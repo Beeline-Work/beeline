@@ -696,6 +696,17 @@ CREATE TABLE IF NOT EXISTS daemon_tokens (
 );
 CREATE INDEX IF NOT EXISTS daemon_tokens_agent_idx ON daemon_tokens(agent_id);
 
+-- Forward recovery of an imported relay identity; token history permanently closes this seam.
+CREATE TABLE IF NOT EXISTS legacy_daemon_migrations (
+  agent_id text PRIMARY KEY REFERENCES identities(id) ON DELETE CASCADE,
+  proof_id text NOT NULL,
+  exchange_hash text NOT NULL,
+  workspace_id uuid NOT NULL,
+  owner_id text NOT NULL,
+  migrated_at timestamptz NOT NULL DEFAULT now()
+);
+
+
 CREATE TABLE IF NOT EXISTS workspaces (
   id uuid PRIMARY KEY,
   name text NOT NULL,

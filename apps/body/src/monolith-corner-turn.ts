@@ -635,6 +635,12 @@ export class MonolithCornerTurnLoop {
     this.forcedStop = true;
   }
 
+  interruptedTurn(): InterruptedTurn | undefined {
+    const current = this.currentTurn;
+    if (!current || this.stoppedTurns.has(current.requestId)) return undefined;
+    return { roomId: this.options.cornerId, requestId: current.requestId, generationId: this.commandContext.generationId };
+  }
+
   interruptForServerMinimum(): InterruptedTurn | undefined {
     this.forcedStop = true;
     const current = this.currentTurn;

@@ -14,6 +14,7 @@
         "scripts/cutover-hooks/{generate-daemon-exchanges,production-e2e}.mjs",
         "scripts/{provision-smoke,publish-smoke-replies}.ts",
         "scripts/prove-tray-inline.ts",
+        "scripts/helper-proof/prove-linux.mjs",
         // CI and the local Android runner invoke these tools by path.
         "scripts/latency-rig/*.{mjs,cjs}",
       ],
@@ -124,7 +125,7 @@
       // The Squire facade is spawned by path from squire-host.ts, outside the
       // JavaScript module graph Knip can follow.
       "entry": [
-        "src/{index,cli,squire-facade}.ts",
+        "src/{index,cli,recovery-cli,squire-facade}.ts",
         "scripts/measure-turn-phases.ts",
         "vitest.live.config.ts",
       ],

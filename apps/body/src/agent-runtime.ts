@@ -1,9 +1,7 @@
 import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { loadBodyConfig } from './config.js';
-import {
-  formatAgentCommand,
-} from './agent-command.js';
+import { formatAgentCommand } from './agent-command.js';
 import { LEGACY_ACCESS_POLICY } from './access-policy.js';
 import {
   applyRuntimeModelPreflight,
@@ -17,14 +15,11 @@ import {
   reportAgentSignInResult,
 } from './agent-sign-in.js';
 import { ConnectorAssignmentLoop } from './connector-assignments.js';
-import { RegistryMcpHostBroker } from './registry-mcp.js';
-import { BrowserShareHost } from './browser-share-host.js';
+import { RegistryMcpHostBroker, registryMcpBrokerSocketPath } from './registry-mcp.js';
+import { BrowserShareHost, browserShareHostPath } from './browser-share-host.js';
 import { ThinDaemonCore } from './thin-core.js';
-import {
-  HelperLifecycle,
-  retryBeforeReady,
-  type HelperExitReason,
-} from './helper-lifecycle.js';
+import { AgentLifecycle, retryBeforeReady, type AgentExitReason } from './helper-lifecycle.js';
+import { migrateLegacyDaemonTransport } from './legacy-daemon-migration.js';
 import { activateDaemonTransport, DaemonApiError } from './daemon-api-client.js';
 import { reportInterruptedTurns } from './force-update-journal.js';
 import type { InterruptedTurn } from './force-update-journal.js';
@@ -42,7 +37,6 @@ import type { BeelineInstallLayout } from './self-update.js';
 import type { InstalledBundleIdentity } from './self-update-manifest.js';
 import { clearDaemonStartFailures } from './daemon-failure.js';
 import { extendSystemdStartTimeout } from './systemd.js';
-import { writeDaemonReleaseStatus } from './release-status.js';
 import { runScratchSweep } from './scratch-sweep.js';
 import type { MachineLink } from './machine-link.js';
 
@@ -58,7 +52,7 @@ function runScratchSweepLogged(runtimeDir: string): void {
 export interface HostedAgent {
   readonly agentId: string;
   readonly runtimeDir: string;
-  readonly lifecycle: HelperLifecycle;
+  readonly lifecycle: AgentLifecycle;
   readonly core: ThinDaemonCore;
 }
 
@@ -72,7 +66,7 @@ export interface AgentRuntimeHost {
   /** Join the machine's update drain and forced-update handoff; returns leave. */
   attach(agent: HostedAgent): () => void;
   /** A status line for the watchdog and `beeline update --status`. */
-  progress(agentId: string, status: string): void;
+  progress(agentId: string, status: string, fault?: unknown): void;
   /** This agent finished starting (or gave up on it). */
   established(agentId: string): void;
   tickUpdate(): Promise<void>;
@@ -90,7 +84,7 @@ export async function runAgentRuntime(
   configPath: string,
   host: AgentRuntimeHost,
   signal: AbortSignal,
-): Promise<HelperExitReason> {
+): Promise<AgentExitReason> {
   const runtimeDir = dirname(configPath);
   // Existing installs converge on the private file modes a fresh runtime
   // record already gets: defense-in-depth alongside the sandbox mask below,
@@ -103,17 +97,26 @@ export async function runAgentRuntime(
   const accessMigration = await migrateRuntimeRecordAccessPolicy(configPath);
   let runtime = accessMigration.runtime;
   if (!runtime.transport) {
-    throw new Error('legacy relay runtime is unsupported; reconnect this agent from the app');
+    runtime = await migrateLegacyDaemonTransport(configPath);
   }
   const activated = await activateDaemonTransport(
     configPath,
     fetch,
-    host.machineLink(runtime.transport.baseUrl),
+    host.machineLink(runtime.transport!.baseUrl),
   );
   if (!activated) throw new Error('monolith daemon transport activation failed');
   runtime = activated.runtime;
   const agentId = runtime.agent.publicKey;
   const daemonApi = activated.client;
+  const loadedReleaseIdentity = host.loadedReleaseIdentity;
+  if (host.layout)
+    daemonApi.setHelperIdentity({
+      releaseVersion: loadedReleaseIdentity?.version,
+      sourceSha: loadedReleaseIdentity?.commit,
+    });
+  // Startup preflight is already a daemon request. A supported successor
+  // must identify itself before it can trip the minimum-version gate.
+  daemonApi.setForceUpdateListener((minVersion) => host.requestForceUpdate(minVersion));
   // A Room pins its adapter into its Workspace before launch. Refreshing the
   // machine-global @latest install here could replace a sibling's live binary.
   const agent = runtimeAgentCommand(runtime);
@@ -151,7 +154,10 @@ export async function runAgentRuntime(
     .execute('getAgentConfiguration', { agentId })
     .then((result) =>
       result.model || result.effort
-        ? { ...(result.model ? { model: result.model } : {}), ...(result.effort ? { effort: result.effort } : {}) }
+        ? {
+            ...(result.model ? { model: result.model } : {}),
+            ...(result.effort ? { effort: result.effort } : {}),
+          }
         : undefined,
     )
     .catch(() => undefined);
@@ -160,12 +166,7 @@ export async function runAgentRuntime(
     serverModelSelection,
   );
   if (preflightModelSelection) {
-    await applyRuntimeModelPreflight(
-      config,
-      agent,
-      preflightModelSelection,
-      undefined,
-    );
+    await applyRuntimeModelPreflight(config, agent, preflightModelSelection, undefined);
     if (!config.modelUnavailable) {
       console.log('[body] persisted model/effort selection passed live startup validation');
     } else {
@@ -198,18 +199,16 @@ export async function runAgentRuntime(
   const controller = new AbortController();
   const abortFromHost = () => lifecycle.stop('stopped');
   // This agent's own lifecycle. Its end is a return value, never a process exit.
-  const lifecycle = new HelperLifecycle({ controller, exitProcess: () => undefined });
+  const lifecycle = new AgentLifecycle({ controller });
+  daemonApi.setAuthorityRefusalListener((fault) => {
+    if (!controller.signal.aborted) host.progress(agentId, fault.message, fault);
+  });
   signal.addEventListener('abort', abortFromHost, { once: true });
   if (signal.aborted) abortFromHost();
 
-  const loadedReleaseIdentity = host.loadedReleaseIdentity;
   if (host.layout) {
     config.daemonReleaseVersion = loadedReleaseIdentity?.version;
     config.daemonSourceSha = loadedReleaseIdentity?.commit;
-    daemonApi.setHelperIdentity({
-      releaseVersion: loadedReleaseIdentity?.version,
-      sourceSha: loadedReleaseIdentity?.commit,
-    });
   }
 
   console.log(
@@ -228,12 +227,29 @@ export async function runAgentRuntime(
   );
   scratchSweepTimer.unref();
 
-  let established = false;
+  let discoveryReady = false;
   const markEstablished = () => {
-    if (established) return;
-    established = true;
+    if (controller.signal.aborted || !discoveryReady || !daemonApi.channel.isOpen()) return;
     host.established(agentId);
+    host.progress(agentId, 'machine registered; discovery ready');
   };
+  daemonApi.setChannelStateListener((connected, refusal) => {
+    if (controller.signal.aborted) return;
+    if (connected) markEstablished();
+    else if (refusal) {
+      const auth = refusal === 'daemon_token_required' || refusal === 'unauthorized';
+      host.progress(
+        agentId,
+        `degraded: machine registration refused: ${refusal}`,
+        new DaemonApiError(
+          `machine registration refused: ${refusal}`,
+          auth ? 401 : 400,
+          false,
+          refusal,
+        ),
+      );
+    } else host.progress(agentId, 'degraded: machine link reconnecting');
+  });
   let connectorLoop: ConnectorAssignmentLoop | undefined;
   let agentSignIn: AgentSignIn | undefined;
   let registryMcpBroker: RegistryMcpHostBroker | undefined;
@@ -257,8 +273,14 @@ export async function runAgentRuntime(
       });
     return catalogRefresh;
   };
-  let exitReason: HelperExitReason | undefined;
+  let exitReason: AgentExitReason | undefined;
   try {
+    // Credential activation and interruption replay precede every intake.
+    await retryBeforeReady(() => reportInterruptedTurns(runtimeDir, daemonApi, agentId), {
+      onLinkOpen: (listener) => daemonApi.onLiveOpen(listener),
+      extendStartTimeout: extendSystemdStartTimeout,
+      signal: controller.signal,
+    });
     registryMcpBroker = new RegistryMcpHostBroker(
       config.operatorHome,
       fetch,
@@ -277,13 +299,13 @@ export async function runAgentRuntime(
           })
         ).allowed === true,
       // One broker per hosted agent: each authorizes against its own agent.
-      registryBrokerSocketPath(config.operatorHome, agentId),
+      registryMcpBrokerSocketPath(config.operatorHome, agentId),
     );
     await registryMcpBroker.start();
     config.registryMcpBrokerSocket = registryMcpBroker.socketPath;
-    // Unix socket paths are capped at 108 bytes, so keep this near the state root.
-    browserShareHost = new BrowserShareHost(join(process.env.XDG_STATE_HOME ?? config.operatorHome ?? homedir(),
-      '.bs', `${process.pid}-${agentId.slice(0, 8)}.sock`));
+    browserShareHost = new BrowserShareHost(
+      browserShareHostPath(process.env.XDG_STATE_HOME ?? config.operatorHome ?? homedir(), agentId),
+    );
     await browserShareHost.start();
     config.browserShareHostSocket = browserShareHost.socketPath;
     let lifecycleRestart: Promise<void> | undefined;
@@ -295,9 +317,12 @@ export async function runAgentRuntime(
         if (lifecycleRestart || !lifecycle.quiesce('restart')) return;
         lifecycleRestart = (async () => {
           const cancelled = await core.cancelActiveWorkForRestart();
-          host.progress(agentId, cancelled
-            ? 'restart requested; active work cancelled'
-            : 'restart requested; no active work');
+          host.progress(
+            agentId,
+            cancelled
+              ? 'restart requested; active work cancelled'
+              : 'restart requested; no active work',
+          );
           lifecycle.stop('restart-requested');
         })().catch((error) => {
           console.error('[thin-core] requested restart failed:', error);
@@ -317,28 +342,8 @@ export async function runAgentRuntime(
     const result = await core.run({
       signal: controller.signal,
       onEstablished: async () => {
-        try {
-          // Interrupted-turn replay waits out an outage on every open
-          // instead of failing the start.
-          await retryBeforeReady(
-            () => reportInterruptedTurns(runtimeDir, daemonApi, agentId),
-            {
-              onLinkOpen: (listener) => daemonApi.onLiveOpen(listener),
-              extendStartTimeout: extendSystemdStartTimeout,
-              signal: controller.signal,
-            },
-          );
-        } catch (error) {
-          // A refusal for the helper version is the forced update's job now.
-          if (error instanceof DaemonApiError && error.status === 426 &&
-              error.code === 'update_required') {
-            markEstablished();
-            return;
-          }
-          throw error;
-        }
         await clearDaemonStartFailures(runtimeDir);
-        await writeDaemonReleaseStatus(runtimeDir, agentId, loadedReleaseIdentity);
+        discoveryReady = true;
         markEstablished();
         // One bounded harness probe per activation keeps the phone's MODEL /
         // EFFORT rows current; it never blocks readiness or the Room loop.
@@ -395,8 +400,13 @@ export async function runAgentRuntime(
           });
         }
       },
-      onProgress: async (status) => {
-        host.progress(agentId, status);
+      onProgress: async (status, fault) => {
+        if (!controller.signal.aborted)
+          host.progress(
+            agentId,
+            daemonApi.channel.isOpen() ? status : 'degraded: machine link reconnecting',
+            fault,
+          );
         await host.tickUpdate();
       },
     });
@@ -407,7 +417,6 @@ export async function runAgentRuntime(
       console.log(`[beeline] agent ${agentId} removed; runtime archived at ${archivedRuntime}`);
     }
   } finally {
-    markEstablished();
     signal.removeEventListener('abort', abortFromHost);
     leaveHost?.();
     clearInterval(scratchSweepTimer);
@@ -420,12 +429,6 @@ export async function runAgentRuntime(
     await clearDaemonPidRecordIfPid(configPath, process.pid);
   }
   return exitReason ?? lifecycle.stopReason ?? 'stopped';
-}
-
-/** Per agent: two agents in one process must never share a broker socket. */
-function registryBrokerSocketPath(home: string | undefined, agentId: string): string {
-  return join(home ?? homedir(), '.beeline', 'registry-mcp-broker',
-    `${process.pid}-${agentId.slice(0, 8)}.sock`);
 }
 
 /** The force-update journal entries for one hosted agent. */

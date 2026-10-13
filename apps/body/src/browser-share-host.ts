@@ -1,7 +1,12 @@
 import { createConnection, createServer, type Server } from 'node:net';
-import { chmodSync, mkdirSync, rmSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { chmodSync, rmSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { shareChromiumPage, type ChromiumPage } from './browser-share.js';
+import { privateSocketPath, preparePrivateSocketDirectory } from './local-socket.js';
+
+export function browserShareHostPath(stateRoot: string, agentId: string): string {
+  return privateSocketPath(JSON.stringify(['browser-share', resolve(stateRoot), process.pid, agentId]));
+}
 
 type ShareRequest = {
   page: ChromiumPage;
@@ -17,7 +22,7 @@ export class BrowserShareHost {
   constructor(readonly socketPath: string) {}
 
   async start(): Promise<void> {
-    mkdirSync(dirname(this.socketPath), { recursive: true, mode: 0o700 });
+    await preparePrivateSocketDirectory(this.socketPath);
     rmSync(this.socketPath, { force: true });
     this.server = createServer({ allowHalfOpen: true }, (socket) => {
       let text = '';

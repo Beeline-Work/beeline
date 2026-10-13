@@ -356,6 +356,9 @@ describe('Room turn phase trace', () => {
   }, 20_000);
 
   it.skipIf(!bwrapUsable)('activates a real shared-layout Room mount from the turn loop', async () => {
+    // The mount proof needs the host adapter; workspace-assets.test.ts proves
+    // pinning. Do not install this operator's large adapter from the network.
+    vi.spyOn(workspaceAssets, 'prepareWorkspaceAdapter').mockResolvedValueOnce(undefined);
     const { acpOptions } = await runTurns({
       sharedAssets: true,
       asks: [{ id: 'shared-room', body: 'work' }],

@@ -15,7 +15,7 @@ const result = spawnSync(
   [
     '--no-install',
     'esbuild',
-    resolve(root, 'apps/body/dist/cli.js'),
+    resolve(root, 'apps/body/dist/recovery-cli.js'),
     '--bundle',
     '--platform=node',
     '--format=esm',

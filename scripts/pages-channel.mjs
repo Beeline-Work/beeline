@@ -31,6 +31,12 @@ export async function downloadPagesChannel({ github, repo, directory }) {
       await writeFile(join(directory, name), await download(name));
     }
   }
+  if (manifest.recovery)
+    for (const name of [manifest.recovery.file, `${manifest.recovery.file}.sha256`]) {
+      if (!['beeline-bootstrap.mjs', 'beeline-bootstrap.mjs.sha256'].includes(name))
+        throw new Error('durable recovery channel has an unsafe filename');
+      await writeFile(join(directory, name), await download(name));
+    }
   await writeFile(join(directory, 'manifest.json'), manifestBytes);
   return (await validateBundleDirectory(directory)).manifest;
 }

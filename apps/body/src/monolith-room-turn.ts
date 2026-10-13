@@ -650,6 +650,12 @@ export class MonolithRoomTurnLoop {
     // Ordinary managed updates keep their existing idle/drain behavior.
   }
 
+  interruptedTurn(): InterruptedTurn | undefined {
+    const active = this.activeTurn;
+    if (!active || active.cancelled) return undefined;
+    return { roomId: this.options.roomId, requestId: active.item.id, generationId: this.commandContext.generationId };
+  }
+
   interruptForServerMinimum(): InterruptedTurn | undefined {
     const active = this.activeTurn;
     if (!active || active.cancelled) return undefined;

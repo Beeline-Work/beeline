@@ -36,15 +36,15 @@ import {
 } from '@beeline/api-contract/scheduled-prompts';
 import { completeDevicePairing } from './device-pairing.js';
 import { claimGrantedHostRoutes } from './host-mcp-route.js';
-import { coordinateManagedUpdateHandoff, ManagedUpdateHandoff } from './managed-update.js';
+import { ReleaseTransaction } from './managed-update.js';
 import {
-  launchRuntimeDaemon,
+  launchLabRuntimeDaemon,
+  runtimeDaemonPid,
   readRuntimeRecord,
-  stopRuntimeDaemon,
   writeRuntimeRecord,
   type AgentRuntimeRecord,
 } from './runtime.js';
-import { activeReleaseId, writeUpdateState } from './self-update.js';
+import { activeReleaseId, activateRelease, writeUpdateState } from './self-update.js';
 import { SessionScheduler } from './session-scheduler.js';
 import { ThinDaemonCore } from './thin-core.js';
 
@@ -502,7 +502,8 @@ describe('daemon API client against the local monolith', () => {
 
   afterEach(async () => {
     if (launchedDaemonConfig) {
-      await stopRuntimeDaemon(launchedDaemonConfig).catch(() => undefined);
+      const pid = await runtimeDaemonPid(launchedDaemonConfig);
+      if (pid) process.kill(pid, 'SIGTERM');
       launchedDaemonConfig = undefined;
     }
     await new Promise<void>((resolve) => server.close(() => resolve()));
@@ -644,7 +645,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
           // binDir <root>/prefix/bin, libDir <root>/prefix/lib/beeline.
           const installRoot = process.env.BEELINE_ACCEPTANCE_INSTALL_ROOT?.trim();
           const installedLibDir = installRoot ? `${installRoot}/prefix/lib/beeline` : undefined;
-          return launchRuntimeDaemon(configPath, {
+          return launchLabRuntimeDaemon(configPath, {
             entrypoint:
               (installRoot && `${installRoot}/prefix/lib/beeline/lib/beeline/beeline-cli.mjs`) ||
               fileURLToPath(new URL('../dist/cli.js', import.meta.url)),
@@ -680,7 +681,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         ).toMatchObject({ presence: { status: 'online', roomId: ROOM } });
       },
       { timeout: 10_000 },
-    );
+    ).catch(async (error) => { throw new Error(`${String(error)}\n${await readFile(resolve(launchedDaemonConfig!, '../daemon.log'), 'utf8').catch(() => 'no daemon log')}`); });
     // The server cursor is second-granular; cross the pairing join-note second
     // before creating the human request so this exercises a fresh inbox row.
     await new Promise((resolveWait) => setTimeout(resolveWait, 1_100));
@@ -1378,18 +1379,11 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         }
         await mkdir(join(updateRoot, 'lib'), { recursive: true });
         await symlink('beeline-releases/old', layout.libDir);
-        const update = await ManagedUpdateHandoff.create(layout);
-        await writeUpdateState(layout, { stagedReleaseId: 'new' });
         let restarted = false;
-        expect(
-          await coordinateManagedUpdateHandoff(
-            update,
-            () => core.quiesceForUpdateIfIdle(),
-            async () => {
-              restarted = true;
-            },
-          ),
-        ).toBe('waiting-for-idle');
+        const update = new ReleaseTransaction({ layout, loadedRelease: 'old', env: {}, idle: () => core.activeTurnCount() === 0, interrupt: () => undefined,
+          handoff: async () => { core.quiesceForUpdate(); await activateRelease(layout, 'new'); restarted = true; }, changed: () => undefined, failed: (error) => { throw error; } });
+        await writeUpdateState(layout, { stagedReleaseId: 'new' });
+        await update.prepared('new');
         expect(restarted).toBe(false);
         expect(await activeReleaseId(layout)).toBe('old');
 
@@ -1495,15 +1489,8 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         await vi.waitFor(() => expect(core.quiesceForUpdateIfIdle()).toBe(true), {
           timeout: 5_000,
         });
-        expect(
-          await coordinateManagedUpdateHandoff(
-            update,
-            () => core.quiesceForUpdateIfIdle(),
-            async () => {
-              restarted = true;
-            },
-          ),
-        ).toBe('restarting');
+        await update.idleChanged();
+        update.dispose();
         expect(restarted).toBe(true);
         expect(await activeReleaseId(layout)).toBe('new');
         expect(

@@ -15,10 +15,10 @@
       "import": "./dist/index.js",
       "default": "./dist/index.js"
     },
-    "./release-status": {
-      "types": "./dist/release-status.d.ts",
-      "import": "./dist/release-status.js",
-      "default": "./dist/release-status.js"
+    "./helper-status": {
+      "types": "./dist/helper-status.d.ts",
+      "import": "./dist/helper-status.js",
+      "default": "./dist/helper-status.js"
     }
   },
   "scripts": {

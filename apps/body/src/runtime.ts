@@ -404,37 +404,6 @@ export async function runningHelperPid(supervisorRoot: string): Promise<number |
   }
 }
 
-/**
- * Without a service manager the helper is one detached process too: a running
- * helper is told to rescan its agents (SIGHUP), otherwise one is started.
- */
-export async function startMachineHelper(
-  opts: { env?: NodeJS.ProcessEnv; entrypoint?: string } = {},
-): Promise<{ pid: number; started: boolean }> {
-  const env = opts.env ?? process.env;
-  const supervisorRoot = defaultSupervisorRoot(env);
-  const running = await runningHelperPid(supervisorRoot);
-  if (running) {
-    process.kill(running, 'SIGHUP');
-    return { pid: running, started: false };
-  }
-  const directory = helperStateDirectory(supervisorRoot);
-  await mkdir(directory, { recursive: true, mode: 0o700 });
-  const output = openSync(resolve(directory, 'helper.log'), 'a', 0o600);
-  const entrypoint = opts.entrypoint ?? process.argv[1];
-  if (!entrypoint) throw new Error('cannot resolve daemon CLI entrypoint');
-  const child = spawn(process.execPath, [entrypoint, 'daemon', '--machine'], {
-    cwd: directory,
-    env,
-    detached: true,
-    stdio: ['ignore', output, output],
-  });
-  child.unref();
-  closeSync(output);
-  if (!child.pid) throw new Error('helper process did not start');
-  return { pid: child.pid, started: true };
-}
-
 /** `beeline stop` leaves this marker; the machine helper does not host a stopped agent. */
 export function agentStoppedPath(configPath: string): string {
   return resolve(dirname(configPath), 'stopped');
@@ -483,25 +452,7 @@ export async function runtimeDaemonPid(configPath: string): Promise<number | nul
   }
 }
 
-export async function stopRuntimeDaemon(
-  path: string,
-  opts: { timeoutMs?: number; pollMs?: number; onWait?: (pid: number, waitedMs: number) => void } = {},
-): Promise<number | null> {
-  const configPath = await resolveRuntimeConfigPath(path);
-  const pid = await runtimeDaemonPid(configPath);
-  if (!pid) return null;
-  process.kill(pid, 'SIGTERM');
-  const started = Date.now();
-  const timeout = opts.timeoutMs ?? 10_000;
-  while (Date.now() - started < timeout) {
-    if ((await runtimeDaemonPid(configPath)) === null) return pid;
-    opts.onWait?.(pid, Date.now() - started);
-    await new Promise((resolveWait) => setTimeout(resolveWait, opts.pollMs ?? 100));
-  }
-  throw new Error(`agent daemon ${pid} did not stop after ${timeout}ms`);
-}
-
-export async function launchRuntimeDaemon(
+export async function launchLabRuntimeDaemon(
   configPath: string,
   opts: { entrypoint?: string; execArgv?: string[]; env?: NodeJS.ProcessEnv; foreground?: boolean } = {},
 ): Promise<number> {
@@ -513,7 +464,7 @@ export async function launchRuntimeDaemon(
   if (!entrypoint) throw new Error('cannot resolve daemon CLI entrypoint');
   const child = spawn(process.execPath, [...(opts.execArgv ?? []), entrypoint, 'daemon', '--config', resolve(configPath)], {
     cwd: directory,
-    env: opts.env ?? process.env,
+    env: { ...(opts.env ?? process.env), BEELINE_LAB: '1' },
     detached: !foreground,
     stdio: ['ignore', output, output],
   });

@@ -95,6 +95,7 @@ export class ThinDaemonCore {
   async prepareForForcedUpdateRestart(): Promise<void> {
     await this.roomRuntime.prepareForForcedUpdateRestart();
   }
+  interruptedTurns(): InterruptedTurn[] { return this.roomRuntime.interruptedTurns(); }
   interruptForServerMinimum(): InterruptedTurn[] {
     return this.roomRuntime.interruptForServerMinimum();
   }
@@ -118,7 +119,7 @@ export class ThinDaemonCore {
       pollMs?: number;
       signal?: AbortSignal;
       onEstablished?: () => void | Promise<void>;
-      onProgress?: (status: string) => void | Promise<void>;
+      onProgress?: (status: string, fault?: unknown) => void | Promise<void>;
     } = {},
   ): Promise<'aborted' | 'agent-removed'> {
     const stop = () => {
@@ -128,10 +129,11 @@ export class ThinDaemonCore {
     opts.signal?.addEventListener('abort', stop, { once: true });
     if (opts.signal?.aborted) stop();
     try {
-      if (!opts.signal?.aborted) await opts.onEstablished?.();
       const supervisor = this.roomRuntime.supervisor;
       let failures = 0;
       let discover = true;
+      let established = false;
+      let lastFault: unknown;
       while (!opts.signal?.aborted) {
         const acknowledge = [...this.progressWaiters];
         const shouldDiscover = discover || this.pendingDiscovery;
@@ -141,11 +143,14 @@ export class ThinDaemonCore {
           if (shouldDiscover) {
             const membership = await this.roomRuntime.reconcile();
             if (membership === 'not-member') return 'agent-removed';
+            if (membership === 'member' && !established) { await opts.onEstablished?.(); established = true; }
             this.discoveryStatus = membership === 'unknown' ? 'monolith membership degraded' : '';
             failures = 0;
+            lastFault = undefined;
           }
         } catch (error) {
           if (isAgentRemovedError(error)) return 'agent-removed';
+          lastFault = error;
           failures = error instanceof DaemonApiError && !error.retryable
             ? supervisor.retries + 1 : failures + 1;
           console.error(
@@ -158,16 +163,17 @@ export class ThinDaemonCore {
           this.roomRuntime.suspectLink(error);
         }
         if (opts.signal?.aborted) break;
-        await opts.onProgress?.(this.healthStatus());
+        await opts.onProgress?.(this.healthStatus(), lastFault);
         for (const done of acknowledge) {
           this.progressWaiters.delete(done);
           done();
         }
-        if (failures > 0 && failures <= supervisor.retries) {
-          await supervisor.retryDelay(failures, opts.signal, wakesBefore);
+        const authorityRefused = lastFault instanceof DaemonApiError && !lastFault.retryable && lastFault.status >= 400 && lastFault.status < 500;
+        if (failures > 0 && !authorityRefused) {
+          await supervisor.retryDelay(Math.min(failures, supervisor.retries), opts.signal, wakesBefore);
           discover = true;
         } else {
-          // Exhausted or refused reads park until a real discovery event. Local
+          // Healthy idle reads and authority refusals wait for a real discovery event. Local
           // health ticks still run here, without replaying the refused request.
           failures = 0;
           await this.waitForDiscovery(opts.signal);

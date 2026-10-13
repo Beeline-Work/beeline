@@ -1,3 +1,4 @@
+import { convergeMachine, prepareMachineRelease } from './recovery.js';
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { chmod, mkdir, readFile, unlink, writeFile } from 'node:fs/promises';
@@ -35,10 +36,8 @@ import {
   type ProviderKeyProvider,
 } from './provider-key-store.js';
 import {
-  activateRelease,
   defaultBeelineInstallLayout,
   hostPlatformKey,
-  stageRelease,
 } from './self-update.js';
 import { isCanonicalInstalledLauncher } from './systemd.js';
 import { parseUpdateManifest, resolveManifestUrl } from './self-update-manifest.js';
@@ -852,17 +851,15 @@ export function seededIdentityLine(grant: { agent_name: string; agent_face?: str
 async function installCurrentRelease(
   fetchImpl: typeof fetch,
 ): Promise<{ binary: string; version: string }> {
+  const layout = defaultBeelineInstallLayout(process.env);
+  if (process.env.BEELINE_RECOVERY_SELECTED_RELEASE) return { binary: resolve(layout.binDir, 'beeline'), version: process.env.BEELINE_RECOVERY_SELECTED_RELEASE };
   const manifestUrl = resolveManifestUrl(process.env);
   const response = await fetchImpl(manifestUrl, { signal: AbortSignal.timeout(30_000) });
   if (!response.ok)
     throw new Error(`fetching the Beeline release manifest failed: HTTP ${response.status}`);
   const published = parseUpdateManifest(await response.text(), hostPlatformKey()).bundle;
-  const layout = defaultBeelineInstallLayout(process.env);
-  const releaseId = await stageRelease(layout, manifestUrl, published, {
-    fetchImpl,
-    logger: () => {},
-  });
-  await activateRelease(layout, releaseId);
+  const { releaseId } = await prepareMachineRelease(layout, { manifest: { url: manifestUrl, bundle: published }, fetchImpl, logger: () => {} });
+  await convergeMachine({ layout, releaseId });
   return {
     binary: resolve(layout.binDir, 'beeline'),
     version: published.version ?? releaseId,

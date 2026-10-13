@@ -41,7 +41,7 @@ vi.mock('./runtime.js', async (importOriginal) => {
   };
 });
 
-const { runStartCommand } = await import('./start-command.js');
+const { ensureMachineHelper } = await import('./helper-service.js');
 
 describe('beeline start installs the host Squire elector', () => {
   let root = '';
@@ -70,18 +70,14 @@ describe('beeline start installs the host Squire elector', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  const start = () =>
-    runStartCommand(['start'], false, {
-      updateBundle: async () => undefined,
-      log: () => undefined,
-    });
+  const start = () => ensureMachineHelper();
 
   it('elects on a host whose agent daemon is already supervised', async () => {
     controls.daemonPid.mockResolvedValue(9911);
 
     const reports = await start();
 
-    expect(reports.map((report) => report.status)).toEqual(['already-running']);
+    expect(reports).toEqual({ pid: 4242, supervisor: 'systemd' });
     // The running helper is only asked to rescan; nothing restarts the agent.
     expect(controls.installHelper).toHaveBeenCalledTimes(1);
     expect(controls.installBroker).toHaveBeenCalledTimes(1);
@@ -90,7 +86,7 @@ describe('beeline start installs the host Squire elector', () => {
   it('elects on a host that starts its agent daemon now', async () => {
     const reports = await start();
 
-    expect(reports.map((report) => report.status)).toEqual(['started']);
+    expect(reports).toEqual({ pid: 4242, supervisor: 'systemd' });
     expect(controls.installHelper).toHaveBeenCalledTimes(1);
     expect(controls.installBroker).toHaveBeenCalledTimes(1);
   });
@@ -100,7 +96,7 @@ describe('beeline start installs the host Squire elector', () => {
 
     const reports = await start();
 
-    expect(reports.map((report) => report.status)).toEqual(['started']);
+    expect(reports).toEqual({ pid: 4242, supervisor: 'systemd' });
     expect(controls.installHelper).toHaveBeenCalledTimes(1);
   });
 
@@ -109,9 +105,7 @@ describe('beeline start installs the host Squire elector', () => {
 
     const reports = await start();
 
-    expect(reports).toEqual([
-      expect.objectContaining({ status: 'started', pid: 5252 }),
-    ]);
+    expect(reports).toEqual({ pid: 5252, supervisor: 'launchd' });
     expect(controls.installLaunchdBroker).toHaveBeenCalledTimes(1);
     expect(controls.installLaunchdHelper).toHaveBeenCalledTimes(1);
     expect(controls.installBroker).not.toHaveBeenCalled();

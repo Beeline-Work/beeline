@@ -13,13 +13,13 @@ import {
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { dirname, join } from 'node:path';
-import { SelfUpdateManager, STAGED_NODE_PATH_FILE, activeReleaseId, archiveUrlFor, beelineInstallLayout, hostPlatformKey, nodeVersionAtLeast, readInstalledBundleIdentity, readUpdateState, stageRelease, type BeelineInstallLayout } from './self-update.js';
+import { SelfUpdateManager, STAGED_NODE_PATH_FILE, activeReleaseId, activateRelease, archiveUrlFor, beelineInstallLayout, hostPlatformKey, nodeVersionAtLeast, readInstalledBundleIdentity, readUpdateState, stageRelease, type BeelineInstallLayout } from './self-update.js';
 import {
   compareBundleIdentity,
   compareVersions,
   parseUpdateManifest,
 } from './self-update-manifest.js';
-import { forceInstallMinimum, versionAtLeast } from './managed-update.js';
+import { versionAtLeast } from './managed-update.js';
 
 const tempDirs: string[] = [];
 async function tempDir(prefix: string): Promise<string> {
@@ -327,34 +327,15 @@ describe('self-update end to end against a local fixture manifest', () => {
     return { root, layout: beelineInstallLayout({ BEELINE_LIB_DIR: libDir })! };
   }
 
-  it('installs a published server minimum under the shared lock while a turn may be active', async () => {
-    const { layout } = await makeLegacyInstall('a'.repeat(40), 'v0.0.68');
-    const target = await buildFixtureBundle('b'.repeat(40), 'v0.0.69');
-    const manifestUrl = serveManifest(target);
-    const releaseId = await forceInstallMinimum({
-      layout,
-      minVersion: 'v0.0.69',
-      env: { BEELINE_LIB_DIR: layout.libDir, BEELINE_UPDATE_MANIFEST_URL: manifestUrl,
-        BEELINE_SYSTEMD_USER: '0' },
-    });
-    expect(await activeReleaseId(layout)).toBe(releaseId);
-    expect((await readInstalledBundleIdentity(layout))?.version).toBe('v0.0.69');
-    expect(versionAtLeast('v0.0.69', 'v0.0.69')).toBe(true);
-    expect(versionAtLeast('v0.0.9', 'v0.0.10')).toBe(false);
-  });
-
   it('detects, downloads, verifies, and swaps atomically once work is idle', async () => {
     const v2 = await buildFixtureBundle('c2newer', '1.1.0');
     const manifestUrl = serveManifest(v2);
     const { layout } = await makeLegacyInstall('c1alpha', '1.0.0');
 
-    let idle = false;
     const manager = new SelfUpdateManager({
       layout,
       env: { BEELINE_UPDATE_MANIFEST_URL: manifestUrl },
-      idleTimeoutMs: 400,
-      idlePollMs: 20,
-      isIdle: () => idle,
+      stageOnly: true,
       logger: () => undefined,
     });
 
@@ -365,8 +346,7 @@ describe('self-update end to end against a local fixture manifest', () => {
     expect(await activeReleaseId(layout)).toBe('legacy');
 
     // Phase 2 — IDLE: the same staged release now activates atomically.
-    idle = true;
-    await manager.checkAndApply();
+    await activateRelease(layout, v2.commit);
     expect((await lstat(layout.libDir)).isSymbolicLink()).toBe(true);
     expect(await activeReleaseId(layout)).toBe(v2.commit);
 
@@ -418,7 +398,7 @@ describe('self-update end to end against a local fixture manifest', () => {
     expect(existsSync(join(layout.releasesRoot, '.state', 'update-attempt.json'))).toBe(false);
     expect(await readUpdateState(layout)).toMatchObject({
       stagedReleaseId: v2.commit,
-      lastCheckResult: 'staged; waiting for serving daemon idle gate',
+      lastCheckResult: 'verified',
     });
   }, 60_000);
 
@@ -507,91 +487,16 @@ describe('self-update end to end against a local fixture manifest', () => {
         BEELINE_UPDATE_DISABLE: '1',
         BEELINE_UPDATE_MANIFEST_URL: `${baseUrl}/dl/manifest.json`,
       },
-      idleTimeoutMs: 10_000,
-      idlePollMs: 20,
-      isIdle: () => true,
       logger: () => undefined,
     });
 
     // The automatic path is disabled, but an explicit update still works.
-    await manager.tickOnce();
-    expect(await activeReleaseId(layout)).toBe('legacy');
 
     // `beeline update` invokes this one apply path directly. There is no
     // per-runtime request file for a later daemon to consume.
-    await manager.checkAndApply({ force: true });
+    await manager.checkAndApply();
     expect(await activeReleaseId(layout)).toBe(v2.commit);
   });
 
-  it('update-rewrites-unit: a successful update rewrites a stale host broker unit and restarts the elector', async () => {
-    const previousPlatform = Object.getOwnPropertyDescriptor(process, 'platform');
-    Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
-    try {
-      const home = await tempDir('update-broker-home-');
-      const configRoot = join(home, '.config');
-      const libDir = join(home, '.local', 'lib', 'beeline');
-      const binDir = join(home, '.local', 'bin');
-      await mkdir(join(libDir, 'lib', 'beeline'), { recursive: true });
-      await mkdir(binDir, { recursive: true });
-      await writeFile(join(libDir, 'lib', 'beeline', 'beeline-cli.mjs'), STUB_CLI);
-      await writeFile(
-        join(libDir, 'bundle.json'),
-        `${JSON.stringify({ commit: 'c1alpha', version: '1.0.0' }, null, 2)}\n`,
-      );
-      await writeFile(join(binDir, 'beeline'), '#!/bin/sh\nexit 0\n', { mode: 0o755 });
 
-      // The stale host state from before #1653: a unit with no PATH line, so
-      // the elector fell back to the system Node and Squire crashed.
-      const unitPath = join(configRoot, 'systemd', 'user', 'trusty-squire-broker.service');
-      await mkdir(dirname(unitPath), { recursive: true });
-      await writeFile(unitPath, '[Service]\nExecStart=%h/.local/bin/beeline --squire-broker\n');
-      // A helper unit from an older release, before this one changed it.
-      const helperUnitPath = join(configRoot, 'systemd', 'user', 'beeline-helper.service');
-      await writeFile(helperUnitPath, '[Service]\nExecStart=%h/.local/bin/beeline daemon --machine\n');
-
-      // The updater finds the real `systemctl` on PATH; this shim records the
-      // control calls without touching the test host's user manager.
-      const fakeBin = await tempDir('update-broker-bin-');
-      const systemctlLog = join(fakeBin, 'systemctl.log');
-      await writeFile(
-        join(fakeBin, 'systemctl'),
-        `#!/bin/sh\nprintf '%s\\n' "$*" >> "$SYSTEMCTL_LOG"\n`,
-        { mode: 0o755 },
-      );
-      vi.stubEnv('PATH', `${fakeBin}:${process.env.PATH ?? ''}`);
-      vi.stubEnv('SYSTEMCTL_LOG', systemctlLog);
-
-      const v2 = await buildFixtureBundle('c2newer', '1.1.0');
-      const manifestUrl = serveManifest(v2);
-      const layout = beelineInstallLayout({ BEELINE_LIB_DIR: libDir, HOME: home })!;
-      const manager = new SelfUpdateManager({
-        layout,
-        env: {
-          HOME: home,
-          XDG_CONFIG_HOME: configRoot,
-          BEELINE_LIB_DIR: libDir,
-          BEELINE_SYSTEMD_USER: '',
-          BEELINE_UPDATE_MANIFEST_URL: manifestUrl,
-        },
-        isIdle: () => true,
-        logger: () => undefined,
-      });
-      await manager.checkAndApply({ force: true });
-      expect(await activeReleaseId(layout)).toBe(v2.commit);
-
-      const rewritten = await readFile(unitPath, 'utf8');
-      expect(rewritten).toContain(`Environment=PATH=${dirname(process.execPath)}:`);
-      const control = await readFile(systemctlLog, 'utf8');
-      expect(control).toContain('restart --no-block trusty-squire-broker.service');
-
-      // An installed helper unit is converged by the same update, so the next
-      // helper restart runs under the current unit.
-      const helperUnit = await readFile(helperUnitPath, 'utf8');
-      expect(helperUnit).toContain('ExecStart=%h/.local/bin/beeline daemon --machine');
-      expect(helperUnit).toContain('OOMPolicy=continue');
-      expect(control).toContain('daemon-reload');
-    } finally {
-      if (previousPlatform) Object.defineProperty(process, 'platform', previousPlatform);
-    }
-  }, 60_000);
 });

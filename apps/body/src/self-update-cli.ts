@@ -1,9 +1,10 @@
+import { convergeMachine, prepareMachineRelease } from './recovery.js';
 /**
  * `beeline update` — the on-demand half of the daemon self-update path.
  *
  * Downloads and verifies the published bundle. A serving helper activates it
  * and restarts through its service manager in a quiet gap between turns.
- * With no helper running, the install is activated for the next start.
+ * With no helper running, native convergence starts it and awaits serving agents.
  */
 import pc from 'picocolors';
 import {
@@ -18,11 +19,8 @@ import {
   findAgentRuntimeConfigPaths,
   findRuntimeConfigPaths,
   readRuntimeRecord,
-  resolveRuntimeConfigPath,
-  runtimeDaemonPid,
 } from './runtime.js';
 import {
-  SelfUpdateManager,
   activeReleaseId,
   archiveUrlFor,
   beelineInstallLayout,
@@ -38,7 +36,6 @@ import {
   parseUpdateManifest,
   resolveManifestUrl,
 } from './self-update-manifest.js';
-import { withInstallLock } from './managed-update.js';
 
 interface RuntimeAdapterRefreshOptions {
   env?: NodeJS.ProcessEnv;
@@ -127,21 +124,6 @@ export async function requireLayout(): Promise<BeelineInstallLayout> {
   throw new Error('this host has no Beeline install; run `npx usebeeline connect` first.');
 }
 
-async function runningDaemonConfigPaths(): Promise<string[]> {
-  const cwd = process.cwd();
-  const [repoConfigs, hostConfigs] = await Promise.all([
-    findRuntimeConfigPaths(cwd).catch(() => [] as string[]),
-    findAgentRuntimeConfigPaths(process.env, cwd).catch(() => [] as string[]),
-  ]);
-  const running: string[] = [];
-  for (const configPath of [...new Set([...repoConfigs, ...hostConfigs])]) {
-    const resolved = await resolveRuntimeConfigPath(configPath).catch(() => undefined);
-    if (!resolved) continue;
-    if (await runtimeDaemonPid(resolved)) running.push(resolved);
-  }
-  return running;
-}
-
 async function printStatus(layout: BeelineInstallLayout): Promise<void> {
   const [helper, ...agents] = await helperStatusLines();
   console.log(`${pc.bold('helper')}            ${helper}`);
@@ -156,18 +138,6 @@ async function printStatus(layout: BeelineInstallLayout): Promise<void> {
       `${pc.bold('last check')}         ${new Date(state.lastCheckAt).toISOString()} — ${state.lastCheckResult ?? 'unknown'}`,
     );
   }
-}
-
-async function reportRunningDaemons(): Promise<number> {
-  const running = await runningDaemonConfigPaths();
-  for (const configPath of running) {
-    const runtime = await readRuntimeRecord(configPath).catch(() => undefined);
-    console.log(
-      `[beeline] daemon ${runtime?.agent.publicKey?.slice(0, 12) ?? configPath} is running; ` +
-        'it will activate the staged bundle and restart in a quiet gap; unfinished work resumes.',
-    );
-  }
-  return running.length;
 }
 
 export async function runUpdateCommand(args: string[]): Promise<void> {
@@ -210,52 +180,40 @@ export async function runUpdateCommand(args: string[]): Promise<void> {
   const installed = await readInstalledBundleIdentity(layout);
   console.log(`[beeline] installed bundle: ${describeIdentity(installed)}`);
 
-  const raw = await fetch(manifestUrl, { signal: AbortSignal.timeout(30_000) }).then((response) => {
-    if (!response.ok) throw new Error(`manifest fetch failed: HTTP ${response.status}`);
-    return response.text();
-  });
-  const { bundle } = parseUpdateManifest(raw, hostPlatformKey());
-  const verdict = compareBundleIdentity(installed, bundle);
-  const publishedLabel = describeIdentity({ commit: bundle.commit, version: bundle.version });
-
-  if (verdict.kind === 'indeterminate' && !force) {
-    console.log(`[beeline] cannot compare against the published bundle (${verdict.reason}).`);
-    console.log('[beeline] re-run with --force to apply it anyway.');
-    return;
-  }
-
   if (checkOnly) {
-    if (verdict.kind === 'update-available') {
-      console.log(`[beeline] update available: ${publishedLabel}`);
-      console.log(`[beeline] archive: ${archiveUrlFor(manifestUrl, bundle.file)}`);
-    } else {
-      console.log('[beeline] installed bundle is current.');
-    }
-    return;
-  }
-
-  if (verdict.kind === 'current' && !force) {
-    console.log('[beeline] installed bundle is current; nothing to do.');
-    return;
-  }
-
-  console.log(`[beeline] applying ${publishedLabel} …`);
-  const running = await reportRunningDaemons();
-  const manager = new SelfUpdateManager({
-    layout,
-    env: { ...process.env, BEELINE_UPDATE_MANIFEST_URL: manifestUrl },
-    // A serving helper owns activation at its idle gate. With no helper,
-    // activate now so the next start uses the new bundle.
-    isIdle: () => true,
-    stageOnly: running > 0,
-  });
-  await withInstallLock(layout, () => manager.checkAndApply({ force: true }));
-  console.log(running > 0
-    ? '[beeline] bundle staged (sha256 verified); the helper will install and restart in a quiet gap.'
-    : '[beeline] bundle applied (sha256 verified).');
-  if (running === 0) {
-    console.log(
-      '[beeline] no running daemon found; the new bundle is used on the next `beeline start`.',
+    const raw = await fetch(manifestUrl, { signal: AbortSignal.timeout(30_000) }).then(
+      (response) => {
+        if (!response.ok) throw new Error(`manifest fetch failed: HTTP ${response.status}`);
+        return response.text();
+      },
     );
+    const { bundle } = parseUpdateManifest(raw, hostPlatformKey());
+    const verdict = compareBundleIdentity(installed, bundle);
+    if (verdict.kind === 'update-available') {
+      console.log(
+        `[beeline] update available: ${describeIdentity({ commit: bundle.commit, version: bundle.version })}`,
+      );
+      console.log(`[beeline] archive: ${archiveUrlFor(manifestUrl, bundle.file)}`);
+    } else
+      console.log(
+        `[beeline] ${verdict.kind === 'current' ? 'installed bundle is current.' : `cannot compare: ${verdict.reason}`}`,
+      );
+    return;
   }
+  const target = await prepareMachineRelease(layout, {
+    env: {
+      ...process.env,
+      BEELINE_LIB_DIR: layout.libDir,
+      BEELINE_UPDATE_MANIFEST_URL: manifestUrl,
+    },
+    force,
+  });
+  const status = await convergeMachine({
+    layout,
+    env: { ...process.env, BEELINE_LIB_DIR: layout.libDir },
+    releaseId: target.releaseId,
+  });
+  console.log(
+    `[beeline] executing release ${status.loadedRelease}; helper pid ${status.pid}; all enabled agents serving`,
+  );
 }

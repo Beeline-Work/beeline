@@ -8380,7 +8380,7 @@ export class PhoneService {
       ...(id.handle ? { handle: id.handle } : {}),
       ...(id.avatar ? { avatar: id.avatar } : {}),
       ...(id.face ? { face: id.face } : {}),
-      pushLevel: pushLevel ?? 'mine',
+      pushLevel: pushLevel ?? 'attention',
     };
   }
   private async claimManagedHandle(viewerId: string, handle: string) {

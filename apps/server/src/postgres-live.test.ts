@@ -233,7 +233,7 @@ describe('Postgres live fanout', () => {
 
     const person = await phone.livePersonChange(AUTHOR);
     expect(person?.person).toEqual({ pubkey: AUTHOR, kind: 'human', name: 'Author Two' });
-    expect(person?.pushLevel).toBe('mine');
+    expect(person?.pushLevel).toBe('attention');
     expect([...person!.viewers].sort()).toEqual([AUTHOR, workspaceMate, roomMate].sort());
     // A viewer who shares no Workspace or Room with the person never hears it.
     expect(person!.viewers.has(outsider)).toBe(false);

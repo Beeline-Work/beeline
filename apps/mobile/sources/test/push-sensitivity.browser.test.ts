@@ -29,9 +29,10 @@ it.skipIf(!existsSync(CHROME))(
         });
         expect(proof.status, proof.stderr).toBe(0);
         expect(proof.result).toContain('PASS');
-        expect(proof.result).toContain('Mentions');
-        expect(proof.result).toContain('Followed');
-        expect(proof.result).toContain('corners you follow');
+        expect(proof.result).toContain('Saved Full, Off, Attention');
+        expect(proof.result).toContain('Attention');
+        expect(proof.result).toContain('Full');
+        expect(proof.result).toContain('all your Rooms and corners');
       }
     }
   },

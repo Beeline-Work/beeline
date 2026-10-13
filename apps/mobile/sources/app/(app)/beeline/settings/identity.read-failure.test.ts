@@ -361,7 +361,7 @@ describe('Reproduction settings-identity-read-failure', () => {
       renderer.root.findByProps({ testID: 'identity-face-setting' }).findByType('BeelineMark'),
     ).toBeDefined();
     await act(async () => {
-      resolveFace({ identity: { personId: 'a'.repeat(64), face: 'fox', pushLevel: 'mine', handle: null, name: 'Captain' }, workspaces: { workspaces: [] } });
+      resolveFace({ identity: { personId: 'a'.repeat(64), face: 'fox', pushLevel: 'attention', handle: null, name: 'Captain' }, workspaces: { workspaces: [] } });
     });
     expect(renderer.root.findByProps({ testID: 'identity-face-mark' }).props).toMatchObject({
       seed: 'a'.repeat(64),
@@ -376,7 +376,7 @@ describe('Reproduction settings-identity-read-failure', () => {
   it('keeps the logo when the hosted identity has no face', async () => {
     runtime.monolithEnabled = true;
     phoneOperation.mockResolvedValue({ identity: {
-      personId: 'a'.repeat(64), face: null, pushLevel: 'mine', handle: null, name: 'Captain',
+      personId: 'a'.repeat(64), face: null, pushLevel: 'attention', handle: null, name: 'Captain',
     }, workspaces: { workspaces: [] } });
     const renderer = await renderScreen();
     await vi.waitFor(() => expect(phoneOperation).toHaveBeenCalledWith('readIdentitySettings', {}));
@@ -399,7 +399,7 @@ describe('Settings groups', () => {
     runtime.monolithEnabled = true;
     phoneOperation.mockResolvedValue({
       face: null,
-      pushLevel: 'mine',
+      pushLevel: 'attention',
       handle: null,
       name: 'Captain',
     });

@@ -50,7 +50,8 @@ describe('resource observers in the desktop web renderer', () => {
         setTimeout(() => { output.terminalReads = globalThis.__installReads;
           output.signInError = document.querySelector('[data-testid="signin-retry"]')?.textContent;
           output.installerError = document.querySelector('[data-testid="connect-error"]')?.textContent;
-          output.inspectorError = document.querySelector('[data-testid="desktop-corner-retry"]')?.textContent;
+          output.inspectorRetry = document.querySelector('[data-testid="desktop-corner-retry"]')?.textContent;
+          output.inspectorError = document.querySelector('[data-testid="desktop-corner-retry"]')?.parentElement?.textContent;
           output.staleTranscript = !!document.querySelector('[data-testid="desktop-work-corner-transcript"]'); }, 7600);
         setTimeout(() => { output.stoppedReads = globalThis.__installReads;
           document.querySelector('[data-testid="signin-retry"]')?.click();
@@ -104,6 +105,7 @@ describe('resource observers in the desktop web renderer', () => {
       expect(proof.signInError).toContain('Retry');
       expect(proof.installerError).toContain('Lost track');
       expect(proof.inspectorError).toContain('Selected corner unavailable');
+      expect(proof.inspectorRetry).toBe('Retry');
       expect(proof.workflowText).toBe('Corner · Implement');
     } finally { await rm(directory, { recursive: true, force: true }); }
   }, 90000);

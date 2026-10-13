@@ -62,6 +62,10 @@ export class ThinDaemonCore {
     });
   }
 
+  reclaimKnownPrivateStorage(): Promise<void> {
+    return this.roomRuntime.reclaimKnownPrivateStorage();
+  }
+
   activeRoomIds(): string[] {
     return this.roomRuntime.activeRoomIds();
   }

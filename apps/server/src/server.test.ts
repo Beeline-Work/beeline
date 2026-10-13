@@ -1521,7 +1521,7 @@ describe('phone committed-row live delivery', () => {
     const livePersonChange = vi.fn().mockImplementation(async (personId: string) =>
       personId === 'mate' ? { person, pushLevel: 'full', viewers: new Set(['mate', 'viewer']) }
         : personId === 'viewer' ? { person: self, pushLevel: 'off', viewers: new Set(['viewer']) }
-          : { person: { ...person, pubkey: 'stranger' }, pushLevel: 'default',
+          : { person: { ...person, pubkey: 'stranger' }, pushLevel: 'attention',
             viewers: new Set(['stranger']) });
     const { live, socket } = await connect(
       vi.fn() as PhoneService['readLiveDelta'], undefined, undefined, false,

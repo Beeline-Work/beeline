@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { DEFAULT_PUSH_LEVEL, isPushLevel, type PushLevel } from '@beeline/api-contract/phone';
+import { ATTENTION_PUSH_LEVEL, isPushLevel, type PushLevel } from '@beeline/api-contract/phone';
 
 const PUSH_LEVEL_PREFIX = '@beeline/push-level/';
 const pushLevelListeners = new Set<(pubkey: string, level: PushLevel) => void>();
@@ -8,7 +8,7 @@ const pushLevelListeners = new Set<(pubkey: string, level: PushLevel) => void>()
 export async function loadStoredPushLevel(pubkey: string): Promise<PushLevel> {
   const stored = await AsyncStorage.getItem(`${PUSH_LEVEL_PREFIX}${pubkey}`);
   if (stored === 'all') return 'full';
-  return isPushLevel(stored) ? stored : DEFAULT_PUSH_LEVEL;
+  return isPushLevel(stored) ? stored : ATTENTION_PUSH_LEVEL;
 }
 
 /** The one writer: store a server-proven level and tell every mounted reader. */
@@ -39,7 +39,7 @@ export function watchStoredPushLevel(
     listener(level);
   });
   void loadStoredPushLevel(pubkey)
-    .catch(() => DEFAULT_PUSH_LEVEL)
+    .catch(() => ATTENTION_PUSH_LEVEL)
     .then((level) => {
       if (!heard && !stopped) listener(level);
     });

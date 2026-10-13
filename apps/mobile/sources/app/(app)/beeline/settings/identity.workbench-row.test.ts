@@ -370,7 +370,7 @@ beforeEach(() => {
     canAskAgain: true,
   });
   phoneOperation.mockImplementation(async (name: string) => name === 'readIdentitySettings'
-    ? { identity: { personId: VIEWER, face: null, pushLevel: 'default', handle: null, name: 'C' },
+    ? { identity: { personId: VIEWER, face: null, pushLevel: 'attention', handle: null, name: 'C' },
         workspaces: { workspaces: [{ id: 'workspace-1', role: 'owner' }] },
         workbench: await workbench.readWorkbench() }
     : {});

@@ -13,16 +13,16 @@ import {
 describe('push level storage', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('defaults missing and invalid values to Default', async () => {
+  it('defaults missing and invalid values to Attention', async () => {
     storage.getItem.mockResolvedValueOnce(null).mockResolvedValueOnce('loud');
-    await expect(loadStoredPushLevel('person')).resolves.toBe('default');
-    await expect(loadStoredPushLevel('person')).resolves.toBe('default');
+    await expect(loadStoredPushLevel('person')).resolves.toBe('attention');
+    await expect(loadStoredPushLevel('person')).resolves.toBe('attention');
   });
 
   it.each([
     ['off', 'off'],
-    ['direct', 'default'],
-    ['mine', 'default'],
+    ['direct', 'attention'],
+    ['mine', 'attention'],
     ['all', 'full'],
   ])('maps cached legacy %s to %s', async (legacy, mapped) => {
     storage.getItem.mockResolvedValueOnce(legacy);
@@ -56,7 +56,7 @@ describe('push level storage', () => {
     await saveStoredPushLevel('person', 'full');
     expect(listener.mock.calls).toEqual([['off'], ['full']]);
     stop();
-    await saveStoredPushLevel('person', 'default');
+    await saveStoredPushLevel('person', 'attention');
     expect(listener).toHaveBeenCalledTimes(2);
   });
 

@@ -18,7 +18,7 @@ const base = {
   message,
   room,
   viewerPubkey: me,
-  level: 'default' as const,
+  level: 'attention' as const,
   openChannelId: null,
   windowFocused: false,
 };
@@ -53,7 +53,7 @@ describe('native desktop message display policy', () => {
     ).toBe(false);
   });
 
-  it.each(['off', 'default', 'full'] as const)(
+  it.each(['off', 'attention', 'full'] as const)(
     'covers ordinary human/final/intermediate/own messages at %s',
     (level) => {
       const input = { ...base, level };

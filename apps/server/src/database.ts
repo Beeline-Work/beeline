@@ -610,7 +610,7 @@ CREATE TABLE IF NOT EXISTS identities (
   handle text,
   avatar text,
   hidden_from_roster boolean NOT NULL DEFAULT false,
-  push_level text NOT NULL DEFAULT 'default' CHECK(push_level IN ('off','default','full')),
+  push_level text NOT NULL DEFAULT 'attention' CHECK(push_level IN ('off','attention','full')),
   github_subject text UNIQUE,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
@@ -622,7 +622,7 @@ ALTER TABLE identities ADD COLUMN IF NOT EXISTS face_id text NULL;
 ALTER TABLE identities ADD COLUMN IF NOT EXISTS welcome_cards_due boolean;
 ALTER TABLE identities ALTER COLUMN welcome_cards_due SET DEFAULT true;
 ALTER TABLE identities DROP COLUMN IF EXISTS tour_seen_tips;
-ALTER TABLE identities ADD COLUMN IF NOT EXISTS push_level text NOT NULL DEFAULT 'default';
+ALTER TABLE identities ADD COLUMN IF NOT EXISTS push_level text NOT NULL DEFAULT 'attention';
 ALTER TABLE identities DROP CONSTRAINT IF EXISTS identities_push_level_check;
 -- Record user counts (excluding hidden system identities) and convert once.
 CREATE TABLE IF NOT EXISTS push_level_migration_counts (
@@ -631,23 +631,23 @@ CREATE TABLE IF NOT EXISTS push_level_migration_counts (
 );
 DO $push_tiers$ BEGIN
   LOCK TABLE identities IN SHARE ROW EXCLUSIVE MODE;
-  IF NOT EXISTS (SELECT 1 FROM workflow_backfills WHERE name='push-tiers-default-full') THEN
+  IF NOT EXISTS (SELECT 1 FROM workflow_backfills WHERE name='push-tiers-attention-full') THEN
     INSERT INTO push_level_migration_counts(old_level,user_count)
       SELECT tier, count(person.id) FROM (VALUES ('off'),('direct'),('mine'),('all')) tiers(tier)
       LEFT JOIN identities person ON person.push_level=tier AND person.kind='human'
         AND NOT person.hidden_from_roster
       GROUP BY tier;
     UPDATE identities SET push_level=CASE push_level
-      WHEN 'direct' THEN 'default' WHEN 'mine' THEN 'default' WHEN 'all' THEN 'full'
+      WHEN 'direct' THEN 'attention' WHEN 'mine' THEN 'attention' WHEN 'all' THEN 'full'
       ELSE push_level END
       WHERE push_level IN ('direct','mine','all');
-    INSERT INTO workflow_backfills(name) VALUES('push-tiers-default-full');
+    INSERT INTO workflow_backfills(name) VALUES('push-tiers-attention-full');
   END IF;
 END $push_tiers$;
-ALTER TABLE identities ALTER COLUMN push_level SET DEFAULT 'default';
+ALTER TABLE identities ALTER COLUMN push_level SET DEFAULT 'attention';
 DO $$ BEGIN
   ALTER TABLE identities ADD CONSTRAINT identities_push_level_check
-    CHECK(push_level IN ('off','default','full'));
+    CHECK(push_level IN ('off','attention','full'));
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 

@@ -666,8 +666,8 @@ it('acknowledges explicit reports so final prose does not send a second report',
   expect((await commands(DM, RUBY)).filter((c) => c.reason === 'report')).toHaveLength(1);
 });
 
-it('human Room reports enter the needs-you tray and push at Default sensitivity', async () => {
-  await db.query(`UPDATE identities SET push_level='default' WHERE id=$1`, [HUMAN]);
+it('human Room reports enter the needs-you tray and push at Attention sensitivity', async () => {
+  await db.query(`UPDATE identities SET push_level='attention' WHERE id=$1`, [HUMAN]);
   await db.query(
     `INSERT INTO push_devices(token,identity_id,platform,environment)
     VALUES('commander-device-token-12345678901234567890',$1,'android','physical')`,

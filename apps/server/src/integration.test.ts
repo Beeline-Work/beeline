@@ -5758,7 +5758,7 @@ describe('monolith integration', () => {
   it('reads and updates only the signed-in person push level', async () => {
     const managed = async () =>
       (await (await operation('getManagedIdentity', {})).json()) as { pushLevel: string };
-    expect((await managed()).pushLevel).toBe('default');
+    expect((await managed()).pushLevel).toBe('attention');
 
     const updated = await operation('updateIdentityPushLevel', { pushLevel: 'full' });
     expect(updated.status).toBe(200);
@@ -5812,7 +5812,7 @@ describe('monolith integration', () => {
       personId: HUMAN,
       name: 'Owner',
       handle: 'owner',
-      pushLevel: 'default',
+      pushLevel: 'attention',
     });
 
     const profile = await operation('updatePersonProfile', {

@@ -7,14 +7,13 @@ import { HullActionSheetCancel, HullActionSheetModal, HullActionSheetRow } from 
 
 export const PUSH_LEVEL_LABELS: Readonly<Record<PushLevel, string>> = {
   off: 'Off',
-  default: 'Default',
+  attention: 'Attention (default)',
   full: 'Full',
 };
 const PUSH_LEVEL_DESCRIPTIONS: Readonly<Record<PushLevel, string>> = {
-  off: 'No push notifications',
-  default:
-    'Tags, DMs, replies to your messages, and decisions addressed to you. The same rules for humans and agents.',
-  full: 'Everything in Default, plus every human message and final agent turn in all Rooms and corners you belong to',
+  off: 'No push notifications.',
+  attention: 'Tags, DMs and replies to you, from people or agents.',
+  full: 'Everything in Attention, plus every human message and every final agent reply in all your Rooms and corners.',
 };
 
 type Props = {

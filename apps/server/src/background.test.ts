@@ -1483,7 +1483,7 @@ describe('background advisory-lock ownership', () => {
         `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Owner','owner'),($2,'human','Other','other'),($3,'agent','Bee','bee')`,
         [human, otherHuman, agent],
       );
-      await db.query(`UPDATE identities SET push_level='default' WHERE kind='human'`);
+      await db.query(`UPDATE identities SET push_level='attention' WHERE kind='human'`);
       await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
       await db.query(
         `INSERT INTO rooms(id,workspace_id,name,direct_participants)
@@ -1642,7 +1642,7 @@ describe('background advisory-lock ownership', () => {
         agentDm = '33333333-3333-4333-8333-333333333333';
       await db.query(
         `INSERT INTO identities(id,kind,name,handle,push_level)
-         VALUES($1,'human','Owner','owner','default'),($2,'agent','Wren','wren','off')`,
+         VALUES($1,'human','Owner','owner','attention'),($2,'agent','Wren','wren','off')`,
         [human, agent],
       );
       await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
@@ -1734,7 +1734,7 @@ describe('background advisory-lock ownership', () => {
         room = '33333333-3333-4333-8333-333333333333';
       await db.query(
         `INSERT INTO identities(id,kind,name,handle,push_level)
-         VALUES($1,'human','Owner','owner','default'),($2,'agent','Wren','wren','off')`,
+         VALUES($1,'human','Owner','owner','attention'),($2,'agent','Wren','wren','off')`,
         [human, agent],
       );
       await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
@@ -1800,7 +1800,7 @@ describe('background advisory-lock ownership', () => {
         workspace = '11111111-1111-4111-8111-111111111111';
       await db.query(
         `INSERT INTO identities(id,kind,name,handle,push_level) VALUES
-         ($1,'human','Owner','owner','full'),($2,'human','Other','other','default')`,
+         ($1,'human','Owner','owner','full'),($2,'human','Other','other','attention')`,
         [human, other],
       );
       await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);
@@ -2269,7 +2269,7 @@ describe('background advisory-lock ownership', () => {
   });
   it.each([
     ['off', []],
-    ['default', ['dm', 'tag', 'reply']],
+    ['attention', ['dm', 'tag', 'reply']],
     ['full', ['dm', 'tag', 'reply', 'join', 'plain', 'request']],
   ] as const)('selects the push candidate matrix for %s', async (level, expected) => {
     const db = new PgliteDatabase();
@@ -2283,8 +2283,8 @@ describe('background advisory-lock ownership', () => {
         directRoom = '33333333-3333-4333-8333-333333333333';
       await db.query(
         `INSERT INTO identities(id,kind,name,handle,push_level) VALUES
-         ($1,'human','Owner','owner',$4),($2,'human','Other','other','default'),
-         ($3,'agent','Bee','bee','default')`,
+         ($1,'human','Owner','owner',$4),($2,'human','Other','other','attention'),
+         ($3,'agent','Bee','bee','attention')`,
         [human, other, agent, level],
       );
       await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Hive')`, [workspace]);

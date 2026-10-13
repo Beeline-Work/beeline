@@ -8,7 +8,7 @@ import type { PushLevel } from '@beeline/api-contract/phone';
 
 function Harness() {
   const { theme } = useUnistyles();
-  const [level, setLevel] = React.useState<PushLevel>('default');
+  const [level, setLevel] = React.useState<PushLevel>('attention');
   return (
     <View
       style={{ backgroundColor: theme.buzz.bgBase, minHeight: 900, padding: theme.buzz.space.md }}
@@ -38,13 +38,13 @@ async function run() {
   await new Promise((resolve) => setTimeout(resolve, 150));
   document.querySelector<HTMLElement>('[data-testid="push-notifications-setting"]')!.click();
   await new Promise((resolve) => setTimeout(resolve, 350));
-  const labels = ['off', 'default', 'full'].map(
+  const labels = ['off', 'attention', 'full'].map(
     (level) => document.querySelector(`[data-testid="push-level-${level}"]`)?.textContent,
   );
   for (const [level, label] of [
     ['full', 'Full'],
     ['off', 'Off'],
-    ['default', 'Default'],
+    ['attention', 'Attention'],
   ]) {
     document.querySelector<HTMLElement>(`[data-testid="push-level-${level}"]`)!.click();
     await new Promise((resolve) => setTimeout(resolve, 300));
@@ -55,7 +55,7 @@ async function run() {
     await new Promise((resolve) => setTimeout(resolve, 350));
   }
   document.getElementById('result')!.textContent = labels.every(Boolean)
-    ? `PASS ${labels.join(' | ')} | Saved Full, Off, Default`
+    ? `PASS ${labels.join(' | ')} | Saved Full, Off, Attention`
     : `FAIL ${JSON.stringify(labels)}`;
 }
 run().catch((error) => {

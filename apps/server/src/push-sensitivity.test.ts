@@ -60,7 +60,7 @@ beforeEach(async () => {
 afterEach(() => db.close());
 describe('push sensitivity service path', () => {
   it('wallet transaction notices deliver one owner-only DM push with amount and agent', async () => {
-    await db.query(`UPDATE identities SET push_level='default' WHERE id=$1`, [person]);
+    await db.query(`UPDATE identities SET push_level='attention' WHERE id=$1`, [person]);
     await postWalletNotice(db, workspace, person, {
       walletNotice: true,
       status: 'submitted',
@@ -103,7 +103,7 @@ describe('push sensitivity service path', () => {
 });
 
 describe('sensitivity boundaries and replacement slots', () => {
-  it.each(['default', 'full'] as const)(
+  it.each(['attention', 'full'] as const)(
     'delivers human messages at %s through the phone API',
     async (level) => {
       const { PhoneService } = await import('./phone-service.js');
@@ -147,7 +147,7 @@ describe('sensitivity boundaries and replacement slots', () => {
       const actual = send.mock.calls.map(([, message]) => message.messageId);
       expect(actual).toEqual(expect.arrayContaining([tag, reply]));
       const ordinary = actual.filter((id) => ids.includes(id));
-      expect(ordinary).toEqual(level === 'default' ? [] : ids);
+      expect(ordinary).toEqual(level === 'attention' ? [] : ids);
       console.log(
         `Phone API ${level}: human activity=${ordinary.length}, tags and explicit replies delivered`,
       );
@@ -155,7 +155,7 @@ describe('sensitivity boundaries and replacement slots', () => {
   );
 
   it('waits for final agent prose and uses tags, replies and choice metadata only once per turn', async () => {
-    await db.query(`UPDATE identities SET push_level='default' WHERE id=$1`, [person]);
+    await db.query(`UPDATE identities SET push_level='attention' WHERE id=$1`, [person]);
     const turn = 'd'.repeat(64);
     await db.query(
       `INSERT INTO agent_turns(room_id,request_id,agent_id,status) VALUES($1,$2,$3,'working')`,
@@ -287,7 +287,7 @@ describe('sensitivity boundaries and replacement slots', () => {
   });
 
   it('never widens membership or infers a reply from adjacency', async () => {
-    await db.query(`UPDATE identities SET push_level='default' WHERE id=$1`, [person]);
+    await db.query(`UPDATE identities SET push_level='attention' WHERE id=$1`, [person]);
     await post('My preceding message', person, room);
     await post('The next message', teammate, room);
     expect(await loop.runOnce()).toBe(0);
@@ -301,7 +301,7 @@ describe('sensitivity boundaries and replacement slots', () => {
   });
 });
 
-it.each(['off', 'default', 'full'] as const)(
+it.each(['off', 'attention', 'full'] as const)(
   'selects finished agent turns at %s and never tool or system chatter',
   async (level) => {
     await db.query(`UPDATE identities SET push_level=$2 WHERE id=$1`, [person, level]);
@@ -334,11 +334,11 @@ it.each(['off', 'default', 'full'] as const)(
   },
 );
 
-it('keeps human DMs in Default and respects the human burst timeout', async () => {
+it('keeps human DMs in Attention and respects the human burst timeout', async () => {
   await db.query(`UPDATE corner_facts SET commissioned_by=NULL WHERE corner_id=$1`, [corner]);
   await post('Opened-corner update', agent, corner);
   expect(await loop.runOnce()).toBe(0);
-  await db.query(`UPDATE identities SET push_level='default' WHERE id=$1`, [person]);
+  await db.query(`UPDATE identities SET push_level='attention' WHERE id=$1`, [person]);
   await db.query(`UPDATE rooms SET direct_participants=$2::jsonb WHERE id=$1`, [
     room,
     JSON.stringify([person, teammate]),
@@ -356,7 +356,7 @@ it('keeps human DMs in Default and respects the human burst timeout', async () =
   expect(send.mock.calls.at(-1)?.[1]).toMatchObject({ messageId: third, collapseId: third });
 });
 
-it.each(['off', 'default', 'full'] as const)(
+it.each(['off', 'attention', 'full'] as const)(
   'demonstrates every message trigger at %s',
   async (level) => {
     const { PhoneService } = await import('./phone-service.js');
@@ -405,7 +405,7 @@ it.each(['off', 'default', 'full'] as const)(
 
 it('migrates every old tier once, records human counts, and defaults new people', async () => {
   await db.query(`ALTER TABLE identities DROP CONSTRAINT identities_push_level_check`);
-  await db.query(`DELETE FROM workflow_backfills WHERE name='push-tiers-default-full'`);
+  await db.query(`DELETE FROM workflow_backfills WHERE name='push-tiers-attention-full'`);
   await db.query(`DELETE FROM push_level_migration_counts`);
   await db.query(`UPDATE identities SET push_level='mine'`);
   for (const [index, tier] of ['off', 'direct', 'mine', 'all'].entries()) {
@@ -426,8 +426,8 @@ it('migrates every old tier once, records human counts, and defaults new people'
   ).rows;
   expect(rows).toEqual([
     { name: 'all', push_level: 'full' },
-    { name: 'direct', push_level: 'default' },
-    { name: 'mine', push_level: 'default' },
+    { name: 'direct', push_level: 'attention' },
+    { name: 'mine', push_level: 'attention' },
     { name: 'off', push_level: 'off' },
   ]);
   const counts = (
@@ -457,8 +457,8 @@ it('migrates every old tier once, records human counts, and defaults new people'
   expect(
     (await db.query(`SELECT push_level FROM identities WHERE id=$1`, ['f'.repeat(64)])).rows[0]
       ?.push_level,
-  ).toBe('default');
+  ).toBe('attention');
   console.log(
-    'Push migration: off→off, direct/mine→default, all→full; counts preserved on rerun; new user=default',
+    'Push migration: off→off, direct/mine→attention, all→full; counts preserved on rerun; new user=attention',
   );
 });

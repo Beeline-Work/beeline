@@ -452,7 +452,7 @@ export class PushDeliveryLoop {
             OR NOT (room.direct_participants @> jsonb_build_array('${SYSTEM_IDENTITY_ID}'::text))
             OR workspace_member.identity_id IS NOT NULL
           )
-          AND recipient.push_level IN ('default','full')
+          AND recipient.push_level IN ('attention','full')
           AND (
             attention.direct
             OR (recipient.push_level='full' AND m.presentation='message' AND m.card_type IS NULL)

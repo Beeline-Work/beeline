@@ -26,6 +26,18 @@ import { PushLevelSetting } from './PushLevelSetting';
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe('PushLevelSetting', () => {
+  it('shows Attention as the selected default in the summary and picker', async () => {
+    let renderer!: ReturnType<typeof create>;
+    await act(async () => {
+      renderer = create(<PushLevelSetting onSave={async () => undefined} value="attention" />);
+    });
+    const row = renderer.root.findByProps({ testID: 'push-notifications-setting' });
+    expect(row.props.value).toBe('Attention (default)');
+    act(() => row.props.onPress());
+    expect(renderer.root.findByProps({ testID: 'push-level-attention' }).props.selected).toBe(true);
+    expect(renderer.root.findByProps({ testID: 'push-level-full' }).props.selected).toBe(false);
+  });
+
   it('opens the sensitivity picker and saves the selected level', async () => {
     const onSave = vi.fn(async () => undefined);
     let renderer!: ReturnType<typeof create>;
@@ -44,30 +56,27 @@ describe('PushLevelSetting', () => {
       renderer.root
         .findAllByType('Choice')
         .map((choice: { props: { testID: string } }) => choice.props.testID),
-    ).toEqual(['push-level-off', 'push-level-default', 'push-level-full']);
+    ).toEqual(['push-level-off', 'push-level-attention', 'push-level-full']);
     // The row's label is one line (HullActionSheetRow pins numberOfLines={1}),
     // so the level's name rides the label and the sentence explaining what it
     // delivers rides the wrapping description slot instead of ellipsizing.
     expect(
-      ['off', 'default', 'full'].map((level) => {
+      ['off', 'attention', 'full'].map((level) => {
         const choice = renderer.root.findByProps({ testID: `push-level-${level}` });
         return [choice.props.label, choice.props.description];
       }),
     ).toEqual([
-      ['Off', 'No push notifications'],
-      [
-        'Default',
-        'Tags, DMs, replies to your messages, and decisions addressed to you. The same rules for humans and agents.',
-      ],
+      ['Off', 'No push notifications.'],
+      ['Attention (default)', 'Tags, DMs and replies to you, from people or agents.'],
       [
         'Full',
-        'Everything in Default, plus every human message and final agent turn in all Rooms and corners you belong to',
+        'Everything in Attention, plus every human message and every final agent reply in all your Rooms and corners.',
       ],
     ]);
 
     await act(async () =>
-      renderer.root.findByProps({ testID: 'push-level-default' }).props.onPress(),
+      renderer.root.findByProps({ testID: 'push-level-attention' }).props.onPress(),
     );
-    expect(onSave).toHaveBeenCalledWith('default');
+    expect(onSave).toHaveBeenCalledWith('attention');
   });
 });

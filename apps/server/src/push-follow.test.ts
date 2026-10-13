@@ -65,7 +65,7 @@ beforeEach(async () => {
 });
 afterEach(() => db.close());
 
-describe('Default does not follow corners', () => {
+describe('Attention does not follow corners', () => {
   it('stays quiet in a corner the person never touched', async () => {
     await post('Untagged update', teammate);
     expect(await delivered()).toEqual([]);

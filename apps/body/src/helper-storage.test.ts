@@ -304,3 +304,16 @@ it('fences new turns across all hosted agents during shared-cache cleanup', asyn
     expect(await SessionScheduler.withIdleHostStorage(async () => undefined)).toBe(false);
   } finally { release(); await a.dispose(); await b.dispose(); }
 });
+
+
+it('preserves old package/cloud/signing credentials and keeps a cache whole when it contains a login', async () => {
+  const f = await fixture();
+  const credentials = ['user/.m2/settings.xml', 'user/.m2/settings-security.xml', 'user/.docker/config.json',
+    'user/.yarnrc.yml', 'user/.android/debug.keystore', 'user/.cache/huggingface/token'];
+  for (const path of credentials) await f.file(`agent-home/${path}`, 'credential');
+  const cache = await f.file('agent-home/user/.cache/downloads/tool');
+  await age(f.root);
+  await reclaimHelperStorage(f.input);
+  for (const path of credentials) expect(await exists(join(f.root, 'agent-home', path)), path).toBe(true);
+  expect(await exists(cache)).toBe(true); // Atomic cache: preserve the complete item, never carve out its token.
+});

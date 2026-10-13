@@ -234,6 +234,9 @@ const OPEN_SETTINGS = [
   'user/.expo', 'user/.npmrc', 'user/.gradle/gradle.properties',
   'user/.android/adbkey', 'user/.android/adbkey.pub', 'user/.ssh', 'user/.aws',
   'user/.netrc', 'user/.git-credentials', 'user/.cargo/credentials', 'user/.cargo/credentials.toml',
+  'user/.docker', 'user/.kube', 'user/.config/gcloud', 'user/.azure',
+  'user/.m2/settings.xml', 'user/.m2/settings-security.xml', 'user/.yarnrc', 'user/.yarnrc.yml', 'user/.yarnrc.yaml',
+  'user/.android/debug.keystore', 'user/.cache/huggingface/token', 'user/.cache/huggingface/stored_tokens',
   'user/.trusty-squire/chrome-profile', 'user/.config/chromium',
   'user/.config/google-chrome', 'user/.config/microsoft-edge', 'user/.mozilla',
 ];
@@ -258,7 +261,7 @@ function disposalObjects(root: string, archived: boolean, tree: Map<string, Tree
   keep.push(...[...tree.keys()].filter(path => /(?:^|\/)(?:config\.toml|settings\.json|mcp\.json|models\.json|\.claude\.json)$/.test(path)));
   const browserProfiles = [...tree.keys()].filter(path =>
     /(?:^|\/)(?:(?:chrome|chromium|browser|firefox)[-_]?profiles?|\.expo)$/.test(path));
-  const protectedPaths = [...new Set([...keep, ...squirePaths, ...browserProfiles])].sort();
+  const protectedPaths = [...new Set([...keep.filter(path => tree.has(path)), ...squirePaths, ...browserProfiles])].sort();
   const protectedExact = new Set(protectedPaths);
   const containsProtected = (path: string) => {
     const prefix = `${path}/`;
@@ -285,7 +288,9 @@ function disposalObjects(root: string, archived: boolean, tree: Map<string, Tree
       if (isSquirePath(path) || protectedExact.has(path) || (homeRelative !== rel && HISTORY_FILES.test(homeRelative))) continue;
       const info = tree.get(path)!;
       const splitInstances = /(?:user\/\.android\/avd|android-instances)$/.test(rel);
-      if (info.directory && (containers.has(path) || splitInstances)) visit(path);
+      if (info.directory && disposable.includes(path) && !splitInstances) {
+        if (!containsProtected(path)) objects.push(path);
+      } else if (info.directory && (containers.has(path) || splitInstances)) visit(path);
       else if (!containsProtected(path)) objects.push(path);
     }
   };

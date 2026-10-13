@@ -242,7 +242,7 @@ describe('using-beeline Room guidance', () => {
     for (const surface of ['room', 'dm'] as const) {
       const context = sessionPrompt({ surface, agentCommand: 'codex-acp' });
       expect(context.systemPrompt).toContain(
-        'When you need a tool you do not have, call connectors_status; offer_connector the tool it lists, otherwise call connect_app for the app.',
+        'For any service or capability request, search with find_connectors if unclear, then call connect.',
       );
       expect(context.systemPrompt).not.toContain('For every user request');
       expect(context.systemPrompt).not.toContain('sign up for an account');
@@ -471,20 +471,12 @@ describe('using-beeline "Tools and the Connectors" section', () => {
     );
   });
 
-  // R5: earlier skill text sent the person to Settings → Workbench → Tools
-  // (then told the agent to stop at naming the tool). The offer card replaces both.
-  it('teaches WHEN to offer a tool from the Room instead of routing the person to a settings page', () => {
-    expect(markdown).toContain('**Offer the tool at the moment you need it.**');
-    expect(markdown).toContain('do not send them to a settings page');
-    expect(markdown).toContain('Call connectors_status first');
-    expect(markdown).toContain(
-      'In a Room or DM, call offer_connector with the connectorType and one short reason',
-    );
-    expect(markdown).toContain('Connector offers are unavailable in corners');
-    expect(markdown).toContain('Your turn pauses on the card');
-    expect(markdown).not.toContain('Settings → Workbench → Tools');
-    expect(markdown).not.toContain('tell the person exactly where to go');
-    expect(markdown).not.toContain('you never walk them through it');
+  it('teaches one server-owned connection path in every surface', () => {
+    expect(markdown).toContain('For any service or capability request, search with find_connectors if unclear, then call connect.');
+    expect(markdown).toContain('including in corners');
+    expect(markdown).toContain('switchGoogleAccount');
+    expect(markdown).toContain('end the turn and wait for its connection wake');
+    expect(markdown).not.toContain('call offer_connector');
   });
 
   it('asks for a request-specific connect card promise without embedding a stock promise', () => {
@@ -492,16 +484,14 @@ describe('using-beeline "Tools and the Connectors" section', () => {
     expect(markdown).toContain('Do not include a link, credential, account identifier, or private data');
   });
 
-  it('requires research-first prose before an unfamiliar tool is offered', () => {
-    expect(markdown).toContain('**Research before you offer, and say so.**');
-    expect(markdown).toContain('Never offer a tool you cannot describe');
-    expect(markdown).toContain('say plainly that you are looking it up first');
-    expect(markdown).toContain('state what you learned in your reply BEFORE the card appears');
-    expect(markdown).toContain('Refusing to act blind is part of being trusted with keys');
+  it('keeps service search silent and setup on the server', () => {
+    expect(markdown).toContain('Search shows the user nothing');
+    expect(markdown).toContain('the server chooses how to connect and finishes setup');
+    expect(markdown).toContain('Do not provision or pair a route yourself');
   });
 
   it('keeps the offer a setup affordance, never an authority escalation, and never a raw credential', () => {
-    expect(markdown).toContain('An offer is setup, never authority');
+    expect(markdown).toContain('Connecting is setup, never authority');
     expect(markdown).toContain(
       'does not replace a grant, write permission, target-branch confirmation, or the merge gate',
     );

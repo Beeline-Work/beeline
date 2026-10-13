@@ -84,7 +84,7 @@ const shims = {
       }
     }`,
   '@/sync/transport/monolith-operation': `export const monolithPhoneOperation = async (name) => {
-      if (name === 'getManagedIdentity') return { face: 'fox', pushLevel: 'mine', handle: 'captain', name: 'Captain' };
+      if (name === 'getManagedIdentity') return { face: 'fox', pushLevel: 'attention', handle: 'captain', name: 'Captain' };
       return undefined;
     };`,
   '@/sync/transport/room-view-client': `export class RoomViewClient { async workspaces() { return { workspaces: [] }; } }`,

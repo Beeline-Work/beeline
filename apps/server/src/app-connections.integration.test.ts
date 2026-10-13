@@ -1,4 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { randomBytes } from 'node:crypto';
+import { LinkAgentWallet } from './link-agent-wallet.js';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { DaemonService } from './daemon-service.js';
@@ -164,7 +166,7 @@ describe('connect_app', () => {
 
   const daemonWith = (registry: McpRegistryClient, composio: ComposioApps = {
     supportsOAuth: async () => false,
-  } as ComposioApps, objects?: ObjectService) =>
+  } as ComposioApps, objects?: ObjectService, linkWallet?: LinkAgentWallet) =>
     new DaemonService(
       database,
       new LiveHub(),
@@ -182,6 +184,7 @@ describe('connect_app', () => {
       composio,
       undefined,
       objects,
+      linkWallet,
     );
 
   function fakeComposio(completedToolkit = 'slack') {
@@ -263,6 +266,109 @@ describe('connect_app', () => {
         `SELECT route,transport FROM workspace_app_routes ORDER BY created_at, id`,
       )
     ).rows;
+
+  it('Reproduction link-route-1: Link signs in with a card and resumes the original request', async () => {
+    await connectSquire();
+    const transport = vi.fn(async (url: string | URL | Request) => String(url).endsWith('/auth/token')
+      ? Response.json({ access_token: 'fixture-access', refresh_token: 'fixture-refresh',
+        expires_in: 3600, scope: 'payment_methods.agentic userinfo:read' })
+      : Response.json({ address: { country: 'US' } })) as unknown as typeof fetch;
+    const wallet = new LinkAgentWallet(database, 'fixture-client', 'fixture-secret', 'pk_test_fixture',
+      'https://server.usebeeline.app', randomBytes(32).toString('base64'), transport);
+    const registry = fakeRegistry([]);
+    registry.client.catalog = vi.fn(async () => []);
+    const provider = fakeComposio();
+    const daemon = daemonWith(registry.client, provider, undefined, wallet);
+    const discovery = await daemon.execute('findConnectors', { roomId: ROOM, query: 'add a card' }, HELPER);
+    expect(discovery.matches[0]).toMatchObject({ key: 'link', status: 'not-connected' });
+    const named = await daemon.execute('findConnectors', { roomId: ROOM, query: 'Stripe Link' }, HELPER);
+    expect(named.matches[0]).toMatchObject({ key: 'link' });
+    expect(registry.client.catalog).toHaveBeenCalledTimes(1);
+    for (const app of ['Stripe Link (link.com)', 'Link', 'Stripe Link', 'link.com']) {
+      const result = await daemon.execute('connect', { ...turn, service: app, reason: 'Add a payment card' }, HELPER);
+      expect(result).toMatchObject({ appKey: 'link', app: 'Link', status: 'needs_sign_in' });
+      expect(result.next).not.toMatch(/store_credential|operate_|API key/);
+    }
+    const cards = await database.query<{ card: { appId: string; appKey: string; commandId: string } }>(
+      `SELECT card FROM messages WHERE card_type='app-sign-in'`);
+    expect(cards.rows).toHaveLength(1);
+    expect(cards.rows[0]!.card).toMatchObject({ appKey: 'link', commandId: COMMAND });
+    expect(registry.transport).not.toHaveBeenCalled();
+    expect(provider.supportsOAuth).not.toHaveBeenCalled();
+    const phone = new PhoneService(database, 'https://server.usebeeline.app', undefined, undefined,
+      undefined, false, database, undefined, undefined, registry.client, provider, wallet);
+    const signIn = await phone.execute('beginAppSignIn', { appId: cards.rows[0]!.card.appId }, OWNER);
+    const authorization = new URL(signIn.authorizationUrl);
+    expect(authorization.origin).toBe('https://login.link.com');
+    await wallet.complete(authorization.searchParams.get('state')!, 'fixture-code');
+    const settled = await database.query<{ card: { status: string } }>(
+      `SELECT card FROM messages WHERE card_type='app-sign-in'`);
+    expect(settled.rows[0]!.card.status).toBe('connected');
+    const resumed = await database.query(`SELECT id FROM agent_commands WHERE reason='app_connected'`);
+    expect(resumed.rows).toHaveLength(1);
+    expect(await daemon.execute('connect', { ...turn, service: 'Link', reason: 'Add a payment card' }, HELPER))
+      .toMatchObject({ status: 'ready', appKey: 'link' });
+    expect(await daemon.execute('connectApp', { ...turn, app: 'Link', reason: 'Add a payment card' }, HELPER))
+      .toMatchObject({ status: 'connected', appKey: 'link' });
+    expect((await database.query(`SELECT id FROM messages WHERE card_type='app-sign-in'`)).rows).toHaveLength(1);
+    expect(await daemon.execute('readAgentWorkbench', { roomId: ROOM }, HELPER))
+      .toMatchObject({ firstPartyIntegrations: [{ key: 'link', status: 'connected' }] });
+    console.info('Reproduction link-route-1: Stripe Link -> one Link sign-in card -> login.link.com -> verified callback -> request resumed -> Link ready with no new card');
+  });
+
+  it('connect posts a Composio sign-in card without issuing an agent sign-in URL', async () => {
+    const provider = fakeComposio();
+    const result = await daemonWith(fakeRegistry([]).client, provider).execute('connect',
+      { ...turn, service: 'Slack', reason: 'Send the message' }, HELPER);
+    expect(result).toMatchObject({ status: 'needs_sign_in', transport: 'composio' });
+    expect(result).not.toHaveProperty('authorizationUrl');
+    expect((await database.query(`SELECT id FROM messages WHERE card_type='app-sign-in'`)).rows).toHaveLength(1);
+    expect(provider.link).not.toHaveBeenCalled();
+  });
+
+  it('connect installs a no-sign-in Registry remote to ready with no owner card', async () => {
+    const registry = fakeRegistry([{ ...linearServer, name: 'org.example/echo', title: 'Echo', websiteUrl: 'https://echo.test' }]);
+    const daemon = daemonWith(registry.client);
+    const connection = daemon.execute('connect', { ...turn, service: 'org.example/echo', reason: 'Use Echo' }, HELPER);
+    let connectorId = '';
+    await vi.waitFor(async () => {
+      const row = (await database.query<{ id: string }>(`SELECT id FROM workspace_connectors WHERE connector_type='registry-mcp'`)).rows[0];
+      expect(row).toBeDefined(); connectorId = row!.id;
+    });
+    await daemon.execute('installConnector', { agentId: HELPER, connectorId }, HELPER);
+    expect(await connection).toMatchObject({ status: 'ready', transport: 'registry-mcp' });
+    expect((await database.query(`SELECT id FROM messages WHERE card_type IN ('app-sign-in','connector-offer','agent-grant')`)).rows).toHaveLength(0);
+  });
+
+  it.each(['ready', 'approval'] as const)('connect runs an unknown service through Squire to %s after one owner consent', async outcome => {
+    await connectSquire();
+    const daemon = daemonWith(fakeRegistry([]).client);
+    const input = { ...turn, service: 'Resend', reason: 'Send email' };
+    const ask = await daemon.execute('connect', input, HELPER);
+    expect(ask.status).toBe('needs_approval');
+    expect((await daemon.execute('connect', input, HELPER)).grantId).toBe(ask.grantId);
+    expect((await database.query(`SELECT id FROM agent_grants WHERE target='connection-install:resend'`)).rows).toHaveLength(1);
+    await database.query(`UPDATE agent_grants SET status='approved',decided_by=$2 WHERE id=$1`, [ask.grantId, OWNER]);
+    const connection = daemon.execute('connect', input, HELPER);
+    let job: import('@beeline/api-contract/daemon').AppConnectionJob | undefined;
+    await vi.waitFor(async () => {
+      const assigned = await daemon.execute('getConnectorAssignments', { agentId: HELPER }, HELPER);
+      const entry = assigned.assignments.find(item => item.kind === 'connect-app');
+      if (entry?.kind === 'connect-app') job = entry.job;
+      expect(job).toBeDefined();
+    });
+    if (outcome === 'ready') await applyVaultList(database,
+      { machine_id: 'machine-one', workspace_id: WORKSPACE, owner_identity_id: OWNER }, [{
+        reference: 'vault:resend', service: 'resend', label: 'Resend', fieldNames: ['api_key'],
+        allowedHosts: ['api.resend.com'], createdAt: 1, stale: false, state: 'active' }]);
+    await daemon.execute('completeAppConnectionJob', { agentId: HELPER, appId: job!.appId, jobId: job!.jobId,
+      outcome: outcome === 'ready' ? { status: 'ready' } : { status: 'approval',
+        approvalUrl: 'https://trustysquire.com/approve/fixture', approvalId: 'fixture', sessionId: 'session-fixture' } }, HELPER);
+    const result = await connection;
+    expect(result.status).toBe(outcome === 'ready' ? 'ready' : 'needs_approval');
+    expect(result.next).not.toMatch(/store_credential|operate_|API key/);
+    if (outcome === 'approval') expect(result.approvalUrl).toBe('https://trustysquire.com/approve/fixture');
+  });
 
   it('installs the official Linear Registry MCP for a new agent connection', async () => {
     const registry = fakeRegistry([linearServer]);
@@ -910,7 +1016,7 @@ describe('connect_app', () => {
       HELPER,
     );
     expect(blocked).toMatchObject({ status: 'needs_squire', route: 'squire-api' });
-    expect((blocked as { next: string }).next).toContain('offer_connector');
+    expect((blocked as { next: string }).next).not.toMatch(/offer_connector|store_credential|operate_/);
     await connectSquire();
     const connecting = await daemon.execute(
       'connectApp',
@@ -918,7 +1024,7 @@ describe('connect_app', () => {
       HELPER,
     );
     expect(connecting).toMatchObject({ status: 'connecting', transport: 'squire-api' });
-    expect((connecting as { next: string }).next).toContain('store_credential (service "resend")');
+    expect((connecting as { next: string }).next).not.toMatch(/store_credential|operate_/);
     await applyVaultList(database, { machine_id: 'machine-one', workspace_id: WORKSPACE, owner_identity_id: OWNER }, [
       {
         reference: 'vault:resend',

@@ -356,7 +356,7 @@ export async function describeTailscaleReach(
       because: 'the CLI is not installed',
       fix: options.enabled
         ? 'the connector will install it and send the owner a login link'
-        : 'offer Tailscale with offer_connector so it can be installed',
+        : 'call connect for Tailscale so it can be installed',
     });
   }
   const status = await readStatus(run);
@@ -407,6 +407,6 @@ export async function describeTailscaleReach(
       : 'the daemon is not running',
     fix: options.enabled
       ? 'the connector will start Tailscale and send the owner a login link'
-      : 'offer Tailscale with offer_connector so it can be installed',
+      : 'call connect for Tailscale so it can be installed',
   });
 }

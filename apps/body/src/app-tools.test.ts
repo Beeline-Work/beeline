@@ -123,7 +123,7 @@ describe('server-mediated connected app tools', () => {
       : { status: 'needs_sign_in', appId, app: 'X', next: 'Sign in from the card.' });
     const names = agentToolsFor(true, false, true, true).map((tool) => tool.name);
     expect(names).toEqual(expect.arrayContaining([
-      'workbench_status', 'connect_app', 'list_app_tools', 'execute_app_tool',
+      'workbench_status', 'connect', 'list_app_tools', 'execute_app_tool',
     ]));
     expect(await callAgentTool('workbench_status', {}, 'call-1'))
       .toContain(`X (app:x, id ${appId}) via composio: connecting`);

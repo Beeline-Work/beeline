@@ -1,4 +1,4 @@
-import type { ConnectorAssignment, ConnectorStatus, PostConnectorStatusInput } from '@beeline/api-contract/daemon';
+import type { AppConnectionJob, ConnectorAssignment, ConnectorStatus, PostConnectorStatusInput } from '@beeline/api-contract/daemon';
 import type { SquireMachineReport } from '@beeline/api-contract/workbench';
 import type { SqlDatabase } from './database.js';
 import { notifyConnectorAssignment } from './postgres-live.js';
@@ -16,6 +16,7 @@ type Work = {
   signIn?: ConnectorStatus['signIn'] | null;
   errorMessage?: string;
   ops?: string[];
+  appConnections?: Record<string, AppConnectionJob>;
 };
 
 export async function machineSquireReport(database: SqlDatabase, ownerId: string, machineId?: string):
@@ -58,7 +59,7 @@ export async function queueSquireWork(database: SqlDatabase, agentId: string,
         steps: [{ label: 'Install on helper', status: 'pending' },
           { label: 'Connect provider account', status: 'pending' }],
         ...(input.forceReloginProvider ? { forceReloginProvider: input.forceReloginProvider } : {}),
-        ops: previous.ops ?? [] }
+        ops: previous.ops ?? [], appConnections: previous.appConnections }
     : { ...previous, generation: previous.generation ?? 0,
         ops: [...new Set([...(previous.ops ?? []), ...(input.op ? [input.op] : [])])] };
   await database.query('UPDATE agents SET squire_work=$2::jsonb WHERE agent_id=$1',
@@ -94,6 +95,22 @@ export async function squireAssignments(database: SqlDatabase, agentId: string):
   const work = row.squire_work;
   const connectorId = squireMachineAddress(row.machine_id);
   const assignments: ConnectorAssignment[] = [];
+  for (const job of Object.values(work.appConnections ?? {})) {
+    if (job.state === 'queued' && !work.install) {
+      const active = await database.query(`SELECT 1 FROM workspace_apps app
+        JOIN rooms room ON room.id=$2 AND room.archived_at IS NULL
+        JOIN agent_commands command ON command.id=$3 AND command.room_id=$2
+          AND command.agent_id=$4 AND command.state<>'cancelled'
+        JOIN agents agent ON agent.agent_id=$4 AND agent.owner_id=app.owner_identity_id
+        WHERE app.id=$1::uuid AND app.state='active'
+          AND EXISTS (SELECT 1 FROM memberships member WHERE member.room_id=$2
+            AND member.identity_id=$4 AND member.removed_at IS NULL)`, [job.appId, job.roomId, job.commandId, agentId]);
+      if (!active.rowCount) continue;
+      assignments.push({ kind: 'connect-app', connectorId: `app:${job.appId}`, job });
+      await database.query(`UPDATE agents SET squire_work=jsonb_set(squire_work,
+        ARRAY['appConnections',$2,'state'],'"running"'::jsonb) WHERE agent_id=$1`, [agentId, job.appId]);
+    }
+  }
   if (work.install) assignments.push({ kind: 'install', connectorId, connectorType: 'trusty-squire',
     pairingGeneration: work.generation,
     ...(work.forceReloginProvider ? { forceReloginProvider: work.forceReloginProvider } : {}) });

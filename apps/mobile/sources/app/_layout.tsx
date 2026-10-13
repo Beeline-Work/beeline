@@ -158,7 +158,7 @@ if (Platform.OS === 'android') {
     vibrationPattern: [0, 250, 250, 250],
     lightColor: '#FF231F7C',
   });
-  Notifications.setNotificationChannelAsync('attention', {
+  Notifications.setNotificationChannelAsync('default', {
     name: 'Agent attention',
     importance: Notifications.AndroidImportance.HIGH,
     vibrationPattern: [0, 250, 250, 250],
@@ -290,7 +290,7 @@ export default function RootLayout() {
         if (changed && changed.pubkey !== identity?.publicKey) return;
         const heard = heardPushLevel?.pubkey === identity?.publicKey ? heardPushLevel?.level : undefined;
         const pushLevel =
-          heard ?? (identity ? await loadStoredPushLevel(identity.publicKey) : 'mine');
+          heard ?? (identity ? await loadStoredPushLevel(identity.publicKey) : 'attention');
         if (!changed && identity && readPushLevelFor !== identity.publicKey) {
           const settings = await loadActiveCommunityId(identity.publicKey)
             .then((workspaceId) => readIdentitySettings(workspaceId ?? undefined))

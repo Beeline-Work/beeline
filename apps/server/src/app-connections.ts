@@ -600,21 +600,19 @@ function nextStep(
   if (outcome.status === 'unavailable')
     return errorNote ?? 'The app connection could not be checked. Try again shortly.';
   if (outcome.status === 'needs_squire')
-    return `Trusty Squire handles every sign-in, sign-up and payment for apps, and it is not connected for this owner. Offer it with offer_connector (connectorType trusty-squire), then call connect_app again.`;
+    return `Trusty Squire must be connected before the server can finish connecting ${name}.`;
   if (outcome.status === 'needs_sign_in')
     if (outcome.transport === 'composio')
       return `${derived.status === 'error' && derived.errorMessage ? `${derived.errorMessage}. ` : ''}The person must complete ${name} sign-in from the connection card. The app resumes on this same route after sign-in.`;
   if (outcome.status === 'needs_sign_in')
-    return `Open authorizationUrl with Trusty Squire (operate_start, operate_login, operate_observe, then operate_finish). Any passkey or vouch step goes to the owner through Squire; never paste the link into chat. Call connect_app again when Squire finishes.`;
+    return `The owner must complete ${name} sign-in from the connection card.`;
   if (outcome.status === 'error')
-    return `${errorNote ?? derived.errorMessage ?? 'The connection failed'}. The route stays ${outcome.transport}; call connect_app with reconnect: true to resolve it again from the top.`;
+    return `${errorNote ?? derived.errorMessage ?? 'The connection failed'}. The route stays ${outcome.transport}; reconnect to repair this connection.`;
   if (outcome.status === 'connected')
     return `${connectedAppUse({ ...outcome, name, domain: where })} Every ${outcome.transport === 'composio' ? 'execution' : 'call'} is authorized as ${target}.`;
   if (outcome.transport === 'registry-mcp')
-    return `The helper is preparing ${name}'s MCP sign-in. Call connect_app again in a moment.`;
-  if (outcome.transport === 'squire-browser')
-    return `${name} has no API: with Trusty Squire, sign up or sign in on ${where} and store that sign-in with store_credential (service "${outcome.appKey}", auth_strategy "username_password"). Call connect_app again when it is vaulted.`;
-  return `With Trusty Squire, sign up or sign in on ${where}, create an API key and store it with store_credential (service "${outcome.appKey}") — never in chat. Call connect_app again when it is vaulted. If ${name} has no API at all, call connect_app with noApi: true.`;
+    return `The server is preparing ${name} connection.`;
+  return `The server is connecting ${name} through Trusty Squire.`;
 }
 
 /**

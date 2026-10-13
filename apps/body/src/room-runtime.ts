@@ -143,6 +143,23 @@ export async function materializeCornerWorktree(input: {
       maxBuffer: 4 * 1024 * 1024,
     });
   }
+  // A bare clone writes no fetch refspec, so `git fetch origin main` only
+  // moves FETCH_HEAD and leaves origin/main stale. Always (re)set the wildcard
+  // refspec: `--replace-all` keeps repeat prepares from stacking duplicate
+  // values and repairs caches cloned before this fix, including ones whose
+  // existing worktree is left in place below. Explicit per-branch fetches still
+  // override it; the refspec only says where a plain fetch lands remote heads.
+  await execFileAsync(
+    'git',
+    [
+      `--git-dir=${gitCommonDir}`,
+      'config',
+      '--replace-all',
+      'remote.origin.fetch',
+      '+refs/heads/*:refs/remotes/origin/*',
+    ],
+    { maxBuffer: 4 * 1024 * 1024 },
+  );
   await execFileAsync(
     'git',
     [

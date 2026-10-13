@@ -610,7 +610,7 @@ CREATE TABLE IF NOT EXISTS identities (
   handle text,
   avatar text,
   hidden_from_roster boolean NOT NULL DEFAULT false,
-  push_level text NOT NULL DEFAULT 'mine' CHECK(push_level IN ('off','direct','mine','all')),
+  push_level text NOT NULL DEFAULT 'attention' CHECK(push_level IN ('off','attention','full')),
   github_subject text UNIQUE,
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
@@ -622,11 +622,32 @@ ALTER TABLE identities ADD COLUMN IF NOT EXISTS face_id text NULL;
 ALTER TABLE identities ADD COLUMN IF NOT EXISTS welcome_cards_due boolean;
 ALTER TABLE identities ALTER COLUMN welcome_cards_due SET DEFAULT true;
 ALTER TABLE identities DROP COLUMN IF EXISTS tour_seen_tips;
-ALTER TABLE identities ADD COLUMN IF NOT EXISTS push_level text NOT NULL DEFAULT 'mine';
+ALTER TABLE identities ADD COLUMN IF NOT EXISTS push_level text NOT NULL DEFAULT 'attention';
 ALTER TABLE identities DROP CONSTRAINT IF EXISTS identities_push_level_check;
+-- Record user counts (excluding hidden system identities) and convert once.
+CREATE TABLE IF NOT EXISTS push_level_migration_counts (
+  old_level text PRIMARY KEY,
+  user_count bigint NOT NULL
+);
+DO $push_tiers$ BEGIN
+  LOCK TABLE identities IN SHARE ROW EXCLUSIVE MODE;
+  IF NOT EXISTS (SELECT 1 FROM workflow_backfills WHERE name='push-tiers-attention-full') THEN
+    INSERT INTO push_level_migration_counts(old_level,user_count)
+      SELECT tier, count(person.id) FROM (VALUES ('off'),('direct'),('mine'),('all')) tiers(tier)
+      LEFT JOIN identities person ON person.push_level=tier AND person.kind='human'
+        AND NOT person.hidden_from_roster
+      GROUP BY tier;
+    UPDATE identities SET push_level=CASE push_level
+      WHEN 'direct' THEN 'attention' WHEN 'mine' THEN 'attention' WHEN 'all' THEN 'full'
+      ELSE push_level END
+      WHERE push_level IN ('direct','mine','all');
+    INSERT INTO workflow_backfills(name) VALUES('push-tiers-attention-full');
+  END IF;
+END $push_tiers$;
+ALTER TABLE identities ALTER COLUMN push_level SET DEFAULT 'attention';
 DO $$ BEGIN
   ALTER TABLE identities ADD CONSTRAINT identities_push_level_check
-    CHECK(push_level IN ('off','direct','mine','all'));
+    CHECK(push_level IN ('off','attention','full'));
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
@@ -2679,6 +2700,13 @@ ALTER TABLE workspace_apps ADD CONSTRAINT workspace_apps_route_check
   CHECK (route IN ('workbench','registry-mcp','composio','squire-api','squire-browser'));
 CREATE INDEX IF NOT EXISTS workspace_apps_connector_idx ON workspace_apps(connector_id);
 CREATE INDEX IF NOT EXISTS workspace_apps_workspace_idx ON workspace_apps(workspace_id);
+-- Retire the reported pending Link fallback; real vaulted connections are preserved.
+UPDATE workspace_apps app SET state='disconnected',updated_at=now()
+WHERE app.id='c3dc5902-2009-45b3-96cb-a69ccf7a322a'::uuid
+  AND app.app_key='stripelinklinkcom' AND app.transport='squire-api' AND app.state='active'
+  AND NOT EXISTS (SELECT 1 FROM workspace_connections connection
+    WHERE connection.owner_identity_id=app.owner_identity_id
+      AND connection.service='stripelinklinkcom' AND connection.state='active');
 ALTER TABLE agent_grants ADD COLUMN IF NOT EXISTS app_id uuid REFERENCES workspace_apps(id) ON DELETE CASCADE;
 CREATE INDEX IF NOT EXISTS agent_grants_app_idx ON agent_grants(app_id,agent_id,status);
 CREATE TABLE IF NOT EXISTS workspace_app_routes (

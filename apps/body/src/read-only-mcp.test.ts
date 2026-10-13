@@ -372,8 +372,8 @@ it('offers the command grammar across Rooms, corners and DMs, with retired tools
 });
 
 it('R8d documents the optional continuation and generic fallback', () => {
-  const tool = agentToolsFor(true, false).find((tool) => tool.name === 'connect_app')!;
+  const tool = agentToolsFor(true, false).find((tool) => tool.name === 'connect')!;
   expect(tool.description).toContain('optional');
   expect(tool.description).toContain('continues the request right after');
-  expect(tool.inputSchema.required).toEqual(['app', 'reason']);
+  expect(tool.inputSchema.required).toEqual(['service', 'reason']);
 });

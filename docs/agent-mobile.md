@@ -24,7 +24,7 @@ Paths and commands below are relative to the repository root. Read these invaria
 
 ## Push notifications
 
-- `apps/server/src/background.ts` sends Android via Firebase and iOS via `apns-push.ts` (when `APNS_KEY_P8_BASE64` is set); `firebase-push.ts` is the one payload serializer and every target carries its Workspace. Push covers DMs, tags, replies, `ask_choice`, final state of a corner you commissioned, and member lifecycle; levels `off`/`direct`/`mine` (`push-level.ts`).
+- `apps/server/src/background.ts` sends Android via Firebase and iOS via `apns-push.ts` (when `APNS_KEY_P8_BASE64` is set); `firebase-push.ts` is the one payload serializer and every target carries its Workspace. Push covers DMs, tags, replies and addressed decisions; Full also covers human messages, final agent turns and member lifecycle; levels `off`/`attention`/`full` (Attention: tags, DMs, replies and addressed decisions; Full adds human messages and final agent turns across member Rooms/corners) (`push-level.ts`).
 - A tapped push outranks the startup redirect (`push/notification-response.ts`, `navigation/initial-landing.ts`). `plugins/withAndroidPushRouting.js` + the `expo-notifications` patch keep the newest tap. `push-actions.ts` defines `grant` and `reply` actions answered without opening the app.
 
 ## Mobile UI

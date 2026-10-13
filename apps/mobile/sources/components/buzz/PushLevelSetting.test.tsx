@@ -26,15 +26,27 @@ import { PushLevelSetting } from './PushLevelSetting';
 ).IS_REACT_ACT_ENVIRONMENT = true;
 
 describe('PushLevelSetting', () => {
+  it('shows Attention as the selected default in the summary and picker', async () => {
+    let renderer!: ReturnType<typeof create>;
+    await act(async () => {
+      renderer = create(<PushLevelSetting onSave={async () => undefined} value="attention" />);
+    });
+    const row = renderer.root.findByProps({ testID: 'push-notifications-setting' });
+    expect(row.props.value).toBe('Attention (default)');
+    act(() => row.props.onPress());
+    expect(renderer.root.findByProps({ testID: 'push-level-attention' }).props.selected).toBe(true);
+    expect(renderer.root.findByProps({ testID: 'push-level-full' }).props.selected).toBe(false);
+  });
+
   it('opens the sensitivity picker and saves the selected level', async () => {
     const onSave = vi.fn(async () => undefined);
     let renderer!: ReturnType<typeof create>;
     await act(async () => {
-      renderer = create(<PushLevelSetting onSave={onSave} value="mine" />);
+      renderer = create(<PushLevelSetting onSave={onSave} value="full" />);
     });
     const row = renderer.root.findByProps({ testID: 'push-notifications-setting' });
     expect(row.props.title).toBe('Notifications');
-    expect(row.props.value).toBe('Followed');
+    expect(row.props.value).toBe('Full');
 
     act(() => row.props.onPress());
     expect(renderer.root.findByProps({ testID: 'push-notifications-sheet' }).props.visible).toBe(
@@ -44,31 +56,27 @@ describe('PushLevelSetting', () => {
       renderer.root
         .findAllByType('Choice')
         .map((choice: { props: { testID: string } }) => choice.props.testID),
-    ).toEqual(['push-level-off', 'push-level-direct', 'push-level-mine', 'push-level-all']);
+    ).toEqual(['push-level-off', 'push-level-attention', 'push-level-full']);
     // The row's label is one line (HullActionSheetRow pins numberOfLines={1}),
     // so the level's name rides the label and the sentence explaining what it
     // delivers rides the wrapping description slot instead of ellipsizing.
     expect(
-      ['off', 'direct', 'mine', 'all'].map((level) => {
+      ['off', 'attention', 'full'].map((level) => {
         const choice = renderer.root.findByProps({ testID: `push-level-${level}` });
         return [choice.props.label, choice.props.description];
       }),
     ).toEqual([
-      ['Off', undefined],
-      ['Mentions', 'Tags, DMs, replies to you, and decisions addressed to you'],
+      ['Off', 'No push notifications.'],
+      ['Attention (default)', 'Tags, DMs and replies to you, from people or agents.'],
       [
-        'Followed',
-        'Mentions plus human messages and finished agent turns in corners you follow. You follow a corner when you open or request it, post or steer in it, or get tagged in it.',
-      ],
-      [
-        'All',
-        'Mentions plus human messages and finished agent turns in every Room and corner you belong to',
+        'Full',
+        'Everything in Attention, plus every human message and every final agent reply in all your Rooms and corners.',
       ],
     ]);
 
     await act(async () =>
-      renderer.root.findByProps({ testID: 'push-level-direct' }).props.onPress(),
+      renderer.root.findByProps({ testID: 'push-level-attention' }).props.onPress(),
     );
-    expect(onSave).toHaveBeenCalledWith('direct');
+    expect(onSave).toHaveBeenCalledWith('attention');
   });
 });

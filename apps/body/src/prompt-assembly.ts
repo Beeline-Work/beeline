@@ -60,10 +60,10 @@ const EVERYWHERE: readonly PromptSurface[] = PROMPT_SURFACES;
 /**
  * Ceiling for the rules every agent gets on every turn, soul text excluded
  * (≈575 tokens). The first ~350-token target was a guess; ten rules measure
- * ~2.3 KB (core.feedback raised it from 2.2 KB), so a new core rule has to
- * replace or shorten one.
+ * ~2.42 KB, including the approved commander-tagging wording. A new core
+ * rule has to replace or shorten one.
  */
-export const CORE_BUDGET_BYTES = 2_300;
+export const CORE_BUDGET_BYTES = 2_420;
 /**
  * Ceiling for one surface's own rules, on top of the core. A code corner uses
  * ~4.3 KB, plus ~0.35 KB for corner.android on a host with an Android SDK and
@@ -380,11 +380,11 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     id: 'core.tagging',
     topic: 'tagging',
     why: 'Every @handle is a wake; stray handles woke agents with nothing to do, and guessed spellings reached nobody.',
-    budgetBytes: 360,
+    budgetBytes: 480,
     layer: 'core',
     surfaces: EVERYWHERE,
     render: () =>
-      'Every exact @handle wakes that member. Copy handles only from the member list. Use order(address, text) privately across member Rooms; report(text) one step up to your commander. Do not tag a human to escalate. Reports begin done:, blocked:, needs-decision: or failed:; human reports appear where they ordered you.',
+      'Every exact @handle wakes that member. Copy handles only from the member list. Use order(address, text) privately across member Rooms; report(text) one step up to your commander. Report only to the member who gave you the task. If that member is a human, tag them when, in your judgement, they need to decide or should know. Reports begin done:, blocked:, needs-decision: or failed:; human reports appear where they ordered you.',
   },
   {
     id: 'core.authority',

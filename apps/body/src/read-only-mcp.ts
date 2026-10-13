@@ -875,7 +875,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   },
   {
     name: 'report',
-    description: 'Report one step up to the commander who ordered this work. No address argument: the corner and order know the return address. Begin done:, blocked:, needs-decision: or failed:. Agent commanders receive this privately. A human commander sees it where they gave the order. If you cannot handle a report, report to your own commander. Report when your assignment is finished, or when you need a decision or are blocked. Don\'t report progress.',
+    description: 'Report one step up to the commander who ordered this work. Report only to the member who gave you the task. If that member is a human, tag them when, in your judgement, they need to decide or should know. No address argument: the corner and order know the return address. Begin done:, blocked:, needs-decision: or failed:. Agent commanders receive this privately. A human commander sees it where they gave the order. If you cannot handle a report, report to your own commander. Report when your assignment is finished, or when you need a decision or are blocked. Don\'t report progress.',
     inputSchema: { type: 'object', required: ['text'], properties: {
       text: { type: 'string', pattern: '^(done|blocked|needs-decision|failed):\\s*\\S', minLength: 1, maxLength: 16000 },
     }, additionalProperties: false },

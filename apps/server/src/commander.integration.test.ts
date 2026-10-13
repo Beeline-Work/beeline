@@ -83,15 +83,15 @@ it('delivers blocked privately to Ruby and Ruby orders the current worker privat
   expect((await db.query(`SELECT text FROM messages WHERE text IN ($1,$2)`,
     ['blocked: need an endpoint decision', 'Use endpoint v2'])).rowCount).toBe(0);
 });
-it('Ruby reports a decision she cannot settle to the captain visibly in the original DM', async () => {
+it.each(['needs-decision: choose the product scope', 'needs-decision: choose the product scope @captain'])('Ruby posts exactly her report text in the original DM: %s', async (text) => {
   const opened = await open(), turn = await worker(opened.cornerId);
-  await daemon.execute('report', { ...authority(turn), text: 'needs-decision: choose the product scope' }, WORKER);
+  await daemon.execute('report', { ...authority(turn), text }, WORKER);
   const report = (await commands(DM, RUBY)).find(c => c.reason === 'report')!;
   await claim(report);
-  await daemon.execute('report', { ...authority(report), text: 'needs-decision: choose the product scope' }, RUBY);
+  await daemon.execute('report', { ...authority(report), text }, RUBY);
   const rows = (await db.query(`SELECT room_id,author_id,text FROM messages WHERE text=$1`,
-    ['needs-decision: choose the product scope @captain'])).rows;
-  expect(rows).toEqual([{ room_id: DM, author_id: RUBY, text: 'needs-decision: choose the product scope @captain' }]);
+    [text])).rows;
+  expect(rows).toEqual([{ room_id: DM, author_id: RUBY, text }]);
   expect((await phone.readRoom(DM, HUMAN))?.messages.some(m => m.text === rows[0]!.text)).toBe(true);
 });
 it('nested Room orders forward reports one commander at a time before reaching the human', async () => {
@@ -115,7 +115,7 @@ it('nested Room orders forward reports one commander at a time before reaching t
   expect((await db.query(`SELECT 1 FROM messages WHERE text=$1`, [text])).rowCount).toBe(0);
   await claim(rubyReport);
   await daemon.execute('report', { ...authority(rubyReport), text }, RUBY);
-  expect((await db.query(`SELECT room_id,author_id FROM messages WHERE text=$1`, [`${text} @captain`])).rows)
+  expect((await db.query(`SELECT room_id,author_id FROM messages WHERE text=$1`, [text])).rows)
     .toEqual([{ room_id: DM, author_id: RUBY }]);
 });
 it('a real GitHub merge webhook wakes Ruby once through the corner lifecycle', async () => {

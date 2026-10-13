@@ -15,4 +15,4 @@ ROOM_SHEET_SCREENSHOT="$PWD/evidence/room-sheet-row-height/fixed-dark.png" PRINT
 
 Validation: 52 targeted tests, root typecheck and workspace build passed.
 
-Required production reviewer-bypass test at phone width in dark mode: **not obtained**. The reviewer secret is absent from the session environment, and no reviewer-bypass connection was listed in Connectors. Squire's exposed tools also lack viewport resizing and DOM measurements. This remains an acceptance requirement before the draft PR is ready.
+Production reviewer-bypass proof at phone width in dark mode: **not obtained; waived for review by Ruby in corner brief revision 2**. The local phone-width dark-mode screenshot and failing-then-passing browser regression satisfy the revised pre-merge verification requirement. Production runs main and cannot show this PR branch before merge. Ruby will check the production sheet after deployment; that check has not yet been performed.

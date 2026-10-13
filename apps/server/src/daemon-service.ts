@@ -92,9 +92,7 @@ import {
   type CommandGrantRule,
   type CommandGrantScript,
 } from '@beeline/api-contract/agent-grants';
-import {
-  surfaceForRoom,
-} from '@beeline/api-contract/surface-capabilities';
+import { surfaceForRoom } from '@beeline/api-contract/surface-capabilities';
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
 import { closeCornerState } from './corner-close.js';

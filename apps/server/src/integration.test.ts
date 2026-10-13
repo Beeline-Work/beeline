@@ -2163,13 +2163,7 @@ describe('monolith integration', () => {
        GROUP BY message.author_id,message.text`,
       [workspaceId],
     );
-    expect(removalDms.rows).toHaveLength(2);
-    expect(removalDms.rows).toEqual(
-      expect.arrayContaining([
-        { author_id: SYSTEM_IDENTITY_ID, text: '@alice removed @bob', count: 2 },
-        { author_id: SYSTEM_IDENTITY_ID, text: '@owner removed @bob', count: 2 },
-      ]),
-    );
+    expect(removalDms.rows).toEqual([]);
     // Gone means gone: the second removal has no membership to act on.
     expect(
       (await operation('removeWorkspaceMember', { workspaceId, memberId: bobId })).status,
@@ -2847,7 +2841,7 @@ describe('monolith integration', () => {
     expect(response.status).toBe(400);
   });
 
-  it('emits one workspace push and silently auto-joins public Rooms', async () => {
+  it('silently records a Workspace arrival and auto-joins public Rooms', async () => {
     const aliceToken = await phoneToken('alice');
     const aliceId = createHash('sha256').update('github:alice').digest('hex');
     const workspaceId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd';
@@ -2875,21 +2869,14 @@ describe('monolith integration', () => {
         })
       ).json(),
     ).toEqual({ joined: true });
-    expect(await loop.runOnce()).toBe(1);
-    expect(send).toHaveBeenLastCalledWith(
-      'owner-explicit-add-device-token-1234567890',
-      expect.objectContaining({
-        workspaceId,
-        type: 'workspace-join',
-        text: '@alice joined Tubing Crew',
-      }),
-    );
+    expect(await loop.runOnce()).toBe(0);
+    expect(send).not.toHaveBeenCalled();
 
     expect(
       await (await operation('addRoomMember', { roomId: room.id, memberId: aliceId })).json(),
     ).toEqual({ joined: false });
     expect(await loop.runOnce()).toBe(0);
-    expect(send).toHaveBeenCalledTimes(1);
+    expect(send).not.toHaveBeenCalled();
     const roomView = (await (
       await request(`/v1/phone/rooms/${room.id}`, 'GET', undefined, aliceToken)
     ).json()) as { messages: Array<{ text: string; presentation: string }> };
@@ -11216,10 +11203,11 @@ describe('monolith integration', () => {
         reason: 'use the host',
       })
     ).json();
-    await database.query(
-      `UPDATE messages SET room_id=$1 WHERE card_type='grant-auto' AND card->>'grantId'=$2`,
-      [ROOM, automatic.grantId],
-    );
+    // Historical automatic receipts stay in their original Room; boot must
+    // not move them into a new System DM.
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
+      VALUES($1,$2,$3,'legacy automatic grant','system','grant-auto',$4::jsonb)`,
+      [createHash('sha256').update('legacy-auto-receipt').digest('hex'), ROOM, AGENT, JSON.stringify({ grantId: automatic.grantId })]);
     await upgradeGrantPolicy(database);
     await upgradeGrantPolicy(database);
     expect(
@@ -11230,7 +11218,7 @@ describe('monolith integration', () => {
           [ROOM, automatic.grantId],
         )
       ).rowCount,
-    ).toBe(0);
+    ).toBe(1);
     expect(
       (await database.query(`SELECT status FROM agent_grants WHERE id=$1`, [automatic.grantId]))
         .rows,

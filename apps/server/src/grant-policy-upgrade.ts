@@ -181,21 +181,6 @@ export async function upgradeGrantPolicy(database: SqlDatabase): Promise<void> {
         JSON.stringify({ ...row.card, sourceRoomId: row.card.sourceRoomId ?? row.room_id }),
       ]);
     }
-    const receipts = await db.query<{ id: string; workspace_id: string; owner_id: string }>(
-      `SELECT m.id,g.workspace_id,a.owner_id FROM messages m
-       JOIN rooms r ON r.id=m.room_id
-       JOIN agent_grants g ON g.id::text=m.card->>'grantId'
-       JOIN agents a ON a.agent_id=g.agent_id
-       WHERE m.card_type='grant-auto' AND g.kind<>'repository' AND r.direct_participants IS NULL`,
-    );
-    for (const receipt of receipts.rows) {
-      const roomId = await ensureSystemDirectMessageRoom(
-        db,
-        receipt.workspace_id,
-        receipt.owner_id,
-      );
-      await db.query(`UPDATE messages SET room_id=$2 WHERE id=$1`, [receipt.id, roomId]);
-    }
     // A revoked legacy ask must not retain live approval buttons in its card.
     await db.query(`UPDATE messages m SET card=jsonb_set(m.card,'{grants}',(
       SELECT jsonb_agg(CASE WHEN g.status='revoked'

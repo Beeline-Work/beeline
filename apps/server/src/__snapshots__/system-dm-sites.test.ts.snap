@@ -15,7 +15,6 @@ exports[`requires review for every new System DM destination producer 1`] = `
   "feedback.ts:sendFixedMessage:ensureSystemDirectMessageRoom",
   "grant-policy-upgrade.ts:upgradeGrantPolicy:ensureSystemDirectMessageRoom",
   "grant-policy-upgrade.ts:upgradeGrantPolicy:ensureSystemDirectMessageRoom",
-  "grant-policy-upgrade.ts:upgradeGrantPolicy:ensureSystemDirectMessageRoom",
   "phone-service.ts:armConnectorPairing:ensureSystemDirectMessageRoom",
   "phone-service.ts:resolveDirectMessage:directMessageRoomId",
   "phone-service.ts:resolveDirectMessage:ensureSystemDirectMessageRoomResult",

@@ -397,6 +397,7 @@ export async function notifyFeedbackFixed(
     const root = (await database.query<{ author_id: string }>(
       `SELECT message.author_id FROM messages message
        JOIN identities author ON author.id=message.author_id AND author.kind='human'
+         AND NOT author.hidden_from_roster
        WHERE message.id=$1`, [command!.root_source_message_id],
     )).rows[0];
     if (!root || !config.systemSenders.includes(root.author_id))

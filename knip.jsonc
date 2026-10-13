@@ -54,6 +54,7 @@
         "scripts/{identity-axis-proof,identity-axis-proof-shims}.tsx",
         "scripts/emoji-clip-proof.tsx",
         "scripts/render-waveform-proof.mjs",
+        "scripts/room-viewport-proof.tsx",
         // The native status fixture is bundled through Gradle's entryFile override.
         "scripts/status-band-native-entry.js",
         "scripts/workspace-picture-clip-proof.tsx",

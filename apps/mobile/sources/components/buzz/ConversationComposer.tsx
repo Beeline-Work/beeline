@@ -61,7 +61,7 @@ type Props = {
   /** A dictated send passes its ■ handle; the call may return the send's promise. */
   onSend(dictated?: DictatedSend): unknown;
   /**
-   * Speech recognition is always available when the hook can use the native
+   * Speech recognition is available when the hook can use the browser or native
    * platform recogniser. Pass `false` to disable it (e.g. when the parent
    * environment already tested availability).
    */
@@ -361,7 +361,9 @@ function ConversationComposerContent({
   // the person to act has a line under the composer.
   const statusLine: string =
     speech.state === 'permission-denied'
-      ? 'microphone off in settings \u00b7 tap to open settings'
+      ? Platform.OS === 'web'
+        ? 'allow microphone in browser site settings \u00b7 tap mic to try again'
+        : 'microphone off in settings \u00b7 tap to open settings'
       : speech.state === 'nothing-recognised'
         ? "didn't catch that \u00b7 tap mic to try again"
         : '';
@@ -701,7 +703,7 @@ function ConversationComposerContent({
                   ? listeningWillSend
                     ? 'Stop listening and send'
                     : 'Stop listening'
-                  : speech.state === 'permission-denied'
+                  : speech.state === 'permission-denied' && Platform.OS !== 'web'
                     ? 'Open microphone settings'
                     : 'Start speech input'
             }
@@ -723,14 +725,14 @@ function ConversationComposerContent({
             hitSlop={9}
             delayLongPress={VOICE_LONG_PRESS_MS}
             onPressIn={() => { voiceHeld.current = false; }}
-            onLongPress={voice && !dictationBusy && !disabled ? () => {
+            onLongPress={Platform.OS !== 'web' && voice && !dictationBusy && !disabled ? () => {
               voiceHeld.current = true;
               Keyboard.dismiss();
               void voice.join();
             } : undefined}
             onPress={() => {
               if (voiceHeld.current) return;
-              if (speech.state === 'permission-denied') {
+              if (speech.state === 'permission-denied' && Platform.OS !== 'web') {
                 void Linking.openSettings();
                 return;
               }
@@ -799,11 +801,11 @@ function ConversationComposerContent({
         <TouchableOpacity
           accessibilityLabel={statusLine}
           accessibilityLiveRegion="polite"
-          accessibilityRole={speech.state === 'permission-denied' ? 'button' : 'text'}
-          activeOpacity={speech.state === 'permission-denied' ? 0.7 : 1}
-          disabled={speech.state !== 'permission-denied'}
+          accessibilityRole={speech.state === 'permission-denied' && Platform.OS !== 'web' ? 'button' : 'text'}
+          activeOpacity={speech.state === 'permission-denied' && Platform.OS !== 'web' ? 0.7 : 1}
+          disabled={speech.state !== 'permission-denied' || Platform.OS === 'web'}
           onPress={
-            speech.state === 'permission-denied' ? () => void Linking.openSettings() : undefined
+            speech.state === 'permission-denied' && Platform.OS !== 'web' ? () => void Linking.openSettings() : undefined
           }
           style={styles.statusLine}
           testID={`${testIDPrefix}-speech-status`}

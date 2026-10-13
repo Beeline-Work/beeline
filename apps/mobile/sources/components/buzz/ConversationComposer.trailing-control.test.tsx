@@ -337,14 +337,16 @@ describe('composer trailing control is mic XOR send', () => {
   });
 
   it('when speech is unavailable, an empty composer still shows the disabled send control', () => {
-    // getRecognitionModule() returns null on web/desktop.
+    // An unsupported browser has no recognition module.
     platformSetter.setOS('web');
+    speechModuleState.present = false;
     const webRoot = render({ value: '' });
     expect(hosts(webRoot, 'chat-mic')).toHaveLength(0);
     expect(hosts(webRoot, 'chat-send')[0].props.disabled).toBe(true);
 
     // The owner's speech switch off on a mobile platform behaves the same.
     platformSetter.setOS('android');
+    speechModuleState.present = true;
     const mutedRoot = render({ value: '', speechEnabled: false });
     expect(hosts(mutedRoot, 'chat-mic')).toHaveLength(0);
     expect(hosts(mutedRoot, 'chat-send')[0].props.disabled).toBe(true);

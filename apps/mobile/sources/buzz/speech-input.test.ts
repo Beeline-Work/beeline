@@ -630,7 +630,7 @@ describe('useSpeechInput', () => {
     expect(onResult).not.toHaveBeenCalled();
   });
 
-  it('is unavailable off device platforms', async () => {
+  it('is unavailable in a browser without recognition', async () => {
     platformState.OS = 'web';
     vi.mocked(getRecognitionModule).mockReturnValue(null);
     const { probe } = renderHook();

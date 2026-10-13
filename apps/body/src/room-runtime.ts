@@ -1968,6 +1968,7 @@ export class RoomRuntimeCoordinator {
     return reclaimHelperStorage({
       runtimeDir: dirname(this.configPath),
       readStates: async () => states,
+      progress: () => this.yieldReconciliation(),
       relatedRoots: roomId => [resolve(this.runtime.supervisorRoot, 'beeline/corners', roomId),
         ...owners.filter(owner => owner.roomId === roomId).map(owner => resolve(this.runtime.supervisorRoot, 'beeline', owner.kind, owner.itemId))],
       operatorHome: this.baseConfig.operatorHome,

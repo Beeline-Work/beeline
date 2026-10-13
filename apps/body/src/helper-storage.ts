@@ -327,6 +327,7 @@ export async function reclaimHelperStorage(input: {
   readStates(): Promise<readonly StorageRoomState[]>;
   withIdleRoom(roomId: string, task: () => Promise<void>): Promise<boolean>;
   relatedRoots?: (roomId: string) => readonly string[];
+  progress?: () => Promise<void>;
   inUse?: (root: string) => Promise<boolean>;
   dryRun?: boolean;
   operatorHome?: string;
@@ -351,6 +352,7 @@ export async function reclaimHelperStorage(input: {
     return capturedUse(root);
   });
   for (const room of await readdir(rooms, { withFileTypes: true })) {
+    await input.progress?.();
     if (!room.isDirectory() || !/^[a-zA-Z0-9-]{1,80}$/.test(room.name)) continue;
     const state = stateById.get(room.name);
     if (!state || typeof state.archived !== 'boolean') continue;
@@ -371,6 +373,7 @@ export async function reclaimHelperStorage(input: {
       }
       const removedLinks = new Map<string, number>();
       for (const [path, objectPaths] of grouped) {
+        await input.progress?.();
         if ((await Promise.all(objectPaths.map(hasMount))).some(Boolean)) continue;
         const before = new Map<string, Inode>();
         for (const objectPath of objectPaths) {
@@ -417,11 +420,28 @@ export function isSquirePath(path: string): boolean {
     trustySquireLegacyStorePaths().some(root => absolute === root || absolute.startsWith(`${root}${sep}`));
 }
 
+const squireTreeIndex = new WeakMap<Map<string, TreeEntry>, { ancestors: Set<string>; children: Map<string, string[]> }>();
 function wholeObjectsExceptSquire(root: string, tree: Map<string, TreeEntry>): string[] {
   if (isSquirePath(root)) return [];
-  if (![...tree.keys()].some(path => isSquirePath(path) && path.startsWith(`${root}/`))) return [root];
-  return [...tree.keys()].filter(path => resolve(path, '..') === root)
-    .flatMap(path => wholeObjectsExceptSquire(path, tree));
+  let index = squireTreeIndex.get(tree);
+  if (!index) {
+    const excluded = [...tree.keys()].filter(isSquirePath);
+    const ancestors = new Set<string>();
+    const children = new Map<string, string[]>();
+    for (const path of excluded) {
+      for (let dir = path; tree.has(dir); dir = resolve(dir, '..')) ancestors.add(dir);
+    }
+    if (excluded.length) for (const path of tree.keys()) {
+      const parent = resolve(path, '..');
+      const values = children.get(parent) ?? [];
+      values.push(path);
+      children.set(parent, values);
+    }
+    index = { ancestors, children };
+    squireTreeIndex.set(tree, index);
+  }
+  if (!index.ancestors.has(root)) return [root];
+  return (index.children.get(root) ?? []).flatMap(path => wholeObjectsExceptSquire(path, tree));
 }
 
 export interface WholeStorageOptions {

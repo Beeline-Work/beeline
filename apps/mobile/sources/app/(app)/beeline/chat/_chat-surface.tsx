@@ -7343,7 +7343,7 @@ export function BuzzChatSurface({
               <HullActionSheetRow
                 label="Mute notifications"
                 accessibilityLabel={`Mute notifications in this ${ROOM_LABEL} and its ${CORNER_LABEL}s`}
-                description={`Silences this ${ROOM_LABEL} and its ${CORNER_LABEL}s. Tags, replies and DMs still reach you.`}
+                description="Tags and replies still notify you."
                 disabled={pushMuteWorking}
                 onPress={() => void togglePushMute()}
                 toggle={{
@@ -7420,7 +7420,6 @@ export function BuzzChatSurface({
         <HullActionSheetRow
           label="Mute notifications"
           accessibilityLabel="Mute notifications from this conversation"
-          description="Stops push notifications from this conversation. Messages still arrive here."
           disabled={pushMuteWorking}
           onPress={() => void togglePushMute()}
           toggle={{

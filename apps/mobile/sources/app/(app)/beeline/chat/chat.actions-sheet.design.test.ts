@@ -86,7 +86,7 @@ describe('Room and corner actions sheets', () => {
 
   it('keeps notification mute on the Room sheet only, and no repo notifications switch', () => {
     // Mute is a Room setting; a corner follows its Room's mute.
-    expect(row(roomSheet, 'room-push-mute')).toContain('Tags, replies and DMs still reach you.');
+    expect(row(roomSheet, 'room-push-mute')).toContain('description="Tags and replies still notify you."');
     expect(cornerSheet).not.toContain('room-push-mute');
     // GitHub events drive the PR flow, so no Room can turn them off.
     expect(chat).not.toContain('room-github-events-toggle');
@@ -106,7 +106,7 @@ describe('Room and corner actions sheets', () => {
     expect(mute).toContain('label="Mute notifications"');
     expect(mute).toContain('value: pushMuted');
     expect(mute).toContain('onPress={() => void togglePushMute()}');
-    expect(mute).not.toContain('Tags, replies and DMs still reach you.');
+    expect(mute).not.toContain('description=');
     // The server read seeds the switch; a failed write rolls back and shows here.
     expect(chat).toContain('if (hasRoomSurface) setPushMuted(viewerPushMuted);');
     expect(chat).toContain('setPushMuted(previous);');

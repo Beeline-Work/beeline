@@ -44,10 +44,10 @@ describe.skipIf(!existsSync(CHROME))('DM actions sheet', () => {
       const muted = await run('?muted=1', 'muted');
       expect(muted.status, muted.stderr).toBe(0);
       const mutedResult = JSON.parse(muted.result);
-      expect(mutedResult.muteHeight).toBeGreaterThan(44);
       expect(mutedResult.switchOn).toBe(true);
       expect(mutedResult.text).toContain('Mute notifications');
-      expect(mutedResult.text).toContain('Stops push notifications from this conversation.');
+      expect(mutedResult.text).not.toContain('Tags and replies still notify you.');
+      expect(mutedResult.muteHeight).toBe(52);
       expect(mutedResult.alert).toBeNull();
       expect(mutedResult.cancel).toBe(true);
       const failed = await run(`?error=${encodeURIComponent('Could not update notifications: Error: offline')}`, 'failed');

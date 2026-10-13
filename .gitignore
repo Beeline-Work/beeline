@@ -69,3 +69,6 @@ apps/mobile/web-build/
 apps/mobile/.turbo/
 # Local iOS signing certificate/profile paths and password (EAS local credentials).
 apps/mobile/credentials.json
+
+# Agent runtime homes (sessions, credentials, caches) never belong in the repository.
+agent-home/

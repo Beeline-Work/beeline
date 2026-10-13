@@ -550,7 +550,10 @@ describe('a helper joining a corner it did not open', () => {
       await recovery.sweepArchivedCornerWorktrees(new Map());
       const baseline = execute.mock.calls.length;
       expect(baseline).toBe(source === 'restore' ? 1 : 4);
-      await expect(access(resolve(refusedWorktree.path, 'node_modules'))).rejects.toMatchObject({ code: 'ENOENT' });
+      // Optional output pruning runs after refusal recording, outside discovery.
+      await vi.waitFor(async () => {
+        await expect(access(resolve(refusedWorktree.path, 'node_modules'))).rejects.toMatchObject({ code: 'ENOENT' });
+      }, { timeout: 5_000 });
       now += 5 * 60_000;
       await recovery.sweepArchivedCornerWorktrees(new Map());
       await recovery.retryPendingCornerReaps(new Set());

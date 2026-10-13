@@ -24,7 +24,7 @@ import type { InterruptedTurn } from './force-update-journal.js';
 import { openRouterRoutingCacheDir } from './openrouter-routing.js';
 import { turnTraceDirectory } from './turn-trace.js';
 import { distillTurnFailureReason } from './turn-failure-reason.js';
-import { preserveUnpublishedCornerWorktree } from './corner-disk-recovery.js';
+import { preserveUnpublishedCornerWorktree, queueCornerPreservation } from './corner-disk-recovery.js';
 import { writePrivateFileAtomically } from './atomic-private-file.js';
 import { agentGitIdentity } from './agent-git-identity.js';
 import { CORNER_SCRATCH_TTL_MS, sweepStaleCornerScratch } from './scratch-lifecycle.js';
@@ -575,6 +575,8 @@ export class RoomRuntimeCoordinator {
    * then left alone; the checkout and its commits are kept, never deleted.
    */
   private readonly archiveCleanupAbandoned = new Set<string>();
+  private preservationFlight?: Promise<void>;
+  private reconciliationProgressListener?: () => void | Promise<void>;
   private lastCornerScratchSweepAt = 0;
   private readonly startingCorners = new Set<string>();
   /**
@@ -704,6 +706,15 @@ export class RoomRuntimeCoordinator {
 
   setDiscoveryWakeListener(listener: () => void): void {
     this.discoveryWakeListener = listener;
+  }
+
+  setReconciliationProgressListener(listener: () => void | Promise<void>): void {
+    this.reconciliationProgressListener = listener;
+  }
+
+  private async yieldReconciliation(): Promise<void> {
+    await new Promise<void>(resolveYield => setImmediate(resolveYield));
+    if (!this.stopped) await this.reconciliationProgressListener?.();
   }
 
   setInteractiveIdleListener(listener: () => void): void {
@@ -836,6 +847,7 @@ export class RoomRuntimeCoordinator {
       return 'not-member';
     }
     this.workspaceRemovalConfirmations = 0;
+    await this.yieldReconciliation();
     const topLevelRooms = bootstrap.rooms.filter((room) => !room.archived);
     // Bind waiting surfaces before any fan-out, cleanup or corner listing.
     // Their intake runs independently while the rest of this sweep continues.
@@ -1697,17 +1709,34 @@ export class RoomRuntimeCoordinator {
     this.pendingCornerReaps.delete(cornerId);
     await writePrivateFileAtomically(this.archiveCleanupRefusalPath(cornerId),
       `${JSON.stringify({ cornerId, status: error.status, code: error.code })}\n`);
-    // A refusal grants no deletion authority. Keep code and refs; reclaim only
-    // ignored generated output using the existing local recovery safeguards.
-    if (worktree && existsSync(worktree.path)) {
+    // Keeping the checkout untouched already preserves its code and refs.
+    // Pointer creation and ignored-output pruning are optional local recovery,
+    // serialized off the work loop, never part of acknowledging a refusal.
+    if (worktree) this.queueArchivePreservation(cornerId, worktree,
+      'server permanently refused archived cleanup');
+    console.warn(`[thin-core] corner ${cornerId} cleanup refused; local work kept`);
+  }
+
+  private queueArchivePreservation(
+    cornerId: string,
+    worktree: DiscoveredCornerWorktree & { branch?: string },
+    reason: string,
+  ): void {
+    const eligible = () => !this.stopped &&
+      !this.running.has(cornerId) && !this.startingCorners.has(cornerId) &&
+      !this.idleCornerSubscriptions.has(cornerId) &&
+      (this.archiveCleanupRefused.has(cornerId) || this.archiveCleanupAbandoned.has(cornerId));
+    queueCornerPreservation(worktree.path, async () => {
+      if (!eligible() || !existsSync(worktree.path)) return;
       const branch = worktree.branch ?? await execFileAsync('git',
         ['-C', worktree.path, 'symbolic-ref', '--quiet', '--short', 'HEAD'])
         .then(result => result.stdout.trim(), () => 'HEAD');
-      await preserveUnpublishedCornerWorktree({ ...worktree, cornerId, branch },
-        'server permanently refused archived cleanup').catch((preserveError) =>
-        console.error(`[thin-core] corner ${cornerId} local recovery preservation failed:`, preserveError));
-    }
-    console.warn(`[thin-core] corner ${cornerId} cleanup refused; local work preserved`);
+      if (!eligible()) return;
+      const flight = preserveUnpublishedCornerWorktree({ ...worktree, cornerId, branch }, reason, eligible);
+      this.preservationFlight = flight.then(() => undefined);
+      try { await this.preservationFlight; }
+      finally { this.preservationFlight = undefined; }
+    });
   }
 
   private archiveCleanupDue(cornerId: string): boolean {
@@ -1725,10 +1754,14 @@ export class RoomRuntimeCoordinator {
   private async retryPendingCornerReaps(desired: ReadonlySet<string>): Promise<void> {
     // A new active membership is fresh authority, rather than a cleanup retry.
     for (const cornerId of desired) {
+      await this.yieldReconciliation();
+      if (this.stopped) return;
       this.archiveCleanupRefused.delete(cornerId);
       await rm(this.archiveCleanupRefusalPath(cornerId), { force: true });
     }
     for (const [cornerId, worktree] of [...this.pendingCornerReaps]) {
+      await this.yieldReconciliation();
+      if (this.stopped) return;
       if (desired.has(cornerId)) {
         this.pendingCornerReaps.delete(cornerId);
         this.archiveCleanupAbandoned.delete(cornerId);
@@ -1745,12 +1778,7 @@ export class RoomRuntimeCoordinator {
           // working-tree changes, report the fault once, and stop spending
           // reconciliation time on it.
           this.archiveCleanupAbandoned.add(cornerId);
-          try {
-            const saved = await preserveUnpublishedCornerWorktree(worktree, 'archived with unpublished local work');
-            console.warn(`[thin-core] corner ${cornerId} recoverable at ${saved.pointer}; pruned ${saved.pruned.join(', ') || 'no generated directories'}`);
-          } catch (preserveError) {
-            console.error(`[thin-core] corner ${cornerId} recovery preservation failed:`, preserveError);
-          }
+          this.queueArchivePreservation(cornerId, worktree, 'archived with unpublished local work');
           console.error(`[thin-core] corner ${cornerId} branch cleanup abandoned; unpublished work kept:`, error);
           continue;
         }
@@ -1777,6 +1805,8 @@ export class RoomRuntimeCoordinator {
   ): Promise<void> {
     const localIds = await this.getLocalWorktreeIds();
     for (const cornerId of [...localIds]) {
+      await this.yieldReconciliation();
+      if (this.stopped) return;
       if (
         desired.has(cornerId) ||
         this.running.has(cornerId) ||
@@ -1838,12 +1868,7 @@ export class RoomRuntimeCoordinator {
       } catch (error) {
         if (candidate && hasUnpublishedWork(error)) {
           this.archiveCleanupAbandoned.add(cornerId);
-          try {
-            const saved = await preserveUnpublishedCornerWorktree(candidate, 'archived with unpublished local work');
-            console.warn(`[thin-core] archived corner ${cornerId} recoverable at ${saved.pointer}; pruned ${saved.pruned.join(', ') || 'no generated directories'}`);
-          } catch (preserveError) {
-            console.error(`[thin-core] archived corner ${cornerId} recovery preservation failed:`, preserveError);
-          }
+          this.queueArchivePreservation(cornerId, candidate, 'archived with unpublished local work');
           continue;
         }
         if (error instanceof DaemonApiError && error.status >= 400 && error.status < 500 && !error.retryable)
@@ -1975,6 +2000,8 @@ export class RoomRuntimeCoordinator {
     const due = this.now() - this.lastCornerScratchSweepAt >= 6 * 60 * 60_000;
     if (due) this.lastCornerScratchSweepAt = this.now();
     for (const entry of await readdir(root, { withFileTypes: true }).catch(() => [])) {
+      await this.yieldReconciliation();
+      if (this.stopped) return;
       if (!entry.isDirectory() || !/^[a-zA-Z0-9-]{1,80}$/.test(entry.name)) continue;
       const roomRoot = resolve(root, entry.name);
       const scratch = resolve(roomRoot, 'scratch');
@@ -2051,6 +2078,7 @@ export class RoomRuntimeCoordinator {
       }
     };
     if (this.membershipDrain) await untilDeadline(this.membershipDrain);
+    if (this.preservationFlight) await untilDeadline(this.preservationFlight.catch(() => undefined));
     const rooms = [...this.running.values()];
     for (const room of rooms) room.controller.abort();
     const drained = Promise.all(rooms.map((room) => room.promise.catch(() => undefined)));

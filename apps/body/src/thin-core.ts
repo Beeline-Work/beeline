@@ -128,14 +128,23 @@ export class ThinDaemonCore {
     };
     opts.signal?.addEventListener('abort', stop, { once: true });
     if (opts.signal?.aborted) stop();
+    const acknowledgeProgress = async () => {
+      await opts.onProgress?.(this.healthStatus(), lastFault);
+      for (const done of this.progressWaiters) {
+        this.progressWaiters.delete(done);
+        done();
+      }
+    };
+    let lastFault: unknown;
+    this.roomRuntime.setReconciliationProgressListener(() => {
+      if (this.progressWaiters.size) return acknowledgeProgress();
+    });
     try {
       const supervisor = this.roomRuntime.supervisor;
       let failures = 0;
       let discover = true;
       let established = false;
-      let lastFault: unknown;
       while (!opts.signal?.aborted) {
-        const acknowledge = [...this.progressWaiters];
         const shouldDiscover = discover || this.pendingDiscovery;
         if (shouldDiscover) this.pendingDiscovery = false;
         const wakesBefore = supervisor.wakes;
@@ -163,11 +172,7 @@ export class ThinDaemonCore {
           this.roomRuntime.suspectLink(error);
         }
         if (opts.signal?.aborted) break;
-        await opts.onProgress?.(this.healthStatus(), lastFault);
-        for (const done of acknowledge) {
-          this.progressWaiters.delete(done);
-          done();
-        }
+        await acknowledgeProgress();
         const authorityRefused = lastFault instanceof DaemonApiError && !lastFault.retryable && lastFault.status >= 400 && lastFault.status < 500;
         if (failures > 0 && !authorityRefused) {
           await supervisor.retryDelay(Math.min(failures, supervisor.retries), opts.signal, wakesBefore);

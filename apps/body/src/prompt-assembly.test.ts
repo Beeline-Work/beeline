@@ -642,7 +642,7 @@ describe('prompt assembly guards', () => {
     for (const surface of ['code-corner', 'repo-less-corner'] as const) {
       const session = assembleSessionPrompt({ surface, agentName: 'Bee' }).systemPrompt;
       expect(session).toContain('Use order(address, text) privately across member Rooms');
-      expect(session).toContain('Report one step up to your commander');
+      expect(session).toContain('report(text) one step up to your commander');
       const turn = assembleTurnPrompt({
         surface,
         corners: [{ cornerId: 'sibling-id', parentRoomId: 'room-id', createdBy: 'agent-id', archived: false, objective: 'Other work' }],
@@ -652,6 +652,17 @@ describe('prompt assembly guards', () => {
       expect(turn).toContain('read, inspect_corner or order across member Rooms');
       expect(turn).not.toContain('ask_corner');
     }
+  });
+
+  it.each(PROMPT_SURFACES)('has one coordination rule and no chain-skipping escalation on %s', (surface) => {
+    const context = { surface, agentName: 'Bee', agentCommand: 'codex-acp' };
+    const entries = sessionSections(context);
+    const coordination = entries.filter(({ text }) => text.includes('report(text)'));
+    expect(coordination.map(({ section }) => section.id)).toEqual(['core.tagging']);
+    const session = assembleSessionPrompt(context);
+    const turn = assembleTurnPrompt({ surface, sessionPrefix: session.turnPrefix, task: { body: 'Continue' } });
+    expect(turn.text).toContain('report(text) one step up to your commander');
+    expect(turn.text).not.toContain('to the person who started the chain');
   });
 });
 

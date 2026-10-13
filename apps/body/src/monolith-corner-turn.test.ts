@@ -40,7 +40,7 @@ import {
 const VOICE_RULE =
   'Keep facts exact regardless of voice. Use plain language in commits, pull requests, and code comments.';
 const TAGGING_RULE =
-  'Every exact @handle wakes that member. Copy handles only from the member list. For work, use order(address, text) down and report(text) up to your commander; do not tag a human to escalate. Reports begin done:, blocked:, needs-decision: or failed:. Agent coordination is private; human reports appear where they ordered you.';
+  'Every exact @handle wakes that member. Copy handles only from the member list. Use order(address, text) privately across member Rooms; report(text) one step up to your commander. Do not tag a human to escalate. Reports begin done:, blocked:, needs-decision: or failed:; human reports appear where they ordered you.';
 
 // Turn fixtures use scratch repositories. Branch synchronization has its own
 // real-git suite; these tests exercise the conversation and merge instructions.
@@ -3834,6 +3834,7 @@ describe('corner turn rename prompt', () => {
 
 describe('corner turn failure receipt', () => {
   it('reports failed with a distilled, secret-free reason and never a stack trace', async () => {
+    const journal = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const root = await mkdtemp(join(tmpdir(), 'beeline-corner-failure-'));
     roots.push(root);
     await execFileAsync('git', ['init', root]);
@@ -3964,6 +3965,11 @@ describe('corner turn failure receipt', () => {
     expect(reason).toContain('turn_backstop: no ACP traffic for 45 minutes; last activity: plan');
     expect(reason).toContain('[REDACTED]');
     expect(reason).not.toMatch(/ghp_abc|\n|\bat AcpClient/);
+    const logged = journal.mock.calls.flat().join(' ');
+    expect(logged).toContain('at AcpClient.request');
+    expect(logged).toContain('[REDACTED]');
+    expect(logged).not.toContain('ghp_abcdefghijklmnopqrstuvwxyz');
+    journal.mockRestore();
   });
 });
 

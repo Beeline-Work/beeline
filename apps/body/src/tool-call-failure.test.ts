@@ -63,4 +63,20 @@ describe('toolCallFailureLine', () => {
     expect(isFailedToolCall({ id: 'call-4', status: 'completed' })).toBe(false);
     expect(isFailedToolCall({ id: 'call-5', status: 'failed' })).toBe(true);
   });
+
+  it('scrubs credentials in command titles and fallback call ids', () => {
+    const secret = 'ghp_abcdefghijklmnop';
+    for (const label of [{ title: `curl -H 'Authorization: Bearer ${secret}'` }, { id: secret }]) {
+      const line = toolCallFailureLine({ id: 'call-title', ...label, status: 'failed' });
+      expect(line).not.toContain(secret);
+      expect(line).toContain('[REDACTED]');
+    }
+  });
+
+  it.each(['bat', 'brt', 'bdt', 'bde'])('scrubs bare Beeline %s credentials in tool errors', (prefix) => {
+    const secret = `${prefix}_${'a'.repeat(43)}`;
+    const line = toolCallFailureLine({ id: 'call-token', status: 'failed', content: `refused ${secret}` });
+    expect(line).not.toContain(secret);
+    expect(line).toContain('[REDACTED]');
+  });
 });

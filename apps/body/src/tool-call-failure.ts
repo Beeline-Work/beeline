@@ -66,7 +66,7 @@ export function isCompletedToolCall(call: ToolCallEntry): boolean {
  */
 export function toolCallFailureLine(call: ToolCallEntry): string | undefined {
   if (!isFailedToolCall(call)) return undefined;
-  const title = call.title?.trim() || call.id || 'tool';
+  const title = redactToolDetail(call.title?.trim() || call.id || 'tool');
   const detail = redactToolDetail(toolCallText(call.content) || toolCallText(call.rawOutput))
     .replace(/\s+/g, ' ')
     .trim()

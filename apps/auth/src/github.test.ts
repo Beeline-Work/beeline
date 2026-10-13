@@ -43,6 +43,14 @@ it('reads merged PR evidence needed to recover a missed webhook', async () => {
   });
 });
 
+it.each(['open', 'closed'])('reads unmerged PR state %s for close recovery', async state => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+    head: { sha: 'a'.repeat(40), ref: 'feature/recovery' }, state, merged: false,
+  }), { status: 200 })));
+  const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
+  await expect(app.readPullRequest('room-token', 'owner/widgets', 42)).resolves.toMatchObject({ state, merged: false });
+});
+
 it('reads the current target branch SHA, including branch names with slashes', async () => {
   const sha = 'a'.repeat(40);
   const fetchMock = vi.fn(

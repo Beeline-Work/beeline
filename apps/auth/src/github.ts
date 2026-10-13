@@ -598,6 +598,7 @@ export class GitHubAppClient {
       ...(typeof head.ref === 'string' ? { headRef: head.ref } : {}),
       ...(typeof base?.ref === 'string' ? { baseRef: base.ref } : {}),
       merged: body.merged === true,
+      ...(body.state === 'open' || body.state === 'closed' ? { state: body.state } : {}),
       ...(typeof body.title === 'string' ? { title: body.title } : {}),
       ...(typeof body.merged_at === 'string' ? { mergedAt: body.merged_at } : {}),
       ...(typeof body.merge_commit_sha === 'string'

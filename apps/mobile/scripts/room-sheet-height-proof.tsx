@@ -11,7 +11,7 @@ createRoot(document.getElementById('root')!).render(
     <HullActionSheet title="#experiments">
     <HullActionSheetRow label="Repository" metadata="beeline" chevron="right" testID="repository" />
     <HullActionSheetRow label="Reviewer" metadata="None" chevron="right" testID="reviewer" />
-    <HullActionSheetRow label="Mute notifications" description="Silences this Room and its corners. Tags, replies and DMs still reach you." toggle={{ value: false, onValueChange: () => {} }} testID="mute" />
+    <HullActionSheetRow label="Mute notifications" description="Tags and replies still notify you." toggle={{ value: false, onValueChange: () => {} }} testID="mute" />
     <HullActionSheetRow label="Members" metadata="21 members" chevron="right" testID="members" />
     <SchedulesSection />
     <HullActionSheetRow label="Delete Room" destructive testID="delete" />

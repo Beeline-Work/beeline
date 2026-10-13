@@ -564,6 +564,7 @@ export class PushDeliveryLoop {
       claimedRows++;
       // Consume suppressed candidates permanently, so leaving a Room does not replay them.
       // A Room's mute covers its corners and lets direct attention through.
+      // Every DM message is direct attention, so a DM's own mute silences it all.
       const suppressed =
         candidate.channel_id &&
         (
@@ -572,7 +573,8 @@ export class PushDeliveryLoop {
          WHERE member.room_id=$1 AND member.identity_id=$2 AND member.removed_at IS NOT NULL
          UNION ALL
          SELECT 1 FROM memberships member WHERE member.room_id=$4 AND member.identity_id=$2
-           AND member.push_muted AND NOT $5::boolean
+           AND member.push_muted AND (NOT $5::boolean OR EXISTS (
+             SELECT 1 FROM rooms dm WHERE dm.id=$1 AND dm.direct_participants IS NOT NULL))
          UNION ALL
          SELECT 1 FROM room_push_views view
          WHERE view.room_id=$1 AND view.identity_id=$2 AND (

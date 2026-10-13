@@ -24,6 +24,7 @@ function sheet(marker: string, label: string): string {
 const roomSheet = sheet('testID="room-actions-sheet"', 'Room actions sheet');
 const cornerSheet = sheet('testID="corner-actions-sheet"', 'corner actions sheet');
 const messageSheet = sheet('testID="message-actions-sheet"', 'message actions sheet');
+const dmSheet = sheet('testID="dm-actions-sheet"', 'DM actions sheet');
 
 const ROOM_ROWS = [
   'room-participant-roster-trigger',
@@ -85,11 +86,34 @@ describe('Room and corner actions sheets', () => {
 
   it('keeps notification mute on the Room sheet only, and no repo notifications switch', () => {
     // Mute is a Room setting; a corner follows its Room's mute.
-    expect(row(roomSheet, 'room-push-mute')).toContain('Tags, replies and DMs still reach you.');
+    expect(row(roomSheet, 'room-push-mute')).toContain('description="Tags and replies still notify you."');
     expect(cornerSheet).not.toContain('room-push-mute');
     // GitHub events drive the PR flow, so no Room can turn them off.
     expect(chat).not.toContain('room-github-events-toggle');
     expect(chat).not.toContain('Repo notifications');
+  });
+
+  it('gives every DM, including System, its own mute on its own sheet', () => {
+    const menu = chat.slice(
+      chat.lastIndexOf('<TouchableOpacity', chat.indexOf('testID="dm-actions-menu"')),
+      chat.indexOf('testID="dm-actions-menu"'),
+    );
+    // Only the viewer's kind gates the menu, so a read-only System DM keeps it.
+    expect(chat).toContain('{isDirectMessage &&\n              !viewerIsAgent &&');
+    expect(menu).toContain('setDmActionsVisible(true)');
+    expect(menu).not.toContain('isReadOnlyDirectMessage');
+    const mute = row(dmSheet, 'dm-push-mute');
+    expect(mute).toContain('label="Mute notifications"');
+    expect(mute).toContain('value: pushMuted');
+    expect(mute).toContain('onPress={() => void togglePushMute()}');
+    expect(mute).not.toContain('description=');
+    // The server read seeds the switch; a failed write rolls back and shows here.
+    expect(chat).toContain('if (hasRoomSurface) setPushMuted(viewerPushMuted);');
+    expect(chat).toContain('setPushMuted(previous);');
+    expect(dmSheet).toContain('accessibilityRole="alert"');
+    expect(dmSheet).toContain('{membershipError}');
+    expect(dmSheet).toContain('testID="dm-actions-close"');
+    expect(dmSheet).not.toContain('leave-room-action');
   });
 
   it('shows Room actions without row subtitles', () => {

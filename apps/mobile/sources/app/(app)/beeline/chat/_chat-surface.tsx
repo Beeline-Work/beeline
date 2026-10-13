@@ -776,7 +776,7 @@ export function BuzzChatSurface({
       setPushMuted(result.muted);
     } catch (error) {
       setPushMuted(previous);
-      setMembershipError(`Could not update Room notifications: ${String(error)}`);
+      setMembershipError(`Could not update notifications: ${String(error)}`);
     } finally {
       setPushMuteWorking(false);
     }
@@ -1005,6 +1005,7 @@ export function BuzzChatSurface({
   const closeRoster = useCallback(() => setRosterVisible(false), []);
   const [roomActionsVisible, setRoomActionsVisible] = useState(false);
   const [cornerActionsVisible, setCornerActionsVisible] = useState(false);
+  const [dmActionsVisible, setDmActionsVisible] = useState(false);
   const [renameEditing, setRenameEditing] = useState(false);
   const [renameDraft, setRenameDraft, renameTextDraft] = useTextDraft(
     `rename:${decodedId}`,
@@ -6338,6 +6339,28 @@ export function BuzzChatSurface({
                 />
               </TouchableOpacity>
             )}
+            {isDirectMessage &&
+              !viewerIsAgent &&
+              !isArchived &&
+              getBuzzRuntimeConfig().monolithEnabled && (
+                <TouchableOpacity
+                  accessibilityLabel="Conversation actions"
+                  accessibilityRole="button"
+                  hitSlop={HEADER_EDGE_HIT_SLOP}
+                  onPress={() => {
+                    setMembershipError(null);
+                    setDmActionsVisible(true);
+                  }}
+                  style={styles.roomActionsButton}
+                  testID="dm-actions-menu"
+                >
+                  <OverflowGlyph
+                    color={styles.roomActionsGlyph.color}
+                    size={HEADER_MARK_SIZE}
+                    testID="dm-actions-glyph"
+                  />
+                </TouchableOpacity>
+              )}
             {!parentChannelId && !isDirectMessage && !viewerIsAgent && !isArchived && (
               <TouchableOpacity
                 accessibilityLabel={`${ROOM_LABEL} actions`}
@@ -7320,7 +7343,7 @@ export function BuzzChatSurface({
               <HullActionSheetRow
                 label="Mute notifications"
                 accessibilityLabel={`Mute notifications in this ${ROOM_LABEL} and its ${CORNER_LABEL}s`}
-                description={`Silences this ${ROOM_LABEL} and its ${CORNER_LABEL}s. Tags, replies and DMs still reach you.`}
+                description="Tags and replies still notify you."
                 disabled={pushMuteWorking}
                 onPress={() => void togglePushMute()}
                 toggle={{
@@ -7385,6 +7408,36 @@ export function BuzzChatSurface({
             )}
           </>
         )}
+      </HullActionSheetModal>
+
+      <HullActionSheetModal
+        accessibilityLabel="Close conversation actions"
+        onClose={() => setDmActionsVisible(false)}
+        testID="dm-actions-sheet"
+        title={displayRoomName}
+        visible={dmActionsVisible}
+      >
+        <HullActionSheetRow
+          label="Mute notifications"
+          accessibilityLabel="Mute notifications from this conversation"
+          disabled={pushMuteWorking}
+          onPress={() => void togglePushMute()}
+          toggle={{
+            value: pushMuted,
+            disabled: pushMuteWorking,
+            onValueChange: () => void togglePushMute(),
+          }}
+          testID="dm-push-mute"
+        />
+        {membershipError && (
+          <View accessibilityRole="alert" style={styles.membershipError}>
+            <Text style={styles.membershipErrorText}>! {membershipError}</Text>
+          </View>
+        )}
+        <HullActionSheetCancel
+          onPress={() => setDmActionsVisible(false)}
+          testID="dm-actions-close"
+        />
       </HullActionSheetModal>
 
       <HullActionSheetModal

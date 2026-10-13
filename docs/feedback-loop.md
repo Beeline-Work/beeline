@@ -16,8 +16,13 @@ person who reported that problem.
   Room, the trigger message plus up to 20 preceding message ids, and the
   request id. The Body attaches the turn's assembled prompt section ids.
   - Each agent gets 10 new items per UTC day.
-  - A repeat with the same category and normalized summary within 24 hours
-    returns the existing id.
+  - An exact match on category, normalized summary (case, punctuation and spacing
+    ignored), and tool name returns the existing open agent item, across agents
+    and at any age. Open means `new`, `filed` or `attached`.
+  - Duplicates increment `occurrence_count` without spending the cap. Their
+    agent, Room, time, trigger, request and evidence are kept in `occurrences`.
+    The original context stays on the item. A repeat from the same agent within
+    one hour returns success without another occurrence.
   - A refusal comes back to the agent as a plain result and never fails the
     turn.
   - The `core.feedback` prompt section tells agents to report only when a turn
@@ -80,7 +85,7 @@ triager never calls `fetch_credential` for it.
 Each run reads two things:
 
 - New rows in `feedback_items`: every human report still `new`, at any age,
-  and agent reports from the last 24 hours.
+  and agent reports with a new occurrence in the last 24 hours.
 - Each report's context. Every report stores `message_ids`: the trigger
   message plus up to 20 messages before it in the same Room. Human `@system`
   reports often have an empty `detail`, so the triager always reads this

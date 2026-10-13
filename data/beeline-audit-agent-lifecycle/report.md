@@ -1,6 +1,6 @@
 # Beeline agent lifecycle audit
 
-Base: `0c25de34924295cd220dfcbdb846fc83e8853fc4`. Worktree isolation verified with both physical path and git top-level. No production DB, real agents, helper unit, private runtime homes, or emulator were accessed. CodeGraph was not initialized and its MCP tools were unavailable; this audit used source reads. The project-memory convention helper reported no changes needed.
+Measurement/source-reference base: `0c25de34924295cd220dfcbdb846fc83e8853fc4`. Before delivery, merged main `1e39bf4fe20aefb08696c81bc011bc27a9d1907b` and repeated the audit matrix; it does not change prompt text. Worktree isolation verified with both physical path and git top-level. No production DB, real agents, helper unit, private runtime homes, or emulator were accessed. CodeGraph was not initialized and its MCP tools were unavailable; this audit used source reads. The project-memory convention helper reported no changes needed.
 
 ## Ranked findings
 
@@ -95,8 +95,9 @@ No cleanup leak was reproduced by the existing isolated worktree/scratch/process
 ## Validation and delivery
 
 - Prompt snapshots regenerated, then rerun without update: 100 tests pass, including four new surface regressions.
-- Audit matrix: 12 files, 197 passed, 3 systemd-only tests skipped. Covers prompt assembly/baselines, warm history, transcript budgets, optional memory, archive scratch, branch synchronization/publication checks, open-PR preservation, scratch TTL and scope startup/fallback. The fallback emitted missing-user-bus diagnostics; it passed. Real-systemd descendant cleanup remains unproven in this environment.
+- Final audit matrix after merging main: 14 files, 204 passed, 3 systemd-only tests skipped. Covers prompt assembly/baselines, warm history, transcript budgets, optional memory, archive scratch, branch synchronization/publication checks, open-PR preservation, scratch TTL, scope startup/fallback, disk recovery and watchdog responsiveness. The fallback emitted missing-user-bus diagnostics; it passed. Real-systemd descendant cleanup remains unproven in this environment.
 - Body typecheck and root `npm run typecheck` pass, including mobile and script checks. `git diff --check` passes.
+- Pre-landing review: no issues found in the final diff.
 - Direct PR to main; no no-mistakes daemon or pipeline, no merge, no release.
 - Delivery link and CI outcome will be recorded once the forge creates the PR.
 

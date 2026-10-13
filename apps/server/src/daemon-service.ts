@@ -33,6 +33,7 @@ import type {
 import {
   CornerVerdictRejectedError,
   recordCornerMergeApproval,
+  isZeroCheckCommander,
   recordPersonMergeYes,
 } from './corner-merge-approval.js';
 import { cornerImplementerSql } from './corner-worker.js';
@@ -1833,8 +1834,8 @@ export class DaemonService {
   }
 
   /**
-   * A repository with no checks emits no check webhook, so its configured
-   * reviewer otherwise waits forever. Resolve that absence only after the
+   * A repository with no checks emits no check webhook, so its review
+   * otherwise waits forever. Resolve that absence only after the
    * worker has finished its PR turn; at PR-open time the same empty rollup is
    * merely a race with GitHub registering workflows. Completion uses the
    * registered PR, regardless of whether the worker's reply contains its URL.
@@ -1850,21 +1851,19 @@ export class DaemonService {
     if (!this.prChecksStatus) return;
     const candidate = (
       await this.database.query<{
-        reviewer_agent_id: string;
+        reviewer_agent_id: string | null;
         owner_agent_id: string;
       }>(
         `SELECT parent.reviewer_agent_id,${cornerImplementerSql('fact', 'corner')} owner_agent_id
          FROM rooms corner
          JOIN rooms parent ON parent.id=corner.parent_id
          JOIN corner_facts fact ON fact.corner_id=corner.id
-         WHERE corner.id=$1 AND parent.reviewer_agent_id IS NOT NULL
-           AND parent.reviewer_agent_id<>$2 AND ${cornerImplementerSql('fact', 'corner')}=$2
+         WHERE corner.id=$1 AND (parent.reviewer_agent_id IS NULL OR parent.reviewer_agent_id<>$2)
+           AND ${cornerImplementerSql('fact', 'corner')}=$2
            AND fact.lifecycle ? 'pr'`,
         [cornerId, workerAgentId],
       )
     ).rows[0];
-    // Preserve the established no-reviewer path exactly: it does not pay for a
-    // GitHub read and does not receive a synthetic completion turn.
     if (!candidate) return;
 
     let verdict: Output<'getPrChecksStatus'>;
@@ -3404,7 +3403,8 @@ export class DaemonService {
   }
 
   /**
-   * The configured reviewer's PASS, from any repository corner turn: nothing
+   * The reviewer's PASS (or the commander's yes on a completed zero-check head
+   * without a reviewer), from any reachable corner turn: nothing
    * here depends on how the reviewer's session booted. The server authorizes
    * the caller and the exact head, records the yes, and reports it to the
    * corner lifecycle in the same transaction, which wakes the implementer to
@@ -3427,10 +3427,11 @@ export class DaemonService {
           [input.cornerId],
         )
       ).rows[0];
-      if (!target || !(await isCornerReviewer(db, input.cornerId, agentId)))
+      if (!target || (!(await isCornerReviewer(db, input.cornerId, agentId)) &&
+        !(await isZeroCheckCommander(db, input.cornerId, agentId))))
         throw new CornerVerdictRejectedError(
           'NOT_CONFIGURED_REVIEWER',
-          "only this corner's configured reviewer can record PASS",
+          "only this corner's configured reviewer or its zero-check commander can record PASS",
         );
       if (!target.pull_request_number || !target.head_sha)
         throw new CornerVerdictRejectedError('NO_PULL_REQUEST', 'corner has no pull request');

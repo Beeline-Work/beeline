@@ -2955,6 +2955,69 @@ describe('the gate stays shut (AC-8)', () => {
   });
 });
 
+describe('zero checks with no reviewer wait for the commander', () => {
+  it.each(['agent', 'person'] as const)('lands only after the %s commander says yes on the completed head', async (kind) => {
+    const cornerId = await open('owner/widgets');
+    githubHead = SHA;
+    githubApp.readCommitCheckRollup.mockResolvedValueOnce({ state: 'pending', total: 0, failing: [], checks: [] });
+    // Use an agent order to establish the same private return route as a dispatched corner.
+    await createAgentCommand(db, { roomId: cornerId, agentId: A, sourceMessageId: null,
+      privatePayload: { kind: 'order', authorId: kind === 'agent' ? B : H, fromRoomId: R, text: 'Finish the widget' }, reason: 'order' });
+    await pushToCorner(cornerId, SHA);
+    await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [cornerId,
+      JSON.stringify({ checks: 'unknown', lifecycle: 'in-review', pr: { number: 7,
+        url: 'https://github.com/owner/widgets/pull/7', headSha: SHA, mergeability: 'clean' } })]);
+    const wired = new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
+      (input) => github.prChecksStatus(input));
+    const turn = (await commands(A, cornerId)).at(-1)!;
+    await claim(turn);
+    await wired.execute('postRoomMessage', { roomId: cornerId, requestId: turn.turnRequestId,
+      generationId: 'g1', text: 'Widget complete' }, A);
+    expect(await currentState(cornerId)).toBe('review');
+    expect((await cards(cornerId)).at(-1)).toMatchObject({ outcome: 'no_reviewer' });
+    const reportText = 'needs-decision: this zero-check pull request is ready to land pending your yes';
+    if (kind === 'agent') {
+      expect((await commands(B, R)).filter(c => c.reason === 'report' && c.source.body.startsWith(reportText)))
+        .toHaveLength(1);
+    } else {
+      expect((await db.query<{ text: string }>(`SELECT text FROM messages WHERE room_id=$1`, [R])).rows
+        .some(row => row.text.startsWith(reportText))).toBe(true);
+    }
+    githubApp.readCommitCheckRollup.mockResolvedValue({ state: 'pending', total: 0, failing: [], checks: [] });
+    try {
+      expect(await github.landCorner(cornerId)).toBe(false);
+      expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
+      await expect(approve(cornerId, SHA, A)).rejects.toThrow('configured reviewer');
+      if (kind === 'agent') {
+        await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checksSummary,total}','1') WHERE corner_id=$1`, [cornerId]);
+        await expect(approve(cornerId, SHA, B)).rejects.toThrow('configured reviewer');
+        await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checksSummary,total}','0') WHERE corner_id=$1`, [cornerId]);
+        await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [R, A]);
+        await expect(approve(cornerId, SHA, B)).rejects.toThrow('configured reviewer');
+        await db.query(`UPDATE rooms SET reviewer_agent_id=NULL WHERE id=$1`, [R]);
+        await expect(approve(cornerId, '8'.repeat(40), B)).rejects.toThrow('STALE_HEAD');
+        await approve(cornerId, SHA, B);
+        expect((await reasons(cornerId, A))).toContain('corner_land');
+        const { holdId } = await phone.execute('setCornerHold', { cornerId }, H);
+        expect(await github.landCorner(cornerId)).toBe(false);
+        await phone.execute('setCornerHold', { cornerId, releaseHoldId: holdId }, H);
+        await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [R, B]);
+        expect(await github.landCorner(cornerId)).toBe(false);
+        await db.query(`UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2`, [R, B]);
+        expect(await github.landCorner(cornerId)).toBe(true);
+      } else {
+        await github.approveCornerMerge(H, { cornerId });
+      }
+      expect(githubApp.mergePullRequest).toHaveBeenCalledOnce();
+      await mergedWebhook(cornerId, 7, SHA);
+      expect(await currentState(cornerId)).toBe('landed');
+    } finally {
+      githubApp.readCommitCheckRollup.mockImplementation(async () => ({ state: githubRollupState, total: 1,
+        failing: githubRollupState === 'failed' ? ['typecheck'] : [], checks: [{ name: 'typecheck', status: githubRollupState }] }));
+    }
+  });
+});
+
 describe("a Workspace owner or admin's yes (order_corner_merge) merges only through the one gate", () => {
   /** The corner's human requester orders the merge through its agent's order_corner_merge. */
   async function order(cornerId: string, service: DaemonService = daemon) {

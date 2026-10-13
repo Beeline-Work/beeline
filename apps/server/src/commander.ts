@@ -119,6 +119,72 @@ export async function reportToCommander(
       400,
     );
   const strict = Boolean(command) && !options.automatic;
+  const { recipient, returnRoom, parent, origin, incoming } = await commanderReportAddress(db, roomId, command);
+  if (!recipient || !returnRoom) {
+    if (strict) throw new CommandRefusalError('this order has no commander return address', 409);
+    console.error(`[commander] ${roomId}: cannot route report without recorded opening provenance`);
+    return { id: reportId, createdAt: Math.floor(Date.now() / 1000), delivered: false };
+  }
+  const member = (
+    await db.query<{ kind: string; handle: string | null }>(
+      `SELECT identity.kind,identity.handle FROM memberships member JOIN identities identity ON identity.id=member.identity_id
+     JOIN rooms room ON room.id=member.room_id AND room.archived_at IS NULL
+     WHERE member.room_id=$1 AND member.identity_id=$2 AND member.removed_at IS NULL
+     FOR SHARE OF member,room`,
+      [returnRoom, recipient],
+    )
+  ).rows[0];
+  if (!member) {
+    if (strict)
+      throw new CommandRefusalError('commander is no longer a member of the return address', 403);
+    console.error(`[commander] ${roomId}: return address no longer has its commander`);
+    return { id: reportId, createdAt: Math.floor(Date.now() / 1000), delivered: false };
+  }
+  if (member.kind === 'agent') {
+    const queued = await createAgentCommand(db, {
+      id: reportId,
+      roomId: returnRoom,
+      agentId: recipient,
+      sourceMessageId: null,
+      privatePayload: {
+        text,
+        authorId: agentId,
+        fromRoomId: roomId,
+        kind: 'report',
+        attachments: options.attachments,
+        originCornerId: origin,
+      },
+      parent,
+      retainDepth: true,
+      reason: 'report',
+    });
+    if (!queued) throw new CommandRefusalError('commander could not receive report', 409);
+  } else {
+    // The existing attention index follows this transport provenance; no public relay is created.
+    if (origin && incoming?.private_payload)
+      await db.query(
+        `UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{originCornerId}',to_jsonb($2::text)) WHERE id=$1`,
+        [incoming.id, origin],
+      );
+    // Only a human address is a chat message; private coordination never enters messages.
+    await db.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation,attachments,request_id)
+       VALUES($1,$2,$3,$4,'message',$5::jsonb,$6) ON CONFLICT(id) DO NOTHING`,
+      [
+        reportId,
+        returnRoom,
+        agentId,
+        member.handle ? `${text} @${member.handle}` : text,
+        JSON.stringify(options.attachments ?? []),
+        incoming?.id ?? null,
+      ],
+    );
+  }
+  return { id: reportId, createdAt: Math.floor(Date.now() / 1000) };
+}
+
+/** The recorded return route shared by lifecycle reports and commander approvals. */
+export async function commanderReportAddress(db: SqlDatabase, roomId: string, command?: CommandRow) {
   if (!command)
     command = (
       await db.query<CommandRow>(
@@ -190,65 +256,5 @@ export async function reportToCommander(
         ])
       ).rows[0];
   }
-  if (!recipient || !returnRoom) {
-    if (strict) throw new CommandRefusalError('this order has no commander return address', 409);
-    console.error(`[commander] ${roomId}: cannot route report without recorded opening provenance`);
-    return { id: reportId, createdAt: Math.floor(Date.now() / 1000), delivered: false };
-  }
-  const member = (
-    await db.query<{ kind: string; handle: string | null }>(
-      `SELECT identity.kind,identity.handle FROM memberships member JOIN identities identity ON identity.id=member.identity_id
-     JOIN rooms room ON room.id=member.room_id AND room.archived_at IS NULL
-     WHERE member.room_id=$1 AND member.identity_id=$2 AND member.removed_at IS NULL
-     FOR SHARE OF member,room`,
-      [returnRoom, recipient],
-    )
-  ).rows[0];
-  if (!member) {
-    if (strict)
-      throw new CommandRefusalError('commander is no longer a member of the return address', 403);
-    console.error(`[commander] ${roomId}: return address no longer has its commander`);
-    return { id: reportId, createdAt: Math.floor(Date.now() / 1000), delivered: false };
-  }
-  if (member.kind === 'agent') {
-    const queued = await createAgentCommand(db, {
-      id: reportId,
-      roomId: returnRoom,
-      agentId: recipient,
-      sourceMessageId: null,
-      privatePayload: {
-        text,
-        authorId: agentId,
-        fromRoomId: roomId,
-        kind: 'report',
-        attachments: options.attachments,
-        originCornerId: origin,
-      },
-      parent,
-      retainDepth: true,
-      reason: 'report',
-    });
-    if (!queued) throw new CommandRefusalError('commander could not receive report', 409);
-  } else {
-    // The existing attention index follows this transport provenance; no public relay is created.
-    if (origin && incoming?.private_payload)
-      await db.query(
-        `UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{originCornerId}',to_jsonb($2::text)) WHERE id=$1`,
-        [incoming.id, origin],
-      );
-    // Only a human address is a chat message; private coordination never enters messages.
-    await db.query(
-      `INSERT INTO messages(id,room_id,author_id,text,presentation,attachments,request_id)
-       VALUES($1,$2,$3,$4,'message',$5::jsonb,$6) ON CONFLICT(id) DO NOTHING`,
-      [
-        reportId,
-        returnRoom,
-        agentId,
-        member.handle ? `${text} @${member.handle}` : text,
-        JSON.stringify(options.attachments ?? []),
-        incoming?.id ?? null,
-      ],
-    );
-  }
-  return { id: reportId, createdAt: Math.floor(Date.now() / 1000) };
+  return { recipient, returnRoom, parent, origin, incoming };
 }

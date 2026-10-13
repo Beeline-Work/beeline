@@ -124,12 +124,13 @@ async function greenHead(number: number, headSha: string, checks = 'passing') {
 describe('corner message attribution', () => {
   // Reproduction ZC-1: GitHub reports no rollup for a PR with no checks, so no
   // check webhook exists to create the configured reviewer's command.
-  it('wakes the configured reviewer when the worker completes a zero-check PR, without changing the no-reviewer path', async () => {
+  it('wakes the configured reviewer when the worker completes a zero-check PR, reports readiness to the commander when no reviewer is configured', async () => {
+    let headSha = '1'.repeat(40);
     const checkGate = vi.fn(async () => ({
       checks: 'pending' as const,
       checkCount: 0,
       pullRequest: 'https://github.com/acme/repo/pull/7',
-      headSha: '1'.repeat(40),
+      headSha,
       approvalPending: true,
       reviewer: '@goosy',
       reviewerExists: true,
@@ -190,19 +191,23 @@ describe('corner message attribution', () => {
 
     await db.query(`DELETE FROM agent_commands`);
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: null }, H);
+    headSha = '2'.repeat(40);
     await db.query(
-      `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"unknown"'),command_check_state=NULL WHERE corner_id=$1`,
-      [C],
+      `UPDATE corner_facts SET lifecycle=jsonb_set(jsonb_set(lifecycle-'checksSummary','{checks}','"unknown"'),
+       '{pr,headSha}',to_jsonb($2::text)),command_check_state=NULL WHERE corner_id=$1`,
+      [C, headSha],
     );
-    const recovery = (await commands(A, C)).map(command => command.id);
     const opening = await createAgentCommand(db, {
-      roomId: C, agentId: A, sourceMessageId: source.id, reason: 'corner_objective',
+      roomId: C, agentId: A, sourceMessageId: null, reason: 'order',
+      privatePayload: { kind: 'order', authorId: B, fromRoomId: R, text: 'Finish the work' },
     });
     const noReviewerWorker = (await commands(A, C)).find(command => command.id === opening!.id);
     await claim(noReviewerWorker!, 'g2');
     await result(noReviewerWorker!, 'https://github.com/acme/repo/pull/7', 'g2');
-    expect(checkGate).toHaveBeenCalledOnce();
-    expect((await commands(A, C)).map(command => command.id)).toEqual(recovery);
+    expect(checkGate).toHaveBeenCalledTimes(2);
+    expect((await commands(B, R)).some(command => command.reason === 'report' &&
+      command.source.body.startsWith('needs-decision: this zero-check pull request is ready to land pending your yes'))).toBe(true);
+    expect((await commands(A, C)).filter(command => command.reason === 'corner_land')).toHaveLength(0);
   });
 
   it('stores the REVIEWER as author when the reviewer posts the review into a corner it does not own', async () => {

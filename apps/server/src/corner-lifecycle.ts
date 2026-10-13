@@ -1,3 +1,4 @@
+import { isZeroCheckCommander } from './corner-merge-approval.js';
 import { reportToCommander } from './commander.js';
 import type { activeCornerHolds } from './corner-holds.js';
 import { createHash } from 'node:crypto';
@@ -100,7 +101,8 @@ export const CORNER_LIFECYCLE_CONTRACT: CornerLifecycleContract = {
     },
     // Green wakes the reviewer (live from the parent Room's
     // `reviewer_agent_id`/`reviewer_fallback_ids`); with no reviewer
-    // configured, green returns the missing review decision to the implementer. Red wakes the
+    // configured, zero checks ask the commander for a yes; other green heads
+    // return the missing review decision to the implementer. Red wakes the
     // implementer, for every failing run, without a human escalation cap.
     checks: { does: 'Check the proposed change.',
       kind: 'server',
@@ -750,15 +752,24 @@ async function checksReported(
   if (from !== 'checks') await transition.take('rechecked');
   await transition.take(plan.outcome, headSha ? { headSha } : {});
   if (plan.outcome === 'no_reviewer') {
-    console.error(`[corner-lifecycle] ${cornerId}: green review has no configured reviewer; the implementer must arrange review`);
-    return noteReviewBlocked(db, cornerId, corner, headSha ?? event.sourceMessageId,
-      'no reviewer is configured');
+    return noteMissingReviewer(db, cornerId, corner, headSha ?? event.sourceMessageId);
   }
   if (plan.outcome === 'passing' && plan.approved) {
     await transition.take('approved', { verdict: 'approved' });
     await wakeToLand(db, cornerId, corner, transition);
   }
   return OK;
+}
+
+/** Zero checks need the commander's yes; other review gaps retain their handback. */
+async function noteMissingReviewer(db: SqlDatabase, cornerId: string, corner: CornerRow, headKey: string): Promise<Applied> {
+  if (corner.lifecycle.checksSummary?.total === 0) {
+    await reportToCommander(db, cornerId, SYSTEM_IDENTITY_ID,
+      `needs-decision: this zero-check pull request is ready to land pending your yes; an agent commander uses approve_merge for current head ${headKey}, and a person uses the merge approval`,
+      undefined, createHash('sha256').update(`zero-check-ready:${cornerId}:${headKey}`).digest('hex'));
+    return OK;
+  }
+  return noteReviewBlocked(db, cornerId, corner, headKey, 'no reviewer is configured');
 }
 
 /**
@@ -815,8 +826,7 @@ async function ensureReviewDispatch(
   if (transition.run.headSha !== pr.headSha || await approvedCurrentHead(db, cornerId, corner))
     return OK;
   if (!corner.configured_reviewer_id) {
-    console.error(`[corner-lifecycle] ${cornerId}: green review has no configured reviewer; the implementer must arrange review`);
-    return noteReviewBlocked(db, cornerId, corner, pr.headSha, 'no reviewer is configured');
+    return noteMissingReviewer(db, cornerId, corner, pr.headSha);
   }
   const outstanding = await db.query<{ id: string; state: string }>(
     `SELECT command.id,command.state FROM agent_commands command
@@ -1194,7 +1204,7 @@ export type CornerMergeGate = {
   reviewerExists: boolean;
   /**
    * A yes said on this exact head: a configured reviewer agent's PASS, or a
-   * current Workspace owner or admin's order.
+   * current Workspace owner or admin's order, or the zero-check commander's yes.
    */
   approved: boolean;
   held: boolean;
@@ -1257,6 +1267,14 @@ export async function cornerMergeGate(
   );
   const corner = rows.rows[0];
   if (!corner) throw new Error('corner not found');
+  if (!corner.approved && !corner.configured_reviewer_id) {
+    const approval = (await db.query<{ approved_by: string }>(
+      `SELECT approved_by FROM corner_merge_approvals
+       WHERE corner_id=$1 AND pull_request_number=$2 AND head_sha=$3`,
+      [cornerId, head.number, head.headSha],
+    )).rows[0];
+    if (approval) corner.approved = await isZeroCheckCommander(db, cornerId, approval.approved_by);
+  }
   const held = corner.holds.length > 0;
   return {
     reviewerExists: Boolean(corner.configured_reviewer_id),

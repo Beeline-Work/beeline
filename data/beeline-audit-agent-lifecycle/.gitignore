@@ -1,0 +1,3 @@
+.tokenizer/
+.tokenizer-cache/
+__pycache__/

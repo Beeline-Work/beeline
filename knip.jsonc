@@ -20,6 +20,7 @@
         "scripts/{provision-smoke,publish-smoke-replies}.ts",
         "scripts/prove-tray-inline.ts",
         "scripts/prove-voice-mode.ts",
+        "scripts/prove-voice-tls.mjs",
         "scripts/serve-voice-ui-proof.ts",
         "scripts/helper-proof/prove-linux.mjs",
         // CI and the local Android runner invoke these tools by path.

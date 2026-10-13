@@ -394,7 +394,7 @@ function ConversationComposerContent({
   };
   const visibleAttachments = attachments.slice(0, 3);
   const hiddenAttachmentCount = Math.max(0, attachments.length - visibleAttachments.length);
-  const conversationActive = Boolean(voice?.call || voice?.connecting);
+  const conversationActive = Boolean(voice?.call || voice?.connecting || voice?.error);
   return (
     <View
       ref={containerRef as React.Ref<View>}

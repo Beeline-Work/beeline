@@ -63,6 +63,7 @@ vi.mock('react-native-svg', () => {
   };
 });
 vi.mock('./IdentityMark', () => ({ IdentityMark: () => null }));
+vi.mock('./BeelineMarkSpinner', () => ({ BeelineMarkSpinner: () => null }));
 import type { VoiceCallState } from '@/buzz/use-voice-call';
 import {
   COMPOSER_MAX_INPUT_HEIGHT,
@@ -450,6 +451,22 @@ describe('one composer', () => {
 
 
 describe('Conversation mode inside the composer', () => {
+  it.each([
+    ['connecting', true, null],
+    ['connection error', false, 'TLS connection failed'],
+  ] as const)('keeps the Room agent strip visible during %s', async (_state, connecting, error) => {
+    const f = render('');
+    const props = f.renderer.root.findByType(ConversationComposer).props;
+    const aim = vi.fn();
+    const voice = { call: null, agents: [{ pubkey: 'ruby', kind: 'agent', name: 'Ruby' }],
+      target: null, speaker: null, level: 0, connecting, error, quotaExhausted: false,
+      firstAudioMs: null, join: vi.fn(), end: vi.fn(), aim } as VoiceCallState;
+    await act(async () => f.renderer.update(<ConversationComposer {...props} voice={voice} />));
+    expect(f.renderer.root.findByProps({ testID: 'conversation-target-strip' })).toBeTruthy();
+    act(() => f.renderer.root.findByProps({ accessibilityLabel: 'Speak to Ruby' }).props.onPress());
+    expect(aim).toHaveBeenCalledWith('ruby');
+  });
+
   it.each([
     ['connected silence', 0, null],
     ['listening', 0.4, null],

@@ -81,6 +81,42 @@ reuses existing native modules and introduces no runtime bump.
 Regenerate native fingerprints after a clean `npm ci --prefix apps/mobile`;
 a warmed dependency tree can produce different hashes from the store/CI install.
 
+### Production TLS trust
+
+The server's `@livekit/rtc-node` participant uses Rust signaling, which loads
+the OS CA store through rustls-native-certs. Node's bundled roots do not satisfy
+that native library. `apps/server/Dockerfile` installs `ca-certificates` in the
+runtime stage and asserts that `/etc/ssl/certs/ca-certificates.crt` is nonempty.
+Keep this package when changing the slim base image. Without it, the join
+endpoint fails before returning the phone's token with
+`engine: signal failure: transport connection error: IO error: no native root CA certificates found (errors: [])`.
+The Android React Native transport uses JavaScript signaling and native WebRTC;
+this error is returned from the server's bridge, not Android's TLS stack.
+The exact empty-root error originates in
+[tokio-tungstenite's Rust TLS connector](https://github.com/snapview/tokio-tungstenite/blob/v0.26.2/src/tls.rs#L90-L105).
+
+Verify the built runtime, rather than a host with a preinstalled CA package:
+
+```sh
+docker build -f apps/server/Dockerfile -t beeline-voice-tls-proof .
+docker run --rm \
+  -v "$PWD/scripts/prove-voice-tls.mjs:/app/tls-proof.mjs:ro" \
+  --entrypoint node beeline-voice-tls-proof /app/tls-proof.mjs
+```
+
+The proof uses an invalid JWT and requires a verified TLS connection reaching
+LiveKit's HTTP 401, so it needs no secrets or existing Room. Supplying
+`VOICE_TLS_CREDENTIALS` with short-lived JWTs scoped to a dedicated
+`beeline-tls-proof-*` room also proves native audio publication and reception of
+at least 100 Android microphone frames. Keep raw SDK output private: it can
+contain those JWTs. [Android release proof](voice-mode-proof/android-tls-roots/README.md)
+records the device, screenshots and media results.
+
+The TLS fix requires a server release. The Room-agent strip shown during
+connecting and error states is a JavaScript change delivered by mobile OTA.
+Neither fix changes native inputs or runtime pins, so no new store build is
+required.
+
 Workers AI's free daily neuron allowance is insufficient for continuous voice.
 At HTTP 429/code 4006, the voice bar displays the daily-limit message and
 mutes the microphone; its pressed mic remains available to end the call. Flux

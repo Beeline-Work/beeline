@@ -1,0 +1,19 @@
+{
+  "url": "wss://beeline-voice-livekit.fly.dev",
+  "nativeConnected": true,
+  "nativeAudioPublished": true,
+  "androidAudioSubscribed": true,
+  "androidMicrophoneFramesReceived": 101,
+  "capturedAt": "2026-10-13T21:22:20.005146+00:00",
+  "androidDevice": "emulator-5592",
+  "androidApi": 36,
+  "androidRuntimeVersion": "35",
+  "iosRuntimeVersion": "33",
+  "buildVariant": "release",
+  "debuggable": false,
+  "apkSha256": "426d5c5e6165d35b1de15be85f5caffc654fc166f09040d2fd51de0635a658b3",
+  "serverImageId": "sha256:06c4e4ac3d39554f2e5888f0d8ec305349a8d9d33bc05fbfededd9495733dbc6",
+  "joinCredentials": "isolated fixture with short-lived test-room-scoped JWTs",
+  "storeBuildRequired": false,
+  "hermesBytecodeMagic": "c61fbc03c103191f"
+}

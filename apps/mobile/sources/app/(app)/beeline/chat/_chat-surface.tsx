@@ -1208,7 +1208,9 @@ export function BuzzChatSurface({
     [workspaceChatList],
   );
   const viewerIsAgent = roomSurface?.viewer.identity.kind === 'agent';
-  const voice = useVoiceCall(decodedId, Boolean(roomSurface?.viewer.permissions.send && !viewerIsAgent && !isArchived));
+  const roomVoiceAgents = useMemo(() => roomSurface?.members
+    .filter(member => member.identity.kind === 'agent').map(member => member.identity) ?? [], [roomSurface?.members]);
+  const voice = useVoiceCall(decodedId, Boolean(roomSurface?.viewer.permissions.send && !viewerIsAgent && !isArchived), roomVoiceAgents);
   useEffect(() => { if (voice.error && !voice.quotaExhausted) Modal.alert('Conversation mode', voice.error); }, [voice.error, voice.quotaExhausted]);
   // The SERVER's statement of who is reading, so the phone's requester test and
   // the server's own are the same comparison over the same namespace.

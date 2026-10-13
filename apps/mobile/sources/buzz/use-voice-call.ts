@@ -24,9 +24,12 @@ async function closeVoiceTransport(transport: { room: Room; closeAudio(): Promis
   }
 }
 
-export function useVoiceCall(roomId: string, enabled: boolean) {
+const NO_AGENTS: readonly RoomViewIdentity[] = [];
+
+export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: readonly RoomViewIdentity[] = NO_AGENTS) {
   const [call, setCall] = React.useState<VoiceCall | null>(null);
-  const [agents, setAgents] = React.useState<readonly RoomViewIdentity[]>([]);
+  const [joinedAgents, setJoinedAgents] = React.useState<{ roomId: string; agents: readonly RoomViewIdentity[] } | null>(null);
+  const agents = joinedAgents?.roomId === roomId ? joinedAgents.agents : roomAgents;
   const [target, setTarget] = React.useState<string | null>(null);
   const [speaker, setSpeaker] = React.useState<string | null>(null);
   const [level, setLevel] = React.useState(0);
@@ -39,11 +42,13 @@ export function useVoiceCall(roomId: string, enabled: boolean) {
   const revision = React.useRef(0);
   const pending = React.useRef(false);
   const speakerRef = React.useRef<string | null>(null);
+  const targetRef = React.useRef<string | null>(null);
 
   const end = React.useCallback(async () => {
     revision.current++; pending.current = false;
     const current = session.current; session.current = null;
-    setCall(null); setSpeaker(null); setLevel(0); setConnecting(false);
+    setCall(null); setSpeaker(null); setLevel(0); setConnecting(false); setError(null);
+    setJoinedAgents(null); setTarget(null); targetRef.current = null;
     speakerRef.current = null;
     if (!current) return;
     await closeVoiceTransport(current);
@@ -62,6 +67,7 @@ export function useVoiceCall(roomId: string, enabled: boolean) {
       transport = await createVoiceRoom();
       joined = await voiceRequest<VoiceJoin>(roomId, 'join');
       if (version !== revision.current) { await transport.closeAudio(); await voiceRequest(joined.call.id, 'leave'); return; }
+      setJoinedAgents({ roomId, agents: joined.agents });
       const { room } = transport;
       room.on(RoomEvent.DataReceived, (bytes, participant, _kind, topic) => {
         if (topic !== VOICE_DATA_TOPIC || participant?.identity !== `beeline-voice-${joined!.call.id}`) return;
@@ -89,7 +95,7 @@ export function useVoiceCall(roomId: string, enabled: boolean) {
       }
       room.on(RoomEvent.Disconnected, () => { if (session.current?.room === room) void end(); });
       await room.connect(joined.url, joined.token);
-      const defaultTarget = joined.agents[0]?.pubkey;
+      const defaultTarget = joined.agents.find(a => a.pubkey === targetRef.current)?.pubkey ?? joined.agents[0]?.pubkey;
       if (defaultTarget) await room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ type: 'target', agentId: defaultTarget })),
         { reliable: true, topic: VOICE_DATA_TOPIC });
       await room.localParticipant.setMicrophoneEnabled(true, { echoCancellation: true, noiseSuppression: true,
@@ -97,7 +103,7 @@ export function useVoiceCall(roomId: string, enabled: boolean) {
       if (quotaRef.current) await room.localParticipant.setMicrophoneEnabled(false);
       if (version !== revision.current) { await room.disconnect(); await transport.closeAudio(); await voiceRequest(joined.call.id, 'leave'); return; }
       session.current = { ...transport, callId: joined.call.id };
-      setCall(joined.call); setAgents(joined.agents); setTarget(joined.agents[0]?.pubkey ?? null);
+      setCall(joined.call); setTarget(defaultTarget ?? null); targetRef.current = defaultTarget ?? null;
       const timer = setInterval(() => {
         if (session.current?.room !== room) { clearInterval(timer); return; }
         const bridge = `beeline-voice-${joined!.call.id}`;
@@ -116,7 +122,7 @@ export function useVoiceCall(roomId: string, enabled: boolean) {
   }, [enabled, roomId, end]);
   const aim = React.useCallback((agentId: string) => {
     if (!agents.some(a => a.pubkey === agentId)) return;
-    setTarget(agentId);
+    setTarget(agentId); targetRef.current = agentId;
     void session.current?.room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ type: 'target', agentId })),
       { reliable: true, topic: VOICE_DATA_TOPIC });
   }, [agents]);

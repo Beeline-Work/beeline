@@ -13,7 +13,9 @@ errors for unavailable voice service and denied microphone permission.
 The reported original blank screen did **not** reproduce. This patch is
 containment and diagnostics, not a claim that the device-specific cause is known.
 
-The patch uses the same native dependencies and runtime. Its release build
+A clean `npm ci` of the final branch also passes the native fingerprint gate
+with the unchanged Android and iOS stamps. The patch uses the same native
+dependencies and runtime. Its release build
 renders Conversation mode in the composer and connects to LiveKit:
 
 ![Connected Conversation mode](connected.png)

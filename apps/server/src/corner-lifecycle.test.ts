@@ -872,6 +872,28 @@ describe('landing and closing from any state (finding 3, implicit edges)', () =>
     console.log('Demonstrated corner-close-run: closing the corner saved the saved workflow run inside it as abandoned and removed its timers');
   });
 
+  it('a GitHub merge abandons a live saved workflow run and its timers inside the corner', async () => {
+    const cornerId = await inReview();
+    const starter = { room_id: cornerId, agent_id: A } as CommandRow;
+    await saveWorkflow(db, starter, { contract: describedWorkflow({
+      version: 1, name: 'corner-chore', description: 'One step inside a corner', roles: ['worker'], start: 'work',
+      handoffs: {
+        work: { role: 'worker', requires: ['note'], on: { done: 'finished', timeout: 'failed' }, timeoutSeconds: 3600 },
+        finished: { kind: 'terminal', status: 'done' },
+        failed: { kind: 'terminal', status: 'failed' },
+      },
+    }) });
+    const { runId } = await startWorkflow(db, starter, { name: 'corner-chore', roleBindings: { worker: A } });
+    expect((await getWorkflowRun(db, cornerId, runId)).status).toBe('live');
+    await mergedWebhook(cornerId, 7, SHA);
+    expect((await getWorkflowRun(db, cornerId, runId)).status).toBe('abandoned');
+    expect(await liveWorkflowRun(db, cornerId, 'corner-chore')).toBeUndefined();
+    expect((await db.query(`SELECT 1 FROM agent_schedules WHERE workflow_run->>'runId'=$1`, [runId])).rowCount).toBe(0);
+    expect(await currentState(cornerId)).toBe('landed');
+    await mergedWebhook(cornerId, 7, SHA);
+    expect((await getWorkflowRun(db, cornerId, runId)).status).toBe('abandoned');
+  });
+
   it('never posts a second terminal card for an already-landed corner', async () => {
     const cornerId = await open();
     await daemon.execute('archiveCorner', { cornerId }, A);

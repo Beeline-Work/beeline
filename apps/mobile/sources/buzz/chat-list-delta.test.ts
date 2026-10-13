@@ -44,6 +44,19 @@ function message(id: string, createdAt: number, extra: Partial<RoomViewMessage> 
 }
 
 describe('chat list deltas', () => {
+  it('updates the live voice mark when an older call card ends, preserving the latest spoken preview', () => {
+    const call = { id: 'call', roomId: 'a', startedAt: 5, startedAtMs: 5000, participants: [] };
+    const view = deck(item('a', 20, { voiceCall: call }));
+    const ended = applyChatListDelta(view, { type: 'message-delta', roomId: 'a',
+      message: message('call-card', 5, { voiceCall: { ...call, endedAt: 30 }, presentation: 'system' }) });
+    expect(ended.chats[0]).not.toHaveProperty('voiceCall');
+    expect(ended.chats[0]?.latestMessage).toEqual(view.chats[0]?.latestMessage);
+    const newer = { ...call, id: 'new-call', startedAt: 40, startedAtMs: 40000 };
+    const joined = deck(item('a', 41, { voiceCall: newer }));
+    const late = applyChatListDelta(joined, { type: 'message-delta', roomId: 'a',
+      message: message('call-card', 5, { voiceCall: { ...call, endedAt: 30 }, presentation: 'system' }) });
+    expect(late.chats[0]?.voiceCall?.id).toBe('new-call');
+  });
   it('applies a parent corner status without a deck read, ordered by the corner store', () => {
     const view = deck(item('a', 20), item('b', 10, { agentState: 'working' }));
     const openCorners = [{ id: 'corner', name: 'Fix', state: 'waiting' as const,

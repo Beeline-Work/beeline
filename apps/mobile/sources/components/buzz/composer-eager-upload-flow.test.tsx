@@ -1,3 +1,4 @@
+vi.mock('@/components/buzz/VoiceBar', () => ({ VoiceBar: () => null }));
 import * as React from 'react';
 // @ts-expect-error No renderer declarations in this workspace.
 import { act, create } from 'react-test-renderer';

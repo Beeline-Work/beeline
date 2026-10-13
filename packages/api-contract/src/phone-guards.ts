@@ -1,6 +1,7 @@
 import { isSystemEvent } from './system-events.js';
 import { isAgentSignInHarness, isAgentSignInKeyProvider } from './agent-sign-in.js';
 import { isAgentAccessPolicy } from './agent-access.js';
+import { readVoiceCall } from './voice.js';
 import {
   MESSAGE_REACTION_EMOJIS,
   ROOM_VIEW_AGENT_LIMIT,
@@ -1092,6 +1093,7 @@ export function readRoomViewMessage(value: unknown): RoomViewMessage | null {
     ...field('grantRequest', readGrantRequest(item.grantRequest)),
     ...field('squireApproval', readSquireApproval(item.squireApproval)),
     ...field('computerSession', readComputerSession(item.computerSession)),
+    ...field('voiceCall', readVoiceCall(item.voiceCall)),
     ...field('connectorOffer', readConnectorOfferCardView(item.connectorOffer)),
     ...field('appSignIn', readAppSignInCard(item.appSignIn)),
     ...field('agentSignIn', readAgentSignInCard(item.agentSignIn)),
@@ -1300,6 +1302,7 @@ function readChat(value: unknown): ChatListItem | null {
       typeof item.agentsOffline === 'boolean' ? item.agentsOffline : undefined,
     ),
     ...field('closed', typeof item.closed === 'boolean' ? item.closed : undefined),
+    ...field('voiceCall', readVoiceCall(item.voiceCall)),
     ...field('latestMessage', readLatest(item.latestMessage)),
     ...field(
       'repositoryName',
@@ -1834,6 +1837,7 @@ export function readWorkspaceView(value: unknown): WorkspaceView | null {
     workspace: {
       ...workspace,
       createdAt: integer(rawWorkspace?.createdAt) ? Number(rawWorkspace.createdAt) : 0,
+      ...field('voiceProvider', oneOf(rawWorkspace?.voiceProvider, ['aura-2', 'kokoro-deepinfra', 'fish-s2.1-pro'])),
       ...field('about', typeof rawWorkspace?.about === 'string' ? rawWorkspace.about : undefined),
     },
     members: readList(item.members, readMember, WORKSPACE_MEMBER_PAGE_SIZE) ?? [],

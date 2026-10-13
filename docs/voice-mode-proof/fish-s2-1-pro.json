@@ -1,0 +1,26 @@
+{
+  "stt": "Flux EndOfTurn seam",
+  "provider": "fish-s2.1-pro",
+  "calls": 1,
+  "humans": 2,
+  "distinctVoices": [
+    {
+      "name": "Ruby",
+      "voice": "bf4a01bacf1b43b188c2c13ebdc77166"
+    },
+    {
+      "name": "Sol",
+      "voice": "c133dc9bb1e74a5d9122e5a795578966"
+    }
+  ],
+  "firstAudioServerMs": [
+    1873.2058550000002,
+    3932.3653239999994,
+    1456.5692319999998
+  ],
+  "p50FirstAudioServerMs": 1873.2058550000002,
+  "receivedAudioFrames": {
+    "Alex": 695,
+    "Sam": 700
+  }
+}

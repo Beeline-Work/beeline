@@ -1,4 +1,5 @@
 import { retireBotDirectMessages } from './migrations/one-system-thread.js';
+import { VOICE_SCHEMA } from './voice-schema.js';
 import { backfillComputerObservations } from './system-line.js';
 import { scheduleWorkflowSlugSql } from './workflow-admin.js';
 import { AGENT_SUBSCRIPTIONS_SCHEMA } from './agent-subscriptions.js';
@@ -914,6 +915,7 @@ CREATE TABLE IF NOT EXISTS messages (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 -- A live computer card keeps only the Beeline bearer link in the Room. The
+${VOICE_SCHEMA}
 -- upstream Squire URL remains server-side and dies with its browser session.
 CREATE TABLE IF NOT EXISTS computer_sessions (
   id text PRIMARY KEY,

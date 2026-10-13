@@ -1,0 +1,26 @@
+{
+  "stt": "live Flux",
+  "provider": "aura-2",
+  "calls": 1,
+  "humans": 2,
+  "distinctVoices": [
+    {
+      "name": "Ruby",
+      "voice": "minerva"
+    },
+    {
+      "name": "Sol",
+      "voice": "aries"
+    }
+  ],
+  "firstAudioServerMs": [
+    1869.820866000001,
+    911.3577580000001,
+    929.6059320000022
+  ],
+  "p50FirstAudioServerMs": 929.6059320000022,
+  "receivedAudioFrames": {
+    "Alex": 543,
+    "Sam": 1180
+  }
+}

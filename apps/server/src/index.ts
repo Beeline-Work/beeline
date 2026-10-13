@@ -39,6 +39,7 @@ import { RegistryMcpOAuth } from './registry-mcp-oauth.js';
 import { ReviewAccess } from './review-access.js';
 import { ReleaseNotifier } from './release-notify.js';
 import { speechTranscriberFromEnv } from './speech-transcription.js';
+import { VoiceService, voiceConfigFromEnv } from './voice-service.js';
 import { createWebPushSender } from './web-push.js';
 import type { MonolithAuthMount } from './monolith-auth.js';
 import { PostgresLiveListener } from './postgres-live.js';
@@ -334,6 +335,8 @@ async function main() {
       : {}),
   });
   const speechTranscriber = speechTranscriberFromEnv();
+  const voiceConfig = voiceConfigFromEnv();
+  const voice = voiceConfig ? new VoiceService(database, live, voiceConfig) : undefined;
   const backgroundJobs = new BackgroundJobRunner();
   const server = createBeelineServer({
     database,
@@ -357,6 +360,7 @@ async function main() {
     review,
     releaseNotify,
     ...(speechTranscriber ? { speechTranscriber } : {}),
+    ...(voice ? { voice } : {}),
     dashboardSecret: process.env.BEELINE_DASHBOARD_SECRET,
     livePaintDiagnostics: process.env.LIVE_PAINT_DIAGNOSTICS === 'true',
     mediaMaximumBytes: mediaExpiryMediaMaximumBytes,
@@ -386,6 +390,7 @@ async function main() {
   const leader = new BackgroundLeader(
     jobsDatabase,
     async (newLeader) => {
+      if (voice) await backgroundJobs.run('voice-call-recovery', () => voice.recover());
       if (newLeader) {
         lastReconciliationAt = Number.NEGATIVE_INFINITY;
         pushPending = Boolean(push);
@@ -478,6 +483,7 @@ async function main() {
     leader.stop();
     stopComputerExpiry();
     stopBackgroundWake();
+    await voice?.close();
     await connectionPresence.stop();
     await liveListener.stop();
     await new Promise<void>((resolve) => server.close(() => resolve()));

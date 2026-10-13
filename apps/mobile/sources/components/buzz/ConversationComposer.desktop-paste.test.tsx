@@ -1,3 +1,4 @@
+vi.mock('@/components/buzz/VoiceBar', () => ({ VoiceBar: () => null }));
 // @vitest-environment jsdom
 import * as React from 'react';
 import { act } from 'react';

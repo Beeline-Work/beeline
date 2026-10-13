@@ -2,6 +2,7 @@ import {
   chmodSync,
   existsSync,
   mkdirSync,
+  symlinkSync,
   mkdtempSync,
   readFileSync,
   writeFileSync,
@@ -59,9 +60,18 @@ const rollbackWorkflow = readFileSync(
 );
 const appConfig = readFileSync(join(mobileRoot, 'app.config.js'), 'utf8');
 
+// Exercise the existing six-target rollback cases with an isolated prior-runtime app.
+// The first test separately checks the current store pins and all compatibility targets.
+const fixtureParent = resolve(mobileRoot, '../../.voice-proof');
+mkdirSync(fixtureParent, { recursive: true });
+const releaseFixtureRoot = mkdtempSync(join(fixtureParent, 'ota-runtime-fixture-'));
+writeFileSync(join(releaseFixtureRoot, 'package.json'), readFileSync(join(mobileRoot, 'package.json')));
+writeFileSync(join(releaseFixtureRoot, 'app.config.js'), "module.exports={name:'Beeline',slug:'beeline',android:{runtimeVersion:'33'},ios:{runtimeVersion:'32'}};");
+symlinkSync(join(mobileRoot, 'node_modules'), join(releaseFixtureRoot, 'node_modules'), 'dir');
+
 function runRelease(args: string[], env: Record<string, string> = {}) {
   return spawnSync(process.execPath, [releaseScript, ...args], {
-    cwd: mobileRoot,
+    cwd: releaseFixtureRoot,
     encoding: 'utf8',
     env: {
       ...process.env,
@@ -80,9 +90,14 @@ describe('mobile OTA release governor', () => {
       { platform: 'android', runtimeVersion: '32' },
       { platform: 'ios', runtimeVersion: '29' },
       { platform: 'ios', runtimeVersion: '31' },
+      { platform: 'android', runtimeVersion: '33' },
+      { platform: 'ios', runtimeVersion: '32' },
     ]);
+    expect(releaseUpdateTargets(mobileRoot)).toHaveLength(8);
+    expect(releaseUpdateTargets(mobileRoot)).toContainEqual({ platform: 'android', runtimeVersion: '34' });
+    expect(releaseUpdateTargets(mobileRoot)).toContainEqual({ platform: 'ios', runtimeVersion: '33' });
     // Each platform publishes to its pin plus the two latest shipped runtimes.
-    expect(releaseUpdateTargets(mobileRoot)).toEqual([
+    expect(releaseUpdateTargets(releaseFixtureRoot)).toEqual([
       { platform: 'android', runtimeVersion: '33' },
       { platform: 'android', runtimeVersion: '31' },
       { platform: 'android', runtimeVersion: '32' },
@@ -205,7 +220,7 @@ describe('mobile OTA release governor', () => {
       {
         // The patched script reads the project config from the repo; the
         // governor reads its runtime lists from the patched file itself.
-        cwd: mobileRoot,
+        cwd: releaseFixtureRoot,
         encoding: 'utf8',
       },
     );
@@ -220,7 +235,7 @@ describe('mobile OTA release governor', () => {
     const previous = process.env.EXPO_RUNTIME_OVERRIDE;
     process.env.EXPO_RUNTIME_OVERRIDE = '23';
     try {
-      expect(() => releaseUpdateTargets(mobileRoot)).toThrow('reserved for ota-release.mjs');
+      expect(() => releaseUpdateTargets(releaseFixtureRoot)).toThrow('reserved for ota-release.mjs');
     } finally {
       if (previous === undefined) delete process.env.EXPO_RUNTIME_OVERRIDE;
       else process.env.EXPO_RUNTIME_OVERRIDE = previous;
@@ -251,7 +266,7 @@ describe('mobile OTA release governor', () => {
     const targetPublishes = publish.stdout
       .split('\n')
       .filter((line) => line.includes('eas-cli@22.2.0 update --branch beta'));
-    const targets = releaseUpdateTargets(mobileRoot);
+    const targets = releaseUpdateTargets(releaseFixtureRoot);
     expect(targetPublishes).toHaveLength(6);
     expect(targetPublishes).toHaveLength(targets.length);
     targets.forEach((target, index) => {
@@ -1677,15 +1692,15 @@ esac
     const ledgerPath = join(directory, 'ledger.json');
     const indexPath = join(directory, 'index.json');
     const before = spawnSync('git', ['rev-parse', 'HEAD~2'], {
-      cwd: mobileRoot,
+      cwd: releaseFixtureRoot,
       encoding: 'utf8',
     }).stdout.trim();
     const head = spawnSync('git', ['rev-parse', 'HEAD'], {
-      cwd: mobileRoot,
+      cwd: releaseFixtureRoot,
       encoding: 'utf8',
     }).stdout.trim();
     const expected = spawnSync('git', ['rev-list', '--reverse', `${before}..${head}`], {
-      cwd: mobileRoot,
+      cwd: releaseFixtureRoot,
       encoding: 'utf8',
     })
       .stdout.trim()
@@ -1718,15 +1733,15 @@ esac
 
   it('accepts dispatch delivery initialization without a push before sha', () => {
     const before = spawnSync('git', ['rev-parse', 'HEAD~2'], {
-      cwd: mobileRoot,
+      cwd: releaseFixtureRoot,
       encoding: 'utf8',
     }).stdout.trim();
     const head = spawnSync('git', ['rev-parse', 'HEAD'], {
-      cwd: mobileRoot,
+      cwd: releaseFixtureRoot,
       encoding: 'utf8',
     }).stdout.trim();
     const expected = spawnSync('git', ['rev-list', '--reverse', `${before}..${head}`], {
-      cwd: mobileRoot,
+      cwd: releaseFixtureRoot,
       encoding: 'utf8',
     })
       .stdout.trim()
@@ -2138,7 +2153,7 @@ esac
 
     function runCanary(args: string[] = [], env: Record<string, string | undefined> = {}) {
       return spawnSync('/bin/bash', [join(mobileRoot, 'scripts/ota-canary.sh'), ...args], {
-        cwd: mobileRoot,
+        cwd: releaseFixtureRoot,
         encoding: 'utf8',
         // Empty strings make the script's ${VAR:-} defaults treat these as
         // unset even when this developer shell exported a real SDK.
@@ -2559,7 +2574,7 @@ esac
 
     function runMaestroGate(sdkRoot: string, env: Record<string, string | undefined> = {}) {
       return spawnSync('bash', [join(mobileRoot, 'scripts/maestro-e2e.sh')], {
-        cwd: mobileRoot,
+        cwd: releaseFixtureRoot,
         encoding: 'utf8',
         env: {
           ...process.env,

@@ -50,6 +50,7 @@ import { isNeedsYouAsk } from './needs-you.js';
 import type { ReviewAccess } from './review-access.js';
 import type { ReleaseNotifier } from './release-notify.js';
 import { TRANSCRIPTION_MAXIMUM_BYTES, type SpeechTranscriber } from './speech-transcription.js';
+import type { VoiceService } from './voice-service.js';
 import { isMediaId } from './media-ttl.js';
 import type { ObjectService } from './object-service.js';
 import { connectorLogo } from './workbench.js';
@@ -172,6 +173,7 @@ export interface ServerOptions {
   releaseNotify?: ReleaseNotifier;
   /** Absent without `GROQ_API_KEY`: dictation keeps the phone's on-device text. */
   speechTranscriber?: SpeechTranscriber;
+  voice?: VoiceService;
   helperVersionGate?: HelperVersionGate;
   /** Server-side secret for the private operator proxy only. */
   dashboardSecret?: string;
@@ -2137,6 +2139,19 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
   }
   if (url.pathname.startsWith('/v1/phone/') && !identityId) {
     json(response, 401, { error: 'phone_token_required' });
+    return;
+  }
+
+  const voiceMatch = url.pathname.match(/^\/v1\/phone\/voice\/([0-9a-f-]{36})\/(current|join|leave)$/);
+  if (voiceMatch) {
+    if (!options.voice) { json(response, 503, { error: 'Voice mode is unavailable' }); return; }
+    if (voiceMatch[2] === 'current' && method === 'GET') {
+      json(response, 200, await options.voice.current(voiceMatch[1]!, identityId!));
+    } else if (voiceMatch[2] === 'join' && method === 'POST') {
+      json(response, 200, await options.voice.join(voiceMatch[1]!, identityId!));
+    } else if (voiceMatch[2] === 'leave' && method === 'POST') {
+      await options.voice.leave(voiceMatch[1]!, identityId!); json(response, 200, { left: true });
+    } else { json(response, 405, { error: 'method_not_allowed' }); }
     return;
   }
 

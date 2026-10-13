@@ -427,6 +427,8 @@ import { cornerOpenTappedAgain } from '@/buzz/corner-open-status';
 import { forwardMessageToNewCorner, takeCornerComposerDraft } from '@/buzz/message-corner-forward';
 import { roomMemberManagementState } from '@/buzz/room-member-management';
 import { connectorOfferCeremonyRoute } from '@/buzz/connector-offer-ceremony';
+import { useVoiceCall } from '@/buzz/use-voice-call';
+import { VoiceCallCard } from '@/components/buzz/VoiceCallCard';
 import { useIsDesktop } from '@/utils/responsive';
 import { isDesktopShell } from '@/utils/isDesktopShell';
 import {
@@ -1203,6 +1205,8 @@ export function BuzzChatSurface({
     [workspaceChatList],
   );
   const viewerIsAgent = roomSurface?.viewer.identity.kind === 'agent';
+  const voice = useVoiceCall(decodedId, Boolean(roomSurface?.viewer.permissions.send && !viewerIsAgent && !isArchived));
+  useEffect(() => { if (voice.error && !voice.quotaExhausted) Modal.alert('Voice mode', voice.error); }, [voice.error, voice.quotaExhausted]);
   // The SERVER's statement of who is reading, so the phone's requester test and
   // the server's own are the same comparison over the same namespace.
   const viewerPubkey = roomSurface?.viewer.identity.pubkey;
@@ -5753,6 +5757,12 @@ export function BuzzChatSurface({
         return <ComputerSessionCard session={item.computerSession} isDesktop={desktopExperience}
           agentHandle={item.authorIdentity?.kind === 'agent' ? item.authorIdentity.handle : undefined} />;
       }
+      if (item.voiceCall) {
+        if (isDirectMessage && !item.voiceCall.endedAt) return null;
+        return <VoiceCallCard call={item.voiceCall} joined={voice.call?.id === item.voiceCall.id}
+          agents={roomSurface?.members.filter(member => member.identity.kind === 'agent').map(member => member.identity)}
+          onJoin={() => void voice.join()} />;
+      }
       if (item.choice) {
         return (
           <ChoiceCard
@@ -6016,6 +6026,10 @@ export function BuzzChatSurface({
     },
     [
       renderCornerMarker,
+      voice.call,
+      voice.join,
+      isDirectMessage,
+      roomSurface?.members,
       bylineOpeners,
       agentByPubkey,
       agentProfileModelByPubkey,
@@ -6843,6 +6857,7 @@ export function BuzzChatSurface({
                       </View>
                     ) : null}
                     <ConversationComposer
+                      voice={roomSurface?.members.some(member => member.identity.kind === 'agent') ? voice : undefined}
                       onStop={
                         composerAck?.stop ? () => handleStopTurn(composerAck.stop!) : undefined
                       }

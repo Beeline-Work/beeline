@@ -20,3 +20,19 @@
 - **Connect is the only onboarding flow** (`npx usebeeline connect`, `connect-command.ts`). It probes before prompting (`CONNECT_PROBE_TIMEOUT_MS`); a deferring CLI joins Rooms only in `finishAgentConnectPairing`. Edit only `packages/usebeeline/README.md`; root `README.md` is a copy made by `npm run readme:sync`.
 - **`@agent /login`** (Claude Code's `/login` at the call site, every harness; `agent-sign-in.ts` server + body): writes an `agent-sign-in` card; the helper runs one of four kinds (Claude paste-back PKCE, Codex/Grok device code, Cursor approve-and-wait, Pi/Goose/OpenCode provider key) and keeps every secret; a pasted code or key crosses the server only as a NOTIFY relay, never a row, card or log; link and device code are projected to the owner only. Shape drift: `*sign-in.contract.test.ts`.
 - **Connectors.** `connector-squire.ts` owns Squire install/vault/revoke; `ConnectorUsageRecorder` sends one `postConnectionUsage` per turn. Squire has no `workspace_connectors` row: its agent tool probes the local task relay when mounted and otherwise uses its machine's broker report; Connectors shows each machine's broker report (`postConnectorVault`, `squire-machine.ts`). Vault metadata belongs to its owner and machine; sign-in work remains generation-scoped in the helper queue. Coverage: `read-only-mcp.workbench.integration.test.ts`, `workbench.integration.test.ts`, `squire-machine-status.browser.test.ts`. One host `trusty-squire-broker.service` elects; every other Squire spawn is the non-electing façade (`squire-broker-link.ts`). Squire's file credential store is not masked from agents. The phone's `workbench/service.tsx` lists distinct vault references read-only and links to Squire's web vault for changes; `PhoneService.readWorkbench` omits Squire API app pointers from Apps while leaving agent routes intact. Route order is in `app-connections.ts`.
+
+## Lifecycle, commands and model selection
+
+Paths and commands below are relative to the repository root. Read these invariants before editing this area; named code and tests hold implementation detail.
+
+### ACP startup
+
+- **ACP scopes bind to the helper's lifetime without ordering after its readiness.** `AcpResourceScope` (`apps/body/src/acp-resource-scope.ts`) keeps `BindsTo` without `After`: the notify helper can initialize ACP before READY, so ordering its scope after readiness can deadlock startup (`acp-resource-scope.startup.test.ts`).
+
+### Tagged control commands
+
+- **An exact tagged lifecycle command is server control, never a model prompt.** `routeHumanMessage` treats a whole message `@agent restart|status|stop|retry|debug|help|login` (or `@agent /restart`, `/login`) as control. Status/help follow access policy; debug/restart need the agent owner or a Room manager; stop/retry also allow the requester; login is owner-only. Restarts coalesce per agent in `agent_commands` until `ConnectionPresence` sees a new lifecycle id.
+
+### Model catalog
+
+- **A model picker is a live account verdict.** `apps/body/src/model-catalog.ts` offers only models proved through the startup-validation setter; the phone renders `agents.model_catalog` + `selected_*` verbatim (`model-catalog-sync.ts`). A failing persisted selection becomes `agents.model_unavailable` and the `wrong-model` silence line. Transient 429/529/timeout/auth-shaped failures are hiccups, never a model verdict (`isTransientProviderText`, `isAuthShapedFault`); a vanished id falls back within its family (`resolveModelFamilyFallback`).

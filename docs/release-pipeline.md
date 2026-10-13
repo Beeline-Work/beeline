@@ -180,3 +180,8 @@ Those fixtures cover canary ordering and window verdicts, rollback selection,
 the server image ledger, no-input defaults, per-component published-input drift,
 shared-path fanout, carry-forward, same-identity no-op and retry continuation,
 missing artifacts, completion/publication checks, and the workflow time budget.
+
+## Compatibility and signing invariants
+
+- Runtime pins in `apps/mobile/app.config.js` must retain old installs in `COMPAT_RUNTIMES` (`ota-release.mjs`).
+- Store submission and signing: [mobile store runbook](../apps/mobile/docs/store-submission.md). The sideload keystore lives only in `ANDROID_SIDELOAD_*` secrets and is never rotated.

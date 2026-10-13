@@ -206,6 +206,91 @@ describe('report_feedback (agent path)', () => {
     });
   });
 
+  it('Reproduction duplicate-cap: shares open items across agents without spending their cap', async () => {
+    const first = await report({ summary: 'Grant card never resolves', toolName: 'request_grant' });
+    const second = await report(
+      { summary: 'GRANT card never resolves.', toolName: 'request_grant' },
+      CORNER,
+      OUTSIDER,
+    );
+    expect(second).toEqual({ itemId: first.itemId, duplicate: true });
+    expect(await items()).toHaveLength(1);
+    const counts = await database.query<{ occurrence_count: number; occurrences: unknown[] }>(
+      'SELECT occurrence_count,occurrences FROM feedback_items WHERE id=$1',
+      [first.itemId],
+    );
+    expect(counts.rows[0]!.occurrence_count).toBe(2);
+    expect(counts.rows[0]!.occurrences).toEqual([
+      expect.objectContaining({ agentId: OUTSIDER, roomId: CORNER, createdAt: expect.any(String) }),
+    ]);
+    for (let index = 0; index < 10; index++)
+      await report({ summary: `other problem ${index}` }, ROOM, OUTSIDER);
+    await expect(report({ summary: 'eleventh' }, ROOM, OUTSIDER)).rejects.toThrow(
+      'feedback cap reached',
+    );
+    await database.query(
+      "UPDATE feedback_items SET created_at=now()-interval '2 hours', occurrences='[]', occurrence_count=1 WHERE id=$1",
+      [first.itemId],
+    );
+    await expect(
+      report({ summary: 'Grant card never resolves', toolName: 'request_grant' }, CORNER, OUTSIDER),
+    ).resolves.toEqual(second);
+    expect(
+      (
+        await database.query<{ occurrence_count: number }>(
+          'SELECT occurrence_count FROM feedback_items WHERE id=$1',
+          [first.itemId],
+        )
+      ).rows[0]!.occurrence_count,
+    ).toBe(2);
+    console.log(
+      'Demonstrated Reproduction duplicate-cap: matching reports share one item with count 2; duplicate at cap succeeds; only new items spend cap',
+    );
+  });
+
+  it('suppresses same-agent repeats for one hour and counts later occurrences on old open items', async () => {
+    const first = await report({ summary: 'Same issue' });
+    await report({ summary: 'Same issue' }, CORNER);
+    expect(
+      (await database.query('SELECT occurrence_count FROM feedback_items')).rows[0]!
+        .occurrence_count,
+    ).toBe(1);
+    await database.query(
+      "UPDATE feedback_items SET created_at=now()-interval '2 days' WHERE id=$1",
+      [first.itemId],
+    );
+    expect(await report({ summary: 'Same issue' }, CORNER)).toEqual({
+      itemId: first.itemId,
+      duplicate: true,
+    });
+    await report({ summary: 'Same issue' });
+    const stored = (
+      await database.query(
+        'SELECT occurrence_count,occurrences,last_occurrence_at FROM feedback_items',
+      )
+    ).rows[0]!;
+    expect(stored.occurrence_count).toBe(2);
+    expect(stored.occurrences).toHaveLength(1);
+    expect(stored.last_occurrence_at).toBeTruthy();
+  });
+
+  it('keeps distinct tools, categories and terminal items separate', async () => {
+    const first = await report({ summary: 'Same issue', toolName: 'read' });
+    await report({ summary: 'Same issue', toolName: 'order' });
+    await report({ summary: 'Same issue', toolName: 'read', category: 'tooling_gap' });
+    await report({ summary: 'A different issue', toolName: 'read' });
+    for (const status of ['resolved', 'dismissed', 'closed']) {
+      await database.query('UPDATE feedback_items SET status=$2 WHERE id=$1', [
+        first.itemId,
+        status,
+      ]);
+      const next = await report({ summary: 'Same issue', toolName: 'read' });
+      expect(next.duplicate).toBe(false);
+      await database.query('DELETE FROM feedback_items WHERE id=$1', [next.itemId]);
+    }
+    expect(await items()).toHaveLength(4);
+  });
+
   it('rejects secret-shaped values and unknown categories', async () => {
     await expect(
       report({ summary: 'token: ghp_abcdefghijklmnopqrstuvwxyz0123' }),

@@ -129,8 +129,8 @@ async function roomWorkspace(database: SqlDatabase, roomId: string): Promise<str
 }
 
 /**
- * `report_feedback`, from inside the agent's authorized turn. Same reporter,
- * category and normalized summary within a day answer the existing id; ten
+ * `report_feedback`, from inside the agent's authorized turn. The same
+ * category, tool and normalized summary match any open agent item; ten
  * new items per agent per UTC day is the cap.
  */
 export async function reportAgentFeedback(
@@ -158,16 +158,53 @@ export async function reportAgentFeedback(
     throw new Error('feedback contains a secret-shaped value; describe the problem without it');
   const summaryKey = feedbackSummaryKey(summary) || summary.toLowerCase();
   await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`feedback:${agentId}`]);
+  await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
+    `feedback-match:${JSON.stringify([input.category, summaryKey, toolName ?? null])}`,
+  ]);
   const existing = (
     await database.query<{ id: string }>(
       `SELECT id FROM feedback_items
-       WHERE source_kind='agent' AND reporter_identity_id=$1 AND category=$2 AND summary_key=$3
-         AND created_at>now()-interval '24 hours'
-       ORDER BY created_at DESC LIMIT 1`,
-      [agentId, input.category, summaryKey],
+       WHERE source_kind='agent' AND category=$1 AND summary_key=$2
+         AND tool_name IS NOT DISTINCT FROM $3::text
+         AND status IN ('new','filed','attached')
+       ORDER BY created_at,id LIMIT 1 FOR UPDATE`,
+      [input.category, summaryKey, toolName ?? null],
     )
   ).rows[0];
-  if (existing) return { itemId: existing.id, duplicate: true };
+  if (existing) {
+    // Original context stays on the item; later occurrences retain their own evidence.
+    await database.query(
+      `UPDATE feedback_items SET occurrence_count=occurrence_count+1,
+         last_occurrence_at=now(), occurrences=occurrences || jsonb_build_array($3::jsonb || jsonb_build_object('createdAt',now()))
+       WHERE id=$1
+         AND NOT (reporter_identity_id=$2 AND created_at>now()-interval '1 hour')
+         AND NOT EXISTS (
+           SELECT 1 FROM jsonb_array_elements(occurrences) occurrence
+           WHERE occurrence->>'agentId'=$2
+             AND (occurrence->>'createdAt')::timestamptz>now()-interval '1 hour'
+         )`,
+      [
+        existing.id,
+        agentId,
+        JSON.stringify({
+          agentId,
+          roomId: command.room_id,
+          triggerMessageId: command.source_message_id,
+          requestId: command.turn_request_id,
+          messageIds: await evidenceMessageIds(
+            database,
+            command.room_id,
+            command.source_message_id,
+          ),
+          promptSectionIds,
+          summary,
+          detail: detail ?? null,
+          errorExcerpt: errorExcerpt ?? null,
+        }),
+      ],
+    );
+    return { itemId: existing.id, duplicate: true };
+  }
   const today = (
     await database.query<{ count: number }>(
       `SELECT count(*)::int count FROM feedback_items

@@ -1007,17 +1007,27 @@ export async function reassignFailedCornerReviewer(
   input: { roomId: string; requestId: string; agentId: string },
 ): Promise<void> {
   await database.transaction(async (db) => {
-    const dispatch = await db.query(
-      `SELECT 1 FROM messages WHERE id=$1 AND room_id=$2 AND system_event->>'kind'='check-passed'`,
-      [input.requestId, input.roomId],
-    );
-    if (!dispatch.rowCount) return;
     await lockCornerLifecycle(db, input.roomId);
+    // The failed turn must be a lifecycle review dispatch. Recovery sources
+    // are ordinary GitHub notes, rather than check-passed events; use the
+    // command's purpose so both dispatch paths share the same failover.
+    const dispatch = (await db.query<{ reason: string; head_sha: string | null }>(
+      `SELECT command.reason,source.system_event->'object'->>'headSha' head_sha
+       FROM agent_commands command JOIN messages source ON source.id=command.source_message_id
+       WHERE command.room_id=$2 AND command.agent_id=$3 AND command.turn_request_id=$1
+         AND command.action='input'
+         AND (command.reason='corner_review_dispatch'
+           OR (command.reason='subscribed_event' AND source.system_event->>'kind'='check-passed'))
+       ORDER BY command.created_at DESC,command.id DESC LIMIT 1`,
+      [input.requestId, input.roomId, input.agentId],
+    )).rows[0];
+    if (!dispatch) return;
     const corner = await loadCorner(db, input.roomId);
     if (!corner?.configured_reviewer_id || !corner.reviewer_fallback_ids.length) return;
     if (corner.lifecycle.checks !== 'passing') return;
     const run = await loadCornerLifecycleState(db, input.roomId);
     if (run?.toState !== 'review') return;
+    if (dispatch.head_sha && dispatch.head_sha !== corner.lifecycle.pr?.headSha) return;
     if (await approvedCurrentHead(db, input.roomId, corner)) return;
     if (!(await isCornerReviewer(db, input.roomId, input.agentId))) return;
     const next = await dispatchableListReviewer(
@@ -1037,7 +1047,7 @@ export async function reassignFailedCornerReviewer(
       roomId: input.roomId,
       agentId: next,
       sourceMessageId: input.requestId,
-      reason: 'subscribed_event',
+      reason: dispatch.reason,
     });
     if (!queued.command)
       await noteReviewBlocked(db, input.roomId, corner, corner.lifecycle.pr?.headSha ?? input.requestId,

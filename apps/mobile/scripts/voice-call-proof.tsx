@@ -8,7 +8,7 @@ import { IdentityMark } from '../sources/components/buzz/IdentityMark';
 import { useVoiceCall } from '../sources/buzz/use-voice-call';
 import { groknight } from '../sources/buzz/groknight';
 import type { RoomView, VoiceCall } from '@beeline/api-contract/phone';
-import { monolithSession } from '../sources/auth/monolith-session';
+import { monolithSession } from '@/auth/monolith-session';
 
 declare global { interface Window { __voiceProof: { origin: string; roomId: string; token: string }; } }
 

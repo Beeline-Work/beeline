@@ -1525,12 +1525,19 @@ async function route(
     const authorization = url.searchParams.get('authorization') ?? '';
     const webOrigin = url.searchParams.get('return') ?? '';
     let isLinkSignIn = false;
+    let safeAuthorization = false;
     try {
       const provider = new URL(authorization);
+      safeAuthorization = provider.protocol === 'https:' && !provider.username && !provider.password
+        && authorization.length <= 4096;
       isLinkSignIn = provider.origin === 'https://login.link.com' && provider.pathname === '/auth'
         && !provider.username && !provider.password;
     } catch { /* Invalid URLs are refused below. */ }
-    const storedSignIn = !isAppSignInLink(authorization) && !isLinkSignIn && authorization.length <= 4096
+    if (!safeAuthorization || !options.webAppOrigins?.includes(webOrigin)) {
+      json(response, 400, { error: 'Invalid app sign-in start' });
+      return;
+    }
+    const storedSignIn = !isAppSignInLink(authorization) && !isLinkSignIn
       ? (await options.database.query(`SELECT 1 FROM workspace_connectors
           WHERE status='installing' AND sign_in->>'url'=$1
           UNION ALL SELECT 1 FROM agents WHERE squire_work->>'install'='true'

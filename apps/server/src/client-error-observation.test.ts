@@ -36,3 +36,13 @@ it('limits diagnostic writes per authenticated identity', async () => {
   expect((await post(observation)).status).toBe(429);
   expect(log).toHaveBeenCalledTimes(12);
 });
+
+it('accepts bounded native-crash metadata and rejects malformed or oversized fields', async () => {
+  const post = await start(); const log = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const native = { ...observation, scope: 'native-crash', message: 'SIGABRT', device: 'Samsung fixture', appVersion: '0.1.50', crashTimestamp: '1234' };
+  expect((await post(native)).status).toBe(204);
+  expect(JSON.parse(String(log.mock.calls[0]?.[1]))).toMatchObject(native);
+  expect((await post({ ...native, device: 'x'.repeat(129) })).status).toBe(400);
+  expect((await post({ ...native, appVersion: 50 })).status).toBe(400);
+  expect((await post({ ...native, crashTimestamp: 'x'.repeat(33) })).status).toBe(400);
+});

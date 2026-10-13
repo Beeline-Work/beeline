@@ -271,6 +271,16 @@ async function loadFonts() {
 }
 
 export default function RootLayout() {
+  React.useEffect(() => {
+    let disposed = false;
+    let stop = () => {};
+    const cancel = afterFirstFrame(() => {
+      void import('@/buzz/native-crash-reporting').then(({ startNativeCrashReporting }) => {
+        if (!disposed) stop = startNativeCrashReporting();
+      }).catch(() => {});
+    });
+    return () => { disposed = true; cancel(); stop(); };
+  }, []);
   React.useEffect(startDesktopNotifications, []);
   React.useEffect(startIdentityLive, []);
   const isDesktop = useIsDesktop();

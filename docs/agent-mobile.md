@@ -30,6 +30,7 @@ Paths and commands below are relative to the repository root. Read these invaria
 ## Mobile UI
 
 - **Render failures remain visible.** `RuntimeErrorBoundary.tsx` contains composer/voice failures; the root route exports its provider-free `RuntimeErrorView`. Keep its native primitives outside the Unistyles Babel rewrite. `client-error-report.ts` sends bounded diagnostics to the authenticated server log endpoint; reporting and cleanup failures never suppress the original error. Proof: `apps/mobile/evidence/voice-error-recovery/README.md`.
+- **Android native crashes survive process death.** `modules/android-crash-trace` records fatal JVM exceptions before delegating to Android and reads Android 12+ signal-crash tombstones through `ApplicationExitInfo`. `native-crash-reporting.ts` sends the private receipt on launch/sign-in/resume and acknowledges only accepted reports. Never add a crash trigger to shipped code. Proof: `apps/mobile/evidence/native-crash-recovery/README.md`.
 
 - [DESIGN.md](../DESIGN.md) is the UI authority; tokens live in `apps/mobile/sources/buzz/groknight.ts`. Box only what the user acts on or a non-repeating region.
 - **Type roles only.** `calm-lint.design.test.ts` ratchets raw and computed `fontSize`/`lineHeight`/`letterSpacing` values in `.ts`/`.tsx` against `apps/mobile/design/calm-baseline.json`; counts only shrink.

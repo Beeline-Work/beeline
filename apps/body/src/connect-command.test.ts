@@ -1,11 +1,13 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { AGENT_SIGN_IN_HARNESSES } from '@beeline/api-contract/daemon';
 import { describe, expect, it, vi } from 'vitest';
 import { completeDevicePairing } from './device-pairing.js';
 import { identityFromKey } from './runtime.js';
 import type { DetectedAgentCommand } from './agent-command.js';
 import {
+  CONNECT_HARNESSES,
   brass,
   brassRails,
   brassSpinner,
@@ -116,6 +118,13 @@ function catalogSeam(input: {
   };
   return { load, requests };
 }
+
+describe('connect harnesses', () => {
+  it('offers exactly the harnesses the auth server accepts', () => {
+    // The auth server checks connects against the contract list.
+    expect([...CONNECT_HARNESSES].sort()).toEqual([...AGENT_SIGN_IN_HARNESSES].sort());
+  });
+});
 
 describe('connect wizard', () => {
   it('accepts interactive input when a mobile terminal proxies stdout', () => {

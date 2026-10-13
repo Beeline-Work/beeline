@@ -20,15 +20,17 @@ const options = [
 ];
 
 describe('the one app front door', () => {
-  it('mounts connect_app wherever an app can be used, and no retired connector tools anywhere', () => {
+  it('mounts connect wherever an app can be used, and no retired connector tools anywhere', () => {
     const room = agentToolsFor(true, false).map((tool) => tool.name);
     const dm = agentToolsFor(true, true).map((tool) => tool.name);
     const corner = agentToolsFor(true, false, true).map((tool) => tool.name);
-    expect(room).toContain('connect_app');
-    expect(dm).toContain('connect_app');
-    expect(corner).toContain('connect_app');
+    expect(room).toContain('connect');
+    expect(dm).toContain('connect');
+    expect(corner).toContain('connect');
     for (const names of [room, dm, corner])
       for (const retired of [
+        'connect_app',
+        'offer_connector',
         'connect_mcp_server',
         'search_mcp_registry',
         'composio_tools',

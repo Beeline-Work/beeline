@@ -542,10 +542,9 @@ describe('prompt assembly guards', () => {
   it('documents Connectors discovery and connection in every agent turn', () => {
     for (const [name, context] of Object.entries(SESSION_VARIANTS)) {
       const text = assembleSessionPrompt(context).systemPrompt;
-      expect(text, name).toContain('connectors_status');
-      expect(text, name).toContain('connect_app');
+      expect(text, name).toContain('search with find_connectors if unclear, then call connect.');
       if (context.surface.includes('corner'))
-        expect(text, name).toContain('connect_app starts sign-in here');
+        expect(text, name).toContain('search with find_connectors if unclear, then call connect.');
     }
   });
 

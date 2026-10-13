@@ -419,13 +419,11 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
   {
     id: 'surface.tools',
     topic: 'tools',
-    why: 'Agents need app discovery before use in every turn; connector offers remain in Rooms and DMs.',
+    why: 'Agents use one server-owned connection path in every turn.',
     budgetBytes: 240,
     layer: 'surface',
     surfaces: EVERYWHERE,
-    render: ({ surface }) => surface === 'room' || surface === 'dm'
-      ? 'When you need a tool you do not have, call connectors_status; offer_connector the tool it lists, otherwise call connect_app for the app.'
-      : 'In corners, connectors_status discovers apps; connect_app starts sign-in here. Connector offers stay in Rooms and DMs.',
+    render: () => 'For any service or capability request, search with find_connectors if unclear, then call connect.',
   },
   {
     id: 'surface.squire-drive',

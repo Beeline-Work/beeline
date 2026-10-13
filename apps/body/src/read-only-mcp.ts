@@ -1629,7 +1629,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'connectors_status',
     description:
-      "Read Connectors for the machine and owner you actually run on: the connector catalog, installed tools, connected apps, and vaulted keys by service and label only, never a value. Trusty Squire signs up and signs in to websites hands-off and holds keys when needed. Call this before you say a tool is missing or offer_connector. Free to call; it changes nothing.",
+      "Read Connectors for the machine and owner you actually run on: the connector catalog, installed tools, connected apps, and vaulted keys by service and label only, never a value. Trusty Squire signs up and signs in to websites hands-off and holds keys when needed. Call this before you say a tool is missing. Use connect to connect it. Free to call; it changes nothing.",
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
@@ -1656,14 +1656,14 @@ const AGENT_TOOLS: ToolDefinition[] = [
       additionalProperties: false },
   },
   {
-    name: 'connect_app',
+    name: 'connect',
     description:
-      'Connect an app after connectors_status shows it is missing. The continuation is optional: pass a request-specific sentence stating what you will do after sign-in; without it the card says "continues the request right after". Omit links, secrets, and private data. The server chooses a direct integration or official Registry sign-in first, then Composio, then Trusty Squire. Wait for the connection wake, then use the app ID with list_app_tools and execute_app_tool where applicable. An outage or refusal never permits a silent route switch. Never put sign-in links or credentials in chat. This is setup, not use permission.',
+      'Connect a service or machine tool. Search with find_connectors only when the service is unclear. The continuation is optional: pass a request-specific sentence stating what you will do after sign-in; without it the card says "continues the request right after". Omit links, secrets, and private data. The server chooses a direct integration or official Registry sign-in first, then Composio, then Trusty Squire. Wait for the connection wake, then use the app ID with list_app_tools and execute_app_tool where applicable. An outage or refusal never permits a silent route switch. Never put sign-in links or credentials in chat. This is setup, not use permission.',
     inputSchema: {
       type: 'object',
-      required: ['app', 'reason'],
+      required: ['service', 'reason'],
       properties: {
-        app: {
+        service: {
           type: 'string',
           minLength: 1,
           maxLength: 200,
@@ -1674,6 +1674,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
           type: 'string', minLength: 1, maxLength: 160,
           description: 'One short sentence promising what you will do for this request after sign-in. No links, credentials, account identifiers, or private data.',
         },
+        switchGoogleAccount: { type: 'boolean', description: 'Trusty Squire only: sign in with a different Google account.' },
         reconnect: {
           type: 'boolean',
           description: 'Resolve an app in error again from the top of the route order.',
@@ -1688,8 +1689,15 @@ const AGENT_TOOLS: ToolDefinition[] = [
     },
   },
   {
+    name: 'find_connectors',
+    description: 'Silently search the server connector index by service name, website, or intent. Returns ranked matches and this owner-machine connection status. Use only to settle which service the user means; this posts nothing.',
+    inputSchema: { type: 'object', required: ['query'], properties: {
+      query: { type: 'string', minLength: 1, maxLength: 200 },
+    }, additionalProperties: false },
+  },
+  {
     name: 'list_app_tools',
-    description: 'List the tools of one connected app shown via composio, by its app ID from connectors_status or connect_app. Apps via squire-api, squire-browser or registry-mcp do not use app tools; the error names their route. Discovery returns no credentials. An unavailable account or empty provider tool list reports a cause.',
+    description: 'List the tools of one connected app shown via composio, by its app ID from connectors_status or connect. Apps via squire-api, squire-browser or registry-mcp do not use app tools; the error names their route. Discovery returns no credentials. An unavailable account or empty provider tool list reports a cause.',
     inputSchema: { type: 'object', required: ['appId'], properties: {
       appId: { type: 'string', format: 'uuid' },
       query: { type: 'string', maxLength: 120 },
@@ -1899,7 +1907,7 @@ export function agentToolsFor(
     if (tool.name === 'close_pull_request') return !cornerTurn || repositoryCorner;
     // Connector installation stays in Rooms and DMs; app discovery and
     // connection are available wherever an app tool can be used.
-    if (tool.name === 'offer_connector') return !cornerTurn;
+    if (tool.name === 'offer_connector' || tool.name === 'connect_app') return false;
     // From a corner, open_corner opens a sibling corner in the parent Room.
     if (tool.name === 'open_corner') return true;
     if (tool.name === 'revise_corner_brief') return true;
@@ -4036,6 +4044,7 @@ export async function workbenchStatus(
     }>;
     apps?: Array<{ appId: string; appKey: string; name: string; transport: string;
       status: string; errorMessage?: string }>;
+    firstPartyIntegrations?: Array<{ key: string; name: string; status: string }>;
     machine?: { machineId: string; name: string;
       squire?: { status: 'connected' | 'error' | 'not-added'; errorMessage?: string } };
   };
@@ -4075,9 +4084,7 @@ export async function workbenchStatus(
       ? `${status} on ${entry.paired.helperName}${entry.paired.onThisMachine ? ' (your machine)' : ''}${cause ? ` — ${cause}` : ''}`
       : !entry.available
         ? 'not available yet'
-        : entry.offerable
-          ? 'not added — you may offer it with offer_connector'
-          : 'not added — added only from the Connectors page';
+        : 'not added — call connect';
     lines.push(`- ${entry.connectorType} (${entry.name}): ${state}. ${entry.purpose}`);
   }
   lines.push('', 'Connections (keys already provisioned, by name only):');
@@ -4087,7 +4094,9 @@ export async function workbenchStatus(
     lines.push(
       `- ${connection.label}${connection.service ? ` (${connection.service})` : ''} via ${connection.connectorType}${connection.state === 'error' ? ' — in error' : ''}`,
     );
-  lines.push('', 'Apps (connect_app; each use is authorized as app:<key>):');
+  lines.push('', 'Apps (connect; each use is authorized as app:<key>):');
+  for (const integration of view.firstPartyIntegrations ?? [])
+    lines.push(`- ${integration.name} (${integration.key}) via Beeline: ${integration.status}`);
   const apps = view.apps ?? [];
   if (!apps.length) lines.push('- none');
   for (const app of apps)
@@ -5016,6 +5025,24 @@ export async function callAgentTool(
         if (attempt < 19) await new Promise(resolve => setTimeout(resolve, 2000));
       }
       return JSON.stringify({ id, status: 'pending_approval' });
+    }
+    case 'connect': {
+      const service = stringArg(args, 'service')?.trim();
+      const reason = stringArg(args, 'reason')?.trim();
+      if (!service || !reason) throw new Error('service and reason are required');
+      const continuation = normalizeAppContinuation(args.continuation);
+      return JSON.stringify(await daemonExecute('connect', {
+        ...await activeCommandContext(), service, reason,
+        ...(continuation ? { continuation } : {}),
+        ...(args.reconnect === true ? { reconnect: true } : {}),
+        ...(args.noApi === true ? { noApi: true } : {}),
+        ...(args.switchGoogleAccount === true ? { switchGoogleAccount: true } : {}),
+      }));
+    }
+    case 'find_connectors': {
+      const query = stringArg(args, 'query')?.trim();
+      if (!query) throw new Error('query is required');
+      return JSON.stringify(await daemonExecute('findConnectors', { roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'), query }));
     }
     case 'connect_app': {
       const app = stringArg(args, 'app')?.trim();

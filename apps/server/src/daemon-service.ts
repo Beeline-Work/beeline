@@ -3,6 +3,9 @@ import { createAgentSubscription, listAgentSubscriptions, deleteAgentSubscriptio
   listServiceSubscriptionEvents, subscriptionPromptBody } from './agent-subscriptions.js';
 import { completeProviderWebhookAssignment, providerWebhookAssignments } from './provider-webhooks.js';
 import { reportAgentSignIn } from './agent-sign-in.js';
+import { FIRST_PARTY_INTEGRATIONS, firstPartyIntegration, settleFirstPartySignIn } from './first-party-integrations.js';
+import { queueAppConnectionJob, readAppConnectionJob, saveAppConnectionOutcome } from './app-connection-jobs.js';
+import { waitForConnection } from './connection-wait.js';
 import { machineSquireReport, queueSquireWork, squireAssignments, squireMachineAddress,
   squireMachineId, squireWorkStatus, reportSquireWork } from './squire-machine.js';
 import { completeSquireMachineOffers } from './connector-offer-completion.js';
@@ -120,15 +123,17 @@ import {
 } from './system-line.js';
 import { mediaIdFromUrl } from './media-ttl.js';
 import { postRoomChoice } from './room-choice.js';
-import { APP_INPUT_MAX_LENGTH, appResourceTarget, connectorAdapter } from '@beeline/api-contract/workbench';
+import { APP_INPUT_MAX_LENGTH, appIdentity, appResourceTarget, connectorAdapter } from '@beeline/api-contract/workbench';
 import { normalizeAppContinuation, type AppTransport } from '@beeline/api-contract/app-connections';
-import { McpRegistryClient } from './mcp-registry.js';
+import { McpRegistryClient, DEFAULT_MCP_REGISTRY_CLIENT } from './mcp-registry.js';
+import { connectorIntentIndex } from './connector-intent-index.js';
 import {
   appGateFor,
   armRegistryConnector,
   backfillRegistryApps,
   connectApp,
   connectedAppUse,
+  hasExistingAppRoute,
   readOwnerApps,
   recordAppUsage,
 } from './app-connections.js';
@@ -352,7 +357,7 @@ export class DaemonService {
     private readonly institutionalMemoryShadow: InstitutionalMemoryShadowConfig = {
       enabled: false,
     },
-    private readonly mcpRegistry: McpRegistryClient = new McpRegistryClient(),
+    private readonly mcpRegistry: McpRegistryClient = DEFAULT_MCP_REGISTRY_CLIENT,
     private readonly registryMcpOAuth?: RegistryMcpOAuth,
     private readonly composio?: ComposioApps,
     private readonly feedback: FeedbackLoop = { config: feedbackConfigFromEnv() },
@@ -471,6 +476,7 @@ export class DaemonService {
       'offerConnector',
       'connectMcpServer',
       'connectApp',
+      'connect',
       'listAppTools',
       'executeAppTool',
       'askRoomChoice',
@@ -1652,6 +1658,35 @@ export class DaemonService {
         )) as Output<Name>;
       case 'searchMcpRegistry':
         return (await this.searchMcpRegistry(input as Input<'searchMcpRegistry'>)) as Output<Name>;
+      case 'findConnectors': {
+        const request = input as Input<'findConnectors'>;
+        const query = typeof request.query === 'string' ? request.query.trim() : '';
+        if (!query || query.length > 200) throw new Error('query is required and must be at most 200 characters');
+        const view = await this.agentWorkbench(request, authenticatedAgentId);
+        const index = connectorIntentIndex(this.mcpRegistry, this.composio);
+        await index.refresh();
+        const status = new Map<string, import('@beeline/api-contract/daemon').ConnectorSearchMatch['status']>();
+        for (const entry of view.catalog) status.set(entry.connectorType,
+          entry.paired?.status === 'connected' ? 'connected' : entry.paired?.status === 'error' ? 'broken' : 'not-connected');
+        status.set('trusty-squire', view.machine.squire?.status === 'connected' ? 'connected'
+          : view.machine.squire?.status === 'error' ? 'broken' : 'not-connected');
+        for (const app of view.apps ?? []) {
+          const value = app.status === 'connected' ? 'connected' : app.status === 'error' ? 'broken' : 'not-connected';
+          status.set(app.appKey, value);
+          status.set(composioToolkitForApp(app.appKey), value);
+        }
+        const personal = view.connections.flatMap(connection => {
+          const key = connection.service && appIdentity(connection.service)?.key;
+          if (!key) return [];
+          if (!['wallet', 'tailscale', 'trusty-squire', ...FIRST_PARTY_INTEGRATIONS.map(entry => entry.key)].includes(key))
+            status.set(key, connection.state === 'active' ? 'connected' : 'broken');
+          return [{ key, service: connection.service!, name: connection.label, source: 'squire' as const,
+            aliases: [connection.service!], intents: ['twilio', 'plivo', 'telnyx'].includes(key)
+              ? ['send texts', 'text messages', 'sms'] : [] }];
+        });
+        for (const entry of view.firstPartyIntegrations ?? []) status.set(entry.key, entry.status);
+        return index.search(query, status, personal) as Output<Name>;
+      }
       case 'connectMcpServer':
         return (await this.connectMcpServer(
           input as Input<'connectMcpServer'>,
@@ -1662,6 +1697,62 @@ export class DaemonService {
           input as Input<'connectApp'>,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'connect':
+        return (await this.connectService(input as Input<'connect'>, authenticatedAgentId)) as Output<Name>;
+      case 'completeAppConnectionJob': {
+        const request = input as Input<'completeAppConnectionJob'>;
+        const outcome = request.outcome.status === 'approval'
+          ? { ...request.outcome, expiresAt: request.outcome.expiresAt ?? Date.now() + 24 * 60 * 60_000 }
+          : request.outcome;
+        let approvalMessageId: string | undefined;
+        const job = await this.database.transaction(async database => {
+          const job = await saveAppConnectionOutcome(database,
+            authenticatedAgentId, request.appId, request.jobId, outcome);
+          if (outcome.decision) {
+          const actor = (await database.query<{ name: string }>('SELECT name FROM identities WHERE id=$1', [authenticatedAgentId])).rows[0]!;
+          await systemLine(database, {
+            id: createHash('sha256').update(`app-connection-decision:${job.jobId}:${outcome.decision.approvalId}`).digest('hex'),
+            roomId: job.roomId, subject: { kind: 'system', name: 'Trusty Squire' },
+            verb: outcome.decision.status, object: `Connect ${job.name}`,
+            presentation: 'card', cardType: 'squire-approval-decision',
+            card: { approvalId: outcome.decision.approvalId, tool: 'operate_drive',
+              title: `Connect ${job.name}`, detail: 'Squire received the owner’s decision.',
+              status: outcome.decision.status, agentId: authenticatedAgentId, agentName: actor.name },
+          });
+          }
+          if (outcome.status === 'approval') {
+            const receipt = await this.squireApproval({ roomId: job.roomId, tool: 'operate_drive',
+              title: `Connect ${job.name}`, detail: 'Complete Squire’s approval to finish connecting this app.',
+              approvalUrl: outcome.approvalUrl, linkKind: 'approval',
+              ...(outcome.approvalId ? { approvalId: outcome.approvalId } : {}),
+              expiresAt: outcome.expiresAt }, authenticatedAgentId, database);
+            approvalMessageId = receipt.id;
+          }
+          return job;
+        });
+        if (approvalMessageId) {
+          const receipt = (await this.database.query<{ room_id: string }>(
+            'SELECT room_id FROM messages WHERE id=$1', [approvalMessageId])).rows[0];
+          if (receipt) this.live.publish({ type: 'invalidate', roomId: receipt.room_id, reason: 'message', agentId: authenticatedAgentId });
+        } else {
+          const parent = (await this.database.query<CommandRow>(
+            `SELECT * FROM agent_commands WHERE id=$1 AND state='complete'`, [job.commandId])).rows[0];
+          if (parent) {
+            await this.database.transaction(async database => {
+              const source = await systemLine(database, { id: `app-connection:${job.jobId}:${request.outcome.status}`,
+                roomId: job.roomId, subject: { kind: 'system', name: job.name },
+                verb: request.outcome.status === 'ready' ? 'connected' : 'could not connect',
+                object: job.name, consequence: request.outcome.status === 'ready'
+                  ? 'The request can continue.' : 'Reconnect to retry.' });
+              if (source.inserted) await createAgentCommand(database, { roomId: job.roomId,
+                agentId: authenticatedAgentId, sourceMessageId: source.id, reason: 'app_connected',
+                parent, retainDepth: true });
+            });
+          }
+        }
+        this.live.publish({ type: 'invalidate', roomId: job.roomId, reason: 'app-connected' });
+        return this.writeResult() as Output<Name>;
+      }
       case 'listAppTools':
         return (await this.listAppTools(input as Input<'listAppTools'>,
           authenticatedAgentId)) as Output<Name>;
@@ -2055,6 +2146,10 @@ export class DaemonService {
     if (squireMachineId(input.connectorId)) {
       await this.database.transaction(async (db) => {
         await reportSquireWork(db, agentId, { ...input, steps: [] }, true);
+        const owner = (await db.query<{ owner_id: string; machine_id: string }>(
+          'SELECT owner_id,COALESCE(machine_id,agent_id) machine_id FROM agents WHERE agent_id=$1', [agentId])).rows[0]!;
+        await settleFirstPartySignIn(db, owner.owner_id, `machine:trusty-squire:${owner.machine_id}`);
+        await notifyConnectorAssignment(db, agentId);
       });
       return { id: input.connectorId, createdAt: Math.floor(Date.now() / 1000) };
     }
@@ -2103,8 +2198,19 @@ export class DaemonService {
         ],
       );
       let registryResume: { roomId: string; agentId: string } | undefined;
+      const unifiedCard = row.connector_type === 'registry-mcp' && (await database.query(
+        `SELECT 1 FROM messages WHERE card_type='app-sign-in'
+          AND card->>'connectKind'='registry-mcp' AND card->>'connectorId'=$1 LIMIT 1`, [row.id])).rowCount > 0;
+      if (row.connector_type === 'tailscale')
+        await settleFirstPartySignIn(database, row.owner_identity_id,
+          `machine:tailscale:${row.machine_id ?? row.helper_agent_id}`);
+      if (row.connector_type === 'registry-mcp') {
+        const app = (await database.query<{ app_key: string }>(
+          'SELECT app_key FROM workspace_apps WHERE connector_id=$1', [row.id])).rows[0];
+        if (app) await settleFirstPartySignIn(database, row.owner_identity_id, app.app_key);
+      }
       if (
-        row.connector_type === 'registry-mcp' &&
+        row.connector_type === 'registry-mcp' && !unifiedCard &&
         row.install_agent_id &&
         row.install_room_id &&
         row.install_command_id
@@ -2256,6 +2362,9 @@ export class DaemonService {
     signIn: NonNullable<Input<'postConnectorStatus'>['signIn']>,
   ): Promise<void> {
     if (signIn.method !== 'oauth') return;
+    const unifiedCard = await this.database.query(`SELECT 1 FROM messages WHERE card_type='app-sign-in'
+      AND card->>'connectKind'='registry-mcp' AND card->>'connectorId'=$1 AND card->>'status'='pending' LIMIT 1`, [row.id]);
+    if (unifiedCard.rowCount) return;
     const target = (
       await this.database.query<{
         install_room_id: string;
@@ -4471,7 +4580,7 @@ export class DaemonService {
     if (line.inserted) this.live.publish({ type: 'invalidate', roomId, reason: 'message', agentId });
   }
 
-  private async squireApproval(input: Input<'postSquireApproval'>, agentId: string) {
+  private async squireApproval(input: Input<'postSquireApproval'>, agentId: string, database = this.database) {
     if (!input.tool.trim() || input.tool.length > 80) throw new Error('Squire tool is invalid');
     if (!input.title.trim() || input.title.length > 120)
       throw new Error('Squire approval title is invalid');
@@ -4504,7 +4613,7 @@ export class DaemonService {
     )
       throw new Error('Squire approval URL is invalid');
     const context = (
-      await this.database.query<{
+      await database.query<{
         workspace_id: string;
         owner_id: string;
         agent_name: string;
@@ -4521,13 +4630,13 @@ export class DaemonService {
       )
     ).rows[0];
     if (!context) throw new Error('agent not found');
-    const member = await this.database.query(
+    const member = await database.query(
       `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL
        AND identity_id=$2 AND removed_at IS NULL`,
       [context.workspace_id, context.owner_id],
     );
     if (!member.rowCount) throw new Error('resource owner access denied');
-    const roomId = await ensureSystemDirectMessageRoom(this.database, context.workspace_id, context.owner_id);
+    const roomId = await ensureSystemDirectMessageRoom(database, context.workspace_id, context.owner_id);
     const dedupeKey = input.approvalId?.trim() || approvalUrl.toString();
     const messageId = createHash('sha256')
       .update(`squire-approval:v1:${context.workspace_id}:${agentId}:${dedupeKey}`)
@@ -4540,7 +4649,7 @@ export class DaemonService {
       ...(context.agent_handle ? { handle: context.agent_handle } : {}),
       ...(context.agent_avatar ? { avatar: context.agent_avatar } : {}),
     };
-    const line = await systemLine(this.database, {
+    const line = await systemLine(database, {
       id: messageId,
       roomId,
       authorId: SYSTEM_IDENTITY_ID,
@@ -4571,7 +4680,7 @@ export class DaemonService {
     // Squire was driving is marked, so a second registry row in the same turn —
     // or an unrelated Squire approval — never suppresses its own owner handoff.
     if (input.signInUrl) {
-      await this.database.query(
+      await database.query(
         `UPDATE workspace_connectors
          SET registry_squire_relayed_attempt=sign_in->>'attemptId',updated_at=now()
          WHERE connector_type='registry-mcp' AND status='installing'
@@ -4580,7 +4689,7 @@ export class DaemonService {
         [agentId, input.roomId, input.signInUrl],
       );
     }
-    if (line.inserted)
+    if (line.inserted && database === this.database)
       this.live.publish({ type: 'invalidate', roomId, reason: 'message', agentId });
     return { id: line.id, createdAt: Math.floor(Date.now() / 1000) };
   }
@@ -5765,7 +5874,7 @@ export class DaemonService {
    * retains its requester/yolo rule. Credential files and unread scripts still
    * require a person. Budget and repository asks are retired.
    */
-  private async requestAgentGrant(input: Input<'requestAgentGrant'>, agentId: string) {
+  private async requestAgentGrant(input: Input<'requestAgentGrant'>, agentId: string, requireOwnerApproval = false) {
     if (!isRequestableAgentGrantKind(input.kind)) throw new Error('grant kind is invalid');
     if (typeof input.target !== 'string' || !input.target.trim())
       throw new Error('grant target is required');
@@ -5883,6 +5992,7 @@ export class DaemonService {
     // The person who started the turn is provenance, not the resource owner.
     // Wallet consent and the two command hard stops keep their existing gates.
     const auto =
+      !requireOwnerApproval &&
       kind !== 'shared_asset' &&
       escalations.length === 0 &&
       (kind === 'mcp' && target.startsWith('app:')
@@ -6575,6 +6685,13 @@ export class DaemonService {
         state: row.state,
       })),
       registryServers,
+      firstPartyIntegrations: await Promise.all(FIRST_PARTY_INTEGRATIONS.map(async entry => {
+        const provider = entry.provider({ linkWallet: this.linkWallet });
+        const account = await provider?.status(context.owner.pubkey, this.database);
+        return { key: entry.key, name: entry.name,
+          status: !provider || account?.ineligible ? 'broken' as const
+            : account?.connected ? 'connected' as const : 'not-connected' as const };
+      })),
       apps: (await readOwnerApps(this.database, context.owner.pubkey, this.composio)).map(
         (app) => ({
           appId: app.appId,
@@ -6601,10 +6718,205 @@ export class DaemonService {
     return { servers: await this.mcpRegistry.search(query, Math.min(10, limit)) };
   }
 
-  /**
-   * connect_app: the one front door. The server chooses the route in its
-   * fixed order (`app-connections.ts`) and the agent only follows `next`.
-   */
+  warmConnectorIndex(): Promise<void> {
+    return connectorIntentIndex(this.mcpRegistry, this.composio).refresh();
+  }
+
+  private async connectService(input: Input<'connect'>, agentId: string): Promise<Output<'connect'>> {
+    const service = typeof input.service === 'string' ? input.service.trim() : '';
+    const reason = typeof input.reason === 'string' ? input.reason.trim() : '';
+    if (!service || service.length > APP_INPUT_MAX_LENGTH || !reason || reason.length > 500)
+      throw new Error('service and reason are required');
+    const continuation = normalizeAppContinuation(input.continuation);
+    const context = await this.offerContext(input.roomId, agentId);
+    const commandId = this.authorizedCommand?.id;
+    const postCard = async (database: SqlDatabase, card: {
+      appId: string; appKey: string; name: string; connectorId?: string;
+      connectKind?: string; resumeOnConnect?: boolean;
+    }) => {
+      await database.transaction(async database => {
+        await database.query('SELECT pg_advisory_xact_lock(hashtext($1))',
+          [`app-sign-in:${input.roomId}:${card.appId}:${context.owner.pubkey}`]);
+        const existing = await database.query(`SELECT 1 FROM messages WHERE room_id=$1
+          AND card_type='app-sign-in' AND card->>'appId'=$2 AND card->>'ownerId'=$3
+          AND card->>'status'='pending'`, [input.roomId, card.appId, context.owner.pubkey]);
+        if (existing.rowCount) return;
+        await systemLine(database, { roomId: input.roomId,
+          subject: { kind: 'agent', id: agentId, name: context.agent.name },
+          verb: 'needs a connection to', object: card.name, consequence: 'Sign in to continue the request.',
+          presentation: 'card', cardType: 'app-sign-in', card: { ...card,
+            ownerId: context.owner.pubkey, agentId, commandId, status: 'pending',
+            ...(continuation ? { continuation } : {}) } });
+      });
+      this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'app-sign-in', agentId });
+    };
+    const afterCommit = async (result: Output<'connect'>,
+      finish: (database: SqlDatabase) => Promise<void>) => {
+      if (this.afterCommit) this.afterCommit(finish);
+      else await finish(this.database);
+      return result;
+    };
+    const machine = async (kind: 'trusty-squire' | 'tailscale', dependent = false): Promise<Output<'connect'>> => {
+      const name = connectorDisplayName(kind);
+      let connectorId: string;
+      if (kind === 'trusty-squire') {
+        connectorId = squireMachineAddress(context.machine.machineId);
+        const status = await squireWorkStatus(this.database, agentId);
+        if (status.status === 'connected' && !input.reconnect && !input.switchGoogleAccount)
+          return { status: 'ready', app: name, connectorId, next: `${name} is ready.` };
+        await this.database.transaction(database => queueSquireWork(database, agentId,
+          { install: true, ...(input.switchGoogleAccount ? { forceReloginProvider: 'google' } : {}) }));
+      } else {
+        const existing = (await this.database.query<{ id: string; status: string }>(
+          `SELECT id,status FROM workspace_connectors WHERE owner_identity_id=$1
+            AND connector_type='tailscale' AND machine_id=$2 ORDER BY updated_at DESC LIMIT 1`,
+          [context.owner.pubkey, context.machine.machineId])).rows[0];
+        if (existing?.status === 'connected' && !input.reconnect)
+          return { status: 'ready', app: name, connectorId: existing.id, next: `${name} is ready.` };
+        connectorId = existing?.id ?? randomUUID();
+        if (existing) await this.database.query(`UPDATE workspace_connectors SET status='installing',
+          sign_in=NULL,status_error=NULL,helper_agent_id=$2,pairing_generation=pairing_generation+1,
+          updated_at=now() WHERE id=$1`, [connectorId, agentId]);
+        else await this.database.query(`INSERT INTO workspace_connectors
+          (id,workspace_id,owner_identity_id,connector_type,helper_agent_id,machine_id,status)
+          VALUES($1,$2,$3,'tailscale',$4,$5,'installing')`,
+          [connectorId, context.workspaceId, context.owner.pubkey, agentId, context.machine.machineId]);
+        await notifyConnectorAssignment(this.database, agentId);
+      }
+      const result: Output<'connect'> = { status: 'unavailable', app: name, connectorId,
+        next: 'The server is connecting this tool. Its completion will resume the request.' };
+      return afterCommit(result, async database => {
+        const status = await waitForConnection(async () => {
+          const value = kind === 'trusty-squire' ? await squireWorkStatus(database, agentId)
+            : (await database.query<{ status: string; sign_in: ConnectorStatus['signIn']; status_error: string | null }>(
+              'SELECT status,sign_in,status_error FROM workspace_connectors WHERE id=$1', [connectorId])).rows[0];
+          if (!value) return undefined;
+          const signIn = 'sign_in' in value ? value.sign_in : value.signIn;
+          if (value.status === 'connected' || value.status === 'error' || signIn?.url)
+            return { status: value.status, signIn };
+          return undefined;
+        });
+        if (!status) return;
+        if (status.status === 'connected') { Object.assign(result, { status: 'ready', next: `${name} is ready.` }); return; }
+        if (!status.signIn?.url) { Object.assign(result, { status: 'error', next: `${name} could not connect. Reconnect to retry.` }); return; }
+        const digest = createHash('sha256').update(`${context.owner.pubkey}:${connectorId}`).digest('hex');
+        const appId = `${digest.slice(0, 8)}-${digest.slice(8, 12)}-4${digest.slice(13, 16)}-8${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
+        await postCard(database, { appId, appKey: `machine:${kind}:${context.machine.machineId}`,
+          name, connectorId, connectKind: kind, resumeOnConnect: !dependent });
+        Object.assign(result, { status: 'needs_sign_in', appId, next: `The ${name} sign-in card is ready. Wait for the owner.` });
+      });
+    };
+    const normalized = service.toLowerCase();
+    if (['squire', 'trusty-squire', 'trusty squire'].includes(normalized)) return machine('trusty-squire');
+    if (normalized === 'tailscale') return machine('tailscale');
+    if (normalized === 'wallet') {
+      if ((await delegationView(this.database, context.owner.pubkey)).active)
+        return { status: 'ready', app: 'Wallet', next: 'Wallet is ready.' };
+      const offer = await this.offerConnector({ roomId: input.roomId, connectorType: 'wallet', reason }, agentId, true);
+      if (commandId) await this.database.query('UPDATE connector_offers SET command_id=$2 WHERE id=$1', [offer.offerId, commandId]);
+      return { status: 'needs_approval', app: 'Wallet', next: 'Wait for the owner to approve connecting their wallet.' };
+    }
+    if (input.switchGoogleAccount) throw new Error('switchGoogleAccount applies only to Trusty Squire');
+    let outcome: Output<'connectApp'>;
+    if (!firstPartyIntegration(service)) {
+      const key = appIdentity(service)?.key;
+      const existing = key && await hasExistingAppRoute(this.database, context.owner.pubkey, key);
+      if (!existing) {
+        let manifests;
+        try { manifests = await this.mcpRegistry.search(service); }
+        catch { return { status: 'unavailable', app: service, next: 'The Registry could not be checked. Try again shortly.' }; }
+        const match = manifests.find(entry => entry.name.toLowerCase() === normalized
+          || entry.title?.toLowerCase() === normalized || entry.websiteUrl && appIdentity(entry.websiteUrl)?.key === key);
+        if (match) {
+          const installed = await this.connectMcpServer({ ...input, serverName: match.name,
+            version: match.version, reason }, agentId);
+          if (installed.status === 'unsupported') return { status: 'unavailable', app: service, next: installed.reason };
+          const app = (await this.database.query<{ id: string; app_key: string }>(
+            'SELECT id,app_key FROM workspace_apps WHERE connector_id=$1 AND owner_identity_id=$2',
+            [installed.connectorId, context.owner.pubkey])).rows[0];
+          outcome = { status: installed.status, app: service, transport: 'registry-mcp',
+            connectorId: installed.connectorId, appId: app?.id, appKey: app?.app_key, next: 'The server is connecting the Registry tool.' };
+        } else outcome = await this.connectAppFrontDoor({ ...input, app: service }, agentId);
+      } else outcome = await this.connectAppFrontDoor({ ...input, app: service }, agentId);
+    } else outcome = await this.connectAppFrontDoor({ ...input, app: service }, agentId);
+    const result: Output<'connect'> = { ...outcome, status: outcome.status === 'connected' ? 'ready'
+      : outcome.status === 'needs_sign_in' ? 'needs_sign_in' : outcome.status === 'unavailable' ? 'unavailable' : 'error',
+      next: outcome.status === 'connected' ? `${outcome.app} is ready.`
+        : outcome.status === 'unavailable' || outcome.status === 'error' || outcome.transport === 'composio' || firstPartyIntegration(service) ? outcome.next
+        : 'The server is connecting this app. Its completion will resume the request.' };
+    delete (result as { authorizationUrl?: string }).authorizationUrl;
+    if (result.status === 'ready' || firstPartyIntegration(service) || outcome.transport === 'composio') return result;
+    if (outcome.transport === 'registry-mcp' && outcome.connectorId && outcome.appId && outcome.appKey) {
+      return afterCommit(result, async database => {
+        const connector = await waitForConnection(async () => {
+          const row = (await database.query<{ status: string; sign_in: ConnectorStatus['signIn'] }>(
+            'SELECT status,sign_in FROM workspace_connectors WHERE id=$1', [outcome.connectorId])).rows[0];
+          return row && (row.status === 'connected' || row.status === 'error' || row.sign_in?.url) ? row : undefined;
+        });
+        if (!connector) return;
+        if (connector.status === 'connected') { Object.assign(result, { status: 'ready', next: `${outcome.app} is ready.` }); return; }
+        if (!connector.sign_in?.url) { Object.assign(result, { status: 'error', next: 'The Registry tool could not connect. Reconnect to retry.' }); return; }
+        await postCard(database, { appId: outcome.appId!, appKey: outcome.appKey!, name: outcome.app,
+          connectorId: outcome.connectorId, connectKind: 'registry-mcp' });
+        Object.assign(result, { status: 'needs_sign_in', next: 'The sign-in card is ready. Wait for the owner.' });
+      });
+    }
+    if (!outcome.appId || !outcome.appKey || !commandId) return result;
+    const previousJob = await readAppConnectionJob(this.database, agentId, outcome.appId);
+    const continuing = previousJob && ['queued', 'running', 'approval'].includes(previousJob.state) && !input.reconnect;
+    let jobId = continuing ? previousJob.jobId : undefined;
+    if (!continuing) {
+      const target = `connection-install:${outcome.appKey}`;
+      const consent = (await this.database.query<{ id: string; status: string }>(
+        `SELECT grant_row.id,grant_row.status FROM agent_grants grant_row JOIN agents agent ON agent.agent_id=grant_row.agent_id
+          WHERE agent.owner_id=$1 AND grant_row.kind='mcp' AND grant_row.target=$2 AND NOT grant_row.auto
+            AND (grant_row.expires_at IS NULL OR grant_row.expires_at>now())
+          ORDER BY grant_row.created_at DESC LIMIT 1`, [context.owner.pubkey, target])).rows[0];
+      if (!consent || consent.status === 'revoked') {
+        const asked = await this.requestAgentGrant({ ...input, kind: 'mcp', target,
+          reason: `Connect ${outcome.app} through Trusty Squire for this request` }, agentId, true);
+        await this.database.query('UPDATE agent_grants SET command_id=$2 WHERE id=$1', [asked.grantId, commandId]);
+        Object.assign(result, { status: 'needs_approval', grantId: asked.grantId, next: 'Wait for the owner’s connection approval.' });
+        return result;
+      }
+      if (consent.status !== 'approved' && consent.status !== 'once') {
+        Object.assign(result, { status: consent.status === 'pending' ? 'needs_approval' : 'unavailable',
+          grantId: consent.id, next: consent.status === 'pending' ? 'Wait for the owner’s connection approval.' : 'The owner declined this connection.' });
+        return result;
+      }
+      const queued = await queueAppConnectionJob(this.database, agentId, { appId: outcome.appId,
+        service: outcome.appKey, name: outcome.app, noApi: outcome.transport === 'squire-browser',
+        roomId: input.roomId, commandId, url: appIdentity(service)?.domain ? `https://${appIdentity(service)!.domain}`
+          : `https://www.google.com/search?${new URLSearchParams({ q: `${service} official website` })}` }, input.reconnect === true);
+      jobId = queued.jobId;
+      if (consent.status === 'once') {
+        const consumed = await this.database.query(`UPDATE agent_grants SET expires_at=now()
+          WHERE id=$1 AND status='once' AND (expires_at IS NULL OR expires_at>now()) RETURNING id`, [consent.id]);
+        if (!consumed.rowCount) throw new Error('Connection consent was already used');
+      }
+    }
+    if ((await machineSquireReport(this.database, context.owner.pubkey, context.machine.machineId))?.status !== 'connected')
+      return machine('trusty-squire', true);
+    return afterCommit(result, async database => {
+      const job = await waitForConnection(async () => {
+        const row = await readAppConnectionJob(database, agentId, outcome.appId!);
+        if (row && row.jobId !== jobId) return { status: 'error' as const, reason: 'This connection was replaced. Reconnect to retry.' };
+        return row?.outcome;
+      });
+      if (!job) {
+        const failed = { status: 'error' as const, reason: 'The connection worker did not finish. Reconnect to retry.' };
+        if (jobId) await database.transaction(database => saveAppConnectionOutcome(database, agentId, outcome.appId!, jobId!, failed));
+        Object.assign(result, { status: 'error', next: failed.reason });
+        return;
+      }
+      Object.assign(result, job.status === 'ready' ? { status: 'ready', next: `${outcome.app} is ready.` }
+        : job.status === 'approval' ? { status: 'needs_approval', approvalUrl: job.approvalUrl,
+          next: 'Squire’s approval card is ready. Wait for the owner.' }
+        : { status: 'error', next: job.reason });
+    });
+  }
+
+  /** Shared app routing for connect and its hidden one-release alias. */
   private async connectAppFrontDoor(
     input: Input<'connectApp'>,
     agentId: string,
@@ -6615,6 +6927,38 @@ export class DaemonService {
       throw new Error('app and reason are required');
     const continuation = normalizeAppContinuation(input.continuation);
     const context = await this.offerContext(input.roomId, agentId);
+    const firstParty = firstPartyIntegration(app);
+    if (firstParty) {
+      const provider = firstParty.provider({ linkWallet: this.linkWallet });
+      if (!provider) return { status: 'unavailable', app: firstParty.name,
+        appKey: firstParty.key, next: `${firstParty.name} sign-in is unavailable. Try again after its server configuration is restored.` };
+      const account = await provider.status(context.owner.pubkey, this.database);
+      if (account.connected && !input.reconnect) return { status: 'connected', app: firstParty.name,
+        appKey: firstParty.key, next: `${firstParty.name} is ready.` };
+      await this.database.transaction(async database => {
+        await database.query('SELECT pg_advisory_xact_lock(hashtext($1))',
+          [`app-sign-in:${input.roomId}:${firstParty.appId}:${context.owner.pubkey}`]);
+        const exists = await database.query(`SELECT 1 FROM messages WHERE room_id=$1
+          AND card_type='app-sign-in' AND card->>'appKey'=$2 AND card->>'ownerId'=$3
+          AND card->>'status'='pending' LIMIT 1`, [input.roomId, firstParty.key, context.owner.pubkey]);
+        if (exists.rowCount) return;
+        await systemLine(database, { roomId: input.roomId,
+          subject: { kind: 'agent', id: agentId, name: context.agent.name },
+          verb: 'needs a connection to', object: firstParty.name,
+          consequence: 'Sign in to continue the request.', presentation: 'card', cardType: 'app-sign-in',
+          card: { appId: firstParty.appId, appKey: firstParty.key, name: firstParty.name,
+            ownerId: context.owner.pubkey, agentId, status: 'pending',
+            commandId: this.authorizedCommand?.id ?? null, ...(continuation ? { continuation } : {}) } });
+        await database.query(`UPDATE workspace_apps SET state='disconnected',updated_at=now()
+          WHERE owner_identity_id=$1 AND app_key='stripelinklinkcom'
+          AND transport='squire-api' AND state='active'
+          AND NOT EXISTS (SELECT 1 FROM workspace_connections WHERE owner_identity_id=$1
+            AND service='stripelinklinkcom' AND state='active')`, [context.owner.pubkey]);
+      });
+      this.live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'app-sign-in', agentId });
+      return { status: 'needs_sign_in', app: firstParty.name, appKey: firstParty.key,
+        appId: firstParty.appId, next: `The ${firstParty.name} sign-in card is ready. Wait for the owner to sign in.` };
+    }
     const outcome = await connectApp(this.database, this.mcpRegistry, {
       workspaceId: context.workspaceId,
       ownerId: context.owner.pubkey,
@@ -6908,6 +7252,7 @@ export class DaemonService {
   private async offerConnector(
     input: Input<'offerConnector'>,
     agentId: string,
+    unified = false,
   ): Promise<Output<'offerConnector'>> {
     if (typeof input.roomId !== 'string' || !input.roomId) throw new Error('roomId is required');
     if (!isOfferableConnectorKind(input.connectorType))
@@ -6929,7 +7274,8 @@ export class DaemonService {
       );
     const intent = switching ? 'switch' : 'add';
     const provider = switching ? 'google' : undefined;
-    const context = await this.offerContext(input.roomId, agentId);
+    const offeredContext = await this.offerContext(input.roomId, agentId);
+    const context = unified ? { ...offeredContext, addressee: offeredContext.owner, isCorner: false } : offeredContext;
     if (context.isCorner)
       throw new Error('connector offer is invalid: offer a tool from the Room, not from a corner');
     const connectorName = connectorDisplayName(connectorType);
@@ -7945,6 +8291,9 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   searchMcpRegistry: true,
   connectMcpServer: true,
   connectApp: true,
+  connect: true,
+  findConnectors: true,
+  completeAppConnectionJob: true,
   listAppTools: true,
   executeAppTool: true,
   offerConnector: true,

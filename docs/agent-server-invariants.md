@@ -29,8 +29,8 @@ Paths and commands below are relative to the repository root. Read these invaria
 ## External apps and MCP
 
 - **Connected app tools execute only at the server boundary.** `apps/server/src/app-connections.ts` resolves the connection; Body's `list_app_tools`/`execute_app_tool` call `DaemonService` with turn authority and never hold provider tokens.
-- **Registry MCP installation is discovery, never authority** (`mcp-registry.ts`; OAuth in `apps/body/src/registry-mcp.ts`).
-- **Connection receipts DM only what needs a human** (`ConnectionUsageRecord.eventClass`). A missing tool is offered in-Room via `offer_connector`. `pairConnector` re-arms a conflicting row. A Squire `google_session` wall becomes an in-Room reconnect card (`npm run prove:squire-login-wall`).
+- **Registry discovery and installation use the connection policy** (`mcp-registry.ts`; OAuth in `apps/body/src/registry-mcp.ts`).
+- **Connection receipts DM only what needs a human** (`ConnectionUsageRecord.eventClass`). Agents use `find_connectors` to settle a service and `connect` for server-owned setup in any surface. Legacy `offer_connector` and `connect_app` aliases stay hidden for one release. `pairConnector` re-arms a conflicting row. A Squire `google_session` wall becomes an in-Room reconnect card (`npm run prove:squire-login-wall`).
 - `external-mcp-capabilities.ts` stores only the profiles `squire-credential-use`/`squire-app-access`; Squire spend verbs need an owner-signed one-use envelope.
 
 ## Object storage

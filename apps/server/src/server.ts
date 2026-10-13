@@ -1415,6 +1415,7 @@ export function createBeelineServer(options: ServerOptions): Server {
       });
     },
   );
+  server.once('listening', () => { void options.daemon.warmConnectorIndex?.(); });
   return server;
 }
 
@@ -1486,6 +1487,15 @@ async function route(
       url.searchParams.get('error') ?? undefined,
       url.searchParams.get('error_description') ?? undefined,
     );
+    const webOrigin = appSignInWebOrigin(request, options);
+    if (webOrigin) {
+      const destination = new URL('/beeline/settings/workbench', webOrigin);
+      response.writeHead(302, { location: destination.toString(),
+        'set-cookie': `${appSignInReturnCookie}=; Path=/v1; Max-Age=0; HttpOnly; Secure; SameSite=Lax`,
+        'cache-control': 'no-store', 'referrer-policy': 'no-referrer' });
+      response.end();
+      return;
+    }
     if (/\b(?:Android|iPhone|iPad|iPod)\b/i.test(request.headers['user-agent'] ?? '')) {
       const appReturn = new URL('beeline://beeline/settings/workbench');
       if (result.ownerId) appReturn.searchParams.set('viewerId', result.ownerId);
@@ -1514,13 +1524,24 @@ async function route(
     // send this browser back to the web app instead of the native app scheme.
     const authorization = url.searchParams.get('authorization') ?? '';
     const webOrigin = url.searchParams.get('return') ?? '';
-    if (!isAppSignInLink(authorization) || !options.webAppOrigins?.includes(webOrigin)) {
+    let isLinkSignIn = false;
+    try {
+      const provider = new URL(authorization);
+      isLinkSignIn = provider.origin === 'https://login.link.com' && provider.pathname === '/auth'
+        && !provider.username && !provider.password;
+    } catch { /* Invalid URLs are refused below. */ }
+    const storedSignIn = !isAppSignInLink(authorization) && !isLinkSignIn && authorization.length <= 4096
+      ? (await options.database.query(`SELECT 1 FROM workspace_connectors
+          WHERE status='installing' AND sign_in->>'url'=$1
+          UNION ALL SELECT 1 FROM agents WHERE squire_work->>'install'='true'
+            AND squire_work->'signIn'->>'url'=$1 LIMIT 1`, [authorization])).rowCount > 0 : false;
+    if (!(isAppSignInLink(authorization) || isLinkSignIn || storedSignIn) || !options.webAppOrigins?.includes(webOrigin)) {
       json(response, 400, { error: 'Invalid app sign-in start' });
       return;
     }
     response.writeHead(302, {
       location: authorization,
-      'set-cookie': `${appSignInReturnCookie}=${encodeURIComponent(webOrigin)}; Path=/v1/apps/oauth; Max-Age=900; HttpOnly; Secure; SameSite=Lax`,
+      'set-cookie': `${appSignInReturnCookie}=${encodeURIComponent(webOrigin)}; Path=/v1; Max-Age=900; HttpOnly; Secure; SameSite=Lax`,
       'cache-control': 'no-store',
       'referrer-policy': 'no-referrer',
       'x-content-type-options': 'nosniff',
@@ -1540,7 +1561,7 @@ async function route(
       webReturn.searchParams.set('appSignInSession', sessionUri);
       response.writeHead(302, {
         location: webReturn.toString(),
-        'set-cookie': `${appSignInReturnCookie}=; Path=/v1/apps/oauth; Max-Age=0; HttpOnly; Secure; SameSite=Lax`,
+        'set-cookie': `${appSignInReturnCookie}=; Path=/v1; Max-Age=0; HttpOnly; Secure; SameSite=Lax`,
         'cache-control': 'no-store',
         'referrer-policy': 'no-referrer',
         'x-content-type-options': 'nosniff',
@@ -1588,6 +1609,14 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     const completed = code
       ? await options.registryMcpOAuth.complete(state, code)
       : (await options.registryMcpOAuth.cancel(state), false);
+    const webOrigin = appSignInWebOrigin(request, options);
+    if (webOrigin) {
+      response.writeHead(302, { location: new URL('/beeline/settings/workbench', webOrigin).toString(),
+        'set-cookie': `${appSignInReturnCookie}=; Path=/v1; Max-Age=0; HttpOnly; Secure; SameSite=Lax`,
+        'cache-control': 'no-store', 'referrer-policy': 'no-referrer' });
+      response.end();
+      return;
+    }
     response.writeHead(completed ? 200 : 400, {
       'content-type': 'text/html; charset=utf-8',
       'cache-control': 'no-store',

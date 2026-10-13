@@ -10,7 +10,7 @@ const execFileAsync = promisify(execFile);
 const roots: string[] = [];
 afterEach(async () => Promise.all(roots.splice(0).map((path) => rm(path, { recursive: true, force: true }))));
 
-it('keeps unpublished source and records its HEAD while pruning only ignored build output', async () => {
+it.each([true, false])('keeps unpublished source and records its HEAD; pruning eligible=%s', async eligible => {
   const root = await mkdtemp(resolve(tmpdir(), 'beeline-recovery-'));
   roots.push(root);
   const checkout = resolve(root, 'beeline', 'corners', 'corner-recovery');
@@ -38,13 +38,19 @@ it('keeps unpublished source and records its HEAD while pruning only ignored bui
   const saved = await preserveUnpublishedCornerWorktree(
     { path: checkout, cornerId: 'corner-recovery', branch: 'main' },
     'has unpushed commits',
+    () => eligible,
   );
-  expect(saved.pruned).toEqual(expect.arrayContaining(['apps/mobile/node_modules', 'target']));
+  expect(saved.pruned).toEqual(eligible ? expect.arrayContaining(['apps/mobile/node_modules', 'target']) : []);
   expect(JSON.parse(await readFile(saved.pointer, 'utf8'))).toMatchObject({
     checkout, head, branch: 'main', cornerId: 'corner-recovery',
   });
   expect(await readFile(resolve(checkout, 'source.ts'), 'utf8')).toBe('recover me\n');
   expect(await readFile(resolve(checkout, 'build', 'valuable-untracked.txt'), 'utf8')).toBe('keep');
+  if (!eligible) {
+    await expect(access(resolve(checkout, 'target'))).resolves.toBeUndefined();
+    await expect(access(resolve(checkout, 'apps', 'mobile', 'node_modules'))).resolves.toBeUndefined();
+    return;
+  }
   await expect(access(resolve(checkout, 'target'))).rejects.toMatchObject({ code: 'ENOENT' });
   await expect(access(resolve(checkout, 'apps', 'mobile', 'node_modules'))).rejects.toMatchObject({ code: 'ENOENT' });
 });

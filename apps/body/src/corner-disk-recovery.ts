@@ -8,6 +8,32 @@ const execFileAsync = promisify(execFile);
 const GENERATED_DIRS = new Set([
   'node_modules', 'target', 'build', 'dist', '.next', '.turbo', '.expo',
 ]);
+// One preservation job across all hosted agents: a refusal burst must not
+// fan out Git processes and filesystem walks. Jobs start on an event-loop turn,
+// never in the reconciliation call that records the refusal.
+const preservationJobs = new Map<string, () => Promise<void>>();
+let preserving = false;
+
+export function queueCornerPreservation(key: string, job: () => Promise<void>): void {
+  preservationJobs.set(key, job);
+  if (preserving) return;
+  preserving = true;
+  setImmediate(() => { void drainPreservationJobs(); });
+}
+
+async function drainPreservationJobs(): Promise<void> {
+  try {
+    while (preservationJobs.size) {
+      const [key, job] = preservationJobs.entries().next().value!;
+      preservationJobs.delete(key);
+      await job().catch(error => console.error('[corner-recovery] preservation failed:', error));
+      await new Promise<void>(resolveYield => setImmediate(resolveYield));
+    }
+  } finally {
+    preserving = false;
+  }
+}
+
 const MAX_DIRECTORY_DEPTH = 4;
 const MAX_VISITED_DIRECTORIES = 5_000;
 
@@ -57,6 +83,7 @@ async function ignoredAndUntracked(checkout: string, path: string): Promise<bool
 export async function preserveUnpublishedCornerWorktree(
   worktree: UnpublishedCornerWorktree,
   reason: string,
+  shouldContinue: () => boolean = () => true,
 ): Promise<{ pointer: string; pruned: string[] }> {
   const checkout = resolve(worktree.path);
   const pointer = cornerRecoveryPointerPath(worktree);
@@ -78,7 +105,7 @@ export async function preserveUnpublishedCornerWorktree(
   const pruned: string[] = [];
   const pending: Array<{ path: string; depth: number }> = [{ path: checkout, depth: 0 }];
   let visited = 0;
-  while (pending.length) {
+  while (pending.length && shouldContinue()) {
     const current = pending.shift()!;
     if (++visited > MAX_VISITED_DIRECTORIES) break;
     if (current.depth >= MAX_DIRECTORY_DEPTH) continue;
@@ -86,7 +113,7 @@ export async function preserveUnpublishedCornerWorktree(
       if (!entry.isDirectory() || entry.name === '.git') continue;
       const path = join(current.path, entry.name);
       if (GENERATED_DIRS.has(entry.name)) {
-        if (await ignoredAndUntracked(checkout, path)) {
+        if (await ignoredAndUntracked(checkout, path) && shouldContinue()) {
           await rm(path, { recursive: true, force: true });
           pruned.push(relative(checkout, path));
         }

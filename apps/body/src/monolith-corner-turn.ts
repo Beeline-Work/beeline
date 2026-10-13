@@ -69,7 +69,7 @@ import { TurnStoppedError } from './turn-stop.js';
 import { AgentTurnStream, durableReplyText } from './turn-stream.js';
 import { isCompletedToolCall, toolCallFailureLine } from './tool-call-failure.js';
 import { captureConnectionUsage, ConnectorUsageRecorder } from './connector-runner.js';
-import { distillTurnFailureReason, redactToolDetail } from './turn-failure-reason.js';
+import { distillTurnFailureReason, redactToolDetail, redactTurnError } from './turn-failure-reason.js';
 import { sessionConfigFingerprint } from './session-config-fingerprint.js';
 import { hasCornerPrepareScript } from './corner-prepare-script.js';
 import { registryMcpHostBindPaths, registryMcpHostDeclarations } from './registry-mcp.js';
@@ -2471,7 +2471,7 @@ export class MonolithCornerTurnLoop {
         onSubscriptionState: this.options.onSubscriptionState,
         onError: (error) => {
           this.options.onIntakeError?.(error);
-          console.error('[thin-core] corner command failed', error);
+          console.error('[thin-core] corner command failed', redactTurnError(error));
         },
         // See monolith-room-turn.ts (C112): mark busy the instant a claim
         // attempt starts, before its own network round trip and before

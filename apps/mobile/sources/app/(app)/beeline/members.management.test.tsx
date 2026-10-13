@@ -1,3 +1,5 @@
+vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
+vi.mock('expo-haptics', () => ({ ImpactFeedbackStyle: { Light: 'Light' }, impactAsync: async () => undefined }));
 import { HumanProfile } from './human-profile';
 import AgentProfileRoute from './agent-profile';
 import * as React from 'react';
@@ -189,7 +191,7 @@ vi.mock('react-native', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
-  return {
+  return { StyleSheet: { flatten: (style: any): any => Array.isArray(style) ? Object.assign({}, ...style.map((part: any) => Array.isArray(part) ? Object.assign({}, ...part) : part)) : style },
     AppState: { addEventListener: () => ({ remove: () => undefined }) },
     Share: { share },
     Platform: platform,
@@ -688,8 +690,8 @@ describe('Members workspace management', () => {
     const agents = renderer.root.findByProps({ testID: 'members-add-agents' });
     expect(people.props.accessibilityLabel).toBe('Add people');
     expect(agents.props.accessibilityLabel).toBe('Add agents');
-    expect(people.props.style.height).toBeGreaterThanOrEqual(44);
-    expect(agents.props.style.height).toBeGreaterThanOrEqual(44);
+    expect(people.props.style({ pressed: false })[0].minHeight).toBeGreaterThanOrEqual(44);
+    expect(agents.props.style({ pressed: false })[0].minHeight).toBeGreaterThanOrEqual(44);
   });
 
   it('shows People and Agents without a count when the server omits totals', async () => {
@@ -702,10 +704,10 @@ describe('Members workspace management', () => {
       agentsTruncated: false,
     }));
     const renderer = await render();
-    expect(renderer.root.findByProps({ testID: 'members-people-head' }).props.children).toBe(
+    expect(renderer.root.findByProps({ testID: 'members-people-head' }).props.title).toBe(
       'People',
     );
-    expect(renderer.root.findByProps({ testID: 'members-agents-head' }).props.children).toBe(
+    expect(renderer.root.findByProps({ testID: 'members-agents-head' }).props.title).toBe(
       'Agents',
     );
     expect(renderer.root.findByProps({ testID: `member-${MEMBER}-identity` })).toBeDefined();
@@ -716,7 +718,7 @@ describe('Members workspace management', () => {
       await Promise.resolve();
       await Promise.resolve();
     });
-    expect(renderer.root.findByProps({ testID: 'members-people-head' }).props.children).toBe(
+    expect(renderer.root.findByProps({ testID: 'members-people-head' }).props.title).toBe(
       'People',
     );
     expect(renderer.root.findByProps({ testID: `member-${MEMBER}-identity` })).toBeDefined();
@@ -725,14 +727,8 @@ describe('Members workspace management', () => {
   it('shows the word alone over counted section heads and no loose total (C73, C79)', async () => {
     const renderer = await render();
     expect(renderer.root.findByProps({ testID: 'members-title' }).props.children).toBe('Members');
-    expect(renderer.root.findByProps({ testID: 'members-people-head' }).props.children).toEqual([
-      'People ',
-      3,
-    ]);
-    expect(renderer.root.findByProps({ testID: 'members-agents-head' }).props.children).toEqual([
-      'Agents ',
-      1,
-    ]);
+    expect(renderer.root.findByProps({ testID: 'members-people-head' }).props.count).toEqual(3);
+    expect(renderer.root.findByProps({ testID: 'members-agents-head' }).props.count).toEqual(1);
     const surface = renderer.root.findByProps({ testID: 'workspace-members-surface' });
     const texts = surface.findAllByType('Text' as any).map((node: any) => node.props.children);
     expect(texts).not.toContain(4);
@@ -1874,10 +1870,7 @@ describe('Members workspace management', () => {
     // The server stops naming it, so the screen stops drawing it — the row,
     // the count, and the detail the removal was performed from.
     expect(renderer.root.findAllByProps({ testID: `agent-${AGENT}-identity` })).toHaveLength(0);
-    expect(renderer.root.findByProps({ testID: 'members-agents-head' }).props.children).toEqual([
-      'Agents ',
-      0,
-    ]);
+    expect(renderer.root.findByProps({ testID: 'members-agents-head' }).props.count).toEqual(0);
     expect(renderer.root.findAllByProps({ testID: 'remove-agent' })).toHaveLength(0);
   });
   it('repaints the Members list under an agent profile from the profile receipt', async () => {
@@ -1942,10 +1935,7 @@ describe('Members workspace management', () => {
     await press(profile, 'edit-agent-soul');
     await press(profile, 'remove-agent');
     expect(list.root.findAllByProps({ testID: `agent-${PAGED}-identity` })).toHaveLength(0);
-    expect(list.root.findByProps({ testID: 'members-agents-head' }).props.children).toEqual([
-      'Agents ',
-      1,
-    ]);
+    expect(list.root.findByProps({ testID: 'members-agents-head' }).props.count).toEqual(1);
   });
 
   it('drops an agent removed from its profile out of the Members list underneath', async () => {
@@ -1958,10 +1948,7 @@ describe('Members workspace management', () => {
     const workspaceReads = roomView.workspace.mock.calls.length;
     await press(profile, 'remove-agent');
     expect(list.root.findAllByProps({ testID: `agent-${AGENT}-identity` })).toHaveLength(0);
-    expect(list.root.findByProps({ testID: 'members-agents-head' }).props.children).toEqual([
-      'Agents ',
-      0,
-    ]);
+    expect(list.root.findByProps({ testID: 'members-agents-head' }).props.count).toEqual(0);
     expect(roomView.workspace.mock.calls.length).toBe(workspaceReads);
   });
 
@@ -2089,10 +2076,7 @@ describe('Members workspace management', () => {
     });
 
     const renderer = await render();
-    expect(renderer.root.findByProps({ testID: 'members-people-head' }).props.children).toEqual([
-      'People ',
-      allPeople.length,
-    ]);
+    expect(renderer.root.findByProps({ testID: 'members-people-head' }).props.count).toEqual(allPeople.length);
     expect(
       renderer.root.findAllByProps({ testID: `member-${firstPage[0]!.identity.pubkey}-identity` })
         .length,
@@ -2115,10 +2099,7 @@ describe('Members workspace management', () => {
     expect(
       renderer.root.findAllByProps({ testID: `member-${offPage.identity.pubkey}-identity` }).length,
     ).toBeGreaterThan(0);
-    expect(renderer.root.findByProps({ testID: 'members-people-head' }).props.children).toEqual([
-      'People ',
-      1,
-    ]);
+    expect(renderer.root.findByProps({ testID: 'members-people-head' }).props.count).toEqual(1);
 
     await act(async () => {
       renderer.root.findByProps({ testID: 'members-search' }).props.onChangeText('');
@@ -2139,9 +2120,6 @@ describe('Members workspace management', () => {
     expect(row(offPage.identity.pubkey)).toHaveLength(1);
     expect(row(VIEWER)).toHaveLength(1);
     expect(firstPage.flatMap((item) => row(item.identity.pubkey))).toHaveLength(firstPageRows);
-    expect(renderer.root.findByProps({ testID: 'members-people-head' }).props.children).toEqual([
-      'People ',
-      allPeople.length,
-    ]);
+    expect(renderer.root.findByProps({ testID: 'members-people-head' }).props.count).toEqual(allPeople.length);
   });
 });

@@ -1,3 +1,4 @@
+import { Button } from '@/components/buzz/Button';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
@@ -29,7 +30,8 @@ export default function Subscription() {
   useLatencyRouteFrame('/beeline/settings/subscription', !loading, true);
   const [working, setWorking] = useState(false);
   const subscription = work?.subscriptions.find((candidate) => candidate.id === subscriptionId);
-  const creatorName = subscription ? work?.agentNames.get(subscription.agentId) ?? 'Agent' : 'Agent';
+  const creatorName = subscription ? (work?.agentNames.get(subscription.agentId) ?? 'Agent' )
+    : 'Agent';
 
   const stop = async () => {
     if (!roomId || !subscription) return;
@@ -54,9 +56,15 @@ export default function Subscription() {
         title="Subscription"
       />
       {error && (
-        <Pressable accessibilityRole="alert" onPress={retry} style={styles.error}>
-          <Text style={styles.errorText}>{error} · Retry</Text>
-        </Pressable>
+        <View style={styles.error}>
+          <Text style={styles.errorText}>{error}</Text>
+          <Button
+            label="Retry"
+            variant="secondary"
+            style={{ alignSelf: 'flex-end' }}
+            onPress={retry}
+          />
+        </View>
       )}
       {loading && !work ? (
         <View style={styles.loading}><SurfaceGlyphLoader testID="subscription-loader" /></View>

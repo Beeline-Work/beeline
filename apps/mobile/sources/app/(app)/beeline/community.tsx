@@ -1,3 +1,4 @@
+import { HullDialogInput } from '@/components/buzz/HullDialog';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Pressable, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
@@ -161,7 +162,7 @@ export default function WorkspaceChoice() {
             />
             {joinOpen ? (
               <View style={styles.joinForm} testID="choice-join-form">
-                <TextInput
+                <HullDialogInput
                   accessibilityLabel="Invite link"
                   autoCapitalize="none"
                   autoCorrect={false}

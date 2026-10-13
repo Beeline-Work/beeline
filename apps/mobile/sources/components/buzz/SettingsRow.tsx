@@ -1,3 +1,4 @@
+import { Button } from './Button';
 import React from 'react';
 import { Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -170,17 +171,14 @@ export function SettingsRow({
   const trailing =
     actionControl !== undefined ? (
       <View style={styles.trailingSlot}>
-        <TouchableOpacity
+        <Button
+          label={actionControl.label}
+          variant="secondary"
           accessibilityLabel={actionControl.accessibilityLabel ?? actionControl.label}
-          accessibilityRole="button"
-          accessibilityState={{ disabled: Boolean(actionControl.disabled) }}
           disabled={actionControl.disabled}
           onPress={actionControl.onPress}
-          style={[styles.actionControl, actionControl.disabled && styles.disabled]}
           testID={actionControl.testID}
-        >
-          <Text style={styles.actionControlLabel}>{actionControl.label}</Text>
-        </TouchableOpacity>
+        />
       </View>
     ) : trailingMark === null ? null : trailingPress ? (
       <TouchableOpacity
@@ -225,13 +223,15 @@ export function SettingsRow({
                 {descriptionLead}
               </Text>
             ) : null}
-            {descriptionContent ?? <Text
+            {descriptionContent ?? (
+              <Text
               numberOfLines={descriptionLead || descriptionAction ? 1 : undefined}
               style={[descriptionLead ? styles.descriptionTail : styles.description,
                 descriptionTone === 'danger' && styles.descriptionDanger]}
             >
               {description}
-            </Text>}
+            </Text>
+            )}
             {descriptionAction ? (
               <TouchableOpacity
                 accessibilityLabel={descriptionAction.accessibilityLabel ?? descriptionAction.label}
@@ -365,22 +365,6 @@ const styles = StyleSheet.create((theme) => {
       color: hull.accent,
     },
     valueRow: { flexDirection: 'row', alignItems: 'center', gap: hull.space.sm },
-    // The one compact bordered control (board revision 2's `.cbtn`): ink
-    // word, ink border, the shared radius — acting stays the one thing
-    // with a box on a row, because it is the one thing a row must act on.
-    actionControl: {
-      borderWidth: 1,
-      borderColor: hull.buttonSecondaryText,
-      borderRadius: hull.radius,
-      paddingVertical: hull.space.xs,
-      paddingHorizontal: hull.space.md,
-    },
-    actionControlLabel: {
-      ...Typography.default(),
-      ...Typography.ledger('medium'),
-      ...hull.type.meta,
-      color: hull.buttonSecondaryText,
-    },
     // The one word that acts. Brass, because acting is what brass marks — and
     // redundant with the verb itself, never the only signal.
     action: { ...Typography.default(), ...hull.type.meta, textAlign: 'right', color: hull.accent },

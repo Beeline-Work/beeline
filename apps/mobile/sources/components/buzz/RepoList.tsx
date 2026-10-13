@@ -1,3 +1,5 @@
+import { RoomListSectionHeader } from './RoomListSectionHeader';
+import { HullDialogInput } from '@/components/buzz/HullDialog';
 import React, { useMemo } from 'react';
 import { SectionList, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -49,7 +51,7 @@ export function RepoList({
 
   return (
     <View style={styles.container} testID={testIDPrefix}>
-      <TextInput
+      <HullDialogInput
         accessibilityLabel="Search repos"
         autoCapitalize="none"
         autoCorrect={false}
@@ -85,13 +87,10 @@ export function RepoList({
         )}
         renderSectionHeader={({ section }) =>
           section.owner ? (
-            <Text
-              accessibilityRole="header"
-              style={styles.owner}
+            <RoomListSectionHeader
+              title={section.owner ?? ''} inset="content"
               testID={`${testIDPrefix}-group-${section.owner.toLowerCase()}`}
-            >
-              {section.owner}
-            </Text>
+            />
           ) : null
         }
         sections={sections}
@@ -117,12 +116,6 @@ const styles = StyleSheet.create((theme) => {
       marginBottom: hull.space.sm,
       borderBottomWidth: 1,
       borderBottomColor: hull.borderStrong,
-    },
-    owner: {
-      ...Typography.default(),
-      ...hull.type.sectionHead,
-      color: hull.textMuted,
-      paddingTop: hull.space.xs,
     },
     row: {
       minHeight: ROW_HEIGHT,

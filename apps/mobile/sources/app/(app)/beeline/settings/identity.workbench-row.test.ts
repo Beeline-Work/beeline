@@ -1,3 +1,5 @@
+vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
+vi.mock('react-native-keyboard-controller', async () => { const R = await import('react'); return { KeyboardAvoidingView: (props: any) => R.createElement('View', props, props.children) }; });
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
@@ -271,6 +273,7 @@ vi.mock('react-native', async () => {
     Switch: host('Switch'),
     Text: host('Text'),
     TextInput: host('TextInput'),
+    Pressable: host('Pressable'),
     TouchableOpacity: host('TouchableOpacity'),
     View: host('View'),
     useWindowDimensions: () => ({ width: 390, height: 844 }),
@@ -470,7 +473,7 @@ describe('Settings account actions', () => {
     expect(renderer.root.findByProps({ testID: 'delete-account-cancel' }).props.disabled).toBe(
       false,
     );
-    expect(headings(renderer)).toContain('Yes');
+    expect(headings(renderer)).toContain('Delete account');
     expect(headings(renderer)).toContain('Cancel');
     expect(account.deleteAccount).not.toHaveBeenCalled();
     await act(async () =>

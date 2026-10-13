@@ -1,3 +1,5 @@
+vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
+vi.mock('expo-haptics', () => ({ ImpactFeedbackStyle: { Light: 'Light' }, impactAsync: async () => undefined }));
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
@@ -7,7 +9,7 @@ vi.mock('react-native', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
-  return {
+  return { StyleSheet: { flatten: (style: any): any => Array.isArray(style) ? Object.assign({}, ...style.map((part: any) => Array.isArray(part) ? Object.assign({}, ...part) : part)) : style },
     KeyboardAvoidingView: host('KeyboardAvoidingView'),
     Keyboard: { addListener: () => ({ remove: () => undefined }) },
     Modal: host('Modal'),
@@ -148,7 +150,7 @@ describe('MemberPickerSheet', () => {
     expect(agentRow.findByType('IdentityMark' as any).props.kind).toBe('agent');
     expect(agentRow.findAllByType('Text' as any).map((node: any) => node.props.children)).toEqual([
       'Ox',
-      ['@', 'ox'],
+      '@ox',
     ]);
 
     act(() => agentRow.props.onPress());

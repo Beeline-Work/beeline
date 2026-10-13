@@ -1,3 +1,4 @@
+import { Button } from '@/components/buzz/Button';
 import { useTextDraft } from '@/buzz/use-text-draft';
 import * as React from 'react';
 import { observeRoomResource, useObservedResource } from '@/buzz/use-observed-resource';
@@ -226,9 +227,18 @@ export function DesktopRoomInspector({
       ) : (
         <>
           {observed.error ? (
-            <Pressable accessibilityRole="button" onPress={observed.retry} testID="desktop-corner-retry">
-              <Text accessibilityRole="alert" style={styles.error}>{observed.error} · Retry</Text>
-            </Pressable>
+            <View>
+              <Text accessibilityRole="alert" style={styles.error}>
+                {observed.error}
+              </Text>
+              <Button
+                label="Retry"
+                variant="secondary"
+                style={{ alignSelf: 'flex-end' }}
+                onPress={observed.retry}
+                testID="desktop-corner-retry"
+              />
+            </View>
           ) : null}
           <CornerCockpit
             client={client}
@@ -257,7 +267,9 @@ function scheduleFrame(callback: () => void) {
 }
 
 function messageMatchesFocus(message: ChatDisplayMessage, focusMessageId: string): boolean {
-  return message.id === focusMessageId || message.foldedIds?.includes(focusMessageId) || message.relayId === focusMessageId;
+  return (
+    message.id === focusMessageId || message.foldedIds?.includes(focusMessageId) || message.relayId === focusMessageId
+  );
 }
 
 function inspectorMessageKind(message: ChatDisplayMessage) {

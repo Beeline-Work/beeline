@@ -1,3 +1,4 @@
+import { MemberRosterRow } from './MemberRosterRow';
 import React, { useEffect, useMemo, useState } from 'react';
 import { Pressable, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -141,48 +142,30 @@ export function MemberPickerSheet({
         visibleCandidates.map((candidate) => {
           const isChecked = checked.has(candidate.pubkey);
           return (
-            <Pressable
+            <MemberRosterRow
+              kind={candidate.kind === 'agent' ? 'agent' : 'human'}
+              pubkey={candidate.pubkey}
+              name={candidate.name}
+              title={candidate.name}
+              handle={candidate.handle}
+              subtitle={`@${candidate.handle}`}
+              avatarUrl={candidate.avatarUrl}
+              face={candidate.face}
+              divider="bottom"
               accessibilityLabel={`${candidate.name}, ${candidate.kind}`}
               accessibilityRole="checkbox"
               accessibilityState={{ checked: isChecked, disabled: busy }}
               disabled={busy}
               key={candidate.pubkey}
               onPress={() => toggle(candidate.pubkey)}
-              style={styles.row}
               testID={`member-picker-candidate-${candidate.pubkey}`}
-            >
-              {candidate.kind === 'agent' ? (
-                <IdentityMark
-                  kind="agent"
-                  seed={candidate.pubkey}
-                  avatarUrl={candidate.avatarUrl}
-                  face={candidate.face}
-                  name={candidate.name}
-                  size={38}
-                />
-              ) : (
-                <IdentityMark
-                  kind="human"
-                  seed={candidate.pubkey}
-                  avatarUrl={candidate.avatarUrl}
-                  face={candidate.face}
-                  name={candidate.name}
-                  size={38}
-                />
-              )}
-              <View style={styles.copy}>
-                <Text numberOfLines={1} style={styles.name}>
-                  {candidate.name}
-                </Text>
-                <Text numberOfLines={1} style={styles.meta}>
-                  @{candidate.handle}
-                </Text>
-              </View>
-              <View
+              trailing={
+                <View
                 style={[styles.check, isChecked && styles.checkOn]}
                 testID={`member-picker-check-${candidate.pubkey}`}
               />
-            </Pressable>
+              }
+            />
           );
         })}
       {!agentConnectOnly && (
@@ -226,17 +209,7 @@ const styles = StyleSheet.create((theme) => {
   return {
     modalContent: { paddingHorizontal: 0 },
     loading: { paddingVertical: hull.space.lg, alignItems: 'center' },
-    row: {
-      minHeight: hull.layout.row,
-      paddingHorizontal: hull.space.md,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: hull.space.md,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: hull.border,
-    },
     copy: { flex: 1, minWidth: 0 },
-    name: { ...Typography.default(), ...hull.type.body, color: hull.textPrimary },
     meta: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
     // The unread square's vocabulary: a box lights brass when it is chosen.
     check: {

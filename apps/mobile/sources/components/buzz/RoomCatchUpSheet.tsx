@@ -1,3 +1,4 @@
+import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import React from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -49,13 +50,13 @@ export function RoomCatchUpSheet({
     >
       {report && (
         <View style={styles.block} testID="catch-up-sheet-summary">
-          <Text style={styles.blockHead}>Summary</Text>
+          <RoomListSectionHeader title="Summary" inset="content" spacing="flush" />
           <Text style={styles.summary}>{report.summary}</Text>
         </View>
       )}
       {report && (
         <View style={styles.block} testID="catch-up-sheet-needs-you">
-          <Text style={styles.blockHead}>Needs you</Text>
+          <RoomListSectionHeader title="Needs you" inset="content" spacing="flush" />
           {report.needsYou.length === 0 ? (
             <Text style={styles.empty}>Nothing is waiting on you.</Text>
           ) : (
@@ -71,7 +72,7 @@ export function RoomCatchUpSheet({
         </View>
       )}
       <View style={styles.block} testID="catch-up-sheet-agents">
-        <Text style={styles.blockHead}>Ask an agent</Text>
+        <RoomListSectionHeader title="Ask an agent" inset="content" spacing="flush" />
         <Text style={styles.hint}>Choose an agent, then review and send the request.</Text>
         {!canDraft ? (
           <Text style={styles.empty}>Finish your current draft to ask for a catch up.</Text>
@@ -102,12 +103,6 @@ const styles = StyleSheet.create((theme) => {
     block: {
       paddingHorizontal: HULL_SHEET_INSET,
       paddingBottom: groknight.space.md,
-    },
-    blockHead: {
-      ...Typography.default('semiBold'),
-      ...groknight.type.sectionHead,
-      color: groknight.ledgerQuiet,
-      paddingBottom: groknight.space.sm,
     },
     summary: {
       ...Typography.default('regular'),

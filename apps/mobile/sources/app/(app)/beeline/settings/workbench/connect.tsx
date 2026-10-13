@@ -1,3 +1,4 @@
+import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ScrollView, Text, View } from 'react-native';
@@ -54,8 +55,9 @@ export default function ConnectTrustySquireScreen() {
     workspaceId?: string | string[]; viewerId?: string | string[] }>();
   const connectorId = firstParam(params.connectorId);
   if (connectorId === 'google' || connectorId?.startsWith('google-'))
-    return <LegacyGoogleAppRedirect workspaceId={firstParam(params.workspaceId) ?? ''}
-      viewerId={firstParam(params.viewerId) ?? ''} />;
+    return (
+      <LegacyGoogleAppRedirect workspaceId={firstParam(params.workspaceId) ?? ''}
+      viewerId={firstParam(params.viewerId) ?? ''} />);
   return <ConnectToolFlow />;
 }
 
@@ -243,12 +245,13 @@ function ConnectToolFlow() {
         ) : null}
         {someHelpers && !offerCeremony ? (
           <View testID="connect-machine-picker">
-            <Text style={styles.sectionLabel}>Helpers</Text>
+            <RoomListSectionHeader title="Helpers" inset="content" />
             {onlineHelpers.length === 1 ? (
               <SettingsRow title={onlineHelpers[0]!.name}
                 description={install ? 'paired' : 'pairing automatically'}
                 testID={`connect-machine-${onlineHelpers[0]!.id}`} />
-            ) : onlineHelpers.map((helper) => (
+            ) : (
+              onlineHelpers.map((helper) => (
               <SettingsRow
                 key={helper.id}
                 description={pairedHelperRef.current === helper.id ? 'paired' : 'online'}
@@ -258,9 +261,11 @@ function ConnectToolFlow() {
                 title={helper.name}
                 action={pairedHelperRef.current ? undefined : 'pair'}
               />
-            ))}
-            {onlineHelpers.length > 1 && !pairedHelperRef.current ?
-              <Text style={styles.note}>Choose the machine that will hold your keys.</Text> : null}
+            ))
+            )}
+            {onlineHelpers.length > 1 && !pairedHelperRef.current ? (
+              <Text style={styles.note}>Choose the machine that will hold your keys.</Text>
+            ) : null}
           </View>
         ) : null}
         {install !== null ? (
@@ -373,7 +378,6 @@ const styles = StyleSheet.create((theme) => {
       paddingBottom: hull.space.xxl,
     },
     loading: { alignItems: 'center', gap: hull.space.sm, paddingVertical: hull.space.xl },
-    sectionLabel: { ...Typography.default(), ...hull.type.sectionHead, color: hull.textMuted },
     note: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
     // The empty state's one centered fact (board: `emp`).
     empty: {

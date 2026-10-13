@@ -1,3 +1,4 @@
+import { Button } from './Button';
 import React from 'react';
 import { Animated, Platform, Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -152,23 +153,30 @@ export function ViewerConversationDock({
   const agentReplies = entries.filter((entry) => entry.speaker !== 'You');
   const showTranscript = Boolean(error || (open && entries.length) || (tickerVisible && agentReplies.length));
   const recent = open ? entries.slice(-3) : agentReplies.slice(-2);
-  return <View pointerEvents="box-none" style={styles.overlay} testID="viewer-conversation-dock"
+  return (
+    <View pointerEvents="box-none" style={styles.overlay} testID="viewer-conversation-dock"
     onLayout={(event) => setAvailableWidth(event.nativeEvent.layout.width - 24)}>
-    {showTranscript ? <View
+      {showTranscript ? (
+        <View
       style={[styles.transcript, { bottom: bottom + pillHeight + 9 }]}
       testID="viewer-conversation-transcript"
     >
-      <Text style={styles.transcriptHeading}>Recent conversation · {currentAgent ?? 'agent'}</Text>
-      {recent.map((entry) => <View key={entry.id} style={styles.transcriptEntry}>
-        <Text style={styles.transcriptSpeaker}>{entry.speaker}</Text>
-        <Text numberOfLines={open ? undefined : 2} style={styles.transcriptText}>{entry.text}</Text>
-        {entry.context ? <TranscriptReference viewer>{viewerContextLabel(entry.context)}</TranscriptReference> : null}
-      </View>)}
-      {error ? <Text style={styles.error}>{error}</Text> : null}
-    </View> : null}
-    <Animated.View style={[styles.pill, { width, bottom }]} testID="viewer-conversation-pill"
+          <Text style={styles.transcriptHeading}>Recent conversation · {currentAgent ?? 'agent'}</Text>
+          {recent.map((entry) => (
+            <View key={entry.id} style={styles.transcriptEntry}>
+              <Text style={styles.transcriptSpeaker}>{entry.speaker}</Text>
+              <Text numberOfLines={open ? undefined : 2} style={styles.transcriptText}>{entry.text}</Text>
+              {entry.context ? (
+                <TranscriptReference viewer>{viewerContextLabel(entry.context)}</TranscriptReference>
+              ) : null}
+            </View>
+          ))}
+          {error ? <Text style={styles.error}>{error}</Text> : null}
+        </View>
+      ) : null}
+      <Animated.View style={[styles.pill, { width, bottom }]} testID="viewer-conversation-pill"
       onLayout={(event) => setPillHeight(event.nativeEvent.layout.height)}>
-      <Pressable
+        <Button label="" variant="secondary" icon={<ViewerConversationRing />}
         accessibilityRole="button" accessibilityLabel={open ? 'Collapse conversation' : 'Talk to agent'}
         accessibilityState={{ expanded: open }}
         onPress={() => {
@@ -177,8 +185,9 @@ export function ViewerConversationDock({
         }}
         style={[styles.control, open && styles.controlOpen]}
         testID="viewer-conversation-toggle"
-      ><ViewerConversationRing /></Pressable>
-      {open ? <View style={styles.composerWrap}><ConversationComposer
+      />
+        {open ? (
+          <View style={styles.composerWrap}><ConversationComposer
         viewerPill value={draft} height={height} focused={focused} disabled={sending || !conversation}
         inputRevision={revision} testIDPrefix="viewer" speechEnabled
         attachments={attachments.map((item) => ({
@@ -198,20 +207,38 @@ export function ViewerConversationDock({
           event.preventDefault(); void send();
         } }}
         onSend={send}
-      /></View> : null}
-    </Animated.View>
-    <AttachmentPickerSheet visible={attachPicker} onClose={() => setAttachPicker(false)}
+      /></View>
+        ) : null}
+      </Animated.View>
+      <AttachmentPickerSheet visible={attachPicker} onClose={() => setAttachPicker(false)}
       onPickDocument={() => void pickDocument()} onPickPhoto={() => void pickPhoto()} />
-  </View>;
+    </View>
+  );
 }
 
 const styles = StyleSheet.create((theme) => ({
   overlay: { ...StyleSheet.absoluteFillObject, zIndex: 20 },
-  pill: { position: 'absolute', right: 12, minHeight: 44, borderRadius: 999,
-    borderWidth: 1, borderColor: theme.buzz.borderStrong, backgroundColor: theme.buzz.bgRaised,
-    flexDirection: 'row', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
-  control: { width: 42, height: 42, borderRadius: 14, backgroundColor: theme.buzz.bgBase,
-    alignItems: 'center', justifyContent: 'center' },
+  pill: {
+    position: 'absolute',
+    right: 12,
+    minHeight: 44,
+    borderRadius: theme.buzz.radius,
+    borderWidth: 1,
+    borderColor: theme.buzz.borderStrong,
+    backgroundColor: theme.buzz.bgRaised,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    overflow: 'hidden',
+  },
+  control: {
+    width: 44,
+    height: 44,
+    borderRadius: theme.buzz.radius,
+    backgroundColor: theme.buzz.bgBase,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
   controlOpen: { borderRightWidth: 1, borderRightColor: theme.buzz.border, borderRadius: 0,
     backgroundColor: 'transparent' },
   composerWrap: { flex: 1, minWidth: 0 },

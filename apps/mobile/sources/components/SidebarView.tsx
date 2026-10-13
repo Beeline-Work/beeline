@@ -1,3 +1,5 @@
+import { Button } from '@/components/buzz/Button';
+import { HullDialogInput } from '@/components/buzz/HullDialog';
 import { useTextDraft } from '@/buzz/use-text-draft';
 import { useNeedsYouCount } from '@/buzz/needs-you-store';
 import { PinnedConversationsEmpty } from '@/components/buzz/PinnedConversationsEmpty';
@@ -276,9 +278,10 @@ export const SidebarView = React.memo(function SidebarView() {
   // The app-level Room list owns its live watch, so the Sidebar stays current
   // whether or not the deck is mounted.
   const chatListKey = React.useMemo(
-    () => (relayUrl && identityPubkey && workspaceId
+    () =>
+      relayUrl && identityPubkey && workspaceId
       ? { relayUrl, viewerPubkey: identityPubkey, workspaceId }
-      : null),
+      : null,
     [identityPubkey, relayUrl, workspaceId],
   );
   const surface = useChatList(chatListKey, {
@@ -610,12 +613,15 @@ export const SidebarView = React.memo(function SidebarView() {
           )}
           <ScrollView style={styles.list} contentContainerStyle={styles.listContent}>
             {navigationError ? (
-              <Pressable
-                accessibilityRole="button"
-                onPress={() => setRefreshNonce((value) => value + 1)}
-              >
-                <Text style={styles.empty}>{navigationError} Select to retry.</Text>
-              </Pressable>
+              <View>
+                <Text style={styles.empty}>{navigationError}</Text>
+                <Button
+                  label="Retry"
+                  variant="secondary"
+                  style={{ alignSelf: 'flex-end' }}
+                  onPress={() => setRefreshNonce((value) => value + 1)}
+                />
+              </View>
             ) : !filteredChats.length ? (
               surface ? (
                 filter === 'pinned' && !query.trim() ? (

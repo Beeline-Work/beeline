@@ -1,6 +1,7 @@
+vi.mock('react-native-keyboard-controller', () => ({ KeyboardAvoidingView: (props: any) => React.createElement('View', props, props.children) }));
 import React from 'react';
 import { beforeEach, vi } from 'vitest';
-import { beelineThemes } from '../buzz/groknight';
+import { completeTestTheme } from './test-theme';
 
 (globalThis as typeof globalThis & { __DEV__?: boolean }).__DEV__ = false;
 
@@ -85,7 +86,7 @@ vi.mock('react-native-reanimated', () => ({
   withTiming: (value: unknown) => value,
 }));
 
-const theme = { buzz: beelineThemes.obsidian };
+const theme = completeTestTheme();
 
 // Production configures Unistyles before rendering. Unit tests run in Node and
 // intentionally do not load React Native's Flow entrypoint, so give style-only

@@ -1,3 +1,5 @@
+import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
+import { Button } from '@/components/buzz/Button';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useEffect, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
@@ -86,13 +88,15 @@ export default function WorkflowRun() {
 
       />
       {error && (
-        <Pressable
-          accessibilityRole="alert"
-          onPress={retry}
-          style={styles.error}
-        >
-          <Text style={styles.errorText}>{error} · Retry</Text>
-        </Pressable>
+        <View style={styles.error}>
+          <Text style={styles.errorText}>{error}</Text>
+          <Button
+            label="Retry"
+            variant="secondary"
+            style={{ alignSelf: 'flex-end' }}
+            onPress={retry}
+          />
+        </View>
       )}
       {loading && !detail ? (
         <View style={styles.loading}>
@@ -146,9 +150,7 @@ export default function WorkflowRun() {
               </Text>
             </View>
           ) : null}
-          <View style={styles.section} testID="workflow-run-steps-header">
-            <Text style={styles.sectionHead}>Steps</Text>
-          </View>
+          <RoomListSectionHeader title="Steps" testID="workflow-run-steps-header" />
           <WorkflowRunLine
             detail={detail}
             liveDrafts={liveDrafts}
@@ -182,7 +184,7 @@ function AlsoRunning({ roomId, current, now }: { roomId: string; current: Workfl
   return (
     <View testID="workflow-run-also-running">
       <View style={styles.section}>
-        <Text style={styles.sectionHead}>Also running in this corner</Text>
+        <RoomListSectionHeader title="Also running in this corner" inset="content" />
       </View>
       {others.map((other) => (
         <Pressable
@@ -256,7 +258,6 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.buzz.border,
   },
-  sectionHead: { ...theme.buzz.type.sectionHead, color: theme.buzz.ledgerQuiet },
   // The same rail + copy treatment as the corner's own objective line
   // (components/buzz/CornerObjectiveLine.tsx).
   summaryLine: {

@@ -14,6 +14,7 @@ vi.mock('react-native', async () => {
       typeof props.children === 'function' ? props.children({ pressed: false }) : props.children,
     );
   return {
+    Platform: { OS: 'ios' },
     Share: { share: (...args: unknown[]) => shareSpy(...args) },
     Pressable: host('Pressable'),
     StyleSheet: { create: (styles: unknown) => styles },

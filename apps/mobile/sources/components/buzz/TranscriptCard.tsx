@@ -1,3 +1,5 @@
+import { HullDialogInput } from '@/components/buzz/HullDialog';
+import { HullDialogActions } from './HullDialog';
 import React, {
   useEffect,
   useLayoutEffect,
@@ -453,7 +455,7 @@ export function TranscriptCard({
           {choices.length ? (
             <View style={styles.choices} testID={testID ? `${testID}-choices` : undefined}>
               {noteInput ? (
-                <TextInput
+                <HullDialogInput
                   accessibilityLabel={noteInput.placeholder}
                   editable={noteInput.editable ?? true}
                   maxLength={noteInput.maxLength}
@@ -489,23 +491,19 @@ export function TranscriptCard({
               ) : (
                 <View style={styles.footerSpacer} />
               )}
-              <View style={styles.actions}>
-                {actions.map((action) => (
-                  <Pressable
-                    key={`${action.label}-${action.testID ?? ''}`}
-                    accessibilityRole={action.accessibilityRole ?? 'button'}
-                    accessibilityLabel={action.label}
-                    disabled={action.disabled}
-                    hitSlop={12}
-                    onPress={action.onPress}
-                    testID={action.testID}
-                  >
-                    <Text style={[styles.action, action.primary && styles.actionPrimary]}>
-                      {action.loading ? '…' : action.label}
-                    </Text>
-                  </Pressable>
-                ))}
-              </View>
+              <HullDialogActions
+                style={styles.actions}
+                actions={actions.map((action) => ({
+                  label: action.loading ? '…' : action.label,
+                  accessibilityLabel: action.label,
+                  accessibilityRole: action.accessibilityRole ?? 'button',
+                  variant: action.primary ? 'primary' : 'quiet',
+                  busy: action.loading,
+                  disabled: action.disabled,
+                  onPress: action.onPress,
+                  testID: action.testID,
+                }))}
+              />
             </View>
           ) : null}
         </View>
@@ -972,8 +970,7 @@ const styles = StyleSheet.create((theme) => {
       flex: 1,
     },
     footerNoteFailed: { color: card.diffRemoved },
-    actions: { flexDirection: 'row', alignItems: 'center', gap: metric.actionGap },
+    actions: { flexShrink: 1 },
     action: { ...card.type.body, fontSize: metric.actionSize, color: card.ledgerQuiet },
-    actionPrimary: { fontFamily: card.proseMedium, color: card.accent },
   };
 });

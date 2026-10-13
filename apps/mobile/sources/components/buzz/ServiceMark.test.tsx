@@ -1,3 +1,6 @@
+vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
+vi.mock('expo-haptics', () => ({ ImpactFeedbackStyle: { Light: 'Light' }, impactAsync: async () => undefined }));
+vi.mock('react-native-keyboard-controller', async () => { const R = await import('react'); return { KeyboardAvoidingView: (props: any) => R.createElement('View', props, props.children) }; });
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
@@ -10,7 +13,7 @@ vi.mock('react-native', async () => {
   return {
     Image: host('Image'),
     Platform: { OS: 'android', select: (choices: Record<string, unknown>) => choices.default },
-    StyleSheet: { create: (styles: unknown) => styles, hairlineWidth: 1 },
+    StyleSheet: { flatten: (style: any): any => Array.isArray(style) ? Object.assign({}, ...style) : style,  create: (styles: unknown) => styles, hairlineWidth: 1 },
     Text: host('Text'),
     View: host('View'),
   };
@@ -50,15 +53,14 @@ describe('ServiceMark', () => {
     expect(renderer.root.findAllByType('Image')).toHaveLength(0);
   });
 
-  it('fetches Google favicon service at the server-derived domain, lettermark behind it', () => {
+  it('fetches Google favicon service at the server-derived domain through the shared app tile', () => {
     const renderer = render(<ServiceMark company="resend" domain="resend.com" testID="mark" />);
     const image = renderer.root.findByType('Image');
     expect(image.props.source).toEqual({ uri: serviceFaviconUrl('resend.com') });
     expect(image.props.source.uri).toBe(
       'https://www.google.com/s2/favicons?domain=resend.com&sz=64',
     );
-    // The lettermark is still painted, so a 404/offline image reveals it.
-    expect(renderer.root.findByType('Text').props.children).toBe('R');
+    expect(renderer.root.findAllByType('Text')).toHaveLength(0);
   });
 
   it('drops the image on error, leaving the lettermark to read', () => {

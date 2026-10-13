@@ -56,7 +56,7 @@ vi.mock('@/components/buzz/HullDialog', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: Record<string, unknown>) =>
     ReactModule.createElement(name, props, props.children as React.ReactNode);
-  return { HullDialog: host('HullDialog'), HullDialogInput: host('TextInput') };
+  return { HullDialogActions: ({ actions }: any) => ReactModule.createElement('View', {}, actions.map((action: any) => ReactModule.createElement('Button', { ...action, key: action.label }))), HullDialog: host('HullDialog'), HullDialogInput: host('TextInput') };
 });
 vi.mock('@/components/buzz/HullActionSheet', async () => {
   const ReactModule = await import('react');

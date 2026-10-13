@@ -1,3 +1,4 @@
+import { HullDialogInput } from '@/components/buzz/HullDialog';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import { useTextDraft } from '@/buzz/use-text-draft';
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -113,7 +114,7 @@ export default function CreateWorkspace() {
             </Text>
             <Text style={styles.copy}>Your team, company, or project. Change it in Settings.</Text>
             <Text style={styles.label}>{`${WORKSPACE_LABEL} name`}</Text>
-            <TextInput
+            <HullDialogInput
               accessibilityLabel={`${WORKSPACE_LABEL} name`}
               autoFocus
               editable={!working}

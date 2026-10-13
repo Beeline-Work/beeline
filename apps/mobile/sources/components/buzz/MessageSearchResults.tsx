@@ -1,3 +1,4 @@
+import { Button } from '@/components/buzz/Button';
 import React from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -125,9 +126,7 @@ function Retry({ label, onPress, testID }: { label: string; onPress: () => void;
   return (
     <View style={styles.retryLine}>
       <Text style={styles.note}>{label}</Text>
-      <Pressable accessibilityRole="button" onPress={onPress} hitSlop={8} testID={testID}>
-        <Text style={styles.action}>Retry</Text>
-      </Pressable>
+      <Button label="Retry" variant="secondary" onPress={onPress} testID={testID} style={{ alignSelf: 'flex-end' }} />
     </View>
   );
 }
@@ -153,7 +152,7 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.buzz.space.md,
     paddingVertical: theme.buzz.space.sm,
   },
-  retryLine: { flexDirection: 'row', alignItems: 'center', gap: theme.buzz.space.sm },
+  retryLine: { padding: theme.buzz.space.md, gap: theme.buzz.space.md },
   more: { paddingHorizontal: theme.buzz.space.md, paddingVertical: theme.buzz.space.sm, minHeight: 44, justifyContent: 'center' },
   action: { ...theme.buzz.type.meta, color: theme.buzz.buttonSecondaryText },
 }));

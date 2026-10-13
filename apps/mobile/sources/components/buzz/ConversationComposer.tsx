@@ -1,3 +1,4 @@
+import { Button } from '@/components/buzz/Button';
 import * as React from 'react';
 import {
   Text,
@@ -452,16 +453,14 @@ function ConversationComposerContent({
                 </Text>
               </View>
               {attachment.uploadState === 'failed' && (
-                <TouchableOpacity
+                <Button
+                  label="Retry"
+                  variant="secondary"
                   accessibilityLabel={`Retry uploading ${attachment.name}`}
-                  accessibilityRole="button"
                   disabled={attachmentsUploading}
                   onPress={() => onRetryAttachment?.(index)}
-                  style={styles.retryButton}
                   testID={`pending-chat-attachment-retry-${index}`}
-                >
-                  <Text style={styles.retryButtonText}>Retry</Text>
-                </TouchableOpacity>
+                />
               )}
               <TouchableOpacity
                 accessibilityLabel={`Remove ${attachment.name}`}
@@ -487,7 +486,8 @@ function ConversationComposerContent({
       )}
       {conversationActive && voice ? (
         <VoiceBar voice={voice} onAttach={onAttach} attachDisabled={attachDisabled} testIDPrefix={testIDPrefix} />
-      ) : <View
+      ) : (
+        <View
         style={[styles.inputRow, viewerPill && styles.viewerPillRow, multiline && styles.composerMultiline]}
         testID={`${testIDPrefix}-composer-input-row`}
       >
@@ -794,7 +794,7 @@ function ConversationComposerContent({
           </Pressable>
         ) : null}
       </View>
-      }
+      )}
       {statusLine ? (
         <TouchableOpacity
           accessibilityLabel={statusLine}
@@ -943,13 +943,6 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.buzz.ledgerGhost,
   },
   attachmentFailed: { color: theme.buzz.danger },
-  retryButton: {
-    minHeight: 44,
-    alignSelf: 'stretch',
-    justifyContent: 'center',
-    paddingHorizontal: 8,
-  },
-  retryButtonText: { ...theme.buzz.type.meta, color: theme.buzz.accent },
   removeButton: {
     width: 44,
     minHeight: 44,

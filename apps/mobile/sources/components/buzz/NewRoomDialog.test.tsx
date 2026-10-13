@@ -24,6 +24,7 @@ vi.mock('@/constants/Typography', () => ({
 vi.mock('./HullDialog', async () => {
   const React = await import('react');
   return {
+    HullDialogActions: ({ actions }: any) => React.createElement('View', {}, actions.map((action: any) => React.createElement('Button', { ...action, key: action.label }))),
     HullDialogInput: (props: any) => React.createElement('TextInput', props),
   };
 });

@@ -1,3 +1,4 @@
+import { HullDialogActions } from '@/components/buzz/HullDialog';
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Image, Platform, Pressable, Text, View } from 'react-native';
 export { NotificationLifecycleCard } from '@/components/buzz/PrLifecycleCard';
@@ -278,7 +279,7 @@ export const GrantRequestCard = React.memo(function GrantRequestCard({
   const canDecide =
     !viewerIsAgent &&
     (repositoryRequest
-      ? viewerCanManageWorkspace ?? (viewerRole === 'admin' || viewerRole === 'owner')
+      ? (viewerCanManageWorkspace ?? (viewerRole === 'admin' || viewerRole === 'owner'))
       : sharedAssetRequest
         ? Boolean(viewerCanManageWorkspace ?? (viewerRole === 'admin' || viewerRole === 'owner')) ||
           viewerPubkey === request.owner.pubkey
@@ -483,16 +484,37 @@ export function AppSignInCard({ message, agentName, canConnect, onConnect, busy 
   busy: boolean;
 }) {
   const app = message.appSignIn!;
-  if (app.status === 'connected') return <Text style={appSignInStyles.settled}>{app.name.toUpperCase()} CONNECTED · {agentName.toUpperCase()} CONTINUES</Text>;
-  return <View style={appSignInStyles.wrap} testID={`app-sign-in-${app.appKey}`}>
-    <View style={appSignInStyles.card}>
-      <View style={appSignInStyles.heading}><AppMark name={app.name} domain={app.domain ?? appDomain(app.name)} logo={app.logo} size={30} white /><Text style={appSignInStyles.title}>Connect {app.name}</Text></View>
-      <Text style={appSignInStyles.detail}>Sign in once. {app.continuation ?? `${agentName} continues the request right after.`}</Text>
-      {app.appKey === 'instagram' ? <Text style={appSignInStyles.detail}>{INSTAGRAM_SIGN_IN_REQUIREMENT}</Text> : null}
-      {app.status === 'failed' ? <Text accessibilityRole="alert" style={appSignInStyles.error}>{app.errorMessage ?? 'App sign-in failed. Try again.'}</Text> : null}
-      {canConnect ? <Button disabled={busy} label={busy ? 'Connecting' : app.status === 'failed' ? `Retry ${app.name}` : `Connect ${app.name}`} onPress={onConnect} style={appSignInStyles.button} testID={`app-sign-in-${app.appKey}-connect`} /> : <Text style={appSignInStyles.detail}>Waiting for the account owner to connect {app.name}.</Text>}
+  if (app.status === 'connected')
+    return (
+      <Text style={appSignInStyles.settled}>{app.name.toUpperCase()} CONNECTED · {agentName.toUpperCase()} CONTINUES</Text>
+    );
+  return (
+    <View style={appSignInStyles.wrap} testID={`app-sign-in-${app.appKey}`}>
+      <View style={appSignInStyles.card}>
+        <View style={appSignInStyles.heading}>
+          <AppMark
+            name={app.name}
+            domain={app.domain ?? appDomain(app.name)}
+            logo={app.logo}
+            size={36}
+          />
+          <Text style={appSignInStyles.title}>Connect {app.name}</Text>
+        </View>
+        <Text style={appSignInStyles.detail}>Sign in once. {app.continuation ?? `${agentName} continues the request right after.`}</Text>
+        {app.appKey === 'instagram' ? (
+          <Text style={appSignInStyles.detail}>{INSTAGRAM_SIGN_IN_REQUIREMENT}</Text>
+        ) : null}
+        {app.status === 'failed' ? (
+          <Text accessibilityRole="alert" style={appSignInStyles.error}>{app.errorMessage ?? 'App sign-in failed. Try again.'}</Text>
+        ) : null}
+        {canConnect ? (
+          <Button disabled={busy} label={busy ? 'Connecting' : app.status === 'failed' ? `Retry ${app.name}` : `Connect ${app.name}`} onPress={onConnect} style={appSignInStyles.button} testID={`app-sign-in-${app.appKey}-connect`} />
+        ) : (
+          <Text style={appSignInStyles.detail}>Waiting for the account owner to connect {app.name}.</Text>
+        )}
+      </View>
     </View>
-  </View>;
+  );
 }
 
 const appSignInStyles = StyleSheet.create(theme => {
@@ -1504,12 +1526,14 @@ function ViewerContextReference({ context, attachment, roomId, timestamp, isDesk
   const browserSession = browserTitle ? [...(conversation?.messages ?? [])].reverse()
     .find((entry) => entry.createdAt <= timestamp && entry.computerSession?.title === browserTitle)
     ?.computerSession : undefined;
-  return <TranscriptReference viewer testID={testID}
+  return (
+    <TranscriptReference viewer testID={testID}
     accessibilityLabel={browserTitle ? 'Open shared browser' : 'Open viewed artifact'}
     onPress={browserSession ? () => void openComputerSessionViewer(browserSession, isDesktop, roomId)
       : !browserTitle && attachment && !attachment.expired
         ? () => openArtifactViewer(attachment, isDesktop, roomId) : undefined}
-  >{viewerContextLabel(context)}</TranscriptReference>;
+  >{viewerContextLabel(context)}</TranscriptReference>
+  );
 }
 
 export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
@@ -1848,7 +1872,11 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
       roomId={codeRoomId} timestamp={message.timestamp} isDesktop={desktopLayout}
       testID={`viewer-context-${message.id}`} />
   ) : null;
-  const messageReference = viewerReference ? <>{replyReference}{viewerReference}</> : replyReference;
+  const messageReference = viewerReference ? (
+    <>{replyReference}{viewerReference}</>
+  ) : (
+    replyReference
+  );
 
   const content = (
     <NewMessageMaterialize enabled={Boolean(message.isNew)} messageId={message.id}>
@@ -1966,14 +1994,12 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
         {message.isUser && deliveryFailed ? (
           <View style={styles.outboxFailure} testID={`outbox-delivery-failed-${message.id}`}>
             <Text style={styles.outboxFailureText}>DELIVERY FAILED</Text>
-            <View style={styles.outboxFailureActions}>
-              <Button label="RETRY" onPress={() => onRetry(message.id)} variant="secondary" />
-              <Button
-                label="DISMISS"
-                onPress={() => onDismiss(message.id)}
-                variant="secondary"
-              />
-            </View>
+            <HullDialogActions
+              actions={[
+                { label: 'Dismiss', onPress: () => onDismiss(message.id) },
+                { label: 'Retry', variant: 'primary', onPress: () => onRetry(message.id) },
+              ]}
+            />
           </View>
         ) : null}
         {message.reactions?.length ? (
@@ -2053,7 +2079,6 @@ const styles = StyleSheet.create((theme) => ({
     fontFamily: theme.buzz.monoSemibold,
     color: theme.buzz.textPrimary,
   },
-  outboxFailureActions: { flexDirection: 'row', gap: 8, marginTop: theme.buzz.space.sm },
   replySwipeContainer: { marginHorizontal: -ALIVE_RING_PAD },
   replySwipeChildren: { paddingHorizontal: ALIVE_RING_PAD },
   replyDesktopRow: { position: 'relative', flexDirection: 'row', alignItems: 'flex-start' },
@@ -2103,11 +2128,6 @@ const styles = StyleSheet.create((theme) => ({
     marginTop: theme.buzz.space.xs,
     marginLeft: 8,
     color: theme.buzz.ledgerQuiet,
-  },
-  replyDesktopLabel: {
-    ...theme.buzz.type.sectionHead,
-    marginTop: theme.buzz.space.xs,
-    color: theme.buzz.textMuted,
   },
   replySwipeAction: {
     width: 78,
@@ -2172,4 +2192,9 @@ const styles = StyleSheet.create((theme) => ({
     textAlign: 'center',
   },
 
+replyDesktopLabel: {
+    ...theme.buzz.type.sectionHead,
+    marginTop: theme.buzz.space.xs,
+    color: theme.buzz.textMuted,
+  },
 }));

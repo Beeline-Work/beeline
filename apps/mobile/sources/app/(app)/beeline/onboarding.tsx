@@ -1,3 +1,5 @@
+import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
+import { HullDialogInput } from '@/components/buzz/HullDialog';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import { useTextDraft } from '@/buzz/use-text-draft';
 /** Native GitHub-first onboarding. OAuth proves lookup only; the Nostr key remains device-held. */
@@ -784,7 +786,7 @@ export default function BuzzOnboarding() {
         testID="onboarding-handle-ceremony"
       >
         <PixelGateReveal style={styles.namePanel}>
-          <Text style={styles.sectionLabel}>{"IDENTITY · HANDLE CEREMONY"}</Text>
+          <RoomListSectionHeader title={'IDENTITY · HANDLE CEREMONY'} inset="content" />
           <View style={styles.nameAvatar}>
             <IdentityMark
               kind="human"
@@ -795,7 +797,7 @@ export default function BuzzOnboarding() {
           </View>
           <Text style={styles.nameTitle}>{"Choose your handle"}</Text>
           <Text style={styles.nameBody}>{"This name is bound to your key. It becomes your verified Beeline identity everywhere."}</Text>
-          <TextInput
+          <HullDialogInput
             accessibilityLabel={"Choose your Beeline handle"}
             autoCapitalize="none"
             autoCorrect={false}
@@ -817,11 +819,11 @@ export default function BuzzOnboarding() {
             {normalized ? `@${normalized}` : "3–30 · a–z · 0–9 · dash"}
           </Text>
           {notice && (
-            <View accessibilityRole="alert" style={styles.noticePanel}>
-              <Text style={styles.statusLabel}>◇ {notice.title}</Text>
-              <Text style={styles.noticeText}>{notice.message}</Text>
-            </View>
-          )}
+        <View accessibilityRole="alert" style={styles.noticePanel}>
+          <Text style={styles.statusLabel}>◇ {notice.title}</Text>
+          <Text style={styles.noticeText}>{notice.message}</Text>
+        </View>
+      )}
           <Button
             disabled={!normalized || loading}
             label={"Claim handle"}
@@ -843,7 +845,7 @@ export default function BuzzOnboarding() {
         testID="onboarding-new-key-step"
       >
         <PixelGateReveal style={styles.namePanel}>
-          <Text style={styles.sectionLabel}>NEW KEY · BACK IT UP</Text>
+          <RoomListSectionHeader title="NEW KEY · BACK IT UP" inset="content" />
           <View style={styles.nameAvatar}>
             <IdentityMark kind="human" seed={newKey.identity.publicKey} size={82} />
           </View>
@@ -853,7 +855,7 @@ export default function BuzzOnboarding() {
             it. Save it somewhere safe before you continue.
           </Text>
 
-          <Text style={styles.sectionLabel}>PUBLIC · NPUB</Text>
+          <RoomListSectionHeader title="PUBLIC · NPUB" inset="content" />
           <HullSurface strength="code" style={styles.keyBox}>
             <Text selectable style={styles.keyText} testID="onboarding-new-key-npub">
               {newKey.npub}
@@ -867,7 +869,7 @@ export default function BuzzOnboarding() {
             </Text>
           </View>
 
-          <Text style={styles.sectionLabel}>SECRET · NSEC</Text>
+          <RoomListSectionHeader title="SECRET · NSEC" inset="content" />
           <HullSurface strength="code" style={styles.keyBox}>
             <Text
               selectable={newKeyRevealed}
@@ -922,27 +924,31 @@ export default function BuzzOnboarding() {
           )}
 
           {notice && (
-            <View accessibilityRole="alert" style={styles.noticePanel}>
-              <Text style={styles.statusLabel}>◇ {notice.title}</Text>
-              <Text style={styles.noticeText}>{notice.message}</Text>
-            </View>
-          )}
+        <View accessibilityRole="alert" style={styles.noticePanel}>
+          <Text style={styles.statusLabel}>◇ {notice.title}</Text>
+          <Text style={styles.noticeText}>{notice.message}</Text>
+        </View>
+      )}
 
-          <Button
+          <View
+            style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', gap: 8 }}
+          >
+            <Button
+              disabled={loading}
+              label="Discard this key"
+              onPress={resetNewKey}
+
+              variant="quiet"
+              testID="onboarding-new-key-discard"
+            />
+            <Button
             disabled={!canEnter || loading}
             label="Enter Beeline"
             loading={loadingAction === 'enter'}
             onPress={() => void handleEnterWithNewKey()}
             testID="onboarding-new-key-enter"
           />
-          <Button
-            disabled={loading}
-            label="Discard this key"
-            onPress={resetNewKey}
-            style={styles.keyDiscard}
-            variant="secondary"
-            testID="onboarding-new-key-discard"
-          />
+          </View>
         </PixelGateReveal>
       </View>
     );
@@ -972,7 +978,7 @@ export default function BuzzOnboarding() {
 
       {!monolithEnabled && showAdvanced && (
         <PixelGateReveal style={styles.importPanel}>
-          <Text style={styles.sectionLabel}>ADVANCED · NEW NOSTR KEY</Text>
+          <RoomListSectionHeader title="ADVANCED · NEW NOSTR KEY" inset="content" />
           <Text style={styles.keyGuide}>
             No key yet? Create one on this device. You back it up before entering Beeline.
           </Text>
@@ -987,11 +993,11 @@ export default function BuzzOnboarding() {
             />
           </View>
           <View style={styles.advancedDivider} />
-          <Text style={styles.sectionLabel}>ADVANCED · EXISTING NOSTR KEY</Text>
+          <RoomListSectionHeader title="ADVANCED · EXISTING NOSTR KEY" inset="content" />
           <Text style={styles.keyGuide}>
             Your nostr key stays on this device and does not go to GitHub.
           </Text>
-          <TextInput
+          <HullDialogInput
             nativeID="buzz-secret-key"
             accessibilityLabel="Secret key"
             style={[styles.input, inputFocused && styles.inputFocused]}
@@ -1138,12 +1144,6 @@ const styles = StyleSheet.create((theme) => {
       color: groknight.textSecondary,
     },
     importPanel: { width: '100%', maxWidth: 440, alignSelf: 'center', marginBottom: 16 },
-    sectionLabel: {
-      ...theme.buzz.type.sectionHead,
-      fontFamily: groknight.monoSemibold,
-      color: groknight.textMuted,
-      marginBottom: 4,
-    },
     keyGuide: {
       ...theme.buzz.type.body,
       color: groknight.textSecondary,
@@ -1174,12 +1174,6 @@ const styles = StyleSheet.create((theme) => {
       ...theme.buzz.type.meta,
       color: groknight.textSecondary,
     },
-    custodyNote: {
-      ...theme.buzz.type.meta,
-      marginTop: groknight.space.md,
-      color: groknight.textMuted,
-      textAlign: 'center',
-    },
     advancedDivider: {
       borderBottomWidth: 1,
       borderBottomColor: groknight.border,
@@ -1202,7 +1196,6 @@ const styles = StyleSheet.create((theme) => {
       ...theme.buzz.type.sectionHead,
       color: groknight.chrome,
     },
-    keyDiscard: { marginTop: groknight.space.sm },
     warning: { flexDirection: 'row', gap: groknight.space.sm, marginBottom: 16 },
     warningGlyph: {
       ...theme.buzz.type.body,
@@ -1268,5 +1261,11 @@ const styles = StyleSheet.create((theme) => {
       color: groknight.textMuted,
       textAlign: 'center',
     },
-  };
+  custodyNote: {
+      ...theme.buzz.type.meta,
+      marginTop: groknight.space.md,
+      color: groknight.textMuted,
+      textAlign: 'center',
+    },
+};
 });

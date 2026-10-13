@@ -1,3 +1,4 @@
+import { RoomListSectionHeader } from './RoomListSectionHeader';
 import React, { useEffect, useState } from 'react';
 import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -148,22 +149,14 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
               because the head is where the add control lives: with the Room
               header's `+` retired (C83), an agentless Room would otherwise
               have no way to reach an agent at all. */}
-          <View style={styles.rosterSectionHeadRow}>
-            <Text style={styles.rosterSectionLabel} testID="room-roster-members-head">
-              {MEMBERS_LABEL} {members.length}
-            </Text>
-            {canAddMembers && (
-              <TouchableOpacity
-                accessibilityLabel="Add members"
-                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                onPress={onAddMembers}
-                style={styles.rosterSectionAdd}
-                testID="room-roster-add-members"
-              >
-                <Text style={styles.rosterSectionAddGlyph}>+</Text>
-              </TouchableOpacity>
-            )}
-          </View>
+          <RoomListSectionHeader
+            title={MEMBERS_LABEL}
+            count={members.length}
+            testID="room-roster-members-head"
+            actionAccessibilityLabel="Add members"
+            actionTestID="room-roster-add-members"
+            onAction={canAddMembers ? onAddMembers : undefined}
+          />
           {roster.visible.map((participant) => {
             const display = participant.agent
               ? resolveAgentDisplayIdentity(participant.pubkey, participant.agent)
@@ -325,24 +318,6 @@ const styles = StyleSheet.create((theme) => {
     },
     rosterModalCloseText: { ...Typography.default(), ...hull.type.hero, color: hull.steel },
     rosterContent: { paddingTop: hull.space.md, paddingBottom: hull.space.xs },
-    rosterSectionHeadRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      marginBottom: hull.space.sm,
-    },
-    rosterSectionLabel: {
-      ...Typography.default(),
-      ...hull.type.sectionHead,
-      color: hull.textMuted,
-    },
-    rosterSectionAdd: {
-      width: 44,
-      height: 44,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    rosterSectionAddGlyph: { ...Typography.default(), ...hull.type.hero, color: hull.accent },
     chevron: { color: hull.textMuted },
     rosterMore: {
       minHeight: 44,

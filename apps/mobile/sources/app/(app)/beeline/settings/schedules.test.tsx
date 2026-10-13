@@ -1,3 +1,5 @@
+vi.mock('expo-haptics', () => ({ ImpactFeedbackStyle: { Light: 'Light' }, impactAsync: async () => undefined }));
+vi.mock('react-native-keyboard-controller', async () => { const R = await import('react'); return { KeyboardAvoidingView: (props: any) => R.createElement('View', props, props.children) }; });
 
 import React from 'react';
 // @ts-expect-error No renderer declarations.
@@ -14,7 +16,7 @@ vi.mock('expo-router', () => ({ router, useLocalSearchParams: () => params.value
 vi.mock('react-native', async () => {
   const { createElement } = await import('react');
   const host = (name: string) => (props: any) => createElement(name, props, props.children);
-  return { Pressable: host('Pressable'), TouchableOpacity: host('TouchableOpacity'), Text: host('Text'), ScrollView: host('ScrollView'), View: host('View') };
+  return { Platform: { OS: 'ios', select: (options: any) => options.ios ?? options.default }, StyleSheet: { flatten: (style: any): any => Array.isArray(style) ? Object.assign({}, ...style.map((part: any) => Array.isArray(part) ? Object.assign({}, ...part) : part)) : style }, Pressable: host('Pressable'), TouchableOpacity: host('TouchableOpacity'), Text: host('Text'), ScrollView: host('ScrollView'), View: host('View') };
 });
 vi.mock('react-native-unistyles', () => ({ StyleSheet: { create: (fn: any) => fn({ buzz: { type: {}, space: {} } }), hairlineWidth: 1 } }));
 vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0 }) }));

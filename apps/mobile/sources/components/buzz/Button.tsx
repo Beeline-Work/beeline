@@ -11,11 +11,13 @@ import { StyleSheet } from 'react-native-unistyles';
 import * as Haptics from 'expo-haptics';
 import { PixelLoader } from './MonoHull';
 
-export type ButtonVariant = 'primary' | 'secondary' | 'brass';
+export type ButtonVariant = 'primary' | 'secondary' | 'brass' | 'quiet' | 'destructive';
 
 export type ButtonProps = Omit<PressableProps, 'children' | 'style'> & {
   /** Sentence-case verb shown on the button. */
   label: string;
+  /** Existing drawn glyph for an icon-only control, with an accessibility label. */
+  icon?: React.ReactNode;
   /**
    * `primary`: the filled action (one per surface).
    * `secondary`: outlined in `borderStrong`, for the alternative action.
@@ -39,6 +41,7 @@ export type ButtonProps = Omit<PressableProps, 'children' | 'style'> & {
  */
 export function Button({
   label,
+  icon,
   variant = 'primary',
   loading = false,
   fullWidth = false,
@@ -63,7 +66,7 @@ export function Button({
       }}
       style={({ pressed }) => [
         styles.frame,
-        primary ? styles.primary : variant === 'brass' ? styles.brass : styles.secondary,
+        primary ? styles.primary : styles[variant],
         pressed && !isDisabled && (primary ? styles.primaryPressed : styles.outlinedPressed),
         isDisabled && (primary ? styles.primaryDisabled : styles.outlinedDisabled),
         fullWidth && styles.fullWidth,
@@ -71,21 +74,26 @@ export function Button({
       ]}
     >
       {loading && <PixelLoader compact />}
-      <Text
-        numberOfLines={1}
-        style={[
-          styles.label,
-          labelStyle,
-          primary
-            ? styles.primaryLabel
-            : variant === 'brass'
-              ? styles.brassLabel
-              : styles.secondaryLabel,
-          isDisabled && styles.disabledLabel,
-        ]}
-      >
-        {label}
-      </Text>
+      {icon}
+      {label ? (
+        <Text
+          numberOfLines={1}
+          style={[
+            styles.label,
+            labelStyle,
+            primary
+              ? styles.primaryLabel
+              : variant === 'brass'
+                ? styles.brassLabel
+                : variant === 'destructive'
+                  ? styles.destructiveLabel
+                  : styles.secondaryLabel,
+            isDisabled && styles.disabledLabel,
+          ]}
+        >
+          {label}
+        </Text>
+      ) : null}
     </Pressable>
   );
 }
@@ -107,6 +115,9 @@ const styles = StyleSheet.create((theme) => {
     primary: { backgroundColor: buzz.buttonPrimaryFill, borderColor: buzz.buttonPrimaryFill },
     secondary: { backgroundColor: 'transparent', borderColor: buzz.borderStrong },
     brass: { backgroundColor: 'transparent', borderColor: buzz.accent },
+    quiet: { backgroundColor: 'transparent', borderColor: 'transparent' },
+    destructive: { backgroundColor: 'transparent', borderColor: 'transparent' },
+    destructiveLabel: { color: buzz.dialogDanger },
     primaryPressed: { opacity: 0.85 },
     outlinedPressed: { backgroundColor: buzz.bgPressed },
     primaryDisabled: { backgroundColor: buzz.bgRaised, borderColor: buzz.bgRaised },

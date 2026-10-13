@@ -22,24 +22,31 @@ export default function ConnectorSignInScreen() {
   useLatencyRouteFrame('/beeline/settings/workbench/connect-signin');
   const params = useLocalSearchParams<{ appSignInSession?: string | string[] }>();
   const sessionUri = first(params.appSignInSession);
-  return sessionUri ? <AppSignInReturnScreen sessionUri={sessionUri} /> : <ConnectorSignInOverlay />;
+  return sessionUri ? (
+    <AppSignInReturnScreen sessionUri={sessionUri} /> ) : (
+    <ConnectorSignInOverlay />);
 }
 
 function AppSignInReturnScreen({ sessionUri }: { sessionUri: string }) {
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     let live = true;
-    void takeAppSignInReturn().then(async destination => {
+    void takeAppSignInReturn().then(async (destination ) => {
       if (!destination?.appId) throw new Error('App sign-in could not be matched to a connection');
       await getWorkbenchSource().completeAppSignIn({ sessionUri, appId: destination.appId });
       if (!live) return;
-      router.replace(destination?.roomId ? connectorOfferCompletionRoute(destination.roomId) as Href : ({ pathname: '/beeline/settings/workbench', params: { workspaceId: destination?.workspaceId ?? '', viewerId: destination?.viewerId ?? '' } } as Href));
+      router.replace(destination?.roomId ? (connectorOfferCompletionRoute(destination.roomId) as Href )
+            : ({ pathname: '/beeline/settings/workbench', params: { workspaceId: destination?.workspaceId ?? '', viewerId: destination?.viewerId ?? '' } } as Href),
+        );
     }).catch(cause => { if (live) setError(cause instanceof Error ? cause.message : 'Sign-in could not be verified'); });
     return () => { live = false; };
   }, [sessionUri]);
-  return <View style={styles.returnScreen} testID="app-sign-in-return">
-    {error ? <Text accessibilityRole="alert" style={styles.error}>{error}</Text> : <ActivityIndicator accessibilityLabel="Completing app sign-in" />}
-  </View>;
+  return (
+    <View style={styles.returnScreen} testID="app-sign-in-return">
+    {error ? (
+        <Text accessibilityRole="alert" style={styles.error}>{error}</Text> ) : (
+        <ActivityIndicator accessibilityLabel="Completing app sign-in" />)}
+  </View>);
 }
 
 /** Existing Trusty Squire helper sign-in retains its streamed browser overlay. */
@@ -59,7 +66,10 @@ function ConnectorSignInOverlay() {
   const insets = useSafeAreaInsets();
   const WebView = useSandboxWebView();
 
-  const finish = useCallback(() => router.replace(roomId ? connectorOfferCompletionRoute(roomId) as Href : ({ pathname: '/beeline/settings/workbench', params: { workspaceId, viewerId } } as Href)), [roomId, viewerId, workspaceId]);
+  const finish = useCallback(() => router.replace(roomId ? (connectorOfferCompletionRoute(roomId) as Href )
+          : ({ pathname: '/beeline/settings/workbench', params: { workspaceId, viewerId } } as Href),
+      ), [roomId, viewerId, workspaceId],
+  );
   const observed = useInstallObserver(workspaceId, connectorId);
   useEffect(() => {
     const state = observed.data;
@@ -75,17 +85,40 @@ function ConnectorSignInOverlay() {
     setFallback(true);
   }, [signIn.url]);
 
-  return <View style={styles.scrim} testID="signin-overlay">
+  return (
+    <View style={styles.scrim} testID="signin-overlay">
     <AnimatedBlurBackdrop interactive={false} blurIntensity={48} />
     <View style={[styles.card, { marginTop: insets.top + 24, marginBottom: insets.bottom + 24 }]} testID="signin-card">
       <PageHeader backAccessibilityLabel="Close sign-in" eyebrow="Connectors" prominent onBack={() => router.back()} testID="signin-header" title={`Sign in to ${connectorName}`} />
-      {observed.error ? <TouchableOpacity accessibilityRole="button" onPress={observed.installMissing ? () => router.back() : observed.retry} testID="signin-retry"><Text accessibilityRole="alert" style={styles.error}>{observed.error} · Retry</Text></TouchableOpacity> : null}
-      {signIn.method === 'oauth' ? <View style={styles.centered} testID="signin-oauth-browser">
+        {observed.error ? (
+          <View>
+            <Text accessibilityRole="alert" style={styles.error}>
+              {observed.error}
+            </Text>
+            <Button
+              label="Retry"
+              variant="secondary"
+              style={{ alignSelf: 'flex-end' }}
+              onPress={observed.installMissing ? () => router.back() : observed.retry}
+              testID="signin-retry"
+            />
+          </View>
+        ) : null}
+        {signIn.method === 'oauth' ? (
+          <View style={styles.centered} testID="signin-oauth-browser">
         <Text style={styles.note}>{connectorName} sign-in opens in your browser. Return here after granting access.</Text>
         <Button label={`Continue with ${connectorName}`} onPress={() => void openBrowser()} testID="signin-open-external" />
-      </View> : WebView && signIn.url ? React.createElement(WebView, { source: { uri: signIn.url }, style: styles.webView, javaScriptEnabled: true, domStorageEnabled: true, testID: 'signin-webview' }) : fallback ? <View style={styles.centered}><Text style={styles.note}>Finish sign-in in the browser, then return here.</Text></View> : <ScrollView contentContainerStyle={styles.centered}><ActivityIndicator testID="signin-webview-loading" /><Button label="Open in browser" onPress={() => void openBrowser()} testID="signin-open-external" /></ScrollView>}
+      </View>
+        ) : WebView && signIn.url ? (
+          React.createElement(WebView, { source: { uri: signIn.url }, style: styles.webView, javaScriptEnabled: true, domStorageEnabled: true, testID: 'signin-webview' })
+        ) : fallback ? (
+          <View style={styles.centered}><Text style={styles.note}>Finish sign-in in the browser, then return here.</Text></View>
+        ) : (
+          <ScrollView contentContainerStyle={styles.centered}><ActivityIndicator testID="signin-webview-loading" /><Button label="Open in browser" onPress={() => void openBrowser()} testID="signin-open-external" /></ScrollView>
+        )}
+      </View>
     </View>
-  </View>;
+  );
 }
 
 const styles = StyleSheet.create(theme => ({

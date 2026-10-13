@@ -1,3 +1,4 @@
+import { Button } from '@/components/buzz/Button';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
@@ -57,9 +58,15 @@ export default function PromptSchedule() {
         title="Schedule"
       />
       {error && (
-        <Pressable accessibilityRole="alert" onPress={retry} style={styles.error}>
-          <Text style={styles.errorText}>{error} · Retry</Text>
-        </Pressable>
+        <View style={styles.error}>
+          <Text style={styles.errorText}>{error}</Text>
+          <Button
+            label="Retry"
+            variant="secondary"
+            style={{ alignSelf: 'flex-end' }}
+            onPress={retry}
+          />
+        </View>
       )}
       {loading && !work ? (
         <View style={styles.loading}>

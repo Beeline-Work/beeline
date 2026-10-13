@@ -1,3 +1,4 @@
+import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import React, { useState } from 'react';
 import { ScrollView, Text, View } from 'react-native';
 import * as WebBrowser from 'expo-web-browser';
@@ -31,38 +32,46 @@ export default function ConnectorServiceScreen() {
   const isSquire = service === 'trusty-squire';
   const helperId = param(params.helperId);
   const helper = view?.helpers.find(item => item.id === helperId);
-  const title = isSquire ? `Trusty Squire${helper ? ` · ${helper.name}` : ''}` : group?.name ?? 'Keys';
+  const title = isSquire ? `Trusty Squire${helper ? ` · ${helper.name}` : ''}` : (group?.name ?? 'Keys');
   const offline = isSquire && helper ? helper.squire?.status !== 'connected'
     : view ? squireConnectionState(view) !== 'connected' : true;
   const openVault = () => { void WebBrowser.openBrowserAsync(SQUIRE_VAULT_URL).catch(() => setError('Could not open Trusty Squire vault')); };
 
-  return <View style={[styles.screen, { paddingTop: insets.top }]} testID="connector-service-screen">
+  return (
+    <View style={[styles.screen, { paddingTop: insets.top }]} testID="connector-service-screen">
     <PageHeader eyebrow="Connectors" prominent title={title} backAccessibilityLabel="Back to Connectors" onBack={() => router.back()} />
     <ScrollView contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 32 }]}>
-      {error || loadError ? <Text accessibilityRole="alert" style={styles.error}>{error ?? 'Connections are unavailable right now'}</Text> : null}
-      {isSquire ? <>
+      {error || loadError ? (
+          <Text accessibilityRole="alert" style={styles.error}>{error ?? 'Connections are unavailable right now'}</Text> ) : null}
+      {isSquire ? (
+          <>
         <Text style={styles.explainer}>Trusty Squire signs up and signs in to websites for your agents, so you never do the manual login. It keeps keys it obtains in its vault.</Text>
         <SettingsRow title="Status" value={helper?.squire?.status === 'error' ? 'Error' : offline ? 'Not added' : 'Connected'} valueTone={offline ? 'danger' : undefined}
           trailingPress={{ accessibilityLabel: 'Change Trusty Squire connection', onPress: () => setStatusOpen(true) }} />
-        {helper?.squire?.errorMessage ? <Text accessibilityRole="alert" style={styles.error}>{helper.squire.errorMessage}</Text> : null}
-        <View style={styles.section}><Text style={styles.sectionLabel}>WHAT YOUR AGENTS CAN DO</Text>
+        {helper?.squire?.errorMessage ? (
+              <Text accessibilityRole="alert" style={styles.error}>{helper.squire.errorMessage}</Text> ) : null}
+        <View style={styles.section}><RoomListSectionHeader title="WHAT YOUR AGENTS CAN DO" inset="content" spacing="flush" />
           <Text style={styles.explainer}>Ask your agent to use a site and Squire handles the login steps.</Text>
           <Text style={styles.example}>“Sign me up for this service”</Text><Text style={styles.example}>“Sign in and finish this task”</Text>
         </View>
-      </> : group ? <>
+      </> ) : group ? (
+          <>
         <View style={styles.identity}><ServiceMark company={group.name} domain={group.domain} /><Text style={styles.provenance}>{group.keys.length} {group.keys.length === 1 ? 'key' : 'keys'} · Trusty Squire</Text></View>
-        {offline ? <><SettingsRow title="Status" value="Offline" valueTone="danger"
+        {offline ? (
+              <><SettingsRow title="Status" value="Offline" valueTone="danger"
           trailingPress={{ accessibilityLabel: 'Reconnect Trusty Squire', onPress: () => setStatusOpen(true) }} />
-          <Text style={styles.explainer}>Trusty Squire is offline. Reconnect it to use these keys.</Text></> :
-          <View style={styles.section}><Text style={styles.sectionLabel}>WHAT YOUR AGENTS CAN DO</Text>
+          <Text style={styles.explainer}>Trusty Squire is offline. Reconnect it to use these keys.</Text></> ) :
+          (
+              <View style={styles.section}><RoomListSectionHeader title="WHAT YOUR AGENTS CAN DO" inset="content" spacing="flush" />
             <Text style={styles.explainer}>Let agents use the {group.name} account you choose, within the access you allow.</Text>
             <Text style={styles.example}>“Use {group.name} for this task”</Text>
-          </View>}
-        <View style={styles.section}><Text style={styles.sectionLabel}>YOUR KEYS</Text>
-          {group.keys.map(key => <SettingsRow key={key.ref} title={key.name} />)}
+          </View>)}
+        <View style={styles.section}><RoomListSectionHeader title="YOUR KEYS" inset="content" spacing="flush" />
+          {group.keys.map((key ) => (
+                <SettingsRow key={key.ref} title={key.name} />))}
         </View>
         <SettingsRow chevron="right" title="Manage in Trusty Squire" onPress={openVault} />
-      </> : null}
+      </> ) : null}
     </ScrollView>
     <HullActionSheetModal visible={statusOpen} title="Trusty Squire" onClose={() => setStatusOpen(false)}>
       {offline ? <HullActionSheetRow label="Reconnect" onPress={() => { setStatusOpen(false); router.push({ pathname: '/beeline/settings/workbench/connect', params: { workspaceId, viewerId, connectorId: 'trusty-squire', ...(helperId ? { helperId } : {}) } }); }} /> :
@@ -74,14 +83,13 @@ export default function ConnectorServiceScreen() {
         }} />}
       <HullActionSheetCancel onPress={() => setStatusOpen(false)} />
     </HullActionSheetModal>
-  </View>;
+  </View>);
 }
 
 const styles = StyleSheet.create(theme => { const hull = theme.buzz; return {
   screen: { flex: 1, backgroundColor: hull.appCanvas },
   content: { paddingHorizontal: hull.space.lg, paddingTop: hull.layout.screenTop, gap: hull.layout.sectionGap },
   section: { gap: hull.space.xs },
-  sectionLabel: { ...Typography.default(), ...hull.type.sectionHead, color: hull.appQuiet, marginBottom: hull.space.sm },
   identity: { flexDirection: 'row', alignItems: 'center', gap: hull.space.sm },
   provenance: { ...Typography.ledger(), ...hull.type.body, color: hull.appQuiet },
   explainer: { ...Typography.ledger(), ...hull.type.body, color: hull.appSecondary },

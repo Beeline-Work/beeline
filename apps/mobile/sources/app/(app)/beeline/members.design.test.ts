@@ -78,10 +78,8 @@ describe('Members page layout contract', () => {
     // it with their live server totals. DESIGN.md must describe this wording,
     // not "Members, never People." The count is a number beside the word when
     // the total is known, so a head never disagrees with the rows beneath it.
-    expect(source).toContain('function countedKindLabel(');
-    expect(source).toContain('`${kind} `');
-    expect(source).toContain("countedKindLabel('People', peopleTotal)");
-    expect(source).toContain("countedKindLabel('Agents', agentTotal)");
+    expect(source).toMatch(/title="People"[\s\S]*?count={peopleTotal}/);
+    expect(source).toMatch(/title="Agents"[\s\S]*?count={agentTotal}/);
     expect(source).toContain('testID="members-people-head"');
     expect(source).toContain('testID="members-agents-head"');
   });
@@ -92,9 +90,9 @@ describe('Members page layout contract', () => {
     // content must align to that same trailing edge rather than centering
     // inside the hit box, or the two visually disagree by half the glyph
     // width (captain report, second complaint on this page).
-    expect(styleBlock(source, 'sectionHeadRow')).toContain('paddingRight: hull.space.sm');
+    expect(source).toContain('<RoomListSectionHeader');
     expect(styleBlock(memberRow, 'row')).toContain('paddingHorizontal: hull.space.sm');
-    expect(styleBlock(source, 'sectionAdd')).toContain("alignItems: 'flex-end'");
+    expect(source).toContain('actionTestID="members-add-people"');
   });
 
   it('opens an agent profile from the roster row instead of expanding settings inline', () => {

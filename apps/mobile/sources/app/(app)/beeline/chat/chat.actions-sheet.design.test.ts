@@ -54,8 +54,8 @@ describe('Room and corner actions sheets', () => {
     expect(chat).toContain('testID="corner-actions-close"');
     // The Room sheet's footer is Cancel + Save, only while the Repository
     // choice is open; otherwise the sheet has no footer.
-    expect(roomChoice).toContain('testID="room-actions-close"');
-    expect(roomChoice).toContain('const footer = control || listOpen ? (');
+    expect(roomChoice).toMatch(/testID:\s*["']room-actions-close["']/);
+    expect(roomChoice).toMatch(/const footer =\s*control \|\| listOpen\s*\?/);
   });
 
   it('docks the room name and Repository control, and scrolls everything beneath them', () => {

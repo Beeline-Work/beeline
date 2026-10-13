@@ -1,3 +1,7 @@
+vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
+vi.mock('expo-haptics', () => ({ ImpactFeedbackStyle: { Light: 'Light' }, impactAsync: async () => undefined }));
+vi.mock('react-native-keyboard-controller', async () => { const R = await import('react'); return { KeyboardAvoidingView: (props: any) => R.createElement('View', props, props.children) }; });
+vi.mock('./HullDialog', async () => { const React = await import('react'); return { HullDialogActions: ({ actions }: any) => React.createElement('View', {}, actions.map((action: any) => React.createElement('Button', { ...action, key: action.label }))) }; });
 import React, { useState } from 'react';
 // @ts-expect-error react-test-renderer has no types in this workspace
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
@@ -6,7 +10,7 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('react-native', async () => {
   const React = await import('react');
   const host = (name: string) => (props: any) => React.createElement(name, props, props.children);
-  return {
+  return { Platform: { OS: 'ios', select: (options: any) => options.ios ?? options.default }, StyleSheet: { flatten: (style: any): any => Array.isArray(style) ? Object.assign({}, ...style.map((part: any) => Array.isArray(part) ? Object.assign({}, ...part) : part)) : style },
     View: host('View'),
     Text: host('Text'),
     TouchableOpacity: host('TouchableOpacity'),
@@ -128,7 +132,7 @@ function mount({
     return parts.join('');
   };
   const press = (testID: string) => act(() => host(testID)?.props.onPress());
-  const save = () => renderer.root.findByType('Button').props;
+  const save = () => host('room-repo-save').props;
   const title = () => renderer.root.findByType('Sheet').props.title;
   const list = () => renderer.root.findByType('RepoList').props;
   return {
@@ -159,7 +163,7 @@ describe('Room header Repository control', () => {
     press('room-repo-row');
     expect(host('room-repo-row')).toBeUndefined();
     // Save/Cancel appear only while the Repository choice is open.
-    expect(text('room-actions-close')).toBe('Cancel');
+    expect(host('room-actions-close').props.label).toBe('Cancel');
     expect(save().label).toBe('Save');
     expect(host('room-repo-mode-none')?.props.accessibilityState.selected).toBe(true);
     expect(host('room-repo-link')).toBeUndefined();
@@ -169,14 +173,14 @@ describe('Room header Repository control', () => {
   });
 
   it('links a repo picked from the repo-only list, only on Save (H3, H4)', () => {
-    const { renderer, text, press, save, title, list, calls } = mount();
+    const { renderer, host, text, press, save, title, list, calls } = mount();
     press('room-repo-row');
     press('room-repo-mode-link');
     expect(text('room-repo-link')).toBe('Choose a repo');
     expect(save().disabled).toBe(true);
     press('room-repo-link');
     expect(title()).toBe('Choose a repo');
-    expect(text('room-actions-close')).toBe('Back');
+    expect(host('room-actions-close').props.label).toBe('Back');
     expect(Object.keys(list()).sort()).toEqual(
       ['candidates', 'currentKey', 'draftContext', 'loading', 'onSelect', 'testIDPrefix'].sort(),
     );

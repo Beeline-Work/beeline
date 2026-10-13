@@ -1,3 +1,4 @@
+import { Button } from '@/components/buzz/Button';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
@@ -59,13 +60,14 @@ function ListTail({ agent, corner, compact }: {
   corner?: { id: string; name: string } | null;
   compact: boolean;
 }) {
-  const shownAgent = compact ? Array.from(agent)[0] ?? agent : agent;
-  return <View style={styles.listTail}>
+  const shownAgent = compact ? (Array.from(agent)[0] ?? agent ) : agent;
+  return (
+    <View style={styles.listTail}>
     <Text style={styles.listDot}>{'\u2009·\u2009'}</Text>
     <Text numberOfLines={1} style={styles.listAgent}>@{shownAgent}</Text>
     <Text style={styles.listDot}>{'\u2009·\u2009'}</Text>
     <ScheduledWorkWhere corner={corner} />
-  </View>;
+  </View>);
 }
 
 /**
@@ -147,13 +149,15 @@ export default function ScheduledWork() {
         title="Schedules and subscriptions"
       />
       {error && (
-        <Pressable
-          accessibilityRole="alert"
-          onPress={retry}
-          style={styles.error}
-        >
-          <Text style={styles.errorText}>{error} · Retry</Text>
-        </Pressable>
+        <View style={styles.error}>
+          <Text style={styles.errorText}>{error}</Text>
+          <Button
+            label="Retry"
+            variant="secondary"
+            style={{ alignSelf: 'flex-end' }}
+            onPress={retry}
+          />
+        </View>
       )}
       {loading ? (
         <View style={styles.loading}>
@@ -173,8 +177,10 @@ export default function ScheduledWork() {
                 Agents set up schedules and subscriptions. Ask an agent in this Room to add one.
               </Text>
             </View>
-          ) : <View style={styles.rows}>{entries.map((entry) => entry.kind === 'schedule'
-            ? renderSchedule(entry.value) : renderSubscription(entry.value))}</View>}
+          ) : (
+            <View style={styles.rows}>{entries.map((entry) => entry.kind === 'schedule'
+            ? renderSchedule(entry.value) : renderSubscription(entry.value))}</View>
+          )}
         </ScrollView>
       )}
     </View>

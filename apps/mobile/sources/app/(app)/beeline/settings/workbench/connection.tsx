@@ -1,3 +1,6 @@
+import { Button } from '@/components/buzz/Button';
+import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
+import { HullDialogActions } from '@/components/buzz/HullDialog';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ScrollView, Text, TouchableOpacity, View } from 'react-native';
@@ -163,7 +166,7 @@ export default function ConnectionDetailScreen() {
         ) : null}
         {detail ? (
           <View testID="connection-detail-metadata">
-            <Text style={styles.sectionLabel}>Vault</Text>
+            <RoomListSectionHeader title="Vault" inset="content" spacing="flush" />
             <SettingsRow disabled title="Reference" description={detail.connection.ref} />
             <SettingsRow
               disabled
@@ -197,7 +200,7 @@ export default function ConnectionDetailScreen() {
         ) : null}
         {detail ? (
           <View testID="connection-detail-grants">
-            <Text style={styles.sectionLabel}>Grants</Text>
+            <RoomListSectionHeader title="Grants" inset="content" spacing="flush" />
             {detail.grants.length ? (
               detail.grants.map((grant) => (
                 <SettingsRow
@@ -221,7 +224,7 @@ export default function ConnectionDetailScreen() {
         ) : null}
         {detail ? (
           <View testID="connection-detail-ledger">
-            <Text style={styles.sectionLabel}>Activity</Text>
+            <RoomListSectionHeader title="Activity" inset="content" spacing="flush" />
             {detail.ledger.length ? (
               detail.ledger.map((row, index) => (
                 <View
@@ -258,7 +261,7 @@ export default function ConnectionDetailScreen() {
         ) : null}
         {detail && revokeOffered && grantCount > 0 ? (
           <View testID="connection-management">
-            <Text style={styles.sectionLabel}>Manage</Text>
+            <RoomListSectionHeader title="Manage" inset="content" spacing="flush" />
             {!confirmRevoke ? (
               <SettingsRow
                 disabled={revoking || pendingGrants.length > 0}
@@ -276,26 +279,24 @@ export default function ConnectionDetailScreen() {
         {confirmRevoke ? (
           <View style={styles.confirm} testID="connection-revoke-confirm">
             <Text style={styles.confirmText}>{revokeQuestion}</Text>
-            <TouchableOpacity
-              accessibilityRole="button"
-              accessibilityState={{ busy: revoking, disabled: revoking }}
-              disabled={revoking}
-              onPress={() => void revoke()}
-              style={styles.confirmDanger}
-              testID="connection-revoke-confirm-yes"
-            >
-              <Text style={styles.confirmDangerText}>{revoking ? 'Revoking…' : 'Revoke'}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              accessibilityRole="button"
-              accessibilityState={{ disabled: revoking }}
-              disabled={revoking}
-              onPress={() => setConfirmRevoke(false)}
-              style={styles.confirmCancel}
-              testID="connection-revoke-confirm-no"
-            >
-              <Text style={styles.confirmCancelText}>Cancel</Text>
-            </TouchableOpacity>
+            <HullDialogActions
+              actions={[
+                {
+                  label: 'Cancel',
+                  disabled: revoking,
+                  onPress: () => setConfirmRevoke(false),
+                  testID: 'connection-revoke-confirm-no',
+                },
+                {
+                  label: revoking ? 'Revoking…' : 'Revoke',
+                  variant: 'destructive',
+                  disabled: revoking,
+                  busy: revoking,
+                  onPress: () => void revoke(),
+                  testID: 'connection-revoke-confirm-yes',
+                },
+              ]}
+            />
           </View>
         ) : null}
         {revokedLine || pendingLine ? (
@@ -311,12 +312,8 @@ export default function ConnectionDetailScreen() {
                 : 'Key unavailable right now')}
             </Text>
             {!detail ? (
-              <SettingsRow
-                onPress={() => void retry()}
-                testID="connection-retry"
-                title="Try again"
-                tone="action"
-              />
+              <Button label="Retry" variant="secondary" onPress={() => void retry()}
+                testID="connection-retry" style={{ alignSelf: 'flex-end' }} />
             ) : null}
           </View>
         ) : null}
@@ -351,7 +348,6 @@ const styles = StyleSheet.create((theme) => {
     stateText: { ...Typography.mono(), ...hull.type.meta, color: hull.textSecondary },
     stateDanger: { color: hull.dialogDanger },
     stateAccent: { color: hull.accent },
-    sectionLabel: { ...Typography.default(), ...hull.type.sectionHead, color: hull.textMuted },
     ledgerRow: {
       minHeight: hull.layout.row,
       paddingHorizontal: hull.space.sm,
@@ -373,20 +369,6 @@ const styles = StyleSheet.create((theme) => {
       gap: hull.space.sm,
     },
     confirmText: { ...Typography.default(), ...hull.type.body, color: hull.textPrimary },
-    confirmDanger: {
-      minHeight: hull.layout.row,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderWidth: 1,
-      borderColor: hull.dialogDanger,
-    },
-    confirmDangerText: { ...Typography.default(), ...hull.type.body, color: hull.dialogDanger },
-    confirmCancel: {
-      minHeight: hull.layout.row,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    confirmCancelText: { ...Typography.default(), ...hull.type.body, color: hull.textMuted },
     savedMark: { ...Typography.default(), ...hull.type.meta, color: hull.textSecondary },
     error: { gap: hull.space.xs },
     errorText: { ...Typography.default(), ...hull.type.meta, color: hull.dialogDanger },

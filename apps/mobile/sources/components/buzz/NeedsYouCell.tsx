@@ -13,7 +13,7 @@ import { compactRelativeTime } from '@/buzz/relative-time';
 import { needsYouExpiryLabel } from '@/buzz/needs-you';
 import { CORNER_META_SIZE, CornerGlyph } from './CornerGlyph';
 import brand from '@/buzz/brand.json';
-import { Button } from './Button';
+import { HullDialogActions } from './HullDialog';
 
 /** How far a phone swipe travels before the rail it reveals dismisses the cell. */
 const SWIPE_RAIL_WIDTH = 96;
@@ -23,7 +23,8 @@ const STALE_SECONDS = 24 * 60 * 60;
 
 /** Where the ask sits, titled like every other surface names it. */
 function sourceTitle(item: NeedsYouItemView): string {
-  if (item.roomKind === 'corner') return cornerTitle(item.parentRoomName, item.roomName, item.roomId);
+  if (item.roomKind === 'corner')
+    return cornerTitle(item.parentRoomName, item.roomName, item.roomId);
   if (item.roomKind === 'room') return roomTitle(item.roomName) ?? item.roomName;
   return directMessageTitle({ name: item.roomName });
 }
@@ -161,29 +162,49 @@ export function NeedsYouCell({
       ) : null}
     </Pressable>
   );
-  const cell = <View>{source}
-    {onAction && approval?.actions?.length ? <View style={styles.actionArea}>
-      {approval?.script ? <View style={styles.script}>
-        <Text style={styles.detail}>{approval.script.path}</Text>
-        <Text style={styles.literal} testID={`needs-you-script-${item.messageId}`}>{approval.script.contents}</Text>
-      </View> : null}
-      <View style={styles.actions}>
-        {approval.actions.map((action, index) => <View key={index} style={styles.action}>
-          <Button label={action.label} variant="secondary" disabled={busy !== null} loading={busy === index}
-            testID={`needs-you-action-${item.messageId}-${index}`}
-            onPress={async (event) => {
-              event.stopPropagation();
-              if (sending.current) return;
-              sending.current = true;
-              setBusy(index);
-              try { await onAction(item, action); }
-              finally { sending.current = false; setBusy(null); }
-            }} />
-          {action.detail ? <Text style={styles.detail}>{action.detail}</Text> : null}
-        </View>)}
-      </View>
-    </View> : null}
-  </View>;
+  const cell = (
+    <View>
+      {source}
+      {onAction && approval?.actions?.length ? (
+        <View style={styles.actionArea}>
+          {approval?.script ? (
+            <View style={styles.script}>
+              <Text style={styles.detail}>{approval.script.path}</Text>
+              <Text style={styles.literal} testID={`needs-you-script-${item.messageId}`}>
+                {approval.script.contents}
+              </Text>
+            </View>
+          ) : null}
+          <HullDialogActions
+            style={styles.actions}
+            actions={approval.actions.map((action, index) => ({
+              label: action.label,
+              variant: action.kind === 'skip-choice' || action.kind === 'external' || ((action.kind === 'grant' || action.kind === 'write-access') && action.decision === 'deny') ? 'quiet' : 'primary',
+                accessibilityRole: action.kind === 'external' ? 'link' : 'button',
+              disabled: busy !== null,
+              loading: busy === index,
+              testID: `needs-you-action-${item.messageId}-${index}`,
+              description: action.detail ? (
+                <Text style={styles.detail}>{action.detail}</Text>
+              ) : undefined,
+              onPress: async (event) => {
+                event.stopPropagation();
+                if (sending.current) return;
+                sending.current = true;
+                setBusy(index);
+                try {
+                  await onAction(item, action);
+                } finally {
+                  sending.current = false;
+                  setBusy(null);
+                }
+              },
+            }))}
+          />
+        </View>
+      ) : null}
+    </View>
+  );
   if (desktop) return cell;
   return (
     <Swipeable
@@ -220,7 +241,7 @@ const styles = StyleSheet.create((theme) => ({
   cellActive: { backgroundColor: theme.buzz.bgHighlight },
   cellSelected: { borderLeftWidth: 1, borderLeftColor: theme.buzz.accent },
   actionArea: { paddingHorizontal: theme.buzz.space.md, paddingBottom: theme.buzz.space.md },
-  actions: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.buzz.space.sm, marginTop: theme.buzz.space.sm },
+  actions: { marginTop: theme.buzz.space.sm },
   action: { flexShrink: 1 },
   script: { marginTop: theme.buzz.space.sm },
   head: { flexDirection: 'row', alignItems: 'baseline', gap: theme.buzz.space.sm },

@@ -1,3 +1,4 @@
+import { MemberRosterRow } from './MemberRosterRow';
 import React, { useRef, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -25,29 +26,20 @@ function ReactionMembers({
   return (
     <View style={styles.memberList}>
       {members.map((member) => (
-        <View
-          accessibilityLabel={`${member.name}, ${rosterSubtitle(member)}`}
+        <MemberRosterRow
           key={member.pubkey}
-          style={[styles.memberRow, sheet && styles.sheetMemberRow]}
+          kind={member.kind}
+          pubkey={member.pubkey}
+          name={member.name}
+          title={member.name}
+          handle={member.handle}
+          subtitle={rosterSubtitle(member)}
+          avatarUrl={member.avatar}
+          face={member.face}
+          divider="bottom"
+          accessibilityLabel={`${member.name}, ${rosterSubtitle(member)}`}
           testID={`reaction-member-${messageId}-${member.pubkey}`}
-        >
-          <IdentityMark
-            kind={member.kind}
-            seed={member.pubkey}
-            avatarUrl={member.avatar}
-            face={member.face}
-            name={member.name}
-            size={32}
-          />
-          <View style={styles.memberCopy}>
-            <Text numberOfLines={1} style={styles.memberName}>
-              {member.name}
-            </Text>
-            <Text numberOfLines={1} style={styles.memberMeta}>
-              {rosterSubtitle(member)}
-            </Text>
-          </View>
-        </View>
+        />
       ))}
     </View>
   );
@@ -192,17 +184,5 @@ const styles = StyleSheet.create((theme) => {
     },
     sheetList: { maxHeight: 360 },
     memberList: { width: '100%' },
-    memberRow: {
-      minHeight: 52,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: hull.space.sm,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: hull.border,
-    },
-    sheetMemberRow: { paddingHorizontal: HULL_SHEET_INSET },
-    memberCopy: { flex: 1, minWidth: 0 },
-    memberName: { ...hull.type.body, color: hull.textPrimary },
-    memberMeta: { ...hull.type.meta, color: hull.ledgerQuiet },
   };
 });

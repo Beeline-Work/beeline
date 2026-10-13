@@ -1,3 +1,6 @@
+vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
+vi.mock('expo-haptics', () => ({ ImpactFeedbackStyle: { Light: 'Light' }, impactAsync: async () => undefined }));
+vi.mock('react-native-keyboard-controller', async () => { const R = await import('react'); return { KeyboardAvoidingView: (props: any) => R.createElement('View', props, props.children) }; });
 // @vitest-environment jsdom
 //
 // The right work-pane divider must behave exactly like the left navigation
@@ -34,7 +37,7 @@ vi.hoisted(() => {
 vi.mock('react-native', async () => {
   // @ts-expect-error react-native-web has no declarations in this workspace.
   const rnw = await import('react-native-web');
-  return {
+  return { StyleSheet: { flatten: (style: any): any => Array.isArray(style) ? Object.assign({}, ...style.map((part: any) => Array.isArray(part) ? Object.assign({}, ...part) : part)) : style },
     FlatList: rnw.FlatList,
     PanResponder: rnw.PanResponder,
     Platform: rnw.Platform,
@@ -61,13 +64,16 @@ const theme = vi.hoisted(() => ({
     type: { hero: {}, body: {}, bodyStrong: {}, meta: {}, machine: {}, sectionHead: {} },
   },
 }));
-vi.mock('react-native-unistyles', () => ({
+vi.mock('react-native-unistyles', async () => {
+  const { completeTestTheme } = await import('@/test/test-theme');
+  const fullTheme = completeTestTheme(theme);
+  return ({
   StyleSheet: {
     hairlineWidth: 1,
-    create: (factory: any) => (typeof factory === 'function' ? factory(theme) : factory),
+    create: (factory: any) => (typeof factory === 'function' ? factory(fullTheme) : factory),
   },
-  useUnistyles: () => ({ theme }),
-}));
+  useUnistyles: () => ({ theme: fullTheme }),
+}); });
 vi.mock('@/components/buzz/IdentityMark', () => ({ IdentityMark: () => null }));
 vi.mock('@/components/buzz/TurnProgressLine', () => ({ TurnProgressLine: () => null }));
 vi.mock('@/components/buzz/ConversationComposer', () => ({

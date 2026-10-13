@@ -1,3 +1,5 @@
+vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
+vi.mock('react-native-keyboard-controller', async () => { const R = await import('react'); return { KeyboardAvoidingView: (props: any) => R.createElement('View', props, props.children) }; });
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
@@ -41,7 +43,7 @@ vi.mock('react-native', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
-  return {
+  return { StyleSheet: { flatten: (style: any): any => Array.isArray(style) ? Object.assign({}, ...style.map((part: any) => Array.isArray(part) ? Object.assign({}, ...part) : part)) : style },
     AppState: {
       addEventListener: (_type: string, listener: (state: string) => void) => {
         deck.appStateListeners.push(listener);
@@ -799,7 +801,7 @@ describe('Room deck live path', () => {
 
     await act(async () => fail(new TypeError('Network request failed')));
     expect(text(toast.root.findByProps({ testID: 'corner-open-failed' }))).toBe(
-      "Couldn't reach BeelineCheck your connection, then retry.Retry",
+      "Couldn't reach BeelineCheck your connection, then retry.",
     );
     expect(router.push).not.toHaveBeenCalled();
     await act(async () => toast.root.findByProps({ testID: 'corner-open-retry' }).props.onPress());

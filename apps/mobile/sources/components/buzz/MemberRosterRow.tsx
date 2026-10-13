@@ -1,5 +1,11 @@
 import React, { type ReactNode } from 'react';
-import { Text, TouchableOpacity, View } from 'react-native';
+import {
+  Text,
+  TouchableOpacity,
+  View,
+  type AccessibilityRole,
+  type AccessibilityState,
+} from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { fallbackMemberHandle } from '@/buzz/member-display';
 import { displayModel } from '@/buzz/model-display';
@@ -7,6 +13,11 @@ import { Typography } from '@/constants/Typography';
 import { IdentityMark } from './IdentityMark';
 
 type SharedRowProps = {
+  accessibilityLabel?: string;
+  accessibilityRole?: AccessibilityRole;
+  accessibilityState?: AccessibilityState;
+  title?: string;
+  subtitle?: string;
   avatarUrl?: string;
   disabled?: boolean;
   divider: 'top' | 'bottom';
@@ -57,8 +68,9 @@ export function memberRosterModel(member: { kind: 'human' } | { kind: 'agent'; m
  * and which edge owns the section divider.
  */
 export function MemberRosterRow(props: MemberRosterRowProps) {
-  const title = memberRosterTitle(props);
-  const subtitle = memberRosterSubtitle(props);
+  const Row = props.onPress ? TouchableOpacity : View;
+  const title = props.title ?? memberRosterTitle(props);
+  const subtitle = props.subtitle ?? memberRosterSubtitle(props);
   const model = memberRosterModel(props);
   const address = title.slice(1);
   // Presence is not spoken: it ages out while an idle agent waits on its
@@ -66,10 +78,14 @@ export function MemberRosterRow(props: MemberRosterRowProps) {
   const workingState = props.kind === 'agent' && props.alive ? ', working' : '';
 
   return (
-    <TouchableOpacity
-      accessibilityLabel={`${title}, ${props.kind === 'human' ? 'person' : 'agent'}${workingState}, at ${address}`}
-      disabled={props.disabled}
-      onPress={props.onPress}
+    <Row
+      accessibilityLabel={
+        props.accessibilityLabel ??
+        `${title}, ${props.kind === 'human' ? 'person' : 'agent'}${workingState}, at ${address}`
+      }
+      accessibilityRole={props.accessibilityRole ?? (props.onPress ? 'button' : undefined)}
+      accessibilityState={props.accessibilityState}
+      {...(props.onPress ? { disabled: props.disabled, onPress: props.onPress } : {})}
       style={[styles.row, props.divider === 'top' ? styles.dividerTop : styles.dividerBottom]}
       testID={props.testID}
     >
@@ -100,7 +116,7 @@ export function MemberRosterRow(props: MemberRosterRowProps) {
         ) : null}
       </View>
       {props.trailing}
-    </TouchableOpacity>
+    </Row>
   );
 }
 

@@ -1,3 +1,5 @@
+vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
+vi.mock('expo-haptics', () => ({ ImpactFeedbackStyle: { Light: 'Light' }, impactAsync: async () => undefined }));
 import * as React from 'react';
 import { readFileSync } from 'node:fs';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
@@ -50,13 +52,14 @@ vi.mock('react-native', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
-  return {
+  return { Platform: { OS: 'ios', select: (options: any) => options.ios ?? options.default }, StyleSheet: { flatten: (style: any): any => Array.isArray(style) ? Object.assign({}, ...style.map((part: any) => Array.isArray(part) ? Object.assign({}, ...part) : part)) : style },
     AppState: { addEventListener: () => ({ remove: () => undefined }) },
     Share: { share },
     ScrollView: host('ScrollView'),
     Switch: host('Switch'),
     Text: host('Text'),
     TextInput: host('TextInput'),
+    Pressable: host('Pressable'),
     TouchableOpacity: host('TouchableOpacity'),
     View: host('View'),
   };

@@ -34,10 +34,8 @@ function declarations(block: string): string[] {
 
 describe('Settings reads as the Members page', () => {
   it('uses the same small-caps mono section label role', () => {
-    const settingsLabel = declarations(styleBlock(settings, 'sectionLabel'));
-    const membersLabel = declarations(styleBlock(members, 'sectionLabel'));
-    expect(settingsLabel).toEqual(expect.arrayContaining(membersLabel));
-    expect(settingsLabel.join(' ')).toContain('hull.type.sectionHead');
+    expect(settings).toContain('<RoomListSectionHeader');
+    expect(members).toContain('<RoomListSectionHeader');
   });
 
   it('uses SettingsRow for the list, without cards', () => {

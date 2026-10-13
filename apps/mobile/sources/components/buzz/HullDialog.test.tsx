@@ -1,3 +1,5 @@
+vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
+vi.mock('expo-haptics', () => ({ ImpactFeedbackStyle: { Light: 'Light' }, impactAsync: async () => undefined }));
 import * as React from 'react';
 import { Pressable } from 'react-native';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
@@ -45,6 +47,9 @@ vi.mock('react-native', async () => {
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
   return {
+    StyleSheet: {
+      flatten: (style: any) => (Array.isArray(style) ? Object.assign({}, ...style) : style),
+    },
     Dimensions: { get: () => ({ width: 390, height: 844 }) },
     Modal: (props: any) => {
       modalRenderSpy();
@@ -273,13 +278,13 @@ describe('Hull dialog family', () => {
     );
     expect(
       hostByTestID(renderer, 'save', 'Pressable').props.style({ pressed: false }),
-    ).toContainEqual({ backgroundColor: hull.buttonPrimaryFill });
+    ).toContainEqual(expect.objectContaining({ backgroundColor: hull.buttonPrimaryFill }));
     expect(
       hostByTestID(renderer, 'save', 'Pressable').props.style({ pressed: true }),
-    ).toContainEqual({ backgroundColor: hull.buttonPrimaryFill });
+    ).toContainEqual(expect.objectContaining({ backgroundColor: hull.buttonPrimaryFill }));
     expect(
       hostByTestID(renderer, 'cancel', 'Pressable').props.style({ pressed: false }),
-    ).not.toContainEqual(expect.objectContaining({ borderWidth: 1 }));
+    ).toContainEqual(expect.objectContaining({ borderColor: 'transparent' }));
     expect(
       hostByTestID(renderer, 'remove', 'Pressable').findByType('Text' as any).props.style,
     ).toContainEqual({ color: hull.dialogDanger });
@@ -347,11 +352,15 @@ describe('Hull dialog family', () => {
     expect(input.props.placeholderTextColor).toBe(hull.textDisabled);
     const inputRule = renderer.root
       .findAllByType('View' as any)
-      .find((node: any) => node.props.style?.borderBottomColor === hull.borderStrong)!;
-    expect(inputRule.props.style).toMatchObject({
+      .find((node: any) =>
+        node.props.style?.some?.((style: any) => style?.borderBottomColor === hull.borderStrong),
+      )!;
+    expect(inputRule.props.style).toContainEqual(
+      expect.objectContaining({
       borderBottomColor: hull.borderStrong,
       borderBottomWidth: 1,
-    });
+    }),
+    );
   });
 
   it('renders a bottom sheet with grip, metadata, destructive-only red, disabled state, and quiet cancel', () => {

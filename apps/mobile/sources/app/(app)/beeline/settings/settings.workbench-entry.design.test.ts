@@ -14,7 +14,7 @@ describe('Settings Workbench entry', () => {
 
   it('heads that row with its own section', () => {
     expect(settings).toContain('testID="workbench-section"');
-    expect(settings).toMatch(/sectionLabel}>Connectors</);
+    expect(settings).toContain('<RoomListSectionHeader title="Connectors"');
   });
 
   // Captain ruling 2026-09-15 (mock 91aa0358328d716e) and the 2026-09-20

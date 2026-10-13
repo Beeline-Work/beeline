@@ -1,3 +1,5 @@
+import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
+import { HullDialogInput } from '@/components/buzz/HullDialog';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import { useTextDraft } from '@/buzz/use-text-draft';
 import { AgentProfileView } from '@/components/buzz/AgentProfileView';
@@ -99,16 +101,11 @@ function first(value: string | string[] | undefined): string | undefined {
 }
 
 
-function countedKindLabel(
-  kind: 'People' | 'Agents',
-  total: number | undefined,
-): 'People' | 'Agents' | [string, number] {
-  return total === undefined ? kind : [`${kind} `, total];
-}
-
 function newerConfigVersion(candidate: string, current: string | undefined): boolean {
-  return !current || candidate.length > current.length ||
-    (candidate.length === current.length && candidate > current);
+  return (
+    !current || candidate.length > current.length ||
+    (candidate.length === current.length && candidate > current)
+  );
 }
 
 function ownerByline(
@@ -622,7 +619,7 @@ export default function BuzzMembers({
     try {
       const next = await readMemberPage({
         kind,
-        offset: kind === 'human' ? page.people?.ids.length ?? 0 : page.agents?.ids.length ?? 0,
+        offset: kind === 'human' ? (page.people?.ids.length ?? 0) : (page.agents?.ids.length ?? 0),
         ...(q ? { q } : {}),
       });
       applyMemberPage(next, kind, true);
@@ -1073,7 +1070,7 @@ export default function BuzzMembers({
                           />
                         </TouchableOpacity>
                         {open && kind === 'model' && axis && (
-                          <TextInput
+                          <HullDialogInput
                             autoCapitalize="none"
                             autoCorrect={false}
                             editable={!busy}
@@ -1257,7 +1254,11 @@ export default function BuzzMembers({
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
         <Text style={styles.error}>{displayedError}</Text>
-        <Button label="RETRY" onPress={() => setRetryGeneration((value) => value + 1)} />
+        <Button
+          label="Retry"
+          onPress={() => setRetryGeneration((value) => value + 1)}
+          variant="secondary"
+        />
       </View>
     );
   }
@@ -1344,7 +1345,7 @@ export default function BuzzMembers({
           contentContainerStyle={[styles.content, { paddingBottom: theme.buzz.space.xxl + insets.bottom }]}
           keyboardShouldPersistTaps="handled"
         >
-          <TextInput
+          <HullDialogInput
             autoCapitalize="none"
             autoCorrect={false}
             editable={!busy}
@@ -1357,26 +1358,22 @@ export default function BuzzMembers({
             value={memberQuery}
           />
           <View style={styles.section} testID="members-people-section">
-            <View style={styles.sectionHeadRow}>
-              <Text style={styles.sectionLabel} testID="members-people-head">
-                {countedKindLabel('People', peopleTotal)}
-              </Text>
-              {canManage && (
-                <TouchableOpacity
-                  accessibilityLabel="Add people"
-                  disabled={busy}
-                  hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                  onPress={() => {
+            <RoomListSectionHeader
+              title="People" inset="content" spacing="flush"
+              count={peopleTotal}
+              testID="members-people-head"
+              actionAccessibilityLabel="Add people"
+              actionTestID="members-add-people"
+              actionDisabled={busy}
+              onAction={
+                canManage
+                  ? () => {
                     setError(null);
                     void invitePerson();
-                  }}
-                  style={styles.sectionAdd}
-                  testID="members-add-people"
-                >
-                  <Text style={styles.sectionAddGlyph}>+</Text>
-                </TouchableOpacity>
-              )}
-            </View>
+                  }
+                  : undefined
+              }
+            />
             {people.map((member) => personRow(member))}
             {canLoadMorePeople && (
               <TouchableOpacity
@@ -1391,21 +1388,15 @@ export default function BuzzMembers({
             )}
           </View>
           <View style={styles.section} testID="members-agents-section">
-            <View style={styles.sectionHeadRow}>
-              <Text style={styles.sectionLabel} testID="members-agents-head">
-                {countedKindLabel('Agents', agentTotal)}
-              </Text>
-              <TouchableOpacity
-                accessibilityLabel="Add agents"
-                disabled={busy}
-                hitSlop={{ top: 12, bottom: 12, left: 12, right: 12 }}
-                onPress={() => void connectAgent()}
-                style={styles.sectionAdd}
-                testID="members-add-agents"
-              >
-                <Text style={styles.sectionAddGlyph}>+</Text>
-              </TouchableOpacity>
-            </View>
+            <RoomListSectionHeader
+              title="Agents" inset="content" spacing="flush"
+              count={agentTotal}
+              testID="members-agents-head"
+              actionAccessibilityLabel="Add agents"
+              actionTestID="members-add-agents"
+              actionDisabled={busy}
+              onAction={() => void connectAgent()}
+            />
             {agents.map((member) => {
               return (
                 <View key={member.identity.pubkey}>
@@ -1495,20 +1486,6 @@ const styles = StyleSheet.create((theme) => {
       paddingBottom: hull.space.xxl,
     },
     section: {},
-    sectionHeadRow: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      paddingRight: hull.space.sm,
-    },
-    sectionLabel: { ...Typography.default(), ...hull.type.sectionHead, color: hull.textMuted },
-    sectionAdd: {
-      width: 44,
-      height: 44,
-      alignItems: 'flex-end',
-      justifyContent: 'center',
-    },
-    sectionAddGlyph: { ...Typography.default(), ...hull.type.hero, color: hull.accent },
     searchInput: {
       ...Typography.default(),
       ...hull.type.body,
@@ -1546,7 +1523,6 @@ const styles = StyleSheet.create((theme) => {
     // AGENT_MODEL_PICKER_VISIBLE_ROWS 44pt rows and scrolls inside that bound.
     choiceList: { maxHeight: AGENT_MODEL_PICKER_VISIBLE_ROWS * 44 },
     choiceActive: { borderColor: hull.chrome, backgroundColor: hull.bgPressed },
-    choiceDisabled: { opacity: 0.35 },
     choiceText: { ...Typography.default(), ...hull.type.meta, color: hull.textPrimary },
     profileSettingLabel: {
       ...Typography.default(),
@@ -1609,5 +1585,6 @@ const styles = StyleSheet.create((theme) => {
       color: hull.textPrimary,
       textAlign: 'center',
     },
-  };
+  choiceDisabled: { opacity: 0.35 },
+};
 });

@@ -173,7 +173,7 @@ export default function BuzzCorners() {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
         <Text style={[styles.error, styles.errorCentered]}>{error}</Text>
-        <Button label="RETRY" onPress={() => void corners.refresh()} />
+        <Button label="Retry" onPress={() => void corners.refresh()} variant="secondary" />
       </View>
     );
   }

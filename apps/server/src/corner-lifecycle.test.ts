@@ -3258,6 +3258,17 @@ describe('a corner opened before the workflow run existed (AC-10)', () => {
     expect(await currentState(cornerId)).toBe('landed');
   });
 
+  it('repairs a non-null projection from the authoritative newest card on boot', async () => {
+    const cornerId = await inReview();
+    await db.query(`UPDATE corner_facts SET workflow_state='implement',workflow_outcome=NULL WHERE corner_id=$1`, [cornerId]);
+    const history = await cards(cornerId);
+    expect(await backfillCornerLifecycleRuns(db)).toBe(1);
+    expect(await projected(cornerId)).toBe('review');
+    expect((await db.query(`SELECT workflow_outcome FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0]!.workflow_outcome).toBe('passing');
+    expect(await cards(cornerId)).toEqual(history);
+    expect(await backfillCornerLifecycleRuns(db)).toBe(0);
+  });
+
   it('a corner with no run at all is given one on its next event', async () => {
     const cornerId = await open('owner/widgets');
     await db.query(`DELETE FROM messages WHERE room_id=$1 AND card_type=$2`, [

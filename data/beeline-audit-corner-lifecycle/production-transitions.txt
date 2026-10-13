@@ -1,0 +1,58 @@
+BEGIN
+   from_state    |      outcome      |    to_state     | count
+-----------------+-------------------+-----------------+-------
+ ask_human       | landed            | landed          |     1
+ checks          | closed            | closed          |     4
+ checks          | failing           | implement       |   170
+ checks          | land              | land            |     3
+ checks          | landed            | landed          |     9
+ checks          | no_reviewer       | implement       |    10
+ checks          | no_reviewer       | review          |     6
+ checks          | passing           | review          |   557
+ implement       | brief_revised     | review          |     1
+ implement       | changes_requested | implement       |     1
+ implement       | closed            | closed          |    34
+ implement       | land              | land            |     6
+ implement       | landed            | landed          |     7
+ implement       | pushed            | checks          |   644
+ implement       | rechecked         | checks          |    48
+ implement       | rereview          | review          |    25
+ investigate     | landed            | landed          |     2
+ land            | landed            | landed          |   240
+ land            | merge_refused     | implement       |     7
+ land            | pushed            | checks          |     4
+ no_code_work    | closed            | closed          |    21
+ no_code_work    | upgrade_requested | upgrade_to_code |   122
+ opened          | code              | implement       |   195
+ opened          | no_code           | implement       |     9
+ opened          | no_code           | no_code_work    |   139
+ opened          | opened            | implement       |    60
+ review          | approved          | land            |   242
+ review          | approved          | review          |    75
+ review          | brief_revised     | review          |     1
+ review          | changes_requested | ask_human       |     2
+ review          | changes_requested | implement       |   197
+ review          | closed            | closed          |     2
+ review          | landed            | landed          |    81
+ review          | merge_refused     | implement       |     2
+ review          | pushed            | checks          |    43
+ review          | rechecked         | checks          |    21
+ upgrade_to_code | upgraded          | implement       |   122
+                 |                   | checks          |     1
+                 |                   | closed          |   101
+                 |                   | implement       |    19
+                 |                   | landed          |   401
+                 |                   | no_code_work    |     4
+                 |                   | opened          |   403
+                 |                   | review          |     1
+(44 rows)
+
+ lifecycle | count
+-----------+-------
+ done      |   903
+ in-review |     3
+ unknown   |     1
+ working   |    23
+(4 rows)
+
+COMMIT

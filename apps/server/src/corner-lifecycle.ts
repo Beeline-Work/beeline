@@ -1349,13 +1349,24 @@ export async function clearUnfinishedCornerMergeClaim(
 }
 
 /**
- * Gives every corner without a projected run state its run: the newest card
- * for corners opened since #1918, or one derived from the lifecycle for
+ * Repairs the run projection from its authoritative newest card, including
+ * non-null projections drifted by older schema migrations. The newest card
+ * supplies corners opened since #1918, or a run is derived from lifecycle for
  * corners opened before it. Run once from `migrateData()`.
  */
 export async function backfillCornerLifecycleRuns(database: SqlDatabase): Promise<number> {
   const missing = await database.query<{ corner_id: string }>(
-    `SELECT corner_id FROM corner_facts WHERE workflow_state IS NULL`,
+    `SELECT fact.corner_id FROM corner_facts fact
+     LEFT JOIN LATERAL (
+       SELECT card->>'toState' state,card->>'outcome' outcome
+       FROM messages WHERE room_id=fact.corner_id AND card_type=$1
+         AND card->>'runId'=fact.corner_id::text
+       ORDER BY (card->>'seq')::int DESC LIMIT 1
+     ) latest ON true
+     WHERE fact.workflow_state IS NULL OR (latest.state IS NOT NULL AND
+       (fact.workflow_state IS DISTINCT FROM latest.state OR
+        fact.workflow_outcome IS DISTINCT FROM latest.outcome))`,
+    [CORNER_LIFECYCLE_CARD_TYPE],
   );
   for (const row of missing.rows) {
     await database.transaction(async (db) => {

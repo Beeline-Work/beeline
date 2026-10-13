@@ -188,7 +188,7 @@ describe('connector row copy', () => {
       glyph: 'live',
       connect: false,
       reconnect: true,
-      disconnect: false,
+      disconnect: true,
       revokeGrants: true,
     });
     expect(connectorInstrument('error', 'trusty-squire')).toEqual({
@@ -218,6 +218,7 @@ describe('connector row copy', () => {
   it('lists adapter reconnect and disconnect in expanded details, and Squire revoke on keys', () => {
     expect(connectorExpandedActions(connectorInstrument('connected', 'trusty-squire'))).toEqual([
       { action: 'reconnect', label: 'Reconnect' },
+      { action: 'disconnect', label: 'Disconnect' },
     ]);
     expect(connectorExpandedActions(connectorInstrument(undefined, 'trusty-squire'))).toEqual([]);
     expect(connectionRevokeOffered()).toBe(true);

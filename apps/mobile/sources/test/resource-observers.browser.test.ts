@@ -68,7 +68,7 @@ describe('resource observers in the desktop web renderer', () => {
         ...shims,
         '@expo/vector-icons': `export const Ionicons = () => null; export const FontAwesome = () => null;`,
         'expo-web-browser': `export const openBrowserAsync = async () => undefined;`,
-        'expo-router': `export const useLocalSearchParams = () => ({ workspaceId: 'workspace', connectorId: 'install', connectorName: 'Squire', pairedConnectorId: 'install', offerId: 'offer', roomId: 'parent', url: 'https://example.test', method: 'oauth' }); export const router = { back() { globalThis.__backs = (globalThis.__backs ?? 0) + 1; }, replace() {}, push() {} }; export const useRouter = () => router;`,
+        'expo-router': `import React from 'react'; export const useFocusEffect = effect => React.useEffect(effect, [effect]); export const useLocalSearchParams = () => ({ workspaceId: 'workspace', connectorId: 'install', connectorName: 'Squire', pairedConnectorId: 'install', offerId: 'offer', roomId: 'parent', url: 'https://example.test', method: 'oauth' }); export const router = { back() { globalThis.__backs = (globalThis.__backs ?? 0) + 1; }, replace() {}, push() {} }; export const useRouter = () => router;`,
         '@/sync/transport/live-connection': `globalThis.__roomListeners = {}; export const sharedLiveConnection = () => ({ register: async (filters, listener) => { const id = filters[0]['#h'][0]; globalThis.__roomListeners[id] = listener; return () => { delete globalThis.__roomListeners[id]; }; }, whenSubscribed: async () => undefined });`,
         '@/buzz/workbench-source': `export const getWorkbenchSource = () => ({ readInstallState: ({ connectorId }) => {
           globalThis.__installReads = (globalThis.__installReads ?? 0) + 1;

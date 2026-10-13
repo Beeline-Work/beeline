@@ -1,3 +1,4 @@
+vi.mock('expo-router', () => ({ useFocusEffect: () => undefined }));
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   isWorkspaceListView,

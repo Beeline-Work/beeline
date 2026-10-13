@@ -35,7 +35,7 @@ No evidence of real credential misuse or real log exposure was obtained. These s
 
 **Deliberately left alone:** generic free-form output cannot be guaranteed secret-free by a finite token regex. This change does not claim to sanitize every journal producer, every arbitrary provider credential, or arbitrary user-authored prose. No log/history scrub, token rotation, credential-store change, or new logging policy is included.
 
-**Delivery:** PR URL is recorded below after PR creation.
+**Delivery:** [Credential-output fix and audit report](https://github.com/Beeline-Work/beeline/pull/2406).
 
 ### 3. Pairing authorization outlives the person who issued it
 
@@ -110,6 +110,6 @@ The explicitly accepted shared-link/readiness behavior and previously declined h
 - Root `npm run typecheck`: passed (workspace packages, mobile and scripts).
 - `git diff --check`: passed.
 - PGlite lifecycle fixture: both pending-exchange and removed-issuer observations reproduced; no network.
-- CI: must be green on the final pushed head before the worker reports done. Canonical PR URL is appended below once GitHub creates it.
+- CI: must be green on the final pushed head before the worker reports done. Canonical PR: https://github.com/Beeline-Work/beeline/pull/2406. The morning handoff records the final CI verdict without changing the tested head.
 
 The review uses the CSO checklist, adapted to the task's defensive-only scope and no-delegation requirement. It is an AI-assisted code review, not a substitute for an independent professional security audit.

@@ -234,3 +234,12 @@ test('aliased createElement and React namespaces cannot bypass raw controls', ()
     ['raw-text-input', 'raw-text-input'],
   );
 });
+
+test('returning UI cannot hide behind a lower-case or underscored component name', () => {
+  const value = scan(
+    'export function renderButton(){return <button/>} export const _Button=()=>null;',
+    'components/actions.tsx',
+  );
+  assert.deepEqual(value.components, ['_Button', 'renderButton']);
+  assert.equal(judgeUiRegistry([value], { ...empty, components: { [value.file]: [] } }).length, 2);
+});

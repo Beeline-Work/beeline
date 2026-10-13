@@ -299,8 +299,8 @@ export function scanUiSource(source, file, rules = UI_CONTROL_RULES) {
   function component(name, body) {
     if (
       name &&
-      (name === 'default' || /^[A-Z][\w$]*$/.test(name)) &&
       body &&
+      (name === 'default' || /^_*[A-Z][\w$]*$/.test(name) || containsUi(body)) &&
       (ts.isFunctionDeclaration(body) ||
         ts.isClassDeclaration(body) ||
         ts.isArrowFunction(body) ||
@@ -346,7 +346,7 @@ export function scanUiSource(source, file, rules = UI_CONTROL_RULES) {
           if (
             !node.isTypeOnly &&
             !element.isTypeOnly &&
-            (element.name.text === 'default' || /^[A-Z][\w$]*$/.test(element.name.text))
+            (element.name.text === 'default' || /^_*[A-Z][\w$]*$/.test(element.name.text))
           )
             components.add(element.name.text);
         }

@@ -2,7 +2,7 @@
 
 Snapshot: **2026-10-13 04:04:24 UTC**, PostgreSQL `BEGIN READ ONLY`. Source revision: `1e39bf4fe` plus the fixes in this branch. No production write, real agent action, helper lifecycle action, or emulator was performed. Read-only GitHub REST observations followed the database snapshot. Private transcripts, names, credentials, and raw query logs are intentionally excluded from the committed report.
 
-Delivery: the four fixes below are separate commits on the authorized `fm/beeline-audit-corner-lifecycle` branch, in one direct PR to `main`. The brief permits pushing only that branch, so independent findings are separated by commits rather than additional push branches. The delivery URL and CI result are recorded after PR creation.
+Delivery: the four fixes below are separate commits on the authorized `fm/beeline-audit-corner-lifecycle` branch, in one direct PR to `main`. The brief permits pushing only that branch, so independent findings are separated by commits rather than additional push branches. Delivery PR: https://github.com/Beeline-Work/beeline/pull/2405. GitHub remains authoritative for the exact-head CI result; completion is reported only after its final head passes.
 
 ## Ranked findings
 
@@ -136,4 +136,4 @@ IDs are navigation keys only. “Idle after completion” means the latest turn 
 
 Regression reproductions: closure 3 failures, recovered fallback 1 failure, non-null projection 1 failure, merge workflow cleanup 1 failure before their respective fixes. All proofs use PGlite/mock GitHub or an ephemeral localhost server and temporary checkout; no real helper manager is used.
 
-Final local results: **283 tests passed** across `corner-lifecycle.test.ts`, `corner-reviewer-list.test.ts`, `corner-review-dispatch.test.ts`, and `github-operations.test.ts`; **30 GitHub client tests passed**; root `npm run typecheck` passed on the synchronized tree, including workspace, mobile, and script checks. Exact-head GitHub CI is recorded with delivery. `npm run prove:command-grammar` already passed: built MCP `open_corner`, private order/report routing and live socket delivery, lifecycle watch provenance, and no private coordination in transcripts/PostgreSQL notification payloads.
+Final local results: **283 tests passed** across `corner-lifecycle.test.ts`, `corner-reviewer-list.test.ts`, `corner-review-dispatch.test.ts`, and `github-operations.test.ts`; **30 GitHub client tests passed**; root `npm run typecheck` passed on the synchronized tree, including workspace, mobile, and script checks. Exact-head GitHub CI is available on the delivery PR linked above. `npm run prove:command-grammar` already passed: built MCP `open_corner`, private order/report routing and live socket delivery, lifecycle watch provenance, and no private coordination in transcripts/PostgreSQL notification payloads.

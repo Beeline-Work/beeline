@@ -865,6 +865,10 @@ ALTER TABLE agents ADD COLUMN IF NOT EXISTS model_unavailable text;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS fast_mode boolean NOT NULL DEFAULT false;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS machine_id text;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS machine_name text;
+-- Broker facts are machine reports, not connector lifecycle records.
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS squire_report jsonb;
+-- Outstanding helper work and its progress; never the broker's status.
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS squire_work jsonb NOT NULL DEFAULT '{}'::jsonb;
 -- The harness is posted alongside the model catalog on every activation
 -- (same cadence as selected_model). custom_tags is retained but unused:
 -- agent tags were removed (retireAgentClasses clears it).
@@ -2552,6 +2556,10 @@ CREATE TABLE IF NOT EXISTS workspace_connections (
 );
 CREATE INDEX IF NOT EXISTS workspace_connections_owner_idx
   ON workspace_connections(owner_identity_id, connector_id);
+ALTER TABLE workspace_connections ALTER COLUMN connector_id DROP NOT NULL;
+ALTER TABLE workspace_connections ADD COLUMN IF NOT EXISTS machine_id text;
+ALTER TABLE workspace_connections ADD COLUMN IF NOT EXISTS workspace_id uuid REFERENCES workspaces(id) ON DELETE CASCADE;
+CREATE INDEX IF NOT EXISTS workspace_connections_workspace_idx ON workspace_connections(workspace_id);
 
 -- R5: an agent's offer to add one connector, made from a Room at the moment
 -- of need. The addressee is the person whose message woke the offering turn
@@ -2632,6 +2640,7 @@ CREATE INDEX IF NOT EXISTS connection_receipts_turn_idx
   ON connection_receipts(connection_id, turn_key) WHERE turn_key IS NOT NULL;
 CREATE INDEX IF NOT EXISTS connection_receipts_workspace_idx ON connection_receipts(workspace_id);
 ALTER TABLE connection_receipts ADD COLUMN IF NOT EXISTS event_class text;
+
 
 -- Apps: the one front door (\`app-connections.ts\`). ONE row per app per
 -- person, served by an existing Workbench connection, managed OAuth, or
@@ -2826,6 +2835,55 @@ UPDATE workspace_apps SET state='disconnected',updated_at=now()
     WHERE connector_type IN ('google-gmail','google-calendar','google-drive','google-youtube'));
 DELETE FROM workspace_connectors
   WHERE connector_type IN ('google-gmail','google-calendar','google-drive','google-youtube');
+-- Preserve vault metadata and receipts before removing legacy Squire rows.
+DO $$ BEGIN
+IF EXISTS (SELECT 1 FROM workspace_connectors WHERE connector_type='trusty-squire') THEN
+UPDATE workspace_connections c SET machine_id=COALESCE(k.machine_id,k.helper_agent_id),
+  workspace_id=k.workspace_id
+FROM workspace_connectors k WHERE c.connector_id=k.id AND k.connector_type='trusty-squire';
+WITH ranked AS (
+  SELECT id,first_value(id) OVER (
+    PARTITION BY owner_identity_id,machine_id,reference ORDER BY updated_at DESC,id
+  ) keeper FROM workspace_connections WHERE machine_id IS NOT NULL
+)
+UPDATE connection_receipts receipt SET connection_id=ranked.keeper
+FROM ranked WHERE receipt.connection_id=ranked.id AND ranked.id<>ranked.keeper;
+WITH merged AS (
+  SELECT owner_identity_id,machine_id,reference,jsonb_agg(DISTINCT grant_row) grants
+  FROM workspace_connections c CROSS JOIN LATERAL jsonb_array_elements(c.grants) grant_row
+  WHERE machine_id IS NOT NULL GROUP BY owner_identity_id,machine_id,reference
+)
+UPDATE workspace_connections c SET grants=merged.grants FROM merged
+WHERE c.owner_identity_id=merged.owner_identity_id AND c.machine_id=merged.machine_id
+  AND c.reference=merged.reference;
+DELETE FROM workspace_connections c USING workspace_connections newer
+WHERE c.machine_id IS NOT NULL AND c.owner_identity_id=newer.owner_identity_id
+  AND c.machine_id=newer.machine_id AND c.reference=newer.reference
+  AND (c.updated_at,c.id)<(newer.updated_at,newer.id);
+UPDATE workspace_connections SET connector_id=NULL WHERE machine_id IS NOT NULL;
+UPDATE workspace_apps app SET machine_id=COALESCE(k.machine_id,k.helper_agent_id)
+FROM workspace_connectors k WHERE app.connector_id=k.id AND k.connector_type='trusty-squire';
+UPDATE agents a SET squire_work=jsonb_build_object('generation',k.pairing_generation,
+  'install',true,'steps',k.status_steps,'signIn',k.sign_in,
+  'forceReloginProvider',k.force_relogin_provider,'ops',k.pending_ops)
+FROM workspace_connectors k WHERE k.helper_agent_id=a.agent_id
+  AND k.connector_type='trusty-squire' AND k.status='installing' AND k.owner_identity_id=a.owner_id
+  AND NOT COALESCE((a.squire_work->>'install')::boolean,false);
+UPDATE messages m SET card=jsonb_set(card,'{connectorId}',to_jsonb('squire:' || COALESCE(k.machine_id,k.helper_agent_id)))
+FROM connector_offers offer JOIN workspace_connectors k ON k.id=offer.connector_id
+WHERE m.card_type='connector-offer' AND m.card->>'offerId'=offer.id::text AND k.connector_type='trusty-squire';
+END IF;
+END $$;
+CREATE UNIQUE INDEX IF NOT EXISTS workspace_connections_machine_reference_unique
+  ON workspace_connections(owner_identity_id,machine_id,reference) WHERE machine_id IS NOT NULL;
+DELETE FROM workspace_connectors WHERE connector_type='trusty-squire';
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname='workspace_connectors_no_squire') THEN
+    ALTER TABLE workspace_connectors ADD CONSTRAINT workspace_connectors_no_squire
+      CHECK (connector_type<>'trusty-squire');
+  END IF;
+END $$;
+
 `;
 
 export async function migrate(

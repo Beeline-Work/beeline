@@ -34,9 +34,7 @@ export function keyServiceGroups(view: WorkbenchView, viewerId: string): KeyServ
 }
 
 export function squireConnectionState(view: WorkbenchView): 'never' | 'connected' | 'offline' {
-  const squire = view.connectors.find((connector) => connector.id === 'trusty-squire');
-  if (squire?.status === 'connected') return 'connected';
-  if (view.connections.length || squire?.status === 'error' || squire?.status === 'installing')
-    return 'offline';
+  if (view.helpers.some((helper) => helper.squire?.status === 'connected')) return 'connected';
+  if (view.helpers.some((helper) => helper.squire?.status === 'error')) return 'offline';
   return 'never';
 }

@@ -1,3 +1,4 @@
+import { squireReachCause } from './squire-status.js';
 /**
  * The helper's connector work queue (Workbench PR 2).
  *
@@ -44,6 +45,8 @@ import {
 } from './connector-squire.js';
 import { installTailscale, watchTailscaleSignIn, type InstallTailscaleResult } from './connector-tailscale.js';
 import { defaultSquireMcpClient } from './squire-mcp-client.js';
+import { existsSync } from 'node:fs';
+import { squireHostPaths, squireBrokerInstallEntry } from './squire-host.js';
 import {
   CEREMONY_EXPIRED,
   installRegistryMcp,
@@ -71,6 +74,7 @@ export type ConnectorAssignmentLoopOptions = {
   readonly watchTailscaleSignIn?: typeof watchTailscaleSignIn;
   /** Host-owned state root for Registry OAuth grants (never an isolated agent home). */
   readonly registryHome?: string;
+  readonly brokerInstalled?: () => boolean;
   readonly installRegistry?: (
     input: Parameters<typeof installRegistryMcp>[0],
   ) => Promise<RegistryInstallResult>;
@@ -121,6 +125,8 @@ export class ConnectorAssignmentLoop {
   /** One install at a time per connector; concurrent wakes skip it. */
   private readonly inFlight = new Set<string>();
   private mcp?: SquireMcpClient;
+  private readonly brokerInstalled: () => boolean;
+  private reporting?: Promise<void>;
 
   constructor(options: ConnectorAssignmentLoopOptions) {
     this.agentId = options.agentId;
@@ -130,6 +136,9 @@ export class ConnectorAssignmentLoop {
     this.installTailscale = options.installTailscale ?? installTailscale;
     this.watchTailscaleSignIn = options.watchTailscaleSignIn ?? watchTailscaleSignIn;
     this.registryHomeDir = options.registryHome ?? process.env.HOME ?? process.cwd();
+    this.brokerInstalled = options.brokerInstalled ?? (() =>
+      existsSync(squireBrokerInstallEntry(this.registryHomeDir)) ||
+      existsSync(squireHostPaths(this.registryHomeDir).mcpSocket));
     this.installRegistry = options.installRegistry ?? installRegistryMcp;
     this.providerWebhook = options.providerWebhook ?? runProviderWebhookAssignment;
     this.readVaultFn = options.readVault ?? readVault;
@@ -175,6 +184,9 @@ export class ConnectorAssignmentLoop {
 
   /** Drain the queue once; every failure is logged, never raised. */
   async runOnce(): Promise<void> {
+    // A startup/reconnect checks the local broker even with no install assignment.
+    this.reporting ??= this.reportLocalBroker().finally(() => { this.reporting = undefined; });
+    // A slow broker must not hold up other connectors on this helper.
     let assignments: readonly ConnectorAssignment[];
     try {
       const result = await this.api.execute('getConnectorAssignments', { agentId: this.agentId });
@@ -461,7 +473,7 @@ export class ConnectorAssignmentLoop {
         ...(result.squireVersion ? { squireVersion: result.squireVersion } : {}),
         ...generation,
       });
-      await this.reportVault(connectorId);
+      await this.reportLocalBroker(true);
       return;
     }
     // Still installing: the human has not signed in yet; keep the steps. This
@@ -507,7 +519,7 @@ export class ConnectorAssignmentLoop {
 
   /** One vault report covers every live trusty-squire connector on this helper. */
   private async runSync(): Promise<void> {
-    await this.reportVault();
+    await this.reportLocalBroker(true);
   }
 
   private async runRevoke(connectorId: string, reference: string): Promise<void> {
@@ -524,9 +536,26 @@ export class ConnectorAssignmentLoop {
     void connectorId;
   }
 
-  private async reportVault(_connectorId?: string): Promise<void> {
-    const connections = await this.readVaultFn(this.squire());
-    await this.api.execute('postConnectorVault', { agentId: this.agentId, connections });
+  private async reportLocalBroker(brokerKnown = false): Promise<void> {
+    let report: { agentId: string; connections: readonly VaultConnectionMeta[];
+      notAdded?: boolean; errorMessage?: string };
+    try {
+      if (!brokerKnown && !this.brokerInstalled()) {
+        report = {
+          agentId: this.agentId, connections: [], notAdded: true,
+        };
+      } else {
+        report = { agentId: this.agentId, connections: await this.readVaultFn(this.squire()) };
+      }
+    } catch (error) {
+      const errorMessage = squireReachCause(error);
+      report = { agentId: this.agentId, connections: [], errorMessage };
+    }
+    try {
+      await this.api.execute('postConnectorVault', report);
+    } catch (reportError) {
+      this.log(`Squire machine report unavailable: ${describe(reportError)}`);
+    }
   }
 }
 

@@ -149,7 +149,7 @@ describe('Postgres live fanout', () => {
     await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [agent, AUTHOR]);
     await database.query(`INSERT INTO workspace_connectors
       (id,workspace_id,owner_identity_id,connector_type,helper_agent_id)
-      VALUES($1,$2,$3,'trusty-squire',$4)`, [connector, WORKSPACE, AUTHOR, agent]);
+      VALUES($1,$2,$3,'tailscale',$4)`, [connector, WORKSPACE, AUTHOR, agent]);
     await database.query(`INSERT INTO workspace_connections
       (id,connector_id,owner_identity_id,reference) VALUES($1,$2,$3,'vault-ref')`,
       ['44444444-4444-4444-8444-444444444444', connector, AUTHOR]);
@@ -160,6 +160,30 @@ describe('Postgres live fanout', () => {
       ownerId: AUTHOR, resource: 'install', resourceId: connector });
     expect(received).toContainEqual({ type: 'resource-change', roomId: '',
       ownerId: AUTHOR, resource: 'workbench' });
+  });
+
+  it('publishes machine broker reports and sign-in progress to the owner surfaces', async () => {
+    const live = new LiveHub();
+    const client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    listeners.push(listener);
+    const received: LiveEvent[] = [];
+    live.subscribeAll((event) => received.push(event));
+    void listener.run();
+    await eventually(() => listener.projectionHealth().connected);
+    const agent = 'b'.repeat(64);
+    await database.query("INSERT INTO identities(id,kind,name) VALUES($1,'agent','Helper')", [agent]);
+    await database.query("INSERT INTO agents(agent_id,owner_id,machine_id) VALUES($1,$2,'machine')",
+      [agent, AUTHOR]);
+    await settle(received);
+    await database.query("UPDATE agents SET squire_report=$2::jsonb,squire_work=$3::jsonb WHERE agent_id=$1",
+      [agent, JSON.stringify({ status: 'error', errorMessage: 'Squire broker unavailable', reportedAt: 1 }),
+        JSON.stringify({ generation: 1, install: true, steps: [] })]);
+    await eventually(() => received.some((event) => event.type === 'resource-change' && event.resource === 'workbench')
+      && received.some((event) => event.type === 'resource-change' && event.resource === 'install'));
+    expect(received).toContainEqual({ type: 'resource-change', roomId: '', ownerId: AUTHOR, resource: 'workbench' });
+    expect(received).toContainEqual({ type: 'resource-change', roomId: '', ownerId: AUTHOR,
+      resource: 'install', resourceId: 'squire:machine' });
   });
 
   it('names a Workspace header or identity change by id, and only to who shares it', async () => {

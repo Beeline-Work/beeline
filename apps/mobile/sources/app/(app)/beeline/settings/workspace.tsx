@@ -39,7 +39,7 @@ import { BuzzRigTransport } from '@/sync/transport';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { WORKSPACE_SETTINGS_TILE, workspacePictureSeat } from '@/buzz/workspace-tile';
-import { Modal } from '@/modal';
+import { roomHref } from '@/buzz/corner-navigation';
 import { PageHeader } from '@/components/buzz/PageHeader';
 import { HullDialog } from '@/components/buzz/HullDialog';
 
@@ -48,6 +48,8 @@ type WorkspaceRoomSetting = {
   name: string;
   visibility: 'public' | 'invite-only';
   canManage: boolean;
+  /** Undefined until the viewer's Room list has loaded. */
+  joined?: boolean;
   createdAt?: number;
 };
 
@@ -116,7 +118,7 @@ const ROOM_DATE_FORMATTER = new Intl.DateTimeFormat('en-US', {
 });
 
 const WORKSPACE_VISIBILITY_LABELS = { public: 'Public', 'invite-only': 'Invite-only' } as const;
-const ROOM_VISIBILITY_LABELS = { public: 'Open', 'invite-only': 'Invite-only' } as const;
+const ROOM_VISIBILITY_LABELS = { public: 'Public', 'invite-only': 'Invite-only' } as const;
 
 /* The Workspace settings tile: the rail's tile at page scale, with its picture
  * seated by the same rule (`buzz/workspace-tile`). */
@@ -161,6 +163,7 @@ export default function WorkspaceSettings() {
   const [renamingWorkspace, setRenamingWorkspace] = useState(false);
   const [visibilityPickerOpen, setVisibilityPickerOpen] = useState(false);
   const [voicePickerOpen, setVoicePickerOpen] = useState(false);
+  const [roomSheetId, setRoomSheetId] = useState<string | null>(null);
   const [deleteSheetOpen, setDeleteSheetOpen] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText, deletionDraft] = useTextDraft(`workspace-delete:${communityId}`,
     '',
@@ -240,6 +243,8 @@ export default function WorkspaceSettings() {
         return {
           ...room,
           canManage: canManageWorkspace,
+          // Membership comes from the viewer's own Room list, never the manager index.
+          joined: chatList ? joinedRooms.has(room.id) : undefined,
         };
       })
       .sort((left, right) => left.name.localeCompare(right.name));
@@ -396,6 +401,7 @@ export default function WorkspaceSettings() {
         return;
       }
       const visibility = room.visibility === 'public' ? 'invite-only' : 'public';
+      setRoomSheetId(null);
       setWorkingKey(`room-${room.id}`);
       setError(null);
       try {
@@ -411,22 +417,31 @@ export default function WorkspaceSettings() {
     [chatListKey, client],
   );
 
-  const showRoomDetails = useCallback((room: WorkspaceRoomSetting) => {
-    // Display-only channel mark; the stored name and copied id stay raw.
-    Modal.actionSheet(
-      roomTitle(room.name) ?? room.name,
-      [
-        {
-          text: `Copy ${ROOM_LABEL} ID`,
-          metadata: room.id,
-          onPress: () => {
-            void Clipboard.setStringAsync(room.id);
-          },
-        },
-      ],
-      { cancelText: 'Cancel' },
-    );
-  }, []);
+  const joinRoom = useCallback(
+    async (room: WorkspaceRoomSetting) => {
+      const viewerId = chatListKey?.viewerPubkey;
+      if (!viewerId || !room.canManage) return;
+      if (!getBuzzRuntimeConfig().monolithEnabled) {
+        setRoomSheetId(null);
+        setError(`Joining a ${ROOM_LABEL} requires the current Beeline runtime.`);
+        return;
+      }
+      setWorkingKey(`room-${room.id}`);
+      setError(null);
+      try {
+        await monolithPhoneOperation('addRoomMember', { roomId: room.id, memberId: viewerId });
+        setRoomSheetId(null);
+        if (chatListKey) refreshChatList(chatListKey);
+        router.push(roomHref(room.id, communityId));
+      } catch (caught) {
+        setRoomSheetId(null);
+        setError(`Could not join ${roomTitle(room.name) ?? room.name}: ${String(caught)}`);
+      } finally {
+        setWorkingKey(null);
+      }
+    },
+    [chatListKey, communityId],
+  );
 
   const closeDeleteSheet = useCallback(() => {
     if (deleteBusy) return;
@@ -466,6 +481,8 @@ export default function WorkspaceSettings() {
     );
   }
 
+  const sheetRoom = rooms.find((room) => room.id === roomSheetId);
+  const sheetRoomWorking = sheetRoom !== undefined && workingKey === `room-${sheetRoom.id}`;
   const peopleTotal = workspaceView?.peopleTotal;
   const agentTotal = workspaceView?.agentTotal;
   const memberCount =
@@ -679,26 +696,30 @@ export default function WorkspaceSettings() {
             {rooms.map((room) => {
               const displayName = roomTitle(room.name) ?? room.name;
               const duplicateName = duplicateRoomNames.has(room.name.trim().toLocaleLowerCase());
-              const nextVisibility = room.visibility === 'public' ? 'invite-only' : 'public';
-              const nextVisibilityLabel = ROOM_VISIBILITY_LABELS[nextVisibility];
+              const description = [
+                room.joined === false ? 'Not joined' : undefined,
+                duplicateName ? roomCreatedQualifier(room.createdAt) : undefined,
+              ]
+                .filter(Boolean)
+                .join(' · ');
               return (
                 <View key={room.id}>
                   <SettingsRow
-                    accessibilityLabel={`Set ${displayName} visibility to ${nextVisibilityLabel}`}
+                    accessibilityLabel={`Show actions for ${ROOM_LABEL} ${displayName}`}
                     chevron="right"
-                    description={duplicateName ? roomCreatedQualifier(room.createdAt) : undefined}
+                    description={description || undefined}
                     descriptionAction={
                       duplicateName
                         ? {
                             accessibilityLabel: `View details for ${ROOM_LABEL} ${displayName}`,
                             label: 'Details',
-                            onPress: () => showRoomDetails(room),
+                            onPress: () => setRoomSheetId(room.id),
                             testID: `room-details-${room.id}`,
                           }
                         : undefined
                     }
                     disabled={!room.canManage || workingKey === `room-${room.id}`}
-                    onPress={() => void changeRoomVisibility(room)}
+                    onPress={() => setRoomSheetId(room.id)}
                     testID={`room-visibility-${room.id}`}
                     title={displayName}
                     value={ROOM_VISIBILITY_LABELS[room.visibility]}
@@ -771,6 +792,74 @@ export default function WorkspaceSettings() {
           disabled={workingKey !== null} onPress={() => void changeVoiceProvider(provider)}
           testID={`workspace-voice-${provider}`} />)}
         <HullActionSheetCancel onPress={() => setVoicePickerOpen(false)} testID="workspace-voice-close" />
+      </HullActionSheetModal>
+
+      <HullActionSheetModal
+        accessibilityLabel={`Close ${ROOM_LABEL} actions`}
+        onClose={() => setRoomSheetId(null)}
+        subtitle={
+          sheetRoom
+            ? `${ROOM_VISIBILITY_LABELS[sheetRoom.visibility]}${
+                sheetRoom.joined === undefined
+                  ? ''
+                  : sheetRoom.joined
+                    ? ' · you are a member'
+                    : ' · you are not a member'
+              }`
+            : undefined
+        }
+        testID="room-sheet"
+        title={sheetRoom ? (roomTitle(sheetRoom.name) ?? sheetRoom.name) : undefined}
+        visible={sheetRoom !== undefined}
+      >
+        {sheetRoom ? (
+          <>
+            {sheetRoom.joined === false && (
+              <HullActionSheetRow
+                description="Adds you as a member and opens it."
+                disabled={sheetRoomWorking}
+                label={sheetRoomWorking ? 'Joining…' : `Join ${ROOM_LABEL.toLowerCase()}`}
+                onPress={() => void joinRoom(sheetRoom)}
+                testID="room-sheet-join"
+              />
+            )}
+            {sheetRoom.joined === true && (
+              <HullActionSheetRow
+                chevron="right"
+                disabled={sheetRoomWorking}
+                label={`Open ${ROOM_LABEL.toLowerCase()}`}
+                onPress={() => {
+                  setRoomSheetId(null);
+                  router.push(roomHref(sheetRoom.id, communityId));
+                }}
+                testID="room-sheet-open"
+              />
+            )}
+            <HullActionSheetRow
+              description={
+                sheetRoom.visibility === 'public'
+                  ? 'Existing members keep their access.'
+                  : `Anyone in the ${WORKSPACE_LABEL} can find and join.`
+              }
+              disabled={sheetRoomWorking}
+              label={`Make ${
+                ROOM_VISIBILITY_LABELS[sheetRoom.visibility === 'public' ? 'invite-only' : 'public']
+              }`}
+              onPress={() => void changeRoomVisibility(sheetRoom)}
+              testID="room-sheet-visibility"
+            />
+            <HullActionSheetRow
+              label={`Copy ${ROOM_LABEL} ID`}
+              metadata={sheetRoom.id}
+              onPress={() => {
+                setRoomSheetId(null);
+                void Clipboard.setStringAsync(sheetRoom.id);
+              }}
+              testID="room-sheet-copy-id"
+            />
+          </>
+        ) : null}
+        <HullActionSheetCancel onPress={() => setRoomSheetId(null)} testID="room-sheet-close" />
       </HullActionSheetModal>
 
       <WorkspaceDeleteConfirmDialog

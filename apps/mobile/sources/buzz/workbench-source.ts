@@ -207,9 +207,21 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
         id: helper.id,
         name: helper.name,
         online: helper.online,
+        ...(helper.squire ? { squire: helper.squire } : {}),
       })),
       connectors: [
         ...dto.catalog.map((entry) => {
+          if (entry.connectorType === 'trusty-squire') {
+            const reports = dto.helpers.filter((helper) => helper.squire);
+            const connected = reports.find((helper) => helper.squire?.status === 'connected');
+            const failed = reports.find((helper) => helper.squire?.status === 'error');
+            const helper = connected ?? failed;
+            return { id: 'trusty-squire' as const, name: entry.name,
+              description: CONNECTOR_DESCRIPTIONS['trusty-squire'], available: entry.available,
+              status: connected ? 'connected' as const : failed ? 'error' as const : 'disconnected' as const,
+              ...(helper ? { helperName: helper.name } : {}),
+              ...(failed && !connected ? { errorMessage: failed.squire?.errorMessage } : {}) };
+          }
           // Wallet creation is a direct human operation, not a helper
           // connector install. The server catalog's helper availability does
           // not govern whether this row can act. The row is connected only

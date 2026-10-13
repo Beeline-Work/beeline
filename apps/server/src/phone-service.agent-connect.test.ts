@@ -616,8 +616,9 @@ describe('PhoneService machine grouping in readWorkbench', () => {
       OWNER,
     );
     const duringInstall = await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER);
-    expect(duringInstall.connectors.find((row) => row.connectorId === paired.connectorId)?.status.helperName)
-      .toBe('squire-box');
+    expect(duringInstall.connectors).toEqual([]);
+    const install = await phone.execute('readConnectorInstall', { connectorId: paired.connectorId }, OWNER);
+    expect(install.status.helperName).toBe('squire-box');
   });
 
   it('keeps another owner’s machine name out of Squire install progress', async () => {
@@ -651,8 +652,9 @@ describe('PhoneService machine grouping in readWorkbench', () => {
     expect(workbench.helpers).toEqual([
       expect.objectContaining({ id: MACHINE_X, name: 'squire-box' }),
     ]);
-    expect(workbench.connectors.find((row) => row.connectorId === paired.connectorId)?.status.helperName)
-      .toBe('squire-box');
+    expect(workbench.connectors).toEqual([]);
+    const install = await phone.execute('readConnectorInstall', { connectorId: paired.connectorId }, OWNER);
+    expect(install.status.helperName).toBe('squire-box');
   });
 
   it('two agents on different machines show two rows in readWorkbench', async () => {
@@ -673,7 +675,7 @@ describe('PhoneService machine grouping in readWorkbench', () => {
     expect(result.helpers[0]!.id).toBe(AGENT_A); // falls back to agent_id
   });
 
-  it('grants Squire to a future owner agent pairing onto the connected machine', async () => {
+  it.each(['installing', 'connected'] as const)('grants Squire to a future owner agent on a %s machine', async (state) => {
     await registerAgent(AGENT_A, 'Charles', MACHINE_X, 'squire-box');
     await phone.execute(
       'pairConnector',
@@ -687,6 +689,13 @@ describe('PhoneService machine grouping in readWorkbench', () => {
     expect(existing.rows).toEqual([
       { agent_id: AGENT_A, requested_by: OWNER, decided_by: OWNER },
     ]);
+
+    if (state === 'connected') {
+      await database.query(
+        `UPDATE agents SET squire_work='{}'::jsonb,squire_report=$2::jsonb WHERE agent_id=$1`,
+        [AGENT_A, JSON.stringify({ status: 'connected', reportedAt: Date.now() })],
+      );
+    }
 
     const code = 'ABCD1234-EF567890';
     await database.query(
@@ -722,7 +731,7 @@ describe('PhoneService machine grouping in readWorkbench', () => {
     ]);
   });
 
-  it('pairing by machine_id creates one connector shared by both agents on that machine', async () => {
+  it('pairing by machine_id queues one install shared by both agents on that machine', async () => {
     await registerAgent(AGENT_A, 'Charles', MACHINE_X, 'squire-box');
     await registerAgent(AGENT_B, 'Codex', MACHINE_X, 'squire-box');
 
@@ -736,18 +745,14 @@ describe('PhoneService machine grouping in readWorkbench', () => {
     expect(paired.connectorId).toBeTruthy();
     expect(paired.status.status).toBe('installing');
 
-    // Verify the connector is stored with the machine_id and references
-    // one of the agents on that machine.
-    const connector = await database.query<{
-      id: string;
-      helper_agent_id: string;
-      machine_id: string;
-    }>(
-      `SELECT id,helper_agent_id,machine_id FROM workspace_connectors WHERE id=$1`,
-      [paired.connectorId],
+    expect(paired.connectorId).toBe(`squire:${MACHINE_X}`);
+    const work = await database.query<{ agent_id: string }>(
+      `SELECT agent_id FROM agents WHERE machine_id=$1 AND squire_work->>'install'='true'`,
+      [MACHINE_X],
     );
-    expect(connector.rows[0]!.machine_id).toBe(MACHINE_X);
-    expect([AGENT_A, AGENT_B]).toContain(connector.rows[0]!.helper_agent_id);
+    expect(work.rows).toHaveLength(1);
+    expect([AGENT_A, AGENT_B]).toContain(work.rows[0]!.agent_id);
+    expect((await database.query("SELECT 1 FROM workspace_connectors WHERE connector_type='trusty-squire'")).rows).toEqual([]);
 
     // Pairing again with the same machine_id returns the existing connector
     const pairedAgain = await phone.execute(
@@ -777,11 +782,12 @@ describe('PhoneService machine grouping in readWorkbench', () => {
       { workspaceId: WORKSPACE, connectorType: 'trusty-squire', helperAgentId: MACHINE_X },
       OWNER,
     );
-    const connector = await database.query<{ helper_agent_id: string }>(
-      `SELECT helper_agent_id FROM workspace_connectors WHERE id=$1`,
-      [paired.connectorId],
+    expect(paired.connectorId).toBe(`squire:${MACHINE_X}`);
+    const work = await database.query<{ agent_id: string }>(
+      `SELECT agent_id FROM agents WHERE machine_id=$1 AND squire_work->>'install'='true'`,
+      [MACHINE_X],
     );
-    expect(connector.rows[0]!.helper_agent_id).toBe(AGENT_B);
+    expect(work.rows).toEqual([{ agent_id: AGENT_B }]);
   });
 
   it('pairing by agent_id (back-compat) still works for legacy agents', async () => {

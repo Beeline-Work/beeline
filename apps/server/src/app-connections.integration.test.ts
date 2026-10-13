@@ -252,14 +252,9 @@ describe('connect_app', () => {
   afterEach(async () => database.close());
 
   async function connectSquire(): Promise<string> {
-    const id = '33333333-3333-4333-8333-333333333333';
-    await database.query(
-      `INSERT INTO workspace_connectors(id,workspace_id,owner_identity_id,connector_type,
-         helper_agent_id,machine_id,status,connected_at)
-       VALUES($1,$2,$3,'trusty-squire',$4,'machine-one','connected',now())`,
-      [id, WORKSPACE, OWNER, HELPER],
-    );
-    return id;
+    await database.query(`UPDATE agents SET squire_report=$2::jsonb WHERE agent_id=$1`,
+      [HELPER, JSON.stringify({ status: 'connected', reportedAt: Date.now() / 1000 })]);
+    return 'squire:machine-one';
   }
 
   const routes = async () =>
@@ -916,7 +911,7 @@ describe('connect_app', () => {
     );
     expect(blocked).toMatchObject({ status: 'needs_squire', route: 'squire-api' });
     expect((blocked as { next: string }).next).toContain('offer_connector');
-    const squireId = await connectSquire();
+    await connectSquire();
     const connecting = await daemon.execute(
       'connectApp',
       { ...turn, app: 'Resend', reason: 'send' },
@@ -924,7 +919,7 @@ describe('connect_app', () => {
     );
     expect(connecting).toMatchObject({ status: 'connecting', transport: 'squire-api' });
     expect((connecting as { next: string }).next).toContain('store_credential (service "resend")');
-    await applyVaultList(database, { id: squireId, owner_identity_id: OWNER }, [
+    await applyVaultList(database, { machine_id: 'machine-one', workspace_id: WORKSPACE, owner_identity_id: OWNER }, [
       {
         reference: 'vault:resend',
         service: 'resend',
@@ -949,26 +944,13 @@ describe('connect_app', () => {
     });
   });
 
-  it('shows one key for a vault reference reported by three Squire connectors', async () => {
-    const first = await connectSquire();
-    const otherWorkspaces = [
-      ['55555555-5555-4555-8555-555555555555', '66666666-6666-4666-8666-666666666666'],
-      ['77777777-7777-4777-8777-777777777777', '88888888-8888-4888-8888-888888888888'],
-    ] as const;
-    for (const [workspaceId, connectorId] of otherWorkspaces) {
-      await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Other')`, [workspaceId]);
-      await database.query(
-        `INSERT INTO workspace_connectors(id,workspace_id,owner_identity_id,connector_type,
-           helper_agent_id,machine_id,status,connected_at)
-         VALUES($1,$2,$3,'trusty-squire',$4,'machine-one','connected',now())`,
-        [connectorId, workspaceId, OWNER, HELPER],
-      );
-    }
+  it('shows one key for repeated vault reports from the same machine', async () => {
+    await connectSquire();
     const key = { reference: 'vault://openrouter/default', service: 'openrouter', label: 'default',
       fieldNames: ['api_key'], allowedHosts: ['openrouter.ai'], createdAt: 1, stale: false,
       state: 'active' as const };
-    for (const id of [first, ...otherWorkspaces.map(([, connectorId]) => connectorId)])
-      await applyVaultList(database, { id, owner_identity_id: OWNER }, [key]);
+    for (let report = 0; report < 3; report++)
+      await applyVaultList(database, { machine_id: 'machine-one', workspace_id: WORKSPACE, owner_identity_id: OWNER }, [key]);
     const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
       undefined, false, database, undefined, undefined, fakeRegistry([]).client);
     const view = await phone.execute('readWorkbench', { workspaceId: WORKSPACE }, OWNER);
@@ -978,8 +960,8 @@ describe('connect_app', () => {
   it('reuses an existing Workbench key without searching the Registry', async () => {
     const registry = fakeRegistry([{ name: 'com.stripe/mcp', version: '0.2.4',
       remotes: [{ type: 'streamable-http', url: 'https://mcp.stripe.com' }] }]);
-    const squireId = await connectSquire();
-    await applyVaultList(database, { id: squireId, owner_identity_id: OWNER }, [
+    await connectSquire();
+    await applyVaultList(database, { machine_id: 'machine-one', workspace_id: WORKSPACE, owner_identity_id: OWNER }, [
       {
         reference: 'vault:stripe',
         service: 'stripe',

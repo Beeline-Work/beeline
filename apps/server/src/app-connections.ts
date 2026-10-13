@@ -1,3 +1,4 @@
+import { machineSquireReport } from './squire-machine.js';
 import { randomUUID } from 'node:crypto';
 import {
   appIdentity,
@@ -296,9 +297,7 @@ async function appConnections(
     await database.query<ConnectionFact>(
       `SELECT c.reference,c.service,c.hosts,c.state
        FROM workspace_connections c
-       JOIN workspace_connectors k ON k.id=c.connector_id
-       WHERE c.owner_identity_id=$1
-         AND k.connector_type='trusty-squire' AND k.status<>'disconnected'
+       WHERE c.owner_identity_id=$1 AND c.machine_id IS NOT NULL
        ORDER BY c.state, c.created_at, c.reference`,
       [ownerId],
     )
@@ -342,17 +341,8 @@ function connectionAppKeys(connection: {
   return [...keys];
 }
 
-async function squireConnected(database: SqlDatabase, ownerId: string): Promise<boolean> {
-  return Boolean(
-    (
-      await database.query(
-        `SELECT 1 FROM workspace_connectors
-         WHERE owner_identity_id=$1
-           AND connector_type='trusty-squire' AND status='connected' LIMIT 1`,
-        [ownerId],
-      )
-    ).rows[0],
-  );
+async function squireConnected(database: SqlDatabase, ownerId: string, machineId?: string | null): Promise<boolean> {
+  return (await machineSquireReport(database, ownerId, machineId ?? undefined))?.status === 'connected';
 }
 
 type Derived = {
@@ -421,7 +411,7 @@ async function deriveStatus(database: SqlDatabase, row: AppRow, composio?: Compo
     if (connector.status === 'error')
       return { status: 'error', errorMessage: connector.status_error ?? 'Connection failed' };
     const needsSquire = connector.sign_in?.url
-      ? !(await squireConnected(database, row.owner_identity_id))
+      ? !(await squireConnected(database, row.owner_identity_id, row.machine_id))
       : false;
     return {
       status: 'connecting',
@@ -431,7 +421,7 @@ async function deriveStatus(database: SqlDatabase, row: AppRow, composio?: Compo
   }
   const connections = await appConnections(database, row.owner_identity_id, row.app_key);
   const active = connections.find((connection) => connection.state === 'active');
-  if (!(await squireConnected(database, row.owner_identity_id)))
+  if (!(await squireConnected(database, row.owner_identity_id, row.machine_id)))
     return {
       status: 'error',
       needsSquire: true,

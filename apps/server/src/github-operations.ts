@@ -18,6 +18,7 @@ import {
 import { recordPersonMergeYes } from './corner-merge-approval.js';
 import { assertCornerBriefAllowsMerge } from './corner-brief.js';
 import { cancelCornerAgentCommands } from './corner-close.js';
+import { abandonCornerWorkflowRuns } from './workflow-runs.js';
 import {
   advanceCorner,
   claimCornerMergeAttempt,
@@ -1041,23 +1042,38 @@ export class GitHubOperations {
       target.full_name,
       target.number,
     );
-    await this.database.transaction(async (database) => {
-      await lockCornerLifecycle(database, cornerId);
-      await database.query(
-        `UPDATE corner_facts SET merge_attempt_head=NULL,
-           lifecycle=(lifecycle-'pr'-'mergeRecovery')||'{"lifecycle":"working","checks":"unknown"}'::jsonb,
-           updated_at=now()
-         WHERE corner_id=$1 AND (lifecycle->'pr'->>'number')::int=$2`,
-        [cornerId, target.number],
-      );
-    });
-    this.onRoomChanged?.(cornerId);
+    await this.recordClosedCornerPullRequest(cornerId, target.number);
     return {
       status: 'closed',
       number: target.number,
       url: target.url,
       title: target.title ?? `Pull request #${target.number}`,
     };
+  }
+
+  /** PR association and run state move together for tool calls and GitHub facts. */
+  private async recordClosedCornerPullRequest(
+    cornerId: string,
+    number: number,
+    database: SqlDatabase = this.database,
+  ): Promise<void> {
+    let changed = false;
+    await database.transaction(async db => {
+      await lockCornerLifecycle(db, cornerId);
+      const removed = await db.query(
+        `UPDATE corner_facts fact SET merge_attempt_head=NULL,
+           lifecycle=(lifecycle-'pr'-'mergeRecovery'-'checksSummary')||'{"lifecycle":"working","checks":"unknown"}'::jsonb,
+           updated_at=now()
+         FROM rooms corner WHERE fact.corner_id=$1 AND corner.id=fact.corner_id
+           AND corner.archived_at IS NULL AND (fact.lifecycle->'pr'->>'number')::int=$2`,
+        [cornerId, number],
+      );
+      if (!removed.rowCount) return;
+      changed = true;
+      await db.query(`DELETE FROM corner_merge_approvals WHERE corner_id=$1 AND pull_request_number=$2`, [cornerId, number]);
+      await advanceCorner(db, cornerId, { kind: 'pull-request-closed', number });
+    });
+    if (changed) this.onRoomChanged?.(cornerId);
   }
 
   /** Caller is authorized by DaemonService: it reaches the corner. */
@@ -1459,7 +1475,7 @@ export class GitHubOperations {
     }, this.database, number, unfinishedClaimHead);
   }
 
-  /** Recover merged corners when GitHub's closed PR webhook never arrived. */
+  /** Recover merged or unmerged closed PRs when GitHub's close webhook was missed. */
   async reconcileMergedCorners(): Promise<void> {
     const candidates = await this.database.query<
       CornerWebhookTarget & {
@@ -1499,7 +1515,11 @@ export class GitHubOperations {
           candidate.repository,
           candidate.number,
         );
-        if (!pr.merged || pr.headRef !== candidate.branch) continue;
+        if (pr.headRef !== candidate.branch) continue;
+        if (!pr.merged) {
+          if (pr.state === 'closed') await this.recordClosedCornerPullRequest(candidate.corner_id, candidate.number);
+          continue;
+        }
         await this.mergeCorner(
           candidate,
           {
@@ -1862,6 +1882,8 @@ export class GitHubOperations {
             },
             database,
           );
+        } else if (body.action === 'closed' && number) {
+          await this.recordClosedCornerPullRequest(target.corner_id, number, database);
         } else if (body.action === 'opened' && url) {
           await this.systemNote(
             target.corner_id,
@@ -2238,6 +2260,7 @@ export class GitHubOperations {
       if (!changed.rowCount) return;
       archived = true;
       await cancelCornerAgentCommands(database, target.corner_id);
+      await abandonCornerWorkflowRuns(database, target.corner_id);
       await database.query(
         `UPDATE corner_facts SET close_requested=true,merge_attempt_head=NULL,
            lifecycle=(lifecycle-'mergeRecovery')||$2::jsonb,

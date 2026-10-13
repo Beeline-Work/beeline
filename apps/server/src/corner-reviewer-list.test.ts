@@ -6,7 +6,7 @@ import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { systemLine } from './system-line.js';
 import { routeSystemCommand } from './agent-command.js';
-import { claimCornerMergeAttempt, cornerMergeGate } from './corner-lifecycle.js';
+import { advanceCorner, claimCornerMergeAttempt, cornerMergeGate } from './corner-lifecycle.js';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 
 const H = 'a'.repeat(64);
@@ -264,6 +264,21 @@ describe('a failed review turn', () => {
     expect(next).toBeDefined();
     expect(next!.turnRequestId).toBe(first!.turnRequestId);
     expect(await exhaustedNotices()).toHaveLength(0);
+  });
+
+  it('passes a recovered review dispatch through the same fallback list', async () => {
+    await setReviewers(REVIEWER_A, REVIEWER_B);
+    await greenCheck();
+    await db.query(`DELETE FROM agent_commands WHERE room_id=$1`, [C]);
+    await advanceCorner(db, C, { kind: 'checks', result: 'passing', sourceMessageId: 'replay' });
+    const [recovered] = (await commands(REVIEWER_A)).filter(c => c.reason === 'corner_review_dispatch');
+    expect(recovered).toBeDefined();
+    await failTurn(recovered!);
+    const [next] = await commands(REVIEWER_B);
+    expect(next).toBeDefined();
+    expect(next!.turnRequestId).toBe(recovered!.turnRequestId);
+    await failTurn(next!);
+    expect(await exhaustedNotices()).toHaveLength(1);
   });
 
   it('names the gap once the last agent on the list has failed too', async () => {

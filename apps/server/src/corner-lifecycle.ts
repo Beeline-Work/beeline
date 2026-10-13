@@ -96,7 +96,7 @@ export const CORNER_LIFECYCLE_CONTRACT: CornerLifecycleContract = {
     implement: { does: 'Build and prove the agreed change.',
       role: 'implementer',
       requires: [],
-      on: { pushed: 'checks', rechecked: 'checks', rereview: 'review' },
+      on: { pushed: 'checks', rechecked: 'checks', rereview: 'review', pr_closed: 'implement' },
     },
     // Green wakes the reviewer (live from the parent Room's
     // `reviewer_agent_id`/`reviewer_fallback_ids`); with no reviewer
@@ -105,7 +105,7 @@ export const CORNER_LIFECYCLE_CONTRACT: CornerLifecycleContract = {
     checks: { does: 'Check the proposed change.',
       kind: 'server',
       requires: [],
-      on: { passing: 'review', no_reviewer: 'review', failing: 'implement' },
+      on: { passing: 'review', no_reviewer: 'review', failing: 'implement', pr_closed: 'implement' },
     },
     // Waiting for a yes on the current head. A reviewer's PASS
     // (`approve_merge`) takes `approved` and wakes the implementer to call
@@ -120,6 +120,7 @@ export const CORNER_LIFECYCLE_CONTRACT: CornerLifecycleContract = {
       requires: [],
       on: {
         approved: 'review',
+        pr_closed: 'implement',
         pushed: 'checks',
         rechecked: 'checks',
         merge_refused: 'implement',
@@ -134,7 +135,7 @@ export const CORNER_LIFECYCLE_CONTRACT: CornerLifecycleContract = {
   // Only an event from outside the run takes these: a new commit on the
   // branch, a check verdict re-reported on the same head, a yes after a
   // handback, or GitHub refusing the merge.
-  externalOutcomes: ['pushed', 'rechecked', 'rereview', 'merge_refused'],
+  externalOutcomes: ['pushed', 'rechecked', 'rereview', 'merge_refused', 'pr_closed'],
 };
 
 /** Everything that can move a corner. Each adapter reports exactly one of these. */
@@ -155,6 +156,7 @@ export type CornerEvent =
   | { kind: 'merge-unconfirmed'; number: number; error: string }
   | { kind: 'merge-refused'; headSha: string; reason: string }
   | { kind: 'merged'; contents: Record<string, unknown> }
+  | { kind: 'pull-request-closed'; number: number }
   | { kind: 'closed' };
 
 type RevisionWake = { queued: boolean; agentId?: string; reason?: string };
@@ -286,7 +288,7 @@ function terminalStatus(toState: string): WorkflowTerminalState['status'] | unde
 function edgesOf(stateName: string): Readonly<Record<string, string>> {
   // Historical cards can still name the removed automatic escalation state.
   if (stateName === 'ask_human') return {
-    pushed: 'checks', rechecked: 'checks', revision_work: 'implement', merge_refused: 'implement',
+    pushed: 'checks', rechecked: 'checks', revision_work: 'implement', merge_refused: 'implement', pr_closed: 'implement',
   };
   const state = CORNER_LIFECYCLE_CONTRACT.handoffs[stateName];
   return state && 'on' in state ? state.on : {};
@@ -628,6 +630,11 @@ async function applyEvent(
       // Landing wakes no one in the parent Room: the merge card announces it,
       // and an agent with work left after the merge subscribes to `merged`.
       await transition.take('landed', event.contents);
+      return OK;
+    case 'pull-request-closed':
+      if (corner.lifecycle.pr) return no('the corner still has a pull request');
+      if (!transition.allows('pr_closed')) return no('no pull request close edge');
+      await transition.take('pr_closed', { pullRequestNumber: event.number });
       return OK;
     case 'closed':
       await transition.take('closed');
@@ -1000,17 +1007,27 @@ export async function reassignFailedCornerReviewer(
   input: { roomId: string; requestId: string; agentId: string },
 ): Promise<void> {
   await database.transaction(async (db) => {
-    const dispatch = await db.query(
-      `SELECT 1 FROM messages WHERE id=$1 AND room_id=$2 AND system_event->>'kind'='check-passed'`,
-      [input.requestId, input.roomId],
-    );
-    if (!dispatch.rowCount) return;
     await lockCornerLifecycle(db, input.roomId);
+    // The failed turn must be a lifecycle review dispatch. Recovery sources
+    // are ordinary GitHub notes, rather than check-passed events; use the
+    // command's purpose so both dispatch paths share the same failover.
+    const dispatch = (await db.query<{ reason: string; head_sha: string | null }>(
+      `SELECT command.reason,source.system_event->'object'->>'headSha' head_sha
+       FROM agent_commands command JOIN messages source ON source.id=command.source_message_id
+       WHERE command.room_id=$2 AND command.agent_id=$3 AND command.turn_request_id=$1
+         AND command.action='input'
+         AND (command.reason='corner_review_dispatch'
+           OR (command.reason='subscribed_event' AND source.system_event->>'kind'='check-passed'))
+       ORDER BY command.created_at DESC,command.id DESC LIMIT 1`,
+      [input.requestId, input.roomId, input.agentId],
+    )).rows[0];
+    if (!dispatch) return;
     const corner = await loadCorner(db, input.roomId);
     if (!corner?.configured_reviewer_id || !corner.reviewer_fallback_ids.length) return;
     if (corner.lifecycle.checks !== 'passing') return;
     const run = await loadCornerLifecycleState(db, input.roomId);
     if (run?.toState !== 'review') return;
+    if (dispatch.head_sha && dispatch.head_sha !== corner.lifecycle.pr?.headSha) return;
     if (await approvedCurrentHead(db, input.roomId, corner)) return;
     if (!(await isCornerReviewer(db, input.roomId, input.agentId))) return;
     const next = await dispatchableListReviewer(
@@ -1030,7 +1047,7 @@ export async function reassignFailedCornerReviewer(
       roomId: input.roomId,
       agentId: next,
       sourceMessageId: input.requestId,
-      reason: 'subscribed_event',
+      reason: dispatch.reason,
     });
     if (!queued.command)
       await noteReviewBlocked(db, input.roomId, corner, corner.lifecycle.pr?.headSha ?? input.requestId,
@@ -1332,13 +1349,24 @@ export async function clearUnfinishedCornerMergeClaim(
 }
 
 /**
- * Gives every corner without a projected run state its run: the newest card
- * for corners opened since #1918, or one derived from the lifecycle for
+ * Repairs the run projection from its authoritative newest card, including
+ * non-null projections drifted by older schema migrations. The newest card
+ * supplies corners opened since #1918, or a run is derived from lifecycle for
  * corners opened before it. Run once from `migrateData()`.
  */
 export async function backfillCornerLifecycleRuns(database: SqlDatabase): Promise<number> {
   const missing = await database.query<{ corner_id: string }>(
-    `SELECT corner_id FROM corner_facts WHERE workflow_state IS NULL`,
+    `SELECT fact.corner_id FROM corner_facts fact
+     LEFT JOIN LATERAL (
+       SELECT card->>'toState' state,card->>'outcome' outcome
+       FROM messages WHERE room_id=fact.corner_id AND card_type=$1
+         AND card->>'runId'=fact.corner_id::text
+       ORDER BY (card->>'seq')::int DESC LIMIT 1
+     ) latest ON true
+     WHERE fact.workflow_state IS NULL OR (latest.state IS NOT NULL AND
+       (fact.workflow_state IS DISTINCT FROM latest.state OR
+        fact.workflow_outcome IS DISTINCT FROM latest.outcome))`,
+    [CORNER_LIFECYCLE_CARD_TYPE],
   );
   for (const row of missing.rows) {
     await database.transaction(async (db) => {

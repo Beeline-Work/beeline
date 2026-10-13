@@ -190,7 +190,8 @@ beforeEach(async () => {
   githubApp.mergePullRequest.mockReset();
   githubApp.mergePullRequest.mockResolvedValue(undefined);
   githubApp.deleteBranch.mockClear();
-  githubApp.closePullRequest.mockClear();
+  githubApp.closePullRequest.mockReset();
+  githubApp.closePullRequest.mockResolvedValue(undefined);
   githubApp.readPullRequest.mockReset();
   githubApp.readPullRequest.mockImplementation(async (_token: string, _repository: string, number: number) => ({
     number, url: `https://github.com/owner/widgets/pull/${number}`, headSha: githubHead, mergeability: 'clean',
@@ -869,6 +870,28 @@ describe('landing and closing from any state (finding 3, implicit edges)', () =>
     expect(await liveWorkflowRun(db, cornerId, 'corner-chore')).toBeUndefined();
     expect((await db.query(`SELECT 1 FROM agent_schedules WHERE workflow_run->>'runId'=$1`, [runId])).rowCount).toBe(0);
     console.log('Demonstrated corner-close-run: closing the corner saved the saved workflow run inside it as abandoned and removed its timers');
+  });
+
+  it('a GitHub merge abandons a live saved workflow run and its timers inside the corner', async () => {
+    const cornerId = await inReview();
+    const starter = { room_id: cornerId, agent_id: A } as CommandRow;
+    await saveWorkflow(db, starter, { contract: describedWorkflow({
+      version: 1, name: 'corner-chore', description: 'One step inside a corner', roles: ['worker'], start: 'work',
+      handoffs: {
+        work: { role: 'worker', requires: ['note'], on: { done: 'finished', timeout: 'failed' }, timeoutSeconds: 3600 },
+        finished: { kind: 'terminal', status: 'done' },
+        failed: { kind: 'terminal', status: 'failed' },
+      },
+    }) });
+    const { runId } = await startWorkflow(db, starter, { name: 'corner-chore', roleBindings: { worker: A } });
+    expect((await getWorkflowRun(db, cornerId, runId)).status).toBe('live');
+    await mergedWebhook(cornerId, 7, SHA);
+    expect((await getWorkflowRun(db, cornerId, runId)).status).toBe('abandoned');
+    expect(await liveWorkflowRun(db, cornerId, 'corner-chore')).toBeUndefined();
+    expect((await db.query(`SELECT 1 FROM agent_schedules WHERE workflow_run->>'runId'=$1`, [runId])).rowCount).toBe(0);
+    expect(await currentState(cornerId)).toBe('landed');
+    await mergedWebhook(cornerId, 7, SHA);
+    expect((await getWorkflowRun(db, cornerId, runId)).status).toBe('abandoned');
   });
 
   it('never posts a second terminal card for an already-landed corner', async () => {
@@ -2026,11 +2049,72 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
       )
     ).rows[0];
     expect(fact).toEqual({ pr: null, archived: false });
+    expect(await currentState(cornerId)).toBe('implement');
+    expect(await projected(cornerId)).toBe('implement');
     await expect(wiredDaemon.execute('mergeCorner', { cornerId }, A))
       .resolves.toEqual({ status: 'blocked', blocker: 'the corner has no pull request' });
     await expect(wiredDaemon.execute('closeCornerPullRequest', { cornerId }, B))
       .resolves.toEqual({ status: 'blocked', blocker: 'the corner has no pull request' });
     expect(githubApp.closePullRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(['checks', 'implement'])('closing a PR from %s resets the run and cancels its yes', async state => {
+    const cornerId = await inReview();
+    await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}',to_jsonb($2::text)) WHERE corner_id=$1`,
+      [cornerId, state === 'checks' ? 'pending' : 'failing']);
+    if (state === 'checks') await advanceCorner(db, cornerId, { kind: 'checks-pending' });
+    else await systemLine(db, { roomId: cornerId, authorId: H, subject: { kind: 'github', name: 'GitHub' },
+      verb: 'failed a check', kind: 'check-failed' });
+    expect(await currentState(cornerId)).toBe(state);
+    await db.query(`INSERT INTO corner_merge_approvals(corner_id,approved_by,pull_request_number,head_sha) VALUES($1,$2,7,$3)`,
+      [cornerId, B, SHA]);
+    await github.closeCornerPullRequest(cornerId);
+    expect(await currentState(cornerId)).toBe('implement');
+    expect(await projected(cornerId)).toBe('implement');
+    expect((await db.query(`SELECT 1 FROM corner_merge_approvals WHERE corner_id=$1`, [cornerId])).rowCount).toBe(0);
+    expect(githubApp.deleteBranch).not.toHaveBeenCalled();
+  });
+
+  it('a delayed close result does not remove a replacement PR', async () => {
+    const cornerId = await inReview();
+    githubApp.closePullRequest.mockImplementationOnce(async () => {
+      await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,number}','8'::jsonb) WHERE corner_id=$1`, [cornerId]);
+    });
+    await github.closeCornerPullRequest(cornerId);
+    expect((await db.query(`SELECT (lifecycle->'pr'->>'number')::int number FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0]!.number).toBe(8);
+    expect(await currentState(cornerId)).toBe('review');
+  });
+
+  it('an unmerged GitHub close returns a legacy waiting corner to implement, once', async () => {
+    const cornerId = await inReview();
+    await db.query(`UPDATE messages SET card=card||'{"toState":"ask_human","outcome":"changes_requested"}'::jsonb
+      WHERE id=(SELECT id FROM messages WHERE room_id=$1 AND card_type=$2 ORDER BY (card->>'seq')::int DESC LIMIT 1)`,
+      [cornerId, CORNER_LIFECYCLE_CARD_TYPE]);
+    await db.query(`UPDATE corner_facts SET workflow_state='ask_human',workflow_outcome='changes_requested' WHERE corner_id=$1`, [cornerId]);
+    const event = {
+      action: 'closed', installation: { id: 77 }, repository: { id: 101, full_name: 'owner/widgets' },
+      pull_request: { number: 7, html_url: 'https://github.com/owner/widgets/pull/7', title: 'Widget', merged: false,
+        head: { ref: branchOf(cornerId), sha: SHA }, base: { ref: 'main' } },
+    };
+    await github.processWebhook('pull_request', event);
+    expect(await currentState(cornerId)).toBe('implement');
+    expect(await projected(cornerId)).toBe('implement');
+    expect((await db.query(`SELECT lifecycle->'pr' pr FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0]!.pr).toBeNull();
+    const count = (await cards(cornerId)).length;
+    await github.processWebhook('pull_request', event);
+    expect(await cards(cornerId)).toHaveLength(count);
+    expect(githubApp.closePullRequest).not.toHaveBeenCalled();
+    expect(githubApp.deleteBranch).not.toHaveBeenCalled();
+  });
+
+  it('recovers a missed unmerged close on the existing PR reconciliation pass', async () => {
+    const cornerId = await inReview();
+    githubApp.readPullRequest.mockResolvedValue({ number: 7, url: 'https://github.com/owner/widgets/pull/7',
+      headSha: SHA, headRef: branchOf(cornerId), merged: false, state: 'closed', mergeability: 'unknown' });
+    await github.reconcileMergedCorners();
+    expect(await currentState(cornerId)).toBe('implement');
+    expect((await db.query(`SELECT lifecycle->'pr' pr FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0]!.pr).toBeNull();
+    expect(githubApp.deleteBranch).not.toHaveBeenCalled();
   });
 
   it('Reproduction REACH-1: a parent Room agent outside the corner closes, renames, steers, reads, revises and posts to it; an outsider cannot', async () => {
@@ -3172,6 +3256,17 @@ describe('a corner opened before the workflow run existed (AC-10)', () => {
     expect(await implementersMerge()).toBe(1);
     await mergedWebhook(cornerId, 7, SHA);
     expect(await currentState(cornerId)).toBe('landed');
+  });
+
+  it('repairs a non-null projection from the authoritative newest card on boot', async () => {
+    const cornerId = await inReview();
+    await db.query(`UPDATE corner_facts SET workflow_state='implement',workflow_outcome=NULL WHERE corner_id=$1`, [cornerId]);
+    const history = await cards(cornerId);
+    expect(await backfillCornerLifecycleRuns(db)).toBe(1);
+    expect(await projected(cornerId)).toBe('review');
+    expect((await db.query(`SELECT workflow_outcome FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0]!.workflow_outcome).toBe('passing');
+    expect(await cards(cornerId)).toEqual(history);
+    expect(await backfillCornerLifecycleRuns(db)).toBe(0);
   });
 
   it('a corner with no run at all is given one on its next event', async () => {

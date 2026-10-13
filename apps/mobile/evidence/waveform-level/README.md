@@ -16,6 +16,10 @@ Started the isolated `dictation_api34` Android emulator with `beeline emulator`.
 
 The tested ranges are **injected values**, not measured device calibration: Android -2/12/20/30 RMS dB; iOS equivalent -60/-40/-20/-5 dBFS; LiveKit linear 0/0.01/0.1/0.56234. iOS scaling was checked against the installed expo-speech-recognition 3.1.3 implementation. Android passes recognizer RMS dB through unchanged; its -2..30 display envelope is an assumption and may understate quiet speech on a recognizer with a narrower range. Confirm it on the owner's physical Android microphone before treating it as calibrated.
 
+## Accepted proof scope
+
+The commander accepted the disclosed injected proof as sufficient for PR #2416 and waived physical-microphone calibration and production audio proof for this PR. The Android -2..30 dB envelope remains an assumption. The owner will check it on their phone after the build ships. All source envelopes, display range, perceptual exponent and smoothing weights are centralized in `sources/buzz/waveform-level.ts` for tuning.
+
 ## Validation
 
 - 84 focused tests pass, including the composer microphone path, silence/finalization behavior, voice local/bridge source selection, fixed-value mapping and smoothing.

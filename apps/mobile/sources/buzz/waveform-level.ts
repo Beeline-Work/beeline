@@ -1,8 +1,23 @@
+// Tune source envelopes and display response here. Android's envelope is an
+// assumption; the owner will check it on their phone after the build ships.
+const DISPLAY_FLOOR_DB = -50;
+const DISPLAY_CEILING_DB = -5;
+const PERCEPTUAL_EXPONENT = 1.5;
+const SOURCE_FLOOR_DB = -60;
+const SOURCE_CEILING_DB = 0;
+const IOS_VOLUME_MIN = -2;
+const IOS_VOLUME_MAX = 10;
+const ANDROID_RMS_MIN_DB = -2;
+const ANDROID_RMS_MAX_DB = 30;
+const ATTACK_WEIGHT = 0.7;
+const RELEASE_WEIGHT = 0.5;
+
 /** Fixed display range in dBFS; no per-take gain or peak normalization. */
 export function waveformLevelFromDb(db: number): number {
   if (!Number.isFinite(db)) return 0;
-  const fraction = Math.max(0, Math.min(1, (db + 50) / 45));
-  return Math.pow(fraction, 1.5);
+  const fraction = Math.max(0, Math.min(1,
+    (db - DISPLAY_FLOOR_DB) / (DISPLAY_CEILING_DB - DISPLAY_FLOOR_DB)));
+  return Math.pow(fraction, PERCEPTUAL_EXPONENT);
 }
 
 /** LiveKit reports linear audio amplitude, not a fraction of display height. */
@@ -14,13 +29,13 @@ export function dictationWaveformLevel(value: number, platform: string): number 
   // expo-speech-recognition iOS scales -60..0 dBFS to -2..10.
   // Android forwards recognizer-relative RMS dB without that scaling. Use a
   // fixed -2..30 envelope; recognizer/device calibration is not standardized.
-  const db = platform === 'android'
-    ? -60 + (value + 2) * (60 / 32)
-    : -60 + (value + 2) * 5;
+  const min = platform === 'android' ? ANDROID_RMS_MIN_DB : IOS_VOLUME_MIN;
+  const max = platform === 'android' ? ANDROID_RMS_MAX_DB : IOS_VOLUME_MAX;
+  const db = SOURCE_FLOOR_DB + (value - min) / (max - min) * (SOURCE_CEILING_DB - SOURCE_FLOOR_DB);
   return waveformLevelFromDb(db);
 }
 
 /** One 120 ms display sample: responsive attack, brief release. */
 export function smoothWaveformLevel(previous: number, next: number): number {
-  return previous + (next - previous) * (next > previous ? 0.7 : 0.5);
+  return previous + (next - previous) * (next > previous ? ATTACK_WEIGHT : RELEASE_WEIGHT);
 }

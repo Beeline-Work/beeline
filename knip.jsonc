@@ -55,6 +55,7 @@
         "scripts/status-band-native-entry.js",
         "scripts/workspace-picture-clip-proof.tsx",
         "scripts/workspace-picture-seat-proof.tsx",
+        "scripts/workspace-room-join-proof.tsx",
         "scripts/workbench-keys-proof.tsx",
         "scripts/render-workbench-keys-proof.mjs",
         "scripts/identity-picture-seat-proof.tsx",

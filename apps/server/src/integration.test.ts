@@ -1797,6 +1797,27 @@ describe('monolith integration', () => {
     expect(
       (await request(`/v1/phone/rooms/${openedRoom.id}`, 'GET', undefined, aliceToken)).status,
     ).toBe(200);
+
+    // An owner who is not in an invite-only Room joins it from Workspace settings.
+    await operation('addWorkspaceMember', { workspaceId, memberId: aliceId, role: 'owner' });
+    const unjoinedRoom = (await (
+      await operation('createRoom', {
+        workspaceId,
+        name: 'owner-self-join',
+        visibility: 'invite-only',
+      })
+    ).json()) as { id: string };
+    expect(
+      (await request(`/v1/phone/rooms/${unjoinedRoom.id}`, 'GET', undefined, aliceToken)).status,
+    ).toBe(404);
+    expect(
+      await (
+        await operation('addRoomMember', { roomId: unjoinedRoom.id, memberId: aliceId }, aliceToken)
+      ).json(),
+    ).toEqual({ joined: true });
+    expect(
+      (await request(`/v1/phone/rooms/${unjoinedRoom.id}`, 'GET', undefined, aliceToken)).status,
+    ).toBe(200);
   });
 
   it('pages Workspace members at the query, keeps totals, searches past the first page, and load-more appends', async () => {

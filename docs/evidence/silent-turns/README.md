@@ -21,6 +21,8 @@ The same user paths now pass:
 
 Regression suites: `monolith-room-turn.failure.test.ts`, `monolith-corner-turn.test.ts`, `turn-silence-notice.test.ts`, `corner-watch.test.ts`, `corner-open-watch.test.ts`, `corner-lifecycle.test.ts`, and commander integration tests. Prompt snapshots, tool descriptions, and the event catalog cover the documented contract.
 
+Reproduction ST-trace: BODY SUITE's provider-retry trace fixture used a normal empty `end_turn`, so it expected two attempts but recorded one after silent completion became supported. The exact test failed locally at the same assertion. The fixture now records a 503 provider outage to exercise failure retry while preserving normal silence. Both Room trace and failure suites pass (58 tests), proving the retry's separate activation and usage receipt alongside silent completion.
+
 ## Live browser limitation
 
 Trusty Squire reached `https://web.usebeeline.app` and opened Ruby's DM read-only. It used an existing lunchboxfortwo owner session, not a reviewer-bypass session. No test message was sent and no corner was created through that browser. The reviewer bypass was absent from this turn's environment and the checked vault services. The branch has not been deployed to that production server, so the requested production check of fixed behavior is not obtained. After release, repeat agent corner creation with the reviewer bypass and verify that the parent DM contains no opener lifecycle reply.

@@ -11,7 +11,7 @@ async function voiceRequest<T>(id: string, action: 'join' | 'leave' | 'current')
   const response = await monolithSession.fetch(`${getBuzzRuntimeConfig().monolithUrl}/v1/phone/voice/${id}/${action}`,
     { method: action === 'current' ? 'GET' : 'POST' });
   const value = await response.json() as T & { error?: string };
-  if (!response.ok) throw new Error(value.error ?? 'Voice mode could not connect');
+  if (!response.ok) throw new Error(value.error ?? 'Conversation mode could not connect');
   return value;
 }
 
@@ -99,7 +99,7 @@ export function useVoiceCall(roomId: string, enabled: boolean) {
     } catch (cause) {
       await transport?.room.disconnect(); await transport?.closeAudio();
       if (joined) await voiceRequest(joined.call.id, 'leave').catch(() => {});
-      if (version === revision.current) setError(cause instanceof Error ? cause.message : 'Voice mode could not connect');
+      if (version === revision.current) setError(cause instanceof Error ? cause.message : 'Conversation mode could not connect');
     } finally {
       if (version === revision.current) { pending.current = false; setConnecting(false); }
     }

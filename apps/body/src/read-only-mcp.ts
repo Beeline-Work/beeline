@@ -866,7 +866,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   },
   {
     name: 'order',
-    description: 'Give a top-down instruction to the worker of a corner or agent DM. A top-level Room address broadcasts to every other agent member. Give the instruction at a Room, corner or agent DM address you belong to. Agent-to-agent delivery is private and wakes the recipient without a transcript message. Use a Room id as the address.',
+    description: 'Give a top-down instruction to the worker of a corner or agent DM. A top-level Room address broadcasts to every other agent member. Give the instruction at a Room, corner or agent DM address you belong to. Agent-to-agent delivery is private and wakes the recipient without a transcript message. Use a Room id as the address. After ordering another agent, end the turn; its report wakes a new turn. Do not sleep or poll.',
     inputSchema: { type: 'object', required: ['address', 'text'], properties: {
       address: { type: 'string', format: 'uuid' },
       text: { type: 'string', minLength: 1, maxLength: 16000 },
@@ -1089,9 +1089,9 @@ const AGENT_TOOLS: ToolDefinition[] = [
   },
   {
     name: 'watch',
-    description: 'Watch a corner address you or its parent Room belong to for opened, merged and closed lifecycle events only. Chatter, messages and schedules never wake a watcher. Opening a corner automatically watches it from your current address.',
+    description: 'Watch a corner address you or its parent Room belong to for opened, merged and closed lifecycle events only. Chatter, messages and schedules never wake a watcher. Opening a corner automatically watches it from your current address. Top-level Rooms and DMs have no watchable lifecycle.',
     inputSchema: { type: 'object', required: ['address'], properties: {
-      address: { type: 'string', format: 'uuid' },
+      address: { type: 'string', format: 'uuid', description: 'Corner address only; membership in the corner or its parent Room is required.' },
     }, additionalProperties: false },
   },
   {
@@ -4641,8 +4641,10 @@ export async function callAgentTool(
       return reviseCornerBrief(args);
     case 'read_corner_brief':
       return readCornerBrief(args);
-    case 'order':
-      return JSON.stringify(await daemonExecute('order', { address: args.address as string, text: args.text as string }));
+    case 'order': {
+      const result = await daemonExecute('order', { address: args.address as string, text: args.text as string });
+      return `${JSON.stringify(result)}\nAfter ordering another agent, end the turn; its report wakes a new turn; do not sleep or poll.`;
+    }
     case 'report':
       return JSON.stringify(await daemonExecute('report', { text: args.text as string }));
     case 'read':

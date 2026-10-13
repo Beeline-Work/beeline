@@ -25,6 +25,7 @@ async function runTurn(options: {
   conversationItems?: InboxItem[];
   turnCount?: number;
   activity?: boolean;
+  commandReason?: string;
   /** Applied over the default config: an OpenRouter pin needs a key and a cache. */
   configOverrides?: Partial<BodyConfig>;
   /** Model id the fake harness advertises, so a selection can be applied. */
@@ -120,6 +121,7 @@ async function runTurn(options: {
               type: 'message',
               body: "what's up",
               attachments: [],
+              ...(options.commandReason ? { fixtureCommandReason: options.commandReason } : {}),
               ...(options.activity ? { type: 'system', fixtureCommandReason: 'computer_activity',
                 systemEvent: { subject: { kind: 'system', name: 'A person' }, verb: 'used',
                   kind: 'computer-session-activity', payload: { sessionId: 'share', activity: 'input' } } } : {}),
@@ -1181,5 +1183,42 @@ it('passes quiet browser open/close context on the next requested turn', async (
       expect(text).toContain('@dani closed the shared browser view');
       return {stopReason:'end_turn',updates:[],agentText:'Ready.',toolCalls:[]};
     },
+  });
+});
+
+describe('delivering tools answer an ordered Room turn without chat text', () => {
+  it.each(['report', 'order', 'open_corner'])('completes after a successful %s without retries or a failure receipt', async (tool) => {
+    const { attempts, receipts, posted } = await runTurn({
+      agentCommand: '/fake-agent', agentKind: 'codex', commandReason: 'order',
+      prompt: async () => ({ stopReason: 'end_turn', updates: [], agentText: '',
+        toolCalls: [{ id: 'delivery', title: `mcp__beeline-agent__${tool}`, status: 'completed' }],
+      }),
+    });
+    expect(attempts).toBe(1);
+    expect(receipts).toContainEqual(expect.objectContaining({ status: 'complete' }));
+    // A failed receipt makes the server retry and eventually report a false
+    // failure to the commander, on top of the successful private report.
+    expect(receipts).not.toContainEqual(expect.objectContaining({ status: 'failed' }));
+    expect(posted).toEqual([]);
+  });
+
+  it.each(['failed', 'pending', 'in_progress', undefined])('does not count a report with status %s as delivery', async (status) => {
+    const { receipts } = await runTurn({
+      agentCommand: '/fake-agent', agentKind: 'codex', commandReason: 'order',
+      prompt: async () => ({ stopReason: 'end_turn', updates: [], agentText: '',
+        toolCalls: [{ id: 'delivery', title: 'mcp__beeline-agent__report', status }],
+      }),
+    });
+    expect(receipts).toContainEqual(expect.objectContaining({ status: 'failed' }));
+  });
+
+  it.each(['report_feedback', 'report_memory_used', 'read'])('does not mistake %s for a delivering tool', async (tool) => {
+    const { receipts } = await runTurn({
+      agentCommand: '/fake-agent', agentKind: 'codex', commandReason: 'order',
+      prompt: async () => ({ stopReason: 'end_turn', updates: [], agentText: '',
+        toolCalls: [{ id: 'other', title: `mcp__beeline-agent__${tool}`, status: 'completed' }],
+      }),
+    });
+    expect(receipts).toContainEqual(expect.objectContaining({ status: 'failed' }));
   });
 });

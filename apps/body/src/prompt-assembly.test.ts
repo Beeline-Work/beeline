@@ -576,7 +576,7 @@ describe('prompt assembly guards', () => {
     for (const [name, context] of Object.entries(SESSION_VARIANTS)) {
       const text = assembleSessionPrompt(context).systemPrompt;
       expect(text, name).toContain('Never just restate the problem.');
-      expect(text, name).toContain('Finish the work before you end the turn.');
+      expect(text, name).toContain('Finish the work before you end the turn, or delegate it.');
     }
   });
 
@@ -785,7 +785,6 @@ describe('assembled prompts', () => {
   }
 });
 
-
 describe('Reproduction runtime-brief-5: delivery capability', () => {
   const base = { id: 'corner', revision: 2, authorId: 'author', sourceRoomId: 'room', attachments: [] };
   const forbidden = ['corner:prepare', '## Reproduced', '## Demonstrated', 'Use its file manifest', 'gh pr create', 'Once the pull request exists', 'pr_checks_status'];
@@ -893,4 +892,13 @@ describe('corner lists render as compact lines without losing a field', () => {
     const text = corners();
     for (const { cornerId } of [...open, ...closed]) expect(text).toContain(`(${cornerId})`);
   });
+});
+
+it('releases delegated turns on every surface so reports can wake a new turn', () => {
+  for (const context of Object.values(SESSION_VARIANTS)) {
+    const text = assembleSessionPrompt(context).systemPrompt;
+    expect(text).toContain('After ordering another agent, end the turn');
+    expect(text).toContain('its report wakes a new turn');
+    expect(text).toContain('do not sleep or poll');
+  }
 });

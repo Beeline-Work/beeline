@@ -1361,7 +1361,7 @@ export class MonolithRoomTurnLoop {
     // Passive browser updates owe no answer and must not start provider
     // retries. Their receipt acknowledges delivery, even for a textless turn.
     if (this.commandContext.current?.source.systemEvent?.kind === 'computer-session-activity') return undefined;
-    return explainEmptyAgentTurn({
+    const explanation = await explainEmptyAgentTurn({
       agentLabel: harnessIdentityLabel({
         kind: this.options.config.agentKind,
         command: this.options.config.agentCommand ?? this.options.config.agentBinary,
@@ -1370,6 +1370,13 @@ export class MonolithRoomTurnLoop {
       sessionId: this.sessionId!,
       result,
     });
+    // Private delivery answers the command without a chat reply. Only an
+    // affirmative completed status counts; failed or unfinished calls still
+    // owe an answer. Keep any durable text recovered from pi's turn record.
+    if (result.toolCalls.some((call) =>
+      isCompletedToolCall(call) && /(?:^|[._:/-])(?:report|order|open_corner)$/i.test(call.title ?? ''),
+    ) && !durableReplyText(explanation.recoveredText ?? '')) return undefined;
+    return explanation;
   }
 
   /**

@@ -34,6 +34,7 @@ const AGENT_HEX = '11'.repeat(32);
 const identity = identityFromKey(AGENT_HEX, 'Bee');
 const AGENT = identity.publicKey;
 const HUMAN = 'a'.repeat(64);
+const COMMANDER = 'b'.repeat(64);
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const OPEN_CORNER_CALL: ToolCallEntry = {
   id: 'call-1',
@@ -48,12 +49,12 @@ beforeAll(async () => {
   db = new PgliteDatabase();
   await migrate(db);
   await db.query(
-    `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Captain','captain'),($2,'agent','Bee','bee')`,
-    [HUMAN, AGENT],
+    `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Captain','captain'),($2,'agent','Bee','bee'),($3,'agent','Commander','commander')`,
+    [HUMAN, AGENT, COMMANDER],
   );
-  await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [AGENT, HUMAN]);
+  await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$3),($2,$3)`, [AGENT, COMMANDER, HUMAN]);
   await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Test')`, [WORKSPACE]);
-  for (const who of [HUMAN, AGENT])
+  for (const who of [HUMAN, AGENT, COMMANDER])
     await db.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner')`,
       [WORKSPACE, who],
@@ -91,22 +92,25 @@ type PromptHooks = {
   readonly agentHomeRoot: string;
   readonly onChunk: (delta: string, full: string, currentRun?: string) => void;
   readonly onToolCalls: (calls: readonly ToolCallEntry[]) => void;
+  /** Deliver a real report under the loop's active command authority. */
+  readonly report: (text: string) => Promise<void>;
   /** Open a real corner on the server the way `open_corner` does. */
   readonly openCorner: (name: string, objective: string) => Promise<string>;
 };
 
 async function runScenario(options: {
   ask: string;
+  ordered?: boolean;
   agentKind?: string;
   agentCommand?: string;
   prompt: (hooks: PromptHooks) => Promise<Awaited<ReturnType<AcpClient['sessionPrompt']>>>;
-}): Promise<{ roomId: string; view: RoomView }> {
+}): Promise<{ roomId: string; view: RoomView; attempts: number }> {
   const roomId = randomUUID();
   await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [
     roomId,
     WORKSPACE,
   ]);
-  for (const who of [HUMAN, AGENT])
+  for (const who of [HUMAN, AGENT, COMMANDER])
     await db.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')`,
       [WORKSPACE, roomId, who],
@@ -163,12 +167,15 @@ async function runScenario(options: {
   vi.spyOn(acp, 'sessionNew').mockResolvedValue({ sessionId: 'room-session', raw: {} });
   vi.spyOn(acp, 'canPromptWithImages').mockReturnValue(false);
   vi.spyOn(acp, 'setModel').mockResolvedValue(undefined);
-  vi.spyOn(acp, 'sessionPrompt').mockImplementation(
+  const promptSpy = vi.spyOn(acp, 'sessionPrompt').mockImplementation(
     (_sessionId, _prompt, _timeoutMs, onChunk, _activity, onToolCalls) =>
       options.prompt({
         agentHomeRoot,
         onChunk: (delta, full, currentRun) => onChunk?.(delta, full, currentRun),
         onToolCalls: (calls) => onToolCalls?.(calls),
+        report: async (text) => {
+          await daemon.execute('report', { ...await activeTurnContext(agentHomeRoot), text }, AGENT);
+        },
         openCorner: async (name, objective) => {
           const context = await activeTurnContext(agentHomeRoot);
           const created = await daemon.execute(
@@ -197,7 +204,13 @@ async function runScenario(options: {
   });
   const running = loop.run();
   try {
-    await phone.execute('sendRoomMessage', { roomId, text: `@bee ${options.ask}` }, HUMAN);
+    await phone.execute('sendRoomMessage', { roomId, text: `@${options.ordered ? 'commander' : 'bee'} ${options.ask}` }, HUMAN);
+    if (options.ordered) {
+      const command = (await daemon.execute('getAgentCommands', { roomId }, COMMANDER)).commands[0]!;
+      await daemon.execute('claimAgentCommand', { roomId, commandId: command.id, generationId: 'commander-generation' }, COMMANDER);
+      await daemon.execute('order', { roomId, requestId: command.turnRequestId,
+        generationId: 'commander-generation', address: roomId, text: options.ask }, COMMANDER);
+    }
     await vi.waitFor(() => expect(pushCommands).toBeTypeOf('function'));
     pushCommands?.((await daemon.execute('getAgentCommands', { roomId }, AGENT)).commands);
     await vi.waitFor(
@@ -219,7 +232,7 @@ async function runScenario(options: {
   }
   const view = await phone.readRoom(roomId, HUMAN);
   expect(view).not.toBeNull();
-  return { roomId, view: view! };
+  return { roomId, view: view!, attempts: promptSpy.mock.calls.length };
 }
 
 /** The corner-open card the server owns, as the phone receives it. */
@@ -344,4 +357,26 @@ describe('a Room turn whose recovered text is only harness preamble', () => {
     // The Room says so: a failed turn is a durable fact, never silence.
     expect(view.messages.some((message) => message.presentation === 'system')).toBe(true);
   });
+});
+
+it('a private report alone completes a real ordered turn with no retry or false failure report', async () => {
+  const text = 'done: RESULT 42';
+  const { roomId, view, attempts } = await runScenario({
+    ask: 'Compute 17 + 25 and report privately', ordered: true,
+    prompt: async ({ report, onToolCalls }) => {
+      await report(text);
+      const call = { id: 'report-1', title: 'mcp__beeline-agent__report', status: 'completed' };
+      onToolCalls([call]);
+      return { stopReason: 'end_turn', updates: [], agentText: '', toolCalls: [call] };
+    },
+  });
+  expect(attempts).toBe(1);
+  expect(view.latestAgentTurns).toContainEqual(expect.objectContaining({ agentPubkey: AGENT, status: 'complete' }));
+  expect((await db.query(`SELECT status FROM agent_turns WHERE room_id=$1 AND agent_id=$2`, [roomId, AGENT])).rows)
+    .toEqual([{ status: 'complete' }]);
+  const reports = (await daemon.execute('getAgentCommands', { roomId }, COMMANDER)).commands.filter(c => c.reason === 'report');
+  expect(reports).toHaveLength(1);
+  expect(reports[0]).toMatchObject({ private: true, source: { body: text, authorId: AGENT } });
+  expect(agentReplies(view)).toEqual([]);
+  expect((await db.query(`SELECT text FROM messages WHERE room_id=$1 AND author_id=$2`, [roomId, AGENT])).rows).toEqual([]);
 });

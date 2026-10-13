@@ -77,3 +77,11 @@ it('reports an already merged corner with its merge commit, and a closed one', a
     await callAgentTool('watch', { address: 'sibling' }, 'watch-4'),
   ).toContain('Corner closed without merging');
 });
+
+it('limits the advertised address to corners, including when called from a Room or DM', () => {
+  for (const dm of [false, true]) {
+    const tool = agentToolsFor(true, dm).find(t => t.name === 'watch')!;
+    expect(tool.description).toContain('Top-level Rooms and DMs have no watchable lifecycle');
+    expect(tool.inputSchema.properties.address.description).toContain('Corner address only');
+  }
+});

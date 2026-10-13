@@ -368,14 +368,14 @@ describe('listening flow', () => {
     expect(mic.props.accessibilityHint).toBe('Stops dictation and sends');
   });
 
-  it('Reproduction WL1: dictation bars distinguish quiet, normal and loud Android input', async () => {
+  it('Reproduction WL2: documented-range Android speech has visible varying bars', async () => {
     vi.useFakeTimers();
     try {
       const { renderer } = render();
       await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
       await act(async () => {});
       await act(async () => vi.advanceTimersByTime(WAVEFORM_SAMPLE_MS));
-      for (const value of [12, 20, 30]) {
+      for (const value of [2, 4, 7]) {
         await act(async () => fireEvent('volumechange', { value }));
         await act(async () => vi.advanceTimersByTime(WAVEFORM_SAMPLE_MS));
       }
@@ -387,11 +387,12 @@ describe('listening flow', () => {
       );
       // Each bar is added a sample before it glides into view.
       expect(heights.slice(0, 2)).toEqual([2, 2]);
-      expect(heights[2]).toBeGreaterThan(2);
+      expect(heights[2]).toBeGreaterThan(5);
+      expect(heights[3]).toBeGreaterThan(9);
       expect(heights[2]).toBeLessThan(heights[3]);
       expect(heights[3]).toBeLessThan(heights[4]);
       expect(heights[4]).toBeLessThan(18);
-      console.info('Reproduction WL1 composer mic -> injected RMS -2/12/20/30 -> bar heights', heights);
+      console.info('Reproduction WL2 composer mic -> documented-range RMS -2/2/4/7 -> bar heights', heights);
     } finally {
       vi.useRealTimers();
     }

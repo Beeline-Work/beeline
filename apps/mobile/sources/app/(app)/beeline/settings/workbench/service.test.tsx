@@ -16,10 +16,10 @@ import { MockWorkbenchSource } from '@/buzz/workbench-source.mock';
 import { setWorkbenchSource } from '@/buzz/workbench-source';
 import ConnectorServiceScreen from './service';
 
-const params = vi.hoisted(() => ({ service: 'vercel' }));
+const params = vi.hoisted(() => ({ service: 'vercel', helperId: '' }));
 const browser = vi.hoisted(() => ({ open: vi.fn().mockResolvedValue({ type: 'dismiss' }) }));
 vi.mock('expo-router', () => ({ router: { back: vi.fn(), push: vi.fn() },
-  useLocalSearchParams: () => ({ workspaceId: 'ws', viewerId: 'human-dani', service: params.service }),
+  useLocalSearchParams: () => ({ workspaceId: 'ws', viewerId: 'human-dani', service: params.service, helperId: params.helperId }),
   useFocusEffect: (effect: () => void) => React.useEffect(effect, [effect]) }));
 vi.mock('expo-web-browser', () => ({ openBrowserAsync: browser.open }));
 vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }) }));
@@ -39,7 +39,7 @@ vi.mock('@/components/buzz/HullActionSheet', () => ({
 beforeEach(() => {
   mobileSurfaceCache.clear();
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
-  params.service = 'vercel'; browser.open.mockClear();
+  params.service = 'vercel'; params.helperId = ''; browser.open.mockClear();
   setWorkbenchSource(new MockWorkbenchSource());
 });
 
@@ -75,4 +75,27 @@ describe('key service', () => {
     expect(tree).not.toContain('KEYS IT HOLDS');
     expect(tree).not.toContain('Open vault');
   });
+});
+
+it('offers Disconnect on a connected machine and sends its address, then refreshes', async () => {
+  params.service = 'trusty-squire'; params.helperId = 'machine-one';
+  const source = new MockWorkbenchSource();
+  const originalRead = source.readWorkbench.bind(source);
+  let connected = true;
+  vi.spyOn(source, 'readWorkbench').mockImplementation(async (scope) => ({
+    ...await originalRead(scope), helpers: [{ id: 'machine-one', name: 'Laptop', online: true,
+      squire: { status: connected ? 'connected' : 'not-added', reportedAt: 1 } }],
+  }));
+  const disconnect = vi.spyOn(source, 'disconnectConnector').mockImplementation(async () => { connected = false; });
+  setWorkbenchSource(source);
+  const renderer = await render();
+  const status = renderer.root.findByType('SettingsRow' as never);
+  expect(status.props.value).toBe('Connected');
+  await act(async () => status.props.trailingPress.onPress());
+  const rows = renderer.root.findAllByType('HullActionSheetRow' as never);
+  expect(rows.map((row: any) => row.props.label)).toEqual(['Disconnect']);
+  await act(async () => rows[0].props.onPress());
+  expect(disconnect).toHaveBeenCalledWith({ workspaceId: 'ws', connectorId: 'squire:machine-one' });
+  expect(renderer.root.findByType('SettingsRow' as never).props.value).toBe('Not added');
+  await act(async () => renderer.unmount());
 });

@@ -324,3 +324,10 @@ describe('targeted screen reads', () => {
     ]);
   });
 });
+
+it('disconnects a machine-addressed Squire without a legacy connector lookup', async () => {
+  state.calls.length = 0;
+  state.readWorkbenchOutput = workbenchDto([]);
+  await new MonolithWorkbenchSource().disconnectConnector({ workspaceId: 'ws', connectorId: 'squire:machine-one' });
+  expect(state.calls).toEqual([{ op: 'unpairConnector', input: { workspaceId: 'ws', connectorId: 'squire:machine-one' } }]);
+});

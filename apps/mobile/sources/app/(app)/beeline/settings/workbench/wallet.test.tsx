@@ -1,3 +1,4 @@
+vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({ register: async () => () => undefined }) }));
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
@@ -19,6 +20,7 @@ vi.mock('@/buzz/surface-storage', async () =>
 vi.mock('@/buzz/use-active-community', () => ({ useActiveCommunityId: () => 'workspace-active' }));
 
 vi.mock('expo-router', () => ({
+  useFocusEffect: (effect: () => void) => React.useEffect(effect, [effect]),
   router: navigation,
   useLocalSearchParams: () => ({ workspaceId: route.workspaceId }),
 }));

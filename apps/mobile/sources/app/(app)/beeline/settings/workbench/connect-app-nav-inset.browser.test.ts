@@ -18,7 +18,7 @@ describe.skipIf(!existsSync(CHROME))('Connect an app above the Android navigatio
         ...webProofShims(mobile),
         'react-native-safe-area-context':
           'export const useSafeAreaInsets = () => ({ top: 24, bottom: 48, left: 0, right: 0 });',
-        'expo-router': `export const router = { back: () => undefined, replace: () => undefined, push: () => undefined };
+        'expo-router': `import React from 'react'; export const useFocusEffect = effect => React.useEffect(effect, [effect]); export const router = { back: () => undefined, replace: () => undefined, push: () => undefined };
           export const useLocalSearchParams = () => ({ workspaceId: 'workspace-1', viewerId: 'human-dani' });`,
         '@/buzz/app-sign-in': 'export const openAppSignIn = async () => undefined;',
         '@/buzz/runtime-config':

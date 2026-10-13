@@ -23,11 +23,11 @@ describe('connector adapters', () => {
     expect(connectorRequesterRole('human-b', 'human-a')).toBe('other');
   });
 
-  it('lets the Squire owner connect, reconnect, and revoke grants', () => {
+  it('lets the Squire owner connect, reconnect, disconnect, and revoke grants', () => {
     for (const action of SQUIRE_CONNECTOR_ADAPTER.actions) {
       expect(SQUIRE_CONNECTOR_ADAPTER.authorize(action, 'owner')).toEqual({ allowed: true });
     }
-    expect(SQUIRE_CONNECTOR_ADAPTER.authorize('disconnect', 'owner').allowed).toBe(false);
+    expect(SQUIRE_CONNECTOR_ADAPTER.authorize('disconnect', 'owner').allowed).toBe(true);
   });
 
   it('refuses another requester every Squire mutation with the Workbench denial', () => {
@@ -59,6 +59,7 @@ describe('connector adapters', () => {
     expect(SQUIRE_CONNECTOR_ADAPTER.workbenchActions('installing')).toEqual([]);
     expect(SQUIRE_CONNECTOR_ADAPTER.workbenchActions('connected')).toEqual([
       'reconnect',
+      'disconnect',
       'revoke-grants',
     ]);
     expect(SQUIRE_CONNECTOR_ADAPTER.workbenchActions('error')).toEqual([

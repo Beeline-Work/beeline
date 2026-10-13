@@ -36,12 +36,12 @@ describe('voice providers', () => {
     expect(fetcher).toHaveBeenCalledTimes(1);
     expect(String(fetcher.mock.calls[0]![0])).toContain('licensed=true');
     expect(speech.voices).toEqual(ids);
-    const iterator = speech.synthesize('Hello', ids[0]!, new AbortController().signal)[Symbol.asyncIterator]();
+    const iterator = speech.synthesize('(excited) Hello', ids[0]!, new AbortController().signal)[Symbol.asyncIterator]();
     expect((await iterator.next()).value).toEqual(new Uint8Array([7, 8]));
     const request = fetcher.mock.calls[1]![1]!;
     expect(request.headers).toMatchObject({ model: 's2.1-pro-free', authorization: 'Bearer test-key' });
     expect(JSON.parse(request.body as string)).toMatchObject({ format: 'pcm', sample_rate: 24000,
-      reference_id: ids[0], latency: 'low' });
+      reference_id: ids[0], text:'[excited] Hello', latency: 'low' });
     finish(); expect((await iterator.next()).done).toBe(true);
   });
   it('keeps voices distinct and deterministic, with explicit soul timbre and exact named routing', () => {
@@ -72,6 +72,60 @@ describe('voice providers', () => {
     expect(text.mock.calls.flat().join('')).toBe(reply.text);
   });
 
+  it('reserves a later saved choice before automatic voices and stale soul overrides', () => {
+    const agents = [
+      { id: 'a', name: 'Auto', handle: 'auto', soul: 'Voice: af_heart' },
+      {
+        id: 'z',
+        name: 'Chosen',
+        handle: 'chosen',
+        soul: 'Voice: bf_emma',
+        chosenVoice: 'af_heart',
+      },
+    ];
+    const assigned = assignVoiceAgents(agents, ['af_heart', 'bf_emma']);
+    expect(assigned.find((a) => a.id === 'z')?.voice).toBe('af_heart');
+    expect(assigned.find((a) => a.id === 'a')?.voice).toBe('bf_emma');
+    expect(assignVoiceAgents([...agents].reverse(), ['af_heart', 'bf_emma'])).toEqual(assigned);
+  });
+  it('streams Fish emotion cues to speech without another generation or waiting for completion', async () => {
+    let finish!: () => void;
+    const body = new ReadableStream<Uint8Array>({
+      start(c) {
+        c.enqueue(
+          new TextEncoder().encode(
+            'data: {"choices":[{"delta":{"content":"[excited] Great news, "}}]}\n\n',
+          ),
+        );
+        finish = () => {
+          c.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
+          c.close();
+        };
+      },
+    });
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(body));
+    const brain = new OpenRouterVoiceBrain('key', fetcher);
+    const delta = vi.fn();
+    const reply = brain.answer(
+      {
+        id: 'a',
+        name: 'A',
+        handle: 'a',
+        soul: 'Warm',
+        voice: '1'.repeat(32),
+        voiceProvider: 'fish-s2.1-pro',
+      },
+      [],
+      delta,
+      new AbortController().signal,
+    );
+    await vi.waitFor(() => expect(delta).toHaveBeenCalledWith('[excited] Great news, '));
+    const request = JSON.parse(fetcher.mock.calls[0]![1]!.body as string);
+    expect(request.messages[0].content).toContain('[empathetic]');
+    expect(fetcher).toHaveBeenCalledOnce();
+    finish();
+    expect((await reply).text).toBe('[excited] Great news,');
+  });
   it('streams Kokoro PCM without waiting for the rest of the body', async () => {
     let finish!: () => void;
     const body = new ReadableStream<Uint8Array>({ start(controller) {

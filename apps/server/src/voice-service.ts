@@ -1,3 +1,5 @@
+import { AgentVoiceService } from './agent-voice.js';
+import { stripVoiceEmotion } from './voice-emotion.js';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
 import { type VoiceCall, type VoiceJoin, type RoomViewIdentity, type VoiceProvider, voiceDuration } from '@beeline/api-contract/phone';
@@ -21,10 +23,12 @@ const identity = (row: IdentityRow): RoomViewIdentity => ({ pubkey: row.id, kind
 /** The DB owns membership/session facts. LiveKit transports audio, never authority. */
 export class VoiceService {
   readonly owner = randomUUID();
+  readonly profiles: AgentVoiceService;
   private readonly runtimes = new Map<string, Promise<VoiceRoomRuntime>>();
   private readonly rooms: RoomServiceClient;
   private readonly unsubscribe: () => void;
   constructor(readonly db: SqlDatabase, readonly live: LiveHub, readonly config: VoiceConfig) {
+    this.profiles = new AgentVoiceService(db, provider => this.providerSpeech(provider));
     this.rooms = new RoomServiceClient(config.url.replace(/^ws/, 'http'), config.apiKey, config.apiSecret);
     this.unsubscribe = live.subscribeAll(event => {
       if (event.type === 'invalidate') {
@@ -48,23 +52,58 @@ export class VoiceService {
 
   async agents(roomId: string, humanId?: string): Promise<VoiceAgent[]> {
     const speech = await this.speech(roomId);
-    const rows = await this.db.query<IdentityRow & { soul: { instructions?: string } | null;
-      owner_id: string; access_policy: unknown }>(
-      `SELECT i.id,i.kind,i.name,i.handle,i.face_id,a.soul,a.owner_id,a.access_policy FROM memberships m
+    const rows = await this.db.query<
+      IdentityRow & {
+        soul: { instructions?: string } | null;
+        owner_id: string;
+        access_policy: unknown;
+        chosen_voices: Partial<Record<VoiceProvider, string>>;
+        voice_provider: VoiceProvider;
+      }
+    >(
+      `SELECT i.id,i.kind,i.name,i.handle,i.face_id,a.soul,a.owner_id,a.access_policy,a.chosen_voices,w.voice_provider FROM memberships m
        JOIN identities i ON i.id=m.identity_id AND i.kind='agent' JOIN agents a ON a.agent_id=i.id
-       WHERE m.room_id=$1 AND m.removed_at IS NULL ORDER BY i.id`, [roomId]);
-    const allowed = new Set(rows.rows.filter(a => !humanId || senderMayAddressAgent(
-      parseAgentAccessPolicy(a.access_policy), humanId, a.owner_id)).map(a => a.id));
-    return assignVoiceAgents(rows.rows.map(a => ({ id: a.id,
-      name: a.name, handle: a.handle ?? a.name, soul: a.soul?.instructions ?? '',
-      ...(a.face_id ? { face: a.face_id } : {}) })), speech.voices).filter(a => allowed.has(a.id));
+       JOIN rooms r ON r.id=m.room_id JOIN workspaces w ON w.id=r.workspace_id
+       WHERE m.room_id=$1 AND m.removed_at IS NULL ORDER BY i.id`,
+      [roomId],
+    );
+    const allowed = new Set(
+      rows.rows
+        .filter(
+          (a) =>
+            !humanId ||
+            senderMayAddressAgent(parseAgentAccessPolicy(a.access_policy), humanId, a.owner_id),
+        )
+        .map((a) => a.id),
+    );
+    return assignVoiceAgents(
+      rows.rows.map((a) => ({
+        id: a.id,
+        name: a.name,
+        handle: a.handle ?? a.name,
+        soul: a.soul?.instructions ?? '',
+        chosenVoice: a.chosen_voices[a.voice_provider],
+        voiceProvider: a.voice_provider,
+        ...(a.face_id ? { face: a.face_id } : {}),
+      })),
+      speech.voices,
+    ).filter((a) => allowed.has(a.id));
   }
 
   async speech(roomId: string): Promise<VoiceSpeech> {
     if (!this.config.providers) return this.config.speech;
-    const row = (await this.db.query<{ voice_provider: VoiceProvider }>(
-      `SELECT w.voice_provider FROM workspaces w JOIN rooms r ON r.workspace_id=w.id WHERE r.id=$1`, [roomId])).rows[0];
-    const speech = row && this.config.providers[row.voice_provider];
+    const row = (
+      await this.db.query<{ voice_provider: VoiceProvider }>(
+        `SELECT w.voice_provider FROM workspaces w JOIN rooms r ON r.workspace_id=w.id WHERE r.id=$1`,
+        [roomId],
+      )
+    ).rows[0];
+    if (!row) throw Error('Room not found');
+    return this.providerSpeech(row.voice_provider);
+  }
+
+  private async providerSpeech(provider: VoiceProvider): Promise<VoiceSpeech> {
+    const speech = this.config.providers ? this.config.providers[provider] : this.config.speech;
     if (!speech) throw new Error('The selected Workspace voice provider is not configured');
     await speech.prepare?.();
     return speech;
@@ -207,6 +246,7 @@ export class VoiceService {
   }
 
   async recordAnswer(roomId: string, agentId: string, text: string) {
+    text=stripVoiceEmotion(text);
     if (!text.trim()) return;
     await this.db.query(`INSERT INTO messages(id,room_id,author_id,text,agent_model)
       SELECT $1,$2,$3,$4,$5 FROM memberships m JOIN rooms r ON r.id=m.room_id

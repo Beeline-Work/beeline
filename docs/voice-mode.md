@@ -9,9 +9,34 @@ through the live call card. After the last person leaves, that card becomes
 
 Workspace owners and admins choose **Voice provider** in Workspace settings:
 Fish S2.1 Pro (default), Kokoro on OpenRouter pinned to DeepInfra, or Aura-2.
-Each provider assigns distinct library voices using the agent's identity and
-soul, with an optional `Aura:`, `Kokoro:` or `Fish:` voice id in its soul.
-Fish uses licensed English library voices; no voice cloning is performed.
+Agent Profile presents Soul, Model / difficulty (model name and thinking level),
+then Voice. The agent owner can open Change, preview a provider library voice,
+and Save it. Fish lists only its public licensed English library; there are no
+cloning or upload controls. Previews stop after eight seconds and navigation or
+Cancel stops them. Other Workspace members can read the current voice.
+
+Saved provider-specific choices live in `agents.chosen_voices`. They reserve
+their voices before identity/soul-based auto-assignment; changing Workspace
+provider retains the agent's choice for the previous provider. A save refuses
+a voice already chosen by another agent in a shared Room. Room assignment
+still resolves every collision deterministically, including older soul overrides
+and agents later brought together from separate Rooms. An optional `Aura:`,
+`Kokoro:` or `Fish:` voice id in the soul remains a fallback. A Profile opened
+from a Room shows that Room's effective assignment.
+
+Fish voice conversation prompts guide sparse emotion cues such as `[excited]`,
+`[confident]`, `[calm]`, `[empathetic]`, `[curious]`, and `[grateful]`. Fish receives
+these inline; parenthesized forms are normalized to Fish's bracket syntax.
+Recognized cues are removed from the visible transcript, including interrupted
+partial cues, while ordinary parentheses and code survive. Other speech providers
+receive text without these cues. The existing clause streaming starts speech as
+before: no additional model request or buffering stage is added. Cue syntax follows
+[Fish's S2 guide](https://fish.audio/blog/fish-audio-s2-fine-grained-ai-voice-control-at-the-word-level/).
+
+`agent-voice.ts` owns library reads, owner saves and bounded previews. The
+client renders validated catalog/write receipts, never a guessed voice choice.
+The existing native WebView hosts short audio previews without adding a native
+dependency or changing the native runtime.
 
 ## Authority and transport
 
@@ -48,9 +73,11 @@ Server secrets:
   configuration error; it never silently substitutes another provider.
 
 LiveKit credentials are server-only; phones receive scoped call JWTs. Configure
-the secrets before the ordinary unified release. This change requires a native
-mobile build for LiveKit/WebRTC: Android runtime 34, iOS runtime 33. The preceding
-runtime pins remain in the OTA compatibility list.
+the secrets before the ordinary unified release. LiveKit/WebRTC first shipped
+in Android runtime 34 / iOS runtime 33. Current runtime pins and fingerprints
+are authoritative in `apps/mobile/app.config.js` and `native-fingerprint.json`;
+preceding pins remain in the OTA compatibility list. Profile voice selection
+reuses existing native modules and introduces no runtime bump.
 Regenerate native fingerprints after a clean `npm ci --prefix apps/mobile`;
 a warmed dependency tree can produce different hashes from the store/CI install.
 
@@ -85,12 +112,12 @@ local proof tokens and must never be committed.
 
 Captured on 2026-10-13, three live Flux→Luna→speech turns per comparison:
 
-| Transport / speech | End-of-turn to first server audio, ms | p50 |
-| --- | --- | --- |
-| Local LiveKit / Aura-2 | 1870, 911, 930 | 930 ms |
-| Local LiveKit / pinned Kokoro | 4092, 3866, 1313 | 3866 ms |
-| Fly 256 MB LiveKit / Aura-2 | 1217, 1042, 1547 | 1217 ms |
-| Local LiveKit / Fish S2.1 Pro free | 1660, 1347, 1446 | 1446 ms |
+| Transport / speech                 | End-of-turn to first server audio, ms | p50     |
+| ---------------------------------- | ------------------------------------- | ------- |
+| Local LiveKit / Aura-2             | 1870, 911, 930                        | 930 ms  |
+| Local LiveKit / pinned Kokoro      | 4092, 3866, 1313                      | 3866 ms |
+| Fly 256 MB LiveKit / Aura-2        | 1217, 1042, 1547                      | 1217 ms |
+| Local LiveKit / Fish S2.1 Pro free | 1660, 1347, 1446                      | 1446 ms |
 
 These are three-sample server measurements, not phone speaker measurements.
 Fish used the same post-end-of-turn path with injected Flux EndOfTurn events,
@@ -119,6 +146,7 @@ comparison; Kokoro and Fish did not meet the under-one-second target in these
 server samples. Do not treat the table as an
 under-one-second phone acceptance claim.
 
-Regression coverage: `voice-providers.test.ts`, `voice-room-runtime.test.ts`,
+Regression coverage: `agent-voice.test.ts`, `voice-emotion.test.ts`,
+`AgentVoiceSection.test.tsx`, `voice-profile.test.ts`, `voice-providers.test.ts`, `voice-room-runtime.test.ts`,
 `voice-service.integration.test.ts`, `ConversationComposer.speech.test.tsx`,
 and `chat-list-delta.test.ts`.

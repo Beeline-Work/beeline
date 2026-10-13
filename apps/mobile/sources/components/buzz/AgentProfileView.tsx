@@ -1,5 +1,5 @@
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
-import { HullDialogInput } from '@/components/buzz/HullDialog';
+import { HullDialogActions, HullDialogInput } from '@/components/buzz/HullDialog';
 import React, { useEffect, useRef, useState } from 'react';
 import { Linking, Pressable, Text, TextInput, View } from 'react-native';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
@@ -14,6 +14,7 @@ import { PageHeader } from './PageHeader';
 import { ProfileActions } from './ProfileActions';
 import { Typography } from '@/constants/Typography';
 import { SoulPortraitControls } from './SoulPortraitControls';
+import { AgentVoiceSection, type AgentVoiceApi } from './AgentVoiceSection';
 import { displayModel } from '@/buzz/model-display';
 
 export function AgentProfileView({
@@ -40,6 +41,8 @@ export function AgentProfileView({
   onCancel,
   soul,
   management,
+  modelManagement,
+  voiceApi,
 }: {
   detail: AgentDetailView | null;
   loading: boolean;
@@ -64,6 +67,8 @@ export function AgentProfileView({
   onCancel: () => void;
   soul: string;
   management: React.ReactNode;
+  modelManagement?: React.ReactNode;
+  voiceApi?: AgentVoiceApi;
 }) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
@@ -162,37 +167,12 @@ export function AgentProfileView({
                       onPress: onMessage,
                       testID: 'agent-profile-message',
                     },
-                    ...(canEdit
-                      ? editing
-                        ? [
-                            {
-                              label: 'Cancel',
-                              disabled: saving,
-                              onPress: onCancel,
-                              testID: 'cancel-agent-edit',
-                            },
-                            {
-                              label: saving ? 'Saving…' : 'Save',
-                              disabled: saving,
-                              onPress: onSave,
-                              testID: 'save-agent-soul',
-                            },
-                          ]
-                        : [
-                            {
-                              label: 'Edit',
-                              onPress: onEdit,
-                              testID: 'edit-agent-soul',
-                            },
-                          ]
+                    ...(canEdit && !editing
+                      ? [{ label: 'Edit', onPress: onEdit, testID: 'edit-agent-soul' }]
                       : []),
                   ]}
                 />
               }
-            />
-            <SettingsRow
-              title="Model / difficulty"
-              value={`${displayModel(label(model, modelAxis))} / ${label(effort, effortAxis)}`}
             />
             {editing && (
               <HullDialogInput
@@ -254,6 +234,48 @@ export function AgentProfileView({
                 </View>
               ) : null}
             </View>
+            {canEdit && editing && (
+              <View style={styles.confirmRow}>
+                <HullDialogActions
+                  actions={[
+                    {
+                      label: 'Cancel',
+                      variant: 'quiet',
+                      disabled: saving,
+                      onPress: onCancel,
+                      testID: 'cancel-agent-edit',
+                    },
+                    {
+                      label: saving ? 'Saving…' : 'Save',
+                      variant: 'primary',
+                      loading: saving,
+                      disabled: saving,
+                      onPress: onSave,
+                      testID: 'save-agent-soul',
+                    },
+                  ]}
+                />
+              </View>
+            )}
+            <View style={styles.section}>
+              <RoomListSectionHeader title="Model / difficulty" inset="content" spacing="flush" />
+              {editing && canEdit && modelManagement ? (
+                modelManagement
+              ) : (
+                <>
+                  <SettingsRow title="Model" description={displayModel(label(model, modelAxis))} />
+                  <SettingsRow title="Thinking level" value={label(effort, effortAxis)} />
+                </>
+              )}
+            </View>
+            <AgentVoiceSection
+              key={`${detail.workspaceId}:${identity.pubkey}:${voiceApi?.contextKey ?? ''}`}
+              agentId={identity.pubkey}
+              configVersion={detail.configVersion}
+              handle={identity.handle ?? identity.name}
+              canEdit={canEdit}
+              api={voiceApi}
+            />
             <SettingsRow
               title="Permission mode"
               value={detail.yolo?.enabled ? 'Yolo' : 'Ask first'}
@@ -265,7 +287,9 @@ export function AgentProfileView({
             {canManage && (editing || !canEdit) && management}
             <View style={styles.section}>
               <View style={styles.workHeading}>
-                <RoomListSectionHeader title="Recent work" inset="content" spacing="flush" />
+                <View style={styles.workTitle}>
+                  <RoomListSectionHeader title="Recent work" inset="content" spacing="flush" />
+                </View>
                 <Text style={styles.meta}>Merged PRs</Text>
               </View>
               {allWork.length ? (
@@ -356,13 +380,15 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.buzz.space.sm,
   },
   soulActions: { gap: 0 },
+  confirmRow: { paddingTop: theme.buzz.space.md },
   workHeading: { flexDirection: 'row', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 },
-identity: {
+  workTitle: { flex: 1 },
+  identity: {
     paddingVertical: theme.buzz.space.lg,
     alignItems: 'center',
     gap: theme.buzz.space.md,
   },
-message: {
+  message: {
     minHeight: 44,
     paddingHorizontal: 24,
     paddingVertical: theme.buzz.space.sm,
@@ -371,6 +397,6 @@ message: {
     borderRadius: theme.buzz.radius,
     justifyContent: 'center',
   },
-pressed: { backgroundColor: theme.buzz.bgPressed },
-strong: { ...Typography.default(), ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },
+  pressed: { backgroundColor: theme.buzz.bgPressed },
+  strong: { ...Typography.default(), ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },
 }));

@@ -1,3 +1,4 @@
+import { stripVoiceEmotion } from './voice-emotion.js';
 import { AccessToken } from 'livekit-server-sdk';
 import { Room, RoomEvent, AudioStream, AudioSource, AudioFrame, LocalAudioTrack,
   TrackPublishOptions, TrackSource, TrackKind, type RemoteParticipant, type RemoteTrack } from '@livekit/rtc-node';
@@ -254,7 +255,7 @@ export class VoiceRoomRuntime {
     // A settings change applies to the next playback with that provider's own timbre.
     const current = (await this.service.agents(this.roomId)).find(a => a.id === agent.id);
     const voice = current?.voice ?? agent.voice;
-    for await (const bytes of speech.synthesize(text, voice, signal)) {
+    for await (const bytes of speech.synthesize((current?.voiceProvider ?? agent.voiceProvider) === 'fish-s2.1-pro' ? text : stripVoiceEmotion(text), voice, signal)) {
       if (signal.aborted || this.closed) throw new DOMException('Interrupted', 'AbortError');
       pending = Buffer.concat([pending, bytes]);
       while (pending.length >= frameBytes) {

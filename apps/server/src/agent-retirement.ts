@@ -88,7 +88,7 @@ export async function retireAgentFromWorkspace(
     [agentId],
   );
   await database.query(
-    `UPDATE agents SET soul=NULL,selected_model=NULL,selected_effort=NULL,
+    `UPDATE agents SET soul=NULL,chosen_voices='{}'::jsonb,selected_model=NULL,selected_effort=NULL,
        model_catalog='[]'::jsonb,model_unavailable=NULL,commands='[]'::jsonb,
        schedule_ids='[]'::jsonb,squire_report=NULL,squire_work='{}'::jsonb,
        yolo_mode=false,yolo_set_by=NULL,yolo_set_at=NULL,

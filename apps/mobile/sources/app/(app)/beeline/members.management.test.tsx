@@ -1268,10 +1268,10 @@ describe('Members workspace management', () => {
       0,
     );
     expect(
-      renderer.root.findByProps({ testID: 'model-axis-model' }).props.children[1].props.children,
+      renderer.root.findByProps({ testID: 'model-axis-model' }).props.description,
     ).toBe('glm-5.3-flash');
     expect(
-      renderer.root.findByProps({ testID: 'model-axis-effort' }).props.children[1].props.children,
+      renderer.root.findByProps({ testID: 'model-axis-effort' }).props.value,
     ).toBe('—');
 
     await press(renderer, 'model-axis-model');

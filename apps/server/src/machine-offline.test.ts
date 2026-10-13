@@ -42,46 +42,32 @@ describe('machine disconnect notices', () => {
      JOIN rooms room ON room.id=message.room_id WHERE message.card_type='machine-offline' ORDER BY message.created_at`,
   )).rows;
 
-  it('notifies only the machine owner once on the last connection; reconnect clears and re-arms it', async () => {
+  it('disconnects and reconnects without a System DM or push, retaining presence', async () => {
     await db.query(`INSERT INTO push_devices(token,identity_id,platform,environment)
-      VALUES('owner-device-token-12345678901234567890',$1,'android','physical'),
-        ('captain-device-token-12345678901234567890',$2,'android','physical')`, [OWNER, CAPTAIN]);
+      VALUES('owner-device-token-12345678901234567890',$1,'android','physical')`, [OWNER]);
     const send = vi.fn(async () => undefined);
     const push = new PushDeliveryLoop(db, { send });
     await push.runOnce();
     await claim(AGENTS[0]!, 'first');
     await claim(AGENTS[1]!, 'second');
     await releaseAgentConnection(db, live, AGENTS[0]!, 'first');
-    expect(await notices()).toHaveLength(0);
     await releaseAgentConnection(db, live, AGENTS[1]!, 'second');
-    const [notice] = await notices();
-    expect(notice?.direct_participants).toContain(OWNER);
-    expect(notice?.direct_participants).not.toContain(CAPTAIN);
-    expect(notice?.text).toBe("Chad's helper went offline · @bee0, @bee1, @bee2 and 2 more can't respond");
-    expect(notice?.card.status).toBe('open');
-    expect(await push.runOnce()).toBe(1);
-    expect(send).toHaveBeenCalledTimes(1);
-    expect(send).toHaveBeenCalledWith('owner-device-token-12345678901234567890',
-      expect.objectContaining({ text: notice?.text }));
-    // Further wakes, repeated disconnects and inactive sibling releases stay silent.
+    expect(await notices()).toEqual([]);
+    expect((await db.query(`SELECT 1 FROM agent_connections WHERE released_at IS NOT NULL`)).rowCount).toBe(2);
+    expect(await push.runOnce()).toBe(0);
     for (let i = 0; i < 10; i++) {
       await noteCornerAgentUnreachable(db, ROOM, AGENTS[0]!, `wake-${i}`);
       await releaseAgentConnection(db, live, AGENTS[1]!, 'second');
     }
-    expect(await notices()).toHaveLength(1);
-    expect(await push.runOnce()).toBe(0);
-    expect(send).toHaveBeenCalledTimes(1);
-    expect((await db.query(`SELECT 1 FROM messages WHERE card_type='corner-agent-unreachable'`)).rowCount).toBe(0);
     await claim(AGENTS[0]!, 'new');
-    expect((await notices())[0]?.card.status).toBe('resolved');
     await releaseAgentConnection(db, live, AGENTS[0]!, 'new');
-    expect(await notices()).toHaveLength(2);
-    expect((await notices())[1]?.card.status).toBe('open');
-    expect(await push.runOnce()).toBe(1);
-    expect(send).toHaveBeenCalledTimes(2);
+    expect(await notices()).toEqual([]);
+    expect(await push.runOnce()).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+    expect((await db.query(`SELECT 1 FROM messages WHERE card_type='corner-agent-unreachable'`)).rowCount).toBe(0);
   });
 
-  it('silently releases every update connection, then notices an unexpected loss after reconnect', async () => {
+  it('silently releases both update connections and unexpected losses after reconnect', async () => {
     await claim(AGENTS[0]!, 'first');
     await claim(AGENTS[1]!, 'second');
     await releaseAgentConnection(db, live, AGENTS[0]!, 'first', true);
@@ -91,10 +77,10 @@ describe('machine disconnect notices', () => {
     await claim(AGENTS[0]!, 'new');
     await releaseAgentConnection(db, live, AGENTS[0]!, 'new');
     await releaseAgentConnection(db, live, AGENTS[0]!, 'new');
-    expect(await notices()).toHaveLength(1);
+    expect(await notices()).toHaveLength(0);
   });
 
-  it('keeps the open-notice lookup indexed', async () => {
+  it('keeps historical offline notice lookups indexed', async () => {
     const index = (await db.query<{ indexdef: string }>(
       `SELECT indexdef FROM pg_indexes WHERE indexname='messages_machine_offline_open_idx'`,
     )).rows[0]?.indexdef;
@@ -109,7 +95,7 @@ describe('machine disconnect notices', () => {
     expect(await releaseAgentConnection(db, live, AGENTS[0]!, 'old')).toBe(false);
     expect(await notices()).toHaveLength(0);
     await releaseAgentConnection(db, live, AGENTS[0]!, 'new');
-    expect(await notices()).toHaveLength(1);
+    expect(await notices()).toHaveLength(0);
   });
 
   it('keeps another machine separate and handles the existing expired-server disconnect path', async () => {
@@ -118,9 +104,8 @@ describe('machine disconnect notices', () => {
     await claim(AGENTS[2]!, 'squire', 'healthy-server');
     await db.query(`INSERT INTO live_server_instances(instance_id,renewed_at) VALUES('healthy-server',clock_timestamp())`);
     await releaseStaleServerConnections(db, 90_000);
-    expect(await notices()).toHaveLength(1);
-    expect((await notices())[0]?.card.machineId).toBe('machine-chad');
+    expect(await notices()).toHaveLength(0);
     await releaseStaleServerConnections(db, 90_000);
-    expect(await notices()).toHaveLength(1);
+    expect(await notices()).toHaveLength(0);
   });
 });

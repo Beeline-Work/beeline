@@ -119,11 +119,12 @@ next run are untouched), to start the workflow:
 
 ## Close the loop: Fixed DMs
 
-`notify_feedback_fixed {item_ids, title, pr_url}` is the only way a Fixed DM
-is sent. The server checks every call:
+`notify_feedback_fixed {item_ids, title, pr_url}` resolves feedback silently.
+Only an explicit notice order adds `notify: true`. The server checks every call:
 
 - It must come from the agent's own active turn.
 - The agent's owner must be listed in `BEELINE_SYSTEM_SENDERS`.
+- A notice request must be rooted in a human command from a configured System sender; scheduled and system-rooted turns cannot send notices.
 - The title must be one line of at most 120 characters, with no secret-shaped
   value.
 - `pr_url` must be a pull request in `BEELINE_FEEDBACK_REPOSITORY`, and GitHub
@@ -131,12 +132,12 @@ is sent. The server checks every call:
   (`pull_requests: read`); without the App, or for an open, closed-unmerged or
   missing pull request, nothing is resolved or sent.
 
-Then the items become `resolved`. Each person who reported one of them
-themselves (`@system` or Report issue) gets one System DM:
-`Fixed: <title> <pr_url>`. Items reported by agents resolve with no DM. The
-text is fixed and System's identity stays with the server; the agent only asks.
-A repeat call sends nothing twice (one DM per person per pull request), and a
-reporter whose account is gone gets no DM.
+Then the items become `resolved` without a DM. When a configured System sender
+explicitly orders notices for the pull request, pass `notify: true` in that
+human-rooted turn. Each human reporter then gets one System DM:
+`Fixed: <title> <pr_url>`. Agent reports stay silent. A later explicit notice
+order can notify items already resolved silently. Repeats send nothing twice
+(one DM per person per pull request); a reporter whose account is gone gets no DM.
 
 ### When the triager cannot send: `skipped`
 

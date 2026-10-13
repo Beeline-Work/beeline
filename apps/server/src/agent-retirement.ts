@@ -2,7 +2,7 @@ import type { AgentGrantStatus } from '@beeline/api-contract/agent-grants';
 import type { AgentGrantView, RoomViewIdentity } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import { revokeDaemonCredentials } from './daemon-credential-lifetime.js';
-import { identitySubject, workspaceSystemLine } from './system-line.js';
+import { identitySubject } from './system-line.js';
 
 const unix = (date: Date) => Math.floor(date.getTime() / 1_000);
 
@@ -120,12 +120,5 @@ export async function retireAgentFromWorkspace(
   // people may still land. The removed agent's `owner_agent_id` stays as
   // the historical "opened by"; the merge webhook and a human close still
   // reach the corner, and a later helper can be addressed in it.
-  await workspaceSystemLine(database, {
-    workspaceId,
-    subject: identitySubject({ id: remover.pubkey, kind: remover.kind, name: remover.name }),
-    verb: 'removed',
-    object: { text: removed.name, id: removed.pubkey },
-    cardType: 'member-removed',
-    card: { identityId: agentId },
-  });
+  // The committed state is the silent audit record.
 }

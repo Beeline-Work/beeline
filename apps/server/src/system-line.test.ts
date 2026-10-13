@@ -11,7 +11,13 @@ import { PushDeliveryLoop } from './background.js';
 import { backfillSystemEventKinds, migrate, type SqlDatabase } from './database.js';
 import { PhoneService } from './phone-service.js';
 import { PgliteDatabase } from './test-support.js';
-import { composeSystemLine, systemLine, workspaceSystemLine } from './system-line.js';
+import { composeSystemLine, systemLine, ensureSystemDirectMessageRoom, type SystemLineInput } from './system-line.js';
+
+async function fixtureSystemNotice(database: SqlDatabase, input: Omit<SystemLineInput, 'roomId'> & { workspaceId: string }) {
+  const { workspaceId, ...line } = input;
+  const roomId = await ensureSystemDirectMessageRoom(database, workspaceId, HUMAN);
+  return systemLine(database, { ...line, roomId, authorId: SYSTEM_IDENTITY_ID });
+}
 
 describe('composeSystemLine', () => {
   it('keeps a join subject while naming its inviter in the attribution slot', () => {
@@ -253,7 +259,7 @@ describe('who an event line mentions', () => {
   });
 });
 
-describe('workspace system lines', () => {
+describe('System DM identity and membership', () => {
   let database: PgliteDatabase;
   beforeEach(async () => {
     database = new PgliteDatabase();
@@ -274,7 +280,7 @@ describe('workspace system lines', () => {
       [SYSTEM_IDENTITY_ID],
     );
 
-    await workspaceSystemLine(database, {
+    await fixtureSystemNotice(database, {
       workspaceId: WORKSPACE,
       subject: { kind: 'person', id: HUMAN, name: 'Ada' },
       verb: 'changed workspace visibility to',
@@ -303,7 +309,7 @@ describe('workspace system lines', () => {
   });
 
   it('restores a rejoined recipient to their existing @system DM', async () => {
-    await workspaceSystemLine(database, {
+    await fixtureSystemNotice(database, {
       workspaceId: WORKSPACE,
       subject: { kind: 'person', id: HUMAN, name: 'Ada' },
       verb: 'changed workspace visibility to',
@@ -349,7 +355,7 @@ describe('workspace system lines', () => {
       [WORKSPACE, HUMAN],
     );
 
-    await workspaceSystemLine(database, {
+    await fixtureSystemNotice(database, {
       workspaceId: WORKSPACE,
       subject: { kind: 'person', id: HUMAN, name: 'Ada' },
       verb: 'changed workspace visibility to',

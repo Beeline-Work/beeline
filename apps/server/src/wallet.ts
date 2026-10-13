@@ -566,7 +566,7 @@ async function recordTransaction(
 /**
  * Deposits the wallet did not originate. Reconciles the source's transaction
  * history against our rows; anything unseen is an inbound deposit, recorded
- * and announced as one inbound ledger line. Runs on wallet reads, so a
+ * silently in wallet history. Runs on wallet reads, so a
  * deposit shows up the next time the owner looks at their money.
  */
 export async function reconcileInbound(
@@ -615,7 +615,7 @@ export async function reconcileInbound(
       agentId: null,
       txUrl: entry.txUrl,
     });
-    await postLedgerLine(database, workspaceId, identityId, entry);
+    // wallet_transactions retains incoming receipts without a System DM.
     added += 1;
   }
   return added;

@@ -16,6 +16,7 @@ import { AuthStore, type TransactionalDatabase } from '@beeline/auth/store';
 import { walletSource } from './wallet.js';
 import { walletExplorerTxUrl } from '@beeline/api-contract/wallet';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
+import { PushDeliveryLoop } from './background.js';
 import { postWalletNotice, type WalletNotice } from './wallet-notices.js';
 import type { FakeWalletState } from './cdp-fake.js';
 
@@ -704,6 +705,24 @@ describe('wallet over the fake CDP seam', () => {
     expect(JSON.stringify(await history.json())).toContain(rows[0]!.card.txUrl);
     expect((await database.query(`SELECT id FROM messages WHERE author_id=$1 AND card_type='wallet-tx'`,
       [SYSTEM_IDENTITY_ID])).rows).toHaveLength(0);
+  });
+
+  it('records indexed incoming receipts in wallet history without a System message', async () => {
+    await createdWallet();
+    await database.query(`INSERT INTO push_devices(token,identity_id,platform,environment) VALUES('silent-wallet-device-token-123456789012345',$1,'android','physical')`, [HUMAN]);
+    const send = vi.fn(async () => undefined);
+    const push = new PushDeliveryLoop(database, { send });
+    await push.runOnce();
+    const txUrl = `https://basescan.org/tx/0x${'9'.repeat(64)}`;
+    vi.spyOn(walletSource(), 'history').mockResolvedValue([{ direction: 'in', amountText: '+5 USDC', counterparty: 'sender', chain: 'base', balanceAfterUsd: '$5.00', agentName: null, txUrl, createdAt: 123 }]);
+    await phoneOperation('readWallet', { workspaceId: WORKSPACE });
+    const history = await daemonOperation('getWalletToolHistory', { agentId: HELPER });
+    expect(history.body.entries).toEqual(expect.arrayContaining([expect.objectContaining({ direction: 'in', txUrl })]));
+    expect((await database.query(`SELECT 1 FROM wallet_transactions WHERE identity_id=$1 AND tx_url=$2`, [HUMAN, txUrl])).rowCount).toBe(1);
+    expect((await notices()).filter(row => row.card.txUrl === txUrl)).toEqual([]);
+    expect(await push.runOnce()).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+    console.log('DM-1: wallet history read retains indexed incoming receipt; zero System messages for the receipt');
   });
 
   it('pending swaps get one notice without claiming confirmation or crediting output', async () => {

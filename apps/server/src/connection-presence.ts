@@ -5,7 +5,7 @@ import type { SqlDatabase } from './database.js';
 import type { CommittedTurnLiveRow, LiveHub } from './live.js';
 import { tagsKnownIdentitySql } from './message-mentions.js';
 import { noteFirstSilence } from './turn-silence-notice.js';
-import { clearMachineOffline, lockAgentMachine, noteMachineOffline } from './machine-offline.js';
+import { lockAgentMachine } from './machine-offline.js';
 import { systemLine } from './system-line.js';
 import { POSTGRES_LIVE_CHANNEL } from './postgres-live.js';
 import { renudgeStrandedPendingCommands } from './agent-command.js';
@@ -595,7 +595,7 @@ export async function claimAgentConnection(
 ): Promise<number> {
   const epoch = await database.transaction(async (db) => {
     await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`presence:${agentId}`]);
-    const machine = await lockAgentMachine(db, agentId);
+    await lockAgentMachine(db, agentId);
     const claimed = await db.query<{ epoch: string | number }>(
       `INSERT INTO agent_connections(agent_id,epoch,connection_id,instance_id,connected_at,released_at)
        VALUES($1,1,$2,$3,clock_timestamp(),NULL)
@@ -605,7 +605,6 @@ export async function claimAgentConnection(
        RETURNING epoch`,
       [agentId, connection.connectionId, connection.instanceId],
     );
-    await clearMachineOffline(db, machine);
     await writeAgentAnnouncement(db, undefined, agentId, metadata, connection, true);
     return Number(claimed.rows[0]?.epoch ?? 0);
   });
@@ -628,7 +627,7 @@ export async function releaseAgentConnection(
 ): Promise<boolean> {
   const released = await database.transaction(async (db) => {
     await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`presence:${agentId}`]);
-    const machine = await lockAgentMachine(db, agentId);
+    await lockAgentMachine(db, agentId);
     const current = await db.query(
       `UPDATE agent_connections SET released_at=clock_timestamp()
        WHERE agent_id=$1 AND connection_id=$2 AND released_at IS NULL RETURNING 1`,
@@ -642,7 +641,6 @@ export async function releaseAgentConnection(
        WHERE agent_id=$1 AND kind='presence' AND body->>'connectionId'=$2`,
       [agentId, connectionId, Math.floor(Date.now() / 1000)],
     );
-    if (!forUpdate) await noteMachineOffline(db, machine);
     return true;
   });
   if (released) await broadcastAgentPresence(database, live, agentId);
@@ -674,12 +672,6 @@ export async function releaseStaleServerConnections(
      ) SELECT DISTINCT agent_id FROM demoted`,
     [expiryMs, Math.floor(Date.now() / 1000)],
   );
-  // This is the existing lost-server disconnect path. Recheck under the same
-  // machine lock as socket releases/reconnects before recording its notice.
-  for (const row of released.rows) await database.transaction(async (db) => {
-    const machine = await lockAgentMachine(db, row.agent_id);
-    await noteMachineOffline(db, machine);
-  });
   await database.query(
     `DELETE FROM live_server_instances WHERE renewed_at<clock_timestamp()-interval '1 day'`,
   );

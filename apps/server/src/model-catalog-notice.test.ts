@@ -86,7 +86,18 @@ describe('postAgentModelCatalog: automatic fallback notice', () => {
     expect(await agentRow(database)).toEqual({ selected_model: 'opus', model_unavailable: null });
     const texts = await ownerDmText(database);
     expect(texts).toHaveLength(1);
+    expect(texts[0]).toContain('opus[1m]');
+    expect(texts[0]).toContain('Opus 5.5');
     expect(texts[0]).toBe('@niglet switched models · opus[1m] is no longer offered; now using Opus 5.5.');
+  });
+
+  it('uses both display names when the old catalog retained a name', async () => {
+    await database.query(`UPDATE agents SET model_catalog=$2::jsonb WHERE agent_id=$1`, [AGENT, JSON.stringify([
+      { id: 'model', category: 'model', currentValue: 'opus[1m]', options: [{ id: 'opus[1m]', name: 'Old Opus' }] },
+    ])]);
+    const daemon = new DaemonService(database, new LiveHub());
+    await daemon.execute('postAgentModelCatalog', { agentId: AGENT, workspaceId: WORKSPACE, options: MODEL_OPTIONS, selection: { model: 'opus' } }, AGENT);
+    expect(await ownerDmText(database)).toEqual(['@niglet switched models · Old Opus is no longer offered; now using Opus 5.5.']);
   });
 
   it('does not re-notify on the next routine catalog mirror once the correction has landed', async () => {

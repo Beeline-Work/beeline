@@ -8,6 +8,7 @@ import { LiveHub } from './live.js';
 import { hasSystemReportMention, taggedIdentityIdsSql } from './message-mentions.js';
 import { PhoneService } from './phone-service.js';
 import { PgliteDatabase } from './test-support.js';
+import { ensureSystemIdentity } from './system-line.js';
 
 const PERSON = 'a'.repeat(64);
 const OTHER = 'b'.repeat(64);
@@ -78,7 +79,7 @@ beforeEach(async () => {
         ($1,NULL,$2,'member'),($1,$3,$2,'member'),($1,$4,$2,'member')`,
       [WORKSPACE, id, ROOM, CORNER],
     );
-  for (const id of [PERSON, TRIAGE])
+  for (const id of [PERSON, TRIAGE, CREATOR])
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
       [WORKSPACE, TRIAGE_CORNER, id],
@@ -425,13 +426,13 @@ describe('notify_feedback_fixed (close the loop)', () => {
 
   async function notify(input: Record<string, unknown>, agentId = TRIAGE, roomId = TRIAGE_CORNER) {
     const turn = await openTurn(
-      await message(`@${agentId === TRIAGE ? 'sweeper' : 'worker'} notify`, PERSON, roomId),
+      await message(`@${agentId === TRIAGE ? 'sweeper' : 'worker'} notify`, CREATOR, roomId),
       roomId,
       agentId,
     );
     return daemon().execute(
       'notifyFeedbackFixed',
-      { ...turn, title: 'Slow tools', prUrl: FIX_URL, ...input } as never,
+      { ...turn, notify: true, title: 'Slow tools', prUrl: FIX_URL, ...input } as never,
       agentId,
     );
   }
@@ -447,6 +448,35 @@ describe('notify_feedback_fixed (close the loop)', () => {
       )
     ).rows;
   }
+
+  it('resolves without a notice request, then sends only on a later explicit order', async () => {
+    const { actionItem } = await reported();
+    await expect(notify({ itemIds: [actionItem], notify: undefined })).resolves.toEqual({ resolved: 1, notified: 0 });
+    expect(await fixedDms()).toEqual([]);
+    expect((await database.query(`SELECT resolved_notified_at FROM feedback_items WHERE id=$1`, [actionItem])).rows)
+      .toEqual([{ resolved_notified_at: null }]);
+    await expect(notify({ itemIds: [actionItem] })).resolves.toEqual({ resolved: 0, notified: 1 });
+    expect(await fixedDms()).toHaveLength(1);
+    console.log('DM-1: merged feedback resolution creates zero System messages; explicit sender-rooted notice order creates one Fixed DM');
+  });
+
+  it('resolves a system-rooted sweep silently and refuses its opt-in notice', async () => {
+    const { actionItem } = await reported();
+    await ensureSystemIdentity(database);
+    const turn = await openTurn(await message('scheduled feedback sweep', SYSTEM_IDENTITY_ID, TRIAGE_CORNER), TRIAGE_CORNER, TRIAGE);
+    const input = { ...turn, itemIds: [actionItem], title: 'Slow tools', prUrl: FIX_URL };
+    await expect(daemon().execute('notifyFeedbackFixed', input as never, TRIAGE)).resolves.toEqual({ resolved: 1, notified: 0 });
+    expect(await fixedDms()).toEqual([]);
+    await expect(daemon().execute('notifyFeedbackFixed', { ...input, notify: true } as never, TRIAGE)).rejects.toThrow('explicit order');
+  });
+
+  it('refuses opt-in notices from another human root', async () => {
+    const { actionItem } = await reported();
+    const turn = await openTurn(await message('@sweeper notify', PERSON, TRIAGE_CORNER), TRIAGE_CORNER, TRIAGE);
+    await expect(daemon().execute('notifyFeedbackFixed', { ...turn, notify: true, itemIds: [actionItem], title: 'Slow tools', prUrl: FIX_URL } as never, TRIAGE))
+      .rejects.toThrow('explicit order');
+    expect(await fixedDms()).toEqual([]);
+  });
 
   it("has System DM each person who reported an item once, resolves agent items silently, and repeats nothing", async () => {
     const ids = Object.values(await reported());

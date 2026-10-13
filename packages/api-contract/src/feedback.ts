@@ -53,6 +53,8 @@ export type NotifyFeedbackFixedInput = {
   readonly itemIds: readonly string[];
   readonly title: string;
   readonly prUrl: string;
+  /** Send Fixed DMs only when explicitly ordered by a configured System sender. Defaults to false. */
+  readonly notify?: boolean;
 };
 export type NotifyFeedbackFixedResult = {
   /** Items this call moved to resolved; already-resolved items count zero. */

@@ -94,8 +94,6 @@ import {
 } from '@beeline/api-contract/agent-grants';
 import {
   surfaceForRoom,
-  surfaceGrantBoundary,
-  type AgentSurface,
 } from '@beeline/api-contract/surface-capabilities';
 import { nextScheduleOccurrence, validateScheduleCadence } from './agent-schedules.js';
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
@@ -5440,8 +5438,9 @@ export class DaemonService {
     return this.database.transaction(async (database) => {
     const prior = (await database.query<{
       model_unavailable: string | null; selected_model: string | null; owner_id: string; name: string; updated_at: Date;
+      model_catalog: Input<'postAgentModelCatalog'>['options'];
     }>(
-      `SELECT a.model_unavailable,a.selected_model,a.owner_id,i.name,a.updated_at FROM agents a
+      `SELECT a.model_unavailable,a.selected_model,a.owner_id,i.name,a.updated_at,a.model_catalog FROM agents a
        JOIN identities i ON i.id=a.agent_id
        JOIN memberships agent_member ON agent_member.identity_id=a.agent_id
          AND agent_member.workspace_id=$2 AND agent_member.room_id IS NULL
@@ -5509,6 +5508,11 @@ export class DaemonService {
       const roomId = await ensureSystemDirectMessageRoom(
         database, input.workspaceId, prior.owner_id,
       );
+      const oldModelName =
+        prior.model_catalog
+          .find((axis) => axis.category === 'model')
+          ?.options.find((choice) => choice.id === prior.selected_model)?.name ??
+        prior.selected_model;
       const newModelName =
         input.options
           .find((axis) => axis.category === 'model')
@@ -5524,7 +5528,7 @@ export class DaemonService {
           .digest('hex'),
         subject: { kind: 'agent', id: agentId, name: prior.name },
         verb: 'switched models',
-        consequence: `${prior.selected_model} is no longer offered; now using ${newModelName}.`,
+        consequence: `${oldModelName} is no longer offered; now using ${newModelName}.`,
       });
     }
     return this.writeResult();
@@ -6023,15 +6027,6 @@ export class DaemonService {
         ? input.roomId
         : await ensureSystemDirectMessageRoom(database, context.workspace_id, resourceOwnerId);
       if (auto) {
-        await systemLine(database, {
-          roomId: resourceRoomId,
-          subject: { kind: 'agent', id: agentId, name: agent.name },
-          verb: 'was granted',
-          object: `${kind} ${target}`,
-          consequence: autoGrantConsequence(kind, surfaceForRoom(context.parent_id !== null)),
-          cardType: 'grant-auto',
-          card: { grantId },
-        });
         return { messageId: undefined, cardRoomId: resourceRoomId };
       }
       const dmRoomId = resourceRoomId;
@@ -8016,17 +8011,6 @@ export class DaemonService {
   }) {
     return { id: id(), createdAt: Math.floor(Date.now() / 1000), ...extra };
   }
-}
-
-/**
- * What automatic owner-machine access actually licensed, so a scroll-back reads as an
- * account of what happened and not a list of names (C94). The boundary is the
- * capability table's, exact and enforced by the mount namespace the runner
- * spawns into: a Room reads, a corner writes its worktree and acts on the host.
- */
-function autoGrantConsequence(kind: AgentGrantKind, surface: AgentSurface): string {
-  if (kind !== 'command') return 'auto-approved';
-  return `auto-approved, ${surfaceGrantBoundary(surface)}`;
 }
 
 /**

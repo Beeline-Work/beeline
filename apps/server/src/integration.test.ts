@@ -5307,7 +5307,7 @@ describe('monolith integration', () => {
     expect(await limited.json()).toEqual({ error: 'too_many_requests' });
   });
 
-  it('routes a Workspace join to one attributed @system DM and no shared Room lines', async () => {
+  it('retains a Workspace join silently without System DMs or pushes', async () => {
     const recipient = await auth.exchangeGitHubOidc('recipient-proof');
     const secondRoom = (await (
       await operation('createRoom', { workspaceId: WORKSPACE, name: 'workshop' })
@@ -5362,68 +5362,15 @@ describe('monolith integration', () => {
        ORDER BY message.room_id`,
       [WORKSPACE],
     );
-    expect(systemDms.rows).toEqual([
-      {
-        id: expect.any(String),
-        room_id: expect.any(String),
-        author_id: SYSTEM_IDENTITY_ID,
-        text: '@recipient joined · invited by @owner',
-        presentation: 'system',
-        direct_participants: [HUMAN, SYSTEM_IDENTITY_ID].sort(),
-        visibility: 'invite-only',
-      },
-    ]);
-    const systemDmId = systemDms.rows[0]!.room_id;
-    const systemDmView = (await (
-      await request(`/v1/phone/rooms/${systemDmId}`)
-    ).json()) as RoomView;
-    expect(systemDmView.viewer.permissions.send).toBe(false);
-    expect(
-      (
-        await operation('sendRoomMessage', {
-          roomId: systemDmId,
-          text: 'replying must stay forbidden',
-        })
-      ).status,
-    ).toBe(403);
-    expect(
-      (
-        await operation('sendRoomReply', {
-          roomId: systemDmId,
-          parentMessageId: systemDms.rows[0]!.id,
-          text: 'replying must stay forbidden too',
-        })
-      ).status,
-    ).toBe(403);
-    expect(
-      (
-        await database.query(
-          `SELECT 1 FROM workspace_join_notification_devices device
-           JOIN workspace_join_notifications notification ON notification.id=device.notification_id
-           WHERE notification.workspace_id=$1`,
-          [WORKSPACE],
-        )
-      ).rowCount,
-    ).toBe(1);
-    expect(await loop.runOnce()).toBe(1);
-    const deliveredJoin = send.mock.calls[0]![1];
-    const routedJoin = (
-      await database.query<{ room_id: string }>(
-        `SELECT room_id FROM workspace_join_notifications WHERE id=$1`,
-        [deliveredJoin.messageId],
-      )
-    ).rows[0]!;
-    expect(deliveredJoin).toEqual(
-      expect.objectContaining({
-        workspaceId: WORKSPACE,
-        roomId: routedJoin.room_id,
-        type: 'workspace-join',
-        text: '@recipient joined Hive',
-      }),
-    );
+    expect(systemDms.rows).toEqual([]);
+    expect((await database.query(`SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND removed_at IS NULL`, [WORKSPACE, recipient.identityId])).rowCount).toBe(1);
+    expect((await database.query(`SELECT 1 FROM workspace_join_notification_devices device JOIN workspace_join_notifications notification ON notification.id=device.notification_id WHERE notification.workspace_id=$1`, [WORKSPACE])).rowCount).toBe(0);
+    expect(await loop.runOnce()).toBe(0);
+    expect(send).not.toHaveBeenCalled();
+
   });
 
-  it('publishes one @system DM note and one push through agent connect', async () => {
+  it('connects an agent without a System DM note or push', async () => {
     const secondRoom = (await (
       await operation('createRoom', { workspaceId: WORKSPACE, name: 'workshop' })
     ).json()) as { id: string };
@@ -5527,19 +5474,10 @@ describe('monolith integration', () => {
        GROUP BY message.author_id,message.text`,
       [WORKSPACE],
     );
-    expect(dmNotes.rows).toEqual([
-      {
-        author_id: SYSTEM_IDENTITY_ID,
-        text: `@${grant.agent_name.toLowerCase()} joined · invited by @owner`,
-        count: 1,
-      },
-    ]);
+    expect(dmNotes.rows).toEqual([]);
+    expect(await loop.runOnce()).toBe(0);
+    expect(send).not.toHaveBeenCalled();
 
-    expect(await loop.runOnce()).toBe(1);
-    expect(send).toHaveBeenCalledWith(
-      'owner-agent-join-device-token-1234567890',
-      expect.objectContaining({ text: `@${grant.agent_name.toLowerCase()} joined Hive` }),
-    );
   });
 
   it('always hands an agent its seeded soul, at both daemon seams (no Workspace switch)', async () => {
@@ -12685,20 +12623,7 @@ describe('monolith integration', () => {
        FROM messages WHERE room_id<>$1 AND card_type IN ('grant-request','grant-auto')`,
       [ROOM],
     );
-    expect(lines.rows).toEqual([
-      {
-        text: '@bee was granted secret FLY_TOKEN · auto-approved',
-        presentation: 'system',
-        tagged_ids: [],
-        author_id: AGENT,
-        system_event: {
-          subject: { kind: 'agent', id: AGENT, name: '@bee' },
-          verb: 'was granted',
-          object: { text: 'secret FLY_TOKEN' },
-          consequence: 'auto-approved',
-        },
-      },
-    ]);
+    expect(lines.rows).toEqual([]);
     const profile = (await (
       await request(`/v1/phone/workspaces/${WORKSPACE}/agents/${AGENT}`)
     ).json()) as { grants: Array<{ auto: boolean; status: string; decidedBy?: unknown }> };
@@ -12990,16 +12915,13 @@ describe('monolith integration', () => {
         })
       ).json()) as Record<string, unknown>;
 
-    // An ordinary command still rides on yolo, and the line now says what that
-    // licensed: in a Room, nothing outside the agent's own scratch.
+    // An ordinary command still rides on yolo; its grant ledger is the audit record.
     const ordinary = await ask('npm test');
     expect(ordinary).toEqual(expect.objectContaining({ status: 'approved', auto: true }));
     const autoLine = await database.query<{ text: string; system_event: { consequence: string } }>(
       `SELECT text,system_event FROM messages WHERE card_type='grant-auto' ORDER BY created_at DESC LIMIT 1`,
     );
-    expect(autoLine.rows[0]!.text).toBe(
-      '@bee was granted command npm test · auto-approved, reads only outside its scratch',
-    );
+    expect(autoLine.rows).toEqual([]);
 
     // An interpreter and a credential file each ask a person, under yolo.
     const script = 'import os\nos.remove("/tmp/x")\n';
@@ -13081,8 +13003,7 @@ describe('monolith integration', () => {
     expect(refused.status).toBe(400);
     expect(((await refused.json()) as { error: string }).error).toContain('will not be truncated');
 
-    // In a corner the same auto line says the opposite, because a corner IS the
-    // writable surface.
+    // Corner automatic grants also remain silent.
     const cornerId = '44444444-4444-4444-8444-444444444444';
     await database.query(
       `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Corner')`,
@@ -13102,9 +13023,7 @@ describe('monolith integration', () => {
       `SELECT text FROM messages WHERE card_type='grant-auto' AND card->>'grantId' IN (SELECT id::text FROM agent_grants WHERE room_id=$1)`,
       [cornerId],
     );
-    expect(cornerLine.rows[0]!.text).toBe(
-      '@bee was granted command npm test · auto-approved, free to write the worktree and act on the host',
-    );
+    expect(cornerLine.rows).toEqual([]);
 
     // A script in the agent's own state directory is not a credential file: a
     // plain read of an absolute scratch path is an ordinary yolo command again,
@@ -13315,12 +13234,7 @@ describe('monolith integration', () => {
          AND message.card_type='workspace-member-joined'`,
       [WORKSPACE],
     );
-    expect(workspaceDms.rows).toEqual([
-      expect.objectContaining({
-        system_event: expect.not.objectContaining({ kind: expect.anything() }),
-        woke: [],
-      }),
-    ]);
+    expect(workspaceDms.rows).toEqual([]);
 
     // No agent subscribed to `joined` in the ordinary Room, so the projection
     // is silent there: the join event is emitted only where someone listens.

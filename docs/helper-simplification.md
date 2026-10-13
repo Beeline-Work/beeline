@@ -71,6 +71,18 @@ Native launchd could not run on this Linux worker; its generator, bounded local
 watchdog and migration fixtures were checked, and the opt-in unique-label test
 remains available on macOS. No production rollout is asserted.
 
+The follow-up control-socket proof ran on an isolated macOS 26.5.1 directory
+with Node 20.19.6. The original 108-byte socket path reproduced `ENOENT` at
+`chmod`; normal macOS temporary paths and a 332-byte Unicode state home then
+served through the new 62-byte endpoints. `machine-control.ts` derives a short
+directory under literal `/tmp` from the UID and state-home hash, checking owner,
+directory type and private permissions before either side uses it. The state
+home, install path and macOS `TMPDIR` cannot lengthen that endpoint.
+`machine-control.test.ts` covers distinct installations, permissions, symlink
+substitution and event-driven successor acknowledgment with long state paths.
+The required `MAC HELPER ACCEPTANCE` gate separately exercises a freshly built
+native bundle, unique-label launchd restart/stop, pairing and actual Room replies.
+
 ## Reproducible acceptance matrix
 
 `scripts/helper-proof/run-linux.sh` creates a disposable Docker PID namespace

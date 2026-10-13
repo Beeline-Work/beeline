@@ -48,6 +48,8 @@ LiveKit credentials are server-only; phones receive scoped call JWTs. Configure
 the secrets before the ordinary unified release. This change requires a native
 mobile build for LiveKit/WebRTC: Android runtime 34, iOS runtime 33. The preceding
 runtime pins remain in the OTA compatibility list.
+Regenerate native fingerprints after a clean `npm ci --prefix apps/mobile`;
+a warmed dependency tree can produce different hashes from the store/CI install.
 
 Workers AI's free daily neuron allowance is insufficient for continuous voice.
 At HTTP 429/code 4006, Flux and Aura need a quota reset or a Workers Paid plan.

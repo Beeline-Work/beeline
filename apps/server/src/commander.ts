@@ -126,8 +126,8 @@ export async function reportToCommander(
     return { id: reportId, createdAt: Math.floor(Date.now() / 1000), delivered: false };
   }
   const member = (
-    await db.query<{ kind: string; handle: string | null }>(
-      `SELECT identity.kind,identity.handle FROM memberships member JOIN identities identity ON identity.id=member.identity_id
+    await db.query<{ kind: string }>(
+      `SELECT identity.kind FROM memberships member JOIN identities identity ON identity.id=member.identity_id
      JOIN rooms room ON room.id=member.room_id AND room.archived_at IS NULL
      WHERE member.room_id=$1 AND member.identity_id=$2 AND member.removed_at IS NULL
      FOR SHARE OF member,room`,
@@ -174,7 +174,7 @@ export async function reportToCommander(
         reportId,
         returnRoom,
         agentId,
-        member.handle ? `${text} @${member.handle}` : text,
+        text,
         JSON.stringify(options.attachments ?? []),
         incoming?.id ?? null,
       ],

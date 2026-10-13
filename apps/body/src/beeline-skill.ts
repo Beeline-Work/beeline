@@ -50,7 +50,7 @@ description: How to answer inside a Beeline Room.
 
 # Using Beeline
 
-Orders flow down and reports flow up. Use open_corner(room, brief) to set up work and become its commander. Use order(address, text) and read(address) across member Rooms, corners and DMs. Use watch only for corner addresses. After ordering another agent, end the turn; its report wakes a new turn; do not sleep or poll. Report only to whoever ordered you, with done:, blocked:, needs-decision: or failed:. Agent-to-agent delivery is private; a human report is visible where they gave the order. No reminder loops. These mechanics apply in Rooms, corners and DMs. ${BEELINE_ROOM_MECHANICS}
+Orders flow down and reports flow up. Use open_corner(room, brief) to set up work and become its commander. Use order(address, text) and read(address) across member Rooms, corners and DMs. Use watch only for corner addresses. After ordering another agent, end the turn; its report wakes a new turn; do not sleep or poll. Report only to the member who gave you the task. If that member is a human, tag them when, in your judgement, they need to decide or should know. Reports begin done:, blocked:, needs-decision: or failed:. Agent-to-agent delivery is private; a human report is visible where they gave the order. No reminder loops. These mechanics apply in Rooms, corners and DMs. ${BEELINE_ROOM_MECHANICS}
 
 ## Conflicting human instructions
 

@@ -172,8 +172,12 @@ async function main() {
     console.log('PASS: private blocked report and private return order arrive through live sockets');
     await mcp(blocked, 'report', { text: 'needs-decision: choose the endpoint policy' });
     const humanView = await phoneRoom(DM);
-    assert.ok(humanView.messages.some(message => message.text === `needs-decision: choose the endpoint policy @${humanView.viewer.identity.handle}`));
-    console.log('PASS: a decision Ruby cannot settle appears only in the captain’s originating DM');
+    assert.ok(humanView.messages.some(message => message.text === 'needs-decision: choose the endpoint policy'));
+    console.log('PASS report-tags-1: an untagged report appears unchanged in the captain’s originating DM');
+    const taggedText = `needs-decision: choose the endpoint policy @${humanView.viewer.identity.handle}`;
+    await mcp(blocked, 'report', { text: taggedText });
+    assert.ok((await phoneRoom(DM)).messages.some(message => message.text === taggedText));
+    console.log('PASS report-tags-1: an agent-written human mention is preserved exactly once');
     const before = rubyPush.size;
     await db.query(`INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,max_runs,next_run_at)
       VALUES($1,$2,$3,$4,$4,'{"kind":"interval","everyMinutes":1}','Run the widget check',1,now()-interval '1 minute')`, [randomUUID(), WORKSPACE, corner, WORKER]);

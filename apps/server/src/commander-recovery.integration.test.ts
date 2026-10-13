@@ -666,7 +666,7 @@ it('acknowledges explicit reports so final prose does not send a second report',
   expect((await commands(DM, RUBY)).filter((c) => c.reason === 'report')).toHaveLength(1);
 });
 
-it('human Room reports enter the needs-you tray and push at direct sensitivity', async () => {
+it('human Room reports with an agent-written mention enter the needs-you tray and push at direct sensitivity', async () => {
   await db.query(`UPDATE identities SET push_level='direct' WHERE id=$1`, [HUMAN]);
   await db.query(
     `INSERT INTO push_devices(token,identity_id,platform,environment)
@@ -685,7 +685,7 @@ it('human Room reports enter the needs-you tray and push at direct sensitivity',
   await claim(incoming);
   const delivered = await daemon.execute(
     'report',
-    { ...authority(incoming), text: 'needs-decision: choose an endpoint' },
+    { ...authority(incoming), text: 'needs-decision: choose an endpoint @captain' },
     RUBY,
   );
   expect((await phone.execute('readNeedsYou', { workspaceId: WS }, HUMAN)).items).toEqual(
@@ -849,7 +849,7 @@ it('keeps the originating corner waiting for a decision returned to its parent R
   await claim(returned);
   await daemon.execute(
     'report',
-    { ...authority(returned), text: 'needs-decision: choose endpoint' },
+    { ...authority(returned), text: 'needs-decision: choose endpoint @captain' },
     RUBY,
   );
   expect(
@@ -902,7 +902,7 @@ it('keeps DM-returned decisions indexed until answered or source membership ends
   await claim(returned);
   await daemon.execute(
     'report',
-    { ...authority(returned), text: 'needs-decision: choose endpoint' },
+    { ...authority(returned), text: 'needs-decision: choose endpoint @captain' },
     RUBY,
   );
   expect((await phone.readRoom(opened.cornerId, HUMAN))?.cornerOwed).toBe(true);

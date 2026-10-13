@@ -539,6 +539,15 @@ describe('prompt assembly guards', () => {
     expect(skill).toContain('exact reviewed head SHA');
   });
 
+  it('lets agents decide when to tag their human commander', () => {
+    for (const [name, context] of Object.entries(SESSION_VARIANTS)) {
+      const text = assembleSessionPrompt(context).systemPrompt;
+      expect(text, name).toContain('Report only to the member who gave you the task. If that member is a human, tag them when, in your judgement, they need to decide or should know.');
+      expect(text, name).not.toContain('Do not tag a human to escalate.');
+      expect(text, name).toContain('report(text) one step up to your commander.');
+    }
+  });
+
   it('documents Connectors discovery and connection in every agent turn', () => {
     for (const [name, context] of Object.entries(SESSION_VARIANTS)) {
       const text = assembleSessionPrompt(context).systemPrompt;

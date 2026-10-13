@@ -1,0 +1,12 @@
+Android release-build proof
+Source commit: 2be7e9592867c049a31e2dbf8c70abc6452fe378
+Command: GRADLE_USER_HOME=<worktree>/data/ui-alignment/gradle XDG_CACHE_HOME=<worktree>/data/ui-alignment/cache ./gradlew assembleRelease --no-daemon
+App entry: apps/mobile/index.ts
+Signing: local debug certificate; no store signing credentials or device installation used.
+APK: apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+APK bytes: 231004745
+APK SHA-256: 2323a85c724c053faabeaf2dd1775969d539a6d533adf8cf08cf619c93a30155
+
+Android Bundled 108676ms index.ts (3242 modules)
+BUILD SUCCESSFUL in 12m 3s
+2086 actionable tasks: 1453 executed, 331 from cache, 302 up-to-date

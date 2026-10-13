@@ -40,7 +40,7 @@ import {
 const VOICE_RULE =
   'Keep facts exact regardless of voice. Use plain language in commits, pull requests, and code comments.';
 const TAGGING_RULE =
-  'Every exact @handle wakes that member. Copy handles only from the member list. For work, use order(address, text) down and report(text) up to your commander; do not tag a human to escalate. Reports begin done:, blocked:, needs-decision: or failed:. Agent coordination is private; human reports appear where they ordered you.';
+  'Every exact @handle wakes that member. Copy handles only from the member list. Use order(address, text) privately across member Rooms; report(text) one step up to your commander. Do not tag a human to escalate. Reports begin done:, blocked:, needs-decision: or failed:; human reports appear where they ordered you.';
 
 // Turn fixtures use scratch repositories. Branch synchronization has its own
 // real-git suite; these tests exercise the conversation and merge instructions.

@@ -84,7 +84,7 @@ CREATE TRIGGER corner_follows_message_update AFTER UPDATE OF text ON messages
 CREATE OR REPLACE FUNCTION corner_follows_steer() RETURNS trigger
 LANGUAGE plpgsql AS $corner_follows$
 BEGIN
-  IF NEW.reason='relay_steer' THEN
+  IF NEW.reason IN ('relay_steer','order') AND EXISTS (SELECT 1 FROM rooms corner WHERE corner.id=NEW.room_id AND corner.parent_id IS NOT NULL) THEN
     INSERT INTO corner_follows(corner_id,identity_id)
     SELECT NEW.room_id,steered_by.author_id FROM messages steered_by
     WHERE steered_by.id=NEW.root_source_message_id AND steered_by.author_id IS NOT NULL
@@ -118,7 +118,7 @@ export async function backfillCornerFollows(database: SqlDatabase): Promise<void
     SELECT steer.room_id,steered_by.author_id FROM agent_commands steer
     JOIN messages steered_by ON steered_by.id=steer.root_source_message_id
     JOIN identities person ON person.id=steered_by.author_id
-    WHERE steer.reason='relay_steer'
+    WHERE steer.reason IN ('relay_steer','order')
       AND EXISTS (SELECT 1 FROM rooms corner WHERE corner.id=steer.room_id AND corner.parent_id IS NOT NULL)
     UNION
     SELECT tagged.room_id,person.id FROM messages tagged

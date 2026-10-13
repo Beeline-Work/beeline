@@ -436,8 +436,6 @@ export interface MonolithCornerTurnOptions {
   openedBy?: string;
   objective: string;
   worktreePath: string;
-  /** The human who commissioned the corner, as a bare handle. Who a repo-less corner reports back to. */
-  requesterHandle?: string;
   /** Present exactly when the parent Room is bound to a repository: this is then a code corner. */
   repository?: {
     featureBranch: string;
@@ -635,6 +633,12 @@ export class MonolithCornerTurnLoop {
 
   async prepareForForcedUpdateRestart(): Promise<void> {
     this.forcedStop = true;
+  }
+
+  interruptedTurn(): InterruptedTurn | undefined {
+    const current = this.currentTurn;
+    if (!current || this.stoppedTurns.has(current.requestId)) return undefined;
+    return { roomId: this.options.cornerId, requestId: current.requestId, generationId: this.commandContext.generationId };
   }
 
   interruptForServerMinimum(): InterruptedTurn | undefined {
@@ -1297,7 +1301,6 @@ export class MonolithCornerTurnLoop {
             },
           }
         : {}),
-      ...(this.options.requesterHandle ? { requesterHandle: this.options.requesterHandle } : {}),
       ...(agentEnv.BEELINE_ANDROID_EMULATOR_PORT
         ? { android: { emulatorPort: agentEnv.BEELINE_ANDROID_EMULATOR_PORT,
             leased: Boolean(agentEnv.BEELINE_ANDROID_LEASE_ROOT) } }
@@ -2509,7 +2512,7 @@ export class MonolithCornerTurnLoop {
             command.source.attachments,
             command.source.authorId,
             command.reason === 'corner_check' ? [command.source.body] : undefined,
-            command.source.type === 'message' ? command.sourceMessageId : undefined,
+            ['message', 'private'].includes(command.source.type) ? command.sourceMessageId : undefined,
           ),
       });
     try {

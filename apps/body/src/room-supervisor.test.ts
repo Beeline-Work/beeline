@@ -46,7 +46,7 @@ function fakeApi(handler: (name: string) => Promise<unknown>) {
 }
 
 describe('RoomSupervisor', () => {
-  it('retries a failed Room read three times, then waits for the next open or wake', async () => {
+  it('keeps retrying a failed Room read at a bounded delay and recovers without a wake', async () => {
     vi.useFakeTimers();
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     let reachable = false;
@@ -83,15 +83,14 @@ describe('RoomSupervisor', () => {
     expect(execute).toHaveBeenCalledTimes(3);
     await vi.advanceTimersByTimeAsync(30_000);
     expect(execute).toHaveBeenCalledTimes(4);
-    // Parked: hours pass without another read, and the loop is still supervised.
-    await vi.advanceTimersByTimeAsync(6 * 60 * 60_000);
-    expect(execute).toHaveBeenCalledTimes(4);
+    // A fourth failure cannot permanently park the agent.
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(execute).toHaveBeenCalledTimes(5);
     expect(settled).toBe(false);
 
     reachable = true;
-    supervisor.wake(); // the live socket opened again, or discovery was woken
-    await vi.advanceTimersByTimeAsync(0);
-    expect(execute).toHaveBeenCalledTimes(5);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(execute).toHaveBeenCalledTimes(6);
     expect(polled).toHaveBeenCalledOnce();
     expect(settled).toBe(false);
     abort.abort();

@@ -190,16 +190,27 @@ describe('LiveLink against a real server and a black-holing proxy', () => {
     });
   });
 
-  it('reconnects after a 503 at upgrade, honouring Retry-After', async () => {
+  it.each([408, 429, 503])('reconnects after a retryable %s upgrade, honouring Retry-After', async (status) => {
     const { server, client } = await harness();
     server.answer = (attempt) =>
       attempt === 1
-        ? { kind: 'refuse', status: 503, headers: { 'Retry-After': '1' } }
+        ? { kind: 'refuse', status, headers: { 'Retry-After': '1' } }
         : { kind: 'accept' };
     client.setRoomsChangedListener(() => undefined);
     await vi.waitFor(() => expect(client.link.state).toBe('open'), { timeout: 5_000 });
     expect(server.upgrades).toHaveLength(2);
     expect(server.upgrades[1]! - server.upgrades[0]!).toBeGreaterThanOrEqual(950);
+  });
+
+  it.each([400, 401, 403, 404, 410])('does not reconnect after a permanent %s upgrade refusal', async (status) => {
+    const { server, client } = await harness();
+    server.answer = () => ({ kind: 'refuse', status });
+    client.setRoomsChangedListener(() => undefined);
+    await vi.waitFor(() => expect(server.upgrades).toHaveLength(1));
+    await new Promise((resolve) => setTimeout(resolve, TIMING.backoffMaxMs * 3));
+    client.link.start();
+    expect(server.upgrades).toHaveLength(1);
+    expect(client.link.state).toBe('refused');
   });
 
   it('abandons a handshake that gets no answer and reconnects after the handshake timeout', async () => {

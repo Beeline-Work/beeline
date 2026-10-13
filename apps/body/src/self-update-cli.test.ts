@@ -1,3 +1,4 @@
+import * as recovery from './recovery.js';
 /**
  * `npx usebeeline update` runs from a throwaway npm cache — never through
  * the installed `<prefix>/bin/beeline` wrapper — so `BEELINE_LIB_DIR` is
@@ -174,6 +175,7 @@ it('stages a CLI update from its manifest override while a helper is serving', a
   await writeStubInstall(prefix, { commit: 'old', version: 'v0.1.28' });
   simulateNpxEnvironment(home);
   vi.stubEnv('BEELINE_SYSTEMD_USER', '0');
+  vi.stubEnv('BEELINE_LAB', '1');
   const configPath = join(home, 'runtime.json');
   vi.spyOn(runtime, 'findRuntimeConfigPaths').mockResolvedValue([]);
   vi.spyOn(runtime, 'findAgentRuntimeConfigPaths').mockResolvedValue([configPath]);
@@ -199,6 +201,7 @@ it('stages a CLI update from its manifest override while a helper is serving', a
   });
   await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
   const manifestUrl = `http://127.0.0.1:${(server.address() as { port: number }).port}/manifest.json`;
+  vi.spyOn(recovery, 'convergeMachine').mockResolvedValue({ pid: 42, generation: 'fixture', processState: 'serving', loadedRelease: 'new', updatedAt: new Date().toISOString(), agents: {} });
   try {
     await runUpdateCommand(['update', '--manifest-url', manifestUrl]);
     const layout = beelineInstallLayout({ BEELINE_LIB_DIR: join(prefix, 'lib/beeline') })!;

@@ -44,6 +44,51 @@ describe('idle corner discovery', () => {
     await runtime.shutdown();
   });
 
+  it('Reproduction R1: starts a corner under its own parent when a DM also lists it', async () => {
+    const supervisorRoot = await mkdtemp(resolve(tmpdir(), 'beeline-dm-corner-'));
+    roots.push(supervisorRoot);
+    const identity = identityFromKey('11'.repeat(32), 'Bee');
+    const corner = { cornerId: 'corner-pr', parentRoomId: 'parent', archived: false,
+      createdBy: identity.publicKey };
+    const execute = vi.fn(async (name: string, input?: { roomId?: string }) => {
+      if (name === 'getDaemonBootstrap')
+        return { workspaceIds: ['workspace'], rooms: [
+          { roomId: 'parent', archived: false }, { roomId: 'dm', archived: false }] };
+      // The server lists the agent's corners in every Room under a DM too.
+      // The DM's answer lands last, as it did on the live helper.
+      if (name === 'listRoomCorners') {
+        if (input?.roomId === 'dm') await new Promise((done) => setTimeout(done, 10));
+        return { corners: [corner] };
+      }
+      throw new Error(`unexpected operation ${name}`);
+    });
+    const runtime = new RoomRuntimeCoordinator(
+      { agent: { name: 'Bee', publicKey: identity.publicKey,
+          secretKeyHex: Buffer.from(identity.secretKey).toString('hex') },
+        rooms: [], communityId: 'workspace', supervisorRoot,
+        transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'token' },
+      } as unknown as AgentRuntimeRecord,
+      resolve(supervisorRoot, 'agent.json'),
+      { workspaceRoot: supervisorRoot } as never,
+      { daemonApi: { execute } as unknown as DaemonApiClient },
+    );
+    const start = vi.fn(async () => undefined);
+    const subject = runtime as unknown as {
+      monolithCornerParents: Map<string, string>;
+      startRoom(roomId: string): Promise<void>;
+      startCorner(corner: { cornerId: string; parentRoomId: string }): Promise<void>;
+    };
+    subject.startRoom = async () => undefined;
+    subject.startCorner = start;
+    expect(await runtime.reconcile()).toBe('member');
+    expect(execute).toHaveBeenCalledWith('listRoomCorners', { roomId: 'dm', activeOnly: true });
+    // The DM has no repository: a corner started under it runs repo-less.
+    expect(start).toHaveBeenCalledWith(expect.objectContaining({ cornerId: 'corner-pr', parentRoomId: 'parent' }));
+    expect(start).not.toHaveBeenCalledWith(expect.objectContaining({ parentRoomId: 'dm' }));
+    expect(subject.monolithCornerParents.get('corner-pr')).toBe('parent');
+    await runtime.shutdown();
+  });
+
   it('Reproduction H-10: counts ten active corners of one parent once', () => {
     const runtime = new RoomRuntimeCoordinator(
       {

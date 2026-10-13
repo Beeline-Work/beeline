@@ -820,23 +820,16 @@ describe('operator skills + MCP passthrough', () => {
     expect(managedSkillText).toContain('inspect its live state with the tools you have');
     expect(managedSkillText).toContain('Memory and Room history are not evidence of current state');
     expect(managedSkillText).toContain('Before asking a person for a code, a status or a file');
-    expect(managedSkillText).toContain('Ask only when none can, and say why');
+    expect(managedSkillText).toContain('Report blocked: to your commander only when none can');
     expect(managedSkillText).toContain('The key-ownership and grant rules still apply');
     const reviewSkill = readFileSync(resolve(skillsDir, 'beeline-review', 'SKILL.md'), 'utf8');
-    expect(reviewSkill).toContain('PASS: call `approve_merge` with the reviewed head SHA');
-    expect(reviewSkill).toContain('`approved <reviewed sha>` without tagging the author. Do not tell the author to merge.');
-    expect(reviewSkill).not.toContain('approved <reviewed sha>, merge');
-    expect(reviewSkill).toContain(
-      'Approving is your last step as reviewer. Your PASS is the yes that wakes the author, who merges that exact head',
-    );
+    expect(reviewSkill).toContain('On PASS, call `approve_merge` with the exact reviewed head SHA');
+    expect(reviewSkill).toContain('PASS wakes the implementer to land');
+    expect(reviewSkill).toContain('Follow an explicit commander order to land');
     expect(reviewSkill).not.toContain('gh pr merge');
-    expect(reviewSkill).not.toContain('Never merge');
-    expect(reviewSkill).not.toContain('approved pending checks');
-    expect(reviewSkill).toContain('checks="passed" with checkCount=0');
-    expect(reviewSkill).toContain('Pending, failed, or unknown checks still block approval.');
-    expect(reviewSkill).not.toContain('--match-head-commit <reviewed sha>');
-    expect(reviewSkill).toContain('P0 - OUTLINE FULFILLED, DEMONSTRATED');
-    expect(reviewSkill).toContain('If the user-visible Y cannot be produced, FAIL now');
+    expect(reviewSkill).toContain('checks="passed" and checkCount=0');
+    expect(reviewSkill).toContain('Check every story and criterion');
+    expect(reviewSkill).toContain('Demand only proof the worker can produce with its own tools');
     const triageSkill = readFileSync(resolve(skillsDir, 'beeline-triage', 'SKILL.md'), 'utf8');
     expect(triageSkill).toContain('name: beeline-triage');
     expect(triageSkill).toContain(
@@ -1837,14 +1830,11 @@ describe('skill provision reuse', () => {
       expect(spec).toContain('`## Acceptance criteria`');
       expect(spec).toContain('Bounded adversarial second read (default on)');
       expect(spec).toContain('Do not infer approval from silence');
-      expect(review).toContain('Read the server-assigned brief and its current revision');
-      expect(review).toContain('Quote the approval with its message ID and approver');
-      expect(review).toContain(
-        'list every `## User stories` and `## Acceptance criteria` line exactly once',
-      );
-      expect(review).toContain(
-        'Check the brief revision and code head for base synchronization',
-      );
+      expect(review).toContain('Read the current server-assigned brief and every required file');
+      expect(review).toContain('the commander order and inherited human constraints win conflicts');
+      expect(review).toContain('Check every story and criterion');
+      expect(review).toContain('Check synchronization with the target branch');
+      expect(review).toContain('Keep your working notes private');
       if (agentKind === 'goose' || agentKind === 'reference' || agentKind === 'custom') {
         expect(agentSkillDir(agentKind)).toBe('codex');
       }

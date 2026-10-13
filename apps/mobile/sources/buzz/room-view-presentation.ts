@@ -305,8 +305,6 @@ export type ChatDisplayMessage = {
   notificationLifecycleRun?: import('./pr-lifecycle').NotificationLifecycleRun;
   githubEvent?: NonNullable<RoomViewMessage['githubEvent']>;
   /** Daemon lifecycle facts are server-projected cards, never prose rows. */
-  relay?: RoomViewMessage['relay'];
-  relayReports?: ChatDisplayMessage[];
   daemonFact?: NonNullable<RoomViewMessage['daemonFact']>;
   /** Corners opened from this message, anchored beneath it (`buzz/corner-markers.ts`). */
   cornerMarkers?: ChatDisplayMessage[];
@@ -442,7 +440,6 @@ export function displayRoomMessage(
       : {}),
     ...(githubEvent ? { githubEvent } : {}),
     ...(daemonFact ? { daemonFact } : {}),
-    ...(message.relay ? { relay: message.relay } : {}),
     ...(message.grantRequest
       ? {
           grantRequest: {

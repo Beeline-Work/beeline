@@ -49,6 +49,8 @@ coverage/
 relay-stack/web/dl/manifest.json
 relay-stack/web/dl/*.tar.gz
 relay-stack/web/dl/*.tar.gz.sha256
+relay-stack/web/dl/beeline-bootstrap.mjs
+relay-stack/web/dl/beeline-bootstrap.mjs.sha256
 
 # Mac
 .DS_Store
@@ -67,3 +69,6 @@ apps/mobile/web-build/
 apps/mobile/.turbo/
 # Local iOS signing certificate/profile paths and password (EAS local credentials).
 apps/mobile/credentials.json
+
+# Agent runtime homes (sessions, credentials, caches) never belong in the repository.
+agent-home/

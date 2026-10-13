@@ -583,6 +583,8 @@ jobs:
             relay-stack/web/dl/beeline-${{ matrix.platform }}.tar.gz.sha256
             relay-stack/web/dl/manifest.json
             relay-stack/web/dl/mac-helper-inputs.json
+            relay-stack/web/dl/beeline-bootstrap.mjs
+            relay-stack/web/dl/beeline-bootstrap.mjs.sha256
           if-no-files-found: error
           retention-days: 7
 

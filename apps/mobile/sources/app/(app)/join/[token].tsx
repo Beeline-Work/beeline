@@ -82,6 +82,15 @@ export default function CommunityInviteJoin() {
           if (!cancelled) enterWorkspaceRoom(invite.joinedWorkspaceId, null);
           return;
         }
+        if (invite.expiresAt === 0) {
+          // A permanent public link is an open join action. After sign-in,
+          // use the same redemption path and go straight into its first Room.
+          if (cancelled) return;
+          const redemption = await monolithPhoneOperation('redeemInvite', { token });
+          await saveActiveCommunityId(currentIdentity.publicKey, redemption.workspaceId);
+          if (!cancelled) enterWorkspaceRoom(redemption.workspaceId, redemption.roomId);
+          return;
+        }
         if (!cancelled) {
           setIdentity(currentIdentity);
           setPreview(invite);

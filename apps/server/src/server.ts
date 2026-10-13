@@ -1,3 +1,4 @@
+import { verifyNip98Header } from '@beeline/nostr';
 import { WorkflowAuthorizationError } from './workflow-admin.js';
 import { WorkspaceSkillNotFoundError } from './institutional-skills.js';
 import { GitHubHttpError } from '@beeline/auth/github';
@@ -32,7 +33,8 @@ import {
   parseArchivedCornerCursor,
   type PhoneService,
 } from './phone-service.js';
-import { DAEMON_OPERATION_NAMES, RelayRefusalError, type DaemonService } from './daemon-service.js';
+import { DAEMON_OPERATION_NAMES, type DaemonService } from './daemon-service.js';
+import { CommandRefusalError } from './commander.js';
 import { institutionalMemoryErrorStatus } from './institutional-memory-shadow.js';
 import { ARTIFACT_MAXIMUM_BYTES, decodeArtifactTitleHeader } from '@beeline/api-contract/daemon';
 import {
@@ -150,6 +152,7 @@ export interface ServerOptions {
    * retained for older release probes. */
   databasePools?: Partial<Record<'app' | 'enrichment' | 'diagnostics' | 'jobs', SqlDatabase>>;
   auth: TokenAuth;
+  legacyMigrationOrigin?: string;
   phone: PhoneService;
   daemon: DaemonService;
   live: LiveHub;
@@ -608,7 +611,7 @@ export function createBeelineServer(options: ServerOptions): Server {
       const message = error instanceof Error ? error.message : 'request failed';
       let status =
         error instanceof WorkflowAuthorizationError ||
-        error instanceof RelayRefusalError ||
+        error instanceof CommandRefusalError ||
         error instanceof WorkspaceSkillNotFoundError
           ? error.status
           : institutionalMemoryErrorStatus(message) ??
@@ -1841,11 +1844,30 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     else json(response, 404, { error: 'not_found' });
     return;
   }
+  if (method === 'POST' && url.pathname === '/v1/auth/logout') {
+    const input = await body(request);
+    if (typeof input.refreshToken !== 'string') throw new Error('refreshToken is required');
+    await options.auth.revokePhoneSession(input.refreshToken);
+    json(response, 200, { signedOut: true });
+    return;
+  }
   if (method === 'POST' && url.pathname === '/v1/auth/refresh') {
     const input = await body(request);
     if (typeof input.refreshToken !== 'string') throw new Error('refreshToken is required');
     const result = await options.auth.refresh(input.refreshToken);
     json(response, result ? 200 : 401, result ?? { error: 'stale_refresh_token' });
+    return;
+  }
+  if (method === 'POST' && url.pathname === '/v1/auth/daemon/migrate-legacy') {
+    const origin = options.legacyMigrationOrigin ?? process.env.BEELINE_MONOLITH_BASE_URL ?? 'https://server.usebeeline.app';
+    const proof = verifyNip98Header(request.headers.authorization, `${origin.replace(/\/$/, '')}/v1/auth/daemon/migrate-legacy`, 'POST');
+    if (!proof.ok) { json(response, 401, { error: 'legacy_identity_proof_required' }); return; }
+    const input = await body(request);
+    if (typeof input.workspaceId !== 'string' || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(input.workspaceId) || typeof input.pairedBy !== 'string') {
+      json(response, 400, { error: 'legacy_pairing_required' }); return;
+    }
+    const result = await options.auth.migrateLegacyDaemon({ agentId: proof.pubkey, proofId: proof.eventId, workspaceId: input.workspaceId, pairedBy: input.pairedBy });
+    json(response, result ? 200 : 403, result ?? { error: 'legacy_reconnect_required' });
     return;
   }
   if (method === 'POST' && url.pathname === '/v1/auth/daemon/exchange') {
@@ -2582,6 +2604,10 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
       return;
     }
     const name = match[1]!;
+    if (name === 'getCornerAsk') {
+      json(response, 410, { error: 'getCornerAsk is retired; use order and report' });
+      return;
+    }
     if (!DAEMON_OPERATION_NAMES.has(name as never)) {
       json(response, 404, { error: 'unknown_daemon_operation' });
       return;

@@ -119,6 +119,8 @@ export function run(command, args, options = {}) {
 
 async function serveBundle(platform) {
   const routes = new Map([
+    ['/dl/beeline-bootstrap.mjs', resolve(webRoot, 'dl/beeline-bootstrap.mjs')],
+    ['/dl/beeline-bootstrap.mjs.sha256', resolve(webRoot, 'dl/beeline-bootstrap.mjs.sha256')],
     ['/dl/beeline-' + platform + '.tar.gz', resolve(webRoot, 'dl', `beeline-${platform}.tar.gz`)],
     [
       '/dl/beeline-' + platform + '.tar.gz.sha256',
@@ -126,6 +128,21 @@ async function serveBundle(platform) {
     ],
   ]);
   const server = createServer(async (request, response) => {
+    if (request.url === '/dl/manifest.json') {
+      const archive = resolve(webRoot, 'dl', `beeline-${platform}.tar.gz`);
+      const metadata = JSON.parse(
+        (await run('tar', ['-xOf', archive, 'lib/beeline/bundle.json'])).stdout,
+      );
+      const digest = (await readFile(`${archive}.sha256`, 'utf8')).trim().split(/\s+/)[0];
+      response.end(
+        JSON.stringify({
+          sourceCommit: metadata.commit,
+          version: metadata.version,
+          bundles: { [platform]: { file: `beeline-${platform}.tar.gz`, sha256: digest } },
+        }),
+      );
+      return;
+    }
     const path = routes.get(request.url ?? '');
     if (!path) {
       response.writeHead(404).end('not found');
@@ -235,6 +252,8 @@ async function main() {
       HOME: resolve(temporaryRoot, 'home'),
       PATH: process.env.PATH ?? '',
       BEELINE_INSTALL_BASE_URL: baseUrl,
+      BEELINE_LAB: '1',
+      XDG_STATE_HOME: resolve(temporaryRoot, 'state'),
       BEELINE_INSTALL_PLATFORM: platform,
       BEELINE_INSTALL_DIR: binDir,
       BEELINE_INSTALL_LIB_DIR: libDir,
@@ -251,7 +270,7 @@ async function main() {
     });
     if (
       !stripAnsi(installed.stdout).includes(
-        'beeline, buzz-agent, buzz-dev-mcp, beeline-readonly-mcp, and codegraph',
+        'verified bundle installed for isolated artifact verification',
       )
     ) {
       fail(`installer success line omitted the read-only helper:\n${installed.stdout}`);

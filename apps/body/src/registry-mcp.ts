@@ -4,7 +4,7 @@ import { createRequire } from 'node:module';
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createConnection, createServer, isIPv4, isIPv6, type Server } from 'node:net';
 import { homedir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { createInterface } from 'node:readline';
 import { fileURLToPath } from 'node:url';
 import type {
@@ -19,6 +19,7 @@ import {
   NON_CONSUMING,
 } from './resource-mcp-facade.js';
 import { MCP_ROUTE_CLASS_KEY, MCP_ROUTE_HOST } from './mcp-route-class.js';
+import { privateSocketPath, preparePrivateSocketDirectory } from './local-socket.js';
 
 export const REGISTRY_MCP_BROKER_FLAG = '--registry-mcp-broker';
 
@@ -737,8 +738,8 @@ function jsonRpcToolName(line: string): string | undefined {
   }
 }
 
-function brokerSocketPath(home = homedir()): string {
-  return join(home, '.beeline', 'registry-mcp-broker', `${process.pid}.sock`);
+export function registryMcpBrokerSocketPath(home = homedir(), agentId?: string): string {
+  return privateSocketPath(JSON.stringify(['registry-mcp', resolve(home), process.pid, agentId]));
 }
 
 /**
@@ -759,7 +760,7 @@ export class RegistryMcpHostBroker {
     private readonly home = homedir(),
     private readonly transport: typeof fetch = fetch,
     private readonly authorize?: RegistryMcpCallAuthorizer,
-    socketPath = brokerSocketPath(home),
+    socketPath = registryMcpBrokerSocketPath(home),
   ) {
     this.socketPath = socketPath;
   }
@@ -836,7 +837,7 @@ export class RegistryMcpHostBroker {
   async start(): Promise<void> {
     if (this.server) return;
     mkdirSync(registryMcpStateRoot(this.home), { recursive: true, mode: 0o700 });
-    mkdirSync(dirname(this.socketPath), { recursive: true, mode: 0o700 });
+    await preparePrivateSocketDirectory(this.socketPath);
     rmSync(this.socketPath, { force: true });
     this.server = createServer({ allowHalfOpen: true }, (socket) => {
       let buffer = '';

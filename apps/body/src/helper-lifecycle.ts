@@ -2,153 +2,104 @@ import type { EventEmitter } from 'node:events';
 import { DaemonApiError } from './daemon-api-client.js';
 import { isNetworkFailure } from './live-link.js';
 import { ROOM_RETRY_DELAYS_MS } from './room-supervisor.js';
-import {
-  DAEMON_DISTRESS_EXIT_STATUS,
-  DELIBERATE_REMOVAL_EXIT_STATUS,
-  UNKNOWN_AGENT_EXIT_STATUS,
-} from './systemd.js';
-
-/** The final stop's ceiling, below the unit's TimeoutStopSec=90s. */
+/** The process exits before the native manager's common 90-second ceiling. */
 export const HELPER_HARD_STOP_MS = 80_000;
-
-/** Why the helper process ends. Every daemon exit goes through one of these. */
-export type HelperExitReason =
-  | 'stopped'
-  | 'restart-requested'
-  | 'update'
-  | 'failed'
-  | 'force-update-failed'
-  | 'distress'
-  | 'agent-removed'
-  | 'unknown-agent'
-  | 'no-agents';
-
-/**
- * One code per reason. 0 and 75 are restarted by the service manager; 77, 78
- * and 79 are in RestartPreventExitStatus and wait for an operator (77), mean
- * the agent was removed (78), or name an agent with no runtime (79). The
- * machine helper exits 79 only when it has no agent to host.
- */
-export const HELPER_EXIT_CODES: Readonly<Record<HelperExitReason, 0 | 75 | 77 | 78 | 79>> = {
+export type HelperExitReason = 'stopped' | 'update' | 'failed';
+export const HELPER_EXIT_CODES: Readonly<Record<HelperExitReason, 0 | 75>> = {
   stopped: 0,
-  'restart-requested': 0,
   update: 0,
   failed: 75,
-  'force-update-failed': 75,
-  distress: DAEMON_DISTRESS_EXIT_STATUS as 77,
-  'agent-removed': DELIBERATE_REMOVAL_EXIT_STATUS as 78,
-  'unknown-agent': UNKNOWN_AGENT_EXIT_STATUS as 79,
-  'no-agents': UNKNOWN_AGENT_EXIT_STATUS as 79,
 };
-
-/** Why intake is closing: an update waits for turns; the others cancel at once. */
+export type AgentExitReason = HelperExitReason | 'restart-requested' | 'agent-removed';
 export type QuiesceReason = 'update' | 'restart' | 'force-update';
-
 export type HelperLifecycleState =
-  | { kind: 'serving' }
-  | { kind: 'quiescing'; reason: QuiesceReason }
-  | { kind: 'stopping'; reason: HelperExitReason }
-  | { kind: 'exited'; code: number };
+  { kind: 'starting' } | { kind: 'serving' } | { kind: 'stopping'; reason: HelperExitReason };
 
-/**
- * The helper process's own lifecycle, separate from its connection:
- *
- *   serving → quiescing(reason) → stopping (80 s hard) → exited(code)
- *
- * A managed update waits for a quiet gap for at most five minutes, then
- * journals and interrupts active work for the successor. `/restart` and a forced update quiesce at once and cancel work. Only the
- * final stop has a hard limit. A managed restart that fails while quiescing
- * goes back to serving, so the helper never refuses turns for good.
- */
+/** Cancellation and intake closure for one hosted agent never control process exit. */
+export class AgentLifecycle {
+  #quiesced: QuiesceReason | undefined;
+  #reason: AgentExitReason | undefined;
+  constructor(private readonly options: { controller: AbortController }) {}
+  get serving(): boolean {
+    return !this.#quiesced && !this.options.controller.signal.aborted;
+  }
+  get state():
+    | { kind: 'serving' }
+    | { kind: 'quiescing'; reason: QuiesceReason }
+    | { kind: 'stopping'; reason: AgentExitReason } {
+    return this.#reason
+      ? { kind: 'stopping', reason: this.#reason }
+      : this.#quiesced
+        ? { kind: 'quiescing', reason: this.#quiesced }
+        : { kind: 'serving' };
+  }
+  get stopReason(): AgentExitReason | undefined {
+    return this.#reason;
+  }
+  quiesce(reason: QuiesceReason): boolean {
+    if (!this.serving && !(this.#quiesced === 'update' && reason !== 'update')) return false;
+    this.#quiesced = reason;
+    return true;
+  }
+  resume(): boolean {
+    if (this.#reason || !this.#quiesced) return false;
+    this.#quiesced = undefined;
+    return true;
+  }
+  quiesceUpdateIfIdle(close: () => boolean): boolean {
+    return this.serving && close() && this.quiesce('update');
+  }
+  resumeAfterFailedUpdate(reopen: () => void): boolean {
+    if (this.#quiesced !== 'update' || !this.resume()) return false;
+    reopen();
+    return true;
+  }
+  stop(reason: AgentExitReason): void {
+    this.#reason ??= reason;
+    this.options.controller.abort();
+  }
+}
+
+/** Only the native service manager decides whether an exited helper restarts. */
 export class HelperLifecycle {
-  #state: HelperLifecycleState = { kind: 'serving' };
+  #state: HelperLifecycleState = { kind: 'starting' };
   #hardStop: ReturnType<typeof setTimeout> | undefined;
-  readonly #exitProcess: (code: number) => void;
-
+  #exited = false;
   constructor(
     private readonly options: {
-      /** Aborting it begins the core's shutdown. */
       controller: AbortController;
       hardStopMs?: number;
       exitProcess?: (code: number) => void;
     },
-  ) {
-    this.#exitProcess = options.exitProcess ?? ((code) => process.exit(code));
-  }
-
+  ) {}
   get state(): HelperLifecycleState {
     return this.#state;
   }
-
   get serving(): boolean {
     return this.#state.kind === 'serving';
   }
-
-  /** The reason the final stop was asked for, once one was. */
   get stopReason(): HelperExitReason | undefined {
     return this.#state.kind === 'stopping' ? this.#state.reason : undefined;
   }
-
-  /**
-   * Close intake. An update may only start from serving; `/restart` and a
-   * forced update also take over a waiting update. Returns whether this call
-   * moved the helper to quiescing.
-   */
-  quiesce(reason: QuiesceReason): boolean {
-    const state = this.#state;
-    if (state.kind === 'serving' || (state.kind === 'quiescing' && state.reason === 'update' && reason !== 'update')) {
-      this.#state = { kind: 'quiescing', reason };
-      return true;
-    }
-    return false;
+  beginServing(): void {
+    if (this.#state.kind === 'starting') this.#state = { kind: 'serving' };
   }
-
-  /** A managed restart failed after intake closed: serve again. */
-  resume(): boolean {
-    if (this.#state.kind !== 'quiescing') return false;
-    this.#state = { kind: 'serving' };
-    return true;
-  }
-
-  /**
-   * The managed update's idle gate: quiesce only while serving and only if
-   * `closeIntakeIfIdle` proves no turn is running (and closes intake in the
-   * same step). A busy helper stays serving, so the update waits.
-   */
-  quiesceUpdateIfIdle(closeIntakeIfIdle: () => boolean): boolean {
-    return this.serving && closeIntakeIfIdle() && this.quiesce('update');
-  }
-
-  /** A managed restart failed after its quiesce: serve again and reopen intake. */
-  resumeAfterFailedUpdate(reopenIntake: () => void): boolean {
-    const state = this.#state;
-    if (state.kind !== 'quiescing' || state.reason !== 'update' || !this.resume()) return false;
-    reopenIntake();
-    return true;
-  }
-
-  /** The final stop: abort the core, and exit no later than the hard limit. */
   stop(reason: HelperExitReason): void {
-    if (this.#state.kind === 'stopping' || this.#state.kind === 'exited') return;
+    if (this.#state.kind === 'stopping') return;
     this.#state = { kind: 'stopping', reason };
-    this.#hardStop = setTimeout(() => {
-      console.error('[thin-core] shutdown deadline reached; exiting helper');
-      this.exit(reason);
-    }, this.options.hardStopMs ?? HELPER_HARD_STOP_MS);
+    this.#hardStop = setTimeout(
+      () => this.exit(reason),
+      this.options.hardStopMs ?? HELPER_HARD_STOP_MS,
+    );
     this.#hardStop.unref?.();
     this.options.controller.abort();
   }
-
-  /** The one exit funnel: each reason maps to exactly one code. */
   exit(reason: HelperExitReason): void {
-    if (this.#state.kind === 'exited') return;
+    if (this.#exited) return;
+    this.#exited = true;
     clearTimeout(this.#hardStop);
-    const code = HELPER_EXIT_CODES[reason];
-    this.#state = { kind: 'exited', code };
-    this.#exitProcess(code);
+    (this.options.exitProcess ?? process.exit)(HELPER_EXIT_CODES[reason]);
   }
-
-  /** SIGTERM and SIGINT are a final stop. */
   installSignals(emitter: EventEmitter = process): () => void {
     const stop = () => this.stop('stopped');
     emitter.once('SIGINT', stop);
@@ -165,7 +116,8 @@ export class HelperLifecycle {
  * feed, a fire-and-forget wake) must not take every Room down with it.
  */
 export function installUnhandledRejectionGuard(emitter: EventEmitter = process): () => void {
-  const log = (reason: unknown) => console.error('[thin-core] unhandled rejection (kept running):', reason);
+  const log = (reason: unknown) =>
+    console.error('[thin-core] unhandled rejection (kept running):', reason);
   emitter.on('unhandledRejection', log);
   return () => emitter.removeListener('unhandledRejection', log);
 }
@@ -204,7 +156,9 @@ export async function retryBeforeReady<T>(
       const timedRetry = ROOM_RETRY_DELAYS_MS[failures - 1];
       console.warn(
         `[thin-core] server unreachable before READY; ${
-          timedRetry === undefined ? 'waiting for the live socket to open' : `retrying in ${timedRetry}ms or on open`
+          timedRetry === undefined
+            ? 'waiting for the live socket to open'
+            : `retrying in ${timedRetry}ms or on open`
         }:`,
         error,
       );

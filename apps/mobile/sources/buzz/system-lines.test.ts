@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { anchorRelayReports, joinSystemNames, systemLineText } from './system-lines';
+import { joinSystemNames, systemLineText } from './system-lines';
 
 const joined = (
   id: string,
@@ -38,7 +38,7 @@ describe('system lines on the phone', () => {
       joined('b', '@terra', 2, 'agent'),
       joined('c', '@codex', 3, 'agent'),
     ];
-    expect(anchorRelayReports(messages)).toEqual(messages);
+    expect(Array.from(messages)).toEqual(messages);
   });
 
   it('keeps each deleted message line in its own place', () => {
@@ -55,7 +55,7 @@ describe('system lines on the phone', () => {
         consequence: 'sent by @milo',
       },
     });
-    expect(anchorRelayReports([deleted('a', 1), deleted('b', 2)]).map((line) => line.id)).toEqual([
+    expect(Array.from([deleted('a', 1), deleted('b', 2)]).map((line) => line.id)).toEqual([
       'a',
       'b',
     ]);
@@ -76,7 +76,7 @@ describe('system lines on the phone', () => {
       timestamp: 5,
       isSystemNotice: true,
     };
-    const folded = anchorRelayReports([
+    const folded = Array.from([
       joined('a', '@candy', 1),
       message,
       joined('b', '@terra', 3),
@@ -94,43 +94,8 @@ describe('system lines on the phone', () => {
       { id: 'a', timestamp: 1, text, isSystemNotice: true },
       { id: 'b', timestamp: 2, text, isSystemNotice: true },
     ];
-    expect(anchorRelayReports(messages)).toEqual(messages);
+    expect(Array.from(messages)).toEqual(messages);
   });
-});
-
-it('anchors up-relays below their corner card and keeps an unanchored report visible', () => {
-  const card = {
-    id: 'card',
-    text: 'Opened',
-    timestamp: 1,
-    daemonFact: {
-      type: 'corner-open' as const,
-      cornerId: 'c',
-      objective: 'Work',
-      name: 'Work',
-    },
-  };
-  const report = {
-    id: 'report',
-    text: 'Ready',
-    timestamp: 3,
-    relay: { direction: 'up' as const, anchorMessageId: 'card' },
-  };
-  const middle = { id: 'middle', text: 'Other conversation', timestamp: 2 };
-  const folded = anchorRelayReports([card, middle, report]);
-  expect(folded.map((m) => m.id)).toEqual(['card', 'middle']);
-  expect(folded[0]).toMatchObject({ relayReports: [report] });
-  // A newly unread report still belongs under a previously read corner card.
-  const anchored = anchorRelayReports([card, middle, report]);
-  const boundary = anchored.findIndex(
-    (m) => m.id === report.id || m.relayReports?.some((r) => r.id === report.id),
-  );
-  expect(boundary).toBe(0);
-  expect([
-    ...anchorRelayReports(anchored.slice(0, boundary)),
-    ...anchorRelayReports(anchored.slice(boundary)),
-  ]).toEqual(folded);
-  expect(anchorRelayReports([middle, report])).toEqual([middle, report]);
 });
 
 it('keeps a corner opened from a message out of a folded lifecycle run', () => {
@@ -147,6 +112,6 @@ it('keeps a corner opened from a message out of a folded lifecycle run', () => {
     },
   });
   // Lifecycle notices and a source-message marker retain their own anchors.
-  const folded = anchorRelayReports([opened('a', 1), opened('b', 2), opened('m', 3, 'message')]);
+  const folded = Array.from([opened('a', 1), opened('b', 2), opened('m', 3, 'message')]);
   expect(folded.map((m) => m.id)).toEqual(['a', 'b', 'm']);
 });

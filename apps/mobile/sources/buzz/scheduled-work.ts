@@ -100,7 +100,6 @@ export function subscriptionWhen(subscription: RoomSubscriptionView): string {
     'corner-opened': 'a corner opening in this Room',
     'check-passed': 'corner checks passing',
     'check-failed': 'corner checks failing',
-    merged: 'a corner merging',
     'workflow-handoff': 'a workflow moving to its next step',
   };
   return `On ${action[subscription.event] ?? 'an event in this Room'}`;

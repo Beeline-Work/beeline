@@ -1,3 +1,4 @@
+import { build as esbuild } from 'esbuild';
 /**
  * The `<prefix>/lib/beeline` layout contract (see self-update.ts, "THE
  * CONTRACT") — regression coverage for the MODULE_NOT_FOUND break where the
@@ -95,6 +96,7 @@ function legacyResolvedWrapper(): string {
 
 interface StubBundle {
   commit: string;
+  version: string;
   tarballPath: string;
   sha256: string;
 }
@@ -147,14 +149,14 @@ async function buildStubBundle(commit: string, version: string): Promise<StubBun
     .update(await readFile(tarballPath))
     .digest('hex');
   await writeFile(`${tarballPath}.sha256`, `${sha256}  ${tarballPath.split('/').pop()}\n`);
-  return { commit, tarballPath, sha256 };
+  return { commit, version, tarballPath, sha256 };
 }
 
 // ---------------------------------------------------------------------------
 // Local manifest/artifact server (same shape as self-update.test.ts)
 // ---------------------------------------------------------------------------
 
-function serveBundles(bundles: Map<string, StubBundle>): Promise<{
+async function serveBundles(bundles: Map<string, StubBundle>): Promise<{
   server: Server;
   baseUrl: string;
   manifestUrl: string;
@@ -163,6 +165,8 @@ function serveBundles(bundles: Map<string, StubBundle>): Promise<{
   // Route names exactly as relay-stack/web/install.sh fetches them.
   const platform = hostPlatformKey();
   const first = [...bundles.values()][0]!;
+  const recovery = (await esbuild({ entryPoints: [resolve(repoRoot, 'apps/body/src/recovery-cli.ts')], bundle: true, platform: 'node', format: 'esm', write: false })).outputFiles[0]!.text;
+  const recoveryDigest = createHash('sha256').update(recovery).digest('hex');
   const files = new Map<string, string>([
     [`/dl/beeline-${platform}.tar.gz`, first.tarballPath],
     [`/dl/beeline-${platform}.tar.gz.sha256`, `${first.tarballPath}.sha256`],
@@ -172,11 +176,13 @@ function serveBundles(bundles: Map<string, StubBundle>): Promise<{
       file: `beeline-${platform}.tar.gz`,
       sha256: first.sha256,
       commit: first.commit,
-      version: first.commit,
+      version: first.version,
     },
   };
   const server = createServer(async (request, response) => {
     const url = request.url ?? '';
+    if (url === '/dl/beeline-bootstrap.mjs') { response.end(recovery); return; }
+    if (url === '/dl/beeline-bootstrap.mjs.sha256') { response.end(`${recoveryDigest}  beeline-bootstrap.mjs\n`); return; }
     if (url === '/dl/manifest.json') {
       response.writeHead(200).end(JSON.stringify({ schemaVersion: 1, bundles: manifestBundles }));
       return;
@@ -206,7 +212,7 @@ function serveBundles(bundles: Map<string, StubBundle>): Promise<{
             file: `beeline-${platform}.tar.gz`,
             sha256: bundle.sha256,
             commit: bundle.commit,
-            version: bundle.commit,
+            version: bundle.version,
           };
         },
         close: () => new Promise((done) => server.close(() => done())),
@@ -222,7 +228,6 @@ async function stubManager(
   return new SelfUpdateManager({
     layout,
     env: { BEELINE_UPDATE_MANIFEST_URL: manifestUrl },
-    isIdle: () => true,
     // CLI-style apply: swap the install, never write a restart journal.
     restartHandover: false,
     logger: () => undefined,
@@ -520,6 +525,18 @@ describe('<prefix>/lib/beeline anchor contract', () => {
       expect(await repairInstallForwarders(layout)).toBe(false);
     });
 
+    it('seeds independent recovery after an old updater activates a new payload', async () => {
+      const { prefix, layout } = await makeReleaseBasedInstall();
+      await repairInstallForwarders(layout);
+      const bootstrap = 'console.log("independent recovery");\n';
+      await writeFile(join(layout.libDir, 'lib/beeline/recovery-cli.mjs'), bootstrap);
+      expect(await repairInstallForwarders(layout)).toBe(true);
+      expect(await readFile(join(prefix, 'lib/beeline-bootstrap.mjs'), 'utf8')).toBe(bootstrap);
+      expect(await readFile(join(prefix, 'bin/beeline'), 'utf8')).toContain('beeline-bootstrap.mjs');
+      expect(await readFile(join(prefix, 'bin/usebeeline'), 'utf8')).toContain('beeline-bootstrap.mjs');
+      expect(await repairInstallForwarders(layout)).toBe(false);
+    });
+
     it('never touches a legacy real-directory install', async () => {
       const root = await tempDir('repair-legacy-');
       const anchor = join(root, 'prefix', 'lib', 'beeline');
@@ -547,7 +564,7 @@ describe('<prefix>/lib/beeline anchor contract', () => {
       // helper restart-looping for 8+ hours with no clear error): they resolve
       // $beeline_node first (recorded install runtime, then PATH, each
       // version-checked) and exec that, never a bare `node`.
-      expect(source).toContain('exec "$beeline_node" "$BEELINE_BUNDLE_ROOT/lib/beeline/beeline-cli.mjs" "$@"');
+      expect(source).toContain('exec "$beeline_node" "$BEELINE_BUNDLE_ROOT/lib/beeline/recovery-cli.mjs" "$@"');
       expect(source).toContain(
         'exec "$beeline_node" "$BEELINE_BUNDLE_ROOT/lib/beeline/beeline-readonly-mcp.mjs"',
       );
@@ -563,18 +580,11 @@ describe('<prefix>/lib/beeline anchor contract', () => {
       const wrapperBlock = source.slice(source.indexOf("resolve(staging, 'bin', 'beeline')"));
       expect(wrapperBlock).not.toContain('lib_dir=$(CDPATH= cd');
 
-      // self-update's forwarderScript() must stay textually identical to what
-      // the installer writes: repairInstallForwarders compares file content
-      // against forwarderScript() to decide whether repair is needed.
-      const installer = await readFile(join(repoRoot, 'relay-stack', 'web', 'install.sh'), 'utf8');
-      // The installer's heredocs escape $ for runtime expansion, so match
-      // the literal on-disk bytes.
-      expect(installer).toContain('export BEELINE_LIB_DIR="\\$prefix_dir/lib/beeline"');
-      expect(installer).toContain('exec "\\$prefix_dir/lib/beeline/bin/$tool" "\\$@"');
-      // The installer lays down BOTH published bin names (packages/
-      // usebeeline/package.json declares usebeeline + beeline -> one entry).
-      expect(installer).toContain('"$bin_dir/usebeeline"');
-      expect(installer).toContain('exec "\\$prefix_dir/lib/beeline/bin/beeline" "\\$@"');
+      const installer = await readFile(join(repoRoot, 'relay-stack/web/install.sh'), 'utf8');
+      expect(installer).toContain('beeline-bootstrap.mjs');
+      expect(installer).toContain('installer_operation=update');
+      expect(installer).not.toContain('releases_root=');
+
     });
   });
 });
@@ -684,7 +694,7 @@ describe('install.sh over-install swings the active anchor', () => {
     const litter: string[] = [];
     const walk = async (dir: string): Promise<void> => {
       for (const entry of await readdir(dir, { withFileTypes: true })) {
-        if (/^beeline\\.new[.-]/.test(entry.name)) litter.push(join(dir, entry.name));
+        if (/^beeline\.new[.-]/.test(entry.name)) litter.push(join(dir, entry.name));
         if (entry.isDirectory()) await walk(join(dir, entry.name));
       }
     };
@@ -736,11 +746,11 @@ describe('install.sh over-install swings the active anchor', () => {
       installed = await runInstaller({ home: root, baseUrl: remote.baseUrl, binDir, libAnchor });
       expect(installed.status).toBe(0);
       const entriesAfterReinstall = (await readdir(releasesRoot)).sort();
-      expect(entriesAfterReinstall).toEqual([v1.commit, v2.commit].sort());
+      expect(entriesAfterReinstall).toEqual(['.state', v1.commit, v2.commit].sort());
       expect(await readlinkTarget(libAnchor)).toBe(`beeline-releases/${v2.commit}`);
       expectFreshShell(prefix, '2.0.0');
 
-      // --- 4. tangle left by the old installer is swept on the next install -
+      // --- 4. old artifacts remain inert history; forward activation never selects them -
       // A release-id-named symlink under releases/, a timestamp-suffixed
       // duplicate of the active release, and a stray beeline.new.* link
       // inside the previous release — exactly what the captain's host held.
@@ -762,8 +772,8 @@ describe('install.sh over-install swings the active anchor', () => {
       installed = await runInstaller({ home: root, baseUrl: remote.baseUrl, binDir, libAnchor });
       expect(installed.status).toBe(0);
       expect(await readlinkTarget(libAnchor)).toBe(`beeline-releases/${v2.commit}`);
-      expect((await readdir(releasesRoot)).sort()).toEqual([v1.commit, v2.commit].sort());
-      expect(await collectInstallerLitter(prefix)).toEqual([]);
+      expect((await readdir(releasesRoot)).sort()).toEqual(['.state', v1.commit, v2.commit, `${v2.commit}-1787443702`, 'deadbeef1111222233334444555566667777888899'].sort());
+      expect(await collectInstallerLitter(prefix)).toHaveLength(1);
       expectFreshShell(prefix, '2.0.0');
     } finally {
       await remote.close();
@@ -788,6 +798,8 @@ function runInstaller(opts: {
         ...process.env,
         HOME: opts.home,
         BEELINE_INSTALL_BASE_URL: opts.baseUrl,
+        BEELINE_LAB: '1',
+        XDG_STATE_HOME: join(opts.home, 'state'),
         BEELINE_INSTALL_PLATFORM: hostPlatformKey(),
         BEELINE_INSTALL_DIR: opts.binDir,
         BEELINE_INSTALL_LIB_DIR: opts.libAnchor,

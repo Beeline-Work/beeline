@@ -270,7 +270,7 @@ async function main(): Promise<void> {
     id: initialRow.id,
     roomId: initialRow.room_id,
     agentId: initialRow.agent_id,
-    sourceMessageId: initialRow.source_message_id,
+    sourceMessageId: initialRow.source_message_id ?? initialRow.id,
     turnRequestId: initialRow.turn_request_id,
     reason: initialRow.reason,
   };
@@ -453,7 +453,7 @@ async function main(): Promise<void> {
     id: strayRow.id,
     roomId: strayRow.room_id,
     agentId: strayRow.agent_id,
-    sourceMessageId: strayRow.source_message_id,
+    sourceMessageId: strayRow.source_message_id ?? strayRow.id,
     turnRequestId: strayRow.turn_request_id,
     reason: strayRow.reason,
   };
@@ -514,7 +514,7 @@ async function main(): Promise<void> {
     id: skillCommandRow.id,
     roomId: skillCommandRow.room_id,
     agentId: skillCommandRow.agent_id,
-    sourceMessageId: skillCommandRow.source_message_id,
+    sourceMessageId: skillCommandRow.source_message_id ?? skillCommandRow.id,
     turnRequestId: skillCommandRow.turn_request_id,
     reason: skillCommandRow.reason,
   };
@@ -553,7 +553,7 @@ async function main(): Promise<void> {
     id: discoveryCommandRow.id,
     roomId: discoveryCommandRow.room_id,
     agentId: discoveryCommandRow.agent_id,
-    sourceMessageId: discoveryCommandRow.source_message_id,
+    sourceMessageId: discoveryCommandRow.source_message_id ?? discoveryCommandRow.id,
     turnRequestId: discoveryCommandRow.turn_request_id,
     reason: discoveryCommandRow.reason,
   };
@@ -614,7 +614,7 @@ async function main(): Promise<void> {
     id: handleCommandRow.id,
     roomId: handleCommandRow.room_id,
     agentId: handleCommandRow.agent_id,
-    sourceMessageId: handleCommandRow.source_message_id,
+    sourceMessageId: handleCommandRow.source_message_id ?? handleCommandRow.id,
     turnRequestId: handleCommandRow.turn_request_id,
     reason: handleCommandRow.reason,
   };
@@ -668,7 +668,7 @@ async function main(): Promise<void> {
   if (!taggedCommand) throw new Error('human tag did not create a command');
   const taggedTurn = await claim(WRITER, writerToken, {
     id: taggedCommand.id, roomId: ROOM, agentId: WRITER,
-    sourceMessageId: taggedCommand.source_message_id,
+    sourceMessageId: taggedCommand.source_message_id ?? taggedCommand.id,
     turnRequestId: taggedCommand.turn_request_id, reason: taggedCommand.reason,
   });
   const duplicateError = await call(WRITER + ' tries to start the active handle-flow after a human tag', 'startWorkflow', {
@@ -761,7 +761,7 @@ async function main(): Promise<void> {
   if (!wakeCommand) throw new Error('wake proof command was not created');
   const wakeTurn = await claim(WRITER, writerToken, {
     id: wakeCommand.id, roomId: ROOM, agentId: WRITER,
-    sourceMessageId: wakeCommand.source_message_id,
+    sourceMessageId: wakeCommand.source_message_id ?? wakeCommand.id,
     turnRequestId: wakeCommand.turn_request_id, reason: wakeCommand.reason,
   });
   await call('writer saves the wake proof workflow', 'saveWorkflow', {

@@ -124,8 +124,7 @@ describe('agent subscriptions', () => {
       await db.query(`UPDATE memberships SET event_subscriptions='["merged"]'::jsonb
         WHERE room_id=$1 AND identity_id=$2`, [ROOM, AGENT]);
       const legacy = (await listRoomSubscriptions(db, ROOM)).subscriptions.find((item) => item.event === 'merged');
-      expect(legacy?.id).toContain('legacy:');
-      await deleteRoomSubscription(db, ROOM, legacy!.id);
+      expect(legacy).toBeUndefined();
       expect((await listAgentSubscriptions(db, ROOM, AGENT)).subscriptions.map((item) => item.event)).toEqual(['joined']);
     } finally { await db.close(); }
   });

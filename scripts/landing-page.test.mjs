@@ -79,7 +79,23 @@ test('landing page names the browser option once and removes the split download 
   assert.doesNotMatch(html, /class="stores"|class="store"/);
 });
 
+test('landing hero links the launch video and permanent community invite without a private-repo footer link', () => {
+  assert.match(html, /href="https:\/\/youtu\.be\/i2sHELZVlWM"[^>]*>▶ Watch the launch video<\/a>/);
+  assert.match(html, /href="https:\/\/usebeeline\.app\/join\/inv_8765f41a655c33815ea86cecf199ab60983b9326bb02b869f6436af1286dd0f2">Join the Beeline Community<\/a>/);
+  const footer = html.match(/<footer>([\s\S]*?)<\/footer>/)[1];
+  assert.doesNotMatch(footer, /github\.com\/Beeline-Work\/beeline/);
+  assert.doesNotMatch(html, /community-link-pending/);
+});
+
 test('terms page carries the beeline brand tokens and links home', () => {
   assert.match(termsHtml, /<title>Beeline Terms<\/title>/);
   assert.match(termsHtml, /--brass:#d7af5f/);
+});
+
+ test('support community link matches the permanent public invite seeded by migration', () => {
+  const token = html.match(/href="https:\/\/usebeeline.app\/join\/(inv_[0-9a-f]{64})">Join Beeline Community/)?.[1];
+  assert.ok(token);
+  const schema = fs.readFileSync(path.join(ROOT, 'apps/server/src/database.ts'), 'utf8');
+  assert.ok(schema.includes(token));
+  assert.ok(schema.includes('8556a9be-d929-41e7-a0ef-d70af452a494'));
 });

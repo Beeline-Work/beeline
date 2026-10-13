@@ -73,7 +73,7 @@ describe('no timer-driven helper server reads', () => {
     } });
     socket.readyState = 1;
     socket.onopen?.();
-    for (let i = 0; i < 20; i += 1) await Promise.resolve();
+    await vi.waitFor(() => expect(operations).toContain('getConnectorAssignments'));
     expect(operations).toContain('getDaemonBootstrap');
     const baseline = [...operations];
     // Four idle hours on a healthy socket: the server's heartbeat pings it
@@ -119,7 +119,6 @@ describe('no timer-driven helper server reads', () => {
       'agent-runtime.ts', // scratch sweep (local disk)
       'session-scheduler.ts', // idle session sweep (local)
       'shared-asset-capacity.ts', // private recovery reserve check (local disk)
-      'startup-cleanup.ts', // systemd startup deadline extension during local cleanup
       'systemd.ts', // local watchdog feed
       'turn-receipt-heartbeat.ts', // receipt heartbeat while a turn runs
     ]);

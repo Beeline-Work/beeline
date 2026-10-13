@@ -92,7 +92,7 @@ lines.on('line', async (line) => {
         update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'ECHO REPLY' } },
       },
     });
-    if (text.includes('OPEN CORNER')) {
+    if (text.includes('OPEN CORNER') && !process.env.BEELINE_DAEMON_CORNER_ID) {
       // Play the open_corner tool: read the turn context the loop persists for
       // the mounted MCP surface, then call the daemon operation it calls.
       const { readdir, readFile } = await import('node:fs/promises');
@@ -596,7 +596,11 @@ describe('fresh Room discovery through the live membership wake', () => {
     await vi.waitFor(
       async () => {
         const corner = await readRoom(cornerId);
-        expect(corner.messages.some((m) => (m.text ?? '').includes('ECHO REPLY'))).toBe(true);
+        expect(corner.messages.some((m) => (m.text ?? '').includes('ECHO REPLY'))).toBe(false);
+        const opening = (await database.query(`SELECT state FROM agent_commands WHERE room_id=$1 AND reason='corner_objective'`, [cornerId])).rows[0];
+        expect(opening?.state).toBe('complete');
+        const report = (await database.query(`SELECT private_payload FROM agent_commands WHERE reason='report' AND private_payload->>'fromRoomId'=$1`, [cornerId])).rows[0];
+        expect(report?.private_payload).toMatchObject({ text: expect.stringContaining('ECHO REPLY') });
       },
       { timeout: 30_000, interval: 500 },
     );
@@ -639,7 +643,11 @@ describe('fresh Room discovery through the live membership wake', () => {
     await vi.waitFor(
       async () => {
         const corner = await readRoom(cornerId);
-        expect(corner.messages.some((m) => (m.text ?? '').includes('ECHO REPLY'))).toBe(true);
+        expect(corner.messages.some((m) => (m.text ?? '').includes('ECHO REPLY'))).toBe(false);
+        const opening = (await database.query(`SELECT state FROM agent_commands WHERE room_id=$1 AND reason='corner_objective'`, [cornerId])).rows[0];
+        expect(opening?.state).toBe('complete');
+        const report = (await database.query(`SELECT private_payload FROM agent_commands WHERE reason='report' AND private_payload->>'fromRoomId'=$1`, [cornerId])).rows[0];
+        expect(report?.private_payload).toMatchObject({ text: expect.stringContaining('ECHO REPLY') });
       },
       { timeout: 30_000, interval: 500 },
     );
@@ -712,7 +720,11 @@ describe('fresh Room discovery through the live membership wake', () => {
     await vi.waitFor(
       async () => {
         const corner = await readRoom(cornerId);
-        expect(corner.messages.some((m) => (m.text ?? '').includes('ECHO REPLY'))).toBe(true);
+        expect(corner.messages.some((m) => (m.text ?? '').includes('ECHO REPLY'))).toBe(false);
+        const opening = (await database.query(`SELECT state FROM agent_commands WHERE room_id=$1 AND reason='corner_objective'`, [cornerId])).rows[0];
+        expect(opening?.state).toBe('complete');
+        const report = (await database.query(`SELECT private_payload FROM agent_commands WHERE reason='report' AND private_payload->>'fromRoomId'=$1`, [cornerId])).rows[0];
+        expect(report?.private_payload).toMatchObject({ text: expect.stringContaining('ECHO REPLY') });
       },
       { timeout: 30_000, interval: 500 },
     );

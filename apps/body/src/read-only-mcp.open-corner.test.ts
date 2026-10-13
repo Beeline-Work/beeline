@@ -211,6 +211,13 @@ async function callTool(
 }
 
 describe('open_corner over the grok wire', () => {
+  it('lets a configured reviewer address approve_merge from a DM', async () => {
+    const door = await daemonDoor();
+    const response = await callTool(door.origin, { cornerId: CORNER, headSha: 'b'.repeat(40) },
+      { name: 'approve_merge', directMessage: true });
+    expect(response.result?.isError).toBeUndefined();
+    expect(door.calls.at(-1)).toMatchObject({ operation: 'approveCornerMerge', cornerId: CORNER, headSha: 'b'.repeat(40) });
+  }, 30_000);
   it('forwards the exact implementer handle through the MCP opening path', async () => {
     const door = await daemonDoor();
     const response = await callTool(door.origin, {
@@ -453,47 +460,47 @@ describe('open_corner over the grok wire', () => {
     expect(door.calls.some((call) => call.operation === 'createCorner')).toBe(false);
   }, 30_000);
 
-  it('refuses a missing name in a sentence that says what to do', async () => {
+  it('derives optional navigation names from the supplied brief', async () => {
     const door = await daemonDoor();
-    const { result } = await callTool(door.origin, { objective: 'Ship the widget' });
-    expect(result?.isError).toBe(true);
-    expect(result?.content[0]?.text).toBe('the name is required; give a title of at most 3 words');
+    const { result } = await callTool(door.origin, { room: ROOM, brief: { spec: 'Ship the widget', approval: { sourceMessageId: 'request' } } });
+    expect(result?.isError).not.toBe(true);
+    expect(door.calls).toContainEqual(expect.objectContaining({ operation: 'createCorner', targetRoomId: ROOM, name: 'Ship-the-widget', objective: 'Ship the widget' }));
   }, 30_000);
 });
 
-describe('relay tools', () => {
+describe('private command tools', () => {
   it('posts a steer through the active Room command', async () => {
     const door = await daemonDoor();
     const response = await callTool(
       door.origin,
-      { cornerId: CORNER, text: 'Change the endpoint' },
-      { name: 'steer_corner' },
+      { address: CORNER, text: 'Change the endpoint' },
+      { name: 'order' },
     );
     expect(response.result?.isError).not.toBe(true);
     expect(door.calls).toContainEqual({
-      operation: 'postRoomMessage',
+      operation: 'order',
       roomId: ROOM,
       requestId: 'command-request',
       generationId: 'g1',
       text: 'Change the endpoint',
-      relay: { fromRoomId: ROOM, toRoomId: CORNER, direction: 'down' },
+      address: CORNER,
     });
   });
   it('asks for exactly one linked reply through the active Room command', async () => {
     const door = await daemonDoor();
     const response = await callTool(
       door.origin,
-      { cornerId: CORNER, text: 'What is blocking the endpoint?' },
-      { name: 'ask_corner' },
+      { address: CORNER, text: 'What is blocking the endpoint?' },
+      { name: 'order' },
     );
     expect(response.result?.isError).not.toBe(true);
     expect(door.calls).toContainEqual({
-      operation: 'postRoomMessage',
+      operation: 'order',
       roomId: ROOM,
       requestId: 'command-request',
       generationId: 'g1',
       text: 'What is blocking the endpoint?',
-      relay: { fromRoomId: ROOM, toRoomId: CORNER, direction: 'down', reply: 'once' },
+      address: CORNER,
     });
   });
   it('reads a listed member corner without posting a message', async () => {
@@ -706,45 +713,45 @@ describe('relay tools', () => {
       const sibling = '33333333-3333-4333-8333-333333333333';
       const steer = await callTool(
         door.origin,
-        { text: 'Use the new endpoint', cornerId: sibling },
-        { name: 'steer_corner', cornerId: CORNER, repositoryCorner },
+        { text: 'Use the new endpoint', address: sibling },
+        { name: 'order', cornerId: CORNER, repositoryCorner },
       );
       expect(steer.error).toBeUndefined();
       expect(steer.result?.isError).not.toBe(true);
       expect(door.calls).toEqual([
         {
-          operation: 'postRoomMessage',
+          operation: 'order',
           roomId: CORNER,
           requestId: 'command-request',
           generationId: 'g1',
           text: 'Use the new endpoint',
-          relay: { fromRoomId: CORNER, toRoomId: sibling, direction: 'down' },
+          address: sibling,
         },
       ]);
     },
   );
-  it('refuses questions from a corner turn', async () => {
+  it('orders from a corner turn', async () => {
     const door = await daemonDoor();
     const steer = await callTool(
       door.origin,
-      { text: 'No', cornerId: CORNER },
-      { name: 'ask_corner', cornerId: CORNER },
+      { text: 'Use v2', address: CORNER },
+      { name: 'order', cornerId: CORNER },
     );
-    expect(steer.result?.isError ?? Boolean(steer.error)).toBe(true);
-    expect(door.calls).toHaveLength(0);
+    expect(steer.result?.isError ?? Boolean(steer.error)).toBe(false);
+    expect(door.calls).toHaveLength(1);
   });
-  it('refuses steers from a direct message', async () => {
+  it('orders from a direct message', async () => {
     const door = await daemonDoor();
     const steer = await callTool(
       door.origin,
-      { text: 'No', cornerId: CORNER },
+      { text: 'Use v2', address: CORNER },
       {
-        name: 'steer_corner',
+        name: 'order',
         directMessage: true,
       },
     );
-    expect(steer.result?.isError ?? Boolean(steer.error)).toBe(true);
-    expect(door.calls).toHaveLength(0);
+    expect(steer.result?.isError ?? Boolean(steer.error)).toBe(false);
+    expect(door.calls).toHaveLength(1);
   });
 
 });

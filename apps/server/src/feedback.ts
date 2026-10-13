@@ -103,8 +103,9 @@ function feedbackItemId(): string {
 async function evidenceMessageIds(
   database: SqlDatabase,
   roomId: string,
-  triggerMessageId: string,
+  triggerMessageId: string | null,
 ): Promise<string[]> {
+  if (!triggerMessageId) return [];
   const rows = await database.query<{ id: string }>(
     `SELECT earlier.id FROM messages trigger
      JOIN messages earlier ON earlier.room_id=trigger.room_id

@@ -232,7 +232,7 @@ async function main(): Promise<void> {
     id: initialRow.id,
     roomId: initialRow.room_id,
     agentId: initialRow.agent_id,
-    sourceMessageId: initialRow.source_message_id,
+    sourceMessageId: initialRow.source_message_id ?? initialRow.id,
     turnRequestId: initialRow.turn_request_id,
     reason: initialRow.reason,
   };

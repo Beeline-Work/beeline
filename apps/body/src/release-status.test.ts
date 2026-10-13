@@ -1,111 +1,94 @@
-import { mkdtemp, mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
-import { readDaemonReleaseFleetStatus, writeDaemonReleaseStatus } from './release-status.js';
-
-const AGENT = 'a'.repeat(64);
-const HUSK = 'b'.repeat(64);
-const MALFORMED = 'c'.repeat(64);
-const SHA = '1'.repeat(40);
-
-function runtimeRecord(agentPubkey: string) {
-  return {
-    version: 2,
-    communityId: 'workspace',
-    pairedBy: 'owner',
-    agent: {
-      name: 'agent',
-      secretKeyHex: '1'.repeat(64),
-      publicKey: agentPubkey,
-    },
-    body: {
-      name: 'body',
-      secretKeyHex: '2'.repeat(64),
-      publicKey: 'd'.repeat(64),
-    },
+import { expect, it } from 'vitest';
+import { MachineControl, machineControlPath, requestMachine } from './machine-control.js';
+import { readMachineStatus, type HelperStatusFile } from './helper-status.js';
+it('ignores stale and malformed disk evidence; only a live connection acknowledges readiness', async () => {
+  const root = await mkdtemp(resolve(tmpdir(), 'beeline-generation-'));
+  try {
+    await mkdir(resolve(root, 'beeline/helper'), { recursive: true });
+    await writeFile(
+      resolve(root, 'beeline/helper/status.json'),
+      JSON.stringify({ pid: process.pid, generation: 'stale', agents: {} }),
+    );
+    await expect(requestMachine(root, { operation: 'status' }, () => true, 20)).rejects.toThrow(
+      'no live helper acknowledgment',
+    );
+    const control = new MachineControl(machineControlPath(root), async () => undefined);
+    await control.start();
+    const status: HelperStatusFile = {
+      pid: process.pid,
+      generation: 'current',
+      processState: 'serving',
+      loadedRelease: 'current',
+      updatedAt: new Date().toISOString(),
+      agents: {},
+    };
+    control.publish(status);
+    try {
+      await writeFile(resolve(root, 'beeline/helper/status.json'), '{broken');
+      expect((await readMachineStatus({ XDG_STATE_HOME: root }))?.generation).toBe('current');
+    } finally {
+      await control.stop();
+    }
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+it('readiness observes a scoped stop completion event, without rereading a status file', async () => {
+  const root = await mkdtemp(resolve(tmpdir(), 'beeline-scoped-stop-'));
+  const control = new MachineControl(machineControlPath(root), async () => undefined);
+  await control.start();
+  const status: HelperStatusFile = {
+    pid: process.pid,
+    generation: 'current',
+    processState: 'serving',
+    updatedAt: new Date().toISOString(),
+    agents: { bee: { state: 'serving', status: '', since: 'now' } },
   };
-}
+  control.publish(status);
+  try {
+    let completed = false;
+    const pending = requestMachine(
+      root,
+      { operation: 'stop', agentId: 'bee' },
+      (snapshot) => snapshot.agents.bee?.state === 'stopped',
+      1000,
+    ).then(() => {
+      completed = true;
+    });
+    await new Promise((done) => setTimeout(done, 10));
+    expect(completed).toBe(false);
+    control.publish({
+      ...status,
+      agents: { bee: { state: 'stopped', status: 'explicit stop', since: 'later' } },
+    });
+    await pending;
+    expect(completed).toBe(true);
+  } finally {
+    await control.stop();
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
-describe('daemon release status', () => {
-  it('writes one release-version + sha record and reports it only for the matching live pid', async () => {
-    const stateHome = await mkdtemp(resolve(tmpdir(), 'beeline-release-status-'));
-    const runtimeDir = resolve(stateHome, 'beeline', 'agents', AGENT);
-    await mkdir(runtimeDir, { recursive: true });
-    await writeFile(resolve(runtimeDir, 'runtime.json'), '{}');
-    await writeFile(resolve(runtimeDir, 'daemon.pid'), '4242\n');
-
-    await writeDaemonReleaseStatus(
-      runtimeDir,
-      AGENT,
-      { version: 'v0.0.1', commit: SHA },
-      { pid: 4242, now: () => new Date('2026-08-31T12:00:00.000Z') },
-    );
-
-    await expect(readDaemonReleaseFleetStatus({ XDG_STATE_HOME: stateHome })).resolves.toEqual([
-      {
-        agentPubkey: AGENT,
-        state: 'ready',
-        releaseVersion: 'v0.0.1',
-        sourceSha: SHA,
-        pid: 4242,
-        readyAt: '2026-08-31T12:00:00.000Z',
-      },
-    ]);
-    await writeFile(resolve(runtimeDir, 'daemon.pid'), '9999\n');
-    expect((await readDaemonReleaseFleetStatus({ XDG_STATE_HOME: stateHome }))[0]?.state).toBe(
-      'stale',
-    );
+it('refuses a malformed live acknowledgment even when its PID belongs to this process', async () => {
+  const root = await mkdtemp(resolve(tmpdir(), 'beeline-invalid-generation-'));
+  const control = new MachineControl(machineControlPath(root), async () => undefined);
+  await control.start();
+  control.publish({
+    pid: process.pid,
+    generation: '',
+    processState: 'serving',
+    agents: {},
+    updatedAt: 'now',
   });
-
-  it('does not let development or malformed identities overwrite a production status', async () => {
-    const stateHome = await mkdtemp(resolve(tmpdir(), 'beeline-release-status-invalid-'));
-    const runtimeDir = resolve(stateHome, 'beeline', 'agents', AGENT);
-    await mkdir(runtimeDir, { recursive: true });
-    await writeFile(resolve(runtimeDir, 'runtime.json'), '{}');
-    await writeFile(resolve(runtimeDir, 'daemon.pid'), '4242\n');
-    await writeDaemonReleaseStatus(
-      runtimeDir,
-      AGENT,
-      { version: 'v0.0.1', commit: SHA },
-      { pid: 4242 },
+  try {
+    await expect(requestMachine(root, { operation: 'status' }, () => true, 1000)).rejects.toThrow(
+      'invalid helper acknowledgment',
     );
-    const before = await readFile(resolve(runtimeDir, 'release-status.json'), 'utf8');
-
-    await expect(
-      writeDaemonReleaseStatus(runtimeDir, AGENT, { version: 'development', commit: 'HEAD' }),
-    ).resolves.toBeUndefined();
-    expect(await readFile(resolve(runtimeDir, 'release-status.json'), 'utf8')).toBe(before);
-  });
-
-  it('ignores directory-only registration husks without hiding valid agents', async () => {
-    const stateHome = await mkdtemp(resolve(tmpdir(), 'beeline-release-status-husk-'));
-    const runtimeDir = resolve(stateHome, 'beeline', 'agents', AGENT);
-    await mkdir(runtimeDir, { recursive: true });
-    await mkdir(resolve(stateHome, 'beeline', 'agents', HUSK), { recursive: true });
-    await writeFile(resolve(runtimeDir, 'runtime.json'), JSON.stringify(runtimeRecord(AGENT)));
-    await writeFile(resolve(runtimeDir, 'daemon.pid'), '4242\n');
-    await writeDaemonReleaseStatus(
-      runtimeDir,
-      AGENT,
-      { version: 'v0.0.1', commit: SHA },
-      { pid: 4242 },
-    );
-
-    const fleet = await readDaemonReleaseFleetStatus({ XDG_STATE_HOME: stateHome });
-
-    expect(fleet).toHaveLength(1);
-    expect(fleet[0]).toMatchObject({ agentPubkey: AGENT, state: 'ready' });
-  });
-
-  it('keeps malformed runtime records visible as invalid agents', async () => {
-    const stateHome = await mkdtemp(resolve(tmpdir(), 'beeline-release-status-malformed-'));
-    const runtimeDir = resolve(stateHome, 'beeline', 'agents', MALFORMED);
-    await mkdir(runtimeDir, { recursive: true });
-    await writeFile(resolve(runtimeDir, 'runtime.json'), '{not-json');
-
-    await expect(readDaemonReleaseFleetStatus({ XDG_STATE_HOME: stateHome })).resolves.toEqual([
-      { agentPubkey: MALFORMED, state: 'invalid' },
-    ]);
-  });
+  } finally {
+    await control.stop();
+    await rm(root, { recursive: true, force: true });
+  }
 });

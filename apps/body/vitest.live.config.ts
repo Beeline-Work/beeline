@@ -12,6 +12,7 @@ process.env.BUZZ_RELAY_URL ??= 'ws://127.0.0.1:3010';
  */
 export default defineConfig({
   test: {
+    setupFiles: ['./test-isolation.ts'],
     include: ['src/**/*.live.test.ts'],
     testTimeout: 180_000,
     hookTimeout: 60_000,

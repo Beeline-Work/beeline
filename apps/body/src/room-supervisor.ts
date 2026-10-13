@@ -1,11 +1,11 @@
-/** After a failure, at most these retries; then only the next open or discovery wake. */
+import { DaemonApiError } from './daemon-api-client.js';
+/** Failure backoff grows to this ceiling and continues until recovery. */
 export const ROOM_RETRY_DELAYS_MS: readonly number[] = [1_000, 5_000, 30_000];
 
 /**
  * Keeps Room and corner intakes, and the discovery reconcile, alive across
- * failed reads without turning recovery into polling. A failure retries a
- * bounded number of times; after that the loop parks until the live socket
- * opens again or discovery is woken, both of which arrive from the server.
+ * failed reads without idle polling. Ordinary failures retry at capped
+ * backoff; an authority refusal waits for a live open or discovery wake.
  */
 export class RoomSupervisor {
   readonly #parked = new Set<() => void>();
@@ -24,7 +24,7 @@ export class RoomSupervisor {
     return this.#wakes;
   }
 
-  /** How many timed retries follow one failure before a loop parks. */
+  /** Number of delay steps before ordinary failure backoff reaches its ceiling. */
   get retries(): number {
     return this.delaysMs.length;
   }
@@ -81,16 +81,24 @@ export class RoomSupervisor {
       } catch (error) {
         if (signal?.aborted) return;
         failures += 1;
-        const parked = failures > this.delaysMs.length;
+        const parked =
+          error instanceof DaemonApiError &&
+          !error.retryable &&
+          error.status >= 400 &&
+          error.status < 500;
         console.error(
           `[thin-core] ${label} intake failed; ${
             parked
               ? 'waiting for the next live open or discovery wake'
-              : `retry ${failures} of ${this.delaysMs.length} in ${this.delaysMs[failures - 1]}ms`
+              : `retry ${failures} in ${this.delaysMs[Math.min(failures, this.delaysMs.length) - 1]}ms`
           }:`,
           error,
         );
-        await this.retryDelay(failures, signal, since);
+        await this.retryDelay(
+          parked ? this.delaysMs.length + 1 : Math.min(failures, this.delaysMs.length),
+          signal,
+          since,
+        );
         if (signal?.aborted) return;
         if (parked) failures = 0;
       }

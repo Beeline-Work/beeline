@@ -1,92 +1,29 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-import { DaemonApiClient, type DaemonWebSocketFactory } from './daemon-api-client.js';
-import { ForceUpdateCoordinator } from './force-update.js';
-import { reportInterruptedTurns } from './force-update-journal.js';
-import { CommandExecutionContext, runServerCommandIntake } from './server-command-intake.js';
-
-const roots: string[] = [];
-afterEach(async () => {
-  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })));
-});
-
-class Socket {
-  static readonly OPEN = 1;
-  readyState = Socket.OPEN;
-  onopen?: () => void;
-  onmessage?: (event: { data: string }) => void;
-  onclose?: () => void;
-  onerror?: () => void;
-  on(): void {}
-  send(): void {}
-  close(): void { this.onclose?.(); }
-  push(value: unknown): void { this.onmessage?.({ data: JSON.stringify(value) }); }
-}
-
-describe('server-enforced helper handoff', () => {
-  for (const signal of ['push', 'refusal'] as const) {
-    it(`interrupts, installs, restarts, reports and resumes after a ${signal}`, async () => {
-      const root = await mkdtemp(join(tmpdir(), 'beeline-force-update-'));
-      roots.push(root);
-      const events: string[] = [];
-      const turn = { roomId: 'room', requestId: 'request', generationId: 'old-generation' };
-      const install = vi.fn(async () => { events.push('install'); return 'release-v0.0.70'; });
-      const restart = vi.fn(async () => { events.push('restart'); });
-      const coordinator = new ForceUpdateCoordinator({
-        loadedVersion: 'v0.0.69',
-        interrupt: () => { events.push('interrupt'); return [{ runtimeDir: root, turns: [turn] }]; },
-        install, restart, failed: (error) => { throw error; },
-      });
-      const socket = new Socket();
-      const api = new DaemonApiClient('http://localhost:3000', 'token', 'agent',
-        vi.fn(async () => signal === 'refusal'
-          ? Response.json({ error: 'update_required', minVersion: 'v0.0.70' }, { status: 426 })
-          : Response.json({ commandProtocol: 1, commands: [] })),
-        (() => socket as never) as DaemonWebSocketFactory);
-      api.setHelperIdentity({ releaseVersion: 'v0.0.69' });
-      api.setForceUpdateListener((minVersion) => coordinator.request(minVersion));
-      if (signal === 'push') {
-        api.liveSubscribe('room');
-        socket.push({ type: 'force-update', minVersion: 'v0.0.70' });
-      } else {
-        await expect(api.execute('getAgentCommands', { roomId: 'room' }))
-          .rejects.toMatchObject({ status: 426 });
-      }
-      await coordinator.pending;
-      const resumedCommand = {
-        id: 'same-command', roomId: turn.roomId, agentId: 'agent',
-        sourceMessageId: turn.requestId, turnRequestId: turn.requestId,
-        rootCommandId: 'same-command', rootSourceMessageId: turn.requestId,
-        agentDepth: 0, action: 'input', reason: 'human_tag',
-        source: { id: turn.requestId, authorId: 'human', body: 'Continue the request',
-          createdAt: 1, type: 'message', attachments: [] },
-      };
-      let requeued = false;
-      const successorApi = {
-        execute: vi.fn(async (name: string, input: Record<string, unknown>) => {
-          if (name === 'postAgentTurnReceipt') {
-            expect(input).toMatchObject({ ...turn, reasonKind: 'update-interrupted' });
-            events.push('receipt');
-            requeued = true;
-            return { updateRequeued: true };
-          }
-          if (name === 'getAgentCommands')
-            return { commandProtocol: 1, commands: requeued ? [resumedCommand] : [] };
-          return { id: 'ok' };
-        }),
-        liveSubscribe: () => () => undefined,
-      };
-      await reportInterruptedTurns(root, successorApi as never, 'agent');
-      const abort = new AbortController();
-      await runServerCommandIntake({ api: successorApi as never, roomId: 'room', agentId: 'agent',
-        context: new CommandExecutionContext(root), signal: abort.signal,
-        run: async () => { events.push('resume'); setTimeout(() => abort.abort(), 0); },
-        stop: () => undefined });
-      expect(events).toEqual(['interrupt', 'install', 'restart', 'receipt', 'resume']);
-      expect(install).toHaveBeenCalledOnce();
-      expect(restart).toHaveBeenCalledWith('release-v0.0.70');
-    });
-  }
+import { resolve } from 'node:path';
+import { expect, it, vi } from 'vitest';
+import { ReleaseTransaction } from './managed-update.js';
+import { journalInterruptedTurns } from './force-update-journal.js';
+import { writeUpdateState } from './self-update.js';
+it('a server minimum durably interrupts every active agent through the one release transaction', async () => {
+  const root = await mkdtemp(resolve(tmpdir(), 'beeline-minimum-'));
+  const layout = { libDir: resolve(root, 'lib/beeline'), releasesRoot: resolve(root, 'lib/beeline-releases'), binDir: resolve(root, 'bin') };
+  const agents = [resolve(root, 'one'), resolve(root, 'two')];
+  for (const dir of agents) await mkdir(dir);
+  await mkdir(resolve(layout.releasesRoot, 'new/lib/beeline'), { recursive: true });
+  await writeFile(resolve(layout.releasesRoot, 'new/lib/beeline/bundle.json'), JSON.stringify({ version: 'v2.0.0' }));
+  await writeUpdateState(layout, { stagedReleaseId: 'new' });
+  const handoff = vi.fn(async () => undefined);
+  const transaction = new ReleaseTransaction({ layout, loadedRelease: 'old', env: {}, idle: () => false,
+    interrupt: () => { for (const dir of agents) journalInterruptedTurns(dir, [{ roomId: 'room', requestId: dir, generationId: 'old' }]); },
+    prepare: async () => undefined, changed: () => undefined, handoff, failed: (error) => { throw error; },
+  });
+  try {
+    transaction.notify(undefined, 'v2.0.0', true);
+    // Journals precede any asynchronous preparation or shutdown.
+    for (const dir of agents) expect(await readFile(resolve(dir, 'force-update-interruptions.json'), 'utf8')).toContain('old');
+    await transaction.pending;
+    await transaction.idleChanged();
+    expect(handoff).toHaveBeenCalledWith('new', true);
+  } finally { transaction.dispose(); await rm(root, { recursive: true, force: true }); }
 });

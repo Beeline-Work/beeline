@@ -93,6 +93,7 @@ describe('the event kinds beside the prose', () => {
       'joined',
       'schedule-ran',
       'corner-opened',
+      'corner-closed',
       'check-passed',
       'check-failed',
       'merged',
@@ -186,17 +187,17 @@ describe('the event kinds beside the prose', () => {
       'joined',
       'schedule-ran',
       'corner-opened',
+      'corner-closed',
       'check-passed',
       'check-failed',
-      'merged',
       'workflow-handoff',
     ]);
     for (const kind of SUBSCRIBABLE_EVENT_KINDS) {
       expect(isPerItemEventKind(kind)).toBe(false);
       expect(isSubscribableEventKind(kind)).toBe(true);
     }
-    // Every server kind lands in exactly one of the two buckets.
-    expect(SUBSCRIBABLE_EVENT_KINDS.length + PER_ITEM_EVENT_KINDS.length).toBe(
+    // Merged is watch-only; every other server kind has its existing subscription/owner routing.
+    expect(SUBSCRIBABLE_EVENT_KINDS.length + PER_ITEM_EVENT_KINDS.length + 1).toBe(
       SERVER_EVENT_KINDS.length,
     );
     expect(isPerItemEventKind('nonsense')).toBe(false);

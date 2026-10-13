@@ -10,10 +10,7 @@ import { build } from 'esbuild';
 const run = promisify(execFile);
 
 /** The production updater entry this script bundles straight from source. */
-export const UPDATER_ENTRY = new URL(
-  '../apps/body/src/self-update.ts',
-  import.meta.url,
-).pathname;
+export const UPDATER_ENTRY = new URL('../apps/body/src/self-update.ts', import.meta.url).pathname;
 
 /**
  * Every `@beeline/*` workspace package the updater's own import graph reaches.
@@ -104,14 +101,13 @@ export async function verifyPagesUpdate({ manifestUrl, expectedManifest, workDir
       layout,
       env: { BEELINE_UPDATE_MANIFEST_URL: manifestUrl },
       fetchImpl: strictFetch,
-      isIdle: () => true,
     });
     await manager.checkAndApply();
     const installed = await updater.readInstalledBundleIdentity(layout);
     assert.equal(installed.commit, manifest.sourceCommit);
     assert.equal(installed.version, manifest.version);
     const state = await updater.readUpdateState(layout);
-    assert.equal(state.lastCheckResult, 'applied');
+    assert.equal(state.lastCheckResult, 'verified');
     const { stdout } = await run(join(layout.binDir, 'beeline'), ['--version'], {
       cwd: prefix,
       timeout: 30_000,

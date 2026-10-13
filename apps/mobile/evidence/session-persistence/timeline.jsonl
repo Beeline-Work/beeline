@@ -1,0 +1,17 @@
+{"event": "baseline", "elapsedSeconds": 31, "utc": "2026-10-12T21:25:25.102476+00:00", "generation": 1, "dropped": 0, "renewals": 0, "signIns": 1, "ota": false, "sessions": 1}
+{"event": "ota-published", "elapsedSeconds": 31, "utc": "2026-10-12T21:25:25.105805+00:00", "generation": 1, "dropped": 0, "renewals": 0, "signIns": 1, "ota": true, "sessions": 1}
+{"event": "after-ota-retained-review-intent", "elapsedSeconds": 49, "utc": "2026-10-12T21:25:42.657514+00:00", "generation": 1, "dropped": 0, "renewals": 0, "signIns": 1, "ota": true, "sessions": 1}
+{"event": "server-replaced", "elapsedSeconds": 49, "utc": "2026-10-12T21:25:42.659368+00:00", "generation": 2, "dropped": 0, "renewals": 0, "signIns": 1, "ota": true, "sessions": 1}
+{"event": "after-server-replacement", "elapsedSeconds": 63, "utc": "2026-10-12T21:25:57.172550+00:00", "generation": 2, "dropped": 0, "renewals": 0, "signIns": 1, "ota": true, "sessions": 1}
+{"event": "after-process-restart", "elapsedSeconds": 74, "utc": "2026-10-12T21:26:07.629999+00:00", "generation": 2, "dropped": 0, "renewals": 0, "signIns": 1, "ota": true, "sessions": 1}
+{"event": "after-background", "elapsedSeconds": 111, "utc": "2026-10-12T21:26:45.176055+00:00", "generation": 2, "dropped": 0, "renewals": 0, "signIns": 1, "ota": true, "sessions": 1}
+{"event": "after-in-place-apk-update", "utc": "2026-10-12T21:32:36.335901+00:00", "generation": 2, "dropped": 0, "renewals": 0, "signIns": 1, "ota": true, "sessions": 1}
+{"event": "lost-reply-armed", "elapsedSeconds": 780, "utc": "2026-10-12T21:37:54.107232+00:00", "generation": 2, "dropped": 0, "renewals": 0, "signIns": 1, "ota": true, "sessions": 1}
+{"event": "after-lost-refresh-reply", "elapsedSeconds": 947, "utc": "2026-10-12T21:40:41.421154+00:00", "generation": 2, "dropped": 1, "renewals": 2, "signIns": 1, "ota": true, "sessions": 1}
+{"event": "expired-access-offline-cold-start", "elapsedSeconds": 1125, "utc": "2026-10-12T21:43:38.686529+00:00", "generation": 2, "dropped": 1, "renewals": 2, "signIns": 1, "ota": true, "sessions": 1}
+{"event": "recovered-after-sleep-and-lost-reply", "elapsedSeconds": 1139, "utc": "2026-10-12T21:43:53.154554+00:00", "generation": 2, "dropped": 1, "renewals": 2, "signIns": 1, "ota": true, "sessions": 1}
+{"event": "second-server-replacement", "elapsedSeconds": 1139, "utc": "2026-10-12T21:43:53.156753+00:00", "generation": 3, "dropped": 1, "renewals": 2, "signIns": 1, "ota": true, "sessions": 1}
+{"event": "after-second-server-replacement", "elapsedSeconds": 1149, "utc": "2026-10-12T21:44:03.558996+00:00", "generation": 3, "dropped": 1, "renewals": 2, "signIns": 1, "ota": true, "sessions": 1}
+{"event": "final-20-minute-session", "elapsedSeconds": 1202, "utc": "2026-10-12T21:44:56.482679+00:00", "generation": 3, "dropped": 1, "renewals": 2, "signIns": 1, "ota": true, "sessions": 1}
+{"event": "PASS", "elapsedSeconds": 1202, "utc": "2026-10-12T21:44:56.482785+00:00"}
+{"event": "final-candidate-continuation", "utc": "2026-10-12T22:05:01.549514+00:00", "generation": 3, "dropped": 1, "renewals": 3, "signIns": 1, "ota": true, "sessions": 1}

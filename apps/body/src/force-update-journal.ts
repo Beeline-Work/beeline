@@ -1,4 +1,12 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+import {
+  closeSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  writeFileSync,
+} from 'node:fs';
 import { resolve } from 'node:path';
 import { DaemonApiError, type DaemonApiClient } from './daemon-api-client.js';
 
@@ -21,8 +29,12 @@ function read(runtimeDir: string): InterruptedTurn[] {
     return rows.map((row) => {
       if (!row || typeof row !== 'object') throw new Error('invalid interrupted turn');
       const turn = row as Record<string, unknown>;
-      if (typeof turn.roomId !== 'string' || typeof turn.requestId !== 'string' ||
-          typeof turn.generationId !== 'string') throw new Error('invalid interrupted turn');
+      if (
+        typeof turn.roomId !== 'string' ||
+        typeof turn.requestId !== 'string' ||
+        typeof turn.generationId !== 'string'
+      )
+        throw new Error('invalid interrupted turn');
       return { roomId: turn.roomId, requestId: turn.requestId, generationId: turn.generationId };
     });
   } catch (error) {
@@ -36,11 +48,26 @@ function write(runtimeDir: string, rows: readonly InterruptedTurn[]): void {
   const target = pathFor(runtimeDir);
   const temporary = `${target}.${process.pid}.tmp`;
   writeFileSync(temporary, `${JSON.stringify(rows)}\n`, { mode: 0o600 });
+  const file = openSync(temporary, 'r');
+  try {
+    fsyncSync(file);
+  } finally {
+    closeSync(file);
+  }
   renameSync(temporary, target);
+  const directory = openSync(runtimeDir, 'r');
+  try {
+    fsyncSync(directory);
+  } finally {
+    closeSync(directory);
+  }
 }
 
 /** Persist the interrupted commands before the old process releases the install. */
-export function journalInterruptedTurns(runtimeDir: string, turns: readonly InterruptedTurn[]): void {
+export function journalInterruptedTurns(
+  runtimeDir: string,
+  turns: readonly InterruptedTurn[],
+): void {
   if (!turns.length) return;
   const rows = read(runtimeDir);
   const seen = new Set(rows.map((row) => `${row.roomId}:${row.requestId}:${row.generationId}`));
@@ -91,6 +118,9 @@ export async function reportInterruptedTurns(
 }
 
 function staleGeneration(error: unknown): boolean {
-  return error instanceof DaemonApiError && error.status === 403 &&
-    /command output authority rejected|command turn cancelled/.test(error.code);
+  return (
+    error instanceof DaemonApiError &&
+    error.status === 403 &&
+    /command output authority rejected|command turn cancelled/.test(error.code)
+  );
 }

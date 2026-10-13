@@ -271,15 +271,14 @@ describe('corner and issue lifecycle stacking', () => {
     ]);
   });
 
-  it('keeps a corner marker on its source message and a relay-report card on its own', () => {
+  it('keeps a corner marker on its source message and folds later lifecycle cards', () => {
     const marker = corner('2', 'corner-open', 'marked');
     marker.daemonFact!.sourceMessageId = 'source';
     const reported = corner('3', 'corner-complete', 'reported', 3);
-    reported.relayReports = [{ id: 'report', text: 'done', timestamp: 3 }];
     const rows = foldPrLifecycleRuns([pr('1', 1), marker, reported, pr('4', 4)]);
-    expect(rows.map((row) => row.id)).toEqual(['1', '2', '3', '4']);
+    expect(rows.map((row) => row.id)).toEqual(['1', '2', '3']);
     expect(rows[1]).toBe(marker);
-    expect(rows[2]).toBe(reported);
+    expect(rows[2]!.foldedIds).toEqual(['3', '4']);
   });
 
   it.each([true, false])('chat ends a corner run (isUser=%s)', (isUser) => {

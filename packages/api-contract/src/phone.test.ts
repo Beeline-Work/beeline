@@ -41,27 +41,18 @@ describe('phone contract', () => {
       watchFilters: [],
     };
     expect(isRoomView(room)).toBe(true);
-    const relay = {
-      fromRoomId: room.room.id,
-      toRoomId: room.room.id,
-      direction: 'down',
-      fromName: 'beeline',
-      cornerId: 'corner',
-      received: true,
-    };
     const message = {
       id: 'b'.repeat(64),
       text: 'Change course',
       createdAt: 1,
       author: identity,
       presentation: 'card',
-      relay,
     };
     expect(isRoomView({ ...room, messages: [message] })).toBe(true);
     expect(isRoomView({ ...room, messages: [{ ...message, createdAtMs: 1_999 }] })).toBe(true);
     expect(
       readRoomView({ ...room, messages: [{ ...message, createdAtMs: 1.5 }] })?.messages,
-    ).toEqual([{ ...message, presentation: 'card', relay }]);
+    ).toEqual([{ ...message, presentation: 'card' }]);
     // The row's write counter survives the read; a malformed one is dropped.
     expect(readRoomView({ ...room, messages: [{ ...message, version: 3 }] })?.messages[0]?.version).toBe(3);
     expect(
@@ -86,17 +77,10 @@ describe('phone contract', () => {
         messages: [{ ...message, reactions: [{ ...reaction, count: 2 }] }],
       })?.messages[0]?.reactions?.[0]?.count,
     ).toBe(2);
-    for (const invalid of [{ direction: 'sideways' }, { received: 'yes' }, { fromName: 1 }])
-      expect(
-        readRoomView({ ...room, messages: [{ ...message, relay: { ...relay, ...invalid } }] })
-          ?.messages[0]?.relay,
-      ).toBeUndefined();
-    expect(
-      readRoomView({
-        ...room,
-        messages: [{ ...message, relay: { ...relay, anchorMessageId: 42 } }],
-      })?.messages[0]?.relay,
-    ).toEqual(relay);
+    // Retired and unknown fields never become part of the projected contract.
+    const projected = readRoomView({ ...room, messages: [{ ...message, relay: { direction: 'down' }, unknownExtra: 42 }] })?.messages[0];
+    expect(projected).not.toHaveProperty('relay');
+    expect(projected).not.toHaveProperty('unknownExtra');
 
     // The face ceremony: an optional face id on every identity, never a non-string.
     expect(

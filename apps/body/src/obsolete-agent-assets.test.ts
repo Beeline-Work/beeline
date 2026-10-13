@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterEach, expect, it } from 'vitest';
 import { findObsoleteAssetCopies } from './obsolete-agent-assets.js';
-import { applyRequestedStartupCleanup, requestStartupCleanup } from './startup-cleanup.js';
+import { runCleanupSharedHomeCommand } from './startup-cleanup.js';
 import { markWorkspaceLayoutLive, prepareWorkspaceAssets, workspaceAssetRoot } from './workspace-assets.js';
 import { defaultSupervisorRoot } from './runtime.js';
 
@@ -32,8 +32,7 @@ it('removes only identical downloaded copies after layout activation and preserv
   const inventory = await findObsoleteAssetCopies(root);
   expect(inventory).toHaveLength(1);
   expect(inventory[0]!.apparentBytes).toBe(8);
-  await requestStartupCleanup(root);
-  await applyRequestedStartupCleanup(root);
+  await runCleanupSharedHomeCommand({ XDG_STATE_HOME: root }, true);
   await expect(stat(resolve(old, 'catalog.json'))).rejects.toMatchObject({ code: 'ENOENT' });
   expect(await readFile(resolve(home, 'codex/sessions/thread.json'), 'utf8')).toBe('private');
   expect(await readFile(resolve(old, 'local-only.json'), 'utf8')).toBe('private cache');

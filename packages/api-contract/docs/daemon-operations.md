@@ -34,15 +34,16 @@ Repeated reads in an authority check are preserved as retry semantics inside the
 | `postWorkSchedule`, `postWorkScheduleReceipt`                   | `work-calendar.ts:802,812,904`; `daemon-work-calendar.ts:801`                                                                           |
 | `postAgentCommands`                                             | `agent-commands-publish.ts:46`                                                                                                          |
 | `postCornerRemoteState`, `archiveCorner`                       | `body.ts:9717,9782,9853,9918,9974`                                                                                                     |
-| `watchCorner`                                                 | `read-only-mcp.ts` (`watch_corner`); transactional snapshot and sibling merge/check wakes                                                 |
+| `watchCorner`                                                 | `read-only-mcp.ts` (`watch`); transactional lifecycle snapshot and opened/merged/closed wakes                                                 |
 | `postAgentActivity`, `postCornerPlan`                           | `activity.ts:1014,1030,1060,1088,1561`                                                                                                  |
 | `postPermissionRequest`, `postPermissionExecution`              | `permission-runtime.ts:121,362`; `body.ts:5841,5932,5946,6328`                                                                          |
+| `order`, `report`, `read` | Private command transport and member-address reads from Rooms, corners and DMs; reports derive their return address from existing command provenance. |
 | `postRoomMessage`                                               | `events-service.ts:421,422,448`; `body.ts:2447,2509,4320,7940`                                                                          |
 | `postAgentTurnReceipt`                                          | `body.ts:4855` and terminal receipt publication routed through `events-service.ts:448`                                                  |
 | `postAgentDraft`, `postAgentThought`, `retractAgentLiveOutput`  | the four live-output publications at `activity.ts:1014,1030,1060,1088` split by their typed presentation                                |
 | `postTargetBranchProposal`                                      | current typed control publication reached from `body.ts:7940`                                                                           |
 | `reviseCornerBrief` | Records the full revision and returns `wake: { queued, agentId?, reason? }`; opener commands may come from the parent or a sibling via `roomId`, implementer commands from the target |
-| `createCorner`, `ensureAgentMembership`                         | current higher-level channel helpers invoked by Body; their relay publications become atomic named operations rather than raw endpoints |
+| `createCorner`, `ensureAgentMembership`                         | current higher-level channel helpers invoked by Body; their create/open calls become atomic named operations rather than raw endpoints |
 
 `events-service.ts:421` and `:422` are alternate injected/default publisher branches; `:448` is the bounded delivery attempt. They are three production publish call sites but one named domain write.
 
@@ -84,7 +85,7 @@ cleared, so `mergeCorner` reports no pull request until a new one opens.
 
 An agent reaches a corner when it is a current member of the corner or of its parent Room. Reach
 authorizes `archiveCorner`, `closeCornerPullRequest`, `renameCorner`, `reviseCornerBrief`, corner
-reads, and steering relays into the corner.
+reads, and private orders into the corner from any member Room or DM.
 
 `listReachableCorners({ roomId })` lists every corner, open and closed, under a Room the caller
 belongs to. `listRoomMembers({ roomId })` lists the current members of a Room the caller belongs to,

@@ -1383,6 +1383,9 @@ test('fresh Mac bundle carry is optional and every failure selects the cold buil
   }
   const upload = steps.find(step => step.uses === 'actions/upload-artifact@v4');
   assert.match(upload.with.path, /mac-helper-inputs\.json/);
+  // The three-platform merge validates the recovery bootstrap in every input directory.
+  assert.match(upload.with.path, /beeline-bootstrap\.mjs\n/);
+  assert.match(upload.with.path, /beeline-bootstrap\.mjs\.sha256/);
   assert.equal(lookup['continue-on-error'], true);
   assert.match(workflow.jobs.initialize.outputs.previous_mac_run_id, /steps\.previous_mac\.outputs\.run_id/);
 });

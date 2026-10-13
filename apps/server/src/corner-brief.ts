@@ -6,6 +6,8 @@ import {
   type CornerBriefDraft,
 } from '@beeline/api-contract/daemon';
 import type { SqlDatabase } from './database.js';
+import type { CommandRow } from './agent-command.js';
+import { commandOrder } from './commander.js';
 
 /** Most files one brief revision may carry. */
 const CORNER_BRIEF_ATTACHMENT_LIMIT = 16;
@@ -190,7 +192,7 @@ export function cornerBriefRevisionHash(
  * the same object, so old and new revisions read alike.
  */
 type StoredCornerBriefApproval = {
-  kind: 'initiating-command' | 'explicit-human-answer';
+  kind: 'initiating-command' | 'explicit-human-answer' | 'commander-order';
   sourceMessageId: string;
   /** The approving message's exact text when the revision was written. */
   snapshot: string;
@@ -216,8 +218,9 @@ export async function resolveCornerBriefApproval(
   sourceRoomId: string;
 }> {
   validateCornerBrief(draft);
-  const sourceMessageId = draft.approval.sourceMessageId;
-  const message = (
+  let sourceMessageId = draft.approval.sourceMessageId;
+  const initiating = sourceMessageId === initiatingMessageId;
+  let message = (
     await db.query<{ text: string; author_id: string; kind: string; room_id: string }>(
       `SELECT message.text,message.author_id,identity.kind,message.room_id
        FROM messages message JOIN identities identity ON identity.id=message.author_id
@@ -225,13 +228,30 @@ export async function resolveCornerBriefApproval(
       [sourceRoomIds, sourceMessageId],
     )
   ).rows[0];
-  if (!message || message.kind !== 'human')
-    throw new Error('corner brief approval must name a human Room message');
+  let commanderOrder = false;
+  if (!message && initiating) {
+    const active = (await db.query<CommandRow>(`SELECT * FROM agent_commands WHERE id=$1`, [sourceMessageId])).rows[0];
+    const order = active ? await commandOrder(db, active) : undefined;
+    if (order?.private_payload?.kind === 'order' && sourceRoomIds.includes(order.room_id)) {
+      sourceMessageId = order.id;
+      message = { text: order.private_payload.text, author_id: order.private_payload.authorId, room_id: order.room_id, kind: 'agent' };
+      commanderOrder = true;
+    } else if (order?.source_message_id) {
+      sourceMessageId = order.source_message_id;
+      message = (await db.query<{ text: string; author_id: string; kind: string; room_id: string }>(
+        `SELECT message.text,message.author_id,identity.kind,message.room_id FROM messages message
+         JOIN identities identity ON identity.id=message.author_id
+         WHERE message.id=$1 AND message.room_id=ANY($2::uuid[])`, [sourceMessageId, sourceRoomIds],
+      )).rows[0];
+    }
+  }
+  if (!message || message.kind !== 'human' && !commanderOrder)
+    throw new Error('corner brief approval must name a human message or commander order');
   const revisionHash = cornerBriefRevisionHash(draft, attachments);
   return {
     approvalBasis: {
       kind:
-        sourceMessageId === initiatingMessageId ? 'initiating-command' : 'explicit-human-answer',
+        message.kind === 'agent' ? 'commander-order' : initiating ? 'initiating-command' : 'explicit-human-answer',
       sourceMessageId,
       snapshot: message.text,
       approvedBy: message.author_id,

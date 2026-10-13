@@ -80,7 +80,7 @@ beforeEach(async () => {
     C,
     W,
   ]);
-  await db.query(`UPDATE rooms SET parent_id=$1 WHERE id=$2`, [R, C]);
+  await db.query(`UPDATE rooms SET parent_id=$1,created_by=$3 WHERE id=$2`, [R, C, OWNER_AGENT]);
   await db.query(
     `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lifecycle) VALUES($1,$2,'Do work',$3::jsonb)`,
     [
@@ -132,7 +132,7 @@ const reviews = async (agentId: string) =>
 
 const exhaustedNotices = () =>
   db
-    .query<{ text: string }>(`SELECT text FROM messages WHERE room_id=$1 AND text LIKE 'No reviewer on the list%'`, [C])
+    .query<{ text: string }>(`SELECT private_payload->>'text' text FROM agent_commands WHERE room_id=$1 AND reason='report' AND private_payload->>'text' LIKE 'blocked: no reviewer on the configured list%'`, [R])
     .then((r) => r.rows);
 
 async function setReviewers(...ids: string[]) {
@@ -198,7 +198,7 @@ describe('check-passed dispatch with a reviewer list', () => {
     expect(await reviews(REVIEWER_B)).toHaveLength(0);
   });
 
-  it('names the gap in the corner when nobody on the list is healthy, once per episode', async () => {
+  it('reports the gap privately when nobody on the list is healthy, once per episode', async () => {
     await reportPresence(REVIEWER_A, 'offline');
     await reportPresence(REVIEWER_B, 'offline');
     // Setting the list re-reports the corner's green head, which already finds nobody.
@@ -213,6 +213,7 @@ describe('check-passed dispatch with a reviewer list', () => {
     expect((await exhaustedNotices())[0]!.text).not.toMatch(/class|tag|tier/i);
     expect(await reviews(REVIEWER_A)).toHaveLength(0);
     expect(await reviews(OWNER_AGENT)).toHaveLength(0);
+    expect((await commands(OWNER_AGENT)).some(command => command.reason === 'corner_review_needed')).toBe(true);
 
     await db.query(
       `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}',to_jsonb($2::text)) WHERE corner_id=$1`,
@@ -272,6 +273,7 @@ describe('a failed review turn', () => {
     await failTurn((await reviews(REVIEWER_B))[0]!);
     expect(await exhaustedNotices()).toHaveLength(1);
     expect(await reviews(OWNER_AGENT)).toHaveLength(0);
+    expect((await commands(OWNER_AGENT)).some(command => command.reason === 'corner_review_needed')).toBe(true);
   });
 
   it('never moves back up the list to an agent that recovered after being skipped', async () => {

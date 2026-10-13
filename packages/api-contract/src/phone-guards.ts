@@ -1029,33 +1029,6 @@ function readReaction(value: unknown): MessageReactionView | null {
   };
 }
 
-function readRelay(value: unknown): NonNullable<RoomViewMessage['relay']> | null {
-  const item = record(value);
-  if (
-    !item ||
-    typeof item.fromRoomId !== 'string' ||
-    typeof item.toRoomId !== 'string' ||
-    (item.direction !== 'down' && item.direction !== 'up') ||
-    typeof item.fromName !== 'string' ||
-    typeof item.cornerId !== 'string' ||
-    typeof item.received !== 'boolean'
-  ) {
-    return null;
-  }
-  return {
-    fromRoomId: item.fromRoomId,
-    toRoomId: item.toRoomId,
-    direction: item.direction,
-    fromName: item.fromName,
-    cornerId: item.cornerId,
-    received: item.received,
-    ...field(
-      'anchorMessageId',
-      typeof item.anchorMessageId === 'string' ? item.anchorMessageId : undefined,
-    ),
-  };
-}
-
 export function readRoomViewMessage(value: unknown): RoomViewMessage | null {
   const item = record(value);
   const author = readIdentity(item?.author);
@@ -1128,7 +1101,6 @@ export function readRoomViewMessage(value: unknown): RoomViewMessage | null {
     ...field('walletDelegation', readWalletDelegation(item.walletDelegation)),
     ...field('targetBranch', readTargetBranch(item.targetBranch)),
     ...field('githubEvent', readGithubEvent(item.githubEvent)),
-    ...field('relay', readRelay(item.relay)),
     ...field('daemonFact', readDaemonFact(item.daemonFact)),
     ...field('systemEvent', isSystemEvent(item.systemEvent) ? item.systemEvent : undefined),
   };

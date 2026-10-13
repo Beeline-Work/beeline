@@ -6,6 +6,7 @@ import { migrate, migrateData } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { directMessageRoomId, ensureSystemDirectMessageRoom } from './system-line.js';
 import { PhoneService } from './phone-service.js';
+import { TokenAuth } from './auth.js';
 
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const OWNER = '1'.repeat(64);
@@ -34,6 +35,12 @@ describe('one System thread migration', () => {
         [OWNER, PEER, DELETED_ACCOUNT_IDENTITY_ID]);
       await db.query(`INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'owner'),($1,$3,'member')`,
         [WORKSPACE, OWNER, PEER]);
+      await db.query(`INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience)
+        VALUES('github','migration-owner',$1,'https://github.com','test')`, [OWNER]);
+      const auth = new TokenAuth(db, async () => ({ subject: 'migration-owner', login: 'owner', name: 'Owner' }));
+      const session = await auth.exchangeGitHubOidc('proof');
+      const sessionsBefore = (await db.query('SELECT * FROM phone_sessions')).rows;
+      const accessBefore = (await db.query('SELECT * FROM phone_access_tokens')).rows;
       const system = await ensureSystemDirectMessageRoom(db, WORKSPACE, OWNER);
       const bots = [...CONNECTOR_KINDS, 'composio'].map(type =>
         createHash('sha256').update(`beeline:connector-identity:${type}`).digest('hex'));
@@ -66,6 +73,10 @@ describe('one System thread migration', () => {
       expect((await phone.readRoom(system, OWNER))?.viewer.permissions.send).toBe(false);
       await migrateData(db);
       expect((await db.query('SELECT 1 FROM rooms')).rowCount).toBe(3);
+      expect((await db.query('SELECT * FROM phone_sessions')).rows).toEqual(sessionsBefore);
+      expect((await db.query('SELECT * FROM phone_access_tokens')).rows).toEqual(accessBefore);
+      expect(await auth.authenticatePhone(session.accessToken)).toBe(OWNER);
+      expect((await auth.refresh(session.refreshToken))?.identityId).toBe(OWNER);
     } finally { await db.close(); }
   });
 });

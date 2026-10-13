@@ -285,104 +285,44 @@ describe('monolith integration', () => {
     expect(await phone.execute('readWelcomeCards', {}, fresh)).toEqual({ due: false });
     expect(await phone.execute('readWelcomeCards', {}, HUMAN)).toEqual({ due: false });
   });
-  it('answers a refused steer with a 4xx naming its cause, never a 503', async () => {
-    const steerCorner = '55555555-5555-4555-8555-555555555555';
-    await database.query(
-      `INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Steer target')`,
-      [steerCorner, WORKSPACE, ROOM],
-    );
-    await database.query(
-      `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lifecycle)
-       VALUES($1,$2,'Steer target','{}')`,
-      [steerCorner, AGENT],
-    );
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-       VALUES($1,$2,$3,'member'),($1,$2,$4,'member')`,
-      [WORKSPACE, steerCorner, HUMAN, AGENT],
-    );
-    const startTurn = async (label: string) => {
-      const messageId = createHash('sha256').update(`steer-source-${label}`).digest('hex');
-      await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`, [
-        messageId,
-        ROOM,
-        HUMAN,
-        '@bee steer the corner',
-      ]);
-      const requestId = `steer-${label}`;
-      const command = await createAgentCommand(database, {
-        roomId: ROOM,
-        agentId: AGENT,
-        sourceMessageId: messageId,
-        reason: 'human_tag',
-        turnRequestId: requestId,
-      });
-      await claimAgentCommand(database, ROOM, AGENT, command!.id, `${requestId}-g`);
-      return { roomId: ROOM, requestId, generationId: `${requestId}-g` };
-    };
-    const steer = (turn: { roomId: string; requestId: string; generationId: string }) =>
-      request(
-        '/v1/daemon/operations/postRoomMessage',
-        'POST',
-        {
-          ...turn,
-          text: 'Steer into the corner',
-          relay: { fromRoomId: ROOM, toRoomId: steerCorner, direction: 'down' },
-        },
-        daemonToken,
-      );
+  it('returns nonretryable refusals for retired tools and legacy watch kinds', async () => {
+    const messageId = createHash('sha256').update('retired-tool-source').digest('hex');
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@bee do this')`, [messageId, ROOM, HUMAN]);
+    const command = (await createAgentCommand(database, {
+      roomId: ROOM, agentId: AGENT, sourceMessageId: messageId, reason: 'human_tag', turnRequestId: 'retired-tool',
+    }))!;
+    await claimAgentCommand(database, ROOM, AGENT, command.id, 'retired-g');
+    const turn = { roomId: ROOM, requestId: 'retired-tool', generationId: 'retired-g' };
+    const relay = await request('/v1/daemon/operations/postRoomMessage', 'POST', {
+      ...turn, text: 'Old steer', relay: { fromRoomId: ROOM, toRoomId: ROOM, direction: 'down' },
+    }, daemonToken);
+    expect(relay.status).toBe(410);
+    expect(await relay.json()).toMatchObject({ error: expect.stringContaining('use order and report') });
+    const retired = await request('/v1/daemon/operations/getCornerAsk', 'POST', turn, daemonToken);
+    expect(retired.status).toBe(410);
+    expect(await retired.json()).toMatchObject({ error: expect.stringContaining('use order and report') });
+    const watch = await request('/v1/daemon/operations/watchCorner', 'POST', {
+      ...turn, cornerId: ROOM, kinds: ['check-passed'],
+    }, daemonToken);
+    expect(watch.status).toBe(400);
+    const empty = await request('/v1/daemon/operations/report', 'POST', { ...turn, text: 'blocked:' }, daemonToken);
+    expect(empty.status).toBe(400);
+    const privateOrder = (await createAgentCommand(database, {
+      roomId: ROOM, agentId: AGENT, sourceMessageId: null, reason: 'order', turnRequestId: 'retired-private',
+      privatePayload: { kind: 'order', authorId: HUMAN, fromRoomId: ROOM, text: 'Do the private work' },
+    }))!;
+    await claimAgentCommand(database, ROOM, AGENT, privateOrder.id, 'private-g');
+    const privateRelay = await request('/v1/daemon/operations/postRoomMessage', 'POST', {
+      roomId: ROOM, requestId: 'retired-private', generationId: 'private-g', text: 'Old private steer',
+      relay: { fromRoomId: ROOM, toRoomId: ROOM, direction: 'down' },
+    }, daemonToken);
+    expect(privateRelay.status).toBe(410);
+    expect((await database.query(`SELECT state FROM agent_commands WHERE id=$1`, [privateOrder.id])).rows[0]?.state).toBe('claimed');
+    expect((await database.query(`SELECT 1 FROM messages WHERE text LIKE 'done: Old private steer%'`)).rowCount).toBe(0);
+    expect((await database.query(`SELECT 1 FROM agent_commands WHERE private_payload->>'text'='done: Old private steer'`)).rowCount).toBe(0);
 
-    const limited = await startTurn('hop-limit');
-    await database.query(`UPDATE agent_commands SET agent_depth=3 WHERE turn_request_id=$1`, [
-      limited.requestId,
-    ]);
-    const hop = await steer(limited);
-    expect(hop.status).toBe(409);
-    expect(await hop.json()).toMatchObject({
-      error: expect.stringContaining('delegation limit'),
-    });
-
-    const closedTurn = await startTurn('closed');
-    await database.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`, [steerCorner]);
-    const closed = await steer(closedTurn);
-    expect(closed.status).toBe(409);
-    expect(await closed.json()).toMatchObject({ error: expect.stringContaining('closed') });
-    await database.query(`UPDATE rooms SET archived_at=NULL WHERE id=$1`, [steerCorner]);
-
-    const lostTurn = await startTurn('lost-membership');
-    await database.query(
-      `UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,
-      [steerCorner, AGENT],
-    );
-    // Parent Room membership reaches the corner, so losing the corner seat is
-    // no membership refusal; with no agent left in the corner, nobody can receive it.
-    const lost = await steer(lostTurn);
-    expect(lost.status).toBe(409);
-    expect(await lost.json()).toMatchObject({
-      error: expect.stringContaining('no agent member'),
-    });
-    await database.query(
-      `UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2`,
-      [steerCorner, AGENT],
-    );
-
-    const lostSourceTurn = await startTurn('lost-source-membership');
-    await database.query(
-      `UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,
-      [ROOM, AGENT],
-    );
-    const lostSource = await steer(lostSourceTurn);
-    await database.query(
-      `UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2`,
-      [ROOM, AGENT],
-    );
-    expect(lostSource.status).toBe(403);
-    expect(await lostSource.json()).toEqual({
-      error: 'relay requires current Room and corner membership',
-    });
-    expect([hop.status, closed.status, lost.status, lostSource.status]).not.toContain(503);
   });
-  it('answers a membership-check outage while steering as a 503, never a membership refusal', async () => {
+  it('answers a membership-check outage while ordering as a 503, never a membership refusal', async () => {
     const steerCorner = '55555555-5555-4555-8555-555555555555';
     await database.query(
       `INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Steer target')`,
@@ -423,14 +363,14 @@ describe('monolith integration', () => {
     });
     try {
       const outage = await request(
-        '/v1/daemon/operations/postRoomMessage',
+        '/v1/daemon/operations/order',
         'POST',
         {
           roomId: ROOM,
           requestId,
           generationId: `${requestId}-g`,
           text: 'Steer into the corner',
-          relay: { fromRoomId: ROOM, toRoomId: steerCorner, direction: 'down' },
+          address: steerCorner,
         },
         daemonToken,
       );
@@ -586,7 +526,7 @@ describe('monolith integration', () => {
       expect(await refused.json()).toMatchObject({
         error: files.length
           ? expect.stringContaining('missing or unavailable in this Room')
-          : 'corner brief approval must name a human Room message',
+          : 'corner brief approval must name a human message or commander order',
       });
       expect(
         (
@@ -689,7 +629,7 @@ describe('monolith integration', () => {
       const refused = await revise(unrelated, 2);
       expect(refused.status).toBe(503);
       expect(await refused.json()).toMatchObject({
-        error: 'corner brief approval must name a human Room message',
+        error: 'corner brief approval must name a human message or commander order',
       });
       expect(
         (
@@ -1856,6 +1796,27 @@ describe('monolith integration', () => {
     ).toBe(204);
     expect(
       (await request(`/v1/phone/rooms/${openedRoom.id}`, 'GET', undefined, aliceToken)).status,
+    ).toBe(200);
+
+    // An owner who is not in an invite-only Room joins it from Workspace settings.
+    await operation('addWorkspaceMember', { workspaceId, memberId: aliceId, role: 'owner' });
+    const unjoinedRoom = (await (
+      await operation('createRoom', {
+        workspaceId,
+        name: 'owner-self-join',
+        visibility: 'invite-only',
+      })
+    ).json()) as { id: string };
+    expect(
+      (await request(`/v1/phone/rooms/${unjoinedRoom.id}`, 'GET', undefined, aliceToken)).status,
+    ).toBe(404);
+    expect(
+      await (
+        await operation('addRoomMember', { roomId: unjoinedRoom.id, memberId: aliceId }, aliceToken)
+      ).json(),
+    ).toEqual({ joined: true });
+    expect(
+      (await request(`/v1/phone/rooms/${unjoinedRoom.id}`, 'GET', undefined, aliceToken)).status,
     ).toBe(200);
   });
 
@@ -5710,7 +5671,7 @@ describe('monolith integration', () => {
     ).toBe('invite-only');
   });
 
-  it('rotates refresh tokens, replays a lost reply, and rejects used phone and daemon credentials', async () => {
+  it('renews durable phone credentials until explicit sign-out and rejects revoked daemon credentials', async () => {
     const initial = await auth.exchangeGitHubOidc('proof');
     const refreshed = await request(
       '/v1/auth/refresh',
@@ -5721,6 +5682,7 @@ describe('monolith integration', () => {
     expect(refreshed.status).toBe(200);
     const successor = (await refreshed.json()) as { accessToken: string; refreshToken: string };
     expect(successor.accessToken).not.toBe(initial.accessToken);
+    expect(successor.refreshToken).toBe(initial.refreshToken);
     const replay = await request(
       '/v1/auth/refresh',
       'POST',
@@ -5728,8 +5690,10 @@ describe('monolith integration', () => {
       '',
     );
     expect(replay.status).toBe(200);
-    expect(await replay.json()).toEqual(successor);
+    expect(await replay.json()).toMatchObject({ refreshToken: initial.refreshToken, identityId: initial.identityId });
     expect((await request('/v1/auth/refresh', 'POST', { refreshToken: successor.refreshToken }, '')).status).toBe(200);
+    expect((await request('/v1/auth/logout', 'POST', { refreshToken: initial.refreshToken }, '')).status).toBe(200);
+    expect((await request('/v1/auth/logout', 'POST', { refreshToken: initial.refreshToken }, '')).status).toBe(200);
     const stale = await request('/v1/auth/refresh', 'POST', { refreshToken: initial.refreshToken }, '');
     expect(stale.status).toBe(401);
     await database.query(`UPDATE daemon_tokens SET revoked_at=now()`);
@@ -9784,7 +9748,7 @@ describe('monolith integration', () => {
     const first = await daemonOperation('createCorner', input);
     expect(first.status).toBe(200);
     const { cornerId } = (await first.json()) as { cornerId: string };
-    expect(await (await daemonOperation('createCorner', input)).json()).toEqual({ cornerId, watch: { roomId: ROOM, kinds: ['merged'] } });
+    expect(await (await daemonOperation('createCorner', input)).json()).toEqual({ cornerId, watch: { roomId: ROOM, kinds: ['opened', 'merged', 'closed'] } });
     const revisions = await database.query<{ revision: number }>(
       `SELECT revision FROM corner_brief_revisions WHERE corner_id=$1`,
       [cornerId],
@@ -9871,7 +9835,7 @@ describe('monolith integration', () => {
     });
     // A retry of the original open still names the same corner after a later
     // correction; the retry is compared with revision 1, not the latest brief.
-    expect(await (await daemonOperation('createCorner', input)).json()).toEqual({ cornerId, watch: { roomId: ROOM, kinds: ['merged'] } });
+    expect(await (await daemonOperation('createCorner', input)).json()).toEqual({ cornerId, watch: { roomId: ROOM, kinds: ['opened', 'merged', 'closed'] } });
     expect(
       (
         await database.query<{ revision: number }>(
@@ -10071,7 +10035,7 @@ describe('monolith integration', () => {
       });
       expect(response.status).not.toBe(200);
       expect(await response.text()).toContain(
-        'corner brief approval must name a human Room message',
+        'corner brief approval must name a human message or commander order',
       );
       expect(
         (await database.query(`SELECT 1 FROM corner_facts WHERE request_id=$1`, [requestId])).rows,

@@ -201,19 +201,6 @@ export type RoomViewActivity = {
 };
 
 export type RoomViewMessage = {
-  readonly relay?: {
-    readonly fromRoomId: string;
-    readonly toRoomId: string;
-    readonly direction: 'down' | 'up';
-    readonly fromName: string;
-    readonly cornerId: string;
-    readonly anchorMessageId?: string;
-    readonly received: boolean;
-    readonly reply?: 'once';
-    readonly askId?: string;
-    readonly answerMessageId?: string;
-    readonly unanswered?: boolean;
-  };
   readonly id: string;
   readonly text: string;
   readonly createdAt: number;
@@ -1086,7 +1073,7 @@ export type AgentYoloView = {
 export type InviteView = {
   readonly name: string;
   readonly avatar?: string;
-  /** Absolute Unix timestamp in seconds. */
+  /** Absolute Unix timestamp in seconds; zero for a permanent public link. */
   readonly expiresAt: number;
   /** Present when the authenticated viewer has already accepted this invite. */
   readonly joinedWorkspaceId?: string;

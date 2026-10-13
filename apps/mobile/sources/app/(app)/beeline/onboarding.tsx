@@ -356,8 +356,11 @@ export default function BuzzOnboarding() {
         // arrived: it must neither spend the one-use ticket a second time nor
         // race the press into the app past the ceremony it is about to publish.
         if (isSignInInFlight()) return;
+        const savedIdentityId = await monolithSession.identityId();
         const challenge =
-          (await resumeInitialGitHubSignIn(() => Promise.resolve(initialUrl))) ??
+          (await resumeInitialGitHubSignIn(() => Promise.resolve(initialUrl), undefined, {
+            signedIn: savedIdentityId !== null,
+          })) ??
           (await recoverPendingGitHubBindChallenge()) ??
           (await loadPendingGitHubBindChallenge());
         if (challenge) {
@@ -381,7 +384,7 @@ export default function BuzzOnboarding() {
           if (alive) await enterAfterMonolithSignIn(identityId);
           return;
         }
-        if (await monolithSession.identityId()) {
+        if (savedIdentityId) {
           if (alive) router.replace('/beeline/channels');
         }
         return;

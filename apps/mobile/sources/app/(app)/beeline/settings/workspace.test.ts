@@ -15,7 +15,7 @@ const avatarUpload = vi.hoisted(() => ({ pickAndUploadAvatar: vi.fn() }));
 const clipboard = vi.hoisted(() => ({ setStringAsync: vi.fn(async () => undefined) }));
 const modal = vi.hoisted(() => ({ actionSheet: vi.fn() }));
 const phoneOperation = vi.hoisted(() => vi.fn());
-const runtime = vi.hoisted(() => ({ monolithEnabled: true }));
+const runtime = vi.hoisted(() => ({ monolithEnabled: true, relayUrl: 'https://usebeeline.app' }));
 // The shared registry entries settings reads, keyed by endpoint.
 const hotSurfaces = vi.hoisted(() => ({
   values: new Map<string, unknown>(),
@@ -114,7 +114,7 @@ vi.mock('@/sync/transport/live-connection', () => ({
 }));
 vi.mock('@/buzz/avatar-upload', () => avatarUpload);
 vi.mock('@/buzz/runtime-config', () => ({
-  getBuzzRuntimeConfig: () => ({ monolithEnabled: runtime.monolithEnabled }),
+  getBuzzRuntimeConfig: () => runtime,
 }));
 vi.mock('expo-clipboard', () => clipboard);
 vi.mock('@/modal', () => ({ Modal: modal }));
@@ -576,10 +576,14 @@ describe('Workspace Settings authority', () => {
 
     const renderer = await render();
     const control = renderer.root.findByProps({ testID: 'room-visibility-private-room' });
-    expect(control.props.accessibilityLabel).toBe('Set #captains visibility to Open');
+    expect(control.props.accessibilityLabel).toBe('Show actions for Room #captains');
+    expect(control.props.value).toBe('Invite-only');
 
+    act(() => control.props.onPress());
+    const visibilityAction = renderer.root.findByProps({ testID: 'room-sheet-visibility' });
+    expect(visibilityAction.props.label).toBe('Make Public');
     await act(async () => {
-      control.props.onPress();
+      visibilityAction.props.onPress();
       await Promise.resolve();
       await Promise.resolve();
     });
@@ -587,8 +591,9 @@ describe('Workspace Settings authority', () => {
       roomId: 'private-room',
       visibility: 'public',
     });
+    expect(renderer.root.findByProps({ testID: 'room-sheet' }).props.visible).toBe(false);
     expect(renderer.root.findByProps({ testID: 'room-visibility-private-room' }).props.value).toBe(
-      'Open',
+      'Public',
     );
   });
 
@@ -597,8 +602,9 @@ describe('Workspace Settings authority', () => {
     roomViews.chats.mockResolvedValue(chatListView([room('room-1', 'atlas', 1)]));
     const renderer = await render();
 
+    act(() => renderer.root.findByProps({ testID: 'room-visibility-room-1' }).props.onPress());
     await act(async () => {
-      renderer.root.findByProps({ testID: 'room-visibility-room-1' }).props.onPress();
+      renderer.root.findByProps({ testID: 'room-sheet-visibility' }).props.onPress();
     });
 
     expect(phoneOperation).not.toHaveBeenCalled();
@@ -638,36 +644,142 @@ describe('Workspace Settings authority', () => {
     expect(visibleText.join(' ')).not.toContain('ID 22222222');
 
     act(() => renderer.root.findByProps({ testID: 'room-details-11111111-room' }).props.onPress());
-    expect(modal.actionSheet).toHaveBeenCalledWith('#beeline', expect.any(Array), {
-      cancelText: 'Cancel',
-    });
-    const actions = modal.actionSheet.mock.calls[0][1];
-    expect(actions[0]).toMatchObject({ text: 'Copy Room ID', metadata: '11111111-room' });
-    await act(async () => actions[0].onPress());
+    // Details opens the one Room sheet; there is no second Room sheet.
+    expect(modal.actionSheet).not.toHaveBeenCalled();
+    const sheet = renderer.root.findByProps({ testID: 'room-sheet' });
+    expect(sheet.props).toMatchObject({ visible: true, title: '#beeline' });
+    const copy = renderer.root.findByProps({ testID: 'room-sheet-copy-id' });
+    expect(copy.props).toMatchObject({ label: 'Copy Room ID', metadata: '11111111-room' });
+    await act(async () => copy.props.onPress());
     expect(clipboard.setStringAsync).toHaveBeenCalledWith('11111111-room');
   });
 
-  it('names the outcome of the 44pt Room visibility action', async () => {
+  // Reproduction R1: a row tap flipped visibility and offered no way to join.
+  it('opens the Room sheet on row tap without changing visibility (R1)', async () => {
     roomViews.chats.mockResolvedValue(chatListView([room('room-1', 'atlas', 1)]));
 
     const renderer = await render();
-    const visibilityControl = renderer.root.findAll(
+    const row = renderer.root.findAll(
       (node) => node.type === 'TouchableOpacity' && node.props.testID === 'room-visibility-room-1',
     )[0]!;
-    expect(visibilityControl.props).toMatchObject({
-      accessibilityLabel: 'Set #atlas visibility to Invite-only',
+    expect(row.props).toMatchObject({
+      accessibilityLabel: 'Show actions for Room #atlas',
       accessibilityRole: 'button',
     });
+    expect(renderer.root.findByProps({ testID: 'room-sheet' }).props.visible).toBe(false);
 
     await act(async () => {
-      visibilityControl.props.onPress();
+      row.props.onPress();
       await Promise.resolve();
     });
-    expect(phoneOperation).toHaveBeenCalledWith('updateRoom', {
-      roomId: 'room-1',
-      visibility: 'invite-only',
+    expect(phoneOperation).not.toHaveBeenCalled();
+    expect(navigation.push).not.toHaveBeenCalled();
+    expect(renderer.root.findByProps({ testID: 'room-sheet' }).props).toMatchObject({
+      visible: true,
+      title: '#atlas',
+      subtitle: 'Public · you are a member',
+    });
+  });
+
+  it('joins an unjoined invite-only Room with the viewer ID, then opens it', async () => {
+    roomViews.workspace.mockResolvedValue(
+      workspaceView('owner', undefined, [
+        { id: 'fantastik', name: 'fantastik', visibility: 'invite-only', createdAt: 3 },
+      ]),
+    );
+    roomViews.chats.mockResolvedValue(chatListView([]));
+    let finishJoin!: () => void;
+    phoneOperation.mockImplementation(
+      () => new Promise<void>((resolve) => (finishJoin = () => resolve(undefined))),
+    );
+
+    const renderer = await render();
+    const row = renderer.root.findByProps({ testID: 'room-visibility-fantastik' });
+    expect(row.props.description).toBe('Not joined');
+    expect(row.props.value).toBe('Invite-only');
+
+    act(() => row.props.onPress());
+    expect(renderer.root.findByProps({ testID: 'room-sheet' }).props.subtitle).toBe(
+      'Invite-only · you are not a member',
+    );
+    expect(renderer.root.findAllByProps({ testID: 'room-sheet-open' })).toHaveLength(0);
+    const sheetLabels = renderer.root
+      .findByProps({ testID: 'room-sheet' })
+      .findAllByType('HullActionSheetRow')
+      .map((node: any) => node.props.label);
+    expect(sheetLabels).toEqual(['Join room', 'Make Public', 'Copy Room ID']);
+
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'room-sheet-join' }).props.onPress();
+      await Promise.resolve();
+    });
+    expect(phoneOperation).toHaveBeenCalledWith('addRoomMember', {
+      roomId: 'fantastik',
+      memberId: 'a'.repeat(64),
+    });
+    // Pending: the action shows its working state and nothing navigates yet.
+    expect(renderer.root.findByProps({ testID: 'room-sheet-join' }).props).toMatchObject({
+      disabled: true,
+      label: 'Joining…',
     });
     expect(navigation.push).not.toHaveBeenCalled();
+
+    await act(async () => {
+      finishJoin();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(navigation.push).toHaveBeenCalledWith({
+      pathname: '/beeline/chat/[channelId]',
+      params: { channelId: 'fantastik', communityId: 'workspace-1' },
+    });
+    expect(renderer.root.findByProps({ testID: 'room-sheet' }).props.visible).toBe(false);
+    expect(phoneOperation).not.toHaveBeenCalledWith('updateRoom', expect.anything());
+  });
+
+  it('shows a failed join in the error panel', async () => {
+    roomViews.workspace.mockResolvedValue(
+      workspaceView('owner', undefined, [
+        { id: 'fantastik', name: 'fantastik', visibility: 'invite-only', createdAt: 3 },
+      ]),
+    );
+    roomViews.chats.mockResolvedValue(chatListView([]));
+    phoneOperation.mockRejectedValue(new Error('workspace manager required'));
+
+    const renderer = await render();
+    act(() => renderer.root.findByProps({ testID: 'room-visibility-fantastik' }).props.onPress());
+    await act(async () => {
+      renderer.root.findByProps({ testID: 'room-sheet-join' }).props.onPress();
+      await Promise.resolve();
+    });
+
+    expect(navigation.push).not.toHaveBeenCalled();
+    expect(renderer.root.findAllByType('Text').map((node) => node.children.join(''))).toContain(
+      'Could not join #fantastik: Error: workspace manager required',
+    );
+  });
+
+  it('offers Open room and no Join for a Room the viewer belongs to', async () => {
+    roomViews.chats.mockResolvedValue(chatListView([room('room-1', 'atlas', 1)]));
+
+    const renderer = await render();
+    const row = renderer.root.findByProps({ testID: 'room-visibility-room-1' });
+    expect(row.props.description).toBeUndefined();
+
+    act(() => row.props.onPress());
+    expect(renderer.root.findAllByProps({ testID: 'room-sheet-join' })).toHaveLength(0);
+    const sheetLabels = renderer.root
+      .findByProps({ testID: 'room-sheet' })
+      .findAllByType('HullActionSheetRow')
+      .map((node: any) => node.props.label);
+    expect(sheetLabels).toEqual(['Open room', 'Make Invite-only', 'Copy Room ID']);
+
+    act(() => renderer.root.findByProps({ testID: 'room-sheet-open' }).props.onPress());
+    expect(navigation.push).toHaveBeenCalledWith({
+      pathname: '/beeline/chat/[channelId]',
+      params: { channelId: 'room-1', communityId: 'workspace-1' },
+    });
+    expect(phoneOperation).not.toHaveBeenCalled();
   });
 
   it('renders Room rows with the # channel mark while stored names stay unmarked', async () => {
@@ -675,7 +787,7 @@ describe('Workspace Settings authority', () => {
 
     const renderer = await render();
     const openRow = renderer.root.findByProps({
-      accessibilityLabel: 'Set #atlas visibility to Invite-only',
+      accessibilityLabel: 'Show actions for Room #atlas',
     });
     // The title leads the row; the visibility value trails it on the one axis.
     const [rowTitle, rowValue] = openRow
@@ -683,7 +795,7 @@ describe('Workspace Settings authority', () => {
       .map((node: any) => node.props.children);
     // The display form carries exactly one mark...
     expect(rowTitle).toBe('#atlas');
-    expect(rowValue).toBe('Open');
+    expect(rowValue).toBe('Public');
     // ...and the duplicate-name qualifier still keys off the RAW name.
     expect(openRow.props.accessibilityLabel).toContain('#atlas');
   });
@@ -833,5 +945,43 @@ describe('Weight tier settings', () => {
     expect(renderer.root.findAllByType('Text').map((node) => node.children.join(''))).not.toContain(
       'Weight tiers',
     );
+  });
+});
+
+
+describe('public Workspace join links', () => {
+  it('lets an admin view, copy and rotate the permanent link', async () => {
+    const view = workspaceView('admin');
+    view.workspace.visibility = 'public';
+    roomViews.workspace.mockResolvedValue(view);
+    const token = `inv_${'d'.repeat(64)}`;
+    const nextToken = `inv_${'e'.repeat(64)}`;
+    phoneOperation.mockResolvedValueOnce({ token, expiresAt: 0 }).mockResolvedValueOnce({ token: nextToken, expiresAt: 0 });
+    const renderer = await render();
+    expect(phoneOperation).toHaveBeenCalledWith('createInvite', { workspaceId: 'workspace-1' });
+    const copy = renderer.root.findByProps({ testID: 'workspace-public-join-copy' });
+    expect(copy.props.description).toBe(`https://usebeeline.app/join/${token}`);
+    await act(async () => copy.props.onPress());
+    expect(clipboard.setStringAsync).toHaveBeenCalledWith(`https://usebeeline.app/join/${token}`);
+    await act(async () => renderer.root.findByProps({ testID: 'workspace-public-join-rotate' }).props.onPress());
+    const dialog = renderer.root.findAll((node: any) => node.props.title === 'Rotate public join link?' && node.props.actions)[0];
+    expect(phoneOperation).not.toHaveBeenCalledWith('createInvite', { workspaceId: 'workspace-1', rotate: true });
+    await act(async () => dialog.props.actions[1].onPress());
+    expect(phoneOperation).toHaveBeenCalledWith('createInvite', { workspaceId: 'workspace-1', rotate: true });
+    expect(renderer.root.findByProps({ testID: 'workspace-public-join-copy' }).props.description).toBe(`https://usebeeline.app/join/${nextToken}`);
+    await act(async () => renderer.unmount());
+  });
+  it('hides permanent links in private Workspaces and from regular members', async () => {
+    let renderer = await render();
+    expect(renderer.root.findAllByProps({ testID: 'workspace-public-join-setting' })).toHaveLength(0);
+    expect(phoneOperation).not.toHaveBeenCalled();
+    await act(async () => renderer.unmount());
+    const view = workspaceView('member');
+    view.workspace.visibility = 'public';
+    roomViews.workspace.mockResolvedValue(view);
+    renderer = await render();
+    expect(renderer.root.findAllByProps({ testID: 'workspace-public-join-setting' })).toHaveLength(0);
+    expect(phoneOperation).not.toHaveBeenCalled();
+    await act(async () => renderer.unmount());
   });
 });

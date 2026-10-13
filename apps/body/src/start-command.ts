@@ -1,17 +1,15 @@
+import { convergeMachine } from './recovery.js';
 import { basename, dirname } from 'node:path';
 import * as clack from '@clack/prompts';
 import pc from 'picocolors';
 import { formatAgentCommand } from './agent-command.js';
-import { ensureMachineHelper } from './helper-service.js';
 import {
   findAgentRuntimeConfigPaths,
   findRuntimeConfigPaths,
   readRuntimeRecord,
   runtimeAgentCommand,
-  runtimeDaemonPid,
   selectRuntimeConfigPaths,
   setAgentStopped,
-  startMachineHelper,
 } from './runtime.js';
 import { runUpdateCommand } from './self-update-cli.js';
 
@@ -30,19 +28,6 @@ export interface AgentStartReport {
   reason?: string;
 }
 
-export interface StartRuntimeDependencies {
-  readPid: typeof runtimeDaemonPid;
-  /** Start the machine helper, or have the running one pick this runtime up. */
-  launch: (configPath: string) => Promise<number>;
-  log: (message: string) => void;
-}
-
-const startDefaults: StartRuntimeDependencies = {
-  readPid: runtimeDaemonPid,
-  launch: async () => (await startMachineHelper()).pid,
-  log: console.log,
-};
-
 export interface StartCommandDependencies {
   updateBundle: () => Promise<void>;
   startOne: (
@@ -54,29 +39,6 @@ export interface StartCommandDependencies {
 
 function defaultUpdateBundle(): Promise<void> {
   return runUpdateCommand([]);
-}
-
-/**
- * Have the machine helper host one stored runtime when nothing serves it yet.
- * A runtime the helper already serves is a no-op.
- */
-export async function startStoredRuntime(
-  configPath: string,
-  opts: {
-    report?: (message: string) => void;
-  } = {},
-  dependencyOverrides: Partial<StartRuntimeDependencies> = {},
-): Promise<AgentStartOutcome> {
-  const deps = { ...startDefaults, ...dependencyOverrides };
-  const report = opts.report ?? deps.log;
-  const existingPid = await deps.readPid(configPath);
-  if (existingPid) {
-    report(`[beeline] agent already running (pid ${existingPid})`);
-    return { status: 'already-running', pid: existingPid };
-  }
-  const pid = await deps.launch(configPath);
-  report(`[beeline] agent started in the machine helper (pid ${pid})`);
-  return { status: 'started', pid };
 }
 
 export function agentStartId(configPath: string): string {
@@ -94,18 +56,9 @@ async function startRuntime(
   report(`[body] agent ${runtime.agent.publicKey} binary: ${formatAgentCommand(selectedAgent)}`);
   // `start` undoes `stop`: the helper hosts this agent again on its next scan.
   await setAgentStopped(configPath, false);
-  const existingPid = await runtimeDaemonPid(configPath);
-  if (existingPid) {
-    // Already served. The Squire elector and the machine helper unit are
-    // still converged here: a host on per-agent units migrates on this call.
-    await ensureMachineHelper({ report }).catch((error) =>
-      report(`[beeline] machine helper not converged: ${error instanceof Error ? error.message : String(error)}`));
-    report(`[beeline] agent already running (pid ${existingPid})`);
-    return { status: 'already-running', pid: existingPid };
-  }
-  const helper = await ensureMachineHelper({ report });
-  report(`[beeline] agent hosted by the machine helper, supervised by ${helper.supervisor} (pid ${helper.pid})`);
-  return { status: 'started', pid: helper.pid };
+  const status = await convergeMachine({ agentIds: [runtime.agent.publicKey] });
+  report(`[beeline] agent serving in machine helper (pid ${status.pid})`);
+  return { status: 'started', pid: status.pid };
 }
 
 function formatAgentReport(report: AgentStartReport): string {
@@ -136,12 +89,6 @@ export async function runStartCommand(
     .slice(1)
     .find((token) => !token.startsWith('--') && token !== flagPubkey);
   const requestedPubkey = flagPubkey ?? positionalPubkey;
-  try {
-    await deps.updateBundle();
-  } catch (error) {
-    const reason = error instanceof Error ? error.message : String(error);
-    deps.log(`[beeline] helper update failed (${reason}); starting agents on the current bundle`);
-  }
   const { paths: unique } = await selectRuntimeConfigPaths({
     cwd: process.cwd(),
     all: allFlag,
@@ -157,6 +104,8 @@ export async function runStartCommand(
     multipleRuntimeMessage:
       'multiple paired agents match that pubkey; pass the full agent pubkey shown by `beeline pair`',
   });
+  for (const path of unique) await setAgentStopped(path, false);
+  await deps.updateBundle();
   if (interactiveUi) clack.intro(pc.bold('beeline start'));
   const reports: AgentStartReport[] = [];
   for (const path of unique) {

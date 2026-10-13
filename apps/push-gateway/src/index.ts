@@ -8,7 +8,7 @@ import { PushGateway, RegisteredEventPoller } from './gateway.js';
 import { TokenRegistry } from './registry.js';
 import { RoomIndexer } from './room-indexer.js';
 import { createRegistrationServer } from './server.js';
-import { readDaemonReleaseFleetStatus } from '@beeline/body/release-status';
+import { readMachineStatus } from '@beeline/body/helper-status';
 
 async function main(): Promise<void> {
   const config = loadPushGatewayConfig();
@@ -51,7 +51,12 @@ async function main(): Promise<void> {
       releaseStatus: async () => ({
         version: process.env.BEELINE_RELEASE_VERSION,
         sourceSha: process.env.BEELINE_RELEASE_SHA,
-        daemons: await readDaemonReleaseFleetStatus(process.env),
+        daemons: Object.entries((await readMachineStatus(process.env))?.agents ?? {}).map(
+          ([agentPubkey, agent]) => ({
+            agentPubkey,
+            state: agent.state === 'serving' ? ('ready' as const) : ('missing' as const),
+          }),
+        ),
       }),
       otaReceiptAdminToken: config.otaReceiptAdminToken,
       indexer: {

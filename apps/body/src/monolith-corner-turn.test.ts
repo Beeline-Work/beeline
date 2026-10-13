@@ -40,7 +40,7 @@ import {
 const VOICE_RULE =
   'Keep facts exact regardless of voice. Use plain language in commits, pull requests, and code comments.';
 const TAGGING_RULE =
-  'Every exact @handle you write wakes that member. Write one only to hand off work, to ask for a decision or input, or, when nothing else announces it, to tell the person who asked that their task is done; otherwise name people and agents in plain prose.';
+  'Every exact @handle wakes that member. Copy handles only from the member list. For work, use order(address, text) down and report(text) up to your commander; do not tag a human to escalate. Reports begin done:, blocked:, needs-decision: or failed:. Agent coordination is private; human reports appear where they ordered you.';
 
 // Turn fixtures use scratch repositories. Branch synchronization has its own
 // real-git suite; these tests exercise the conversation and merge instructions.
@@ -174,66 +174,39 @@ describe('corner merge instructions', () => {
     expect(execute).toHaveBeenCalledTimes(3);
   });
 
-  it('selects the no-reviewer and reviewer matrix', () => {
-    // A reviewer's PASS wakes the author to merge with merge_corner, after it
-    // checks the discussion for an unanswered human question. With no
-    // reviewer, a Workspace owner or admin's yes merges it.
+  it('routes missing review capability up and reviewer PASS back to the implementer', () => {
     const none = cornerMergeInstruction();
-    expect(none).toContain('no configured reviewer');
-    expect(none).toContain("it merges only on a person's yes");
-    expect(none).toContain('order_corner_merge');
-    expect(none).not.toContain('gh pr merge');
+    expect(none).toContain('report blocked: to your commander');
     const reviewed = cornerMergeInstruction('echo');
     expect(reviewed).toContain('its PASS wakes you to merge');
-    expect(reviewed).toContain("if a human's question or proposal in the corner has no answer, name it and do not merge");
-    expect(reviewed).toContain('otherwise call merge_corner.');
-    expect(reviewed).toContain('You are also woken to fix failing checks, requested changes, or a refused merge');
-    expect(reviewed).not.toContain('gh pr merge');
-    expect(reviewed).not.toContain('please review');
-    expect(reviewed).not.toContain('@echo');
     expect(reviewed).toContain('the reviewer (echo)');
-    for (const instruction of [none, reviewed]) expect(instruction).not.toMatch(/yolo/i);
+    for (const instruction of [none, reviewed]) {
+      expect(instruction).toContain('Call merge_corner when the live gate allows it');
+      expect(instruction).toContain('Repair failing checks, requested changes or a refused merge');
+      expect(instruction).not.toContain('gh pr merge');
+      expect(instruction).not.toMatch(/yolo/i);
+    }
   });
 
   it('selects the reviewer role by the reviewer post alone', () => {
-    const reviewer = {
-      isReviewer: true,
-      authorHandle: 'bee',
-      pullRequestNumber: 42,
-      headSha: 'a'.repeat(40),
-      briefRevision: 2,
-    };
+    const reviewer = { isReviewer: true, authorHandle: 'bee', pullRequestNumber: 42,
+      headSha: 'a'.repeat(40), briefRevision: 2 };
     const instruction = cornerReviewerInstruction(reviewer)!;
-    expect(instruction).toContain(`Checks are green on PR #42 at ${'a'.repeat(40)}`);
-    expect(instruction).toContain(`call the approve_merge tool for ${'a'.repeat(40)}`);
-    expect(instruction).toContain('assigned brief revision 2');
-    expect(instruction).not.toContain('briefRevision=');
-    expect(instruction).toContain(
-      `reply \`approved ${'a'.repeat(40)}\` without tagging bee: your PASS wakes the author to merge`,
-    );
-    expect(instruction).toContain("A human's question or proposal in the corner discussion with no answer is a FAIL finding; name it.");
-    expect(instruction).not.toContain(`approved ${'a'.repeat(40)}, merge`);
-    expect(instruction).toContain('Never merge yourself or tell the author to merge');
+    expect(instruction).toContain(`Review PR 42 at ${reviewer.headSha} against brief revision 2`);
+    expect(instruction).toContain('call approve_merge with the reviewed head SHA as a tool argument');
+    expect(instruction).toContain('FAIL: order the worker');
+    expect(instruction).toContain('report done: PASS to your commander');
+    expect(instruction).toContain('PASS wakes the implementer to land');
+    expect(instruction).toContain('If your commander explicitly orders you to land');
     expect(instruction).not.toContain('gh pr merge');
-    expect(instruction).toContain('Never merge yourself');
-    expect(instruction).toContain('Never say you are holding or waiting for checks');
-    expect(instruction).not.toContain('pending checks');
-    expect(instruction).not.toContain('unknown checks');
     expect(cornerReviewerInstruction({ ...reviewer, isReviewer: false })).toBeUndefined();
   });
 
-  it('gives a reviewer that writes code a person as its reviewer', () => {
-    const instruction = CORNER_REVIEWER_AUTHOR_MERGE;
-    expect(instruction.startsWith("If you wrote this corner's code,")).toBe(true);
-    expect(instruction).toContain('no agent can review your own code');
-    expect(instruction).toContain('a person is your reviewer');
-    // No other agent can review it, so only a person's yes merges it.
-    expect(instruction).toContain(
-      'tag the person who assigned you this work, and ask them to approve the merge',
-    );
-    expect(instruction).toContain('Record their yes with order_corner_merge.');
-    expect(instruction).toContain('Never merge it any other way.');
-    expect(instruction).not.toContain('gh pr merge');
+  it('requires independent review when the configured reviewer writes code', () => {
+    expect(CORNER_REVIEWER_AUTHOR_MERGE).toContain("If you wrote this corner's code, arrange independent review through your commander");
+    expect(CORNER_REVIEWER_AUTHOR_MERGE).toContain('call merge_corner when the live gate allows it');
+    expect(CORNER_REVIEWER_AUTHOR_MERGE).toContain('report blocked: with any missing capability');
+    expect(CORNER_REVIEWER_AUTHOR_MERGE).not.toContain('gh pr merge');
   });
 
   it('nudges delivery for dirty work without disposing of it', async () => {
@@ -496,11 +469,11 @@ describe('corner merge instructions', () => {
         }
       ).activeReviewerInstruction();
     const firstInstruction = await activeInstruction();
-    expect(firstInstruction).toContain(`Checks are green on PR #7 at ${firstHead}`);
-    expect(firstInstruction).toContain(`call the approve_merge tool for ${firstHead}`);
+    expect(firstInstruction).toContain(`Review PR 7 at ${firstHead}`);
+    expect(firstInstruction).toContain('call approve_merge with the reviewed head SHA as a tool argument');
     const reviewSkill = join(root, 'agent-home', 'codex', 'skills', 'beeline-review', 'SKILL.md');
     expect(firstInstruction).toContain(reviewSkill);
-    expect(await readFile(reviewSkill, 'utf8')).toContain('Read the server-assigned brief');
+    expect(await readFile(reviewSkill, 'utf8')).toContain('Read the current server-assigned brief');
     await writeFile(join(root, 'reviewed.txt'), 'latest head\n');
     await execFileAsync('git', ['-C', root, 'add', 'reviewed.txt']);
     await execFileAsync('git', ['-C', root, 'commit', '-m', 'latest head']);
@@ -509,8 +482,8 @@ describe('corner merge instructions', () => {
     ).stdout.trim();
     lifecycleHead = latestHead;
     const refreshedInstruction = await activeInstruction();
-    expect(refreshedInstruction).toContain(`Checks are green on PR #7 at ${latestHead}`);
-    expect(refreshedInstruction).toContain(`call the approve_merge tool for ${latestHead}`);
+    expect(refreshedInstruction).toContain(`Review PR 7 at ${latestHead}`);
+    expect(refreshedInstruction).toContain('call approve_merge with the reviewed head SHA as a tool argument');
     expect(refreshedInstruction).not.toContain(firstHead);
     lifecycleHead = firstHead;
     expect(await activeInstruction()).toBe(CORNER_REVIEWER_UNSTABLE_HEAD_INSTRUCTION);
@@ -553,7 +526,7 @@ describe('corner merge instructions', () => {
     ).prompt('stable-review-turn', stableTrigger, [], undefined, [stableTrigger]);
     expect(sessionPrompt).toHaveBeenCalledTimes(stableRuns);
     expect(sessionPrompt.mock.calls[0]?.[1]).toContain(
-      `Checks are green on PR #7 at ${latestHead}`,
+      `Review PR 7 at ${latestHead}`,
     );
     expect(api.execute.mock.calls.filter(([name]) => name === 'postRoomMessage')[0]?.[1]).toEqual(
       expect.objectContaining({ text: `review pass ${stableRuns}` }),
@@ -574,10 +547,10 @@ describe('corner merge instructions', () => {
     ).prompt('review-turn', trigger, [], undefined, [trigger]);
     expect(sessionPrompt).toHaveBeenCalledTimes(stableRuns + 2);
     expect(sessionPrompt.mock.calls[stableRuns]?.[1]).toContain(
-      `Checks are green on PR #7 at ${latestHead}`,
+      `Review PR 7 at ${latestHead}`,
     );
     expect(sessionPrompt.mock.calls[stableRuns + 1]?.[1]).toContain(
-      `Checks are green on PR #7 at ${newestHead}`,
+      `Review PR 7 at ${newestHead}`,
     );
     expect(sessionPrompt.mock.calls[stableRuns + 1]?.[1]).not.toContain(latestHead);
     const durableReplies = api.execute.mock.calls.filter(([name]) => name === 'postRoomMessage');
@@ -693,14 +666,14 @@ describe('Reproduction reviewer-opener-2224: a Room reviewer that opened its cor
 
     const session = sessionNew.mock.calls[0]?.[0]?.systemPrompt ?? '';
     expect(session).toContain(CORNER_REVIEWER_SESSION_INSTRUCTION);
-    expect(prompts[0]).toContain(`Checks are green on PR #7 at ${head}`);
+    expect(prompts[0]).toContain(`Review PR 7 at ${head}`);
     for (const text of prompts) {
       expect(text).not.toContain('push a fix');
       expect(text).not.toContain('fix the failure and push');
       expect(text).not.toContain(CORNER_DELIVERY_NUDGE);
     }
     // No verdict on the first pass: the one bounded second pass is the reviewer target again.
-    expect(prompts[1]).toContain(`Checks are green on PR #7 at ${head}`);
+    expect(prompts[1]).toContain(`Review PR 7 at ${head}`);
 
     // A chat message to the reviewer (here the implementer's tag) still names
     // the green head, so the reviewer can PASS it; only a green wake gets the
@@ -709,8 +682,8 @@ describe('Reproduction reviewer-opener-2224: a Room reviewer that opened its cor
     await writeFile(join(root, 'unfinished-work.txt'), 'the implementer is still writing\n');
     prompts.length = 0;
     await turn('implementer-tag', '@ruby the replay recipe is attached; please look again');
-    expect(prompts[0]).toContain(`Checks are green on PR #7 at ${head}`);
-    expect(prompts[0]).toContain(`call the approve_merge tool for ${head}`);
+    expect(prompts[0]).toContain(`Review PR 7 at ${head}`);
+    expect(prompts[0]).toContain('call approve_merge with the reviewed head SHA as a tool argument');
     expect(prompts).toHaveLength(1);
     for (const text of prompts) expect(text).not.toContain(CORNER_DELIVERY_NUDGE);
     await (loop as unknown as { discardSession(): Promise<void> }).discardSession();
@@ -1013,7 +986,7 @@ describe('corner close-request delivery', () => {
       const delivered = sessionNew.mock.calls[0]?.[0].systemPrompt + '\n' + sessionPrompt.mock.calls[0]?.[1];
       for (const instruction of ['corner:prepare', '## Reproduced', '## Demonstrated', 'Use its file manifest', 'Once the pull request exists', 'pr_checks_status']) expect(delivered).not.toContain(instruction);
       expect(delivered).toContain('post_artifact');
-      expect(delivered).toContain('The human approval quote wins any conflict');
+      expect(delivered).toContain("The commander's order quote and inherited human constraints win any conflict");
       expect(delivered).toContain('How is the desk doing?');
       console.log('Reproduction runtime-brief-5 demonstrated: runtime corner delivered brief authority and chat, no coding routine, and no dirty-work delivery nudge');
     }
@@ -1699,10 +1672,11 @@ describe('corner close-request delivery', () => {
       await writeFile(join(operatorHome, '.android/avd/test.ini'), 'path=/operator/test.avd\n');
       await writeFile(join(operatorHome, '.android/avd/test.avd/config.ini'), 'image.sysdir.1=system-images/android-36/\n');
     }
-    const pinningFailure = shape.endsWith('-fallback')
-      ? vi.spyOn(workspaceAssets, 'prepareWorkspaceAdapter').mockRejectedValueOnce(
-          shape === 'capacity-fallback' ? new SharedAssetCapacityError() : new Error('npm registry timed out'))
-      : undefined;
+    const pinningFailure = shape.endsWith('-fallback');
+    const prepare = vi.spyOn(workspaceAssets, 'prepareWorkspaceAdapter');
+    if (pinningFailure) prepare.mockRejectedValueOnce(
+      shape === 'capacity-fallback' ? new SharedAssetCapacityError() : new Error('npm registry timed out'));
+    else prepare.mockResolvedValueOnce(undefined); // This mount fixture must not install from the host's npm registry.
     try {
       await internal.activate();
       expect(fixture.clientOptions()).toBeDefined();
@@ -1717,7 +1691,7 @@ describe('corner close-request delivery', () => {
         expect(selected.agentEnv?.BEELINE_ANDROID_BASE_AVD_HOME).not.toContain('/sdk/');
       }
       if (pinningFailure) {
-        expect(pinningFailure).toHaveBeenCalledOnce();
+        expect(prepare).toHaveBeenCalledOnce();
         expect(selected.agentEnv?.npm_config_cache ?? '').toContain('/workspaces/');
         const args = selected.agentArgs!;
         expect(args[args.lastIndexOf('--') + 1]).toBe('codex-acp');
@@ -1744,7 +1718,7 @@ describe('corner close-request delivery', () => {
         expect(child.status, child.stderr).toBe(0);
       }
     } finally {
-      pinningFailure?.mockRestore();
+      prepare.mockRestore();
       fixture.abort.abort();
       await fixture.scheduler.dispose();
     }
@@ -3462,7 +3436,7 @@ describe('thin monolith corner turn', () => {
           }),
           expect.objectContaining({ name: 'beeline-agent' }),
         ]),
-        systemPrompt: expect.stringContaining("it merges only on a person's yes"),
+        systemPrompt: expect.stringContaining("report blocked: to your commander"),
       }),
     );
     expect(sessionNew).toHaveBeenCalledWith(

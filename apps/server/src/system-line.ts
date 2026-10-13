@@ -1,4 +1,4 @@
-import { createAgentCommand, routeSystemCommand } from './agent-command.js';
+import { createAgentCommand, type CommandRow, routeSystemCommand } from './agent-command.js';
 import { createHash, randomBytes } from 'node:crypto';
 import {
   MAX_EVENT_DEPTH,
@@ -468,7 +468,7 @@ export async function systemLine(
     db: SqlDatabase,
     cascade: Cascade | undefined,
     notBefore: Date | null,
-    watches: { watcher_room_id: string; agent_id: string }[],
+    watches: { watcher_room_id: string; agent_id: string; incoming_command: CommandRow | null }[],
   ) => {
     const result = await db.query(
       `INSERT INTO messages(
@@ -499,12 +499,15 @@ export async function systemLine(
       ],
     );
     if (result.rowCount) {
+      const watched = watches.length ? (await db.query<{ name: string; merge_sha: string | null }>(`SELECT room.name,fact.lifecycle->'pr'->>'mergeCommitSha' merge_sha FROM rooms room LEFT JOIN corner_facts fact ON fact.corner_id=room.id WHERE room.id=$1`, [input.card?.cornerId ?? input.roomId])).rows[0] : undefined;
       for (const watch of watches)
         await createAgentCommand(db, {
           roomId: watch.watcher_room_id,
           agentId: watch.agent_id,
           sourceMessageId: id,
+          privatePayload: { text: `Watched corner ${watched?.name ?? input.subject.name} (${input.card?.cornerId ?? input.roomId}): ${input.kind === 'corner-opened' ? 'opened' : input.kind === 'corner-closed' ? 'closed' : input.kind}${input.kind === 'merged' && watched?.merge_sha ? ` · merge commit ${watched?.merge_sha}` : ''}\n${text}`, authorId, fromRoomId: String(input.card?.cornerId ?? input.roomId), kind: 'lifecycle' },
           reason: 'watched_corner',
+          parent: watch.incoming_command ?? undefined, retainDepth: true,
           action: 'input',
         });
       await routeSystemCommand(db, {
@@ -549,24 +552,20 @@ export async function systemLine(
   };
   return database.transaction(async (tx) => {
     const watches =
-      input.kind && ['merged', 'check-passed', 'check-failed'].includes(input.kind)
+      input.kind && ['corner-opened', 'merged', 'corner-closed'].includes(input.kind)
         ? (
-            await tx.query<{ watcher_room_id: string; agent_id: string }>(
-              `SELECT w.watcher_room_id,w.agent_id FROM corner_watches w
+            await tx.query<{ watcher_room_id: string; agent_id: string; incoming_command: CommandRow | null }>(
+              `SELECT w.watcher_room_id,w.agent_id,to_jsonb(incoming) incoming_command FROM corner_watches w
+           LEFT JOIN agent_commands incoming ON incoming.id=w.incoming_command_id
            JOIN rooms corner ON corner.id=w.corner_id AND corner.parent_id IS NOT NULL
            JOIN rooms watcher ON watcher.id=w.watcher_room_id AND watcher.archived_at IS NULL
            JOIN memberships m ON m.room_id=w.watcher_room_id AND m.identity_id=w.agent_id
              AND m.removed_at IS NULL
            WHERE w.corner_id=$1 AND w.kinds @> $2::jsonb
-             -- The parent Room gets its own merge card; a member subscribed to
-             -- merged there is woken by that card, so the watch stays quiet.
-             AND NOT ($2::jsonb='["merged"]'::jsonb AND w.watcher_room_id=corner.parent_id
-               AND (m.event_subscriptions @> $2::jsonb OR EXISTS (
-                 SELECT 1 FROM agent_subscriptions subscription
-                 WHERE subscription.room_id=m.room_id AND subscription.agent_id=m.identity_id
-                   AND subscription.source='room' AND subscription.event='merged')))
+             AND EXISTS(SELECT 1 FROM memberships target WHERE target.room_id IN (corner.id,corner.parent_id)
+               AND target.identity_id=w.agent_id AND target.removed_at IS NULL)
            FOR SHARE OF w,m,watcher`,
-              [input.roomId, JSON.stringify([input.kind])],
+              [input.kind === 'corner-opened' ? input.card?.cornerId ?? input.roomId : input.roomId, JSON.stringify([input.kind === 'corner-opened' ? 'opened' : input.kind === 'corner-closed' ? 'closed' : input.kind])],
             )
           ).rows
         : [];
@@ -585,16 +584,15 @@ export async function systemLine(
 }
 
 /**
- * `watch_corner` on a corner that already merged: queue one `watched_corner`
- * wake on the corner's merge line in the watcher's Room. An agent that already
- * had a wake for that merge — the line itself, or the parent Room's merge card
- * through a `merged` subscription — gets none. Returns whether a wake was queued.
+ * `watch` on an already merged corner queues one private lifecycle wake.
+ * An agent that already received this merge gets none, including legacy wakes.
  */
 export async function wakeLateCornerWatcher(
   db: SqlDatabase,
   watcherRoomId: string,
   agentId: string,
   cornerId: string,
+  incoming?: CommandRow,
 ): Promise<boolean> {
   const line = (
     await db.query<{ id: string }>(
@@ -617,7 +615,9 @@ export async function wakeLateCornerWatcher(
       roomId: watcherRoomId,
       agentId,
       sourceMessageId: line.id,
+      privatePayload: { text: `Watched address ${cornerId}: merged`, authorId: agentId, fromRoomId: cornerId, kind: 'lifecycle' },
       reason: 'watched_corner',
+      parent: incoming, retainDepth: true,
       action: 'input',
     }),
   );

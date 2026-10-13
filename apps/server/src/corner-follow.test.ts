@@ -104,13 +104,12 @@ describe('Mine corners use the push Followed rule', () => {
     expect(await mine()).toEqual({ list: true, page: true });
   });
 
-  it('includes a corner the person steered from its Room', async () => {
+  it('includes a corner the person ordered from its Room', async () => {
     const ask = await post('@bee tell the corner to use Postgres', PERSON, ROOM);
-    const relay = await post('Use Postgres', AGENT);
     await database.query(
       `INSERT INTO agent_commands(id,room_id,agent_id,source_message_id,turn_request_id,action,reason,root_command_id,root_source_message_id,agent_depth)
-       VALUES('steer',$1,$2,$3,'turn','input','relay_steer','root',$4,1)`,
-      [CORNER, AGENT, relay, ask],
+       VALUES('order',$1,$2,NULL,'turn','input','order','root',$3,1)`,
+      [CORNER, AGENT, ask],
     );
     expect(await mine()).toEqual({ list: true, page: true });
   });

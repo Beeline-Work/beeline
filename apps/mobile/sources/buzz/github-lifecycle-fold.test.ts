@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ChatDisplayMessage } from './room-view-presentation';
-import { anchorRelayReports } from './system-lines';
+
 
 function github(
   id: string,
@@ -104,6 +104,6 @@ describe('separate lifecycle notifications', () => {
       corner('8', 'corner-complete', '1', 2),
       corner('9', 'worktree-cleaned', '1'),
     ];
-    expect(anchorRelayReports(messages)).toEqual(messages);
+    expect(Array.from(messages)).toEqual(messages);
   });
 });

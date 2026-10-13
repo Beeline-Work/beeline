@@ -651,6 +651,19 @@ describe('GitHub auth session redirects', () => {
     ).resolves.toBeNull();
   });
 
+  it('ignores a completed launch callback retained across OTA reload when the device is signed in', async () => {
+    await persistGitHubSignInState(STATE);
+    await resumeInitialGitHubSignIn(async () => bindCallback());
+    await clearPendingGitHubSignInState();
+    await expect(resumeInitialGitHubSignIn(async () => bindCallback(), undefined, { signedIn: true })).resolves.toBeNull();
+  });
+
+  it('keeps state validation for a new pending flow even on a signed-in device', async () => {
+    await persistGitHubSignInState(STATE);
+    await expect(resumeInitialGitHubSignIn(async () => bindCallback(OTHER_STATE), undefined, { signedIn: true }))
+      .rejects.toMatchObject({ code: 'state_mismatch' });
+  });
+
   it('rejects a cold callback whose state does not match without consuming the real state', async () => {
     await persistGitHubSignInState(STATE);
 

@@ -3,6 +3,8 @@ import { monolithSecureStorage, type MonolithSecureStorage } from '@/auth/monoli
 import { isDesktopShell } from '@/utils/isDesktopShell';
 import { webRuntimeStorage } from '@/utils/web-storage';
 import { resetClientState } from '@/sync/client-reset';
+import { sha256 } from '@noble/hashes/sha2.js';
+import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 
 const REFRESH_KEY = 'buzzy.monolith.refresh.v1';
 const IDENTITY_KEY = 'buzzy.monolith.identity.v1';
@@ -93,6 +95,13 @@ export class MonolithRefreshError extends Error {
   }
 }
 
+export class MonolithSessionChangedError extends Error {
+  constructor() {
+    super('The signed-in session changed while credentials were being renewed.');
+    this.name = 'MonolithSessionChangedError';
+  }
+}
+
 export class GitHubAccountMismatchError extends Error {
   constructor() {
     super('Reconnect the GitHub account already linked to this identity.');
@@ -107,6 +116,8 @@ export class MonolithSession {
   private accessRestoreInFlight?: Promise<void>;
   private accessRestoreAttempted = false;
   private credentialRevision = 0;
+  private sessionRevision = 0;
+  private credentialMutation: Promise<void> = Promise.resolve();
   /** Each origin with when a request on it last went unanswered (0: never). */
   private readonly origins: { readonly origin: string; stalledAt: number }[];
   private currentOrigin = 0;
@@ -153,6 +164,7 @@ export class MonolithSession {
   }
 
   async exchangeGitHubTicket(ticket: string): Promise<string> {
+    const revision = this.credentialRevision;
     const response = await this.fetchImpl(`${this.baseUrl}/v1/auth/github/exchange`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -160,7 +172,7 @@ export class MonolithSession {
     });
     if (!response.ok) throw new MonolithSessionRequiredError();
     const tokens = (await response.json()) as MonolithTokens;
-    await this.accept(tokens, true);
+    await this.accept(tokens, true, revision);
     return tokens.identityId;
   }
 
@@ -184,6 +196,7 @@ export class MonolithSession {
    * which surfaces here as the ordinary "sign in" requirement.
    */
   async exchangeReviewSecret(secret: string): Promise<string> {
+    const revision = this.credentialRevision;
     const response = await this.fetchImpl(`${this.baseUrl}/v1/auth/review/exchange`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -191,8 +204,31 @@ export class MonolithSession {
     });
     if (!response.ok) throw new MonolithSessionRequiredError();
     const tokens = (await response.json()) as MonolithTokens;
-    await this.accept(tokens, true);
+    await this.accept(tokens, true, revision);
+    const acceptedRevision = this.credentialRevision;
+    await this.mutateCredentials(async () => {
+      if (acceptedRevision !== this.credentialRevision) throw new MonolithSessionChangedError();
+      await (await this.secureStorage()).setItemAsync(ACCESS_KEY, JSON.stringify({
+        token: tokens.accessToken, expiresAt: tokens.accessExpiresAt, identityId: tokens.identityId,
+        reviewSecretHash: bytesToHex(sha256(utf8ToBytes(secret))),
+      }));
+      if (acceptedRevision !== this.credentialRevision) throw new MonolithSessionChangedError();
+    });
     return tokens.identityId;
+  }
+
+  /** An already redeemed launch link must not replace the session on an OTA reload. */
+  async reviewIdentityForSecret(secret: string): Promise<string | null> {
+    const storage = await this.secureStorage();
+    const raw = await storage.getItemAsync(ACCESS_KEY);
+    if (!raw) return null;
+    try {
+      const saved = JSON.parse(raw) as { reviewSecretHash?: unknown; identityId?: unknown };
+      const identityId = await this.identityId();
+      return identityId && saved.identityId === identityId &&
+        saved.reviewSecretHash === bytesToHex(sha256(utf8ToBytes(secret))) &&
+        await storage.getItemAsync(REFRESH_KEY) ? identityId : null;
+    } catch { return null; }
   }
 
   async identityId(): Promise<string | null> {
@@ -223,8 +259,10 @@ export class MonolithSession {
    */
   watchOtherTabs(target: Pick<Window, 'addEventListener'>, storage: Storage): void {
     target.addEventListener('storage', (event) => {
-      if (event.storageArea !== storage || (event.key !== null && event.key !== IDENTITY_KEY)) return;
+      if (event.storageArea !== storage ||
+        (event.key !== null && event.key !== IDENTITY_KEY && event.key !== REFRESH_KEY)) return;
       this.credentialRevision += 1;
+      this.sessionRevision += 1;
       this.access = undefined;
       this.refreshToken = undefined;
       this.accessRestoreAttempted = false;
@@ -235,16 +273,58 @@ export class MonolithSession {
 
   async clear(): Promise<void> {
     this.credentialRevision += 1;
+    this.sessionRevision += 1;
     this.access = undefined;
     this.refreshToken = undefined;
     this.accessRestoreAttempted = true;
-    const storage = await this.secureStorage();
-    await Promise.all([
-      storage.deleteItemAsync(REFRESH_KEY),
-      storage.deleteItemAsync(IDENTITY_KEY),
-      storage.deleteItemAsync(ACCESS_KEY),
-    ]);
+    await this.mutateCredentials(async () => {
+      const storage = await this.secureStorage();
+      await Promise.all([
+        storage.deleteItemAsync(REFRESH_KEY),
+        storage.deleteItemAsync(IDENTITY_KEY),
+        storage.deleteItemAsync(ACCESS_KEY),
+      ]);
+    });
     this.identityChanged();
+  }
+
+  async signOut(): Promise<void> {
+    const credential = this.refreshToken ?? await (await this.secureStorage()).getItemAsync(REFRESH_KEY);
+    await this.clear();
+    if (!credential) return;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 2_000);
+    try {
+      await untilAborted(this.fetchImpl(`${this.origins[this.currentOrigin]!.origin}/v1/auth/logout`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ refreshToken: credential }), signal: controller.signal,
+      }), controller.signal);
+    } catch {
+      // Signing out also works offline: the device has already erased its credential.
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private mutateCredentials(operation: () => Promise<void>): Promise<void> {
+    const result = this.credentialMutation.then(operation, operation);
+    this.credentialMutation = result.catch(() => undefined);
+    return result;
+  }
+
+  private assertSharedRefresh(credential: string): void {
+    const shared = isDesktopShell() ? undefined : webRuntimeStorage()?.storage;
+    if (!shared || shared.getItem(REFRESH_KEY) === credential) return;
+    // A storage event can arrive after the HTTP reply. Check the origin's
+    // current credential before clearing or writing, so a delayed old tab
+    // cannot erase a newer sign-in, including one for the same identity.
+    this.credentialRevision += 1;
+    this.access = undefined;
+    this.refreshToken = undefined;
+    this.accessRestoreAttempted = false;
+    this.accessRestoreInFlight = undefined;
+    this.identityChanged();
+    throw new MonolithSessionChangedError();
   }
 
   async authorization(): Promise<string> {
@@ -300,8 +380,10 @@ export class MonolithSession {
     init: RequestInit = {},
     options: { timeoutMs?: number; idempotent?: boolean } = {},
   ): Promise<Response> {
+    const sessionRevision = this.sessionRevision;
     let response = await this.dispatch(input, init, options);
     if (response.status !== 401) return response;
+    if (sessionRevision !== this.sessionRevision) throw new MonolithSessionChangedError();
     this.access = undefined;
     this.accessRestoreAttempted = true;
     response = await this.dispatch(input, init, options);
@@ -451,6 +533,7 @@ export class MonolithSession {
   }
 
   private async performRefresh(): Promise<string> {
+    const revision = this.credentialRevision;
     const refreshToken =
       this.refreshToken ?? (await (await this.secureStorage()).getItemAsync(REFRESH_KEY));
     if (!refreshToken) throw new MonolithSessionRequiredError();
@@ -464,15 +547,25 @@ export class MonolithSession {
     let response: Response;
     const origin = this.currentOrigin;
     try {
-      response = await this.fetchImpl(`${this.origins[origin]!.origin}/v1/auth/refresh`, {
+      response = await untilAborted(this.fetchImpl(`${this.origins[origin]!.origin}/v1/auth/refresh`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ refreshToken }),
         signal: controller.signal,
-      });
+      }), controller.signal);
+      if (revision !== this.credentialRevision) throw new MonolithSessionChangedError();
+      this.assertSharedRefresh(refreshToken);
+      if (response.status === 401) {
+        await this.clear();
+        throw new MonolithSessionRequiredError();
+      }
+      if (!response.ok) throw new MonolithRefreshError(response.status);
+      const tokens = await untilAborted(response.json() as Promise<MonolithTokens>, controller.signal);
+      await this.accept(tokens, false, revision, refreshToken);
+      return tokens.accessToken;
     } catch (error) {
       if (timedOut) {
-        // Never repeated: a refresh rotates its token. The next one goes elsewhere.
+        // The next renewal uses a fresh connection and the same durable credential.
         this.markStalled(origin);
         throw new MonolithRequestTimeoutError();
       }
@@ -480,40 +573,50 @@ export class MonolithSession {
     } finally {
       clearTimeout(timer);
     }
-    if (response.status === 401) {
-      await this.clear();
-      throw new MonolithSessionRequiredError();
-    }
-    if (!response.ok) throw new MonolithRefreshError(response.status);
-    const tokens = (await response.json()) as MonolithTokens;
-    await this.accept(tokens);
-    return tokens.accessToken;
   }
 
-  private async accept(tokens: MonolithTokens, signedIn = false): Promise<void> {
+  private async accept(tokens: MonolithTokens, signedIn = false, expectedRevision = this.credentialRevision, previousRefresh?: string): Promise<void> {
     if (!tokens.accessToken || !tokens.refreshToken || !tokens.identityId)
       throw new Error('Invalid monolith session response');
-    this.credentialRevision += 1;
-    const storage = await this.secureStorage();
-    const previousId = this.access?.identityId ?? (await storage.getItemAsync(IDENTITY_KEY));
-    await Promise.all([
-      storage.setItemAsync(REFRESH_KEY, tokens.refreshToken),
-      storage.setItemAsync(IDENTITY_KEY, tokens.identityId),
-      storage.setItemAsync(ACCESS_KEY, JSON.stringify({
+    if (expectedRevision !== this.credentialRevision) throw new MonolithSessionChangedError();
+    if (previousRefresh) this.assertSharedRefresh(previousRefresh);
+    const revision = ++this.credentialRevision;
+    await this.mutateCredentials(async () => {
+      if (revision !== this.credentialRevision) throw new MonolithSessionChangedError();
+      const storage = await this.secureStorage();
+      const previousId = this.access?.identityId ?? (await storage.getItemAsync(IDENTITY_KEY));
+      if (signedIn || previousId !== tokens.identityId) this.sessionRevision += 1;
+      let reviewSecretHash: string | undefined;
+      if (!signedIn && previousId === tokens.identityId) {
+        try {
+          const saved = JSON.parse(await storage.getItemAsync(ACCESS_KEY) ?? 'null') as { reviewSecretHash?: unknown } | null;
+          if (typeof saved?.reviewSecretHash === 'string') reviewSecretHash = saved.reviewSecretHash;
+        } catch {
+          // An older or partial access record has no review-link metadata.
+        }
+      }
+      if (previousRefresh) this.assertSharedRefresh(previousRefresh);
+      await Promise.all([
+        storage.setItemAsync(REFRESH_KEY, tokens.refreshToken),
+        storage.setItemAsync(IDENTITY_KEY, tokens.identityId),
+        storage.setItemAsync(ACCESS_KEY, JSON.stringify({
+          token: tokens.accessToken,
+          expiresAt: tokens.accessExpiresAt,
+          identityId: tokens.identityId,
+          ...(reviewSecretHash ? { reviewSecretHash } : {}),
+        })),
+      ]);
+      if (revision !== this.credentialRevision) throw new MonolithSessionChangedError();
+      this.refreshToken = tokens.refreshToken;
+      this.access = {
         token: tokens.accessToken,
         expiresAt: tokens.accessExpiresAt,
         identityId: tokens.identityId,
-      })),
-    ]);
-    this.refreshToken = tokens.refreshToken;
-    this.access = {
-      token: tokens.accessToken,
-      expiresAt: tokens.accessExpiresAt,
-      identityId: tokens.identityId,
-    };
-    // A new sign-in may repair an expired session for the same identity.
-    // Token refresh alone must not start another registration/refresh loop.
-    if (signedIn || previousId !== tokens.identityId) this.identityChanged();
+      };
+      // A new sign-in may repair an expired session for the same identity.
+      // Token refresh alone must not start another registration/refresh loop.
+      if (signedIn || previousId !== tokens.identityId) this.identityChanged();
+    });
   }
 }
 

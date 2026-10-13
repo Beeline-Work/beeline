@@ -16,7 +16,14 @@ import type {
 } from '@beeline/buzz-client';
 import { TokenRegistry } from './registry.js';
 import type { TestSendReport } from './gateway.js';
-import type { DaemonReleaseFleetEntry } from '@beeline/body/release-status';
+interface DaemonReleaseFleetEntry {
+  agentPubkey: string;
+  state: 'ready' | 'missing' | 'stale' | 'invalid';
+  releaseVersion?: string;
+  sourceSha?: string;
+  pid?: number;
+  readyAt?: string;
+}
 
 const MAX_BODY_BYTES = 32 * 1024;
 const NON_PRODUCTION_ENVIRONMENTS = new Set(['test', 'emulator', 'simulator']);

@@ -14,6 +14,9 @@ export async function mergeBeelineBundles({ outputDir, inputDirs }) {
     inputs.push({ directory, ...(await validateBundleDirectory(directory)) });
   }
   const identity = inputs[0].manifest;
+  for (const input of inputs)
+    if (JSON.stringify(input.manifest.recovery) !== JSON.stringify(identity.recovery))
+      throw new Error(`helper recovery bootstrap differs in ${input.directory}`);
   const bundles = {};
   await mkdir(outputDir, { recursive: true });
   for (const input of inputs) {
@@ -34,6 +37,12 @@ export async function mergeBeelineBundles({ outputDir, inputDirs }) {
     }
   }
   const manifest = { ...identity, bundles };
+  if (identity.recovery)
+    for (const name of [identity.recovery.file, `${identity.recovery.file}.sha256`]) {
+      const source = join(inputs[0].directory, name);
+      const destination = join(outputDir, name);
+      if (source !== destination) await copyFile(source, destination);
+    }
   await writeFile(join(outputDir, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
   await validateBundleDirectory(outputDir, {
     expectedSha: identity.sourceCommit,

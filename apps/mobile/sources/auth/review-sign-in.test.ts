@@ -85,6 +85,19 @@ describe('redeeming a review link on a device', () => {
     expect(secure.get('buzzy.monolith.identity.v1')).toBe(REVIEW_IDENTITY);
   });
 
+  it('keeps the same device session when Android repeats its accepted review launch URL after OTA', async () => {
+    const fetcher = vi.fn(async () => new Response(JSON.stringify(reviewTokens())));
+    const first = new MonolithSession('https://server.example', fetcher as typeof fetch);
+    await signInWithReviewSecret(SECRET, first);
+    const cold = new MonolithSession('https://server.example', fetcher as typeof fetch);
+    await expect(signInWithReviewSecret(SECRET, cold)).resolves.toBe(REVIEW_IDENTITY);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(secure.get('buzzy.monolith.refresh.v1')).toBe('refresh-review');
+    await cold.clear();
+    await signInWithReviewSecret(SECRET, cold);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  });
+
   it('leaves the device signed out when the server refuses the secret', async () => {
     secure.set('buzzy.monolith.refresh.v1', 'somebody-elses-refresh');
     secure.set('buzzy.monolith.identity.v1', 'e'.repeat(64));
@@ -95,5 +108,20 @@ describe('redeeming a review link on a device', () => {
     await expect(signInWithReviewSecret(SECRET, session)).rejects.toThrow();
     expect(secure.has('buzzy.monolith.refresh.v1')).toBe(false);
     expect(secure.has('buzzy.monolith.identity.v1')).toBe(false);
+  });
+
+  it('retains accepted-review metadata across renewal without storing the raw review secret', async () => {
+    let renewed = false;
+    const fetcher = vi.fn(async () => new Response(JSON.stringify({
+      ...reviewTokens(), accessExpiresAt: Date.now() + (renewed ? 60_000 : 1),
+    })));
+    const first = new MonolithSession('https://server.example', fetcher as typeof fetch);
+    await signInWithReviewSecret(SECRET, first);
+    renewed = true;
+    await first.authorization();
+    const cold = new MonolithSession('https://server.example', fetcher as typeof fetch);
+    await expect(signInWithReviewSecret(SECRET, cold)).resolves.toBe(REVIEW_IDENTITY);
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(secure.get('buzzy.monolith.access.v1')).not.toContain(SECRET);
   });
 });

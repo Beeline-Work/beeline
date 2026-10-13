@@ -40,6 +40,7 @@ beforeAll(async () => {
     `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
     [WS, A, W],
   );
+  await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [WS, B, W]);
   daemon = new DaemonService(db, new LiveHub());
 }, 30_000);
 afterAll(async () => db?.close());
@@ -70,7 +71,7 @@ const emit = (kind: CornerWatchKind = 'merged') =>
 const wakes = () => readAgentCommands(db, A, W).then((r) => r.commands);
 
 it('Reproduction O-2: a watcher receives a named sibling merge in A', async () => {
-  await daemon.execute('setEventSubscriptions', { roomId: A, kinds: ['merged'] }, W);
+
   await watch();
   // Production archives the watched corner before writing its merge line.
   await db.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`, [B]);
@@ -82,12 +83,13 @@ it('Reproduction O-2: a watcher receives a named sibling merge in A', async () =
     roomId: A,
     reason: 'watched_corner',
     action: 'input',
-    sourceMessageId: 'event-merged',
+    private: true,
   });
+  expect(commands[0]!.sourceMessageId).toBe(commands[0]!.id);
   expect(commands[0]!.source.body).toContain(`Watched corner B (${B}): merged`);
 });
 
-it.each(['non-member', 'non-sibling', 'self', 'room', 'invalid kind'])(
+it.each(['non-member', 'self', 'room', 'invalid kind'])(
   'refuses %s and writes nothing',
   async (reason) => {
     if (reason === 'non-sibling')
@@ -106,7 +108,7 @@ it.each(['non-member', 'non-sibling', 'self', 'room', 'invalid kind'])(
           ? 'cannot watch itself'
           : reason === 'invalid kind'
             ? 'watch kinds'
-            : 'child or sibling',
+            : 'access denied',
     );
     expect((await db.query(`SELECT * FROM corner_watches`)).rowCount).toBe(0);
   },
@@ -157,23 +159,19 @@ it('lets a parent Room watch its child', async () => {
 });
 
 it('filters kinds and replaces the earlier watch', async () => {
-  await watch(['check-failed']);
+  await watch(['closed']);
   await watch();
-  await emit('check-failed');
+  await systemLine(db, { roomId: B, authorId: H, subject: GITHUB_SUBJECT, verb: 'checked', kind: 'check-failed' });
   expect(await wakes()).toEqual([]);
   await emit();
   expect(await wakes()).toHaveLength(1);
 });
 
-it.each(['check-passed', 'check-failed'] as const)(
-  'fans out %s even through the workflow route',
-  async (kind) => {
-    await watch([kind]);
-    await emit(kind);
-    expect(await wakes()).toHaveLength(1);
-    expect((await wakes())[0]!.source.body).toContain(`Watched corner B (${B}): ${kind}`);
-  },
-);
+it('a closed lifecycle event wakes the watcher, while schedules do not', async () => {
+  await watch(['closed']);
+  await systemLine(db, { roomId: B, authorId: H, subject: GITHUB_SUBJECT, verb: 'closed', kind: 'corner-closed' });
+  expect(await wakes()).toHaveLength(1);
+});
 
 it('an empty list removes the watch', async () => {
   await watch();

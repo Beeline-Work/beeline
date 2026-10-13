@@ -32,17 +32,17 @@ afterEach(() => {
 
 it('calls watchCorner in the current corner and returns readable state and kinds', async () => {
   const text = await callAgentTool(
-    'watch_corner',
-    { cornerId: 'sibling', kinds: ['merged', 'check-passed'] },
+    'watch',
+    { address: 'sibling' },
     'watch-1',
   );
   expect(calls).toEqual([
     {
       name: 'watchCorner',
-      input: { roomId: 'watcher', cornerId: 'sibling', kinds: ['merged', 'check-passed'] },
+      input: { roomId: 'watcher', cornerId: 'sibling', kinds: ['opened', 'merged', 'closed'] },
     },
   ]);
-  expect(text).toContain('Watching for merged, check-passed');
+  expect(text).toContain('Watching for opened, merged, closed');
   for (const value of [
     'Ship widget',
     'review',
@@ -54,21 +54,10 @@ it('calls watchCorner in the current corner and returns readable state and kinds
     expect(text).toContain(value);
 });
 
-it('reports removal and uses the parent Room when outside a corner', async () => {
-  vi.stubEnv('BEELINE_DAEMON_CORNER_ID', '');
-  expect(
-    await callAgentTool('watch_corner', { cornerId: 'sibling', kinds: [] }, 'watch-2'),
-  ).toContain('Watch removed');
-  expect(calls[0]!.input).toEqual({ roomId: 'parent', cornerId: 'sibling', kinds: [] });
-});
-
-it('describes replacement and removal on both Room and corner surfaces', () => {
-  for (const corner of [false, true]) {
-    const tool = agentToolsFor(true, false, corner).find((t) => t.name === 'watch_corner')!;
-    expect(tool.description).toContain('Replaces any earlier watch');
-    expect(tool.description).toContain('empty list removes');
-    expect(tool.inputSchema.required).toEqual(['cornerId', 'kinds']);
-  }
+it('offers lifecycle watches in a DM without chatter or schedule events', () => {
+  const tool = agentToolsFor(true, true).find(t => t.name === 'watch')!;
+  expect(tool.description).toContain('Chatter, messages and schedules never wake a watcher');
+  expect(tool.inputSchema.required).toEqual(['address']);
 });
 
 it('reports an already merged corner with its merge commit, and a closed one', async () => {
@@ -77,14 +66,22 @@ it('reports an already merged corner with its merge commit, and a closed one', a
     Response.json({ kinds: [], state: 'merged', woken: true, snapshot: merged }),
   );
   const text = await callAgentTool(
-    'watch_corner',
-    { cornerId: 'sibling', kinds: ['merged'] },
+    'watch',
+    { address: 'sibling' },
     'watch-3',
   );
   expect(text).toContain('Corner already merged; one merged wake queued now');
   expect(text).toContain('f'.repeat(40));
   vi.stubGlobal('fetch', async () => Response.json({ kinds: [], state: 'closed', snapshot }));
   expect(
-    await callAgentTool('watch_corner', { cornerId: 'sibling', kinds: ['merged'] }, 'watch-4'),
+    await callAgentTool('watch', { address: 'sibling' }, 'watch-4'),
   ).toContain('Corner closed without merging');
+});
+
+it('limits the advertised address to corners, including when called from a Room or DM', () => {
+  for (const dm of [false, true]) {
+    const tool = agentToolsFor(true, dm).find(t => t.name === 'watch')!;
+    expect(tool.description).toContain('Top-level Rooms and DMs have no watchable lifecycle');
+    expect(tool.inputSchema.properties.address.description).toContain('Corner address only');
+  }
 });

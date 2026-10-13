@@ -278,7 +278,7 @@ describe('who an agent can tag, and how it is spelled', () => {
     // The rule for using them rides the session text (core.tagging), which this
     // harness receives on every turn.
     expect(prompts[0]).toContain(
-      'Copy handles only from the member list in the turn prompt; any other spelling reaches nobody.',
+      'Copy handles only from the member list.',
     );
     expect(prompts[0]).toContain('- @lunchboxfortwo — Captain (person)');
     expect(prompts[0]).toContain('- @bananaman614305 (person)');

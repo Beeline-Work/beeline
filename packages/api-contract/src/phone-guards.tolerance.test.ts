@@ -144,7 +144,6 @@ const cases: Case[] = [
       'walletDelegation',
       'targetBranch',
       'githubEvent',
-      'relay',
       'daemonFact',
       'systemEvent',
       'presentation',

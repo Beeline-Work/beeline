@@ -1366,74 +1366,6 @@ function SwipeToReply({
   return swipeRow();
 }
 
-/** Relays have no speaker tile, bubble, reply swipe, or self-message treatment. */
-export function RelayHandOff({ message }: { message: ChatDisplayMessage }) {
-  const [expanded, setExpanded] = useState(false);
-  const [overflows, setOverflows] = useState(false);
-  const measure = useRef<Text>(null);
-  useEffect(() => {
-    if (Platform.OS !== 'web' || !measure.current) return;
-    const element = measure.current as unknown as HTMLElement;
-    const update = () => {
-      const lineHeight = Number.parseFloat(getComputedStyle(element).lineHeight);
-      setOverflows(element.getBoundingClientRect().height > lineHeight * 2 + 1);
-    };
-    update();
-    const observer = new ResizeObserver(update);
-    observer.observe(element);
-    return () => observer.disconnect();
-  }, [message.text]);
-  const relay = message.relay!;
-  const caption =
-    relay.direction === 'down'
-      ? `FROM #${relay.fromName.replace(/^#/, '')}`
-      : `FROM THE CORNER · ${relay.fromName}`;
-  return (
-    <View style={styles.relay} testID={`relay-${message.id}`}>
-      <Text style={styles.relayCaption}>
-        {caption}
-        {message.authorIdentity?.handle
-          ? ` · @${message.authorIdentity.handle.replace(/^@/, '')}`
-          : ''}
-      </Text>
-      <View>
-        <Text
-          style={styles.relayText}
-          numberOfLines={expanded ? undefined : 2}
-          testID={`relay-text-${message.id}`}
-        >
-          {message.text}
-        </Text>
-        <Text
-          ref={measure}
-          style={[styles.relayText, styles.relayMeasure]}
-          accessible={false}
-          aria-hidden
-          pointerEvents="none"
-          testID={`relay-measure-${message.id}`}
-          onTextLayout={(event) => setOverflows(event.nativeEvent.lines.length > 2)}
-        >
-          {message.text}
-        </Text>
-      </View>
-      {overflows ? (
-        <Pressable
-          onPress={() => setExpanded(!expanded)}
-          accessibilityRole="button"
-          accessibilityLabel={expanded ? 'Show less relay text' : 'Show more relay text'}
-          accessibilityState={{ expanded }}
-          testID={`relay-toggle-${message.id}`}
-        >
-          <Text style={styles.relayToggle}>{expanded ? 'LESS' : 'MORE'}</Text>
-        </Pressable>
-      ) : null}
-      {relay.direction === 'down' && relay.received ? (
-        <Text style={styles.relayCaption}>RECEIVED</Text>
-      ) : null}
-    </View>
-  );
-}
-
 export interface OrdinaryLedgerMessageProps {
   message: ChatDisplayMessage;
   agent?: AgentPresentation;
@@ -2087,11 +2019,6 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
 });
 
 const styles = StyleSheet.create((theme) => ({
-  relay: { paddingVertical: theme.buzz.space.sm, gap: theme.buzz.space.sm },
-  relayCaption: { ...theme.buzz.type.sectionHead, color: theme.buzz.textSecondary },
-  relayText: { ...theme.buzz.type.body, color: theme.buzz.textSecondary },
-  relayToggle: { ...theme.buzz.type.sectionHead, color: theme.buzz.accent },
-  relayMeasure: { position: 'absolute', top: 0, left: 0, right: 0, opacity: 0 },
   activityGroup: { width: '100%', minWidth: 0 },
   connectorReceipt: {
     marginTop: 4,

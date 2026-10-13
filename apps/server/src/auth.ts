@@ -1,5 +1,4 @@
 import {
-  createCipheriv,
   createDecipheriv,
   createHash,
   randomBytes,
@@ -20,8 +19,10 @@ import {
 } from './review-access.js';
 
 const ACCESS_LIFETIME_MS = 15 * 60_000;
-const REFRESH_LIFETIME_MS = 30 * 24 * 60 * 60_000;
-const REFRESH_REPLAY_GRACE_MS = 120_000;
+// A date-valued sentinel keeps older server images able to read the row during
+// the two-Machine rollout or a rollback. Session lifetime is explicit revocation,
+// not this field; the sweeper no longer deletes phone sessions by age.
+const DURABLE_REFRESH_EXPIRES_AT = Date.parse('9999-12-31T23:59:59.000Z');
 const DAEMON_EXCHANGE_LIFETIME_MS = 15 * 60_000;
 const DAEMON_AUTH_CACHE_TTL_MS = 10_000;
 
@@ -62,13 +63,6 @@ function sameHash(left: string, right: string): boolean {
 // keeps the hash and sealed reply, never the raw phone credentials.
 function replayKey(refreshToken: string): Buffer {
   return createHash('sha256').update('beeline:refresh-replay:').update(refreshToken).digest();
-}
-
-function sealSuccessor(refreshToken: string, tokens: PhoneTokens): string {
-  const iv = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', replayKey(refreshToken), iv);
-  const ciphertext = Buffer.concat([cipher.update(JSON.stringify(tokens), 'utf8'), cipher.final()]);
-  return [iv, cipher.getAuthTag(), ciphertext].map((part) => part.toString('base64url')).join('.');
 }
 
 function openSuccessor(refreshToken: string, sealed: string): PhoneTokens {
@@ -195,58 +189,61 @@ export class TokenAuth {
   }
 
   async refresh(refreshToken: string): Promise<PhoneTokens | null> {
-    const hash = tokenHash(refreshToken);
     return this.database.transaction(async (database) => {
-      const found = await database.query<{
-        refresh_hash: string;
-        identity_id: string;
-        family_id: string;
-        expires_at: Date;
-        consumed_at: Date | null;
-        successor_tokens: string | null;
-      }>(`SELECT * FROM phone_sessions WHERE refresh_hash = $1 FOR UPDATE`, [hash]);
-      const session = found.rows[0];
-      if (!session || !sameHash(session.refresh_hash, hash)) return null;
-      const now = this.now();
-      if (
-        session.consumed_at &&
-        session.successor_tokens &&
-        session.expires_at.getTime() > now.getTime() &&
-        session.consumed_at.getTime() <= now.getTime() &&
-        now.getTime() - session.consumed_at.getTime() <= REFRESH_REPLAY_GRACE_MS
-      ) {
-        const successor = openSuccessor(refreshToken, session.successor_tokens);
-        const current = await database.query<{ consumed_at: Date | null }>(
-          `SELECT consumed_at FROM phone_sessions WHERE refresh_hash=$1 AND family_id=$2 FOR UPDATE`,
-          [tokenHash(successor.refreshToken), session.family_id],
-        );
-        if (
-          current.rows[0] &&
-          !current.rows[0].consumed_at &&
-          successor.refreshExpiresAt > now.getTime()
-        )
-          return successor;
+      if (!await this.lockPhoneIdentity(database, refreshToken)) return null;
+      // A device credential survives sleep, process death and lost replies.
+      // Only access tokens expire. Old rotating credentials can follow their
+      // sealed successors to the same device session, with no replay deadline
+      // and no family-wide punishment for an older request arriving late.
+      const visited = new Set<string>();
+      let familyId: string | undefined;
+      let credential = refreshToken;
+      while (true) {
+        const hash = tokenHash(credential);
+        if (visited.has(hash)) return null;
+        visited.add(hash);
+        const found = await database.query<{
+          refresh_hash: string; identity_id: string; family_id: string;
+          consumed_at: Date | null; successor_tokens: string | null;
+        }>(`SELECT * FROM phone_sessions WHERE refresh_hash=$1 FOR UPDATE`, [hash]);
+        const session = found.rows[0];
+        if (!session || !sameHash(session.refresh_hash, hash)) return null;
+        familyId ??= session.family_id;
+        if (session.family_id !== familyId) return null;
+        if (session.consumed_at) {
+          if (!session.successor_tokens) return null;
+          credential = openSuccessor(credential, session.successor_tokens).refreshToken;
+          continue;
+        }
+        const access = await this.issuePhoneAccess(session.identity_id, familyId, database);
+        return { ...access, refreshToken: credential, refreshExpiresAt: DURABLE_REFRESH_EXPIRES_AT, identityId: session.identity_id };
       }
-      if (session.consumed_at || session.expires_at.getTime() <= now.getTime()) {
-        await database.query(`DELETE FROM phone_sessions WHERE family_id = $1`, [
-          session.family_id,
-        ]);
-        await database.query(`DELETE FROM phone_access_tokens WHERE family_id = $1`, [
-          session.family_id,
-        ]);
-        return null;
-      }
-      const successor = await this.issuePhoneTokens(
-        session.identity_id,
-        session.family_id,
-        database,
-      );
-      await database.query(
-        `UPDATE phone_sessions SET consumed_at=$2, successor_tokens=$3 WHERE refresh_hash=$1`,
-        [hash, now, sealSuccessor(refreshToken, successor)],
-      );
-      return successor;
     });
+  }
+
+  /** Revoke only the presenting device session; repeated sign-out is harmless. */
+  async revokePhoneSession(refreshToken: string): Promise<void> {
+    await this.database.transaction(async database => {
+      if (!await this.lockPhoneIdentity(database, refreshToken)) return;
+      const found = await database.query<{ family_id: string }>(
+        'SELECT family_id FROM phone_sessions WHERE refresh_hash=$1 FOR UPDATE', [tokenHash(refreshToken)],
+      );
+      const familyId = found.rows[0]?.family_id;
+      if (!familyId) return;
+      await database.query('DELETE FROM phone_access_tokens WHERE family_id=$1', [familyId]);
+      await database.query('DELETE FROM phone_sessions WHERE family_id=$1', [familyId]);
+    });
+  }
+
+  private async lockPhoneIdentity(database: SqlDatabase, refreshToken: string): Promise<boolean> {
+    const found = await database.query<{ identity_id: string }>(
+      'SELECT identity_id FROM phone_sessions WHERE refresh_hash=$1', [tokenHash(refreshToken)],
+    );
+    const identityId = found.rows[0]?.identity_id;
+    if (!identityId) return false;
+    // Refresh and revocation acquire the identity before any session row.
+    // A legacy ancestor retry and sign-out of its successor cannot deadlock.
+    return !!(await database.query('SELECT id FROM identities WHERE id=$1 FOR UPDATE', [identityId])).rowCount;
   }
 
   async authenticatePhone(token: string): Promise<string | null> {
@@ -273,6 +270,35 @@ export class TokenAuth {
     return { exchangeToken, expiresAt };
   }
 
+  /** One forward credential migration; never restores a revoked monolith token. */
+  async migrateLegacyDaemon(input: { agentId: string; workspaceId: string; pairedBy: string; proofId: string }): Promise<{ agentId: string; exchangeToken: string; expiresAt: number } | null> {
+    return this.database.transaction(async (database) => {
+      const identity = await database.query(
+        `SELECT a.agent_id FROM agents a JOIN identities i ON i.id=a.agent_id
+         WHERE a.agent_id=$1 AND a.owner_id=$2 AND i.kind='agent' AND NOT i.hidden_from_roster
+           AND EXISTS(SELECT 1 FROM memberships m WHERE m.workspace_id=$3 AND m.identity_id=a.agent_id AND m.room_id IS NULL AND m.removed_at IS NULL)
+           AND EXISTS(SELECT 1 FROM memberships m WHERE m.workspace_id=$3 AND m.identity_id=a.owner_id AND m.room_id IS NULL AND m.removed_at IS NULL)
+         FOR UPDATE OF a`, [input.agentId, input.pairedBy, input.workspaceId],
+      );
+      if (!identity.rowCount) return null;
+      if ((await database.query(`SELECT 1 FROM daemon_tokens WHERE agent_id=$1 AND (revoked_at IS NOT NULL OR expires_at<=$2) LIMIT 1`, [input.agentId, this.now()])).rowCount) return null;
+      const prior = (await database.query<{ proof_id: string; exchange_hash: string }>(
+        `SELECT proof_id,exchange_hash FROM legacy_daemon_migrations WHERE agent_id=$1`, [input.agentId],
+      )).rows[0];
+      if (prior?.proof_id === input.proofId) return null;
+      if (prior && (await database.query(`SELECT 1 FROM daemon_token_exchanges WHERE exchange_hash=$1 AND consumed_at IS NOT NULL`, [prior.exchange_hash])).rowCount) return null;
+      // An interrupted local write can retry with a fresh proof. Only the latest exchange survives.
+      if (prior) await database.query(`DELETE FROM daemon_token_exchanges WHERE exchange_hash=$1 AND consumed_at IS NULL`, [prior.exchange_hash]);
+      const exchange = await this.createDaemonExchange(input.agentId, database);
+      await database.query(
+        `INSERT INTO legacy_daemon_migrations(agent_id,proof_id,exchange_hash,workspace_id,owner_id)
+         VALUES($1,$2,$3,$4,$5) ON CONFLICT(agent_id) DO UPDATE SET proof_id=EXCLUDED.proof_id,exchange_hash=EXCLUDED.exchange_hash,migrated_at=now()`,
+        [input.agentId, input.proofId, tokenHash(exchange.exchangeToken), input.workspaceId, input.pairedBy],
+      );
+      return { agentId: input.agentId, ...exchange };
+    });
+  }
+
   async exchangeDaemonToken(
     exchangeToken: string,
   ): Promise<{ daemonToken: string; agentId: string } | null> {
@@ -287,17 +313,41 @@ export class TokenAuth {
         [hash],
       );
       const exchange = found.rows[0];
-      if (
-        !exchange ||
-        exchange.consumed_at ||
-        exchange.expires_at.getTime() <= this.now().getTime()
-      )
-        return null;
+      if (!exchange) return null;
+      const legacy = (await database.query<{ workspace_id: string; owner_id: string }>(
+        `SELECT workspace_id,owner_id FROM legacy_daemon_migrations WHERE exchange_hash=$1 AND agent_id=$2`, [hash, exchange.agent_id],
+      )).rows[0];
+      // A consumed legacy exchange only redelivers its already-issued, still
+      // authorized credential. A long interruption cannot turn a lost local
+      // write into a reconnect requirement; unused exchanges still expire.
+      if (exchange.expires_at.getTime() <= this.now().getTime() && !(legacy && exchange.consumed_at)) return null;
+      if (legacy) {
+        // Lock the current membership before minting. Removal takes this row first,
+        // so it either wins here or revokes the newly minted token afterward.
+        const authorized = await database.query(
+          `SELECT member.id FROM memberships member JOIN memberships owner
+             ON owner.workspace_id=member.workspace_id AND owner.identity_id=$3 AND owner.room_id IS NULL AND owner.removed_at IS NULL
+           JOIN identities i ON i.id=member.identity_id JOIN agents a ON a.agent_id=i.id
+           WHERE member.workspace_id=$1 AND member.identity_id=$2 AND member.room_id IS NULL
+             AND member.removed_at IS NULL AND NOT i.hidden_from_roster AND a.owner_id=$3
+           FOR UPDATE OF member,owner`, [legacy.workspace_id, exchange.agent_id, legacy.owner_id],
+        );
+        if (!authorized.rowCount) return null;
+      }
+      // Delivering a legacy credential is idempotent across a lost HTTP reply
+      // or process death after minting. Derive its high-entropy bearer from the
+      // exchange secret so the database still stores hashes only. Ordinary
+      // exchanges retain their one-use contract; revoked tokens never revive.
+      const daemonToken = legacy ? `bdt_${createHash('sha256').update('beeline legacy daemon exchange\0').update(exchangeToken).digest('base64url')}` : opaque('bdt');
+      if (exchange.consumed_at) {
+        if (!legacy) return null;
+        const existing = await database.query(`SELECT 1 FROM daemon_tokens WHERE token_hash=$1 AND agent_id=$2 AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at>$3)`, [tokenHash(daemonToken), exchange.agent_id, this.now()]);
+        return existing.rowCount ? { daemonToken, agentId: exchange.agent_id } : null;
+      }
       await database.query(
         `UPDATE daemon_token_exchanges SET consumed_at = $2 WHERE exchange_hash = $1`,
         [hash, this.now()],
       );
-      const daemonToken = opaque('bdt');
       await database.query(`INSERT INTO daemon_tokens(token_hash, agent_id) VALUES ($1, $2)`, [
         tokenHash(daemonToken),
         exchange.agent_id,
@@ -380,23 +430,28 @@ export class TokenAuth {
   private async issuePhoneTokens(
     identity: string,
     familyId: string,
-    database: SqlDatabase = this.database,
   ): Promise<PhoneTokens> {
+    return this.database.transaction(async database => {
+      const access = await this.issuePhoneAccess(identity, familyId, database);
+      const refreshToken = opaque('brt');
+      await database.query(
+        `INSERT INTO phone_sessions(refresh_hash, identity_id, family_id, expires_at)
+         VALUES ($1, $2, $3, $4)`, [tokenHash(refreshToken), identity, familyId, new Date(DURABLE_REFRESH_EXPIRES_AT)],
+      );
+      return { ...access, refreshToken, refreshExpiresAt: DURABLE_REFRESH_EXPIRES_AT, identityId: identity };
+    });
+  }
+
+  private async issuePhoneAccess(identity: string, familyId: string, database: SqlDatabase):
+    Promise<Pick<PhoneTokens, 'accessToken' | 'accessExpiresAt'>> {
     const accessToken = opaque('bat');
-    const refreshToken = opaque('brt');
     const accessExpiresAt = this.now().getTime() + ACCESS_LIFETIME_MS;
-    const refreshExpiresAt = this.now().getTime() + REFRESH_LIFETIME_MS;
     await database.query(
       `INSERT INTO phone_access_tokens(token_hash, identity_id, family_id, expires_at)
        VALUES ($1, $2, $3, $4)`,
       [tokenHash(accessToken), identity, familyId, new Date(accessExpiresAt)],
     );
-    await database.query(
-      `INSERT INTO phone_sessions(refresh_hash, identity_id, family_id, expires_at)
-       VALUES ($1, $2, $3, $4)`,
-      [tokenHash(refreshToken), identity, familyId, new Date(refreshExpiresAt)],
-    );
-    return { accessToken, accessExpiresAt, refreshToken, refreshExpiresAt, identityId: identity };
+    return { accessToken, accessExpiresAt };
   }
 }
 

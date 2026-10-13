@@ -696,6 +696,17 @@ CREATE TABLE IF NOT EXISTS daemon_tokens (
 );
 CREATE INDEX IF NOT EXISTS daemon_tokens_agent_idx ON daemon_tokens(agent_id);
 
+-- Forward recovery of an imported relay identity; token history permanently closes this seam.
+CREATE TABLE IF NOT EXISTS legacy_daemon_migrations (
+  agent_id text PRIMARY KEY REFERENCES identities(id) ON DELETE CASCADE,
+  proof_id text NOT NULL,
+  exchange_hash text NOT NULL,
+  workspace_id uuid NOT NULL,
+  owner_id text NOT NULL,
+  migrated_at timestamptz NOT NULL DEFAULT now()
+);
+
+
 CREATE TABLE IF NOT EXISTS workspaces (
   id uuid PRIMARY KEY,
   name text NOT NULL,
@@ -1983,6 +1994,22 @@ CREATE TABLE IF NOT EXISTS invites (
   consumed_at timestamptz
 );
 CREATE INDEX IF NOT EXISTS invites_workspace_idx ON invites(workspace_id);
+-- A public token is recoverable for managers, reusable, and has no expiry.
+ALTER TABLE invites ALTER COLUMN expires_at DROP NOT NULL;
+ALTER TABLE invites ADD COLUMN IF NOT EXISTS public_token text;
+CREATE UNIQUE INDEX IF NOT EXISTS invites_public_workspace_idx ON invites(workspace_id)
+  WHERE public_token IS NOT NULL;
+-- Publish the existing support Workspace's first link with the website release.
+-- Existing/rotated links win on all later migrations; never recreate an old token.
+INSERT INTO invites(token_hash,workspace_id,created_by,expires_at,public_token)
+SELECT '71365e5a8aac2ea96a29263d9c08e60157f01439ff5eaa68aecbc9807992962b',w.id,m.identity_id,NULL,
+  'inv_8765f41a655c33815ea86cecf199ab60983b9326bb02b869f6436af1286dd0f2'
+FROM workspaces w JOIN memberships m ON m.workspace_id=w.id AND m.room_id IS NULL
+  AND m.removed_at IS NULL AND m.role IN ('owner','admin')
+WHERE w.id='8556a9be-d929-41e7-a0ef-d70af452a494' AND w.visibility='public'
+  AND NOT EXISTS(SELECT 1 FROM invites i WHERE i.workspace_id=w.id AND i.public_token IS NOT NULL)
+ORDER BY CASE m.role WHEN 'owner' THEN 0 ELSE 1 END,m.identity_id LIMIT 1
+ON CONFLICT DO NOTHING;
 
 CREATE TABLE IF NOT EXISTS agent_pairing_codes (
   code_hash text PRIMARY KEY,
@@ -3060,11 +3087,16 @@ export async function migrate(
      ON messages(${cardExpiresAtSql()})
      WHERE ${EXPIRING_CARD_TYPES} AND deleted_at IS NULL`,
   ));
-  await retryMigrationStep('needs-you question lookback index', () => createIndexConcurrently(
-    database, 'messages_needs_you_question_idx',
-    `CREATE INDEX CONCURRENTLY messages_needs_you_question_idx
+  // The v2 predicate includes actionable commander reports. Build it before
+  // retiring the old question-only index, so deployed databases keep indexed reads.
+  await retryMigrationStep('needs-you actionable lookback index', () => createIndexConcurrently(
+    database, 'messages_needs_you_actionable_idx',
+    `CREATE INDEX CONCURRENTLY messages_needs_you_actionable_idx
      ON messages(created_at) WHERE ${askingMessageSql()}`,
   ));
+  await retryMigrationStep('retire needs-you question-only index', async () => {
+    await database.query('DROP INDEX CONCURRENTLY IF EXISTS messages_needs_you_question_idx');
+  });
   await retryMigrationStep('squire decision index', () => createIndexConcurrently(
     database, 'messages_squire_decision_idx',
     `CREATE INDEX CONCURRENTLY messages_squire_decision_idx
@@ -3087,6 +3119,10 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
     });
     return result;
   };
+  await dataStep('durable phone sessions', () =>
+    workflowBackfillOnce(database, 'durable-phone-sessions-v1', async db => {
+      await db.query("UPDATE phone_sessions SET expires_at='9999-12-31T23:59:59Z'");
+    }));
   await dataStep('one system thread', () =>
     workflowBackfillOnce(database, 'one-system-thread-v1', retireBotDirectMessages));
   await dataStep('browser observations', () =>

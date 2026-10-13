@@ -307,7 +307,7 @@ export const CORNER_BRIEF_PROPERTIES = {
     required: ['sourceMessageId'],
     properties: { sourceMessageId: { type: 'string' } },
     additionalProperties: false,
-    description: 'The human Room message dispatching this work or authorizing its revision. The server quotes it; separate spec approval is not required.',
+    description: 'The human message or active private commander order dispatching this work or authorizing its revision. The server quotes it; separate spec approval is not required.',
   },
   attachments: {
     type: 'array',
@@ -371,7 +371,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'download_attachment',
     description:
-      'Download one file attached to a Room message (a 📎 marker in your transcript, or an attachment id from get_room_message) into your writable session home and return {path, mimeType, size}; read the local path. Same access as get_room_message. Capped at 25 MB; a file already downloaded with the same sha256 is not fetched again. A failure is a JSON error whose `error` is not_found, forbidden, too_large, or download_failed: tell the requester you could not open the file, and never fetch its media URL yourself.',
+      'Download one file attached to a Room message (a 📎 marker in your transcript, or an attachment id from get_room_message) into your writable session home and return {path, mimeType, size}; read the local path. Same access as get_room_message. Capped at 25 MB; a file already downloaded with the same sha256 is not fetched again. A failure is a JSON error whose `error` is not_found, forbidden, too_large, or download_failed: report blocked: to your commander with the missing file, and never fetch its media URL yourself.',
     inputSchema: {
       type: 'object',
       required: ['messageId', 'attachmentId'],
@@ -534,7 +534,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'assign_workflow_role',
     description:
-      'Bind one specific agent to a list-bound role this run is currently on - the human-directed recovery when nobody on the role\'s list is healthy (the run names this in the Room and asks a human; that human can then tag you and ask you to call this). No health filter applies - an explicit choice overrides "healthy". The target can be any agent member of this Room, on the list or not; agentId takes an agent id or a handle from your member list. Not for a role bound to one agent; that role never fails over.' +
+      'Bind one specific agent to a list-bound role this run is currently on - the human-directed recovery when nobody on the role\'s list is healthy (report exhausted capability to your commander, who arranges the required role assignment). No health filter applies - an explicit choice overrides "healthy". The target can be any agent member of this Room, on the list or not; agentId takes an agent id or a handle from your member list. Not for a role bound to one agent; that role never fails over.' +
       ` How to write and run workflows: ${WORKFLOW_GUIDE_URL}`,
     inputSchema: {
       type: 'object',
@@ -866,18 +866,26 @@ const AGENT_TOOLS: ToolDefinition[] = [
     },
   },
   {
-    name: 'steer_corner',
-    description:
-      'Pass input from your active Room or corner turn to another corner under the same parent Room; membership of that corner or of the parent Room is enough. From a corner, the hand-off queues input for the agent who opened your corner when that agent is a member of the destination. Otherwise it goes to the agent who opened the destination; a corner opened from the phone has none, so it goes to its implementer, else its first agent member. It keeps your turn active; membership alone never authorizes a turn.',
-    inputSchema: {
-      type: 'object',
-      required: ['cornerId', 'text'],
-      properties: {
-        cornerId: { type: 'string' },
-        text: { type: 'string', minLength: 1, maxLength: 16000 },
-      },
-      additionalProperties: false,
-    },
+    name: 'order',
+    description: 'Give a top-down instruction to the worker of a corner or agent DM. A top-level Room address broadcasts to every other agent member. Give the instruction at a Room, corner or agent DM address you belong to. Agent-to-agent delivery is private and wakes the recipient without a transcript message. Use a Room id as the address. After ordering another agent, end the turn; its report wakes a new turn. Do not sleep or poll.',
+    inputSchema: { type: 'object', required: ['address', 'text'], properties: {
+      address: { type: 'string', format: 'uuid' },
+      text: { type: 'string', minLength: 1, maxLength: 16000 },
+    }, additionalProperties: false },
+  },
+  {
+    name: 'report',
+    description: 'Report one step up to the commander who ordered this work. No address argument: the corner and order know the return address. Begin done:, blocked:, needs-decision: or failed:. Agent commanders receive this privately. A human commander sees it where they gave the order. If you cannot handle a report, report to your own commander.',
+    inputSchema: { type: 'object', required: ['text'], properties: {
+      text: { type: 'string', pattern: '^(done|blocked|needs-decision|failed):\\s*\\S', minLength: 1, maxLength: 16000 },
+    }, additionalProperties: false },
+  },
+  {
+    name: 'read',
+    description: 'Read a bounded transcript at any Room, corner or DM address you belong to, across Room boundaries and from DMs. Orders and reports between agents have no transcript.',
+    inputSchema: { type: 'object', required: ['address'], properties: {
+      address: { type: 'string', format: 'uuid' }, limit: { type: 'integer', minimum: 1, maximum: 100 },
+    }, additionalProperties: false },
   },
   {
     name: 'inspect_corner',
@@ -898,31 +906,6 @@ const AGENT_TOOLS: ToolDefinition[] = [
           description: 'The body offset from transcript next.',
         },
       },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'ask_corner',
-    description:
-      'Ask the corner opener one question. The returned id is the askId for get_corner_ask. The answer wakes your next Room turn and is linked to the corner card.',
-    inputSchema: {
-      type: 'object',
-      required: ['cornerId', 'text'],
-      properties: {
-        cornerId: { type: 'string' },
-        text: { type: 'string', minLength: 1, maxLength: 16000 },
-      },
-      additionalProperties: false,
-    },
-  },
-  {
-    name: 'get_corner_ask',
-    description:
-      'Retrieve your corner question by the askId returned by ask_corner, including its answer or unanswered close status.',
-    inputSchema: {
-      type: 'object',
-      required: ['askId'],
-      properties: { askId: { type: 'string' } },
       additionalProperties: false,
     },
   },
@@ -1089,10 +1072,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
       `Available kinds: ${eventKindCatalogLines().join('; ')}. ` +
       'Subscribe to joined and every newcomer wakes you, so you can greet them - a person arriving ' +
       'in the Workspace wakes you too when that arrival projects into this Room. ' +
-      'A corner merging wakes nobody in its parent Room by default: if you still have work to do after ' +
-      'a corner merges, subscribe to merged here in the parent Room before the merge, act only on the ' +
-      'corner you are waiting for, post nothing for any other merge, and drop merged once nothing is ' +
-      'left to wait for. Never post just to acknowledge a merge; the merge card already announces it. ' +
+      'Use watch(address) for corner opened, merged and closed lifecycle wakes. Opening a corner watches it automatically. ' +
       'A grant, approval, choice, poll, or turn you asked for or started wakes you back automatically ' +
       'when it settles - there is nothing to subscribe to for your own items, and a kind like that is refused.',
     inputSchema: {
@@ -1109,21 +1089,11 @@ const AGENT_TOOLS: ToolDefinition[] = [
     },
   },
   {
-    name: 'watch_corner',
-    description:
-      'Watch a sibling corner (or a child of this Room) for merged, check-passed or check-failed events and get its current snapshot. Replaces any earlier watch on that corner; an empty list removes it. Wakes arrive in your own Room or corner and name the watched corner and event. open_corner already watches the corners you open for merged. On a corner that already merged, the result has state "merged" and the snapshot\'s mergeCommitSha, and a "merged" watch queues one wake now; on a corner closed without merging, state is "closed".',
-    inputSchema: {
-      type: 'object',
-      required: ['cornerId', 'kinds'],
-      properties: {
-        cornerId: { type: 'string' },
-        kinds: {
-          type: 'array',
-          items: { type: 'string', enum: ['merged', 'check-passed', 'check-failed'] },
-        },
-      },
-      additionalProperties: false,
-    },
+    name: 'watch',
+    description: 'Watch a corner address you or its parent Room belong to for opened, merged and closed lifecycle events only. Chatter, messages and schedules never wake a watcher. Opening a corner automatically watches it from your current address. Top-level Rooms and DMs have no watchable lifecycle.',
+    inputSchema: { type: 'object', required: ['address'], properties: {
+      address: { type: 'string', format: 'uuid', description: 'Corner address only; membership in the corner or its parent Room is required.' },
+    }, additionalProperties: false },
   },
   {
     name: 'list_event_subscriptions',
@@ -1168,7 +1138,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'set_corner_hold',
     description:
-      'Set an explicit merge hold for this turn’s original human requester. Supply releaseHoldId to release a stored hold: only its holder or a human with higher standing may do so. Chat never sets or releases holds; pr_checks_status lists active hold IDs.',
+      'Set an explicit merge hold for the human who ordered this work. Supply releaseHoldId to release a stored hold: only its holder or a human with higher standing may do so. Chat never sets or releases holds; pr_checks_status lists active hold IDs.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1181,7 +1151,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'order_corner_merge',
     description:
-      'Record this turn’s original human requester’s yes to merge the corner’s current pull request head. Only a current Workspace owner or admin’s yes is recorded; anyone else is refused. The server merges at once when checks are green and no hold stands; otherwise the yes stays on this head until they are. A new commit cancels it. Chat never orders a merge directly.',
+      'Record the human who ordered this work’s yes to merge the corner’s current pull request head. Only a current Workspace owner or admin’s yes is recorded; anyone else is refused. The server merges at once when checks are green and no hold stands; otherwise the yes stays on this head until they are. A new commit cancels it. Chat never orders a merge directly.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1193,11 +1163,12 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'open_corner',
     description:
-      'Set implementer to hand the corner work to another agent member; the caller then does not work the corner. Open one corner after any material unresolved choice is settled. The dispatching message authorizes work; no separate spec or mock approval is required. Supply a compact brief for a precise small fix or a complete brief and Room files for complex work. The brief and available Room files are committed atomically with the first worker command. Give it a name of AT MOST THREE WORDS and a fixed objective of no more than 24 words. By default you watch the new corner for merged: its merge wakes you once here, naming the corner and merge commit. Set watchMerge false to skip that watch.',
+      'Open a venue with room and brief; optional name and objective customize its navigation. Set implementer to hand the corner work to another agent member; the caller then does not work the corner. Open one corner after any material unresolved choice is settled. The dispatching message authorizes work; no separate spec or mock approval is required. Supply a compact brief for a precise small fix or a complete brief and Room files for complex work. The brief and available Room files are committed atomically with the first worker command. Give it a name of AT MOST THREE WORDS and a fixed objective of no more than 24 words. You are its commander: the worker reports only to you. Opening automatically watches opened, merged and closed lifecycle events here. DMs can open corners in every Room you belong to.',
     inputSchema: {
       type: 'object',
-      required: ['name', 'objective'],
+      required: ['room', 'brief'],
       properties: {
+        room: { type: 'string', format: 'uuid', description: 'Parent Room address; may differ from your active DM, Room or corner.' },
         name: {
           type: 'string',
           minLength: 1,
@@ -1223,12 +1194,9 @@ const AGENT_TOOLS: ToolDefinition[] = [
         },
         hold: {
           type: 'boolean',
-          description: 'Create a merge hold atomically, for the original human requester.',
+          description: 'Create a merge hold atomically, for the human who ordered this work.',
         },
-        watchMerge: {
-          type: 'boolean',
-          description: 'Defaults to true: the merge of this corner wakes you here. False skips that watch.',
-        },
+
       },
       additionalProperties: false,
     },
@@ -1236,7 +1204,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'revise_corner_brief',
     description:
-      'Record a correction as the next immutable assignment revision. Any agent in the corner or its parent Room may revise it. Supply the complete replacement spec, the human message authorizing the work or correction, and the revision you read; the result reports whether a wake was queued and its recipient.',
+      'Record a correction as the next immutable assignment revision. Any agent in the corner or its parent Room may revise it. Supply the complete replacement spec, the human message or active commander order authorizing the work or correction, and the revision you read; the result reports whether a wake was queued and its recipient.',
     inputSchema: {
       type: 'object',
       required: ['expectedRevision', 'spec', 'approval', 'change'],
@@ -1456,7 +1424,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'pr_checks_status',
     description:
-      'Read live GitHub checks and the merge gate for a pull request. Pass pullRequest (number or full GitHub URL) when reviewing a PR this corner did not author; defaults to this corner’s own PR. From a Room or sibling corner, pass cornerId to read that corner’s PR. Facts only: stage, checks, approved (a yes said on this head: a reviewer agent’s PASS or a Workspace owner or admin), held, and mergeAllowed = checks passed AND approved AND not held. reviewerWake says whether the configured reviewer was woken. No agent runs gh pr merge. Never infer passing checks from local git, gh output, or chat prose.',
+      'Read live GitHub checks and the merge gate for a pull request. Pass pullRequest (number or full GitHub URL) when reviewing a PR this corner did not author; defaults to this corner’s own PR. From a Room or sibling corner, pass cornerId to read that corner’s PR. Facts only: stage, checks, approved (a yes said on this head: a reviewer agent’s PASS or a Workspace owner or admin), held, and mergeAllowed = checks passed AND approved AND not held. reviewerWake says whether the configured reviewer was woken. Use merge_corner for landing. Never infer passing checks from local git, gh output, or chat prose.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1471,12 +1439,12 @@ const AGENT_TOOLS: ToolDefinition[] = [
   },
   {
     name: 'approve_merge',
-    description:
-      'Record the configured reviewer’s PASS (a yes) for the exact pull-request head you reviewed. The implementer is then woken to merge it with merge_corner; it merges when checks are green and no hold stands. No agent runs gh pr merge. Withhold PASS while a human’s question or proposal in the corner discussion has no answer, and name it. The server rejects a caller who is not the parent Room’s configured reviewer, and a head that is not the pull request’s current head. Call it only after a complete beeline-review PASS whose outline ledger has no missing or unverified user story - otherwise send the brief back; use that review’s full head SHA, then reply that you approved that SHA without tagging the author. Do not tell the author to merge.',
+    description: 'Record the configured reviewer’s PASS for the exact current green head after verifying the brief and live proof. Pass the reviewed head SHA only as the tool argument. Lead the posted review with verdict, one blocking reason and the worker’s next step; list only blockers, with evidence behind a link. Do not post an outline ledger, message IDs or commit hashes. Demand only proof the worker can produce with its tools. Human-only proof gets one blocked report to the commander, never repeated FAILs. Obtain test setup yourself in the review Workspace; report blocked: to your commander for missing capability. On FAIL use order to send the worker its next step. PASS wakes the implementer to land. Follow an explicit commander order to land through merge_corner when the live gate permits it.',
     inputSchema: {
       type: 'object',
       required: ['headSha'],
       properties: {
+        cornerId: { type: 'string', format: 'uuid', description: 'Required from a Room or DM; omit in the active corner.' },
         headSha: {
           type: 'string',
           pattern: '^[0-9a-fA-F]{40}$',
@@ -1488,9 +1456,8 @@ const AGENT_TOOLS: ToolDefinition[] = [
   },
   {
     name: 'merge_corner',
-    description:
-      "Squash-merge this corner's own pull request at its current head. Only this corner's implementer may call it. Before calling, read the corner discussion: if a human's question or proposal has no answer, do not merge; reply naming it and end the turn. The server merges only when pr_checks_status reports mergeAllowed; otherwise it merges nothing and returns the blocker. No agent runs gh pr merge.",
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+    description: "Squash-merge a reachable corner's pull request at its current head. Membership of the corner or parent Room is enough, including from a DM. The server merges only on green live checks, an exact-head yes and no hold; otherwise it returns the blocker. Report unresolved questions to your commander.",
+    inputSchema: { type: 'object', properties: { cornerId: { type: 'string', format: 'uuid', description: 'Required from a Room or DM; omit in the active corner.' } }, additionalProperties: false },
   },
   {
     name: 'close_pull_request',
@@ -1499,18 +1466,23 @@ const AGENT_TOOLS: ToolDefinition[] = [
     inputSchema: { type: 'object', properties: { cornerId: { type: 'string', format: 'uuid', description: 'Omit inside the active corner.' } }, additionalProperties: false },
   },
   {
+    name: 'list_rooms',
+    description: 'List your member Rooms, corners and DMs with their names and addresses. Use these addresses with open_corner, order, read, watch and member reads.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
     name: 'list_corners',
     description:
-      'List every corner, open and closed, under this Room (or, from a corner, under its parent Room), with its name, objective, pull request number and state.',
-    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+      'List corners under a member Room address. Omit address for the active Room; from a DM this lists corners across all your member Rooms. Includes name, objective, pull request and state.',
+    inputSchema: { type: 'object', properties: { address: { type: 'string', format: 'uuid' } }, additionalProperties: false },
   },
   {
     name: 'list_room_members',
     description:
-      'List the current members of this Room or corner, or of a named corner under your Room: id, person or agent, name, handle and role.',
+      'List current members of any member Room, corner or DM address: id, person or agent, name, handle and role. Omit address for this turn.',
     inputSchema: {
       type: 'object',
-      properties: { cornerId: { type: 'string', format: 'uuid', description: 'Omit for the active Room or corner.' } },
+      properties: { address: { type: 'string', format: 'uuid', description: 'Member Room, corner or DM; omit for this turn.' }, cornerId: { type: 'string', format: 'uuid', description: 'A corner address; omit when using address.' } },
       additionalProperties: false,
     },
   },
@@ -1523,7 +1495,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'post_to_corner',
     description:
-      'Post a plain message into a corner under your Room or a sibling corner. It wakes nobody and queues no turn; use steer_corner to hand work over.',
+      'Post a plain message into a corner under your Room or a sibling corner. It wakes nobody and queues no turn; use order to hand work over.',
     inputSchema: {
       type: 'object',
       required: ['cornerId', 'text'],
@@ -1725,7 +1697,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   },
   {
     name: 'execute_app_tool',
-    description: 'Run one tool against the connected person’s app account. The server decides permission on every call. A needs_permission result means wait for the owner’s decision; needs_connection means ask the person to reconnect. Never switch to another route after a refusal or outage. To send a file to a parameter list_app_tools marks file_uploadable (for example a video to upload), pass { "beelineObjectId": "<object id>" } as that parameter’s value: the object id post_artifact reports, or the id at the end of a Room attachment’s /v1/media/<id> link. The file must be attached in this Room or posted by you here; the server uploads it to the app provider itself (video, audio, PNG/JPEG/GIF/WebP, PDF, plain text, CSV or JSON; 128 MB at most).',
+    description: 'Run one tool against the connected person’s app account. The server decides permission on every call. A needs_permission result means wait for the owner’s decision; needs_connection means report blocked: to your commander with the required owner reconnect. Never switch to another route after a refusal or outage. To send a file to a parameter list_app_tools marks file_uploadable (for example a video to upload), pass { "beelineObjectId": "<object id>" } as that parameter’s value: the object id post_artifact reports, or the id at the end of a Room attachment’s /v1/media/<id> link. The file must be attached in this Room or posted by you here; the server uploads it to the app provider itself (video, audio, PNG/JPEG/GIF/WebP, PDF, plain text, CSV or JSON; 128 MB at most).',
     inputSchema: { type: 'object', required: ['appId', 'tool', 'arguments'], properties: {
       appId: { type: 'string', format: 'uuid' },
       tool: { type: 'string', minLength: 1 },
@@ -1907,10 +1879,9 @@ export function agentToolsFor(
     ) {
       return institutionalMemoryEnabled;
     }
-    if (tool.name === 'steer_corner' || tool.name === 'watch_corner') return !directMessage;
-    if (['ask_corner', 'get_corner_ask'].includes(tool.name)) return !directMessage && !cornerTurn;
     if (
       [
+        'list_rooms',
         'inspect_corner',
         'close_corner',
         'rename_corner',
@@ -1920,20 +1891,18 @@ export function agentToolsFor(
         'post_to_corner',
       ].includes(tool.name)
     )
-      return !directMessage;
-    // Every turn in a corner whose parent Room has a repository may record a
-    // PASS: the server, not the session's boot role, decides whether this
-    // agent is the configured reviewer.
-    if (tool.name === 'approve_merge') return cornerTurn && repositoryCorner;
-    if (tool.name === 'merge_corner') return cornerTurn && repositoryCorner;
+      return true;
+    // The server checks configured-reviewer authority on the addressed corner.
+    if (tool.name === 'approve_merge') return !cornerTurn || repositoryCorner;
+    if (tool.name === 'merge_corner') return !cornerTurn || repositoryCorner;
     // A Room turn may close a child corner's PR; a corner turn needs a repository.
-    if (tool.name === 'close_pull_request') return !directMessage && (!cornerTurn || repositoryCorner);
+    if (tool.name === 'close_pull_request') return !cornerTurn || repositoryCorner;
     // Connector installation stays in Rooms and DMs; app discovery and
     // connection are available wherever an app tool can be used.
     if (tool.name === 'offer_connector') return !cornerTurn;
     // From a corner, open_corner opens a sibling corner in the parent Room.
-    if (tool.name === 'open_corner') return !directMessage;
-    if (tool.name === 'revise_corner_brief') return !directMessage;
+    if (tool.name === 'open_corner') return true;
+    if (tool.name === 'revise_corner_brief') return true;
     if (tool.name === 'scratch_status') return cornerTurn && !repositoryCorner;
     if (tool.name === 'publish_corner_app' || tool.name === 'open_corner_app') return cornerTurn;
     if (tool.name === 'open_poll') return !directMessage;
@@ -2432,7 +2401,6 @@ async function turnPromptSectionIds(): Promise<string[]> {
  */
 const SAFE_TO_REPEAT_DAEMON_OPERATIONS: ReadonlySet<string> = new Set([
   'getAgentAvatar',
-  'getCornerAsk',
   'getCornerRestoreState',
   'getPrChecksStatus',
   'getRoomAuthority',
@@ -2447,6 +2415,7 @@ const SAFE_TO_REPEAT_DAEMON_OPERATIONS: ReadonlySet<string> = new Set([
   'getWorkflowRun',
   'listAppTools',
   'listCornerBriefRevisions',
+  'listRooms',
   'listRoomCorners',
   'listAgentSubscriptions',
   'loadWorkspaceSkill',
@@ -2541,34 +2510,15 @@ export function cornerCallText(args: JsonObject): { name: string; objective: str
   };
 }
 
-async function relayMessage(direction: 'down', args: JsonObject, reply = false): Promise<string> {
-  const cornerId = process.env.BEELINE_DAEMON_CORNER_ID?.trim();
-  if (process.env.BEELINE_AGENT_DM === '1' || (reply && Boolean(cornerId)))
-    throw new Error('corner questions require a Room turn; steers require a Room or corner turn');
-  if (typeof args.text !== 'string' || !args.text.trim() || args.text.length > 16000)
-    throw new Error('relay text must contain 1 to 16000 characters');
-  const context = await activeCommandContext();
-  const toRoomId = args.cornerId;
-  if (typeof toRoomId !== 'string' || !toRoomId) throw new Error('cornerId is required');
-  const sent = await daemonExecute('postRoomMessage', {
-    text: args.text,
-    relay: {
-      fromRoomId: context.roomId,
-      toRoomId,
-      direction,
-      ...(reply ? { reply: 'once' } : {}),
-    },
-  });
-  return JSON.stringify(reply ? { ...sent, askId: sent.id } : sent);
-}
-
 async function openCorner(args: JsonObject, toolCallId: string): Promise<string> {
-  if (process.env.BEELINE_AGENT_DM === '1') {
-    throw new Error('open_corner is not available in a direct message');
-  }
-  const { name, objective } = cornerCallText(args);
+  const spec = (args.brief as { spec?: unknown } | undefined)?.spec;
+  const words = typeof spec === 'string' ? spec.match(/[a-zA-Z0-9]+/g) ?? [] : [];
+  const { name, objective } = cornerCallText({ ...args,
+    name: args.name ?? (words.slice(0, 3).join('-') || 'Work'),
+    objective: args.objective ?? (words.slice(0, 24).join(' ') || 'Carry out the brief'),
+  });
   // In a corner turn this is the parent Room, where the new corner opens.
-  const roomId = requiredEnv('BEELINE_DAEMON_ROOM_ID');
+  const roomId = typeof args.room === 'string' ? args.room : requiredEnv('BEELINE_DAEMON_ROOM_ID');
   const repository = await daemonExecute('getRoomRepositoryState', { roomId });
   if (repository.resolution === 'unverified') {
     throw new Error('open_corner is waiting for the Room repository state to resolve');
@@ -2581,7 +2531,8 @@ async function openCorner(args: JsonObject, toolCallId: string): Promise<string>
     .update(`open_corner\0${requestId}\0${toolCallId}`)
     .digest('hex');
   const created = await daemonExecute('createCorner', {
-    roomId,
+    roomId: (await activeCommandContext()).roomId,
+    targetRoomId: roomId,
     requestId,
     idempotencyKey,
     name,
@@ -2591,7 +2542,6 @@ async function openCorner(args: JsonObject, toolCallId: string): Promise<string>
       ? { brief: args.brief as unknown as import('@beeline/api-contract/daemon').CornerBriefDraft }
       : {}),
     ...(args.hold === true ? { hold: true } : {}),
-    ...(args.watchMerge === false ? { watchMerge: false } : {}),
     ...(repository.resolution === 'repository'
       ? {
           repository: repository.key,
@@ -2804,7 +2754,7 @@ export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
 }
 
 export async function approveMerge(args: JsonObject = {}): Promise<string> {
-  const cornerId = requiredEnv('BEELINE_DAEMON_CORNER_ID');
+  const cornerId = targetCornerId(args);
   const headSha = typeof args.headSha === 'string' ? args.headSha.toLowerCase() : '';
   if (!/^[0-9a-f]{40}$/.test(headSha)) throw new Error('headSha must be a full 40-character SHA');
   return JSON.stringify(await daemonExecute('approveCornerMerge', { cornerId, headSha }));
@@ -4678,24 +4628,15 @@ export async function callAgentTool(
       return reviseCornerBrief(args);
     case 'read_corner_brief':
       return readCornerBrief(args);
-    case 'steer_corner':
-      return relayMessage('down', args);
-    case 'ask_corner':
-      return relayMessage('down', args, true);
-    case 'get_corner_ask': {
-      if (process.env.BEELINE_AGENT_DM === '1' || process.env.BEELINE_DAEMON_CORNER_ID)
-        throw new Error('get_corner_ask requires a Room turn');
-      if (typeof args.askId !== 'string' || !args.askId) throw new Error('askId is required');
-      return JSON.stringify(
-        await daemonExecute('getCornerAsk', {
-          roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
-          askId: args.askId,
-        }),
-      );
+    case 'order': {
+      const result = await daemonExecute('order', { address: args.address as string, text: args.text as string });
+      return `${JSON.stringify(result)}\nAfter ordering another agent, end the turn; its report wakes a new turn; do not sleep or poll.`;
     }
+    case 'report':
+      return JSON.stringify(await daemonExecute('report', { text: args.text as string }));
+    case 'read':
+      return JSON.stringify(await daemonExecute('read', { address: args.address as string, limit: args.limit as number | undefined }));
     case 'inspect_corner': {
-      if (process.env.BEELINE_AGENT_DM === '1')
-        throw new Error('inspect_corner requires a Room or corner turn');
       if (typeof args.cornerId !== 'string' || !args.cornerId)
         throw new Error('cornerId is required');
       if (args.after !== undefined && (typeof args.after !== 'string' || !args.after))
@@ -4863,23 +4804,25 @@ export async function callAgentTool(
       return approveMerge(args);
     case 'merge_corner':
       return JSON.stringify(
-        await daemonExecute('mergeCorner', { cornerId: requiredEnv('BEELINE_DAEMON_CORNER_ID') }),
+        await daemonExecute('mergeCorner', { cornerId: targetCornerId(args) }),
       );
     case 'close_pull_request':
       return JSON.stringify(
         await daemonExecute('closeCornerPullRequest', { cornerId: targetCornerId(args) }),
       );
+    case 'list_rooms':
+      return JSON.stringify(await daemonExecute('listRooms', { roomId: agentScheduleRoomId() }));
     case 'list_corners':
       return JSON.stringify(
         await daemonExecute('listReachableCorners', {
-          roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
+          roomId: typeof args.address === 'string' ? args.address : requiredEnv('BEELINE_DAEMON_ROOM_ID'),
         }),
       );
     case 'list_room_members':
       return JSON.stringify(
         await daemonExecute('listRoomMembers', {
           roomId:
-            typeof args.cornerId === 'string' && args.cornerId
+            typeof args.address === 'string' ? args.address : typeof args.cornerId === 'string' && args.cornerId
               ? args.cornerId
               : process.env.BEELINE_DAEMON_CORNER_ID?.trim() ||
                 requiredEnv('BEELINE_DAEMON_ROOM_ID'),
@@ -5001,12 +4944,12 @@ export async function callAgentTool(
     }
     case 'subscribe_events':
       return subscribeEvents(args);
-    case 'watch_corner': {
+    case 'watch': {
       const deps = agentScheduleDepsFromEnv();
       const result = await deps.execute('watchCorner', {
         roomId: deps.roomId,
-        cornerId: args.cornerId,
-        kinds: args.kinds,
+        cornerId: args.address,
+        kinds: ['opened', 'merged', 'closed'],
       });
       const kinds = (result.kinds as string[]).join(', ');
       const headline =

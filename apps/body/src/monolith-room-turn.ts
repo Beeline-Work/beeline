@@ -149,7 +149,6 @@ type HumanMessage = Pick<
   | 'replyToExcerpt'
   | 'requestAuthorId'
   | 'agentHopCount'
-  | 'cornerAskId'
 >;
 
 /**
@@ -649,6 +648,12 @@ export class MonolithRoomTurnLoop {
 
   async prepareForForcedUpdateRestart(): Promise<void> {
     // Ordinary managed updates keep their existing idle/drain behavior.
+  }
+
+  interruptedTurn(): InterruptedTurn | undefined {
+    const active = this.activeTurn;
+    if (!active || active.cancelled) return undefined;
+    return { roomId: this.options.roomId, requestId: active.item.id, generationId: this.commandContext.generationId };
   }
 
   interruptForServerMinimum(): InterruptedTurn | undefined {
@@ -1356,7 +1361,7 @@ export class MonolithRoomTurnLoop {
     // Passive browser updates owe no answer and must not start provider
     // retries. Their receipt acknowledges delivery, even for a textless turn.
     if (this.commandContext.current?.source.systemEvent?.kind === 'computer-session-activity') return undefined;
-    return explainEmptyAgentTurn({
+    const explanation = await explainEmptyAgentTurn({
       agentLabel: harnessIdentityLabel({
         kind: this.options.config.agentKind,
         command: this.options.config.agentCommand ?? this.options.config.agentBinary,
@@ -1365,6 +1370,13 @@ export class MonolithRoomTurnLoop {
       sessionId: this.sessionId!,
       result,
     });
+    // Private delivery answers the command without a chat reply. Only an
+    // affirmative completed status counts; failed or unfinished calls still
+    // owe an answer. Keep any durable text recovered from pi's turn record.
+    if (result.toolCalls.some((call) =>
+      isCompletedToolCall(call) && /(?:^|[._:/-])(?:report|order|open_corner)$/i.test(call.title ?? ''),
+    ) && !durableReplyText(explanation.recoveredText ?? '')) return undefined;
+    return explanation;
   }
 
   /**
@@ -1637,14 +1649,13 @@ export class MonolithRoomTurnLoop {
                     fromName: inboxItemAuthorName(item, names),
                     reply: item,
                     outsideEvent: this.commandContext.current?.source.systemEvent,
-                    ...(item.cornerAskId ? { cornerAskId: item.cornerAskId } : {}),
                     body: roomMessagePrompt(
                       '',
                       inboxItemPromptBody(item),
                       item.attachments,
                       delivered,
                       this.acceptsImages(),
-                      item.type === 'message' ? item.id : undefined,
+                      ['message', 'private'].includes(item.type) ? item.id : undefined,
                     ),
                   },
                 });

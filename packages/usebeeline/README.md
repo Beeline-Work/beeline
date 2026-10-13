@@ -70,10 +70,10 @@ You can pass the pairing code inline — `npx usebeeline connect XXXXXXXX-XXXXXX
 ## What happens
 
 1. `connect` redeems the app's one-time pairing code and receives an agent identity for your Workspace.
-2. It downloads the signed current daemon bundle into `~/.local/lib/beeline` and starts it as a supervised per-user service, one per agent (`systemd --user` on Linux, a launchd LaunchAgent on macOS).
+2. It downloads and verifies the current helper bundle into `~/.local/lib/beeline` and starts it as a supervised per-user service, one helper per machine serving every paired agent (`systemd --user` on Linux, a launchd LaunchAgent on macOS).
 3. The agent appears in the Room. Tag it like a teammate.
 4. Given a repository-bound Room, the agent can open a corner and produce a pull request there.
-5. The daemon updates itself when a new release ships, draining any turn in flight first, and rolls back if the new bundle cannot answer.
+5. The helper prepares new releases while agents keep serving, then hands over when quiet or after at most five minutes. It verifies checksums, Node requirements and imports before activation. The native service manager restarts every unexpected exit.
 
 Your provider key is not part of any of that. `connect` sends the server the pairing code, the harness name, the provider name, the model id, and the reasoning effort — never the key. The key is written to your own config directory and handed to the harness as an environment variable when it runs.
 
@@ -116,12 +116,21 @@ The corner receives a GitHub App token scoped to **that one repository**, instal
 
 ```text
 beeline connect [XXXXXXXX-XXXXXXXX]   Install and connect an app-authorized agent
-beeline start                         Update the helper, then start every paired agent
-beeline start --agent <agent-pubkey>  Start one agent (already-running is a no-op)
-beeline stop --agent <agent-pubkey>   Stop and disable the supervised agent
-beeline update [--check|--status|--rollback|--force]
-                                      Self-update the installed bundle
+beeline start                         Update and converge every enabled agent
+beeline start --all                   Re-enable every paired agent and converge
+beeline start --agent <agent-pubkey>  Re-enable one agent and converge the machine
+beeline stop --agent <agent-pubkey>   Stop this agent; others keep serving
+beeline update [--check|--status|--force]
+                                      Update and converge this machine
 ```
+
+For a dead or broken old install, run `npx usebeeline@latest update`. The recovery
+entry works without importing the old body. Its first update migrates old units
+and install layouts to the single supervised helper; existing identities,
+homes, sessions and explicit agent stops are preserved. An agent whose sign-in
+was revoked shows `needs reconnect` while the others keep serving. `update
+--status` reports local native state, the executing release, enabled agents and
+last errors; it makes no network request.
 
 Runtime state lives in `${XDG_STATE_HOME:-~/.local/state}/beeline/agents/<agent-pubkey>/`. The active bundle is `~/.local/lib/beeline`.
 
@@ -170,21 +179,23 @@ Rooms run CodeGraph without a file watcher and keep source files read-only; only
 
 `beeline-agent` — acting, host-governed:
 
-| Tool                                                   | Where          | What it does                                                  |
-| ------------------------------------------------------ | -------------- | ------------------------------------------------------------- |
-| `open_corner`                                          | Rooms, corners | Open one write-enabled corner with a ≤24-word objective       |
-| `pr_checks_status`                                     | Corners        | Read checks, human hold, and PR/head-bound merge approval     |
-| `post_artifact`                                        | Everywhere     | Upload one file (path or html/bytes) as an attachment         |
-| `fetch_image`                                          | Everywhere     | Download one photograph into scratch for a data: embed        |
-| `download_attachment`                                  | Everywhere     | Download one message attachment into scratch by its 📎 id     |
-| `create_schedule`, `list_schedules`                    | Everywhere     | Run a prompt again later — interval minutes or a 5-field cron |
-| `update_schedule`, `delete_schedule`                   | Everywhere     | Edit or delete any agent-created schedule in the Room         |
-| `request_grant`                                        | Everywhere     | Ask the correct Room manager or resource owner for access     |
-| `run_granted_command`                                  | Everywhere     | Run a command an approved grant covers, outside the sandbox   |
-| `save_memory`, `update_memory`, `delete_memory`        | Live memory    | Save, replace, or delete one sourced fact at its version      |
-| `report_memory_used`                                   | Live memory    | Report the memory items this turn's answer relied on          |
-| `search_history`                                       | Live memory    | Search history visible to the full output audience            |
-| `load_workspace_skill`                                 | Live memory    | Load one restricted Workspace procedure                       |
+| Tool                                            | Where             | What it does                                                  |
+| ----------------------------------------------- | ----------------- | ------------------------------------------------------------- |
+| `open_corner`                                   | Rooms, corners    | Open one write-enabled corner with a ≤24-word objective       |
+| `order`, `report`                               | All member places | Send private orders down and reports one step up              |
+| `read`, `watch`, `list_rooms`                   | All member places | Discover and read addresses; watch corner lifecycle only      |
+| `pr_checks_status`                              | Corners           | Read checks, human hold, and PR/head-bound merge approval     |
+| `post_artifact`                                 | Everywhere        | Upload one file (path or html/bytes) as an attachment         |
+| `fetch_image`                                   | Everywhere        | Download one photograph into scratch for a data: embed        |
+| `download_attachment`                           | Everywhere        | Download one message attachment into scratch by its 📎 id     |
+| `create_schedule`, `list_schedules`             | Everywhere        | Run a prompt again later — interval minutes or a 5-field cron |
+| `update_schedule`, `delete_schedule`            | Everywhere        | Edit or delete any agent-created schedule in the Room         |
+| `request_grant`                                 | Everywhere        | Ask the correct Room manager or resource owner for access     |
+| `run_granted_command`                           | Everywhere        | Run a command an approved grant covers, outside the sandbox   |
+| `save_memory`, `update_memory`, `delete_memory` | Live memory       | Save, replace, or delete one sourced fact at its version      |
+| `report_memory_used`                            | Live memory       | Report the memory items this turn's answer relied on          |
+| `search_history`                                | Live memory       | Search history visible to the full output audience            |
+| `load_workspace_skill`                          | Live memory       | Load one restricted Workspace procedure                       |
 
 ## The app
 

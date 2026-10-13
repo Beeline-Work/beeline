@@ -201,3 +201,170 @@ it('cuts a worktree and runs the code-corner surface for a human corner of a rep
     await coordinator.shutdown();
   }
 }, 60_000);
+
+const DM = '44444444-4444-4444-8444-444444444444';
+const PLAIN_ROOM = '55555555-5555-4555-8555-555555555555';
+const PLAIN_CORNER = '66666666-6666-4666-8666-666666666666';
+
+it('Reproduction R1: a corner a DM also lists starts on its feature branch; a plain-Room corner stays repo-less', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'beeline-corner-dm-listing-'));
+  roots.push(root);
+  const remote = await bareRemote(root);
+  const agentIdentity = identityFromKey('11'.repeat(32), 'Candy');
+  const AGENT = agentIdentity.publicKey;
+  const staged = await stageMonolithAgentRuntime({
+    workspaceId: WORKSPACE,
+    pairedBy: HUMAN,
+    daemonExchangeToken: `bde_${'d'.repeat(43)}`,
+    agentBinary: '/fake-agent',
+    agentKind: 'goose',
+    agentCommand: '/fake-agent',
+    agentArgs: [],
+    mcpBinary: '/fake-dev-mcp',
+    agentIdentity,
+    bodyIdentity: identityFromKey('22'.repeat(32), 'Body'),
+    supervisorRoot: root,
+  });
+  const repositoryCorner = { cornerId: CORNER, parentRoomId: ROOM, archived: false, createdBy: AGENT };
+  const plainCorner = { cornerId: PLAIN_CORNER, parentRoomId: PLAIN_ROOM, archived: false, createdBy: AGENT };
+  const execute = vi.fn(async (name: string, input?: { roomId?: string; cornerId?: string }) => {
+    switch (name) {
+      case 'getDaemonBootstrap':
+        return {
+          workspaceIds: [WORKSPACE],
+          rooms: [
+            { roomId: ROOM, archived: false },
+            { roomId: PLAIN_ROOM, archived: false },
+            { roomId: DM, archived: false },
+          ],
+        };
+      case 'listRoomCorners':
+        // Since #2390 a DM lists the agent's corners in its other Rooms, each
+        // with its own parent. The DM's answer lands last, as on the live helper.
+        if (input?.roomId === DM) {
+          await new Promise((done) => setTimeout(done, 20));
+          return { corners: [repositoryCorner, plainCorner] };
+        }
+        return { corners: input?.roomId === ROOM ? [repositoryCorner] : [plainCorner] };
+      case 'getCornerRestoreState':
+        return {
+          cornerId: input?.cornerId,
+          parentRoomId: input?.cornerId === CORNER ? ROOM : PLAIN_ROOM,
+          objective: 'Review the open pull request.',
+          title: 'review-corner',
+          titleGenerated: true,
+          kind: 'agent',
+          closeRequested: false,
+        };
+      case 'getRoomRepositoryState':
+        return input?.roomId === ROOM
+          ? { resolution: 'repository', key: 'owner/widgets', remote: `file://${remote}`, targetBranch: 'main' }
+          : { resolution: 'none' };
+      case 'getRoomGitHubToken':
+        return { token: 'corner-token', expiresAt: Date.now() + 60 * 60_000 };
+      case 'getAgentConfiguration':
+        return { commands: [], yoloMode: true };
+      case 'getWorkspaceRoster':
+        return {
+          members: [{ identityId: AGENT, kind: 'agent', name: 'Candy', handle: 'candy', role: 'member' }],
+        };
+      case 'getAgentCommands':
+        return { commandProtocol: 1, commands: [] };
+      case 'getRoomInbox':
+        return { items: [], cursor: 'latest' };
+      case 'listCornerBriefRevisions':
+        return { revisions: [] };
+      default:
+        return { id: 'write-id', createdAt: 1 };
+    }
+  });
+  const coordinator = new RoomRuntimeCoordinator(
+    staged.runtime,
+    staged.configPath,
+    {
+      workspaceRoot: root,
+      agentBinary: '/fake-agent',
+      agentKind: 'goose',
+      agentCommand: '/fake-agent',
+      agentArgs: [],
+      mcpBinary: '/fake-dev-mcp',
+      readonlyMcpCommand: '/fake-beeline-mcp',
+      agentEnv: {},
+      autoApprovePermissions: true,
+      codegraphCommand: '/usr/bin/false',
+    } as BodyConfig,
+    {
+      daemonApi: {
+        execute,
+        connection: () => ({
+          baseUrl: 'https://server.example',
+          daemonToken: 'daemon-token',
+          agentId: AGENT,
+          helperVersion: 'test',
+        }),
+      } as unknown as DaemonApiClient,
+    },
+  );
+  const internals = coordinator as unknown as {
+    startRoom(roomId: string): Promise<void>;
+    running: Map<string, { body: MonolithCornerTurnLoop }>;
+  };
+  // Top-level Room sessions are outside this proof; corner startup is real.
+  internals.startRoom = async () => undefined;
+  const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+  vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  const session = async (cornerId: string) => {
+    const loop = internals.running.get(cornerId)!.body;
+    const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
+    vi.spyOn(acp, 'start').mockResolvedValue(undefined);
+    vi.spyOn(acp, 'stop').mockResolvedValue(undefined);
+    const sessionNew = vi.spyOn(acp, 'sessionNew').mockResolvedValue({ sessionId: `${cornerId}-session`, raw: {} });
+    (loop as unknown as { options: { createAcpClient: () => AcpClient } }).options.createAcpClient = () => acp;
+    await (loop as unknown as { activate(): Promise<string> }).activate();
+    const input = sessionNew.mock.calls[0]![0];
+    const agentServer = (input.mcpServers ?? []).find((server) => server.name === 'beeline-agent');
+    return {
+      surface: (loop as unknown as { sessionSurface: string }).sessionSurface,
+      cwd: input.cwd,
+      systemPrompt: input.systemPrompt ?? '',
+      repositoryEnv: (agentServer?.env ?? []).find(({ name }) => name === 'BEELINE_CORNER_REPOSITORY')?.value,
+    };
+  };
+  try {
+    expect(await coordinator.reconcile()).toBe('member');
+    expect(error.mock.calls.map((call) => String(call[0]))).not.toContainEqual(
+      expect.stringContaining('failed to start corner'),
+    );
+    expect(execute).toHaveBeenCalledWith('listRoomCorners', { roomId: DM, activeOnly: true });
+
+    // The repository corner: worktree on its feature branch, code-corner session.
+    const featureBranch = `feature/corner-${CORNER.replaceAll('-', '').slice(0, 12)}`;
+    const worktree = join(staged.runtime.supervisorRoot, 'beeline', 'corners', CORNER);
+    expect(execute).toHaveBeenCalledWith('getRoomRepositoryState', { roomId: ROOM });
+    expect(execute).not.toHaveBeenCalledWith('getRoomRepositoryState', { roomId: DM });
+    expect(existsSync(join(worktree, 'widget.txt'))).toBe(true);
+    expect((await git('git', ['-C', worktree, 'branch', '--show-current'])).stdout.trim()).toBe(featureBranch);
+    expect(log.mock.calls.map((call) => String(call[0]))).toContain(
+      `[thin-core] serving corner ${CORNER} on ${featureBranch} at ${worktree}`,
+    );
+    const code = await session(CORNER);
+    expect(code.surface).toBe('code-corner');
+    expect(code.cwd).toBe(worktree);
+    expect(code.repositoryEnv).toBe('1');
+    expect(code.systemPrompt).toContain(`isolated git worktree on ${featureBranch}`);
+    expect(code.systemPrompt).not.toContain('repo-less corner');
+
+    // Negative control: a corner whose own parent has no repository stays repo-less.
+    const plain = await session(PLAIN_CORNER);
+    expect(plain.surface).toBe('repo-less-corner');
+    expect(plain.repositoryEnv).not.toBe('1');
+    expect(plain.systemPrompt).toContain('This is a repo-less corner with no repository checkout');
+    expect(existsSync(join(root, 'beeline', 'corners', PLAIN_CORNER))).toBe(false);
+    expect(log.mock.calls.map((call) => String(call[0]))).toContainEqual(
+      expect.stringContaining(`[thin-core] serving repo-less corner ${PLAIN_CORNER}`),
+    );
+  } finally {
+    await coordinator.shutdown();
+  }
+}, 60_000);

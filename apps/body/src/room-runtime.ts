@@ -887,17 +887,19 @@ export class RoomRuntimeCoordinator {
           activeOnly: true,
         });
         for (const corner of result.corners) {
-          this.monolithCornerParents.set(corner.cornerId, room.roomId);
+          // A DM lists corners from the agent's other Rooms too. The corner's
+          // own parent decides its repository, never the Room that listed it.
+          this.monolithCornerParents.set(corner.cornerId, corner.parentRoomId);
           if (corner.archived) {
             archivedCorners.set(corner.cornerId, {
               cornerId: corner.cornerId,
-              parentRoomId: room.roomId,
+              parentRoomId: corner.parentRoomId,
             });
           } else {
             desired.add(corner.cornerId);
             desiredCorners.set(corner.cornerId, {
               cornerId: corner.cornerId,
-              parentRoomId: room.roomId,
+              parentRoomId: corner.parentRoomId,
               ...(corner.createdBy ? { openedBy: corner.createdBy } : {}),
             });
           }
@@ -1532,14 +1534,14 @@ export class RoomRuntimeCoordinator {
       if (this.stopped) return;
       const result = await this.options.daemonApi.execute('listRoomCorners', { roomId, activeOnly: true });
       for (const corner of result.corners) {
-        this.monolithCornerParents.set(corner.cornerId, roomId);
+        this.monolithCornerParents.set(corner.cornerId, corner.parentRoomId);
         if (corner.archived) continue;
         this.surfaceHealth.discover(corner.cornerId, 'corner');
         this.roomRemovalConfirmations.delete(corner.cornerId);
         if (this.running.has(corner.cornerId) || this.startingCorners.has(corner.cornerId)) continue;
         await this.watchCorner({
           cornerId: corner.cornerId,
-          parentRoomId: roomId,
+          parentRoomId: corner.parentRoomId,
           ...(corner.createdBy ? { openedBy: corner.createdBy } : {}),
         });
       }

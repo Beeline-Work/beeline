@@ -408,8 +408,13 @@ export function HullDialogActions({
 
 export const HullDialogInput = React.forwardRef<
   TextInput,
-  TextInputProps & { ruleStyle?: StyleProp<ViewStyle> }
->(function HullDialogInput({ style, ruleStyle, ...props }, ref) {
+  TextInputProps & {
+    ruleStyle?: StyleProp<ViewStyle>;
+    // `boxed` drops the dialog margin, rule and min-height so the field
+    // centres inside a caller-drawn bordered box, such as a search row.
+    variant?: 'dialog' | 'boxed';
+  }
+>(function HullDialogInput({ style, ruleStyle, variant = 'dialog', ...props }, ref) {
   const { theme } = useUnistyles();
   // Layout belongs to the wrapper; the native field owns only its shared type
   // and underline geometry. Keep flex/margins at existing row/search callers.
@@ -439,7 +444,15 @@ export const HullDialogInput = React.forwardRef<
     delete innerStyle[key];
   }
   return (
-    <View style={[styles.inputRule, outerStyle, ruleStyle, focused && styles.inputFocused]}>
+    <View
+      style={[
+        styles.inputRule,
+        variant === 'boxed' && styles.inputRuleBoxed,
+        outerStyle,
+        ruleStyle,
+        focused && styles.inputFocused,
+      ]}
+    >
       <TextInput
         {...props}
         ref={ref}
@@ -452,7 +465,12 @@ export const HullDialogInput = React.forwardRef<
           props.onBlur?.(event);
         }}
         placeholderTextColor={props.placeholderTextColor ?? theme.buzz.textDisabled}
-        style={[innerStyle, styles.input, props.multiline && styles.multilineInput]}
+        style={[
+          innerStyle,
+          styles.input,
+          variant === 'boxed' && styles.inputBoxed,
+          props.multiline && styles.multilineInput,
+        ]}
       />
     </View>
   );
@@ -534,6 +552,7 @@ const styles = StyleSheet.create((theme) => {
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: hull.borderStrong,
     },
+    inputRuleBoxed: { alignSelf: 'auto', marginTop: 0, borderBottomWidth: 0 },
     inputFocused: { borderBottomColor: hull.accent },
     input: {
       ...hull.type.body,
@@ -553,6 +572,7 @@ const styles = StyleSheet.create((theme) => {
       textAlign: 'left',
       fontWeight: 'normal',
     },
+    inputBoxed: { minHeight: 0, paddingVertical: 0, textAlignVertical: 'center' },
     multilineInput: { minHeight: 120, textAlignVertical: 'top' },
   };
 });

@@ -354,7 +354,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     layer: 'core',
     surfaces: EVERYWHERE,
     render: () =>
-      'Finish the work before you end the turn. Follow tool results through sign-in or retry; wait only for people, CI, reviewers, or real blocks.',
+      'Finish the work before you end the turn, or delegate it. Follow tool results. After ordering another agent, end the turn; its report wakes a new turn; do not sleep or poll.',
   },
   {
     id: 'core.truth',
@@ -468,7 +468,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
       [
         'Repository changes happen only in a corner. Open one when your commander orders repository work.',
         'Before opening one, consult beeline-triage and beeline-spec, then call open_corner with the target room address, a name of at most three words joined by hyphens (no whitespace), an objective of at most 24 words, and the brief (a spec plus the approving message). The objective only titles the work; the brief is its authority. Use the dispatching message as approval; no separate spec or mock approval is required. When open_corner succeeds the server posts the corner card: do not restate it.',
-        'Use read(address) across member Rooms, order(address, text) for private instructions, and report(text) for outcomes or decisions to your commander. watch(address) wakes only on opened, merged or closed; open_corner watches automatically. Schedules and chatter never wake watchers.',
+        'Use read(address) across member Rooms, order(address, text) for private instructions, and report(text) for outcomes or decisions to your commander. watch(cornerAddress) wakes only on opened, merged or closed; open_corner watches automatically. Schedules and chatter never wake watchers.',
         'A corner ends when its pull request merges; since a person may merge minutes after it opens, anything still needed must already live in a different corner before that pull request opens, not after. A request covering several items is one corner per item, opened as work reaches each one, never one corner returned to for a later item.',
       ].join(' '),
   },
@@ -493,7 +493,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     surfaces: ['dm'],
     render: ({ shell }) =>
       [
-        'This is a private direct message with one person: everything they send is for you, so reply without tagging. Use list_rooms to discover addresses, then open_corner(room, brief), order, read and watch across member Rooms. Do repository work in a corner. Report a choice you cannot settle to your commander here. The filesystem is read-only. Web search is available.',
+        'This is a private direct message with one person: everything they send is for you, so reply without tagging. Use list_rooms to discover addresses, then open_corner(room, brief), order and read across member Rooms; watch only corner addresses. Do repository work in a corner. Report a choice you cannot settle to your commander here. The filesystem is read-only. Web search is available.',
         shellLine(shell),
       ]
         .filter(Boolean)

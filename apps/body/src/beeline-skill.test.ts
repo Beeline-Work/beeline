@@ -562,3 +562,11 @@ describe('using-beeline "Showing a photograph" section', () => {
     expect(photograph).not.toContain('Trusty Squire');
   });
 });
+
+it('keeps the command contract aligned with asynchronous ordering and corner-only watches', () => {
+  const text = usingBeelineSkillMarkdown('test-release');
+  expect(text).toContain('After ordering another agent, end the turn');
+  expect(text).toContain('its report wakes a new turn');
+  expect(text).toContain('do not sleep or poll');
+  expect(text).not.toContain('read(address) and watch(address) across member Rooms, corners and DMs');
+});

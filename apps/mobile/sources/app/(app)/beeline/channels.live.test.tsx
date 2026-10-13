@@ -599,32 +599,45 @@ describe('Room list gestures', () => {
   it('keeps a coast-stopping touch from opening the Room after momentum ends', async () => {
     deck.renderRows = true;
     const renderer = await mountDeck();
-    const list = listIn(renderer);
-    const rowPress = () => pressIn(renderer);
-    act(() => {
-      list.props.onScrollBeginDrag?.();
-      list.props.onScrollEndDrag?.({
-        nativeEvent: { velocity: { y: 2 }, contentOffset: { y: 100 } },
+    vi.useFakeTimers();
+    try {
+      const list = listIn(renderer);
+      const rowPress = () => pressIn(renderer);
+      act(() => {
+        list.props.onScrollBeginDrag?.();
+        list.props.onScrollEndDrag?.({
+          nativeEvent: { velocity: { y: 2 }, contentOffset: { y: 100 } },
+        });
+        list.props.onMomentumScrollBegin?.();
+        touchIn(renderer).props.onStartShouldSetResponderCapture?.();
+        list.props.onMomentumScrollEnd?.();
+        touchIn(renderer).props.onTouchEnd?.();
+        rowPress().props.onPress();
       });
-      list.props.onMomentumScrollBegin?.();
-      touchIn(renderer).props.onStartShouldSetResponderCapture?.();
-      list.props.onMomentumScrollEnd?.();
-      touchIn(renderer).props.onTouchEnd?.();
-      rowPress().props.onPress();
-    });
-    expect(dispatchRoomOpenTap).not.toHaveBeenCalled();
-    expect(router.push).not.toHaveBeenCalled();
-    console.log(
-      'Reproduction room-list-coast: fling → touch row → momentum ends → release: no Room opened',
-    );
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 16));
-      touchIn(renderer).props.onStartShouldSetResponderCapture();
-      rowPress().props.onPress();
-    });
-    expect(dispatchRoomOpenTap).toHaveBeenCalledOnce();
-    console.log('Resting tap: Room open dispatched immediately');
-    act(() => renderer.unmount());
+      expect(dispatchRoomOpenTap).not.toHaveBeenCalled();
+      expect(router.push).not.toHaveBeenCalled();
+      console.log(
+        'Reproduction room-list-coast: fling → touch row → momentum ends → release: no Room opened',
+      );
+      // Native setTimeout(16) can return after only 15 ms on Date.now's clock.
+      // Prove both sides of the guard with the same clock the hook reads.
+      act(() => {
+        vi.advanceTimersByTime(15);
+        touchIn(renderer).props.onStartShouldSetResponderCapture();
+        rowPress().props.onPress();
+      });
+      expect(dispatchRoomOpenTap).not.toHaveBeenCalled();
+      act(() => {
+        vi.advanceTimersByTime(1);
+        touchIn(renderer).props.onStartShouldSetResponderCapture();
+        rowPress().props.onPress();
+      });
+      expect(dispatchRoomOpenTap).toHaveBeenCalledOnce();
+      console.log('Resting tap: Room open dispatched immediately');
+    } finally {
+      act(() => renderer.unmount());
+      vi.useRealTimers();
+    }
   });
 });
 

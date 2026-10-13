@@ -15,7 +15,7 @@ describe.skipIf(!existsSync(CHROME))('Room list gestures in a browser', () => {
         width: 390,
         query: baseline ? '?baseline' : '',
       });
-      console.log(result);
+      console.log(`Room list gesture proof (baseline=${baseline}; ${baseline ? "expected reproduction failures" : "fixed behavior"}):\n${result}`);
       expect(status, stderr).toBe(0);
       if (baseline) {
         expect(result).toContain('FAIL Reproduction room-list-diagonal');

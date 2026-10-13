@@ -33,6 +33,7 @@ describe('agent-owned Chromium sharing', () => {
   let debugPort: number;
   let spawnFailed = false;
   let source: WebSocket | undefined;
+  let receivedNavigation = false;
   let receiveFrame: (frame: string) => void;
   const firstFrame = new Promise<string>((resolve) => { receiveFrame = resolve; });
 
@@ -43,11 +44,20 @@ describe('agent-owned Chromium sharing', () => {
       }
       websocket.handleUpgrade(request, socket, head, (accepted) => {
         source = accepted;
+        // Replay CI's notification-before-JPEG ordering as soon as the test
+        // subscribes, whether that happens before or after sharing starts.
+        // The JPEG must still come from the real Chromium session.
+        accepted.once('newListener', (event) => {
+          if (event === 'message') queueMicrotask(() => accepted.emit('message', Buffer.from(JSON.stringify({
+            type: 'share-event', name: 'navigation', detail: `${origin}/page`,
+          }))));
+        });
         // Subscribe before sharing starts: a frame can precede the share call's
         // return, and navigation notifications can arrive before the first JPEG.
         accepted.on('message', (data) => {
-          if (JSON.parse(data.toString()).method === 'Page.screencastFrame')
-            receiveFrame(data.toString());
+          const message = JSON.parse(data.toString());
+          if (message.type === 'share-event' && message.name === 'navigation') receivedNavigation = true;
+          if (message.method === 'Page.screencastFrame') receiveFrame(data.toString());
         });
       });
     });
@@ -105,6 +115,7 @@ describe('agent-owned Chromium sharing', () => {
     // The test's overall deadline bounds this event wait, without repeatedly
     // installing one-shot listeners that consume unrelated relay messages.
     const frame = JSON.parse(await firstFrame);
+    expect(receivedNavigation).toBe(true);
     expect(frame.method).toBe('Page.screencastFrame');
     expect(Buffer.from(frame.params.data, 'base64').subarray(0, 2)).toEqual(Buffer.from([0xff, 0xd8]));
     // A newer relay's activity frame must leave the old source session alive.

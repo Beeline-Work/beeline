@@ -5,6 +5,7 @@ import {
   type StyleProp,
   Text,
   type ViewStyle,
+  type TextStyle,
 } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import * as Haptics from 'expo-haptics';
@@ -27,6 +28,8 @@ export type ButtonProps = Omit<PressableProps, 'children' | 'style'> & {
   fullWidth?: boolean;
   /** Outer layout only (margins, alignment, flex). Shape and type are fixed. */
   style?: StyleProp<ViewStyle>;
+  /** Label layout only; shape and type remain fixed. */
+  labelStyle?: StyleProp<Pick<TextStyle, 'flexGrow' | 'textAlign'>>;
 };
 
 /**
@@ -41,6 +44,7 @@ export function Button({
   fullWidth = false,
   disabled,
   style,
+  labelStyle,
   onPress,
   accessibilityState,
   ...props
@@ -71,6 +75,7 @@ export function Button({
         numberOfLines={1}
         style={[
           styles.label,
+          labelStyle,
           primary
             ? styles.primaryLabel
             : variant === 'brass'
@@ -107,8 +112,7 @@ const styles = StyleSheet.create((theme) => {
     primaryDisabled: { backgroundColor: buzz.bgRaised, borderColor: buzz.bgRaised },
     outlinedDisabled: { borderColor: buzz.border },
     fullWidth: { alignSelf: 'stretch' },
-    // A measured-width Text can ellipsize bundled fonts before the frame runs out of space.
-    label: { ...buzz.type.body, fontFamily: buzz.proseMedium, flexGrow: 1, textAlign: 'center' },
+    label: { ...buzz.type.body, fontFamily: buzz.proseMedium },
     primaryLabel: { color: buzz.buttonPrimaryText },
     secondaryLabel: { color: buzz.buttonSecondaryText },
     brassLabel: { color: buzz.accent },

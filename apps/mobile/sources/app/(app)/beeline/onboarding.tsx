@@ -1047,6 +1047,7 @@ export default function BuzzOnboarding() {
         ) : !showAdvanced && canSignIn ? (
           <Button
             label={signInLabel}
+            labelStyle={Platform.OS === 'android' ? styles.signInLabel : undefined}
             testID="onboarding-github-sign-in"
             loading={
               loadingAction === 'github' || loadingAction === 'bind' || status === 'checking_device'
@@ -1165,6 +1166,8 @@ const styles = StyleSheet.create((theme) => {
       paddingHorizontal: groknight.space.md - (INPUT_FOCUSED_BORDER_WIDTH - INPUT_BORDER_WIDTH),
     },
     importAction: { marginTop: groknight.space.sm },
+    // Android undermeasures the bundled face; reserve only this sign-in label's width.
+    signInLabel: { flexGrow: 1, textAlign: 'center' },
     actions: { width: '100%', maxWidth: 440, alignSelf: 'center', gap: groknight.space.sm },
     recoveryActions: { gap: groknight.space.sm },
     recoveryWarning: {

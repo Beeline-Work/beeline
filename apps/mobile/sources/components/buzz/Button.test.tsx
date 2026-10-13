@@ -204,10 +204,17 @@ describe('the shared Button anatomy', () => {
     expect((await render({ fullWidth: true })).frame().alignSelf).toBe('stretch');
   });
 
-  it('gives a one-line label the remaining button width on Android', async () => {
-    const { label, text } = await render({ label: 'Continue with GitHub' });
-    expect(label.props.numberOfLines).toBe(1);
+  it('allows a screen to reserve its label width without changing other buttons', async () => {
+    const { text } = await render({ labelStyle: { flexGrow: 1, textAlign: 'center' } });
     expect(text.flexGrow).toBe(1);
     expect(text.textAlign).toBe('center');
+    expect((await render({ label: 'Message' })).text.flexGrow).toBeUndefined();
+  });
+
+  it('keeps one-line labels intrinsic so profile actions can share a row', async () => {
+    const { label, text } = await render({ label: 'Continue with GitHub' });
+    expect(label.props.numberOfLines).toBe(1);
+    expect(text.flexGrow).toBeUndefined();
+    expect(text.textAlign).toBeUndefined();
   });
 });

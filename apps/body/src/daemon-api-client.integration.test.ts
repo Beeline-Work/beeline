@@ -2270,21 +2270,12 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       expect(sessionPrompt.mock.calls[0]![1]).toContain('yo again');
       await vi.waitFor(async () => expect(await turns()).toBeGreaterThan(0), { timeout: 5_000 });
       // The same helper and runtime record obey the live change, while the
-      // shared Room retains only its refusal. Workspace configuration goes to
-      // each active person's read-only @system DM.
+      // shared Room retains only its refusal. Addressing policy changes stay
+      // silent while the same helper obeys the updated server policy.
       expect(await systemLines()).toEqual([
         expect.stringContaining('did not answer @bananaman614305'),
       ]);
-      expect(await accessPolicyLines()).toEqual([
-        {
-          author_id: SYSTEM_IDENTITY_ID,
-          text: '@lunchboxfortwo changed who may address @bee · anyone may ask now',
-        },
-        {
-          author_id: SYSTEM_IDENTITY_ID,
-          text: '@lunchboxfortwo changed who may address @bee · anyone may ask now',
-        },
-      ]);
+      expect(await accessPolicyLines()).toEqual([]);
     } finally {
       abort.abort();
       await loop;

@@ -97,6 +97,7 @@
         "scripts/build-subscriptions-frame.ts",
         "scripts/subscriptions-frame.tsx",
         "scripts/composer-dictation-proof.tsx",
+        "scripts/composer-conversation-proof.tsx",
         "scripts/voice-call-proof.tsx",
         "scripts/composer-tags-proof.tsx",
         "scripts/composer-hint-center-native.tsx",

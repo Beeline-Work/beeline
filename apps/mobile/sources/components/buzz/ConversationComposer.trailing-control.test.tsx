@@ -27,6 +27,7 @@ vi.mock('react-native', () => {
     TouchableOpacity: host('TouchableOpacity'),
     Pressable: host('Pressable'),
     View: host('View'),
+    ScrollView: host('ScrollView'),
     Linking: { openSettings: vi.fn() },
     Keyboard: {
       isVisible: () => keyboard.visible,

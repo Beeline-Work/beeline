@@ -63,7 +63,7 @@ describe('helper private storage reclamation', () => {
     ];
     const retained = [
       'agent-home/codex/sessions/rollout.jsonl', 'agent-home/codex/state_5.sqlite',
-      'agent-home/codex/thread_history_1.sqlite-wal', 'agent-home/codex/session_index.jsonl',
+      'agent-home/codex/thread_history_1.sqlite-wal', 'agent-home/codex/state_5.sqlite-journal', 'agent-home/codex/session_index.jsonl',
       'scratch/agent-home/claude/projects/project/subagents/transcript.jsonl',
       'agent-home/pi/sessions/chat.jsonl', 'agent-home/user/.pi/pi-acp/session-map.json',
       'agent-home/goose/data/sessions/sessions.db', 'agent-home/goose/state/session',
@@ -85,6 +85,7 @@ describe('helper private storage reclamation', () => {
     // Old protected data must survive too.
     await age(join(f.root, 'agent-home/codex/skills'));
     await age(join(f.root, 'agent-home/codex/sessions'));
+    await age(join(f.root, 'agent-home/codex/state_5.sqlite-journal'));
     await age(join(f.root, 'agent-home/user/.trusty-squire/chrome-profile'));
     const unknown = vi.fn();
     const entries = await reclaimHelperStorage({ ...f.input, unknown });
@@ -223,7 +224,7 @@ describe('helper private storage reclamation', () => {
     const f = await fixture();
     const database = await f.file('agent-home/codex/logs_2.sqlite');
     await age(database);
-    const wal = await f.file('agent-home/codex/logs_2.sqlite-wal');
+    const wal = await f.file('agent-home/codex/logs_2.sqlite-journal');
     expect(await reclaimHelperStorage(f.input)).toEqual([]);
     await age(wal);
     const entries = await reclaimHelperStorage(f.input);

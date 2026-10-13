@@ -199,7 +199,7 @@ const HISTORY_TREES = [
   'user/.local/share/opencode/storage/message',
   'user/.local/share/opencode/storage/part',
 ] as const;
-const HISTORY_FILES = /^(?:codex\/(?:history\.jsonl|session_index\.jsonl|(?:state_\d+|thread_history_\d+)\.sqlite(?:-wal|-shm)?)|user\/\.local\/share\/opencode\/opencode\.db(?:-wal|-shm)?)$/;
+const HISTORY_FILES = /^(?:codex\/(?:history\.jsonl|session_index\.jsonl|(?:state_\d+|thread_history_\d+)\.sqlite(?:-wal|-shm|-journal)?)|user\/\.local\/share\/opencode\/opencode\.db(?:-wal|-shm|-journal)?)$/;
 const RESUME_FILES = ['user/.pi/pi-acp/session-map.json'];
 
 function retainedPaths(root: string, archived: boolean): string[] {
@@ -373,7 +373,7 @@ export async function reclaimHelperStorage(input: {
       const tree = await storageTree(root);
       const grouped = new Map<string, string[]>();
       for (const path of disposalObjects(root, state.archived, tree)) {
-        const databaseKey = path.replace(/\.(sqlite|db)(?:-wal|-shm)$/, '.$1');
+        const databaseKey = path.replace(/\.(sqlite|db)(?:-wal|-shm|-journal)$/, '.$1');
         const key = /\/avd\/[^/]+\.ini$/.test(databaseKey) ? databaseKey.replace(/\.ini$/, '.avd') : databaseKey;
         const paths = grouped.get(key) ?? [];
         paths.push(path);

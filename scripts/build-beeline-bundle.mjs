@@ -211,6 +211,10 @@ async function main() {
     await mkdir(resolve(staging, 'bin'), { recursive: true });
     await mkdir(resolve(staging, 'lib', 'beeline'), { recursive: true });
 
+    run('npx', [ '--no-install', 'esbuild', resolve(repoRoot, 'apps/body/dist/recovery-cli.js'),
+      '--bundle', '--platform=node', '--format=esm', '--target=node20',
+      `--outfile=${resolve(staging, 'lib/beeline/recovery-cli.mjs')}`,
+    ]);
     run('npx', [
       '--no-install',
       'esbuild',
@@ -342,11 +346,14 @@ async function main() {
     );
     await writeFile(
       resolve(staging, 'bin', 'beeline'),
-      `${wrapperPrologue}\n${nodeResolution}\n: "\${BUZZ_AGENT_BIN:=$(dirname -- "$script_path")/buzz-agent}"\n: "\${BUZZ_DEV_MCP_BIN:=$(dirname -- "$script_path")/buzz-dev-mcp}"\n: "\${BEELINE_READONLY_MCP_BIN:=$(dirname -- "$script_path")/beeline-readonly-mcp}"\n: "\${BEELINE_CODEGRAPH_BIN:=$(dirname -- "$script_path")/codegraph}"\n# Self-update needs to know its own install anchor (import.meta.url is defined away inside the esbuild bundle).\nexport BUZZ_AGENT_BIN BUZZ_DEV_MCP_BIN BEELINE_READONLY_MCP_BIN BEELINE_CODEGRAPH_BIN\nexec "$beeline_node" "$BEELINE_BUNDLE_ROOT/lib/beeline/beeline-cli.mjs" "$@"\n`,
+      `${wrapperPrologue}\n${nodeResolution}\n: "\${BUZZ_AGENT_BIN:=$(dirname -- "$script_path")/buzz-agent}"\n: "\${BUZZ_DEV_MCP_BIN:=$(dirname -- "$script_path")/buzz-dev-mcp}"\n: "\${BEELINE_READONLY_MCP_BIN:=$(dirname -- "$script_path")/beeline-readonly-mcp}"\n: "\${BEELINE_CODEGRAPH_BIN:=$(dirname -- "$script_path")/codegraph}"\n# Self-update needs to know its own install anchor (import.meta.url is defined away inside the esbuild bundle).\nexport BUZZ_AGENT_BIN BUZZ_DEV_MCP_BIN BEELINE_READONLY_MCP_BIN BEELINE_CODEGRAPH_BIN\nif [ "\${1:-}" = helper-bootstrap ] || { [ "\${1:-}" = daemon ] && [ "\${2:-}" = --machine ]; }; then\n  export BEELINE_BOOT_LAUNCHER_PID=$$ BEELINE_BOOT_LAUNCHER_PARENT_PID=$PPID\n  beeline_entry=$("$beeline_node" "$BEELINE_BUNDLE_ROOT/lib/beeline/recovery-cli.mjs" select-release)\n  case $(uname -s) in Linux) export BEELINE_MANAGED_BY_SYSTEMD=1 ;; Darwin) export BEELINE_MANAGED_BY_LAUNCHD=1 ;; esac\n  exec "$beeline_node" "$beeline_entry" daemon --machine\nfi\nexec "$beeline_node" "$BEELINE_BUNDLE_ROOT/lib/beeline/recovery-cli.mjs" "$@"\n`,
       { mode: 0o755 },
     );
   }
 
+  const recoveryBytes = await readFile(resolve(staging, 'lib/beeline/recovery-cli.mjs'));
+  await writeFile(resolve(outputRoot, 'beeline-bootstrap.mjs'), recoveryBytes);
+  await writeFile(resolve(outputRoot, 'beeline-bootstrap.mjs.sha256'), `${createHash('sha256').update(recoveryBytes).digest('hex')}  beeline-bootstrap.mjs\n`);
   await writeFile(
     resolve(staging, 'lib', 'beeline', 'bundle.json'),
     `${JSON.stringify(
@@ -385,6 +392,7 @@ async function main() {
   manifest.schemaVersion = 1;
   manifest.sourceCommit = sourceCommit;
   manifest.version = buildVersion;
+  manifest.recovery = { file: 'beeline-bootstrap.mjs', sha256: createHash('sha256').update(recoveryBytes).digest('hex'), bytes: recoveryBytes.length };
   manifest.bundles ??= {};
   manifest.bundles[platform] = {
     file: filename,

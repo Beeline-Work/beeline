@@ -10,9 +10,9 @@ import {
   HELPER_EXIT_CODES,
   HELPER_HARD_STOP_MS,
   HelperLifecycle,
+  AgentLifecycle,
   retryBeforeReady,
 } from './helper-lifecycle.js';
-import { ManagedUpdateDrain, type ManagedUpdateHandoff } from './managed-update.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
 import { ThinDaemonCore } from './thin-core.js';
 
@@ -72,22 +72,19 @@ async function coreWithRoom() {
 function lifecycle() {
   const controller = new AbortController();
   const exitProcess = vi.fn();
-  return { controller, exitProcess, lifecycle: new HelperLifecycle({ controller, exitProcess }) };
+  return { controller, exitProcess, lifecycle: new AgentLifecycle({ controller }) };
 }
 
 describe('HelperLifecycle', () => {
-  it('maps every exit reason to one of 0, 75, 77, 78 or 79', () => {
-    expect(new Set(Object.values(HELPER_EXIT_CODES))).toEqual(new Set([0, 75, 77, 78, 79]));
-    expect(HELPER_EXIT_CODES).toMatchObject({
-      stopped: 0,
-      'restart-requested': 0,
-      update: 0,
-      failed: 75,
-      'force-update-failed': 75,
-      distress: 77,
-      'agent-removed': 78,
-      'unknown-agent': 79,
-    });
+  it('has only clean and failure machine exits; every exit is restartable', () => {
+    expect(HELPER_EXIT_CODES).toEqual({ stopped: 0, update: 0, failed: 75 });
+    const helper = new HelperLifecycle({ controller: new AbortController(), exitProcess: () => undefined });
+    expect(helper.state.kind).toBe('starting');
+    helper.beginServing();
+    expect(helper.state.kind).toBe('serving');
+    helper.stop('stopped');
+    helper.exit('stopped');
+    expect(helper.state.kind).toBe('stopping');
   });
 
   it('holds a managed update while a turn runs and quiesces once it settles', async () => {
@@ -112,13 +109,14 @@ describe('HelperLifecycle', () => {
     expect(room.body.prepareForForcedUpdateRestart).toHaveBeenCalledOnce();
     helper.stop('restart-requested');
     expect(controller.signal.aborted).toBe(true);
-    helper.exit(helper.stopReason!);
-    expect(exitProcess).toHaveBeenCalledWith(0);
+    expect(helper.stopReason).toBe('restart-requested');
+    expect(exitProcess).not.toHaveBeenCalled();
   });
 
   it('stops hard 80 s after SIGTERM if shutdown never finishes', async () => {
     vi.useFakeTimers();
-    const { lifecycle: helper, controller, exitProcess } = lifecycle();
+    const controller = new AbortController(), exitProcess = vi.fn();
+    const helper = new HelperLifecycle({ controller, exitProcess });
     const emitter = new EventEmitter();
     const dispose = helper.installSignals(emitter);
     emitter.emit('SIGTERM');
@@ -137,29 +135,9 @@ describe('HelperLifecycle', () => {
     const { core, turn, discovery, canStartTurn } = await coreWithRoom();
     turn.busy = false;
     const { lifecycle: helper, controller } = lifecycle();
-    const update = {
-      restartRequest: async (readyToRestart: (request: {
-        loadedRelease: string; desiredRelease: string; drainDeadlineAt: number;
-      }) => boolean) => {
-        const request = { loadedRelease: 'a', desiredRelease: 'b', drainDeadlineAt: Date.now() };
-        if (!readyToRestart(request)) return { kind: 'none' as const };
-        return { kind: 'restart' as const, request };
-      },
-    } as unknown as ManagedUpdateHandoff;
-    const drain = new ManagedUpdateDrain({
-      update,
-      quiesce: () => {
-        core.quiesceForUpdate();
-        return helper.quiesce('update');
-      },
-      activeTurnCount: () => core.activeTurnCount(),
-      restart: async () => {
-        throw new Error('staged release lost activation race');
-      },
-      log: () => undefined,
-    });
-    // The same recovery the daemon wires around every update tick.
-    await drain.tick().catch(() => helper.resumeAfterFailedUpdate(() => core.resumeServing()));
+    core.quiesceForUpdate();
+    helper.quiesce('update');
+    helper.resumeAfterFailedUpdate(() => core.resumeServing());
     expect(helper.state).toEqual({ kind: 'serving' });
     expect(controller.signal.aborted).toBe(false);
     expect(canStartTurn()).toBe(true);

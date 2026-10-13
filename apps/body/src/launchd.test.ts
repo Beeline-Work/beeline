@@ -3,10 +3,7 @@ import { chmod, mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/pr
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { LAUNCHD_BROKER_LABEL, LAUNCHD_HELPER_LABEL, cleanupLaunchdAgentService, installLaunchdHelperService, installLaunchdTrustySquireBrokerService, launchdAgentLabel, launchdAgentPlistPath, launchdBrokerPlistPath, launchdHelperPlist, launchdHelperPlistPath, launchdHelperSupervisorPath, launchdHelperSupervisorScript, launchdUserDomain, retireLegacyLaunchdAgents } from './launchd.js';
-import {
-  NO_AGENTS_EXIT_STATUS,
-} from './systemd.js';
+import { LAUNCHD_BROKER_LABEL, LAUNCHD_HELPER_LABEL, cleanupLaunchdAgentService, installLaunchdHelperService, installLaunchdTrustySquireBrokerService, launchdAgentLabel, launchdAgentPlistPath, launchdBrokerPlistPath, launchdHelperPlist, launchdHelperPlistPath, launchdUserDomain } from './launchd.js';
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -73,90 +70,12 @@ function parsePlist(source: string): Record<string, PlistValue> {
   return root as Record<string, PlistValue>;
 }
 
-/**
- * Install the generated wrapper with a stub daemon and report the exit status
- * launchd would observe. `signal` is delivered to the wrapper once the stub is
- * running, standing in for `launchctl bootout`.
- */
-async function runSupervisor(
-  daemon: string,
-  options: { signal?: NodeJS.Signals } = {},
-): Promise<{ status: number | null; signal: NodeJS.Signals | null; log: string }> {
-  const root = await mkdtemp(resolve(tmpdir(), 'beeline-launchd-wrapper-'));
-  roots.push(root);
-  const supervisor = resolve(root, 'supervise-agent');
-  const stub = resolve(root, 'beeline');
-  const ready = resolve(root, 'ready');
-  const log = resolve(root, 'log');
-  await writeFile(
-    supervisor,
-    launchdHelperSupervisorScript(),
-    { mode: 0o700 },
-  );
-  await chmod(supervisor, 0o700);
-  await writeFile(
-    stub,
-    `#!/bin/sh\nLOG=${JSON.stringify(log)}\nREADY=${JSON.stringify(ready)}\n${daemon}\n`,
-    { mode: 0o700 },
-  );
-  await chmod(stub, 0o700);
-  const child = spawn(supervisor, [stub], { stdio: 'ignore' });
-  if (options.signal) {
-    await vi.waitFor(async () => expect(await readFile(ready, 'utf8')).toContain('ready'), {
-      timeout: 5_000,
-      interval: 25,
-    });
-    child.kill(options.signal);
-  }
-  const [status, signal] = await new Promise<[number | null, NodeJS.Signals | null]>((done) =>
-    child.once('exit', (code, received) => done([code, received])),
-  );
-  return { status, signal, log: await readFile(log, 'utf8').catch(() => '') };
-}
-
-/**
- * A launchd whose job is mid-teardown: `bootout` answers `36: Operation now in
- * progress`, the label stays in the domain for two more reads, and a `bootstrap`
- * while it is still there is refused the way launchd refuses it.
- */
-function terminatingJob(): (args: string[]) => Promise<{ stdout: string }> {
-  let loaded = true;
-  let reaped = false;
-  let readsBeforeGone = 2;
-  let pid = 111;
-  return async (args) => {
-    if (args[0] === 'print') {
-      if (!loaded) throw new Error('Could not find service');
-      if (!reaped) {
-        if (readsBeforeGone > 0) readsBeforeGone -= 1;
-        else {
-          reaped = true;
-          loaded = false;
-          throw new Error('Could not find service');
-        }
-      }
-      return { stdout: `state = running\npid = ${pid}\n` };
-    }
-    if (args[0] === 'bootout') {
-      throw Object.assign(new Error('Command failed: launchctl bootout'), {
-        stderr: 'Boot-out failed: 36: Operation now in progress\n',
-      });
-    }
-    if (args[0] === 'bootstrap') {
-      if (loaded) throw new Error('Bootstrap failed: 37: Operation already in progress');
-      loaded = true;
-      pid = 222;
-    }
-    return { stdout: '' };
-  };
-}
-
 async function canonicalEnv() {
   const home = await mkdtemp(resolve(tmpdir(), 'beeline-launchd-home-'));
   roots.push(home);
   return {
     home,
-    env: { HOME: home, BEELINE_LIB_DIR: resolve(home, '.local', 'lib', 'beeline') },
+    env: { ...process.env, HOME: home, BEELINE_LIB_DIR: resolve(home, '.local', 'lib', 'beeline') },
     invocationPath: resolve(home, '.local', 'lib', 'beeline', 'lib', 'beeline', 'beeline-cli.mjs'),
   };
 }
@@ -171,127 +90,32 @@ const squireInstallRun = async (_command: string, args: readonly string[], optio
 };
 
 describe('launchd supervision contract', () => {
-  it('renders one login-persistent helper job for every agent, restarted on unsuccessful exit', () => {
-    const env = { HOME: '/Users/operator' };
-    const job = parsePlist(launchdHelperPlist(env));
-    expect(job.Label).toBe(LAUNCHD_HELPER_LABEL);
-    expect(job.ProgramArguments).toEqual([
-      launchdHelperSupervisorPath(env),
-      '/Users/operator/.local/bin/beeline',
-    ]);
-    expect(job.RunAtLoad).toBe(true);
-    expect(job.KeepAlive).toEqual({ SuccessfulExit: false });
-    expect(job.ThrottleInterval).toBe(5);
-    expect(job.ExitTimeOut).toBe(600);
-    // A `Background` ProcessType puts the job — and every ACP harness and build
-    // it spawns — in darwin's throttled background task role.
-    expect(job.ProcessType).toBeUndefined();
-    const environment = job.EnvironmentVariables as Record<string, PlistValue>;
-    expect(String(environment.PATH).split(':')).toContain('/Users/operator/.local/bin');
-    expect(job.StandardOutPath).toBe('/Users/operator/Library/Logs/Beeline/helper.log');
-    expect(launchdHelperSupervisorScript()).toContain('"$1" daemon --machine &');
+  it('uses direct native exec and restarts every exit, including an empty machine', () => {
+    const plist = parsePlist(launchdHelperPlist({ HOME: '/operator' }));
+    expect(plist.ProgramArguments).toEqual(['/operator/.local/bin/beeline', 'helper-bootstrap']);
+    expect(plist.KeepAlive).toBe(true);
+    expect(plist.ExitTimeOut).toBe(90);
+    expect(JSON.stringify(plist)).not.toContain('supervise-helper');
   });
-
-  it('stops the helper for good only when it has no agent to host', async () => {
-    await expect(runSupervisor(`exit ${NO_AGENTS_EXIT_STATUS}`, {}))
-      .resolves.toMatchObject({ status: 0 });
-    for (const status of [0, 1, 75])
-      await expect(runSupervisor(`exit ${status}`, {})).resolves.toMatchObject({ status: 1 });
-  }, 20_000);
-
-  it('forwards a stop to the helper so every agent drains, and a hangup so it rescans', async () => {
-    await expect(
-      runSupervisor(
-        `trap 'printf drained > "$LOG"; exit 0' TERM\nprintf ready > "$READY"\nwhile :; do sleep 1; done`,
-        { signal: 'SIGTERM' },
-      ),
-    ).resolves.toMatchObject({ status: 1, signal: null, log: 'drained' });
-    await expect(
-      runSupervisor(
-        `trap 'printf rescanned > "$LOG"; exit ${NO_AGENTS_EXIT_STATUS}' HUP\nprintf ready > "$READY"\nwhile :; do sleep 1; done`,
-        { signal: 'SIGHUP' },
-      ),
-    ).resolves.toMatchObject({ status: 0, signal: null, log: 'rescanned' });
-  }, 20_000);
-
-  async function legacyJobs(env: { HOME: string }, keys: string[]) {
-    const directory = resolve(env.HOME, 'Library', 'LaunchAgents');
-    await mkdir(directory, { recursive: true });
-    for (const key of keys) await writeFile(launchdAgentPlistPath(key, env), `<plist><dict><key>Label</key><string>${launchdAgentLabel(key)}</string></dict></plist>`);
-    await writeFile(resolve(directory, 'app.usebeeline.agent.short.plist'), '');
-  }
-
-  it('bootstraps the helper job, then retires every per-agent job, its own last', async () => {
-    const { env, invocationPath } = await canonicalEnv();
-    const own = 'b'.repeat(64);
-    const other = 'c'.repeat(64);
-    await legacyJobs(env, [own, other]);
-    const domain = launchdUserDomain();
-    const target = `${domain}/${LAUNCHD_HELPER_LABEL}`;
+  it('forward-migrates old labels before starting the sole helper', async () => {
+    const root = await mkdtemp(resolve(tmpdir(), 'beeline-launchd-native-')); roots.push(root);
+    const dir = resolve(root, 'Library/LaunchAgents');
+    await mkdir(dir, { recursive: true });
+    const legacy = `app.usebeeline.agent.${'a'.repeat(64)}`;
+    await writeFile(resolve(dir, `${legacy}.plist`), 'legacy');
     const calls: string[][] = [];
-    let loaded = false;
-    const run = vi.fn(async (args: string[]) => {
-      calls.push(args);
-      if (args[0] === 'bootstrap') loaded = true;
-      if (args[0] === 'print') {
-        if (!loaded) throw new Error('Could not find service');
-        return { stdout: 'state = running\npid = 222\n' };
-      }
-      return { stdout: '' };
-    });
-    await expect(installLaunchdHelperService({
-      env, invocationPath, run, waitTimeoutMs: 1_000, selfLabel: launchdAgentLabel(own),
-    })).resolves.toBe(222);
-    const ownLabel = `${domain}/${launchdAgentLabel(own)}`;
-    const otherLabel = `${domain}/${launchdAgentLabel(other)}`;
-    expect(calls).toEqual([
-      ['print', target],
-      ['print', target],
-      ['enable', target],
-      ['print', target],
-      ['bootstrap', domain, launchdHelperPlistPath(env)],
-      ['print', target],
-      ['disable', otherLabel], ['bootout', otherLabel],
-      ['disable', ownLabel], ['bootout', ownLabel],
-    ]);
-    await expect(stat(launchdAgentPlistPath(own, env))).rejects.toMatchObject({ code: 'ENOENT' });
-    await expect(stat(launchdAgentPlistPath(other, env))).rejects.toMatchObject({ code: 'ENOENT' });
-    expect(await readFile(launchdHelperSupervisorPath(env), 'utf8')).toBe(launchdHelperSupervisorScript());
-  });
-
-  it('asks a running, unchanged helper to rescan with SIGHUP instead of replacing it', async () => {
-    const { env, invocationPath } = await canonicalEnv();
-    const first = vi.fn(async (args: string[]) => {
-      if (args[0] === 'print') throw new Error('not loaded');
-      return { stdout: '' };
-    });
-    await installLaunchdHelperService({ env, invocationPath, run: async (args) => {
-      if (args[0] === 'bootstrap') first.mockImplementation(async () => ({ stdout: 'state = running\npid = 5\n' }));
-      return first(args);
-    }, waitTimeoutMs: 1_000 });
-    const helper = spawn('sleep', ['30'], { stdio: 'ignore' });
-    const hungUp = new Promise<NodeJS.Signals | null>((done) => helper.once('exit', (_code, signal) => done(signal)));
-    const calls: string[][] = [];
-    const run = vi.fn(async (args: string[]) => {
-      calls.push(args);
-      return { stdout: args[0] === 'print' ? `state = running\npid = ${helper.pid}\n` : '' };
-    });
-    await expect(installLaunchdHelperService({ env, invocationPath, run })).resolves.toBe(helper.pid);
-    await expect(hungUp).resolves.toBe('SIGHUP');
-    expect(calls.some((args) => ['bootout', 'bootstrap', 'kickstart'].includes(args[0]!))).toBe(false);
-  });
-
-  it('retires nothing on a host that never had per-agent jobs', async () => {
-    const { env } = await canonicalEnv();
-    const run = vi.fn(async () => ({ stdout: '' }));
-    await expect(retireLegacyLaunchdAgents({ env, run })).resolves.toEqual([]);
-    expect(run).not.toHaveBeenCalled();
+    const run = async (args: string[]) => { calls.push(args); return { stdout: args[0] === 'print' && calls.some((row) => row[0] === 'bootstrap') ? 'pid = 777' : '' }; };
+    const pid = await installLaunchdHelperService({ env: { ...process.env, HOME: root, BEELINE_LIB_DIR: resolve(root, '.local/lib/beeline') }, invocationPath: resolve(root, '.local/lib/beeline/lib/beeline/beeline-cli.mjs'), run });
+    expect(pid).toBe(777);
+    expect(calls.findIndex((row) => row[0] === 'bootout')).toBeLessThan(calls.findIndex((row) => row[0] === 'bootstrap'));
+    expect(await readFile(launchdHelperPlistPath({ HOME: root }), 'utf8')).toContain('<key>KeepAlive</key><true/>');
   });
 
   it('clears a retired agent\'s leftover per-agent job without booting anything out', async () => {
     const { env } = await canonicalEnv();
     const publicKey = 'e'.repeat(64);
-    await legacyJobs(env, [publicKey]);
+    await mkdir(resolve(env.HOME, 'Library/LaunchAgents'), { recursive: true });
+    await writeFile(launchdAgentPlistPath(publicKey, env), 'legacy');
     const calls: string[][] = [];
     const run = vi.fn(async (args: string[]) => {
       calls.push(args);
@@ -382,29 +206,10 @@ describe('launchd supervision contract', () => {
     expect(calls.some((args) => args[0] === 'bootout')).toBe(true);
   });
 
-  it('bootstraps the broker after a removal in progress instead of kickstarting a dying job', async () => {
+  it('reports a native removal still in progress without polling or claiming a loaded successor', async () => {
     const { env, invocationPath } = await canonicalEnv();
-    await installLaunchdTrustySquireBrokerService({
-      env,
-      invocationPath,
-      squireInstallRun,
-      run: async (args) => {
-        if (args[0] === 'print') throw new Error('not loaded');
-        return { stdout: '' };
-      },
-    });
-    const launchd = terminatingJob();
-    const calls: string[][] = [];
-    const run = vi.fn(async (args: string[]) => {
-      calls.push(args);
-      return launchd(args);
-    });
-
-    await installLaunchdTrustySquireBrokerService({ env, invocationPath, run, restart: true, squireInstallRun });
-
-    expect(calls.some((args) => args[0] === 'kickstart')).toBe(false);
-    expect(calls.filter((args) => args[0] === 'bootstrap')).toEqual([
-      ['bootstrap', launchdUserDomain(), launchdBrokerPlistPath(env)],
-    ]);
+    const run = async (args: string[]) => { if (args[0] === 'print') return { stdout: 'state = running\npid = 111\n' }; if (args[0] === 'bootout') throw Object.assign(new Error('Boot-out failed: 36'), { stderr: 'Boot-out failed: 36' }); return { stdout: '' }; };
+    await expect(installLaunchdTrustySquireBrokerService({ env, invocationPath, run, squireInstallRun })).rejects.toThrow('still in progress');
   });
+
 });

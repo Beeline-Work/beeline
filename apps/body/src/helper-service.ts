@@ -1,23 +1,21 @@
+import { nativeSupervisor } from './native-helper.js';
 import {
   installLaunchdHelperService,
   installLaunchdTrustySquireBrokerService,
   launchdAgentLabel,
   reloadLaunchdHelperService,
 } from './launchd.js';
-import { defaultSupervisorRoot, runningHelperPid, startMachineHelper } from './runtime.js';
 import {
   installHelperService,
   installTrustySquireBrokerService,
   reloadHelperService,
 } from './systemd.js';
 
-export type Supervisor = 'systemd' | 'launchd' | 'process';
+export type Supervisor = 'systemd' | 'launchd';
 
 /** Which service manager owns the machine helper on this host. */
 export function supervisor(env: NodeJS.ProcessEnv = process.env): Supervisor {
-  if (process.platform === 'linux' && env.BEELINE_SYSTEMD_USER !== '0') return 'systemd';
-  if (process.platform === 'darwin' && env.BEELINE_LAUNCHD_USER !== '0') return 'launchd';
-  return 'process';
+  return nativeSupervisor(env);
 }
 
 /**
@@ -38,22 +36,37 @@ export async function ensureMachineHelper(
   const kind = supervisor(env);
   if (kind === 'systemd') {
     await installTrustySquireBrokerService({ env }).catch((error) =>
-      report(`[beeline] trusty-squire host broker not installed: ${
-        error instanceof Error ? error.message : String(error)}`));
-    return { pid: await installHelperService({ env }), supervisor: kind };
-  }
-  if (kind === 'launchd') {
-    await installLaunchdTrustySquireBrokerService({ env }).catch((error) =>
-      report(`[beeline] trusty-squire host broker not installed: ${
-        error instanceof Error ? error.message : String(error)}`));
+      report(
+        `[beeline] trusty-squire host broker not installed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      ),
+    );
     return {
-      pid: await installLaunchdHelperService({
-        env, ...(options.selfAgent ? { selfLabel: launchdAgentLabel(options.selfAgent) } : {}),
+      pid: await installHelperService({
+        env,
+        ...(options.selfAgent ? { selfAgent: options.selfAgent } : {}),
       }),
       supervisor: kind,
     };
   }
-  return { pid: (await startMachineHelper({ env })).pid, supervisor: kind };
+  if (kind === 'launchd') {
+    await installLaunchdTrustySquireBrokerService({ env }).catch((error) =>
+      report(
+        `[beeline] trusty-squire host broker not installed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      ),
+    );
+    return {
+      pid: await installLaunchdHelperService({
+        env,
+        ...(options.selfAgent ? { selfLabel: launchdAgentLabel(options.selfAgent) } : {}),
+      }),
+      supervisor: kind,
+    };
+  }
+  throw new Error('native helper supervisor is required');
 }
 
 /** Ask a running helper to rescan paired agents; a stopped helper stays stopped. */
@@ -61,8 +74,5 @@ export async function reloadMachineHelper(env: NodeJS.ProcessEnv = process.env):
   const kind = supervisor(env);
   if (kind === 'systemd') return reloadHelperService();
   if (kind === 'launchd') return reloadLaunchdHelperService();
-  const pid = await runningHelperPid(defaultSupervisorRoot(env));
-  if (!pid) return false;
-  process.kill(pid, 'SIGHUP');
-  return true;
+  return false;
 }

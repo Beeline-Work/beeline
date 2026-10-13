@@ -1672,10 +1672,11 @@ describe('corner close-request delivery', () => {
       await writeFile(join(operatorHome, '.android/avd/test.ini'), 'path=/operator/test.avd\n');
       await writeFile(join(operatorHome, '.android/avd/test.avd/config.ini'), 'image.sysdir.1=system-images/android-36/\n');
     }
-    const pinningFailure = shape.endsWith('-fallback')
-      ? vi.spyOn(workspaceAssets, 'prepareWorkspaceAdapter').mockRejectedValueOnce(
-          shape === 'capacity-fallback' ? new SharedAssetCapacityError() : new Error('npm registry timed out'))
-      : undefined;
+    const pinningFailure = shape.endsWith('-fallback');
+    const prepare = vi.spyOn(workspaceAssets, 'prepareWorkspaceAdapter');
+    if (pinningFailure) prepare.mockRejectedValueOnce(
+      shape === 'capacity-fallback' ? new SharedAssetCapacityError() : new Error('npm registry timed out'));
+    else prepare.mockResolvedValueOnce(undefined); // This mount fixture must not install from the host's npm registry.
     try {
       await internal.activate();
       expect(fixture.clientOptions()).toBeDefined();
@@ -1690,7 +1691,7 @@ describe('corner close-request delivery', () => {
         expect(selected.agentEnv?.BEELINE_ANDROID_BASE_AVD_HOME).not.toContain('/sdk/');
       }
       if (pinningFailure) {
-        expect(pinningFailure).toHaveBeenCalledOnce();
+        expect(prepare).toHaveBeenCalledOnce();
         expect(selected.agentEnv?.npm_config_cache ?? '').toContain('/workspaces/');
         const args = selected.agentArgs!;
         expect(args[args.lastIndexOf('--') + 1]).toBe('codex-acp');
@@ -1717,7 +1718,7 @@ describe('corner close-request delivery', () => {
         expect(child.status, child.stderr).toBe(0);
       }
     } finally {
-      pinningFailure?.mockRestore();
+      prepare.mockRestore();
       fixture.abort.abort();
       await fixture.scheduler.dispose();
     }

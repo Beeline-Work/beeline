@@ -154,8 +154,16 @@ export type DaemonClientMetrics = {
 
 const REQUEST_DEADLINE_MS = 30_000;
 const DAEMON_LIVE_EVENT_TYPES = new Set<unknown>([
-  'helper-release', 'rooms-changed', 'discovery-wake', 'corner-complete',
-  'connector-assignment', 'agent-sign-in', 'config-changed', 'subscribed', 'commands', 'inbox',
+  'helper-release',
+  'rooms-changed',
+  'discovery-wake',
+  'corner-complete',
+  'connector-assignment',
+  'agent-sign-in',
+  'config-changed',
+  'subscribed',
+  'commands',
+  'inbox',
 ]);
 
 /** Typed client for the complete named daemon operation contract. */
@@ -165,6 +173,8 @@ export class DaemonApiClient {
   /** This agent's registration on the machine's one live socket. */
   readonly channel: AgentChannel;
   readonly machine: MachineLink;
+  private authorityRefusalListener?: (error: DaemonApiError) => void;
+  private channelStateListener?: (connected: boolean, refusal?: string) => void;
   private inFlight = 0;
   private requestCount = 0;
   private timeoutCount = 0;
@@ -211,11 +221,13 @@ export class DaemonApiClient {
     // Test transports may supply their own admission model. The real network
     // transport always takes the machine-wide budget.
     this.readBudget = readBudget ?? (fetchImpl === fetch ? new HostReadBudget(baseUrl) : undefined);
-    this.machine = machine ?? new MachineLink({
-      baseUrl,
-      ...(webSocketFactory ? { factory: webSocketFactory } : {}),
-      ...(linkTiming ? { timing: linkTiming } : {}),
-    });
+    this.machine =
+      machine ??
+      new MachineLink({
+        baseUrl,
+        ...(webSocketFactory ? { factory: webSocketFactory } : {}),
+        ...(linkTiming ? { timing: linkTiming } : {}),
+      });
     this.channel = this.machine.attach(agentId, {
       registration: () => ({
         token: this.daemonToken,
@@ -223,15 +235,20 @@ export class DaemonApiClient {
         releaseVersion: this.helperIdentity.releaseVersion,
         ...(this.helperIdentity.sourceSha ? { sourceSha: this.helperIdentity.sourceSha } : {}),
       }),
-      onOpen: () => this.liveOpened(),
+      onOpen: () => {
+        this.liveOpened();
+        this.channelStateListener?.(true);
+      },
       onMessage: (event) => this.liveMessage(event),
       onClose: () => {
+        this.channelStateListener?.(false);
         for (const room of this.liveRooms.values())
           for (const registration of room.registrations) registration.onState?.(false);
       },
       // A settled removal is learned through the next reconcile's HTTP answer.
       onRefused: (code) => {
         if (code === AGENT_REMOVED_CODE) this.roomsChangedListener?.();
+        else this.channelStateListener?.(false, code);
       },
       onUpdateRequired: (minVersion) => this.forceUpdateListener?.(minVersion),
     });
@@ -244,8 +261,12 @@ export class DaemonApiClient {
 
   /** Connection material for the daemon-owned MCP proxy and corner credentials. */
   connection(): { baseUrl: string; daemonToken: string; agentId: string; helperVersion: string } {
-    return { baseUrl: this.baseUrl, daemonToken: this.daemonToken, agentId: this.agentId,
-      helperVersion: this.helperIdentity.releaseVersion };
+    return {
+      baseUrl: this.baseUrl,
+      daemonToken: this.daemonToken,
+      agentId: this.agentId,
+      helperVersion: this.helperIdentity.releaseVersion,
+    };
   }
 
   setHelperIdentity(identity: { releaseVersion?: string; sourceSha?: string }): void {
@@ -258,6 +279,12 @@ export class DaemonApiClient {
 
   setForceUpdateListener(listener: (minVersion: string) => void): void {
     this.forceUpdateListener = listener;
+  }
+  setAuthorityRefusalListener(listener: (error: DaemonApiError) => void): void {
+    this.authorityRefusalListener = listener;
+  }
+  setChannelStateListener(listener: (connected: boolean, refusal?: string) => void): void {
+    this.channelStateListener = listener;
   }
 
   metrics(): DaemonClientMetrics {
@@ -376,7 +403,11 @@ export class DaemonApiClient {
       const operation = String(name);
       if (this.readBudget && /^(get|list|read|search)/.test(operation)) {
         release = await this.readBudget.acquire(
-          operation === 'getAgentCommands' || operation === 'getRoomInbox' || operation === 'getDaemonBootstrap' ? 'urgent' : 'background',
+          operation === 'getAgentCommands' ||
+            operation === 'getRoomInbox' ||
+            operation === 'getDaemonBootstrap'
+            ? 'urgent'
+            : 'background',
           Date.now() + REQUEST_DEADLINE_MS,
         );
       }
@@ -397,6 +428,7 @@ export class DaemonApiClient {
       );
       if (!response.ok) {
         const error = await responseError(response);
+        if (error.status === 401) this.authorityRefusalListener?.(error);
         if (error.status === 426 && error.code === 'update_required' && error.minVersion)
           this.channel.requireUpdate(error.minVersion);
         throw error;
@@ -411,7 +443,12 @@ export class DaemonApiClient {
         // An admitted request that hears nothing for its whole deadline may be
         // riding a dead path; ask the socket. A queued one only waited here.
         if (admitted) this.channel.suspect();
-        throw new DaemonApiError(`monolith daemon ${String(name)} timed out`, 408, true, 'deadline_exceeded');
+        throw new DaemonApiError(
+          `monolith daemon ${String(name)} timed out`,
+          408,
+          true,
+          'deadline_exceeded',
+        );
       }
       if (isNetworkFailure(error)) this.channel.suspect();
       throw error;
@@ -438,8 +475,11 @@ export class DaemonApiClient {
   }
 
   private liveMessage(event: Record<string, unknown>): void {
-    if (event.type === 'helper-release' && typeof event.version === 'string' &&
-        typeof event.sha === 'string') {
+    if (
+      event.type === 'helper-release' &&
+      typeof event.version === 'string' &&
+      typeof event.sha === 'string'
+    ) {
       this.helperReleaseListener?.({ version: event.version, sha: event.sha });
       return;
     }
@@ -447,8 +487,10 @@ export class DaemonApiClient {
       this.roomsChangedListener?.(membershipChange(event));
       return;
     }
-    if (event.type === 'discovery-wake' &&
-        (event.reason === 'listener-resync' || event.reason === 'database-recovered')) {
+    if (
+      event.type === 'discovery-wake' &&
+      (event.reason === 'listener-resync' || event.reason === 'database-recovered')
+    ) {
       this.roomsChangedListener?.();
       return;
     }
@@ -486,10 +528,11 @@ export class DaemonApiClient {
     ) {
       const room = this.liveRooms.get(event.roomId);
       if (!room) return;
-      const commands = event.commands.filter((command): command is AgentCommand =>
-        isAgentCommand(command) &&
-        command.roomId === event.roomId &&
-        command.agentId === this.agentId,
+      const commands = event.commands.filter(
+        (command): command is AgentCommand =>
+          isAgentCommand(command) &&
+          command.roomId === event.roomId &&
+          command.agentId === this.agentId,
       );
       for (const registration of room.registrations) registration.onCommands?.(commands);
       return;

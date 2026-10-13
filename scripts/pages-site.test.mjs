@@ -32,6 +32,18 @@ function fixtureBundle(root) {
     },
   };
   fs.mkdirSync(root, { recursive: true });
+  const recoveryBytes = Buffer.from('console.log("recovery");\n');
+  const recovery = {
+    file: 'beeline-bootstrap.mjs',
+    sha256: createHash('sha256').update(recoveryBytes).digest('hex'),
+    bytes: recoveryBytes.length,
+  };
+  manifest.recovery = recovery;
+  fs.writeFileSync(path.join(root, recovery.file), recoveryBytes);
+  fs.writeFileSync(
+    path.join(root, `${recovery.file}.sha256`),
+    `${recovery.sha256}  ${recovery.file}\n`,
+  );
   fs.writeFileSync(path.join(root, filename), archive);
   fs.writeFileSync(path.join(root, `${filename}.sha256`), `${digest}  ${filename}\n`);
   fs.writeFileSync(path.join(root, 'manifest.json'), `${JSON.stringify(manifest, null, 2)}\n`);
@@ -62,6 +74,8 @@ test('builds every public Pages path and preserves association and helper bytes'
       '.well-known/assetlinks.json',
       'install',
       'dl/manifest.json',
+      'dl/beeline-bootstrap.mjs',
+      'dl/beeline-bootstrap.mjs.sha256',
       `dl/${fixture.filename}`,
       `dl/${fixture.filename}.sha256`,
     ]) {
@@ -89,7 +103,10 @@ test('builds every public Pages path and preserves association and helper bytes'
 
 test('privacy policy explains how Google user data is protected', () => {
   const html = fs.readFileSync(path.join(WEB_ROOT, 'privacy', 'index.html'), 'utf8');
-  const section = html.slice(html.indexOf('<h2>Google user data</h2>'), html.indexOf('<h2>Your choices</h2>'));
+  const section = html.slice(
+    html.indexOf('<h2>Google user data</h2>'),
+    html.indexOf('<h2>Your choices</h2>'),
+  );
   assert.ok(section.length > 0, 'Google user data section');
   for (const required of [
     /encrypted in transit with HTTPS \(TLS\)/,

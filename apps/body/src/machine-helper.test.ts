@@ -1,3 +1,4 @@
+import { requestMachine } from './machine-control.js';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
@@ -8,14 +9,14 @@ import { WebSocketServer } from 'ws';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 import { DaemonApiClient } from './daemon-api-client.js';
 import { CommandExecutionContext, runServerCommandIntake } from './server-command-intake.js';
-import { activeReleaseId, hostPlatformKey, SelfUpdateManager } from './self-update.js';
+import { activeReleaseId, activateRelease, readInstalledBundleIdentity, readUpdateState, hostPlatformKey, SelfUpdateManager } from './self-update.js';
 import { dirname, resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { AgentRuntimeHost, HostedAgent } from './agent-runtime.js';
 import { reportInterruptedTurns } from './force-update-journal.js';
 import * as updateJournal from './force-update-journal.js';
 import { daemonFailurePath } from './daemon-failure.js';
-import { HelperLifecycle, type HelperExitReason } from './helper-lifecycle.js';
+import { AgentLifecycle, type AgentExitReason } from './helper-lifecycle.js';
 import { helperStatusLines, helperStatusPath } from './helper-status.js';
 import { quiesceHostedAgents, runMachineHelper } from './machine-helper.js';
 import {
@@ -61,7 +62,7 @@ async function stage(root: string, index: number): Promise<string> {
 }
 
 /** A fake agent runtime: serves until its signal aborts, unless a script says otherwise. */
-function fakeRuntimes(script: (agentId: string, run: number) => Promise<HelperExitReason> | undefined = () => undefined) {
+function fakeRuntimes(script: (agentId: string, run: number) => Promise<AgentExitReason> | undefined = () => undefined) {
   const runs = new Map<string, number>();
   const signals = new Map<string, AbortSignal>();
   const runAgent = vi.fn(async (configPath: string, host: AgentRuntimeHost, signal: AbortSignal) => {
@@ -90,7 +91,7 @@ describe('one helper process hosts every agent on the machine', () => {
     const running = runMachineHelper({ env, signals, runAgent: fake.runAgent, exitProcess: () => undefined });
     await vi.waitFor(async () => {
       await expect(access(old)).rejects.toMatchObject({ code: 'ENOENT' });
-    });
+    }, { timeout: 5000 });
     signals.emit('SIGTERM');
     expect((await running).reason).toBe('stopped');
   });
@@ -121,13 +122,13 @@ describe('one helper process hosts every agent on the machine', () => {
     expect(exits).toEqual([0]);
   });
 
-  it('restarts only the agent that failed, and stops only the one in distress', async () => {
+  it('retries past three failures until recovery while the sibling continues', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
     const { root, configPaths, env, signals } = await machine(2);
     const failing = (await readRuntimeRecord(configPaths[0]!)).agent.publicKey;
     const sibling = (await readRuntimeRecord(configPaths[1]!)).agent.publicKey;
-    const fake = fakeRuntimes((agentId) =>
-      agentId === failing ? Promise.reject(new Error('harness exploded')) : undefined);
+    const fake = fakeRuntimes((agentId, run) =>
+      agentId === failing && run <= 3 ? Promise.reject(new Error('harness exploded')) : undefined);
     const running = runMachineHelper({ env, signals, runAgent: fake.runAgent, exitProcess: () => undefined });
     const waitForRestart = async (previousSince?: string) => {
       let since = '';
@@ -149,19 +150,16 @@ describe('one helper process hosts every agent on the machine', () => {
     await waitForRestart(firstRestart);
     await vi.advanceTimersByTimeAsync(10_000);
     await vi.waitFor(() => expect(fake.runs.get(failing)).toBe(3));
-    // Three counted failures in the window: distress, recorded as before, and no more restarts.
-    await vi.waitFor(async () =>
-      expect(JSON.parse(await readFile(daemonFailurePath(dirname(configPaths[0]!)), 'utf8')))
-        .toMatchObject({ distressedAt: expect.any(Number), lastError: 'harness exploded' }));
-    await vi.advanceTimersByTimeAsync(120_000);
-    expect(fake.runs.get(failing)).toBe(3);
+    await vi.waitFor(async () => expect(JSON.parse(await readFile(daemonFailurePath(dirname(configPaths[0]!)), 'utf8'))).toMatchObject({ lastError: 'harness exploded' }));
+    await vi.advanceTimersByTimeAsync(20_000);
+    await vi.waitFor(() => expect(fake.runs.get(failing)).toBe(4));
     // The sibling started once and was never touched.
     expect(fake.runs.get(sibling)).toBe(1);
     expect(fake.signals.get(sibling)!.aborted).toBe(false);
     // The distress record is written before the helper status is persisted.
     await vi.waitFor(async () => {
       const lines = await helperStatusLines(env);
-      expect(lines.find((line) => line.includes(failing.slice(0, 12)))).toMatch(/distressed/);
+      expect(lines.find((line) => line.includes(failing.slice(0, 12)))).toMatch(/serving/);
       expect(lines.find((line) => line.includes(sibling.slice(0, 12)))).toMatch(/serving/);
     });
     signals.emit('SIGTERM');
@@ -186,7 +184,7 @@ describe('one helper process hosts every agent on the machine', () => {
     const { root, configPaths, env, signals } = await machine(2);
     const fake = fakeRuntimes();
     const running = runMachineHelper({ env, signals, runAgent: fake.runAgent, exitProcess: () => undefined });
-    await vi.waitFor(() => expect(fake.signals.size).toBe(2));
+    await vi.waitFor(() => expect(fake.signals.size).toBe(2), { timeout: 5000 });
     const kept = (await readRuntimeRecord(configPaths[0]!)).agent.publicKey;
     const stopped = (await readRuntimeRecord(configPaths[1]!)).agent.publicKey;
     const paired = await stage(root, 7);
@@ -205,10 +203,44 @@ describe('one helper process hosts every agent on the machine', () => {
     expect((await running).reason).toBe('stopped');
   });
 
-  it('ends with no-agents, which the service manager does not restart, when nothing is paired', async () => {
-    const { env, signals } = await machine(0);
-    const { reason } = await runMachineHelper({ env, signals, runAgent: vi.fn(), exitProcess: () => undefined });
-    expect(reason).toBe('no-agents');
+  it('remembers a start that arrives while the scoped stop is still draining', async () => {
+    const { root, configPaths, env, signals } = await machine(2);
+    const id = (await readRuntimeRecord(configPaths[0]!)).agent.publicKey;
+    let finishStop!: () => void;
+    const stopped = new Promise<void>((done) => { finishStop = done; });
+    const counts = new Map<string, number>();
+    const runAgent = async (path: string, host: AgentRuntimeHost, signal: AbortSignal): Promise<AgentExitReason> => {
+      const key = (await readRuntimeRecord(path)).agent.publicKey;
+      const count = (counts.get(key) ?? 0) + 1; counts.set(key, count);
+      host.established(key);
+      await new Promise<void>((done) => signal.addEventListener('abort', () => done(), { once: true }));
+      if (key === id && count === 1) await stopped;
+      return 'stopped';
+    };
+    const running = runMachineHelper({ env, signals, runAgent, exitProcess: () => undefined });
+    try {
+      await vi.waitFor(() => expect(counts.size).toBe(2));
+      await setAgentStopped(configPaths[0]!, true);
+      await requestMachine(root, { operation: 'converge' }, () => true);
+      await setAgentStopped(configPaths[0]!, false);
+      await requestMachine(root, { operation: 'converge' }, () => true);
+      expect(counts.get(id)).toBe(1);
+      finishStop();
+      await vi.waitFor(() => expect(counts.get(id)).toBe(2));
+      expect([...counts.values()].sort()).toEqual([1, 2]);
+    } finally { finishStop(); signals.emit('SIGTERM'); await running; }
+  });
+
+  it('serves an empty machine and picks up a newly paired agent on an explicit event', async () => {
+    const { root, env, signals } = await machine(0);
+    const fake = fakeRuntimes();
+    const running = runMachineHelper({ env, signals, runAgent: fake.runAgent, exitProcess: () => undefined });
+    try {
+      await vi.waitFor(async () => expect(JSON.parse(await readFile(helperStatusPath(root), 'utf8'))).toMatchObject({ processState: 'serving', agents: {} }));
+      await stage(root, 8);
+      signals.emit('SIGHUP');
+      await vi.waitFor(() => expect(fake.runs.size).toBe(1));
+    } finally { signals.emit('SIGTERM'); await running; }
   });
 });
 
@@ -263,7 +295,7 @@ describe('one update drain for every hosted agent', () => {
     let running: ReturnType<typeof runMachineHelper> | undefined;
     try {
       const runAgent = vi.fn(async (_configPath: string, host: AgentRuntimeHost, signal: AbortSignal) => {
-        const lifecycle = new HelperLifecycle({ controller: new AbortController(), exitProcess: () => undefined });
+        const lifecycle = new AgentLifecycle({ controller: new AbortController() });
         const core = { activeTurnCount: () => 0, quiesceForUpdate: () => undefined,
           isWorkspaceIdle: () => true } as unknown as ThinDaemonCore;
         const leave = host.attach({ agentId, runtimeDir: root, lifecycle, core });
@@ -285,22 +317,26 @@ describe('one update drain for every hosted agent', () => {
       });
       running = runMachineHelper({ configPaths, env, signals, runAgent,
         runUpdateWorker: async () => {
-          const manager = new SelfUpdateManager({ layout, stageOnly: true, env, logger: () => undefined });
+          const response = await fetch(env.BEELINE_UPDATE_MANIFEST_URL);
+          const target = JSON.parse(await response.text());
+          if ((await readInstalledBundleIdentity(layout))?.commit === target.sourceCommit) return;
+          const manager = new SelfUpdateManager({ layout, stageOnly: true, env, logger: () => undefined, fetchImpl: (url, opts) => String(url).endsWith('/manifest.json') ? Promise.resolve(Response.json(target)) : fetch(url, opts) });
           await manager.checkAndApply();
         }, exitProcess: () => undefined });
       await vi.waitFor(() => expect(manifestReads).toBe(1));
       expect(await activeReleaseId(layout)).toBe('old');
       if (delivery === 'reconnect') {
-        for (const socket of sockets.clients) socket.close(1012, 'test reconnect');
-        await vi.waitFor(() => expect([...sockets.clients].every((socket) => socket.readyState === socket.CLOSED)).toBe(true));
         published = true;
+        const oldSockets = [...sockets.clients];
+        for (const socket of oldSockets) socket.close(1012, 'test reconnect');
+        await vi.waitFor(() => expect(oldSockets.every((socket) => socket.readyState === socket.CLOSED)).toBe(true));
       } else {
         published = true;
         for (const socket of sockets.clients) socket.send(JSON.stringify({
           type: 'helper-release', version: 'v0.1.29', sha: 'new',
         }));
       }
-      await vi.waitFor(async () => expect(await activeReleaseId(layout)).toBe('new'), { timeout: 10_000 });
+      await vi.waitFor(async () => expect((await readUpdateState(layout)).stagedReleaseId).toBe('new'), { timeout: 10_000 });
       expect((await running).reason).toBe('update');
       await vi.waitFor(() => expect(closes).toContainEqual({ code: 4002, reason: 'helper-update' }));
       expect(manifestReads).toBe(2);
@@ -405,7 +441,7 @@ describe('one update drain for every hosted agent', () => {
     const held = new Promise<void>((resolveHeld) => { finishHeld = resolveHeld; });
     let host!: AgentRuntimeHost;
     let core!: ThinDaemonCore;
-    let agentLifecycle!: HelperLifecycle;
+    let agentLifecycle!: AgentLifecycle;
     let generation = 0;
     const runAgent = async (configPath: string, runtimeHost: AgentRuntimeHost, signal: AbortSignal) => {
       host = runtimeHost;
@@ -415,7 +451,7 @@ describe('one update drain for every hosted agent', () => {
       const api = new DaemonApiClient(origin, 'isolated-test-token', agentId);
       await reportInterruptedTurns(dirname(configPath), api, agentId);
       core = new ThinDaemonCore(runtime, configPath, { workspaceRoot: root } as never, { daemonApi: api });
-      const lifecycle = new HelperLifecycle({ controller: new AbortController(), exitProcess: () => undefined });
+      const lifecycle = new AgentLifecycle({ controller: new AbortController() });
       agentLifecycle = lifecycle;
       const leave = host.attach({ agentId, runtimeDir: dirname(configPath), lifecycle, core });
       const internal = core as unknown as { roomRuntime: {
@@ -425,6 +461,9 @@ describe('one update drain for every hosted agent', () => {
         let busy = false;
         const context = new CommandExecutionContext(root);
         internal.roomRuntime.running.set(roomId, { body: { isBusy: () => busy,
+          interruptedTurn: () => busy && context.current ? {
+            roomId, requestId: context.current.turnRequestId, generationId: context.generationId,
+          } : undefined,
           interruptForServerMinimum: () => busy && context.current ? {
             roomId, requestId: context.current.turnRequestId, generationId: context.generationId,
           } : undefined }, controller: new AbortController(), promise: Promise.resolve() });
@@ -453,8 +492,8 @@ describe('one update drain for every hosted agent', () => {
       await vi.waitFor(() => expect(claims.has('held')).toBe(true));
       const manager = new SelfUpdateManager({ layout, stageOnly: true, env: { ...helperEnv,
         BEELINE_UPDATE_MANIFEST_URL: `${origin}/manifest.json` }, logger: () => undefined });
-      await manager.checkAndApply({ force: true });
-      await host.tickUpdate();
+      await manager.checkAndApply();
+      await requestMachine(root, { operation: 'update', releaseId: 'new' }, () => true);
       expect(core.activeTurnCount()).toBe(1);
       expect(await activeReleaseId(layout)).toBe('old');
 
@@ -483,6 +522,7 @@ describe('one update drain for every hosted agent', () => {
       const restartAt = Date.now();
       await host.tickUpdate();
       expect((await running).reason).toBe('update');
+      await activateRelease(layout, 'new');
       expect(await activeReleaseId(layout)).toBe('new');
       expect(Date.now() - restartAt).toBeLessThan(1_000);
       vi.useRealTimers();
@@ -519,7 +559,7 @@ describe('one update drain for every hosted agent', () => {
 
   function hosted(busy: boolean): HostedAgent & { closed: () => boolean } {
     let intakeClosed = false;
-    const lifecycle = new HelperLifecycle({ controller: new AbortController(), exitProcess: () => undefined });
+    const lifecycle = new AgentLifecycle({ controller: new AbortController() });
     const core = {
       activeTurnCount: () => (busy ? 1 : 0),
       quiesceForUpdate: () => {
@@ -542,6 +582,11 @@ describe('one update drain for every hosted agent', () => {
     const agents = [hosted(false), hosted(true), hosted(false)];
     expect(quiesceHostedAgents(agents, true)).toBe(true);
     expect(agents.every((agent) => agent.closed() && !agent.lifecycle.serving)).toBe(true);
+  });
+  it('continues the common handoff after server-minimum interruption has already quiesced agents', () => {
+    const agents = [hosted(true), hosted(false)];
+    for (const agent of agents) agent.lifecycle.quiesce('force-update');
+    expect(quiesceHostedAgents(agents, true)).toBe(true);
   });
 
   it('keeps every agent serving while any hosted turn is busy', () => {

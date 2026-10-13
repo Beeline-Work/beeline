@@ -12,8 +12,20 @@ async function fixture(directory, version = 'v0.0.63') {
   const bytes = Buffer.from(`verified bundle ${version}`);
   const file = 'beeline-linux-x64.tar.gz';
   const sha256 = createHash('sha256').update(bytes).digest('hex');
+  const recoveryBytes = Buffer.from('console.log("recovery");\n');
+  const recovery = {
+    file: 'beeline-bootstrap.mjs',
+    sha256: createHash('sha256').update(recoveryBytes).digest('hex'),
+    bytes: recoveryBytes.length,
+  };
+  await writeFile(join(directory, recovery.file), recoveryBytes);
+  await writeFile(
+    join(directory, `${recovery.file}.sha256`),
+    `${recovery.sha256}  ${recovery.file}\n`,
+  );
   const manifest = {
     schemaVersion: 1,
+    recovery,
     sourceCommit: 'a'.repeat(40),
     version,
     bundles: {

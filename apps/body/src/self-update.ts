@@ -61,9 +61,11 @@
  */
 import { createHash } from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
+import { assertInstallTestIsolation } from './lifecycle-test-guard.js';
 import {
   access,
   chmod,
+  copyFile,
   lstat,
   mkdir,
   open,
@@ -77,14 +79,11 @@ import { spawn } from 'node:child_process';
 import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import {
-  compareBundleIdentity,
   parseUpdateManifest,
   resolveManifestUrl,
   type InstalledBundleIdentity,
   type PublishedBundle,
 } from './self-update-manifest.js';
-import { convergeLaunchdTrustySquireBrokerService } from './launchd.js';
-import { convergeHelperServiceUnit, convergeTrustySquireBrokerService } from './systemd.js';
 
 // ---------------------------------------------------------------------------
 // Layout
@@ -298,6 +297,7 @@ export function nodeVersionAtLeast(
 export interface UpdateStateFile {
   lastCheckAt?: number;
   lastCheckResult?: string;
+  lastCheckError?: string;
   /** Last server-announced release for which this install checked the manifest. */
   notifiedReleaseKey?: string;
   /** Verified release staged by the disposable worker, not yet activated. */
@@ -325,7 +325,17 @@ export async function writeUpdateState(
   state: UpdateStateFile,
 ): Promise<void> {
   await mkdir(join(layout.releasesRoot, '.state'), { recursive: true });
-  await writeFile(updateStatePath(layout), `${JSON.stringify(state, null, 2)}\n`, 'utf8');
+  const path = updateStatePath(layout);
+  const temporary = `${path}.${process.pid}.tmp`;
+  const handle = await open(temporary, 'w', 0o600);
+  try {
+    await handle.writeFile(`${JSON.stringify(state, null, 2)}\n`);
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  await rename(temporary, path);
+  await fsyncDir(dirname(path));
 }
 
 /**
@@ -476,25 +486,60 @@ export async function stageRelease(
   layout: BeelineInstallLayout,
   manifestUrl: string,
   published: PublishedBundle,
-  opts: { fetchImpl?: typeof fetch; smokeTestCli?: boolean; logger?: (line: string) => void } = {},
+  opts: {
+    fetchImpl?: typeof fetch;
+    smokeTestCli?: boolean;
+    logger?: (line: string) => void;
+    force?: boolean;
+    deadlineAt?: number;
+  } = {},
 ): Promise<string> {
-  const fetchImpl = opts.fetchImpl ?? fetch;
+  assertInstallTestIsolation(layout);
+  const deadlineAt = opts.deadlineAt ?? Date.now() + 3 * 60_000;
+  const remaining = () => {
+    const ms = deadlineAt - Date.now();
+    if (ms <= 0) throw new Error('release preparation deadline exceeded');
+    return ms;
+  };
+  const fetchImpl: typeof fetch = (input, init) =>
+    (opts.fetchImpl ?? fetch)(input, {
+      ...init,
+      signal: AbortSignal.any([
+        ...(init?.signal ? [init.signal] : []),
+        AbortSignal.timeout(remaining()),
+      ]),
+    });
   const log = opts.logger ?? ((line: string) => console.log(`[body] self-update: ${line}`));
-  const releaseId = sanitizeReleaseId(
-    published.commit ?? published.version ?? `release-${Date.now()}`,
+  let releaseId = sanitizeReleaseId(
+    (published.commit ?? published.version ?? `release-${Date.now()}`) +
+      (opts.force ? `-repair-${Date.now()}` : ''),
   );
-  const releaseDir = join(layout.releasesRoot, releaseId);
+  let releaseDir = join(layout.releasesRoot, releaseId);
 
   // Already staged and verified? Reuse it — a retry after a busy-deferred
   // attempt must not redownload 14MB.
-  const okMarker = join(releaseDir, '.stage-ok');
+  let okMarker = join(releaseDir, '.stage-ok');
   let previouslyVerified = false;
   try {
     const recorded = await readFile(okMarker, 'utf8');
-    if (recorded.trim() === published.sha256) return releaseId;
-    previouslyVerified = true; // verified for a DIFFERENT digest: never delete this dir
+    if (recorded.trim() === published.sha256 && !opts.force) return releaseId;
+    // Different bytes under the same published identity get a new immutable directory.
+    releaseId = sanitizeReleaseId(`${releaseId}-${published.sha256.slice(0, 12)}`);
+    releaseDir = join(layout.releasesRoot, releaseId);
+    okMarker = join(releaseDir, '.stage-ok');
+    const matching = await readFile(okMarker, 'utf8').catch(() => '');
+    if (matching.trim() === published.sha256 && !opts.force) return releaseId;
+    previouslyVerified = Boolean(matching);
   } catch {
     // not staged yet
+  }
+  // Never extract over the process's immutable release, even if its marker
+  // was lost in an interrupted legacy migration or manually damaged.
+  if ((await activeReleaseId(layout)) === releaseId) {
+    releaseId = sanitizeReleaseId(`${releaseId}-repair-${Date.now()}`);
+    releaseDir = join(layout.releasesRoot, releaseId);
+    okMarker = join(releaseDir, '.stage-ok');
+    previouslyVerified = false;
   }
 
   await mkdir(releaseDir, { recursive: true });
@@ -526,14 +571,19 @@ export async function stageRelease(
     const entries = (
       await new Promise<string>((resolveList, rejectList) => {
         const child = spawn('tar', ['-tzf', tempArchive], { stdio: ['ignore', 'pipe', 'inherit'] });
+        const timer = setTimeout(() => child.kill('SIGKILL'), Math.min(30_000, remaining()));
         let out = '';
         child.stdout?.on('data', (chunk: Buffer) => {
           out += chunk.toString('utf8');
         });
-        child.once('error', rejectList);
-        child.once('exit', (status) =>
-          status === 0 ? resolveList(out) : rejectList(new Error('tar -tzf failed')),
-        );
+        child.once('error', (error) => {
+          clearTimeout(timer);
+          rejectList(error);
+        });
+        child.once('exit', (status) => {
+          clearTimeout(timer);
+          status === 0 ? resolveList(out) : rejectList(new Error('tar -tzf failed'));
+        });
       })
     )
       .split('\n')
@@ -544,7 +594,11 @@ export async function stageRelease(
       }
     }
 
-    const extract = await run('tar', ['-xzf', tempArchive, '-C', releaseDir], 5 * 60_000);
+    const extract = await run(
+      'tar',
+      ['-xzf', tempArchive, '-C', releaseDir],
+      Math.min(60_000, remaining()),
+    );
     if (extract.status !== 0) throw new Error(`extracting bundle failed: ${extract.stderr}`);
 
     for (const relative of requiredBundlePaths()) {
@@ -554,6 +608,12 @@ export async function stageRelease(
         throw new Error(`staged bundle is missing ${relative}`);
       }
     }
+    const identity = await readInstalledBundleIdentity({ ...layout, libDir: releaseDir });
+    if (
+      (published.commit && identity?.commit !== published.commit) ||
+      (published.version && identity?.version !== published.version)
+    )
+      throw new Error('staged bundle identity differs from the published manifest');
 
     // Record a Node runtime that satisfies this release's own engine minimum
     // as an absolute path, so every later invocation of this release --
@@ -581,7 +641,7 @@ export async function stageRelease(
       const probe = await run(
         process.execPath,
         [join(releaseDir, BUNDLE_ENTRYPOINT), '--version'],
-        60_000,
+        Math.min(60_000, remaining()),
       );
       if (probe.status !== 0) {
         throw new Error(
@@ -632,13 +692,7 @@ const FORWARDER_ALIASES: Readonly<Record<string, (typeof FORWARDER_TOOLS)[number
 };
 
 function forwarderScript(tool: string): string {
-  // Must stay byte-identical with relay-stack/web/install.sh's forwarder
-  // heredocs — repairInstallForwarders compares file content against this
-  // exact text, and the two writers must never disagree about what a healthy
-  // forwarder looks like. The anchor is resolved with cd+pwd -P against REAL
-  // directories (prefix/bin), then exported so the bundle wrapper never has
-  // to hand node a '..' component through the symlinked anchor.
-  return [
+  const common = [
     '#!/bin/sh',
     'set -eu',
     'case $0 in',
@@ -647,7 +701,21 @@ function forwarderScript(tool: string): string {
     'esac',
     'prefix_dir=$(CDPATH= cd -- "$(dirname -- "$script_path")/.." && pwd -P)',
     'export BEELINE_LIB_DIR="$prefix_dir/lib/beeline"',
-    `exec "$prefix_dir/lib/beeline/bin/${tool}" "$@"`,
+  ];
+  if (tool !== 'beeline')
+    return [...common, `exec "$prefix_dir/lib/beeline/bin/${tool}" "$@"`, ''].join('\n');
+  return [
+    ...common,
+    'beeline_node=${BEELINE_NODE:-}',
+    'if [ -z "$beeline_node" ] && [ -f "$prefix_dir/lib/beeline-node-path" ]; then beeline_node=$(cat "$prefix_dir/lib/beeline-node-path"); fi',
+    'if [ -z "$beeline_node" ]; then beeline_node=$(command -v node); fi',
+    'if [ "${1:-}" = helper-bootstrap ] || { [ "${1:-}" = daemon ] && [ "${2:-}" = --machine ]; }; then',
+    '  export BEELINE_BOOT_LAUNCHER_PID=$$ BEELINE_BOOT_LAUNCHER_PARENT_PID=$PPID',
+    '  entry=$("$beeline_node" "$prefix_dir/lib/beeline-bootstrap.mjs" select-release)',
+    '  case $(uname -s) in Linux) export BEELINE_MANAGED_BY_SYSTEMD=1 ;; Darwin) export BEELINE_MANAGED_BY_LAUNCHD=1 ;; esac',
+    '  exec "$beeline_node" "$entry" daemon --machine',
+    'fi',
+    'exec "$beeline_node" "$prefix_dir/lib/beeline-bootstrap.mjs" "$@"',
     '',
   ].join('\n');
 }
@@ -677,7 +745,8 @@ export async function activateRelease(
   layout: BeelineInstallLayout,
   releaseId: string,
 ): Promise<void> {
-  const releaseDir = join(layout.releasesRoot, releaseId);
+  assertInstallTestIsolation(layout);
+  let releaseDir = join(layout.releasesRoot, releaseId);
   await access(join(releaseDir, BUNDLE_ENTRYPOINT), fsConstants.F_OK);
 
   await mkdir(layout.releasesRoot, { recursive: true });
@@ -712,8 +781,31 @@ export async function activateRelease(
 
   // Stable forwarders in bin/ — identical across releases, so this is setup,
   // not per-update churn.
+  await installRecoveryLauncher(layout, releaseDir);
   await writeBinForwarders(layout, releaseDir);
+}
 
+async function installRecoveryLauncher(
+  layout: BeelineInstallLayout,
+  releaseDir: string,
+): Promise<void> {
+  const bootstrap = join(releaseDir, 'lib/beeline/recovery-cli.mjs');
+  if (
+    await access(bootstrap).then(
+      () => true,
+      () => false,
+    )
+  ) {
+    const stable = resolve(layout.libDir, '../beeline-bootstrap.mjs');
+    const temporary = `${stable}.${process.pid}.tmp`;
+    await copyFile(bootstrap, temporary);
+    await rename(temporary, stable);
+    await replaceFile(
+      resolve(layout.libDir, '../beeline-node-path'),
+      `${process.execPath}\n`,
+      0o600,
+    );
+  }
 }
 
 /** Files a legacy-flat bundle keeps at its root; migration moves them into lib/beeline/. */
@@ -779,7 +871,17 @@ async function writeBinForwarders(
     } catch {
       continue; // bundle does not ship this tool; leave any existing entry alone
     }
-    await replaceFile(join(layout.binDir, name), forwarderScript(tool), 0o755);
+    const independent = await access(resolve(layout.libDir, '../beeline-bootstrap.mjs')).then(
+      () => true,
+      () => false,
+    );
+    await replaceFile(
+      join(layout.binDir, name),
+      independent || tool !== 'beeline'
+        ? forwarderScript(tool)
+        : forwarderScript('legacy-beeline').replace('/bin/legacy-beeline', '/bin/beeline'),
+      0o755,
+    );
   }
 }
 
@@ -801,7 +903,9 @@ export async function repairInstallForwarders(
   layout: BeelineInstallLayout,
   opts: { logger?: (line: string) => void } = {},
 ): Promise<boolean> {
+  assertInstallTestIsolation(layout);
   if ((await pathKind(layout.libDir)) !== 'symlink') return false;
+  await installRecoveryLauncher(layout, layout.libDir);
   const forwarderHealthy = async (name: string, tool: string): Promise<boolean> => {
     let current: string | undefined;
     try {
@@ -809,7 +913,15 @@ export async function repairInstallForwarders(
     } catch {
       current = undefined;
     }
-    return current === forwarderScript(tool);
+    const independent = await access(resolve(layout.libDir, '../beeline-bootstrap.mjs')).then(
+      () => true,
+      () => false,
+    );
+    const expected =
+      independent || tool !== 'beeline'
+        ? forwarderScript(tool)
+        : forwarderScript('legacy-beeline').replace('/bin/legacy-beeline', '/bin/beeline');
+    return current === expected;
   };
   let healthy = await forwarderHealthy('beeline', 'beeline');
   for (const [alias, tool] of Object.entries(FORWARDER_ALIASES)) {
@@ -826,18 +938,13 @@ export async function repairInstallForwarders(
 }
 
 // ---------------------------------------------------------------------------
-// The manager (driven by explicit ticks)
+// Compatibility entry for one explicit preparation
 // ---------------------------------------------------------------------------
 
 export interface SelfUpdateManagerOptions {
   layout: BeelineInstallLayout;
   env?: NodeJS.ProcessEnv;
   now?: () => number;
-  /** How long to wait for agent work to finish before restarting. Default 30min. */
-  idleTimeoutMs?: number;
-  idlePollMs?: number;
-  /** Busy gate: true when no agent work is running anywhere in this daemon. */
-  isIdle?: () => boolean;
   fetchImpl?: typeof fetch;
   logger?: (line: string) => void;
   /** Download, verify, and smoke-test only. The serving daemon activates after it proves idle. */
@@ -852,228 +959,63 @@ export function describeIdentity(identity: InstalledBundleIdentity | undefined):
   return parts.join(' ') || 'unknown';
 }
 
+/** Compatibility facade for callers that prepare one release. It owns no lifecycle or idle loop. */
 export class SelfUpdateManager {
-  private readonly options: Required<
-    Pick<
-      SelfUpdateManagerOptions,
-      'layout' | 'idleTimeoutMs' | 'idlePollMs'
-    >
-  > & { env: NodeJS.ProcessEnv; now: () => number };
-  private readonly isIdle: () => boolean;
-  private readonly fetchImpl: typeof fetch;
-  private readonly log: (line: string) => void;
-  private readonly stageOnly: boolean;
-
-  private disposed = false;
-  private applying = false;
-  private deferredBusyNotice = false;
-  private lastVerdictLog = '';
-
-  constructor(options: SelfUpdateManagerOptions) {
-    const env = options.env ?? process.env;
-    const numberEnv = (name: string, fallback: number): number => {
-      const raw = env[name];
-      if (!raw) return fallback;
-      const value = Number(raw);
-      return Number.isFinite(value) && value >= 0 ? value : fallback;
-    };
-    this.options = {
-      layout: options.layout,
-      idleTimeoutMs:
-        options.idleTimeoutMs ?? numberEnv('BEELINE_UPDATE_IDLE_TIMEOUT_MS', 30 * 60_000),
-      idlePollMs: options.idlePollMs ?? 5_000,
-      env,
-      now: options.now ?? Date.now,
-    };
-    this.isIdle = options.isIdle ?? (() => true);
-    this.fetchImpl = options.fetchImpl ?? fetch;
-    this.log = options.logger ?? ((line: string) => console.log(line));
-    this.stageOnly = options.stageOnly ?? false;
-  }
-
-  dispose(): void {
-    this.disposed = true;
-  }
-
-  private busy(): boolean {
-    return !this.isIdle();
-  }
-
-  /** Public single tick — test/CLI synchronization point. */
-  async tickOnce(): Promise<void> {
-    await this.tick();
-  }
-
-  private async tick(): Promise<void> {
-    if (this.disposed || this.applying) return;
-    const now = this.options.now();
-    const disabled = this.options.env.BEELINE_UPDATE_DISABLE === '1';
-    if (disabled) return;
-    this.applying = true;
-    try {
-      await this.checkAndApply();
-    } catch (error) {
-      this.log(
-        `[body] self-update check failed: ${error instanceof Error ? error.message : String(error)}`,
-      );
-      const state = await readUpdateState(this.options.layout);
-      await writeUpdateState(this.options.layout, {
-        ...state,
-        lastCheckAt: now,
-        lastCheckResult: `failed: ${error instanceof Error ? error.message : String(error)}`.slice(
-          0,
-          300,
-        ),
-      }).catch(() => undefined);
-    } finally {
-      this.applying = false;
-    }
-  }
-
+  constructor(private readonly options: SelfUpdateManagerOptions) {}
   async checkAndApply(opts: { force?: boolean } = {}): Promise<void> {
-    const now = this.options.now();
-    const manifestUrl = resolveManifestUrl(this.options.env);
-    const platform = hostPlatformKey();
-    const raw = await fetchText(manifestUrl, this.fetchImpl);
-    const { bundle } = parseUpdateManifest(raw, platform);
-    const state = await readUpdateState(this.options.layout);
-    // An explicit --force overrides an indeterminate comparison when the
-    // published side at least names itself; otherwise compare normally.
-    const installed = await readInstalledBundleIdentity(this.options.layout, state);
-    const compared = compareBundleIdentity(installed, bundle);
-    const verdict =
-      opts.force && compared.kind === 'indeterminate' && (bundle.commit || bundle.version)
-        ? ({ kind: 'update-available', published: bundle } as const)
-        : compared;
-
-    const verdictLine =
-      verdict.kind === 'update-available'
-        ? `update available: ${describeIdentity(installed)} -> ${describeIdentity({ commit: verdict.published.commit, version: verdict.published.version })}`
-        : verdict.kind === 'current'
-          ? 'installed bundle is current'
-          : `cannot decide: ${verdict.reason}`;
-    if (verdictLine !== this.lastVerdictLog) {
-      this.log(`[body] self-update: ${verdictLine}`);
-      this.lastVerdictLog = verdictLine;
-    }
-    await writeUpdateState(this.options.layout, {
-      ...state,
-      lastCheckAt: now,
-      lastCheckResult: verdict.kind === 'update-available' ? verdictLine : verdictLine,
+    const target = await prepareLatestRelease(this.options.layout, {
+      ...this.options,
+      force: opts.force,
     });
-
-    if (verdict.kind === 'current') return;
-    if (verdict.kind === 'indeterminate') {
-      this.log(
-        '[body] self-update: skipping automatic apply; run `beeline update --force` to apply anyway',
-      );
-      return;
-    }
-
-    await this.apply(verdict.published, manifestUrl);
+    if (!this.options.stageOnly) await activateRelease(this.options.layout, target.releaseId);
   }
+}
 
-  private async apply(published: PublishedBundle, manifestUrl: string): Promise<void> {
-    const now = this.options.now();
-    const state = await readUpdateState(this.options.layout);
-    const installed = await readInstalledBundleIdentity(this.options.layout, state);
-    const targetIdentity = {
-      ...(published.commit ? { commit: published.commit } : {}),
-      ...(published.version ? { version: published.version } : {}),
-    };
-
-    // Stage (download/verify/extract/smoke) FIRST — none of that touches the
-    // live install or interrupts anything, so it may proceed while busy.
-    const releaseId = await stageRelease(this.options.layout, manifestUrl, published, {
-      fetchImpl: this.fetchImpl,
-      logger: (line) => this.log(line.replace(/^\[body\] self-update: /, '[body] self-update: ')),
+export async function prepareLatestRelease(
+  layout: BeelineInstallLayout,
+  options: {
+    env?: NodeJS.ProcessEnv;
+    fetchImpl?: typeof fetch;
+    logger?: (line: string) => void;
+    force?: boolean;
+    deadlineAt?: number;
+    manifest?: { url: string; bundle: PublishedBundle };
+  } = {},
+): Promise<{ releaseId: string; identity: InstalledBundleIdentity }> {
+  try {
+    const manifestUrl = options.manifest?.url ?? resolveManifestUrl(options.env ?? process.env);
+    const bundle =
+      options.manifest?.bundle ??
+      parseUpdateManifest(
+        await fetchText(manifestUrl, options.fetchImpl ?? fetch),
+        hostPlatformKey(),
+      ).bundle;
+    const pending = (await readUpdateState(layout)).stagedReleaseId;
+    const pendingDigest = pending
+      ? await readFile(join(layout.releasesRoot, pending, '.stage-ok'), 'utf8').catch(() => '')
+      : '';
+    const releaseId =
+      !options.force && pending && pendingDigest.trim() === bundle.sha256
+        ? pending
+        : await stageRelease(layout, manifestUrl, bundle, {
+            fetchImpl: options.fetchImpl,
+            logger: options.logger,
+            force: options.force,
+            deadlineAt: options.deadlineAt,
+          });
+    await writeUpdateState(layout, {
+      lastCheckAt: Date.now(),
+      lastCheckResult: 'verified',
+      stagedReleaseId: releaseId,
     });
-
-    if (this.stageOnly) {
-      await writeUpdateState(this.options.layout, {
-        ...state,
-        lastCheckAt: now,
-        lastCheckResult: 'staged; waiting for serving daemon idle gate',
-        stagedReleaseId: releaseId,
-      });
-      this.log(
-        `[body] self-update: Beeline bundle ${describeIdentity(targetIdentity)} staged; ` +
-          'activation waits for the serving daemon to quiesce intake',
-      );
-      return;
-    }
-
-    // Busy gate: never interrupt a turn, a corner, or intake mid-flight.
-    if (this.busy()) {
-      if (!this.deferredBusyNotice) {
-        this.log(
-          '[body] self-update: agent work is running; the restart waits until the daemon is idle',
-        );
-        this.deferredBusyNotice = true;
-      }
-      const idle = await this.waitForIdle();
-      if (!idle) {
-        this.log(
-          '[body] self-update: still busy after the idle wait; deferring the restart to the next tick (staged bundle kept)',
-        );
-        return;
-      }
-    }
-    this.deferredBusyNotice = false;
-
-    await activateRelease(this.options.layout, releaseId);
-    // The managed self-update path converges the host elector onto the bundle
-    // it just activated: the unit installed by `beeline start`/pairing predates
-    // `trustySquireBrokerUnit()`'s Node pin (#1653), and neither the activating
-    // process nor the running elector is restarted by the swap itself. Pass the
-    // anchor as the launcher's BEELINE_LIB_DIR so the canonicality refusal that
-    // protects a source checkout still holds; best-effort on a host without
-    // its native per-user service manager.
-    if (process.platform === 'linux' && this.options.env.BEELINE_SYSTEMD_USER !== '0') {
-      await convergeTrustySquireBrokerService({
-        libDir: this.options.layout.libDir,
-        env: this.options.env,
-        log: this.log,
-      });
-      // An install/pair path rewrites the helper unit, but this update path is
-      // how an already-running host gets a changed one. The restart that
-      // follows this activation starts under the new unit.
-      await convergeHelperServiceUnit({
-        libDir: this.options.layout.libDir,
-        env: this.options.env,
-        log: this.log,
-      });
-    } else if (
-      process.platform === 'darwin' &&
-      this.options.env.BEELINE_LAUNCHD_USER !== '0'
-    ) {
-      await convergeLaunchdTrustySquireBrokerService({
-        libDir: this.options.layout.libDir,
-        env: this.options.env,
-        log: this.log,
-      });
-    }
-    const { stagedReleaseId: _stagedReleaseId, ...stateWithoutStagedRelease } = state;
-    await writeUpdateState(this.options.layout, {
-      ...stateWithoutStagedRelease,
-      lastCheckAt: now,
-      lastCheckResult: 'applied',
-    });
-    this.log(
-      `[body] self-update: Beeline bundle ${describeIdentity(installed)} -> ` +
-        `${describeIdentity(targetIdentity)} applied; the daemon coordinator will restart from the stable anchor.`,
-    );
-  }
-
-  /** Poll the busy gate until idle or the idle wait budget is spent. */
-  async waitForIdle(): Promise<boolean> {
-    const deadline = this.options.now() + this.options.idleTimeoutMs;
-    for (;;) {
-      if (!this.busy()) return true;
-      if (this.options.now() >= deadline) return false;
-      await new Promise((resolveWait) =>
-        setTimeout(resolveWait, Math.min(this.options.idlePollMs, 250)),
-      );
-    }
+    return { releaseId, identity: { version: bundle.version, commit: bundle.commit } };
+  } catch (error) {
+    await writeUpdateState(layout, {
+      ...(await readUpdateState(layout)),
+      lastCheckAt: Date.now(),
+      lastCheckResult: 'unconfirmed',
+      lastCheckError: String(error),
+    }).catch(() => undefined);
+    throw error;
   }
 }

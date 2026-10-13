@@ -5,7 +5,6 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 import { HELPER_EXIT_CODES } from './helper-lifecycle.js';
-import { NO_AGENTS_EXIT_STATUS } from './systemd.js';
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -66,10 +65,16 @@ describe('daemon entry points', () => {
     expect(result.calls.some((args) => ['disable', 'stop'].includes(args[1]!))).toBe(false);
   }, 20_000);
 
-  it('ends the machine helper with the not-restarted status when nothing is paired', async () => {
+  it('refuses an unsupervised production machine instead of detaching a process', async () => {
     const result = await daemon(['--machine'], { BEELINE_SYSTEMD_USER: '0', BEELINE_LAUNCHD_USER: '0' });
-    expect(result.code).toBe(NO_AGENTS_EXIT_STATUS);
-    expect(result.output).toContain('no paired agent on this machine');
+    expect(result.code).toBe(HELPER_EXIT_CODES.failed);
+    expect(result.output).toContain('native user service manager');
+  }, 20_000);
+  it('refuses a direct machine entry outside native ownership', async () => {
+    const result = await daemon(['--machine'], { BEELINE_SYSTEMD_USER: '1', BEELINE_MANAGED_BY_SYSTEMD: '0' });
+    expect(result.code).toBe(HELPER_EXIT_CODES.failed);
+    expect(result.output).toContain('native service ownership');
+    expect(result.calls).toEqual([]);
   }, 20_000);
 
   it('refuses a daemon start that names neither the machine nor one runtime', async () => {

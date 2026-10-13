@@ -1,8 +1,9 @@
+import { assertLifecycleTestIsolation } from './lifecycle-test-guard.js';
+import { convergeNativeHelper } from './native-helper.js';
 import { execFile } from 'node:child_process';
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { dirname, resolve } from 'node:path';
-import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
 import {
   updateSquireBrokerInstall,
@@ -14,20 +15,9 @@ import {
 
 const execFileAsync = promisify(execFile);
 
-export const DELIBERATE_REMOVAL_EXIT_STATUS = 78;
-/** A persistent daemon-start failure has been recorded; wait for an operator. */
-export const DAEMON_DISTRESS_EXIT_STATUS = 77;
-/** systemd addressed an agent whose durable runtime was already removed. */
-export const UNKNOWN_AGENT_EXIT_STATUS = 79;
-/** The pre-machine per-agent template; migration still names it. */
-export const SYSTEMD_UNIT_NAME = 'beeline-agent@.service';
 /** One helper process per machine hosts every paired agent. */
 export const SYSTEMD_HELPER_UNIT_NAME = 'beeline-helper.service';
-/** The helper machine found no agent to host; nothing restarts it until one is paired. */
-export const NO_AGENTS_EXIT_STATUS = UNKNOWN_AGENT_EXIT_STATUS;
 export const SYSTEMD_COMMAND_TIMEOUT_MS = 15_000;
-/** Unit stop ceiling plus a small window for the successor to enter active. */
-export const SYSTEMD_RESTART_WAIT_MS = 90_000 + 30_000;
 
 /**
  * The machine helper unit: one process hosts every agent paired on this host
@@ -42,49 +32,7 @@ export const SYSTEMD_RESTART_WAIT_MS = 90_000 + 30_000;
  * agent can resolve `cursor-agent`; a host drop-in that replaces PATH must keep
  * that entry.
  */
-export function helperServiceUnit(): string {
-  return `[Unit]
-Description=Beeline helper (every agent on this machine)
-After=network-online.target
-Wants=network-online.target
-StartLimitIntervalSec=0
-
-[Service]
-Type=notify
-NotifyAccess=all
-Environment=BEELINE_MANAGED_BY_SYSTEMD=1
-Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=%h/.local/bin/beeline daemon --machine
-ExecReload=/bin/kill -HUP $MAINPID
-Restart=always
-RestartSec=5s
-RestartSteps=5
-RestartMaxDelaySec=60s
-RestartPreventExitStatus=${NO_AGENTS_EXIT_STATUS}
-SuccessExitStatus=${NO_AGENTS_EXIT_STATUS}
-WatchdogSec=180s
-CPUWeight=1000
-IOWeight=1000
-Nice=-5
-OOMScoreAdjust=-1000
-OOMPolicy=continue
-TimeoutStartSec=90s
-TimeoutStopSec=90s
-KillMode=control-group
-UMask=0077
-# A desktop-launched user manager may inherit Ubuntu's unprivileged_userns
-# AppArmor profile. Without an explicit transition every agent inherits it too,
-# so /usr/bin/bwrap cannot enter its package-provided bwrap profile.
-# Do not set NoNewPrivileges or PrivateTmp on this outer service: systemd applies
-# either before AppArmorProfile, which blocks this transition. Bubblewrap sets
-# no-new-privs and a private /tmp inside each agent sandbox it creates.
-AppArmorProfile=-unconfined
-
-[Install]
-WantedBy=default.target
-`;
-}
-
+export { helperServiceUnit } from './native-helper.js';
 /**
  * The user unit belongs to the installed launcher, never to a source checkout.
  * `BEELINE_LIB_DIR` is injected only by that launcher. Refusing here protects
@@ -104,24 +52,11 @@ export function isCanonicalInstalledLauncher(
   );
 }
 
-function assertCanonicalInstalledLauncher(
-  env: NodeJS.ProcessEnv,
-  invocationPath?: string,
-): void {
+function assertCanonicalInstalledLauncher(env: NodeJS.ProcessEnv, invocationPath?: string): void {
   if (isCanonicalInstalledLauncher(env, invocationPath)) return;
   throw new Error(
     'refusing to modify the shared Beeline systemd unit outside the canonical ~/.local/bin/beeline launcher',
   );
-}
-
-export function systemdUserUnitPath(env: NodeJS.ProcessEnv = process.env): string {
-  const configRoot = env.XDG_CONFIG_HOME?.trim() || resolve(homedir(), '.config');
-  return resolve(configRoot, 'systemd', 'user', SYSTEMD_UNIT_NAME);
-}
-
-export function systemdHelperUnitPath(env: NodeJS.ProcessEnv = process.env): string {
-  const configRoot = env.XDG_CONFIG_HOME?.trim() || resolve(homedir(), '.config');
-  return resolve(configRoot, 'systemd', 'user', SYSTEMD_HELPER_UNIT_NAME);
 }
 
 export function systemdBrokerUnitPath(env: NodeJS.ProcessEnv = process.env): string {
@@ -151,15 +86,16 @@ export async function installTrustySquireBrokerService(
   } = {},
 ): Promise<void> {
   const env = options.env ?? process.env;
+  assertLifecycleTestIsolation(env, Boolean(options.run));
   assertCanonicalInstalledLauncher(env, options.invocationPath);
   const home = env.HOME?.trim() || homedir();
   writeSquireBrokerUnitMarker(home);
   // Deliberate update point: pin the durable broker install before the unit
   // (re)starts, so a crash-restart never has to touch npm at all.
-  const install = await updateSquireBrokerInstall(
-    home,
-    { ...(options.squireInstallRun ? { run: options.squireInstallRun } : {}), mode: options.squireUpdateMode ?? 'latest' },
-  );
+  const install = await updateSquireBrokerInstall(home, {
+    ...(options.squireInstallRun ? { run: options.squireInstallRun } : {}),
+    mode: options.squireUpdateMode ?? 'latest',
+  });
   const path = systemdBrokerUnitPath(env);
   const content = trustySquireBrokerUnit();
   const existing = await readFile(path, 'utf8').catch(() => '');
@@ -181,86 +117,9 @@ export async function installTrustySquireBrokerService(
   }
 }
 
-/**
- * Install + restart the host elector from the managed self-update path.
- *
- * Activation swaps the bundle anchor from a process that is NOT the canonical
- * `<prefix>/bin/beeline` launcher — `npx usebeeline update` runs from an npm
- * cache, and the managed worker runs from the bundle it is replacing. Rather
- * than refuse, the caller supplies the anchor it just activated, which is
- * exactly what the launcher exports as BEELINE_LIB_DIR, so the canonicality
- * refusal that protects a source checkout is unchanged. Best-effort: the
- * update already succeeded, so a host without systemd user services logs and
- * keeps its stale unit instead of failing the release.
- */
-export async function convergeTrustySquireBrokerService(options: {
-  libDir: string;
-  env?: NodeJS.ProcessEnv;
-  run?: SystemdRunner;
-  log?: (line: string) => void;
-}): Promise<boolean> {
-  const env = options.env ?? process.env;
-  try {
-    await installTrustySquireBrokerService({
-      env: { ...env, BEELINE_LIB_DIR: options.libDir },
-      invocationPath: resolve(options.libDir, 'lib', 'beeline', 'beeline-cli.mjs'),
-      ...(options.run ? { run: options.run } : {}),
-    });
-    return true;
-  } catch (error) {
-    options.log?.(
-      `[beeline] host Squire broker unit not converged: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-    return false;
-  }
-}
-
-/**
- * Rewrite the installed helper unit from the running bundle without
- * restarting it. `beeline start`/pairing rewrites the unit on install, but a
- * managed update would otherwise keep the old unit forever. The new content
- * takes effect on the helper's next start, which the update handoff performs.
- * A host still on per-agent units is left alone: its first daemon start on the
- * new bundle migrates it. Best-effort: the release is already live.
- */
-export async function convergeHelperServiceUnit(options: {
-  libDir: string;
-  env?: NodeJS.ProcessEnv;
-  run?: SystemdRunner;
-  log?: (line: string) => void;
-}): Promise<boolean> {
-  const env = options.env ?? process.env;
-  try {
-    assertCanonicalInstalledLauncher(
-      env,
-      resolve(options.libDir, 'lib', 'beeline', 'beeline-cli.mjs'),
-    );
-    const path = systemdHelperUnitPath(env);
-    const existing = await readFile(path, 'utf8').catch(() => '');
-    const content = helperServiceUnit();
-    if (!existing || existing === content) return false;
-    await writeFile(path, content, { mode: 0o600 });
-    const run = options.run ?? runSystemctl;
-    await run(['daemon-reload']);
-    options.log?.('[beeline] helper systemd unit updated; it applies on the next helper restart');
-    return true;
-  } catch (error) {
-    options.log?.(
-      `[beeline] helper systemd unit not converged: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-    return false;
-  }
-}
-
 export interface SystemdRunner {
   (args: string[]): Promise<{ stdout: string }>;
 }
-
-const AGENT_SERVICE = /^beeline-agent@([0-9a-f]{64})\.service$/i;
 
 const runSystemctl: SystemdRunner = async (args) => {
   const result = await execFileAsync('systemctl', ['--user', ...args], {
@@ -285,120 +144,29 @@ export async function installHelperService(
     waitTimeoutMs?: number;
     /** Test seam; production checks the running bundled CLI path. */
     invocationPath?: string;
+    selfAgent?: string;
   } = {},
 ): Promise<number> {
   const env = options.env ?? process.env;
+  assertLifecycleTestIsolation(env, Boolean(options.run));
   assertCanonicalInstalledLauncher(env, options.invocationPath);
-  const path = systemdHelperUnitPath(env);
-  const content = helperServiceUnit();
-  const existing = await readFile(path, 'utf8').catch(() => '');
-  if (existing !== content) {
-    await mkdir(dirname(path), { recursive: true, mode: 0o700 });
-    await writeFile(path, content, { mode: 0o600 });
-  }
-  const run = options.run ?? runSystemctl;
-  await run(['daemon-reload']);
-  await run(['enable', SYSTEMD_HELPER_UNIT_NAME]);
-  if (options.start === false) {
-    await retireLegacyAgentUnits({ env, run });
-    return 0;
-  }
-  // The helper starts before any per-agent unit is retired: this may run
-  // inside one of those units, and retiring it stops this very process. The
-  // helper waits for each agent's old process to exit before serving it.
-  const before = await serviceStatus(run, SYSTEMD_HELPER_UNIT_NAME);
-  if (before.activeState === 'active' && before.pid > 0) {
-    await run(['reload', SYSTEMD_HELPER_UNIT_NAME]);
-    await retireLegacyAgentUnits({ env, run });
-    return before.pid;
-  }
-  // `--no-block` leaves the start job (and a previous stop's drain) to systemd
-  // rather than the generic 15-second subprocess timeout.
-  await run(['reset-failed', SYSTEMD_HELPER_UNIT_NAME]).catch(() => undefined);
-  await run(['restart', '--no-block', SYSTEMD_HELPER_UNIT_NAME]);
-  const deadline = Date.now() + (options.waitTimeoutMs ?? SYSTEMD_RESTART_WAIT_MS);
-  do {
-    const status = await serviceStatus(run, SYSTEMD_HELPER_UNIT_NAME);
-    if (status.activeState === 'failed') {
-      throw new Error(
-        `systemd failed to start ${SYSTEMD_HELPER_UNIT_NAME} (${status.result || 'unknown result'})`,
-      );
-    }
-    // Type=notify: ActiveState reaches 'active' only once the helper itself
-    // calls sd_notify READY — i.e. it imported successfully, hosted every
-    // agent, and established them (machine-helper.ts). A changed MainPID
-    // alone is true the instant systemd spawns ANY attempt, including one
-    // that is about to crash on import and restart-loop forever without ever
-    // reaching 'failed' (Restart=always, no start limit) — exactly the
-    // incident that stopped every legacy per-agent unit the moment a
-    // crash-looping helper process first appeared, with nothing left able
-    // to serve.
-    if (status.activeState === 'active' && status.pid > 0) {
-      await retireLegacyAgentUnits({ env, run });
-      return status.pid;
-    }
-    await sleep(100);
-  } while (Date.now() < deadline);
-  // Never confirmed healthy: stop it so a crash-looping unit does not keep
-  // restarting in the background once this call returns control to a caller
-  // that assumes the attempt is over, and so the legacy per-agent units —
-  // never retired above — remain the only thing serving until a fixed
-  // release lands. cli.ts's migrateLegacyAgentUnit reports the refusal.
-  await run(['disable', SYSTEMD_HELPER_UNIT_NAME]).catch(() => undefined);
-  await run(['stop', '--no-block', SYSTEMD_HELPER_UNIT_NAME]).catch(() => undefined);
-  throw new Error(
-    `${SYSTEMD_HELPER_UNIT_NAME} did not become healthy before the restart deadline; legacy per-agent units were left serving`,
-  );
+  if (options.start === false) throw new Error('installing a disabled helper is unsupported');
+  return convergeNativeHelper({
+    env,
+    platform: 'systemd',
+    ...(options.run ? { run: options.run } : {}),
+    ...(options.selfAgent ? { legacyCaller: `beeline-agent@${options.selfAgent}.service` } : {}),
+  });
 }
 
 /** Ask a running machine helper to rescan paired agents. A stopped one is left stopped. */
 export async function reloadHelperService(options: { run?: SystemdRunner } = {}): Promise<boolean> {
+  assertLifecycleTestIsolation(process.env, Boolean(options.run));
   const run = options.run ?? runSystemctl;
   const status = await serviceStatus(run, SYSTEMD_HELPER_UNIT_NAME);
   if (status.activeState !== 'active' || status.pid === 0) return false;
   await run(['reload', SYSTEMD_HELPER_UNIT_NAME]);
   return true;
-}
-
-/**
- * Retire every per-agent unit from before the machine helper: disabled first
- * so `Restart=always` cannot race the stop, then stopped without blocking (a
- * draining agent finishes under systemd). The template file goes too. Each
- * runtime directory is untouched; the machine helper serves it next.
- */
-export async function retireLegacyAgentUnits(
-  options: { env?: NodeJS.ProcessEnv; run?: SystemdRunner } = {},
-): Promise<string[]> {
-  const env = options.env ?? process.env;
-  const run = options.run ?? runSystemctl;
-  const units = await legacyAgentUnits({ run });
-  for (const unit of units) {
-    await run(['disable', unit]).catch(() => undefined);
-    await run(['reset-failed', unit]).catch(() => undefined);
-    await run(['stop', '--no-block', unit]).catch(() => undefined);
-  }
-  const template = systemdUserUnitPath(env);
-  if (await readFile(template, 'utf8').then(() => true, () => false)) {
-    await rm(template, { force: true });
-    await run(['daemon-reload']);
-  }
-  return units;
-}
-
-/** Every loaded or enabled `beeline-agent@<key>.service`, whatever its state. */
-async function legacyAgentUnits(options: { run: SystemdRunner }): Promise<string[]> {
-  const units = new Set<string>();
-  for (const args of [
-    ['list-unit-files', 'beeline-agent@*.service', '--no-legend', '--no-pager'],
-    ['list-units', '--all', 'beeline-agent@*.service', '--no-legend', '--no-pager', '--plain'],
-  ]) {
-    const result = await options.run(args).catch(() => ({ stdout: '' }));
-    for (const line of result.stdout.split('\n')) {
-      const unit = line.trim().split(/\s+/, 1)[0];
-      if (unit && AGENT_SERVICE.test(unit)) units.add(unit);
-    }
-  }
-  return [...units].sort();
 }
 
 async function serviceStatus(
@@ -435,6 +203,7 @@ export async function cleanupAgentService(
   options: { run?: SystemdRunner } = {},
 ): Promise<boolean> {
   if (!/^[0-9a-f]{64}$/i.test(publicKey)) throw new Error('agent public key must be 64 hex');
+  assertLifecycleTestIsolation(process.env, Boolean(options.run));
   const run = options.run ?? runSystemctl;
   const unit = `beeline-agent@${publicKey.toLowerCase()}.service`;
   const loadState = (await run(['show', '--property=LoadState', '--value', unit])).stdout.trim();
@@ -457,7 +226,9 @@ async function notify(fields: string[]): Promise<void> {
 
 /** Extend startup while interrupted-turn replay waits for a network reconnect. */
 export async function extendSystemdStartTimeout(ms: number): Promise<void> {
-  await notify([`EXTEND_TIMEOUT_USEC=${Math.max(0, Math.round(ms)) * 1000}`]).catch(() => undefined);
+  await notify([`EXTEND_TIMEOUT_USEC=${Math.max(0, Math.round(ms)) * 1000}`]).catch(
+    () => undefined,
+  );
 }
 
 /** systemd notification transport; only acknowledged work-loop ticks renew the watchdog. */
@@ -484,22 +255,43 @@ export function startLocalWatchdog(
   notifier: Pick<DaemonNotifier, 'progress'>,
   status: () => string,
   workLoopProgress: () => Promise<void | boolean>,
-  intervalMs = 60_000,
+  intervalMs: number | undefined = undefined,
   env: NodeJS.ProcessEnv = process.env,
+  onStall: () => void = () => process.exit(75),
 ): () => void {
-  if (!env.WATCHDOG_USEC) return () => undefined;
+  const localDeadline = process.platform === 'darwin';
+  if (!env.WATCHDOG_USEC && !localDeadline) return () => undefined;
+  let deadline: ReturnType<typeof setTimeout> | undefined;
   let pending = false;
   let stopped = false;
-  const timer = setInterval(() => {
-    if (pending || stopped) return;
-    pending = true;
-    // The existing local tick asks the work loops to run. A wedged loop never
-    // completes this barrier, even while sockets and other agents keep running.
-    void workLoopProgress()
-      .then((progressed) => stopped || progressed === false ? undefined : notifier.progress(status(), true))
-      .catch((error) => console.error('[thin-core] watchdog notification failed:', error))
-      .finally(() => { pending = false; });
-  }, intervalMs);
+  const timer = setInterval(
+    () => {
+      if (pending || stopped) return;
+      pending = true;
+      if (localDeadline && !deadline) deadline = setTimeout(onStall, 180_000);
+      // The existing local tick asks the work loops to run. A wedged loop never
+      // completes this barrier, even while sockets and other agents keep running.
+      void workLoopProgress()
+        .then((progressed) => {
+          if (progressed !== false) {
+            clearTimeout(deadline);
+            deadline = undefined;
+          }
+          return stopped || progressed === false || localDeadline
+            ? undefined
+            : notifier.progress(status(), true);
+        })
+        .catch((error) => console.error('[thin-core] watchdog notification failed:', error))
+        .finally(() => {
+          pending = false;
+        });
+    },
+    intervalMs ?? Math.min(60_000, Math.max(100, Number(env.WATCHDOG_USEC || 180_000_000) / 3000)),
+  );
   timer.unref?.();
-  return () => { stopped = true; clearInterval(timer); };
+  return () => {
+    stopped = true;
+    clearInterval(timer);
+    clearTimeout(deadline);
+  };
 }

@@ -5,9 +5,9 @@
 > Fly monolith. The unified release has no legacy host mirror. The runbook is
 > retained only as cutover history; do not execute its mirror-enable steps.
 
-Existing helpers poll `https://usebeeline.app/dl/manifest.json`. That URL and
+Helpers select the newest release at startup, on a pushed release notice, and once after socket registration from `https://usebeeline.app/dl/manifest.json`. That URL and
 its relative platform archive and `.sha256` paths remain unchanged.
-No helper migration, URL override, or intervening helper release is required.
+The recovery bootstrap migrates old installations forward to one native supervised helper.
 Cloudflare remains the public TLS endpoint; GitHub Pages becomes the origin
 for the entire website, including `/dl` and `.well-known`.
 
@@ -35,7 +35,7 @@ Its promote phase passes `daemon-artifact-<version>-<sha>` to
 The rolling `helper-update-channel` release is a prerelease, excluded from
 GitHub's latest stable release selection. It supplies durable inputs for
 website-only deployments after Actions artifacts expire. It is not the URL
-helpers poll. `scripts/pages-channel.mjs` owns its upload/download contract.
+helpers read on startup and release/reconnect events. `scripts/pages-channel.mjs` owns its upload/download contract.
 Every caller holds the same `usebeeline-pages` concurrency group through
 publication and deployment. An interrupted backup upload fails validation;
 the next release retry replaces and repairs it. The previous Pages deployment
@@ -78,7 +78,7 @@ fallback — so an ordinary `apps/body`, shared-package, or unmapped-path change
 never queues behind that one machine. It performs a fresh installer run,
 exercises launchd crash restart and a bootout/bootstrap cycle
 (the closest non-destructive CI equivalent to a logout/login), verifies the
-terminal exit-status contract, pairs against the in-process monolith, observes a
+restart-after-any-exit and explicit native-stop contract, pairs against the in-process monolith, observes a
 Room answer, and exercises `open_corner` with the deterministic ACP fixture. The
 native Apple-silicon bundle is proven only by the release's own `helper_macos`
 leg - or, on a retry reusing a merged artifact, by the attempt that built those
@@ -98,16 +98,12 @@ is sandboxed or nothing (C94 fail-closed). Corner grants are unaffected — they
 run on the host by design — so `run_granted_command` works in corners and
 refuses in Rooms on every Mac.
 
-Three supervision guarantees the Linux systemd unit provides have no launchd
-counterpart, and are accepted platform gaps rather than omissions. Agent
-stdout and stderr go to the single plain file
-`~/Library/Logs/Beeline/agent-<key>.log` with no rotation and no size cap,
-where Linux writes to the capped and rotated journal — a crash loop or months
-of ordinary logging grow that file without bound, and pruning that file is the
-operator's job. launchd has no `sd_notify` protocol, so the unit's
-`Type=notify` plus `WatchdogSec=180s` recovery of a wedged-but-running daemon
-does not exist on macOS: such a daemon stays up and silent until a human
-restarts it. This release adds neither a rotating writer nor a watchdog.
+Linux uses `Type=notify` and `WatchdogSec=180s`. macOS has no `sd_notify`
+protocol; the helper uses the same local work-loop barrier with a bounded
+three-minute watchdog that exits the process when progress stops. `KeepAlive`
+restarts it. Native readiness and individual agent readiness remain separate.
+The macOS helper log is `~/Library/Logs/Beeline/helper.log`; launchd does not
+provide Linux's bounded journal rotation.
 
 And the helper is supervised in the per-GUI-session domain, `gui/<uid>`, not a
 system domain: the LaunchAgent loads when that user LOGS IN, not at boot, and
@@ -126,132 +122,58 @@ direct github.io URL before custom-domain setup and the public Cloudflare URL
 after cutover. Pages propagation is retried for up to 20 attempts, 15 seconds
 apart; stale manifests and checksum mismatches never count as success.
 
-## Historical firstmate cutover runbook (completed; do not execute)
+## Recovery and the first update from an old release
 
-Only firstmate performs these remote configuration and teardown steps. Decision
-`pages-tls-cutover`: use the ongoing Cloudflare bridge, with orange-cloud proxying
-and **Full** SSL to the Pages origin. GitHub provisioning a `usebeeline.app`
-certificate is not a prerequisite. Never turn off Cloudflare proxying as part
-of this migration; never retain the dev origin as a permanent fallback.
+`npx usebeeline@latest update` runs a small recovery entry independent of the
+installed body. It downloads, verifies checksum, Node requirements and imports,
+then installs the stable launcher. It normalizes flat installs, real anchor
+directories, old symlinks, broken forwarders and recorded Node paths. It disables
+and stops legacy per-agent units before enabling the sole native helper. The
+new unit has no exit-79 exception; an empty helper stays alive. Any exit restarts
+unless the operator explicitly stops the native service.
 
-### 1. Land and populate Pages while the old origin remains live
+The CLI that is already executing on an old machine still has its old behavior.
+Use the new npm recovery entry for a dead or broken old install. After the first
+forward migration, both installed `beeline update`/`beeline start` and npx select
+the current release, ensure the native helper is running, and wait for a live
+process-generation acknowledgment that every enabled agent is serving. A failed
+agent is named with its reason. `update` preserves stopped agents; `start --all`
+or `start --agent <key>` explicitly re-enables them. `update --status` is a local,
+read-only observation; `--check` checks only the published artifact.
 
-- Merge the validated PR. Do not change DNS or stop the dev stack yet.
-- The former temporary host mirror was active during this historical step; it
-  has since been removed from the release workflow.
-- Bootstrap Pages with the current unified release's artifact, or run a full
-  unified release. At implementation time the current release was `v0.0.63`,
-  SHA `9fc9f30cde8e6cbdeab6183dbf22b5402e47473a`, run `34189855500`, archive
-  SHA-256 `77a3a0cd4fc180e64dac0f3f55dbfd3ab4c77189de3e3d111df3274b876664d3`.
-  The retired bootstrap workflow used this command (historical evidence only;
-  the workflow no longer exists):
+Legacy relay records sign the one-time authenticated
+`/v1/auth/daemon/migrate-legacy` server route with their existing identity. The
+server requires current owner and Workspace membership, and denies revoked or expired daemon credentials and repeat completed migrations. The exchange preserves agent identity,
+policy, homes and sessions. Revoked or unrecognized identities show `needs
+reconnect`; other agents continue serving.
 
-  ```sh
-  gh-axi workflow run pages.yml --repo lunchboxfortwo/beeline --ref main -f release_run_id=34189855500
-  ```
+One release transaction prepares in a private worker while intake stays open.
+It hands over at a quiet gap or after at most five minutes. Before interruption
+it flushes each active command's journal; the successor reclaims that command
+without spending retries. Newer releases supersede prepared work without
+renewing the drain deadline. Forced server minimums use the same transaction
+with immediate interruption and a minimum-version check.
 
-- Wait for the Pages workflow's real-update proof to pass against
-  `https://beeline-work.github.io/beeline/dl/manifest.json`. A first push can
-  fail because the channel does not exist yet; bootstrap repairs that without
-  using the checkout's stale bytes. If the release artifact has expired, run a
-  new unified release; do not rebuild the old release under a new identity.
-- Download the durable channel into a fresh local directory for later comparison:
+A stable `<prefix>/lib/beeline-bootstrap.mjs` and recorded Node path select the
+body before importing it. `<prefix>/lib/beeline` remains an atomically renamed
+symlink into immutable `beeline-releases/<id>`. Startup serves the last verified
+release if publication is unavailable, with freshness explicitly unconfirmed;
+it never disables the native restart owner. There is no rollback coordinator
+or detached production fallback. `BEELINE_UPDATE_DISABLE=1` disables automatic
+freshness checks, and is visible in local status; explicit updates still work.
 
-  ```sh
-  gh-axi release download helper-update-channel --repo lunchboxfortwo/beeline --dir .scratch/cutover-expected
-  node scripts/verify-pages-update.mjs --manifest-url https://beeline-work.github.io/beeline/dl/manifest.json --expected-manifest .scratch/cutover-expected/manifest.json --work-dir .scratch/cutover-proof
-  node scripts/verify-pages-update.mjs --manifest-url https://usebeeline.app/dl/manifest.json --expected-manifest .scratch/cutover-expected/manifest.json --work-dir .scratch/cutover-proof
-  ```
+The manifest's `recovery` entry pins the small bootstrap's file, checksum and
+size. Bundle merging, Pages assembly and the durable helper channel preserve
+and validate those exact bytes alongside the platform archives.
 
-Both origins must pass with the same current version, commit, and digest before
-cutover. Pause release dispatches and website changes during the transition so
-the compared generation stays fixed. Preserve the current Cloudflare DNS record
-and origin/SSL settings in the operator log for rollback.
+## Isolated acceptance
 
-### 2. Change the Cloudflare origin, keeping public TLS at Cloudflare
-
-1. In GitHub repository **Settings → Pages**, retain **GitHub Actions** as the
-   publishing source and set the custom domain to `usebeeline.app`. This binds
-   the incoming Host header to this Pages project at `/`, rather than `/beeline`.
-   The checked-in `CNAME` alone does not configure a custom Actions deployment.
-   Do not wait for a GitHub custom-domain certificate or make Enforce HTTPS a
-   gate; Cloudflare already owns the browser/helper-facing certificate.
-2. In Cloudflare's `usebeeline.app` zone, keep the apex record **Proxied**
-   (orange cloud). Edit the existing apex `CNAME` (`@` / `usebeeline.app`):
-   replace its `<tunnel-id>.cfargotunnel.com` target with
-   **`beeline-work.github.io`**. Target is a hostname, without `https://` or
-   `/beeline`. Cloudflare flattens the apex CNAME. Do not leave competing A,
-   AAAA, or tunnel records for this same apex name.
-3. Set Cloudflare origin SSL mode to **Full** for `usebeeline.app` (use a
-   hostname-scoped Configuration Rule if other hostnames need a different
-   setting). Keep the Cloudflare edge certificate active. Full encrypts the
-   origin hop without requiring a certificate matching `usebeeline.app`;
-   Pages can present its `*.github.io` certificate. Do not use Full (strict),
-   Flexible, Off, or DNS-only for this agreed transition.
-4. Remove or disable any apex-specific Worker, Origin Rule, redirect, or
-   tunnel routing override that would still send `/dl` or the website to the
-   dev stack. The entire apex, including `/dl/*` and `/.well-known/*`, uses
-   Pages. Do not change `server.usebeeline.app` or other unrelated hostnames.
-5. Purge Cloudflare's cached apex content, including `/dl/manifest.json`, the
-   tarball, sidecar, and both association paths. Set a cache-bypass rule for
-   `http.host eq "usebeeline.app" and starts_with(http.request.uri.path, "/dl/")`
-   so Cloudflare does not retain an older rolling helper generation.
-6. Set the repository variable used by future deploy proofs:
-
-   ```sh
-   gh-axi variable set BEELINE_PAGES_MANIFEST_URL --repo lunchboxfortwo/beeline --body https://usebeeline.app/dl/manifest.json
-   ```
-
-GitHub's default project URL may now redirect to the public domain. That is
-expected; proofs must now use the public URL above, not silently follow a
-redirect from the old pre-cutover probe URL.
-
-### 3. Verify the public contract, then remove the dev dependency
-
-Run the real update proof again, with normal certificate validation:
-
-```sh
-node scripts/verify-pages-update.mjs --manifest-url https://usebeeline.app/dl/manifest.json --expected-manifest .scratch/cutover-expected/manifest.json --work-dir .scratch/cutover-proof --attempts 20
-curl --fail --silent --show-error https://usebeeline.app/ -o .scratch/cutover-index.html
-curl --fail --silent --show-error https://usebeeline.app/.well-known/assetlinks.json -o .scratch/cutover-assetlinks.json
-curl --fail --silent --show-error https://usebeeline.app/.well-known/apple-app-site-association -o .scratch/cutover-apple-association
-cmp relay-stack/web/.well-known/assetlinks.json .scratch/cutover-assetlinks.json
-cmp relay-stack/web/.well-known/apple-app-site-association .scratch/cutover-apple-association
-```
-
-Confirm `/` is the deployed site, and in Cloudflare confirm the apex origin is
-Pages and no active rule routes the apex to the tunnel. Record the successful
-Pages deployment and public version/SHA/digest proof. Inspect the ordinary
-server daemon-readiness report for release convergence. A certificate mismatch
-from a **direct** `curl --resolve usebeeline.app:443:<Pages-IP>` is irrelevant
-to this bridge; the public Cloudflare URL must pass without `--insecure`.
-
-The completed cutover then ran a website-only Pages deployment and confirmed
-future releases no longer wrote the dev `/dl` directory.
-
-Firstmate may then disable the cloudflared tunnel services serving this old
-apex origin and their autostart, stop the `beeline-front` nginx service/container
-and `buzz-acp`, and remove the old
-`/home/lunchbox/buzz-router-relay-prod/relay-front/web/dl` store. Identify their
-actual supervisor/unit/container names on that host before applying teardown;
-this repository does not own those service names or a safe whole-host shutdown
-command. Do not stop unrelated tunnels, helpers, the shared release runner,
-no-mistakes, or Fly services. Do not delete the dev directory before verification.
-Re-run the public update and association proof after services are stopped.
-
-Keep the old origin available only during the verification window. If the public
-proof fails before teardown, restore the recorded Cloudflare apex origin and
-prior settings, keep the mirror enabled, and repair Pages before trying again.
-This is a temporary operator rollback, not a permanent routing fallback. After
-teardown, repair/redeploy from GitHub Release assets or a new unified release;
-re-enabling the dev mirror is not a recovery dependency.
-
-## References and local checks
-
-- [GitHub custom-domain configuration](https://docs.github.com/en/pages/configuring-a-custom-domain-for-your-github-pages-site/managing-a-custom-domain-for-your-github-pages-site)
-- [Cloudflare Full SSL](https://developers.cloudflare.com/ssl/origin-configuration/ssl-modes/full/)
-- [Cloudflare apex CNAME flattening](https://developers.cloudflare.com/dns/cname-flattening/set-up-cname-flattening/)
-
-Run `npm run test:pages`, the targeted release/association tests, and
-`npm run lint:workflows`. `npm run bundle:beeline` remains the local native
-build command.
+Never run lifecycle tests against a live user's install or native helper. Body
+tests set private HOME/config/state paths and an unreachable user bus.
+`lifecycle-test-guard.ts` refuses real paths, symlink aliases, and an unmocked
+manager outside the disposable native-proof container. Native Linux proof lives
+in `scripts/helper-proof/`: build the real bundle and npm tarball first, then
+run `bash scripts/helper-proof/run-linux.sh`. It uses its own PID namespace,
+PID 1, user manager, local HTTP/WebSocket server and deterministic ACP harness.
+The container is removed at completion. See the acceptance evidence in
+[helper simplification](./helper-simplification.md).

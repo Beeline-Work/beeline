@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promis
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { NO_AGENTS_EXIT_STATUS, cleanupAgentService, convergeHelperServiceUnit, helperServiceUnit, installHelperService, installTrustySquireBrokerService, isCanonicalInstalledLauncher, reloadHelperService, startLocalWatchdog, systemdBrokerUnitPath } from './systemd.js';
+import { cleanupAgentService, helperServiceUnit, installHelperService, installTrustySquireBrokerService, isCanonicalInstalledLauncher, reloadHelperService, startLocalWatchdog, systemdBrokerUnitPath } from './systemd.js';
 import { squireBrokerInstalledVersion, TRUSTY_SQUIRE_BROKER_UNIT_NAME, trustySquireBrokerUnit } from './squire-host.js';
 const roots: string[] = [];
 
@@ -75,16 +75,30 @@ describe('systemd supervision contract', () => {
       error.mockRestore();
     }
   });
+  it('bounds a frozen macOS work barrier locally without notification or server reads', async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+    Object.defineProperty(process, 'platform', { value: 'darwin', configurable: true });
+    vi.useFakeTimers();
+    const stalled = vi.fn(), progress = vi.fn();
+    const stop = startLocalWatchdog({ progress }, () => 'serving', () => new Promise(() => {}), 1000, {}, stalled);
+    try {
+      await vi.advanceTimersByTimeAsync(180_999);
+      expect(stalled).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
+      expect(stalled).toHaveBeenCalledOnce();
+      expect(progress).not.toHaveBeenCalled();
+    } finally { stop(); vi.useRealTimers(); if (descriptor) Object.defineProperty(process, 'platform', descriptor); }
+  });
+
   it('renders one notify helper that hosts every agent and rescans on reload', () => {
     const unit = helperServiceUnit();
     expect(unit).toContain('Type=notify');
     expect(unit).toContain('Environment=BEELINE_MANAGED_BY_SYSTEMD=1');
     expect(unit).toContain('Restart=always');
-    expect(unit).toContain('ExecStart=%h/.local/bin/beeline daemon --machine');
+    expect(unit).toContain('ExecStart=%h/.local/bin/beeline helper-bootstrap');
     expect(unit).toContain('ExecReload=/bin/kill -HUP $MAINPID');
-    // A helper with no agent to host stays down until pairing starts it.
-    expect(unit).toContain(`RestartPreventExitStatus=${NO_AGENTS_EXIT_STATUS}`);
-    expect(unit).toContain(`SuccessExitStatus=${NO_AGENTS_EXIT_STATUS}`);
+    expect(unit).not.toContain('RestartPreventExitStatus=');
+    expect(unit).not.toContain('SuccessExitStatus=');
     expect(unit).toContain('WatchdogSec=180s');
     expect(unit).toContain('TimeoutStopSec=90s');
     expect(unit).toContain('KillMode=control-group');
@@ -125,39 +139,6 @@ describe('systemd supervision contract', () => {
     expect(reference).toBe(helperServiceUnit());
   });
 
-  it('converges an installed helper unit on update without restarting it', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'beeline-systemd-converge-'));
-    roots.push(root);
-    const calls: string[][] = [];
-    const run = vi.fn(async (args: string[]) => {
-      calls.push(args);
-      return { stdout: '' };
-    });
-    const home = '/operator';
-    const libDir = `${home}/.local/lib/beeline`;
-    const env = { HOME: home, BEELINE_LIB_DIR: libDir, XDG_CONFIG_HOME: root };
-    // A host still on per-agent units is migrated by its first daemon start.
-    await expect(convergeHelperServiceUnit({ libDir, env, run })).resolves.toBe(false);
-    expect(calls).toEqual([]);
-
-    await mkdir(join(root, 'systemd/user'), { recursive: true });
-    await writeFile(join(root, 'systemd/user/beeline-helper.service'), '[Unit]\nold\n');
-    await expect(convergeHelperServiceUnit({ libDir, env, run })).resolves.toBe(true);
-    expect(calls).toEqual([['daemon-reload']]);
-    expect(await readFile(join(root, 'systemd/user/beeline-helper.service'), 'utf8'))
-      .toBe(helperServiceUnit());
-
-    calls.length = 0;
-    await expect(convergeHelperServiceUnit({ libDir, env, run })).resolves.toBe(false);
-    // A non-canonical checkout may not rewrite the shared user unit.
-    await expect(convergeHelperServiceUnit({
-      libDir: '/worktree',
-      env: { HOME: home, BEELINE_LIB_DIR: '/worktree', XDG_CONFIG_HOME: root },
-      run,
-    })).resolves.toBe(false);
-    expect(calls).toEqual([]);
-  });
-
   function systemctl(state: { active: boolean; pids: number[]; legacy?: string[] }) {
     const calls: string[][] = [];
     let reads = 0;
@@ -176,7 +157,7 @@ describe('systemd supervision contract', () => {
   }
 
   const installed = (root: string) => ({
-    env: { HOME: '/operator', BEELINE_LIB_DIR: '/operator/.local/lib/beeline', XDG_CONFIG_HOME: root },
+    env: { ...process.env, HOME: '/operator', BEELINE_LIB_DIR: '/operator/.local/lib/beeline', XDG_CONFIG_HOME: root },
     invocationPath: '/operator/.local/lib/beeline/lib/beeline/beeline-cli.mjs',
   });
   const show = [
@@ -190,64 +171,53 @@ describe('systemd supervision contract', () => {
     await writeFile(join(root, 'systemd/user/beeline-agent@.service'), '[Unit]\nDescription=legacy Beeline agent\n');
     const first = `beeline-agent@${'a'.repeat(64)}.service`;
     const second = `beeline-agent@${'b'.repeat(64)}.service`;
-    const { calls, run } = systemctl({ active: false, pids: [0, 4242], legacy: [first, second, 'beeline-agent@short.service'] });
+    const { calls, run } = systemctl({ active: false, pids: [4242], legacy: [first, second, 'beeline-agent@short.service'] });
     await expect(installHelperService({ ...installed(root), run })).resolves.toBe(4242);
-    expect(calls).toEqual([
-      ['daemon-reload'],
-      ['enable', 'beeline-helper.service'],
-      show,
-      ['reset-failed', 'beeline-helper.service'],
-      ['restart', '--no-block', 'beeline-helper.service'],
-      show,
-      // Only once the helper runs: it waits for each old process to let go.
-      ['list-unit-files', 'beeline-agent@*.service', '--no-legend', '--no-pager'],
-      ['list-units', '--all', 'beeline-agent@*.service', '--no-legend', '--no-pager', '--plain'],
-      ['disable', first], ['reset-failed', first], ['stop', '--no-block', first],
-      ['disable', second], ['reset-failed', second], ['stop', '--no-block', second],
-      ['daemon-reload'],
-    ]);
+    expect(calls).toContainEqual(['start', 'beeline-helper.service']);
+    expect(calls).toContainEqual(['enable', 'beeline-helper.service']);
+    expect(calls).toContainEqual(['stop', first, second]);
+    expect(calls.findIndex((row) => row[0] === 'stop')).toBeLessThan(calls.findIndex((row) => row[0] === 'start'));
+    expect(calls.filter((row) => row[0] === 'show')).toHaveLength(1);
     expect(await readFile(join(root, 'systemd/user/beeline-helper.service'), 'utf8'))
       .toBe(helperServiceUnit());
     // The template is gone; each agent's runtime directory is never touched here.
-    expect(await readdir(join(root, 'systemd/user'))).toEqual(['beeline-helper.service']);
+    expect(await readdir(join(root, 'systemd/user'))).toEqual(['beeline-agent@.service.d', 'beeline-helper.service']);
   });
 
-  it('refuses to retire legacy units for a helper that never becomes healthy, and stops it instead', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'beeline-systemd-unhealthy-'));
-    roots.push(root);
-    await mkdir(join(root, 'systemd/user'), { recursive: true });
-    await writeFile(join(root, 'systemd/user/beeline-agent@.service'), '[Unit]\nDescription=legacy Beeline agent\n');
-    const legacy = `beeline-agent@${'c'.repeat(64)}.service`;
+  it('queues a native successor before the legacy caller can be terminated', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-self-handoff-')); roots.push(root);
+    const id = 'a'.repeat(64), legacy = `beeline-agent@${id}.service`;
+    const { calls, run } = systemctl({ active: false, pids: [], legacy: [legacy] });
+    await expect(installHelperService({ ...installed(root), run, selfAgent: id })).resolves.toBe(0);
+    expect(calls).toContainEqual(['disable', legacy]);
+    expect(calls).toContainEqual(['enable', 'beeline-helper.service']);
+    expect(calls.at(-1)).toEqual(['start', '--no-block', 'beeline-helper.service']);
+    expect(calls.some((row) => row[0] === 'stop')).toBe(false);
+    expect(await readFile(join(root, 'systemd/user/beeline-helper.service.d/legacy-forward-migration.conf'), 'utf8')).toContain(`Conflicts=${legacy}\nAfter=${legacy}`);
+  });
+
+  it('never disables the sole helper when native start fails', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-systemd-failure-')); roots.push(root);
     const calls: string[][] = [];
-    let reads = 0;
-    const run = vi.fn(async (args: string[]) => {
+    const run = async (args: string[]) => { calls.push(args); if (args[0] === 'start') throw new Error('native start timed out'); return { stdout: '' }; };
+    await expect(installHelperService({ ...installed(root), run })).rejects.toThrow('native start timed out');
+    expect(calls).toContainEqual(['enable', 'beeline-helper.service']);
+    expect(calls).not.toContainEqual(['disable', 'beeline-helper.service']);
+    expect(calls).not.toContainEqual(['stop', 'beeline-helper.service']);
+  });
+
+  it.each(['inactive', 'active'])('migrates a deleted legacy unit whose native state is %s', async (state) => {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-missing-legacy-')); roots.push(root);
+    const legacy = `beeline-agent@${'d'.repeat(64)}.service`, calls: string[][] = [];
+    const run = async (args: string[]) => {
       calls.push(args);
-      if (args[0] === 'show') {
-        // A new process spawns every restart (MainPID keeps changing) but
-        // Type=notify never reaches READY -- the exact crash-on-import shape:
-        // ActiveState stays 'activating' forever, never 'active' and never
-        // 'failed' either (Restart=always, StartLimitIntervalSec=0). The old
-        // check ("a pid appeared") declared this healthy on the very first
-        // poll and retired every legacy unit before the crash loop was ever
-        // detected.
-        reads += 1;
-        return { stdout: `MainPID=${reads}\nActiveState=activating\nResult=success\n` };
-      }
-      if (args[0] === 'list-unit-files' || args[0] === 'list-units') return { stdout: `${legacy} enabled` };
-      return { stdout: '' };
-    });
-    await expect(
-      installHelperService({ ...installed(root), run, waitTimeoutMs: 250 }),
-    ).rejects.toThrow(/did not become healthy/);
-    // The legacy unit was never even scanned, let alone stopped.
-    expect(calls.some((args) => args[0] === 'list-unit-files' || args[0] === 'list-units')).toBe(
-      false,
-    );
-    expect(calls.some((args) => args[1] === legacy)).toBe(false);
-    // The crash-looping helper itself is stopped so it does not keep
-    // restarting in the background once this call returns.
-    expect(calls).toContainEqual(['disable', 'beeline-helper.service']);
-    expect(calls).toContainEqual(['stop', '--no-block', 'beeline-helper.service']);
+      if (args[0] === 'list-units') return { stdout: `${legacy} not-found ${state} dead\n` };
+      if (args[0] === 'disable') throw new Error(`Failed to disable unit: Unit file ${legacy} does not exist.`);
+      return { stdout: args[0] === 'show' ? 'MainPID=42\n' : '' };
+    };
+    await expect(installHelperService({ ...installed(root), run })).resolves.toBe(42);
+    expect(calls.some((row) => row[0] === 'stop')).toBe(state === 'active');
+    expect(calls).toContainEqual(['enable', 'beeline-helper.service']);
   });
 
   it('asks a running helper to rescan instead of restarting it', async () => {
@@ -264,7 +234,7 @@ describe('systemd supervision contract', () => {
     const run = vi.fn(async () => ({ stdout: '' }));
     await expect(
       installHelperService({
-        env: { HOME: '/operator', BEELINE_LIB_DIR: '/operator/.local/lib/beeline' },
+        env: { ...process.env, HOME: '/operator', BEELINE_LIB_DIR: '/operator/.local/lib/beeline' },
         invocationPath: '/worktree/apps/body/src/cli.ts',
         run,
       }),
@@ -333,6 +303,7 @@ describe('trusty squire host broker unit', () => {
     });
     const options = {
       env: {
+        ...process.env,
         HOME: home,
         BEELINE_LIB_DIR: `${home}/.local/lib/beeline`,
         XDG_CONFIG_HOME: root,

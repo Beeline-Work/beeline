@@ -1,169 +1,80 @@
 import { execFile } from 'node:child_process';
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
+import { watch } from 'node:fs';
+import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { promisify } from 'node:util';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import {
-  LAUNCHD_HELPER_LABEL,
-  installLaunchdHelperService,
-  launchdHelperPlistPath,
-  launchdUserDomain,
-} from './launchd.js';
-import { NO_AGENTS_EXIT_STATUS } from './systemd.js';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { nativeHelperPlist, LAUNCHD_HELPER_LABEL } from './native-helper.js';
+import { launchdUserDomain } from './launchd.js';
+import { assertLifecycleTestIsolation } from './lifecycle-test-guard.js';
 
 const run = promisify(execFile);
 const enabled = process.platform === 'darwin' && process.env.BEELINE_LAUNCHD_ACCEPTANCE === '1';
-
-/**
- * The helper job has one fixed label, so a cancelled run's leftover job is the
- * one the next run reclaims. The temp HOME keeps the plist and wrapper away from
- * a real install; only run this where no real Beeline helper is loaded.
- */
-const label = LAUNCHD_HELPER_LABEL;
-
-/** launchd's own view of the job, read the way `launchd.ts` reads it. */
-async function jobStatus(target: string): Promise<{ state: string; pid: number; lastExitStatus?: number }> {
-  try {
-    const { stdout } = await run('launchctl', ['print', target]);
-    const exited = Number(stdout.match(/^\s*last exit (?:status|code)\s*=\s*(-?\d+)\s*$/m)?.[1] ?? 'x');
-    return {
-      state: stdout.match(/^\s*state\s*=\s*([^\n]+)$/m)?.[1]?.trim() ?? '',
-      pid: Number(stdout.match(/^\s*pid\s*=\s*(\d+)\s*$/m)?.[1] ?? '0'),
-      ...(Number.isSafeInteger(exited) ? { lastExitStatus: exited } : {}),
-    };
-  } catch {
-    return { state: 'unloaded', pid: 0 };
-  }
+// The test owns a unique label even on a shared Mac; never bootout the real helper.
+const label = `app.usebeeline.acceptance.${process.pid}.${Date.now()}`;
+const target = `${launchdUserDomain()}/${label}`;
+const home = process.env.HOME!;
+const root = resolve(home, 'native-acceptance');
+const plist = resolve(root, 'helper.plist');
+const countPath = resolve(root, 'generation');
+const modePath = resolve(root, 'mode');
+async function count() { return Number(await readFile(countPath, 'utf8').catch(() => '0')); }
+async function nextGeneration(previous: number): Promise<void> {
+  await new Promise<void>((done, reject) => {
+    const watcher = watch(root, (_event, file) => { if (file === 'generation') void check(); });
+    const deadline = setTimeout(() => { watcher.close(); reject(new Error('launchd did not restart the unique fixture')); }, 20_000);
+    async function check() { if (await count() > previous) { clearTimeout(deadline); watcher.close(); done(); } }
+    void check();
+  });
+}
+async function kill() {
+  const { stdout } = await run('launchctl', ['print', target]);
+  const pid = Number(stdout.match(/^\s*pid\s*=\s*(\d+)$/m)?.[1]);
+  if (!pid) throw new Error('unique launchd fixture has no PID');
+  process.kill(pid, 'SIGKILL');
 }
 
-describe.runIf(enabled)('isolated launchd supervision acceptance for the machine helper', () => {
-  let root = '';
-  let home = '';
-  let target = '';
-  let stateRoot = '';
-  let env: NodeJS.ProcessEnv;
-
+describe.runIf(enabled)('isolated launchd restart contract', () => {
   beforeAll(async () => {
-    root = await mkdtemp(resolve(tmpdir(), 'beeline-launchd-acceptance-'));
-    home = resolve(root, 'home');
-    stateRoot = resolve(root, 'state');
-    target = `${launchdUserDomain()}/${label}`;
-    const bin = resolve(home, '.local', 'bin');
-    const lib = resolve(home, '.local', 'lib', 'beeline');
-    await mkdir(bin, { recursive: true });
-    await mkdir(resolve(lib, 'lib', 'beeline'), { recursive: true });
-    await mkdir(stateRoot, { recursive: true });
-    await writeFile(resolve(stateRoot, 'mode'), 'run\n');
-    await writeFile(
-      resolve(bin, 'beeline'),
-      `#!/bin/sh
-count_file=${JSON.stringify(resolve(stateRoot, 'count'))}
-child_file=${JSON.stringify(resolve(stateRoot, 'child-pid'))}
-mode_file=${JSON.stringify(resolve(stateRoot, 'mode'))}
+    assertLifecycleTestIsolation(process.env, true);
+    await mkdir(root, { recursive: true });
+    await mkdir(resolve(home, '.local/bin'), { recursive: true });
+    await mkdir(resolve(home, 'Library/Logs/Beeline'), { recursive: true });
+    await writeFile(modePath, 'run');
+    await writeFile(resolve(home, '.local/bin/beeline'), `#!/bin/sh
+count_file=${JSON.stringify(countPath)}
 count=0
 test ! -f "$count_file" || count=$(cat "$count_file")
-count=$((count + 1))
-printf '%s\n' "$$" > "$child_file"
-printf '%s\n' "$count" > "$count_file"
-test "$(cat "$mode_file")" != terminal || exit ${NO_AGENTS_EXIT_STATUS}
+printf '%s\n' "$((count+1))" > "$count_file"
+test "$(cat ${JSON.stringify(modePath)})" != terminal || exit 79
 trap 'exit 0' TERM INT
 while :; do sleep 1; done
-`,
-      { mode: 0o700 },
-    );
-    await chmod(resolve(bin, 'beeline'), 0o700);
-    const invocationPath = resolve(lib, 'lib', 'beeline', 'beeline-cli.mjs');
-    await writeFile(invocationPath, 'acceptance fixture\n');
-    env = { HOME: home, BEELINE_LIB_DIR: lib };
-    await run('launchctl', ['bootout', target]).catch(() => undefined);
-    await installLaunchdHelperService({ env, invocationPath, waitTimeoutMs: 15_000 });
-    await waitForCountGreaterThan(0);
-  }, 40_000);
-
+`, { mode: 0o700 });
+    await writeFile(plist, nativeHelperPlist(process.env).replaceAll(LAUNCHD_HELPER_LABEL, label));
+    const started = nextGeneration(0);
+    await run('launchctl', ['bootstrap', launchdUserDomain(), plist]);
+    await started;
+  }, 30_000);
   afterAll(async () => {
-    await run('launchctl', ['bootout', target]).catch(() => undefined);
+    if (enabled) await run('launchctl', ['bootout', target]).catch(() => undefined);
     await rm(root, { recursive: true, force: true });
   });
-
-  async function count(): Promise<number> {
-    return Number((await readFile(resolve(stateRoot, 'count'), 'utf8')).trim());
-  }
-
-  async function killFixture(): Promise<void> {
-    const pid = Number((await readFile(resolve(stateRoot, 'child-pid'), 'utf8')).trim());
-    process.kill(pid, 'SIGKILL');
-  }
-
-  async function waitForCountGreaterThan(previous: number): Promise<void> {
-    try {
-      await vi.waitFor(async () => expect(await count()).toBeGreaterThan(previous), {
-        timeout: 20_000,
-        interval: 250,
-      });
-    } catch (error) {
-      // A bare count assertion cannot say whether launchd refused the job, left
-      // it stopped, or started it and had it die, and that is the whole
-      // difference between a supervision bug and a fixture bug.
-      const status = await jobStatus(target);
-      throw new Error(
-        `launchd did not reach start #${previous + 1} within 20s: ` +
-          `state=${status.state || 'unknown'} pid=${status.pid} ` +
-          `lastExit=${status.lastExitStatus ?? 'none'} · ` +
-          `${error instanceof Error ? error.message : String(error)}`,
-        { cause: error },
-      );
-    }
-  }
-
-  /**
-   * The closest non-destructive CI equivalent of the next login: no job loaded
-   * for the label, then the installed plist bootstrapped from
-   * `~/Library/LaunchAgents`.
-   *
-   * `launchctl bootout` returns before launchd has taken the job out of the
-   * domain, and a bootstrap of a label still there is refused, so the removal is
-   * waited out. The fixture's supervisor exits 1 on the SIGTERM bootout sends
-   * (a clean daemon stop is an unsuccessful launchd exit, which is exactly what
-   * `KeepAlive.SuccessfulExit=false` restarts), so a removal launchd reads as a
-   * crash can put the job back; the label is re-booted out until it stays gone.
-   */
-  async function loginBootstrap(): Promise<void> {
-    const deadline = Date.now() + 30_000;
-    for (;;) {
-      await run('launchctl', ['bootout', target]).catch(() => undefined);
-      await sleep(250);
-      if ((await jobStatus(target)).state === 'unloaded') break;
-      if (Date.now() >= deadline) throw new Error(`launchd never removed ${label} after bootout`);
-    }
-    await run('launchctl', ['bootstrap', launchdUserDomain(), launchdHelperPlistPath(env)]);
-  }
-
-  it('restarts after a crash and is loaded again at the next login bootstrap', async () => {
-    const first = await count();
-    await killFixture();
-    await waitForCountGreaterThan(first);
-
-    const afterCrash = await count();
-    await loginBootstrap();
-    await waitForCountGreaterThan(afterCrash);
-  }, 60_000);
-
-  it('does not restart a helper that found no agent to host', async () => {
-    // Both tests run in one process against one job, so this one re-establishes
-    // a loaded, running daemon rather than inheriting it: a bootstrap failure
-    // above must read as that failure, not as an unexplained timeout here.
-    const loaded = await count();
-    await loginBootstrap();
-    await waitForCountGreaterThan(loaded);
-
-    await writeFile(resolve(stateRoot, 'mode'), 'terminal\n');
-    const before = await count();
-    await killFixture();
-    await waitForCountGreaterThan(before);
-    const stoppedAt = await count();
-    await sleep(7_000);
-    expect(await count()).toBe(stoppedAt);
+  it('restarts crashes, restarts exit 79, and honors explicit native stop', async () => {
+    let prior = await count();
+    let started = nextGeneration(prior);
+    await kill(); await started;
+    await writeFile(modePath, 'terminal');
+    prior = await count(); started = nextGeneration(prior);
+    await kill(); await started;
+    prior = await count(); await nextGeneration(prior);
+    await run('launchctl', ['bootout', target]);
+    const stopped = await count();
+    await sleep(7000);
+    expect(await count()).toBe(stopped);
+    await writeFile(modePath, 'run');
+    started = nextGeneration(stopped);
+    await run('launchctl', ['bootstrap', launchdUserDomain(), plist]);
+    await started;
   }, 60_000);
 });

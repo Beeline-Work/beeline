@@ -15,6 +15,7 @@
  * and the captured prompt below, not just the reply, to see either way.
  */
 import { createHash, randomUUID } from 'node:crypto';
+import { watch } from 'node:fs';
 import { mkdir, mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -145,6 +146,20 @@ async function readInstitutionalMemoryOutcome(
   };
 }
 
+async function awaitCompletedTrace(traceDir: string, roomId: string): Promise<void> {
+  await mkdir(traceDir, { recursive: true });
+  await new Promise<void>((done, reject) => {
+    const watcher = watch(traceDir, () => void check());
+    const deadline = setTimeout(() => { watcher.close(); reject(new Error('completed trace deadline exceeded')); }, 10_000);
+    async function check() {
+      try { await readInstitutionalMemoryOutcome(traceDir, roomId); }
+      catch { return; }
+      clearTimeout(deadline); watcher.close(); done();
+    }
+    void check();
+  });
+}
+
 describe('institutional context prefetch, proven against the real server', () => {
   it('serves a real saved profile fact in a Room turn, and the daemon\'s claim precedes the fetch', async () => {
     const roomId = randomUUID();
@@ -249,6 +264,9 @@ describe('institutional context prefetch, proven against the real server', () =>
           ).toBeGreaterThan(0),
         { timeout: 10_000, interval: 25 },
       );
+      // The server receipt precedes the local trace flush. Wait for that
+      // completion event before cancelling the otherwise idle intake.
+      await awaitCompletedTrace(traceDir, roomId);
     } finally {
       abort.abort();
       await running.catch(() => undefined);

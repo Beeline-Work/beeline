@@ -4,7 +4,7 @@ import { loadBodyConfig } from './config.js';
 import { activateDaemonTransport, type DaemonFetch } from './daemon-api-client.js';
 import { validateAgentModelSelection } from './model-catalog.js';
 import { selectPairAgentCommand } from './pair-agent-selection.js';
-import { ensureMachineHelper } from './helper-service.js';
+import { convergeMachine } from './recovery.js';
 import { identityFromKey, stageMonolithAgentRuntime } from './runtime.js';
 
 const DEFAULT_BODY_IDENTITY_NAME = 'beeline-body';
@@ -134,7 +134,7 @@ async function pairDevice(
   try {
     pid = await (
       options.launch ??
-      (async () => (await ensureMachineHelper()).pid)
+      (async () => (await convergeMachine({ agentIds: [agentIdentity.publicKey] })).pid)
     )(staged.configPath, agentIdentity.publicKey);
   } catch (error) {
     throw new Error(

@@ -284,6 +284,7 @@ type RoomLeaf = Pick<
   | 'isBusy'
   | 'prepareForForcedUpdateRestart'
   | 'interruptForServerMinimum'
+  | 'interruptedTurn'
   | 'requestReconciliation'
   | 'refreshPersonaForSoulUpdate'
   | 'forceRecoverRoom'
@@ -804,6 +805,10 @@ export class RoomRuntimeCoordinator {
     await Promise.allSettled(rooms.filter((room) => room.body.isBusy())
       .map((room) => room.body.prepareForForcedUpdateRestart()));
     for (const room of rooms) room.controller.abort();
+  }
+
+  interruptedTurns(): InterruptedTurn[] {
+    return [...this.running.values()].map((room) => room.body.interruptedTurn()).filter((turn): turn is InterruptedTurn => turn !== undefined);
   }
 
   interruptForServerMinimum(): InterruptedTurn[] {

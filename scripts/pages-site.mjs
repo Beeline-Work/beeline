@@ -117,6 +117,20 @@ export async function validateBundleDirectory(bundleRoot, { expectedSha, expecte
     }
     files.push(bundle.file, sidecarName);
   }
+  if (manifest.recovery) {
+    const recovery = manifest.recovery;
+    if (recovery.file !== 'beeline-bootstrap.mjs' || !/^[0-9a-f]{64}$/.test(recovery.sha256 ?? ''))
+      fail('helper recovery bootstrap metadata is invalid');
+    const bytes = await readFile(join(bundleRoot, recovery.file));
+    if (sha256(bytes) !== recovery.sha256 || bytes.length !== recovery.bytes)
+      fail('helper recovery bootstrap differs from the manifest');
+    const sidecar = `${recovery.file}.sha256`;
+    if (
+      (await readFile(join(bundleRoot, sidecar), 'utf8')).trim().split(/\s+/)[0] !== recovery.sha256
+    )
+      fail('helper recovery bootstrap sidecar differs from the manifest');
+    files.push(recovery.file, sidecar);
+  }
   return { manifest, manifestBytes, files };
 }
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { requestMachine } from './machine-control.js';
 import { RESOURCE_FACADE_FLAG, runResourceFacade } from './resource-mcp-facade.js';
 /**
  * Beeline body CLI — run a body against a TLC channel.
@@ -37,7 +38,7 @@ import {
   type HelperExitReason,
 } from './helper-lifecycle.js';
 import { activateDaemonTransport } from './daemon-api-client.js';
-import { findAgentRuntimeConfigPaths, readRuntimeRecord, setAgentStopped } from './runtime.js';
+import { defaultSupervisorRoot, findAgentRuntimeConfigPaths, readRuntimeRecord, setAgentStopped } from './runtime.js';
 import { runCleanupSharedHomeCommand } from './startup-cleanup.js';
 import { runStartCommand } from './start-command.js';
 import {
@@ -45,7 +46,7 @@ import {
   runConnectCommand,
   runConnectFinishCommand,
 } from './connect-command.js';
-import { runUpdateCommand } from './self-update-cli.js';
+import { refreshRuntimeHarnessAdapters, runUpdateCommand } from './self-update-cli.js';
 import {
   activeReleaseId,
   beelineInstallLayout,
@@ -106,7 +107,7 @@ class DaemonExitError extends Error {
 /**
  * A per-agent unit from before the machine helper started this (new) bundle
  * as `daemon --agent <key>`. Hand the agent to the machine helper, retire the
- * per-agent units, and exit with the status those units never restart.
+ * per-agent units, and exit after the native manager owns the successor job.
  */
 async function migrateLegacyAgentUnit(agentPubkey: string): Promise<never> {
   // Retiring this process's own unit sends it SIGTERM; finish the handoff first.
@@ -124,7 +125,7 @@ async function migrateLegacyAgentUnit(agentPubkey: string): Promise<never> {
       'failed',
     );
   }
-  process.exit(HELPER_EXIT_CODES['unknown-agent']);
+  process.exit(0);
 }
 
 async function main(): Promise<void> {
@@ -164,6 +165,24 @@ async function main(): Promise<void> {
       throw new Error('managed-update-worker is an internal command');
     }
     console.log(JSON.stringify(await runManagedUpdateWorker()));
+    return;
+  }
+
+  if (command === 'converge-dependencies') {
+    if (process.env.BEELINE_INTERNAL_RECOVERY !== '1') throw new Error('converge-dependencies is an internal recovery command');
+    await refreshRuntimeHarnessAdapters({ env: process.env });
+    const layout = beelineInstallLayout(process.env);
+    if (!layout) throw new Error('dependency convergence requires an installed layout');
+    const invocationPath = resolve(layout.libDir, 'lib/beeline/beeline-cli.mjs');
+    try {
+      if (process.platform === 'linux') {
+        const { installTrustySquireBrokerService } = await import('./systemd.js');
+        await installTrustySquireBrokerService({ invocationPath });
+      } else if (process.platform === 'darwin') {
+        const { installLaunchdTrustySquireBrokerService } = await import('./launchd.js');
+        await installLaunchdTrustySquireBrokerService({ invocationPath });
+      }
+    } catch (error) { console.error(`[beeline] host Squire dependency not converged: ${String(error)}`); }
     return;
   }
 
@@ -243,13 +262,14 @@ async function main(): Promise<void> {
     const agentPubkey = agentFlag >= 0 ? args[agentFlag + 1] : undefined;
     if (agentPubkey && !configPath) {
       if (!/^[0-9a-f]{64}$/i.test(agentPubkey))
-        throw new DaemonExitError(`unknown agent ${agentPubkey}`, 'unknown-agent');
+        throw new DaemonExitError(`unknown agent ${agentPubkey}`, 'failed');
       await migrateLegacyAgentUnit(agentPubkey.toLowerCase());
     }
     if (!configPath && !args.includes('--machine'))
       throw new Error('daemon requires --machine, or --config <runtime.json> for one agent');
     // `--machine` hosts every paired agent; `--config` hosts exactly one, for
     // a development checkout or a test that runs one helper by hand.
+    if (configPath && process.env.BEELINE_LAB !== '1') throw new Error('daemon --config requires explicit BEELINE_LAB=1 and an isolated state root');
     const { reason, lifecycle } = await runMachineHelper(
       configPath ? { configPaths: [resolve(configPath)] } : {},
     );
@@ -287,6 +307,8 @@ async function main(): Promise<void> {
     // it; every other agent on the machine keeps serving.
     await setAgentStopped(configPath, true);
     const reloaded = await reloadMachineHelper();
+    if (reloaded) await requestMachine(defaultSupervisorRoot(), { operation: 'stop', agentId: runtime.agent.publicKey },
+      (status) => !status.agents[runtime.agent.publicKey] || status.agents[runtime.agent.publicKey]!.state === 'stopped', 90_000);
     console.log(
       `[beeline] agent ${runtime.agent.publicKey} stopped${reloaded ? '; graceful stop requested' : ''}`,
     );

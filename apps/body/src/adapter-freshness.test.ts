@@ -9,7 +9,7 @@ import {
   type AgentCommand,
   type AgentKind,
 } from './agent-command.js';
-import { adapterInstallLockPath, withAdapterInstallLock } from './adapter-install-lock.js';
+import { withAdapterInstallLock } from './adapter-install-lock.js';
 import { loadConnectModelCatalog } from './connect-command.js';
 import { refreshRuntimeHarnessAdapters } from './self-update-cli.js';
 
@@ -131,9 +131,9 @@ describe('harness adapter freshness', () => {
     expect(install).toHaveBeenCalledTimes(2);
   });
 
-  it('takes over an abandoned adapter lock after its bounded stale age', async () => {
+  it('ignores an abandoned legacy lock file; the kernel owns exclusion', async () => {
     const env = await lockEnv();
-    const lock = adapterInstallLockPath(env)!;
+    const lock = join(env.BEELINE_LIB_DIR!, '../beeline-releases/.state/adapter-install.lock');
     await mkdir(join(lock, '..'), { recursive: true });
     await writeFile(lock, 'abandoned');
     const old = new Date(Date.now() - 5 * 60_000);

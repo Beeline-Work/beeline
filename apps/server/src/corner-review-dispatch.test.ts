@@ -531,7 +531,7 @@ describe('corner message attribution', () => {
     await db.query(`DELETE FROM push_devices WHERE identity_id=$1`, [H]);
   });
 
-  it('tells the requester when a corner in a Room without a repository posts its deliverable, tag or no tag', async () => {
+  it.each([false, true])('notifies an Attention requester about a non-repository deliverable only when tagged (tagged=%s)', async (tagged) => {
     await db.query(
       `UPDATE rooms SET repository_key=NULL,repository_resolution='none' WHERE id=$1`,
       [R],
@@ -565,11 +565,12 @@ describe('corner message attribution', () => {
          VALUES($1,$2,'https://example.test/media/report','report.pdf','application/pdf',10,$3,'g1')`,
         [C, A, worker!.turnRequestId],
       );
-      await result(worker!, 'The report is attached.');
+      const text = tagged ? '@human The report is attached.' : 'The report is attached.';
+      await result(worker!, text);
       await push.runOnce();
-      expect(send.mock.calls.map(([, message]) => message.text)).toEqual([
-        'Hoots: The report is attached.',
-      ]);
+      expect(send.mock.calls.map(([, message]) => message.text)).toEqual(
+        tagged ? [`Hoots: ${text}`] : [],
+      );
     } finally {
       await db.query(
         `UPDATE rooms SET repository_key='owner/widgets',repository_resolution='repository' WHERE id=$1`,

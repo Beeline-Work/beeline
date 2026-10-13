@@ -1,9 +1,9 @@
-import { createHash } from 'node:crypto';
 import { watch } from 'node:fs';
-import { chmod, lstat, mkdir, rm } from 'node:fs/promises';
+import { chmod, rm } from 'node:fs/promises';
 import { createConnection, createServer, type Socket } from 'node:net';
 import { basename, dirname, resolve } from 'node:path';
 import type { HelperStatusFile } from './helper-status.js';
+import { privateSocketPath, preparePrivateSocketDirectory } from './local-socket.js';
 
 export interface MachineRequest {
   operation: 'status' | 'converge' | 'stop' | 'update';
@@ -15,20 +15,9 @@ export interface MachineRequest {
 export function machineControlPath(stateRoot: string): string {
   // Darwin truncates Unix socket paths at 104 bytes. Neither the install/home
   // path nor os.tmpdir() (usually /var/folders/.../T on macOS) is bounded.
-  // A private, installation-specific directory under the literal /tmp keeps
+  // A private, installation-specific directory under literal /var/tmp keeps
   // both sides on the same short endpoint, including for Unicode state homes.
-  const key = createHash('sha256').update(resolve(stateRoot)).digest('hex').slice(0, 32);
-  return `/tmp/beeline-${process.getuid!()}-${key}/control.sock`;
-}
-
-async function prepareControlDirectory(path: string): Promise<void> {
-  const directory = dirname(path);
-  await mkdir(directory, { mode: 0o700 }).catch((error: NodeJS.ErrnoException) => {
-    if (error.code !== 'EEXIST') throw error;
-  });
-  const entry = await lstat(directory);
-  if (!entry.isDirectory() || entry.uid !== process.getuid!() || (entry.mode & 0o077) !== 0)
-    throw new Error(`expected a private helper control directory: ${directory}`);
+  return privateSocketPath(resolve(stateRoot));
 }
 
 /** The live connection, rather than a PID or a disk snapshot, proves the process generation. */
@@ -67,7 +56,7 @@ export class MachineControl {
   ) {}
 
   async start(): Promise<void> {
-    await prepareControlDirectory(this.path);
+    await preparePrivateSocketDirectory(this.path);
     // Machine ownership is held by the native supervisor and the process lock.
     await rm(this.path, { force: true });
     await new Promise<void>((done, reject) => {
@@ -102,7 +91,7 @@ export async function requestMachine(
   timeoutMs = 600_000,
 ): Promise<HelperStatusFile> {
   const path = machineControlPath(stateRoot);
-  await prepareControlDirectory(path);
+  await preparePrivateSocketDirectory(path);
   return new Promise((done, reject) => {
     let socket: Socket | undefined;
     let connecting = false;

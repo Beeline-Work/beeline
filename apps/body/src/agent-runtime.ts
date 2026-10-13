@@ -1,5 +1,5 @@
 import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { loadBodyConfig } from './config.js';
 import { formatAgentCommand } from './agent-command.js';
 import { LEGACY_ACCESS_POLICY } from './access-policy.js';
@@ -15,8 +15,8 @@ import {
   reportAgentSignInResult,
 } from './agent-sign-in.js';
 import { ConnectorAssignmentLoop } from './connector-assignments.js';
-import { RegistryMcpHostBroker } from './registry-mcp.js';
-import { BrowserShareHost } from './browser-share-host.js';
+import { RegistryMcpHostBroker, registryMcpBrokerSocketPath } from './registry-mcp.js';
+import { BrowserShareHost, browserShareHostPath } from './browser-share-host.js';
 import { ThinDaemonCore } from './thin-core.js';
 import { AgentLifecycle, retryBeforeReady, type AgentExitReason } from './helper-lifecycle.js';
 import { migrateLegacyDaemonTransport } from './legacy-daemon-migration.js';
@@ -299,17 +299,12 @@ export async function runAgentRuntime(
           })
         ).allowed === true,
       // One broker per hosted agent: each authorizes against its own agent.
-      registryBrokerSocketPath(config.operatorHome, agentId),
+      registryMcpBrokerSocketPath(config.operatorHome, agentId),
     );
     await registryMcpBroker.start();
     config.registryMcpBrokerSocket = registryMcpBroker.socketPath;
-    // Unix socket paths are capped at 108 bytes, so keep this near the state root.
     browserShareHost = new BrowserShareHost(
-      join(
-        process.env.XDG_STATE_HOME ?? config.operatorHome ?? homedir(),
-        '.bs',
-        `${process.pid}-${agentId.slice(0, 8)}.sock`,
-      ),
+      browserShareHostPath(process.env.XDG_STATE_HOME ?? config.operatorHome ?? homedir(), agentId),
     );
     await browserShareHost.start();
     config.browserShareHostSocket = browserShareHost.socketPath;
@@ -434,16 +429,6 @@ export async function runAgentRuntime(
     await clearDaemonPidRecordIfPid(configPath, process.pid);
   }
   return exitReason ?? lifecycle.stopReason ?? 'stopped';
-}
-
-/** Per agent: two agents in one process must never share a broker socket. */
-function registryBrokerSocketPath(home: string | undefined, agentId: string): string {
-  return join(
-    home ?? homedir(),
-    '.beeline',
-    'registry-mcp-broker',
-    `${process.pid}-${agentId.slice(0, 8)}.sock`,
-  );
 }
 
 /** The force-update journal entries for one hosted agent. */

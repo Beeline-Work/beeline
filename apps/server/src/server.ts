@@ -2179,6 +2179,65 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     return;
   }
 
+  const profileVoiceMatch = url.pathname.match(
+    /^\/v1\/phone\/workspaces\/([0-9a-f-]{36})\/agents\/([a-f0-9]{64})\/(voices|voice-preview)$/,
+  );
+  if (profileVoiceMatch) {
+    if (!options.voice) {
+      json(response, 503, { error: 'The Workspace voice provider is unavailable' });
+      return;
+    }
+    const [, workspaceId, agentId, action] = profileVoiceMatch;
+    if (method === 'GET' && action === 'voices')
+      json(
+        response,
+        200,
+        await options.voice.profiles.catalog(
+          workspaceId!,
+          agentId!,
+          identityId!,
+          url.searchParams.get('roomId') ?? undefined,
+        ),
+      );
+    else if (method === 'POST') {
+      const input = await body(request);
+      if (
+        !['aura-2', 'kokoro-deepinfra', 'fish-s2.1-pro'].includes(String(input.provider)) ||
+        typeof input.voiceId !== 'string' ||
+        input.voiceId.length > 128
+      ) {
+        json(response, 400, { error: 'Invalid voice selection' });
+        return;
+      }
+      const provider = input.provider as import('@beeline/api-contract/phone').VoiceProvider;
+      if (action === 'voice-preview')
+        json(
+          response,
+          200,
+          await options.voice.profiles.preview(
+            workspaceId!,
+            agentId!,
+            identityId!,
+            provider,
+            input.voiceId,
+          ),
+        );
+      else
+        json(
+          response,
+          200,
+          await options.voice.profiles.save(
+            workspaceId!,
+            agentId!,
+            identityId!,
+            provider,
+            input.voiceId,
+          ),
+        );
+    } else json(response, 405, { error: 'method_not_allowed' });
+    return;
+  }
+
   const voiceMatch = url.pathname.match(/^\/v1\/phone\/voice\/([0-9a-f-]{36})\/(current|join|leave)$/);
   if (voiceMatch) {
     if (!options.voice) { json(response, 503, { error: 'Voice mode is unavailable' }); return; }

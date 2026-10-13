@@ -1,4 +1,5 @@
 export const VOICE_SCHEMA = `
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS chosen_voices jsonb NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS voice_provider text NOT NULL DEFAULT 'fish-s2.1-pro'
   CHECK (voice_provider IN ('aura-2','kokoro-deepinfra','fish-s2.1-pro'));
 ALTER TABLE workspaces ALTER COLUMN voice_provider SET DEFAULT 'fish-s2.1-pro';

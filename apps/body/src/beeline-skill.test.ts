@@ -44,7 +44,7 @@ describe('using-beeline Room guidance', () => {
     const room = roomPrompt();
     expect(room).toContain('Every exact @handle wakes that member.');
     expect(room).toContain(
-      'For work, use order(address, text) down and report(text) up to your commander',
+      'Use order(address, text) privately across member Rooms; report(text) one step up to your commander',
     );
     expect(room).toContain('If nothing is actionable for you, do not reply.');
     // The Room asks for the corner's NAME as well as its objective (C89).
@@ -229,7 +229,7 @@ describe('using-beeline Room guidance', () => {
     expect(context.systemPrompt).toContain("Use your own owner's tools and keys for whoever asks");
     expect(context.systemPrompt).toContain('Web search is available');
     expect(context.systemPrompt).toContain(
-      'report(text) up to your commander',
+      'report(text) one step up to your commander',
     );
     expect(context.turnPrefix).toBe(context.systemPrompt);
     // A harness that honors the session prompt gets no duplicate on every turn.

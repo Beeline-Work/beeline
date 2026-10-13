@@ -363,7 +363,7 @@ it('offers the command grammar across Rooms, corners and DMs, with retired tools
   const dm = assembleSessionPrompt({ surface: 'dm', agentName: 'Bee' }).systemPrompt;
   expect(dm).toContain('list_rooms');
   expect(dm).toContain('across member Rooms');
-  expect(dm).toContain('report(text) up to your commander');
+  expect(dm).toContain('report(text) one step up to your commander');
 });
 
 it('R8d documents the optional continuation and generic fallback', () => {

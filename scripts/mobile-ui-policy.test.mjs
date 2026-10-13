@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { parse } from 'yaml';
@@ -242,4 +243,34 @@ test('returning UI cannot hide behind a lower-case or underscored component name
   );
   assert.deepEqual(value.components, ['_Button', 'renderButton']);
   assert.equal(judgeUiRegistry([value], { ...empty, components: { [value.file]: [] } }).length, 2);
+});
+
+test('generated, vendored and module-extension UI sources cannot evade registration', () => {
+  const scratch = fileURLToPath(new URL('../.scratch/ui-policy/', import.meta.url));
+  mkdirSync(scratch, { recursive: true });
+  const root = mkdtempSync(path.join(scratch, 'source-scope-'));
+  try {
+    const sources = path.join(root, 'apps/mobile/sources');
+    for (const [file, source] of [
+      ['components/generated/NewButton.gen.tsx', 'export const NewButton=()=>null;'],
+      ['components/vendor/NewControl.mjs', 'export function NewControl(){return null}'],
+      [
+        'app/input.gen.tsx',
+        "import {TextInput} from 'react-native'; export default ()=> <TextInput/>;",
+      ],
+      ['components/Ignore.test.tsx', 'export const TestFixture=()=>null;'],
+    ]) {
+      const target = path.join(sources, file);
+      mkdirSync(path.dirname(target), { recursive: true });
+      writeFileSync(target, source);
+    }
+    const scans = scanUiTree(root);
+    assert.equal(scans.length, 3);
+    const errors = judgeUiRegistry(scans, empty);
+    assert.equal(errors.filter((error) => error.rule === 'component-file').length, 2);
+    assert.equal(errors.filter((error) => error.rule === 'component-symbol').length, 2);
+    assert.equal(errors.filter((error) => error.rule === 'raw-text-input').length, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

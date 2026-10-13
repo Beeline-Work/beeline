@@ -27,10 +27,10 @@ export function uiSourceFiles(root) {
     for (const entry of readdirSync(directory, { withFileTypes: true })) {
       const file = path.join(directory, entry.name);
       if (entry.isDirectory()) {
-        if (!['test', 'vendor', 'node_modules'].includes(entry.name)) walk(file);
+        if (!['test', 'node_modules'].includes(entry.name)) walk(file);
       } else if (
-        /\.[jt]sx?$/.test(entry.name) &&
-        !/\.(test|spec|gen)\.[jt]sx?$|\.d\.ts$/.test(entry.name)
+        /\.[cm]?[jt]sx?$/.test(entry.name) &&
+        !/\.(test|spec)\.[cm]?[jt]sx?$|\.d\.[cm]?ts$/.test(entry.name)
       ) {
         files.push({
           file: path
@@ -468,9 +468,9 @@ export function registryAtRef(root, ref) {
   const scans = files
     .filter(
       (file) =>
-        /\.[jt]sx?$/.test(file) &&
-        !/\.(test|spec|gen)\.[jt]sx?$|\.d\.ts$/.test(file) &&
-        !/\/(test|vendor)\//.test(file),
+        /\.[cm]?[jt]sx?$/.test(file) &&
+        !/\.(test|spec)\.[cm]?[jt]sx?$|\.d\.[cm]?ts$/.test(file) &&
+        !/\/test\//.test(file),
     )
     .map((file) =>
       scanUiSource(git(['show', `${ref}:${file}`]), file.replace('apps/mobile/sources/', '')),

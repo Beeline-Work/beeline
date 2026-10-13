@@ -1076,6 +1076,7 @@ export default function BuzzMembers({
         voiceApi={
           identity && relayUrl && workspaceId
             ? {
+                contextKey: `${workspaceId}:${profileRoomId ?? first(params.roomId) ?? ''}:${surface?.workspace.voiceProvider ?? ''}:${identity.publicKey}`,
                 read: () =>
                   new RoomViewClient({ baseUrl: relayUrl, identity }).agentVoices(
                     workspaceId,

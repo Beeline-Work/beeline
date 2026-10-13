@@ -266,7 +266,7 @@ export function AgentProfileView({
               )}
             </View>
             <AgentVoiceSection
-              key={identity.pubkey}
+              key={`${detail.workspaceId}:${identity.pubkey}:${voiceApi?.contextKey ?? ''}`}
               agentId={identity.pubkey}
               configVersion={detail.configVersion}
               handle={identity.handle ?? identity.name}

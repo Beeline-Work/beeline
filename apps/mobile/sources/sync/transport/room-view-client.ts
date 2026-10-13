@@ -318,10 +318,11 @@ class MonolithRoomViewClient {
             : { headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }),
         },
         // Reads, read marks and invite lookups repeat safely on a fresh
-        // connection; claiming a pairing code does not.
+        // connection; pairing claims and paid voice synthesis must not replay.
         {
           timeoutMs: MONOLITH_REQUEST_TIMEOUT_MS,
-          idempotent: !path.endsWith('/operations/claimAgentPairing'),
+          idempotent:
+            !path.endsWith('/operations/claimAgentPairing') && !path.endsWith('/voice-preview'),
         },
       )
       .catch((error: unknown) => {

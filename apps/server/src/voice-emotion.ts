@@ -10,8 +10,8 @@ export const FISH_EMOTION_GUIDE =
 export function stripVoiceEmotion(text: string): string {
   const clean = text
     .replace(tags, '')
-    .replace(/[\[(]([a-z]*)$/i, (tag, prefix: string) =>
-      cues.split('|').some((c) => c.startsWith(prefix.toLowerCase())) ? '' : tag,
+    .replace(/(^|\s)[\[(]([a-z]+)$/i, (tag, boundary: string, prefix: string) =>
+      cues.split('|').some((c) => c.startsWith(prefix.toLowerCase())) ? boundary : tag,
     );
   return clean.replace(/ {2,}/g, ' ').trim();
 }

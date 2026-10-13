@@ -12,6 +12,8 @@ import { Button } from './Button';
 import { VoicePreviewPlayer } from './VoicePreviewPlayer';
 
 export type AgentVoiceApi = {
+  /** Stable server read scope; changing Workspace, Room, provider or viewer remounts the picker. */
+  contextKey?: string;
   read: () => Promise<AgentVoiceCatalog>;
   save: (provider: VoiceProvider, voiceId: string) => Promise<AgentVoiceCatalog>;
   preview: (provider: VoiceProvider, voiceId: string) => Promise<AgentVoicePreview>;
@@ -81,6 +83,12 @@ export function AgentVoiceSection({
     },
     [agentId],
   );
+  useEffect(() => {
+    if (!canEdit) {
+      stop();
+      setOpen(false);
+    }
+  }, [canEdit]);
   const preview = async (id: string) => {
     if (playing === id) {
       stop();
@@ -151,7 +159,7 @@ export function AgentVoiceSection({
         </Text>
       )}
       {!catalog && error && <SettingsRow title="Retry" tone="action" onPress={() => void load()} />}
-      {open && catalog && (
+      {open && catalog && changeable && (
         <>
           <Text style={styles.copy}>Choose a voice for @{handle}</Text>
           <ScrollView

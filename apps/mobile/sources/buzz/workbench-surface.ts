@@ -19,15 +19,32 @@ export const isWorkbenchView = (value: unknown): value is WorkbenchView => {
 const isSuggestions = (value: unknown): value is WorkbenchAppSearchResult => Array.isArray(value);
 const connectReads = new Map<string, Promise<string | null>>();
 const heldWorkbench = new Map<string, { address: SurfaceCacheAddress; scope: WorkbenchScope }>();
+/** Workbench views the server answered this session; a stored view outside it may be stale. */
+const answeredWorkbench = new Set<string>();
 const ownerErrors = new Map<string, Set<(error: string | null) => void>>();
 let workbenchStop: (() => void) | undefined;
 let workbenchStarting = false;
-subscribeClientReset(() => { heldWorkbench.clear(); workbenchStop?.(); workbenchStop = undefined; });
+subscribeClientReset(() => {
+  heldWorkbench.clear(); answeredWorkbench.clear(); workbenchStop?.(); workbenchStop = undefined;
+});
+/** A server answer written outside this module, such as the one inside the Settings read. */
+export function noteWorkbenchAnswer(address: SurfaceCacheAddress) {
+  answeredWorkbench.add(JSON.stringify(address));
+}
 function reportOwnerError(key: string, error: string | null) {
   for (const listener of ownerErrors.get(key) ?? []) listener(error);
 }
 export function holdSharedWorkbench(address: SurfaceCacheAddress, scope: WorkbenchScope) {
   const key = JSON.stringify(address);
+  // A stored view can predate live changes this device never heard, such as a
+  // machine's Squire report. Read it again once per session; with no stored
+  // view, the route's own first read covers it.
+  if (!answeredWorkbench.has(key)) {
+    answeredWorkbench.add(key);
+    void mobileSurfaceCache.read(address, isWorkbenchView).then((stored) => stored &&
+      mobileSurfaceCache.fetch(address, isWorkbenchView, () => getWorkbenchSource().readWorkbench(scope))
+        .then(() => reportOwnerError(key, null), (cause) => reportOwnerError(key, String(cause))));
+  }
   heldWorkbench.set(key, { address, scope });
   if (heldWorkbench.size > 8) heldWorkbench.delete(heldWorkbench.keys().next().value!);
   if (workbenchStop || workbenchStarting) return;

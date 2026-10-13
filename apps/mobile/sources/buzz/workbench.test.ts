@@ -27,13 +27,13 @@ import {
   ledgerStamp,
   resolveGoogleConnectTarget,
   serviceMonogram,
-  workbenchSummary,
   type ConnectionDetailView,
   type WorkbenchConnector,
   type WorkbenchConnectorId,
   type WorkbenchConnectorStatus,
   type WorkbenchView,
 } from './workbench';
+import { workbenchSummary } from './connectors-model';
 
 const VIEWER_A = 'human-dani';
 const VIEWER_B = 'human-terra';
@@ -545,41 +545,40 @@ describe('workbenchSummary', () => {
     tool('google-drive', 'Google Drive', status),
     tool('google-youtube', 'YouTube', status),
   ];
-  const summary = (connectors: WorkbenchConnector[], keys = 0, apps: WorkbenchView['apps'] = []) =>
+  const summary = (connectors: WorkbenchConnector[], keys = 0, apps: WorkbenchView['apps'] = [],
+    helpers: WorkbenchView['helpers'] = []) =>
     workbenchSummary(
       {
         connectors,
         connections: Array.from({ length: keys }, (_, index) => ({
           ref: `key-${index}`,
           name: `key-${index}`,
+          service: index % 2 ? 'stripe' : 'openrouter',
           hosts: [],
           state: 'active' as const,
           ownerId: VIEWER_A,
         })),
         apps,
-        helpers: [],
+        helpers,
       },
       VIEWER_A,
     );
+  const machine = { id: 'machine-squire', name: 'squire', online: true,
+    squire: { status: 'connected' as const, reportedAt: 1 } };
 
-  it('pluralises connections and distinct keys', () => {
-    expect(summary([], 0).value).toBe('0 connections · 0 keys');
-    expect(summary([tool('trusty-squire', 'Trusty Squire', 'connected')], 1).value).toBe(
-      '1 connection · 1 key',
-    );
-    expect(
-      summary(
-        [
-          tool('trusty-squire', 'Trusty Squire', 'connected'),
-          tool('wallet', 'Wallet', 'connected'),
-        ],
-        57,
-      ).value,
-    ).toBe('2 connections · 57 keys');
+  it('states one total of connections, singular and plural alike', () => {
+    expect(summary([], 0).value).toBe('0 connected');
+    expect(summary([tool('wallet', 'Wallet', 'connected')]).value).toBe('1 connected');
+    expect(summary([tool('wallet', 'Wallet', 'connected')], 0, [], [machine]).value).toBe('2 connected');
+  });
+
+  it('counts each key service once, not each key', () => {
+    expect(summary([tool('trusty-squire', 'Trusty Squire', 'connected')], 57, [], [machine]).value)
+      .toBe('3 connected');
   });
 
   it('counts the four legacy Google connectors as one connection', () => {
-    expect(summary(google('connected')).value).toBe('1 connection · 0 keys');
+    expect(summary(google('connected')).value).toBe('1 connected');
   });
 
   it('counts only connected, available rows', () => {
@@ -587,10 +586,9 @@ describe('workbenchSummary', () => {
       summary([
         tool('trusty-squire', 'Trusty Squire', 'installing'),
         tool('wallet', 'Wallet', 'disconnected'),
-        tool('tailscale', 'Tailscale', 'connected', false),
         ...google('disconnected'),
       ]).value,
-    ).toBe('0 connections · 0 keys');
+    ).toBe('0 connected');
   });
 
   it('counts signed-in apps with connectors', () => {
@@ -602,7 +600,7 @@ describe('workbenchSummary', () => {
       status: 'connected' as const,
       useCount: 0,
     };
-    expect(summary([], 0, [app]).value).toBe('1 connection · 0 keys');
+    expect(summary([], 0, [app]).value).toBe('1 connected');
   });
 
   it('has no attention line when nothing is in error', () => {
@@ -614,7 +612,7 @@ describe('workbenchSummary', () => {
   it('names the one broken tool, folding Google into Google Workspace', () => {
     expect(
       summary([tool('trusty-squire', 'Trusty Squire', 'connected'), ...google('error')], 57),
-    ).toEqual({ value: '1 connection · 57 keys', attention: 'Google Workspace needs attention' });
+    ).toEqual({ value: '2 connected', attention: 'Google Workspace needs attention' });
     expect(summary([tool('wallet', 'Wallet', 'error')]).attention).toBe('Wallet needs attention');
   });
 

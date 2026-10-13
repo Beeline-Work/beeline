@@ -258,6 +258,25 @@ describe('Connectors settings screen', () => {
     expect(read).toHaveBeenLastCalledWith({ workspaceId: 'workspace-1', viewerId: 'human-dani' });
   });
 
+  it('Reproduction connectors-squire-not-added: re-reads a stored view once so a connected machine is not "Not added"', async () => {
+    const source = new MockWorkbenchSource();
+    const read = source.readWorkbench.bind(source);
+    const machine = { id: 'machine-squire', name: 'squire', online: true };
+    source.readWorkbench = async input => ({ ...await read(input),
+      helpers: [{ ...machine, squire: { status: 'connected' as const, reportedAt: 2 } }] });
+    setWorkbenchSource(source);
+    // The view this device stored before the machine's broker report reached it.
+    const stored = { ...await read({ workspaceId: 'workspace-1', viewerId: 'human-dani' }), helpers: [machine] };
+    await mobileSurfaceCache.write({ relayOrigin: 'https://relay.test', viewerPubkey: 'human-dani',
+      endpoint: '/workspace/:id/workbench', params: { workspaceId: 'workspace-1', viewerId: 'human-dani' } },
+    stored, (value): value is typeof stored => Boolean(value));
+    const renderer = await render();
+    const squire = () => renderer.root.findAllByType('SettingsRow')
+      .find((row: any) => row.props.title === 'Trusty Squire · squire');
+    await vi.waitFor(() => expect(squire()?.props.value).toBe('Connected'));
+    expect(squire()?.props.statusGlyph).toBe('live');
+  });
+
   it('connects the recommended wallet by creating it and granting delegation', async () => {
     const wallet = new MockWalletSource();
     const create = vi.spyOn(wallet, 'createWallet');

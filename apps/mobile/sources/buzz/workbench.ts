@@ -431,47 +431,6 @@ export function connectionsForViewer(
   return view.connections.filter((connection) => connection.ownerId === viewerId);
 }
 
-/** What the Settings Connectors row states about the person's connections. */
-export type WorkbenchSummary = {
-  /** Connected services and distinct vault entries. */
-  value: string;
-  /** The danger subtitle naming Tools rows in error; absent when none are. */
-  attention?: string;
-};
-
-function plural(count: number, noun: string): string {
-  return `${count} ${noun}${count === 1 ? '' : 's'}`;
-}
-
-/**
- * Counts the Tools rows exactly as the Workbench page displays them: the
- * four google connectors fold into the one Google Workspace entry, an
- * unavailable connector reads `soon` whatever its status, and apps are not
- * tools. Keys are `connectionsForViewer`, the same count as before.
- */
-export function workbenchSummary(view: WorkbenchView, viewerId: string): WorkbenchSummary {
-  const google = googleEntryConnector(view.connectors);
-  const shown = [
-    ...view.connectors.filter((row) => row.available &&
-      (row.id === 'trusty-squire' || row.id === 'tailscale' || row.id === 'wallet')),
-    ...(google && !view.apps.some((app) => app.key === 'gmail') ? [google] : []),
-  ];
-  const connected = shown.filter((row) => row.status === 'connected').length +
-    view.apps.filter((app) => app.transport !== 'squire-api' && app.status === 'connected').length +
-    (view.linkAccount?.connected ? 1 : 0);
-  const broken = shown.filter((row) => row.status === 'error');
-  const keys = new Set(connectionsForViewer(view, viewerId).map((key) => key.ref)).size;
-  const value = `${plural(connected, 'connection')} · ${plural(keys, 'key')}`;
-  if (broken.length === 0) return { value };
-  return {
-    value,
-    attention:
-      broken.length === 1
-        ? `${broken[0].name} needs attention`
-        : `${broken.length} connections need attention`,
-  };
-}
-
 /** The quiet line under a connected connector: what it runs on. */
 export function connectorDescription(
   connector: Omit<WorkbenchConnector, 'id'> & { id: string },

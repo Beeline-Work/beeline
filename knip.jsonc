@@ -94,6 +94,7 @@
         "scripts/corner-dropdown-proof.tsx",
         "scripts/new-corner-dialog-proof.tsx",
         "scripts/room-repo-choice-proof.tsx",
+        "scripts/room-sheet-height-proof.tsx",
         "scripts/build-subscriptions-frame.ts",
         "scripts/subscriptions-frame.tsx",
         "scripts/composer-dictation-proof.tsx",

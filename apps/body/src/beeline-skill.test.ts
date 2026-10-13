@@ -106,7 +106,9 @@ describe('using-beeline Room guidance', () => {
 
   it('watches corner lifecycle events without subscriptions or reminder loops', () => {
     const markdown = usingBeelineSkillMarkdown('test-release');
-    expect(markdown).toContain('Use watch(address) for corner lifecycle events: opened, merged and closed');
+    expect(markdown).toContain('Use watch(address) for corner lifecycle events: opened and merged');
+    expect(markdown).toContain('If a wake needs no message, end the turn silently.');
+    expect(markdown).not.toContain('corner-closed');
     expect(markdown).toContain('Chatter and schedules never wake watchers');
     expect(markdown).not.toContain('create a merged subscription');
     expect(markdown).toContain('No reminder loops');

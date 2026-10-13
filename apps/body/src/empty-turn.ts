@@ -147,3 +147,11 @@ export function isAccountOrProviderRefusal(record: PiTurnRecord | undefined): bo
   if (!record || record.kind !== 'error' || record.status === undefined) return false;
   return [401, 402, 403, 407, 408, 429].includes(record.status) || record.status >= 500;
 }
+
+/** A normal empty final reply completes silently; harness failures still need a reason. */
+export function isSilentCompletion(result: PromptResult, explanation: EmptyTurnExplanation): boolean {
+  return result.stopReason === 'end_turn' && !result.agentText.trim() &&
+    result.toolCalls.every((call) => call.status === 'completed') &&
+    (explanation.record === undefined ||
+      (explanation.record.kind === 'empty' && ['stop', 'end_turn'].includes(explanation.record.stopReason)));
+}

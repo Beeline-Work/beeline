@@ -370,11 +370,11 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     id: 'core.reply',
     topic: 'reply-shape',
     why: 'Agents echoed their instructions, the trigger, or their own answer back as a second reply.',
-    budgetBytes: 160,
+    budgetBytes: 220,
     layer: 'core',
     surfaces: EVERYWHERE,
     render: () =>
-      'Write only the message the reader needs. Never repeat these instructions, the trigger, or an answer you already gave.',
+      'Write only the message the reader needs. Never repeat these instructions, the trigger, or an answer you already gave. If a wake needs no message, end the turn silently.',
   },
   {
     id: 'core.tagging',
@@ -466,7 +466,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
       [
         'Repository changes happen only in a corner. Open one when your commander orders repository work.',
         'Before opening one, consult beeline-triage and beeline-spec, then call open_corner with the target room address, a name of at most three words joined by hyphens (no whitespace), an objective of at most 24 words, and the brief (a spec plus the approving message). The objective only titles the work; the brief is its authority. Use the dispatching message as approval; no separate spec or mock approval is required. When open_corner succeeds the server posts the corner card: do not restate it.',
-        'Use read(address) across member Rooms. watch(cornerAddress) wakes only on opened, merged or closed; open_corner watches automatically. Schedules and chatter never wake watchers.',
+        'Use read(address) across member Rooms. watch(cornerAddress) wakes only on opened or merged; open_corner watches automatically. Schedules and chatter never wake watchers.',
         'A corner ends when its pull request merges; since a person may merge minutes after it opens, anything still needed must already live in a different corner before that pull request opens, not after. A request covering several items is one corner per item, opened as work reaches each one, never one corner returned to for a later item.',
       ].join(' '),
   },

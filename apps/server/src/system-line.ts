@@ -461,7 +461,7 @@ export async function systemLine(
       ...(input.wakes ?? []),
       ...(await subscribers(database, input.roomId, input.kind)),
     ]),
-  ];
+  ].filter(agentId => input.kind !== 'corner-opened' || agentId !== input.subject.id);
   // Only an event carries a cascade. A line with no kind is one nothing reacts
   // to, so it has no root to belong to and no budget to spend.
   const write = async (
@@ -505,7 +505,7 @@ export async function systemLine(
           roomId: watch.watcher_room_id,
           agentId: watch.agent_id,
           sourceMessageId: id,
-          privatePayload: { text: `Watched corner ${watched?.name ?? input.subject.name} (${input.card?.cornerId ?? input.roomId}): ${input.kind === 'corner-opened' ? 'opened' : input.kind === 'corner-closed' ? 'closed' : input.kind}${input.kind === 'merged' && watched?.merge_sha ? ` · merge commit ${watched?.merge_sha}` : ''}\n${text}`, authorId, fromRoomId: String(input.card?.cornerId ?? input.roomId), kind: 'lifecycle' },
+          privatePayload: { text: `Watched corner ${watched?.name ?? input.subject.name} (${input.card?.cornerId ?? input.roomId}): ${input.kind === 'corner-opened' ? 'opened' : input.kind}${input.kind === 'merged' && watched?.merge_sha ? ` · merge commit ${watched?.merge_sha}` : ''}\n${text}`, authorId, fromRoomId: String(input.card?.cornerId ?? input.roomId), kind: 'lifecycle' },
           reason: 'watched_corner',
           parent: watch.incoming_command ?? undefined, retainDepth: true,
           action: 'input',
@@ -533,6 +533,7 @@ export async function systemLine(
           FOR UPDATE OF subscription`,
           [input.roomId, input.kind]);
         for (const subscription of subscriptions.rows) {
+          if (input.kind === 'corner-opened' && subscription.agent_id === input.subject.id) continue;
           const firedId = createHash('sha256').update(`room-subscription:${id}:${subscription.id}`).digest('hex');
           const fired = await systemLine(db, {
             id: firedId, roomId: input.roomId, authorId: SYSTEM_IDENTITY_ID,
@@ -552,7 +553,7 @@ export async function systemLine(
   };
   return database.transaction(async (tx) => {
     const watches =
-      input.kind && ['corner-opened', 'merged', 'corner-closed'].includes(input.kind)
+      input.kind && ['corner-opened', 'merged'].includes(input.kind)
         ? (
             await tx.query<{ watcher_room_id: string; agent_id: string; incoming_command: CommandRow | null }>(
               `SELECT w.watcher_room_id,w.agent_id,to_jsonb(incoming) incoming_command FROM corner_watches w
@@ -562,10 +563,11 @@ export async function systemLine(
            JOIN memberships m ON m.room_id=w.watcher_room_id AND m.identity_id=w.agent_id
              AND m.removed_at IS NULL
            WHERE w.corner_id=$1 AND w.kinds @> $2::jsonb
+             AND ($3::text IS NULL OR w.agent_id<>$3)
              AND EXISTS(SELECT 1 FROM memberships target WHERE target.room_id IN (corner.id,corner.parent_id)
                AND target.identity_id=w.agent_id AND target.removed_at IS NULL)
            FOR SHARE OF w,m,watcher`,
-              [input.kind === 'corner-opened' ? input.card?.cornerId ?? input.roomId : input.roomId, JSON.stringify([input.kind === 'corner-opened' ? 'opened' : input.kind === 'corner-closed' ? 'closed' : input.kind])],
+              [input.kind === 'corner-opened' ? input.card?.cornerId ?? input.roomId : input.roomId, JSON.stringify([input.kind === 'corner-opened' ? 'opened' : input.kind]), input.kind === 'corner-opened' ? input.subject.id ?? null : null],
             )
           ).rows
         : [];

@@ -73,9 +73,11 @@ Server secrets:
   configuration error; it never silently substitutes another provider.
 
 LiveKit credentials are server-only; phones receive scoped call JWTs. Configure
-the secrets before the ordinary unified release. This change requires a native
-mobile build for LiveKit/WebRTC: Android runtime 34, iOS runtime 33. The preceding
-runtime pins remain in the OTA compatibility list.
+the secrets before the ordinary unified release. LiveKit/WebRTC first shipped
+in Android runtime 34 / iOS runtime 33. Current runtime pins and fingerprints
+are authoritative in `apps/mobile/app.config.js` and `native-fingerprint.json`;
+preceding pins remain in the OTA compatibility list. Profile voice selection
+reuses existing native modules and introduces no runtime bump.
 Regenerate native fingerprints after a clean `npm ci --prefix apps/mobile`;
 a warmed dependency tree can produce different hashes from the store/CI install.
 

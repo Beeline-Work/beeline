@@ -159,7 +159,6 @@ export function AgentVoiceSection({
           {error}
         </Text>
       )}
-      {!catalog && error && <SettingsRow title="Retry" tone="action" onPress={() => void load()} />}
       {open && catalog && changeable && (
         <>
           <Text style={styles.copy}>Choose a voice for @{handle}</Text>

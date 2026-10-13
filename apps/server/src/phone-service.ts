@@ -1,3 +1,4 @@
+import { machineSquireReport, queueSquireWork, queueOwnerSquireWork, squireMachineAddress, squireMachineId, squireWorkStatus } from './squire-machine.js';
 import { listRoomSubscriptions, deleteRoomSubscription } from './agent-subscriptions.js';
 import {
   beginAgentSignInCards,
@@ -3907,18 +3908,18 @@ export class PhoneService {
         }
       }
       const machineId = input.machineId || input.agentPubkey;
-      const squireOnMachine = await database.query(
-        `SELECT 1 FROM workspace_connectors
-         WHERE workspace_id=$1 AND owner_identity_id=$2 AND connector_type='trusty-squire'
-           AND machine_id=$3 AND status IN ('installing','connected')`,
-        [pairing.workspace_id, pairing.created_by, machineId],
+      const squireOnMachine = await machineSquireReport(database, pairing.created_by, machineId);
+      const squireInstalling = await database.query(
+        `SELECT 1 FROM agents a JOIN memberships m ON m.identity_id=a.agent_id
+         WHERE a.owner_id=$1 AND COALESCE(a.machine_id,a.agent_id)=$2
+           AND a.squire_work->>'install'='true'
+           AND m.workspace_id=$3 AND m.room_id IS NULL AND m.removed_at IS NULL LIMIT 1`,
+        [pairing.created_by, machineId, pairing.workspace_id],
       );
-      if (squireOnMachine.rowCount) {
+      if (squireOnMachine?.status === 'connected' || squireInstalling.rowCount) {
         await grantSquireToOwnerMachineAgents(database, {
-          workspaceId: pairing.workspace_id,
-          ownerIdentityId: pairing.created_by,
-          machineId,
-          agentId: input.agentPubkey,
+          workspaceId: pairing.workspace_id, ownerIdentityId: pairing.created_by,
+          machineId, agentId: input.agentPubkey,
         });
       }
       const exchange = createDaemonExchange
@@ -7559,14 +7560,16 @@ export class PhoneService {
       });
       // The helper reads its assignment only after this transaction commits,
       // so it sees the forced provider on the same install.
-      if (offer.intent === 'switch' && offer.provider)
+      if (offer.intent === 'switch' && offer.provider && connectorType === 'trusty-squire') {
+        await queueSquireWork(database, offer.agent_id, { install: true, forceReloginProvider: offer.provider });
+      } else if (offer.intent === 'switch' && offer.provider)
         await database.query(
           `UPDATE workspace_connectors SET force_relogin_provider=$2 WHERE id=$1::uuid`,
           [pairing.connectorId, offer.provider],
         );
       await database.query(`UPDATE connector_offers SET connector_id=$2::uuid WHERE id::text=$1`, [
         input.offerId,
-        pairing.connectorId,
+        connectorType === 'trusty-squire' ? null : pairing.connectorId,
       ]);
       await this.markConnectorOfferConnecting(database, {
         roomId: offer.room_id,
@@ -8659,6 +8662,21 @@ export class PhoneService {
     input: Input<'readConnectorInstall'>,
     viewerId: string,
   ): Promise<Output<'readConnectorInstall'>> {
+    if (input.connectorId === 'trusty-squire' || squireMachineId(input.connectorId)) {
+      const machineId = squireMachineId(input.connectorId);
+      const agent = (await this.database.query<{ agent_id: string }>(
+        `SELECT agent_id FROM agents WHERE owner_id=$1
+          AND ($2::text IS NULL OR COALESCE(machine_id,agent_id)=$2)
+        ORDER BY (squire_work->>'install') DESC NULLS LAST,updated_at DESC LIMIT 1`,
+        [viewerId, machineId ?? null],
+      )).rows[0];
+      if (!agent) {
+        if (machineId) throw new Error('Squire machine not found (access denied)');
+        return null;
+      }
+      const status = await squireWorkStatus(this.database, agent.agent_id);
+      return { connectorId: status.connectorId, status };
+    }
     const row = (
       await this.database.query<{
         id: string;
@@ -8709,35 +8727,12 @@ export class PhoneService {
   ): Promise<Output<'readWorkbench'>> {
     const linkAccount = await this.linkWallet?.status(viewerId);
     if (input.refreshVault) {
-      const refreshes = await this.database.transaction(async (database) => {
-        const rows = (
-          await database.query<{ id: string; helper_agent_id: string }>(
-            `UPDATE workspace_connectors
-             SET pending_ops=CASE
-                   WHEN pending_ops @> '"sync"'::jsonb THEN pending_ops
-                   ELSE pending_ops || '"sync"'::jsonb
-                 END,
-                 updated_at=now()
-             WHERE owner_identity_id=$1 AND connector_type='trusty-squire'
-               AND status='connected'
-             RETURNING id,helper_agent_id`,
-            [viewerId],
-          )
-        ).rows;
-        if (rows.length) {
-          await database.query(
-            `UPDATE workspace_connections SET last_synced_at=NULL,updated_at=now()
-             WHERE connector_id=ANY($1::uuid[])`,
-            [rows.map((row) => row.id)],
-          );
-        }
-        return rows;
+      const machines = (await this.database.query<{ machine_id: string }>(
+        `SELECT DISTINCT COALESCE(machine_id,agent_id) machine_id FROM agents WHERE owner_id=$1`, [viewerId],
+      )).rows;
+      await this.database.transaction(async (db) => {
+        for (const machine of machines) await queueOwnerSquireWork(db, viewerId, machine.machine_id, 'sync');
       });
-      // The helper's live assignment wake makes the sync immediate; its
-      // ordinary five-minute poll remains the recovery path.
-      for (const helperId of new Set(refreshes.map((row) => row.helper_agent_id))) {
-        await notifyConnectorAssignment(this.database, helperId);
-      }
     }
     const connectors = (
       await this.database.query<{
@@ -8791,7 +8786,7 @@ export class PhoneService {
         // instead floated four unrelated `default` labels to the top. A 0 is
         // "no vault time" (an unparseable timestamp), which falls back to the
         // row's own insert time rather than sinking the key to the bottom.
-        `SELECT id,connector_id,reference,service,label,hosts,state,connection_metadata,last_synced_at,created_at
+        `SELECT id,COALESCE(connector_id::text,'squire:' || machine_id) connector_id,reference,service,label,hosts,state,connection_metadata,last_synced_at,created_at
          FROM workspace_connections
          WHERE owner_identity_id=$1
          ORDER BY COALESCE(NULLIF((connection_metadata->>'vaultCreatedAt')::double precision, 0), extract(epoch from created_at)) DESC, reference`,
@@ -8803,6 +8798,7 @@ export class PhoneService {
         id: string;
         name: string;
         online: boolean;
+        squire_report: import('@beeline/api-contract/workbench').SquireMachineReport | null;
       }>(
         // A helper is a MACHINE, not an individual agent: agents sharing a
         // machine_id are grouped into one row. An agent without a machine_id
@@ -8812,7 +8808,9 @@ export class PhoneService {
         // falling back to the first agent's identity name.
         `SELECT COALESCE(a.machine_id,a.agent_id) id,
                 COALESCE(MAX(a.machine_name),MIN(i.name)) name,
-                bool_or(p.online) online
+                bool_or(p.online) online,
+                (array_agg(a.squire_report ORDER BY (a.squire_report->>'reportedAt')::double precision DESC NULLS LAST)
+                  FILTER (WHERE a.squire_report IS NOT NULL))[1] squire_report
          FROM agents a
          JOIN identities i ON i.id=a.agent_id
          JOIN memberships m ON m.identity_id=a.agent_id
@@ -8888,6 +8886,7 @@ export class PhoneService {
         id: row.id,
         name: row.name,
         online: row.online,
+        ...(row.squire_report ? { squire: row.squire_report } : {}),
       })),
       apps: apps.map((app) => {
         const metadata = appMetadata.get(composioToolkitForApp(app.appKey));
@@ -9278,6 +9277,13 @@ export class PhoneService {
       const role = connectorRequesterRole(input.ownerIdentityId, helperOwner?.owner_id ?? '');
       if (!adapter.authorize('connect', role).allowed) throw new Error(CONNECTOR_ADAPTER_DENIED);
     }
+    if (input.connectorType === 'trusty-squire') {
+      await queueSquireWork(database, input.helperAgentId, { install: true });
+      await grantSquireToOwnerMachineAgents(database, { workspaceId: input.workspaceId,
+        ownerIdentityId: input.ownerIdentityId, machineId: input.machineId });
+      const status = await squireWorkStatus(database, input.helperAgentId);
+      return { connectorId: squireMachineAddress(input.machineId), status };
+    }
     const viewerId = input.ownerIdentityId;
     const machineId = input.machineId;
     const ws = { workspace_id: input.workspaceId };
@@ -9339,13 +9345,6 @@ export class PhoneService {
     // Push the install to this helper now; the poll is only recovery.
     await notifyConnectorAssignment(database, matched.agent_id);
     await ensureSystemDirectMessageRoom(database, ws.workspace_id, viewerId);
-    if (input.connectorType === 'trusty-squire') {
-      await grantSquireToOwnerMachineAgents(database, {
-        workspaceId: ws.workspace_id,
-        ownerIdentityId: viewerId,
-        machineId,
-      });
-    }
     return {
       connectorId: existing.id,
       status: {
@@ -9389,6 +9388,13 @@ export class PhoneService {
   /** Unpair revokes everything the helper holds, then waits for its uninstall ack. */
   async unpairConnector(input: Input<'unpairConnector'>, viewerId: string): Promise<void> {
     await this.assertWorkbenchViewer(input.workspaceId, viewerId);
+    const squireMachine = squireMachineId(input.connectorId);
+    if (squireMachine) {
+      await this.resolveViewerHelper(squireMachine, viewerId).catch(() => {
+        throw new Error('Squire machine not found (access denied)');
+      });
+      throw new Error('Trusty Squire is managed on its machine');
+    }
     const connector = await this.assertOwnedConnector(input.connectorId, viewerId);
     // Receipts and connections are the connector's work; unpair clears them.
     await this.database.query(`DELETE FROM workspace_connections WHERE connector_id=$1::uuid`, [
@@ -9423,7 +9429,7 @@ export class PhoneService {
         last_synced_at: Date | null;
         created_at: Date;
       }>(
-        `SELECT id,connector_id,reference,service,label,hosts,state,grants,
+        `SELECT id,COALESCE(connector_id::text,'squire:' || machine_id) connector_id,reference,service,label,hosts,state,grants,
                 connection_metadata,last_synced_at,created_at
          FROM workspace_connections WHERE id=$1::uuid AND owner_identity_id=$2`,
         [input.connectionId, viewerId],
@@ -9434,13 +9440,18 @@ export class PhoneService {
     // `sync` op and wakes the helper for a fresh snapshot now; its recovery
     // poll only catches a wake that reached no socket.
     if (isMetadataStale(connection.last_synced_at)) {
-      await this.database.query(
-        `UPDATE workspace_connectors
-         SET pending_ops = pending_ops || '"sync"'::jsonb, updated_at=now()
-         WHERE id=$1::uuid AND NOT pending_ops @> '"sync"'::jsonb`,
-        [connection.connector_id],
-      );
-      await notifyConnectorHelper(this.database, connection.connector_id);
+      if (squireMachineId(connection.connector_id)) {
+        await this.database.transaction((db) => queueOwnerSquireWork(db, viewerId,
+          squireMachineId(connection.connector_id)!, 'sync'));
+      } else {
+        await this.database.query(
+          `UPDATE workspace_connectors
+           SET pending_ops = pending_ops || '"sync"'::jsonb, updated_at=now()
+           WHERE id=$1::uuid AND NOT pending_ops @> '"sync"'::jsonb`,
+          [connection.connector_id],
+        );
+        await notifyConnectorHelper(this.database, connection.connector_id);
+      }
     }
     const ledger = (
       await this.database.query<{
@@ -9516,10 +9527,11 @@ export class PhoneService {
         grants: Array<Record<string, unknown>>;
         owner_identity_id: string;
       }>(
-        `SELECT c.id,c.connector_id,k.connector_type,c.reference,c.grants,
+        `SELECT c.id,COALESCE(c.connector_id::text,'squire:' || c.machine_id) connector_id,
+                COALESCE(k.connector_type,'trusty-squire') connector_type,c.reference,c.grants,
                 c.owner_identity_id
          FROM workspace_connections c
-         JOIN workspace_connectors k ON k.id=c.connector_id
+         LEFT JOIN workspace_connectors k ON k.id=c.connector_id
          WHERE c.id=$1::uuid`,
         [input.connectionId],
       )
@@ -9546,13 +9558,18 @@ export class PhoneService {
       [connection.id, JSON.stringify(updated)],
     );
     if (live.length) {
-      await this.database.query(
-        `UPDATE workspace_connectors
-         SET pending_ops = pending_ops || $2::jsonb, updated_at=now()
-         WHERE id=$1::uuid`,
-        [connection.connector_id, JSON.stringify([`revoke-grants:${connection.reference}`])],
-      );
-      await notifyConnectorHelper(this.database, connection.connector_id);
+      if (squireMachineId(connection.connector_id)) {
+        await this.database.transaction((db) => queueOwnerSquireWork(db, viewerId,
+          squireMachineId(connection.connector_id)!, `revoke-grants:${connection.reference}`));
+      } else {
+        await this.database.query(
+          `UPDATE workspace_connectors
+           SET pending_ops = pending_ops || $2::jsonb, updated_at=now()
+           WHERE id=$1::uuid`,
+          [connection.connector_id, JSON.stringify([`revoke-grants:${connection.reference}`])],
+        );
+        await notifyConnectorHelper(this.database, connection.connector_id);
+      }
     }
     const pending = live.length + alreadyPending;
     return pending ? { revoked: 0, failed: 0, pending } : { revoked: 0, failed: 0 };

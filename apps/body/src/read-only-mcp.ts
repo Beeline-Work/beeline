@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { squireReachCause } from './squire-status.js';
 /**
  * Deliberately narrow MCP server for repository and approved-skill inspection
  * in Room sessions.
@@ -3841,8 +3842,7 @@ export function connectorOfferDepsFromEnv(): ConnectorOfferDeps {
     roomId: agentScheduleRoomId(),
     execute: daemonExecute,
     tailscaleReach: (enabled) => describeTailscaleReach({ enabled, installIfMissing: enabled }),
-    // Without a granted route, use the server's Workbench state. A sandbox
-    // cannot independently probe the host broker through its isolated home.
+    // This task relay reaches only the broker on this agent's own machine.
     squireReach: relayUrl && relayToken ? async () => {
       let connections: Awaited<ReturnType<typeof readVault>>;
       try {
@@ -3871,7 +3871,8 @@ export function connectorOfferDepsFromEnv(): ConnectorOfferDeps {
       } catch (error) {
         // Task authorization and stale turns are not machine failures.
         if (/not authorized|active task|active server command|Squire relay HTTP 403/i.test(
-          error instanceof Error ? error.message : '')) return undefined;
+          error instanceof Error ? error.message : ''))
+          return { reachable: false, cause: 'Squire status probe was not authorized' };
         const cause = squireReachCause(error);
         try {
           await daemonExecute('postConnectorVault', { connections: [], errorMessage: cause });
@@ -4006,26 +4007,6 @@ async function shareBrowser(args: JsonObject): Promise<string> {
   return JSON.stringify({ cardId: result.id, url: result.url, sessionId: page.id, status: 'live' });
 }
 
-/** Only known causes reach chat or the Workbench; provider payloads may hold secrets. */
-function squireReachCause(error: unknown): string {
-  const message = error instanceof Error ? error.message : '';
-  if (/broker unavailable/i.test(message)) return 'Squire broker unavailable';
-  if (/ECONNREFUSED/.test(message) || (error instanceof Error &&
-      (error.cause as { code?: string } | undefined)?.code === 'ECONNREFUSED'))
-    return 'Squire relay connection refused';
-  if (/timed out|timeout/i.test(message) || (error instanceof Error && error.name === 'TimeoutError'))
-    return 'Squire MCP request timed out';
-  if (/connection died|server exited|session closed/i.test(message)) return 'Squire MCP connection closed';
-  if (/vault locked/i.test(message)) return 'Squire vault locked';
-  const code = message.match(/\b(ENOENT|EACCES|EPERM|EHOSTUNREACH|ENETUNREACH|ECONNRESET|EPIPE)\b/)
-    ?? (error instanceof Error ? String((error.cause as { code?: string } | undefined)?.code ?? '')
-      .match(/^(ENOENT|EACCES|EPERM|EHOSTUNREACH|ENETUNREACH|ECONNRESET|EPIPE)$/) : null);
-  if (code) return `Squire MCP request failed (${code[1]})`;
-  if (/no vault metadata/i.test(message) || error instanceof SyntaxError) return 'Squire returned invalid vault metadata';
-  const http = message.match(/^Squire relay HTTP (\d{3})$/);
-  if (http) return `Squire relay HTTP ${http[1]}`;
-  return error instanceof TypeError ? 'Squire relay request failed (TypeError)' : 'Squire MCP tool error';
-}
 
 /**
  * workbench_status: the Workbench of the machine and owner this helper
@@ -4055,7 +4036,8 @@ export async function workbenchStatus(
     }>;
     apps?: Array<{ appId: string; appKey: string; name: string; transport: string;
       status: string; errorMessage?: string }>;
-    machine?: { machineId: string; name: string };
+    machine?: { machineId: string; name: string;
+      squire?: { status: 'connected' | 'error' | 'not-added'; errorMessage?: string } };
   };
   const who = view.owner?.handle
     ? `@${view.owner.handle}`
@@ -4069,20 +4051,25 @@ export async function workbenchStatus(
     '',
     'Catalog:',
   ];
-  const localSquire = view.catalog?.find((entry) => entry.connectorType === 'trusty-squire'
-    && entry.paired?.onThisMachine
-    && (entry.paired.status === 'connected' || entry.paired.status === 'error'));
-  const squireReach = localSquire && deps.squireReach
+  const machineReport = view.machine?.squire;
+  const squireReach = deps.squireReach
     ? await deps.squireReach()
-    : undefined;
+    : machineReport && machineReport.status !== 'not-added'
+      ? { reachable: machineReport.status === 'connected', cause: machineReport.errorMessage }
+      : undefined;
   for (const entry of view.catalog ?? []) {
-    const localReach = entry.connectorType === 'trusty-squire' && entry === localSquire
+    const localReach = entry.connectorType === 'trusty-squire'
       ? squireReach : undefined;
-    const status = localReach
-      ? (localReach.reachable ? 'connected' : 'error')
-      : entry.paired?.status;
+    if (entry.connectorType === 'trusty-squire') {
+      const state = localReach
+        ? `${localReach.reachable ? 'connected' : 'error'} on ${machine} (your machine)${localReach.cause ? ` — ${localReach.cause}` : ''}`
+        : 'not added';
+      lines.push(`- ${entry.connectorType} (${entry.name}): ${state}. ${entry.purpose}`);
+      continue;
+    }
+    const status = entry.paired?.status;
     const cause = status === 'error'
-      ? localReach?.cause ?? entry.paired?.errorMessage ?? 'Connection failed'
+      ? entry.paired?.errorMessage ?? 'Connection failed'
       : undefined;
     const state = entry.paired
       ? `${status} on ${entry.paired.helperName}${entry.paired.onThisMachine ? ' (your machine)' : ''}${cause ? ` — ${cause}` : ''}`

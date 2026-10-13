@@ -108,6 +108,7 @@ vi.mock('@/components/buzz/PulsingText', async () => {
 import ConnectTrustySquireScreen from './connect';
 import { getWorkbenchSource, setWorkbenchSource, MonolithWorkbenchSource } from '@/buzz/workbench-source';
 import { MockWorkbenchSource } from '@/buzz/workbench-source.mock';
+import { readSharedWorkbench } from '@/buzz/workbench-surface';
 
 const originalConsoleError = console.error;
 
@@ -273,6 +274,39 @@ describe('Connect Trusty Squire flow — ONE connect path', () => {
     expect(pairing).toHaveBeenCalledTimes(1);
     expect(pairing).toHaveBeenCalledWith({ workspaceId: 'workspace-1',
       connectorId: 'trusty-squire', helperId: 'helper-squire-box' });
+  });
+
+  it.each(['offline', 'missing'])('squire-reconnect-target-3: preserves an explicit %s machine instead of pairing another', async (state) => {
+    searchParams.params.helperId = 'machine-a';
+    const source = new MockWorkbenchSource();
+    const read = source.readWorkbench.bind(source);
+    let online = false;
+    source.readWorkbench = async (input) => ({ ...await read(input), helpers: [
+      ...(online ? [{ id: 'machine-a', name: 'Machine A', online: true }] : []),
+      ...(state === 'offline' && !online ? [{ id: 'machine-a', name: 'Machine A', online: false }] : []),
+      { id: 'machine-b', name: 'Machine B', online: true },
+    ] });
+    const pairing = vi.spyOn(source, 'pairConnector');
+    setWorkbenchSource(source);
+    const renderer = await render();
+    expect(pairing).not.toHaveBeenCalled();
+    const selected = renderer.root.findByProps({ testID: 'connect-requested-unavailable' });
+    expect(selected.props.title).toBe(state === 'offline' ? 'Machine A' : 'Selected machine');
+    expect(selected.props.description).toBe('Unavailable — waiting for this machine to come online');
+    expect(renderer.root.findAllByProps({ testID: 'connect-machine-machine-b' })).toHaveLength(0);
+    console.log('squire-reconnect-target-3 Demonstrated:', JSON.stringify({
+      requestedMachine: 'machine-a', state, automaticPairCalls: pairing.mock.calls,
+      renderedStatus: selected.props.description,
+    }));
+    online = true;
+    await act(async () => {
+      await readSharedWorkbench({ workspaceId: 'workspace-1', viewerId: 'human-dani' }, { refresh: true });
+    });
+    expect(pairing).toHaveBeenCalledTimes(1);
+    expect(pairing).toHaveBeenCalledWith({ workspaceId: 'workspace-1',
+      connectorId: 'trusty-squire', helperId: 'machine-a' });
+    expect(renderer.root.findAllByProps({ testID: 'connect-requested-unavailable' })).toHaveLength(0);
+
   });
 
   it('with more than one machine, asks once with a single machine list', async () => {

@@ -24,17 +24,18 @@ function deps(
 }
 
 describe('beeline-agent connectors_status + offer_connector (R5)', () => {
-  it('uses the shared Workbench state when no Squire route is granted', async () => {
+  it('uses this machine broker report when no Squire route is granted', async () => {
     vi.stubEnv('BEELINE_DAEMON_ROOM_ID', 'room-1');
     vi.stubEnv('BEELINE_SQUIRE_RELAY_URL', '');
     vi.stubEnv('BEELINE_SQUIRE_RELAY_TOKEN', '');
     try {
       const runtime = connectorOfferDepsFromEnv();
       expect(runtime.squireReach).toBeUndefined();
-      const text = await workbenchStatus(deps({ catalog: [{
-        connectorType: 'trusty-squire', name: 'Trusty Squire', purpose: 'A vault.',
-        paired: { status: 'connected', helperName: 'squire', onThisMachine: true },
-      }] }, [], { squireReach: runtime.squireReach }));
+      const text = await workbenchStatus(deps({
+        machine: { name: 'squire', squire: { status: 'connected', reportedAt: 1 } },
+        catalog: [{
+          connectorType: 'trusty-squire', name: 'Trusty Squire', purpose: 'A vault.',
+        }] }, [], { squireReach: runtime.squireReach }));
       expect(text).toContain('Trusty Squire): connected on squire');
     } finally { vi.unstubAllEnvs(); }
   });
@@ -129,7 +130,7 @@ describe('beeline-agent connectors_status + offer_connector (R5)', () => {
     expect(text).not.toContain('Connectors for @zeke');
     expect(text).toContain('on otter-laptop');
     expect(text).toContain(
-      '- trusty-squire (Trusty Squire): not added — you may offer it with offer_connector. A credential vault.',
+      '- trusty-squire (Trusty Squire): not added. A credential vault.',
     );
     expect(text).toContain('- google-gmail (Gmail): connected on otter-laptop (your machine). Mail.');
     expect(text).toContain('- wallet (Wallet): not added — added only from the Connectors page.');

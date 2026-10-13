@@ -7,6 +7,7 @@ import {
 } from 'node:crypto';
 import { GITHUB_IDENTITY_AUDIENCE } from '@beeline/auth/github';
 import type { SqlDatabase } from './database.js';
+import { lockDaemonCredentialLifetime } from './daemon-credential-lifetime.js';
 import { ensureReviewWorkspace } from './review-proof-fixture.js';
 import {
   lockIdentityHandleWorkspaces,
@@ -304,6 +305,16 @@ export class TokenAuth {
   ): Promise<{ daemonToken: string; agentId: string } | null> {
     const hash = tokenHash(exchangeToken);
     return this.database.transaction(async (database) => {
+      // Find the lock key without holding the exchange row: retirement takes
+      // the lifetime lock before deleting unused exchanges or memberships.
+      const candidate = (
+        await database.query<{ agent_id: string }>(
+          `SELECT agent_id FROM daemon_token_exchanges WHERE exchange_hash=$1`,
+          [hash],
+        )
+      ).rows[0];
+      if (!candidate) return null;
+      await lockDaemonCredentialLifetime(database, candidate.agent_id);
       const found = await database.query<{
         agent_id: string;
         expires_at: Date;

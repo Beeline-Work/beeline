@@ -150,6 +150,7 @@ import { CORNER_ROW_ROOM_COLUMNS, cornerRoomColumnsSql } from './corner-row-proj
 import { cornerOwedLookupSql } from './corner-owed.js';
 const seconds = (date: Date) => Math.floor(date.getTime() / 1_000);
 import { retireAgentFromWorkspace, settleGrantCard } from './agent-retirement.js';
+import { revokeDaemonCredentials } from './daemon-credential-lifetime.js';
 import { ensureFirstRoom, firstAccessibleRoomId } from './first-room.js';
 import {
   joinRooms,
@@ -3574,8 +3575,32 @@ export class PhoneService {
       : null;
   }
 
+  private async lockPairingIssuer(database: SqlDatabase, workspaceId: string, issuerId: string) {
+    await database.query(`SELECT id FROM workspaces WHERE id=$1 FOR UPDATE`, [workspaceId]);
+    const issuer = await database.query(
+      `SELECT id FROM memberships WHERE workspace_id=$1 AND room_id IS NULL
+         AND identity_id=$2 AND removed_at IS NULL FOR UPDATE`,
+      [workspaceId, issuerId],
+    );
+    return issuer.rowCount > 0;
+  }
+
   async claimAgentPairing(code: string, agentId: string): Promise<AgentPairingClaimView | null> {
     return this.database.transaction(async (database) => {
+      const candidate = (
+        await database.query<{ workspace_id: string; created_by: string }>(
+          `SELECT workspace_id,created_by FROM agent_pairing_codes WHERE code_hash=$1`,
+          [hash(code)],
+        )
+      ).rows[0];
+      if (!candidate) return null;
+      // Handle allocation takes its global lock before the Workspace row.
+      const lockedWorkspaces = lockIdentityHandleWorkspaces(database, agentId, [
+        candidate.workspace_id,
+      ]);
+      await lockedWorkspaces;
+      if (!(await this.lockPairingIssuer(database, candidate.workspace_id, candidate.created_by)))
+        return null;
       const result = await database.query<{
         workspace_id: string;
         created_by: string;
@@ -3592,10 +3617,6 @@ export class PhoneService {
         [pairing.workspace_id, agentId],
       );
       if (!existingMembership.rowCount) {
-        const lockedWorkspaces = lockIdentityHandleWorkspaces(database, agentId, [
-          pairing.workspace_id,
-        ]);
-        await lockedWorkspaces;
         const agent = (
           await database.query<{ name: string }>(
             `SELECT name FROM identities WHERE id=$1 AND kind='agent'`,
@@ -3793,6 +3814,14 @@ export class PhoneService {
     | { status: 'not_found' | 'expired' | 'already_claimed' }
   > {
     return this.database.transaction(async (database) => {
+      const candidate = (await database.query<{ workspace_id: string; created_by: string }>(
+        `SELECT workspace_id,created_by FROM agent_pairing_codes WHERE code_hash=$1`, [hash(input.code)],
+      )).rows[0];
+      if (!candidate) return { status: 'not_found' };
+      const lockedWorkspaces = lockIdentityHandleWorkspaces(database, input.agentPubkey, [candidate.workspace_id]);
+      await lockedWorkspaces;
+      if (!(await this.lockPairingIssuer(database, candidate.workspace_id, candidate.created_by)))
+        return { status: 'not_found' };
       const result = await database.query<{
         workspace_id: string;
         workspace_name: string;
@@ -3813,10 +3842,6 @@ export class PhoneService {
       if (pairing.expires_at.getTime() <= Date.now()) return { status: 'expired' };
       if (pairing.claimed_by) return { status: 'already_claimed' };
 
-      const lockedWorkspaces = lockIdentityHandleWorkspaces(database, input.agentPubkey, [
-        pairing.workspace_id,
-      ]);
-      await lockedWorkspaces;
       const worn = await this.wornSeededIdentity(database, pairing.workspace_id, input.agentPubkey);
       const seeded = assignSeededAgentIdentity({
         seed: input.agentPubkey,
@@ -6041,6 +6066,20 @@ export class PhoneService {
     const agent = await this.requireIdentity(input.agentId);
     const requester = await this.requireIdentity(pending.principal_id);
     await this.database.transaction(async (database) => {
+      if (viewerId === pending.principal_id) {
+        const access = await database.query(
+          `SELECT room_member.id FROM memberships workspace_member
+           JOIN rooms room ON room.workspace_id=workspace_member.workspace_id
+           JOIN memberships room_member ON room_member.room_id=room.id
+             AND room_member.identity_id=workspace_member.identity_id
+           WHERE room.id=$1 AND workspace_member.room_id IS NULL
+             AND workspace_member.identity_id=$2 AND workspace_member.removed_at IS NULL
+             AND room_member.removed_at IS NULL
+           FOR UPDATE OF workspace_member,room_member`,
+          [input.roomId, viewerId],
+        );
+        if (!access.rowCount) throw new Error('room access denied');
+      }
       const updated = await database.query(
         `UPDATE permission_authority SET status=$2,updated_at=now()
          WHERE permission_id=$1 AND room_id=$3 AND status='pending'`,
@@ -6173,6 +6212,10 @@ export class PhoneService {
         `UPDATE memberships SET removed_at=now() WHERE workspace_id=$1 AND identity_id=$2`,
         [input.workspaceId, viewerId],
       );
+      await database.query(
+        `DELETE FROM agent_pairing_codes WHERE workspace_id=$1 AND created_by=$2 AND claimed_by IS NULL`,
+        [input.workspaceId, viewerId],
+      );
       await workspaceSystemLine(database, {
         workspaceId: input.workspaceId,
         subject: identitySubject({ id: leaver.pubkey, kind: leaver.kind, name: leaver.name }),
@@ -6209,8 +6252,28 @@ export class PhoneService {
    * membership row went with it.
    */
   private async deleteWorkspace(input: Input<'deleteWorkspace'>, viewerId: string) {
-    const outcome = await this.database.query<{ existed: boolean; deleted: boolean }>(
-      `WITH existing AS MATERIALIZED (
+    await this.database.transaction(async (database) => {
+      const workspace = await database.query(`SELECT id FROM workspaces WHERE id=$1 FOR UPDATE`, [
+        input.workspaceId,
+      ]);
+      if (!workspace.rowCount) return;
+      const owner = await database.query(
+        `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL
+           AND identity_id=$2 AND role='owner' AND removed_at IS NULL`,
+        [input.workspaceId, viewerId],
+      );
+      if (!owner.rowCount) throw new Error('workspace owner access denied');
+      const retiring = await database.query<{ identity_id: string }>(
+        `SELECT m.identity_id FROM memberships m JOIN identities i ON i.id=m.identity_id
+         WHERE m.workspace_id=$1 AND m.room_id IS NULL AND m.removed_at IS NULL AND i.kind='agent'
+           AND NOT EXISTS(SELECT 1 FROM memberships other WHERE other.identity_id=m.identity_id
+             AND other.removed_at IS NULL AND other.workspace_id<>$1)
+         ORDER BY m.identity_id`,
+        [input.workspaceId],
+      );
+      for (const agent of retiring.rows) await revokeDaemonCredentials(database, agent.identity_id);
+      const outcome = await database.query<{ existed: boolean; deleted: boolean }>(
+        `WITH existing AS MATERIALIZED (
          SELECT id,name FROM workspaces WHERE id=$1 FOR UPDATE
        ), members AS MATERIALIZED (
          SELECT m.identity_id,i.kind FROM memberships m JOIN identities i ON i.id=m.identity_id
@@ -6226,27 +6289,19 @@ export class PhoneService {
          INSERT INTO workspace_deletion_notices(identity_id,workspace_id,workspace_name)
          SELECT members.identity_id,deleted.id,deleted.name FROM deleted JOIN members ON true
          WHERE members.identity_id<>$2 AND members.kind='human' RETURNING identity_id
-       ), revoked AS (
-         UPDATE daemon_tokens token SET revoked_at=now()
-         WHERE token.revoked_at IS NULL AND EXISTS (SELECT 1 FROM deleted)
-           AND EXISTS (SELECT 1 FROM members
-             WHERE members.identity_id=token.agent_id AND members.kind='agent')
-           AND NOT EXISTS (SELECT 1 FROM memberships other
-             WHERE other.identity_id=token.agent_id AND other.removed_at IS NULL
-               AND other.workspace_id<>$1)
-         RETURNING token.agent_id
        ), audit AS (
          INSERT INTO workspace_deletions(workspace_id,workspace_name,deleted_by)
          SELECT id,name,$2 FROM deleted ON CONFLICT (workspace_id) DO NOTHING
          RETURNING workspace_id
        )
        SELECT EXISTS(SELECT 1 FROM existing) existed,EXISTS(SELECT 1 FROM deleted) deleted,
-         (SELECT count(*) FROM notices) notice_count,(SELECT count(*) FROM revoked) revoked_count,
+         (SELECT count(*) FROM notices) notice_count,
          (SELECT count(*) FROM audit) audit_count`,
-      [input.workspaceId, viewerId],
-    );
-    if (outcome.rows[0]?.existed && !outcome.rows[0].deleted)
-      throw new Error('workspace owner access denied');
+        [input.workspaceId, viewerId],
+      );
+      if (outcome.rows[0]?.existed && !outcome.rows[0].deleted)
+        throw new Error('workspace owner access denied');
+    });
   }
   private async createRoom(input: Input<'createRoom'>, viewerId: string) {
     await this.requireWorkspaceManager(input.workspaceId, viewerId);
@@ -6861,6 +6916,10 @@ export class PhoneService {
       }
       await database.query(
         `UPDATE memberships SET removed_at=now() WHERE workspace_id=$1 AND identity_id=$2`,
+        [input.workspaceId, input.memberId],
+      );
+      await database.query(
+        `DELETE FROM agent_pairing_codes WHERE workspace_id=$1 AND created_by=$2 AND claimed_by IS NULL`,
         [input.workspaceId, input.memberId],
       );
       await workspaceSystemLine(database, {
@@ -7809,24 +7868,24 @@ export class PhoneService {
    * is a real daemon and must be removed by a human through removeAgent.
    */
   async rollbackUnrealizedAgent(agentId: string) {
-    const claimed = await this.database.query(
-      `SELECT 1 FROM agent_pairing_codes WHERE claimed_by=$1`,
-      [agentId],
-    );
-    if (!claimed.rowCount) throw new Error('pairing not found');
-    const ran = await this.database.query(
-      `SELECT 1 FROM live_outputs WHERE agent_id=$1 AND kind='presence' LIMIT 1`,
-      [agentId],
-    );
-    if (ran.rowCount) throw new Error('agent already ran; use removeAgent instead');
-    await this.database.query(
-      `UPDATE memberships SET removed_at=now()
+    await this.database.transaction(async (database) => {
+      const claimed = await database.query(
+        `SELECT 1 FROM agent_pairing_codes WHERE claimed_by=$1`,
+        [agentId],
+      );
+      if (!claimed.rowCount) throw new Error('pairing not found');
+      const ran = await database.query(
+        `SELECT 1 FROM live_outputs WHERE agent_id=$1 AND kind='presence' LIMIT 1`,
+        [agentId],
+      );
+      if (ran.rowCount) throw new Error('agent already ran; use removeAgent instead');
+      await revokeDaemonCredentials(database, agentId);
+      await database.query(
+        `UPDATE memberships SET removed_at=now()
        WHERE identity_id=$1 AND removed_at IS NULL`,
-      [agentId],
-    );
-    await this.database.query(`UPDATE daemon_tokens SET revoked_at=now() WHERE agent_id=$1`, [
-      agentId,
-    ]);
+        [agentId],
+      );
+    });
   }
 
   /**

@@ -1,10 +1,15 @@
 import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
-import { assignVoiceAgents, fluxFactory, KokoroSpeech, FishSpeech, OpenRouterVoiceBrain, VoiceQuotaError } from './voice-providers.js';
+import { assignVoiceAgents, fluxFactory, KokoroSpeech, FishSpeech, AuraSpeech, OpenRouterVoiceBrain, VoiceQuotaError } from './voice-providers.js';
 import { namedVoiceTarget } from './voice-room-runtime.js';
 
 describe('voice providers', () => {
+  it('classifies the same Workers AI quota response during Aura playback', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ errors: [{ code: 4006 }] }), { status: 429 }));
+    const reader = new AuraSpeech('test', 'account', fetcher).synthesize('Hello', 'luna', new AbortController().signal)[Symbol.asyncIterator]();
+    await expect(reader.next()).rejects.toBeInstanceOf(VoiceQuotaError);
+  });
   it('settles a rejected Flux upgrade with the explicit daily-quota error and closes the socket', async () => {
     class Socket extends EventEmitter { terminate = vi.fn(); close = vi.fn(); }
     const socket = new Socket();

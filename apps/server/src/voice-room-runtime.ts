@@ -239,7 +239,9 @@ export class VoiceRoomRuntime {
             } finally { if (this.speaking === controller) { this.speaking = undefined; await this.signal({ type: 'speaker', agentId: null }); } }
           } finally { this.queuedReports.delete(report.source_message_id); }
         });
-        void this.reportQueue.catch(() => this.signal({ type: 'error', message: 'The report is in the transcript; voice playback failed' }));
+        void this.reportQueue.catch(error => this.signal({ type: 'error',
+          message: error instanceof VoiceQuotaError ? error.message : 'The report is in the transcript; voice playback failed',
+          ...(error instanceof VoiceQuotaError ? { code: error.code } : {}) }));
       }
     } finally { this.refreshPending = false; }
   }

@@ -1,0 +1,26 @@
+{
+  "stt": "live Flux",
+  "provider": "kokoro-deepinfra",
+  "calls": 1,
+  "humans": 2,
+  "distinctVoices": [
+    {
+      "name": "Ruby",
+      "voice": "af_heart"
+    },
+    {
+      "name": "Sol",
+      "voice": "bm_george"
+    }
+  ],
+  "firstAudioServerMs": [
+    4091.9618690000007,
+    3865.981219999998,
+    1313.067966999999
+  ],
+  "p50FirstAudioServerMs": 3865.981219999998,
+  "receivedAudioFrames": {
+    "Alex": 257,
+    "Sam": 963
+  }
+}

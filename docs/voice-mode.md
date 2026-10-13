@@ -85,6 +85,10 @@ Captured on 2026-10-13, three live Flux→Luna→speech turns per comparison:
 | Fly 256 MB LiveKit / Aura-2 | 1217, 1042, 1547 | 1217 ms |
 
 These are three-sample server measurements, not phone speaker measurements.
+Captured artifacts: [Aura-2](voice-mode-proof/aura-2.json),
+[Kokoro](voice-mode-proof/kokoro-deepinfra.json),
+[Fly transport](voice-mode-proof/fly-256mb.json), and
+[the earlier browser voice-bar capture](voice-mode-proof/room-voice-bar.png).
 Both humans received actual audio; named targeting changed Ruby to Sol without
 waking a real worker for conversation. External work was claimed, a file was
 created, and its authenticated report was spoken. Browser proof exercised Join,

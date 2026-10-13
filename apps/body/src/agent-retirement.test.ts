@@ -1,4 +1,4 @@
-import { mkdtemp, readdir, rm, stat } from 'node:fs/promises';
+import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -111,7 +111,7 @@ describe('a removed agent retires its own helper', () => {
     expect(progress.every((status) => status.startsWith('monolith discovery degraded'))).toBe(true);
   });
 
-  it('disables and resets its enabled unit from an ordinary caller before archiving', async () => {
+  it('disables and resets its enabled unit from an ordinary caller before removing storage', async () => {
     const { root, staged } = await stage('7');
     const service = `beeline-agent@${staged.runtime.agent.publicKey}.service`;
     const run = vi.fn(async (args: string[]) => ({ stdout: args[0] === 'show' ? 'loaded\n' : '' }));
@@ -127,15 +127,15 @@ describe('a removed agent retires its own helper', () => {
       ['disable', service],
       ['reset-failed', service],
     ]);
-    expect(archived.startsWith(resolve(root, 'beeline', 'deleted-runtimes'))).toBe(true);
-    expect((await stat(archived)).isDirectory()).toBe(true);
+    expect(archived).toBe(runtimeDirectory(root, staged.runtime.agent.publicKey));
+    await expect(stat(archived)).rejects.toThrow();
     await expect(
       stat(runtimeDirectory(staged.runtime.supervisorRoot, staged.runtime.agent.publicKey)),
     ).rejects.toThrow();
-    expect(await readdir(resolve(root, 'beeline', 'deleted-runtimes'))).toHaveLength(1);
+    await expect(stat(resolve(root, 'beeline', 'deleted-runtimes'))).rejects.toThrow();
   });
 
-  it('moves a runtime when the exact target unit does not exist', async () => {
+  it('removes a runtime when the exact target unit does not exist', async () => {
     const { staged } = await stage('e');
     const service = `beeline-agent@${staged.runtime.agent.publicKey}.service`;
     const run = vi.fn(async () => ({ stdout: 'not-found\n' }));
@@ -143,7 +143,7 @@ describe('a removed agent retires its own helper', () => {
     await expect(
       retireRemovedAgent(staged.runtime, { run }),
     ).resolves.toContain(
-      'deleted-runtimes',
+      'agents',
     );
     expect(run.mock.calls.map(([args]) => args)).toEqual([
       ['show', '--property=LoadState', '--value', service],
@@ -206,7 +206,7 @@ describe('a removed agent retires its own helper', () => {
     ).rejects.toThrow('reset-failed failed');
     await expect(
       retireRemovedAgent(staged.runtime, { run }),
-    ).resolves.toContain('deleted-runtimes');
+    ).resolves.toContain('agents');
     expect(resetAttempts).toBe(2);
   });
 });

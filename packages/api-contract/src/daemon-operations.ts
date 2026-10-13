@@ -804,6 +804,13 @@ export type TargetAgentAuthorityInput = AgentRoomInput & {
 export type DaemonBootstrapInput = AgentInput;
 export type WorkspaceRosterInput = AgentInput & { readonly workspaceId: string };
 export type DaemonBootstrapResult = {
+  /** Explicit member Room/corner lifecycle facts for private storage reclamation.
+   * Absent on older servers: helpers must preserve all private storage. */
+  readonly storageRooms?: readonly {
+    readonly workspaceId?: string;
+    readonly roomId: string;
+    readonly archived: boolean;
+  }[];
   readonly workspaceIds: readonly string[];
   /** Command-bearing surfaces to bind before background Room discovery. */
   readonly pendingRooms?: readonly {

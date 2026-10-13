@@ -80,6 +80,8 @@ ${pc.dim('Usage:')}
                                             agent on this machine keeps serving
   beeline update [--check|--status|--force]
                                             Self-update the installed bundle
+  beeline storage [--dry-run|--orphans]       Report reclaimable bytes and orphan storage;
+                                            read-only, with no helper lifecycle actions
   beeline cleanup-shared-home [--apply]      Report byte-identical obsolete cache copies;
                                             --apply requires a quiescent helper
 
@@ -196,6 +198,12 @@ async function main(): Promise<void> {
     if (!activated) throw new Error('corner-read-token requires monolith transport');
     const credential = await activated.client.execute('getRoomGitHubToken', { roomId });
     process.stdout.write(`${credential.token}\n`);
+    return;
+  }
+
+  if (command === 'storage') {
+    const { runStorageReportCommand } = await import('./storage-report.js');
+    await runStorageReportCommand(args.slice(1));
     return;
   }
 

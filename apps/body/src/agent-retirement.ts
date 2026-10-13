@@ -2,29 +2,20 @@ import { mkdir, rename } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { cleanupLaunchdAgentService, type LaunchdRunner } from './launchd.js';
 import { cleanupAgentService, type SystemdRunner } from './systemd.js';
+import { markAgentStorageEnded, pruneEndedOwnerStorage } from './storage-owners.js';
 import { runtimeDirectory, type AgentRuntimeRecord } from './runtime.js';
 
-/**
- * What a helper does to itself once the server has definitively said its
- * agent is gone (`isAgentRemovedError`, or a bootstrap that no longer lists
- * the Workspace after `REMOVAL_CONFIRMATION_READS`).
- *
- * It is the same teardown a confirmed removal from the app performs, in the
- * same order: the unit is disabled so `Restart=always` cannot resurrect a
- * daemon with revoked tokens, and the runtime directory moves aside into
- * `deleted-runtimes/` rather than being deleted, so an operator can still see
- * what was paired here. Nothing about it may run on uncertainty — the caller
- * owns that judgement, and only a settled removal answer reaches here.
- */
+/** Retire only after a settled server answer and the hosted agent has drained.
+ * An in-use folder stays fenced by an ended-owner fact for the next idle pass. */
 export async function retireRemovedAgent(
   runtime: AgentRuntimeRecord,
   options: { run?: SystemdRunner | LaunchdRunner } = {},
 ): Promise<string> {
-  const deletedRoot = resolve(runtime.supervisorRoot, 'beeline', 'deleted-runtimes');
-  const target = resolve(deletedRoot, `${runtime.agent.publicKey}-${Date.now()}`);
-  return relocateAgentRuntime(runtime, target, {
-    ...(options.run ? { run: options.run } : {}),
-  });
+  if (process.platform === 'linux') await cleanupAgentService(runtime.agent.publicKey, { ...(options.run ? { run: options.run as SystemdRunner } : {}) });
+  else if (process.platform === 'darwin') await cleanupLaunchdAgentService(runtime.agent.publicKey, { ...(options.run ? { run: options.run as LaunchdRunner } : {}) });
+  await markAgentStorageEnded(runtime);
+  await pruneEndedOwnerStorage(runtime.supervisorRoot);
+  return runtimeDirectory(runtime.supervisorRoot, runtime.agent.publicKey);
 }
 
 /**

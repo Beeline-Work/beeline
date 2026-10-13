@@ -108,7 +108,7 @@ const AGENT_PRIVATE_STATE_ENV = 'BUZZY_AGENT_PRIVATE_DIR';
  * keyed by the state directory the harness was pointed at. `source` is
  * relative to the operator's real `$HOME`; `target` to the isolated dir.
  */
-const SHARED_CREDENTIALS: Array<{
+export const SHARED_CREDENTIALS: Array<{
   dir: 'claude' | 'codex' | 'grok' | 'pi' | 'cursor' | 'user';
   source: string;
   target: string;
@@ -321,8 +321,8 @@ const CODEX_ROOM_WEB_SEARCH_TOML = '[features]\nstandalone_web_search = true\n';
 /**
  * Subdirectories created under a room-instance's agent home. Every one of
  * these except `tmp` is a harness state/credential root (see
- * `roomAgentHomeEnv`) — `scratch-sweep.ts` is the one other reader and treats
- * all but `tmp` as never-touch.
+ * `roomAgentHomeEnv`). Private reclamation is governed by lifecycle, whole
+ * object use, and the preservation paths in `helper-storage.ts`.
  */
 export const HOME_SUBDIRS = [
   'user',
@@ -545,14 +545,14 @@ export async function repairRoomAgentCredentialLinks(input: {
 export async function writeBackRoomClaudeLogin(input: {
   root: string;
   operatorHome?: string;
-}): Promise<void> {
+}): Promise<'linked' | 'not-newer' | 'busy' | 'absent'> {
   const claude = SHARED_CREDENTIALS.find((credential) => credential.dir === 'claude')!;
   const source = resolve(input.operatorHome ?? homedir(), claude.source);
-  if (!existsSync(source)) return;
+  if (!existsSync(source)) return 'busy';
   const target = resolve(input.root, claude.dir, claude.target);
   const stats = await lstat(target).catch(() => undefined);
-  if (!stats?.isFile()) return;
-  await writeBackDetachedClaudeLogin(target, source);
+  if (!stats?.isFile()) return 'absent';
+  return writeBackDetachedClaudeLogin(target, source);
 }
 
 /**
@@ -578,7 +578,7 @@ export function watchRoomClaudeLogin(input: {
     watcher = watch(dir, (_event, filename) => {
       if (filename !== claude.target) return;
       pass = pass
-        .then(() => writeBackRoomClaudeLogin(input))
+        .then(async () => { await writeBackRoomClaudeLogin(input); })
         .catch((error: unknown) => {
           console.error(`[body] could not write back a refreshed Claude login under ${dir}:`, error);
         });
@@ -1771,7 +1771,7 @@ export async function writeIsolatedHarnessFile(path: string, content: string): P
  * than the ~108-byte `sun_path` a Unix socket address allows; `tsx` (and any
  * other tool that binds an IPC socket under `os.tmpdir()`) then fails with
  * `listen EINVAL`. The real scratch directory stays `<root>/tmp` — so
- * `scratch-sweep.ts` and the OS sandbox keep seeing it — and this path is a
+ * `helper-storage.ts` and the OS sandbox keep seeing it — and this path is a
  * symlink to it, named by a hash of the home so it is stable per session and
  * comfortably inside the socket limit. `prepareRoomAgentHome` creates the
  * symlink; `bwrap-sandbox.ts` binds its resolved directory over the sandbox's

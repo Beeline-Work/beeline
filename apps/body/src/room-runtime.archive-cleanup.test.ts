@@ -85,7 +85,7 @@ describe('archived corner branch cleanup', () => {
     } finally { await coordinator.shutdown(); }
   });
 
-  it('retains repository-free conversation and approvals during archived cleanup', async () => {
+  it('removes repository-free private state including conversation after authoritative archive', async () => {
     const supervisorRoot = await mkdtemp(resolve(tmpdir(), 'beeline-corner-private-retention-'));
     roots.push(supervisorRoot);
     const cornerId = 'chat-corner';
@@ -98,16 +98,15 @@ describe('archived corner branch cleanup', () => {
     const coordinator = new RoomRuntimeCoordinator(
       runtimeAt(supervisorRoot), resolve(supervisorRoot, 'agent.json'),
       { workspaceRoot: supervisorRoot } as never,
-      { daemonApi: { execute: vi.fn() } as unknown as DaemonApiClient },
+      { daemonApi: { execute: vi.fn().mockResolvedValue({ archived: true }) } as unknown as DaemonApiClient },
     );
     try {
       const internal = coordinator as unknown as {
-        cleanupArchivedCornerLocalState(id: string, known: ReadonlyMap<string, { cornerId: string; parentRoomId: string }>): Promise<boolean>;
+        cleanupArchivedCornerLocalState(id: string): Promise<boolean>;
       };
-      expect(await internal.cleanupArchivedCornerLocalState(cornerId,
-        new Map([[cornerId, { cornerId, parentRoomId: 'room' }]]))).toBe(true);
-      expect(await readFile(resolve(scratch, 'agent-home/codex/sessions/history.json'), 'utf8')).toBe('conversation');
-      expect(await readFile(resolve(scratch, 'agent-private/pending.json'), 'utf8')).toBe('approval');
+      expect(await internal.cleanupArchivedCornerLocalState(cornerId)).toBe(true);
+      await expect(readFile(resolve(scratch, 'agent-home/codex/sessions/history.json'))).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(readFile(resolve(scratch, 'agent-private/pending.json'))).rejects.toMatchObject({ code: 'ENOENT' });
       await expect(readFile(resolve(scratch, 'work.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
     } finally { await coordinator.shutdown(); }
   });

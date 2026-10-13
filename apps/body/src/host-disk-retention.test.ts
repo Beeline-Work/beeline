@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { access, mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
+import { lstat, readdir, access, mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -10,7 +10,7 @@ const execFileAsync = promisify(execFile);
 const roots: string[] = [];
 afterEach(async () => Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true }))));
 
-it('expires only correctly named old removed-agent homes', async () => {
+it('immediately removes confirmed retired runtimes including homes', async () => {
   const root = await mkdtemp(join(tmpdir(), 'beeline-retention-'));
   roots.push(root);
   const deleted = join(root, 'beeline', 'deleted-runtimes');
@@ -22,10 +22,10 @@ it('expires only correctly named old removed-agent homes', async () => {
   await Promise.all([old, fresh, unknown].map((path) => mkdir(path, { recursive: true })));
   await mkdir(join(oldWithHome, 'rooms', 'one', 'agent-home', 'codex', 'sessions'), { recursive: true });
   await writeFile(join(oldWithHome, 'rooms', 'one', 'agent-home', 'codex', 'sessions', 'thread.json'), 'history');
-  expect(await pruneDeletedRuntimes(root, now)).toEqual([old]);
+  expect(new Set(await pruneDeletedRuntimes(root, now))).toEqual(new Set([old, oldWithHome, fresh]));
   await expect(access(old)).rejects.toMatchObject({ code: 'ENOENT' });
-  await expect(access(fresh)).resolves.toBeUndefined();
-  await expect(access(join(oldWithHome, 'rooms', 'one', 'agent-home', 'codex', 'sessions', 'thread.json'))).resolves.toBeUndefined();
+  await expect(access(fresh)).rejects.toMatchObject({ code: 'ENOENT' });
+  await expect(access(oldWithHome)).rejects.toMatchObject({ code: 'ENOENT' });
   await expect(access(unknown)).resolves.toBeUndefined();
 });
 
@@ -47,10 +47,15 @@ it('expires an old bare clone only if git has no linked checkout', async () => {
   const checkout = join(root, 'checkout');
   await execFileAsync('git', [`--git-dir=${bare}`, 'worktree', 'add', '--detach', checkout]);
   const now = Date.now();
-  await utimes(bare, new Date(now - 31 * 86400_000), new Date(now - 31 * 86400_000));
+  await ageTree(bare, now);
   expect(await pruneRepositoryCaches(root, now)).toEqual([]);
   await execFileAsync('git', [`--git-dir=${bare}`, 'worktree', 'remove', checkout]);
-  await utimes(bare, new Date(now - 31 * 86400_000), new Date(now - 31 * 86400_000));
+  await ageTree(bare, now);
   expect(await pruneRepositoryCaches(root, now)).toEqual([bare]);
   await expect(access(bare)).rejects.toMatchObject({ code: 'ENOENT' });
 });
+
+async function ageTree(path: string, now: number): Promise<void> {
+  if ((await lstat(path)).isDirectory()) for (const child of await readdir(path)) await ageTree(join(path, child), now);
+  await utimes(path, new Date(now - 8 * 86400_000), new Date(now - 8 * 86400_000));
+}

@@ -6,6 +6,11 @@
   "include": ["files", "exports", "types"],
   "includeEntryExports": true,
   "ignoreExportsUsedInFile": true,
+  // Only proof adapters: esbuild supplies these exports through runtime aliases.
+  // Keep file reachability and production export enforcement enabled.
+  "ignoreIssues": {
+    "apps/mobile/scripts/ui-alignment-proof/{proof-env,proof-workbench,svg,unistyles}.{ts,tsx}": ["exports"],
+  },
   "workspaces": {
     ".": {
       // Shell hooks and device harnesses invoke these by path, outside the
@@ -51,6 +56,8 @@
         "sources/app/**/*.{ts,tsx}",
         "sources/**/*.{ios,android,windows,web,native,default}.{js,jsx,ts,tsx}",
         "scripts/{ota-delivery-index,ota-release}.mjs",
+        // The screenshot builder loads its entry and native adapters through esbuild aliases.
+        "scripts/ui-alignment-proof/*.{mjs,tsx,ts}",
         "scripts/{identity-axis-proof,identity-axis-proof-shims}.tsx",
         "scripts/emoji-clip-proof.tsx",
         "scripts/render-waveform-proof.mjs",

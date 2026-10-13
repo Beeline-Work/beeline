@@ -52,8 +52,7 @@ The temporary workflow changes were removed. No speculative voice transport
 fix is included; a device trace or a later Play report is still needed.
 
 This addition requires a **store build** and server deployment. Android runtime
-advances 34 → 35. Expo also fingerprints the new local module descriptor on
-iOS, so the existing gate requires iOS runtime 33 → 34; no iOS crash recorder
-is introduced. Both previous pins remain in OTA compatibility coverage. The
-optional native-module lookup keeps the JS update safe on older binaries,
+advances 34 → 35, and the old Android pin remains in OTA compatibility coverage.
+A clean lockfile install confirms iOS has no native change and keeps runtime 33.
+The optional native-module lookup keeps the JS update safe on older binaries,
 which cannot acquire the new native recorder through OTA alone.

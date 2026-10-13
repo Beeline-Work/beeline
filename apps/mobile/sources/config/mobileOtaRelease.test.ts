@@ -69,8 +69,26 @@ writeFileSync(join(releaseFixtureRoot, 'package.json'), readFileSync(join(mobile
 writeFileSync(join(releaseFixtureRoot, 'app.config.js'), "module.exports={name:'Beeline',slug:'beeline',android:{runtimeVersion:'33'},ios:{runtimeVersion:'32'}};");
 symlinkSync(join(mobileRoot, 'node_modules'), join(releaseFixtureRoot, 'node_modules'), 'dir');
 
+// Freeze the prior release's compatibility list as well as its pins. Adding a
+// current store runtime must not silently change these historical rollback cases.
+const priorCompat = [
+  { platform: 'android', runtimeVersion: '31' },
+  { platform: 'android', runtimeVersion: '32' },
+  { platform: 'ios', runtimeVersion: '29' },
+  { platform: 'ios', runtimeVersion: '31' },
+  { platform: 'android', runtimeVersion: '33' },
+  { platform: 'ios', runtimeVersion: '32' },
+];
+const priorTargets = [{ platform: 'android', runtimeVersion: '33' }, ...priorCompat]
+  .filter((target, index, all) => all.findIndex(t => t.platform === target.platform && t.runtimeVersion === target.runtimeVersion) === index);
+const priorReleaseScript = join(releaseFixtureRoot, 'ota-release.mjs');
+writeFileSync(priorReleaseScript, releaseSource
+  .replace(/export const COMPAT_RUNTIMES = \[[\s\S]*?\n\];/, `export const COMPAT_RUNTIMES = ${JSON.stringify(priorCompat)};`)
+  .replace("'./native-fingerprint.mjs'", JSON.stringify(join(mobileRoot, 'scripts/native-fingerprint.mjs')))
+  .replace("'./ota-delivery-index.mjs'", JSON.stringify(join(mobileRoot, 'scripts/ota-delivery-index.mjs'))));
+
 function runRelease(args: string[], env: Record<string, string> = {}) {
-  return spawnSync(process.execPath, [releaseScript, ...args], {
+  return spawnSync(process.execPath, [priorReleaseScript, ...args], {
     cwd: releaseFixtureRoot,
     encoding: 'utf8',
     env: {
@@ -92,9 +110,10 @@ describe('mobile OTA release governor', () => {
       { platform: 'ios', runtimeVersion: '31' },
       { platform: 'android', runtimeVersion: '33' },
       { platform: 'ios', runtimeVersion: '32' },
+      { platform: 'android', runtimeVersion: '34' },
     ]);
-    expect(releaseUpdateTargets(mobileRoot)).toHaveLength(8);
-    expect(releaseUpdateTargets(mobileRoot)).toContainEqual({ platform: 'android', runtimeVersion: '34' });
+    expect(releaseUpdateTargets(mobileRoot)).toHaveLength(9);
+    expect(releaseUpdateTargets(mobileRoot)).toContainEqual({ platform: 'android', runtimeVersion: '35' });
     expect(releaseUpdateTargets(mobileRoot)).toContainEqual({ platform: 'ios', runtimeVersion: '33' });
     // Each platform publishes to its pin plus the two latest shipped runtimes.
     expect(releaseUpdateTargets(releaseFixtureRoot)).toEqual([
@@ -104,6 +123,7 @@ describe('mobile OTA release governor', () => {
       { platform: 'ios', runtimeVersion: '29' },
       { platform: 'ios', runtimeVersion: '31' },
       { platform: 'ios', runtimeVersion: '32' },
+      { platform: 'android', runtimeVersion: '34' },
     ]);
   });
 
@@ -266,7 +286,7 @@ describe('mobile OTA release governor', () => {
     const targetPublishes = publish.stdout
       .split('\n')
       .filter((line) => line.includes('eas-cli@22.2.0 update --branch beta'));
-    const targets = releaseUpdateTargets(releaseFixtureRoot);
+    const targets = priorTargets;
     expect(targetPublishes).toHaveLength(6);
     expect(targetPublishes).toHaveLength(targets.length);
     targets.forEach((target, index) => {

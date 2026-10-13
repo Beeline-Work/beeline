@@ -23,10 +23,11 @@ describe('connector adapters', () => {
     expect(connectorRequesterRole('human-b', 'human-a')).toBe('other');
   });
 
-  it('lets the Squire owner connect, reconnect, disconnect, and revoke grants', () => {
+  it('lets the Squire owner connect, reconnect, and revoke grants', () => {
     for (const action of SQUIRE_CONNECTOR_ADAPTER.actions) {
       expect(SQUIRE_CONNECTOR_ADAPTER.authorize(action, 'owner')).toEqual({ allowed: true });
     }
+    expect(SQUIRE_CONNECTOR_ADAPTER.authorize('disconnect', 'owner').allowed).toBe(false);
   });
 
   it('refuses another requester every Squire mutation with the Workbench denial', () => {
@@ -55,16 +56,14 @@ describe('connector adapters', () => {
   it('offers Squire Workbench controls from status, including vault revoke when connected', () => {
     expect(SQUIRE_CONNECTOR_ADAPTER.workbenchActions(undefined)).toEqual(['connect']);
     expect(SQUIRE_CONNECTOR_ADAPTER.workbenchActions('disconnected')).toEqual(['connect']);
-    expect(SQUIRE_CONNECTOR_ADAPTER.workbenchActions('installing')).toEqual(['disconnect']);
+    expect(SQUIRE_CONNECTOR_ADAPTER.workbenchActions('installing')).toEqual([]);
     expect(SQUIRE_CONNECTOR_ADAPTER.workbenchActions('connected')).toEqual([
       'reconnect',
-      'disconnect',
       'revoke-grants',
     ]);
     expect(SQUIRE_CONNECTOR_ADAPTER.workbenchActions('error')).toEqual([
       'connect',
       'reconnect',
-      'disconnect',
     ]);
   });
 
@@ -77,9 +76,9 @@ describe('connector adapters', () => {
     expect(YOUTUBE_CONNECTOR_ADAPTER.workbenchActions('connected')).not.toContain('revoke-grants');
   });
 
-  it('derives helper lifecycle from status: Squire install/uninstall, YouTube grant refresh', () => {
-    expect(SQUIRE_CONNECTOR_ADAPTER.assignmentKinds('installing')).toEqual(['install']);
-    expect(SQUIRE_CONNECTOR_ADAPTER.assignmentKinds('disconnected')).toEqual(['uninstall']);
+  it('keeps Squire work independent of row status and derives YouTube grant refresh', () => {
+    expect(SQUIRE_CONNECTOR_ADAPTER.assignmentKinds('installing')).toEqual([]);
+    expect(SQUIRE_CONNECTOR_ADAPTER.assignmentKinds('disconnected')).toEqual([]);
     expect(SQUIRE_CONNECTOR_ADAPTER.assignmentKinds('connected')).toEqual([]);
     expect(YOUTUBE_CONNECTOR_ADAPTER.assignmentKinds('installing')).toEqual(['install']);
     expect(YOUTUBE_CONNECTOR_ADAPTER.assignmentKinds('disconnected')).toEqual(['uninstall']);

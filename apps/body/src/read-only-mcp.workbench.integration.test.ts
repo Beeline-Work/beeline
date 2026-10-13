@@ -36,7 +36,7 @@ afterEach(async () => {
 });
 afterAll(async () => { await rm(directory, { recursive: true, force: true }); });
 
-async function fixture(options: { stale?: boolean; failure?: string; toolFailure?: string; syncFails?: boolean } = {}) {
+async function fixture(options: { machineReport?: { status: string }; noBroker?: boolean; noRow?: boolean; stale?: boolean; failure?: string; toolFailure?: string; syncFails?: boolean } = {}) {
   const context = { roomId: 'corner', requestId: 'turn', taskId: 'root', generationId: 'generation' };
   const contextFile = join(directory, 'turn.json');
   await writeFile(contextFile, JSON.stringify(context));
@@ -55,9 +55,9 @@ async function fixture(options: { stale?: boolean; failure?: string; toolFailure
       if (!input.errorMessage) connections = input.connections;
       response.end('{}');
     } else if (request.url?.endsWith('/readAgentWorkbench')) {
-      response.end(JSON.stringify({ owner: { name: 'Owner' }, machine: { name: 'squire' },
+      response.end(JSON.stringify({ owner: { name: 'Owner' }, machine: { name: 'squire', squire: options.machineReport },
         catalog: [{ connectorType: 'trusty-squire', name: 'Trusty Squire', purpose: 'A vault.',
-          paired: { status, errorMessage: cause, helperName: 'squire', onThisMachine: true } }],
+          available: true, ...(options.noRow ? {} : { paired: { status, errorMessage: cause, helperName: 'squire', onThisMachine: true } }) }],
         connections, apps: [],
       }));
     } else { response.writeHead(404).end('{}'); }
@@ -86,7 +86,7 @@ async function fixture(options: { stale?: boolean; failure?: string; toolFailure
   const wire = beelineAgentMcpServer(config, new DaemonApiClient(origin, 'daemon-token', 'agent'), {
     roomId: 'parent', cornerId: 'corner', workspaceId: 'workspace', turnContextPath: contextFile,
     // Same mount used by Room and corner sessions.
-    squireRelay: endpoint,
+    ...(options.noBroker ? {} : { squireRelay: endpoint }),
   });
   const child = spawn(wire.command, wire.args, {
     env: { ...process.env, PATH: directory,
@@ -102,7 +102,7 @@ async function fixture(options: { stale?: boolean; failure?: string; toolFailure
       else resolve(response.result.content[0].text);
     });
     child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call',
-      params: { name: 'workbench_status', arguments: {} } }) + '\n');
+      params: { name: 'connectors_status', arguments: {} } }) + '\n');
   });
   return { statusText, calls, closeRelay: () => relay.close(), appView: () => ({ status, cause, connections }),
     mountedTool: () => fetch(`${endpoint.url}/mcp`, {
@@ -113,6 +113,25 @@ async function fixture(options: { stale?: boolean; failure?: string; toolFailure
 }
 
 describe('Reproduction squire-status-1 through the released Workbench MCP', () => {
+  it('Reproduction squire-machine-status-2: working broker without a server connection row', async () => {
+    const f = await fixture({ noRow: true });
+    expect((await f.mountedTool()).status).toBe(200);
+    expect(await f.statusText()).toContain('Trusty Squire): connected on squire (your machine)');
+    console.log('Reproduction squire-machine-status-2: local broker answers without a server row → connected');
+  });
+  it('shows the broker failure without any server connection row', async () => {
+    const f = await fixture({ noRow: true, failure: 'broker unavailable' });
+    expect(await f.statusText()).toContain('error on squire (your machine) — Squire broker unavailable');
+  });
+  it('shows not added without a broker even when the server claims a connection', async () => {
+    const f = await fixture({ noBroker: true });
+    expect(await f.statusText()).toContain('Trusty Squire): not added');
+    expect(f.calls).toEqual([]);
+  });
+  it('uses this machine broker report when the task has no mounted relay', async () => {
+    const f = await fixture({ noRow: true, noBroker: true, machineReport: { status: 'connected' } });
+    expect(await f.statusText()).toContain('Trusty Squire): connected on squire (your machine)');
+  });
   it.each([false, true])('reports connected through the working task relay (stale=%s)', async (stale) => {
     const f = await fixture({ stale });
     expect((await f.mountedTool()).status).toBe(200);
@@ -157,7 +176,7 @@ describe('Reproduction squire-status-1 through the released Workbench MCP', () =
 
   it('does not turn a task authorization refusal into a machine failure', async () => {
     const f = await fixture({ failure: 'Squire call is not authorized for this task' });
-    expect(await f.statusText()).toContain('Trusty Squire): connected on squire');
+    expect(await f.statusText()).toContain('Squire status probe was not authorized');
     expect(f.appView().status).toBe('connected');
   });
 });

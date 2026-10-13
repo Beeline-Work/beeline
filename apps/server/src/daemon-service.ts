@@ -3,6 +3,9 @@ import { createAgentSubscription, listAgentSubscriptions, deleteAgentSubscriptio
   listServiceSubscriptionEvents, subscriptionPromptBody } from './agent-subscriptions.js';
 import { completeProviderWebhookAssignment, providerWebhookAssignments } from './provider-webhooks.js';
 import { reportAgentSignIn } from './agent-sign-in.js';
+import { machineSquireReport, queueSquireWork, squireAssignments, squireMachineAddress,
+  squireMachineId, squireWorkStatus, reportSquireWork } from './squire-machine.js';
+import { completeSquireMachineOffers } from './connector-offer-completion.js';
 import { activeCornerHolds, setCornerHold } from './corner-holds.js';
 import { cornerFactsSql, cornerRowState, type CornerStateRow } from './chat-corner-counts.js';
 import { renderAgentAvatar } from './agent-avatar.js';
@@ -1955,7 +1958,8 @@ export class DaemonService {
         [agentId],
       )
     ).rows;
-    const assignments: ConnectorAssignment[] = [];
+    const assignments: ConnectorAssignment[] = await this.database.transaction(
+      (db) => squireAssignments(db, agentId));
     for (const row of connectors) {
       const adapter = connectorAdapter(row.connector_type);
       const generation = { pairingGeneration: row.pairing_generation };
@@ -2049,6 +2053,12 @@ export class DaemonService {
     input: Input<'installConnector'>,
     agentId: string,
   ): Promise<Output<'installConnector'>> {
+    if (squireMachineId(input.connectorId)) {
+      await this.database.transaction(async (db) => {
+        await reportSquireWork(db, agentId, { ...input, steps: [] }, true);
+      });
+      return { id: input.connectorId, createdAt: Math.floor(Date.now() / 1000) };
+    }
     const result = await this.database.transaction(async (database) => {
       const row = (
         await database.query<{
@@ -2187,6 +2197,10 @@ export class DaemonService {
     input: Input<'postConnectorStatus'>,
     agentId: string,
   ): Promise<Output<'postConnectorStatus'>> {
+    if (squireMachineId(input.connectorId)) {
+      await this.database.transaction((db) => reportSquireWork(db, agentId, input));
+      return { id: input.connectorId, createdAt: Math.floor(Date.now() / 1000) };
+    }
     const row = (
       await this.database.query<{
         id: string;
@@ -2330,40 +2344,36 @@ export class DaemonService {
   }
 
   /**
-   * One helper vault report (metadata only): upserted into the sovereign
-   * connection rows of every live trusty-squire connector this helper serves
-   * whose owner is this helper's owner. One helper carries ONE Squire account;
-   * a foreign Workbench row on the same helper does not inherit that vault.
+   * The broker verdict and vault metadata from this helper's own machine.
+   * A failed probe preserves cached keys; successful metadata stays scoped
+   * to the machine owner. Squire has no persisted connector row.
    */
   private async connectorVaultReport(
     input: Input<'postConnectorVault'>,
     agentId: string,
   ): Promise<Output<'postConnectorVault'>> {
-    const connectors = (
-      await this.database.query<{ id: string; owner_identity_id: string }>(
-        `SELECT c.id,c.owner_identity_id FROM workspace_connectors c
-         JOIN agents a ON a.agent_id=$1
-         WHERE COALESCE(c.machine_id,c.helper_agent_id)=COALESCE(a.machine_id,a.agent_id)
-           AND c.connector_type='trusty-squire'
-           AND c.status IN ('connected','error')
-           AND c.owner_identity_id=a.owner_id`,
-        [agentId],
-      )
-    ).rows;
-    for (const connector of connectors) {
-      if (input.errorMessage) {
-        await this.database.query(
-          `UPDATE workspace_connectors SET status='error',status_error=$2,updated_at=now()
-           WHERE id=$1::uuid AND status IN ('connected','error')`,
-          [connector.id, input.errorMessage]);
-        continue;
-      }
-      await this.database.query(
-        `UPDATE workspace_connectors SET status='connected',status_error=NULL,
-           connected_at=COALESCE(connected_at,now()),updated_at=now()
-         WHERE id=$1::uuid AND status='error'`, [connector.id]);
-      await applyVaultList(this.database, connector, input.connections);
-    }
+    const completed = await this.database.transaction(async (db) => {
+      const machine = (await db.query<{ owner_id: string; machine_id: string; workspace_id: string }>(
+        `SELECT a.owner_id,COALESCE(a.machine_id,a.agent_id) machine_id,m.workspace_id
+         FROM agents a JOIN memberships m ON m.identity_id=a.agent_id
+           AND m.room_id IS NULL AND m.removed_at IS NULL
+         WHERE a.agent_id=$1 ORDER BY m.joined_at LIMIT 1`, [agentId],
+      )).rows[0];
+      if (!machine) throw new Error('machine helper not found');
+      await db.query('SELECT pg_advisory_xact_lock(hashtext($1))',
+        [`squire-vault:${machine.owner_id}:${machine.machine_id}`]);
+      const report = { status: input.notAdded ? 'not-added' : input.errorMessage ? 'error' : 'connected',
+        ...(input.errorMessage ? { errorMessage: input.errorMessage } : {}),
+        reportedAt: Date.now() / 1000 };
+      await db.query('UPDATE agents SET squire_report=$2::jsonb WHERE agent_id=$1',
+        [agentId, JSON.stringify(report)]);
+      if (input.errorMessage || input.notAdded) return [];
+      await applyVaultList(db, { owner_identity_id: machine.owner_id,
+        machine_id: machine.machine_id, workspace_id: machine.workspace_id }, input.connections);
+      return completeSquireMachineOffers(db, machine.owner_id, machine.machine_id);
+    });
+    for (const offer of completed) this.live.publish({ type: 'invalidate', roomId: offer.roomId,
+      reason: 'connector-offer', agentId: offer.agentId });
     return { id: agentId, createdAt: Math.floor(Date.now() / 1000) };
   }
 
@@ -2376,6 +2386,11 @@ export class DaemonService {
     agentId: string,
     connectorId?: string,
   ): Promise<Output<'getConnectorStatus'>> {
+    if (connectorId && squireMachineId(connectorId)) {
+      const status = await squireWorkStatus(this.database, agentId);
+      if (status.connectorId !== connectorId) throw new Error('Squire machine access denied');
+      return status;
+    }
     const rows = (
       await this.database.query<{
         id: string;
@@ -2439,11 +2454,13 @@ export class DaemonService {
         connection_metadata: { fieldNames?: string[]; vaultCreatedAt?: number } | null;
         last_synced_at: Date | null;
       }>(
-        `SELECT c.id,c.connector_id,c.reference,c.service,c.label,c.hosts,c.state,
+        `SELECT c.id,COALESCE(c.connector_id::text,'squire:' || c.machine_id) connector_id,c.reference,c.service,c.label,c.hosts,c.state,
                 c.connection_metadata,c.last_synced_at
          FROM workspace_connections c
-         JOIN workspace_connectors k ON k.id=c.connector_id
-         WHERE k.helper_agent_id=$1
+         JOIN agents a ON a.agent_id=$1
+         LEFT JOIN workspace_connectors k ON k.id=c.connector_id
+         WHERE (k.helper_agent_id=$1 OR (c.owner_identity_id=a.owner_id
+           AND c.machine_id=COALESCE(a.machine_id,a.agent_id)))
          ORDER BY c.created_at`,
         [agentId],
       )
@@ -2463,6 +2480,10 @@ export class DaemonService {
       };
     });
     for (const connectorId of staleConnectorIds) {
+      if (squireMachineId(connectorId)) {
+        await this.database.transaction((db) => queueSquireWork(db, agentId, { op: 'sync' }));
+        continue;
+      }
       await this.database.query(
         `UPDATE workspace_connectors
          SET pending_ops = pending_ops || '"sync"'::jsonb, updated_at=now()
@@ -2492,23 +2513,29 @@ export class DaemonService {
         connection_metadata: { fieldNames?: string[]; vaultCreatedAt?: number } | null;
         last_synced_at: Date | null;
       }>(
-        `SELECT c.id,c.connector_id,c.reference,c.service,c.label,c.hosts,c.state,
+        `SELECT c.id,COALESCE(c.connector_id::text,'squire:' || c.machine_id) connector_id,c.reference,c.service,c.label,c.hosts,c.state,
                 c.grants,c.connection_metadata,c.last_synced_at
          FROM workspace_connections c
-         JOIN workspace_connectors k ON k.id=c.connector_id
-         WHERE k.helper_agent_id=$1 AND c.reference=$2`,
+         JOIN agents a ON a.agent_id=$1
+         LEFT JOIN workspace_connectors k ON k.id=c.connector_id
+         WHERE (k.helper_agent_id=$1 OR (c.owner_identity_id=a.owner_id
+           AND c.machine_id=COALESCE(a.machine_id,a.agent_id))) AND c.reference=$2`,
         [agentId, input.ref],
       )
     ).rows[0];
     if (!row) throw new Error(`unknown connection reference ${input.ref}`);
     if (isMetadataStale(row.last_synced_at)) {
-      await this.database.query(
-        `UPDATE workspace_connectors
-         SET pending_ops = pending_ops || '"sync"'::jsonb, updated_at=now()
-         WHERE id=$1::uuid AND NOT pending_ops @> '"sync"'::jsonb`,
-        [row.connector_id],
-      );
-      await notifyConnectorHelper(this.database, row.connector_id);
+      if (squireMachineId(row.connector_id)) {
+        await this.database.transaction((db) => queueSquireWork(db, agentId, { op: 'sync' }));
+      } else {
+        await this.database.query(
+          `UPDATE workspace_connectors
+           SET pending_ops = pending_ops || '"sync"'::jsonb, updated_at=now()
+           WHERE id=$1::uuid AND NOT pending_ops @> '"sync"'::jsonb`,
+          [row.connector_id],
+        );
+        await notifyConnectorHelper(this.database, row.connector_id);
+      }
     }
     const ledger = (
       await this.database.query<{
@@ -2560,10 +2587,12 @@ export class DaemonService {
         reference: string;
         grants: Array<Record<string, unknown>> | null;
       }>(
-        `SELECT c.id,c.connector_id,c.reference,c.grants
+        `SELECT c.id,COALESCE(c.connector_id::text,'squire:' || c.machine_id) connector_id,c.reference,c.grants
          FROM workspace_connections c
-         JOIN workspace_connectors k ON k.id=c.connector_id
-         WHERE k.helper_agent_id=$1 AND c.reference=$2`,
+         JOIN agents a ON a.agent_id=$1
+         LEFT JOIN workspace_connectors k ON k.id=c.connector_id
+         WHERE (k.helper_agent_id=$1 OR (c.owner_identity_id=a.owner_id
+           AND c.machine_id=COALESCE(a.machine_id,a.agent_id))) AND c.reference=$2`,
         [agentId, input.ref],
       )
     ).rows[0];
@@ -2580,6 +2609,14 @@ export class DaemonService {
       `UPDATE workspace_connections SET grants=$2::jsonb, updated_at=now() WHERE id=$1::uuid`,
       [row.id, JSON.stringify(updated)],
     );
+    if (squireMachineId(row.connector_id)) {
+      await this.database.query(`UPDATE agents SET squire_work=jsonb_set(squire_work,'{ops}',
+        COALESCE((SELECT jsonb_agg(to_jsonb(op)) FROM jsonb_array_elements_text(
+          COALESCE(squire_work->'ops','[]'::jsonb)) op WHERE op<>$2),'[]'::jsonb))
+        WHERE (owner_id,COALESCE(machine_id,agent_id))=(
+          SELECT owner_id,COALESCE(machine_id,agent_id) FROM agents WHERE agent_id=$1)`,
+        [agentId, `revoke-grants:${row.reference}`]);
+    } else {
     await this.database.query(
       `UPDATE workspace_connectors SET pending_ops = COALESCE((
          SELECT jsonb_agg(to_jsonb(elem))
@@ -2589,6 +2626,7 @@ export class DaemonService {
        WHERE id=$1::uuid`,
       [row.connector_id, `revoke-grants:${row.reference}`],
     );
+    }
     return { revoked: live.length, failed: 0 };
   }
 
@@ -4670,16 +4708,9 @@ export class DaemonService {
         )
       ).rows[0];
       if (open) return { offerId: open.id, cardPosted: false };
-      const connected = (
-        await database.query<{ id: string; machine_id: string | null }>(
-          `SELECT id,machine_id FROM workspace_connectors
-           WHERE workspace_id=$1 AND owner_identity_id=$2 AND connector_type=$3
-             AND helper_agent_id=$4 AND status='connected'
-           ORDER BY updated_at DESC LIMIT 1`,
-          [context.workspaceId, context.owner.pubkey, connectorType, agentId],
-        )
-      ).rows[0];
-      if (!connected) return undefined;
+      const report = await machineSquireReport(database, context.owner.pubkey, context.machine.machineId);
+      if (report?.status !== 'connected') return undefined;
+      const connected = { id: squireMachineAddress(context.machine.machineId), machine_id: context.machine.machineId };
       const offerId = randomUUID();
       const messageId = id();
       const acceptedAt = new Date();
@@ -4701,7 +4732,7 @@ export class DaemonService {
             connected.machine_id ?? context.machine.machineId,
             provider ?? null,
             acceptedAt,
-            connected.id,
+            null,
           ],
         )
       ).rows[0]!;
@@ -4743,14 +4774,8 @@ export class DaemonService {
       // may pass --force-relogin, and only when the provider is actually
       // known (`google_session`); `oauth_sign_in` leaves it NULL so the
       // helper runs a plain reconnect, exactly as Squire's own remedy says.
-      await database.query(
-        `UPDATE workspace_connectors
-         SET status='installing', status_error=NULL, pending_ops='[]'::jsonb,
-             connected_at=NULL, sign_in=NULL, force_relogin_provider=$2,
-             pairing_generation=pairing_generation + 1, updated_at=now()
-         WHERE id=$1::uuid`,
-        [connected.id, provider ?? null],
-      );
+      await queueSquireWork(database, agentId, { install: true,
+        ...(provider ? { forceReloginProvider: provider } : {}) });
       return { offerId, cardPosted: true };
     });
     if (!result) return notActioned;
@@ -5425,7 +5450,10 @@ export class DaemonService {
   }
   private async machineReport(input: Input<'postAgentMachineReport'>, agentId: string) {
     await this.database.query(
-      `UPDATE agents SET machine_id=$2,machine_name=$3,updated_at=now() WHERE agent_id=$1`,
+      `UPDATE agents SET machine_id=$2,machine_name=$3,updated_at=now(),
+         squire_report=CASE WHEN COALESCE(machine_id,agent_id)=$2 THEN squire_report ELSE NULL END,
+         squire_work=CASE WHEN COALESCE(machine_id,agent_id)=$2 THEN squire_work ELSE '{}'::jsonb END
+       WHERE agent_id=$1`,
       [agentId, input.machineId, input.machineName],
     );
     return this.writeResult();
@@ -6448,6 +6476,10 @@ export class DaemonService {
     ).rows;
     const walletConnected = (await delegationView(this.database, context.owner.pubkey)).active;
     const catalog = connectorCatalog().map((entry) => {
+      if (entry.connectorType === 'trusty-squire') return {
+        connectorType: entry.connectorType, name: entry.name, purpose: connectorPurpose(entry.connectorType),
+        available: entry.available, offerable: !context.isCorner,
+      };
       if (entry.connectorType === 'wallet' && walletConnected)
         return {
           connectorType: entry.connectorType,
@@ -6500,9 +6532,9 @@ export class DaemonService {
         reference: string;
         state: 'active' | 'error';
       }>(
-        `SELECT k.connector_type,NULLIF(c.service,'') service,c.label,c.reference,c.state
+        `SELECT COALESCE(k.connector_type,'trusty-squire') connector_type,NULLIF(c.service,'') service,c.label,c.reference,c.state
          FROM workspace_connections c
-         JOIN workspace_connectors k ON k.id=c.connector_id
+         LEFT JOIN workspace_connectors k ON k.id=c.connector_id
          WHERE c.owner_identity_id=$1
          ORDER BY c.service,c.reference`,
         [context.owner.pubkey],
@@ -6552,7 +6584,8 @@ export class DaemonService {
           ...(app.errorMessage ? { errorMessage: app.errorMessage } : {}),
         }),
       ),
-      machine: context.machine,
+      machine: { ...context.machine, squire: await machineSquireReport(this.database,
+        context.owner.pubkey, context.machine.machineId) },
     };
   }
 
@@ -6900,13 +6933,9 @@ export class DaemonService {
       throw new Error('connector offer is invalid: offer a tool from the Room, not from a corner');
     const connectorName = connectorDisplayName(connectorType);
     if (switching) {
-      const bound = await this.database.query(
-        `SELECT 1 FROM workspace_connectors
-         WHERE workspace_id=$1 AND owner_identity_id=$2 AND connector_type=$3
-           AND machine_id=$4 AND status='connected'`,
-        [context.workspaceId, context.addressee.pubkey, connectorType, context.machine.machineId],
-      );
-      if (!bound.rowCount)
+      const bound = await machineSquireReport(this.database, context.addressee.pubkey,
+        context.machine.machineId);
+      if (bound?.status !== 'connected')
         throw new Error(
           `connector offer is invalid: ${context.addressee.name} has no connected ${connectorName} on this machine to switch; check connectors_status`,
         );
@@ -6915,6 +6944,9 @@ export class DaemonService {
     // grant to sign is active.
     const already = switching
       ? undefined
+      : connectorType === 'trusty-squire'
+        ? (await machineSquireReport(this.database, context.addressee.pubkey, context.machine.machineId))?.status === 'connected'
+          ? { status: 'connected' } : undefined
       : connectorType === 'wallet'
         ? (await delegationView(this.database, context.addressee.pubkey)).active
           ? { status: 'connected' }

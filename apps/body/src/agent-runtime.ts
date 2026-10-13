@@ -363,11 +363,6 @@ export async function runAgentRuntime(
         // collapse multiple agents on one physical host into one machine row
         // in readWorkbench. Best-effort: a failed report does not block
         // readiness or the Room loop.
-        void readMachineId(process.env)
-          .then(({ machineId, machineName }) =>
-            daemonApi.execute('postAgentMachineReport', { machineId, machineName }),
-          )
-          .catch((error) => console.warn('[body] machine report failed:', error));
         // The connector work queue drains on the live Connect push.
         // One loop per agent also handles reconnects.
         connectorLoop ??= new ConnectorAssignmentLoop({
@@ -377,7 +372,11 @@ export async function runAgentRuntime(
           log: (message) => console.log(`[body] connector: ${message}`),
         });
         daemonApi.setConnectorAssignmentListener(() => connectorLoop?.wake());
-        connectorLoop.start();
+        void readMachineId(process.env)
+          .then(({ machineId, machineName }) =>
+            daemonApi.execute('postAgentMachineReport', { machineId, machineName }))
+          .catch((error) => console.warn('[body] machine report failed:', error))
+          .finally(() => connectorLoop?.start());
         // `@agent /login`: the owner's Room card relays each step over the
         // live socket; the login lands where this harness reads it.
         const signInHarness = agentSignInHarness(agent.kind);

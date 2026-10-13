@@ -186,7 +186,11 @@ export class MockWorkbenchSource implements WorkbenchSource {
     const viewer = this.viewer(input.viewerId);
     const connected = this.installs.size > 0 || this.failedConnectors.size > 0;
     return {
-      helpers: MOCK_HELPERS,
+      helpers: MOCK_HELPERS.map(helper => ({ ...helper,
+        squire: { status: helper.id !== 'helper-squire-box' || !connected ? 'not-added' as const
+          : this.failedConnectors.has('trusty-squire') ? 'error' as const : 'connected' as const,
+          reportedAt: 1, ...(helper.id === 'helper-squire-box' && this.failedConnectors.has('trusty-squire')
+            ? { errorMessage: 'another Trusty Squire session is already using the browser — close it first' } : {}) } })),
       connectors: [
         {
           id: 'trusty-squire',

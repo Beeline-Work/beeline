@@ -27,6 +27,7 @@ const fakeServer = vi.hoisted(() => {
         signIn: { method: string; url: string } | null;
       };
     }>,
+    helpers: [] as Array<{ id: string; name: string; online: boolean; squire: { status: 'connected' | 'error' | 'not-added'; errorMessage?: string; reportedAt: number } }>,
     wallet: false as
       | false
       | { createdAt: number; delegationActive: boolean; delegationExpiresAt: number | null },
@@ -39,7 +40,7 @@ vi.mock('@/sync/transport/monolith-operation', () => ({
     if (name === 'readWorkbench') {
       return {
         workspaceId: input.workspaceId,
-        helpers: [],
+        helpers: fakeServer.helpers,
         catalog: [
           { connectorType: 'wallet', name: 'Coinbase Wallet', available: false },
           ...fakeServer.rows.map((row) => ({
@@ -89,6 +90,7 @@ const MEMBER_B = 'human-terra';
 describe('real monolith Workbench source — install-state row resolution', () => {
   beforeEach(() => {
     fakeServer.rows = [];
+    fakeServer.helpers = [];
     fakeServer.wallet = false;
   });
 
@@ -145,6 +147,8 @@ describe('real monolith Workbench source — install-state row resolution', () =
         },
       },
     ];
+    fakeServer.helpers = [{ id: 'machine', name: 'squire-box', online: true, squire: { status: 'error',
+      errorMessage: 'another Trusty Squire session is already using the browser — close it first', reportedAt: 1 } }];
     const source = new MonolithWorkbenchSource();
     let view = await source.readWorkbench({ workspaceId: 'ws', viewerId: MEMBER_A });
     expect(view.connectors.find((entry) => entry.id === 'trusty-squire')?.errorMessage).toBe(

@@ -89,7 +89,7 @@ export async function retireAgentFromWorkspace(
   await database.query(
     `UPDATE agents SET soul=NULL,selected_model=NULL,selected_effort=NULL,
        model_catalog='[]'::jsonb,model_unavailable=NULL,commands='[]'::jsonb,
-       schedule_ids='[]'::jsonb,
+       schedule_ids='[]'::jsonb,squire_report=NULL,squire_work='{}'::jsonb,
        yolo_mode=false,yolo_set_by=NULL,yolo_set_at=NULL,
        access_policy='{"type":"everyone"}'::jsonb,updated_at=now()
      WHERE agent_id=$1`,

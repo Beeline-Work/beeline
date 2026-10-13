@@ -12071,8 +12071,10 @@ describe('monolith integration', () => {
         status: string;
         connector_type: string;
       }>(
-        `SELECT owner_identity_id,helper_agent_id,machine_id,status,connector_type
-         FROM workspace_connectors WHERE id=$1::uuid`,
+        `SELECT owner_id owner_identity_id,agent_id helper_agent_id,machine_id,
+           CASE WHEN (squire_work->>'install')::boolean THEN 'installing'
+             ELSE squire_report->>'status' END status,'trusty-squire' connector_type
+         FROM agents WHERE 'squire:' || COALESCE(machine_id,agent_id)=$1`,
         [acceptance.connectorId],
       )
     ).rows[0];
@@ -12133,11 +12135,17 @@ describe('monolith integration', () => {
       ),
     ).toEqual(expect.objectContaining({ rowCount: 0 }));
 
+    // A working vault alone cannot complete an outstanding sign-in ceremony.
+    expect((await daemonOperation('postConnectorVault', { connections: [] })).status).toBe(200);
+    expect((await database.query(`SELECT status FROM connector_offers WHERE id=$1`,
+      [offer.offerId])).rows[0]).toEqual({ status: 'connecting' });
+
     // Completing sign-in is the acceptance boundary: the helper's connected
     // report settles the card and only then resumes the paused agent.
     expect(
-      (await daemonOperation('installConnector', { connectorId: acceptance.connectorId })).status,
+      (await daemonOperation('installConnector', { connectorId: acceptance.connectorId, pairingGeneration: 2 })).status,
     ).toBe(200);
+    await daemonOperation('postConnectorVault', { connections: [] });
     const settled = await database.query<{ id: string; card: Record<string, any> }>(
       `SELECT id,card FROM messages WHERE card_type='connector-offer'`,
     );
@@ -12203,11 +12211,7 @@ describe('monolith integration', () => {
     const after = (await (
       await daemonOperation('readAgentWorkbench', { roomId: ROOM })
     ).json()) as { catalog: Array<{ connectorType: string; paired?: Record<string, unknown> }> };
-    expect(after.catalog.find((entry) => entry.connectorType === 'trusty-squire')?.paired).toEqual({
-      status: 'connected',
-      helperName: 'otter-laptop',
-      onThisMachine: true,
-    });
+    expect(after.catalog.find((entry) => entry.connectorType === 'trusty-squire')?.paired).toBeUndefined();
 
     // Workspace managers can settle ordinary connector offers, but Google
     // credentials belong to the agent's human owner.
@@ -12267,16 +12271,9 @@ describe('monolith integration', () => {
       ).status,
     ).toBe(400);
 
-    const connector = (
-      await database.query<{ id: string }>(
-        `INSERT INTO workspace_connectors(
-           id,workspace_id,owner_identity_id,connector_type,helper_agent_id,machine_id,status,
-           signed_in_as
-         ) VALUES(gen_random_uuid(),$1,$2,'trusty-squire',$3,'machine-otter-switch','connected',
-                  'personal@example.com') RETURNING id`,
-        [WORKSPACE, HUMAN, AGENT],
-      )
-    ).rows[0]!;
+    await daemonOperation('postAgentMachineReport', { machineId: 'machine-otter-switch', machineName: 'otter-laptop' });
+    await daemonOperation('postConnectorVault', { connections: [] });
+    const connector = { id: 'squire:machine-otter-switch' };
     const posted = await offerSwitch();
     expect(posted.status).toBe(200);
     const offer = (await posted.json()) as { offerId: string; messageId: string; joined: boolean };
@@ -12285,7 +12282,7 @@ describe('monolith integration', () => {
     expect(
       (
         await database.query<{ status: string; force_relogin_provider: string | null }>(
-          `SELECT status,force_relogin_provider FROM workspace_connectors WHERE id=$1::uuid`,
+          `SELECT CASE WHEN (squire_work->>'install')::boolean THEN 'installing' ELSE squire_report->>'status' END status,squire_work->>'forceReloginProvider' force_relogin_provider FROM agents WHERE 'squire:' || COALESCE(machine_id,agent_id)=$1`,
           [connector.id],
         )
       ).rows[0],
@@ -12318,7 +12315,7 @@ describe('monolith integration', () => {
     expect(
       (
         await database.query<{ status: string; force_relogin_provider: string | null }>(
-          `SELECT status,force_relogin_provider FROM workspace_connectors WHERE id=$1::uuid`,
+          `SELECT CASE WHEN (squire_work->>'install')::boolean THEN 'installing' ELSE squire_report->>'status' END status,squire_work->>'forceReloginProvider' force_relogin_provider FROM agents WHERE 'squire:' || COALESCE(machine_id,agent_id)=$1`,
           [connector.id],
         )
       ).rows[0],
@@ -12337,9 +12334,10 @@ describe('monolith integration', () => {
     ]);
 
     // The helper's connected report settles the card and clears the flag.
-    expect((await daemonOperation('installConnector', { connectorId: connector.id })).status).toBe(
+    expect((await daemonOperation('installConnector', { connectorId: connector.id, pairingGeneration: Number((await database.query<{ generation: string }>(`SELECT squire_work->>'generation' generation FROM agents WHERE agent_id=$1`, [AGENT])).rows[0]!.generation) })).status).toBe(
       200,
     );
+    await daemonOperation('postConnectorVault', { connections: [] });
     const settled = (
       await database.query<{ card: Record<string, any> }>(`SELECT card FROM messages WHERE id=$1`, [
         offer.messageId,
@@ -12349,7 +12347,7 @@ describe('monolith integration', () => {
     expect(
       (
         await database.query<{ force_relogin_provider: string | null }>(
-          `SELECT force_relogin_provider FROM workspace_connectors WHERE id=$1::uuid`,
+          `SELECT squire_work->>'forceReloginProvider' force_relogin_provider FROM agents WHERE 'squire:' || COALESCE(machine_id,agent_id)=$1`,
           [connector.id],
         )
       ).rows[0]!.force_relogin_provider,
@@ -12360,15 +12358,9 @@ describe('monolith integration', () => {
     // Squire is ALREADY connected for this owner/agent — the scenario is a
     // live task hitting a stale session in the shared browser, not a missing
     // tool.
-    const connector = (
-      await database.query<{ id: string }>(
-        `INSERT INTO workspace_connectors(
-           id,workspace_id,owner_identity_id,connector_type,helper_agent_id,machine_id,status
-         ) VALUES(gen_random_uuid(),$1,$2,'trusty-squire',$3,'machine-otter-wall',
-                  'connected') RETURNING id`,
-        [WORKSPACE, HUMAN, AGENT],
-      )
-    ).rows[0]!;
+    await daemonOperation('postAgentMachineReport', { machineId: 'machine-otter-wall', machineName: 'otter-laptop' });
+    await daemonOperation('postConnectorVault', { connections: [] });
+    const connector = { id: 'squire:machine-otter-wall' };
 
     const notActioned = await daemonOperation('postSquireLoginWall', {
       roomId: ROOM,
@@ -12438,7 +12430,7 @@ describe('monolith integration', () => {
     // session through Squire's own connect ceremony — never the ordinary
     // "add a connector" pairing, which must never pass --force-relogin.
     const armed = await database.query<{ status: string; force_relogin_provider: string | null }>(
-      `SELECT status,force_relogin_provider FROM workspace_connectors WHERE id=$1::uuid`,
+      `SELECT CASE WHEN (squire_work->>'install')::boolean THEN 'installing' ELSE squire_report->>'status' END status,squire_work->>'forceReloginProvider' force_relogin_provider FROM agents WHERE 'squire:' || COALESCE(machine_id,agent_id)=$1`,
       [connector.id],
     );
     expect(armed.rows[0]).toEqual({ status: 'installing', force_relogin_provider: 'google' });
@@ -12465,9 +12457,10 @@ describe('monolith integration', () => {
     // The helper's connected report settles the card, clears the force-relogin
     // flag, and resumes the SAME paused agent turn — the existing
     // connector-offer settle-in-place and hidden resume path, unchanged.
-    expect((await daemonOperation('installConnector', { connectorId: connector.id })).status).toBe(
+    expect((await daemonOperation('installConnector', { connectorId: connector.id, pairingGeneration: Number((await database.query<{ generation: string }>(`SELECT squire_work->>'generation' generation FROM agents WHERE agent_id=$1`, [AGENT])).rows[0]!.generation) })).status).toBe(
       200,
     );
+    await daemonOperation('postConnectorVault', { connections: [] });
     const settled = await database.query<{ card: Record<string, any> }>(
       `SELECT card FROM messages WHERE card_type='connector-offer'`,
     );
@@ -12475,7 +12468,7 @@ describe('monolith integration', () => {
       expect.objectContaining({ status: 'accepted', connectorId: connector.id }),
     );
     const clearedFlag = await database.query<{ force_relogin_provider: string | null }>(
-      `SELECT force_relogin_provider FROM workspace_connectors WHERE id=$1::uuid`,
+      `SELECT squire_work->>'forceReloginProvider' force_relogin_provider FROM agents WHERE 'squire:' || COALESCE(machine_id,agent_id)=$1`,
       [connector.id],
     );
     expect(clearedFlag.rows[0]!.force_relogin_provider).toBeNull();
@@ -12500,15 +12493,9 @@ describe('monolith integration', () => {
        VALUES($1,$2,$3,'member'),($1,$2,$4,'member')`,
       [WORKSPACE, cornerId, HUMAN, AGENT],
     );
-    const connector = (
-      await database.query<{ id: string }>(
-        `INSERT INTO workspace_connectors(
-           id,workspace_id,owner_identity_id,connector_type,helper_agent_id,machine_id,status
-         ) VALUES(gen_random_uuid(),$1,$2,'trusty-squire',$3,'machine-otter-corner',
-                  'connected') RETURNING id`,
-        [WORKSPACE, HUMAN, AGENT],
-      )
-    ).rows[0]!;
+    await daemonOperation('postAgentMachineReport', { machineId: 'machine-otter-corner', machineName: 'otter-laptop' });
+    await daemonOperation('postConnectorVault', { connections: [] });
+    const connector = { id: 'squire:machine-otter-corner' };
 
     const posted = await daemonOperation('postSquireLoginWall', {
       roomId: cornerId,
@@ -12528,7 +12515,7 @@ describe('monolith integration', () => {
       expect.objectContaining({ status: 'connecting', intent: 'reconnect', provider: 'google' }),
     );
     const armed = await database.query<{ force_relogin_provider: string | null }>(
-      `SELECT force_relogin_provider FROM workspace_connectors WHERE id=$1::uuid`,
+      `SELECT squire_work->>'forceReloginProvider' force_relogin_provider FROM agents WHERE 'squire:' || COALESCE(machine_id,agent_id)=$1`,
       [connector.id],
     );
     expect(armed.rows[0]).toEqual({ force_relogin_provider: 'google' });
@@ -12538,15 +12525,9 @@ describe('monolith integration', () => {
     // `oauth_sign_in` (Drive's hand-back for a mid-task OAuth pause) names no
     // provider, and Squire's own remedy for it is a plain `connect` — never
     // `--force-relogin` — unlike the `google_session` gate.
-    const connector = (
-      await database.query<{ id: string }>(
-        `INSERT INTO workspace_connectors(
-           id,workspace_id,owner_identity_id,connector_type,helper_agent_id,machine_id,status
-         ) VALUES(gen_random_uuid(),$1,$2,'trusty-squire',$3,'machine-otter-oauth',
-                  'connected') RETURNING id`,
-        [WORKSPACE, HUMAN, AGENT],
-      )
-    ).rows[0]!;
+    await daemonOperation('postAgentMachineReport', { machineId: 'machine-otter-oauth', machineName: 'otter-laptop' });
+    await daemonOperation('postConnectorVault', { connections: [] });
+    const connector = { id: 'squire:machine-otter-oauth' };
 
     const posted = await daemonOperation('postSquireLoginWall', {
       roomId: ROOM,
@@ -12568,7 +12549,7 @@ describe('monolith integration', () => {
     );
     expect(cards.rows[0]!.card.provider).toBeUndefined();
     const armed = await database.query<{ status: string; force_relogin_provider: string | null }>(
-      `SELECT status,force_relogin_provider FROM workspace_connectors WHERE id=$1::uuid`,
+      `SELECT CASE WHEN (squire_work->>'install')::boolean THEN 'installing' ELSE squire_report->>'status' END status,squire_work->>'forceReloginProvider' force_relogin_provider FROM agents WHERE 'squire:' || COALESCE(machine_id,agent_id)=$1`,
       [connector.id],
     );
     expect(armed.rows[0]).toEqual({ status: 'installing', force_relogin_provider: null });
@@ -12595,9 +12576,8 @@ describe('monolith integration', () => {
       `INSERT INTO workspace_connectors(
          id,workspace_id,owner_identity_id,connector_type,helper_agent_id,machine_id,status
        ) VALUES
-         (gen_random_uuid(),$1,$2,'tailscale',$3,'machine-chode-1','connected'),
-         (gen_random_uuid(),$1,$4,'trusty-squire',$3,'machine-chode-1','connected')`,
-      [WORKSPACE, HUMAN, AGENT, zekeId],
+         (gen_random_uuid(),$1,$2,'tailscale',$3,'machine-chode-1','connected')`,
+      [WORKSPACE, HUMAN, AGENT],
     );
     await operation(
       'sendRoomMessage',

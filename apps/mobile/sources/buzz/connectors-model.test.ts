@@ -20,6 +20,17 @@ describe('Connectors key projection', () => {
     expect(keyServiceGroups(view, 'owner')).toEqual([expect.objectContaining({
       name: 'OpenRouter', keys: [view.connections[0], view.connections[1]],
     })]);
+    expect(squireConnectionState(view)).toBe('never');
+  });
+  it('uses machine broker reports instead of connector rows or cached keys', () => {
+    const view: WorkbenchView = { connectors: [{ id: 'trusty-squire', name: 'Trusty Squire',
+      description: '', available: true, status: 'connected' }], helpers: [], apps: [], connections: [] };
+    expect(squireConnectionState(view)).toBe('never');
+    view.helpers = [{ id: 'machine', name: 'Machine', online: true,
+      squire: { status: 'error', errorMessage: 'Squire broker unavailable', reportedAt: 1 } }];
     expect(squireConnectionState(view)).toBe('offline');
+    view.helpers = [{ id: 'machine', name: 'Machine', online: true,
+      squire: { status: 'connected', reportedAt: 2 } }];
+    expect(squireConnectionState(view)).toBe('connected');
   });
 });

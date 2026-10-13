@@ -1,5 +1,5 @@
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
-import { HullDialogInput } from '@/components/buzz/HullDialog';
+import { HullDialogActions, HullDialogInput } from '@/components/buzz/HullDialog';
 import React, { useEffect, useRef, useState } from 'react';
 import { Linking, Pressable, Text, TextInput, View } from 'react-native';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
@@ -236,26 +236,29 @@ export function AgentProfileView({
             </View>
             {canEdit && editing && (
               <View style={styles.confirmRow}>
-                <View style={styles.trailingActions} testID="profile-edit-confirm-actions">
-                  <Button
-                    label="Cancel"
-                    variant="secondary"
-                    disabled={saving}
-                    onPress={onCancel}
-                    testID="cancel-agent-edit"
-                  />
-                  <Button
-                    label={saving ? 'Saving…' : 'Save'}
-                    variant="primary"
-                    loading={saving}
-                    onPress={onSave}
-                    testID="save-agent-soul"
-                  />
-                </View>
+                <HullDialogActions
+                  actions={[
+                    {
+                      label: 'Cancel',
+                      variant: 'quiet',
+                      disabled: saving,
+                      onPress: onCancel,
+                      testID: 'cancel-agent-edit',
+                    },
+                    {
+                      label: saving ? 'Saving…' : 'Save',
+                      variant: 'primary',
+                      loading: saving,
+                      disabled: saving,
+                      onPress: onSave,
+                      testID: 'save-agent-soul',
+                    },
+                  ]}
+                />
               </View>
             )}
             <View style={styles.section}>
-              <Text style={styles.sectionLabel}>MODEL / DIFFICULTY</Text>
+              <RoomListSectionHeader title="Model / difficulty" inset="content" spacing="flush" />
               {editing && canEdit && modelManagement ? (
                 modelManagement
               ) : (
@@ -376,14 +379,13 @@ const styles = StyleSheet.create((theme) => ({
   },
   soulActions: { gap: 0 },
   confirmRow: { paddingTop: theme.buzz.space.md },
-  trailingActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: theme.buzz.space.sm },
   workHeading: { flexDirection: 'row', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 },
-identity: {
+  identity: {
     paddingVertical: theme.buzz.space.lg,
     alignItems: 'center',
     gap: theme.buzz.space.md,
   },
-message: {
+  message: {
     minHeight: 44,
     paddingHorizontal: 24,
     paddingVertical: theme.buzz.space.sm,
@@ -392,6 +394,6 @@ message: {
     borderRadius: theme.buzz.radius,
     justifyContent: 'center',
   },
-pressed: { backgroundColor: theme.buzz.bgPressed },
-strong: { ...Typography.default(), ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },
+  pressed: { backgroundColor: theme.buzz.bgPressed },
+  strong: { ...Typography.default(), ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },
 }));

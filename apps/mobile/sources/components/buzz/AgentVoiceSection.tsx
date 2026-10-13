@@ -8,7 +8,8 @@ import {
   type VoiceProvider,
 } from '@beeline/api-contract/phone';
 import { SettingsRow } from './SettingsRow';
-import { Button } from './Button';
+import { RoomListSectionHeader } from './RoomListSectionHeader';
+import { HullDialogActions } from './HullDialog';
 import { VoicePreviewPlayer } from './VoicePreviewPlayer';
 
 export type AgentVoiceApi = {
@@ -132,7 +133,7 @@ export function AgentVoiceSection({
   const changeable = canEdit && catalog?.canChange;
   return (
     <View style={styles.section} testID="voice-section">
-      <Text style={styles.heading}>VOICE</Text>
+      <RoomListSectionHeader title="Voice" inset="content" spacing="flush" />
       <SettingsRow
         title={selected?.name ?? (api && !error ? 'Loading voice…' : 'Voice unavailable')}
         description={
@@ -193,25 +194,28 @@ export function AgentVoiceSection({
               />
             ))}
           </ScrollView>
-          <View style={styles.trailingActions} testID="voice-confirm-actions">
-            <Button
-              label="Cancel"
-              variant="secondary"
-              disabled={saving}
-              onPress={() => {
-                stop();
-                setOpen(false);
-              }}
-              testID="cancel-agent-voice"
-            />
-            <Button
-              label={saving ? 'Saving…' : 'Save'}
-              variant="primary"
-              loading={saving}
-              onPress={() => void save()}
-              testID="save-agent-voice"
-            />
-          </View>
+          <HullDialogActions
+            actions={[
+              {
+                label: 'Cancel',
+                variant: 'quiet',
+                disabled: saving,
+                onPress: () => {
+                  stop();
+                  setOpen(false);
+                },
+                testID: 'cancel-agent-voice',
+              },
+              {
+                label: saving ? 'Saving…' : 'Save',
+                variant: 'primary',
+                loading: saving,
+                disabled: saving,
+                onPress: () => void save(),
+                testID: 'save-agent-voice',
+              },
+            ]}
+          />
         </>
       )}
       {source && (
@@ -230,8 +234,6 @@ export function AgentVoiceSection({
 }
 const styles = StyleSheet.create((theme) => ({
   section: { paddingTop: theme.buzz.space.lg, gap: theme.buzz.space.md },
-  heading: { ...theme.buzz.type.sectionHead, color: theme.buzz.textMuted },
   copy: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
   library: { maxHeight: theme.buzz.layout.row * 5 },
-  trailingActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: theme.buzz.space.sm },
 }));

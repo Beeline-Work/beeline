@@ -114,8 +114,8 @@ describe('Members page layout contract', () => {
     expect(profileIdentity).toContain('face={identity.face}');
     expect(profileIdentity).toContain('IDENTITY_SETTINGS_TILE');
     expect(profile).toContain("testID: 'edit-agent-soul'");
-    expect(profile).toContain('testID="save-agent-soul"');
-    expect(profile).toContain('testID="cancel-agent-edit"');
+    expect(profile).toContain("testID: 'save-agent-soul'");
+    expect(profile).toContain("testID: 'cancel-agent-edit'");
     expect(profile).not.toContain('agent-tab-manage');
     expect(source).not.toContain('testID="close-agent-settings"');
     expect(source).not.toContain('accessibilityLabel="Close agent settings"');

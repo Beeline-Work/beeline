@@ -397,7 +397,10 @@
     "components/SidebarView.tsx": ["SidebarView"],
     "components/StatusBarProvider.tsx": ["StatusBarProvider"],
     "components/StyledText.tsx": ["RNText", "Text"],
-    "components/UpdateReadyPrompt.tsx": ["UpdateReadyPrompt"]
+    "components/UpdateReadyPrompt.tsx": ["UpdateReadyPrompt"],
+    "components/buzz/AgentVoiceSection.tsx": ["AgentVoiceSection"],
+    "components/buzz/VoicePreviewPlayer.tsx": ["VoicePreviewPlayer"],
+    "components/buzz/VoicePreviewPlayer.native.tsx": ["VoicePreviewPlayer"]
   },
   "legacyControls": {
     "app/(app)/beeline/channels.tsx": {

@@ -13,10 +13,20 @@ vi.mock('react-native-unistyles', () => ({
   useUnistyles: () => ({ theme: { buzz: beelineThemes.obsidian } }),
 }));
 vi.mock('./VoicePreviewPlayer', () => ({ VoicePreviewPlayer: () => null }));
+vi.mock('./RoomListSectionHeader', () => ({ RoomListSectionHeader: () => null }));
 vi.mock('./SettingsRow', () => ({
   SettingsRow: (props: any) => React.createElement('Row', props),
 }));
-vi.mock('./Button', () => ({ Button: (props: any) => React.createElement('Button', props) }));
+vi.mock('./HullDialog', () => ({
+  HullDialogActions: ({ actions }: any) =>
+    React.createElement(
+      'Actions',
+      null,
+      ...actions.map((action: any) =>
+        React.createElement('Button', { ...action, key: action.testID }),
+      ),
+    ),
+}));
 import { AgentVoiceSection } from './AgentVoiceSection';
 const catalog = {
   provider: 'fish-s2.1-pro' as const,
@@ -107,7 +117,7 @@ it('keeps Save functional when the live profile echo arrives before the write re
     ),
   );
   await act(async () => saveResolve(catalog));
-  expect(renderer.root.findAllByProps({ testID: 'voice-confirm-actions' })).toHaveLength(0);
+  expect(renderer.root.findAllByProps({ testID: 'save-agent-voice' })).toHaveLength(0);
   expect(renderer.root.findByProps({ testID: 'change-agent-voice' }).props.disabled).toBe(false);
   await act(async () => renderer.unmount());
 });

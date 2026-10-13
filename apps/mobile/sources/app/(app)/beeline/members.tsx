@@ -1169,23 +1169,14 @@ export default function BuzzMembers({
                             testID={`model-options-${kind}`}
                           >
                             {visibleChoices.map((choice) => (
-                              <TouchableOpacity
+                              <SettingsRow
                                 key={choice.id}
                                 disabled={busy}
                                 onPress={() => void setModelOption(kind, choice.id)}
-                                style={[
-                                  styles.choice,
-                                  choice.id === current && styles.choiceActive,
-                                ]}
                                 testID={`model-option-${kind}-${choice.id}`}
-                              >
-                                <Text style={styles.choiceText}>
-                                  {kind === 'model'
-                                    ? displayModel(choice.name ?? choice.id)
-                                    : (choice.name ?? choice.id)}
-                                </Text>
-                                {choice.id === current && <Text style={styles.choiceText}>✓</Text>}
-                              </TouchableOpacity>
+                                title={kind === 'model' ? displayModel(choice.name ?? choice.id) : (choice.name ?? choice.id)}
+                                value={choice.id === current ? '✓' : undefined}
+                              />
                             ))}
                           </ScrollView>
                         )}

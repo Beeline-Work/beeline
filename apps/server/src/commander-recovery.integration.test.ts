@@ -462,15 +462,15 @@ it('resumes the incoming human order for a non-opener watch', async () => {
   } as unknown as AgentCommand);
   await daemon.execute(
     'watchCorner',
-    { roomId: ROOM, cornerId: opened.cornerId, kinds: ['closed'] },
+    { roomId: ROOM, cornerId: opened.cornerId, kinds: ['merged'] },
     WORKER,
   );
-  await phone.execute('requestCornerClose', { roomId: opened.cornerId }, HUMAN);
-  const closed = (await commands(ROOM, WORKER)).find((c) => c.reason === 'watched_corner')!;
-  expect(closed.parentCommandId).toBe(incoming.id);
-  await claim(closed);
+  await systemLine(db, { roomId: opened.cornerId, authorId: HUMAN, subject: { kind: 'system', name: 'GitHub' }, verb: 'merged', kind: 'merged' });
+  const merged = (await commands(ROOM, WORKER)).find((c) => c.reason === 'watched_corner')!;
+  expect(merged.parentCommandId).toBe(incoming.id);
+  await claim(merged);
   await expect(
-    daemon.execute('report', { ...authority(closed), text: 'done: watched corner closed' }, WORKER),
+    daemon.execute('report', { ...authority(merged), text: 'done: watched corner merged' }, WORKER),
   ).resolves.toHaveProperty('id');
 });
 

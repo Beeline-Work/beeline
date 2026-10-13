@@ -771,6 +771,7 @@ describe('assembled prompts', () => {
     const gib = Number((ACP_SESSION_MEMORY_MAX_BYTES / 1024 ** 3).toFixed(2));
     for (const surface of PROMPT_SURFACES) {
       const session = assembleSessionPrompt({ surface, agentName: 'Bee', agentCommand: 'codex-acp' });
+      expect(session.systemPrompt).toContain('If a wake needs no message, end the turn silently.');
       expect(session.systemPrompt).toContain(`Memory cap: ${gib} GiB per session.`);
       expect(session.systemPrompt).toContain('Size builds, tests and data jobs to fit it; split heavy work.');
       expect(assembleTurnPrompt({ surface, sessionPrefix: session.turnPrefix, task: { body: 'Hi' } }).text)

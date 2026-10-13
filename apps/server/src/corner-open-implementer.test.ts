@@ -132,7 +132,7 @@ it('Reproduction O1-1: naming Beta assigns the work to Beta and keeps Alpha as a
   const beforeReplay = await openingCounts();
   expect(await daemon.execute('createCorner', request, A)).toEqual({
     cornerId,
-    watch: { roomId: request.roomId, kinds: ['opened', 'merged', 'closed'] },
+    watch: { roomId: request.roomId, kinds: ['opened', 'merged'] },
   });
   expect(await openingCounts()).toEqual(beforeReplay);
   await expect(
@@ -229,6 +229,6 @@ it.each([undefined, 'alpha'])('keeps caller assignment for implementer %s', asyn
   ).toEqual([{ agent_id: A }]);
   expect(await daemon.execute('createCorner', { ...request, implementer: 'alpha' }, A)).toEqual({
     cornerId,
-    watch: { roomId: request.roomId, kinds: ['opened', 'merged', 'closed'] },
+    watch: { roomId: request.roomId, kinds: ['opened', 'merged'] },
   });
 });

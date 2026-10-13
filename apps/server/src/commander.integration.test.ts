@@ -69,7 +69,7 @@ it('opens in an unrelated member Room from a DM and records the caller as comman
     .toMatchObject({ parent_id: ROOM, created_by: RUBY });
   expect((await commands(opened.cornerId, WORKER))[0]).toMatchObject({ private: true,
     source: { authorId: RUBY, body: 'Build the widget' } });
-  expect(opened.watch?.kinds).toEqual(['opened', 'merged', 'closed']);
+  expect(opened.watch?.kinds).toEqual(['opened', 'merged']);
 });
 it('delivers blocked privately to Ruby and Ruby orders the current worker privately', async () => {
   const opened = await open(), turn = await worker(opened.cornerId);

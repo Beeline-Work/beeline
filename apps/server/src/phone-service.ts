@@ -1,3 +1,5 @@
+import { notifyAgentConfigChange } from './postgres-live.js';
+import { SQUIRE_MCP_TARGET } from '@beeline/api-contract/phone';
 import { FIRST_PARTY_INTEGRATIONS } from './first-party-integrations.js';
 import { machineSquireReport, queueSquireWork, queueOwnerSquireWork, squireMachineAddress, squireMachineId, squireWorkStatus } from './squire-machine.js';
 import { listRoomSubscriptions, deleteRoomSubscription } from './agent-subscriptions.js';
@@ -9487,7 +9489,24 @@ export class PhoneService {
       await this.resolveViewerHelper(squireMachine, viewerId).catch(() => {
         throw new Error('Squire machine not found (access denied)');
       });
-      throw new Error('Trusty Squire is managed on its machine');
+      await this.database.transaction(async (db) => {
+        await db.query('SELECT pg_advisory_xact_lock(hashtext($1))',
+          [`squire-vault:${viewerId}:${squireMachine}`]);
+        await db.query(`DELETE FROM workspace_connections WHERE owner_identity_id=$1 AND machine_id=$2`,
+          [viewerId, squireMachine]);
+        const agents = await db.query<{ agent_id: string }>(`UPDATE agents
+          SET squire_work=jsonb_build_object('generation',COALESCE((squire_work->>'generation')::int,0)+1,
+            'disconnected',true),
+            squire_report=jsonb_build_object('status','not-added','reportedAt',extract(epoch from now()))
+          WHERE owner_id=$1 AND COALESCE(machine_id,agent_id)=$2 RETURNING agent_id`,
+          [viewerId, squireMachine]);
+        await db.query(`UPDATE agent_grants SET status='revoked'
+          WHERE kind='mcp' AND target=$3 AND status IN ('approved','once')
+            AND agent_id IN (SELECT agent_id FROM agents WHERE owner_id=$1
+              AND COALESCE(machine_id,agent_id)=$2)`, [viewerId, squireMachine, SQUIRE_MCP_TARGET]);
+        for (const agent of agents.rows) await notifyAgentConfigChange(db, agent.agent_id);
+      });
+      return;
     }
     const connector = await this.assertOwnedConnector(input.connectorId, viewerId);
     // Receipts and connections are the connector's work; unpair clears them.

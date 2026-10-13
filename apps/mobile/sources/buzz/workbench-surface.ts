@@ -4,7 +4,7 @@ import type { WorkbenchAppSearchResult } from '@beeline/api-contract/workbench';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { getWorkbenchSource } from './workbench-source';
 import { mobileSurfaceCache, surfaceAddress } from './surface-storage';
-import { useSharedSurface, useSurfaceSnapshot } from './use-shared-surface';
+import { useFreshWorkbenchSurface, useSharedSurface, useSurfaceSnapshot } from './use-shared-surface';
 import type { ConnectionDetailView, WorkbenchView } from './workbench';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { clientResetGeneration, subscribeClientReset } from '@/sync/client-reset';
@@ -146,7 +146,7 @@ export function useSharedConnectionDetail(scope: WorkbenchScope, connectionId: s
     if (!result) throw new Error('Key not found — it belongs to another member or no longer exists');
     return result;
   }, [scope.workspaceId, scope.viewerId, connectionId]);
-  return useSharedSurface('/workspace/:id/connections/:connectionId',
+  return useFreshWorkbenchSurface('/workspace/:id/connections/:connectionId',
     { ...scope, connectionId }, isConnectionDetail, request, Boolean(connectionId));
 }
 

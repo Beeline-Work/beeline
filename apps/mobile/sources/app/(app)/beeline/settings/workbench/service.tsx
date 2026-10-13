@@ -9,6 +9,7 @@ import { PageHeader } from '@/components/buzz/PageHeader';
 import { ServiceMark } from '@/components/buzz/ServiceMark';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { HullActionSheetModal, HullActionSheetRow, HullActionSheetCancel } from '@/components/buzz/HullActionSheet';
+import { getWorkbenchSource } from '@/buzz/workbench-source';
 import { useSharedWorkbench } from '@/buzz/workbench-surface';
 import { keyServiceGroups, squireConnectionState, type KeyServiceGroup } from '@/buzz/connectors-model';
 
@@ -21,7 +22,7 @@ export default function ConnectorServiceScreen() {
   const viewerId = param(params.viewerId) ?? '';
   const service = param(params.service) ?? '';
   const insets = useSafeAreaInsets();
-  const { value: view, error: loadError } = useSharedWorkbench({ workspaceId, viewerId });
+  const { value: view, error: loadError, refresh } = useSharedWorkbench({ workspaceId, viewerId });
   const [error, setError] = useState<string | null>(null);
   const [statusOpen, setStatusOpen] = useState(false);
 
@@ -65,7 +66,12 @@ export default function ConnectorServiceScreen() {
     </ScrollView>
     <HullActionSheetModal visible={statusOpen} title="Trusty Squire" onClose={() => setStatusOpen(false)}>
       {offline ? <HullActionSheetRow label="Reconnect" onPress={() => { setStatusOpen(false); router.push({ pathname: '/beeline/settings/workbench/connect', params: { workspaceId, viewerId, connectorId: 'trusty-squire', ...(helperId ? { helperId } : {}) } }); }} /> :
-        <HullActionSheetRow label="Manage in Trusty Squire" onPress={() => { setStatusOpen(false); openVault(); }} />}
+        <HullActionSheetRow label="Disconnect" destructive onPress={() => {
+          setStatusOpen(false);
+          const machineId = helperId ?? view?.helpers.find(item => item.squire?.status === 'connected')?.id;
+          void getWorkbenchSource().disconnectConnector({ workspaceId, connectorId: `squire:${machineId}` })
+            .then(() => refresh()).catch(() => setError('Could not disconnect Trusty Squire'));
+        }} />}
       <HullActionSheetCancel onPress={() => setStatusOpen(false)} />
     </HullActionSheetModal>
   </View>;

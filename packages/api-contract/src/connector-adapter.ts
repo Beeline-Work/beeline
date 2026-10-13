@@ -70,6 +70,7 @@ function ownerOnly(
 }
 
 const SQUIRE_ACTIONS = [
+  'disconnect',
   'connect',
   'reconnect',
   'revoke-grants',
@@ -84,7 +85,7 @@ export const SQUIRE_CONNECTOR_ADAPTER: ConnectorAdapter = {
       case 'installing':
         return [];
       case 'connected':
-        return ['reconnect', 'revoke-grants'];
+        return ['reconnect', 'disconnect', 'revoke-grants'];
       case 'error':
         return ['connect', 'reconnect'];
       default:

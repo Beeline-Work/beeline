@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 import type { WalletHistoryResult, WalletView } from '@beeline/api-contract/wallet';
 import { getWalletSource } from './wallet-source';
-import { useSharedSurface } from './use-shared-surface';
+import { useFreshWorkbenchSurface } from './use-shared-surface';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { mobileSurfaceCache, surfaceAddress } from './surface-storage';
 
@@ -17,7 +17,7 @@ const isWalletHistory = (value: unknown): value is WalletHistoryResult =>
 export function useSharedWallet(workspaceId: string | null | undefined) {
   const request = useCallback(() => getWalletSource().readWallet({ workspaceId: workspaceId! }),
     [workspaceId]);
-  return useSharedSurface('/workspace/:id/wallet', workspaceId ? { workspaceId } : undefined,
+  return useFreshWorkbenchSurface('/workspace/:id/wallet', workspaceId ? { workspaceId } : undefined,
     isWalletView, request, Boolean(workspaceId));
 }
 
@@ -32,6 +32,6 @@ export async function publishSharedWallet(workspaceId: string, wallet: WalletVie
 export function useSharedWalletHistory(workspaceId: string | null | undefined) {
   const request = useCallback(() => getWalletSource().readHistory({ workspaceId: workspaceId!, limit: 30 }),
     [workspaceId]);
-  return useSharedSurface('/workspace/:id/wallet-history', workspaceId ? { workspaceId } : undefined,
+  return useFreshWorkbenchSurface('/workspace/:id/wallet-history', workspaceId ? { workspaceId } : undefined,
     isWalletHistory, request, Boolean(workspaceId));
 }

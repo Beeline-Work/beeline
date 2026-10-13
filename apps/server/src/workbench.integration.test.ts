@@ -1242,6 +1242,26 @@ describe('workbench connectors', () => {
     expect(response.status).toBe(403);
   });
 
+  it('unpairs an owner Squire machine and keeps late broker reports detached until re-pair', async () => {
+    const connectorId = await pairOwnerConnector();
+    expect((await database.query(`SELECT 1 FROM agent_grants WHERE agent_id=$1 AND kind='mcp' AND target='squire' AND status IN ('approved','once')`, [HELPER])).rowCount).toBeGreaterThan(0);
+    expect((await operation('unpairConnector', { workspaceId: WORKSPACE, connectorId }, recipientToken)).status).toBe(403);
+    await phoneOperation('unpairConnector', { workspaceId: WORKSPACE, connectorId });
+    const view = await phoneOperation('readWorkbench', { workspaceId: WORKSPACE }) as any;
+    expect(view.connections).toEqual([]);
+    expect(view.helpers[0].squire.status).toBe('not-added');
+    expect((await database.query(`SELECT 1 FROM workspace_connectors WHERE connector_type='trusty-squire'`)).rowCount).toBe(0);
+    expect((await database.query(`SELECT 1 FROM agent_grants WHERE agent_id=$1
+      AND kind='mcp' AND target='squire' AND status IN ('approved','once')`, [HELPER])).rowCount).toBe(0);
+    await daemonOperation('postConnectorVault', { connections: [{ reference: 'late-key',
+      service: 'github', label: 'Late key', fieldNames: [], allowedHosts: [], createdAt: 0, stale: false, state: 'active' }] });
+    const detached = await phoneOperation('readWorkbench', { workspaceId: WORKSPACE }) as any;
+    expect(detached.connections).toEqual([]); expect(detached.helpers[0].squire.status).toBe('not-added');
+    await pairOwnerConnector();
+    const paired = await phoneOperation('readWorkbench', { workspaceId: WORKSPACE }) as any;
+    expect(paired.helpers[0].squire.status).toBe('connected'); expect(paired.connections.length).toBeGreaterThan(0);
+  });
+
   it('does not copy an owner machine vault to another owner', async () => {
     await pairOwnerConnector();
     await daemonOperation('postConnectorVault', { connections: [{ reference: 'owner-key',

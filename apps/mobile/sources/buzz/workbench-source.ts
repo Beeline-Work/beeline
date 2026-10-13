@@ -413,6 +413,10 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
   }
 
   async disconnectConnector(input: { workspaceId: string; connectorId: string }): Promise<void> {
+    if (input.connectorId.startsWith('squire:')) {
+      await monolithPhoneOperation('unpairConnector', input);
+      return;
+    }
     const dto = await monolithPhoneOperation('readWorkbench', { workspaceId: input.workspaceId });
     if (input.connectorId === GOOGLE_ACCOUNT_CONNECTOR_ID ||
         (input.connectorId.startsWith('google-') &&

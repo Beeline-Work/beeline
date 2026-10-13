@@ -2470,6 +2470,12 @@ export class DaemonService {
       if (!machine) throw new Error('machine helper not found');
       await db.query('SELECT pg_advisory_xact_lock(hashtext($1))',
         [`squire-vault:${machine.owner_id}:${machine.machine_id}`]);
+      // An owner unpair survives startup/reconnect broker reports. Explicit pairing
+      // clears this machine decision; the local Squire account stays in its vault.
+      const disconnected = await db.query(`SELECT 1 FROM agents WHERE owner_id=$1
+        AND COALESCE(machine_id,agent_id)=$2 AND squire_work->>'disconnected'='true'`,
+        [machine.owner_id, machine.machine_id]);
+      if (disconnected.rowCount) return [];
       const report = { status: input.notAdded ? 'not-added' : input.errorMessage ? 'error' : 'connected',
         ...(input.errorMessage ? { errorMessage: input.errorMessage } : {}),
         reportedAt: Date.now() / 1000 };

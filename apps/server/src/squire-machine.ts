@@ -11,6 +11,7 @@ export const squireMachineId = (address: string): string | undefined =>
 type Work = {
   generation: number;
   install?: boolean;
+  disconnected?: boolean;
   forceReloginProvider?: string;
   steps?: ConnectorStatus['steps'];
   signIn?: ConnectorStatus['signIn'] | null;
@@ -50,7 +51,7 @@ export async function queueSquireWork(database: SqlDatabase, agentId: string,
       [machine.owner_id, machine.machine_id],
     )).rows[0]!.generation) + 1;
     await database.query(`UPDATE agents SET squire_work=squire_work
-      - 'install' - 'steps' - 'signIn' - 'errorMessage' - 'forceReloginProvider'
+      - 'disconnected' - 'install' - 'steps' - 'signIn' - 'errorMessage' - 'forceReloginProvider'
       WHERE owner_id=$1 AND COALESCE(machine_id,agent_id)=$2 AND agent_id<>$3`,
       [machine.owner_id, machine.machine_id, agentId]);
   }

@@ -1,3 +1,4 @@
+vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({ register: async () => () => undefined }) }));
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
@@ -21,6 +22,7 @@ const searchParams = vi.hoisted(() => ({
 const safeAreaInsets = vi.hoisted(() => ({ top: 0, right: 0, bottom: 34, left: 0 }));
 
 vi.mock('expo-router', () => ({
+  useFocusEffect: (effect: () => void) => React.useEffect(effect, [effect]),
   router: navigation,
   useLocalSearchParams: () => searchParams.params,
 }));

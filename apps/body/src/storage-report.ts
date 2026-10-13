@@ -60,7 +60,7 @@ export async function helperStorageReport(supervisorRoot = defaultSupervisorRoot
         if (!room.isDirectory()) continue;
         const state = byId.get(room.name);
         const path = resolve(runtimeDir, 'rooms', room.name);
-        if (state?.archived) orphans.push({ path, owner: room.name, reason: 'server-confirmed archived Room/corner' });
+        if (state?.archived && await hasNonSquirePayload(path)) orphans.push({ path, owner: room.name, reason: 'server-confirmed archived Room/corner' });
         else if (!state) unknown.push({ path, reason: 'no settled lifecycle answer' });
       }
       if (!bootstrap.workspaceIds.includes(runtime.communityId)) {

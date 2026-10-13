@@ -502,15 +502,24 @@ export async function reclaimWholeStorageObject(
   return entries;
 }
 
-/** Squire-only ancestor directories have no payload belonging to an ended owner. */
+/** Squire-only ancestors are exempt; an empty non-Squire directory is still
+ * orphan storage. Stop at the first owned byte without reading file contents. */
 export async function hasNonSquirePayload(root: string): Promise<boolean> {
   if (isSquirePath(root)) return false;
   const info = await lstat(root).catch(error => { if (error.code === 'ENOENT') return undefined; throw error; });
   if (!info) return false;
-  if (!info.isDirectory()) return true;
-  const tree = await storageTree(root).catch(error => {
-    if ((error as { stderr?: string }).stderr?.includes('FileNotFoundError')) return undefined;
-    throw error;
-  });
-  return tree ? [...tree].some(([path, item]) => !item.directory && !isSquirePath(path)) : false;
+  const script = String.raw`
+import os,sys,stat
+excluded={'.trusty-squire','trusty-squire','squire-host-config'}
+def payload(path):
+    if os.path.basename(path) in excluded: return False
+    if not stat.S_ISDIR(os.lstat(path).st_mode): return True
+    fd=os.open(path,os.O_RDONLY|os.O_DIRECTORY|os.O_NOATIME|os.O_NOFOLLOW)
+    try: names=os.listdir(fd)
+    finally: os.close(fd)
+    return not names or any(payload(os.path.join(path,name)) for name in names)
+print('true' if payload(sys.argv[1]) else 'false')
+`;
+  const { stdout } = await execFileAsync('/usr/bin/python3', ['-c', script, root]);
+  return JSON.parse(stdout) as boolean;
 }

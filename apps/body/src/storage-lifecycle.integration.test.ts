@@ -98,6 +98,9 @@ it('reports unknown/read-failed lifecycle separately from confirmed orphans, wit
   expect(report.orphans.map(item => item.path)).toEqual([resolve(runtime, 'rooms/archived')]);
   expect(report.unknown.some(item => item.path === resolve(runtime, 'rooms/unknown'))).toBe(true);
   expect(await exists(resolve(runtime, 'rooms/archived/data'))).toBe(true);
+  await file(resolve(runtime, 'rooms/archived/agent-home/user/.trusty-squire/vault'));
+  await rm(resolve(runtime, 'rooms/archived/data'));
+  expect((await helperStorageReport(root, { orphanOnly: true })).orphans).toEqual([]);
   vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('offline'); }));
   expect((await helperStorageReport(root)).orphans).toEqual([]);
 });

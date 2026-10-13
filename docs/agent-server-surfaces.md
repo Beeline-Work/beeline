@@ -1,5 +1,7 @@
 # Server-indexed surfaces and Room reads
 
+- **Voice uses existing agent identities and ordinary orders.** `apps/server/src/voice-service.ts` owns membership and dispatch; `voice-room-runtime.ts` speaks command-provenance reports without capping real work. Short-press dictation remains separate. Providers, native runtime requirements and isolated proof commands: [voice mode](voice-mode.md).
+
 - **Computer activity is an observation, never an owed reply.** `computer-session.ts` retains Squire's preview channel, HTML and latest frame while any viewer remains; `ComputerSessionCard` preserves that preview's token when opening the full view. `agent-command.ts` coalesces one pending observation per share behind other work and refreshes its source at claim; Room/corner turn loops accept silence, and `turn-silence-notice.ts` never retries or inscribes an activity failure. Coverage: `computer-session.test.ts`, `server-command-intake.test.ts`, and the Room/corner turn tests.
 
 - **Server-indexed surfaces are the only durable read authority.** `apps/push-gateway/src/room-indexer.ts` owns paint-ready queries; `packages/buzz-client/src/room-view.ts` owns DTOs + the signed client. Screens render validated responses as-is; a relay signal only marks a surface dirty. Never restore client reducers or snapshots.

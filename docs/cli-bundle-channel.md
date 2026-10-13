@@ -177,3 +177,14 @@ run `bash scripts/helper-proof/run-linux.sh`. It uses its own PID namespace,
 PID 1, user manager, local HTTP/WebSocket server and deterministic ACP harness.
 The container is removed at completion. See the acceptance evidence in
 [helper simplification](./helper-simplification.md).
+
+## Daemon update invariants
+
+Paths and commands below are relative to the repository root. Read these invariants before editing this area; named code and tests hold implementation detail.
+
+### Daemon self-update and CLI bundle
+
+- **`<prefix>/lib/beeline` is the active bundle anchor**, a symlink into `lib/beeline-releases/<id>` swung by rename(2) (`self-update.ts`). `BEELINE_UPDATE_DISABLE=1` opts out of automatic updates. Never suggest `npx beeline` (an unrelated package); recovery is `npx usebeeline update`.
+- **Update restarts are silent.** `runMachineHelper` closes the machine link before agent teardown with `HELPER_UPDATE_CLOSE_CODE`/`HELPER_UPDATE_CLOSE_REASON`; `DaemonAgentSession` releases presence without an offline notice only for that signal. Unexpected loss still notices the owner (`machine-offline.test.ts`, `daemon-live.test.ts`, `machine-helper.test.ts`). Release delivery pushes helpers only (`release-notify.ts`).
+- **Routine updates wait at most five minutes for a quiet gap.** `ReleaseNotifier` (`apps/server/src/release-notify.ts`) pushes published helper releases; `MachineLink` (`apps/body/src/machine-link.ts`) reconciles the manifest once after the first registration on each socket, with no periodic update check. `ReleaseTransaction` (`managed-update.ts`) and `quiesceHostedAgents` (`machine-helper.ts`) keep intake open until idle or the deadline, then hand over; the successor activates the selected release. Deadline interruptions use `force-update-journal.ts`; the successor replays `update-interrupted` receipts and reclaims the same commands without spending retries. `machine-helper.test.ts` proves push, reconnect, and both handoffs over isolated HTTP/WebSocket. Installation is checksum verification plus atomic activation; no post-install probe or rollback. Server minimums (426 / `force-update`) interrupt immediately (`managed-update.ts`).
+- `.github/actions/daemon-leg/` builds linux-x64 and darwin bundles; `launchd.ts` supervises macOS (no bwrap). `https://usebeeline.app/dl/manifest.json` stays pinned; runbook `docs/cli-bundle-channel.md`.

@@ -102,6 +102,7 @@
         "scripts/render-agent-profile-voice-proof.mjs",
         "scripts/agent-profile-voice-proof.tsx",
         "scripts/agent-profile-voice-native-proof.tsx",
+        "scripts/verify-agent-profile-native-heading.mjs",
         "scripts/render-consolidated-board-proof.mjs",
         "scripts/consolidated-board-proof.tsx",
         "scripts/android-splash-theme-proof.js",

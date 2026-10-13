@@ -287,7 +287,9 @@ export function AgentProfileView({
             {canManage && (editing || !canEdit) && management}
             <View style={styles.section}>
               <View style={styles.workHeading}>
-                <RoomListSectionHeader title="Recent work" inset="content" spacing="flush" />
+                <View style={styles.workTitle}>
+                  <RoomListSectionHeader title="Recent work" inset="content" spacing="flush" />
+                </View>
                 <Text style={styles.meta}>Merged PRs</Text>
               </View>
               {allWork.length ? (
@@ -380,6 +382,7 @@ const styles = StyleSheet.create((theme) => ({
   soulActions: { gap: 0 },
   confirmRow: { paddingTop: theme.buzz.space.md },
   workHeading: { flexDirection: 'row', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 },
+  workTitle: { flex: 1 },
   identity: {
     paddingVertical: theme.buzz.space.lg,
     alignItems: 'center',

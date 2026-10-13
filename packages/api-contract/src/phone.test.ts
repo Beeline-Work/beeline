@@ -251,7 +251,7 @@ describe('phone contract', () => {
       'pushLevel',
     );
     expectTypeOf<PhoneOperationMap['getManagedIdentity']['output']>().toHaveProperty('pushLevel');
-    expect(isPushLevel('mine')).toBe(true);
+    expect(isPushLevel('default')).toBe(true);
   });
 
   it('accepts only the server-owned four-state corner contract', () => {

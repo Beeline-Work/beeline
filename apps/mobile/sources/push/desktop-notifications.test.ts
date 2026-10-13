@@ -28,12 +28,12 @@ vi.mock('@/sync/client-reset', () => ({
 }));
 vi.mock('@/buzz/open-room-tracker', () => ({ getOpenBuzzChannelId: () => null }));
 vi.mock('@/buzz/managed-identity-surface', () => ({
-  readManagedIdentity: async () => ({ pushLevel: 'mine' }),
+  readManagedIdentity: async () => ({ pushLevel: 'default' }),
 }));
 vi.mock('./buzz-push-registration', () => ({ getBuzzPushEnabled: async () => true }));
-vi.mock('./push-level-storage', () => ({ loadStoredPushLevel: async () => 'mine' }));
+vi.mock('./push-level-storage', () => ({ loadStoredPushLevel: async () => 'default' }));
 vi.mock('@/sync/transport/monolith-operation', () => ({
-  monolithPhoneOperation: async () => ({ pushLevel: 'mine' }),
+  monolithPhoneOperation: async () => ({ pushLevel: 'default' }),
 }));
 vi.mock('@/sync/transport', () => ({
   BuzzRigTransport: class {

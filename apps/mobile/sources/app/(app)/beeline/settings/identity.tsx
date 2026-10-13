@@ -87,7 +87,7 @@ export default function BuzzIdentitySettings() {
   const [pushRegistration, setPushRegistration] = useState<BuzzPushRegistrationState | null>(null);
   const [pushPermission, setPushPermission] = useState<PushPermissionInfo | null>(null);
   const [pushWorking, setPushWorking] = useState(false);
-  const [pushLevel, setPushLevel] = useState<PushLevel>('mine');
+  const [pushLevel, setPushLevel] = useState<PushLevel>('default');
   const [legacyManagedIdentity, setLegacyManagedIdentity] = useState<ManagedIdentity | null>(null);
   const monolithEnabled = getBuzzRuntimeConfig().monolithEnabled;
   const currentWorkspaceId = useActiveCommunityId();

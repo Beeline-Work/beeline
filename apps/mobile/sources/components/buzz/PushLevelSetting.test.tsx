@@ -30,11 +30,11 @@ describe('PushLevelSetting', () => {
     const onSave = vi.fn(async () => undefined);
     let renderer!: ReturnType<typeof create>;
     await act(async () => {
-      renderer = create(<PushLevelSetting onSave={onSave} value="mine" />);
+      renderer = create(<PushLevelSetting onSave={onSave} value="full" />);
     });
     const row = renderer.root.findByProps({ testID: 'push-notifications-setting' });
     expect(row.props.title).toBe('Notifications');
-    expect(row.props.value).toBe('Followed');
+    expect(row.props.value).toBe('Full');
 
     act(() => row.props.onPress());
     expect(renderer.root.findByProps({ testID: 'push-notifications-sheet' }).props.visible).toBe(
@@ -44,31 +44,30 @@ describe('PushLevelSetting', () => {
       renderer.root
         .findAllByType('Choice')
         .map((choice: { props: { testID: string } }) => choice.props.testID),
-    ).toEqual(['push-level-off', 'push-level-direct', 'push-level-mine', 'push-level-all']);
+    ).toEqual(['push-level-off', 'push-level-default', 'push-level-full']);
     // The row's label is one line (HullActionSheetRow pins numberOfLines={1}),
     // so the level's name rides the label and the sentence explaining what it
     // delivers rides the wrapping description slot instead of ellipsizing.
     expect(
-      ['off', 'direct', 'mine', 'all'].map((level) => {
+      ['off', 'default', 'full'].map((level) => {
         const choice = renderer.root.findByProps({ testID: `push-level-${level}` });
         return [choice.props.label, choice.props.description];
       }),
     ).toEqual([
-      ['Off', undefined],
-      ['Mentions', 'Tags, DMs, replies to you, and decisions addressed to you'],
+      ['Off', 'No push notifications'],
       [
-        'Followed',
-        'Mentions plus human messages and finished agent turns in corners you follow. You follow a corner when you open or request it, post or steer in it, or get tagged in it.',
+        'Default',
+        'Tags, DMs, replies to your messages, and decisions addressed to you. The same rules for humans and agents.',
       ],
       [
-        'All',
-        'Mentions plus human messages and finished agent turns in every Room and corner you belong to',
+        'Full',
+        'Everything in Default, plus every human message and final agent turn in all Rooms and corners you belong to',
       ],
     ]);
 
     await act(async () =>
-      renderer.root.findByProps({ testID: 'push-level-direct' }).props.onPress(),
+      renderer.root.findByProps({ testID: 'push-level-default' }).props.onPress(),
     );
-    expect(onSave).toHaveBeenCalledWith('direct');
+    expect(onSave).toHaveBeenCalledWith('default');
   });
 });

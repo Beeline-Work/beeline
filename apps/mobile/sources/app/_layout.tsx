@@ -287,7 +287,7 @@ export default function RootLayout() {
         if (changed && changed.pubkey !== identity?.publicKey) return;
         const heard = heardPushLevel?.pubkey === identity?.publicKey ? heardPushLevel?.level : undefined;
         const pushLevel =
-          heard ?? (identity ? await loadStoredPushLevel(identity.publicKey) : 'mine');
+          heard ?? (identity ? await loadStoredPushLevel(identity.publicKey) : 'default');
         if (!changed && identity && readPushLevelFor !== identity.publicKey) {
           const settings = await loadActiveCommunityId(identity.publicKey)
             .then((workspaceId) => readIdentitySettings(workspaceId ?? undefined))

@@ -18,7 +18,7 @@ const base = {
   message,
   room,
   viewerPubkey: me,
-  level: 'mine' as const,
+  level: 'default' as const,
   openChannelId: null,
   windowFocused: false,
 };
@@ -53,6 +53,32 @@ describe('native desktop message display policy', () => {
     ).toBe(false);
   });
 
+  it.each(['off', 'default', 'full'] as const)(
+    'covers ordinary human/final/intermediate/own messages at %s',
+    (level) => {
+      const input = { ...base, level };
+      expect(desktopMessageMayNotify(input)).toBe(level === 'full');
+      const agent = {
+        ...message,
+        author: { ...message.author, kind: 'agent' as const },
+        requestId: 'turn',
+      };
+      expect(desktopMessageMayNotify({ ...input, message: agent, finalAgentTurn: true })).toBe(
+        level === 'full',
+      );
+      expect(desktopMessageMayNotify({ ...input, message: agent })).toBe(false);
+      expect(
+        desktopMessageMayNotify({
+          ...input,
+          message: { ...message, author: { ...message.author, pubkey: me } },
+        }),
+      ).toBe(false);
+      expect(
+        desktopMessageMayNotify({ ...input, message: { ...message, mentionPubkeys: [me] } }),
+      ).toBe(level !== 'off');
+    },
+  );
+
   it('never draws deleted, activity, or relayed-up rows', () => {
     const direct = { ...base, room: { ...room, directMessage: {} } as ChatListItem };
     expect(desktopMessageMayNotify({ ...direct, message: { ...message, deleted: true } })).toBe(
@@ -61,6 +87,5 @@ describe('native desktop message display policy', () => {
     expect(
       desktopMessageMayNotify({ ...direct, message: { ...message, presentation: 'activity' } }),
     ).toBe(false);
-
   });
 });

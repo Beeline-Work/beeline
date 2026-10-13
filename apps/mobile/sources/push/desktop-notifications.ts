@@ -90,19 +90,26 @@ export function startDesktopNotifications(): () => void {
     }
 
     function cornerRows() {
-      return parents().filter((parent) => (getRoomCornerSummary(parent.room.id)?.cornerCount ?? 0) > 0)
+      return parents()
+        .filter((parent) => (getRoomCornerSummary(parent.room.id)?.cornerCount ?? 0) > 0)
         .flatMap((parent) =>
-        roomOpenCornerRows(getRoomCorners(parent.room.id)).map((item) => ({ parent, item })));
+          roomOpenCornerRows(getRoomCorners(parent.room.id)).map((item) => ({ parent, item })),
+        );
     }
 
     function notificationRoom(roomId: string) {
       const room = parents().find((item) => item.room.id === roomId);
       if (room) return { room, parentName: undefined };
       const found = cornerRows().find(({ item }) => item.corner.id === roomId);
-      return found && {
-        room: { room: found.item.corner, unread: false } as ChatListItem,
-        parentName: found.parent.room.name,
-      };
+      return (
+        found && {
+          room: {
+            room: found.item.corner,
+            unread: false,
+          } as ChatListItem,
+          parentName: found.parent.room.name,
+        }
+      );
     }
     const seen = new Set<string>();
     const startedAt = Date.now();
@@ -119,30 +126,36 @@ export function startDesktopNotifications(): () => void {
       // Most live rows need no network or plugin work. In particular a
       // foreground message must never wait on the notification path.
       if (document.hasFocus() || getOpenBuzzChannelId() === roomId) return;
-      if (
-        !room.directMessage &&
-        !message.mentionPubkeys?.includes(identity!.publicKey) &&
-        !message.reply
-      )
-        return;
       const enabled = await getBuzzPushEnabled(identity!.publicKey);
       if (!enabled) return;
       const managed = await readManagedIdentity().catch(() => null);
       const level = managed?.pushLevel ?? (await loadStoredPushLevel(identity!.publicKey));
-      let repliedToViewer = false;
-      if (
+      const needsReply =
         !room.directMessage &&
         message.reply &&
-        !message.mentionPubkeys?.includes(identity!.publicKey)
-      ) {
-        // The canonical reply pointer is eventId. Never substitute rootId: that
-        // would notify a root author for replies to somebody else's child.
-        const view = await reader.room(roomId).catch(() => null);
-        repliedToViewer =
-          view?.messages.some(
-            (row) => row.id === message.reply?.eventId && row.author.pubkey === identity!.publicKey,
-          ) ?? false;
-      }
+        !message.mentionPubkeys?.includes(identity!.publicKey);
+      const needsTurn =
+        message.presentation === 'message' && message.author.kind === 'agent' && message.requestId;
+      const view = needsReply || needsTurn ? await reader.room(roomId).catch(() => null) : null;
+      const repliedToViewer =
+        view?.messages.some(
+          (row) => row.id === message.reply?.eventId && row.author.pubkey === identity!.publicKey,
+        ) ?? false;
+      const turn = view?.latestAgentTurns?.find(
+        (item) =>
+          item.agentPubkey === message.author.pubkey && item.requestId === message.requestId,
+      );
+      const finalAgentTurn =
+        turn?.status === 'complete' &&
+        !view?.messages.some(
+          (row) =>
+            row.author.pubkey === message.author.pubkey &&
+            row.requestId === message.requestId &&
+            row.presentation === 'message' &&
+            !row.deleted &&
+            (row.createdAt > message.createdAt ||
+              (row.createdAt === message.createdAt && row.id > message.id)),
+        );
       if (
         !desktopMessageMayNotify({
           message,
@@ -150,6 +163,7 @@ export function startDesktopNotifications(): () => void {
           viewerPubkey: identity!.publicKey,
           level,
           repliedToViewer,
+          finalAgentTurn,
           openChannelId: getOpenBuzzChannelId(),
           windowFocused: document.hasFocus(),
         })
@@ -226,10 +240,12 @@ export function startDesktopNotifications(): () => void {
         // A corner is its own Room and its messages do not ride the parent's
         // socket filter. Read each active parent with corners so the same
         // signed-in member can receive an exact tag there too.
-        const cornerCount = (room: ChatListItem) => getRoomCornerSummary(room.room.id)?.cornerCount ?? 0;
+        const cornerCount = (room: ChatListItem) =>
+          getRoomCornerSummary(room.room.id)?.cornerCount ?? 0;
         const cornerParents = rooms.filter((room) => cornerCount(room) > 0);
-        const nextCornerKey = JSON.stringify(cornerParents.map((room) =>
-          [room.room.id, getRoomCornerSummary(room.room.id)]));
+        const nextCornerKey = JSON.stringify(
+          cornerParents.map((room) => [room.room.id, getRoomCornerSummary(room.room.id)]),
+        );
         if (nextCornerKey !== cornerKey) {
           const marks = cornerParents.map((room) => cornerReadMark(room.room.id));
           const cornerReads = await Promise.allSettled(
@@ -300,9 +316,7 @@ export function startDesktopNotifications(): () => void {
   function report(error: unknown) {
     console.warn('[desktop-notifications]', error);
   }
-  stopSession = subscribeClientReset(
-    () => void startForIdentity().catch(report),
-  );
+  stopSession = subscribeClientReset(() => void startForIdentity().catch(report));
   void startForIdentity().catch(report);
   return () => {
     disposed = true;

@@ -65,19 +65,19 @@ beforeEach(async () => {
 });
 afterEach(() => db.close());
 
-describe('Followed level follows corners', () => {
+describe('Default does not follow corners', () => {
   it('stays quiet in a corner the person never touched', async () => {
     await post('Untagged update', teammate);
     expect(await delivered()).toEqual([]);
   });
 
-  it('follows a corner the person posted in', async () => {
+  it('stays quiet after the person posts in a corner', async () => {
     await post('I have a thought', person);
     const update = await post('Untagged update', teammate);
-    expect(await delivered()).toEqual([update]);
+    expect(await delivered()).toEqual([]);
   });
 
-  it('follows a corner the person ordered from its Room', async () => {
+  it('stays quiet after the person orders work in a corner', async () => {
     const ask = await post('@bee tell the corner to use Postgres', person, room);
     await db.query(
       `INSERT INTO agent_commands(id,room_id,agent_id,source_message_id,turn_request_id,action,reason,root_command_id,root_source_message_id,agent_depth)
@@ -86,16 +86,16 @@ describe('Followed level follows corners', () => {
     );
     send.mockClear();
     const update = await post('Untagged update', teammate);
-    expect(await delivered()).toContain(update);
+    expect(await delivered()).not.toContain(update);
   });
 
-  it('follows a corner the person was tagged in', async () => {
+  it('delivers the tag without following subsequent corner messages', async () => {
     const tag = await post('@owner can you look', teammate);
     const update = await post('Untagged update', teammate);
-    expect(await delivered()).toEqual([tag, update]);
+    expect(await delivered()).toEqual([tag]);
   });
 
-  it('ends the follow when the corner is archived', async () => {
+  it('stays quiet when the corner is archived', async () => {
     await post('I have a thought', person);
     await db.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`, [corner]);
     await post('Untagged update', teammate);
@@ -105,7 +105,7 @@ describe('Followed level follows corners', () => {
 
 describe('Room mute', () => {
   it("silences the Room and its corners but lets the person's tags through", async () => {
-    await db.query(`UPDATE identities SET push_level='all' WHERE id=$1`, [person]);
+    await db.query(`UPDATE identities SET push_level='full' WHERE id=$1`, [person]);
     await db.query(`UPDATE memberships SET push_muted=true WHERE room_id=$1 AND identity_id=$2`, [
       room,
       person,
@@ -118,7 +118,7 @@ describe('Room mute', () => {
   });
 
   it('ignores and clears a corner-level mute', async () => {
-    await db.query(`UPDATE identities SET push_level='all' WHERE id=$1`, [person]);
+    await db.query(`UPDATE identities SET push_level='full' WHERE id=$1`, [person]);
     await db.query(`UPDATE memberships SET push_muted=true WHERE room_id=$1 AND identity_id=$2`, [
       corner,
       person,

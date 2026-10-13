@@ -7,16 +7,14 @@ import { HullActionSheetCancel, HullActionSheetModal, HullActionSheetRow } from 
 
 export const PUSH_LEVEL_LABELS: Readonly<Record<PushLevel, string>> = {
   off: 'Off',
-  direct: 'Mentions',
-  mine: 'Followed',
-  all: 'All',
+  default: 'Default',
+  full: 'Full',
 };
-/** What each level actually delivers. A sentence never shares the row's
- *  single-line label, so it rides the sheet row's own description slot. */
-const PUSH_LEVEL_DESCRIPTIONS: Readonly<Partial<Record<PushLevel, string>>> = {
-  direct: 'Tags, DMs, replies to you, and decisions addressed to you',
-  mine: 'Mentions plus human messages and finished agent turns in corners you follow. You follow a corner when you open or request it, post or steer in it, or get tagged in it.',
-  all: 'Mentions plus human messages and finished agent turns in every Room and corner you belong to',
+const PUSH_LEVEL_DESCRIPTIONS: Readonly<Record<PushLevel, string>> = {
+  off: 'No push notifications',
+  default:
+    'Tags, DMs, replies to your messages, and decisions addressed to you. The same rules for humans and agents.',
+  full: 'Everything in Default, plus every human message and final agent turn in all Rooms and corners you belong to',
 };
 
 type Props = {

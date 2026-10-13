@@ -82,7 +82,7 @@ export async function clearLegacyPresentedNotificationsOnce(
 export async function reconcilePresentedNotificationBadge(
   api: PresentedNotificationApi,
   platform: string,
-  pushLevel: PushLevel = 'mine',
+  pushLevel: PushLevel = 'default',
 ): Promise<void> {
   if (pushLevel === 'off') {
     await api.setBadgeCountAsync(0);

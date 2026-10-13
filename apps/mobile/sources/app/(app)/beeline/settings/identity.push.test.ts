@@ -323,7 +323,7 @@ describe('identity settings push row honesty', () => {
       expect(renderer.root.findAllByProps({ testID: 'push-level-setting' })).toHaveLength(1),
     );
     const picker = renderer.root.findByProps({ testID: 'push-level-setting' });
-    expect(picker.props.value).toBe('mine');
+    expect(picker.props.value).toBe('default');
 
     await act(async () => picker.props.onSave('off'));
     expect(phoneOperation).toHaveBeenCalledWith('updateIdentityPushLevel', { pushLevel: 'off' });

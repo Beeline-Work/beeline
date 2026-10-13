@@ -2860,8 +2860,8 @@ describe('monolith integration', () => {
       platform: 'android',
       environment: 'physical',
     });
-    // Member lifecycle rides the mine level.
-    await database.query(`UPDATE identities SET push_level='mine' WHERE id=$1`, [HUMAN]);
+    // Member lifecycle rides the Full level.
+    await database.query(`UPDATE identities SET push_level='full' WHERE id=$1`, [HUMAN]);
     const send = vi.fn().mockResolvedValue(undefined);
     const loop = new PushDeliveryLoop(database, { send });
     expect(await loop.runOnce()).toBe(0);
@@ -5317,7 +5317,7 @@ describe('monolith integration', () => {
       platform: 'android',
       environment: 'physical',
     });
-    await database.query(`UPDATE identities SET push_level='mine' WHERE id=$1`, [HUMAN]);
+    await database.query(`UPDATE identities SET push_level='full' WHERE id=$1`, [HUMAN]);
     const send = vi.fn().mockResolvedValue(undefined);
     const loop = new PushDeliveryLoop(database, { send });
     expect(await loop.runOnce()).toBe(0);
@@ -5432,7 +5432,7 @@ describe('monolith integration', () => {
       platform: 'android',
       environment: 'physical',
     });
-    await database.query(`UPDATE identities SET push_level='mine' WHERE id=$1`, [HUMAN]);
+    await database.query(`UPDATE identities SET push_level='full' WHERE id=$1`, [HUMAN]);
     const send = vi.fn().mockResolvedValue(undefined);
     const loop = new PushDeliveryLoop(database, { send });
     expect(await loop.runOnce()).toBe(0);
@@ -5758,14 +5758,14 @@ describe('monolith integration', () => {
   it('reads and updates only the signed-in person push level', async () => {
     const managed = async () =>
       (await (await operation('getManagedIdentity', {})).json()) as { pushLevel: string };
-    expect((await managed()).pushLevel).toBe('mine');
+    expect((await managed()).pushLevel).toBe('default');
 
-    const updated = await operation('updateIdentityPushLevel', { pushLevel: 'direct' });
+    const updated = await operation('updateIdentityPushLevel', { pushLevel: 'full' });
     expect(updated.status).toBe(200);
     expect((await updated.json()) as { pushLevel: string }).toEqual(
-      expect.objectContaining({ pushLevel: 'direct' }),
+      expect.objectContaining({ pushLevel: 'full' }),
     );
-    expect((await managed()).pushLevel).toBe('direct');
+    expect((await managed()).pushLevel).toBe('full');
     expect(
       (
         await database.query<{ push_level: string }>(
@@ -5773,10 +5773,10 @@ describe('monolith integration', () => {
           [HUMAN],
         )
       ).rows[0]?.push_level,
-    ).toBe('direct');
+    ).toBe('full');
 
     expect((await operation('updateIdentityPushLevel', { pushLevel: 'loud' })).status).toBe(400);
-    expect((await managed()).pushLevel).toBe('direct');
+    expect((await managed()).pushLevel).toBe('full');
   });
 
   it('projects every agent message with the current author name, handle, and face', async () => {
@@ -5812,7 +5812,7 @@ describe('monolith integration', () => {
       personId: HUMAN,
       name: 'Owner',
       handle: 'owner',
-      pushLevel: 'mine',
+      pushLevel: 'default',
     });
 
     const profile = await operation('updatePersonProfile', {

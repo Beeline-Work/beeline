@@ -7,6 +7,7 @@ const pushLevelListeners = new Set<(pubkey: string, level: PushLevel) => void>()
 /** Device copy of the server's push level: a cold-start hint until the server answers. */
 export async function loadStoredPushLevel(pubkey: string): Promise<PushLevel> {
   const stored = await AsyncStorage.getItem(`${PUSH_LEVEL_PREFIX}${pubkey}`);
+  if (stored === 'all') return 'full';
   return isPushLevel(stored) ? stored : DEFAULT_PUSH_LEVEL;
 }
 

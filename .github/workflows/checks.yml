@@ -336,6 +336,13 @@ jobs:
       # turbo's typecheck task depends on ^build, so every workspace's dist/ is
       # produced before its dependents — and before the mobile leg, which
       # resolves @beeline/* from those dists exactly as Metro does.
+      - name: Enforce the shared UI component registry
+        env:
+          UI_POLICY_BASE: ${{ github.event.pull_request.base.sha || github.sha }}
+        run: |
+          git fetch --no-tags --depth=1 origin "$UI_POLICY_BASE"
+          node --test scripts/mobile-ui-policy.test.mjs
+          node scripts/check-mobile-ui-components.mjs --base "$UI_POLICY_BASE"
       - run: npm run typecheck
       # Keep the primary gate aligned with the command a mobile developer runs
       # from this directory. The root script also generates Expo route types;

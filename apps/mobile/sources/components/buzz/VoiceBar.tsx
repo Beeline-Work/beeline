@@ -8,8 +8,9 @@ import { DictationWaveform } from './DictationWaveform';
 import { BeelineMarkSpinner } from './BeelineMarkSpinner';
 import type { VoiceCallState } from '@/buzz/use-voice-call';
 
-/** Pass 08: one 56px row; no status/name row or second end control. */
-export function VoiceBar({ voice, fullScreen = false }: { voice: VoiceCallState; fullScreen?: boolean }) {
+export function VoiceBar({ voice, fullScreen = false, onAttach, attachDisabled = false, testIDPrefix = 'chat' }: {
+  voice: VoiceCallState; fullScreen?: boolean; onAttach?: () => void; attachDisabled?: boolean; testIDPrefix?: string;
+}) {
   const { theme } = useUnistyles();
   const [expanded, setExpanded] = React.useState(fullScreen);
   const [reduceMotion, setReduceMotion] = React.useState(false);
@@ -19,26 +20,35 @@ export function VoiceBar({ voice, fullScreen = false }: { voice: VoiceCallState;
     return () => listener.remove();
   }, []);
   const bar = <View style={styles.bar} testID="voice-bar">
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[styles.agents, voice.quotaExhausted && styles.quotaAgents]}
-      contentContainerStyle={styles.agentContent}>
-      {voice.agents.map(agent => <Pressable key={agent.pubkey} onPress={() => voice.aim(agent.pubkey)}
-        accessibilityRole="button" accessibilityLabel={`Speak to ${agent.name}`}
-        accessibilityState={{ selected: voice.target === agent.pubkey }} style={styles.agent}>
-        <View style={[styles.halo, { opacity: voice.speaker === agent.pubkey ? reduceMotion ? 0.9 : 0.5 + voice.level * 0.5 : voice.target === agent.pubkey ? 0.5 : 0,
-          transform: [{ scale: reduceMotion ? 1 : voice.speaker === agent.pubkey ? 1 + voice.level * 0.12 : 1 }] }]} />
-        <IdentityMark kind="agent" seed={agent.pubkey} face={agent.face} name={agent.name} size={32} />
-      </Pressable>)}
-    </ScrollView>
-    <Pressable style={styles.waveform} onLongPress={() => setExpanded(true)}
-      accessibilityLabel={voice.quotaExhausted ? voice.error ?? 'Daily voice limit reached' : voice.speaker ? `${voice.agents.find(a => a.pubkey === voice.speaker)?.name ?? 'Agent'} speaking` : 'Listening'}
-      accessibilityHint="Hold to open full screen" testID="voice-waveform">
-      {voice.quotaExhausted ? <Text accessibilityRole="alert" style={styles.error} testID="voice-quota-error">{voice.error}</Text>
-        : <DictationWaveform level={voice.level} live={!voice.connecting} />}
-    </Pressable>
-    <Pressable onPress={() => void voice.end()} accessibilityRole="button" accessibilityLabel="End voice mode"
-      accessibilityState={{ selected: true, busy: voice.connecting }} style={styles.mic} testID="voice-mic">
-      {voice.connecting ? <BeelineMarkSpinner ink={theme.buzz.accent} live /> : <MicGlyph color={theme.buzz.accent} />}
-    </Pressable>
+    <View style={styles.targetStrip} testID="conversation-target-strip">
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.agents}
+        contentContainerStyle={styles.agentContent}>
+        {voice.agents.map(agent => <Pressable key={agent.pubkey} onPress={() => voice.aim(agent.pubkey)}
+          accessibilityRole="button" accessibilityLabel={`Speak to ${agent.name}`}
+          accessibilityState={{ selected: voice.target === agent.pubkey }} style={styles.agent}>
+          <View style={[styles.halo, { opacity: voice.speaker === agent.pubkey ? reduceMotion ? 0.9 : 0.5 + voice.level * 0.5 : voice.target === agent.pubkey ? 0.5 : 0,
+            transform: [{ scale: reduceMotion ? 1 : voice.speaker === agent.pubkey ? 1 + voice.level * 0.12 : 1 }] }]} />
+          <IdentityMark kind="agent" seed={agent.pubkey} face={agent.face} name={agent.name} size={32} />
+        </Pressable>)}
+      </ScrollView>
+      <Text style={styles.modeLabel} testID="conversation-mode-label">Conversation mode</Text>
+    </View>
+    <View style={styles.controls}>
+      <Pressable onPress={onAttach} disabled={attachDisabled || !onAttach} accessibilityRole="button"
+        accessibilityLabel="Attach photo or document" style={styles.attach} testID={`${testIDPrefix}-attach-button`}>
+        <Text style={styles.attachText}>＋</Text>
+      </Pressable>
+      <Pressable style={styles.waveform} onLongPress={() => setExpanded(true)}
+        accessibilityLabel={voice.quotaExhausted ? voice.error ?? 'Daily Conversation mode limit reached' : voice.speaker ? `${voice.agents.find(a => a.pubkey === voice.speaker)?.name ?? 'Agent'} speaking` : 'Listening'}
+        accessibilityHint="Hold to open full screen" testID="voice-waveform">
+        {voice.quotaExhausted ? <Text accessibilityRole="alert" style={styles.error} testID="voice-quota-error">{voice.error}</Text>
+          : <DictationWaveform level={voice.level} live={!voice.connecting} />}
+      </Pressable>
+      <Pressable onPress={() => void voice.end()} accessibilityRole="button" accessibilityLabel="End Conversation mode"
+        accessibilityState={{ selected: true, busy: voice.connecting }} style={styles.mic} testID="voice-mic">
+        {voice.connecting ? <BeelineMarkSpinner ink={theme.buzz.accent} live /> : <MicGlyph color={theme.buzz.accent} />}
+      </Pressable>
+    </View>
   </View>;
   return <>
     {bar}
@@ -57,9 +67,13 @@ export function VoiceBar({ voice, fullScreen = false }: { voice: VoiceCallState;
 }
 
 const styles = StyleSheet.create(theme => ({
-  bar: { height: 56, flexDirection: 'row', alignItems: 'center', gap: 8, width: '100%' },
-  agents: { flexGrow: 0, maxWidth: '55%' }, agentContent: { alignItems: 'center' },
-  quotaAgents: { maxWidth: '25%' },
+  bar: { width: '100%' },
+  targetStrip: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, gap: 8 },
+  agents: { flex: 1, minWidth: 0 }, agentContent: { alignItems: 'center' },
+  modeLabel: { ...theme.buzz.type.meta, color: theme.buzz.textMuted, textAlign: 'right', flexShrink: 0 },
+  controls: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 8 },
+  attach: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  attachText: { ...theme.buzz.type.body, color: theme.buzz.textPrimary },
   agent: { width: 44, height: 48, alignItems: 'center', justifyContent: 'center' },
   halo: { position: 'absolute', width: 38, height: 38, borderRadius: 3, borderWidth: 2,
     borderColor: theme.buzz.accent },

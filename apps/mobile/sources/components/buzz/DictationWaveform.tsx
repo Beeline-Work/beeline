@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { Animated, Easing, Platform, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import { smoothWaveformLevel } from '@/buzz/waveform-level';
 
 /** More bars than the widest field holds; the oldest clip off the left edge. */
 export const WAVEFORM_BAR_COUNT = 80;
@@ -41,6 +42,7 @@ export function DictationWaveform({
   levelRef.current = level;
   const [bars, setBars] = React.useState<readonly Bar[]>([]);
   const nextIndexRef = React.useRef(0);
+  const smoothedLevelRef = React.useRef(0);
   const offset = React.useRef(new Animated.Value(0)).current;
   React.useEffect(() => {
     if (!live) return;
@@ -58,7 +60,8 @@ export function DictationWaveform({
       if (due <= nextIndexRef.current) return;
       const added: Bar[] = [];
       for (let index = nextIndexRef.current; index < due; index += 1) {
-        added.push({ index, value: levelRef.current });
+        smoothedLevelRef.current = smoothWaveformLevel(smoothedLevelRef.current, levelRef.current);
+        added.push({ index, value: smoothedLevelRef.current });
       }
       nextIndexRef.current = due;
       setBars((current) => [...current, ...added].slice(-WAVEFORM_BAR_COUNT));

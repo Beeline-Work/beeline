@@ -1206,7 +1206,7 @@ export function BuzzChatSurface({
   );
   const viewerIsAgent = roomSurface?.viewer.identity.kind === 'agent';
   const voice = useVoiceCall(decodedId, Boolean(roomSurface?.viewer.permissions.send && !viewerIsAgent && !isArchived));
-  useEffect(() => { if (voice.error && !voice.quotaExhausted) Modal.alert('Voice mode', voice.error); }, [voice.error, voice.quotaExhausted]);
+  useEffect(() => { if (voice.error && !voice.quotaExhausted) Modal.alert('Conversation mode', voice.error); }, [voice.error, voice.quotaExhausted]);
   // The SERVER's statement of who is reading, so the phone's requester test and
   // the server's own are the same comparison over the same namespace.
   const viewerPubkey = roomSurface?.viewer.identity.pubkey;
@@ -7360,8 +7360,6 @@ export function BuzzChatSurface({
                 testID="room-schedules-action"
               />
             )}
-            {/* Leave and Delete end the sheet in their own group, apart from settings. */}
-            <View style={styles.roomLifecycleGap} />
             {canManageWorkspace && (
               <HullActionSheetRow
                 accessibilityLabel={`Delete ${ROOM_LABEL}`}
@@ -7718,7 +7716,6 @@ const styles = StyleSheet.create((theme) => {
       justifyContent: 'flex-end',
       gap: groknight.space.sm,
     },
-    roomLifecycleGap: { height: groknight.space.lg },
     // The sheet's one box: a notice the reader must act on, held to the same
     // trailing axis as the rows above it (DESIGN.md → Shape).
     membershipError: {

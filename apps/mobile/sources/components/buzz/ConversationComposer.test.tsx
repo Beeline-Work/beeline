@@ -14,6 +14,8 @@ vi.mock('react-native', () => {
   return {
     Text: host('Text'),
     View: host('View'),
+    ScrollView: host('ScrollView'),
+    AccessibilityInfo: { isReduceMotionEnabled: async () => false, addEventListener: () => ({ remove() {} }) },
     TextInput: host('TextInput'),
     TouchableOpacity: host('TouchableOpacity'),
     Pressable: host('Pressable'),
@@ -21,6 +23,8 @@ vi.mock('react-native', () => {
     Keyboard: { isVisible: () => true, addListener: () => ({ remove() {} }), dismiss() {} },
     Animated: {
       View: host('View'),
+    ScrollView: host('ScrollView'),
+    AccessibilityInfo: { isReduceMotionEnabled: async () => false, addEventListener: () => ({ remove() {} }) },
       Value: class {
         constructor(readonly value: number) {}
       },
@@ -42,6 +46,7 @@ vi.mock('./HullDialog', async () => {
   const ReactModule = await import('react');
   return {
     HullDialog: (props: any) => ReactModule.createElement('HullDialog', props),
+    HullModal: () => null,
   };
 });
 vi.mock('react-native-svg', () => {
@@ -57,6 +62,8 @@ vi.mock('react-native-svg', () => {
     Rect: host('RNSVGRect'),
   };
 });
+vi.mock('./IdentityMark', () => ({ IdentityMark: () => null }));
+import type { VoiceCallState } from '@/buzz/use-voice-call';
 import {
   COMPOSER_MAX_INPUT_HEIGHT,
   COMPOSER_SINGLE_LINE_INPUT_HEIGHT,
@@ -438,5 +445,37 @@ describe('one composer', () => {
     expect(focus).not.toHaveProperty('borderWidth');
     expect(focus).not.toHaveProperty('shadowColor');
     expect(focus).not.toHaveProperty('boxShadow');
+  });
+});
+
+
+describe('Conversation mode inside the composer', () => {
+  it.each([
+    ['connected silence', 0, null],
+    ['listening', 0.4, null],
+    ['agent speaking', 0.7, 'agent'],
+  ] as const)('keeps the shell, label and attachment flow during %s', async (_state, level, speaker) => {
+    const f = render('');
+    const props = f.renderer.root.findByType(ConversationComposer).props;
+    const onAttach = vi.fn();
+    const voice = { call: { id: 'call' }, agents: [], target: null, speaker, level,
+      connecting: false, error: null, quotaExhausted: false, firstAudioMs: null,
+      join: vi.fn(), end: vi.fn(), aim: vi.fn() } as unknown as VoiceCallState;
+    await act(async () => f.renderer.update(<ConversationComposer {...props} voice={voice} onAttach={onAttach} />));
+    const label = f.renderer.root.findByProps({ testID: 'conversation-mode-label' });
+    expect(label.props.children).toBe('Conversation mode');
+    expect(label.props.style.textAlign).toBe('right');
+    expect(f.renderer.root.findByProps({ testID: 'conversation-target-strip' }).props.style.flexDirection).toBe('row');
+    act(() => f.renderer.root.findByProps({ testID: 'chat-attach-button' }).props.onPress());
+    expect(onAttach).toHaveBeenCalledOnce();
+    const attachments = [{ uri: 'file://photo', name: 'photo.png', sizeLabel: '1 KB', mimeType: 'image/png', uploadState: 'uploaded' as const }];
+    act(() => f.renderer.update(<ConversationComposer {...props} voice={voice} attachments={attachments} />));
+    expect(f.renderer.root.findByProps({ testID: 'pending-chat-attachment-0' })).toBeTruthy();
+    act(() => f.renderer.update(<ConversationComposer {...props} voice={{ ...voice, call: null }} attachments={attachments} value="Next message" />));
+    expect(f.renderer.root.findAllByProps({ testID: 'conversation-mode-label' })).toHaveLength(0);
+    expect(f.renderer.root.findByType('TextInput').props.value).toBe('Next message');
+    expect(f.renderer.root.findByProps({ testID: 'pending-chat-attachment-0' })).toBeTruthy();
+    act(() => f.renderer.root.findByProps({ testID: 'chat-send' }).props.onPress());
+    expect(f.onSend).toHaveBeenCalledOnce();
   });
 });

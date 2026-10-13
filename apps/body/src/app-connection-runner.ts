@@ -13,8 +13,11 @@ export async function runAppConnection(job: AppConnectionJob, client: SquireMcpC
   const goal = job.noApi
     ? `Sign in to ${job.name} with the owner's saved account and save its login in the vault as service ${job.service}.`
     : `Sign up or sign in to ${job.name} using the owner's account. Create an API key and leave its revealed key dialog open for secure vault capture. Do not copy a secret into the response.`;
+  let savedLoginLoaded = false;
+  let answer: string | undefined;
   for (let attempt = 0; attempt < 3; attempt++) {
     const args = { goal, facts: {}, max_seconds: 25, max_steps: 60,
+      ...(answer ? { answer } : {}),
       ...(sessionId ? { session_id: sessionId } : job.url ? { url: job.url } : {}) };
     const raw = await client.call('operate_drive', args);
     const result = record(raw);
@@ -38,6 +41,35 @@ export async function runAppConnection(job: AppConnectionJob, client: SquireMcpC
       await client.call('operate_finish', { session_id: sessionId, outcome: 'none' });
       return { status: 'ready' };
     }
+    if (result.status === 'needs_value' && sessionId && !savedLoginLoaded && attempt < 2) {
+      const listed = record(await client.call('list_credentials', { service: job.service, fields: 'summary' }));
+      const saved = Array.isArray(listed.credentials) ? listed.credentials.map(record).find(entry =>
+        typeof entry.reference === 'string' && Array.isArray(entry.field_names)
+        && entry.field_names.includes('password')
+        && (entry.field_names.includes('login') || entry.field_names.includes('username'))) : undefined;
+      if (saved) {
+        const fields = [(saved.field_names as string[]).includes('login') ? 'login' : 'username', 'password'];
+        const loginArgs = { action: 'load_saved', session_id: sessionId, reference: saved.reference,
+          fields, slot_prefix: 'connection-login' };
+        const loaded = await client.call('operate_login', loginArgs);
+        const loginApproval = squireApprovalFromMcp({ id: 1, method: 'tools/call',
+          params: { name: 'operate_login', arguments: loginArgs } }, { id: 1, result: loaded });
+        if (loginApproval) return { status: 'approval', sessionId, approvalUrl: loginApproval.approvalUrl,
+          ...(loginApproval.approvalId ? { approvalId: loginApproval.approvalId } : {}),
+          ...(loginApproval.expiresAt ? { expiresAt: loginApproval.expiresAt } : {}) };
+        if (record(loaded).isError === true || record(loaded).error)
+          return { status: 'error', reason: 'Squire could not load the saved app login. Reconnect to retry.' };
+        savedLoginLoaded = true;
+        answer = 'Use the saved login slots loaded into this session to sign in. Never reveal their values.';
+        continue;
+      }
+    }
+    const failure = {
+      needs_value: 'Squire needs account information that it could not resolve securely.',
+      stuck: 'Squire could not proceed with this app’s connection flow.',
+      low_confidence: 'Squire could not determine a reliable next action for this app.',
+    }[String(result.status) as 'needs_value' | 'stuck' | 'low_confidence'];
+    if (failure) return { status: 'error', reason: `${failure} Reconnect to retry.` };
     if (result.status !== 'budget' || !sessionId)
       return { status: 'error', reason: 'Squire could not finish connecting this app. Reconnect to retry.' };
   }

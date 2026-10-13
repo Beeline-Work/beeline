@@ -11,11 +11,11 @@ export function VoiceCallCard({ call, joined, onJoin, agents = [] }: { call: Voi
     const timer = setInterval(() => setNow(Date.now() / 1000), 1000); return () => clearInterval(timer);
   }, [call.endedAt]);
   const duration = voiceDuration((call.endedAt ?? now) - call.startedAt);
-  if (call.endedAt) return <Text style={styles.ended} testID="voice-call-ended">Voice call ended · {duration}</Text>;
+  if (call.endedAt) return <Text style={styles.ended} testID="voice-call-ended">Conversation ended · {duration}</Text>;
   return <View style={styles.card} testID="voice-call-card">
-    <View style={styles.copy}><Text style={styles.title}>Voice call · {duration}</Text>
+    <View style={styles.copy}><Text style={styles.title}>Conversation mode · {duration}</Text>
       <Text style={styles.people} numberOfLines={1}>{[...call.participants, ...agents].map(p => p.name).join(', ')}</Text></View>
-    {!joined && <Pressable onPress={onJoin} accessibilityRole="button" accessibilityLabel="Join voice call" style={styles.join} testID="voice-call-join">
+    {!joined && <Pressable onPress={onJoin} accessibilityRole="button" accessibilityLabel="Join Conversation mode" style={styles.join} testID="voice-call-join">
       <Text style={styles.joinText}>Join</Text></Pressable>}
   </View>;
 }

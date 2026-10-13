@@ -44,11 +44,12 @@ native module. Android 12+ provides native signal backtraces when retained by
 the OS; fatal JVM exceptions are captured on all supported Android versions.
 If Android does not retain a trace, the receipt explicitly says so.
 
-The Samsung v0.1.50 root cause has **not** been identified. The read-only Play
-Reporting workflow returned `403 SERVICE_DISABLED`, rather than an empty set
-of crash reports. Its temporary workflow was removed. The account owner must
-enable the Reporting API before crash clusters can be retrieved. No speculative
-voice transport fix is included.
+The Samsung v0.1.50 root cause has **not** been identified. The first read-only
+Play Reporting query returned `403 SERVICE_DISABLED`. After the account owner
+enabled the API, both the crash report and crash cluster searches succeeded
+but returned no entries covering the last 48 hours, including the current hour.
+The temporary workflow changes were removed. No speculative voice transport
+fix is included; a device trace or a later Play report is still needed.
 
 This addition requires a **store build** and server deployment. Android runtime
 advances 34 → 35. Expo also fingerprints the new local module descriptor on

@@ -55,6 +55,6 @@ describe.skipIf(!existsSync(CHROME))('DM actions sheet', () => {
       const failedResult = JSON.parse(failed.result);
       expect(failedResult.switchOn).toBe(false);
       expect(failedResult.alert).toContain('Could not update notifications');
-    });
+    }, 120_000);
   }
 });

@@ -566,7 +566,7 @@ export class RoomRuntimeCoordinator {
   private localWorktreeIds?: Promise<Set<string>>;
   /** Event-driven cleanup retries stay scoped to the failed local corner. */
   private readonly archiveCleanupFaults = new Map<string, { failures: number; retryAt: number }>();
-  /** A non-retryable refusal parks this local checkout for the rest of this core's lifetime. */
+  /** Permanent cleanup refusals survive core and helper restarts on disk. */
   private readonly archiveCleanupRefused = new Set<string>();
   /**
    * A corner whose branch cleanup found commits no origin ref contains. That
@@ -739,8 +739,8 @@ export class RoomRuntimeCoordinator {
     return this.surfaceHealth.summary();
   }
 
-  hasUnreadySurfaces(): boolean {
-    return this.surfaceHealth.hasUnready();
+  hasDegradedSurfaces(): boolean {
+    return this.surfaceHealth.hasDegraded();
   }
 
   /**
@@ -1668,6 +1668,46 @@ export class RoomRuntimeCoordinator {
     return (this.localWorktreeIds ??= localCornerWorktreeIds(this.runtime.supervisorRoot));
   }
 
+  private archiveCleanupRefusalPath(cornerId: string): string {
+    return resolve(dirname(this.configPath), 'corner-cleanup-refusals',
+      `${createHash('sha256').update(cornerId).digest('hex')}.json`);
+  }
+
+  private async cleanupWasRefused(cornerId: string): Promise<boolean> {
+    if (this.archiveCleanupRefused.has(cornerId)) return true;
+    if (await lstat(this.archiveCleanupRefusalPath(cornerId)).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return undefined;
+      throw error;
+    })) {
+      this.archiveCleanupRefused.add(cornerId);
+      return true;
+    }
+    return false;
+  }
+
+  private async refuseArchiveCleanup(
+    cornerId: string,
+    error: DaemonApiError,
+    worktree?: DiscoveredCornerWorktree & { branch?: string },
+  ): Promise<void> {
+    this.archiveCleanupRefused.add(cornerId);
+    this.archiveCleanupFaults.delete(cornerId);
+    this.pendingCornerReaps.delete(cornerId);
+    await writePrivateFileAtomically(this.archiveCleanupRefusalPath(cornerId),
+      `${JSON.stringify({ cornerId, status: error.status, code: error.code })}\n`);
+    // A refusal grants no deletion authority. Keep code and refs; reclaim only
+    // ignored generated output using the existing local recovery safeguards.
+    if (worktree && existsSync(worktree.path)) {
+      const branch = worktree.branch ?? await execFileAsync('git',
+        ['-C', worktree.path, 'symbolic-ref', '--quiet', '--short', 'HEAD'])
+        .then(result => result.stdout.trim(), () => 'HEAD');
+      await preserveUnpublishedCornerWorktree({ ...worktree, cornerId, branch },
+        'server permanently refused archived cleanup').catch((preserveError) =>
+        console.error(`[thin-core] corner ${cornerId} local recovery preservation failed:`, preserveError));
+    }
+    console.warn(`[thin-core] corner ${cornerId} cleanup refused; local work preserved`);
+  }
+
   private archiveCleanupDue(cornerId: string): boolean {
     return (this.archiveCleanupFaults.get(cornerId)?.retryAt ?? 0) <= this.now();
   }
@@ -1681,13 +1721,18 @@ export class RoomRuntimeCoordinator {
   }
 
   private async retryPendingCornerReaps(desired: ReadonlySet<string>): Promise<void> {
+    // A new active membership is fresh authority, rather than a cleanup retry.
+    for (const cornerId of desired) {
+      this.archiveCleanupRefused.delete(cornerId);
+      await rm(this.archiveCleanupRefusalPath(cornerId), { force: true });
+    }
     for (const [cornerId, worktree] of [...this.pendingCornerReaps]) {
       if (desired.has(cornerId)) {
         this.pendingCornerReaps.delete(cornerId);
         this.archiveCleanupAbandoned.delete(cornerId);
         continue;
       }
-      if (this.archiveCleanupAbandoned.has(cornerId) || this.archiveCleanupRefused.has(cornerId)) continue;
+      if (this.archiveCleanupAbandoned.has(cornerId) || await this.cleanupWasRefused(cornerId)) continue;
       if (!this.archiveCleanupDue(cornerId)) continue;
       try {
         await this.reapCornerWorktree(worktree);
@@ -1708,9 +1753,11 @@ export class RoomRuntimeCoordinator {
           continue;
         }
         if (error instanceof DaemonApiError && error.status >= 400 && error.status < 500 && !error.retryable)
-          this.archiveCleanupRefused.add(cornerId);
-        else this.deferArchiveCleanup(cornerId);
-        console.error(`[thin-core] corner ${cornerId} branch cleanup retry failed:`, error);
+          await this.refuseArchiveCleanup(cornerId, error, worktree);
+        else {
+          this.deferArchiveCleanup(cornerId);
+          console.error(`[thin-core] corner ${cornerId} branch cleanup retry failed:`, error);
+        }
         // Cleanup retries ride the next reconciliation. Waking discovery
         // here would repeat every Room and archived-corner read.
       }
@@ -1736,7 +1783,7 @@ export class RoomRuntimeCoordinator {
         continue;
       if (!this.archiveCleanupDue(cornerId)) continue;
       if (this.archiveCleanupAbandoned.has(cornerId)) continue;
-      if (this.archiveCleanupRefused.has(cornerId)) continue;
+      if (await this.cleanupWasRefused(cornerId)) continue;
       let corner = corners.get(cornerId);
       let discovered: DiscoveredCornerWorktree | undefined;
       let candidate: CornerWorktree | undefined;
@@ -1784,7 +1831,8 @@ export class RoomRuntimeCoordinator {
           recovered: true,
         };
         await this.reapCornerWorktree(candidate);
-        console.log(`[thin-core] swept archived corner worktree ${cornerId}`);
+        if (!this.archiveCleanupRefused.has(cornerId))
+          console.log(`[thin-core] swept archived corner worktree ${cornerId}`);
       } catch (error) {
         if (candidate && hasUnpublishedWork(error)) {
           this.archiveCleanupAbandoned.add(cornerId);
@@ -1797,9 +1845,11 @@ export class RoomRuntimeCoordinator {
           continue;
         }
         if (error instanceof DaemonApiError && error.status >= 400 && error.status < 500 && !error.retryable)
-          this.archiveCleanupRefused.add(cornerId);
-        else this.deferArchiveCleanup(cornerId);
-        console.error(`[thin-core] archived corner ${cornerId} cleanup deferred:`, error);
+          await this.refuseArchiveCleanup(cornerId, error, discovered);
+        else {
+          this.deferArchiveCleanup(cornerId);
+          console.error(`[thin-core] archived corner ${cornerId} cleanup deferred:`, error);
+        }
         // The checkout remains for the next reconciliation. A stale or unsafe
         // checkout cannot require another full discovery immediately.
       }
@@ -1807,6 +1857,7 @@ export class RoomRuntimeCoordinator {
   }
 
   private async reapCornerWorktree(worktree: CornerWorktree): Promise<void> {
+    if (await this.cleanupWasRefused(worktree.cornerId)) return;
     // The exact local ref is the deletion authority. It was created for this
     // corner's worktree and survives a failed remote deletion so reconcile can
     // retry the same exact ref. A missing local ref plus a missing remote ref
@@ -1841,6 +1892,10 @@ export class RoomRuntimeCoordinator {
         });
       }
     } catch (error) {
+      if (error instanceof DaemonApiError && !error.retryable && error.status >= 400 && error.status < 500) {
+        await this.refuseArchiveCleanup(worktree.cornerId, error, worktree);
+        return;
+      }
       this.pendingCornerReaps.set(worktree.cornerId, { ...worktree, token: '' });
       throw error;
     }
@@ -1856,7 +1911,9 @@ export class RoomRuntimeCoordinator {
     try {
       const state = await this.options.daemonApi.execute('getCornerRestoreState', { cornerId });
       return cornerBranchIsSafeToDelete(state.lifecycle);
-    } catch {
+    } catch (error) {
+      if (error instanceof DaemonApiError && !error.retryable && error.status >= 400 && error.status < 500)
+        throw error;
       return false;
     }
   }
@@ -1876,6 +1933,7 @@ export class RoomRuntimeCoordinator {
     knownArchive?: ReadonlyMap<string, { cornerId: string; parentRoomId: string }>,
   ): Promise<boolean> {
     if (this.running.has(cornerId) || this.startingCorners.has(cornerId)) return false;
+    if (await this.cleanupWasRefused(cornerId)) return false;
     const root = resolve(dirname(this.configPath), 'rooms', cornerId);
     if (this.roomRoot(cornerId) !== root || !/^[a-zA-Z0-9-]{1,80}$/.test(cornerId)) return false;
     const info = await lstat(root).catch(() => undefined);
@@ -1885,7 +1943,9 @@ export class RoomRuntimeCoordinator {
       try {
         const restore = await this.options.daemonApi.execute('getCornerRestoreState', { cornerId }) as CornerRestoreResult & { archived?: boolean };
         archived = restore.archived === true;
-      } catch {
+      } catch (error) {
+        if (error instanceof DaemonApiError && !error.retryable && error.status >= 400 && error.status < 500)
+          await this.refuseArchiveCleanup(cornerId, error);
         return false;
       }
     }

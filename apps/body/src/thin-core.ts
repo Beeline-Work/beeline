@@ -70,7 +70,7 @@ export class ThinDaemonCore {
   }
   healthStatus(): string {
     const count = this.roomRuntime.activeRoomCount();
-    return `${this.discoveryStatus || (this.roomRuntime.hasUnreadySurfaces() ? 'degraded' : 'healthy')}; ` +
+    return `${this.discoveryStatus || (this.roomRuntime.hasDegradedSurfaces() ? 'degraded' : 'healthy')}; ` +
       `${count} Room${count === 1 ? '' : 's'} active; ${this.roomRuntime.surfaceHealthSummary()}`;
   }
   setInteractiveIdleListener(listener: () => void): void {

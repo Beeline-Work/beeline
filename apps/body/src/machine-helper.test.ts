@@ -7,7 +7,7 @@ import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
 import { WebSocketServer } from 'ws';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
-import { DaemonApiClient } from './daemon-api-client.js';
+import { DaemonApiError, DaemonApiClient } from './daemon-api-client.js';
 import { CommandExecutionContext, runServerCommandIntake } from './server-command-intake.js';
 import { activeReleaseId, activateRelease, readInstalledBundleIdentity, readUpdateState, hostPlatformKey, SelfUpdateManager } from './self-update.js';
 import { dirname, resolve } from 'node:path';
@@ -120,6 +120,44 @@ describe('one helper process hosts every agent on the machine', () => {
     expect([...fake.signals.values()].every((signal) => signal.aborted)).toBe(true);
     lifecycle.exit(reason);
     expect(exits).toEqual([0]);
+  });
+
+  it('keeps established agents serving when health prose says degraded', async () => {
+    const { root, env, signals } = await machine(1);
+    const fake = fakeRuntimes();
+    const running = runMachineHelper({ env, signals, runAgent: fake.runAgent, exitProcess: () => undefined });
+    try {
+      await vi.waitFor(() => expect(fake.signals.size).toBe(1));
+      const [, host] = fake.runAgent.mock.calls[0]!;
+      const agentId = [...fake.signals.keys()][0]!;
+      for (const text of ['degraded; 13 Rooms active; surfaces=31 intake-ready=13 subscribed=0 discovered=18 degraded=0',
+        'monolith discovery degraded: temporary read failure']) {
+        host.progress(agentId, text);
+        await vi.waitFor(async () => {
+          const status = JSON.parse(await readFile(helperStatusPath(root), 'utf8'));
+          expect(status.agents[agentId]).toMatchObject({ state: 'serving', status: text });
+        });
+      }
+      expect(fake.runAgent).toHaveBeenCalledOnce();
+    } finally {
+      signals.emit('SIGTERM');
+      await running;
+    }
+  });
+
+  it.each([400, 404, 409, 410])('parks a permanent %s startup refusal until configuration changes', async (statusCode) => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    const { root, env, signals } = await machine(1);
+    const fake = fakeRuntimes(() => Promise.reject(new DaemonApiError('configuration refused', statusCode, false)));
+    const running = runMachineHelper({ env, signals, runAgent: fake.runAgent, exitProcess: () => undefined });
+    try {
+      await vi.waitFor(async () => {
+        const status = JSON.parse(await readFile(helperStatusPath(root), 'utf8'));
+        expect(Object.values(status.agents)).toEqual([expect.objectContaining({ state: 'needs-config' })]);
+      });
+      await vi.advanceTimersByTimeAsync(120_000);
+      expect(fake.runAgent).toHaveBeenCalledOnce();
+    } finally { signals.emit('SIGTERM'); await running; }
   });
 
   it('retries past three failures until recovery while the sibling continues', async () => {

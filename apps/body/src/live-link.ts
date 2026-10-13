@@ -16,9 +16,9 @@ export { isNetworkFailure };
  * that hears no ping for `heartbeatTimeoutMs` is dead even if it looks open.
  *
  *   disconnected → connecting → open ⇄ suspect
- *   any state → update-required (terminal: never reconnects)
+ *   any state → update-required or refused (terminal: never reconnects)
  */
-export type LiveLinkState = 'disconnected' | 'connecting' | 'open' | 'suspect' | 'update-required';
+export type LiveLinkState = 'disconnected' | 'connecting' | 'open' | 'suspect' | 'update-required' | 'refused';
 
 export type LiveSocketFactory = (
   url: string,
@@ -120,7 +120,7 @@ export class LiveLink {
   }
 
   start(): void {
-    if (this.#state === 'update-required') return;
+    if (this.#state === 'update-required' || this.#state === 'refused') return;
     this.#wanted = true;
     if (!this.#socket && !this.#reconnect) this.#connect();
   }
@@ -130,7 +130,7 @@ export class LiveLink {
     this.#clearTimers();
     const socket = this.#socket;
     this.#socket = undefined;
-    if (this.#state !== 'update-required') this.#state = 'disconnected';
+    if (this.#state !== 'update-required' && this.#state !== 'refused') this.#state = 'disconnected';
     socket?.close(forUpdate ? HELPER_UPDATE_CLOSE_CODE : undefined,
       forUpdate ? HELPER_UPDATE_CLOSE_REASON : undefined);
   }
@@ -215,7 +215,15 @@ export class LiveLink {
       response.socket?.setKeepAlive?.(true, this.#timing.keepAliveDelayMs);
     });
     socket.on?.('unexpected-response', (_request: unknown, response: IncomingMessage) => {
-      if (response.statusCode !== 426) {
+      const status = response.statusCode ?? 0;
+      if (status >= 400 && status < 500 && status !== 408 && status !== 429 && status !== 426) {
+        this.#state = 'refused';
+        console.warn(`[live-link] server permanently refused socket upgrade (${status}); reconnects stopped`);
+        this.#clearTimers();
+        socket.terminate();
+        return;
+      }
+      if (status !== 426) {
         // Any other refusal (502, 503, a proxy page) ends this attempt now;
         // without this the handshake would wait forever for a close.
         this.#retryAfterMs = retryAfterMs(headerValue(response.headers?.['retry-after'])) ?? 0;
@@ -278,9 +286,9 @@ export class LiveLink {
       this.#heartbeatDeadline = undefined;
       const openedAt = this.#openedAt;
       this.#openedAt = undefined;
-      if (this.#state !== 'update-required') this.#state = 'disconnected';
+      if (this.#state !== 'update-required' && this.#state !== 'refused') this.#state = 'disconnected';
       this.options.onClose();
-      if (this.#state === 'update-required' || !this.#wanted) return;
+      if (this.#state === 'update-required' || this.#state === 'refused' || !this.#wanted) return;
       this.#scheduleReconnect(openedAt);
     };
   }

@@ -3834,6 +3834,7 @@ describe('corner turn rename prompt', () => {
 
 describe('corner turn failure receipt', () => {
   it('reports failed with a distilled, secret-free reason and never a stack trace', async () => {
+    const journal = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const root = await mkdtemp(join(tmpdir(), 'beeline-corner-failure-'));
     roots.push(root);
     await execFileAsync('git', ['init', root]);
@@ -3964,6 +3965,11 @@ describe('corner turn failure receipt', () => {
     expect(reason).toContain('turn_backstop: no ACP traffic for 45 minutes; last activity: plan');
     expect(reason).toContain('[REDACTED]');
     expect(reason).not.toMatch(/ghp_abc|\n|\bat AcpClient/);
+    const logged = journal.mock.calls.flat().join(' ');
+    expect(logged).toContain('at AcpClient.request');
+    expect(logged).toContain('[REDACTED]');
+    expect(logged).not.toContain('ghp_abcdefghijklmnopqrstuvwxyz');
+    journal.mockRestore();
   });
 });
 

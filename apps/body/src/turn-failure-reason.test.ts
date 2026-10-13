@@ -1,10 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { ModelSelectionUnavailableError } from './model-config.js';
-import { distillTurnFailureReason, TURN_FAILURE_REASON_MAX } from './turn-failure-reason.js';
+import { distillTurnFailureReason, redactTurnError, TURN_FAILURE_REASON_MAX } from './turn-failure-reason.js';
 import { AcpResourceLimitError, AcpRuntimeExitedError, AcpTurnBackstopError, TURN_BACKSTOP_MS } from './acp.js';
 import { classifyTurnSilence, phraseTurnSilence } from '@beeline/api-contract/daemon';
 
 describe('distillTurnFailureReason', () => {
+  it('keeps the journal stack while scrubbing its credential values', () => {
+    const error = new Error('failed GH_TOKEN=ghp_abcdefghijklmnop');
+    error.stack = `${error.message}\n    at prompt (/fixture/acp.js:12:1)`;
+    expect(redactTurnError(error)).toContain('at prompt (/fixture/acp.js:12:1)');
+    expect(redactTurnError(error)).not.toContain('ghp_abcdefghijklmnop');
+    expect(redactTurnError(error)).toContain('[REDACTED]');
+    expect(redactTurnError('failed token=fixture-secret')).not.toContain('fixture-secret');
+  });
   it('keeps a cgroup memory failure as a terminal resource limit receipt', () => {
     const reason = distillTurnFailureReason(new AcpResourceLimitError(128 * 1024 * 1024));
     expect(reason).toEqual({

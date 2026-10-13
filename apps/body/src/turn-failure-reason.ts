@@ -25,6 +25,7 @@ export function redactToolDetail(value: string): string {
       (assignment) => `${assignment.slice(0, assignment.indexOf('='))}=[REDACTED]`,
     )
     .replace(/\b(?:gh[pousr]_[A-Za-z0-9_]{12,}|github_pat_[A-Za-z0-9_]{12,})\b/gi, '[REDACTED]')
+    .replace(/\b(?:bat|brt|bdt|bde)_[A-Za-z0-9_-]{43}\b/g, '[REDACTED]')
     .replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g, '[REDACTED]')
     .replace(/\b(Bearer\s+)[^\s,]+/gi, '$1[REDACTED]')
     .replace(/\bsk-[A-Za-z0-9_-]{12,}\b/g, '[REDACTED]')
@@ -32,6 +33,11 @@ export function redactToolDetail(value: string): string {
       /(--?(?:api[_-]?key|token|secret|password|authorization|credential|cookie)\s+)(?:"[^"]*"|'[^']*'|\S+)/gi,
       '$1[REDACTED]',
     );
+}
+
+/** Keep diagnostic stacks in the helper journal without their credential values. */
+export function redactTurnError(error: unknown): string {
+  return redactToolDetail(error instanceof Error ? error.stack || error.message : String(error));
 }
 
 export function distillTurnFailureReason(error: unknown): DistilledTurnFailureReason {

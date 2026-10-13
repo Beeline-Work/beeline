@@ -123,7 +123,7 @@ import { TurnStoppedError } from './turn-stop.js';
 import { AgentTurnStream, durableReplyText } from './turn-stream.js';
 import { TurnTrace, TurnTraceFile, type TurnTraceSink } from './turn-trace.js';
 import { isCompletedToolCall, toolCallFailureLine } from './tool-call-failure.js';
-import { distillTurnFailureReason } from './turn-failure-reason.js';
+import { distillTurnFailureReason, redactTurnError, redactToolDetail } from './turn-failure-reason.js';
 import { withTurnReceiptHeartbeat } from './turn-receipt-heartbeat.js';
 import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
 import { WarmTranscript } from './warm-transcript.js';
@@ -1417,7 +1417,7 @@ export class MonolithRoomTurnLoop {
     this.activeTurn = active;
     active.promise = this.prompt(active)
       .catch((error) => {
-        console.error(`[thin-core] monolith Room ${this.options.roomId} turn failed:`, error);
+        console.error(`[thin-core] monolith Room ${this.options.roomId} turn failed:`, redactTurnError(error));
       })
       .finally(() => {
         if (this.activeTurn === active) {
@@ -1854,7 +1854,7 @@ export class MonolithRoomTurnLoop {
               }
               if (openCornerCall) {
                 console.log(
-                  `[thin-core] monolith Room ${this.options.roomId} tool call: ${openCornerCall.title} (${openCornerCall.status ?? 'no status'})`,
+                  `[thin-core] monolith Room ${this.options.roomId} tool call: ${redactToolDetail(openCornerCall.title ?? '')} (${openCornerCall.status ?? 'no status'})`,
                 );
                 if (cornerOpened) this.options.onCornerOpened?.();
               }
@@ -2060,7 +2060,7 @@ export class MonolithRoomTurnLoop {
         onSubscriptionState: this.options.onSubscriptionState,
         onError: (error) => {
           this.options.onIntakeError?.(error);
-          console.error('[thin-core] Room command failed', error);
+          console.error('[thin-core] Room command failed', redactTurnError(error));
         },
         // Marks this loop busy the instant it attempts to claim a real
         // turn, before the claim's own network round trip and before

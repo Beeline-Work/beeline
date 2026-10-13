@@ -141,6 +141,45 @@ export const DEFAULT_WORKSPACE_LIVE_SESSIONS_FLOOR = 4;
  * ACP handshake stall every other Room's next turn, workspace-wide.
  */
 export class SessionScheduler {
+  private static readonly instances = new Set<SessionScheduler>();
+  static hostStoragePaused = false;
+  private static readonly storageAvailable = new Set<(key?: string) => void>();
+  static onStorageAvailable(listener: (key?: string) => void): () => void {
+    this.storageAvailable.add(listener);
+    return () => { this.storageAvailable.delete(listener); };
+  }
+  private static notifyStorageAvailable(key?: string): void {
+    for (const listener of this.storageAvailable) listener(key);
+  }
+  private static readonly hostRoomStorage = new Set<string>();
+  static roomStoragePaused(key: string): boolean { return this.hostRoomStorage.has(key); }
+  static async withIdleHostRoom(key: string, task: () => Promise<void>): Promise<boolean> {
+    if (this.hostStoragePaused || this.hostRoomStorage.has(key) || [...this.instances].some(scheduler =>
+      scheduler.live.has(key) || scheduler.busy.has(key) || scheduler.queues.has(key) ||
+      scheduler.drainingKeys.has(key) || scheduler.storageMaintenance.has(key) || scheduler.suspending.size)) return false;
+    this.hostRoomStorage.add(key);
+    try { await task(); return true; }
+    finally {
+      this.hostRoomStorage.delete(key);
+      for (const scheduler of this.instances) void scheduler.drainKey(key);
+      this.notifyStorageAvailable(key);
+    }
+  }
+
+  /** Fence all hosted turn launches while shared storage is measured/removed. */
+  static async withIdleHostStorage(task: () => Promise<void>): Promise<boolean> {
+    if (this.hostStoragePaused || this.hostRoomStorage.size || [...this.instances].some(scheduler =>
+      scheduler.live.size || scheduler.busy.size || scheduler.queues.size ||
+      scheduler.drainingKeys.size || scheduler.suspending.size || scheduler.storageMaintenance.size)) return false;
+    this.hostStoragePaused = true;
+    try { await task(); return true; }
+    finally {
+      this.hostStoragePaused = false;
+      for (const scheduler of this.instances) for (const key of scheduler.queues.keys()) void scheduler.drainKey(key);
+      this.notifyStorageAvailable();
+    }
+  }
+
   /** Fixed ceiling when explicitly configured; undefined selects the dynamic one. */
   private readonly fixedMaxLiveSessions?: number;
   private readonly perRoomLiveSessions: number;
@@ -216,6 +255,7 @@ export class SessionScheduler {
     if (options.activeRoomCount) this.activeRoomCount = options.activeRoomCount;
     this.sweepTimer = setInterval(() => void this.sweepIdle(), Math.min(this.idleMs, 30_000));
     this.sweepTimer.unref?.();
+    SessionScheduler.instances.add(this);
   }
 
   /** Run one ordered turn on a channel's pinned logical session. */
@@ -250,8 +290,25 @@ export class SessionScheduler {
     return promise;
   }
 
+  private readonly storageMaintenance = new Set<string>();
+
+  /** A storage lease excludes retained/spawning processes and queued turns. */
+  async withIdleStorage(key: string, task: () => Promise<void>): Promise<boolean> {
+    if (SessionScheduler.hostStoragePaused || SessionScheduler.roomStoragePaused(key) || this.storageMaintenance.has(key) || this.live.has(key) || this.busy.has(key) ||
+        this.drainingKeys.has(key) || this.queues.has(key) || this.suspending.size) return false;
+    this.storageMaintenance.add(key);
+    try {
+      await task();
+      return true;
+    } finally {
+      this.storageMaintenance.delete(key);
+      void this.drainKey(key);
+      SessionScheduler.notifyStorageAvailable(key);
+    }
+  }
+
   private async drainKey(key: string): Promise<void> {
-    if (this.drainingKeys.has(key)) return;
+    if (SessionScheduler.hostStoragePaused || SessionScheduler.roomStoragePaused(key) || this.drainingKeys.has(key) || this.storageMaintenance.has(key)) return;
     this.drainingKeys.add(key);
     try {
       for (;;) {
@@ -405,6 +462,7 @@ export class SessionScheduler {
     this.physicalHistory.clear();
     await Promise.all(sessions.map((session) => this.retire(session)));
     this.wakeCapacityWaiters();
+    SessionScheduler.instances.delete(this);
   }
 
   /** Workspace ceiling: fixed when configured, else `max(floor, perRoom x rooms)`. */

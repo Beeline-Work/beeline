@@ -37,16 +37,7 @@ import type { BeelineInstallLayout } from './self-update.js';
 import type { InstalledBundleIdentity } from './self-update-manifest.js';
 import { clearDaemonStartFailures } from './daemon-failure.js';
 import { extendSystemdStartTimeout } from './systemd.js';
-import { runScratchSweep } from './scratch-sweep.js';
 import type { MachineLink } from './machine-link.js';
-
-const SCRATCH_SWEEP_INTERVAL_MS = 6 * 60 * 60_000;
-
-function runScratchSweepLogged(runtimeDir: string): void {
-  void runScratchSweep(runtimeDir).catch((error) =>
-    console.error('[body] scratch sweep failed:', error),
-  );
-}
 
 /** What the machine helper needs from one agent it hosts. */
 export interface HostedAgent {
@@ -217,16 +208,7 @@ export async function runAgentRuntime(
   console.log(`[body] agent binary: ${formatAgentCommand(agent)}`);
   console.log(`[body] ${sandbox.advisory}`);
 
-  // The attach scratch roots (`scratch-sweep.ts`) are settled the moment the
-  // per-agent runtime layout above is: swept once now, then on a fixed
-  // interval for the life of this agent.
-  runScratchSweepLogged(runtimeDir);
-  const scratchSweepTimer = setInterval(
-    () => runScratchSweepLogged(runtimeDir),
-    SCRATCH_SWEEP_INTERVAL_MS,
-  );
-  scratchSweepTimer.unref();
-
+  let privateStorageTimer: ReturnType<typeof setInterval> | undefined;
   let discoveryReady = false;
   const markEstablished = () => {
     if (controller.signal.aborted || !discoveryReady || !daemonApi.channel.isOpen()) return;
@@ -330,6 +312,13 @@ export async function runAgentRuntime(
         });
       },
     });
+    // The existing six-hour local-disk timer now reclaims whole unused objects
+    // from previously confirmed lifecycle facts. It makes no server reads.
+    privateStorageTimer = setInterval(() => {
+      void core.reclaimKnownPrivateStorage().catch(error =>
+        console.error('[body] private storage cleanup deferred:', error));
+    }, 6 * 60 * 60_000);
+    privateStorageTimer.unref();
     leaveHost = host.attach({ agentId, runtimeDir, lifecycle, core });
     daemonApi.setForceUpdateListener((minVersion) => host.requestForceUpdate(minVersion));
     daemonApi.setHelperReleaseListener(({ version, sha }) => {
@@ -411,14 +400,13 @@ export async function runAgentRuntime(
     });
     if (result === 'agent-removed') {
       controller.abort();
-      const archivedRuntime = await retireRemovedAgent(runtime);
       exitReason = 'agent-removed';
-      console.log(`[beeline] agent ${agentId} removed; runtime archived at ${archivedRuntime}`);
+
     }
   } finally {
     signal.removeEventListener('abort', abortFromHost);
     leaveHost?.();
-    clearInterval(scratchSweepTimer);
+    clearInterval(privateStorageTimer);
     connectorLoop?.stop();
     agentSignIn?.stop();
     await registryMcpBroker?.stop();
@@ -426,6 +414,10 @@ export async function runAgentRuntime(
     daemonApi.closeLive();
     // Only clear the pid record while it still names THIS process.
     await clearDaemonPidRecordIfPid(configPath, process.pid);
+  }
+  if (exitReason === 'agent-removed') {
+    await retireRemovedAgent(runtime);
+    console.log(`[beeline] agent ${agentId} removed; private storage reclaimed or deferred while in use`);
   }
   return exitReason ?? lifecycle.stopReason ?? 'stopped';
 }

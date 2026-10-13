@@ -27,7 +27,8 @@ import { distillTurnFailureReason } from './turn-failure-reason.js';
 import { preserveUnpublishedCornerWorktree, queueCornerPreservation } from './corner-disk-recovery.js';
 import { writePrivateFileAtomically } from './atomic-private-file.js';
 import { agentGitIdentity } from './agent-git-identity.js';
-import { CORNER_SCRATCH_TTL_MS, sweepStaleCornerScratch } from './scratch-lifecycle.js';
+import { reclaimHelperStorage, capturePrivateProcessUse, storageTree, isSquirePath, hasMount, ordinaryDirectory, type StorageRoomState } from './helper-storage.js';
+import { pruneOpenCheckoutObjects, publishStorageFacts, rememberStorageOwner, discoverLegacyStorageOwners, readStorageOwners, reclaimOwnedCheckout } from './storage-owners.js';
 import { SurfaceHealth, type SurfaceHealthState } from './surface-health.js';
 import { RoomSupervisor } from './room-supervisor.js';
 import type { AgentRuntimeRecord, RoomRuntimeRecord } from './runtime.js';
@@ -142,6 +143,23 @@ export async function materializeCornerWorktree(input: {
       maxBuffer: 4 * 1024 * 1024,
     });
   }
+  // A bare clone writes no fetch refspec, so `git fetch origin main` only
+  // moves FETCH_HEAD and leaves origin/main stale. Always (re)set the wildcard
+  // refspec: `--replace-all` keeps repeat prepares from stacking duplicate
+  // values and repairs caches cloned before this fix, including ones whose
+  // existing worktree is left in place below. Explicit per-branch fetches still
+  // override it; the refspec only says where a plain fetch lands remote heads.
+  await execFileAsync(
+    'git',
+    [
+      `--git-dir=${gitCommonDir}`,
+      'config',
+      '--replace-all',
+      'remote.origin.fetch',
+      '+refs/heads/*:refs/remotes/origin/*',
+    ],
+    { maxBuffer: 4 * 1024 * 1024 },
+  );
   await execFileAsync(
     'git',
     [
@@ -377,6 +395,10 @@ export async function removeCornerWorktreeAndBranches(
   worktree: CornerWorktree,
   options: { preserveRemoteBranch?: boolean } = {},
 ): Promise<void> {
+  if (existsSync(worktree.path) && !await ordinaryDirectory(worktree.path)) throw new Error('refusing noncanonical checkout');
+  const contents = await storageTree(worktree.path).catch(() => undefined);
+  if (!contents && existsSync(worktree.path)) throw new Error('checkout inventory unavailable');
+  if (contents && [...contents.keys()].some(isSquirePath)) throw new Error('refusing checkout containing Trusty Squire storage');
   const preserveRemoteBranch = options.preserveRemoteBranch === true;
   const localRef = `refs/heads/${worktree.branch}`;
   const remoteRef = `refs/heads/${worktree.branch}`;
@@ -534,24 +556,6 @@ interface DesiredCorner {
 
 const execFileAsync = promisify(execFile);
 
-/** Delete exactly one chat-only corner's dedicated scratch workspace. */
-export async function removeCornerScratchWorkspace(input: {
-  cornerId: string;
-  roomRoot: string;
-  scratchPath: string;
-}): Promise<void> {
-  const expected = resolve(input.roomRoot, 'scratch');
-  if (resolve(input.scratchPath) !== expected) {
-    throw new Error(`refusing to remove scratch outside corner ${input.cornerId}`);
-  }
-  // Repository-free corners put their durable harness history inside scratch.
-  // Reap only work files; an archived session must remain resumable.
-  for (const entry of await readdir(expected, { withFileTypes: true }).catch(() => [])) {
-    if (entry.name === 'agent-home' || entry.name === 'agent-private') continue;
-    await rm(resolve(expected, entry.name), { recursive: true, force: true });
-  }
-}
-
 /** Monolith-only Room supervisor. Relay-backed discovery and turn serving are retired. */
 export class RoomRuntimeCoordinator {
   private readonly runtime: AgentRuntimeRecord;
@@ -577,7 +581,10 @@ export class RoomRuntimeCoordinator {
   private readonly archiveCleanupAbandoned = new Set<string>();
   private preservationFlight?: Promise<void>;
   private reconciliationProgressListener?: () => void | Promise<void>;
-  private lastCornerScratchSweepAt = 0;
+  private readonly storageMaintenanceRooms = new Set<string>();
+  private readonly storageDeferredStarts = new Set<string>();
+  private readonly stopStorageAvailable: () => void;
+  private knownStorageStates: readonly StorageRoomState[] = [];
   private readonly startingCorners = new Set<string>();
   /**
    * Rooms whose start is in flight. `running` is not set until the checkout
@@ -698,6 +705,14 @@ export class RoomRuntimeCoordinator {
       maxWarmSessions: resolveMaxWarmSessions(process.env),
       reserveInteractiveSlot: true,
     });
+    this.stopStorageAvailable = SessionScheduler.onStorageAvailable(key => {
+      if (this.stopped || !this.storageDeferredStarts.size) return;
+      if (key && !this.storageDeferredStarts.delete(key)) return;
+      if (!key) this.storageDeferredStarts.clear();
+      // Re-read membership/commands after the lease, rather than starting
+      // from facts that could have changed while storage was unavailable.
+      this.wakeDiscovery();
+    });
   }
 
   activeRoomIds(): string[] {
@@ -765,7 +780,7 @@ export class RoomRuntimeCoordinator {
   }
 
   isWorkspaceIdle(): boolean {
-    return this.activeTurnCount() === 0;
+    return this.activeTurnCount() === 0 && this.startingRooms.size === 0 && this.startingCorners.size === 0;
   }
 
   /** Turns executing right now. Serving a Room or corner with no turn in flight is idle. */
@@ -834,9 +849,12 @@ export class RoomRuntimeCoordinator {
   async reconcile(): Promise<WorkspaceMembershipStatus> {
     if (this.stopped) return 'member';
     const existingRooms = new Set(this.running.keys());
+    this.knownStorageStates = [];
     const bootstrap = await this.options.daemonApi.execute('getDaemonBootstrap', {
       agentId: this.agent.publicKey,
     });
+    this.knownStorageStates = bootstrap.storageRooms ?? [];
+    publishStorageFacts(this.runtime.supervisorRoot, this.knownStorageStates);
     if (this.stopped) return 'member';
     if (!bootstrap.workspaceIds.includes(this.runtime.communityId)) {
       this.workspaceRemovalConfirmations += 1;
@@ -940,8 +958,6 @@ export class RoomRuntimeCoordinator {
     if (this.stopped) return 'member';
     await this.sweepArchivedCornerWorktrees(archivedCorners, desired);
     if (this.stopped) return 'member';
-    await this.sweepCornerLocalState(archivedCorners, desired);
-    if (this.stopped) return 'member';
     for (const cornerId of this.idleCornerSubscriptions.keys()) {
       if (desired.has(cornerId)) continue;
       this.unwatchCorner(cornerId);
@@ -954,6 +970,8 @@ export class RoomRuntimeCoordinator {
       await this.stopRunning(channelId, running);
       this.roomRemovalConfirmations.delete(channelId);
     }
+    await this.sweepRoomPrivateStorage(bootstrap.storageRooms ?? []);
+    if (this.stopped) return 'member';
     // Archived corners are discovered for local cleanup through their exact
     // checkout IDs. Their parent mapping serves only a running intake.
     for (const cornerId of this.monolithCornerParents.keys()) {
@@ -1138,6 +1156,10 @@ export class RoomRuntimeCoordinator {
   private async startRoom(roomId: string): Promise<void> {
     if (this.stopped) return;
     if (this.running.has(roomId) || this.startingRooms.has(roomId)) return;
+    if (SessionScheduler.hostStoragePaused || SessionScheduler.roomStoragePaused(roomId) || this.storageMaintenanceRooms.has(roomId)) {
+      this.storageDeferredStarts.add(roomId);
+      return;
+    }
     this.surfaceHealth.discover(roomId, 'room');
     this.startingRooms.add(roomId);
     try {
@@ -1172,7 +1194,7 @@ export class RoomRuntimeCoordinator {
       onSubscriptionState: (connected) => this.surfaceHealth.subscribed(roomId, connected),
       onIntakeError: () => this.surfaceHealth.degraded(roomId, 'Room command intake failed'),
       onRestartRequested: () => this.requestLifecycleRestart(),
-      canStartTurn: () => !this.restartRequested,
+      canStartTurn: () => !this.restartRequested && !this.storageMaintenanceRooms.has(roomId),
       supervisor: this.supervisor,
     });
     const promise = loop
@@ -1219,6 +1241,7 @@ export class RoomRuntimeCoordinator {
       .digest('hex')
       .slice(0, 24);
     const path = resolve(this.runtime.supervisorRoot, 'beeline', 'room-checkouts', checkoutId);
+    await rememberStorageOwner(this.runtime.supervisorRoot, { workspaceId: this.runtime.communityId, roomId, kind: 'room-checkouts', itemId: checkoutId });
     await mkdir(dirname(path), { recursive: true, mode: 0o700 });
 
     const token = remote.startsWith('https://github.com/')
@@ -1289,6 +1312,10 @@ export class RoomRuntimeCoordinator {
   private async startCorner(corner: DesiredCorner): Promise<void> {
     if (this.stopped) return;
     if (this.running.has(corner.cornerId) || this.startingCorners.has(corner.cornerId)) return;
+    if (SessionScheduler.hostStoragePaused || SessionScheduler.roomStoragePaused(corner.cornerId) || this.storageMaintenanceRooms.has(corner.cornerId)) {
+      this.storageDeferredStarts.add(corner.cornerId);
+      return;
+    }
     this.surfaceHealth.discover(corner.cornerId, 'corner');
     this.startingCorners.add(corner.cornerId);
     let configKey: string | undefined;
@@ -1341,6 +1368,7 @@ export class RoomRuntimeCoordinator {
             token: granted!.token,
           })
         : undefined;
+      if (worktree) await rememberStorageOwner(this.runtime.supervisorRoot, { workspaceId: this.runtime.communityId, roomId: corner.cornerId, kind: 'corners', itemId: corner.cornerId });
       const workspacePath = worktree?.path ?? resolve(this.roomRoot(corner.cornerId), 'scratch');
       if (!worktree) await mkdir(workspacePath, { recursive: true, mode: 0o700 });
       await writePrivateFileAtomically(
@@ -1396,7 +1424,7 @@ export class RoomRuntimeCoordinator {
               })
             : this.reapCornerScratch({ path: workspacePath, cornerId: corner.cornerId }),
         onRestartRequested: () => this.requestLifecycleRestart(),
-        canStartTurn: () => !this.restartRequested,
+        canStartTurn: () => !this.restartRequested && !this.storageMaintenanceRooms.has(corner.cornerId),
         supervisor: this.supervisor,
       });
       const promise = loop
@@ -1550,7 +1578,7 @@ export class RoomRuntimeCoordinator {
         if (corner.archived) continue;
         this.surfaceHealth.discover(corner.cornerId, 'corner');
         this.roomRemovalConfirmations.delete(corner.cornerId);
-        if (this.running.has(corner.cornerId) || this.startingCorners.has(corner.cornerId)) continue;
+        if (SessionScheduler.hostStoragePaused || SessionScheduler.roomStoragePaused(corner.cornerId) || this.running.has(corner.cornerId) || this.startingCorners.has(corner.cornerId)) continue;
         await this.watchCorner({
           cornerId: corner.cornerId,
           parentRoomId: corner.parentRoomId,
@@ -1904,7 +1932,9 @@ export class RoomRuntimeCoordinator {
           roomId: parentRoomId,
         })
       ).token;
+      if ((await capturePrivateProcessUse())(worktree.path) || await hasMount(worktree.path)) return;
       await removeCornerWorktreeAndBranches({ ...worktree, token }, { preserveRemoteBranch });
+      await rm(resolve(this.runtime.supervisorRoot, 'beeline/storage-owners', `corners-${worktree.cornerId}.json`), { force: true });
       this.pendingCornerReaps.delete(worktree.cornerId);
       this.archiveCleanupFaults.delete(worktree.cornerId);
       (await this.getLocalWorktreeIds()).delete(worktree.cornerId);
@@ -1946,82 +1976,77 @@ export class RoomRuntimeCoordinator {
   }
 
   private async reapCornerScratch(scratch: CornerScratch): Promise<void> {
-    await removeCornerScratchWorkspace({
-      cornerId: scratch.cornerId,
-      roomRoot: this.roomRoot(scratch.cornerId),
-      scratchPath: scratch.path,
-    });
+    if (resolve(scratch.path) !== resolve(this.roomRoot(scratch.cornerId), 'scratch'))
+      throw new Error(`refusing scratch outside corner ${scratch.cornerId}`);
+    await this.cleanupArchivedCornerLocalState(scratch.cornerId);
   }
 
-  /** Reap a corner's private state only after the server confirms archive and
-   * its ACP session has suspended. A missing/failed read is never authority. */
-  private async cleanupArchivedCornerLocalState(
-    cornerId: string,
-    knownArchive?: ReadonlyMap<string, { cornerId: string; parentRoomId: string }>,
-  ): Promise<boolean> {
+  /** A failed/missing restore read cannot authorize private reclamation. Shared
+   * checkouts are reaped separately, under their unpublished-work protections. */
+  private async cleanupArchivedCornerLocalState(cornerId: string): Promise<boolean> {
     if (this.running.has(cornerId) || this.startingCorners.has(cornerId)) return false;
     if (await this.cleanupWasRefused(cornerId)) return false;
-    const root = resolve(dirname(this.configPath), 'rooms', cornerId);
-    if (this.roomRoot(cornerId) !== root || !/^[a-zA-Z0-9-]{1,80}$/.test(cornerId)) return false;
-    const info = await lstat(root).catch(() => undefined);
-    if (!info?.isDirectory() || (await realpath(root)) !== root) return false;
-    let archived = knownArchive?.has(cornerId) ?? false;
-    if (!archived) {
-      try {
-        const restore = await this.options.daemonApi.execute('getCornerRestoreState', { cornerId }) as CornerRestoreResult & { archived?: boolean };
-        archived = restore.archived === true;
-      } catch (error) {
-        if (error instanceof DaemonApiError && !error.retryable && error.status >= 400 && error.status < 500)
-          await this.refuseArchiveCleanup(cornerId, error);
-        return false;
-      }
+    let restore: CornerRestoreResult;
+    try {
+      restore = await this.options.daemonApi.execute('getCornerRestoreState', { cornerId });
+    } catch (error) {
+      if (error instanceof DaemonApiError && !error.retryable && error.status >= 400 && error.status < 500)
+        await this.refuseArchiveCleanup(cornerId, error);
+      return false;
     }
-    if (!archived) return false;
-    await this.scheduler.suspend(cornerId);
-    await removeCornerScratchWorkspace({
-      cornerId,
-      roomRoot: root,
-      scratchPath: resolve(root, 'scratch'),
-    });
-    // Retain harness conversations and auth while shared assets migrate.
-    await rm(resolve(root, '.beeline-corner.json'), { force: true });
-    return true;
+    if (restore.archived !== true) return false;
+    return (await this.reclaimPrivateStorage([{ roomId: cornerId, archived: true }])).length > 0;
   }
 
-  /** Recover chat-only scratch and per-member homes after missed close events
-   * or a helper restart. A marker identifies new code corners after their
-   * checkout has already gone; a scratch directory identifies legacy chat
-   * corners. Active scratch gets a 14-day file TTL, never a wholesale reap. */
-  private async sweepCornerLocalState(
-    archived: ReadonlyMap<string, { cornerId: string; parentRoomId: string }>,
-    desired: ReadonlySet<string>,
-  ): Promise<void> {
-    const root = resolve(dirname(this.configPath), 'rooms');
-    const due = this.now() - this.lastCornerScratchSweepAt >= 6 * 60 * 60_000;
-    if (due) this.lastCornerScratchSweepAt = this.now();
-    for (const entry of await readdir(root, { withFileTypes: true }).catch(() => [])) {
-      await this.yieldReconciliation();
-      if (this.stopped) return;
-      if (!entry.isDirectory() || !/^[a-zA-Z0-9-]{1,80}$/.test(entry.name)) continue;
-      const roomRoot = resolve(root, entry.name);
-      const scratch = resolve(roomRoot, 'scratch');
-      const marker = resolve(roomRoot, '.beeline-corner.json');
-      const hasScratch = (await lstat(scratch).catch(() => undefined))?.isDirectory() ?? false;
-      const hasMarker = (await lstat(marker).catch(() => undefined))?.isFile() ?? false;
-      if (!hasScratch && !hasMarker) continue;
-      if (desired.has(entry.name)) {
-        if (due && hasScratch && !this.startingCorners.has(entry.name) && !this.running.get(entry.name)?.body.isBusy()) {
-          await sweepStaleCornerScratch(scratch, this.now(), CORNER_SCRATCH_TTL_MS).catch((error) =>
-            console.error(`[thin-core] corner ${entry.name} scratch TTL sweep failed:`, error),
-          );
-        }
-        continue;
-      }
-      if (this.running.has(entry.name) || this.startingCorners.has(entry.name)) continue;
-      await this.cleanupArchivedCornerLocalState(entry.name, archived).catch((error) =>
-        console.error(`[thin-core] corner ${entry.name} local cleanup deferred:`, error),
-      );
+  private async reclaimPrivateStorage(states: readonly StorageRoomState[]) {
+    const owners = await readStorageOwners(this.runtime.supervisorRoot);
+    return reclaimHelperStorage({
+      runtimeDir: dirname(this.configPath),
+      readStates: async () => states,
+      progress: () => this.yieldReconciliation(),
+      relatedRoots: roomId => [resolve(this.runtime.supervisorRoot, 'beeline/corners', roomId),
+        ...owners.filter(owner => owner.roomId === roomId).map(owner => resolve(this.runtime.supervisorRoot, 'beeline', owner.kind, owner.itemId))],
+      operatorHome: this.baseConfig.operatorHome,
+      emulatorLeaseRoot: resolve(workspaceAssetRoot(this.runtime.supervisorRoot, this.runtime.communityId), 'cache/android-leases'),
+      withIdleRoom: async (roomId, task) => {
+        if (this.stopped || this.startingRooms.has(roomId) || this.startingCorners.has(roomId) ||
+            this.running.get(roomId)?.body.isBusy() ||
+            this.roomRoot(roomId) !== resolve(dirname(this.configPath), 'rooms', roomId)) return false;
+        return this.scheduler.withIdleStorage(roomId, async () => {
+          this.storageMaintenanceRooms.add(roomId);
+          try { await task(); }
+          finally { this.storageMaintenanceRooms.delete(roomId); }
+        });
+      },
+      log: entry => console.log(`[body] private storage: Room ${entry.roomId} ${entry.kind} deleted ${entry.path}; freed ${entry.freedBytes} bytes`),
+    });
+  }
+
+  /** Archive cleanup runs on each authoritative reconciliation. Open private
+   * folders are reconsidered every six hours; no file-age decision is made. */
+  private async sweepRoomPrivateStorage(states: readonly StorageRoomState[]): Promise<void> {
+    for (const owner of await discoverLegacyStorageOwners(this.runtime.supervisorRoot, this.runtime.communityId, states))
+      await rememberStorageOwner(this.runtime.supervisorRoot, owner);
+    await this.reclaimPrivateStorage(states);
+    await pruneOpenCheckoutObjects(this.runtime.supervisorRoot, states, {
+      log: entry => console.log(`[body] open checkout storage deleted ${entry.path}; freed ${entry.freedBytes} bytes`),
+    });
+    const archived = new Set(states.filter(state => state.archived).map(state => state.roomId));
+    for (const owner of await readStorageOwners(this.runtime.supervisorRoot)) {
+      if (!archived.has(owner.roomId) || owner.kind !== 'room-checkouts') continue;
+      if (this.running.has(owner.roomId) || this.startingRooms.has(owner.roomId)) continue;
+      await this.scheduler.withIdleStorage(owner.roomId, async () => {
+        await reclaimOwnedCheckout(this.runtime.supervisorRoot, owner, {
+          log: entry => console.log(`[body] Room ${owner.roomId} checkout deleted ${entry.path}; freed ${entry.freedBytes} bytes`),
+        });
+      });
     }
+  }
+
+  /** Local maintenance consumes only facts delivered by successful discovery.
+   * Archive is terminal; uncertainty never synthesizes an archive fact. */
+  async reclaimKnownPrivateStorage(): Promise<void> {
+    if (!this.stopped) await this.sweepRoomPrivateStorage(this.knownStorageStates);
   }
 
   private notePoll(roomId: string): void {
@@ -2043,6 +2068,7 @@ export class RoomRuntimeCoordinator {
   beginShutdown(): void {
     if (this.stopped) return;
     this.stopped = true;
+    this.stopStorageAvailable();
     this.restartRequested = true;
     for (const cornerId of this.idleCornerSubscriptions.keys()) this.unwatchCorner(cornerId);
     this.options.daemonApi.closeLive?.();

@@ -124,7 +124,7 @@ async function greenHead(number: number, headSha: string, checks = 'passing') {
 describe('corner message attribution', () => {
   // Reproduction ZC-1: GitHub reports no rollup for a PR with no checks, so no
   // check webhook exists to create the configured reviewer's command.
-  it('wakes the configured reviewer when the worker completes a zero-check PR, reports readiness to the commander when no reviewer is configured', async () => {
+  it('wakes the configured reviewer for a zero-check PR, privately asks the implementer to report when no reviewer is configured', async () => {
     let headSha = '1'.repeat(40);
     const checkGate = vi.fn(async () => ({
       checks: 'pending' as const,
@@ -189,8 +189,8 @@ describe('corner message attribution', () => {
       ).rows[0]?.lifecycle,
     ).toMatchObject({ checks: 'passing', checksSummary: { total: 0 } });
 
-    await db.query(`DELETE FROM agent_commands`);
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: null }, H);
+    await db.query(`DELETE FROM agent_commands`);
     headSha = '2'.repeat(40);
     await db.query(
       `UPDATE corner_facts SET lifecycle=jsonb_set(jsonb_set(lifecycle-'checksSummary','{checks}','"unknown"'),
@@ -205,8 +205,14 @@ describe('corner message attribution', () => {
     await claim(noReviewerWorker!, 'g2');
     await result(noReviewerWorker!, 'https://github.com/acme/repo/pull/7', 'g2');
     expect(checkGate).toHaveBeenCalledTimes(2);
-    expect((await commands(B, R)).some(command => command.reason === 'report' &&
-      command.source.body.startsWith('needs-decision: this zero-check pull request is ready to land pending your yes'))).toBe(true);
+    const notices = (await commands(A, C)).filter(command => command.reason === 'corner_review_needed');
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toMatchObject({ private: true, source: {
+      body: 'This pull request has no checks and no reviewer. Landing needs your commander\'s yes. Ask your commander using your normal report tool.',
+    } });
+    expect((await commands(B, R)).filter(command => command.reason === 'report' && command.source.body.includes('pending your yes'))).toHaveLength(0);
+    expect((await db.query(`SELECT 1 FROM messages WHERE text LIKE '%ready to land pending your yes%'
+      OR text LIKE '%Landing needs your commander%'`)).rowCount).toBe(0);
     expect((await commands(A, C)).filter(command => command.reason === 'corner_land')).toHaveLength(0);
   });
 
@@ -531,7 +537,7 @@ describe('corner message attribution', () => {
     await db.query(`DELETE FROM push_devices WHERE identity_id=$1`, [H]);
   });
 
-  it('tells the requester when a corner in a Room without a repository posts its deliverable, tag or no tag', async () => {
+  it.each([false, true])('notifies an Attention requester about a non-repository deliverable only when tagged (tagged=%s)', async (tagged) => {
     await db.query(
       `UPDATE rooms SET repository_key=NULL,repository_resolution='none' WHERE id=$1`,
       [R],
@@ -565,11 +571,12 @@ describe('corner message attribution', () => {
          VALUES($1,$2,'https://example.test/media/report','report.pdf','application/pdf',10,$3,'g1')`,
         [C, A, worker!.turnRequestId],
       );
-      await result(worker!, 'The report is attached.');
+      const text = tagged ? '@human The report is attached.' : 'The report is attached.';
+      await result(worker!, text);
       await push.runOnce();
-      expect(send.mock.calls.map(([, message]) => message.text)).toEqual([
-        'Hoots: The report is attached.',
-      ]);
+      expect(send.mock.calls.map(([, message]) => message.text)).toEqual(
+        tagged ? [`Hoots: ${text}`] : [],
+      );
     } finally {
       await db.query(
         `UPDATE rooms SET repository_key='owner/widgets',repository_resolution='repository' WHERE id=$1`,

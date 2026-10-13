@@ -1,12 +1,17 @@
 import { randomBytes } from 'node:crypto';
-import { createAgentPairingCode, normalizeAgentPairingCode } from '@beeline/api-contract/phone';
+import {
+  AGENT_SIGN_IN_HARNESSES,
+  createAgentPairingCode,
+  normalizeAgentPairingCode,
+} from '@beeline/api-contract/phone';
 import { isReasonableAgentName } from '@beeline/buzz-client';
 import { generateKeypair } from '@beeline/nostr';
 import { GITHUB_IDENTITY_AUDIENCE } from './github.js';
 import type { AuthRouteContext } from './server-context.js';
 
 const DEVICE_TTL_MS = 10 * 60_000;
-const SUPPORTED_HARNESSES = new Set(['codex', 'claude', 'goose', 'pi', 'grok', 'cursor']);
+// The contract's harness list, so a harness the CLI offers is never refused here.
+const SUPPORTED_HARNESSES = new Set<string>(AGENT_SIGN_IN_HARNESSES);
 const PROVIDER_REQUIRED = new Set(['goose', 'pi']);
 const SUPPORTED_PROVIDERS = new Set(['openrouter', 'openai', 'anthropic', 'google', 'xai']);
 const PAIRING_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';

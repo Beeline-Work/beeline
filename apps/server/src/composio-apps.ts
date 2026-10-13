@@ -309,6 +309,32 @@ function customOAuthConfig(items: readonly Json[], toolkit: string): Json | unde
 }
 
 export class ComposioApps {
+  /** Public service metadata only, loaded for the server's discovery index. */
+  async catalog(): Promise<readonly { slug: string; name: string; description?: string; appUrl?: string }[]> {
+    const entries = new Map<string, { slug: string; name: string; description?: string; appUrl?: string }>();
+    const cursors = new Set<string>();
+    let cursor: string | undefined;
+    for (let page = 0; page < 100; page++) {
+      const params = new URLSearchParams({ limit: '100', ...(cursor ? { cursor } : {}) });
+      const result = await this.request(`/toolkits?${params}`, 'GET');
+      if (!Array.isArray(result.items)) throw new Error('App catalog is invalid');
+      for (const item of result.items) {
+        const row = item && typeof item === 'object' ? item as Json : undefined;
+        if (!row || typeof row.slug !== 'string' || typeof row.name !== 'string'
+          || row.enabled === false || row.deprecated === true || row.is_local_toolkit === true) continue;
+        const meta = row.meta && typeof row.meta === 'object' ? row.meta as Json : {};
+        entries.set(row.slug, { slug: row.slug, name: row.name,
+          ...(typeof meta.description === 'string' ? { description: meta.description.slice(0, 1000) } : {}),
+          ...(typeof meta.app_url === 'string' ? { appUrl: meta.app_url.slice(0, 2048) } : {}) });
+      }
+      const next = result.next_cursor;
+      if (typeof next !== 'string' || !next) return [...entries.values()];
+      if (cursors.has(next)) throw new Error('App catalog cursor repeated');
+      cursors.add(next);
+      cursor = next;
+    }
+    throw new Error('App catalog exceeded its page budget');
+  }
   private readonly receiverSecrets = new Map<string, { secret: string; until: number }>();
   private readonly toolkitCache = new Map<string, { until: number; value: Promise<{
     slug: string; description?: string; logo?: string; appUrl?: string; enabled?: boolean;

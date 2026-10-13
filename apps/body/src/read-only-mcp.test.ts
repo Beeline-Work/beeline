@@ -9,6 +9,11 @@ import {
 } from './prompt-assembly.js';
 
 describe('direct message helper surface', () => {
+  it('limits reports to completion, decisions, or blockers', () => {
+    const report = agentToolsFor(true, false).find(tool => tool.name === 'report')!;
+    expect(report.description).toContain("Report when your assignment is finished, or when you need a decision or are blocked. Don't report progress.");
+  });
+
   it('advertises the enforced event and history input limits in tool descriptions', () => {
     const tools = agentToolsFor(true, false);
     const event = tools.find(tool => tool.name === 'emit_event')!;
@@ -367,8 +372,8 @@ it('offers the command grammar across Rooms, corners and DMs, with retired tools
 });
 
 it('R8d documents the optional continuation and generic fallback', () => {
-  const tool = agentToolsFor(true, false).find((tool) => tool.name === 'connect_app')!;
+  const tool = agentToolsFor(true, false).find((tool) => tool.name === 'connect')!;
   expect(tool.description).toContain('optional');
   expect(tool.description).toContain('continues the request right after');
-  expect(tool.inputSchema.required).toEqual(['app', 'reason']);
+  expect(tool.inputSchema.required).toEqual(['service', 'reason']);
 });

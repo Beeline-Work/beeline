@@ -487,7 +487,7 @@ describe('Room turn phase trace', () => {
         modelSelection: { model: 'z-ai/glm-5.3-flash' },
       } as Partial<BodyConfig>,
       prompt: async ({ attempt, agentHomeRoot, onChunk }) => {
-        // Attempt one is the C92 failure: 200, tool-enabled, and silent.
+        // A recorded provider outage retries; a normal empty final reply is silent.
         const dir = join(agentHomeRoot, 'pi', 'sessions', '--room--');
         await mkdir(dir, { recursive: true });
         await writeFile(
@@ -496,7 +496,12 @@ describe('Room turn phase trace', () => {
             JSON.stringify({ type: 'message', message: { role: 'user', content: [] } }),
             JSON.stringify({
               type: 'message',
-              message: { role: 'assistant', content: [], stopReason: 'end_turn', usage: { input: attempt * 10 } },
+              message: {
+                role: 'assistant', content: [],
+                stopReason: attempt === 1 ? 'error' : 'end_turn',
+                ...(attempt === 1 ? { errorMessage: '503: Provider unavailable' } : {}),
+                usage: { input: attempt * 10 },
+              },
             }),
           ].join('\n'),
         );
@@ -513,7 +518,7 @@ describe('Room turn phase trace', () => {
     expect(trace!.attempts[0]!.activation).toBe('cold');
     // The retry re-pins to one named provider and re-activates: its own cold spawn.
     expect(trace!.attempts[1]).toMatchObject({ activation: 'cold', provider: 'phala' });
-    expect(trace!.attempts[1]!.retryReason).toMatch(/no answer text|no text/);
+    expect(trace!.attempts[1]!.retryReason).toContain('provider error 503: Provider unavailable');
     expect(trace!.attempts[1]!.phases.activation).toBeGreaterThanOrEqual(0);
     expect(trace!.attempts[1]!.phases.publish).toBeGreaterThanOrEqual(0);
     expect(posted.map((message) => message.text)).toEqual(['Sorry about that.']);

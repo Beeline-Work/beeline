@@ -94,6 +94,7 @@ import type { BodyConfig } from './config.js';
 import { type DaemonApiClient } from './daemon-api-client.js';
 import {
   explainEmptyAgentTurn,
+  isSilentCompletion,
   isContextOverflowTurn,
   nextPinnedProvider,
   shouldFailOverProviderError,
@@ -293,6 +294,16 @@ export function inboxItemPromptBody(item: {
  */
 type PendingCardKind = 'grant' | 'connector';
 function pendingCardKind(call: { title?: string; content?: unknown }): PendingCardKind | undefined {
+  if (/(?:^|[._:/-])connect$/i.test(call.title ?? '')) {
+    try {
+      let content = call.content;
+      if (content && typeof content === 'object' && 'content' in content) content = content.content;
+      if (Array.isArray(content)) content = content.find(item => item?.type === 'text')?.text;
+      const result = typeof content === 'string' ? JSON.parse(content) : content;
+      if (result && typeof result === 'object' && ['needs_sign_in', 'needs_approval'].includes(result.status))
+        return result.grantId ? 'grant' : 'connector';
+    } catch { /* An invalid reply does not pause the turn. */ }
+  }
   const kind = /(?:^|[._:/-])(request_grant|request_shared_asset_isolation|offer_connector)$/i.exec(call.title ?? '')?.[1];
   if (!kind || !/(?:pending|already offered), card (?:posted|still open)/i.test(
     typeof call.content === 'string' ? call.content : JSON.stringify(call.content ?? ''),
@@ -1370,6 +1381,7 @@ export class MonolithRoomTurnLoop {
       sessionId: this.sessionId!,
       result,
     });
+    if (isSilentCompletion(result, explanation)) return undefined;
     // Private delivery answers the command without a chat reply. Only an
     // affirmative completed status counts; failed or unfinished calls still
     // owe an answer. Keep any durable text recovered from pi's turn record.

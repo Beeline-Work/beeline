@@ -34,7 +34,7 @@ Repeated reads in an authority check are preserved as retry semantics inside the
 | `postWorkSchedule`, `postWorkScheduleReceipt`                   | `work-calendar.ts:802,812,904`; `daemon-work-calendar.ts:801`                                                                           |
 | `postAgentCommands`                                             | `agent-commands-publish.ts:46`                                                                                                          |
 | `postCornerRemoteState`, `archiveCorner`                       | `body.ts:9717,9782,9853,9918,9974`                                                                                                     |
-| `watchCorner`                                                 | `read-only-mcp.ts` (`watch`); transactional lifecycle snapshot and opened/merged/closed wakes                                                 |
+| `watchCorner`                                                 | `read-only-mcp.ts` (`watch`); transactional lifecycle snapshot and opened/merged wakes                                                 |
 | `postAgentActivity`, `postCornerPlan`                           | `activity.ts:1014,1030,1060,1088,1561`                                                                                                  |
 | `postPermissionRequest`, `postPermissionExecution`              | `permission-runtime.ts:121,362`; `body.ts:5841,5932,5946,6328`                                                                          |
 | `order`, `report`, `read` | Private command transport and member-address reads from Rooms, corners and DMs; reports derive their return address from existing command provenance. |

@@ -462,15 +462,15 @@ it('resumes the incoming human order for a non-opener watch', async () => {
   } as unknown as AgentCommand);
   await daemon.execute(
     'watchCorner',
-    { roomId: ROOM, cornerId: opened.cornerId, kinds: ['closed'] },
+    { roomId: ROOM, cornerId: opened.cornerId, kinds: ['merged'] },
     WORKER,
   );
-  await phone.execute('requestCornerClose', { roomId: opened.cornerId }, HUMAN);
-  const closed = (await commands(ROOM, WORKER)).find((c) => c.reason === 'watched_corner')!;
-  expect(closed.parentCommandId).toBe(incoming.id);
-  await claim(closed);
+  await systemLine(db, { roomId: opened.cornerId, authorId: HUMAN, subject: { kind: 'system', name: 'GitHub' }, verb: 'merged', kind: 'merged' });
+  const merged = (await commands(ROOM, WORKER)).find((c) => c.reason === 'watched_corner')!;
+  expect(merged.parentCommandId).toBe(incoming.id);
+  await claim(merged);
   await expect(
-    daemon.execute('report', { ...authority(closed), text: 'done: watched corner closed' }, WORKER),
+    daemon.execute('report', { ...authority(merged), text: 'done: watched corner merged' }, WORKER),
   ).resolves.toHaveProperty('id');
 });
 
@@ -666,8 +666,8 @@ it('acknowledges explicit reports so final prose does not send a second report',
   expect((await commands(DM, RUBY)).filter((c) => c.reason === 'report')).toHaveLength(1);
 });
 
-it('human Room reports with an agent-written mention enter the needs-you tray and push at direct sensitivity', async () => {
-  await db.query(`UPDATE identities SET push_level='direct' WHERE id=$1`, [HUMAN]);
+it('human Room reports with an agent-written mention enter the needs-you tray and push at Attention sensitivity', async () => {
+  await db.query(`UPDATE identities SET push_level='attention' WHERE id=$1`, [HUMAN]);
   await db.query(
     `INSERT INTO push_devices(token,identity_id,platform,environment)
     VALUES('commander-device-token-12345678901234567890',$1,'android','physical')`,

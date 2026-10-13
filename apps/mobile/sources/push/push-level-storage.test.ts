@@ -13,10 +13,20 @@ import {
 describe('push level storage', () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it('defaults missing and invalid values to mine', async () => {
+  it('defaults missing and invalid values to Attention', async () => {
     storage.getItem.mockResolvedValueOnce(null).mockResolvedValueOnce('loud');
-    await expect(loadStoredPushLevel('person')).resolves.toBe('mine');
-    await expect(loadStoredPushLevel('person')).resolves.toBe('mine');
+    await expect(loadStoredPushLevel('person')).resolves.toBe('attention');
+    await expect(loadStoredPushLevel('person')).resolves.toBe('attention');
+  });
+
+  it.each([
+    ['off', 'off'],
+    ['direct', 'attention'],
+    ['mine', 'attention'],
+    ['all', 'full'],
+  ])('maps cached legacy %s to %s', async (legacy, mapped) => {
+    storage.getItem.mockResolvedValueOnce(legacy);
+    await expect(loadStoredPushLevel('person')).resolves.toBe(mapped);
   });
 
   it('round-trips a server-proven level for launch reconciliation', async () => {
@@ -29,8 +39,8 @@ describe('push level storage', () => {
     storage.setItem.mockResolvedValue(undefined);
     const listener = vi.fn(() => expect(storage.setItem).toHaveBeenCalled());
     const stop = subscribeStoredPushLevel(listener);
-    await saveStoredPushLevel('person', 'all');
-    expect(listener).toHaveBeenCalledWith('person', 'all');
+    await saveStoredPushLevel('person', 'full');
+    expect(listener).toHaveBeenCalledWith('person', 'full');
     stop();
     await saveStoredPushLevel('person', 'off');
     expect(listener).toHaveBeenCalledTimes(1);
@@ -42,11 +52,11 @@ describe('push level storage', () => {
     const listener = vi.fn();
     const stop = watchStoredPushLevel('person', listener);
     await vi.waitFor(() => expect(listener).toHaveBeenCalledWith('off'));
-    await saveStoredPushLevel('someone-else', 'all');
-    await saveStoredPushLevel('person', 'all');
-    expect(listener.mock.calls).toEqual([['off'], ['all']]);
+    await saveStoredPushLevel('someone-else', 'full');
+    await saveStoredPushLevel('person', 'full');
+    expect(listener.mock.calls).toEqual([['off'], ['full']]);
     stop();
-    await saveStoredPushLevel('person', 'mine');
+    await saveStoredPushLevel('person', 'attention');
     expect(listener).toHaveBeenCalledTimes(2);
   });
 
@@ -56,11 +66,11 @@ describe('push level storage', () => {
     storage.setItem.mockResolvedValue(undefined);
     const listener = vi.fn();
     const stop = watchStoredPushLevel('person', listener);
-    await saveStoredPushLevel('person', 'all');
+    await saveStoredPushLevel('person', 'full');
     resolveRead('off');
     await Promise.resolve();
     await Promise.resolve();
-    expect(listener.mock.calls).toEqual([['all']]);
+    expect(listener.mock.calls).toEqual([['full']]);
     stop();
   });
 });

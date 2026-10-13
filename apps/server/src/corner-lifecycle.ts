@@ -764,10 +764,15 @@ async function checksReported(
 /** Zero checks need the commander's yes; other review gaps retain their handback. */
 async function noteMissingReviewer(db: SqlDatabase, cornerId: string, corner: CornerRow, headKey: string): Promise<Applied> {
   if (corner.lifecycle.checksSummary?.total === 0) {
-    await reportToCommander(db, cornerId, SYSTEM_IDENTITY_ID,
-      `needs-decision: this zero-check pull request is ready to land pending your yes; an agent commander uses approve_merge for current head ${headKey}, and a person uses the merge approval`,
-      undefined, createHash('sha256').update(`zero-check-ready:${cornerId}:${headKey}`).digest('hex'));
-    return OK;
+    const command = corner.worker_agent_id ? await createAgentCommand(db, {
+      id: createHash('sha256').update(`zero-check-ready:${cornerId}:${headKey}`).digest('hex'),
+      roomId: cornerId, agentId: corner.worker_agent_id, sourceMessageId: null,
+      privatePayload: { text: 'This pull request has no checks and no reviewer. Landing needs your commander\'s yes. Ask your commander using your normal report tool.',
+        authorId: SYSTEM_IDENTITY_ID, fromRoomId: cornerId, kind: 'lifecycle' },
+      reason: 'corner_review_needed',
+    }) : undefined;
+    return { ok: true, wake: command ? { queued: true, agentId: corner.worker_agent_id! }
+      : { queued: false, reason: 'The implementer cannot be woken to ask its commander for a merge decision' } };
   }
   return noteReviewBlocked(db, cornerId, corner, headKey, 'no reviewer is configured');
 }

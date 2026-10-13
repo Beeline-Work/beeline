@@ -101,16 +101,16 @@ items stay unresolved, so a later run with a System sender reports them.
 Run the read-only query through your granted command:
 
 \`\`\`sql
-SELECT id, source_kind, category, summary, detail, tool_name, error_excerpt, created_at
+SELECT id, source_kind, category, summary, detail, tool_name, error_excerpt, created_at, occurrence_count, occurrences
 FROM feedback_items
-WHERE status = 'new' AND created_at > now() - interval '24 hours'
+WHERE status = 'new' AND COALESCE(last_occurrence_at, created_at) > now() - interval '24 hours'
 ORDER BY created_at;
 \`\`\`
 
 If the previous run never reached \`done\`, widen the window back to that run's start.
 Group the rows by problem: agent reports with the same category and a similar
 summary, and human reports (\`detail\` holds the person's own \`@system\` text or Report
-issue note) that describe the same failure. Rank the groups by report count, with
+issue note) that describe the same failure. Rank the groups by the sum of occurrence_count, with
 human reports first on a tie.
 
 If nothing is new, hand off \`nothing_new\`. Otherwise hand off \`ranked\` with

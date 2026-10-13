@@ -33,6 +33,24 @@ describe('daemon room access', () => {
       .toContain('AND r.archived_at IS NULL');
   });
 
+  it('projects only existing member Room/corner lifecycle facts without expanding top-level discovery', async () => {
+    const query = vi.fn(async <Row>(sql: string): Promise<QueryResult<Row>> => {
+      if (sql.includes('SELECT m.room_id, r.parent_id')) return { rows: [
+        { room_id: ROOM, parent_id: null, archived: false, repository_revision: 'v1' },
+        { room_id: 'archived-corner', parent_id: ROOM, archived: true },
+      ] as Row[], rowCount: 2 };
+      return { rows: [], rowCount: 0 };
+    });
+    const daemon = new DaemonService({ query } as unknown as SqlDatabase, new LiveHub());
+    const result = await daemon.execute('getDaemonBootstrap', { agentId: AGENT }, AGENT);
+    expect(result.rooms.map(room => room.roomId)).toEqual([ROOM]);
+    expect(result.storageRooms).toEqual([
+      { roomId: ROOM, archived: false }, { roomId: 'archived-corner', archived: true },
+    ]);
+    expect(query.mock.calls.find(([sql]) => sql.includes('SELECT m.room_id, r.parent_id'))?.[0])
+      .toContain('m.identity_id=$1 AND (m.removed_at IS NULL OR r.archived_at IS NOT NULL)');
+  });
+
   it('checks membership once when listing a Room\'s corners', async () => {
     const query = vi.fn(async <Row>(sql: string): Promise<QueryResult<Row>> => {
       if (sql.includes('FROM memberships WHERE room_id=$1'))

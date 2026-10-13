@@ -1,8 +1,6 @@
 import type { SqlDatabase } from './database.js';
 import { createAgentCommand, type CommandRow } from './agent-command.js';
 import { advanceCorner } from './corner-lifecycle.js';
-import { systemLine, ensureSystemIdentity } from './system-line.js';
-import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { abandonCornerWorkflowRuns } from './workflow-runs.js';
 
 /**
@@ -96,9 +94,5 @@ export async function closeCornerState(database: SqlDatabase, cornerId: string) 
   );
   await abandonCornerWorkflowRuns(database, cornerId);
   await advanceCorner(database, cornerId, { kind: 'closed' });
-  await ensureSystemIdentity(database);
-  await systemLine(database, { id: `corner-closed:${cornerId}`, roomId: cornerId,
-    authorId: SYSTEM_IDENTITY_ID, subject: { kind: 'system', name: corner.name }, verb: 'closed',
-    kind: 'corner-closed' });
   return { parentId: corner.parent_id };
 }

@@ -122,10 +122,10 @@ describe('Chat header — one language for Room and Corner', () => {
       'const HEADER_EDGE_HIT_SLOP = { top: 4, bottom: 4, left: 4, right: 4 } as const;',
     );
     // One slop for every header control: back, the corners door, the lone
-    // corner overflow, and the Room's clustered overflow. A second, larger
-    // trailing slop used to grow a 44 box into a 72 one, which overlapped the
-    // sibling a spacing step away in the hit layer.
-    expect(chatSource.match(/hitSlop=\{HEADER_EDGE_HIT_SLOP\}/g)).toHaveLength(4);
+    // corner overflow, the lone DM overflow, and the Room's clustered overflow.
+    // A second, larger trailing slop used to grow a 44 box into a 72 one, which
+    // overlapped the sibling a spacing step away in the hit layer.
+    expect(chatSource.match(/hitSlop=\{HEADER_EDGE_HIT_SLOP\}/g)).toHaveLength(5);
     expect(chatSource).not.toContain('HEADER_TRAILING_HIT_SLOP');
   });
 

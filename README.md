@@ -120,6 +120,8 @@ beeline start                         Update and converge every enabled agent
 beeline start --all                   Re-enable every paired agent and converge
 beeline start --agent <agent-pubkey>  Re-enable one agent and converge the machine
 beeline stop --agent <agent-pubkey>   Stop this agent; others keep serving
+beeline storage --dry-run            Report whole storage objects eligible for cleanup
+beeline storage --orphans            List storage whose owner has ended (read-only)
 beeline update [--check|--status|--force]
                                       Update and converge this machine
 ```

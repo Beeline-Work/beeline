@@ -227,7 +227,7 @@ export async function withdrawSupersededGrantAsks(database: SqlDatabase): Promis
       target: string;
       script: CommandGrantScript | null;
     }>(`SELECT id::text,kind,target,script FROM agent_grants
-      WHERE status='pending' AND NOT (kind='mcp' AND target='wallet')
+      WHERE status='pending' AND NOT (kind='mcp' AND (target='wallet' OR target LIKE 'connection-install:%'))
       FOR UPDATE`);
     const superseded = pending.rows
       .filter((grant) => {

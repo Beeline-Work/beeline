@@ -9,7 +9,7 @@ import { RoomRuntimeCoordinator } from './room-runtime.js';
 const roots: string[] = [];
 afterEach(async () => Promise.all(roots.splice(0).map((path) => rm(path, { recursive: true, force: true }))));
 
-it('reaps legacy chat-only work while retaining agent history after exact server archive proof', async () => {
+it('reaps the entire legacy private folder after exact server archive proof', async () => {
   const supervisorRoot = await mkdtemp(resolve(tmpdir(), 'beeline-chat-reap-'));
   roots.push(supervisorRoot);
   const identity = identityFromKey('12'.repeat(32), 'Bee');
@@ -38,12 +38,12 @@ it('reaps legacy chat-only work while retaining agent history after exact server
     { daemonApi: { execute } as unknown as DaemonApiClient },
   );
   const sweep = coordinator as unknown as {
-    sweepCornerLocalState(archived: ReadonlyMap<string, { cornerId: string; parentRoomId: string }>, desired: ReadonlySet<string>): Promise<void>;
+    cleanupArchivedCornerLocalState(cornerId: string): Promise<boolean>;
   };
 
-  await sweep.sweepCornerLocalState(new Map(), new Set());
+  await sweep.cleanupArchivedCornerLocalState('corner-chat');
   await expect(access(resolve(scratch, 'work.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
-  await expect(access(resolve(home, 'session.txt'))).resolves.toBeUndefined();
+  await expect(access(resolve(home, 'session.txt'))).rejects.toMatchObject({ code: 'ENOENT' });
   expect(execute).toHaveBeenCalledWith('getCornerRestoreState', { cornerId: 'corner-chat' });
   await coordinator.shutdown();
 });
@@ -71,9 +71,9 @@ it('keeps chat scratch when the server says the corner is still open', async () 
     { daemonApi: { execute } as unknown as DaemonApiClient },
   );
   const sweep = coordinator as unknown as {
-    sweepCornerLocalState(archived: ReadonlyMap<string, { cornerId: string; parentRoomId: string }>, desired: ReadonlySet<string>): Promise<void>;
+    cleanupArchivedCornerLocalState(cornerId: string): Promise<boolean>;
   };
-  await sweep.sweepCornerLocalState(new Map(), new Set());
+  await sweep.cleanupArchivedCornerLocalState('corner-chat');
   await expect(access(resolve(scratch, 'work.txt'))).resolves.toBeUndefined();
   await coordinator.shutdown();
 });

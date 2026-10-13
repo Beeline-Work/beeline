@@ -63,7 +63,6 @@ export const SERVER_EVENT_KINDS = [
   'joined',
   'schedule-ran',
   'corner-opened',
-  'corner-closed',
   'check-passed',
   'check-failed',
   'merged',
@@ -93,7 +92,6 @@ export const SERVER_EVENT_KIND_DETAIL: Readonly<Record<ServerEventKind, string>>
   'corner-opened': 'fires when a corner opens under this Room',
   'check-passed': "fires when a corner's pull request checks turn green",
   'check-failed': "fires when a corner's pull request checks turn red",
-  'corner-closed': 'fires when a corner closes without merging',
   'merged': "fires when a corner's pull request merges",
   'grant-decided': 'carries the grant id and status and resumes the turn that asked for the grant',
   'squire-approval-decided':

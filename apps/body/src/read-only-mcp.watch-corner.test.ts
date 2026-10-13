@@ -39,10 +39,10 @@ it('calls watchCorner in the current corner and returns readable state and kinds
   expect(calls).toEqual([
     {
       name: 'watchCorner',
-      input: { roomId: 'watcher', cornerId: 'sibling', kinds: ['opened', 'merged', 'closed'] },
+      input: { roomId: 'watcher', cornerId: 'sibling', kinds: ['opened', 'merged'] },
     },
   ]);
-  expect(text).toContain('Watching for opened, merged, closed');
+  expect(text).toContain('Watching for opened, merged');
   for (const value of [
     'Ship widget',
     'review',

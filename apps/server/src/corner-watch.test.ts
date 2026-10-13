@@ -5,6 +5,7 @@ import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { GITHUB_SUBJECT, systemLine } from './system-line.js';
 import { readAgentCommands } from './agent-command.js';
+import { closeCornerState } from './corner-close.js';
 import type { CornerWatchKind } from '@beeline/api-contract/daemon';
 
 const W = 'a'.repeat(64),
@@ -89,14 +90,14 @@ it('Reproduction O-2: a watcher receives a named sibling merge in A', async () =
   expect(commands[0]!.source.body).toContain(`Watched corner B (${B}): merged`);
 });
 
-it.each(['non-member', 'self', 'room', 'invalid kind'])(
+it.each(['non-member', 'self', 'room', 'invalid kind', 'closed kind'])(
   'refuses %s and writes nothing',
   async (reason) => {
     if (reason === 'non-sibling')
       await db.query(`UPDATE rooms SET parent_id=$2 WHERE id=$1`, [B, OTHER]);
     await expect(
       watch(
-        reason === 'invalid kind' ? ['joined' as CornerWatchKind] : ['merged'],
+        reason === 'invalid kind' ? ['joined' as CornerWatchKind] : reason === 'closed kind' ? ['closed' as CornerWatchKind] : ['merged'],
         A,
         reason === 'self' ? A : reason === 'room' ? P : B,
         reason === 'non-member' ? H : W,
@@ -106,7 +107,7 @@ it.each(['non-member', 'self', 'room', 'invalid kind'])(
         ? 'access denied'
         : reason === 'self'
           ? 'cannot watch itself'
-          : reason === 'invalid kind'
+          : ['invalid kind', 'closed kind'].includes(reason)
             ? 'watch kinds'
             : 'access denied',
     );
@@ -159,7 +160,7 @@ it('lets a parent Room watch its child', async () => {
 });
 
 it('filters kinds and replaces the earlier watch', async () => {
-  await watch(['closed']);
+  await watch(['opened']);
   await watch();
   await systemLine(db, { roomId: B, authorId: H, subject: GITHUB_SUBJECT, verb: 'checked', kind: 'check-failed' });
   expect(await wakes()).toEqual([]);
@@ -167,10 +168,25 @@ it('filters kinds and replaces the earlier watch', async () => {
   expect(await wakes()).toHaveLength(1);
 });
 
-it('a closed lifecycle event wakes the watcher, while schedules do not', async () => {
-  await watch(['closed']);
-  await systemLine(db, { roomId: B, authorId: H, subject: GITHUB_SUBJECT, verb: 'closed', kind: 'corner-closed' });
+it('Reproduction ST-closed: legacy closed watches receive no wake when the corner closes', async () => {
+  await db.query(`INSERT INTO corner_watches(watcher_room_id,agent_id,corner_id,kinds) VALUES($1,$2,$3,'["closed","merged"]')`, [A,W,B]);
+  await closeCornerState(db, B);
+  expect(await wakes()).toEqual([]);
+  expect((await db.query(`SELECT * FROM messages WHERE system_event->>'kind'='corner-closed'`)).rows).toEqual([]);
+  expect((await db.query(`SELECT archived_at IS NOT NULL archived FROM rooms WHERE id=$1`, [B])).rows).toEqual([{ archived: true }]);
+  console.info('Demonstrated ST-closed: close archived corner; legacy watcher got 0 wakes');
+});
+
+it('Reproduction ST-opened: skips the opener but wakes another watcher', async () => {
+  await watch(['opened']);
+  await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member') ON CONFLICT DO NOTHING`, [WS,P,W]);
+  await db.query(`UPDATE memberships SET event_subscriptions='["corner-opened"]' WHERE room_id=$1 AND identity_id=$2`, [P,W]);
+  await systemLine(db, { roomId: P, authorId: W, subject: { kind: 'agent', id: W, name: 'Watcher' }, verb: 'opened', kind: 'corner-opened', card: { cornerId: B } });
+  expect(await wakes()).toEqual([]);
+  expect((await readAgentCommands(db, P, W)).commands).toEqual([]);
+  await systemLine(db, { roomId: P, authorId: H, subject: { kind: 'agent', id: H, name: 'Other opener' }, verb: 'opened', kind: 'corner-opened', card: { cornerId: B } });
   expect(await wakes()).toHaveLength(1);
+  console.info('Demonstrated ST-opened: opener got 0 wakes; other watcher got 1');
 });
 
 it('an empty list removes the watch', async () => {

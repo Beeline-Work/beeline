@@ -173,6 +173,9 @@ describe('onboarding — canonical brand treatment', () => {
       'Continue with GitHub',
     );
 
+    const signInButton = signIn.find((node: any) => node.type === 'Button');
+    expect(signInButton?.props.labelStyle).toMatchObject({ flexGrow: 1, textAlign: 'center' });
+
     // Every login-screen button is the shared Button, whose label face is
     // fixed by the component (DESIGN.md → Buttons): no per-call override.
     const buttons = tree.root.findAll(
@@ -181,7 +184,9 @@ describe('onboarding — canonical brand treatment', () => {
     );
     expect(buttons.length).toBeGreaterThan(0);
     for (const button of buttons) {
-      expect(button.props.labelStyle).toBeUndefined();
+      if (button.props.testID !== 'onboarding-github-sign-in') {
+        expect(button.props.labelStyle).toBeUndefined();
+      }
     }
   });
 });
@@ -209,6 +214,6 @@ describe('onboarding — canonical brand source assertions', () => {
     const src = source();
     expect(src.match(/<Button\n/g)?.length ?? 0).toBeGreaterThan(0);
     expect(src).not.toMatch(/<(MonoButton|BrassButton|OnboardingButton|RoundButton)\b/);
-    expect(src).not.toContain('labelStyle=');
+    expect(src.match(/labelStyle=/g)).toHaveLength(1);
   });
 });

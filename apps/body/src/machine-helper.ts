@@ -49,8 +49,9 @@ import {
   SystemdNotifier,
 } from './systemd.js';
 import { squireBrokerMeetsComputerUseMinimum } from './squire-host.js';
-import { pruneDeletedRuntimes, pruneRepositoryCaches } from './host-disk-retention.js';
-import { pruneSharedModelCache } from './scratch-lifecycle.js';
+import { pruneDeletedRuntimes, pruneRepositoryCaches, pruneMachineStorage } from './host-disk-retention.js';
+import { SessionScheduler } from './session-scheduler.js';
+import { reclaimArchivedMemberStorage, watchStorageFacts, pruneStoppedAgentStorage, pruneEndedOwnerStorage } from './storage-owners.js';
 import { monitorPrivateRecoveryReserve } from './shared-asset-capacity.js';
 
 /** A failed agent restarts inside the helper after this, doubling to the cap. */
@@ -121,39 +122,48 @@ async function serveMachineHelper(
   const slots = new Map<string, AgentSlot>();
   const hosted = new Map<string, HostedAgent>();
   const links = new Map<string, MachineLink>();
+  const archiveStoragePending = new Map<string, import('./helper-storage.js').StorageRoomState>();
+  let archiveStorageRunning = false;
+  const stopStorageFacts = watchStorageFacts(supervisorRoot, states => {
+    for (const state of states) if (state.archived) archiveStoragePending.set(state.roomId, state);
+    if (archiveStorageRunning || !archiveStoragePending.size) return;
+    archiveStorageRunning = true;
+    void (async () => {
+      try {
+        while (!controller.signal.aborted && archiveStoragePending.size) {
+          const batch = [...archiveStoragePending.values()];
+          archiveStoragePending.clear();
+          await reclaimArchivedMemberStorage(supervisorRoot, batch, {
+            log: entry => console.log(`[helper] Room ${entry.roomId} private storage deleted ${entry.path}; freed ${entry.freedBytes} bytes`),
+          });
+        }
+      } catch (error) { console.warn('[helper] archived member cleanup deferred:', error); }
+      finally { archiveStorageRunning = false; }
+    })();
+  });
+  controller.signal.addEventListener('abort', stopStorageFacts, { once: true });
   let diskSweepRunning = false;
-  let lastModelSweepAt = 0;
   let lastRetentionSweepAt = 0;
   const sweepHostDisk = async () => {
     const now = Date.now();
-    if (
-      controller.signal.aborted ||
-      diskSweepRunning ||
-      [...hosted.values()].some((agent) => !agent.core.isWorkspaceIdle()) ||
-      (now - lastModelSweepAt < 60 * 60_000 && now - lastRetentionSweepAt < 24 * 60 * 60_000)
-    )
-      return;
+    if (controller.signal.aborted || diskSweepRunning ||
+        [...hosted.values()].some(agent => !agent.core.isWorkspaceIdle()) ||
+        now - lastRetentionSweepAt < 6 * 60 * 60_000) return;
     diskSweepRunning = true;
     try {
-      const modelDue = now - lastModelSweepAt >= 60 * 60_000;
-      const removed = modelDue
-        ? await pruneSharedModelCache(resolve(supervisorRoot, 'beeline', 'model-cache'))
-        : [];
-      if (modelDue) lastModelSweepAt = now;
-      if (now - lastRetentionSweepAt >= 24 * 60 * 60_000) {
-        removed.push(...(await pruneDeletedRuntimes(supervisorRoot)));
-        removed.push(...(await pruneRepositoryCaches(supervisorRoot)));
-        lastRetentionSweepAt = now;
-      }
-      if (removed.length)
-        console.log(
-          `[helper] idle disk sweep removed ${removed.length} expired cache/runtime directories`,
-        );
-    } catch (error) {
-      console.warn('[helper] idle disk sweep failed:', error);
-    } finally {
-      diskSweepRunning = false;
-    }
+      const log = (entry: import('./helper-storage.js').StorageReclaimEntry) =>
+        console.log(`[helper] storage deleted ${entry.path}; freed ${entry.freedBytes} bytes`);
+      const options = { log };
+      const swept = await SessionScheduler.withIdleHostStorage(async () => {
+        await pruneStoppedAgentStorage(supervisorRoot, options);
+        await pruneEndedOwnerStorage(supervisorRoot, options);
+        await pruneDeletedRuntimes(supervisorRoot, now, options);
+        await pruneRepositoryCaches(supervisorRoot, now, options);
+        await pruneMachineStorage(supervisorRoot, options);
+      });
+      if (swept) lastRetentionSweepAt = now;
+    } catch (error) { console.warn('[helper] idle disk sweep deferred:', error); }
+    finally { diskSweepRunning = false; }
   };
   if (!options.configPaths) await writeHelperPidRecord(supervisorRoot, process.pid);
 
@@ -433,6 +443,12 @@ async function serveMachineHelper(
           throw new Error(
             `previous runtime owner ${previous} still alive; native topology migration incomplete`,
           );
+        if (await stat(resolve(supervisorRoot, 'beeline/storage-owners', `ended-agent-${slot.agentId}.json`)).catch(() => undefined)) {
+          await pruneEndedOwnerStorage(supervisorRoot);
+          slot.enabled = false;
+          setState(slot, 'removed', 'server-confirmed retired agent');
+          break;
+        }
         reason = await runAgent(slot.configPath, host, slot.controller.signal);
       } catch (error) {
         console.error(`[helper] agent ${slot.agentId} failed:`, error);

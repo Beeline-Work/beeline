@@ -1099,13 +1099,13 @@ describe('the three-level push migration', () => {
   });
   afterEach(() => database.close());
 
-  it('preserves all activity across repeated migrations', async () => {
+  it('preserves Full activity across repeated migrations', async () => {
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Owner')`, [
       OWNER,
     ]);
     // Simulate a stored preference before repeating the migration.
     await database.query(`ALTER TABLE identities DROP CONSTRAINT identities_push_level_check`);
-    await database.query(`UPDATE identities SET push_level='all' WHERE id=$1`, [OWNER]);
+    await database.query(`UPDATE identities SET push_level='full' WHERE id=$1`, [OWNER]);
     // Repeated migration must preserve the chosen sensitivity.
     await migrate(database);
     expect(
@@ -1115,8 +1115,8 @@ describe('the three-level push migration', () => {
           [OWNER],
         )
       ).rows[0]?.push_level,
-    ).toBe('all');
-    await database.query(`UPDATE identities SET push_level='all' WHERE id=$1`, [OWNER]);
+    ).toBe('full');
+    await database.query(`UPDATE identities SET push_level='full' WHERE id=$1`, [OWNER]);
   });
 });
 

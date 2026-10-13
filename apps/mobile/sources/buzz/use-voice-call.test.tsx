@@ -5,10 +5,11 @@ import { EventEmitter } from 'node:events';
 import { expect, it, vi } from 'vitest';
 import { VOICE_DATA_TOPIC, VOICE_QUOTA_MESSAGE } from '@beeline/api-contract/phone';
 
-const fixture = vi.hoisted(() => ({ room: undefined as any, callId: '11111111-1111-4111-8111-111111111111' }));
+const fixture = vi.hoisted(() => ({ room: undefined as any, closeAudio: vi.fn(async () => {}), callId: '11111111-1111-4111-8111-111111111111' }));
+vi.mock('./client-error-report', async original => ({ ...await original<object>(), reportClientError: vi.fn(async () => {}) }));
 vi.mock('react-native', () => ({ Platform: { OS: 'android' } }));
 vi.mock('livekit-client', () => ({ RoomEvent: { DataReceived: 'data', Disconnected: 'left' }, Track: {} }));
-vi.mock('./voice-transport', () => ({ createVoiceRoom: async () => ({ room: fixture.room, closeAudio: async () => {} }) }));
+vi.mock('./voice-transport', () => ({ createVoiceRoom: async () => ({ room: fixture.room, closeAudio: fixture.closeAudio }) }));
 vi.mock('./runtime-config', () => ({ getBuzzRuntimeConfig: () => ({ monolithUrl: 'http://proof' }) }));
 vi.mock('@/auth/monolith-session', () => ({ monolithSession: { fetch: async () => new Response(JSON.stringify({
   call: { id: fixture.callId, roomId: fixture.callId, startedAt: 1, participants: [] },
@@ -70,5 +71,22 @@ it('ignores a peer error and mutes the microphone on the trusted bridge quota si
     expect(fixture.room.localParticipant.setMicrophoneEnabled).toHaveBeenLastCalledWith(false);
     expect(voice.connecting).toBe(false);
     await act(async () => voice.end());
+  } finally { await act(async () => renderer.unmount()); }
+});
+
+it('preserves the connection error even if disconnect and audio cleanup also reject', async () => {
+  fixture.closeAudio.mockRejectedValueOnce(new Error('audio cleanup failed'));
+  fixture.closeAudio.mockClear();
+  fixture.room = Object.assign(new EventEmitter(), { connect: async () => { throw new Error('WebRTC failed before connecting'); },
+    disconnect: async () => { throw new Error('disconnect failed'); }, remoteParticipants: new Map(), localParticipant: {} });
+  let voice!: ReturnType<typeof useVoiceCall>; let renderer: any;
+  function Probe() { voice = useVoiceCall(fixture.callId, true); return null; }
+  await act(async () => { renderer = create(<Probe />); });
+  try {
+    await act(async () => { await expect(voice.join()).resolves.toBeUndefined(); });
+    expect(voice.error).toBe('WebRTC failed before connecting');
+    expect(fixture.closeAudio).toHaveBeenCalledOnce();
+    expect(voice.connecting).toBe(false);
+    expect(voice.call).toBeNull();
   } finally { await act(async () => renderer.unmount()); }
 });

@@ -13,6 +13,7 @@ vi.mock('react-native', async () => {
   return {
     Text: host('Text'),
     View: host('View'),
+    ScrollView: host('ScrollView'),
     TextInput: host('TextInput'),
     TouchableOpacity: host('TouchableOpacity'),
     Pressable: host('Pressable'),

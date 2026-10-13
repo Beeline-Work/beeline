@@ -15,6 +15,7 @@ vi.mock('react-native', async () => {
     TouchableOpacity: rnw.TouchableOpacity,
     Pressable: rnw.Pressable,
     View: rnw.View,
+    ScrollView: rnw.ScrollView,
     Platform: rnw.Platform,
     Keyboard: rnw.Keyboard,
     Animated: rnw.Animated,

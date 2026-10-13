@@ -1,0 +1,277 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Beeline — Agent Profile / Voice</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --ink: #f0f0f3;
+        --quiet: #b6adb9;
+        --brass: #b08a4a;
+        --line: #3b3048;
+      }
+      * {
+        box-sizing: border-box;
+      }
+      body {
+        margin: 0;
+        background: #100916;
+        color: var(--ink);
+        font-family: Arial, sans-serif;
+      }
+      header,
+      main,
+      footer {
+        max-width: 1460px;
+        margin: auto;
+        padding: 64px 48px;
+      }
+      header {
+        padding-bottom: 40px;
+        border-bottom: 1px solid var(--line);
+      }
+      .eyebrow {
+        font: 12px monospace;
+        letter-spacing: 3px;
+        color: var(--brass);
+      }
+      h1 {
+        font-size: clamp(36px, 5vw, 72px);
+        font-weight: 500;
+        letter-spacing: -2px;
+        margin: 24px 0;
+      }
+      p {
+        max-width: 720px;
+        font-size: 18px;
+        line-height: 1.6;
+        color: var(--quiet);
+      }
+      .facts {
+        display: flex;
+        gap: 32px;
+        flex-wrap: wrap;
+        margin-top: 36px;
+        font: 13px monospace;
+        color: var(--brass);
+      }
+      section {
+        margin-bottom: 72px;
+      }
+      h2 {
+        font-size: 28px;
+        font-weight: 400;
+        margin-bottom: 12px;
+      }
+      .intro {
+        margin-bottom: 32px;
+      }
+      .frames {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 48px;
+      }
+      .frame {
+        margin: 0;
+        min-width: 0;
+      }
+      .label {
+        display: flex;
+        justify-content: space-between;
+        margin-bottom: 20px;
+        color: var(--quiet);
+        font: 13px monospace;
+      }
+      .device {
+        width: 416px;
+        max-width: 100%;
+        margin: auto;
+        border: 1px solid #504057;
+        border-radius: 32px;
+        padding: 12px;
+        background: #08070b;
+        box-shadow: 0 24px 60px #0005;
+      }
+      .status {
+        height: 28px;
+        padding: 0 12px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        font: 12px monospace;
+        color: #eee;
+      }
+      iframe {
+        display: block;
+        border: 0;
+        width: 100%;
+        height: 1040px;
+        border-radius: 8px;
+        background: #14091a;
+      }
+      .footnote {
+        font: 13px monospace;
+        line-height: 1.7;
+        color: var(--quiet);
+        margin-top: 20px;
+      }
+      footer {
+        border-top: 1px solid var(--line);
+        padding-top: 32px;
+      }
+      a {
+        color: #d0ad70;
+      }
+      @media (max-width: 950px) {
+        .frames {
+          grid-template-columns: 1fr;
+        }
+        header,
+        main,
+        footer {
+          padding: 32px 20px;
+        }
+        .facts {
+          gap: 16px;
+        }
+        .device {
+          width: 416px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="eyebrow">BEELINE / PRODUCT REVIEW / 01</div>
+      <h1>A soul. A mind.<br />A voice of its own.</h1>
+      <p>
+        Agent Profile, arranged around identity: Soul first, Model / difficulty next, then Voice.
+        Message and Edit sit together beneath the handle.
+      </p>
+      <div class="facts">
+        <span>390 PX · ANDROID WIDTH</span><span>OBSIDIAN + BONE</span
+        ><span>REAL REACT NATIVE COMPONENTS</span>
+      </div>
+    </header>
+    <main>
+      <section>
+        <div class="eyebrow">01 / PROFILE</div>
+        <h2>The agent, in the requested order.</h2>
+        <p class="intro">
+          Two themes, one composition. Scroll each phone to inspect the full page. Existing profile
+          controls remain in place.
+        </p>
+        <div class="frames">
+          <figure class="frame">
+            <figcaption class="label"><span>EMBERUS / OBSIDIAN</span><span>01A</span></figcaption>
+            <div class="device">
+              <div class="status"><span>9:41</span><span>● ▰</span></div>
+              <iframe title="Emberus Profile in Obsidian" src="/frame?theme=dark"></iframe>
+            </div>
+          </figure>
+          <figure class="frame">
+            <figcaption class="label"><span>EMBERUS / BONE</span><span>01B</span></figcaption>
+            <div class="device">
+              <div class="status"><span>9:41</span><span>● ▰</span></div>
+              <iframe title="Emberus Profile in Bone" src="/frame?theme=light"></iframe>
+            </div>
+          </figure>
+        </div>
+      </section>
+      <section>
+        <div class="eyebrow">02 / VOICE PICKER</div>
+        <h2>Listen before choosing.</h2>
+        <p class="intro">
+          The Workspace uses Fish in this example. Its public licensed English library supplies the
+          choices. Play starts a short provider sample; selecting a row and saving changes this
+          agent’s voice in the mock.
+        </p>
+        <div class="frames">
+          <figure class="frame">
+            <figcaption class="label">
+              <span>FISH LIBRARY / OBSIDIAN</span><span>02A</span>
+            </figcaption>
+            <div class="device">
+              <div class="status"><span>9:41</span><span>● ▰</span></div>
+              <iframe
+                title="Voice picker in Obsidian"
+                src="/frame?theme=dark&state=picker"
+              ></iframe>
+            </div>
+          </figure>
+          <figure class="frame">
+            <figcaption class="label"><span>FISH LIBRARY / BONE</span><span>02B</span></figcaption>
+            <div class="device">
+              <div class="status"><span>9:41</span><span>● ▰</span></div>
+              <iframe title="Voice picker in Bone" src="/frame?theme=light&state=picker"></iframe>
+            </div>
+          </figure>
+        </div>
+        <p class="footnote">
+          Preview uses Fish’s public samples, capped at eight seconds. The list scrolls. Only one
+          sample plays within each frame. Mock saves are local to that frame.
+        </p>
+      </section>
+      <section>
+        <div class="eyebrow">03 / EDIT</div>
+        <h2>The same order while editing.</h2>
+        <p class="intro">
+          The existing Edit action opens the name and Soul draft. Cancel and Save retain their
+          familiar place beside Message.
+        </p>
+        <div class="frames">
+          <figure class="frame">
+            <figcaption class="label"><span>EDIT / OBSIDIAN</span><span>03A</span></figcaption>
+            <div class="device">
+              <div class="status"><span>9:41</span><span>● ▰</span></div>
+              <iframe title="Edit Profile in Obsidian" src="/frame?theme=dark&state=edit"></iframe>
+            </div>
+          </figure>
+          <figure class="frame">
+            <figcaption class="label"><span>EDIT / BONE</span><span>03B</span></figcaption>
+            <div class="device">
+              <div class="status"><span>9:41</span><span>● ▰</span></div>
+              <iframe title="Edit Profile in Bone" src="/frame?theme=light&state=edit"></iframe>
+            </div>
+          </figure>
+        </div>
+      </section>
+      <section>
+        <div class="eyebrow">04 / ANOTHER AGENT</div>
+        <h2>Each agent keeps its own voice.</h2>
+        <p class="intro">
+          Milo has a different voice from Emberus in the same illustrative Room. The selection
+          belongs to the agent; choosing it here does not change Emberus.
+        </p>
+        <div class="frames">
+          <figure class="frame">
+            <figcaption class="label"><span>MILO / OBSIDIAN</span><span>04A</span></figcaption>
+            <div class="device">
+              <div class="status"><span>9:41</span><span>● ▰</span></div>
+              <iframe
+                title="Milo Profile in Obsidian"
+                src="/frame?theme=dark&agent=second"
+              ></iframe>
+            </div>
+          </figure>
+          <figure class="frame">
+            <figcaption class="label"><span>MILO / BONE</span><span>04B</span></figcaption>
+            <div class="device">
+              <div class="status"><span>9:41</span><span>● ▰</span></div>
+              <iframe title="Milo Profile in Bone" src="/frame?theme=light&agent=second"></iframe>
+            </div>
+          </figure>
+        </div>
+      </section>
+    </main>
+    <footer>
+      <div class="eyebrow">APPROVAL BOARD · MOCK FIRST</div>
+      <p>
+        These are browser-rendered real-code mock frames at Android width. Server persistence and
+        native Android release-build proof follow frame approval. No production writes occur here.
+      </p>
+    </footer>
+  </body>
+</html>

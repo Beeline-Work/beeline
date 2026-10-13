@@ -620,9 +620,13 @@ export class DaemonService {
                 candidate.generationId,
                 allowCompleted,
               );
-        if (command.private_payload && [
-          'postRoomMessage', 'postAgentDraft', 'postAgentThought', 'postAgentActivity',
-        ].includes(name)) {
+        // A corner is the ordered work's own address: its viewers watch the
+        // turn's draft, thoughts and tool rows there. Only the final prose
+        // becomes the private report.
+        if (command.private_payload && (name === 'postRoomMessage' || ([
+          'postAgentDraft', 'postAgentThought', 'postAgentActivity',
+        ].includes(name) && !(await db.query(
+          `SELECT 1 FROM corner_facts WHERE corner_id=$1`, [scopedRoom])).rowCount))) {
           // Final ACP prose is a bottom-up report too; older helpers need no new tool to deliver it.
           if (name === 'postRoomMessage') {
             const text = String(candidate.text ?? '').trim();

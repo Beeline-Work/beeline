@@ -170,14 +170,42 @@ it('schedules, check events and chatter in the corner never wake a watcher', asy
     [randomBytes(32).toString('hex'), opened.cornerId, WORKER]);
   expect((await commands(DM, RUBY)).map(c => c.id)).toEqual(before);
 });
-it('private final replies, drafts, activity and empty completion produce no transcript', async () => {
+it('an ordered corner turn shows its live work in the corner; its final reply stays a private report', async () => {
   const opened = await open(), turn = await worker(opened.cornerId);
+  const before = (await db.query(`SELECT id FROM messages`)).rows.length;
+  const live = new LiveHub(), seen: unknown[] = [];
+  live.subscribeAll((event) => seen.push(event));
+  const watched = new DaemonService(db, live);
+  await watched.execute('postAgentDraft', { ...authority(turn), agentId: WORKER, turnId: turn.turnRequestId, text: 'live draft' }, WORKER);
+  await watched.execute('postAgentActivity', { ...authority(turn), agentId: WORKER, requestId: turn.turnRequestId!,
+    cornerActivityKey: '1:tool-0', activity: [{ kind: 'tool', title: 'Read widget.ts', operation: 'read', status: 'completed' }] }, WORKER);
+  expect((await db.query(`SELECT room_id,presentation FROM messages WHERE author_id=$1`, [WORKER])).rows)
+    .toEqual([{ room_id: opened.cornerId, presentation: 'activity' }]);
+  expect(seen).toEqual(expect.arrayContaining([
+    expect.objectContaining({ roomId: opened.cornerId, reason: 'activity' }),
+  ]));
+  expect(seen.every((event) => (event as { roomId?: string }).roomId === opened.cornerId)).toBe(true);
+  // The corner screen reads this view while the turn runs.
+  const corner = await phone.readRoom(opened.cornerId, HUMAN);
+  const row = corner?.messages.find((message) => message.author.pubkey === WORKER);
+  console.log('[R1] corner view while the ordered turn runs:', JSON.stringify(row?.activity));
+  expect(row?.activity).toEqual([expect.objectContaining({ kind: 'tool', title: 'Read widget.ts' })]);
+  await watched.execute('postRoomMessage', { ...authority(turn), text: 'private final output' }, WORKER);
+  await watched.execute('postAgentTurnReceipt', { ...authority(turn), agentId: WORKER, status: 'complete', completionKind: 'no-reply' }, WORKER);
+  expect((await db.query(`SELECT 1 FROM messages WHERE text='private final output'`)).rowCount).toBe(0);
+  expect((await db.query(`SELECT id FROM messages`)).rows).toHaveLength(before + 1);
+  expect((await commands(opened.cornerId, WORKER))).toEqual([]);
+});
+it('a private order to a Room keeps its drafts and activity out of that Room', async () => {
+  await daemon.execute('order', { ...authority(order), address: ROOM, text: 'Check the widget' }, RUBY);
+  const turn = (await commands(ROOM, WORKER)).find(c => c.reason === 'order')!;
+  await claim(turn);
   const before = (await db.query(`SELECT id FROM messages`)).rows;
   await daemon.execute('postAgentDraft', { ...authority(turn), agentId: WORKER, turnId: turn.turnRequestId, text: 'private draft' }, WORKER);
+  await daemon.execute('postAgentActivity', { ...authority(turn), agentId: WORKER, requestId: turn.turnRequestId!,
+    activity: [{ kind: 'tool', title: 'Read widget.ts', operation: 'read', status: 'completed' }] }, WORKER);
   await daemon.execute('postRoomMessage', { ...authority(turn), text: 'private final output' }, WORKER);
-  await daemon.execute('postAgentTurnReceipt', { ...authority(turn), agentId: WORKER, status: 'complete', completionKind: 'no-reply' }, WORKER);
   expect((await db.query(`SELECT id FROM messages`)).rows).toEqual(before);
-  expect((await commands(opened.cornerId, WORKER))).toEqual([]);
 });
 it('reconnect recovery keeps every private report, even when each was queued offline', async () => {
   const opened = await open(), turn = await worker(opened.cornerId);

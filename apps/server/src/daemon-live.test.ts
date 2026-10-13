@@ -282,7 +282,7 @@ describe('held presence for a live connection', () => {
     ).rows[0]?.body;
   }
 
-  it.each(['update', 'crash', 'ordinary-close'] as const)('releases a %s socket and notices only unexpected loss', async (kind) => {
+  it.each(['update', 'crash', 'ordinary-close'] as const)('releases a %s socket silently and retains offline presence', async (kind) => {
     const database = await seeded();
     const live = new LiveHub();
     const presence = new ConnectionPresence(database, live);
@@ -297,7 +297,8 @@ describe('held presence for a live connection', () => {
       else client.socket.close();
       await vi.waitFor(async () => expect(await presenceBody(database)).toMatchObject({ status: 'offline', held: false }));
       expect((await database.query(`SELECT 1 FROM messages WHERE card_type='machine-offline'`)).rowCount)
-        .toBe(kind === 'update' ? 0 : 1);
+        .toBe(0);
+      expect((await database.query(`SELECT 1 FROM agent_connections WHERE agent_id=$1 AND released_at IS NOT NULL`, [AGENT_A])).rowCount).toBe(1);
     } finally {
       await presence.stop();
       await database.close();

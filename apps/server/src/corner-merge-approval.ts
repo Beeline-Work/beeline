@@ -1,3 +1,4 @@
+import { commanderReportAddress } from './commander.js';
 import type { SqlDatabase } from './database.js';
 import { advanceCorner, lockCornerLifecycle } from './corner-lifecycle.js';
 
@@ -92,4 +93,28 @@ export class CornerVerdictRejectedError extends Error {
     super(`${code}: ${detail}`);
     this.name = 'CornerVerdictRejectedError';
   }
+}
+
+/** A completed zero-check head with no reviewer asks its recorded commander for review. */
+export async function isZeroCheckCommander(db: SqlDatabase, cornerId: string, actorId: string): Promise<boolean> {
+  const eligible = await db.query(
+    `SELECT 1 FROM rooms corner
+     JOIN rooms parent ON parent.id=corner.parent_id
+     JOIN corner_facts fact ON fact.corner_id=corner.id
+     WHERE corner.id=$1 AND corner.archived_at IS NULL
+       AND parent.reviewer_agent_id IS NULL AND cardinality(parent.reviewer_fallback_ids)=0
+       AND fact.lifecycle->>'checks'='passing'
+       AND fact.lifecycle->'checksSummary'->>'total'='0'
+       AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
+       AND EXISTS (SELECT 1 FROM memberships reachable WHERE reachable.room_id IN (corner.id,parent.id)
+         AND reachable.identity_id=$2 AND reachable.removed_at IS NULL)`, [cornerId, actorId]);
+  if (!eligible.rowCount) return false;
+  const { recipient, returnRoom } = await commanderReportAddress(db, cornerId);
+  if (recipient !== actorId || !returnRoom) return false;
+  const member = await db.query(
+    `SELECT 1 FROM memberships member JOIN identities identity ON identity.id=member.identity_id
+     JOIN rooms address ON address.id=member.room_id AND address.archived_at IS NULL
+     WHERE member.room_id=$1 AND member.identity_id=$2 AND member.removed_at IS NULL
+       AND identity.kind='agent'`, [returnRoom, actorId]);
+  return Boolean(member.rowCount);
 }

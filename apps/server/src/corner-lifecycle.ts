@@ -96,7 +96,7 @@ export const CORNER_LIFECYCLE_CONTRACT: CornerLifecycleContract = {
     implement: { does: 'Build and prove the agreed change.',
       role: 'implementer',
       requires: [],
-      on: { pushed: 'checks', rechecked: 'checks', rereview: 'review' },
+      on: { pushed: 'checks', rechecked: 'checks', rereview: 'review', pr_closed: 'implement' },
     },
     // Green wakes the reviewer (live from the parent Room's
     // `reviewer_agent_id`/`reviewer_fallback_ids`); with no reviewer
@@ -105,7 +105,7 @@ export const CORNER_LIFECYCLE_CONTRACT: CornerLifecycleContract = {
     checks: { does: 'Check the proposed change.',
       kind: 'server',
       requires: [],
-      on: { passing: 'review', no_reviewer: 'review', failing: 'implement' },
+      on: { passing: 'review', no_reviewer: 'review', failing: 'implement', pr_closed: 'implement' },
     },
     // Waiting for a yes on the current head. A reviewer's PASS
     // (`approve_merge`) takes `approved` and wakes the implementer to call
@@ -120,6 +120,7 @@ export const CORNER_LIFECYCLE_CONTRACT: CornerLifecycleContract = {
       requires: [],
       on: {
         approved: 'review',
+        pr_closed: 'implement',
         pushed: 'checks',
         rechecked: 'checks',
         merge_refused: 'implement',
@@ -134,7 +135,7 @@ export const CORNER_LIFECYCLE_CONTRACT: CornerLifecycleContract = {
   // Only an event from outside the run takes these: a new commit on the
   // branch, a check verdict re-reported on the same head, a yes after a
   // handback, or GitHub refusing the merge.
-  externalOutcomes: ['pushed', 'rechecked', 'rereview', 'merge_refused'],
+  externalOutcomes: ['pushed', 'rechecked', 'rereview', 'merge_refused', 'pr_closed'],
 };
 
 /** Everything that can move a corner. Each adapter reports exactly one of these. */
@@ -155,6 +156,7 @@ export type CornerEvent =
   | { kind: 'merge-unconfirmed'; number: number; error: string }
   | { kind: 'merge-refused'; headSha: string; reason: string }
   | { kind: 'merged'; contents: Record<string, unknown> }
+  | { kind: 'pull-request-closed'; number: number }
   | { kind: 'closed' };
 
 type RevisionWake = { queued: boolean; agentId?: string; reason?: string };
@@ -286,7 +288,7 @@ function terminalStatus(toState: string): WorkflowTerminalState['status'] | unde
 function edgesOf(stateName: string): Readonly<Record<string, string>> {
   // Historical cards can still name the removed automatic escalation state.
   if (stateName === 'ask_human') return {
-    pushed: 'checks', rechecked: 'checks', revision_work: 'implement', merge_refused: 'implement',
+    pushed: 'checks', rechecked: 'checks', revision_work: 'implement', merge_refused: 'implement', pr_closed: 'implement',
   };
   const state = CORNER_LIFECYCLE_CONTRACT.handoffs[stateName];
   return state && 'on' in state ? state.on : {};
@@ -628,6 +630,11 @@ async function applyEvent(
       // Landing wakes no one in the parent Room: the merge card announces it,
       // and an agent with work left after the merge subscribes to `merged`.
       await transition.take('landed', event.contents);
+      return OK;
+    case 'pull-request-closed':
+      if (corner.lifecycle.pr) return no('the corner still has a pull request');
+      if (!transition.allows('pr_closed')) return no('no pull request close edge');
+      await transition.take('pr_closed', { pullRequestNumber: event.number });
       return OK;
     case 'closed':
       await transition.take('closed');

@@ -7806,14 +7806,10 @@ describe('monolith integration', () => {
     expect(
       (await webhook('pull_request', 'corner-pr-merged-semantic-retry', mergedPayload)).status,
     ).toBe(202);
-    // The person who commissioned the corner hears it landed once, from the
-    // parent Room's merge card, however many times GitHub retries the webhook.
-    expect(await pushes.runOnce()).toBe(1);
-    expect(send).toHaveBeenCalledOnce();
-    expect(send).toHaveBeenCalledWith(
-      deviceToken,
-      expect.objectContaining({ roomId: ROOM, channelId: ROOM, target: 'message' }),
-    );
+    // Attention does not push an unaddressed lifecycle card. The landing stays
+    // visible in the parent Room, however many times GitHub retries the webhook.
+    expect(await pushes.runOnce()).toBe(0);
+    expect(send).not.toHaveBeenCalled();
     expect(await pushes.runOnce()).toBe(0);
     expect(
       (

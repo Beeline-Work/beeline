@@ -4,7 +4,7 @@ Run `node apps/mobile/scripts/render-agent-profile-voice-proof.mjs` from the rep
 
 The approval board is published at https://animals-fishing-dozen-simulation.trycloudflare.com while the local server and tunnel remain running.
 
-This mock bundles the real React Native Web `AgentProfileView`, `ProfileIdentity`, `ProfileActions`, `SettingsRow`, buttons, identity marks and theme tokens. A mock-only esbuild transform moves the model display after Soul, splits model name and thinking level into readable rows, and adds the Voice fixture. Production components, server behavior and persistent data are unchanged pending approval.
+The board now bundles the complete production `AgentProfileView` and `AgentVoiceSection`, including shared Settings typography, identity, rows, buttons and both themes. Only transport data is synthetic; the approved mock-only layout transform has been removed. Frame saves are local fixture receipts, not production writes.
 
 The phones have a 390-pixel content width. Both themes show the overview, voice picker, edit state and another agent with a distinct voice. Frames scroll; the picker initially scrolls to Voice. Fish library data was fetched from the same public licensed English library endpoint used by `FishSpeech.prepare` on 2026-10-13. No cloning or upload controls exist. Play uses the provider's public MP3 sample and stops after eight seconds. Save voice updates only that frame's local state; reloading resets it.
 
@@ -17,10 +17,10 @@ Browser validation through `chrome-devtools-axi`:
 - Selecting Calm Narrator Voice and then Save voice updates the current voice and closes the picker.
 - The public tunnel renders all eight real-code frames.
 
-The mobile typecheck was attempted. It currently fails on pre-existing SDK build drift (missing voice/push exports in installed `@beeline` dist) and an absent `livekit-client` dependency; the new mock files reported no type errors. These prerequisites will be resolved before implementation validation.
+Root and mobile dependencies were refreshed and shared SDK packages rebuilt; the full root typecheck passes.
 
-PNG captures here are browser proofs, not native Android release screenshots. The server persistence, provider catalog/preview API, collision-aware Room assignment and Android release-build evidence follow approval. Firstmate's acknowledged follow-up also adds Fish emotion-tag guidance to voice-mode prompting, preserves tags for speech, and removes them from the visible transcript without an extra request or buffering delay.
+The top-level PNG captures are browser proofs. Native release-build captures and artifact details are recorded separately below. Server persistence, provider catalog/preview API, collision-aware Room assignment and Fish emotion handling are implemented and covered by targeted regressions.
 
 The app-wide alignment approved via firstmate on 2026-10-13 is applied to both mock confirmations: trailing row, quiet Cancel left, primary Save right, shared 44-pixel Button. In profile edit mode, Message remains in its own identity action row; the confirmation row follows the Soul draft.
 
-Approval is required by the launch brief before implementation or a PR.
+Captain approval was received via firstmate instruction 004 on 2026-10-13. The app-wide alignment lane owns the shared confirmation-row component; integration follows that lane's delivery.

@@ -4,6 +4,9 @@ import {
   type RoomViewClientOptions,
 } from '@beeline/buzz-client';
 import {
+  readAgentVoiceCatalog,
+  readAgentVoicePreview,
+  type VoiceProvider,
   readAgentDetailView,
   readAgentPairingClaimView,
   readChatListView,
@@ -120,19 +123,57 @@ class MonolithRoomViewClient {
       readAgentDetailView,
     );
   }
+  agentVoices(workspaceId: string, agentId: string, roomId?: string) {
+    return this.get(
+      `/v1/phone/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(agentId)}/voices${roomId ? `?roomId=${encodeURIComponent(roomId)}` : ''}`,
+      readAgentVoiceCatalog,
+    );
+  }
+  setAgentVoice(workspaceId: string, agentId: string, provider: VoiceProvider, voiceId: string) {
+    return this.checked(
+      `/v1/phone/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(agentId)}/voices`,
+      'POST',
+      readAgentVoiceCatalog,
+      { provider, voiceId },
+    );
+  }
+  previewAgentVoice(
+    workspaceId: string,
+    agentId: string,
+    provider: VoiceProvider,
+    voiceId: string,
+  ) {
+    return this.checked(
+      `/v1/phone/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(agentId)}/voice-preview`,
+      'POST',
+      readAgentVoicePreview,
+      { provider, voiceId },
+    );
+  }
   chats(id: string): Promise<ChatListView> {
     return this.get(`/v1/phone/workspaces/${encodeURIComponent(id)}/chats`, readChatListView);
   }
   room(id: string): Promise<RoomView> {
-    return this.get(`/v1/phone/rooms/${encodeURIComponent(id)}`, readRoomView, undefined, COMPACT_ROOM_READ);
+    return this.get(
+      `/v1/phone/rooms/${encodeURIComponent(id)}`,
+      readRoomView,
+      undefined,
+      COMPACT_ROOM_READ,
+    );
   }
   corners(
     id: string,
-    options: { readonly archived?: boolean; readonly before?: string; readonly openBefore?: string } = {},
+    options: {
+      readonly archived?: boolean;
+      readonly before?: string;
+      readonly openBefore?: string;
+    } = {},
   ): Promise<CornerListView> {
     const query = options.archived
       ? `?archived=1${options.before ? `&before=${encodeURIComponent(options.before)}` : ''}`
-      : options.openBefore ? `?openBefore=${encodeURIComponent(options.openBefore)}` : '';
+      : options.openBefore
+        ? `?openBefore=${encodeURIComponent(options.openBefore)}`
+        : '';
     return this.get(
       `/v1/phone/rooms/${encodeURIComponent(id)}/corners${query}`,
       readCornerListView,
@@ -305,8 +346,11 @@ class MonolithRoomViewClient {
       if (timing && serverTiming) {
         const requestToFirstByteMs = timing.firstByteMs - timing.requestStartMs;
         const serverProcessingMs = Number(serverTiming[1]);
-        if (requestToFirstByteMs >= serverProcessingMs &&
-            requestToFirstByteMs < 15_000 && serverProcessingMs >= 0) {
+        if (
+          requestToFirstByteMs >= serverProcessingMs &&
+          requestToFirstByteMs < 15_000 &&
+          serverProcessingMs >= 0
+        ) {
           recordRoomReadNetworkTiming(decodeURIComponent(roomMatch[1]!), {
             requestToFirstByteMs,
             serverProcessingMs,
@@ -369,6 +413,26 @@ export class RoomViewClient {
   agent(workspaceId: string, agentId: string, workCursor?: string) {
     return this.implementation.agent(workspaceId, agentId, workCursor);
   }
+  agentVoices(workspaceId: string, agentId: string, roomId?: string) {
+    if (!(this.implementation instanceof MonolithRoomViewClient))
+      return Promise.reject(new Error('Voice selection requires the server'));
+    return this.implementation.agentVoices(workspaceId, agentId, roomId);
+  }
+  setAgentVoice(workspaceId: string, agentId: string, provider: VoiceProvider, voiceId: string) {
+    if (!(this.implementation instanceof MonolithRoomViewClient))
+      return Promise.reject(new Error('Voice selection requires the server'));
+    return this.implementation.setAgentVoice(workspaceId, agentId, provider, voiceId);
+  }
+  previewAgentVoice(
+    workspaceId: string,
+    agentId: string,
+    provider: VoiceProvider,
+    voiceId: string,
+  ) {
+    if (!(this.implementation instanceof MonolithRoomViewClient))
+      return Promise.reject(new Error('Voice selection requires the server'));
+    return this.implementation.previewAgentVoice(workspaceId, agentId, provider, voiceId);
+  }
   chats(id: string) {
     return this.implementation.chats(id);
   }
@@ -376,7 +440,14 @@ export class RoomViewClient {
     return stamped(this.implementation.room(id));
   }
   /** `before` is an archived page's `nextArchived` cursor. */
-  corners(id: string, options?: { readonly archived?: boolean; readonly before?: string; readonly openBefore?: string }) {
+  corners(
+    id: string,
+    options?: {
+      readonly archived?: boolean;
+      readonly before?: string;
+      readonly openBefore?: string;
+    },
+  ) {
     return this.implementation.corners(id, options);
   }
   history(id: string, before?: { createdAt: number; id: string }) {

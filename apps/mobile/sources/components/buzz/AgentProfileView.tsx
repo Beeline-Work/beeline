@@ -14,6 +14,7 @@ import { PageHeader } from './PageHeader';
 import { ProfileActions } from './ProfileActions';
 import { Typography } from '@/constants/Typography';
 import { SoulPortraitControls } from './SoulPortraitControls';
+import { AgentVoiceSection, type AgentVoiceApi } from './AgentVoiceSection';
 import { displayModel } from '@/buzz/model-display';
 
 export function AgentProfileView({
@@ -40,6 +41,8 @@ export function AgentProfileView({
   onCancel,
   soul,
   management,
+  modelManagement,
+  voiceApi,
 }: {
   detail: AgentDetailView | null;
   loading: boolean;
@@ -64,6 +67,8 @@ export function AgentProfileView({
   onCancel: () => void;
   soul: string;
   management: React.ReactNode;
+  modelManagement?: React.ReactNode;
+  voiceApi?: AgentVoiceApi;
 }) {
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
@@ -162,37 +167,12 @@ export function AgentProfileView({
                       onPress: onMessage,
                       testID: 'agent-profile-message',
                     },
-                    ...(canEdit
-                      ? editing
-                        ? [
-                            {
-                              label: 'Cancel',
-                              disabled: saving,
-                              onPress: onCancel,
-                              testID: 'cancel-agent-edit',
-                            },
-                            {
-                              label: saving ? 'Saving…' : 'Save',
-                              disabled: saving,
-                              onPress: onSave,
-                              testID: 'save-agent-soul',
-                            },
-                          ]
-                        : [
-                            {
-                              label: 'Edit',
-                              onPress: onEdit,
-                              testID: 'edit-agent-soul',
-                            },
-                          ]
+                    ...(canEdit && !editing
+                      ? [{ label: 'Edit', onPress: onEdit, testID: 'edit-agent-soul' }]
                       : []),
                   ]}
                 />
               }
-            />
-            <SettingsRow
-              title="Model / difficulty"
-              value={`${displayModel(label(model, modelAxis))} / ${label(effort, effortAxis)}`}
             />
             {editing && (
               <HullDialogInput
@@ -254,6 +234,45 @@ export function AgentProfileView({
                 </View>
               ) : null}
             </View>
+            {canEdit && editing && (
+              <View style={styles.confirmRow}>
+                <View style={styles.trailingActions} testID="profile-edit-confirm-actions">
+                  <Button
+                    label="Cancel"
+                    variant="secondary"
+                    disabled={saving}
+                    onPress={onCancel}
+                    testID="cancel-agent-edit"
+                  />
+                  <Button
+                    label={saving ? 'Saving…' : 'Save'}
+                    variant="primary"
+                    loading={saving}
+                    onPress={onSave}
+                    testID="save-agent-soul"
+                  />
+                </View>
+              </View>
+            )}
+            <View style={styles.section}>
+              <Text style={styles.sectionLabel}>MODEL / DIFFICULTY</Text>
+              {editing && canEdit && modelManagement ? (
+                modelManagement
+              ) : (
+                <>
+                  <SettingsRow title="Model" description={displayModel(label(model, modelAxis))} />
+                  <SettingsRow title="Thinking level" value={label(effort, effortAxis)} />
+                </>
+              )}
+            </View>
+            <AgentVoiceSection
+              key={identity.pubkey}
+              agentId={identity.pubkey}
+              configVersion={detail.configVersion}
+              handle={identity.handle ?? identity.name}
+              canEdit={canEdit}
+              api={voiceApi}
+            />
             <SettingsRow
               title="Permission mode"
               value={detail.yolo?.enabled ? 'Yolo' : 'Ask first'}
@@ -356,6 +375,8 @@ const styles = StyleSheet.create((theme) => ({
     paddingHorizontal: theme.buzz.space.sm,
   },
   soulActions: { gap: 0 },
+  confirmRow: { paddingTop: theme.buzz.space.md },
+  trailingActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: theme.buzz.space.sm },
   workHeading: { flexDirection: 'row', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 },
 identity: {
     paddingVertical: theme.buzz.space.lg,

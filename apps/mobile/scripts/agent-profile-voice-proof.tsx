@@ -1,10 +1,8 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useState } from 'react';
 // @ts-expect-error Standalone proof uses installed react-dom.
 import { createRoot } from 'react-dom/client';
-import { View, Text, ScrollView } from 'react-native';
+import { View } from 'react-native';
 import { AgentProfileView } from '../sources/components/buzz/AgentProfileView';
-import { SettingsRow } from '../sources/components/buzz/SettingsRow';
-import { Button } from '../sources/components/buzz/Button';
 import { beelineThemes } from '../sources/buzz/groknight';
 import type { AgentDetailView } from '@beeline/buzz-client';
 import voices from './agent-profile-voice-library.json';
@@ -52,135 +50,23 @@ const style = document.createElement('style');
 style.textContent = `@font-face{font-family:SpaceGrotesk-Regular;src:url(${font})}@font-face{font-family:SpaceGrotesk-Medium;src:url(${medium})}@font-face{font-family:SpaceGrotesk-SemiBold;src:url(${bold})}@font-face{font-family:IBMPlexMono-Regular;src:url(${mono})}body{margin:0;background:${theme.bgBase};color:${theme.textPrimary}}*{box-sizing:border-box}#root{height:100vh;display:flex}button:focus-visible,[role=button]:focus-visible{outline:2px solid ${theme.accent};outline-offset:2px}`;
 document.head.appendChild(style);
 Object.assign(globalThis, { __boardFixture: { agent: detail } });
-function VoiceMock() {
-  const initial = voices[second ? 1 : 0]!;
-  const [current, setCurrent] = useState(initial.id);
-  const [draft, setDraft] = useState(initial.id);
-  const [open, setOpen] = useState(params.get('state') === 'picker');
-  const [playing, setPlaying] = useState<string | null>(null);
-  const [error, setError] = useState(false);
-  const audio = useRef<HTMLAudioElement | null>(null);
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const stop = () => {
-    audio.current?.pause();
-    if (timer.current) clearTimeout(timer.current);
-    setPlaying(null);
-  };
-  useEffect(
-    () => () => {
-      audio.current?.pause();
-      if (timer.current) clearTimeout(timer.current);
-    },
-    [],
-  );
-  useEffect(() => {
-    if (params.get('state') === 'picker')
-      setTimeout(() => {
-        const section = document.querySelector('[data-testid="voice-section"]');
-        const scroll = document.querySelector('[data-testid="agent-profile-scroll"]');
-        if (section && scroll)
-          scroll.scrollTop +=
-            section.getBoundingClientRect().top - scroll.getBoundingClientRect().top;
-      }, 300);
-  }, []);
-  const preview = async (voice: (typeof voices)[number]) => {
-    if (playing === voice.id) {
-      stop();
-      return;
-    }
-    stop();
-    setError(false);
-    const player = new Audio(voice.sample ?? '');
-    audio.current = player;
-    player.onended = stop;
-    player.onerror = () => {
-      stop();
-      setError(true);
-    };
-    setPlaying(voice.id);
-    try {
-      await player.play();
-      timer.current = setTimeout(stop, 8000);
-    } catch {
-      stop();
-      setError(true);
-    }
-  };
-  const selected = voices.find((v) => v.id === current)!;
-  return (
-    <View style={{ paddingTop: theme.space.lg, gap: theme.space.md }} testID="voice-section">
-      <Text style={{ ...theme.type.sectionHead, color: theme.textMuted }}>VOICE</Text>
-      <SettingsRow
-        title={selected.name}
-        description="Fish · Workspace voice provider"
-        action="Change"
-        onPress={() => {
-          stop();
-          setDraft(current);
-          setOpen((v) => !v);
-        }}
-        testID="change-agent-voice"
-        accessibilityLabel={`Current voice ${selected.name}. Change voice`}
-      />
-      {open && (
-        <>
-          <Text style={{ ...theme.type.meta, color: theme.ledgerQuiet }}>
-            Choose a voice for @{detail.agent.identity.handle}
-          </Text>
-          <ScrollView style={{ maxHeight: 320 }} testID="voice-library">
-            {voices.map((voice) => (
-              <SettingsRow
-                key={voice.id}
-                title={voice.name}
-                description={draft === voice.id ? 'Selected' : 'Public licensed library voice'}
-                onPress={() => setDraft(voice.id)}
-                testID={`voice-option-${voice.id}`}
-                value={playing === voice.id ? 'Stop' : '▶ Play'}
-                valueTone={draft === voice.id ? 'accent' : undefined}
-                trailingPress={{
-                  onPress: () => void preview(voice),
-                  accessibilityLabel: `${playing === voice.id ? 'Stop' : 'Preview'} ${voice.name}`,
-                  testID: `preview-${voice.id}`,
-                }}
-              />
-            ))}
-          </ScrollView>
-          {error && (
-            <Text
-              style={{ ...theme.type.meta, color: theme.ledgerQuiet }}
-              accessibilityRole="alert"
-            >
-              Preview unavailable. Try again.
-            </Text>
-          )}
-          <View
-            style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: theme.space.sm }}
-            testID="voice-confirm-actions"
-          >
-            <Button
-              label="Cancel"
-              variant="secondary"
-              onPress={() => {
-                stop();
-                setOpen(false);
-              }}
-            />
-            <Button
-              label="Save"
-              variant="primary"
-              onPress={() => {
-                stop();
-                setCurrent(draft);
-                setOpen(false);
-              }}
-              testID="save-agent-voice"
-            />
-          </View>
-        </>
-      )}
-    </View>
-  );
-}
+// Only transport data is a fixture; the complete Profile/Voice controls are production components.
+let currentVoiceId = voices[second ? 1 : 0]!.id;
+const fixtureVoiceApi = {
+  read: async () => ({
+    provider: 'fish-s2.1-pro' as const,
+    currentVoiceId,
+    canChange: true,
+    choices: voices.map((v) => ({ id: v.id, name: v.name, sampleUrl: v.sample ?? undefined })),
+  }),
+  save: async (_provider: import('@beeline/api-contract/phone').VoiceProvider, id: string) => {
+    currentVoiceId = id;
+    return fixtureVoiceApi.read();
+  },
+  preview: async (_provider: import('@beeline/api-contract/phone').VoiceProvider, id: string) => ({
+    url: voices.find((v) => v.id === id)!.sample!,
+  }),
+};
 function App() {
   const [editing, setEditing] = useState(params.get('state') === 'edit');
   const [name, setName] = useState(detail.agent.identity.name ?? '');
@@ -217,9 +103,20 @@ function App() {
         }}
         soul={savedSoul}
         management={null}
-        {...{ mockVoice: <VoiceMock /> }}
+        voiceApi={fixtureVoiceApi}
       />
     </View>
   );
 }
 createRoot(document.getElementById('root')!).render(<App />);
+if (params.get('state') === 'picker')
+  setTimeout(() => {
+    document.querySelector<HTMLElement>('[data-testid="change-agent-voice"]')?.click();
+    setTimeout(() => {
+      const section = document.querySelector('[data-testid="voice-section"]');
+      const scroll = document.querySelector('[data-testid="agent-profile-scroll"]');
+      if (section && scroll)
+        scroll.scrollTop +=
+          section.getBoundingClientRect().top - scroll.getBoundingClientRect().top;
+    }, 200);
+  }, 400);

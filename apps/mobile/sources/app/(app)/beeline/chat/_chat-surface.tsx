@@ -1431,11 +1431,11 @@ export function BuzzChatSurface({
               } as Href)
             : ({
                 pathname: '/beeline/agent-profile',
-                params: { communityId: activeCommunityId, agentId },
+                params: { communityId: activeCommunityId, agentId, roomId:decodedId },
               } as Href),
         );
     },
-    [activeCommunityId, desktopExperience, cacheViewerPubkey],
+    [activeCommunityId, desktopExperience, cacheViewerPubkey,decodedId],
   );
   const openingMentionRef = useRef<string | null>(null);
   const handleOpenMention = useCallback(
@@ -7074,6 +7074,7 @@ export function BuzzChatSurface({
               <BuzzMembers
                 key={profileAgentId}
                 profileAgentId={profileAgentId}
+                profileRoomId={decodedId}
                 workspaceIdOverride={activeCommunityId}
                 onClose={() => setProfileAgentId(null)}
               />

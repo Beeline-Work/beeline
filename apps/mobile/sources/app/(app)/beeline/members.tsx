@@ -2,6 +2,7 @@ import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { HullDialogInput } from '@/components/buzz/HullDialog';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import { useTextDraft } from '@/buzz/use-text-draft';
+import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { AgentProfileView } from '@/components/buzz/AgentProfileView';
 // Members is the canonical combined People + Agents surface. It lives in its
 // own route file: Expo Router routes every default-exporting file under `app/`,
@@ -78,7 +79,6 @@ import { Modal } from '@/modal/ModalManager';
 import { CHEVRON_ROW_SIZE, ChevronGlyph } from '@/components/buzz/ChevronGlyph';
 import { PageHeader } from '@/components/buzz/PageHeader';
 
-
 async function copyText(value: string): Promise<void> {
   await (await import('expo-clipboard')).setStringAsync(value);
 }
@@ -100,10 +100,10 @@ function first(value: string | string[] | undefined): string | undefined {
   return Array.isArray(value) ? value[0] : value;
 }
 
-
 function newerConfigVersion(candidate: string, current: string | undefined): boolean {
   return (
-    !current || candidate.length > current.length ||
+    !current ||
+    candidate.length > current.length ||
     (candidate.length === current.length && candidate > current)
   );
 }
@@ -220,10 +220,12 @@ function modelSelectionInput(
 export default function BuzzMembers({
   profileAgentId,
   workspaceIdOverride,
+  profileRoomId,
   onClose,
 }: {
   profileAgentId?: string;
   workspaceIdOverride?: string;
+  profileRoomId?: string;
   onClose?: () => void;
 } = {}) {
   useLatencyRouteFrame('/beeline/members');
@@ -231,6 +233,7 @@ export default function BuzzMembers({
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams<{
     communityId?: string | string[];
+    roomId?: string | string[];
     action?: string | string[];
   }>();
   const navigation = useNavigation();
@@ -239,35 +242,59 @@ export default function BuzzMembers({
   const [identity, setIdentity] = useState<Identity | null>(null);
   const [relayUrl, setRelayUrl] = useState<string | null>(null);
   const [localAgentId, setLocalAgentId] = useState<string | null>(null);
-  const workspaceAddress = useMemo(() => identity && relayUrl && workspaceId
-    ? surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id', { workspaceId }) : null,
-    [identity?.publicKey, relayUrl, workspaceId]);
+  const workspaceAddress = useMemo(
+    () =>
+      identity && relayUrl && workspaceId
+        ? surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id', { workspaceId })
+        : null,
+    [identity?.publicKey, relayUrl, workspaceId],
+  );
   const agentId = profileAgentId ?? localAgentId;
-  const agentAddress = useMemo(() => identity && relayUrl && workspaceId && agentId
-    ? surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id/agents/:agentId',
-      { workspaceId, agentPubkey: agentId }) : null,
-    [identity?.publicKey, relayUrl, workspaceId, agentId]);
+  const agentAddress = useMemo(
+    () =>
+      identity && relayUrl && workspaceId && agentId
+        ? surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id/agents/:agentId', {
+            workspaceId,
+            agentPubkey: agentId,
+          })
+        : null,
+    [identity?.publicKey, relayUrl, workspaceId, agentId],
+  );
   const surface = useSurfaceSnapshot(workspaceAddress, isWorkspaceView);
   const selectedAgent = useSurfaceSnapshot(agentAddress, isAgentDetailView);
   const setSelectedAgent = (value: AgentDetailView | null) => {
-    if (!value) { setLocalAgentId(null); return; }
+    if (!value) {
+      setLocalAgentId(null);
+      return;
+    }
     setLocalAgentId(value.agent.identity.pubkey);
     if (identity && relayUrl && workspaceId)
-      void mobileSurfaceCache.write(surfaceAddress(relayUrl, identity.publicKey,
-        '/workspace/:id/agents/:agentId',
-        { workspaceId, agentPubkey: value.agent.identity.pubkey }), value, isAgentDetailView);
+      void mobileSurfaceCache.write(
+        surfaceAddress(relayUrl, identity.publicKey, '/workspace/:id/agents/:agentId', {
+          workspaceId,
+          agentPubkey: value.agent.identity.pubkey,
+        }),
+        value,
+        isAgentDetailView,
+      );
   };
-  useLatencyRouteFrame(profileAgentId ? '/beeline/agent-profile' : '/beeline/members',
-    profileAgentId ? selectedAgent !== null : surface !== null, true);
+  useLatencyRouteFrame(
+    profileAgentId ? '/beeline/agent-profile' : '/beeline/members',
+    profileAgentId ? selectedAgent !== null : surface !== null,
+    true,
+  );
   const [editingAgentSoul, setEditingAgentSoul] = useState(false);
-  const [agentNameDraft, setAgentNameDraft, nameDraft] = useTextDraft(selectedAgent ? `agent-name:${workspaceId}:${selectedAgent.agent.identity.pubkey}` : null,
+  const [agentNameDraft, setAgentNameDraft, nameDraft] = useTextDraft(
+    selectedAgent ? `agent-name:${workspaceId}:${selectedAgent.agent.identity.pubkey}` : null,
     '',
   );
-  const [agentSoulDraft, setAgentSoulDraft, soulDraft] = useTextDraft(selectedAgent ? `agent-soul:${workspaceId}:${selectedAgent.agent.identity.pubkey}` : null,
+  const [agentSoulDraft, setAgentSoulDraft, soulDraft] = useTextDraft(
+    selectedAgent ? `agent-soul:${workspaceId}:${selectedAgent.agent.identity.pubkey}` : null,
     '',
   );
   const [openModelAxis, setOpenModelAxis] = useState<ModelAxisKind | null>(null);
-  const [modelSearchQuery, setModelSearchQuery] = useTextDraft(`model-search:${workspaceId}:${selectedAgent?.agent.identity.pubkey ?? ''}`,
+  const [modelSearchQuery, setModelSearchQuery] = useTextDraft(
+    `model-search:${workspaceId}:${selectedAgent?.agent.identity.pubkey ?? ''}`,
     '',
   );
   const [modelAppliesNote, setModelAppliesNote] = useState<ModelAxisKind | null>(null);
@@ -297,9 +324,10 @@ export default function BuzzMembers({
   latestConfigVersionRef.current = selectedAgent?.configVersion;
   const ownsSelectedAgent = selectedAgent?.access?.owner?.id === identity?.publicKey;
   const canRemoveSelectedAgent = ownsSelectedAgent || Boolean(surface?.viewer.permissions.manage);
-  const recordScope = identity && relayUrl && workspaceId
-    ? workspaceRecordScope(relayUrl, identity.publicKey, workspaceId)
-    : null;
+  const recordScope =
+    identity && relayUrl && workspaceId
+      ? workspaceRecordScope(relayUrl, identity.publicKey, workspaceId)
+      : null;
   useWorkspaceRecords(recordScope);
   const selectedAgentOwnerByline = selectedAgent?.owner
     ? ownerByline(selectedAgent.owner)
@@ -345,37 +373,53 @@ export default function BuzzMembers({
     let cancelled = false;
     let stop: (() => void) | undefined;
     const agentId = selectedAgent.agent.identity.pubkey;
-    void sharedLiveConnection().register([], (event) => {
-      if (cancelled || !('monolithLive' in event)) return;
-      const live = event.monolithLive;
-      if (!((live.type === 'resource-change' && live.resource === 'agent' &&
-          live.resourceId === agentId) ||
-          (live.type === 'invalidate' && live.roomId === '' && live.reason === 'reconnect')))
-        return;
-      if (live.type === 'resource-change' && live.version) {
-        if (!newerConfigVersion(live.version, latestConfigVersionRef.current)) return;
-        if (pendingConfigWriteRef.current) {
-          if (newerConfigVersion(live.version, queuedConfigVersionRef.current))
-            queuedConfigVersionRef.current = live.version;
+    void sharedLiveConnection()
+      .register([], (event) => {
+        if (cancelled || !('monolithLive' in event)) return;
+        const live = event.monolithLive;
+        if (!(
+          (live.type === 'resource-change' &&
+            live.resource === 'agent' &&
+            live.resourceId === agentId) ||
+          (live.type === 'invalidate' && live.roomId === '' && live.reason === 'reconnect')
+        ))
           return;
+        if (live.type === 'resource-change' && live.version) {
+          if (!newerConfigVersion(live.version, latestConfigVersionRef.current)) return;
+          if (pendingConfigWriteRef.current) {
+            if (newerConfigVersion(live.version, queuedConfigVersionRef.current))
+              queuedConfigVersionRef.current = live.version;
+            return;
+          }
         }
-      }
-      void readAgent(agentId).then((detail) => {
-        if (!waitingForEffortCatalogRef.current) return;
-        const effort = effortConfigAxis(detail.catalog.filter((candidate) =>
-          isAllowedAgentModelConfigCategory(candidate.category, candidate.id) &&
-          candidate.options.length > 0));
-        if (effort) {
-          waitingForEffortCatalogRef.current = false;
-          setWorking(null);
-          setOpenModelAxis('effort');
-        }
-      }).catch((reason) => { if (!cancelled) setError(String(reason)); });
-    }).then((release) => {
-      if (cancelled) release();
-      else stop = release;
-    });
-    return () => { cancelled = true; stop?.(); };
+        void readAgent(agentId)
+          .then((detail) => {
+            if (!waitingForEffortCatalogRef.current) return;
+            const effort = effortConfigAxis(
+              detail.catalog.filter(
+                (candidate) =>
+                  isAllowedAgentModelConfigCategory(candidate.category, candidate.id) &&
+                  candidate.options.length > 0,
+              ),
+            );
+            if (effort) {
+              waitingForEffortCatalogRef.current = false;
+              setWorking(null);
+              setOpenModelAxis('effort');
+            }
+          })
+          .catch((reason) => {
+            if (!cancelled) setError(String(reason));
+          });
+      })
+      .then((release) => {
+        if (cancelled) release();
+        else stop = release;
+      });
+    return () => {
+      cancelled = true;
+      stop?.();
+    };
   }, [identity, relayUrl, selectedAgent?.agent.identity.pubkey]);
 
   const writeClient = async () => {
@@ -392,7 +436,12 @@ export default function BuzzMembers({
     append: boolean,
   ) => {
     if (recordScope)
-      recordWorkspacePage(recordScope, page, { query: page.query, kind, append, stamp: page.stamp });
+      recordWorkspacePage(recordScope, page, {
+        query: page.query,
+        kind,
+        append,
+        stamp: page.stamp,
+      });
     setRosterQuery(page.query);
   };
 
@@ -404,7 +453,10 @@ export default function BuzzMembers({
     if (!identity || !relayUrl || !workspaceId) throw new Error('Workspace connection unavailable');
     // A removal or receipt recorded while this page is in flight is newer than it.
     const stamp = currentSurfaceStamp();
-    const page = await new RoomViewClient({ baseUrl: relayUrl, identity }).workspaceMembers(workspaceId, input);
+    const page = await new RoomViewClient({ baseUrl: relayUrl, identity }).workspaceMembers(
+      workspaceId,
+      input,
+    );
     return { ...page, query: input.q ?? '', stamp };
   };
 
@@ -415,7 +467,8 @@ export default function BuzzMembers({
     let scheduler: SurfaceRefreshScheduler<WorkspaceView | null> | undefined;
     void (async () => {
       const [nextIdentity, nextRelayUrl] = await Promise.all([
-        loadBuzzIdentity(), getEffectiveRelayUrl(),
+        loadBuzzIdentity(),
+        getEffectiveRelayUrl(),
       ]);
       if (!nextIdentity) {
         router.replace('/beeline/onboarding');
@@ -430,25 +483,34 @@ export default function BuzzMembers({
         // A direct profile open needs both authority and detail, but one wire
         // response writes the two existing keyed entries for later visits.
         const profile = await monolithPhoneOperation('readAgentProfile', {
-          workspaceId, agentId: profileAgentId,
+          workspaceId,
+          agentId: profileAgentId,
         });
         if (cancelled) return;
         await Promise.all([
           mobileSurfaceCache.write(address, profile.workspace, isWorkspaceView),
-          mobileSurfaceCache.write(surfaceAddress(nextRelayUrl, nextIdentity.publicKey,
-            '/workspace/:id/agents/:agentId', { workspaceId, agentPubkey: profileAgentId }),
-          profile.agent, isAgentDetailView),
+          mobileSurfaceCache.write(
+            surfaceAddress(nextRelayUrl, nextIdentity.publicKey, '/workspace/:id/agents/:agentId', {
+              workspaceId,
+              agentPubkey: profileAgentId,
+            }),
+            profile.agent,
+            isAgentDetailView,
+          ),
         ]);
       }
       if (cancelled) return;
-      setIdentity((current) => current?.publicKey === nextIdentity.publicKey ? current : nextIdentity);
+      setIdentity((current) =>
+        current?.publicKey === nextIdentity.publicKey ? current : nextIdentity,
+      );
       setRelayUrl(nextRelayUrl);
       // Every Members instance (the list under an agent profile included)
       // paints the one shared entry; rows and totals read the shared records,
       // which hear every write of this entry.
       const http = new RoomViewClient({ baseUrl: nextRelayUrl, identity: nextIdentity });
       scheduler = new SurfaceRefreshScheduler({
-        fetch: () => mobileSurfaceCache.fetch(address, isWorkspaceView, () => http.workspace(workspaceId)),
+        fetch: () =>
+          mobileSurfaceCache.fetch(address, isWorkspaceView, () => http.workspace(workspaceId)),
         apply: (value) => {
           // Null: a newer write or an eviction overtook the read; the entry
           // listener already painted whatever is current.
@@ -458,8 +520,13 @@ export default function BuzzMembers({
         onError: (reason) => setWorkspaceError(String(reason)),
       });
       schedulerRef.current = scheduler;
-      const watch = watchWorkspace(nextIdentity, nextRelayUrl, workspaceId,
-        () => scheduler?.signal(), (reason) => setWorkspaceError(String(reason)));
+      const watch = watchWorkspace(
+        nextIdentity,
+        nextRelayUrl,
+        workspaceId,
+        () => scheduler?.signal(),
+        (reason) => setWorkspaceError(String(reason)),
+      );
       stopWatch = watch.release;
       await watch.ready;
       if (cancelled) return;
@@ -678,11 +745,15 @@ export default function BuzzMembers({
     if (!agentEditDirty) return true;
     const clearName = nameDraft.capture();
     const clearSoul = soulDraft.capture();
-    const confirmed = await Modal.confirm('Discard agent changes?', 'Your name and soul edits have not been saved.', {
-      cancelText: 'Keep editing',
-      confirmText: 'Discard',
-      destructive: true,
-    });
+    const confirmed = await Modal.confirm(
+      'Discard agent changes?',
+      'Your name and soul edits have not been saved.',
+      {
+        cancelText: 'Keep editing',
+        confirmText: 'Discard',
+        destructive: true,
+      },
+    );
     if (confirmed) {
       clearName();
       clearSoul();
@@ -813,8 +884,9 @@ export default function BuzzMembers({
     try {
       const pubkey = selectedAgent.agent.identity.pubkey;
       const client = await writeClient();
-      const receipt = await client.setAgentModelConfig(selectedAgent.workspaceId, pubkey,
-        { fastMode: enabled });
+      const receipt = await client.setAgentModelConfig(selectedAgent.workspaceId, pubkey, {
+        fastMode: enabled,
+      });
       applyAgentReceipt(receipt as unknown as AgentDetailView);
     } catch (reason) {
       setError(`Could not set Fast mode: ${String(reason)}`);
@@ -1001,25 +1073,38 @@ export default function BuzzMembers({
         onSave={() => void saveAgentSoul()}
         onCancel={() => setEditingAgentSoul(false)}
         soul={selectedAgent ? agentSoulCopy(selectedAgent) : ''}
-        management={
+        voiceApi={
+          identity && relayUrl && workspaceId
+            ? {
+                read: () =>
+                  new RoomViewClient({ baseUrl: relayUrl, identity }).agentVoices(
+                    workspaceId,
+                    profileAgentId,
+                    profileRoomId ?? first(params.roomId),
+                  ),
+                save: (provider, voiceId) =>
+                  new RoomViewClient({ baseUrl: relayUrl, identity }).setAgentVoice(
+                    workspaceId,
+                    profileAgentId,
+                    provider,
+                    voiceId,
+                  ),
+                preview: (provider, voiceId) =>
+                  new RoomViewClient({ baseUrl: relayUrl, identity }).previewAgentVoice(
+                    workspaceId,
+                    profileAgentId,
+                    provider,
+                    voiceId,
+                  ),
+              }
+            : undefined
+        }
+        modelManagement={
           selectedAgent ? (
-            <View
-              style={styles.detailPanel}
-              testID={`agent-${selectedAgent.agent.identity.pubkey}-model-config`}
-            >
-              {selectedAgentOwnerByline && (
-                <Text style={styles.profileSettingCopy} testID="agent-owner">
-                  {selectedAgentOwnerByline}
-                </Text>
-              )}
-              {ownsSelectedAgent && (
-                <Text style={styles.profileSettingCopy}>
-                  Model, access and Yolo changes apply immediately.
-                </Text>
-              )}
+            <>
+              {' '}
               {ownsSelectedAgent && (
                 <View style={styles.modelSection}>
-                  <Text style={styles.profileSettingLabel}>Model / effort</Text>
                   {(['model', 'effort'] as const).map((kind) => {
                     const axis = kind === 'model' ? modelAxes.model : modelAxes.effort;
                     const current = axisValue(selectedAgent, kind, axis);
@@ -1031,44 +1116,37 @@ export default function BuzzMembers({
                         : choices;
                     return (
                       <View key={kind} style={styles.axisBlock}>
-                        <TouchableOpacity
-                          accessibilityRole="button"
-                          accessibilityState={{
-                            busy: working === 'model-catalog' && kind === 'effort',
-                            disabled: busy || (kind === 'model' && !axis),
-                            expanded: open,
-                          }}
+                        <SettingsRow
+                          title={kind === 'model' ? 'Model' : 'Thinking level'}
+                          description={
+                            kind === 'model'
+                              ? current
+                                ? displayModel(current)
+                                : UNSET_VALUE
+                              : undefined
+                          }
+                          value={
+                            kind === 'effort'
+                              ? working === 'model-catalog'
+                                ? 'Refreshing…'
+                                : (current ?? UNSET_VALUE)
+                              : undefined
+                          }
                           disabled={busy || (kind === 'model' && !axis)}
                           onPress={() => void toggleModelAxis(kind, open, axis)}
-                          style={styles.axisRow}
+                          chevron={open ? 'down' : 'right'}
                           testID={`model-axis-${kind}`}
-                        >
-                          <Text style={styles.axisLabel}>
-                            {kind === 'model' ? 'Model' : 'Effort'}
+                        />
+                        {(selectedAgent.modelUnavailable === kind ||
+                          selectedAgent.modelUnavailable === 'selection') && (
+                          <Text
+                            accessibilityLabel={`${kind} unavailable`}
+                            style={styles.axisValue}
+                            testID={`model-unavailable-${kind}`}
+                          >
+                            !
                           </Text>
-                          <Text style={styles.axisValue} numberOfLines={1}>
-                            {working === 'model-catalog' && kind === 'effort'
-                              ? 'Refreshing…'
-                              : kind === 'model' && current
-                                ? displayModel(current)
-                                : (current ?? UNSET_VALUE)}
-                          </Text>
-                          {(selectedAgent.modelUnavailable === kind ||
-                            selectedAgent.modelUnavailable === 'selection') && (
-                            <Text
-                              accessibilityLabel={`${kind} unavailable`}
-                              style={styles.axisValue}
-                              testID={`model-unavailable-${kind}`}
-                            >
-                              !
-                            </Text>
-                          )}
-                          <ChevronGlyph
-                            color={styles.chevron.color}
-                            direction={open ? 'down' : 'right'}
-                            size={CHEVRON_ROW_SIZE}
-                          />
-                        </TouchableOpacity>
+                        )}
                         {open && kind === 'model' && axis && (
                           <HullDialogInput
                             autoCapitalize="none"
@@ -1153,6 +1231,25 @@ export default function BuzzMembers({
                     </View>
                   )}
                 </View>
+              )}
+            </>
+          ) : null
+        }
+        management={
+          selectedAgent ? (
+            <View
+              style={styles.detailPanel}
+              testID={`agent-${selectedAgent.agent.identity.pubkey}-model-config`}
+            >
+              {selectedAgentOwnerByline && (
+                <Text style={styles.profileSettingCopy} testID="agent-owner">
+                  {selectedAgentOwnerByline}
+                </Text>
+              )}
+              {ownsSelectedAgent && (
+                <Text style={styles.profileSettingCopy}>
+                  Model, access and Yolo changes apply immediately.
+                </Text>
               )}
               {ownsSelectedAgent && (
                 <View style={styles.switchSection} testID="agent-access">
@@ -1265,8 +1362,14 @@ export default function BuzzMembers({
 
   const canManage = surface.viewer.permissions.manage;
   const page = workspacePage(recordScope, rosterQuery);
-  const people = workspaceRows<WorkspaceView['members'][number]>(recordScope, page.people?.ids ?? []);
-  const agents = workspaceRows<WorkspaceView['agents'][number]>(recordScope, page.agents?.ids ?? []);
+  const people = workspaceRows<WorkspaceView['members'][number]>(
+    recordScope,
+    page.people?.ids ?? [],
+  );
+  const agents = workspaceRows<WorkspaceView['agents'][number]>(
+    recordScope,
+    page.agents?.ids ?? [],
+  );
   const peopleTotal = page.people?.total;
   const agentTotal = page.agents?.total;
   const canLoadMorePeople = Boolean(page.people?.truncated) && !rosterLoading;
@@ -1342,7 +1445,10 @@ export default function BuzzMembers({
         )}
         <KeyboardAwareScrollView
           bottomOffset={16}
-          contentContainerStyle={[styles.content, { paddingBottom: theme.buzz.space.xxl + insets.bottom }]}
+          contentContainerStyle={[
+            styles.content,
+            { paddingBottom: theme.buzz.space.xxl + insets.bottom },
+          ]}
           keyboardShouldPersistTaps="handled"
         >
           <HullDialogInput

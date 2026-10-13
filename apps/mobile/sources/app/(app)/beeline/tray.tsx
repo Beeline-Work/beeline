@@ -625,11 +625,9 @@ export default function TrayScreen() {
       >
         <View style={styles.originLine} testID={`bookmark-save-line-${bookmark.messageId}`}>
           <View style={styles.originSource}>
-            {bookmark.roomKind === 'corner' ? (
-              <CornerGlyph size={CORNER_META_SIZE} testID={`bookmark-corner-mark-${bookmark.messageId}`} />
-            ) : (
-              <Text style={styles.originSigil}>#</Text>
-            )}
+            {bookmark.roomKind === 'corner'
+              ? <CornerGlyph size={CORNER_META_SIZE} testID={`bookmark-corner-mark-${bookmark.messageId}`} />
+              : <Text style={styles.originSigil}>#</Text>}
             <Text numberOfLines={1} style={styles.origin}>{sourceTitle(bookmark)}</Text>
           </View>
           <Text numberOfLines={1} style={styles.time}>SAVED {compactRelativeTime(bookmark.bookmarkedAt, now)}</Text>

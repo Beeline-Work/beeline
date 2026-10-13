@@ -43,7 +43,7 @@ describe('desktop layout mode', () => {
     expect(sidebar).toContain('roomListSections(filteredChats)');
     expect(sidebar).toContain("section.kind === 'rooms' ? ROOMS_LABEL : 'Direct messages'");
     expect(sidebar).toContain('<RoomListSectionHeader');
-    expect(channels).toContain('<RoomListSectionHeader title={section.title} />');
+    expect(channels).toMatch(/<RoomListSectionHeader title=\{section.title\}[^>]*\/>/);
   });
 
   it('keeps section-head creation controls above the conversation sections', () => {

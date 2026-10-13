@@ -1,13 +1,78 @@
-import fs from 'node:fs';import path from 'node:path';import{build}from'esbuild';import{createServer}from'node:http';
-const dir=path.dirname(new URL(import.meta.url).pathname),root=path.resolve(dir,'../../sources'),out=path.resolve(root,'../../../.scratch/ui-alignment-proof');fs.mkdirSync(out,{recursive:true});
-await build({entryPoints:[dir+'/screens.tsx'],outfile:out+'/bundle.js',bundle:true,format:'iife',jsx:'automatic',loader:{'.png':'dataurl','.ttf':'file'},nodePaths:[path.resolve(root,'../node_modules')],define:{__DEV__:'false','process.env.NODE_ENV':'"production"'},plugins:[{name:'proof',setup(b){
- b.onResolve({filter:/^react-native$/},()=>({path:path.resolve(root,'../node_modules/react-native-web/dist/index.js')}));
- b.onResolve({filter:/^react-native-unistyles$/},()=>({path:dir+'/unistyles.ts'}));
- b.onResolve({filter:/^react-native-svg$/},()=>({path:dir+'/svg.tsx'}));
- b.onResolve({filter:/\/WorkflowRunLine$|\/SurfaceGlyphLoader$|expo-web-browser|expo-haptics|@expo\/vector-icons|react-native-keyboard-controller|react-native-safe-area-context|expo-router|expo-crypto|\/MonoHull$|^@\/buzz\/(latency-route-hook|use-text-draft|community-storage|enter-workspace)$|^@\/auth\/buzz-identity-storage$|^@\/sync\/transport\/monolith-operation$/},()=>({path:dir+'/proof-env.tsx'}));
- b.onResolve({filter:/^@\/buzz\/(workbench-surface|workbench-source)$/},()=>({path:dir+'/proof-workbench.tsx'}));
- b.onResolve({filter:/^@\//},args=>{const f=path.join(root,args.path.slice(2));for(const ext of ['.web.tsx','.web.ts','.tsx','.ts','.json','/index.ts'])if(fs.existsSync(f+ext))return{path:f+ext};});
-}}],minify:true});
-fs.mkdirSync(out+'/fonts',{recursive:true});for(const f of fs.readdirSync(root+'/assets/fonts'))if(f.startsWith('SpaceGrotesk')||f.startsWith('IBMPlexMono'))fs.copyFileSync(root+'/assets/fonts/'+f,out+'/fonts/'+f);
-const css=fs.readdirSync(out+'/fonts').map(f=>`@font-face{font-family:'${f.replace(/\.ttf$/,'')}';src:url('/fonts/${f}')}`).join('');fs.writeFileSync(out+'/index.html',`<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}html,body,#root{min-height:100%;margin:0}</style><div id="root"></div><script src="/bundle.js"></script>`);
-if (!process.env.PROOF_BUILD_ONLY) createServer((req,res)=>{const file=out+(req.url.split('?')[0]==='/'?'/index.html':req.url.split('?')[0]);if(!fs.existsSync(file)){res.writeHead(404);res.end();return;}res.setHeader('Content-Type',file.endsWith('.js')?'application/javascript':file.endsWith('.ttf')?'font/ttf':'text/html');fs.createReadStream(file).pipe(res);}).listen(19244,'127.0.0.1',()=>console.log('Proof at http://127.0.0.1:19244'));
+import fs from 'node:fs';
+import path from 'node:path';
+import { build } from 'esbuild';
+import { createServer } from 'node:http';
+const dir = path.dirname(new URL(import.meta.url).pathname),
+  root = path.resolve(dir, '../../sources'),
+  out = path.resolve(root, '../../../.scratch/ui-alignment-proof');
+fs.mkdirSync(out, { recursive: true });
+await build({
+  entryPoints: [dir + '/screens.tsx'],
+  outfile: out + '/bundle.js',
+  bundle: true,
+  format: 'iife',
+  jsx: 'automatic',
+  loader: { '.png': 'dataurl', '.ttf': 'file' },
+  nodePaths: [path.resolve(root, '../node_modules')],
+  define: { __DEV__: 'false', 'process.env.NODE_ENV': '"production"' },
+  plugins: [
+    {
+      name: 'proof',
+      setup(b) {
+        b.onResolve({ filter: /^react-native$/ }, () => ({
+          path: path.resolve(root, '../node_modules/react-native-web/dist/index.js'),
+        }));
+        b.onResolve({ filter: /^react-native-unistyles$/ }, () => ({
+          path: dir + '/unistyles.ts',
+        }));
+        b.onResolve({ filter: /^react-native-svg$/ }, () => ({ path: dir + '/svg.tsx' }));
+        b.onResolve(
+          {
+            filter:
+              /\/WorkflowRunLine$|\/SurfaceGlyphLoader$|expo-web-browser|expo-haptics|@expo\/vector-icons|react-native-keyboard-controller|react-native-safe-area-context|expo-router|expo-crypto|\/MonoHull$|^@\/buzz\/(latency-route-hook|use-text-draft|community-storage|enter-workspace)$|^@\/auth\/buzz-identity-storage$|^@\/sync\/transport\/monolith-operation$/,
+          },
+          () => ({ path: dir + '/proof-env.tsx' }),
+        );
+        b.onResolve({ filter: /^@\/buzz\/(workbench-surface|workbench-source)$/ }, () => ({
+          path: dir + '/proof-workbench.tsx',
+        }));
+        b.onResolve({ filter: /^@\// }, (args) => {
+          const f = path.join(root, args.path.slice(2));
+          for (const ext of ['.web.tsx', '.web.ts', '.tsx', '.ts', '.json', '/index.ts'])
+            if (fs.existsSync(f + ext)) return { path: f + ext };
+        });
+      },
+    },
+  ],
+  minify: true,
+});
+fs.mkdirSync(out + '/fonts', { recursive: true });
+for (const f of fs.readdirSync(root + '/assets/fonts'))
+  if (f.startsWith('SpaceGrotesk') || f.startsWith('IBMPlexMono'))
+    fs.copyFileSync(root + '/assets/fonts/' + f, out + '/fonts/' + f);
+const css = fs
+  .readdirSync(out + '/fonts')
+  .map((f) => `@font-face{font-family:'${f.replace(/\.ttf$/, '')}';src:url('/fonts/${f}')}`)
+  .join('');
+fs.writeFileSync(
+  out + '/index.html',
+  `<!doctype html><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}html,body,#root{min-height:100%;margin:0}</style><div id="root"></div><script src="/bundle.js"></script>`,
+);
+if (!process.env.PROOF_BUILD_ONLY)
+  createServer((req, res) => {
+    const file = out + (req.url.split('?')[0] === '/' ? '/index.html' : req.url.split('?')[0]);
+    if (!fs.existsSync(file)) {
+      res.writeHead(404);
+      res.end();
+      return;
+    }
+    res.setHeader(
+      'Content-Type',
+      file.endsWith('.js')
+        ? 'application/javascript'
+        : file.endsWith('.ttf')
+          ? 'font/ttf'
+          : 'text/html',
+    );
+    fs.createReadStream(file).pipe(res);
+  }).listen(19244, '127.0.0.1', () => console.log('Proof at http://127.0.0.1:19244'));

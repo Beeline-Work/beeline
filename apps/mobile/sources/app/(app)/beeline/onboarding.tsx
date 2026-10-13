@@ -1,5 +1,5 @@
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
-import { HullDialogInput } from '@/components/buzz/HullDialog';
+import { HullDialogActions, HullDialogInput } from '@/components/buzz/HullDialog';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import { useTextDraft } from '@/buzz/use-text-draft';
 /** Native GitHub-first onboarding. OAuth proves lookup only; the Nostr key remains device-held. */
@@ -930,25 +930,13 @@ export default function BuzzOnboarding() {
         </View>
       )}
 
-          <View
-            style={{ flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', gap: 8 }}
-          >
-            <Button
-              disabled={loading}
-              label="Discard this key"
-              onPress={resetNewKey}
-
-              variant="quiet"
-              testID="onboarding-new-key-discard"
-            />
-            <Button
-            disabled={!canEnter || loading}
-            label="Enter Beeline"
-            loading={loadingAction === 'enter'}
-            onPress={() => void handleEnterWithNewKey()}
-            testID="onboarding-new-key-enter"
-          />
-          </View>
+          <HullDialogActions actions={[
+            { label: 'Discard this key', variant: 'quiet', disabled: loading,
+              onPress: resetNewKey, testID: 'onboarding-new-key-discard' },
+            { label: 'Enter Beeline', variant: 'primary', disabled: !canEnter || loading,
+              loading: loadingAction === 'enter', onPress: () => void handleEnterWithNewKey(),
+              testID: 'onboarding-new-key-enter' },
+          ]} />
         </PixelGateReveal>
       </View>
     );

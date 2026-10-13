@@ -226,6 +226,31 @@ function controlContext(node, context) {
 // or null; the common scanner, grandfather registry and required CI gate own enforcement.
 export const UI_CONTROL_RULES = [
   {
+    id: 'aligned-text-field',
+    strict: true,
+    check: (c) =>
+      c.primitive === 'TextInput' &&
+      ![
+        ['components/buzz/HullDialog.tsx', 'HullDialogInput'],
+        ['components/buzz/ConversationComposer.tsx', 'ConversationComposerContent'],
+        ['components/CommandPalette/CommandPaletteInput.tsx', 'CommandPaletteInput'],
+      ].some(([file, owner]) => c.file === file && c.owner(c.node) === owner)
+        ? 'Use HullDialogInput; only the composer and command palette own specialized native fields.'
+        : null,
+  },
+  {
+    id: 'aligned-decision-retry',
+    strict: true,
+    check: (c) =>
+      (touches.has(c.primitive) || (c.primitive === 'Text' && c.properties.has('onPress'))) &&
+      !(c.file === 'components/buzz/Button.tsx' && c.owner(c.node) === 'Button') &&
+      /(?:>\s*(?:Cancel|Retry|Try again)\s*<|["'](?:Cancel|Retry|Try again)["']|Tap to retry|[·.] Retry)/i.test(
+        c.text,
+      )
+        ? 'Use Button or HullDialogActions for cancellation, confirmation pairs and retries; keep error copy separate.'
+        : null,
+  },
+  {
     id: 'raw-text-input',
     check: (c) =>
       c.primitive === 'TextInput'
@@ -350,10 +375,11 @@ export function scanUiSource(source, file, rules = UI_CONTROL_RULES) {
           )
             components.add(element.name.text);
         }
-    } else {
+    }
+    {
       const control = controlContext(node, context);
       if (control)
-        for (const rule of rules) {
+        for (const rule of rules.filter((rule) => !file.startsWith('components/') || rule.strict)) {
           const message = rule.check(control);
           if (message) {
             const line =
@@ -361,10 +387,34 @@ export function scanUiSource(source, file, rules = UI_CONTROL_RULES) {
                 .line + 1;
             // Exact AST + owning function pins legacy controls; comments and formatting
             // are harmless, while changing a legacy control asks for shared-component migration.
-            const fingerprint = hash(
-              `${rule.id}\n${context.owner(node)}\n${normalize(control.body, context.sourceFile)}\n${control.style.replace(/\s+/g, ' ').trim()}`,
-            );
-            offences.push({ rule: rule.id, file, line, fingerprint, message });
+            const fingerprintFor = (body) =>
+              hash(
+                `${rule.id}\n${context.owner(node)}\n${normalize(body, context.sourceFile)}\n${control.style.replace(/\s+/g, ' ').trim()}`,
+              );
+            const legacyFingerprint = fingerprintFor(control.body);
+            // Layout shells own only their attributes and styles. Children are
+            // visited independently, so migrating them never authorizes a new shell.
+            const shellOnly =
+              control.primitive === 'View' &&
+              ['custom-row', 'custom-header', 'custom-dialog-footer'].includes(rule.id);
+            const shell = ts.isCallExpression(node)
+              ? ts.factory.updateCallExpression(
+                  node,
+                  node.expression,
+                  node.typeArguments,
+                  node.arguments.slice(0, 2),
+                )
+              : node;
+            const fingerprint = shellOnly ? fingerprintFor(shell) : legacyFingerprint;
+            offences.push({
+              rule: rule.id,
+              file,
+              line,
+              fingerprint,
+              legacyFingerprint,
+              message,
+              ...(rule.strict ? { strict: true } : {}),
+            });
           }
         }
     }
@@ -381,6 +431,7 @@ export function scanUiTree(root) {
 export function grandfatherRegistry(scans) {
   return {
     version: 1,
+    fingerprintMode: 'layout-shell-v1',
     components: Object.fromEntries(
       scans
         .filter((scan) => scan.file.startsWith('components/'))
@@ -388,15 +439,15 @@ export function grandfatherRegistry(scans) {
     ),
     legacyControls: Object.fromEntries(
       scans
-        .filter((scan) => scan.offences.length)
+        .filter((scan) => scan.offences.some((o) => !o.strict))
         .map((scan) => [
           scan.file,
           Object.fromEntries(
-            [...new Set(scan.offences.map((o) => o.fingerprint))]
+            [...new Set(scan.offences.filter((o) => !o.strict).map((o) => o.fingerprint))]
               .sort()
               .map((fingerprint) => [
                 fingerprint,
-                scan.offences.filter((o) => o.fingerprint === fingerprint).length,
+                scan.offences.filter((o) => !o.strict && o.fingerprint === fingerprint).length,
               ]),
           ),
         ]),
@@ -428,6 +479,7 @@ export function judgeUiRegistry(scans, registry, baseRegistry) {
       }
     }
   for (const scan of scans) {
+    errors.push(...scan.offences.filter((offence) => offence.strict));
     if (scan.file.startsWith('components/')) {
       if (!Object.hasOwn(registry.components, scan.file))
         errors.push({
@@ -446,7 +498,7 @@ export function judgeUiRegistry(scans, registry, baseRegistry) {
           });
     } else {
       const remaining = { ...(registry.legacyControls[scan.file] ?? {}) };
-      for (const offence of scan.offences) {
+      for (const offence of scan.offences.filter((offence) => !offence.strict)) {
         if ((remaining[offence.fingerprint] ?? 0) > 0) remaining[offence.fingerprint]--;
         else errors.push(offence);
       }
@@ -464,7 +516,8 @@ export function registryAtRef(root, ref) {
     .split('\n');
   // A base without the registry bootstraps only controls already committed there.
   const registryFiles = git(['ls-tree', '--name-only', ref, '--', REGISTRY_PATH]);
-  if (registryFiles.trim()) return JSON.parse(git(['show', `${ref}:${REGISTRY_PATH}`]));
+  const stored = registryFiles.trim() ? JSON.parse(git(['show', `${ref}:${REGISTRY_PATH}`])) : null;
+  if (stored?.fingerprintMode === 'layout-shell-v1') return stored;
   const scans = files
     .filter(
       (file) =>
@@ -475,5 +528,16 @@ export function registryAtRef(root, ref) {
     .map((file) =>
       scanUiSource(git(['show', `${ref}:${file}`]), file.replace('apps/mobile/sources/', '')),
     );
-  return grandfatherRegistry(scans);
+  if (!stored) return grandfatherRegistry(scans);
+  // Translate only exceptions authorized by the old exact AST budgets. The
+  // caller cannot create exceptions by changing the registry in its branch.
+  for (const scan of scans) {
+    const remaining = { ...(stored.legacyControls[scan.file] ?? {}) };
+    scan.offences = scan.offences.filter((offence) => {
+      if (offence.strict || !(remaining[offence.legacyFingerprint] > 0)) return false;
+      remaining[offence.legacyFingerprint]--;
+      return true;
+    });
+  }
+  return { ...grandfatherRegistry(scans), components: stored.components };
 }

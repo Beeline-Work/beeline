@@ -15,7 +15,10 @@ import {
 
 const empty = { version: 1, components: {}, legacyControls: {} };
 const scan = (source, file = 'app/screen.tsx') => scanUiSource(source, file);
-const rules = (source) => scan(source).offences.map((offence) => offence.rule);
+const rules = (source) =>
+  scan(source)
+    .offences.filter((offence) => !offence.strict)
+    .map((offence) => offence.rule);
 
 test('existing source tree passes the checked-in registry', () => {
   const root = fileURLToPath(new URL('..', import.meta.url));
@@ -136,7 +139,7 @@ test('comments, strings and unrelated components called TextInput are harmless',
 
 test('legacy controls are exact and counted; appending a duplicate or swapping a control fails', () => {
   const source =
-    "import {TextInput} from 'react-native'; function Screen(){return <TextInput placeholder='Name'/>}";
+    "import {Pressable} from 'react-native'; function Screen(){return <Pressable accessibilityRole='button' accessibilityLabel='Name'/>}";
   const original = scan(source);
   const registry = grandfatherRegistry([original]);
   assert.deepEqual(judgeUiRegistry([original], registry), []);
@@ -146,8 +149,8 @@ test('legacy controls are exact and counted; appending a duplicate or swapping a
       [
         scan(
           source.replace(
-            "<TextInput placeholder='Name'/>",
-            "<><TextInput placeholder='Name'/><TextInput placeholder='Name'/></>",
+            "<Pressable accessibilityRole='button' accessibilityLabel='Name'/>",
+            "<><Pressable accessibilityRole='button' accessibilityLabel='Name'/><Pressable accessibilityRole='button' accessibilityLabel='Name'/></>",
           ),
         ),
       ],
@@ -159,9 +162,9 @@ test('legacy controls are exact and counted; appending a duplicate or swapping a
 
 test('formatting and comments do not consume new legacy exceptions', () => {
   const a =
-    "import {TextInput} from 'react-native';const styles={entry:{padding:8}};function Screen(){return <TextInput style={styles.entry}/>;}";
+    "import {Pressable} from 'react-native';const styles={entry:{padding:8}};function Screen(){return <Pressable style={styles.entry}/>;}";
   const b =
-    "import { TextInput } from 'react-native';\nconst styles = { entry: { padding: 8 /* padding */ } };\nfunction Screen() { return <TextInput style = {styles.entry} />; }";
+    "import { Pressable } from 'react-native';\nconst styles = { entry: { padding: 8 /* padding */ } };\nfunction Screen() { return <Pressable style = {styles.entry} />; }";
   assert.deepEqual(judgeUiRegistry([scan(b)], grandfatherRegistry([scan(a)])), []);
 });
 
@@ -273,4 +276,98 @@ test('generated, vendored and module-extension UI sources cannot evade registrat
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test('legacy shell admits migrated children but rejects new or changed layouts', () => {
+  const original =
+    "import {View,TextInput} from 'react-native'; const styles={row:{flexDirection:'row',gap:8}}; function Screen(){return <View style={styles.row}><TextInput/></View>}";
+  const baseline = grandfatherRegistry([scan(original)]);
+  const migrated = original.replace('<TextInput/>', '<HullDialogInput/>');
+  assert.deepEqual(judgeUiRegistry([scan(migrated)], baseline, baseline), []);
+  assert.ok(
+    judgeUiRegistry([scan(migrated.replace('gap:8', 'gap:9'))], baseline, baseline).some(
+      (error) => error.rule === 'custom-row',
+    ),
+  );
+  assert.ok(
+    judgeUiRegistry(
+      [
+        scan(
+          migrated
+            .replace('return <View', 'return <><View')
+            .replace('</View>', '</View><View style={styles.row}/></>'),
+        ),
+      ],
+      baseline,
+      baseline,
+    ).some((error) => error.rule === 'custom-row'),
+  );
+  assert.ok(
+    judgeUiRegistry([scan(original)], baseline, baseline).some(
+      (error) => error.rule === 'aligned-text-field',
+    ),
+  );
+});
+
+test('registered component and grandfathering cannot authorize custom decisions or retries', () => {
+  const file = 'components/LegacyDialog.tsx';
+  for (const body of [
+    '<><Tap onPress={cancel}><Text>Cancel</Text></Tap><Tap onPress={save}><Text>Save</Text></Tap></>',
+    '<Tap onPress={retry}><Text>Retry</Text></Tap>',
+    '<Text onPress={retry}>{error} · Retry</Text>',
+    'React.createElement(Tap,{onPress:retry},"Retry")',
+  ]) {
+    const result = scan(
+      "import React from 'react';import {Pressable as Tap,Text} from 'react-native'; export function LegacyDialog(){return " +
+        body +
+        '}',
+      file,
+    );
+    const registry = grandfatherRegistry([result]);
+    assert.ok(
+      judgeUiRegistry([result], registry).some((error) => error.rule === 'aligned-decision-retry'),
+    );
+  }
+  const shared = scan(
+    `import {Button} from './Button';import {HullDialogActions} from './HullDialog'; export function LegacyDialog(){return <><HullDialogActions actions={actions}/><Button label="Retry"/></>}`,
+    file,
+  );
+  assert.deepEqual(judgeUiRegistry([shared], grandfatherRegistry([shared])), []);
+});
+
+test('specialized fields have exact file and owner authority', () => {
+  for (const [file, owner] of [
+    ['components/buzz/HullDialog.tsx', 'HullDialogInput'],
+    ['components/buzz/ConversationComposer.tsx', 'ConversationComposerContent'],
+    ['components/CommandPalette/CommandPaletteInput.tsx', 'CommandPaletteInput'],
+  ]) {
+    const source = `import {TextInput as Input} from 'react-native'; export function ${owner}(){return <Input/>}`;
+    assert.ok(!scan(source, file).offences.some((error) => error.strict));
+    assert.ok(
+      scan(source, 'components/FakeField.tsx').offences.some(
+        (error) => error.rule === 'aligned-text-field',
+      ),
+    );
+    assert.ok(
+      scan(source.replace(owner, 'NewField'), file).offences.some(
+        (error) => error.rule === 'aligned-text-field',
+      ),
+    );
+  }
+});
+
+test('createElement layouts also fingerprint only their props and style', () => {
+  const original = `import React from 'react';import {View,TextInput} from 'react-native';
+    const Screen=()=>React.createElement(View,{style:{flexDirection:'row',gap:8}},React.createElement(TextInput));`;
+  const baseline = grandfatherRegistry([scan(original)]);
+  const migrated = original.replace(
+    'React.createElement(TextInput)',
+    'React.createElement(HullDialogInput)',
+  );
+  assert.deepEqual(judgeUiRegistry([scan(migrated)], baseline, baseline), []);
+  assert.ok(
+    judgeUiRegistry([scan(migrated.replace('gap:8', 'gap:16'))], baseline, baseline).some(
+      (e) => e.rule === 'custom-row',
+    ),
+  );
 });

@@ -723,7 +723,7 @@ describe('Room turn failure receipt', () => {
     expect(failed.reasonKind).toBe('context-overflow');
   });
 
-  it('describes the stream when a non-pi harness ends a turn with reasoning only', async () => {
+  it('completes silently when a non-pi harness ends normally with reasoning only', async () => {
     const { receipts } = await runTurn({
       agentCommand: '/fake-agent',
       agentKind: 'codex',
@@ -742,16 +742,11 @@ describe('Room turn failure receipt', () => {
         ],
       }),
     });
-    const failed = receipts.find((receipt) => receipt.status === 'failed')!;
-    expect(failed.reason).toBe(
-      'harness ended the turn (end_turn) with no answer text; the stream carried only agent_thought_chunk×1',
-    );
+    expect(receipts).toContainEqual(expect.objectContaining({ status: 'complete' }));
+    expect(receipts.some(receipt => receipt.status === 'failed')).toBe(false);
   });
 
-  it('retries an empty completion on the next pinned provider, then fails naming it', async () => {
-    // The C92 failure: the provider accepts a tool-enabled request, returns
-    // 200, and says nothing. OpenRouter never falls back for that, so the turn
-    // loop must rotate the pin itself.
+  it('Reproduction ST-silent: an empty final reply completes without posting or retrying', async () => {
     const cacheRoot = await mkdtemp(join(tmpdir(), 'beeline-room-routing-'));
     roots.push(cacheRoot);
     const emptyTurn = async ({ agentHomeRoot }: { agentHomeRoot: string }) => {
@@ -803,7 +798,7 @@ describe('Room turn failure receipt', () => {
       warnings.push(args.map(String).join(' '));
     });
     let secondPin: unknown;
-    const { receipts, posted, attempts, agentHomeRoot } = await runTurn({
+    const { receipts, posted, attempts } = await runTurn({
       agentCommand: '/opt/harness/pi-acp',
       agentKind: 'pi',
       advertisedModel: 'z-ai/glm-5.3-flash',
@@ -823,25 +818,13 @@ describe('Room turn failure receipt', () => {
     });
     warn.mockRestore();
 
-    // Exactly one retry, and it was pinned to ONE named provider with no
-    // fallbacks, so the failure names who actually served it.
-    expect(attempts).toBe(2);
+    expect(attempts).toBe(1);
     expect(posted).toEqual([]);
-    expect(
-      (secondPin as Record<string, any>).providers.openrouter.modelOverrides['z-ai/glm-5.3-flash']
-        .compat.openRouterRouting,
-    ).toEqual({
-      only: ['phala'],
-      order: ['phala'],
-      allow_fallbacks: false,
-      require_parameters: false,
-    });
-    expect(existsSync(join(agentHomeRoot, 'pi', 'models.json'))).toBe(true);
-    const failed = receipts.find((receipt) => receipt.status === 'failed')!;
-    expect(failed.reason).toBe(
-      'the model ended its turn with no text (stop reason end_turn) · served by phala',
-    );
-    expect(warnings.join('\n')).toContain('routed to venice, phala; retrying on phala');
+    expect(secondPin).toBeUndefined();
+    expect(receipts).toContainEqual(expect.objectContaining({ status: 'complete' }));
+    expect(receipts.some(receipt => receipt.status === 'failed')).toBe(false);
+    expect(warnings).toEqual([]);
+    console.info('Demonstrated ST-silent: empty final reply posts nothing, completes once, no retry');
   });
 
   describe('Reproduction R1: a provider 429 behind a one-provider pin', () => {
@@ -916,8 +899,8 @@ describe('Room turn failure receipt', () => {
         prompt: async ({ agentHomeRoot, attempt }) => {
           pins.push(await pinOf(agentHomeRoot));
           if (attempt === 1) {
-            // Turn one: an empty completion; the loop re-pins to baseten.
-            await record(agentHomeRoot, { content: [], stopReason: 'end_turn' });
+            // Turn one: a provider outage moves the pin to baseten.
+            await record(agentHomeRoot, { content: [], stopReason: 'error', errorMessage: '503: Provider unavailable' });
             return { stopReason: 'end_turn', updates: [], agentText: '', toolCalls: [] };
           }
           if (attempt === 3) {
@@ -1212,13 +1195,13 @@ describe('delivering tools answer an ordered Room turn without chat text', () =>
     expect(receipts).toContainEqual(expect.objectContaining({ status: 'failed' }));
   });
 
-  it.each(['report_feedback', 'report_memory_used', 'read'])('does not mistake %s for a delivering tool', async (tool) => {
+  it.each(['report_feedback', 'report_memory_used', 'read'])('allows a silent final after %s', async (tool) => {
     const { receipts } = await runTurn({
       agentCommand: '/fake-agent', agentKind: 'codex', commandReason: 'order',
       prompt: async () => ({ stopReason: 'end_turn', updates: [], agentText: '',
         toolCalls: [{ id: 'other', title: `mcp__beeline-agent__${tool}`, status: 'completed' }],
       }),
     });
-    expect(receipts).toContainEqual(expect.objectContaining({ status: 'failed' }));
+    expect(receipts).toContainEqual(expect.objectContaining({ status: 'complete' }));
   });
 });

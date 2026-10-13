@@ -1227,7 +1227,7 @@ export type PostAgentModelCatalogInput = AgentInput & {
   /** The harness kind (`AGENT_KINDS` in `apps/body/src/agent-command.ts`); the automatic "harness" tag. */
   readonly harness?: string;
 };
-export type CornerWatchKind = 'opened' | 'merged' | 'closed';
+export type CornerWatchKind = 'opened' | 'merged';
 export type CornerWatchResult = {
   readonly kinds: readonly CornerWatchKind[];
   /**

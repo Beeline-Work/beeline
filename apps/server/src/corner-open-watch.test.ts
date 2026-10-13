@@ -146,7 +146,9 @@ async function clearWakes() {
 it('open_corner watches for merged by default and the merge wakes the opener once', async () => {
   await clearWakes();
   const created = await open();
-  expect(created.watch).toEqual({ roomId: R, kinds: ['opened', 'merged', 'closed'] });
+  expect(created.watch).toEqual({ roomId: R, kinds: ['opened', 'merged'] });
+  expect((await readAgentCommands(db, R, A)).commands.filter(c => c.reason === 'watched_corner')).toEqual([]);
+  console.info('Demonstrated ST-opened: createCorner auto-watch produced no opener wake');
   await merge(created.cornerId);
   const wakes = await mergeWakes();
   expect(wakes).toHaveLength(1);
@@ -159,7 +161,7 @@ it('open_corner watches for merged by default and the merge wakes the opener onc
 it('opening always watches lifecycle events, with no visibility or merge-watch opt out', async () => {
   await clearWakes();
   const created = await open();
-  expect(created.watch?.kinds).toEqual(['opened', 'merged', 'closed']);
+  expect(created.watch?.kinds).toEqual(['opened', 'merged']);
   await merge(created.cornerId);
   expect(await mergeWakes()).toHaveLength(1);
 }, 30_000);
@@ -219,7 +221,7 @@ it('Room merged subscriptions are retired; a corner watch is the merge wake', as
 it('a watch held by an archived opener corner is a no-op on merge', async () => {
   const opener = await open();
   const created = await open(opener.cornerId);
-  expect(created.watch).toEqual({ roomId: opener.cornerId, kinds: ['opened', 'merged', 'closed'] });
+  expect(created.watch).toEqual({ roomId: opener.cornerId, kinds: ['opened', 'merged'] });
   await daemon.execute('archiveCorner', { cornerId: opener.cornerId }, A);
   await merge(created.cornerId);
   const wakes = await db.query(

@@ -4286,35 +4286,6 @@ export class DaemonService {
           input.requestId,
           agentId,
         );
-        if (input.completionKind === 'no-reply' && !this.authorizedCommand?.private_payload) {
-          const agent = (
-            await database.query<{ name: string }>(
-              `SELECT COALESCE(NULLIF(name,''),'The agent') name FROM identities WHERE id=$1`,
-              [agentId],
-            )
-          ).rows[0];
-          const existing = await database.query(
-            `SELECT 1 FROM messages WHERE room_id=$1 AND card_type='turn-no-reply'
-               AND card->>'requestId'=$2 AND card->>'agentId'=$3 LIMIT 1`,
-            [input.roomId, input.requestId, agentId],
-          );
-          if (agent && !existing.rowCount) {
-            await systemLine(database, {
-              roomId: input.roomId,
-              subject: { kind: 'agent', id: agentId, name: agent.name },
-              verb: 'had nothing to add',
-              consequence: 'this turn completed normally.',
-              cardType: 'turn-no-reply',
-              card: {
-                requestId: input.requestId,
-                agentId,
-                state: 'complete',
-                completionKind: 'no-reply',
-              },
-              afterMessageId: input.requestId,
-            });
-          }
-        }
       }
     });
     this.live.publish({
@@ -5493,9 +5464,9 @@ export class DaemonService {
   ): Promise<Output<'watchCorner'>> {
     if (
       !Array.isArray(input.kinds) ||
-      input.kinds.some((kind) => !['opened', 'merged', 'closed'].includes(kind))
+      input.kinds.some((kind) => !['opened', 'merged'].includes(kind))
     )
-      throw new CommandRefusalError('watch kinds must be opened, merged or closed', 400);
+      throw new CommandRefusalError('watch kinds must be opened or merged', 400);
     const kinds = [...new Set(input.kinds)];
     return this.database.transaction(async (db) => {
       const incoming = (await db.query<CommandRow>(`SELECT * FROM agent_commands
@@ -7344,7 +7315,7 @@ export class DaemonService {
       });
       // Opening watches lifecycle events where the commander opened the corner.
       await db.query(
-          `INSERT INTO corner_watches(watcher_room_id,agent_id,corner_id,kinds,incoming_command_id) VALUES($1,$2,$3,'["opened","merged","closed"]'::jsonb,$4)
+          `INSERT INTO corner_watches(watcher_room_id,agent_id,corner_id,kinds,incoming_command_id) VALUES($1,$2,$3,'["opened","merged"]'::jsonb,$4)
            ON CONFLICT(watcher_room_id,agent_id,corner_id) DO NOTHING`,
           [commandRoomId, agentId, cornerId, parentCommand.id],
         );

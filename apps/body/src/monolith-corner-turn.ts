@@ -100,6 +100,7 @@ import type { BodyConfig } from './config.js';
 import { DaemonApiError, type DaemonApiClient } from './daemon-api-client.js';
 import {
   explainEmptyAgentTurn,
+  isSilentCompletion,
   isAccountOrProviderRefusal,
   isContextOverflowTurn,
   nextPinnedProvider,
@@ -1447,7 +1448,7 @@ export class MonolithCornerTurnLoop {
     // Passive browser updates owe no answer and must not start provider
     // retries. Their receipt acknowledges delivery, even for a textless turn.
     if (this.commandContext.current?.source.systemEvent?.kind === 'computer-session-activity') return undefined;
-    return explainEmptyAgentTurn({
+    const explanation = await explainEmptyAgentTurn({
       agentLabel: harnessIdentityLabel({
         kind: this.options.config.agentKind,
         command: this.options.config.agentCommand ?? this.options.config.agentBinary,
@@ -1456,6 +1457,8 @@ export class MonolithCornerTurnLoop {
       sessionId: this.sessionId!,
       result,
     });
+    if (isSilentCompletion(result, explanation)) return undefined;
+    return explanation;
   }
 
   /**

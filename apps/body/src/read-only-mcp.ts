@@ -1072,7 +1072,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
       `Available kinds: ${eventKindCatalogLines().join('; ')}. ` +
       'Subscribe to joined and every newcomer wakes you, so you can greet them - a person arriving ' +
       'in the Workspace wakes you too when that arrival projects into this Room. ' +
-      'Use watch(address) for corner opened, merged and closed lifecycle wakes. Opening a corner watches it automatically. ' +
+      'Use watch(address) for corner opened and merged lifecycle wakes. Opening a corner watches it automatically. ' +
       'A grant, approval, choice, poll, or turn you asked for or started wakes you back automatically ' +
       'when it settles - there is nothing to subscribe to for your own items, and a kind like that is refused.',
     inputSchema: {
@@ -1090,7 +1090,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   },
   {
     name: 'watch',
-    description: 'Watch a corner address you or its parent Room belong to for opened, merged and closed lifecycle events only. Chatter, messages and schedules never wake a watcher. Opening a corner automatically watches it from your current address. Top-level Rooms and DMs have no watchable lifecycle.',
+    description: 'Watch a corner address you or its parent Room belong to for opened and merged lifecycle events only. Chatter, messages and schedules never wake a watcher. Opening a corner automatically watches it from your current address. Top-level Rooms and DMs have no watchable lifecycle.',
     inputSchema: { type: 'object', required: ['address'], properties: {
       address: { type: 'string', format: 'uuid', description: 'Corner address only; membership in the corner or its parent Room is required.' },
     }, additionalProperties: false },
@@ -1163,7 +1163,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'open_corner',
     description:
-      'Open a venue with room and brief; optional name and objective customize its navigation. Set implementer to hand the corner work to another agent member; the caller then does not work the corner. Open one corner after any material unresolved choice is settled. The dispatching message authorizes work; no separate spec or mock approval is required. Supply a compact brief for a precise small fix or a complete brief and Room files for complex work. The brief and available Room files are committed atomically with the first worker command. Give it a name of AT MOST THREE WORDS and a fixed objective of no more than 24 words. You are its commander: the worker reports only to you. Opening automatically watches opened, merged and closed lifecycle events here. DMs can open corners in every Room you belong to.',
+      'Open a venue with room and brief; optional name and objective customize its navigation. Set implementer to hand the corner work to another agent member; the caller then does not work the corner. Open one corner after any material unresolved choice is settled. The dispatching message authorizes work; no separate spec or mock approval is required. Supply a compact brief for a precise small fix or a complete brief and Room files for complex work. The brief and available Room files are committed atomically with the first worker command. Give it a name of AT MOST THREE WORDS and a fixed objective of no more than 24 words. You are its commander: the worker reports only to you. Opening automatically watches opened and merged lifecycle events here. DMs can open corners in every Room you belong to.',
     inputSchema: {
       type: 'object',
       required: ['room', 'brief'],
@@ -4949,7 +4949,7 @@ export async function callAgentTool(
       const result = await deps.execute('watchCorner', {
         roomId: deps.roomId,
         cornerId: args.address,
-        kinds: ['opened', 'merged', 'closed'],
+        kinds: ['opened', 'merged'],
       });
       const kinds = (result.kinds as string[]).join(', ');
       const headline =

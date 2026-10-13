@@ -94,6 +94,7 @@ import type { BodyConfig } from './config.js';
 import { type DaemonApiClient } from './daemon-api-client.js';
 import {
   explainEmptyAgentTurn,
+  isSilentCompletion,
   isContextOverflowTurn,
   nextPinnedProvider,
   shouldFailOverProviderError,
@@ -1370,6 +1371,7 @@ export class MonolithRoomTurnLoop {
       sessionId: this.sessionId!,
       result,
     });
+    if (isSilentCompletion(result, explanation)) return undefined;
     // Private delivery answers the command without a chat reply. Only an
     // affirmative completed status counts; failed or unfinished calls still
     // owe an answer. Keep any durable text recovered from pi's turn record.

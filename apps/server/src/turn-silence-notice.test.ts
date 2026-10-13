@@ -522,14 +522,11 @@ describe('first-silence notice', () => {
         [ROOM, requestId],
       )
     ).rows;
-    expect(lines).toEqual([
-      {
-        text: '@candy had nothing to add · this turn completed normally.',
-        card_type: 'turn-no-reply',
-        state: 'complete',
-        completion: 'no-reply',
-      },
-    ]);
+    expect(lines).toEqual([]);
+    expect((await database.query(`SELECT * FROM messages WHERE author_id=$1`, [AGENT])).rows).toEqual([]);
+    expect((await database.query(`SELECT * FROM agent_commands WHERE id<>$1`, [command.id])).rows).toEqual([]);
+    expect((await database.query(`SELECT status FROM agent_turns WHERE request_id=$1`, [requestId])).rows).toEqual([{ status: 'complete' }]);
+    console.info('Demonstrated silent-turns: no message, no notification source, no wake; audit receipt complete');
     expect((await commandState(database, command.id))?.state).toBe('complete');
   });
 

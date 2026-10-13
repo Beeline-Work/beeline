@@ -2,7 +2,8 @@
  * Thin adapter for expo-speech-recognition. Exists in its own module so tests
  * can mock it without vitest trying to resolve the native module chain.
  *
- * On unsupported platforms (web, desktop) getRecognitionModule returns null.
+ * Web uses speech-recognition-adapter.web.ts; this native adapter returns null
+ * outside iOS and Android.
  * Platform check is lazy so the adapter module can be loaded in test
  * environments without parsing react-native's Flow-typed source.
  */

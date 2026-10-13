@@ -145,7 +145,7 @@ export function useSpeechInput(
   const takeRef = React.useRef<RecordedTake>(NO_TAKE);
   const takeIdRef = React.useRef(0);
   const capability: SpeechInputCapability =
-    (Platform.OS === 'ios' || Platform.OS === 'android') && modRef.current
+    modRef.current
       ? 'available'
       : 'unavailable';
 

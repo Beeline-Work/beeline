@@ -250,10 +250,10 @@ it('holds the existing mic to enter voice mode without starting a dictation take
 });
 
 describe('mic button visibility', () => {
-  it('does not render the mic button on web/desktop', () => {
+  it('renders the mic button on web when recognition is available', () => {
     platformSetter.setOS('web');
     const { renderer } = render();
-    expect(renderer.root.findAllByProps({ testID: 'chat-mic' })).toHaveLength(0);
+    expect(renderer.root.findByProps({ testID: 'chat-mic' }).props.accessibilityLabel).toBe('Start speech input');
   });
 
   it('renders the mic button on Android', () => {

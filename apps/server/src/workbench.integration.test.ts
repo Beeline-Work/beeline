@@ -281,6 +281,8 @@ describe('workbench connectors', () => {
       },
     ]);
     expect(grants.rows.map((row) => row.agent_id)).not.toContain(OTHER_HELPER);
+    expect((await database.query(`SELECT 1 FROM messages WHERE card_type='grant-auto'`)).rowCount).toBe(0);
+
   });
 
 

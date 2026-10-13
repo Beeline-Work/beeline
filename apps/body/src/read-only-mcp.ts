@@ -671,7 +671,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'notify_feedback_fixed',
     description:
-      'After a merged pull request fixes Beeline feedback items, tell the people who reported them. System sends each person who reported an item themselves one DM, "Fixed: <title> <pr_url>"; agent reports resolve with no DM. The server allows this only when your owner is a configured System sender, and only for a pull request in the Beeline repository.',
+      'Resolve Beeline feedback items after a merged fix. Resolution is silent by default. Set notify true only when a configured System sender explicitly ordered Fixed notices for this pull request; the turn must be rooted in that human’s command. System sends each human reporter one Fixed DM per pull request. Your owner must be a configured System sender.',
     inputSchema: {
       type: 'object',
       required: ['item_ids', 'title', 'pr_url'],
@@ -684,6 +684,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
         },
         title: { type: 'string', minLength: 1, maxLength: FEEDBACK_FIXED_TITLE_MAX_LENGTH },
         pr_url: { type: 'string', minLength: 1 },
+        notify: { type: 'boolean', description: 'Only true for an explicit human order to send Fixed notices; omit for routine resolution.' },
       },
       additionalProperties: false,
     },
@@ -4476,6 +4477,7 @@ export async function callAgentTool(
           itemIds: Array.isArray(args.item_ids) ? args.item_ids : [],
           title: String(args.title ?? ''),
           prUrl: String(args.pr_url ?? ''),
+          ...(typeof args.notify === 'boolean' ? { notify: args.notify } : {}),
         }),
       );
     case 'save_memory':

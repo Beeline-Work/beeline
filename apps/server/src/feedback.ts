@@ -371,15 +371,7 @@ export async function reportMessageIssue(
 // Close the loop
 // ---------------------------------------------------------------------------
 
-/**
- * `notify_feedback_fixed`: the triage agent reports that a merged pull request
- * fixed these items. System, whose identity only the server holds, DMs each
- * person who reported one of them themselves, once per pull request; agent
- * reports resolve silently. Checked on every call: the agent's own turn, an
- * owner listed in `BEELINE_SYSTEM_SENDERS`, a one-line title with no secret,
- * and a pull request in the configured repository that GitHub reports as
- * merged. The text is fixed.
- */
+/** Resolve merged feedback silently; send Fixed DMs only on an explicit sender-rooted notify request. */
 export async function notifyFeedbackFixed(
   database: SqlDatabase,
   { config, pullRequests }: FeedbackLoop,
@@ -400,6 +392,17 @@ export async function notifyFeedbackFixed(
     throw new Error(
       'System DM access denied: only agents whose owner is a configured System sender can send Fixed DMs, in their own turn',
     );
+  const notify = input.notify === true;
+  if (notify) {
+    const root = (await database.query<{ author_id: string }>(
+      `SELECT message.author_id FROM messages message
+       JOIN identities author ON author.id=message.author_id AND author.kind='human'
+         AND NOT author.hidden_from_roster
+       WHERE message.id=$1`, [command!.root_source_message_id],
+    )).rows[0];
+    if (!root || !config.systemSenders.includes(root.author_id))
+      throw new Error('System DM access denied: Fixed notices need an explicit order from a configured System sender');
+  }
   const itemIds = Array.isArray(input.itemIds)
     ? [...new Set(input.itemIds.filter((id): id is string => typeof id === 'string'))]
     : [];
@@ -431,19 +434,28 @@ export async function notifyFeedbackFixed(
       reporter_identity_id: string;
       workspace_id: string;
     }>(
-      `UPDATE feedback_items SET status='resolved',resolved_notified_at=now(),
+      `UPDATE feedback_items SET status='resolved',
          triaged_at=COALESCE(triaged_at,now())
        WHERE id=ANY($1::text[]) AND status<>'resolved'
        RETURNING source_kind,reporter_identity_id,workspace_id`,
       [itemIds],
     );
-    const people = new Map<string, string>();
-    for (const row of resolved.rows)
-      if (row.source_kind === 'human' && !people.has(row.reporter_identity_id))
-        people.set(row.reporter_identity_id, row.workspace_id);
+    if (!notify) return { resolved: resolved.rowCount ?? 0, notified: 0 };
+    // A later explicit notice order can notify items already resolved silently.
+    const reporters = await db.query<{ reporter_identity_id: string; workspace_id: string }>(
+      `SELECT reporter_identity_id,workspace_id FROM feedback_items
+       WHERE id=ANY($1::text[]) AND status='resolved' AND source_kind='human'
+         AND resolved_notified_at IS NULL`, [itemIds],
+    );
+    const people = new Map(reporters.rows.map(row => [row.reporter_identity_id, row.workspace_id]));
     let notified = 0;
-    for (const [person, workspaceId] of people)
-      if (await sendFixedMessage(db, person, workspaceId, title, url)) notified++;
+    for (const [person, workspaceId] of people) {
+      if (await sendFixedMessage(db, person, workspaceId, title, url)) {
+        notified++;
+        await db.query(`UPDATE feedback_items SET resolved_notified_at=now()
+          WHERE id=ANY($1::text[]) AND reporter_identity_id=$2 AND status='resolved'`, [itemIds, person]);
+      }
+    }
     return { resolved: resolved.rowCount ?? 0, notified };
   });
 }

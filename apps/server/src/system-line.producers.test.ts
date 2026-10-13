@@ -1,5 +1,6 @@
 import { createAgentCommand, claimAgentCommand } from './agent-command.js';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { PushDeliveryLoop } from './background.js';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { DaemonService } from './daemon-service.js';
@@ -88,6 +89,41 @@ async function workspaceLineCounts(
  * phone can render mentions and fold runs.
  */
 describe('system-line producers', () => {
+  it('keeps each removed Workspace producer silent and its state queryable', async () => {
+    const database = await fixture();
+    try {
+      await database.query(`INSERT INTO push_devices(token,identity_id,platform,environment)
+        VALUES('silent-owner-device-token-123456789012345',$1,'android','physical')`, [OWNER]);
+      const send = vi.fn(async () => undefined);
+      const push = new PushDeliveryLoop(database, { send });
+      await push.runOnce();
+      const phone = new PhoneService(database, 'http://local.test');
+      const silent = async (action: () => Promise<unknown>) => {
+        await action();
+        expect((await database.query(`SELECT 1 FROM messages m JOIN rooms r ON r.id=m.room_id WHERE r.direct_participants IS NOT NULL`)).rowCount).toBe(0);
+        expect(await push.runOnce()).toBe(0);
+        expect(send).not.toHaveBeenCalled();
+      };
+      await silent(() => phone.execute('addWorkspaceMember', { workspaceId: WORKSPACE, memberId: ADDED_AGENT, role: 'member' }, OWNER));
+      await silent(() => phone.execute('addWorkspaceMember', { workspaceId: WORKSPACE, memberId: MEMBER, role: 'admin' }, OWNER));
+      await silent(() => phone.execute('updateWorkspace', { workspaceId: WORKSPACE, visibility: 'public' }, OWNER));
+      await database.query(`UPDATE agents SET model_catalog=$2::jsonb WHERE agent_id=$1`, [AGENT, JSON.stringify([
+        { id: 'model', category: 'model', currentValue: 'old', options: [{ id: 'old', name: 'Old' }, { id: 'new', name: 'New' }] },
+        { id: 'effort', category: 'effort', currentValue: 'low', options: [{ id: 'low', name: 'Low' }, { id: 'high', name: 'High' }] },
+      ])]);
+      await silent(() => phone.execute('updateAgentModelSelection', { workspaceId: WORKSPACE, agentId: AGENT, model: 'new', effort: 'high' }, OWNER));
+      await silent(() => phone.execute('updateAgentAccessPolicy', { workspaceId: WORKSPACE, agentId: AGENT, policy: 'creator' }, OWNER));
+      expect((await database.query(`SELECT selected_model,selected_effort,access_policy FROM agents WHERE agent_id=$1`, [AGENT])).rows)
+        .toEqual([{ selected_model: 'new', selected_effort: 'high', access_policy: { type: 'creator' } }]);
+      await silent(() => phone.execute('leaveWorkspace', { workspaceId: WORKSPACE }, MEMBER));
+      await silent(() => phone.execute('removeWorkspaceMember', { workspaceId: WORKSPACE, memberId: LATE }, OWNER));
+      await silent(() => phone.execute('removeAgent', { workspaceId: WORKSPACE, agentId: AGENT }, OWNER));
+      expect((await database.query(`SELECT identity_id FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND removed_at IS NOT NULL ORDER BY identity_id`, [WORKSPACE])).rows)
+        .toEqual([MEMBER, AGENT, LATE].sort().map(identity_id => ({ identity_id })));
+      console.log('DM-1: Workspace joins, roles, visibility, model, effort, addressing policy, leave and removal: committed state retained; zero System messages and zero pushes');
+    } finally { await database.close(); }
+  });
+
   it('phrases a membership join, a leave, and a removal', async () => {
     const database = await fixture();
     try {
@@ -202,13 +238,7 @@ describe('system-line producers', () => {
       );
       await phone.execute('addRoomMember', { roomId: ROOM, memberId: ADDED_AGENT }, MANAGER);
       expect(await lines(database)).toEqual([]);
-      expect(await workspaceLineCounts(database, ['workspace-member-joined'])).toEqual([
-        {
-          author_id: SYSTEM_IDENTITY_ID,
-          text: '@scout joined · invited by @manager',
-          count: 5,
-        },
-      ]);
+      expect(await workspaceLineCounts(database, ['workspace-member-joined'])).toEqual([]);
       expect(
         (
           await database.query<{ owner_id: string }>(
@@ -232,27 +262,19 @@ describe('system-line producers', () => {
         OWNER,
       );
       expect(await lines(database)).toEqual([]);
-      expect(await workspaceLineCounts(database, ['member-role'])).toEqual([
-        {
-          author_id: SYSTEM_IDENTITY_ID,
-          text: '@owner changed role to admin',
-          count: 5,
-        },
-      ]);
+      expect(await workspaceLineCounts(database, ['member-role'])).toEqual([]);
     } finally {
       await database.close();
     }
   });
 
-  it("routes an agent Workspace removal to each person's @system DM", async () => {
+  it("silently retains an agent Workspace removal", async () => {
     const database = await fixture();
     try {
       const phone = new PhoneService(database, 'http://local.test');
       await phone.execute('removeAgent', { workspaceId: WORKSPACE, agentId: AGENT }, OWNER);
       expect(await lines(database)).toEqual([]);
-      expect(await workspaceLineCounts(database, ['member-removed'])).toEqual([
-        { author_id: SYSTEM_IDENTITY_ID, text: '@owner removed @bee', count: 5 },
-      ]);
+      expect(await workspaceLineCounts(database, ['member-removed'])).toEqual([]);
     } finally {
       await database.close();
     }
@@ -293,7 +315,7 @@ describe('system-line producers', () => {
     }
   });
 
-  it('names the acting human on model, role, and visibility changes', async () => {
+  it('silently retains model, role, and visibility changes', async () => {
     const database = await fixture();
     try {
       await database.query(
@@ -341,27 +363,15 @@ describe('system-line producers', () => {
         AGENT,
       ]);
       expect((await phone.readAgent(WORKSPACE, AGENT, OWNER))?.modelUnavailable).toBe('model');
-      // The model change is a Workspace fact: one @system DM per person, and
-      // nothing in the shared Room transcript it used to fan out across.
       expect(
         await workspaceLineCounts(database, ['agent-model', 'member-role', 'workspace-visibility']),
-      ).toEqual([
-        {
-          author_id: SYSTEM_IDENTITY_ID,
-          text: "@owner changed @bee's model to Codex",
-          count: 5,
-        },
-        {
-          author_id: SYSTEM_IDENTITY_ID,
-          text: "@owner changed @member's role to admin",
-          count: 5,
-        },
-        {
-          author_id: SYSTEM_IDENTITY_ID,
-          text: '@owner changed workspace visibility to public',
-          count: 5,
-        },
-      ]);
+      ).toEqual([]);
+      expect((await database.query(`SELECT selected_model FROM agents WHERE agent_id=$1`, [AGENT])).rows)
+        .toEqual([{ selected_model: 'codex' }]);
+      expect((await database.query(`SELECT visibility FROM workspaces WHERE id=$1`, [WORKSPACE])).rows)
+        .toEqual([{ visibility: 'public' }]);
+      expect((await database.query(`SELECT role FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`, [WORKSPACE, MEMBER])).rows)
+        .toEqual([{ role: 'admin' }]);
     } finally {
       await database.close();
     }

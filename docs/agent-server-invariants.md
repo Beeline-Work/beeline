@@ -19,12 +19,12 @@ Paths and commands below are relative to the repository root. Read these invaria
 
 ## Feature contracts
 
-- Wallet settlement and push authority: [wallet tools](wallet-tools.md), `wallet-notices.ts`, `wallet-webhooks.ts`. Balance deltas enrich history; they never replace owner-DM transaction push.
-- Feedback closes only through `notify_feedback_fixed` with a merged PR in `BEELINE_FEEDBACK_REPOSITORY`; storage and policy: `apps/server/src/feedback.ts`, [triage workflow](workflows/feedback-triage.json).
+- Wallet settlement and push authority: [wallet tools](wallet-tools.md), `wallet-notices.ts`, `wallet-webhooks.ts`. Indexed incoming receipts stay in `wallet_transactions` without a System DM. Outgoing transactions, failures, refusals, pending notices and webhook receipts without a history row retain their notices.
+- Feedback resolves silently through `notify_feedback_fixed` with a merged PR in `BEELINE_FEEDBACK_REPOSITORY`; `notify: true` sends Fixed notices only for an explicitly ordered notice in a configured System sender’s human-rooted turn; storage and policy: `apps/server/src/feedback.ts`, [triage workflow](workflows/feedback-triage.json).
 - The GitHub star card acts only on the person's own tap and never gates anything (`github-star-prompt.ts`, `StarPromptCard.tsx`).
 - Corner Apps are installed data, never downloaded code; permission manifest: `packages/api-contract/src/corner-apps.ts`.
 - Agent faces and names are assigned together by the server under the Workspace lock (`assignSeededAgentIdentity`, `PhoneService.claimAgentConnectPairing`); never re-derive a face on the client. Keep face IDs aligned in `packages/api-contract/src/faces.ts` and `apps/mobile/sources/buzz/faces/index.ts`. Human handles win collisions (`workspace-handles.ts`).
-- **A non-agent system author is a hidden `kind='human'` identity** with a fixed id (`SYSTEM_IDENTITY_ID`, `REVIEW_IDENTITY_ID`, `SCHEDULE_SCHEDULER_ID`), never a new `identities.kind`. `system-line.ts` sends Workspace facts and connector notices to each member's read-only `@system` DM (`assertRoomIsWritable`); `migrations/one-system-thread.ts` retires every other bot DM and its contents. Tray decisions reuse the transcript's grant/permission/choice operations; Squire retains its own ceremony (`needs-you.ts`, `tray.tsx`).
+- **A non-agent system author is a hidden `kind='human'` identity** with a fixed id (`SYSTEM_IDENTITY_ID`, `REVIEW_IDENTITY_ID`, `SCHEDULE_SCHEDULER_ID`), never a new `identities.kind`. `system-line.ts` sends essential approvals, sign-in, security and money notices to the recipient's read-only `@system` DM; routine Workspace facts stay in their committed state (`assertRoomIsWritable`); `migrations/one-system-thread.ts` retires every other bot DM and its contents. Tray decisions reuse the transcript's grant/permission/choice operations; Squire retains its own ceremony (`needs-you.ts`, `tray.tsx`).
 
 ## External apps and MCP
 

@@ -1,0 +1,31 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`requires review for every new System DM destination producer 1`] = `
+[
+  "daemon-service.ts:agentAvatar:directMessageRoomId",
+  "daemon-service.ts:connectMcpServer:ensureSystemDirectMessageRoom",
+  "daemon-service.ts:linkSpendApproval:ensureSystemDirectMessageRoom",
+  "daemon-service.ts:modelCatalog:ensureSystemDirectMessageRoom",
+  "daemon-service.ts:modelCatalog:ensureSystemDirectMessageRoom",
+  "daemon-service.ts:notifyTailscaleSignIn:ensureSystemDirectMessageRoom",
+  "daemon-service.ts:requestAgentGrant:ensureSystemDirectMessageRoom",
+  "daemon-service.ts:requestAgentGrant:ensureSystemDirectMessageRoom",
+  "daemon-service.ts:squireApproval:ensureSystemDirectMessageRoom",
+  "feedback.ts:notifyFeedbackFixed:sendFixedMessage",
+  "feedback.ts:sendFixedMessage:ensureSystemDirectMessageRoom",
+  "grant-policy-upgrade.ts:upgradeGrantPolicy:ensureSystemDirectMessageRoom",
+  "grant-policy-upgrade.ts:upgradeGrantPolicy:ensureSystemDirectMessageRoom",
+  "phone-service.ts:armConnectorPairing:ensureSystemDirectMessageRoom",
+  "phone-service.ts:resolveDirectMessage:directMessageRoomId",
+  "phone-service.ts:resolveDirectMessage:ensureSystemDirectMessageRoomResult",
+  "system-line.ts:ensureSystemDirectMessageRoom:ensureSystemDirectMessageRoomResult",
+  "system-line.ts:ensureSystemDirectMessageRoomResult:directMessageRoomId",
+  "wallet-notices.ts:postWalletNotice:ensureSystemDirectMessageRoom",
+  "wallet.ts:agentSignTypedData:ensureSystemDirectMessageRoom",
+  "wallet.ts:createWallet:ensureSystemDirectMessageRoom",
+  "wallet.ts:grantWalletDelegation:ensureSystemDirectMessageRoom",
+  "workbench.ts:grantSquireToOwnerMachineAgents:ensureSystemDirectMessageRoom",
+  "workbench.ts:postUsageReceiptCard:ensureSystemDirectMessageRoom",
+  "workflow-runs.ts:noticeRunOwner:ensureSystemDirectMessageRoom",
+]
+`;

@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { SUBSCRIBABLE_EVENT_KINDS, type SystemEventKind } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
-import { systemIdentityMention, systemLine, workspaceSystemLine } from './system-line.js';
+import { systemIdentityMention, systemLine } from './system-line.js';
 
 type RoomSelection =
   { type: 'none' } | { type: 'rooms'; roomIds: readonly string[] } | { type: 'all-live-top-level' };
@@ -290,19 +290,10 @@ export async function joinRooms(
       card: { identityId: input.identityId },
     };
 
-    if (input.workspaceJoined) {
-      await workspaceSystemLine(transaction, {
-        workspaceId: input.workspaceId,
-        excludeRecipientIds: [input.identityId],
-        ...line,
-        kind: undefined,
-        cardType: 'workspace-member-joined',
-      });
-    }
     // Auto-joining public Rooms is only a membership projection of the
     // Workspace arrival. In an ordinary Room that arrival stays silent: it is
-    // announced once per existing person in their @system DM, not again in
-    // every projected Room. System events are SUBSCRIBABLE per Room, so the
+    // retained in memberships without a System DM. System events are
+    // SUBSCRIBABLE per Room, so the
     // projection emits its `joined` event exactly where someone subscribed:
     // any agent member of a projected Room that subscribed to `joined` wakes
     // on it, in any Workspace, with no workspace special case — that is how a
@@ -317,6 +308,9 @@ export async function joinRooms(
         roomId,
         ...line,
       });
+
+    // Workspace arrivals are retained in memberships without a broadcast push.
+    if (input.workspaceJoined) return { roomIds };
 
     const notificationId = `workspace-join:${randomUUID()}`;
     await transaction.query(

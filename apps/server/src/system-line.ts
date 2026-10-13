@@ -102,15 +102,6 @@ export interface SystemLineInput {
   readonly afterMessageId?: string;
 }
 
-export interface WorkspaceSystemLineInput extends Omit<
-  SystemLineInput,
-  'roomId' | 'authorId' | 'id' | 'wakes' | 'causeId' | 'afterMessageId'
-> {
-  readonly workspaceId: string;
-  /** Active people who should not receive this Workspace fact, such as the person who just joined. */
-  readonly excludeRecipientIds?: readonly string[];
-}
-
 export function directMessageRoomId(
   workspaceId: string,
   participants: readonly [string, string],
@@ -623,45 +614,6 @@ export async function wakeLateCornerWatcher(
       action: 'input',
     }),
   );
-}
-
-/**
- * Routes one Workspace-scoped lifecycle fact into each active person's
- * read-only `@system` DM. Shared Rooms never receive these rows.
- */
-export async function workspaceSystemLine(
-  database: SqlDatabase,
-  input: WorkspaceSystemLineInput,
-): Promise<SystemLineResult[]> {
-  const excluded = input.excludeRecipientIds ?? [];
-  const recipients = await database.query<{ identity_id: string }>(
-    `SELECT membership.identity_id
-     FROM memberships membership
-     JOIN identities identity ON identity.id=membership.identity_id
-       AND identity.kind='human' AND identity.hidden_from_roster=false
-     WHERE membership.workspace_id=$1 AND membership.room_id IS NULL
-       AND membership.removed_at IS NULL
-       AND NOT (membership.identity_id=ANY($2::text[]))
-     ORDER BY membership.identity_id`,
-    [input.workspaceId, [...excluded]],
-  );
-  const { workspaceId, excludeRecipientIds: _excludeRecipientIds, ...line } = input;
-  const results: SystemLineResult[] = [];
-  for (const recipient of recipients.rows) {
-    const roomId = await ensureSystemDirectMessageRoom(
-      database,
-      workspaceId,
-      recipient.identity_id,
-    );
-    results.push(
-      await systemLine(database, {
-        ...line,
-        roomId,
-        authorId: SYSTEM_IDENTITY_ID,
-      }),
-    );
-  }
-  return results;
 }
 
 /**

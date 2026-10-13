@@ -174,7 +174,6 @@ import {
   identitySubject,
   systemIdentityMention,
   systemLine,
-  workspaceSystemLine,
 } from './system-line.js';
 export { directMessageRoomId } from './system-line.js';
 import {
@@ -6212,17 +6211,6 @@ export class PhoneService {
         `UPDATE workspaces SET name=COALESCE($2,name),avatar=COALESCE($3,avatar),visibility=COALESCE($4,visibility),voice_provider=COALESCE($5,voice_provider),updated_at=now() WHERE id=$1`,
         [input.workspaceId, input.name ?? null, avatar, input.visibility ?? null, input.voiceProvider ?? null],
       );
-      if (input.visibility && input.visibility !== current?.visibility) {
-        const actor = await this.requireIdentity(viewerId, database);
-        await workspaceSystemLine(database, {
-          workspaceId: input.workspaceId,
-          subject: identitySubject({ id: actor.pubkey, kind: actor.kind, name: actor.name }),
-          verb: 'changed workspace visibility to',
-          object: input.visibility,
-          cardType: 'workspace-visibility',
-          card: { visibility: input.visibility },
-        });
-      }
     });
   }
   private async leaveWorkspace(input: Input<'leaveWorkspace'>, viewerId: string) {
@@ -6253,13 +6241,7 @@ export class PhoneService {
         `DELETE FROM agent_pairing_codes WHERE workspace_id=$1 AND created_by=$2 AND claimed_by IS NULL`,
         [input.workspaceId, viewerId],
       );
-      await workspaceSystemLine(database, {
-        workspaceId: input.workspaceId,
-        subject: identitySubject({ id: leaver.pubkey, kind: leaver.kind, name: leaver.name }),
-        verb: 'left',
-        cardType: 'member-left',
-        card: { identityId: viewerId },
-      });
+      // The committed state is the silent audit record.
     });
   }
   /**
@@ -6810,8 +6792,8 @@ export class PhoneService {
   private async addWorkspaceMember(input: Input<'addWorkspaceMember'>, viewerId: string) {
     await this.requireWorkspaceManager(input.workspaceId, viewerId);
     if (input.memberId === viewerId) throw new Error('workspace managers cannot change themselves');
-    const changedMember = await this.requireIdentity(input.memberId);
-    const changingMember = await this.requireIdentity(viewerId);
+    await this.requireIdentity(input.memberId);
+    await this.requireIdentity(viewerId);
     return this.database.transaction(async (database) => {
       const workspaceIds = await lockIdentityHandleWorkspaces(database, input.memberId, [
         input.workspaceId,
@@ -6870,28 +6852,6 @@ export class PhoneService {
           [input.workspaceId, input.memberId, input.role, viewerId],
         );
         await syncTopLevelSharedRoomRoles(database, input.workspaceId, input.memberId);
-        if (!target.removed_at && target.role !== input.role) {
-          const targetMention = systemIdentityMention({
-            id: changedMember.pubkey,
-            kind: changedMember.kind,
-            name: changedMember.name,
-            handle: changedMember.handle ?? null,
-          });
-          await workspaceSystemLine(database, {
-            workspaceId: input.workspaceId,
-            subject: identitySubject({
-              id: changingMember.pubkey,
-              kind: changingMember.kind,
-              name: changingMember.name,
-            }),
-            verb: 'changed',
-            object: targetMention
-              ? `${targetMention}'s role to ${input.role}`
-              : `role to ${input.role}`,
-            cardType: 'member-role',
-            card: { identityId: input.memberId, role: input.role },
-          });
-        }
         if (target.removed_at)
           await joinRooms(database, {
             workspaceId: input.workspaceId,
@@ -6959,14 +6919,7 @@ export class PhoneService {
         `DELETE FROM agent_pairing_codes WHERE workspace_id=$1 AND created_by=$2 AND claimed_by IS NULL`,
         [input.workspaceId, input.memberId],
       );
-      await workspaceSystemLine(database, {
-        workspaceId: input.workspaceId,
-        subject: identitySubject({ id: remover.pubkey, kind: remover.kind, name: remover.name }),
-        verb: 'removed',
-        object: { text: removed.name, id: removed.pubkey },
-        cardType: 'member-removed',
-        card: { identityId: input.memberId },
-      });
+      // The committed state is the silent audit record.
     });
   }
   private async resolveDirectMessage(input: Input<'resolveDirectMessage'>, viewerId: string) {
@@ -7260,12 +7213,6 @@ export class PhoneService {
            AND membership.removed_at IS NULL AND room.archived_at IS NULL`,
         [input.agentId, input.workspaceId],
       );
-      const actor = {
-        id: context.actor_id,
-        kind: context.actor_kind,
-        name: context.actor_name,
-        handle: context.actor_handle,
-      };
       // Hot-restart wake: every daemon live subscription of these Rooms filters
       // on the target agent, so its retained sessions retire at once and the
       // next turn cold-activates against the saved selection — exactly what
@@ -7285,29 +7232,7 @@ export class PhoneService {
           }),
         ]);
       }
-      const agentMention = systemIdentityMention({
-        id: context.agent_id,
-        kind: context.agent_kind,
-        name: context.agent_name,
-        handle: context.agent_handle,
-      });
-      // A model/effort change is a Workspace-scoped configuration fact, not
-      // Room activity: one fact routed through workspaceSystemLine into each
-      // person's @system DM, the same lane as role and visibility changes.
-      for (const change of changes) {
-        const value =
-          change.axis === 'model' && change.value
-            ? selectedModelLabel(change.value, context.model_catalog ?? [])
-            : change.value;
-        await workspaceSystemLine(database, {
-          workspaceId: input.workspaceId,
-          subject: identitySubject(actor),
-          verb: 'changed',
-          object: `${agentMention}'s ${change.axis} to ${value ?? 'default'}`,
-          cardType: 'agent-model',
-          card: { agentId: input.agentId, axis: change.axis, value },
-        });
-      }
+      // Selected model and effort remain queryable on agents.
     });
   }
   /**
@@ -7878,25 +7803,7 @@ export class PhoneService {
         [input.agentId, JSON.stringify(agentAccessPolicyRecord(input.policy, allow))],
       );
       if (!changed.rowCount) return;
-      await workspaceSystemLine(database, {
-        workspaceId: input.workspaceId,
-        subject: {
-          kind: 'person',
-          id: viewerId,
-          // Named by @handle like every other person in a system line; a
-          // person with no handle is left unnamed rather than described.
-          name: personMention(agent.viewer_handle) ?? 'Someone',
-        },
-        verb: 'changed who may address',
-        object: { text: agent.agent_name, id: input.agentId },
-        consequence:
-          input.policy === 'everyone'
-            ? 'anyone may ask now'
-            : input.policy === 'creator'
-              ? `only ${personMention(agent.owner_handle) ?? 'the owner'} may ask now`
-              : 'only an allowed member may ask now',
-        cardType: 'agent-access',
-      });
+      // The committed state is the silent audit record.
     });
   }
   /**

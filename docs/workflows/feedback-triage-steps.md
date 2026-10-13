@@ -26,8 +26,10 @@ gh pr list --repo Beeline-Work/beeline --state merged --search '"Feedback items:
 
 For each one, call `notify_feedback_fixed` with the item ids from that line, a short
 plain title for the fix (one line, at most 120 characters), and the pull request URL.
-The server confirms the pull request merged before anyone hears about it. A repeat
-call sends nothing twice, so re-checking an older PR is safe. Hand off `notified`
+Omit `notify`: routine resolution sends no DM. Only set `notify: true` when
+a configured System sender explicitly orders Fixed notices for that pull request
+in the current human-rooted turn. The server verifies the merge before resolving
+items; repeats resolve nothing twice. Hand off `notified`
 with `fixedPullRequests` listing the URLs you reported, or `none`, and
 `skipReason` and `unnotifiedPullRequests` set to `none`.
 

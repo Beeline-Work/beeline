@@ -115,6 +115,7 @@ describe('report_feedback', () => {
       {
         item_ids: ['fb_1', 'fb_2'],
         title: 'Grant card resolves',
+        notify: true,
         pr_url: 'https://github.com/Beeline-Work/beeline/pull/7',
       },
       'call-1',
@@ -127,12 +128,19 @@ describe('report_feedback', () => {
           roomId: 'room-1',
           itemIds: ['fb_1', 'fb_2'],
           title: 'Grant card resolves',
+          notify: true,
           prUrl: 'https://github.com/Beeline-Work/beeline/pull/7',
           requestId: 'request-1',
           generationId: context.generationId,
         }),
       },
     ]);
+  });
+
+  it('omits notify for routine feedback resolution', async () => {
+    answer = () => Response.json({ resolved: 1, notified: 0 });
+    await callAgentTool('notify_feedback_fixed', { item_ids: ['fb_1'], title: 'Fix', pr_url: 'https://github.com/Beeline-Work/beeline/pull/7' }, 'silent-resolution');
+    expect(calls[0]?.input).not.toHaveProperty('notify');
   });
 
   it('returns a refusal as a result instead of failing the turn', async () => {

@@ -1033,7 +1033,7 @@ export default function BuzzChannels() {
               }
               renderSectionHeader={({ section }) =>
                 section.title && !query.trim() ? (
-                  <RoomListSectionHeader title={section.title} inset="content" />
+                  <RoomListSectionHeader title={section.title} />
                 ) : null
               }
               ListFooterComponent={

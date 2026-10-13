@@ -21,4 +21,6 @@ The mobile typecheck was attempted. It currently fails on pre-existing SDK build
 
 PNG captures here are browser proofs, not native Android release screenshots. The server persistence, provider catalog/preview API, collision-aware Room assignment and Android release-build evidence follow approval. Firstmate's acknowledged follow-up also adds Fish emotion-tag guidance to voice-mode prompting, preserves tags for speech, and removes them from the visible transcript without an extra request or buffering delay.
 
+The app-wide alignment approved via firstmate on 2026-10-13 is applied to both mock confirmations: trailing row, quiet Cancel left, primary Save right, shared 44-pixel Button. In profile edit mode, Message remains in its own identity action row; the confirmation row follows the Soul draft.
+
 Approval is required by the launch brief before implementation or a PR.

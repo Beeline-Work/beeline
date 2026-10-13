@@ -134,6 +134,20 @@ await build({
           const end = contents.indexOf('            {editing && (', start);
           if (start < 0 || end < 0) throw Error('Profile mock anchor changed');
           contents = contents.slice(0, start) + contents.slice(end);
+          const actionsStart = contents.indexOf('                <ProfileActions');
+          const actionsEnd = contents.indexOf('\n              }', actionsStart);
+          if (actionsStart < 0 || actionsEnd < 0)
+            throw Error('Profile actions mock anchor changed');
+          contents =
+            contents.slice(0, actionsStart) +
+            `                <ProfileActions
+                  actions={[
+                    {label:'Message', onPress:onMessage, testID:'agent-profile-message'},
+                    ...(canEdit && !editing ? [{label:'Edit', onPress:onEdit, testID:'edit-agent-soul'}] : []),
+                  ]}
+                />` +
+            contents.slice(actionsEnd);
+
           contents = contents.replace('  management,', '  management,\n  mockVoice,');
           contents = contents.replace(
             '  management: React.ReactNode;',
@@ -141,7 +155,13 @@ await build({
           );
           contents = contents.replace(
             '            <SettingsRow\n              title="Permission mode"',
-            `            <View style={styles.section}>
+            `            {canEdit && editing && (
+              <View style={{flexDirection:'row', justifyContent:'flex-end', gap:theme.buzz.space.sm, paddingTop:theme.buzz.space.md}} testID="profile-edit-confirm-actions">
+                <Button label="Cancel" variant="secondary" disabled={saving} onPress={onCancel} testID="cancel-agent-edit" />
+                <Button label={saving ? 'Saving…' : 'Save'} variant="primary" disabled={saving} onPress={onSave} testID="save-agent-soul" />
+              </View>
+            )}
+            <View style={styles.section}>
               <Text style={styles.sectionLabel}>MODEL / DIFFICULTY</Text>
               <SettingsRow title="Model" description={displayModel(label(model, modelAxis))} />
               <SettingsRow title="Thinking level" value={label(effort, effortAxis)} />

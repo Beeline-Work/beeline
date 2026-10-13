@@ -153,7 +153,10 @@ function VoiceMock() {
               Preview unavailable. Try again.
             </Text>
           )}
-          <View style={{ flexDirection: 'row', gap: theme.space.sm }}>
+          <View
+            style={{ flexDirection: 'row', justifyContent: 'flex-end', gap: theme.space.sm }}
+            testID="voice-confirm-actions"
+          >
             <Button
               label="Cancel"
               variant="secondary"
@@ -163,8 +166,8 @@ function VoiceMock() {
               }}
             />
             <Button
-              label="Save voice"
-              variant="brass"
+              label="Save"
+              variant="primary"
               onPress={() => {
                 stop();
                 setCurrent(draft);

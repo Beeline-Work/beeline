@@ -2,6 +2,7 @@ import { existsSync, mkdirSync } from 'node:fs';
 import path from 'node:path';
 import { CHROME, runBrowserProof, webProofShims } from '@/test/browserProof';
 import * as React from 'react';
+import { mobileSurfaceCache } from '@/buzz/surface-storage';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -310,6 +311,7 @@ beforeEach(() => {
   workspaceSet.active = null;
   workspaceSet.workspaces = [];
   phoneOperation.mockReset();
+  vi.mocked(mobileSurfaceCache.read).mockResolvedValue(null);
   openExternal.mockClear();
   roomRead.mockReset();
   prefetchRoom.mockReset();
@@ -733,12 +735,68 @@ describe('Needs-you badge and tray', () => {
     layout.width = 390;
   });
 
+  it('Reproduction TRAY-CACHED-EMPTY-1: opening refreshes a cached empty Tray against the five live asks', async () => {
+    const server = { needs: Array.from({ length: 5 }, (_, index) => need({ messageId: `ask-${index + 1}` })) };
+    serveNeeds(server);
+    const cachedSaved = Array.from({ length: 6 }, (_, index) => bookmark({ messageId: `saved-${index}` }));
+    vi.mocked(mobileSurfaceCache.read).mockImplementation(async (_address, guard) => {
+      const value = guard({ items: [] }) ? { items: [] } : { bookmarks: cachedSaved };
+      return value as never;
+    });
+    const tree = await render(false);
+    expect(badge(tree)).toBe(5);
+    await act(async () => tree.update(<BadgeAndTray tray />));
+    await act(async () => undefined);
+    expect([rows(tree), badge(tree)]).toEqual([5, 5]);
+    expect(phoneOperation).toHaveBeenCalledWith('readTray', { workspaceId: 'ws' });
+    vi.mocked(mobileSurfaceCache.read).mockResolvedValue(null);
+  });
+
   it('Reproduction NEEDS-YOU-BADGE-1: a dismiss drops the badge with the list', async () => {
     serveNeeds({ needs: [need(), need({ messageId: 'ask-2' })] });
     const tree = await render(true);
     expect([rows(tree), badge(tree)]).toEqual([2, 2]);
     await swipe(tree, 'ask-1');
     expect([rows(tree), badge(tree)]).toEqual([1, 1]);
+  });
+
+  it.each([0, 1, 5])('the badge matches %i Needs you rows and ignores six Saved rows', async (count) => {
+    serve({ needs: Array.from({ length: count }, (_, index) => need({ messageId: `ask-${index + 1}` })),
+      bookmarks: Array.from({ length: 6 }, (_, index) => bookmark({ messageId: `saved-${index}` })) });
+    const tree = await render(true);
+    expect([rows(tree), badge(tree)]).toEqual([count, count]);
+  });
+
+  it.each([true, false])('refreshes on foreground with the Tray open=%s even if the socket stays connected', async (tray) => {
+    const server = { needs: [need(), need({ messageId: 'ask-2' })] as unknown[] };
+    serveNeeds(server);
+    const tree = await render(true);
+    if (!tray) await act(async () => tree.update(<BadgeAndTray tray={false} />));
+    server.needs = [need()];
+    await act(async () => {
+      for (const state of ['background', 'active'])
+        for (const listener of [...appState.listeners]) listener(state);
+    });
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(badge(tree)).toBe(1);
+    if (tray) expect(rows(tree)).toBe(1);
+  });
+
+  it('foreground replaces an in-flight count and ignores its late stale response', async () => {
+    const answers: Array<(value: { count: number }) => void> = [];
+    phoneOperation.mockImplementation((name: string) => name === 'countNeedsYou'
+      ? new Promise((resolve) => answers.push(resolve)) : Promise.resolve(undefined));
+    const tree = await render(false);
+    expect(answers).toHaveLength(1);
+    await act(async () => {
+      for (const state of ['background', 'active'])
+        for (const listener of [...appState.listeners]) listener(state);
+    });
+    await act(async () => undefined);
+    expect(answers).toHaveLength(2);
+    await act(async () => answers[1]!({ count: 1 }));
+    await act(async () => answers[0]!({ count: 5 }));
+    expect(badge(tree)).toBe(1);
   });
 
   it('a failed clear puts the cell back in the list and the badge', async () => {

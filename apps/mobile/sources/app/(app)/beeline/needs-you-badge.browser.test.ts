@@ -73,6 +73,35 @@ function shims(mobile: string): Record<string, string> {
 }
 
 describe.skipIf(!existsSync(CHROME))('needs-you badge beside the Tray in a browser', () => {
+  it('Reproduction TRAY-CACHED-EMPTY-1: validates a disk-seeded empty Tray', async () => {
+    const mobile = process.cwd();
+    const mocks = shims(mobile);
+    mocks['@/sync/transport/monolith-operation'] += `
+      server.items.alice.push(item('item-a4', 'Fourth ask?', 80), item('item-a5', 'Fifth ask?', 60));`;
+    mocks['@/sync/transport/monolith-operation'] = mocks['@/sync/transport/monolith-operation']
+      .replace('saved: { bookmarks: [] }', 'saved: { bookmarks: window.__saved }');
+    mocks['@/buzz/surface-storage'] = `
+      const saved = Array.from({ length: 6 }, (_, i) => ({ messageId: 'saved-' + i,
+        workspaceId: 'workspace-1', roomId: 'room-saved', roomName: 'Saved room',
+        roomKind: 'room', bookmarkedAt: 1, messageCreatedAt: 1, available: true, text: 'Saved note' }));
+      window.__saved = saved;
+      export const surfaceAddress = (_relay, _viewer, endpoint) => endpoint;
+      export const mobileSurfaceCache = {
+        read: async (endpoint) => endpoint.endsWith('/needs-you') ? { items: [] }
+          : endpoint.endsWith('/bookmarks') ? { bookmarks: saved } : null,
+        write: async () => undefined, remove: async () => undefined,
+      };`;
+    const { result, status, stderr } = await runBrowserProof({
+      entry: path.join(mobile, 'scripts/tray-cache-proof.tsx'), mobile, shims: mocks,
+      width: 1440, budgetMs: 10_000,
+      ...(process.env.BEELINE_DESIGN_PROOF_DIR ? {
+        screenshotPath: path.join(process.env.BEELINE_DESIGN_PROOF_DIR, 'tray-cache.png'),
+      } : {}),
+    });
+    console.log(`Demonstrated: ${result}`);
+    expect(status, stderr).toBe(0);
+    expect(result).toMatch(/^PASS /);
+  }, 120_000);
   it('matches the list after a clear, a failed clear, a gap and an account switch', async () => {
     const mobile = process.cwd();
     const { result, status, stderr } = await runBrowserProof({

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useSyncExternalStore } from 'react';
+import { AppState } from 'react-native';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { clientResetGeneration, subscribeClientReset } from '@/sync/client-reset';
@@ -30,6 +31,7 @@ const trayReaders = new Map<string, Set<(reason: string) => void>>();
 let viewer: { key: string; relay: string; pubkey: string } | undefined;
 let resolving: Promise<NonNullable<typeof viewer>> | undefined;
 let liveStop: (() => void) | undefined;
+let foregroundStop: (() => void) | undefined;
 let liveStarting = false;
 const notify = () => listeners.forEach((listener) => listener());
 const active = (slot: Slot) => slots.get(slot.key) === slot;
@@ -94,12 +96,28 @@ const savedSlice = (items: readonly MessageBookmarkView[], delta: BookmarkDelta)
 
 subscribeClientReset(() => {
   slots.clear(); viewer = undefined; resolving = undefined;
+  foregroundStop?.(); foregroundStop = undefined;
   liveStop?.(); liveStop = undefined; liveStarting = false; notify();
   if (listeners.size) void resolveViewer();
 });
 function startLive(): void {
   if (liveStop || liveStarting) return;
   liveStarting = true;
+  foregroundStop?.();
+  let backgrounded = AppState.currentState !== 'active';
+  const foreground = AppState.addEventListener('change', (state) => {
+    if (state !== 'active') backgrounded = true;
+    else if (backgrounded) {
+      backgrounded = false;
+      for (const slot of slots.values()) if (!trayReaders.has(slot.workspaceId)) {
+        slot.clock += 1;
+        slot.countRead = undefined;
+        write(slot, { ...slot.entry, needs: null, count: null }, false);
+      }
+      for (const readers of trayReaders.values()) for (const read of readers) read('foreground');
+    }
+  });
+  foregroundStop = () => foreground.remove();
   const generation = clientResetGeneration();
   void sharedLiveConnection().register([], (event) => {
     if (generation !== clientResetGeneration()) return;
@@ -187,12 +205,13 @@ export async function loadSavedList(workspaceId: string, before?: string): Promi
   } finally { slot.reads.delete(at); trim(slot); }
 }
 
-/** One cold tray response seeds both sections; a held pair costs no request. */
+/** Cached sections paint immediately; opening still validates them with the server. */
 export async function loadTrayList(workspaceId: string, force = false): Promise<{ needsError?: string; savedError?: string }> {
   const slot = slotFor(await resolveViewer(), workspaceId);
+  const held = Boolean(slot.entry.needs && slot.entry.saved);
   if (!slot.entry.needs) await seed(workspaceId, 'needs-you');
   if (!slot.entry.saved) await seed(workspaceId, 'bookmarks');
-  if (!force && !slot.forgotten && slot.entry.needs && slot.entry.saved) return {};
+  if (!force && !slot.forgotten && held) return {};
   if (slot.trayRead) return slot.trayRead;
   const at = ++slot.clock;
   slot.reads.add(at);
@@ -328,14 +347,16 @@ export function useNeedsYouCount(workspaceId: string | null | undefined, refresh
       const at = slot.clock;
       try {
         const request = slot.countRead ??= monolithPhoneOperation('countNeedsYou', { workspaceId })
-          .then(({ count }) => ({ count, at })).finally(() => { slot.countRead = undefined; });
+          .then(({ count }) => ({ count, at })).finally(() => {
+            if (slot.countRead === request) slot.countRead = undefined;
+          });
         const answer = await request;
         if (!cancelled && !slot.forgotten && slot.clock === answer.at && !slot.entry.needs)
           write(slot, { ...slot.entry, count: answer.count });
       } catch { /* Keep the previous count. */ }
     })();
     return () => { cancelled = true; };
-  }, [workspaceId, refreshKey, entry.needs, entry.count, generation]);
+  }, [workspaceId, refreshKey, entry, generation]);
   return entry.needs
     ? entry.needs.filter((item) => !entry.held.has(item.messageId)).length : entry.count ?? 0;
 }

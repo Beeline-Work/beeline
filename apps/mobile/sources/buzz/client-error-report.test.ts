@@ -5,7 +5,7 @@ vi.mock('./runtime-config', () => ({ getBuzzRuntimeConfig: () => ({ monolithUrl:
 vi.mock('@/sync/appConfig', () => ({ loadAppConfig: () => ({ releaseSha: 'proof-sha' }) }));
 vi.mock('expo-updates', () => ({ runtimeVersion: '34', updateId: 'test-update' }));
 vi.mock('react-native', () => ({ Platform: { OS: 'android', Version: 36 } }));
-import { errorDiagnostic, reportClientError } from './client-error-report';
+import { errorDiagnostic, reportClientError, reportNativeCrash } from './client-error-report';
 it('reports bounded error text, stack and release identity without bearer credentials', async () => {
   const cause = new Error('Failed https://example.test/?token=secret Bearer opaque-secret');
   await reportClientError('voice-join', cause);
@@ -23,4 +23,16 @@ it('does not reject when telemetry fails', async () => {
 
 it('retains native WebRTC rejection messages even when they are not Error instances', () => {
   expect(errorDiagnostic({ name: 'NotAllowedError', message: 'Microphone permission denied' }).message).toBe('Microphone permission denied');
+});
+
+it('reports native exception frames and crashed device/version, retaining on non-success responses', async () => {
+  const report = { id: 'receipt', timestamp: 1234, device: 'Samsung fixture', appVersion: '0.1.50',
+    platformVersion: '16 (API 36)', releaseSha: 'crashed-sha', runtimeVersion: '34', updateId: 'crashed-update',
+    message: 'SIGABRT', stack: Array.from({ length: 12 }, (_, i) => `#${i} libwebrtc.so`).join('\n') };
+  expect(await reportNativeCrash(report)).toBe(true);
+  const [, init] = send.mock.calls.at(-1)! as unknown as [string, { body: string }];
+  expect(JSON.parse(init.body)).toMatchObject({ scope: 'native-crash', device: report.device, appVersion: '0.1.50',
+    releaseSha: 'crashed-sha', crashTimestamp: '1234', stack: report.stack });
+  send.mockResolvedValueOnce(new Response(null, { status: 503 }));
+  expect(await reportNativeCrash(report)).toBe(false);
 });

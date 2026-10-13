@@ -2450,8 +2450,11 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     if (!clientErrorLimit.admit(identityId!)) { json(response, 429, { error: 'too_many_requests' }); return; }
     const input = await body(request);
     const limits = { message: 2048, stack: 4096, platform: 32, platformVersion: 64, releaseSha: 128, runtimeVersion: 64, updateId: 64 };
-    if (!['app', 'conversation', 'voice-join', 'voice-cleanup'].includes(String(input.scope)) ||
-      Object.entries(limits).some(([key, limit]) => typeof input[key] !== 'string' || (input[key] as string).length > limit) || !input.message) {
+    const nativeLimits = { device: 128, appVersion: 64, crashTimestamp: 32 };
+    if (!['app', 'conversation', 'voice-join', 'voice-cleanup', 'native-crash'].includes(String(input.scope)) ||
+      Object.entries(limits).some(([key, limit]) => typeof input[key] !== 'string' || (input[key] as string).length > limit) ||
+      Object.entries(nativeLimits).some(([key, limit]) => input[key] !== undefined &&
+        (typeof input[key] !== 'string' || (input[key] as string).length > limit)) || !input.message) {
       json(response, 400, { error: 'invalid_observation' }); return;
     }
     const clean = (value: unknown) => String(value)
@@ -2459,7 +2462,8 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
       .replace(/\bBearer\s+\S+/gi, 'Bearer [redacted]')
       .replace(/\beyJ[\w-]+\.[\w-]+\.[\w-]+\b/g, '[token]');
     console.warn('[client-error]', JSON.stringify({ identityId, scope: input.scope,
-      ...Object.fromEntries(Object.keys(limits).map(key => [key, clean(input[key])])) }));
+      ...Object.fromEntries(Object.keys(limits).map(key => [key, clean(input[key])])),
+      ...Object.fromEntries(Object.keys(nativeLimits).filter(key => input[key] !== undefined).map(key => [key, clean(input[key])])) }));
     response.writeHead(204, { 'cache-control': 'private, no-store' }); response.end(); return;
   }
   if (method === 'POST' && url.pathname === '/v1/phone/observations/page-load') {

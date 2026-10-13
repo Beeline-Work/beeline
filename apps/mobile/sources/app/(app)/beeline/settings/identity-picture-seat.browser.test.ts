@@ -40,7 +40,7 @@ function seatShims(mobile: string): Record<string, string> {
     export const loadPreferredPersonName = async () => 'Captain';
     export const savePreferredPersonName = async () => undefined;`,
     '@/buzz/runtime-config': `export const getBuzzRuntimeConfig = () => ({ monolithEnabled: true, relayUrl: 'https://relay.test' });`,
-    '@/buzz/workbench': `export const workbenchSummary = () => ({ value: '0 tools · 0 keys' });`,
+    '@/buzz/connectors-model': `export const workbenchSummary = () => ({ value: '0 connected' });`,
     '@/buzz/workbench-source': `export const getWorkbenchSource = () => ({ readWorkbench: async () => ({ connections: [] }) });`,
     '@/buzz/room-open-trace': `export const roomOpenTraceEnabled = () => false;`,
     '@/sync/appConfig': `export const loadAppConfig = () => ({ releaseVersion: 'development', releaseSha: null });`,

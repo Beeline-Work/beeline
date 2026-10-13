@@ -321,15 +321,16 @@ function headings(renderer: ReactTestRenderer): string[] {
 const VIEWER = 'a'.repeat(64);
 
 function key(ref: string): WorkbenchConnection {
-  return { ref, name: ref, hosts: [], state: 'active', ownerId: VIEWER };
+  return { ref, name: ref, service: 'stripe', hosts: [], state: 'active', ownerId: VIEWER };
 }
 
-function view(keys: number, connectors: WorkbenchConnector[] = []): WorkbenchView {
+function view(keys: number, connectors: WorkbenchConnector[] = [],
+  helpers: WorkbenchView['helpers'] = []): WorkbenchView {
   return {
     connectors,
     connections: Array.from({ length: keys }, (_, index) => key(`key-${index}`)),
     apps: [],
-    helpers: [],
+    helpers,
   };
 }
 
@@ -381,7 +382,7 @@ describe('Settings Workbench row shares the held Workbench projection', () => {
       .mockResolvedValueOnce(view(0, googleError))
       .mockResolvedValue(view(57, googleError));
     const renderer = await renderScreen();
-    await vi.waitFor(() => expect(workbenchRow(renderer).props.value).toBe('1 connection · 0 keys'));
+    await vi.waitFor(() => expect(workbenchRow(renderer).props.value).toBe('0 connected'));
 
     await act(async () => { await mobileSurfaceCache.write({ relayOrigin: 'https://relay.test',
       viewerPubkey: VIEWER, endpoint: '/workspace/:id/workbench',
@@ -389,14 +390,22 @@ describe('Settings Workbench row shares the held Workbench projection', () => {
       (value): value is WorkbenchView => Boolean(value)); });
     await refocus();
 
-    await vi.waitFor(() => expect(workbenchRow(renderer).props.value).toBe('1 connection · 57 keys'));
+    await vi.waitFor(() => expect(workbenchRow(renderer).props.value).toBe('1 connected'));
     expect(workbench.readWorkbench).toHaveBeenCalledTimes(1);
+  });
+
+  it('states one total of the Your connections rows, not keys apart', async () => {
+    workbench.readWorkbench.mockResolvedValue(view(57, googleError, [{ id: 'machine-squire',
+      name: 'squire', online: true, squire: { status: 'connected', reportedAt: 1 } }]));
+    const renderer = await renderScreen();
+    await vi.waitFor(() => expect(workbenchRow(renderer).props.value).toBe('2 connected'));
+    expect(workbenchRow(renderer).props.wholeTitle).toBe(true);
   });
 
   it('names the one broken tool in a danger subtitle', async () => {
     workbench.readWorkbench.mockResolvedValue(view(57, googleError));
     const renderer = await renderScreen();
-    await vi.waitFor(() => expect(workbenchRow(renderer).props.value).toBe('1 connection · 57 keys'));
+    await vi.waitFor(() => expect(workbenchRow(renderer).props.value).toBe('1 connected'));
     expect(workbenchRow(renderer).props).toMatchObject({
       title: 'Your connections',
       chevron: 'right',
@@ -410,12 +419,12 @@ describe('Settings Workbench row shares the held Workbench projection', () => {
       .mockResolvedValueOnce(view(57, googleError))
       .mockRejectedValue(new Error('offline'));
     const renderer = await renderScreen();
-    await vi.waitFor(() => expect(workbenchRow(renderer).props.value).toBe('1 connection · 57 keys'));
+    await vi.waitFor(() => expect(workbenchRow(renderer).props.value).toBe('1 connected'));
 
     await refocus();
 
     expect(workbench.readWorkbench).toHaveBeenCalledTimes(1);
-    expect(workbenchRow(renderer).props.value).toBe('1 connection · 57 keys');
+    expect(workbenchRow(renderer).props.value).toBe('1 connected');
     expect(workbenchRow(renderer).props.description).toBe('Google Workspace needs attention');
     expect(headings(renderer).some((text) => text.startsWith('Could not load'))).toBe(false);
   });

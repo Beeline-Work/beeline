@@ -76,6 +76,8 @@ type SettingsRowProps = {
   trailingPress?: SettingsRowTrailingPress;
   /** The row's current state, on the trailing axis. Never in the title. */
   value?: string;
+  /** The title keeps its full width; the trailing value ellipsizes instead. */
+  wholeTitle?: boolean;
   /**
    * The state dot beside the value word, when the state carries one. Never
    * the only signal — the word beside it carries the state.
@@ -132,6 +134,7 @@ export function SettingsRow({
   trailingPress,
   value,
   valueTone,
+  wholeTitle = false,
 }: SettingsRowProps) {
   const spoken = [value ?? action ?? actionControl?.label,
     descriptionLead ? `${descriptionLead} ${description ?? ''}`.trim() : description,
@@ -144,7 +147,7 @@ export function SettingsRow({
         {action}
       </Text>
     ) : value !== undefined ? (
-      <View style={styles.valueRow}>
+      <View style={[styles.valueRow, wholeTitle && styles.yieldingValue]}>
         {statusGlyph ? (
           <StateDot kind={statusGlyph} testID={testID ? `${testID}-glyph` : undefined} />
         ) : null}
@@ -155,6 +158,7 @@ export function SettingsRow({
             appBoard && styles.boardValue,
             valueTone === 'danger' && styles.valueDanger,
             valueTone === 'accent' && styles.valueAccent,
+            wholeTitle && styles.yieldingValue,
           ]}
         >
           {value}
@@ -195,12 +199,12 @@ export function SettingsRow({
         {trailingMark}
       </TouchableOpacity>
     ) : (
-      <View style={styles.trailingSlot}>{trailingMark}</View>
+      <View style={[styles.trailingSlot, wholeTitle && styles.yieldingSlot]}>{trailingMark}</View>
     );
   const body = (
     <>
       {leading}
-      <View style={styles.copy}>
+      <View style={[styles.copy, wholeTitle && styles.wholeCopy]}>
         <Text
           numberOfLines={1}
           style={[
@@ -306,6 +310,10 @@ const styles = StyleSheet.create((theme) => {
       borderBottomWidth: 1, borderBottomColor: board.border },
     disabled: { opacity: 0.42 },
     copy: { flex: 1, minWidth: 0 },
+    // A whole title sizes the copy column to itself; the trailing value yields.
+    wholeCopy: { flexGrow: 1, flexShrink: 0, flexBasis: 'auto' },
+    yieldingSlot: { flexShrink: 1, minWidth: 0 },
+    yieldingValue: { flexShrink: 1, minWidth: 0, maxWidth: '100%' },
     title: { ...Typography.default(), ...hull.type.body, color: hull.textPrimary },
     boardTitle: { ...Typography.ledger(), ...hull.type.body, color: board.ink },
     quiet: { color: hull.textMuted },

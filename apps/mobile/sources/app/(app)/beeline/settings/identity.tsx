@@ -27,7 +27,7 @@ import {
   savePreferredPersonName,
 } from '@/buzz/person-name';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
-import { workbenchSummary } from '@/buzz/workbench';
+import { workbenchSummary } from '@/buzz/connectors-model';
 import { useSharedWorkbench } from '@/buzz/workbench-surface';
 import { isManagedIdentity, publishManagedIdentity, readIdentitySettings } from '@/buzz/managed-identity-surface';
 import { useSurfaceSnapshot } from '@/buzz/use-shared-surface';
@@ -457,6 +457,7 @@ export default function BuzzIdentitySettings() {
               } as never)}
               testID="settings-workbench-row"
               title="Your connections"
+              wholeTitle
               value={workbench?.value}
               description={workbench?.attention}
               descriptionTone={workbench?.attention ? 'danger' : undefined}

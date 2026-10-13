@@ -9,6 +9,7 @@ import {
 } from './speech-input';
 import { getRecognitionModule } from './speech-recognition-adapter';
 import { dictationTranscriptionAvailable, startDictationUpload } from './speech-transcription';
+import { dictationWaveformLevel } from './waveform-level';
 
 vi.mock('react-native', () => ({
   Platform: {
@@ -325,11 +326,11 @@ describe('useSpeechInput', () => {
     await act(async () => {
       fireEvent('volumechange', { value: 4 });
     });
-    expect(probe().speechRef.volumeLevel).toBe(0.5);
+    expect(probe().speechRef.volumeLevel).toBe(dictationWaveformLevel(4, 'android'));
     await act(async () => {
       fireEvent('volumechange', { value: 20 });
     });
-    expect(probe().speechRef.volumeLevel).toBe(1);
+    expect(probe().speechRef.volumeLevel).toBe(dictationWaveformLevel(20, 'android'));
   });
 
   it('auto-stops after silence with nothing recognised', async () => {

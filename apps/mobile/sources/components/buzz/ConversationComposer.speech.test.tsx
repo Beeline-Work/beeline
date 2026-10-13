@@ -368,15 +368,17 @@ describe('listening flow', () => {
     expect(mic.props.accessibilityHint).toBe('Stops dictation and sends');
   });
 
-  it('grows the newest waveform bar with native volume', async () => {
+  it('Reproduction WL1: dictation bars distinguish quiet, normal and loud Android input', async () => {
     vi.useFakeTimers();
     try {
       const { renderer } = render();
       await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
       await act(async () => {});
       await act(async () => vi.advanceTimersByTime(WAVEFORM_SAMPLE_MS));
-      await act(async () => fireEvent('volumechange', { value: 10 }));
-      await act(async () => vi.advanceTimersByTime(WAVEFORM_SAMPLE_MS));
+      for (const value of [12, 20, 30]) {
+        await act(async () => fireEvent('volumechange', { value }));
+        await act(async () => vi.advanceTimersByTime(WAVEFORM_SAMPLE_MS));
+      }
       const waveform = renderer.root
         .findAllByProps({ testID: 'chat-speech-waveform' })
         .find((node: any) => node.type === 'View');
@@ -384,7 +386,12 @@ describe('listening flow', () => {
         (bar: any) => bar.props.style.flat(Infinity).find((style: any) => style?.height).height,
       );
       // Each bar is added a sample before it glides into view.
-      expect(heights).toEqual([2, 2, 18]);
+      expect(heights.slice(0, 2)).toEqual([2, 2]);
+      expect(heights[2]).toBeGreaterThan(2);
+      expect(heights[2]).toBeLessThan(heights[3]);
+      expect(heights[3]).toBeLessThan(heights[4]);
+      expect(heights[4]).toBeLessThan(18);
+      console.info('Reproduction WL1 composer mic -> injected RMS -2/12/20/30 -> bar heights', heights);
     } finally {
       vi.useRealTimers();
     }

@@ -1,0 +1,34 @@
+[
+  {
+    "id": "dictation-Silence",
+    "height": 2
+  },
+  {
+    "id": "dictation-Quiet",
+    "height": 5.46875
+  },
+  {
+    "id": "dictation-Normal",
+    "height": 11.25
+  },
+  {
+    "id": "dictation-Loud",
+    "height": 18
+  },
+  {
+    "id": "voice-Silence",
+    "height": 2
+  },
+  {
+    "id": "voice-Quiet",
+    "height": 3.671875
+  },
+  {
+    "id": "voice-Normal",
+    "height": 10.703125
+  },
+  {
+    "id": "voice-Loud",
+    "height": 18
+  }
+]

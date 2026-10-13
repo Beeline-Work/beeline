@@ -12,6 +12,7 @@
  */
 import * as React from 'react';
 import { Platform } from 'react-native';
+import { dictationWaveformLevel } from './waveform-level';
 import {
   getRecognitionModule,
   type SpeechRecognitionInterface,
@@ -445,8 +446,7 @@ export function useSpeechInput(
 
     const onVolumeChange = (event: any) => {
       if (!listeningRef.current || typeof event?.value !== 'number') return;
-      // Native values span roughly -2 (silent) through 10 (loud).
-      setVolumeLevel(Math.max(0, Math.min(1, (event.value + 2) / 12)));
+      setVolumeLevel(dictationWaveformLevel(event.value, Platform.OS));
       if (event.value > SPEECH_VOLUME_FLOOR) armSilenceTimer();
     };
 

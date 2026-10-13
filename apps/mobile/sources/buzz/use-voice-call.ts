@@ -5,6 +5,7 @@ import { VOICE_DATA_TOPIC, type VoiceJoin, type VoiceSignal, type VoiceCall, typ
 import { monolithSession } from '@/auth/monolith-session';
 import { getBuzzRuntimeConfig } from './runtime-config';
 import { createVoiceRoom } from './voice-transport';
+import { voiceWaveformLevel } from './waveform-level';
 
 async function voiceRequest<T>(id: string, action: 'join' | 'leave' | 'current'): Promise<T> {
   const response = await monolithSession.fetch(`${getBuzzRuntimeConfig().monolithUrl}/v1/phone/voice/${id}/${action}`,
@@ -83,7 +84,7 @@ export function useVoiceCall(roomId: string, enabled: boolean) {
       if (defaultTarget) await room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ type: 'target', agentId: defaultTarget })),
         { reliable: true, topic: VOICE_DATA_TOPIC });
       await room.localParticipant.setMicrophoneEnabled(true, { echoCancellation: true, noiseSuppression: true,
-        autoGainControl: true });
+        autoGainControl: false });
       if (quotaRef.current) await room.localParticipant.setMicrophoneEnabled(false);
       if (version !== revision.current) { await room.disconnect(); await transport.closeAudio(); await voiceRequest(joined.call.id, 'leave'); return; }
       session.current = { ...transport, callId: joined.call.id };
@@ -93,7 +94,7 @@ export function useVoiceCall(roomId: string, enabled: boolean) {
         const bridge = `beeline-voice-${joined!.call.id}`;
         const levels = speakerRef.current ? [room.remoteParticipants.get(bridge)?.audioLevel ?? 0]
           : [room.localParticipant.audioLevel, ...[...room.remoteParticipants.values()].filter(p => p.identity !== bridge).map(p => p.audioLevel)];
-        setLevel(quotaRef.current ? 0 : Math.max(0, ...levels));
+        setLevel(quotaRef.current ? 0 : voiceWaveformLevel(Math.max(0, ...levels)));
       }, 60);
     } catch (cause) {
       await transport?.room.disconnect(); await transport?.closeAudio();

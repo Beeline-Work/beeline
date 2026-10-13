@@ -1,3 +1,4 @@
+import { HullDialogInput } from '@/components/buzz/HullDialog';
 import React, { useState } from 'react';
 import { Linking, Text, TextInput, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -146,7 +147,8 @@ export function AgentSignInCard({ card, agentName, isOwner, stamp, onSubmit, tes
     if (text) setValue(text);
   };
 
-  const failure = error ?? (card.status === 'failed' ? card.errorMessage ?? 'Sign-in failed.' : null);
+  const failure =
+    error ?? (card.status === 'failed' ? (card.errorMessage ?? 'Sign-in failed.') : null);
   const waitingForLink = card.status === 'starting';
   const canAct = card.status === 'pending' || card.status === 'failed' || card.status === 'signing-in';
   const sending = busy || card.status === 'signing-in';
@@ -189,7 +191,7 @@ export function AgentSignInCard({ card, agentName, isOwner, stamp, onSubmit, tes
 
   const field = (placeholder: string, secure: boolean) => (
     <View style={styles.field}>
-      <TextInput
+      <HullDialogInput
         accessibilityLabel={placeholder}
         autoCapitalize="none"
         autoCorrect={false}
@@ -323,14 +325,16 @@ export function AgentSignInCard({ card, agentName, isOwner, stamp, onSubmit, tes
 
   return (
     <TranscriptCard
-      identity={logo ? <AppMark domain={logo.domain} name={logo.name} size={26} white /> : undefined}
+      identity={logo ? <AppMark domain={logo.domain} name={logo.name} size={36} /> : undefined}
       stamp={stamp}
       subline={subline}
       testID={testID}
       tier={ask ? 'ask' : 'record'}
       title={title}
     >
-      {steps ? <View style={styles.body} testID={`${testID}-body`}>{steps}</View> : null}
+      {steps ? (
+        <View style={styles.body} testID={`${testID}-body`}>{steps}</View>
+      ) : null}
     </TranscriptCard>
   );
 }

@@ -1,3 +1,6 @@
+import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
+import { Button } from '@/components/buzz/Button';
+import { HullDialogActions } from '@/components/buzz/HullDialog';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native';
@@ -140,7 +143,7 @@ export default function BuzzIdentitySettings() {
     const stopLevel = watchStoredPushLevel(profilePubkey, setPushLevel);
     const stopIdentity = subscribeOwnIdentityChange((person) => {
       setProfileName(person.name);
-      setFace(monolithEnabled ? null : person.face ?? null);
+      setFace(monolithEnabled ? null : (person.face ?? null));
       setLegacyManagedIdentity((current) =>
         current && person.handle
           ? { ...current, handle: person.handle, displayName: person.name }
@@ -378,7 +381,7 @@ export default function BuzzIdentitySettings() {
     pushRegistration !== null &&
     !pushRegistration.registered &&
     buzzPushPhaseDetail(pushRegistration.phase) !== null;
-  const displayName = monolithEnabled ? managedProjection?.name ?? profileName : profileName;
+  const displayName = monolithEnabled ? (managedProjection?.name ?? profileName) : profileName;
   const displayFace = face ?? (monolithEnabled ? managedProjection?.face : null) ?? null;
   const managedHandle = (monolithEnabled ? managedProjection?.handle : legacyManagedIdentity?.handle) ??
     (displayName ? personHandle(displayName, profilePubkey ?? '') : '');
@@ -444,7 +447,7 @@ export default function BuzzIdentitySettings() {
 
         {monolithEnabled && (
           <View style={styles.section} testID="workbench-section">
-            <Text style={styles.sectionLabel}>Connectors</Text>
+            <RoomListSectionHeader title="Connectors" inset="content" />
             <SettingsRow
               accessibilityLabel="Open your Connectors"
               chevron="right"
@@ -466,25 +469,22 @@ export default function BuzzIdentitySettings() {
         )}
 
         <View style={styles.section} testID="appearance-section">
-          <Text style={styles.sectionLabel}>Device</Text>
+          <RoomListSectionHeader title="Device" inset="content" />
           {pushSupported ? (
             <View testID="notifications-section">
               <PushLevelSetting
                 disabled={pushEnabled === null || pushWorking}
                 onSave={changePushLevel}
-                value={monolithEnabled ? managedProjection?.pushLevel ?? pushLevel : pushLevel}
+                value={monolithEnabled ? (managedProjection?.pushLevel ?? pushLevel) : pushLevel}
               />
               {pushRegistrationFailed ? (
-                <TouchableOpacity
+                <Button
+                  label={pushWorking ? 'Retrying…' : 'Retry'}
+                  variant="secondary"
                   disabled={pushWorking}
                   onPress={() => void retryPushRegistration()}
-                  style={styles.pushRetryButton}
                   testID="push-retry-registration"
-                >
-                  <Text style={styles.pushRetryText}>
-                    {pushWorking ? 'RETRYING…' : 'RETRY NOW'}
-                  </Text>
-                </TouchableOpacity>
+                />
               ) : null}
             </View>
           ) : null}
@@ -509,7 +509,7 @@ export default function BuzzIdentitySettings() {
         </View>
 
         <View style={styles.section} testID="account-settings">
-          <Text style={styles.sectionLabel}>Account</Text>
+          <RoomListSectionHeader title="Account" inset="content" />
           <View testID="legal-settings">
             <SettingsRow
               accessibilityLabel={"Privacy Policy"}
@@ -560,28 +560,25 @@ export default function BuzzIdentitySettings() {
             <Text style={styles.warningText}>
               deleting your account will delete all your data. this action is irrevocable. confirm?
             </Text>
-            <View style={styles.confirmActions}>
-              <TouchableOpacity
-                accessibilityLabel="Yes, delete account"
-                accessibilityRole="button"
-                disabled={deleteBusy}
-                onPress={() => void deleteAccount()}
-                style={styles.confirmAction}
-                testID="delete-account-yes"
-              >
-                <Text style={styles.confirmText}>Yes</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                accessibilityLabel="Cancel account deletion"
-                accessibilityRole="button"
-                disabled={deleteBusy}
-                onPress={() => setConfirmDelete(false)}
-                style={styles.confirmAction}
-                testID="delete-account-cancel"
-              >
-                <Text style={styles.cancelText}>Cancel</Text>
-              </TouchableOpacity>
-            </View>
+            <HullDialogActions
+              actions={[
+                {
+                  label: 'Cancel',
+                  accessibilityLabel: 'Cancel account deletion',
+                  disabled: deleteBusy,
+                  onPress: () => setConfirmDelete(false),
+                  testID: 'delete-account-cancel',
+                },
+                {
+                  label: 'Delete account',
+                  variant: 'destructive',
+                  accessibilityLabel: 'Yes, delete account',
+                  disabled: deleteBusy,
+                  onPress: () => void deleteAccount(),
+                  testID: 'delete-account-yes',
+                },
+              ]}
+            />
           </PixelGateReveal>
         ) : null}
 
@@ -643,21 +640,7 @@ const styles = StyleSheet.create((theme) => {
       paddingBottom: hull.space.xxl,
     },
     section: {},
-    sectionLabel: {
-      ...Typography.default(),
-      ...hull.type.sectionHead,
-      color: hull.textMuted,
-      paddingTop: hull.space.md,
-    },
     disabled: { opacity: 0.42 },
-    pushRetryButton: {
-      minHeight: 44,
-      paddingHorizontal: hull.space.md,
-      justifyContent: 'center',
-      borderBottomWidth: StyleSheet.hairlineWidth,
-      borderBottomColor: hull.border,
-    },
-    pushRetryText: { ...Typography.default(), ...hull.type.meta, color: hull.accent },
     notice: {
       ...Typography.default(),
       ...hull.type.meta,
@@ -670,16 +653,6 @@ const styles = StyleSheet.create((theme) => {
       gap: hull.space.md,
     },
     warningText: { ...Typography.default(), ...hull.type.meta, color: hull.textSecondary },
-    confirmActions: { flexDirection: 'row', justifyContent: 'flex-end', gap: hull.space.sm },
-    confirmAction: {
-      minHeight: 44,
-      minWidth: 64,
-      justifyContent: 'center',
-      alignItems: 'center',
-      paddingHorizontal: hull.space.sm,
-    },
-    confirmText: { ...Typography.default(), ...hull.type.body, color: hull.danger },
-    cancelText: { ...Typography.default(), ...hull.type.body, color: hull.accent },
     errorPanel: {
       padding: hull.space.md,
       borderWidth: StyleSheet.hairlineWidth,

@@ -1,3 +1,7 @@
+import { HullDialogActions } from '@/components/buzz/HullDialog';
+import { RoomListSectionHeader } from './RoomListSectionHeader';
+import { Button } from './Button';
+import { HullDialogInput } from '@/components/buzz/HullDialog';
 import { useTextDraft } from '@/buzz/use-text-draft';
 import React, { memo, useMemo, useState } from 'react';
 import { SectionList, Text, TextInput, TouchableOpacity, View } from 'react-native';
@@ -166,7 +170,7 @@ export const RepoPicker = memo(function RepoPicker({
       style={[styles.container, fillAvailableHeight && styles.containerFill]}
       testID={testIDPrefix}
     >
-      <TextInput
+      <HullDialogInput
         accessibilityLabel="Search repositories or paste a GitHub URL"
         autoCapitalize="none"
         autoCorrect={false}
@@ -222,9 +226,7 @@ export const RepoPicker = memo(function RepoPicker({
               style={styles.groupHeader}
               testID={`${testIDPrefix}-group-${section.owner.toLowerCase()}`}
             >
-              <Text accessibilityRole="header" style={styles.groupName}>
-                {section.owner}
-              </Text>
+              <RoomListSectionHeader title={section.owner ?? ''} inset="content" spacing="flush" />
               <Text style={styles.groupMeta}>
                 {section.installation && section.installation.status !== 'active'
                   ? section.installation.status.toUpperCase()
@@ -271,33 +273,15 @@ export const RepoPicker = memo(function RepoPicker({
         <View style={styles.instructionCard} testID={`${testIDPrefix}-link-instruction`}>
           <Text style={styles.instructionTitle}>ON GITHUB</Text>
           <Text style={styles.instructionText}>{GITHUB_REPOSITORY_SELECTION_INSTRUCTION}</Text>
-          <View style={styles.instructionActions}>
-            <TouchableOpacity
-              accessibilityRole="button"
-              onPress={() => setPendingLinkage(null)}
-              style={styles.instructionButton}
-            >
-              <Text style={styles.instructionCancel}>CANCEL</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              accessibilityRole="button"
-              onPress={() => {
+          <HullDialogActions style={styles.instructionActions} actions={[{ label: "Cancel", variant: "quiet", onPress: () => setPendingLinkage(null) }, { label: pendingLinkage.kind === 'owner-grant'
+                  ? 'Share install link →'
+                  : 'Continue to GitHub →', variant: "primary", onPress: () => {
                 const plan = pendingLinkage;
                 setPendingLinkage(null);
                 if (plan.kind === 'manage') onManageInstallation?.(plan.installation);
                 else if (plan.kind === 'owner-grant') onAskOwnerGrant?.(plan.fullName);
                 else onAddAccount?.(plan.owner || undefined);
-              }}
-              style={styles.instructionButton}
-              testID={`${testIDPrefix}-link-continue`}
-            >
-              <Text style={styles.instructionContinue}>
-                {pendingLinkage.kind === 'owner-grant'
-                  ? 'SHARE INSTALL LINK →'
-                  : 'CONTINUE TO GITHUB →'}
-              </Text>
-            </TouchableOpacity>
-          </View>
+              }, testID: `${testIDPrefix}-link-continue` }]} />
         </View>
       )}
       {onCreateRepository && activeInstallations.length > 0 && (
@@ -337,7 +321,7 @@ export const RepoPicker = memo(function RepoPicker({
                 ))}
               </View>
               <View style={styles.createRow}>
-                <TextInput
+                <HullDialogInput
                   autoCapitalize="none"
                   autoCorrect={false}
                   onChangeText={setNewName}
@@ -458,12 +442,6 @@ const styles = StyleSheet.create((theme) => {
       paddingTop: groknight.space.md,
       paddingBottom: groknight.space.xs,
     },
-    groupName: {
-      ...Typography.default('semiBold'),
-      ...groknight.type.sectionHead,
-      color: groknight.textMuted,
-      flex: 1,
-    },
     groupMeta: { ...groknight.type.meta, color: groknight.textMuted },
     candidateRow: {
       flexDirection: 'row',
@@ -512,10 +490,12 @@ const styles = StyleSheet.create((theme) => {
     },
     instructionTitle: { ...groknight.type.sectionHead, fontFamily: groknight.monoRegular, color: groknight.accent },
     instructionText: { ...groknight.type.machine, color: groknight.textPrimary },
-    instructionActions: { flexDirection: 'row', justifyContent: 'space-between', gap: groknight.space.sm },
-    instructionButton: { minHeight: 36, justifyContent: 'center' },
-    instructionCancel: { ...groknight.type.sectionHead, fontFamily: groknight.monoRegular, color: groknight.textMuted },
-    instructionContinue: { ...groknight.type.sectionHead, fontFamily: groknight.monoRegular, color: groknight.accent },
+    instructionActions: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      justifyContent: 'flex-end',
+      gap: groknight.space.sm,
+    },
     createForm: { gap: 8, paddingBottom: groknight.space.md },
     accountChoices: { flexDirection: 'row', flexWrap: 'wrap', gap: groknight.space.sm },
     accountChoice: { paddingVertical: 4 },

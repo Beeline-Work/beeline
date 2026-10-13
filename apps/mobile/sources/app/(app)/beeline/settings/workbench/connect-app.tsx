@@ -1,3 +1,5 @@
+import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
+import { HullDialogInput } from '@/components/buzz/HullDialog';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import { useTextDraft } from '@/buzz/use-text-draft';
 import React, { useEffect, useState } from 'react';
@@ -53,7 +55,9 @@ export default function ConnectAppScreen() {
     }, 200);
     return () => { live = false; clearTimeout(timer); };
   }, [searchQuery]);
-  const filtered = searchQuery ? resultsQuery === searchQuery ? searchResults : [] : suggestions ?? [];
+  const filtered = searchQuery
+    ? resultsQuery === searchQuery ? searchResults : []
+    : (suggestions ?? []);
   const byKey = new Map<string, WorkbenchAppSearchResult[number][]>();
   for (const result of filtered) byKey.set(result.appKey, [...(byKey.get(result.appKey) ?? []), result]);
   const recommendations = [...byKey.values()].map(options =>
@@ -85,44 +89,61 @@ export default function ConnectAppScreen() {
     finally { setBusy(null); }
   };
 
-  return <View style={[styles.screen, { paddingTop: insets.top }]} testID="connect-app-screen">
-    <PageHeader eyebrow="Connectors" prominent title="Search" backAccessibilityLabel="Back to Connectors" testID="connect-app-header" onBack={() => router.back()} />
-    <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom }} keyboardShouldPersistTaps="handled" testID="connect-app-scroll">
-      <View style={styles.searchWrap}>
-        <View style={styles.search}>
-          <Svg width={18} height={18} viewBox="0 0 24 24" fill="none"><Circle cx={11} cy={11} r={7} stroke={styles.placeholder.color} strokeWidth={2} /><Path d="M20 20l-3.5-3.5" stroke={styles.placeholder.color} strokeWidth={2} strokeLinecap="round" /></Svg>
-          <TextInput accessibilityLabel="Search connections" testID="connect-app-input" autoCapitalize="none" autoCorrect={false} placeholder="Search apps, keys, and websites" placeholderTextColor={styles.placeholder.color} value={query} onChangeText={setQuery} style={styles.input} />
+  return (
+    <View style={[styles.screen, { paddingTop: insets.top }]} testID="connect-app-screen">
+      <PageHeader eyebrow="Connectors" prominent title="Search" backAccessibilityLabel="Back to Connectors" testID="connect-app-header" onBack={() => router.back()} />
+      <ScrollView contentContainerStyle={{ paddingBottom: insets.bottom }} keyboardShouldPersistTaps="handled" testID="connect-app-scroll">
+        <View style={styles.searchWrap}>
+          <View style={styles.search}>
+            <Svg width={18} height={18} viewBox="0 0 24 24" fill="none"><Circle cx={11} cy={11} r={7} stroke={styles.placeholder.color} strokeWidth={2} /><Path d="M20 20l-3.5-3.5" stroke={styles.placeholder.color} strokeWidth={2} strokeLinecap="round" /></Svg>
+            <HullDialogInput
+              accessibilityLabel="Search connections" testID="connect-app-input" autoCapitalize="none" autoCorrect={false} placeholder="Search apps, keys, and websites" placeholderTextColor={styles.placeholder.color} value={query} onChangeText={setQuery} style={styles.input}
+            />
+          </View>
         </View>
-      </View>
-      <Text style={styles.section}>{searchQuery ? `RECOMMENDED FOR ${searchQuery.toUpperCase()}` : 'RECOMMENDED'}</Text>
-      <View style={styles.list}>
-        {recommendations.map(app => {
-          const existing = apps.find(item => item.key === app.appKey);
-          const connected = existing || keyGroups.some(group => group.key === app.appKey);
-          return <TouchableOpacity accessibilityRole="button" key={app.appKey} onPress={() => void connect(app)} style={styles.recommendation} testID={`connect-app-${app.appKey}`}>
+        <RoomListSectionHeader
+          title={searchQuery ? `RECOMMENDED FOR ${searchQuery.toUpperCase()}` : 'RECOMMENDED'}
+        />
+        <View style={styles.list}>
+          {recommendations.map((app) => {
+            const existing = apps.find(item => item.key === app.appKey);
+            const connected = existing || keyGroups.some(group => group.key === app.appKey);
+            return (
+              <TouchableOpacity accessibilityRole="button" key={app.appKey} onPress={() => void connect(app)} style={styles.recommendation} testID={`connect-app-${app.appKey}`}>
             <ServiceMark company={app.name} domain={app.domain} />
             <View style={styles.name}><Text style={styles.nameText}>{connected ? app.name : `Sign in to ${app.name}`}</Text>
               <Text style={styles.description}>{connected ? 'Connected' : app.appKey === 'instagram' ? INSTAGRAM_SIGN_IN_REQUIREMENT : 'Review and approve access'}</Text></View>
             <ChevronGlyph direction="right" size={18} color={styles.connected.color} />
-          </TouchableOpacity>;
-        })}
-        {resultsQuery === searchQuery && searchQuery && recommendations.length === 0 ? <Text style={styles.description}>No connections found. Trusty Squire can connect to a website for you.</Text> : null}
-        {searchQuery && recommendations.length > 0 && !apps.some(app => app.key === recommendations[0]?.appKey) && !matchingKey ? <>
-          <TouchableOpacity accessibilityRole="button" onPress={() => setShowOther(open => !open)} style={styles.otherWays} testID="connectors-other-ways">
+          </TouchableOpacity>
+            );
+          })}
+          {resultsQuery === searchQuery && searchQuery && recommendations.length === 0 ? (
+            <Text style={styles.description}>No connections found. Trusty Squire can connect to a website for you.</Text>
+          ) : null}
+          {searchQuery && recommendations.length > 0 && !apps.some(app => app.key === recommendations[0]?.appKey) && !matchingKey ? (
+            <>
+              <TouchableOpacity accessibilityRole="button" onPress={() => setShowOther(open => !open)} style={styles.otherWays} testID="connectors-other-ways">
             <Text style={styles.otherWaysLabel}>Other sign-in or Trusty Squire</Text>
             <Text style={styles.otherWaysCount}>{recommendations[0]?.registryServerName && byKey.get(recommendations[0].appKey)?.some(option => !option.registryServerName) ? '2 ways' : '1 way'}</Text>
             <ChevronGlyph direction={showOther ? 'up' : 'down'} size={18} color={styles.connected.color} />
           </TouchableOpacity>
-          {showOther ? <>
-            {byKey.get(recommendations[0]!.appKey)?.some(option => !option.registryServerName) && recommendations[0]?.registryServerName ?
-              <SettingsRow chevron="right" title="Sign in another way" onPress={() => void connect(recommendations[0]!, 'composio')} /> : null}
-            <SettingsRow chevron="right" title="Use Trusty Squire" onPress={() => void connect(recommendations[0]!, 'squire-api')} />
-          </> : null}
-        </> : null}
-      </View>
-      {error || ownerError ? <Text accessibilityRole="alert" style={styles.error}>{error ?? 'Apps are unavailable right now'}</Text> : null}
-    </ScrollView>
-  </View>;
+              {showOther ? (
+                <>
+                  {byKey.get(recommendations[0]!.appKey)?.some(option => !option.registryServerName) && recommendations[0]?.registryServerName ? (
+                    <SettingsRow chevron="right" title="Sign in another way" onPress={() => void connect(recommendations[0]!, 'composio')} />
+                  ) : null}
+                  <SettingsRow chevron="right" title="Use Trusty Squire" onPress={() => void connect(recommendations[0]!, 'squire-api')} />
+                </>
+              ) : null}
+            </>
+          ) : null}
+        </View>
+        {error || ownerError ? (
+          <Text accessibilityRole="alert" style={styles.error}>{error ?? 'Apps are unavailable right now'}</Text>
+        ) : null}
+      </ScrollView>
+    </View>
+  );
 }
 
 const styles = StyleSheet.create(theme => {
@@ -134,9 +155,7 @@ const styles = StyleSheet.create(theme => {
   search: { flexDirection: 'row', alignItems: 'center', gap: hull.space.sm, height: 48, paddingHorizontal: hull.space.md, borderWidth: 1, borderColor: board.strongBorder, borderRadius: theme.buzz.radius, backgroundColor: board.tile },
   input: { ...Typography.ledger(), ...hull.type.body, flex: 1, color: board.ink, paddingVertical: 0 },
   placeholder: { color: board.quiet },
-  section: { ...Typography.default(), ...hull.type.sectionHead, paddingHorizontal: hull.space.lg, paddingTop: hull.space.md, paddingBottom: 4, color: board.quiet },
   list: { paddingHorizontal: hull.space.lg },
-  row: { minHeight: 54, flexDirection: 'row', alignItems: 'center', gap: hull.space.md, paddingVertical: hull.space.sm, borderBottomWidth: 1, borderBottomColor: board.border },
   recommendation: { minHeight: 88, flexDirection: 'row', alignItems: 'center', gap: hull.space.md,
     borderWidth: 1, borderColor: board.strongBorder, borderRadius: hull.radius, backgroundColor: board.card,
     paddingHorizontal: hull.space.md, marginBottom: hull.space.md },
@@ -149,5 +168,6 @@ const styles = StyleSheet.create(theme => {
   otherWaysLabel: { ...Typography.ledger(), ...hull.type.meta, color: board.ink, flex: 1 },
   otherWaysCount: { ...Typography.ledger(), ...hull.type.meta, color: board.quiet },
   error: { ...Typography.default(), margin: hull.space.lg, color: theme.buzz.dialogDanger },
-  };
+  row: { minHeight: 54, flexDirection: 'row', alignItems: 'center', gap: hull.space.md, paddingVertical: hull.space.sm, borderBottomWidth: 1, borderBottomColor: board.border },
+};
 });

@@ -17,7 +17,7 @@ const surface = readFileSync(
 describe('the catch-up sheet', () => {
   it('offers a model choice below the two overview blocks', () => {
     expect(sheet).toContain('HullActionSheetModal');
-    const blockHeads = [...sheet.matchAll(/styles\.blockHead}>([^<]+)</g)].map((match) =>
+    const blockHeads = [...sheet.matchAll(/<RoomListSectionHeader title="([^"]+)"/g)].map((match) =>
       match[1]!.trim(),
     );
     expect(blockHeads).toEqual(['Summary', 'Needs you', 'Ask an agent']);

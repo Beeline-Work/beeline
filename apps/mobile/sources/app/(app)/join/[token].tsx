@@ -235,6 +235,7 @@ export default function CommunityInviteJoin() {
               onPress={retry}
               style={styles.primary}
               testID="invite-retry"
+              variant="secondary"
             />
             <Pressable
               accessibilityRole="button"

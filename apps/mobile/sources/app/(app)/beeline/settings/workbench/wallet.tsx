@@ -1,3 +1,4 @@
+import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useCallback, useEffect, useState } from 'react';
 import { Image, ScrollView, Text, TouchableOpacity, View } from 'react-native';
@@ -187,13 +188,12 @@ export default function WalletScreen() {
               valueTone={granting ? 'accent' : undefined}
             />
           ) : (
-          <>
-
-            {/* Address: one row, copy on the trailing axis, QR on demand. */}
-            <View style={styles.addressBlock} testID="wallet-address">
-              <View style={styles.addressCopy}>
-                <Text style={styles.sectionLabel}>Address</Text>
-                <Text
+            <>
+              {/* Address: one row, copy on the trailing axis, QR on demand. */}
+              <View style={styles.addressBlock} testID="wallet-address">
+                <View style={styles.addressCopy}>
+                  <RoomListSectionHeader title="Address" inset="content" />
+                  <Text
                   numberOfLines={1}
                   selectable
                   style={styles.address}
@@ -201,8 +201,8 @@ export default function WalletScreen() {
                 >
                   {address || '—'}
                 </Text>
-              </View>
-              <TouchableOpacity
+                </View>
+                <TouchableOpacity
                 accessibilityLabel="Copy address"
                 accessibilityRole="button"
                 onPress={copyAddress}
@@ -211,7 +211,7 @@ export default function WalletScreen() {
               >
                 <Text style={styles.addressActionText}>{copied ? 'Copied' : 'Copy'}</Text>
               </TouchableOpacity>
-              <TouchableOpacity
+                <TouchableOpacity
                 accessibilityLabel="Show address QR code"
                 accessibilityRole="button"
                 onPress={() => setQrOpen((open) => !open)}
@@ -220,14 +220,14 @@ export default function WalletScreen() {
               >
                 <Text style={styles.addressActionText}>QR</Text>
               </TouchableOpacity>
-            </View>
-            {qrOpen ? (
+              </View>
+              {qrOpen ? (
               <View style={styles.qrBlock} testID="wallet-address-qr">
                 <WalletQr payload={address} size={160} />
               </View>
             ) : null}
 
-            <View style={styles.balanceBlock} testID="wallet-balance">
+              <View style={styles.balanceBlock} testID="wallet-balance">
               <Text style={styles.balance} testID="wallet-balance-value">
                 {wallet?.totalUsd ?? '—'}
               </Text>
@@ -254,10 +254,8 @@ export default function WalletScreen() {
               </View>
             </View>
 
-            <Text style={styles.sectionLabel} testID="wallet-assets-head">
-              Assets
-            </Text>
-            {coins.length === 0 ? (
+              <RoomListSectionHeader title="Assets" inset="content" testID="wallet-assets-head" />
+              {coins.length === 0 ? (
               <Text style={styles.quietLine} testID="wallet-assets-empty">
                 No assets yet. Receive funds to get started.
               </Text>
@@ -304,10 +302,8 @@ export default function WalletScreen() {
               })
             )}
 
-            <Text style={styles.sectionLabel} testID="wallet-activity-head">
-              Activity
-            </Text>
-            {historyUnavailable ? (
+              <RoomListSectionHeader title="Activity" inset="content" testID="wallet-activity-head" />
+              {historyUnavailable ? (
               <Text style={styles.quietLine} testID="wallet-activity-unavailable">
                 Activity is unavailable right now.
               </Text>
@@ -360,7 +356,7 @@ export default function WalletScreen() {
                 </View>
               ))
             )}
-          </>
+            </>
           )}
         </View>
       </ScrollView>
@@ -412,12 +408,6 @@ const styles = StyleSheet.create((theme) => {
       ...Typography.ledger('medium'),
       ...hull.type.body,
       color: hull.accent,
-    },
-    sectionLabel: {
-      ...Typography.default(),
-      ...hull.type.sectionHead,
-      color: hull.textMuted,
-      paddingTop: hull.space.sm,
     },
     quietLine: { ...hull.type.meta, color: hull.textMuted, paddingVertical: hull.space.sm },
     explainer: { ...hull.type.meta, color: hull.textSecondary, paddingBottom: hull.space.md },

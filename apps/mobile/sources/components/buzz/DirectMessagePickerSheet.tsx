@@ -1,3 +1,7 @@
+import { MemberRosterRow } from './MemberRosterRow';
+import { Button } from './Button';
+import { RoomListSectionHeader } from './RoomListSectionHeader';
+import { HullDialogInput } from '@/components/buzz/HullDialog';
 import { useTextDraft } from '@/buzz/use-text-draft';
 import React, { useMemo } from 'react';
 import { ScrollView, Text, TextInput, TouchableOpacity } from 'react-native';
@@ -47,7 +51,7 @@ export function DirectMessagePickerSheet({
       title="Message"
       visible={visible}
     >
-      <TextInput
+      <HullDialogInput
         accessibilityLabel="Search Workspace members"
         autoCapitalize="none"
         autoCorrect={false}
@@ -66,7 +70,7 @@ export function DirectMessagePickerSheet({
         style={styles.listViewport}
         testID="direct-message-picker-list"
       >
-        {people.length > 0 && <SectionHeading label="PEOPLE" />}
+        {people.length > 0 && <RoomListSectionHeader title="People" count={people.length} />}
         {people.map((member) => (
           <MemberRow
             busy={busyPubkey === member.peerPubkey}
@@ -83,7 +87,7 @@ export function DirectMessagePickerSheet({
               : 'No other members in this Workspace yet.'}
           </Text>
         )}
-        {agents.length > 0 && <SectionHeading label="AGENTS" />}
+        {agents.length > 0 && <RoomListSectionHeader title="Agents" count={agents.length} />}
         {agents.map((member) => (
           <MemberRow
             busy={busyPubkey === member.peerPubkey}
@@ -99,10 +103,6 @@ export function DirectMessagePickerSheet({
   );
 }
 
-function SectionHeading({ label }: { label: string }) {
-  return <Text style={styles.section}>{label}</Text>;
-}
-
 function MemberRow({
   busy,
   disabled,
@@ -116,27 +116,30 @@ function MemberRow({
 }) {
   const agent = member.peerKind === 'agent';
   return (
-    <TouchableOpacity
-      accessibilityLabel={`Message ${member.peerName}`}
-      accessibilityRole="button"
+    <MemberRosterRow
+      kind={agent ? 'agent' : 'human'}
+      name={member.peerName}
+      title={member.peerName}
+      pubkey={member.peerPubkey}
+      avatarUrl={member.avatarUrl}
+      face={member.face}
       disabled={disabled}
       onPress={onPress}
-      style={styles.row}
+      divider="top"
+      accessibilityLabel={`Message ${member.peerName}`}
       testID={`message-workspace-member-${member.peerPubkey}`}
-    >
-      <IdentityMark
-        {...(agent ? ({ kind: 'agent' } as const) : ({ kind: 'human' } as const))}
-        seed={member.peerPubkey}
-        avatarUrl={member.avatarUrl}
-        face={member.face}
-        name={member.peerName}
-        size={36}
-      />
-      <Text numberOfLines={1} style={styles.name}>
-        {member.peerName}
-      </Text>
-      <Text style={styles.action}>{busy ? 'OPENING…' : 'MESSAGE'}</Text>
-    </TouchableOpacity>
+      trailing={
+        <Button
+          label={busy ? 'Opening…' : 'Message'}
+          variant="quiet"
+          disabled={disabled}
+          onPress={(event) => {
+            event.stopPropagation();
+            onPress();
+          }}
+        />
+      }
+    />
   );
 }
 
@@ -156,39 +159,11 @@ const styles = StyleSheet.create((theme) => {
     },
     listViewport: { maxHeight: 440, flexGrow: 0 },
     list: { paddingBottom: 4 },
-    row: {
-      minHeight: 60,
-      paddingHorizontal: groknight.space.sm,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: groknight.space.sm,
-      borderTopWidth: StyleSheet.hairlineWidth,
-      borderTopColor: groknight.border,
-    },
-    name: {
-      ...groknight.type.bodyStrong,
-      flex: 1,
-      minWidth: 0,
-      color: groknight.textSecondary,
-    },
-    action: {
-      ...groknight.type.machine,
-      fontFamily: groknight.monoSemibold,
-      color: groknight.chrome,
-      textTransform: 'uppercase',
-    },
     empty: {
       ...groknight.type.meta,
       paddingVertical: 24,
       color: groknight.textMuted,
       textAlign: 'center',
-    },
-    section: {
-      ...groknight.type.sectionHead,
-      color: groknight.chrome,
-      paddingTop: groknight.space.md,
-      paddingBottom: 4,
-      paddingHorizontal: groknight.space.sm,
     },
   };
 });

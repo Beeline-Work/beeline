@@ -1,3 +1,5 @@
+import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
+import { HullDialogInput } from '@/components/buzz/HullDialog';
 import React, { useEffect, useRef, useState } from 'react';
 import { Linking, Pressable, Text, TextInput, View } from 'react-native';
 import { KeyboardAwareScrollView } from 'react-native-keyboard-controller';
@@ -144,7 +146,7 @@ export function AgentProfileView({
             <Text style={styles.copy} accessibilityRole="alert">
               {error}
             </Text>
-            <Button label="Retry" onPress={onRetry} />
+            <Button label="Retry" onPress={onRetry} variant="secondary" />
           </View>
         )}
         {identity && (
@@ -193,7 +195,7 @@ export function AgentProfileView({
               value={`${displayModel(label(model, modelAxis))} / ${label(effort, effortAxis)}`}
             />
             {editing && (
-              <TextInput
+              <HullDialogInput
                 accessibilityLabel="Agent name"
                 editable={!saving}
                 maxLength={AGENT_NAME_MAX_LENGTH}
@@ -204,9 +206,9 @@ export function AgentProfileView({
               />
             )}
             <View style={styles.section}>
-              <Text style={styles.sectionLabel}>SOUL</Text>
+              <RoomListSectionHeader title="SOUL" inset="content" spacing="flush" />
               {editing ? (
-                <TextInput
+                <HullDialogInput
                   accessibilityLabel="Persona / instructions"
                   editable={!saving}
                   maxLength={1000}
@@ -263,7 +265,7 @@ export function AgentProfileView({
             {canManage && (editing || !canEdit) && management}
             <View style={styles.section}>
               <View style={styles.workHeading}>
-                <Text style={styles.sectionLabel}>Recent work</Text>
+                <RoomListSectionHeader title="Recent work" inset="content" spacing="flush" />
                 <Text style={styles.meta}>Merged PRs</Text>
               </View>
               {allWork.length ? (
@@ -316,11 +318,6 @@ export function AgentProfileView({
 const styles = StyleSheet.create((theme) => ({
   container: { flex: 1, minWidth: 0, backgroundColor: theme.buzz.bgBase },
   content: { paddingHorizontal: theme.buzz.space.md, paddingBottom: theme.buzz.space.xxl },
-  identity: {
-    paddingVertical: theme.buzz.space.lg,
-    alignItems: 'center',
-    gap: theme.buzz.space.md,
-  },
   name: {
     ...Typography.default(),
     ...theme.buzz.type.hero,
@@ -349,24 +346,8 @@ const styles = StyleSheet.create((theme) => ({
     padding: theme.buzz.space.md,
   },
   placeholder: { color: theme.buzz.textMuted },
-  message: {
-    minHeight: 44,
-    paddingHorizontal: 24,
-    paddingVertical: theme.buzz.space.sm,
-    borderWidth: 1,
-    borderColor: theme.buzz.accent,
-    borderRadius: theme.buzz.radius,
-    justifyContent: 'center',
-  },
-  pressed: { backgroundColor: theme.buzz.bgPressed },
   copy: { ...Typography.default(), ...theme.buzz.type.body, color: theme.buzz.textSecondary },
   meta: { ...Typography.default(), ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
-  strong: { ...Typography.default(), ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },
-  sectionLabel: {
-    ...Typography.default(),
-    ...theme.buzz.type.sectionHead,
-    color: theme.buzz.textMuted,
-  },
   accent: { ...Typography.default(), ...theme.buzz.type.meta, color: theme.buzz.accent },
   section: { paddingTop: theme.buzz.space.md, gap: theme.buzz.space.md },
   readMore: {
@@ -376,4 +357,20 @@ const styles = StyleSheet.create((theme) => ({
   },
   soulActions: { gap: 0 },
   workHeading: { flexDirection: 'row', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 },
+identity: {
+    paddingVertical: theme.buzz.space.lg,
+    alignItems: 'center',
+    gap: theme.buzz.space.md,
+  },
+message: {
+    minHeight: 44,
+    paddingHorizontal: 24,
+    paddingVertical: theme.buzz.space.sm,
+    borderWidth: 1,
+    borderColor: theme.buzz.accent,
+    borderRadius: theme.buzz.radius,
+    justifyContent: 'center',
+  },
+pressed: { backgroundColor: theme.buzz.bgPressed },
+strong: { ...Typography.default(), ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },
 }));

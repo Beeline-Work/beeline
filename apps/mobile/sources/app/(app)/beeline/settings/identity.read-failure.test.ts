@@ -1,3 +1,5 @@
+vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
+vi.mock('react-native-keyboard-controller', async () => { const R = await import('react'); return { KeyboardAvoidingView: (props: any) => R.createElement('View', props, props.children) }; });
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
@@ -391,8 +393,8 @@ describe('Settings groups', () => {
   it('heads the device controls Device and the account run Account', async () => {
     const renderer = await renderScreen();
     const texts = headings(renderer);
-    expect(texts).toContain('Device');
-    expect(texts).toContain('Account');
+    expect(texts).toContain('DEVICE');
+    expect(texts).toContain('ACCOUNT');
   });
 
   it('heads the Workbench row Workbench when the Workbench is available', async () => {
@@ -405,9 +407,9 @@ describe('Settings groups', () => {
     });
     const renderer = await renderScreen();
     const texts = headings(renderer);
-    expect(texts).toContain('Connectors');
-    expect(texts).toContain('Device');
-    expect(texts).toContain('Account');
+    expect(texts).toContain('CONNECTORS');
+    expect(texts).toContain('DEVICE');
+    expect(texts).toContain('ACCOUNT');
   });
 
   it('files privacy, terms and feedback under Account, above the destructive rows', async () => {

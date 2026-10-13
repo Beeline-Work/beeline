@@ -173,7 +173,7 @@ export default function BuzzCorners() {
     return (
       <View style={[styles.container, styles.center, { paddingTop: insets.top }]}>
         <Text style={[styles.error, styles.errorCentered]}>{error}</Text>
-        <Button label="RETRY" onPress={() => void corners.refresh()} />
+        <Button label="Retry" onPress={() => void corners.refresh()} variant="secondary" />
       </View>
     );
   }
@@ -206,16 +206,10 @@ export default function BuzzCorners() {
           onAdd={() => void createCorner()}
         />
         {!!error && (
-          // F5: it is tappable, so it announces as a button. `alert` promised
-          // no action, which left the retry invisible to a screen reader.
-          <TouchableOpacity
-            accessibilityLabel={`${error}. Retry`}
-            accessibilityRole="button"
-            onPress={() => void corners.refresh()}
-            style={styles.errorPanel}
-          >
+          <View style={styles.errorPanel}>
             <Text style={styles.error}>! {error}</Text>
-          </TouchableOpacity>
+            <Button label="Retry" variant="secondary" onPress={() => void corners.refresh()} />
+          </View>
         )}
         <CornerOpenRow roomId={decodedId} />
         <RoomCornersList

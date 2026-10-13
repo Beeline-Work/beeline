@@ -1,3 +1,4 @@
+import { HullDialogActions } from '@/components/buzz/HullDialog';
 import React, { useEffect, useState } from 'react';
 import { Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -203,29 +204,10 @@ export function useRoomRepositoryChoice({
     </View>
   );
 
-  const footer = control || listOpen ? (
-    <View style={styles.actions}>
-      <TouchableOpacity
-        accessibilityRole="button"
-        disabled={busy && !listOpen}
-        onPress={() => (listOpen ? setListOpen(false) : onCancel())}
-        style={styles.cancelAction}
-        testID="room-actions-close"
-      >
-        <Text style={styles.cancelText}>{listOpen ? 'Back' : 'Cancel'}</Text>
-      </TouchableOpacity>
-      {canManage && !listOpen && (
-        <Button
-          disabled={!canSave}
-          label={busy ? 'Saving…' : 'Save'}
-          loading={busy}
-          onPress={save}
-          style={styles.primaryAction}
-          testID="room-repo-save"
-        />
-      )}
-    </View>
-  ) : null;
+  const footer =
+    control || listOpen ? (
+      <HullDialogActions style={styles.actions} actions={[{ label: listOpen ? 'Back' : 'Cancel', variant: "quiet", disabled: busy && !listOpen, onPress: () => (listOpen ? setListOpen(false) : onCancel()), testID: "room-actions-close" }, ...(canManage && !listOpen ? [{ disabled: !canSave, label: busy ? 'Saving…' : 'Save', loading: busy, onPress: save, testID: "room-repo-save", variant: 'primary' as const }] : [])]} />
+    ) : null;
 
   return {
     listOpen,
@@ -244,16 +226,9 @@ const styles = StyleSheet.create((theme) => {
       flexDirection: 'row',
       justifyContent: 'flex-end',
       alignItems: 'center',
-      gap: hull.space.xs,
+      gap: hull.space.sm,
       paddingHorizontal: HULL_SHEET_INSET,
       paddingTop: hull.space.sm,
     },
-    cancelAction: {
-      minHeight: 42,
-      paddingHorizontal: hull.space.sm,
-      justifyContent: 'center',
-    },
-    cancelText: { ...Typography.default(), ...hull.type.meta, color: hull.textSecondary },
-    primaryAction: { minHeight: 42, paddingHorizontal: hull.space.md },
   };
 });

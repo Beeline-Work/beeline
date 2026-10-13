@@ -1,3 +1,6 @@
+import { RoomListSectionHeader } from './RoomListSectionHeader';
+vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
+vi.mock('expo-haptics', () => ({ ImpactFeedbackStyle: { Light: 'Light' }, impactAsync: async () => undefined }));
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
@@ -9,7 +12,7 @@ vi.mock('react-native', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
-  return {
+  return { StyleSheet: { flatten: (style: any): any => Array.isArray(style) ? Object.assign({}, ...style.map((part: any) => Array.isArray(part) ? Object.assign({}, ...part) : part)) : style },
     KeyboardAvoidingView: host('KeyboardAvoidingView'),
     Modal: host('Modal'),
     Platform: { OS: 'ios' },
@@ -187,7 +190,7 @@ describe('RoomRosterSheet', () => {
       const renderer = render(sheet({ parentChannelId }));
       expect(
         renderer.root.findAllByProps({ testID: 'room-roster-members-head' }).at(-1)!.props.children,
-      ).toEqual(['Members', ' ', 2]);
+      ).toEqual('MEMBERS');
       expect(renderer.root.findAllByProps({ testID: 'room-roster-people-head' })).toHaveLength(0);
       expect(renderer.root.findAllByProps({ testID: 'room-roster-agents-head' })).toHaveLength(0);
 
@@ -265,7 +268,8 @@ describe('RoomRosterSheet', () => {
     const renderer = render(sheet({ members: [viewer, ana, ox] }));
     expect(
       renderer.root.findAllByProps({ testID: 'room-roster-members-head' }).at(-1)!.props.children,
-    ).toEqual(['Members', ' ', 3]);
+    ).toEqual('MEMBERS');
+    expect(renderer.root.findByType(RoomListSectionHeader).props.count).toBe(3);
 
     expect(rowIds(renderer)).toEqual([
       `room-roster-person-${VIEWER}`,
@@ -300,7 +304,8 @@ describe('RoomRosterSheet', () => {
     // The head counts all thirteen even while ten are on screen.
     expect(
       renderer.root.findAllByProps({ testID: 'room-roster-members-head' }).at(-1)!.props.children,
-    ).toEqual(['Members', ' ', 13]);
+    ).toEqual('MEMBERS');
+    expect(renderer.root.findByType(RoomListSectionHeader).props.count).toBe(13);
     expect(visible()).toHaveLength(10);
     expect(visible().at(-1)).toBe('room-roster-person-person-9');
 
@@ -319,7 +324,7 @@ describe('RoomRosterSheet', () => {
     expect(renderer.root.findAllByProps({ testID: 'room-roster-add-agents' })).toHaveLength(0);
     const add = renderer.root.findByProps({ testID: 'room-roster-add-members' });
     expect(add.props.accessibilityLabel).toBe('Add members');
-    expect(add.props.style.height).toBeGreaterThanOrEqual(44);
+    expect(add.props.style({ pressed: false })[0].minHeight).toBeGreaterThanOrEqual(44);
     act(() => add.props.onPress());
     expect(onAddMembers).toHaveBeenCalledTimes(1);
   });
@@ -330,7 +335,8 @@ describe('RoomRosterSheet', () => {
     const onAddMembers = vi.fn();
     const empty = render(sheet({ onAddMembers, members: [] }));
     const head = empty.root.findAllByProps({ testID: 'room-roster-members-head' }).at(-1)!;
-    expect(head.props.children).toEqual(['Members', ' ', 0]);
+    expect(head.props.children).toEqual('MEMBERS');
+    expect(empty.root.findByType(RoomListSectionHeader).props.count).toBe(0);
     act(() => empty.root.findByProps({ testID: 'room-roster-add-members' }).props.onPress());
     expect(onAddMembers).toHaveBeenCalledTimes(1);
 

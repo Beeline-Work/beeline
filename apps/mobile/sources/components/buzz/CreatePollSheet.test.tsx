@@ -1,3 +1,6 @@
+vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
+vi.mock('expo-haptics', () => ({ ImpactFeedbackStyle: { Light: 'Light' }, impactAsync: async () => undefined }));
+vi.mock('react-native-keyboard-controller', async () => { const R = await import('react'); return { KeyboardAvoidingView: (props: any) => R.createElement('View', props, props.children) }; });
 import React from 'react';
 // @ts-expect-error react-test-renderer has no types in this workspace
 import { act, create } from 'react-test-renderer';
@@ -7,7 +10,7 @@ vi.mock('react-native', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
-  return {
+  return { Platform: { OS: 'ios', select: (options: any) => options.ios ?? options.default }, StyleSheet: { flatten: (style: any): any => Array.isArray(style) ? Object.assign({}, ...style.map((part: any) => Array.isArray(part) ? Object.assign({}, ...part) : part)) : style },
     AppState: { addEventListener: () => ({ remove: () => undefined }) },
     Pressable: host('Pressable'),
     ScrollView: host('ScrollView'),
@@ -32,7 +35,16 @@ vi.mock('react-native-unistyles', () => ({
 }));
 vi.mock('./HullDialog', async () => {
   const ReactModule = await import('react');
-  return { HullDialogInput: (props: any) => ReactModule.createElement('TextInput', props) };
+  return { HullDialogActions: ({ actions }: any) =>
+      ReactModule.createElement(
+        'View',
+        {},
+        actions.map((action: any) =>
+          ReactModule.createElement('Button', { ...action, key: action.label }),
+        ),
+      ),
+    HullDialogInput: (props: any) => ReactModule.createElement('TextInput', props) ,
+  };
 });
 vi.mock('./HullActionSheet', async () => {
   const ReactModule = await import('react');

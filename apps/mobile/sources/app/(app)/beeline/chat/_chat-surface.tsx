@@ -1,3 +1,4 @@
+import { HullDialogActions } from '@/components/buzz/HullDialog';
 import { useTextDraft } from '@/buzz/use-text-draft';
 import { HumanProfile } from '../human-profile';
 import BuzzMembers from '../members';
@@ -1190,9 +1191,10 @@ export function BuzzChatSurface({
     };
   }, []);
   const chatListKey = useMemo(
-    () => (chatListRelayUrl && userPubkey && activeCommunityId
+    () =>
+      chatListRelayUrl && userPubkey && activeCommunityId
       ? { relayUrl: chatListRelayUrl, viewerPubkey: userPubkey, workspaceId: activeCommunityId }
-      : null),
+      : null,
     [activeCommunityId, chatListRelayUrl, userPubkey],
   );
   const githubScope = chatListRelayUrl && userPubkey
@@ -5755,14 +5757,18 @@ export function BuzzChatSurface({
         );
       }
       if (item.computerSession) {
-        return <ComputerSessionCard session={item.computerSession} isDesktop={desktopExperience}
-          agentHandle={item.authorIdentity?.kind === 'agent' ? item.authorIdentity.handle : undefined} />;
+        return (
+          <ComputerSessionCard session={item.computerSession} isDesktop={desktopExperience}
+          agentHandle={item.authorIdentity?.kind === 'agent' ? item.authorIdentity.handle : undefined} />
+        );
       }
       if (item.voiceCall) {
         if (isDirectMessage && !item.voiceCall.endedAt) return null;
-        return <VoiceCallCard call={item.voiceCall} joined={voice.call?.id === item.voiceCall.id}
+        return (
+          <VoiceCallCard call={item.voiceCall} joined={voice.call?.id === item.voiceCall.id}
           agents={roomSurface?.members.filter(member => member.identity.kind === 'agent').map(member => member.identity)}
-          onJoin={() => void voice.join()} />;
+          onJoin={() => void voice.join()} />
+        );
       }
       if (item.choice) {
         return (
@@ -7286,7 +7292,7 @@ export function BuzzChatSurface({
             {!isCorner && canRenameTitle && renameEditing && (
               <View style={styles.roomRenameEditor} testID="rename-room-editor">
                 <Text style={styles.roomRenameLabel}>New {ROOM_LABEL.toLowerCase()} name</Text>
-                <TextInput
+                <HullDialogInput
                   accessibilityLabel={`New ${ROOM_LABEL} name`}
                   autoCapitalize="none"
                   autoCorrect={false}
@@ -7305,24 +7311,10 @@ export function BuzzChatSurface({
                 {!validRoomSlug(renameDraft.trim()) && (
                   <Text style={styles.roomRenameLabel}>{ROOM_SLUG_HINT}</Text>
                 )}
-                <View style={styles.roomRenameControls}>
-                  <Button
-                    disabled={renameBusy}
-                    label="Cancel"
-                    onPress={() => {
+                <HullDialogActions style={styles.roomRenameControls} actions={[{ disabled: renameBusy, label: "Cancel", onPress: () => {
                       setRenameEditing(false);
                       setRenameError(null);
-                    }}
-                    variant="secondary"
-                  />
-                  <Button
-                    disabled={renameBusy || !validRoomSlug(renameDraft.trim())}
-                    label={renameBusy ? 'Renaming…' : 'Apply'}
-                    loading={renameBusy}
-                    onPress={() => void handleRenameRoom()}
-                    testID="apply-room-rename"
-                  />
-                </View>
+                    }, variant: "quiet" }, { disabled: renameBusy || !validRoomSlug(renameDraft.trim()), label: renameBusy ? 'Renaming…' : 'Save', loading: renameBusy, onPress: () => void handleRenameRoom(), testID: "apply-room-rename", variant: 'primary' }]} />
               </View>
             )}
             <RoomReviewerActions
@@ -7813,109 +7805,6 @@ const styles = StyleSheet.create((theme) => {
     messageListContentEmpty: {
       flexGrow: 1,
     },
-    outboxFailure: {
-      marginTop: 4,
-      marginHorizontal: 8,
-      padding: 8,
-      borderWidth: 1,
-      borderColor: groknight.borderStrong,
-      backgroundColor: groknight.bgHighlight,
-    },
-    outboxFailureText: {
-      ...theme.buzz.type.sectionHead,
-      fontFamily: groknight.monoSemibold,
-      color: groknight.textPrimary,
-    },
-    outboxFailureActions: {
-      flexDirection: 'row',
-      gap: 8,
-      marginTop: groknight.space.sm,
-    },
-    replySwipeAction: {
-      width: 78,
-      marginBottom: 8,
-      alignItems: 'center',
-      justifyContent: 'center',
-      borderLeftWidth: 1,
-      borderLeftColor: groknight.borderStrong,
-      backgroundColor: groknight.bgHighlight,
-    },
-    replySwipeGlyph: {
-      ...theme.buzz.type.body,
-      fontFamily: groknight.proseSemibold,
-      color: groknight.textPrimary,
-    },
-    replySwipeLabel: {
-      ...theme.buzz.type.sectionHead,
-      fontFamily: groknight.monoSemibold,
-      marginTop: groknight.space.xs,
-      color: groknight.textMuted,
-    },
-    /* A person reaching back up the transcript quotes what they reached for, on
-     * one dim line and with no rule beside it — the ledger has no delimiters. */
-    replyReference: {
-      minWidth: 0,
-      marginBottom: groknight.space.xs,
-    },
-    replyReferenceText: {
-      ...theme.buzz.type.machine,
-      color: groknight.ledgerGhost,
-    },
-    /* An attachment hangs off the message that carries it: a row, not a card. */
-    attachmentCard: {
-      minWidth: 0,
-      width: '100%',
-      minHeight: 58,
-      marginTop: 8,
-      paddingVertical: groknight.space.sm,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: groknight.space.sm,
-    },
-    attachmentThumbnail: {
-      width: 46,
-      height: 46,
-      backgroundColor: groknight.bgHighlight,
-    },
-    attachmentFileGlyph: {
-      width: 46,
-      height: 46,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    attachmentFileGlyphText: {
-      ...theme.buzz.type.hero,
-      color: groknight.steel,
-    },
-    attachmentCopy: { flex: 1, minWidth: 0 },
-    attachmentName: {
-      ...theme.buzz.type.body,
-      fontSize: groknight.transcriptCard.rowTitleSize,
-      color: groknight.textPrimary,
-    },
-    attachmentMeta: {
-      ...theme.buzz.type.machine,
-      fontSize: groknight.transcriptCard.rowKindSize,
-      marginTop: groknight.space.xs,
-      color: groknight.textMuted,
-    },
-    attachmentOpenGlyph: {
-      ...theme.buzz.type.body,
-      width: 22,
-      color: groknight.steel,
-      textAlign: 'center',
-    },
-
-    // ── The ledger ─────────────────────────────────────────────────
-    // A turn's whole tool run folds into one line here; the group itself is
-    // pure rhythm, with no rule or fill separating it from the prose around it.
-    // Every other transcript shape lives in components/buzz/Ledger.tsx, which
-    // Rooms and Corners share.
-    activityGroup: {
-      width: '100%',
-      minWidth: 0,
-      marginBottom: groknight.space.md,
-    },
 
     // ── Archived notice ─────────────────────────────────────────────
     archivedBubble: {
@@ -7942,116 +7831,6 @@ const styles = StyleSheet.create((theme) => {
     // no height in this column.
     bottomChromeStack: bottomChrome.stack,
     inputBar: bottomChrome.composerRow,
-    previewLinkRow: {
-      marginTop: groknight.space.sm,
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: 8,
-      minWidth: 0,
-    },
-    previewLinkLabel: {
-      ...theme.buzz.type.machine,
-      fontFamily: groknight.monoSemibold,
-      color: groknight.textPrimary,
-      flexShrink: 0,
-    },
-    previewLinkUrl: {
-      ...theme.buzz.type.machine,
-      color: groknight.textMuted,
-      flexShrink: 1,
-      minWidth: 0,
-    },
-    targetBranchCard: {
-      minWidth: 0,
-      marginBottom: 8,
-      paddingHorizontal: groknight.space.md,
-      paddingVertical: groknight.space.md,
-      borderWidth: 1,
-      borderColor: groknight.borderStrong,
-      gap: 8,
-    },
-    targetBranchTitle: {
-      ...theme.buzz.type.bodyStrong,
-      color: groknight.textPrimary,
-    },
-    targetBranchChange: {
-      ...theme.buzz.type.machine,
-      fontFamily: groknight.monoSemibold,
-      color: groknight.textPrimary,
-    },
-    targetBranchBoundary: {
-      ...theme.buzz.type.meta,
-      color: groknight.textSecondary,
-    },
-    targetBranchActions: { flexDirection: 'row', gap: 8 },
-    targetBranchButton: { flex: 1, minWidth: 0 },
-    targetBranchStatus: {
-      ...theme.buzz.type.sectionHead,
-      fontFamily: groknight.monoSemibold,
-      color: groknight.textSecondary,
-    },
-    writePermissionCard: {
-      minWidth: 0,
-      marginBottom: 8,
-      paddingHorizontal: groknight.space.md,
-      paddingVertical: groknight.space.md,
-      borderWidth: 1,
-      borderColor: groknight.borderStrong,
-      gap: groknight.space.sm,
-    },
-    githubEventPressable: { marginBottom: 8 },
-    githubEventCard: {
-      minWidth: 0,
-      paddingHorizontal: groknight.space.md,
-      paddingVertical: groknight.space.md,
-      borderWidth: 1,
-      borderColor: groknight.borderStrong,
-      gap: groknight.space.sm,
-    },
-    githubEventTitle: {
-      ...theme.buzz.type.bodyStrong,
-      color: groknight.textPrimary,
-    },
-    githubEventLink: {
-      ...theme.buzz.type.machine,
-      fontFamily: groknight.monoSemibold,
-      color: groknight.textSecondary,
-    },
-    writePermissionHeading: {
-      flexDirection: 'row',
-      alignItems: 'center',
-      gap: groknight.space.sm,
-    },
-    writePermissionCopy: { flex: 1, minWidth: 0 },
-    writePermissionTitle: {
-      ...theme.buzz.type.bodyStrong,
-      color: groknight.textPrimary,
-    },
-    writePermissionIntent: {
-      ...theme.buzz.type.meta,
-      color: groknight.textMuted,
-      marginTop: groknight.space.xs,
-    },
-    writePermissionRepository: {
-      ...theme.buzz.type.machine,
-      fontFamily: groknight.monoSemibold,
-      color: groknight.textPrimary,
-    },
-    writePermissionBoundary: {
-      ...theme.buzz.type.meta,
-      color: groknight.textSecondary,
-    },
-    writePermissionFailure: {
-      ...theme.buzz.type.machine,
-      color: groknight.textSecondary,
-    },
-    writePermissionActions: { flexDirection: 'row', gap: 8 },
-    writePermissionButton: { flex: 1, minWidth: 0 },
-    writePermissionStatus: {
-      ...theme.buzz.type.sectionHead,
-      fontFamily: groknight.monoSemibold,
-      color: groknight.textSecondary,
-    },
     // Under the composer's tag menu: a tap anywhere else closes the menu.
     tagMenuBackdrop: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
     repoPromptBanner: {
@@ -8098,5 +7877,209 @@ const styles = StyleSheet.create((theme) => {
       color: groknight.muted,
     },
     cornerArchivedInputText: { ...Typography.mono('italic'), color: groknight.textMuted },
-  };
+  outboxFailure: {
+      marginTop: 4,
+      marginHorizontal: 8,
+      padding: 8,
+      borderWidth: 1,
+      borderColor: groknight.borderStrong,
+      backgroundColor: groknight.bgHighlight,
+    },
+outboxFailureText: {
+      ...theme.buzz.type.sectionHead,
+      fontFamily: groknight.monoSemibold,
+      color: groknight.textPrimary,
+    },
+outboxFailureActions: {
+      flexDirection: 'row',
+      gap: 8,
+      marginTop: groknight.space.sm,
+    },
+replySwipeAction: {
+      width: 78,
+      marginBottom: 8,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderLeftWidth: 1,
+      borderLeftColor: groknight.borderStrong,
+      backgroundColor: groknight.bgHighlight,
+    },
+replySwipeGlyph: {
+      ...theme.buzz.type.body,
+      fontFamily: groknight.proseSemibold,
+      color: groknight.textPrimary,
+    },
+replySwipeLabel: {
+      ...theme.buzz.type.sectionHead,
+      fontFamily: groknight.monoSemibold,
+      marginTop: groknight.space.xs,
+      color: groknight.textMuted,
+    },
+replyReference: {
+      minWidth: 0,
+      marginBottom: groknight.space.xs,
+    },
+replyReferenceText: {
+      ...theme.buzz.type.machine,
+      color: groknight.ledgerGhost,
+    },
+attachmentCard: {
+      minWidth: 0,
+      width: '100%',
+      minHeight: 58,
+      marginTop: 8,
+      paddingVertical: groknight.space.sm,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: groknight.space.sm,
+    },
+attachmentThumbnail: {
+      width: 46,
+      height: 46,
+      backgroundColor: groknight.bgHighlight,
+    },
+attachmentFileGlyph: {
+      width: 46,
+      height: 46,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+attachmentFileGlyphText: {
+      ...theme.buzz.type.hero,
+      color: groknight.steel,
+    },
+attachmentCopy: { flex: 1, minWidth: 0 },
+attachmentName: {
+      ...theme.buzz.type.body,
+      fontSize: groknight.transcriptCard.rowTitleSize,
+      color: groknight.textPrimary,
+    },
+attachmentMeta: {
+      ...theme.buzz.type.machine,
+      fontSize: groknight.transcriptCard.rowKindSize,
+      marginTop: groknight.space.xs,
+      color: groknight.textMuted,
+    },
+attachmentOpenGlyph: {
+      ...theme.buzz.type.body,
+      width: 22,
+      color: groknight.steel,
+      textAlign: 'center',
+    },
+activityGroup: {
+      width: '100%',
+      minWidth: 0,
+      marginBottom: groknight.space.md,
+    },
+previewLinkRow: {
+      marginTop: groknight.space.sm,
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 8,
+      minWidth: 0,
+    },
+previewLinkLabel: {
+      ...theme.buzz.type.machine,
+      fontFamily: groknight.monoSemibold,
+      color: groknight.textPrimary,
+      flexShrink: 0,
+    },
+previewLinkUrl: {
+      ...theme.buzz.type.machine,
+      color: groknight.textMuted,
+      flexShrink: 1,
+      minWidth: 0,
+    },
+targetBranchCard: {
+      minWidth: 0,
+      marginBottom: 8,
+      paddingHorizontal: groknight.space.md,
+      paddingVertical: groknight.space.md,
+      borderWidth: 1,
+      borderColor: groknight.borderStrong,
+      gap: 8,
+    },
+targetBranchTitle: {
+      ...theme.buzz.type.bodyStrong,
+      color: groknight.textPrimary,
+    },
+targetBranchChange: {
+      ...theme.buzz.type.machine,
+      fontFamily: groknight.monoSemibold,
+      color: groknight.textPrimary,
+    },
+targetBranchBoundary: {
+      ...theme.buzz.type.meta,
+      color: groknight.textSecondary,
+    },
+targetBranchActions: { flexDirection: 'row', gap: 8 },
+targetBranchButton: { flex: 1, minWidth: 0 },
+targetBranchStatus: {
+      ...theme.buzz.type.sectionHead,
+      fontFamily: groknight.monoSemibold,
+      color: groknight.textSecondary,
+    },
+writePermissionCard: {
+      minWidth: 0,
+      marginBottom: 8,
+      paddingHorizontal: groknight.space.md,
+      paddingVertical: groknight.space.md,
+      borderWidth: 1,
+      borderColor: groknight.borderStrong,
+      gap: groknight.space.sm,
+    },
+githubEventPressable: { marginBottom: 8 },
+githubEventCard: {
+      minWidth: 0,
+      paddingHorizontal: groknight.space.md,
+      paddingVertical: groknight.space.md,
+      borderWidth: 1,
+      borderColor: groknight.borderStrong,
+      gap: groknight.space.sm,
+    },
+githubEventTitle: {
+      ...theme.buzz.type.bodyStrong,
+      color: groknight.textPrimary,
+    },
+githubEventLink: {
+      ...theme.buzz.type.machine,
+      fontFamily: groknight.monoSemibold,
+      color: groknight.textSecondary,
+    },
+writePermissionHeading: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: groknight.space.sm,
+    },
+writePermissionCopy: { flex: 1, minWidth: 0 },
+writePermissionTitle: {
+      ...theme.buzz.type.bodyStrong,
+      color: groknight.textPrimary,
+    },
+writePermissionIntent: {
+      ...theme.buzz.type.meta,
+      color: groknight.textMuted,
+      marginTop: groknight.space.xs,
+    },
+writePermissionRepository: {
+      ...theme.buzz.type.machine,
+      fontFamily: groknight.monoSemibold,
+      color: groknight.textPrimary,
+    },
+writePermissionBoundary: {
+      ...theme.buzz.type.meta,
+      color: groknight.textSecondary,
+    },
+writePermissionFailure: {
+      ...theme.buzz.type.machine,
+      color: groknight.textSecondary,
+    },
+writePermissionActions: { flexDirection: 'row', gap: 8 },
+writePermissionButton: { flex: 1, minWidth: 0 },
+writePermissionStatus: {
+      ...theme.buzz.type.sectionHead,
+      fontFamily: groknight.monoSemibold,
+      color: groknight.textSecondary,
+    },
+};
 });

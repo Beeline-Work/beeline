@@ -34,8 +34,8 @@ describe('Workbench row text matches the standard body/meta sizes', () => {
   });
 
   it('Workbench and Connect an app section captions read the shared sectionHead role', () => {
-    expect(workbench).toContain('hull.type.sectionHead');
-    expect(connectApp).toContain('hull.type.sectionHead');
+    expect(workbench).toContain('<RoomListSectionHeader');
+    expect(connectApp).toContain('<RoomListSectionHeader');
     expect(connectApp).not.toContain('appBoardType');
   });
 

@@ -1,3 +1,5 @@
+import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
+import { HullDialogInput } from '@/components/buzz/HullDialog';
 import { useTextDraft } from '@/buzz/use-text-draft';
 import React, { useMemo } from 'react';
 import { ScrollView, Text, TextInput, View } from 'react-native';
@@ -57,7 +59,7 @@ export function ForwardMessagePickerSheet({
       title="Forward message"
       visible={visible}
     >
-      <TextInput
+      <HullDialogInput
         accessibilityLabel="Search forward destinations"
         autoCapitalize="none"
         autoCorrect={false}
@@ -93,9 +95,7 @@ export function ForwardMessagePickerSheet({
             if (!sectionTargets.length) return null;
             return (
               <React.Fragment key={section.group}>
-                <Text accessibilityRole="header" style={styles.section}>
-                  {section.label}
-                </Text>
+                <RoomListSectionHeader title={section.label} />
                 {sectionTargets.map((target) => (
                   <HullActionSheetRow
                     chevron="right"
@@ -140,13 +140,6 @@ const styles = StyleSheet.create((theme) => {
     },
     listViewport: { maxHeight: 360, flexGrow: 0 },
     list: { paddingBottom: 4 },
-    section: {
-      ...groknight.type.sectionHead,
-      color: groknight.chrome,
-      paddingTop: groknight.space.md,
-      paddingBottom: 4,
-      paddingHorizontal: HULL_SHEET_INSET,
-    },
     loading: {
       alignItems: 'center',
       paddingHorizontal: HULL_SHEET_INSET,

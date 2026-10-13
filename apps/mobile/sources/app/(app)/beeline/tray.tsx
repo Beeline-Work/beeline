@@ -1,3 +1,4 @@
+import { Button } from '@/components/buzz/Button';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import { messageJumpHref, roomHref } from '@/buzz/corner-navigation';
 import { useIsDesktop } from '@/utils/responsive';
@@ -93,12 +94,19 @@ type Row =
   | { readonly key: string; readonly type: 'saved-empty' }
   | { readonly key: string; readonly type: 'saved-more' };
 
-function emptySection(title: string, detail: string, icon: 'checkmark-circle-outline' | 'bookmark-outline', testID: string) {
-  return <View style={styles.emptyBlock} testID={testID}>
+function emptySection(
+  title: string,
+  detail: string,
+  icon: 'checkmark-circle-outline' | 'bookmark-outline',
+  testID: string,
+) {
+  return (
+    <View style={styles.emptyBlock} testID={testID}>
     <Ionicons color={styles.emptyIcon.color} name={icon} size={22} />
     <Text style={styles.emptyTitle}>{title}</Text>
     <Text style={styles.empty}>{detail}</Text>
-  </View>;
+  </View>
+  );
 }
 
 /**
@@ -709,10 +717,12 @@ export default function TrayScreen() {
           case 'saved':
             return renderSaved(row.bookmark);
           case 'saved-more':
-            return <Pressable accessibilityRole="button" onPress={() => void loadMoreSaved()}
+            return (
+              <Pressable accessibilityRole="button" onPress={() => void loadMoreSaved()}
               style={styles.emptyBlock} testID="bookmarks-more">
               <Text style={styles.removeText}>LOAD MORE SAVED</Text>
-            </Pressable>;
+            </Pressable>
+            );
           case 'saved-empty':
             return emptySection('No bookmarks yet', desktop
               ? 'Hover a message and press its bookmark mark.'
@@ -767,9 +777,15 @@ export default function TrayScreen() {
       <PageHeader backAccessibilityLabel="Back to Rooms" eyebrow={workspaceName ?? 'Workspace'}
         onBack={desktop ? undefined : () => router.back()} prominent testID="tray-header" title="Tray" />
       {error ? (
-        <Pressable accessibilityRole="button" onPress={() => void load(true)} style={styles.error}>
-          <Text style={styles.errorText}>{error} · Retry</Text>
-        </Pressable>
+        <View style={styles.error}>
+          <Text style={styles.errorText}>{error}</Text>
+          <Button
+            label="Retry"
+            variant="secondary"
+            style={{ alignSelf: 'flex-end' }}
+            onPress={() => void load(true)}
+          />
+        </View>
       ) : null}
       <View style={styles.body}>
         {list}

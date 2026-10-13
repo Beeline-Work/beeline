@@ -1,3 +1,4 @@
+vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
 /**
  * The member picker as the app actually mounts it: the REAL sheet, the real
  * `HullModal` presentation boundary, the real `HullActionSheet`, the real
@@ -88,7 +89,8 @@ vi.mock('react-native', async () => {
   // `react-native-unistyles/src/components/native/Pressable.native.tsx`,
   // verbatim in the part that matters: a `style` that is not a function is read
   // for its C++ handle before it ever reaches the native view.
-  const getStyles = (styleProps: Record<string, any> = {}) => {
+  const getStyles = (styleProps: Record<string, any> = {}): Record<string, any> => {
+    if (Array.isArray(styleProps)) return Object.assign({}, ...styleProps.map(getStyles));
     const unistyleKey = Object.keys(styleProps).find((key) => key.startsWith('unistyles_'));
     if (!unistyleKey) return styleProps;
     return { ...styleProps[unistyleKey].uni__getStyles(), [unistyleKey]: styleProps[unistyleKey] };
@@ -110,7 +112,7 @@ vi.mock('react-native', async () => {
     Platform: { OS: 'android', select: (choices: Record<string, unknown>) => choices.default },
     Pressable: UnistylesPressable,
     ScrollView: host('ScrollView'),
-    StyleSheet: {
+    StyleSheet: { flatten: (style: any): any => Array.isArray(style) ? Object.assign({}, ...style) : style,
       create: (styles: unknown) => styles,
       absoluteFillObject: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0 },
       hairlineWidth: 1,
@@ -118,7 +120,7 @@ vi.mock('react-native', async () => {
     Switch: host('Switch'),
     Text: host('Text'),
     TextInput: host('TextInput'),
-    TouchableOpacity: host('TouchableOpacity'),
+    TouchableOpacity: ({ style, children, ...rest }: any) => ReactModule.createElement('TouchableOpacity', { ...rest, style: getStyles(style) }, children),
     View: host('View'),
     useWindowDimensions: () => ({ width: 390, height: 844 }),
   };

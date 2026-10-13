@@ -1,6 +1,7 @@
 import React from 'react';
 import {
   Modal,
+  StyleSheet as NativeStyleSheet,
   Platform,
   Pressable,
   Text,
@@ -13,14 +14,18 @@ import {
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { typeRoles } from '@/buzz/groknight';
+import { Button, type ButtonProps } from './Button';
 import { HullSurface } from './MonoHull';
 
 export type HullDialogAction = {
   accessibilityLabel?: string;
+  accessibilityRole?: ButtonProps['accessibilityRole'];
+  description?: React.ReactNode;
   busy?: boolean;
+  loading?: boolean;
   disabled?: boolean;
   label: string;
-  onPress: () => void;
+  onPress: NonNullable<ButtonProps['onPress']>;
   testID?: string;
   variant?: 'quiet' | 'primary' | 'destructive';
 };
@@ -355,44 +360,49 @@ export function HullDialog({
             </View>
           ) : null}
         </View>
-        <View style={styles.dialogActions}>
-          {actions.map((action, index) => {
-            const isPrimary = index === primaryIndex;
-            return (
-              <Pressable
-                accessibilityLabel={action.accessibilityLabel ?? action.label}
-                accessibilityRole="button"
-                accessibilityState={{
-                  busy: action.busy === true,
-                  disabled: action.disabled === true,
-                }}
-                disabled={action.disabled}
-                key={`${action.testID ?? action.label}:${action.variant ?? 'quiet'}`}
-                onPress={action.onPress}
-                style={({ pressed }) => [
-                  styles.dialogAction,
-                  isPrimary && styles.dialogActionPrimary,
-                  pressed && (isPrimary ? styles.dialogActionPrimaryPressed : styles.dialogActionPressed),
-                  action.disabled && styles.dialogActionDisabled,
-                ]}
-                testID={action.testID}
-              >
-                <Text
-                  style={[
-                    styles.dialogActionText,
-                    isPrimary && styles.dialogActionPrimaryText,
-                    action.variant === 'destructive' && styles.dialogActionDestructiveText,
-                    action.disabled && styles.dialogActionDisabledText,
-                  ]}
-                >
-                  {action.label}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
+        <HullDialogActions
+          actions={actions.map((action, index) =>
+            action.variant === 'primary' && index !== primaryIndex
+              ? { ...action, variant: 'quiet' as const }
+              : action,
+          )}
+          style={styles.dialogActions}
+        />
       </HullFloatingSurface>
     </HullModal>
+  );
+}
+
+/** Shared trailing decision row, used by dialogs, sheet forms and inline decisions. */
+export function HullDialogActions({
+  actions,
+  style,
+}: {
+  actions: readonly HullDialogAction[];
+  style?: StyleProp<ViewStyle>;
+}) {
+  return (
+    <View style={[styles.actionRow, style]}>
+      {actions.map((action) => (
+        <View
+          key={`${action.testID ?? action.label}:${action.variant ?? 'quiet'}`}
+          style={styles.actionSlot}
+        >
+          <Button
+            {...(action.accessibilityRole ? { accessibilityRole: action.accessibilityRole } : {})}
+            label={action.label}
+            variant={action.variant ?? 'quiet'}
+            accessibilityLabel={action.accessibilityLabel ?? action.label}
+            accessibilityState={{ busy: action.busy === true }}
+            loading={action.loading}
+            disabled={action.disabled}
+            onPress={action.onPress}
+            testID={action.testID}
+          />
+          {action.description}
+        </View>
+      ))}
+    </View>
   );
 }
 
@@ -401,13 +411,48 @@ export const HullDialogInput = React.forwardRef<
   TextInputProps & { ruleStyle?: StyleProp<ViewStyle> }
 >(function HullDialogInput({ style, ruleStyle, ...props }, ref) {
   const { theme } = useUnistyles();
+  // Layout belongs to the wrapper; the native field owns only its shared type
+  // and underline geometry. Keep flex/margins at existing row/search callers.
+  const [focused, setFocused] = React.useState(false);
+  const resolvedStyle = NativeStyleSheet.flatten(style) ?? {};
+  const layoutKeys = [
+    'flex',
+    'flexGrow',
+    'flexShrink',
+    'flexBasis',
+    'alignSelf',
+    'width',
+    'minWidth',
+    'maxWidth',
+    'margin',
+    'marginHorizontal',
+    'marginVertical',
+    'marginTop',
+    'marginBottom',
+    'marginLeft',
+    'marginRight',
+  ] as const;
+  const outerStyle: ViewStyle = {};
+  const innerStyle = { ...resolvedStyle };
+  for (const key of layoutKeys) {
+    if (key in resolvedStyle) (outerStyle as Record<string, unknown>)[key] = resolvedStyle[key];
+    delete innerStyle[key];
+  }
   return (
-    <View style={ruleStyle ? [styles.inputRule, ruleStyle] : styles.inputRule}>
+    <View style={[styles.inputRule, outerStyle, ruleStyle, focused && styles.inputFocused]}>
       <TextInput
         {...props}
         ref={ref}
+        onFocus={(event) => {
+          setFocused(true);
+          props.onFocus?.(event);
+        }}
+        onBlur={(event) => {
+          setFocused(false);
+          props.onBlur?.(event);
+        }}
         placeholderTextColor={props.placeholderTextColor ?? theme.buzz.textDisabled}
-        style={[styles.input, style]}
+        style={[innerStyle, styles.input, props.multiline && styles.multilineInput]}
       />
     </View>
   );
@@ -471,43 +516,43 @@ const styles = StyleSheet.create((theme) => {
       flexDirection: 'row',
       alignItems: 'center',
       justifyContent: 'flex-end',
-      gap: 4,
+      gap: hull.space.sm,
       borderTopWidth: HULL_DIALOG_LAYOUT.actionBorderTopWidth,
       borderTopColor: hull.border,
     },
-    dialogAction: {
-      minWidth: 44,
-      minHeight: HULL_DIALOG_LAYOUT.actionButtonMinHeight,
-      paddingHorizontal: hull.space.md,
+    actionSlot: { flexShrink: 1 },
+    actionRow: {
+      flexDirection: 'row',
+      flexWrap: 'wrap',
       alignItems: 'center',
-      justifyContent: 'center',
-      borderRadius: hull.radius,
+      justifyContent: 'flex-end',
+      gap: hull.space.sm,
     },
-    dialogActionPrimary: { backgroundColor: hull.buttonPrimaryFill },
-    dialogActionPressed: { opacity: 0.78, backgroundColor: hull.bgPressed },
-    dialogActionPrimaryPressed: { opacity: 0.78 },
-    dialogActionDisabled: { opacity: 0.42 },
-    dialogActionText: {
-      ...hull.type.machine,
-      fontFamily: hull.monoSemibold,
-      color: hull.buttonSecondaryText,
-      textTransform: 'uppercase',
-    },
-    dialogActionPrimaryText: { color: hull.buttonPrimaryText },
-    dialogActionDestructiveText: { color: hull.dialogDanger },
-    dialogActionDisabledText: { color: hull.textDisabled },
     inputRule: {
-      width: '100%',
+      alignSelf: 'stretch',
       marginTop: HULL_DIALOG_LAYOUT.inputMarginTop,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: hull.borderStrong,
     },
+    inputFocused: { borderBottomColor: hull.accent },
     input: {
       ...hull.type.body,
       minHeight: HULL_DIALOG_LAYOUT.inputMinHeight,
       paddingHorizontal: 0,
       paddingVertical: 8,
       color: hull.textPrimary,
+      backgroundColor: 'transparent',
+      borderWidth: 0,
+      borderBottomWidth: 0,
+      borderTopWidth: 0,
+      borderLeftWidth: 0,
+      borderRightWidth: 0,
+      borderRadius: hull.radius,
+      height: undefined,
+      ...(Platform.OS === 'web' ? { outlineStyle: 'solid' as const, outlineWidth: 0 } : {}),
+      textAlign: 'left',
+      fontWeight: 'normal',
     },
+    multilineInput: { minHeight: 120, textAlignVertical: 'top' },
   };
 });

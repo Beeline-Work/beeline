@@ -717,8 +717,11 @@ describe('RoomCornersList archived footer', () => {
         />,
       ),
     );
-    expect(text(tree)).toContain('Beeline is offline. Tap to retry');
-    act(() => pressable(tree, 'room-corners-archived-more').props.onPress());
+    expect(text(tree)).toContain('Beeline is offline');
+    const retry = tree.root.findByType('Button' as any);
+    expect(retry.props.label).toBe('Retry');
+    expect(retry.props.variant).toBe('secondary');
+    act(() => retry.props.onPress());
     expect(onMoreArchived).toHaveBeenCalledTimes(2);
 
     act(() =>

@@ -1,3 +1,5 @@
+import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
+import { HullDialogActions } from './HullDialog';
 import React, { useState } from 'react';
 import { Text, View } from 'react-native';
 import { router } from 'expo-router';
@@ -15,7 +17,7 @@ import { ScheduledWorkWhere } from './ScheduledWorkWhere';
 export function DetailSection({ title, testID }: { title: string; testID?: string }) {
   return (
     <View style={styles.section} testID={testID}>
-      <Text style={styles.sectionHead}>{title}</Text>
+      <RoomListSectionHeader title={title} inset="content" spacing="flush"/>
     </View>
   );
 }
@@ -82,7 +84,9 @@ export function ScheduledWorkDoes({ roomId, prompt, workflowSlug }: {
             />
           </View>
         </>
-      ) : <DetailRailLine testID="scheduled-work-prompt">{prompt}</DetailRailLine>}
+      ) : (
+        <DetailRailLine testID="scheduled-work-prompt">{prompt}</DetailRailLine>
+      )}
     </>
   );
 }
@@ -106,22 +110,23 @@ export function StopScheduledWork({
   return (
     <View style={styles.facts}>
       {confirming ? (
-        <>
-          <SettingsRow
-            disabled={working}
-            onPress={onStop}
-            testID={`${testID}-confirm`}
-            title={`Confirm: ${label}`}
-            tone="destructive"
-          />
-          <SettingsRow
-            disabled={working}
-            onPress={() => setConfirming(false)}
-            testID={`${testID}-cancel`}
-            title="Cancel"
-            tone="quiet"
-          />
-        </>
+        <HullDialogActions
+          actions={[
+            {
+              label: 'Cancel',
+              disabled: working,
+              onPress: () => setConfirming(false),
+              testID: `${testID}-cancel`,
+            },
+            {
+              label,
+              variant: 'destructive',
+              disabled: working,
+              onPress: onStop,
+              testID: `${testID}-confirm`,
+            },
+          ]}
+        />
       ) : (
         <SettingsRow
           disabled={working}
@@ -146,7 +151,6 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.buzz.border,
   },
-  sectionHead: { ...theme.buzz.type.sectionHead, color: theme.buzz.ledgerQuiet },
   summaryLine: {
     flexDirection: 'row',
     alignItems: 'flex-start',

@@ -1,3 +1,4 @@
+import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import React, { useCallback, useEffect, useState } from 'react';
 import { Platform, ScrollView, Text, TouchableOpacity, View } from 'react-native';
@@ -91,7 +92,7 @@ export default function WorkbenchScreen() {
   );
 
   useEffect(() => { setNetworkFailure((current) =>
-    loadError ? 'load' : current === 'load' ? null : current); }, [loadError]);
+    (loadError ? 'load' : current === 'load' ? null : current)); }, [loadError]);
 
   const apps = view?.apps ?? [];
   const keyGroups = view ? keyServiceGroups(view, viewerId) : [];
@@ -273,49 +274,62 @@ export default function WorkbenchScreen() {
           <Text style={styles.searchIcon}>⌕</Text><Text style={styles.searchPlaceholder}>Search apps, keys, and websites</Text>
         </TouchableOpacity>
         <View testID="connectors-your-connections">
-          <Text style={styles.sectionLabel}>YOUR CONNECTIONS</Text>
-          {(view?.helpers ?? []).map(helper => <SettingsRow appBoard chevron="right" key={`squire:${helper.id}`}
+          <RoomListSectionHeader title="YOUR CONNECTIONS" inset="content" spacing="flush" />
+          {(view?.helpers ?? []).map((helper ) => (
+            <SettingsRow appBoard chevron="right" key={`squire:${helper.id}`}
             title={`Trusty Squire · ${helper.name}`}
             description={helper.squire?.errorMessage ?? 'Hands-off sign-in'}
             leading={<ServiceMark company="Trusty Squire" />}
             value={helper.squire?.status === 'connected' ? 'Connected' : helper.squire?.status === 'error' ? 'Error' : 'Not added'}
             statusGlyph={helper.squire?.status === 'connected' ? 'live' : helper.squire?.status === 'error' ? 'failed' : undefined}
             valueTone={helper.squire?.status === 'error' ? 'danger' : undefined}
-            onPress={() => router.push({ pathname: '/beeline/settings/workbench/service', params: { workspaceId, viewerId, service: 'trusty-squire', helperId: helper.id } } as unknown as Href)} />)}
-          {keyGroups.map(group => <SettingsRow appBoard chevron="right" key={group.key} title={group.name}
+            onPress={() => router.push({ pathname: '/beeline/settings/workbench/service', params: { workspaceId, viewerId, service: 'trusty-squire', helperId: helper.id } } as unknown as Href)} />
+          ))}
+          {keyGroups.map((group) => (
+            <SettingsRow appBoard chevron="right" key={group.key} title={group.name}
             description={`${group.keys.length === 1 ? 'Key' : `${group.keys.length} keys`} · Trusty Squire`}
             leading={<ServiceMark company={group.name} domain={group.domain} />}
             value={squireState === 'offline' ? 'Offline' : undefined}
             valueTone={squireState === 'offline' ? 'danger' : undefined}
             statusGlyph={squireState === 'offline' ? 'failed' : undefined}
-            onPress={() => router.push({ pathname: '/beeline/settings/workbench/service', params: { workspaceId, viewerId, service: group.key } } as unknown as Href)} />)}
-          {apps.map(app => <SettingsRow appBoard chevron="right" key={app.id} testID={`connectors-app-${app.id}`} title={app.name}
+            onPress={() => router.push({ pathname: '/beeline/settings/workbench/service', params: { workspaceId, viewerId, service: group.key } } as unknown as Href)} />))}
+          {apps.map((app ) => (
+            <SettingsRow appBoard chevron="right" key={app.id} testID={`connectors-app-${app.id}`} title={app.name}
             description="Signed in" leading={<AppMark name={app.name} domain={app.domain} logo={app.logo} />}
             value={app.status === 'connected' ? 'Connected' : app.status === 'error' ? 'Offline' : 'Connecting'}
             statusGlyph={app.status === 'connected' ? 'live' : app.status === 'error' ? 'failed' : 'pulse'}
             valueTone={app.status === 'error' ? 'danger' : undefined}
-            onPress={() => router.push({ pathname: '/beeline/settings/workbench/app', params: { workspaceId, viewerId, appId: app.id } } as unknown as Href)} />)}
-          {googleEntryConnector(connectors)?.status === 'connected' && !apps.some(app => app.key === 'gmail') ?
+            onPress={() => router.push({ pathname: '/beeline/settings/workbench/app', params: { workspaceId, viewerId, appId: app.id } } as unknown as Href)} />
+          ))}
+          {googleEntryConnector(connectors)?.status === 'connected' && !apps.some(app => app.key === 'gmail') ? (
             <SettingsRow appBoard chevron="right" title="Google Workspace" description="Signed in" leading={<ServiceMark company="Google" domain="google.com" />}
-              value="Connected" statusGlyph="live" onPress={() => void connectConnector('google')} /> : null}
-          {connectors.filter(connector => connector.id === 'tailscale' && connector.status === 'connected').map(connector =>
-            <SettingsRow appBoard chevron="right" key={connector.id} title="Tailscale" description="Network · Tailscale" leading={<ServiceMark company="Tailscale" domain="tailscale.com" />}
-              value="Connected" statusGlyph="live" onPress={() => void connectConnector(connector.id)} />)}
-          {connectors.some(connector => connector.id === 'wallet' && connector.status === 'connected') ? <SettingsRow appBoard chevron="right" testID="connectors-wallet" title="Coinbase wallet" description="Wallet" leading={<ServiceMark company="Coinbase" domain="coinbase.com" />}
-            value="Connected" statusGlyph="live" onPress={() => void openWallet()} /> : null}
-          {view?.linkAccount?.connected ? <SettingsRow appBoard chevron="right" title="Link" description="Approve agent purchases with Link" leading={<ServiceMark company="Link" domain="link.com" />}
-            value="Connected" statusGlyph="live" trailingPress={{ accessibilityLabel: 'Change Link connection', onPress: () => setStatusAction({ title: 'Link', disconnect: () => void disconnectLink() }) }} /> : null}
+              value="Connected" statusGlyph="live" onPress={() => void connectConnector('google')} />
+          ) : null}
+          {connectors.filter(connector => connector.id === 'tailscale' && connector.status === 'connected').map((connector) => (
+              <SettingsRow appBoard chevron="right" key={connector.id} title="Tailscale" description="Network · Tailscale" leading={<ServiceMark company="Tailscale" domain="tailscale.com" />}
+              value="Connected" statusGlyph="live" onPress={() => void connectConnector(connector.id)} />
+            ))}
+          {connectors.some(connector => connector.id === 'wallet' && connector.status === 'connected') ? (
+            <SettingsRow appBoard chevron="right" testID="connectors-wallet" title="Coinbase wallet" description="Wallet" leading={<ServiceMark company="Coinbase" domain="coinbase.com" />}
+            value="Connected" statusGlyph="live" onPress={() => void openWallet()} />
+          ) : null}
+          {view?.linkAccount?.connected ? (
+            <SettingsRow appBoard chevron="right" title="Link" description="Approve agent purchases with Link" leading={<ServiceMark company="Link" domain="link.com" />}
+            value="Connected" statusGlyph="live" trailingPress={{ accessibilityLabel: 'Change Link connection', onPress: () => setStatusAction({ title: 'Link', disconnect: () => void disconnectLink() }) }} />
+          ) : null}
         </View>
         <View testID="connectors-recommended">
-          <Text style={styles.sectionLabel}>RECOMMENDED</Text>
-          {squireState === 'never' ? <View style={styles.squireHero}>
+          <RoomListSectionHeader title="RECOMMENDED" inset="content" spacing="flush" />
+          {squireState === 'never' ? (
+            <View style={styles.squireHero}>
             <ToolDetailsCell appBoard expanded testID="connectors-squire-hero" title="Trusty Squire" detailText="Signs up and signs in for your agents" action="Connect" onAction={() => void connectConnector('trusty-squire')}
               leading={<View style={styles.squireMark}><Text style={styles.squireMarkText}>{'{ }'}</Text></View>} />
             <Text style={styles.appsNote}>Any website, hands-off. Its vault holds keys when needed.</Text>
-          </View> : null}
+          </View>
+          ) : null}
           {RECOMMENDED_CONNECTIONS.filter(item => !apps.some(app => app.key === item.key) && !keyGroups.some(group => group.key === item.key) &&
             !(item.key === 'link' && view?.linkAccount?.connected) && !(item.key === 'wallet' && connectors.some(connector => connector.id === 'wallet' && connector.status === 'connected')) &&
-            !(item.key === 'tailscale' && connectors.some(connector => connector.id === 'tailscale' && connector.status === 'connected'))).map(item =>
+            !(item.key === 'tailscale' && connectors.some(connector => connector.id === 'tailscale' && connector.status === 'connected'))).map((item) => (
             <SettingsRow appBoard chevron="right" key={item.key} testID={`connectors-recommended-${item.key}`} title={item.name}
               description={item.key === 'link' && linkError ? linkError : item.subtitle}
               descriptionTone={item.key === 'link' && linkError ? 'danger' : undefined}
@@ -323,7 +337,8 @@ export default function WorkbenchScreen() {
               leading={<ServiceMark company={item.name} domain={item.domain} />}
               onPress={item.key === 'link' ? () => void connectLink() : item.key === 'wallet' ? () => void connectWallet()
                 : item.key === 'tailscale' ? () => void connectConnector('tailscale')
-                : () => router.push({ pathname: '/beeline/settings/workbench/connect-app', params: { workspaceId, viewerId, query: item.name } } as unknown as Href)} />)}
+                : () => router.push({ pathname: '/beeline/settings/workbench/connect-app', params: { workspaceId, viewerId, query: item.name } } as unknown as Href)} />
+          ))}
         </View>
       </ScrollView>
       <HullActionSheetModal visible={statusAction !== null} title={statusAction?.title} onClose={() => setStatusAction(null)}>
@@ -355,7 +370,6 @@ const styles = StyleSheet.create((theme) => {
     searchIcon: { ...hull.type.hero, color: board.quiet },
     searchPlaceholder: { ...Typography.ledger(), ...hull.type.body, color: board.quiet },
     squireHero: { backgroundColor: board.card, borderColor: board.strongBorder, borderWidth: 1, borderRadius: hull.radius, padding: hull.space.sm },
-    sectionLabel: { ...Typography.default(), ...hull.type.sectionHead, color: board.quiet, paddingBottom: hull.space.sm },
     appsNote: { ...Typography.ledger(), ...hull.type.meta, marginTop: hull.space.md, color: board.quiet },
     squireMark: { width: 36, height: 36, borderRadius: 8, alignItems: 'center', justifyContent: 'center', backgroundColor: TOOL_BRAND_MARKS.squire.ground },
     squireMarkText: { ...Typography.mono(), ...hull.type.machine, color: TOOL_BRAND_MARKS.squire.ink },

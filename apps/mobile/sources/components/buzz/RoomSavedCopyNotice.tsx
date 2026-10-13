@@ -1,5 +1,6 @@
+import { Button } from './Button';
 import React from 'react';
-import { Text, TouchableOpacity, View } from 'react-native';
+import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
 /**
@@ -18,30 +19,28 @@ export function RoomSavedCopyNotice({
   return (
     <View accessibilityRole="alert" style={styles.band} testID="room-saved-copy-notice">
       <Text style={styles.message}>{message}</Text>
-      <TouchableOpacity
-        accessibilityLabel="Retry loading this conversation"
-        accessibilityRole="button"
-        hitSlop={12}
+      <Button
+        label="Retry"
+        variant="secondary"
         onPress={onRetry}
+        accessibilityLabel="Retry loading this conversation"
         testID="room-saved-copy-retry"
-      >
-        <Text style={styles.action}>Retry</Text>
-      </TouchableOpacity>
+        style={{ alignSelf: 'flex-end' }}
+      />
     </View>
   );
 }
 
 const styles = StyleSheet.create((theme) => ({
   band: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: theme.buzz.space.sm,
-    paddingVertical: theme.buzz.space.sm,
+    flexDirection: 'column',
+    alignItems: 'stretch',
+    gap: theme.buzz.space.md,
+    paddingVertical: theme.buzz.space.md,
     paddingHorizontal: theme.buzz.space.md,
     backgroundColor: theme.buzz.brassWash,
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.buzz.border,
   },
-  message: { ...theme.buzz.type.meta, flex: 1, color: theme.buzz.textPrimary },
-  action: { ...theme.buzz.type.sectionHead, color: theme.buzz.accent },
+  message: { ...theme.buzz.type.meta, color: theme.buzz.textPrimary },
 }));

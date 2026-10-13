@@ -137,7 +137,7 @@ describe('the shared Button anatomy', () => {
   it.each(['bone', 'obsidian'] as const)('keeps one shape and face in %s', async (name) => {
     active.theme = name;
     const palette = beelineThemes[name];
-    for (const variant of ['primary', 'secondary', 'brass'] as ButtonVariant[]) {
+    for (const variant of ['primary', 'secondary', 'brass', 'quiet', 'destructive'] as ButtonVariant[]) {
       const { frame, text } = await render({ variant });
       const style = frame();
       expect(style.minHeight).toBe(44);
@@ -157,8 +157,10 @@ describe('the shared Button anatomy', () => {
       primary: [palette.buttonPrimaryFill, palette.buttonPrimaryFill, palette.buttonPrimaryText],
       secondary: ['transparent', palette.borderStrong, palette.buttonSecondaryText],
       brass: ['transparent', palette.accent, palette.accent],
+      quiet: ['transparent', 'transparent', palette.buttonSecondaryText],
+      destructive: ['transparent', 'transparent', palette.dialogDanger],
     } as const;
-    for (const variant of ['primary', 'secondary', 'brass'] as const) {
+    for (const variant of ['primary', 'secondary', 'brass', 'quiet', 'destructive'] as const) {
       const { frame, text } = await render({ variant });
       expect([frame().backgroundColor, frame().borderColor, text.color]).toEqual(expected[variant]);
     }
@@ -166,7 +168,7 @@ describe('the shared Button anatomy', () => {
 
   it('fills outlined variants with bgPressed while pressed', async () => {
     active.theme = 'obsidian';
-    for (const variant of ['secondary', 'brass'] as const) {
+    for (const variant of ['secondary', 'brass', 'quiet', 'destructive'] as const) {
       const { frame } = await render({ variant });
       expect(frame(true).backgroundColor).toBe(beelineThemes.obsidian.bgPressed);
     }

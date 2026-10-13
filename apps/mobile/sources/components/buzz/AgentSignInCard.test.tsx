@@ -1,3 +1,6 @@
+vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
+vi.mock('expo-haptics', () => ({ ImpactFeedbackStyle: { Light: 'Light' }, impactAsync: async () => undefined }));
+vi.mock('react-native-keyboard-controller', async () => { const R = await import('react'); return { KeyboardAvoidingView: (props: any) => R.createElement('View', props, props.children) }; });
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
@@ -13,7 +16,7 @@ const clipboard = vi.hoisted(() => ({
 vi.mock('react-native', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) => ReactModule.createElement(name, props, props.children);
-  return { Linking: linking, Text: host('Text'), TextInput: host('TextInput'), View: host('View') };
+  return { Platform: { OS: 'ios', select: (options: any) => options.ios ?? options.default }, StyleSheet: { flatten: (style: any): any => Array.isArray(style) ? Object.assign({}, ...style.map((part: any) => Array.isArray(part) ? Object.assign({}, ...part) : part)) : style }, Linking: linking, Text: host('Text'), TextInput: host('TextInput'), View: host('View') };
 });
 vi.mock('react-native-unistyles', () => {
   const theme = {
@@ -134,7 +137,7 @@ describe('@agent login card', () => {
   it("carries the company's logo, not an identity plate", () => {
     const logo = (card: AgentSignInCardView) =>
       render(card).renderer.root.findByType('AppMark' as any).props;
-    expect(logo(claude)).toMatchObject({ name: 'Claude', domain: 'claude.ai', size: 26 });
+    expect(logo(claude)).toMatchObject({ name: 'Claude', domain: 'claude.ai', size: 36 });
     expect(logo({ ...claude, harness: 'codex', kind: 'device-code' })).toMatchObject({
       name: 'ChatGPT',
       domain: 'openai.com',

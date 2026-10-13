@@ -1,5 +1,6 @@
 {
   "version": 1,
+  "fingerprintMode": "layout-shell-v1",
   "components": {
     "components/AnimatedOverlay.tsx": ["AnimatedBlurBackdrop"],
     "components/BubblePressable.tsx": ["AnimatedPressable", "BubblePressable"],
@@ -158,7 +159,8 @@
       "HullDialogInput",
       "HullFloatingSurface",
       "HullModal",
-      "StableHullModal"
+      "StableHullModal",
+      "HullDialogActions"
     ],
     "components/buzz/HullMenuTrigger.tsx": ["HullMenuTrigger"],
     "components/buzz/IdentityMark.tsx": ["IdentityMark", "WorkspacePlate"],
@@ -184,7 +186,7 @@
     ],
     "components/buzz/MemberGrantRow.tsx": ["MemberGrantRow"],
     "components/buzz/MemberPickerSheet.tsx": ["MemberPickerSheet"],
-    "components/buzz/MemberRosterRow.tsx": ["MemberRosterRow"],
+    "components/buzz/MemberRosterRow.tsx": ["MemberRosterRow", "Row"],
     "components/buzz/MembersGlyph.tsx": ["APEX_X", "MembersGlyph"],
     "components/buzz/MentionSuggestionMenu.tsx": ["ChannelSuggestionMenu", "MentionSuggestionMenu"],
     "components/buzz/MessageReactionRoster.tsx": ["MessageReactionRoster", "ReactionMembers"],
@@ -399,213 +401,169 @@
   },
   "legacyControls": {
     "app/(app)/beeline/channels.tsx": {
-      "16662afcd91c5a28c6bf": 1,
       "18895c725954ebc8d948": 1,
-      "2283995e3c91b35358de": 1,
-      "326d378db2174ac3dd03": 1,
+      "27706873ee4035b3e577": 1,
       "33abd1394b1a8afd8243": 1,
-      "3b8f5129e861a994ae20": 1,
       "62c1a0dc104428aa49cf": 1,
+      "9c68246428fcc118b2dc": 1,
+      "af51541f44d37a05d777": 1,
+      "b0990a18f708f56f6a05": 1,
+      "bb1677a7dc2eec73fd1d": 1,
       "d1c586ee80c2f4eb3891": 1,
-      "f8d799f0466c0b174a8b": 1,
-      "fbbade6a920c7a6c3031": 1
+      "e347b1032fab40a374ad": 1
+    },
+    "app/(app)/beeline/chat/RoomMessageVariants.tsx": {
+      "423e6b4ccfc89bb274b6": 1,
+      "4371e41e959fe140451d": 1,
+      "490ffb6e0554ae7df0b5": 1,
+      "6aa979a5429e91de5ee4": 1,
+      "7ea002bf7ce0904744cd": 1,
+      "83ba702057de1ac9661c": 1,
+      "86e2bed05b4e98965c2a": 1,
+      "a34f3998052010c3ad23": 1,
+      "aa4408de2cbbb0b3f96c": 1,
+      "b4067a6b821ad8c17aef": 1,
+      "d1315f5ee69cc0e8da1f": 1,
+      "e19f6b8c7f954b22b756": 1,
+      "e7448b61a3b921485b1f": 1
     },
     "app/(app)/beeline/chat/_chat-surface.tsx": {
-      "07f7b6c82dc13563d515": 1,
       "1b9443b9d72d544a316a": 1,
-      "50e38be51043812be68c": 1,
-      "5b4ebdeef08bf5be33c3": 1,
-      "609c3d9b7d846ec4e97a": 1,
+      "2ad2cc76bcf1b0c7ad42": 1,
+      "4ef3e7e79dc392db5000": 2,
+      "609b0fbb24da940944e6": 1,
+      "69197de172d20e859d8d": 1,
       "6ea2ac695f57f44869cc": 1,
       "853217cc4274fc10315f": 1,
       "a015575d44e0d279bf67": 1,
+      "a28f5f6b74a31bcb0d55": 1,
       "a7b28c7dd32063507f80": 1,
       "ad234486085122f41e99": 1,
-      "ae0d109caf627e95d0ef": 1,
-      "af39c5e199019e475e63": 1,
-      "b5a29f3650dccfcda594": 1,
       "b676c220dcba3c4ba5c7": 1,
       "d2217ba6b0bbe07fa86d": 1,
       "d46affe308a9b4478d86": 1,
-      "e7be2b6677738930707c": 1,
-      "eb7e608f08e0bb3eba07": 1
-    },
-    "app/(app)/beeline/chat/RoomMessageVariants.tsx": {
-      "308c1b94b7cb6ff9e053": 1,
-      "3445a17afd464ff657a9": 1,
-      "3701fd18aea835d7c4ed": 1,
-      "3dddd43a25b1e22c41e9": 1,
-      "490ffb6e0554ae7df0b5": 1,
-      "5642f9c1b4566c66109f": 1,
-      "67e49e96a72324045a5c": 1,
-      "6aa979a5429e91de5ee4": 1,
-      "7073461621c729384814": 1,
-      "825e230539b890bc9e1a": 1,
-      "83ba702057de1ac9661c": 1,
-      "8d7a953144efbeff7ee2": 1,
-      "aa4408de2cbbb0b3f96c": 1,
-      "e7448b61a3b921485b1f": 1
+      "d923bed4432a7487c602": 1
     },
     "app/(app)/beeline/community.tsx": {
-      "342d4c027ed6fcdecf9e": 1,
       "90955f5a00cd90038e4c": 1,
       "d9b71faffba9301a497d": 1,
       "e5b9e66ae085599ee5ea": 1
     },
-    "app/(app)/beeline/corners/[roomId].tsx": {
-      "83f5a74f9618d411dd77": 1
-    },
     "app/(app)/beeline/create-workspace.tsx": {
-      "07607ba79adf09831762": 1,
-      "bfb550041493673f3880": 1
+      "07607ba79adf09831762": 1
     },
     "app/(app)/beeline/human-profile.tsx": {
       "2b8d08688a213e76ff17": 1,
-      "357dd6949025eb4eafab": 1,
-      "b73dd9850ee8b18dceaf": 1
+      "b73dd9850ee8b18dceaf": 1,
+      "fbb4156c7496d92af119": 1
     },
     "app/(app)/beeline/members.tsx": {
       "1fc32e061d589b89f123": 1,
       "2361b84ca38188b3cfc9": 1,
       "2516ab9c68a371c5ca37": 1,
       "2e3b8d852feea8ea61e0": 1,
-      "31c882c677cb9d378991": 1,
-      "3917e6377a1fea7f2c8b": 1,
-      "3e6ba11d77f14bb466c3": 1,
-      "42c460d360dbda87f8ab": 1,
-      "49356ec68d1745e677f1": 1,
       "4b3f00d5eaf6bb96c11f": 1,
+      "75500558dd29c1797c2b": 2,
       "8b4346651eedbf7305d6": 1,
       "8dadebb9f8787b1dad43": 1,
-      "c10c9a3ffbe01fd8afc2": 1,
       "d46c0ae73107e3ddf7a2": 1,
-      "d9c6600101d5597a4989": 1,
-      "f5198015e3f26eec77af": 1,
       "f90c109d36708421dc14": 1,
       "fc49483f9f6ca47afaa7": 1
     },
     "app/(app)/beeline/onboarding.tsx": {
-      "42b4c940d435bdd979b5": 1,
+      "30ddc6202b9f0c6435b8": 1,
       "778764b6aef071b18d1a": 1,
-      "791fe625a3eb803a5642": 1,
       "9a5a89e24b43849b7cf2": 1,
       "b2f837cc7e0432700e9d": 1,
-      "b5371f24ebecf83d009f": 1,
-      "bd51c663e12b202fbf29": 1,
-      "cc6a84eb85fad8ab59a0": 1
+      "cc6a84eb85fad8ab59a0": 1,
+      "f0b9fa51f41f5080ff3a": 1
     },
     "app/(app)/beeline/settings/identity.tsx": {
-      "1e94f0f15378496829dc": 1,
-      "36206e7b525780629ca5": 1,
-      "ca9fc618350ff382533a": 1,
-      "d20f584784d242470756": 1,
-      "f8b404747c5ef2525d22": 1
-    },
-    "app/(app)/beeline/settings/schedule.tsx": {
-      "d44050644a732ee0dc9d": 1
+      "d20f584784d242470756": 1
     },
     "app/(app)/beeline/settings/schedules.tsx": {
-      "1005757d449a1846e0d1": 1,
-      "5fa438d8a80586d4fd7d": 1
-    },
-    "app/(app)/beeline/settings/subscription.tsx": {
-      "19f595561ea6534f6225": 1
+      "df656ba65c05cb43019f": 1
     },
     "app/(app)/beeline/settings/workbench.tsx": {
       "b40b4b178ce33ae452ce": 1,
       "cf586685f3b320a182f0": 1
     },
     "app/(app)/beeline/settings/workbench/app.tsx": {
-      "137480cafff1aa65f332": 1
+      "ba78486e53a87e5053af": 1
     },
     "app/(app)/beeline/settings/workbench/connect-app.tsx": {
-      "04613fb3cb11d8cfa2e0": 1,
       "1b76edcc368ad7f4fc7b": 1,
-      "2aecbc0ce75cdb8c7f00": 1,
       "39b81fa0b42a649d03dd": 1,
       "5f29071e79e333915fda": 1,
-      "928f7e38b528873dff7e": 1
-    },
-    "app/(app)/beeline/settings/workbench/connect-signin.tsx": {
-      "d37cf56cfe607ed656a8": 1
+      "928f7e38b528873dff7e": 1,
+      "f13de89211a7f6e28864": 1
     },
     "app/(app)/beeline/settings/workbench/connection.tsx": {
-      "1c3fb848751511977b6b": 1,
-      "1e0d759a2423f23784b2": 1,
-      "31083c1d3ae9c350aeb9": 1,
-      "59c9f6318d75b7bd7544": 1,
-      "73a1ea741bd0a1353357": 1,
-      "a3bf3c2af22aa73ece3f": 1,
-      "d4f6347279f94c60d18d": 1
+      "ac921078484491f3859f": 1,
+      "b1119f7e753abfcb34b6": 1,
+      "eb51c31f0812bf12f52f": 1
     },
     "app/(app)/beeline/settings/workbench/service.tsx": {
-      "d999d6d3a93cc51af7ba": 1
+      "806c88b0385041e36dcb": 1
     },
     "app/(app)/beeline/settings/workbench/wallet-service.tsx": {
-      "79df5fd74d106eaaaf10": 1
+      "73f7dd92c9a528cb103e": 1
     },
     "app/(app)/beeline/settings/workbench/wallet.tsx": {
-      "087750d32618035d7cea": 1,
       "105587bdc522c2c96c11": 1,
-      "19ed0bbcbfce5bd506c1": 1,
-      "2c338820202df991c0ff": 1,
+      "4b881d5b5068f12792ef": 1,
       "514ddacba5ac518d1010": 1,
-      "55042c4cceaf4b2ed977": 1,
-      "8e6b92b2da279f5b77c5": 1,
-      "f2e0a09c524df5cc5e28": 1,
-      "f769c93b4404545e874a": 1,
-      "f7fcd1dc92984f1f4abd": 1
+      "6df1ac490efa562df6ac": 1,
+      "90c42250d4ccf1ae3786": 1,
+      "96911698fca11d106eb4": 1,
+      "9b5a432d023b93ba5e6b": 1,
+      "9e0938ce7449354f2e5a": 1,
+      "b2cdccdb76538724572b": 1,
+      "f769c93b4404545e874a": 1
     },
     "app/(app)/beeline/settings/workflows.tsx": {
       "1392c938deecb819ee77": 1,
       "23a6f9b3cde858871d81": 1,
-      "de822b280e7d9f16e301": 1
+      "306fffee3ae284e808a4": 1
     },
     "app/(app)/beeline/settings/workspace.tsx": {
-      "1c2384917b90f6d1031b": 1,
-      "58ca8c01d3ae8f1f1daf": 1,
-      "b85e18e629b0958347fb": 1,
       "fda2570895625aa7b25b": 1
     },
     "app/(app)/beeline/tray.tsx": {
       "0f0ca97f94fcdc07eefc": 1,
       "1937af04dcc5d7e0cf33": 1,
+      "1ae043dfc455e07b268e": 1,
       "254dad42008d3c8fff29": 1,
+      "2cf69ae413d42f12718e": 1,
       "31f57d12f2f9c437e3b1": 1,
-      "339b4f30ccbc02efc51e": 1,
-      "53a05bc00db20ddf319f": 1,
+      "452561d665731fba2d57": 1,
       "58ef620cd837fde2c8ae": 1,
       "604a522188b7f5f8837f": 1,
       "63811544cba0dbbda290": 1,
-      "6e622b9de06c198d8ac3": 1,
-      "70d7ab2cb657e4c523f4": 1,
-      "7a3a61ed697c055c824a": 1,
-      "87513e43f020bb893f4e": 1,
-      "8af572dc626d2ba4b085": 1,
+      "6f24f5cb273372d98bc3": 1,
       "8cec188bcc2adf8b9fef": 1,
-      "a2348fa354da0fee7212": 1,
+      "98b77cf904bd678b0f27": 1,
+      "a24224bdec336ab1b8e0": 1,
       "a8233f2a9f933913a8a8": 1,
       "b24dc138cee09dbf5653": 1,
-      "c11bfd1e822396a09446": 1
+      "c773130242e3770457e3": 1,
+      "e41c95f87fd2f82c9555": 1
     },
     "app/(app)/beeline/workflow-run.tsx": {
-      "07391ad6676fc9494bc9": 1,
-      "370b05fd665179314720": 1,
-      "3cbb126a4e1f05f32159": 1,
+      "1310ff7d89842557a666": 1,
       "69ceecf06f9256f3e184": 1,
+      "c1dbbd4ba394089df504": 1,
       "d37d9259a99fd8af7150": 1,
-      "d3f2b9b415a8a09af46b": 1,
-      "f1edfe5d6a8881255739": 1,
+      "f24decd1070ff09fe1c6": 1,
       "f399c3d9c09135b35695": 1
     },
     "app/(app)/beeline/workflow.tsx": {
-      "71636cd0b37d1ece3c39": 1,
-      "caa1c933a9301b7b45d3": 1
+      "71636cd0b37d1ece3c39": 1
     },
     "app/(app)/join/[token].tsx": {
-      "0529cdcc150f96ee1a7f": 1,
-      "293b96c844b62c2e084e": 1,
+      "021d64f7276e914cc3b7": 1,
       "b1bbfc478a4ae0d26cc8": 1,
+      "b26cab1da78b5be72728": 1,
       "eae0aa03d3ce036fbfe6": 1
     },
     "app/(app)/text-selection.tsx": {
@@ -614,15 +572,13 @@
     "buzz/room-message-cell.tsx": {
       "2e61da3d31ff8a564468": 1,
       "36ff4da126cd34c6c1b6": 1,
-      "5f8a3e46d0a8da4026b1": 1,
-      "9dc4fe716a3d6307a270": 1
+      "5186a982e73f98e8cab1": 1,
+      "6d292473a58364a54c20": 1
     },
     "buzz/wallet-send-form.tsx": {
-      "45e084952eefa035366e": 1,
       "5c95025a8066eac53022": 1,
-      "751ccf0cb43d33a90d91": 1,
       "803e43023ebd9400d229": 1,
-      "cf5290ad7bd1361f0741": 1
+      "82b0e47faccafef9dc8d": 1
     }
   }
 }

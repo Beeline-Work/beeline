@@ -1,3 +1,4 @@
+import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import { Typography } from '@/constants/Typography';
 import React, { useEffect, useRef, useState } from 'react';
@@ -221,7 +222,13 @@ export function HumanProfile({
             <Text style={styles.copy} accessibilityRole="alert">
               {displayedError}
             </Text>
-            {!member && <Button label="Retry" onPress={() => setRetry((value) => value + 1)} />}
+            {!member && (
+              <Button
+                label="Retry"
+                onPress={() => setRetry((value) => value + 1)}
+                variant="secondary"
+              />
+            )}
           </View>
         )}
         {member && (
@@ -300,7 +307,7 @@ export function HumanProfile({
             )}
             {editing && canEditRole && (
               <View testID="person-role-editor">
-                <Text style={styles.section}>Access level</Text>
+                <RoomListSectionHeader title="Access level" inset="content" />
                 <View
                   accessibilityRole="radiogroup"
                   style={styles.roleToggle}
@@ -341,7 +348,7 @@ export function HumanProfile({
                 )}
               </View>
             )}
-            <Text style={styles.section}>Connected agents</Text>
+            <RoomListSectionHeader title="Connected agents" inset="content" />
             {connectedAgents.length ? (
               connectedAgents.map((agent) => (
                 <SettingsRow
@@ -386,7 +393,7 @@ export function HumanProfile({
                 }
               />
             )}
-            <Text style={styles.section}>Grants</Text>
+            <RoomListSectionHeader title="Grants" inset="content" />
             {grants.length ? (
               grants.map((grant) => (
                 <MemberGrantRow
@@ -433,24 +440,7 @@ export default function HumanProfileRoute() {
 const styles = StyleSheet.create((theme) => ({
   container: { flex: 1, minWidth: 0, backgroundColor: theme.buzz.bgBase },
   content: { paddingHorizontal: theme.buzz.space.md },
-  identity: {
-    alignItems: 'center',
-    paddingVertical: theme.buzz.space.lg,
-    gap: theme.buzz.space.md,
-  },
-  name: {
-    ...Typography.default(),
-    ...theme.buzz.type.hero,
-    color: theme.buzz.textPrimary,
-    textAlign: 'center',
-  },
   copy: { ...Typography.default(), ...theme.buzz.type.body, color: theme.buzz.textSecondary },
-  section: {
-    ...Typography.default(),
-    ...theme.buzz.type.sectionHead,
-    color: theme.buzz.textMuted,
-    paddingTop: theme.buzz.space.md,
-  },
   // The segmented control is sized to its two labels, never stretched across
   // the content column: `alignSelf` keeps it a label-width plate on the
   // section head's left edge, and the two options carry no `flex`. At desktop
@@ -497,6 +487,17 @@ const styles = StyleSheet.create((theme) => ({
   removeMemberText: {
     ...Typography.default(),
     ...theme.buzz.type.body,
+    color: theme.buzz.textPrimary,
+    textAlign: 'center',
+  },
+identity: {
+    alignItems: 'center',
+    paddingVertical: theme.buzz.space.lg,
+    gap: theme.buzz.space.md,
+  },
+name: {
+    ...Typography.default(),
+    ...theme.buzz.type.hero,
     color: theme.buzz.textPrimary,
     textAlign: 'center',
   },

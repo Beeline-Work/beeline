@@ -1,3 +1,4 @@
+import { HullDialogActions } from '@/components/buzz/HullDialog';
 import React, { useEffect, useRef, useState } from 'react';
 import { Keyboard, Platform, Switch, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -182,27 +183,7 @@ export function NewRoomDialog({
       title={step === 'picker' ? 'Choose a repo' : `New ${ROOM_LABEL}`}
       visible={visible}
       footer={
-        <View style={styles.actions}>
-          <TouchableOpacity
-            accessibilityRole="button"
-            disabled={busy}
-            onPress={() => (showRepoPicker ? handleToggleRepoPicker() : onClose())}
-            style={styles.cancelAction}
-            testID="create-room-cancel"
-          >
-            <Text style={styles.cancelText}>{showRepoPicker ? 'Back' : 'Cancel'}</Text>
-          </TouchableOpacity>
-          {step === 'form' && (
-            <Button
-              disabled={submitDisabled}
-              label={busy ? 'Creating…' : 'Create Room'}
-              loading={busy}
-              onPress={() => void submit()}
-              style={styles.primaryAction}
-              testID="create-room-submit"
-            />
-          )}
-        </View>
+        <HullDialogActions style={styles.actions} actions={[{ label: showRepoPicker ? 'Back' : 'Cancel', variant: "quiet", disabled: busy, onPress: () => (showRepoPicker ? handleToggleRepoPicker() : onClose()), testID: "create-room-cancel" }, ...(step === 'form' ? [{ disabled: submitDisabled, label: busy ? 'Creating…' : 'Create Room', loading: busy, onPress: () => void submit(), testID: "create-room-submit", variant: 'primary' as const }] : [])]} />
       }
     >
       {step === 'form' && (
@@ -343,16 +324,9 @@ const styles = StyleSheet.create((theme) => {
       flexDirection: 'row',
       justifyContent: 'flex-end',
       alignItems: 'center',
-      gap: hull.space.xs,
+      gap: hull.space.sm,
       paddingHorizontal: HULL_SHEET_INSET,
       paddingTop: hull.space.sm,
     },
-    cancelAction: {
-      minHeight: 42,
-      paddingHorizontal: hull.space.sm,
-      justifyContent: 'center',
-    },
-    cancelText: { ...Typography.default(), ...hull.type.meta, color: hull.textSecondary },
-    primaryAction: { minHeight: 42, paddingHorizontal: hull.space.md },
   };
 });

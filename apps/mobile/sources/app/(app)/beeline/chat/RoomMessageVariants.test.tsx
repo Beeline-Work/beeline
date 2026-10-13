@@ -1,3 +1,6 @@
+vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
+vi.mock('expo-haptics', () => ({ ImpactFeedbackStyle: { Light: 'Light' }, impactAsync: async () => undefined }));
+vi.mock('react-native-keyboard-controller', async () => { const R = await import('react'); return { KeyboardAvoidingView: (props: any) => R.createElement('View', props, props.children) }; });
 import * as React from 'react';
 import { readFileSync } from 'node:fs';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
@@ -63,7 +66,7 @@ vi.mock('react-native', async () => {
     Text: host('Animated.Text'),
     View: host('Animated.View'),
   };
-  return {
+  return { StyleSheet: { flatten: (style: any): any => Array.isArray(style) ? Object.assign({}, ...style.map((part: any) => Array.isArray(part) ? Object.assign({}, ...part) : part)) : style },
     Animated,
     AppState: {
       currentState: 'active',
@@ -2896,7 +2899,7 @@ describe('Room message variant components', () => {
       const accept = card.root.findByProps({ testID: 'connector-offer-offer-1-accept' });
       expect(accept.props.accessibilityLabel).toBe('✓ Add Trusty Squire');
       const actionLabels = card.root
-        .findAllByType('Pressable')
+        .findAllByType('Button')
         .filter((node: ReactTestInstance) => node.props.accessibilityLabel !== undefined)
         .map((node: ReactTestInstance) => node.props.accessibilityLabel);
       expect(actionLabels).toEqual(['✓ Add Trusty Squire']);

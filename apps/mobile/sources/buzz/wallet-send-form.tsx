@@ -1,3 +1,4 @@
+import { HullDialogInput } from '@/components/buzz/HullDialog';
 import { useTextDraft } from '@/buzz/use-text-draft';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
@@ -62,7 +63,7 @@ export function WalletSendForm({ workspaceId}: { workspaceId: string }) {
     <View testID="wallet-send-form">
       <Text style={styles.label}>Amount</Text>
       <View style={styles.amountRow}>
-        <TextInput
+        <HullDialogInput
           keyboardType="decimal-pad"
           onChangeText={setAmount}
           style={styles.amountInput}
@@ -72,7 +73,7 @@ export function WalletSendForm({ workspaceId}: { workspaceId: string }) {
         <Text style={styles.amountAsset}>{defaultAsset.toUpperCase()}</Text>
       </View>
       <Text style={styles.label}>To</Text>
-      <TextInput
+      <HullDialogInput
         autoCapitalize="none"
         autoCorrect={false}
         onChangeText={setTo}

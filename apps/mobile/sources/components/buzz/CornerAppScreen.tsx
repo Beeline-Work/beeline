@@ -1,3 +1,4 @@
+import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import React from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -99,7 +100,7 @@ function CornerAppBlockView({
 }) {
   switch (block.type) {
     case 'heading':
-      return <Text style={styles.heading}>{block.text}</Text>;
+      return <RoomListSectionHeader title={block.text} inset="content" spacing="flush" />;
     case 'text':
       return <Text style={styles.body}>{block.text}</Text>;
     case 'fields':
@@ -175,12 +176,6 @@ const styles = StyleSheet.create((theme) => ({
     ...theme.buzz.type.body,
     color: theme.buzz.ledgerQuiet,
     marginBottom: theme.buzz.space.xl,
-  },
-  heading: {
-    ...theme.buzz.type.hero,
-    color: theme.buzz.textPrimary,
-    marginTop: theme.buzz.space.xl,
-    marginBottom: theme.buzz.space.sm,
   },
   body: {
     ...theme.buzz.type.body,

@@ -1,3 +1,4 @@
+import { Button } from './Button';
 import React from 'react';
 import {
   Keyboard,
@@ -295,21 +296,15 @@ export function HullActionSheetCancel({
   testID?: string;
 }) {
   return (
-    <Pressable
-      accessibilityLabel={label}
-      accessibilityRole="button"
-      accessibilityState={{ disabled }}
+    <Button
+      label={label}
+      variant="quiet"
+      fullWidth
       disabled={disabled}
       onPress={onPress}
-      style={({ pressed }) => [
-        styles.cancel,
-        pressed && styles.rowPressed,
-        disabled && styles.disabled,
-      ]}
       testID={testID}
-    >
-      <Text style={styles.cancelText}>{label}</Text>
-    </Pressable>
+      style={styles.cancel}
+    />
   );
 }
 
@@ -483,18 +478,12 @@ const styles = StyleSheet.create((theme) => {
     chevronMark: { color: hull.textMuted },
     destructive: { color: hull.dialogDanger },
     cancel: {
-      minHeight: 54,
+      minHeight: 44,
       paddingHorizontal: HULL_SHEET_INSET,
       alignItems: 'center',
       justifyContent: 'center',
       borderTopWidth: StyleSheet.hairlineWidth,
       borderTopColor: hull.border,
-    },
-    cancelText: {
-      ...Typography.default(),
-      ...hull.type.body,
-      color: hull.chrome,
-      fontFamily: hull.proseRegular,
     },
   };
 });

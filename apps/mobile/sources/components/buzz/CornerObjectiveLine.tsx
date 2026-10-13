@@ -1,3 +1,4 @@
+import { Button } from '@/components/buzz/Button';
 import React from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -55,7 +56,9 @@ export const CornerObjectiveLine = React.memo(function CornerObjectiveLine({
         {line ? (
           <View style={styles.objective}>
             <Text accessibilityRole="text" style={styles.copy} testID={`${testID}-copy`}>
-              {spans.some((span) => span.url) ? spans.map((span, index) => span.url ? (
+              {spans.some((span) => span.url)
+                ? spans.map((span, index) =>
+                    span.url ? (
                 <Text
                   key={index}
                   accessibilityRole="link"
@@ -63,16 +66,24 @@ export const CornerObjectiveLine = React.memo(function CornerObjectiveLine({
                   style={styles.objectiveLink}
                   onPress={() => { void openExternalUrl(span.url!).catch(() => undefined); }}
                 >{span.text}</Text>
-              ) : span.text) : line}
+              ) : (
+                      span.text
+                    ),
+                  )
+                : line}
             </Text>
           </View>
         ) : null}
         {workflowError ? (
           <View testID={`${testID}-workflow-error`}>
             <Text accessibilityRole="alert" style={styles.copy}>{workflowError}</Text>
-            <Pressable accessibilityRole="button" accessibilityLabel="Retry workflow" onPress={onRetryWorkflow} style={styles.briefLink} testID={`${testID}-workflow-retry`}>
-              <Text style={styles.briefLinkText}>Retry</Text>
-            </Pressable>
+            <Button
+              label="Retry"
+              variant="secondary"
+              accessibilityLabel="Retry workflow"
+              onPress={onRetryWorkflow}
+              testID={`${testID}-workflow-retry`}
+            />
           </View>
         ) : null}
         {run || onOpenBrief ? (

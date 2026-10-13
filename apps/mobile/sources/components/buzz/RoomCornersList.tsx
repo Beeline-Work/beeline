@@ -398,23 +398,22 @@ export function RoomCornersList({
             <React.Fragment key={item.corner.id}>{row(item)}</React.Fragment>
           ))}
           {showMoreArchived && archived.status === 'ready' && archived.next ? (
-            <Pressable
-              accessibilityLabel={
-                more?.status === 'error' ? `${more.reason}. Tap to retry` : 'More archived corners'
-              }
-              accessibilityRole="button"
-              disabled={more?.status === 'loading'}
-              onPress={onMoreArchived}
-              style={styles.more}
-              testID="room-corners-archived-more"
-            >
-              <Text style={styles.moreLabel}>
-                {more?.status === 'error' ? `${more.reason}. Tap to retry` : 'More'}
-              </Text>
-              {more?.status === 'loading' ? (
-                <SurfaceGlyphLoader compact testID="room-corners-archived-more-loading" />
-              ) : null}
-            </Pressable>
+            more?.status === 'error' ? (
+              <View style={styles.more}>
+                <Text style={styles.moreLabel}>{more.reason}</Text>
+                <Button label="Retry" variant="secondary" onPress={onMoreArchived}
+                  testID="room-corners-archived-more" />
+              </View>
+            ) : (
+              <Pressable accessibilityLabel="More archived corners" accessibilityRole="button"
+                disabled={more?.status === 'loading'} onPress={onMoreArchived}
+                style={styles.more} testID="room-corners-archived-more">
+                <Text style={styles.moreLabel}>More</Text>
+                {more?.status === 'loading' ? (
+                  <SurfaceGlyphLoader compact testID="room-corners-archived-more-loading" />
+                ) : null}
+              </Pressable>
+            )
           ) : null}
         </View>
       }

@@ -235,7 +235,7 @@ Rooms and corners render one transcript primitive, `components/buzz/Ledger.tsx`,
 `TranscriptCard` is the one structured-card anatomy (grant, permission, merge summary, choice, notification): head with identity, title, subline and stamp; rows; code block; footer verbs. Record tier for facts and settled asks, ask tier (raised fill) only while a response is needed. Radius 10, 1 px border, 16 side padding, 26 px identity.
 
 ### Buttons
-- **`Button`** (`components/buzz/Button.tsx`) is the one button: house radius, 44 tall, `body` label in Space Grotesk Medium, sentence case, a pressed state. Variants: `primary` (filled `buttonPrimaryFill`), `secondary` (1 px `borderStrong`), `brass` (1 px `accent`, brass label).
+- **`Button`** (`components/buzz/Button.tsx`) is the one button: house radius, 44 tall, `body` label in Space Grotesk Medium, sentence case, a pressed state. Variants: `primary` (filled `buttonPrimaryFill`), `secondary` (1 px `borderStrong`), `brass` (1 px `accent`, brass label), `quiet` (unboxed Cancel/dismissal), `destructive` (unboxed `dialogDanger` explicit verb). `HullDialogActions` owns the trailing, wrapping decision row: Cancel/reject first, confirm last, gap 8. Retry uses a secondary Button beside separately readable error copy; dismissal uses `HullActionSheetCancel`.
 - **Busy:** `PixelLoader` (four frames, ~7.5 fps) appears only inside a labelled control.
 
 ### Index rows

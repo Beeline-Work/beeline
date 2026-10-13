@@ -1,3 +1,4 @@
+vi.mock('react-native-keyboard-controller', async () => { const R = await import('react'); return { KeyboardAvoidingView: (props: any) => R.createElement('View', props, props.children) }; });
 import * as React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
@@ -127,7 +128,7 @@ vi.mock('react-native', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
-  return {
+  return { StyleSheet: { flatten: (style: any): any => Array.isArray(style) ? Object.assign({}, ...style.map((part: any) => Array.isArray(part) ? Object.assign({}, ...part) : part)) : style },
     AppState: { addEventListener: () => ({ remove: () => undefined }) },
     Animated: {
       View: host('AnimatedView'),
@@ -171,12 +172,16 @@ const theme = vi.hoisted(() => ({
     type: { body: {}, bodyStrong: {}, hero: {}, machine: {}, meta: {}, sectionHead: {} },
   },
 }));
-vi.mock('react-native-unistyles', () => ({
+vi.mock('react-native-unistyles', async () => {
+  const { completeTestTheme } = await import('@/test/test-theme');
+  const fullTheme = completeTestTheme(theme);
+  return ({
   StyleSheet: {
     hairlineWidth: 1,
-    create: (factory: any) => (typeof factory === 'function' ? factory(theme) : factory),
+    create: (factory: any) => (typeof factory === 'function' ? factory(fullTheme) : factory),
   },
-}));
+  useUnistyles: () => ({ theme: fullTheme }),
+}); });
 vi.mock('@expo/vector-icons', async () => {
   const ReactModule = await import('react');
   return { Ionicons: (props: any) => ReactModule.createElement('Ionicons', props) };
@@ -635,9 +640,7 @@ describe('desktop Workspace navigation', () => {
     const search = control('desktop-room-search');
     expect(search.props.accessibilityLabel).toBe('Search Rooms and direct messages');
     act(() => search.props.onFocus());
-    expect(control('desktop-room-search').props.style).toContainEqual({
-      borderBottomColor: '#b08a4a',
-    });
+    expect(tree.root.findAllByType('View').some((node: any) => Array.isArray(node.props.style) && node.props.style.some((part: any) => part?.borderBottomColor === '#b08a4a' && !part?.minHeight))).toBe(true);
   });
 
   it('routes the heading glyphs to Members and Tray, with no Workbench sidebar entry', () => {

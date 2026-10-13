@@ -1,3 +1,5 @@
+import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
+import { Button } from '@/components/buzz/Button';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import { workflowRunHref } from '@/buzz/workflow-run-copy';
 import React, { useCallback, useState } from 'react';
@@ -55,11 +57,17 @@ export default function Workflow() {
         testID="workflow-header"
       />
       {error ? (
-        <Pressable onPress={() => void reload()}>
+        <View>
           <Text accessibilityRole="alert" style={styles.error}>
-            {error} · Retry
+            {error}
           </Text>
-        </Pressable>
+          <Button
+            label="Retry"
+            variant="secondary"
+            style={{ alignSelf: 'flex-end' }}
+            onPress={() => void reload()}
+          />
+        </View>
       ) : null}
       {!detail && !error ? <SurfaceGlyphLoader /> : null}
       {detail ? (
@@ -74,7 +82,7 @@ export default function Workflow() {
             onOpenCorner={() => undefined}
             testID="workflow-steps"
           />
-          <Text style={styles.heading}>History</Text>
+          <RoomListSectionHeader title="History" />
           {detail.runs.map((run) => (
             <Pressable
               key={run.runId}
@@ -104,11 +112,6 @@ const styles = StyleSheet.create((theme) => ({
   description: {
     ...theme.buzz.type.body,
     color: theme.buzz.textSecondary,
-    padding: theme.buzz.space.md,
-  },
-  heading: {
-    ...theme.buzz.type.sectionHead,
-    color: theme.buzz.ledgerQuiet,
     padding: theme.buzz.space.md,
   },
   run: {

@@ -1,3 +1,4 @@
+import { Button } from '@/components/buzz/Button';
 import React from 'react';
 import { Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -15,14 +16,8 @@ export function NetworkUnavailableState({
     <View accessibilityRole="alert" style={styles.container} testID={testID}>
       <Text style={styles.message}>Network is not available right now.</Text>
       {onRetry ? (
-        <TouchableOpacity
-          accessibilityRole="button"
-          onPress={onRetry}
-          style={styles.retryTarget}
-          testID={`${testID}-retry`}
-        >
-          <Text style={styles.retry}>Try again</Text>
-        </TouchableOpacity>
+        <Button label="Retry" variant="secondary" onPress={onRetry}
+          testID={`${testID}-retry`} />
       ) : null}
     </View>
   );
@@ -45,7 +40,5 @@ const styles = StyleSheet.create((theme) => {
       color: hull.textPrimary,
       textAlign: 'center',
     },
-    retryTarget: { minHeight: 44, justifyContent: 'center', paddingHorizontal: hull.space.md },
-    retry: { ...Typography.default(), ...hull.type.meta, color: hull.accent },
   };
 });

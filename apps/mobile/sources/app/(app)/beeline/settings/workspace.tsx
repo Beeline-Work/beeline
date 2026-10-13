@@ -1,3 +1,5 @@
+import { HullDialogActions } from '@/components/buzz/HullDialog';
+import { HullDialogInput } from '@/components/buzz/HullDialog';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import { useTextDraft } from '@/buzz/use-text-draft';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -93,7 +95,7 @@ export function WorkspaceDeleteConfirmDialog({
       ]}
     >
       <View style={styles.inlineEditor}>
-        <TextInput
+        <HullDialogInput
           accessibilityLabel={`Type ${workspaceName} to confirm`}
           autoCapitalize="none"
           autoCorrect={false}
@@ -500,9 +502,10 @@ export default function WorkspaceSettings() {
             {error ?? `Could not load ${WORKSPACE_LABEL} settings`}
           </Text>
           <Button
-            label="RETRY"
+            label="Retry"
             onPress={() => setRetryGeneration((value) => value + 1)}
             testID="workspace-settings-retry"
+            variant="secondary"
           />
         </View>
       ) : !canManageWorkspace ? (
@@ -567,7 +570,7 @@ export default function WorkspaceSettings() {
             />
             {renamingWorkspace && (
               <View style={styles.inlineEditor} testID="workspace-name-editor">
-                <TextInput
+                <HullDialogInput
                   accessibilityLabel={`New ${WORKSPACE_LABEL} name`}
                   autoFocus
                   editable={workingKey !== 'name'}
@@ -582,25 +585,9 @@ export default function WorkspaceSettings() {
                   testID="workspace-name-input"
                   value={workspaceName}
                 />
-                <View style={styles.inlineEditorControls}>
-                  <Button
-                    disabled={workingKey === 'name'}
-                    label="Cancel"
-                    onPress={() => setRenamingWorkspace(false)}
-                    variant="secondary"
-                  />
-                  <Button
-                    disabled={
-                      !workspaceName.trim() ||
+                <HullDialogActions style={styles.inlineEditorControls} actions={[{ disabled: workingKey === 'name', label: "Cancel", onPress: () => setRenamingWorkspace(false), variant: "quiet" }, { disabled: !workspaceName.trim() ||
                       workspaceName.trim() === workspace?.name ||
-                      workingKey === 'name'
-                    }
-                    label={workingKey === 'name' ? 'Saving…' : 'Save'}
-                    loading={workingKey === 'name'}
-                    onPress={() => void saveWorkspaceName()}
-                    testID="workspace-name-save"
-                  />
-                </View>
+                      workingKey === 'name', label: workingKey === 'name' ? 'Saving…' : 'Save', loading: workingKey === 'name', onPress: () => void saveWorkspaceName(), testID: "workspace-name-save", variant: 'primary' }]} />
               </View>
             )}
             {workspace?.visibility === 'public' && getBuzzRuntimeConfig().monolithEnabled && (
@@ -632,7 +619,7 @@ export default function WorkspaceSettings() {
                   onRequestClose={() => setRotateLinkOpen(false)}
                   actions={[
                     { label: 'Cancel', testID: 'workspace-public-join-cancel', onPress: () => setRotateLinkOpen(false) },
-                    { label: 'Rotate link', testID: 'workspace-public-join-confirm', onPress: () => { setRotateLinkOpen(false); void loadPublicJoinLink(true); } },
+                    { label: 'Rotate link', variant: 'primary', testID: 'workspace-public-join-confirm', onPress: () => { setRotateLinkOpen(false); void loadPublicJoinLink(true); } },
                   ]}
                 />
               </View>
@@ -652,13 +639,15 @@ export default function WorkspaceSettings() {
                 }
               />
             </View>
-            {canManageWorkspace && <SettingsRow
+            {canManageWorkspace && (
+              <SettingsRow
               title="Voice provider"
               description="Choose how agents sound in this Workspace."
               value={VOICE_PROVIDER_LABELS[workspace?.voiceProvider ?? DEFAULT_VOICE_PROVIDER]}
               chevron="right" disabled={workingKey === 'voice'}
               onPress={() => setVoicePickerOpen(true)} testID="workspace-voice-provider"
-            />}
+            />
+            )}
             {WORKSPACE_PICTURES_ENABLED && workspace?.avatar ? (
               <SettingsRow
                 disabled={workingKey === 'picture'}
@@ -787,10 +776,12 @@ export default function WorkspaceSettings() {
       <HullActionSheetModal title="Voice provider" visible={voicePickerOpen}
         accessibilityLabel="Close voice provider picker" testID="workspace-voice-sheet"
         onClose={() => setVoicePickerOpen(false)}>
-        {VOICE_PROVIDERS.map(provider => <HullActionSheetRow key={provider}
+        {VOICE_PROVIDERS.map((provider) => (
+          <HullActionSheetRow key={provider}
           label={VOICE_PROVIDER_LABELS[provider]} selected={(workspace?.voiceProvider ?? DEFAULT_VOICE_PROVIDER) === provider}
           disabled={workingKey !== null} onPress={() => void changeVoiceProvider(provider)}
-          testID={`workspace-voice-${provider}`} />)}
+          testID={`workspace-voice-${provider}`} />
+        ))}
         <HullActionSheetCancel onPress={() => setVoicePickerOpen(false)} testID="workspace-voice-close" />
       </HullActionSheetModal>
 

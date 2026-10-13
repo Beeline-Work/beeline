@@ -588,7 +588,7 @@ describe.skipIf(!existsSync(CHROME))('Workflow run page in a browser', () => {
         startedAt: STARTED + 50, updatedAt: STARTED + 60, },
     ];
     const page = await proof(detail, '', 390, [], siblingRuns);
-    expect(page.text).toContain('Also running in this corner');
+    expect(page.text).toContain('ALSO RUNNING IN THIS CORNER');
     // The section excludes this page's own run, listing only the other one.
     expect(page.alsoRunning).toEqual(['workflow-run-also-running-run-2']);
     expect(page.text).toEqual(expect.arrayContaining(['Macro paper desk · Draft', '@lunchboxfortwo']));

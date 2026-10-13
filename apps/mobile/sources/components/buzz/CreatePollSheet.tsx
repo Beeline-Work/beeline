@@ -2,7 +2,7 @@ import { useTextDraft } from '@/buzz/use-text-draft';
 import React, { useEffect, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { HullDialogInput } from './HullDialog';
+import { HullDialogActions, HullDialogInput } from './HullDialog';
 import { HULL_SHEET_INSET, HullActionSheetCancel, HullActionSheetModal } from './HullActionSheet';
 import { Button } from './Button';
 
@@ -55,13 +55,17 @@ export function CreatePollSheet({
       title="Create poll"
       testID="create-poll-sheet"
       footer={
-        <View>
-          <View style={styles.submitInset}>
-            <Button
-              disabled={busy || !ready}
-              label="Create poll"
-              loading={busy}
-              onPress={async () => {
+        <HullDialogActions
+          style={styles.submitInset}
+          actions={[
+            { label: 'Cancel', disabled: busy, onPress: onClose },
+            {
+              label: 'Create poll',
+              variant: 'primary',
+              disabled: busy || !ready,
+              busy,
+              testID: 'create-poll-submit',
+              onPress: async () => {
                 const clearPrompt = promptDraft.capture();
                 const clearOptions = optionsDraft.capture();
                 const succeeded = await onCreate({
@@ -76,13 +80,10 @@ export function CreatePollSheet({
                   clearPrompt();
                   clearOptions();
                 }
-              }}
-              testID="create-poll-submit"
-              variant="primary"
-            />
-          </View>
-          <HullActionSheetCancel disabled={busy} onPress={onClose} />
-        </View>
+              },
+            },
+          ]}
+        />
       }
     >
       <ScrollView keyboardShouldPersistTaps="handled" style={styles.content}>

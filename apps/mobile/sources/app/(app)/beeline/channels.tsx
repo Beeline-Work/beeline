@@ -850,7 +850,11 @@ export default function BuzzChannels() {
     return (
       <View style={[styles.center, { paddingTop: insets.top }]}>
         <Text style={styles.error}>{error}</Text>
-        <Button label="RETRY" onPress={() => setRetryGeneration((value) => value + 1)} />
+        <Button
+          label="Retry"
+          onPress={() => setRetryGeneration((value) => value + 1)}
+          variant="secondary"
+        />
       </View>
     );
   }
@@ -1029,7 +1033,7 @@ export default function BuzzChannels() {
               }
               renderSectionHeader={({ section }) =>
                 section.title && !query.trim() ? (
-                  <RoomListSectionHeader title={section.title} />
+                  <RoomListSectionHeader title={section.title} inset="content" />
                 ) : null
               }
               ListFooterComponent={

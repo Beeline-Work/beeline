@@ -1,3 +1,4 @@
+import { Button } from '@/components/buzz/Button';
 import React, { useEffect, useState } from 'react';
 import { Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -70,15 +71,13 @@ export function CornerOpenToast() {
           </Text>
         </TouchableOpacity>
         {failed && (
-          <TouchableOpacity
+          <Button
+            label="Retry"
+            variant="secondary"
             accessibilityLabel={`Retry opening the ${CORNER_LABEL}`}
-            accessibilityRole="button"
-            hitSlop={12}
             onPress={status.retry}
             testID="corner-open-retry"
-          >
-            <Text style={styles.action}>Retry</Text>
-          </TouchableOpacity>
+          />
         )}
       </View>
     </View>
@@ -105,7 +104,6 @@ const styles = StyleSheet.create((theme) => ({
   message: { flex: 1 },
   title: { ...theme.buzz.type.body, color: theme.buzz.textPrimary },
   detail: { ...theme.buzz.type.meta, color: theme.buzz.textMuted },
-  action: { ...theme.buzz.type.sectionHead, color: theme.buzz.accent },
   row: {
     flexDirection: 'row',
     gap: theme.buzz.space.sm,

@@ -1,3 +1,4 @@
+import { HullDialogInput } from '@/components/buzz/HullDialog';
 import React, { useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, Text, TextInput, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -117,7 +118,7 @@ export function RoomListToolbar({
   );
   const search = (
     <View>
-      <TextInput
+      <HullDialogInput
         ref={searchRef ?? localSearchRef}
         value={query}
         onChangeText={onQuery}

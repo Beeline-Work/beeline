@@ -8,20 +8,36 @@ import { Pressable } from 'react-native';
 
 export function RoomListSectionHeader({
   title,
+  inset = 'screen',
+  spacing = 'section',
   count,
   actionAccessibilityLabel,
   actionTestID,
   onAction,
+  actionDisabled,
+  testID,
 }: {
   title: string;
+  /** Content already supplies its own screen inset. */
+  inset?: 'screen' | 'content';
+  /** Flush when the surrounding section already supplies its vertical gap. */
+  spacing?: 'section' | 'flush';
+  testID?: string;
+  actionDisabled?: boolean;
   count?: number;
   actionAccessibilityLabel?: string;
   actionTestID?: string;
   onAction?: () => void;
 }) {
   return (
-    <View style={styles.sectionHeader}>
-      <Text accessibilityRole="header" style={styles.sectionHeaderText}>
+    <View
+      style={[
+        styles.sectionHeader,
+        inset === 'content' && styles.contentInset,
+        spacing === 'flush' && styles.flushSpacing,
+      ]}
+    >
+      <Text testID={testID} accessibilityRole="header" style={styles.sectionHeaderText}>
         {title.toUpperCase()}
       </Text>
       {count !== undefined && <Text style={styles.sectionCount}>{count}</Text>}
@@ -30,6 +46,8 @@ export function RoomListSectionHeader({
           accessibilityLabel={actionAccessibilityLabel}
           accessibilityRole="button"
           onPress={onAction}
+          disabled={actionDisabled}
+          accessibilityState={{ disabled: actionDisabled }}
           hitSlop={8}
           style={({ pressed }) => [styles.sectionHeaderAction, pressed && { opacity: 0.7 }]}
           testID={actionTestID}
@@ -52,6 +70,8 @@ const styles = StyleSheet.create((theme) => {
       paddingHorizontal: hull.space.md,
       backgroundColor: hull.bgTerminal,
     },
+    contentInset: { paddingHorizontal: 0 },
+    flushSpacing: { paddingTop: 0 },
     sectionHeaderText: {
       ...Typography.default('semiBold'),
       ...hull.type.sectionHead,
@@ -59,7 +79,8 @@ const styles = StyleSheet.create((theme) => {
       flex: 1,
     },
     sectionHeaderAction: {
-      minHeight: 28,
+      minHeight: 44,
+      minWidth: 44,
       alignItems: 'center',
       justifyContent: 'center',
     },

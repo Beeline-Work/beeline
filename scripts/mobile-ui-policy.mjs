@@ -60,20 +60,56 @@ export function uiContext(source, file) {
     );
   const bindings = new Map();
   const namespaces = new Set();
+  const elementFactories = new Set(['React.createElement', 'createElement']);
   const declarations = new Map();
   const styleProperties = new Map();
   function index(node) {
     if (
       ts.isImportDeclaration(node) &&
       ts.isStringLiteral(node.moduleSpecifier) &&
-      node.moduleSpecifier.text === 'react-native'
+      ['react-native', 'react-native-gesture-handler'].includes(node.moduleSpecifier.text) &&
+      !node.importClause?.isTypeOnly
     ) {
       const clause = node.importClause?.namedBindings;
+      if (node.importClause?.name) namespaces.add(node.importClause.name.text);
       if (clause && ts.isNamespaceImport(clause)) namespaces.add(clause.name.text);
       if (clause && ts.isNamedImports(clause))
         for (const binding of clause.elements) {
           const imported = binding.propertyName?.text ?? binding.name.text;
           if (primitives.has(imported) && !binding.isTypeOnly)
+            bindings.set(binding.name.text, imported);
+        }
+    }
+    if (
+      ts.isImportDeclaration(node) &&
+      ts.isStringLiteral(node.moduleSpecifier) &&
+      node.moduleSpecifier.text === 'react'
+    ) {
+      const clause = node.importClause?.namedBindings;
+      if (node.importClause?.name)
+        elementFactories.add(node.importClause.name.text + '.createElement');
+      if (clause && ts.isNamespaceImport(clause))
+        elementFactories.add(clause.name.text + '.createElement');
+      if (clause && ts.isNamedImports(clause))
+        for (const binding of clause.elements) {
+          if ((binding.propertyName?.text ?? binding.name.text) === 'createElement')
+            elementFactories.add(binding.name.text);
+        }
+    }
+    if (
+      ts.isVariableDeclaration(node) &&
+      node.initializer &&
+      ts.isCallExpression(node.initializer) &&
+      node.initializer.expression.getText(sourceFile) === 'require' &&
+      ts.isStringLiteral(node.initializer.arguments[0]) &&
+      ['react-native', 'react-native-gesture-handler'].includes(node.initializer.arguments[0].text)
+    ) {
+      if (ts.isIdentifier(node.name)) namespaces.add(node.name.text);
+      if (ts.isObjectBindingPattern(node.name))
+        for (const binding of node.name.elements) {
+          const imported =
+            binding.propertyName?.getText(sourceFile) ?? binding.name.getText(sourceFile);
+          if (primitives.has(imported) && ts.isIdentifier(binding.name))
             bindings.set(binding.name.text, imported);
         }
     }
@@ -128,7 +164,7 @@ export function uiContext(source, file) {
     }
     return '<module>';
   }
-  return { sourceFile, source, file, primitive, resolveStyle, owner };
+  return { sourceFile, source, file, primitive, resolveStyle, owner, elementFactories };
 }
 
 function controlContext(node, context) {
@@ -147,7 +183,7 @@ function controlContext(node, context) {
     body = ts.isJsxOpeningElement(node) ? node.parent : node;
   } else if (
     ts.isCallExpression(node) &&
-    /^(React\.)?createElement$/.test(node.expression.getText(context.sourceFile)) &&
+    context.elementFactories.has(node.expression.getText(context.sourceFile)) &&
     node.arguments[0]
   ) {
     tag = node.arguments[0];

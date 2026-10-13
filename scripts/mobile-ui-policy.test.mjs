@@ -217,3 +217,20 @@ test('new exported aliases of shared components require registration too', () =>
   );
   assert.deepEqual(value.components, ['FancyButton']);
 });
+
+test('default native namespaces and require bindings are recognized', () => {
+  assert.deepEqual(
+    rules(`import Native from 'react-native';
+    const {TextInput: Field}=require('react-native'); const RN=require('react-native');
+    function Screen(){return <><Native.TextInput/><Field/><RN.Pressable style={{height:44}}/></>}`),
+    ['raw-text-input', 'raw-text-input', 'raw-button'],
+  );
+});
+
+test('aliased createElement and React namespaces cannot bypass raw controls', () => {
+  assert.deepEqual(
+    rules(`import * as R from 'react'; import {createElement as h} from 'react';
+    import {TextInput} from 'react-native'; const a=h(TextInput); const b=R.createElement(TextInput);`),
+    ['raw-text-input', 'raw-text-input'],
+  );
+});

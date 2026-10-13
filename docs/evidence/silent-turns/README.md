@@ -24,3 +24,5 @@ Regression suites: `monolith-room-turn.failure.test.ts`, `monolith-corner-turn.t
 ## Live browser limitation
 
 Trusty Squire reached `https://web.usebeeline.app` and opened Ruby's DM read-only. It used an existing lunchboxfortwo owner session, not a reviewer-bypass session. No test message was sent and no corner was created through that browser. The reviewer bypass was absent from this turn's environment and the checked vault services. The branch has not been deployed to that production server, so the requested production check of fixed behavior is not obtained. After release, repeat agent corner creation with the reviewer bypass and verify that the parent DM contains no opener lifecycle reply.
+
+Revision 2 uses the integration proof above as the browser alternative. The report tool description includes the exact completion/decision/blocker sentence, verified by `read-only-mcp.test.ts` (23 passing tests).

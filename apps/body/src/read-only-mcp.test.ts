@@ -9,6 +9,11 @@ import {
 } from './prompt-assembly.js';
 
 describe('direct message helper surface', () => {
+  it('limits reports to completion, decisions, or blockers', () => {
+    const report = agentToolsFor(true, false).find(tool => tool.name === 'report')!;
+    expect(report.description).toContain("Report when your assignment is finished, or when you need a decision or are blocked. Don't report progress.");
+  });
+
   it('advertises the enforced event and history input limits in tool descriptions', () => {
     const tools = agentToolsFor(true, false);
     const event = tools.find(tool => tool.name === 'emit_event')!;

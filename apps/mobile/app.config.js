@@ -71,7 +71,7 @@ export default {
         scheme,
         userInterfaceStyle: "automatic",
         ios: {
-            runtimeVersion: runtimeVersionOverride || "32",
+            runtimeVersion: runtimeVersionOverride || "33",
             // Keep the launcher identity stable across system appearance modes.
             // iOS masks this full-size source; only Android adaptive layers need
             // the separately inset safe-zone treatment.
@@ -105,7 +105,7 @@ export default {
             }
         },
         android: {
-            runtimeVersion: runtimeVersionOverride || "33",
+            runtimeVersion: runtimeVersionOverride || "34",
             versionCode: 27,
             adaptiveIcon: {
                 foregroundImage: "./sources/assets/images/icon-adaptive.png",
@@ -174,6 +174,8 @@ export default {
             favicon: "./sources/assets/images/favicon.png"
         },
         plugins: [
+            "@livekit/react-native-expo-plugin",
+            "@config-plugins/react-native-webrtc",
             require("./plugins/withEinkCompatibility.js"),
             require("./plugins/withAndroidBuildTooling.js"),
             require("./plugins/withAndroidPushRouting.js"),

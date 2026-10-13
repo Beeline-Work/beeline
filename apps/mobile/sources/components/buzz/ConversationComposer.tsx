@@ -18,6 +18,9 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { groknight } from '@/buzz/groknight';
 import { HullDialog } from './HullDialog';
 import { MicGlyph } from './MicGlyph';
+import { VoiceBar } from './VoiceBar';
+import type { VoiceCallState } from '@/buzz/use-voice-call';
+import { VOICE_LONG_PRESS_MS } from '@beeline/api-contract/phone';
 import { BeelineMarkSpinner } from './BeelineMarkSpinner';
 import { DictationWaveform } from './DictationWaveform';
 import { useSpeechInput } from '@/buzz/speech-input';
@@ -30,6 +33,7 @@ import { removeComposerTag, removeLastComposerTag, splitComposerTags } from '@/b
 export type DictatedSend = { cancelled: boolean; committed: boolean };
 
 type Props = {
+  voice?: VoiceCallState;
   value: string;
   height: number;
   maxHeight?: number;
@@ -141,6 +145,7 @@ function useKeyboardUp(focused: boolean) {
 
 /** The one text-entry row used by both desktop Room and embedded Corner conversations. */
 export function ConversationComposer({
+  voice,
   value,
   height,
   maxHeight = 120,
@@ -175,6 +180,7 @@ export function ConversationComposer({
   onRetryAttachment,
 }: Props) {
   const { theme } = useUnistyles();
+  const voiceHeld = React.useRef(false);
   const containerRef = React.useRef<HTMLElement | null>(null);
   const ownInputRef = React.useRef<TextInput | null>(null);
   const [textOffset, setTextOffset] = React.useState(0);
@@ -377,6 +383,7 @@ export function ConversationComposer({
   };
   const visibleAttachments = attachments.slice(0, 3);
   const hiddenAttachmentCount = Math.max(0, attachments.length - visibleAttachments.length);
+  if (voice?.call || voice?.connecting) return <VoiceBar voice={voice} />;
   return (
     <View
       ref={containerRef as React.Ref<View>}
@@ -704,7 +711,15 @@ export function ConversationComposer({
                 : { selected: isListening }
             }
             hitSlop={9}
+            delayLongPress={VOICE_LONG_PRESS_MS}
+            onPressIn={() => { voiceHeld.current = false; }}
+            onLongPress={voice && !dictationBusy && !disabled ? () => {
+              voiceHeld.current = true;
+              Keyboard.dismiss();
+              void voice.join();
+            } : undefined}
             onPress={() => {
+              if (voiceHeld.current) return;
               if (speech.state === 'permission-denied') {
                 void Linking.openSettings();
                 return;

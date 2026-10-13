@@ -1,4 +1,8 @@
 *
+!infra
+infra/*
+!infra/voice-livekit
+!infra/voice-livekit/**
 !package.json
 !package-lock.json
 !tsconfig.base.json

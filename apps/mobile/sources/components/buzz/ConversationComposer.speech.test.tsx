@@ -240,6 +240,15 @@ afterEach(() => {
   act(() => renderers.splice(0).forEach((r) => r.unmount()));
 });
 
+it('holds the existing mic to enter voice mode without starting a dictation take on release', () => {
+  const join = vi.fn();
+  const { renderer } = render({ voice: { call: null, connecting: false, join } });
+  const mic = renderer.root.findByProps({ testID: 'chat-mic' });
+  act(() => { mic.props.onPressIn(); mic.props.onLongPress(); mic.props.onPress(); });
+  expect(join).toHaveBeenCalledTimes(1);
+  expect(mockMod.start).not.toHaveBeenCalled();
+});
+
 describe('mic button visibility', () => {
   it('does not render the mic button on web/desktop', () => {
     platformSetter.setOS('web');

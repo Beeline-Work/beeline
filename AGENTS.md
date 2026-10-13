@@ -42,6 +42,8 @@ Committed home for project-intrinsic agent knowledge: rule + authoritative file 
 
 ## Relay and client protocol
 
+- **Voice uses existing agent identities and ordinary orders.** `apps/server/src/voice-service.ts` owns membership and dispatch; `voice-room-runtime.ts` speaks command-provenance reports without capping real work. Short-press dictation remains separate. Providers, native runtime requirements and isolated proof commands: [docs/voice-mode.md](docs/voice-mode.md).
+
 - **kind:30078 reads filter by `#d`, never `#h`** (a `#h` filter matches nothing). `agentPresenceKey` (`packages/buzz-client/src/agent-presence.ts`) builds presence keys. Test with `matchesFilterRelayFaithfully`/`deliverRelayFaithfully` (`client.test.ts`); generic stubs miss this.
 - **Production relays may answer a multi-value `#h`/`#d` filter for one key only**, so every `packages/buzz-client` fan-out sends one single-key filter per key inside one batched query.
 - **Local stack vs production.** `relay-stack/compose.yml` (http `127.0.0.1:3010`, the `relay-config.ts` default) has a credential-free materializer and cannot serve GitHub-backed corners (`githubHttpsRemote` maps `git://` remotes to GitHub HTTPS), so pair repo-less Rooms there. `BuzzClient` treats loopback/`10.0.2.2` relays as open. `@beeline/gate` reads `BUZZY_RELAY_*` at import. Gate live tests: `npm run stack:up`, then `cd apps/gate && npm run test:live`.

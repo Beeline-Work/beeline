@@ -201,6 +201,7 @@ export type RoomViewActivity = {
 };
 
 export type RoomViewMessage = {
+  readonly voiceCall?: import('./voice.js').VoiceCall;
   readonly id: string;
   readonly text: string;
   readonly createdAt: number;
@@ -794,6 +795,7 @@ export type RoomCornerSummary = {
 };
 
 export type ChatListItem = {
+  readonly voiceCall?: import('./voice.js').VoiceCall;
   readonly room: RoomViewHeader;
   /** Leaving as the last Workspace manager in this Room deletes it for everyone. */
   readonly leaveDeletesRoom?: boolean;
@@ -924,6 +926,7 @@ export type WorkspaceView = {
   readonly workspace: ChatListWorkspace & {
     readonly about?: string;
     readonly createdAt: number;
+    readonly voiceProvider?: import('./voice.js').VoiceProvider;
   };
   readonly managerSettings?: {
     readonly visibility: 'public' | 'invite-only';

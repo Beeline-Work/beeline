@@ -1,4 +1,5 @@
 export * from './phone-types.js';
+export * from './voice.js';
 export * from './artifacts.js';
 export * from './corner-apps.js';
 export * from './phone-guards.js';

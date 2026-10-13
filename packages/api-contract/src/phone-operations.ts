@@ -623,6 +623,7 @@ export type UpdateWorkspaceInput = WorkspaceInput & {
   readonly name?: string;
   readonly avatar?: string;
   readonly visibility?: 'public' | 'invite-only';
+  readonly voiceProvider?: import('./voice.js').VoiceProvider;
 };
 export type CreateRoomInput = WorkspaceInput & {
   readonly name: string;

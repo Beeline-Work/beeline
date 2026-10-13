@@ -1,4 +1,5 @@
 import { listRoomSubscriptions, deleteRoomSubscription } from './agent-subscriptions.js';
+import { VOICE_PROVIDERS, type VoiceProvider } from '@beeline/api-contract/phone';
 import {
   beginAgentSignInCards,
   AGENT_SIGN_IN_NO_ANSWER_MESSAGE,
@@ -829,6 +830,8 @@ function projectedMessage(
   };
   if (!row.card_type || !row.card) return base;
   switch (row.card_type) {
+    case 'voice-call':
+      return { ...base, voiceCall: row.card as NonNullable<RoomViewMessage['voiceCall']> };
     case 'permission':
       return { ...base, permission: row.card as NonNullable<RoomViewMessage['permission']> };
     case 'grant-request':
@@ -1564,6 +1567,7 @@ export class PhoneService {
         ...(row.avatar ? { avatar: assetUrl(row.avatar, this.publicOrigin) } : {}),
         visibility: row.visibility,role: row.role,updatedAt: unix(row.updated_at),
         ...(row.about ? { about: row.about } : {}),createdAt: unix(row.created_at),
+        voiceProvider: row.voice_provider,
       },
       ...(managedRooms ? { managerSettings: {
         visibility: row.visibility,rooms: managedRooms,
@@ -1719,6 +1723,7 @@ export class PhoneService {
         updated_at: Date;
       };
       room_rows: (RoomRow & {
+        voice_call: ChatListItem['voiceCall'] | null;
         member_count: string;
         leave_deletes_room: boolean;
         latest_id: string | null;
@@ -1756,6 +1761,8 @@ export class PhoneService {
          WHERE w.id=$1 AND wm.identity_id=$2 AND wm.removed_at IS NULL
        ), visible_rooms AS (
       SELECT r.*,
+        (SELECT message.card FROM voice_calls call JOIN messages message ON message.id=call.message_id
+          WHERE call.room_id=r.id AND call.ended_at IS NULL) voice_call,
         (SELECT count(*)::text FROM memberships rm WHERE rm.room_id=r.id AND rm.removed_at IS NULL) member_count,
         NOT EXISTS (
           SELECT 1 FROM memberships other_room
@@ -1921,6 +1928,7 @@ export class PhoneService {
         .slice(0, 200)
         .map((row) => ({
           room: roomHeader(row, this.publicOrigin),
+          ...(row.voice_call ? { voiceCall: row.voice_call } : {}),
           leaveDeletesRoom:
             !row.direct_participants &&
             (current.role === 'owner' || current.role === 'admin') &&
@@ -6112,6 +6120,8 @@ export class PhoneService {
   private async updateWorkspace(input: Input<'updateWorkspace'>, viewerId: string) {
     await this.database.transaction(async (database) => {
       await this.requireWorkspaceManager(input.workspaceId, viewerId, database);
+      if (input.voiceProvider !== undefined && !VOICE_PROVIDERS.includes(input.voiceProvider))
+        throw new Error('Unknown voice provider');
       const current = (
         await database.query<{ visibility: 'public' | 'invite-only' }>(
           'SELECT visibility FROM workspaces WHERE id=$1 FOR UPDATE',
@@ -6132,8 +6142,8 @@ export class PhoneService {
                 : undefined,
             );
       await database.query(
-        `UPDATE workspaces SET name=COALESCE($2,name),avatar=COALESCE($3,avatar),visibility=COALESCE($4,visibility),updated_at=now() WHERE id=$1`,
-        [input.workspaceId, input.name ?? null, avatar, input.visibility ?? null],
+        `UPDATE workspaces SET name=COALESCE($2,name),avatar=COALESCE($3,avatar),visibility=COALESCE($4,visibility),voice_provider=COALESCE($5,voice_provider),updated_at=now() WHERE id=$1`,
+        [input.workspaceId, input.name ?? null, avatar, input.visibility ?? null, input.voiceProvider ?? null],
       );
       if (input.visibility && input.visibility !== current?.visibility) {
         const actor = await this.requireIdentity(viewerId, database);
@@ -9665,6 +9675,7 @@ export class PhoneService {
   ): Promise<(WorkspaceMemberListView & {
     workspaceRow: {
       id: string; name: string; about: string | null; avatar: string | null;
+      voice_provider: VoiceProvider;
       visibility: 'public' | 'invite-only'; created_at: Date; updated_at: Date;
       role: 'owner' | 'admin' | 'member' | 'spectator';
     };
@@ -9680,6 +9691,7 @@ export class PhoneService {
     const result = await this.database.query<{
       workspace_row: {
         id: string; name: string; about: string | null; avatar: string | null;
+        voice_provider: VoiceProvider;
         visibility: 'public' | 'invite-only'; created_at: Date; updated_at: Date;
         role: 'owner' | 'admin' | 'member' | 'spectator';
       };
@@ -9692,7 +9704,7 @@ export class PhoneService {
       people_total: string;
       agent_total: string;
     }>(`WITH visible_workspace AS (
-        SELECT w.id,w.name,w.about,w.avatar,w.visibility,w.created_at,w.updated_at,wm.role
+        SELECT w.id,w.name,w.about,w.avatar,w.visibility,w.voice_provider,w.created_at,w.updated_at,wm.role
         FROM workspaces w JOIN memberships wm ON wm.workspace_id=w.id AND wm.room_id IS NULL
         WHERE w.id=$1 AND wm.identity_id=$7 AND wm.removed_at IS NULL
       ), viewer_row AS (

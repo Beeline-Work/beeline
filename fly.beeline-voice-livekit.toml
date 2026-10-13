@@ -1,0 +1,42 @@
+app = "beeline-voice-livekit"
+primary_region = "iad"
+
+[build]
+  dockerfile = "infra/voice-livekit/Dockerfile"
+
+[env]
+  # Set LIVEKIT_NODE_IP to this app's dedicated IPv4 before deployment.
+  LIVEKIT_PORT = "7880"
+
+[[services]]
+  protocol = "tcp"
+  internal_port = 7880
+  auto_stop_machines = "off"
+  auto_start_machines = true
+  min_machines_running = 1
+  [[services.ports]]
+    port = 443
+    handlers = ["tls", "http"]
+  [[services.http_checks]]
+    interval = "10s"
+    timeout = "2s"
+    grace_period = "10s"
+    path = "/"
+    method = "GET"
+
+[[services]]
+  protocol = "tcp"
+  internal_port = 7881
+  [[services.ports]]
+    port = 7881
+
+[[services]]
+  protocol = "udp"
+  internal_port = 7882
+  [[services.ports]]
+    port = 7882
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "256mb"

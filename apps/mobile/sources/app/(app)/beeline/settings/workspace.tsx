@@ -12,7 +12,7 @@ import {
   type BuzzClient,
   type WorkspaceView,
 } from '@beeline/buzz-client';
-import { roomTitle } from '@beeline/api-contract/phone';
+import { roomTitle, VOICE_PROVIDERS, VOICE_PROVIDER_LABELS, type VoiceProvider } from '@beeline/api-contract/phone';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
@@ -160,6 +160,7 @@ export default function WorkspaceSettings() {
   );
   const [renamingWorkspace, setRenamingWorkspace] = useState(false);
   const [visibilityPickerOpen, setVisibilityPickerOpen] = useState(false);
+  const [voicePickerOpen, setVoicePickerOpen] = useState(false);
   const [deleteSheetOpen, setDeleteSheetOpen] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText, deletionDraft] = useTextDraft(`workspace-delete:${communityId}`,
     '',
@@ -179,6 +180,17 @@ export default function WorkspaceSettings() {
     if (workspace) workspaceDraft.initialize(workspace.name);
   }, [workspace?.name, workspaceDraft]);
   const canManageWorkspace = workspaceView?.viewer.permissions.manage === true;
+  const changeVoiceProvider = useCallback(async (voiceProvider: VoiceProvider) => {
+    if (!communityId || !canManageWorkspace) return;
+    setVoicePickerOpen(false);
+    setWorkingKey('voice');
+    setError(null);
+    try {
+      await monolithPhoneOperation('updateWorkspace', { workspaceId: communityId, voiceProvider });
+      workspaceSchedulerRef.current?.force();
+    } catch (caught) { setError(`Could not change voice provider: ${String(caught)}`); }
+    finally { setWorkingKey(null); }
+  }, [communityId, canManageWorkspace]);
   const loadPublicJoinLink = useCallback(async (rotate = false) => {
     if (!communityId || !canManageWorkspace || workspace?.visibility !== 'public') return;
     const generation = ++joinLinkGeneration.current;
@@ -623,6 +635,13 @@ export default function WorkspaceSettings() {
                 }
               />
             </View>
+            {canManageWorkspace && <SettingsRow
+              title="Voice provider"
+              description="Choose how agents sound in this Workspace."
+              value={VOICE_PROVIDER_LABELS[workspace?.voiceProvider ?? 'aura-2']}
+              chevron="right" disabled={workingKey === 'voice'}
+              onPress={() => setVoicePickerOpen(true)} testID="workspace-voice-provider"
+            />}
             {WORKSPACE_PICTURES_ENABLED && workspace?.avatar ? (
               <SettingsRow
                 disabled={workingKey === 'picture'}
@@ -742,6 +761,16 @@ export default function WorkspaceSettings() {
           onPress={() => setVisibilityPickerOpen(false)}
           testID="workspace-visibility-close"
         />
+      </HullActionSheetModal>
+
+      <HullActionSheetModal title="Voice provider" visible={voicePickerOpen}
+        accessibilityLabel="Close voice provider picker" testID="workspace-voice-sheet"
+        onClose={() => setVoicePickerOpen(false)}>
+        {VOICE_PROVIDERS.map(provider => <HullActionSheetRow key={provider}
+          label={VOICE_PROVIDER_LABELS[provider]} selected={(workspace?.voiceProvider ?? 'aura-2') === provider}
+          disabled={workingKey !== null} onPress={() => void changeVoiceProvider(provider)}
+          testID={`workspace-voice-${provider}`} />)}
+        <HullActionSheetCancel onPress={() => setVoicePickerOpen(false)} testID="workspace-voice-close" />
       </HullActionSheetModal>
 
       <WorkspaceDeleteConfirmDialog

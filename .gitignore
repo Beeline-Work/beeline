@@ -72,3 +72,5 @@ apps/mobile/credentials.json
 
 # Agent runtime homes (sessions, credentials, caches) never belong in the repository.
 agent-home/
+# Isolated voice proof output (including local session tokens), never ship it.
+/.voice-proof/

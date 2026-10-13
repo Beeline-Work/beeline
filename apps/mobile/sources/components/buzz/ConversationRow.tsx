@@ -133,6 +133,8 @@ export function ConversationRow({
               <Text style={styles.sigil}>{name.sigil}</Text>
               {name.name}
             </Text>
+            {item.voiceCall && !item.voiceCall.endedAt && <Text accessibilityLabel="Live voice call"
+              style={styles.liveVoice} testID={`${testID}-voice-live`}>live</Text>}
           </View>
           <View style={styles.previewLine}>
             <Text
@@ -185,6 +187,7 @@ export function ConversationRow({
 }
 
 const styles = StyleSheet.create((theme) => ({
+  liveVoice: { ...theme.buzz.type.meta, color: theme.buzz.accent, marginLeft: 8 },
   row: {
     minHeight: 62,
     backgroundColor: 'transparent',

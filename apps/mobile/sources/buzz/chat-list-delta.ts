@@ -129,6 +129,20 @@ export function applyChatListDelta(
   if (index < 0) return view;
   const item = view.chats[index]!;
   if (delta.type === 'message-delta') {
+    const call = delta.message.voiceCall;
+    if (call) {
+      // A call card can end after newer spoken messages have become the deck
+      // preview. Its live mark still changes, without replacing that preview.
+      const existing = item.voiceCall;
+      const newer = !existing || existing.id === call.id ||
+        (call.startedAtMs ?? call.startedAt * 1000) > (existing.startedAtMs ?? existing.startedAt * 1000);
+      if ((call.endedAt && existing?.id === call.id) || (!call.endedAt && newer)) {
+        const { voiceCall: _old, ...rest } = item;
+        const chats = [...view.chats];
+        chats[index] = { ...rest, ...(!call.endedAt ? { voiceCall: call } : {}) };
+        view = { ...view, chats };
+      }
+    }
     if (delta.message.deleted && 'deckPreview' in delta &&
         item.latestMessage?.id === delta.message.id) {
       const { latestMessage: _old, ...rest } = item;

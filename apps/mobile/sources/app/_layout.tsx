@@ -171,10 +171,13 @@ if (Platform.OS === 'android') {
   });
 }
 
-export {
-  // Catch any errors thrown by the Layout component.
-  ErrorBoundary,
-} from 'expo-router';
+import type { ErrorBoundaryProps } from 'expo-router';
+import { RuntimeErrorView } from '@/components/buzz/RuntimeErrorBoundary';
+
+export function ErrorBoundary({ error, retry }: ErrorBoundaryProps) {
+  React.useEffect(() => { launchSplash.release(); }, []);
+  return <RuntimeErrorView error={error} retry={() => void retry()} scope="app" />;
+}
 
 // Keep the native splash up through font initialization. Once the first real
 // app tree commits, hide it without inserting a second React splash screen.

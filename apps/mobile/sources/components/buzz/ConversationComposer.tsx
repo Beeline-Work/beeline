@@ -19,6 +19,7 @@ import { groknight } from '@/buzz/groknight';
 import { HullDialog } from './HullDialog';
 import { MicGlyph } from './MicGlyph';
 import { VoiceBar } from './VoiceBar';
+import { RuntimeErrorBoundary } from './RuntimeErrorBoundary';
 import type { VoiceCallState } from '@/buzz/use-voice-call';
 import { VOICE_LONG_PRESS_MS } from '@beeline/api-contract/phone';
 import { BeelineMarkSpinner } from './BeelineMarkSpinner';
@@ -143,8 +144,15 @@ function useKeyboardUp(focused: boolean) {
   return focused && (Platform.OS === 'web' || visible);
 }
 
+export function ConversationComposer(props: Props) {
+  return <RuntimeErrorBoundary scope="conversation" onError={() => props.voice?.end()}
+    onRetry={() => props.voice?.join()}>
+    <ConversationComposerContent {...props} />
+  </RuntimeErrorBoundary>;
+}
+
 /** The one text-entry row used by both desktop Room and embedded Corner conversations. */
-export function ConversationComposer({
+function ConversationComposerContent({
   voice,
   value,
   height,

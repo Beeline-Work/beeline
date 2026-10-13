@@ -5,6 +5,11 @@ export async function createVoiceRoom(): Promise<{ room: Room; closeAudio(): Pro
   const { registerGlobals, AudioSession } = await import('@livekit/react-native');
   registerGlobals();
   await AudioSession.startAudioSession();
-  const room = new Room({ adaptiveStream: false, dynacast: false });
-  return { room, closeAudio: () => AudioSession.stopAudioSession() };
+  try {
+    const room = new Room({ adaptiveStream: false, dynacast: false });
+    return { room, closeAudio: () => AudioSession.stopAudioSession() };
+  } catch (cause) {
+    await AudioSession.stopAudioSession().catch(() => {});
+    throw cause;
+  }
 }

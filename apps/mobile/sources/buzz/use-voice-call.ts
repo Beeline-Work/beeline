@@ -5,6 +5,7 @@ import { VOICE_DATA_TOPIC, type VoiceJoin, type VoiceSignal, type VoiceCall, typ
 import { monolithSession } from '@/auth/monolith-session';
 import { getBuzzRuntimeConfig } from './runtime-config';
 import { createVoiceRoom } from './voice-transport';
+import { errorDiagnostic, reportClientError } from './client-error-report';
 import { voiceWaveformLevel } from './waveform-level';
 
 async function voiceRequest<T>(id: string, action: 'join' | 'leave' | 'current'): Promise<T> {
@@ -13,6 +14,14 @@ async function voiceRequest<T>(id: string, action: 'join' | 'leave' | 'current')
   const value = await response.json() as T & { error?: string };
   if (!response.ok) throw new Error(value.error ?? 'Conversation mode could not connect');
   return value;
+}
+
+async function closeVoiceTransport(transport: { room: Room; closeAudio(): Promise<void> } | undefined | null) {
+  if (!transport) return;
+  // Stop RTC before releasing its native audio session; each cleanup is best effort.
+  for (const close of [() => transport.room.disconnect(), () => transport.closeAudio()]) {
+    try { await close(); } catch (cause) { void reportClientError('voice-cleanup', cause); }
+  }
 }
 
 export function useVoiceCall(roomId: string, enabled: boolean) {
@@ -37,7 +46,7 @@ export function useVoiceCall(roomId: string, enabled: boolean) {
     setCall(null); setSpeaker(null); setLevel(0); setConnecting(false);
     speakerRef.current = null;
     if (!current) return;
-    await current.room.disconnect(); await current.closeAudio();
+    await closeVoiceTransport(current);
     try { await voiceRequest(current.callId, 'leave'); } catch { /* RTC disconnect also removes the participant server-side. */ }
   }, []);
   React.useEffect(() => () => { void end(); }, [roomId, end]);
@@ -97,9 +106,10 @@ export function useVoiceCall(roomId: string, enabled: boolean) {
         setLevel(quotaRef.current ? 0 : voiceWaveformLevel(Math.max(0, ...levels)));
       }, 60);
     } catch (cause) {
-      await transport?.room.disconnect(); await transport?.closeAudio();
+      void reportClientError('voice-join', cause);
+      await closeVoiceTransport(transport);
       if (joined) await voiceRequest(joined.call.id, 'leave').catch(() => {});
-      if (version === revision.current) setError(cause instanceof Error ? cause.message : 'Conversation mode could not connect');
+      if (version === revision.current) setError(errorDiagnostic(cause).message);
     } finally {
       if (version === revision.current) { pending.current = false; setConnecting(false); }
     }

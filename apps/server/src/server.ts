@@ -57,7 +57,7 @@ import { connectorLogo } from './workbench.js';
 import type { LinkAgentWallet } from './link-agent-wallet.js';
 import type { RegistryMcpOAuth } from './registry-mcp-oauth.js';
 import { InvitePreviewAccess } from './invite-preview.js';
-import { phoneReadLimits, type PhoneReadLimits } from './phone-read-limit.js';
+import { IdentityRateLimit, phoneReadLimits, type PhoneReadLimits } from './phone-read-limit.js';
 import type { ConnectionPresence } from './connection-presence.js';
 import {
   parseDashboardPlatforms,
@@ -285,6 +285,7 @@ async function bytes(request: IncomingMessage, maximum: number): Promise<Buffer>
   }
   return Buffer.concat(chunks);
 }
+const clientErrorLimit = new IdentityRateLimit('client-error', 12);
 async function body(request: IncomingMessage): Promise<Record<string, unknown>> {
   const raw = await bytes(request, MAX_JSON_BYTES);
   if (!raw.length) return {};
@@ -2408,6 +2409,22 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
       json(response, 502, { error: 'transcription_failed' });
     }
     return;
+  }
+  if (method === 'POST' && url.pathname === '/v1/phone/observations/client-error') {
+    if (!clientErrorLimit.admit(identityId!)) { json(response, 429, { error: 'too_many_requests' }); return; }
+    const input = await body(request);
+    const limits = { message: 2048, stack: 4096, platform: 32, platformVersion: 64, releaseSha: 128, runtimeVersion: 64, updateId: 64 };
+    if (!['app', 'conversation', 'voice-join', 'voice-cleanup'].includes(String(input.scope)) ||
+      Object.entries(limits).some(([key, limit]) => typeof input[key] !== 'string' || (input[key] as string).length > limit) || !input.message) {
+      json(response, 400, { error: 'invalid_observation' }); return;
+    }
+    const clean = (value: unknown) => String(value)
+      .replace(/https?:\/\/[^\s)]+/gi, '[url]')
+      .replace(/\bBearer\s+\S+/gi, 'Bearer [redacted]')
+      .replace(/\beyJ[\w-]+\.[\w-]+\.[\w-]+\b/g, '[token]');
+    console.warn('[client-error]', JSON.stringify({ identityId, scope: input.scope,
+      ...Object.fromEntries(Object.keys(limits).map(key => [key, clean(input[key])])) }));
+    response.writeHead(204, { 'cache-control': 'private, no-store' }); response.end(); return;
   }
   if (method === 'POST' && url.pathname === '/v1/phone/observations/page-load') {
     const input = await body(request);

@@ -287,6 +287,9 @@ function disposalObjects(root: string, archived: boolean, tree: Map<string, Tree
       const homeRelative = rel.replace(/^(?:scratch\/)?agent-home\//, '');
       if (isSquirePath(path) || protectedExact.has(path) || (homeRelative !== rel && HISTORY_FILES.test(homeRelative))) continue;
       const info = tree.get(path)!;
+      // A known state/config ancestor may itself be an operator alias. The
+      // no-follow inventory cannot see its protected descendants.
+      if (!info.directory && containers.has(path)) continue;
       const splitInstances = /(?:user\/\.android\/avd|android-instances)$/.test(rel);
       if (info.directory && disposable.includes(path) && !splitInstances) {
         if (!containsProtected(path)) objects.push(path);

@@ -154,3 +154,31 @@ it('reclaims whole unused ignored build directories while preserving tracked fil
   expect(await exists(resolve(checkout, 'dist/recent'))).toBe(true);
   expect(await readFile(resolve(checkout, 'source'), 'utf8')).toBe('keep source');
 });
+
+it('wakes discovery when storage maintenance deferred a newly assigned Room', async () => {
+  const { RoomRuntimeCoordinator } = await import('./room-runtime.js');
+  const { SessionScheduler } = await import('./session-scheduler.js');
+  const root = await mkdtemp(resolve(tmpdir(), 'beeline-storage-start-resume-')); roots.push(root);
+  const staged = await stageMonolithAgentRuntime({ workspaceId: 'workspace', pairedBy: 'human',
+    daemonExchangeToken: `bde_${'a'.repeat(43)}`, agentBinary: '/nonexistent', agentKind: 'codex',
+    agentCommand: '/nonexistent', agentArgs: [], mcpBinary: 'unused',
+    agentIdentity: identityFromKey('51'.repeat(32), 'Bee'), bodyIdentity: identityFromKey('61'.repeat(32), 'Body'), supervisorRoot: root });
+  const execute = vi.fn(async (operation: string) => {
+    if (operation === 'getDaemonBootstrap') return { workspaceIds: ['workspace'], rooms: [{ roomId: 'new-room', archived: false }] };
+    if (operation === 'listRoomCorners') return { corners: [] };
+    throw new Error(`unexpected ${operation}`);
+  });
+  const coordinator = new RoomRuntimeCoordinator(staged.runtime, staged.configPath,
+    { workspaceRoot: root, agentEnv: {} } as never, { daemonApi: { execute } as never });
+  const wake = vi.fn(); coordinator.setDiscoveryWakeListener(wake);
+  let release!: () => void;
+  const hold = new Promise<void>(done => { release = done; });
+  const maintenance = SessionScheduler.withIdleHostStorage(async () => hold);
+  try {
+    expect(await coordinator.reconcile()).toBe('member');
+    expect(coordinator.activeRoomIds()).toEqual([]);
+    expect(wake).not.toHaveBeenCalled();
+    release(); await maintenance;
+    expect(wake).toHaveBeenCalledOnce();
+  } finally { release(); await maintenance; await coordinator.shutdown(); }
+});

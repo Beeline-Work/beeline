@@ -565,6 +565,8 @@ export class RoomRuntimeCoordinator {
   private preservationFlight?: Promise<void>;
   private reconciliationProgressListener?: () => void | Promise<void>;
   private readonly storageMaintenanceRooms = new Set<string>();
+  private readonly storageDeferredStarts = new Set<string>();
+  private readonly stopStorageAvailable: () => void;
   private knownStorageStates: readonly StorageRoomState[] = [];
   private readonly startingCorners = new Set<string>();
   /**
@@ -685,6 +687,14 @@ export class RoomRuntimeCoordinator {
       idleMs: resolveSessionIdleMs(process.env),
       maxWarmSessions: resolveMaxWarmSessions(process.env),
       reserveInteractiveSlot: true,
+    });
+    this.stopStorageAvailable = SessionScheduler.onStorageAvailable(key => {
+      if (this.stopped || !this.storageDeferredStarts.size) return;
+      if (key && !this.storageDeferredStarts.delete(key)) return;
+      if (!key) this.storageDeferredStarts.clear();
+      // Re-read membership/commands after the lease, rather than starting
+      // from facts that could have changed while storage was unavailable.
+      this.wakeDiscovery();
     });
   }
 
@@ -1128,7 +1138,11 @@ export class RoomRuntimeCoordinator {
 
   private async startRoom(roomId: string): Promise<void> {
     if (this.stopped) return;
-    if (SessionScheduler.hostStoragePaused || SessionScheduler.roomStoragePaused(roomId) || this.running.has(roomId) || this.startingRooms.has(roomId) || this.storageMaintenanceRooms.has(roomId)) return;
+    if (this.running.has(roomId) || this.startingRooms.has(roomId)) return;
+    if (SessionScheduler.hostStoragePaused || SessionScheduler.roomStoragePaused(roomId) || this.storageMaintenanceRooms.has(roomId)) {
+      this.storageDeferredStarts.add(roomId);
+      return;
+    }
     this.surfaceHealth.discover(roomId, 'room');
     this.startingRooms.add(roomId);
     try {
@@ -1280,7 +1294,11 @@ export class RoomRuntimeCoordinator {
 
   private async startCorner(corner: DesiredCorner): Promise<void> {
     if (this.stopped) return;
-    if (SessionScheduler.hostStoragePaused || SessionScheduler.roomStoragePaused(corner.cornerId) || this.running.has(corner.cornerId) || this.startingCorners.has(corner.cornerId) || this.storageMaintenanceRooms.has(corner.cornerId)) return;
+    if (this.running.has(corner.cornerId) || this.startingCorners.has(corner.cornerId)) return;
+    if (SessionScheduler.hostStoragePaused || SessionScheduler.roomStoragePaused(corner.cornerId) || this.storageMaintenanceRooms.has(corner.cornerId)) {
+      this.storageDeferredStarts.add(corner.cornerId);
+      return;
+    }
     this.surfaceHealth.discover(corner.cornerId, 'corner');
     this.startingCorners.add(corner.cornerId);
     let configKey: string | undefined;
@@ -2033,6 +2051,7 @@ export class RoomRuntimeCoordinator {
   beginShutdown(): void {
     if (this.stopped) return;
     this.stopped = true;
+    this.stopStorageAvailable();
     this.restartRequested = true;
     for (const cornerId of this.idleCornerSubscriptions.keys()) this.unwatchCorner(cornerId);
     this.options.daemonApi.closeLive?.();

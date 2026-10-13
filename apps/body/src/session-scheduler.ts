@@ -143,6 +143,14 @@ export const DEFAULT_WORKSPACE_LIVE_SESSIONS_FLOOR = 4;
 export class SessionScheduler {
   private static readonly instances = new Set<SessionScheduler>();
   static hostStoragePaused = false;
+  private static readonly storageAvailable = new Set<(key?: string) => void>();
+  static onStorageAvailable(listener: (key?: string) => void): () => void {
+    this.storageAvailable.add(listener);
+    return () => { this.storageAvailable.delete(listener); };
+  }
+  private static notifyStorageAvailable(key?: string): void {
+    for (const listener of this.storageAvailable) listener(key);
+  }
   private static readonly hostRoomStorage = new Set<string>();
   static roomStoragePaused(key: string): boolean { return this.hostRoomStorage.has(key); }
   static async withIdleHostRoom(key: string, task: () => Promise<void>): Promise<boolean> {
@@ -154,6 +162,7 @@ export class SessionScheduler {
     finally {
       this.hostRoomStorage.delete(key);
       for (const scheduler of this.instances) void scheduler.drainKey(key);
+      this.notifyStorageAvailable(key);
     }
   }
 
@@ -167,6 +176,7 @@ export class SessionScheduler {
     finally {
       this.hostStoragePaused = false;
       for (const scheduler of this.instances) for (const key of scheduler.queues.keys()) void scheduler.drainKey(key);
+      this.notifyStorageAvailable();
     }
   }
 
@@ -293,6 +303,7 @@ export class SessionScheduler {
     } finally {
       this.storageMaintenance.delete(key);
       void this.drainKey(key);
+      SessionScheduler.notifyStorageAvailable(key);
     }
   }
 

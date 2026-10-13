@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { access, chmod, link, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, utimes, writeFile } from 'node:fs/promises';
+import { access, chmod, link, lstat, lutimes, mkdir, mkdtemp, readFile, readdir, rm, symlink, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -316,4 +316,24 @@ it('preserves old package/cloud/signing credentials and keeps a cache whole when
   await reclaimHelperStorage(f.input);
   for (const path of credentials) expect(await exists(join(f.root, 'agent-home', path)), path).toBe(true);
   expect(await exists(cache)).toBe(true); // Atomic cache: preserve the complete item, never carve out its token.
+});
+
+
+it('keeps old harness and config directory aliases whose sign-in/history children are outside the no-follow inventory', async () => {
+  const f = await fixture();
+  const external = join(f.runtimeDir, 'operator-state');
+  await mkdir(join(external, 'codex/sessions'), { recursive: true });
+  await mkdir(join(external, 'config/cursor'), { recursive: true });
+  await writeFile(join(external, 'codex/auth.json'), 'operator login');
+  await writeFile(join(external, 'codex/sessions/thread'), 'operator history');
+  await writeFile(join(external, 'config/cursor/auth.json'), 'operator login');
+  await f.file('agent-home/user/marker');
+  const aliases = [join(f.root, 'agent-home/codex'), join(f.root, 'agent-home/user/.config')];
+  await symlink(join(external, 'codex'), aliases[0]!);
+  await symlink(join(external, 'config'), aliases[1]!);
+  const old = new Date(Date.now() - 8 * 86400_000);
+  for (const alias of aliases) await lutimes(alias, old, old);
+  await reclaimHelperStorage(f.input);
+  for (const alias of aliases) expect((await lstat(alias)).isSymbolicLink()).toBe(true);
+  expect(await readFile(join(aliases[0]!, 'sessions/thread'), 'utf8')).toBe('operator history');
 });

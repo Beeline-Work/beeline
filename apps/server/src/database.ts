@@ -2793,6 +2793,13 @@ CREATE TABLE IF NOT EXISTS feedback_items (
   created_at timestamptz NOT NULL DEFAULT now(),
   triaged_at timestamptz
 );
+ALTER TABLE feedback_items ADD COLUMN IF NOT EXISTS occurrence_count integer NOT NULL DEFAULT 1
+  CHECK (occurrence_count > 0);
+ALTER TABLE feedback_items ADD COLUMN IF NOT EXISTS occurrences jsonb NOT NULL DEFAULT '[]';
+ALTER TABLE feedback_items ADD COLUMN IF NOT EXISTS last_occurrence_at timestamptz;
+CREATE INDEX IF NOT EXISTS feedback_items_open_match_idx
+  ON feedback_items(category, summary_key, tool_name)
+  WHERE source_kind='agent' AND status IN ('new','filed','attached');
 -- One human report per message, whether it came from a tag or the action.
 CREATE UNIQUE INDEX IF NOT EXISTS feedback_items_human_message_idx
   ON feedback_items(trigger_message_id) WHERE source_kind='human';
@@ -3149,7 +3156,7 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
   await dataStep('stored corner workflows', () => deleteStoredCornerWorkflows(database));
   await dataStep('corner lifecycle runs', () => backfillCornerLifecycleRuns(database));
   await dataStep('feedback triage workflow', () =>
-    workflowBackfillOnce(database, 'feedback-triage-v2', backfillFeedbackTriageWorkflow));
+    workflowBackfillOnce(database, 'feedback-triage-v3', backfillFeedbackTriageWorkflow));
   await dataStep('workflow skill summary/does', () =>
     workflowBackfillOnce(database, 'workflow-descriptions-v1', backfillWorkflowSkillDescriptions));
   await dataStep('repair workflow step descriptions', () =>

@@ -141,6 +141,25 @@ describe('feedback-triage workflow', () => {
     console.log('Demonstrated cleanup-boot: second migration startup made no feedback seed or workflow description writes');
   });
 
+  it('refreshes the deployed procedure to list occurrence counts despite the old completion marker', async () => {
+    await backfillFeedbackTriageWorkflow(database);
+    await database.query(`DELETE FROM workflow_backfills WHERE name='feedback-triage-v3'`);
+    await database.query(`INSERT INTO workflow_backfills(name) VALUES('feedback-triage-v2') ON CONFLICT DO NOTHING`);
+    await database.query(
+      `UPDATE workspace_skill_versions SET markdown='old procedure',content_hash=$2
+       WHERE skill_id=(SELECT id FROM workspace_skills WHERE workspace_id=$1 AND slug='feedback-triage-steps')`,
+      [WORKSPACE, 'f'.repeat(64)],
+    );
+    await migrateData(database);
+    const procedure = (await database.query<{ markdown: string }>(
+      `SELECT version.markdown FROM workspace_skills skill
+       JOIN workspace_skill_versions version ON version.skill_id=skill.id AND version.version=skill.current_version
+       WHERE skill.workspace_id=$1 AND skill.slug='feedback-triage-steps'`, [WORKSPACE],
+    )).rows[0]!;
+    expect(procedure.markdown).toBe(FEEDBACK_TRIAGE_STEPS);
+    expect(procedure.markdown).toContain('occurrence_count');
+  });
+
   it('leaves an interrupted backfill unmarked and allows an idempotent retry', async () => {
     await expect(workflowBackfillOnce(database, 'test-retry', async (db) => {
       await db.query(`UPDATE agent_schedules SET message='failed migration' WHERE id=$1`, [TRIAGE_SCHEDULE]);

@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { AccessibilityInfo, Modal, Pressable, ScrollView, Text, View } from 'react-native';
+import { AccessibilityInfo, Pressable, ScrollView, Text, View } from 'react-native';
+import { HullModal } from './HullDialog';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { IdentityMark } from './IdentityMark';
 import { MicGlyph } from './MicGlyph';
@@ -18,7 +19,7 @@ export function VoiceBar({ voice, fullScreen = false }: { voice: VoiceCallState;
     return () => listener.remove();
   }, []);
   const bar = <View style={styles.bar} testID="voice-bar">
-    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.agents}
+    <ScrollView horizontal showsHorizontalScrollIndicator={false} style={[styles.agents, voice.quotaExhausted && styles.quotaAgents]}
       contentContainerStyle={styles.agentContent}>
       {voice.agents.map(agent => <Pressable key={agent.pubkey} onPress={() => voice.aim(agent.pubkey)}
         accessibilityRole="button" accessibilityLabel={`Speak to ${agent.name}`}
@@ -29,9 +30,10 @@ export function VoiceBar({ voice, fullScreen = false }: { voice: VoiceCallState;
       </Pressable>)}
     </ScrollView>
     <Pressable style={styles.waveform} onLongPress={() => setExpanded(true)}
-      accessibilityLabel={voice.speaker ? `${voice.agents.find(a => a.pubkey === voice.speaker)?.name ?? 'Agent'} speaking` : 'Listening'}
+      accessibilityLabel={voice.quotaExhausted ? voice.error ?? 'Daily voice limit reached' : voice.speaker ? `${voice.agents.find(a => a.pubkey === voice.speaker)?.name ?? 'Agent'} speaking` : 'Listening'}
       accessibilityHint="Hold to open full screen" testID="voice-waveform">
-      <DictationWaveform level={voice.level} live={!voice.connecting} />
+      {voice.quotaExhausted ? <Text accessibilityRole="alert" style={styles.error} testID="voice-quota-error">{voice.error}</Text>
+        : <DictationWaveform level={voice.level} live={!voice.connecting} />}
     </Pressable>
     <Pressable onPress={() => void voice.end()} accessibilityRole="button" accessibilityLabel="End voice mode"
       accessibilityState={{ selected: true, busy: voice.connecting }} style={styles.mic} testID="voice-mic">
@@ -40,7 +42,7 @@ export function VoiceBar({ voice, fullScreen = false }: { voice: VoiceCallState;
   </View>;
   return <>
     {bar}
-    <Modal visible={expanded} onRequestClose={() => setExpanded(false)} animationType="fade">
+    <HullModal visible={expanded} onRequestClose={() => setExpanded(false)} placement="fill" animationType="fade">
       <View style={styles.fullScreen}>
         <Pressable onPress={() => setExpanded(false)} accessibilityRole="button" style={styles.back}><Text style={styles.text}>Back to Room</Text></Pressable>
         <View style={styles.fullScreenBody}>{voice.agents.map(agent => <Pressable key={agent.pubkey} onPress={() => voice.aim(agent.pubkey)}
@@ -50,20 +52,22 @@ export function VoiceBar({ voice, fullScreen = false }: { voice: VoiceCallState;
         </Pressable>)}</View>
         {bar}
       </View>
-    </Modal>
+    </HullModal>
   </>;
 }
 
 const styles = StyleSheet.create(theme => ({
   bar: { height: 56, flexDirection: 'row', alignItems: 'center', gap: 8, width: '100%' },
   agents: { flexGrow: 0, maxWidth: '55%' }, agentContent: { alignItems: 'center' },
+  quotaAgents: { maxWidth: '25%' },
   agent: { width: 44, height: 48, alignItems: 'center', justifyContent: 'center' },
   halo: { position: 'absolute', width: 38, height: 38, borderRadius: 3, borderWidth: 2,
-    borderColor: theme.buzz.accent, shadowColor: theme.buzz.accent, shadowRadius: 6, shadowOpacity: 0.9, shadowOffset: { width: 0, height: 0 } },
+    borderColor: theme.buzz.accent },
   waveform: { flex: 1, minWidth: 32, height: 44, justifyContent: 'center', overflow: 'hidden' },
   mic: { width: 44, height: 44, borderRadius: 3, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.buzz.bgPressed },
   fullScreen: { flex: 1, backgroundColor: theme.buzz.bgBase, padding: 16 },
   fullScreenBody: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 24 },
   fullScreenAgent: { alignItems: 'center', gap: 16 }, back: { minHeight: 44, justifyContent: 'center' },
   text: { ...theme.buzz.type.body, color: theme.buzz.textPrimary },
+  error: { ...theme.buzz.type.meta, color: theme.buzz.textPrimary },
 }));

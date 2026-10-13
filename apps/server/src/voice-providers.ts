@@ -1,5 +1,17 @@
 import { createHash } from 'node:crypto';
 import WebSocket from 'ws';
+import { VOICE_QUOTA_MESSAGE } from '@beeline/api-contract/phone';
+
+export class VoiceQuotaError extends Error {
+  readonly code = 'speech-quota-exhausted' as const;
+  constructor() { super(VOICE_QUOTA_MESSAGE); }
+}
+function quotaExhausted(body: unknown): boolean {
+  if (!body || typeof body !== 'object') return false;
+  const item = body as { code?: unknown; message?: unknown; errors?: unknown[]; error?: unknown };
+  return item.code === 4006 || (typeof item.message === 'string' && /daily.*(?:allocation|limit)|10,?000 neurons/i.test(item.message)) ||
+    (Array.isArray(item.errors) && item.errors.some(quotaExhausted)) || quotaExhausted(item.error);
+}
 
 export const VOICE_MODEL = 'openai/gpt-6-luna';
 export const KOKORO_MODEL = 'hexgrad/kokoro-82m';
@@ -52,6 +64,22 @@ export function fluxFactory(token: string, accountId: string,
     let opened = false;
     let closing = false;
     let sequence = -1;
+    socket.once('unexpected-response', (_request, response) => {
+      let finished = false;
+      let body = ''; const timer = setTimeout(() => finish(), 2000);
+      timer.unref();
+      const finish = () => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(timer); closing = true;
+        let quota = false;
+        try { quota = response.statusCode === 429 && quotaExhausted(JSON.parse(body)); } catch {}
+        reject(quota ? new VoiceQuotaError() : new Error('Speech input connection refused'));
+        response.destroy(); socket.terminate();
+      };
+      response.on('data', chunk => { if (body.length < 16_384) body += String(chunk).slice(0, 16_384 - body.length); });
+      response.once('end', finish); response.once('error', finish);
+    });
     socket.once('open', () => {
       opened = true;
       resolve({ send(pcm) {
@@ -64,7 +92,9 @@ export function fluxFactory(token: string, accountId: string,
     });
     socket.on('message', raw => {
       try {
-        const event = JSON.parse(raw.toString()) as FluxEvent;
+        const parsed: unknown = JSON.parse(raw.toString());
+        if (quotaExhausted(parsed)) { closing = true; onError(new VoiceQuotaError()); socket.close(); return; }
+        const event = parsed as FluxEvent;
         if (!['Update', 'StartOfTurn', 'EagerEndOfTurn', 'TurnResumed', 'EndOfTurn'].includes(event.event) ||
             typeof event.transcript !== 'string' || !Number.isSafeInteger(event.turn_index) ||
             !Number.isSafeInteger(event.sequence_id) || event.sequence_id <= sequence) return;
@@ -98,7 +128,8 @@ export interface VoiceSpeech {
 export class FishSpeech implements VoiceSpeech {
   voices: readonly string[] = [];
   private loading?: Promise<void>;
-  constructor(private readonly key: string, private readonly fetchImpl: typeof fetch = fetch) {}
+  constructor(private readonly key: string, private readonly fetchImpl: typeof fetch = fetch,
+    private readonly model: 's2.1-pro' | 's2.1-pro-free' = 's2.1-pro-free') {}
   prepare(): Promise<void> {
     if (this.voices.length) return Promise.resolve();
     return this.loading ??= this.load().catch(error => { this.loading = undefined; throw error; });
@@ -118,7 +149,7 @@ export class FishSpeech implements VoiceSpeech {
     if (!this.voices.includes(voice)) throw new Error('Unknown Fish voice');
     const response = await this.fetchImpl('https://api.fish.audio/v1/tts', {
       method: 'POST', signal, headers: { authorization: `Bearer ${this.key}`,
-        'content-type': 'application/json', model: 's2.1-pro' },
+        'content-type': 'application/json', model: this.model },
       body: JSON.stringify({ text, reference_id: voice, format: 'pcm',
         sample_rate: VOICE_SAMPLE_RATE, latency: 'low', chunk_length: 100 }),
     });
@@ -198,6 +229,7 @@ export class AuraSpeech implements VoiceSpeech {
       method: 'POST', signal, headers: { authorization: `Bearer ${this.token}`, 'content-type': 'application/json' },
       body: JSON.stringify({ text, speaker: voice, encoding: 'linear16', container: 'none', sample_rate: VOICE_SAMPLE_RATE }),
     });
+    if (response.status === 429 && quotaExhausted(await response.json().catch(() => null))) throw new VoiceQuotaError();
     if (!response.ok || !response.body) throw new Error(`Voice playback unavailable (${response.status})`);
     for await (const bytes of response.body as unknown as AsyncIterable<Uint8Array>) yield bytes;
   }

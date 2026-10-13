@@ -22,6 +22,8 @@ export function useVoiceCall(roomId: string, enabled: boolean) {
   const [level, setLevel] = React.useState(0);
   const [connecting, setConnecting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
+  const [quotaExhausted, setQuotaExhausted] = React.useState(false);
+  const quotaRef = React.useRef(false);
   const [firstAudioMs, setFirstAudioMs] = React.useState<number | null>(null);
   const session = React.useRef<{ room: Room; callId: string; closeAudio(): Promise<void> } | null>(null);
   const revision = React.useRef(0);
@@ -43,7 +45,7 @@ export function useVoiceCall(roomId: string, enabled: boolean) {
   const join = React.useCallback(async () => {
     if (!enabled || session.current || pending.current) return;
     pending.current = true; const version = ++revision.current;
-    setConnecting(true); setError(null);
+    setConnecting(true); setError(null); setQuotaExhausted(false); quotaRef.current = false;
     let transport: Awaited<ReturnType<typeof createVoiceRoom>> | undefined;
     let joined: VoiceJoin | undefined;
     try {
@@ -57,7 +59,13 @@ export function useVoiceCall(roomId: string, enabled: boolean) {
           const data = JSON.parse(new TextDecoder().decode(bytes)) as VoiceSignal;
           if (data.type === 'speaker') { speakerRef.current = data.agentId; setSpeaker(data.agentId); }
           if (data.type === 'target') setTarget(data.agentId);
-          if (data.type === 'error') setError(data.message);
+          if (data.type === 'error') {
+            setError(data.message);
+            if (data.code === 'speech-quota-exhausted') {
+              quotaRef.current = true; setQuotaExhausted(true); setLevel(0);
+              void room.localParticipant.setMicrophoneEnabled(false).catch(() => {});
+            }
+          }
           if (data.type === 'latency') setFirstAudioMs(data.firstAudioMs);
         } catch {}
       });
@@ -76,6 +84,7 @@ export function useVoiceCall(roomId: string, enabled: boolean) {
         { reliable: true, topic: VOICE_DATA_TOPIC });
       await room.localParticipant.setMicrophoneEnabled(true, { echoCancellation: true, noiseSuppression: true,
         autoGainControl: true });
+      if (quotaRef.current) await room.localParticipant.setMicrophoneEnabled(false);
       if (version !== revision.current) { await room.disconnect(); await transport.closeAudio(); await voiceRequest(joined.call.id, 'leave'); return; }
       session.current = { ...transport, callId: joined.call.id };
       setCall(joined.call); setAgents(joined.agents); setTarget(joined.agents[0]?.pubkey ?? null);
@@ -84,7 +93,7 @@ export function useVoiceCall(roomId: string, enabled: boolean) {
         const bridge = `beeline-voice-${joined!.call.id}`;
         const levels = speakerRef.current ? [room.remoteParticipants.get(bridge)?.audioLevel ?? 0]
           : [room.localParticipant.audioLevel, ...[...room.remoteParticipants.values()].filter(p => p.identity !== bridge).map(p => p.audioLevel)];
-        setLevel(Math.max(0, ...levels));
+        setLevel(quotaRef.current ? 0 : Math.max(0, ...levels));
       }, 60);
     } catch (cause) {
       await transport?.room.disconnect(); await transport?.closeAudio();
@@ -100,7 +109,7 @@ export function useVoiceCall(roomId: string, enabled: boolean) {
     void session.current?.room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ type: 'target', agentId })),
       { reliable: true, topic: VOICE_DATA_TOPIC });
   }, [agents]);
-  return { call, agents, target, speaker, level, connecting, error, firstAudioMs, join, end, aim };
+  return { call, agents, target, speaker, level, connecting, error, quotaExhausted, firstAudioMs, join, end, aim };
 }
 
 export type VoiceCallState = ReturnType<typeof useVoiceCall>;

@@ -12,7 +12,7 @@ import {
   type BuzzClient,
   type WorkspaceView,
 } from '@beeline/buzz-client';
-import { roomTitle, VOICE_PROVIDERS, VOICE_PROVIDER_LABELS, type VoiceProvider } from '@beeline/api-contract/phone';
+import { roomTitle, VOICE_PROVIDERS, VOICE_PROVIDER_LABELS, DEFAULT_VOICE_PROVIDER, type VoiceProvider } from '@beeline/api-contract/phone';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
@@ -655,7 +655,7 @@ export default function WorkspaceSettings() {
             {canManageWorkspace && <SettingsRow
               title="Voice provider"
               description="Choose how agents sound in this Workspace."
-              value={VOICE_PROVIDER_LABELS[workspace?.voiceProvider ?? 'aura-2']}
+              value={VOICE_PROVIDER_LABELS[workspace?.voiceProvider ?? DEFAULT_VOICE_PROVIDER]}
               chevron="right" disabled={workingKey === 'voice'}
               onPress={() => setVoicePickerOpen(true)} testID="workspace-voice-provider"
             />}
@@ -788,7 +788,7 @@ export default function WorkspaceSettings() {
         accessibilityLabel="Close voice provider picker" testID="workspace-voice-sheet"
         onClose={() => setVoicePickerOpen(false)}>
         {VOICE_PROVIDERS.map(provider => <HullActionSheetRow key={provider}
-          label={VOICE_PROVIDER_LABELS[provider]} selected={(workspace?.voiceProvider ?? 'aura-2') === provider}
+          label={VOICE_PROVIDER_LABELS[provider]} selected={(workspace?.voiceProvider ?? DEFAULT_VOICE_PROVIDER) === provider}
           disabled={workingKey !== null} onPress={() => void changeVoiceProvider(provider)}
           testID={`workspace-voice-${provider}`} />)}
         <HullActionSheetCancel onPress={() => setVoicePickerOpen(false)} testID="workspace-voice-close" />

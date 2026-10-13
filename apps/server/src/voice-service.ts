@@ -228,9 +228,10 @@ export function voiceConfigFromEnv(env = process.env): VoiceConfig | undefined {
       !cloudflareToken || !env.CLOUDFLARE_ACCOUNT_ID) return undefined;
   const aura = new AuraSpeech(cloudflareToken, env.CLOUDFLARE_ACCOUNT_ID);
   const kokoro = new DeepInfraKokoroSpeech(key);
-  const fish = env.FISH_AUDIO_API_KEY ? new FishSpeech(env.FISH_AUDIO_API_KEY) : undefined;
+  const fish = env.FISH_AUDIO_API_KEY ? new FishSpeech(env.FISH_AUDIO_API_KEY, fetch,
+    env.BEELINE_VOICE_FISH_MODEL === 's2.1-pro' ? 's2.1-pro' : 's2.1-pro-free') : undefined;
   return { url: env.LIVEKIT_URL, apiKey: env.LIVEKIT_API_KEY, apiSecret: env.LIVEKIT_API_SECRET,
-    brain: new OpenRouterVoiceBrain(key), speech: aura,
+    brain: new OpenRouterVoiceBrain(key), speech: fish ?? aura,
     providers: { 'aura-2': aura, 'kokoro-deepinfra': kokoro, ...(fish ? { 'fish-s2.1-pro': fish } : {}) },
     stt: fluxFactory(cloudflareToken, env.CLOUDFLARE_ACCOUNT_ID) };
 }

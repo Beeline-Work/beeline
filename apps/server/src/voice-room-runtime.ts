@@ -3,7 +3,7 @@ import { Room, RoomEvent, AudioStream, AudioSource, AudioFrame, LocalAudioTrack,
   TrackPublishOptions, TrackSource, TrackKind, type RemoteParticipant, type RemoteTrack } from '@livekit/rtc-node';
 import { VOICE_DATA_TOPIC, type VoiceSignal } from '@beeline/api-contract/phone';
 import type { VoiceService } from './voice-service.js';
-import { VOICE_SAMPLE_RATE, type VoiceAgent, type VoiceStt } from './voice-providers.js';
+import { VOICE_SAMPLE_RATE, VoiceQuotaError, type VoiceAgent, type VoiceStt } from './voice-providers.js';
 
 export function namedVoiceTarget(text: string, agents: readonly VoiceAgent[], selected?: string): VoiceAgent | undefined {
   const named = agents.map(agent => ({ agent, at: [agent.name, agent.handle].reduce((first, name) => {
@@ -43,8 +43,9 @@ export class VoiceRoomRuntime {
     token.addGrant({ roomJoin: true, room: `beeline-voice-${this.callId}`, canPublish: true,
       canSubscribe: true, canPublishData: true });
     this.room.on(RoomEvent.TrackSubscribed, (track, _publication, participant) => {
-      if (track.kind === TrackKind.KIND_AUDIO) void this.listen(track, participant).catch(() =>
-        this.signal({ type: 'error', message: 'Speech input unavailable; please try again' }));
+      if (track.kind === TrackKind.KIND_AUDIO) void this.listen(track, participant).catch(error =>
+        this.signal({ type: 'error', message: error instanceof VoiceQuotaError ? error.message : 'Speech input unavailable; please try again',
+          ...(error instanceof VoiceQuotaError ? { code: error.code } : {}) }, participant.identity));
     });
     this.room.on(RoomEvent.TrackUnsubscribed, (track, _pub, participant) => {
       if (this.inputs.get(participant.identity)?.track === track) this.stopInput(participant.identity);
@@ -107,11 +108,13 @@ export class VoiceRoomRuntime {
       this.turnIndices.set(human, event.turn_index);
       void this.utterance(human, event.transcript, performance.now()).catch(error => {
         if (error instanceof Error && error.name === 'AbortError') return;
-        void this.signal({ type: 'error', message: 'Voice reply unavailable; your message is in the transcript' });
+        void this.signal({ type: 'error', message: error instanceof VoiceQuotaError ? error.message : 'Voice reply unavailable; your message is in the transcript',
+          ...(error instanceof VoiceQuotaError ? { code: error.code } : {}) }, human);
       });
-      }, () => {
+      }, error => {
         if (this.inputVersions.get(human) !== version) return;
-        void this.signal({ type: 'error', message: 'Speech input disconnected; please rejoin' }); this.stopInput(human);
+        void this.signal({ type: 'error', message: error instanceof VoiceQuotaError ? error.message : 'Speech input disconnected; please rejoin',
+          ...(error instanceof VoiceQuotaError ? { code: error.code } : {}) }, human); this.stopInput(human);
       }, hints);
     } catch (error) {
       if (this.inputVersions.get(human) !== version) { await reader.cancel().catch(() => {}); return; }

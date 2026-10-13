@@ -20,7 +20,7 @@ export function VoiceCallCard({ call, joined, onJoin, agents = [] }: { call: Voi
   </View>;
 }
 const styles = StyleSheet.create(theme => ({
-  card: { flexDirection: 'row', alignItems: 'center', padding: 12, borderWidth: 1, borderRadius: 10,
+  card: { flexDirection: 'row', alignItems: 'center', padding: 16, borderWidth: 1, borderRadius: 10,
     borderColor: theme.buzz.border, backgroundColor: theme.buzz.bgRaised }, copy: { flex: 1 },
   title: { ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },
   people: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },

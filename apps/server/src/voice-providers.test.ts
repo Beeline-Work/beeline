@@ -1,10 +1,22 @@
 import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
-import { assignVoiceAgents, fluxFactory, KokoroSpeech, FishSpeech, OpenRouterVoiceBrain } from './voice-providers.js';
+import { assignVoiceAgents, fluxFactory, KokoroSpeech, FishSpeech, OpenRouterVoiceBrain, VoiceQuotaError } from './voice-providers.js';
 import { namedVoiceTarget } from './voice-room-runtime.js';
 
 describe('voice providers', () => {
+  it('settles a rejected Flux upgrade with the explicit daily-quota error and closes the socket', async () => {
+    class Socket extends EventEmitter { terminate = vi.fn(); close = vi.fn(); }
+    const socket = new Socket();
+    const opening = fluxFactory('test', 'account', () => socket as unknown as WebSocket)(vi.fn(), vi.fn());
+    const failed = expect(opening).rejects.toBeInstanceOf(VoiceQuotaError);
+    const response = Object.assign(new EventEmitter(), { statusCode: 429, destroy: vi.fn() });
+    socket.emit('unexpected-response', {}, response);
+    response.emit('data', JSON.stringify({ errors: [{ code: 4006, message: 'Daily free allocation exhausted' }] }));
+    response.emit('end');
+    await failed;
+    expect(socket.terminate).toHaveBeenCalledOnce();
+  });
   it('selects licensed library voices and streams Fish PCM before the response ends', async () => {
     const ids = ['1'.repeat(32), '2'.repeat(32)];
     let finish!: () => void;
@@ -22,7 +34,7 @@ describe('voice providers', () => {
     const iterator = speech.synthesize('Hello', ids[0]!, new AbortController().signal)[Symbol.asyncIterator]();
     expect((await iterator.next()).value).toEqual(new Uint8Array([7, 8]));
     const request = fetcher.mock.calls[1]![1]!;
-    expect(request.headers).toMatchObject({ model: 's2.1-pro', authorization: 'Bearer test-key' });
+    expect(request.headers).toMatchObject({ model: 's2.1-pro-free', authorization: 'Bearer test-key' });
     expect(JSON.parse(request.body as string)).toMatchObject({ format: 'pcm', sample_rate: 24000,
       reference_id: ids[0], latency: 'low' });
     finish(); expect((await iterator.next()).done).toBe(true);

@@ -18,6 +18,25 @@ vi.mock('@livekit/rtc-node', () => ({
   TrackSource: { SOURCE_MICROPHONE: 1 }, TrackKind: { KIND_AUDIO: 1 }, AudioFrame: class {},
 }));
 import { VoiceRoomRuntime } from './voice-room-runtime.js';
+import { VoiceQuotaError } from './voice-providers.js';
+
+it('cancels microphone input and sends a targeted quota signal when Flux rejects the handshake', async () => {
+  const cancel = vi.fn();
+  state.streams = [new ReadableStream({ cancel })];
+  const service = { owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret',
+    stt: vi.fn(async () => { throw new VoiceQuotaError(); }) }, access: vi.fn(async () => {}),
+    agents: vi.fn(async () => []), db: { query: vi.fn(async () => ({ rowCount: 1, rows: [] })) },
+    runtimeClosed: vi.fn() } as unknown as VoiceService;
+  const runtime = await VoiceRoomRuntime.connect(service, 'call', 'room');
+  try {
+    state.room.emit('track', { kind: 1 }, {}, { identity: 'human' });
+    await vi.waitFor(() => expect(state.room.localParticipant.publishData).toHaveBeenCalled());
+    const [bytes, options] = state.room.localParticipant.publishData.mock.calls[0];
+    expect(JSON.parse(new TextDecoder().decode(bytes))).toMatchObject({ code: 'speech-quota-exhausted', message: expect.stringContaining('Daily voice limit') });
+    expect(options.destinationIdentities).toEqual(['human']);
+    expect(cancel).toHaveBeenCalledOnce();
+  } finally { await runtime.close(); }
+});
 
 it('buffers first microphone frames during authorization and ignores stale STT failures after a track replacement', async () => {
   let authorize!: () => void;

@@ -67,7 +67,7 @@ it('refuses a removed member and a spectator, including stale call tokens', asyn
 
 it('persists the Workspace provider only for managers and uses that provider for the Room', async () => {
   const phone = new PhoneService(db, 'http://proof');
-  expect((await phone.readWorkspace(W, H))?.workspace.voiceProvider).toBe('aura-2');
+  expect((await phone.readWorkspace(W, H))?.workspace.voiceProvider).toBe('fish-s2.1-pro');
   await phone.execute('updateWorkspace', { workspaceId: W, voiceProvider: 'kokoro-deepinfra' }, H);
   expect((await phone.readWorkspace(W, H))?.workspace.voiceProvider).toBe('kokoro-deepinfra');
   await expect(phone.execute('updateWorkspace', { workspaceId: W, voiceProvider: 'fish-s2.1-pro' }, SECOND)).rejects.toThrow();

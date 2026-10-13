@@ -1,8 +1,8 @@
 # Beeline voice mode delivery
 
-PR: https://github.com/Beeline-Work/beeline/pull/2404. Merge is held for the
-captain's native-runtime decision. Implementation, captured evidence and pending
-phone/Fish proofs are documented in [the voice runbook](../../docs/voice-mode.md).
+PR: https://github.com/Beeline-Work/beeline/pull/2404. The captain approved the native build
+and a full release including store; firstmate owns merge and release. Implementation, captured evidence and pending
+phone proofs are documented in [the voice runbook](../../docs/voice-mode.md).
 
 ## Native runtime and the path to the phone
 
@@ -23,11 +23,11 @@ Microphone permission handling, autoplay/user activation, audio routing, call
 interruptions and lifecycle behavior need proof on the actual installed Android
 and iOS binaries. WebView has its own
 [media-capture permission controls](https://github.com/react-native-webview/react-native-webview/blob/master/docs/Reference.md#mediacapturepermissiongranttype).
-I have retained the native implementation while the captain decides.
+The approved delivery now uses the native implementation.
 
 For the current implementation, the release path is:
 
-1. Captain accepts the new-binary requirement; firstmate releases the merged SHA
+1. With the native build approved, firstmate releases the merged SHA
    through `unified-release.yml` with an explicitly approved store track. A
    runtime-pin change intentionally refuses the ordinary OTA-only release.
 2. The Android leg builds the new AAB on EAS and submits to the chosen Play
@@ -44,5 +44,9 @@ The previous Android 33 and iOS 32 pins remain in `COMPAT_RUNTIMES`; old install
 are not universally cut off from supported OTA JavaScript updates. They cannot
 receive the missing native modules through OTA or use this native voice path.
 Separately, Flux/Aura need a Workers AI quota reset or the captain's Workers Paid
-decision, and Fish still needs its API key. LiveKit is already deployed; server
+decision, Fish now has its API key and a successful live Luna/TTS/RTC/order-report proof
+using the documented free S2.1 Pro route (the paid API credit balance was zero).
+Fish is the Workspace default; Aura and Kokoro remain selectable.
+The Fish comparison measured 1660/1347/1446 ms after EndOfTurn (p50 1446 ms);
+Flux EndOfTurn was injected because STT remained quota-bound. LiveKit is already deployed; server
 secrets are staged without restarting production.

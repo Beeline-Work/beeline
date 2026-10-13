@@ -8,7 +8,7 @@ through the live call card. After the last person leaves, that card becomes
 `Voice call ended · duration`.
 
 Workspace owners and admins choose **Voice provider** in Workspace settings:
-Aura-2 (default), Kokoro on OpenRouter pinned to DeepInfra, or Fish S2.1 Pro.
+Fish S2.1 Pro (default), Kokoro on OpenRouter pinned to DeepInfra, or Aura-2.
 Each provider assigns distinct library voices using the agent's identity and
 soul, with an optional `Aura:`, `Kokoro:` or `Fish:` voice id in its soul.
 Fish uses licensed English library voices; no voice cloning is performed.
@@ -41,7 +41,10 @@ Server secrets:
 - `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` (same key pair as LiveKit).
 - `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_WORKERS_AI_TOKEN` with Workers AI permission.
 - Existing `OPENROUTER_EMBEDDING_API_KEY`, or `BEELINE_VOICE_OPENROUTER_API_KEY`.
-- `FISH_AUDIO_API_KEY` for Fish. Selecting Fish without it returns a clear
+- `FISH_AUDIO_API_KEY` for Fish. The default model header is `s2.1-pro-free`,
+  the documented free developer route. Set `BEELINE_VOICE_FISH_MODEL=s2.1-pro`
+  only for a funded API account. The supplied key had no paid API credit, but
+  the free route returned real audio. Selecting Fish without its key returns a clear
   configuration error; it never silently substitutes another provider.
 
 LiveKit credentials are server-only; phones receive scoped call JWTs. Configure
@@ -52,7 +55,9 @@ Regenerate native fingerprints after a clean `npm ci --prefix apps/mobile`;
 a warmed dependency tree can produce different hashes from the store/CI install.
 
 Workers AI's free daily neuron allowance is insufficient for continuous voice.
-At HTTP 429/code 4006, Flux and Aura need a quota reset or a Workers Paid plan.
+At HTTP 429/code 4006, the voice bar displays the daily-limit message and
+mutes the microphone; its pressed mic remains available to end the call. Flux
+and Aura need a quota reset or a Workers Paid plan to resume.
 Kokoro and Fish do not consume that allowance for TTS; all providers still use
 Flux for STT. Billing changes remain an owner decision.
 
@@ -85,11 +90,19 @@ Captured on 2026-10-13, three live Flux→Luna→speech turns per comparison:
 | Local LiveKit / Aura-2 | 1870, 911, 930 | 930 ms |
 | Local LiveKit / pinned Kokoro | 4092, 3866, 1313 | 3866 ms |
 | Fly 256 MB LiveKit / Aura-2 | 1217, 1042, 1547 | 1217 ms |
+| Local LiveKit / Fish S2.1 Pro free | 1660, 1347, 1446 | 1446 ms |
 
 These are three-sample server measurements, not phone speaker measurements.
+Fish used the same post-end-of-turn path with injected Flux EndOfTurn events,
+because the real Flux endpoint still returned its exhausted daily quota. Its
+actual Luna generation, licensed library voices, PCM synthesis and RTC playback
+were live. The Fish full-flow proof also claimed an ordinary agent command,
+created the greeting file and spoke its authenticated report to both humans.
 Captured artifacts: [Aura-2](voice-mode-proof/aura-2.json),
 [Kokoro](voice-mode-proof/kokoro-deepinfra.json),
-[Fly transport](voice-mode-proof/fly-256mb.json), and
+[Fly transport](voice-mode-proof/fly-256mb.json),
+[Fish full flow](voice-mode-proof/fish-s2-1-pro.json),
+[Fish comparison](voice-mode-proof/fish-s2-1-pro-compare.json), and
 [the earlier browser voice-bar capture](voice-mode-proof/room-voice-bar.png).
 Both humans received actual audio; named targeting changed Ruby to Sol without
 waking a real worker for conversation. External work was claimed, a file was
@@ -98,11 +111,12 @@ the 56 px voice bar, long press and mic exit. Mock acceptance is the approved
 pass 08 board; the earlier browser capture used a minimal source-component
 fixture, whose font-loading issue was corrected in the proof server.
 
-**Pending by firstmate's delivery instruction:** Fish live proof (key pending),
-real-phone first-audible-word latency, and the final phone comparison with the
+**Pending by firstmate's delivery instruction:** real-phone first-audible-word
+latency and the final phone comparison with the
 approved frames. Cloudflare's exhausted free quota prevents a fresh live Flux
 rerun tonight. Kokoro showed transient playback failures during the earlier
-comparison and did not meet the target latency. Do not treat the table as an
+comparison; Kokoro and Fish did not meet the under-one-second target in these
+server samples. Do not treat the table as an
 under-one-second phone acceptance claim.
 
 Regression coverage: `voice-providers.test.ts`, `voice-room-runtime.test.ts`,

@@ -1,6 +1,7 @@
 export const VOICE_SCHEMA = `
-ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS voice_provider text NOT NULL DEFAULT 'aura-2'
+ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS voice_provider text NOT NULL DEFAULT 'fish-s2.1-pro'
   CHECK (voice_provider IN ('aura-2','kokoro-deepinfra','fish-s2.1-pro'));
+ALTER TABLE workspaces ALTER COLUMN voice_provider SET DEFAULT 'fish-s2.1-pro';
 CREATE TABLE IF NOT EXISTS voice_calls (
   id uuid PRIMARY KEY,
   room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,

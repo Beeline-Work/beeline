@@ -1206,7 +1206,7 @@ export function BuzzChatSurface({
   );
   const viewerIsAgent = roomSurface?.viewer.identity.kind === 'agent';
   const voice = useVoiceCall(decodedId, Boolean(roomSurface?.viewer.permissions.send && !viewerIsAgent && !isArchived));
-  useEffect(() => { if (voice.error) Modal.alert('Voice mode', voice.error); }, [voice.error]);
+  useEffect(() => { if (voice.error && !voice.quotaExhausted) Modal.alert('Voice mode', voice.error); }, [voice.error, voice.quotaExhausted]);
   // The SERVER's statement of who is reading, so the phone's requester test and
   // the server's own are the same comparison over the same namespace.
   const viewerPubkey = roomSurface?.viewer.identity.pubkey;

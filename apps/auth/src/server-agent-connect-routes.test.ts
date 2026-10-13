@@ -302,6 +302,56 @@ describe('app-authorized agent connect', () => {
     expect(overreach.statusCode).toBe(400);
   });
 
+  it('accepts an OpenCode connect, which supplies its own provider', async () => {
+    state.agentPairingClaim = async () => seeded;
+    const connected = await app.inject({
+      method: 'POST',
+      url: '/auth/agent/connect',
+      headers: { host: alphaTenant.host },
+      payload: { ...payload, harness: 'opencode', model: 'opencode/big-pickle' },
+    });
+    expect(connected.statusCode).toBe(200);
+    expect(connected.json<Record<string, string>>()).toMatchObject({ harness: 'opencode' });
+
+    const overreach = await app.inject({
+      method: 'POST',
+      url: '/auth/agent/connect',
+      headers: { host: alphaTenant.host },
+      payload: { ...payload, harness: 'opencode', provider: 'openrouter', model: 'x' },
+    });
+    expect(overreach.statusCode).toBe(400);
+    expect(overreach.json<Record<string, string>>()).toMatchObject({ error: 'invalid_provider' });
+
+    const started = await app.inject({
+      method: 'POST',
+      url: '/auth/device/connect',
+      headers: { host: alphaTenant.host },
+      payload: {
+        harness: 'opencode',
+        model: 'opencode/big-pickle',
+        soul: 'Warm, direct, and deeply practical.',
+        agent_name: 'Piper',
+        code_challenge: 'a'.repeat(64),
+      },
+    });
+    expect(started.statusCode).toBe(201);
+
+    const deviceOverreach = await app.inject({
+      method: 'POST',
+      url: '/auth/device/connect',
+      headers: { host: alphaTenant.host },
+      payload: {
+        harness: 'opencode',
+        provider: 'openrouter',
+        model: 'opencode/big-pickle',
+        soul: 'Warm, direct, and deeply practical.',
+        agent_name: 'Piper',
+        code_challenge: 'a'.repeat(64),
+      },
+    });
+    expect(deviceOverreach.statusCode).toBe(400);
+  });
+
   it('passes the event kinds the CLI subscribed to into the finish call', async () => {
     let finished: Parameters<typeof state.agentConnectFinish>[0] | undefined;
     state.agentConnectFinish = async (input) => {

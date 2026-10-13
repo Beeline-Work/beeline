@@ -383,7 +383,7 @@ export function ConversationComposer({
   };
   const visibleAttachments = attachments.slice(0, 3);
   const hiddenAttachmentCount = Math.max(0, attachments.length - visibleAttachments.length);
-  if (voice?.call || voice?.connecting) return <VoiceBar voice={voice} />;
+  const conversationActive = Boolean(voice?.call || voice?.connecting);
   return (
     <View
       ref={containerRef as React.Ref<View>}
@@ -477,7 +477,9 @@ export function ConversationComposer({
           )}
         </View>
       )}
-      <View
+      {conversationActive && voice ? (
+        <VoiceBar voice={voice} onAttach={onAttach} attachDisabled={attachDisabled} testIDPrefix={testIDPrefix} />
+      ) : <View
         style={[styles.inputRow, viewerPill && styles.viewerPillRow, multiline && styles.composerMultiline]}
         testID={`${testIDPrefix}-composer-input-row`}
       >
@@ -784,6 +786,7 @@ export function ConversationComposer({
           </Pressable>
         ) : null}
       </View>
+      }
       {statusLine ? (
         <TouchableOpacity
           accessibilityLabel={statusLine}

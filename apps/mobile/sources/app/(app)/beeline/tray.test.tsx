@@ -1538,21 +1538,29 @@ describe('Tray section CLEAR', () => {
   });
 });
 
-it.skipIf(!existsSync(CHROME))('R12a Demonstrated: Chrome at 760px paints OPEN → in a compact Tray', async () => {
+it.skipIf(!existsSync(CHROME)).each([false, true])('R12a Demonstrated: Chrome at 760px paints OPEN → in a compact Tray (crossSecond=%s)', async (crossSecond) => {
   const mobile = process.cwd();
   const { result, status, stderr } = await runBrowserProof({
     entry: path.join(mobile, 'scripts/tray-empty-proof.tsx'), mobile, width: 760, query: '?surface=phone&mode=row',
+    // Reproduce a second boundary between the screen's read clock and the DTO.
+    // Leave timers and performance.now untouched; only relative ages use this clock.
+    head: '<script>Date.now = () => 1700000000999;</script>',
     shims: {
       ...webProofShims(mobile),
       'expo-router': `import React from 'react';
         export const useFocusEffect = (effect) => React.useEffect(effect, [effect]);
         export const useLocalSearchParams = () => ({ communityId: 'workspace-1' });
         export const useRouter = () => ({ back: () => undefined, push: () => undefined });`,
-      '@/sync/transport/monolith-operation': `export const monolithPhoneOperation = async (name) => name === 'readTray' ? { needs: { items: [] }, saved: { bookmarks: [{
+      // Anchor the saved DTO before rendering, as the real server does. Sampling
+      // it inside the read can make it newer than Tray's already sampled `now`.
+      '@/sync/transport/monolith-operation': `const now = Math.floor(Date.now() / 1000);
+      export const monolithPhoneOperation = async (name) => {
+        if (${crossSecond}) Date.now = () => 1700000001000;
+        return name === 'readTray' ? { needs: { items: [] }, saved: { bookmarks: [{
         messageId: 'msg-1', workspaceId: 'workspace-1', roomId: 'room-1', roomName: 'Room', roomKind: 'room',
-        messageCreatedAt: Math.floor(Date.now()/1000)-7200, bookmarkedAt: Math.floor(Date.now()/1000)-120,
+        messageCreatedAt: now - 7200, bookmarkedAt: now - 120,
         available: true, author: { name: 'Avery' }, text: 'Bookmarked line'
-      }] } } : undefined;`,
+      }] } } : undefined; };`,
       '@/sync/transport/room-view-client': 'export class RoomViewClient {}',
       '@/push/push-room-prefetch': 'export const prefetchPushRoom = () => undefined;',
       '@/sync/transport/live-connection':

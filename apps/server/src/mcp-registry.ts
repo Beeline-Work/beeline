@@ -11,6 +11,7 @@ function record(value: unknown): Record<string, unknown> | undefined {
     : undefined;
 }
 
+
 function text(value: unknown, max = 500): string | undefined {
   if (typeof value !== 'string') return undefined;
   const trimmed = value.trim();
@@ -155,6 +156,31 @@ export class McpRegistryClient {
     return value;
   }
 
+  /** Build a local discovery snapshot; search calls never paginate the provider. */
+  async catalog(): Promise<readonly RegistryMcpManifest[]> {
+    const entries = new Map<string, RegistryMcpManifest>();
+    const cursors = new Set<string>();
+    let cursor: string | undefined;
+    for (let page = 0; page < 200; page++) {
+      const url = new URL('/v0.1/servers', this.origin);
+      url.search = new URLSearchParams({ version: 'latest', limit: '100', ...(cursor ? { cursor } : {}) }).toString();
+      const response = await this.transport(url, { signal: AbortSignal.timeout(10_000) });
+      if (!response.ok) throw new Error('MCP Registry catalog is unavailable');
+      const body = record(await boundedJson(response));
+      if (!Array.isArray(body?.servers)) throw new Error('MCP Registry catalog is invalid');
+      for (const row of body.servers) {
+        const manifest = normalizeRegistryServer(row);
+        if (manifest) entries.set(manifest.name, manifest);
+      }
+      const next = record(body.metadata)?.nextCursor;
+      if (typeof next !== 'string' || !next) return [...entries.values()];
+      if (cursors.has(next)) throw new Error('MCP Registry catalog cursor repeated');
+      cursors.add(next);
+      cursor = next;
+    }
+    throw new Error('MCP Registry catalog exceeded its page budget');
+  }
+
   /** Exact selections are deliberately never served from the search cache. */
   async exact(name: string, version: string): Promise<RegistryMcpManifest | undefined> {
     const serverName = name.trim();
@@ -174,3 +200,5 @@ export class McpRegistryClient {
       : undefined;
   }
 }
+
+export const DEFAULT_MCP_REGISTRY_CLIENT = new McpRegistryClient();

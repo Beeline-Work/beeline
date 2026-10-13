@@ -24,6 +24,14 @@ function deps(
 }
 
 describe('beeline-agent connectors_status + offer_connector (R5)', () => {
+  it('pauses a connect call on its committed sign-in or approval card, including MCP text content', () => {
+    for (const status of ['needs_sign_in', 'needs_approval']) {
+      const text = JSON.stringify({ status, app: 'Link' });
+      expect(pendingGrantToolCall({ title: 'beeline-agent.connect', content: text })).toBe(true);
+      expect(pendingGrantToolCall({ title: 'beeline-agent.connect', content: { content: [{ type: 'text', text }] } })).toBe(true);
+    }
+    expect(pendingGrantToolCall({ title: 'beeline-agent.connect', content: '{"status":"ready"}' })).toBe(false);
+  });
   it('uses this machine broker report when no Squire route is granted', async () => {
     vi.stubEnv('BEELINE_DAEMON_ROOM_ID', 'room-1');
     vi.stubEnv('BEELINE_SQUIRE_RELAY_URL', '');
@@ -44,7 +52,8 @@ describe('beeline-agent connectors_status + offer_connector (R5)', () => {
       const names = agentToolsFor(true, directMessage).map((tool) => tool.name);
       expect(names).toContain('connectors_status');
       expect(names).toContain('workbench_status');
-      expect(names).toContain('offer_connector');
+      expect(names).toContain('connect');
+      expect(names).not.toContain('offer_connector');
     }
     const corner = agentToolsFor(true, false, true).map((tool) => tool.name);
     expect(corner).toContain('connectors_status');
@@ -59,24 +68,15 @@ describe('beeline-agent connectors_status + offer_connector (R5)', () => {
     expect(tool.description).toContain('Free to call; it changes nothing');
   });
 
-  it('offer_connector accepts only offerable kinds, the wallet included', () => {
-    const tool = agentToolsFor(true, false).find((entry) => entry.name === 'offer_connector')!;
-    const kinds = (tool.inputSchema.properties as { connectorType: { enum: string[] } }).connectorType
-      .enum;
-    expect(kinds).toContain('trusty-squire');
-    expect(kinds).not.toContain('google-gmail');
-    expect(kinds).toContain('wallet');
-    expect(kinds).toContain('tailscale');
-  });
-
-  it('describes the offer as a paused turn on one addressed card, research-first, never authority', () => {
-    const tool = agentToolsFor(true, false).find((entry) => entry.name === 'offer_connector')!;
-    expect(tool.description).toContain('ONE affirmative action');
-    expect(tool.description).toContain('Only that person or a Workspace admin can accept');
-    expect(tool.description).toContain('The wallet is the exception: only that person can accept');
-    expect(tool.description).toContain('Your turn pauses on the card');
-    expect(tool.description).toContain('research it first and say so in your reply BEFORE calling this');
-    expect(tool.description).toContain('This is setup, not authority');
+  it('connect exposes service and machine flags while legacy offer calls stay hidden', () => {
+    const names = agentToolsFor(true, false).map(tool => tool.name);
+    expect(names).not.toContain('offer_connector');
+    expect(names).not.toContain('connect_app');
+    const tool = agentToolsFor(true, false).find(entry => entry.name === 'connect')!;
+    expect(tool.inputSchema.required).toEqual(['service', 'reason']);
+    expect(tool.inputSchema.properties).toHaveProperty('switchGoogleAccount');
+    expect(tool.inputSchema.properties).toHaveProperty('reconnect');
+    expect(tool.inputSchema.properties).toHaveProperty('noApi');
   });
 
   it('workbench_status renders the catalog, the paired state, and connections by name only', async () => {
@@ -133,9 +133,9 @@ describe('beeline-agent connectors_status + offer_connector (R5)', () => {
       '- trusty-squire (Trusty Squire): not added. A credential vault.',
     );
     expect(text).toContain('- google-gmail (Gmail): connected on otter-laptop (your machine). Mail.');
-    expect(text).toContain('- wallet (Wallet): not added — added only from the Connectors page.');
+    expect(text).toContain('- wallet (Wallet): not added — call connect.');
     expect(text).toContain(
-      '- tailscale (Tailscale): not added — you may offer it with offer_connector. Network.',
+      '- tailscale (Tailscale): not added — call connect. Network.',
     );
     expect(text).toContain('- 1inch API key (1inch) via trusty-squire');
     // Names only: nothing in the view carries a value, and the text prints nothing but names.

@@ -103,11 +103,26 @@ describe('server readiness', () => {
     ['a non-provider sign-in link', 'https://evil.test/link/x', 'https://web.beeline.test'],
     ['a plain-http sign-in link', 'http://backend.composio.dev/link/x', 'https://web.beeline.test'],
   ])('refuses to start web sign-in with %s', async (_label, authorization, returnOrigin) => {
+    const query = vi.fn(async () => ({ rows: [], rowCount: 0 }));
     const response = await get(`/v1/apps/oauth/start?${new URLSearchParams({ authorization, return: returnOrigin })}`,
-      { query: vi.fn(), transaction: vi.fn() }, { webAppOrigins: ['https://web.beeline.test'] }, { redirect: 'manual' });
+      { query, transaction: vi.fn() }, { webAppOrigins: ['https://web.beeline.test'] }, { redirect: 'manual' });
     expect(response.status).toBe(400);
     expect(response.headers.get('location')).toBeNull();
     expect(response.headers.get('set-cookie')).toBeNull();
+    if (_label !== 'a non-provider sign-in link') expect(query).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['https://signin.example.test/start', 302, true],
+    ['http://signin.example.test/start', 400, false],
+    ['https://user:password@signin.example.test/start', 400, false],
+  ])('validates a stored machine sign-in URL before redirecting: %s', async (authorization, status, reads) => {
+    const query = vi.fn(async () => ({ rows: [{ '?column?': 1 }], rowCount: 1 }));
+    const response = await get(`/v1/apps/oauth/start?${new URLSearchParams({ authorization, return: 'https://web.beeline.test' })}`,
+      { query, transaction: vi.fn() }, { webAppOrigins: ['https://web.beeline.test'] }, { redirect: 'manual' });
+    expect(response.status).toBe(status);
+    expect(response.headers.get('location')).toBe(status === 302 ? authorization : null);
+    expect(query.mock.calls.length > 0).toBe(reads);
   });
 
   it('keeps an untrusted verifier session encoded in the return link', async () => {

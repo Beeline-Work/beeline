@@ -2700,6 +2700,13 @@ ALTER TABLE workspace_apps ADD CONSTRAINT workspace_apps_route_check
   CHECK (route IN ('workbench','registry-mcp','composio','squire-api','squire-browser'));
 CREATE INDEX IF NOT EXISTS workspace_apps_connector_idx ON workspace_apps(connector_id);
 CREATE INDEX IF NOT EXISTS workspace_apps_workspace_idx ON workspace_apps(workspace_id);
+-- Retire the reported pending Link fallback; real vaulted connections are preserved.
+UPDATE workspace_apps app SET state='disconnected',updated_at=now()
+WHERE app.id='c3dc5902-2009-45b3-96cb-a69ccf7a322a'::uuid
+  AND app.app_key='stripelinklinkcom' AND app.transport='squire-api' AND app.state='active'
+  AND NOT EXISTS (SELECT 1 FROM workspace_connections connection
+    WHERE connection.owner_identity_id=app.owner_identity_id
+      AND connection.service='stripelinklinkcom' AND connection.state='active');
 ALTER TABLE agent_grants ADD COLUMN IF NOT EXISTS app_id uuid REFERENCES workspace_apps(id) ON DELETE CASCADE;
 CREATE INDEX IF NOT EXISTS agent_grants_app_idx ON agent_grants(app_id,agent_id,status);
 CREATE TABLE IF NOT EXISTS workspace_app_routes (

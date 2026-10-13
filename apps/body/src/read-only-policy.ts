@@ -270,6 +270,8 @@ const AGENT_SURFACE_TOOL_NAMES = [
   'scratch_status',
   'fetch_image',
   'connect_app',
+  'connect',
+  'find_connectors',
 ] as const;
 
 /**

@@ -39,6 +39,7 @@
     "prove:corner-brief-acceptance": "node scripts/prove-corner-brief-acceptance.mjs",
     "review:exact-head": "node scripts/review-exact-head.mjs",
     "prove:fanout-fixes": "node scripts/prove-fanout-fixes.mjs",
+    "prove:connect-flow": "npm run build && node --import tsx scripts/prove-connect-flow.mjs",
     "prove:tailscale-connector": "node --import tsx scripts/prove-tailscale-connector.ts",
     "prove:connector-adapters": "node --import tsx scripts/prove-connector-adapters.ts",
     "prove:squire-login-wall": "npm run build -w @beeline/api-contract && node --import tsx scripts/prove-squire-login-wall.ts",

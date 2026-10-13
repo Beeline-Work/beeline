@@ -1,5 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import type { SqlDatabase } from './database.js';
+import { settleFirstPartySignIn } from './first-party-integrations.js';
 
 type Grant = { accessToken: string; refreshToken: string; expiresAt: number; scopes: string[] };
 type Token = { access_token?: string; refresh_token?: string; expires_in?: number; scope?: string };
@@ -41,11 +42,11 @@ export class LinkAgentWallet {
     return JSON.parse(Buffer.concat([decipher.update(bytes.subarray(28)), decipher.final()]).toString()) as Grant;
   }
 
-  async begin(ownerId: string): Promise<string> {
+  async begin(ownerId: string, database = this.database): Promise<string> {
     const state = randomBytes(32).toString('base64url');
     const verifier = randomBytes(32).toString('base64url');
     const challenge = createHash('sha256').update(verifier).digest('base64url');
-    await this.database.query(
+    await database.query(
       `INSERT INTO link_oauth_accounts(owner_identity_id,state,code_verifier,attempt_expires_at,ineligible)
        VALUES ($1,$2,$3,now()+interval '10 minutes',false)
        ON CONFLICT (owner_identity_id) DO UPDATE SET state=EXCLUDED.state,
@@ -58,8 +59,8 @@ export class LinkAgentWallet {
     return url.toString();
   }
 
-  async status(ownerId: string): Promise<{ connected: boolean; pending: boolean; ineligible: boolean }> {
-    const row = (await this.database.query<{ sealed_grant: string | null; pending: boolean;
+  async status(ownerId: string, database = this.database): Promise<{ connected: boolean; pending: boolean; ineligible: boolean }> {
+    const row = (await database.query<{ sealed_grant: string | null; pending: boolean;
       ineligible: boolean }>(`SELECT sealed_grant,
          (state IS NOT NULL AND attempt_expires_at>now()) pending,ineligible FROM link_oauth_accounts
        WHERE owner_identity_id=$1`, [ownerId])).rows[0];
@@ -110,9 +111,12 @@ export class LinkAgentWallet {
         ineligible = Boolean(country && country !== 'US' && country !== 'CA');
       }
     }
-    await this.database.query(`UPDATE link_oauth_accounts SET sealed_grant=$2,
-      granted_scopes=$3::text[],ineligible=$4,updated_at=now() WHERE owner_identity_id=$1`,
-      [claimed.owner_identity_id, this.seal(grant), grant.scopes, ineligible]);
+    await this.database.transaction(async database => {
+      await database.query(`UPDATE link_oauth_accounts SET sealed_grant=$2,
+        granted_scopes=$3::text[],ineligible=$4,updated_at=now() WHERE owner_identity_id=$1`,
+        [claimed.owner_identity_id, this.seal(grant), grant.scopes, ineligible]);
+      await settleFirstPartySignIn(database, claimed.owner_identity_id, 'link');
+    });
     return { completed: true, ownerId: claimed.owner_identity_id };
   }
 

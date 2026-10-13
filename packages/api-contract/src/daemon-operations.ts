@@ -554,6 +554,14 @@ export type DaemonOperationMap = {
   connectMcpServer: Operation<ConnectMcpServerInput, ConnectMcpServerResult>;
   /** The one front door: connect an app by the route the server resolves. */
   connectApp: Operation<ConnectAppInput, ConnectAppResult>;
+  connect: Operation<ConnectInput, ConnectResult>;
+  findConnectors: Operation<RoomInput & { readonly query: string }, {
+    readonly matches: readonly ConnectorSearchMatch[]; readonly unavailableSources: readonly string[];
+  }>;
+  completeAppConnectionJob: Operation<AgentInput & {
+    readonly appId: string; readonly jobId: string;
+    readonly outcome: AppConnectionJobOutcome;
+  }, WriteResult>;
   /** Discover server-mediated tools for one connected app; no credentials are returned. */
   listAppTools: Operation<TurnOutputAuthority & AgentInput & RoomInput & { readonly appId: string;
     readonly query?: string }, { readonly tools: readonly {
@@ -1084,6 +1092,39 @@ export type ConnectAppResult = {
   /** Server-owned next step, in one or two sentences. */
   readonly next: string;
 };
+export type ConnectInput = Omit<ConnectAppInput, 'app'> & {
+  readonly service: string;
+  readonly switchGoogleAccount?: boolean;
+};
+export type ConnectorSearchMatch = {
+  readonly key: string; readonly service: string; readonly name: string; readonly website?: string;
+  readonly source: 'machine' | 'first-party' | 'registry' | 'composio' | 'squire';
+  readonly status: 'connected' | 'not-connected' | 'broken';
+};
+export type ConnectResult = Omit<ConnectAppResult, 'status'> & {
+  readonly status: 'ready' | 'needs_sign_in' | 'needs_approval' | 'error' | 'unavailable';
+  readonly approvalUrl?: string;
+  readonly grantId?: string;
+};
+export type AppConnectionJobOutcome = {
+  readonly decision?: { readonly approvalId: string; readonly status: 'approved' | 'denied' | 'expired' };
+} & (
+  | { readonly status: 'ready' }
+  | { readonly status: 'approval'; readonly approvalUrl: string; readonly approvalId?: string;
+      readonly sessionId: string; readonly expiresAt?: number }
+  | { readonly status: 'error'; readonly reason: string });
+export type AppConnectionJob = {
+  readonly appId: string;
+  readonly jobId: string;
+  readonly service: string;
+  readonly name: string;
+  readonly url?: string;
+  readonly noApi: boolean;
+  readonly roomId: string;
+  readonly commandId: string;
+  readonly state: 'queued' | 'running' | 'approval' | 'ready' | 'error';
+  readonly outcome?: AppConnectionJobOutcome;
+};
 export type AgentPresenceResult = {
   readonly status: 'online' | 'offline' | 'dormant';
   readonly observedAt?: number;
@@ -1597,6 +1638,12 @@ export type AgentWorkbenchView = {
     readonly websiteUrl?: string;
     readonly onThisMachine: boolean;
   }[];
+  /** First-party integrations expose only connection state, never credentials. */
+  readonly firstPartyIntegrations?: readonly {
+    readonly key: string;
+    readonly name: string;
+    readonly status: 'connected' | 'not-connected' | 'broken';
+  }[];
   /** The owner's apps (`connect_app`): one entry per app, whatever serves it. */
   readonly apps?: readonly {
     readonly appId: string;
@@ -1847,6 +1894,7 @@ export type ConnectorKind =
 
 /** The helper's work queue (server → helper delivery). */
 export type ConnectorAssignment =
+  | { readonly kind: 'connect-app'; readonly connectorId: string; readonly job: AppConnectionJob }
   | {
       readonly kind: 'install';
       readonly connectorId: string;

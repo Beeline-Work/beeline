@@ -2975,14 +2975,17 @@ describe('zero checks with no reviewer wait for the commander', () => {
       generationId: 'g1', text: 'Widget complete' }, A);
     expect(await currentState(cornerId)).toBe('review');
     expect((await cards(cornerId)).at(-1)).toMatchObject({ outcome: 'no_reviewer' });
-    const reportText = 'needs-decision: this zero-check pull request is ready to land pending your yes';
-    if (kind === 'agent') {
-      expect((await commands(B, R)).filter(c => c.reason === 'report' && c.source.body.startsWith(reportText)))
-        .toHaveLength(1);
-    } else {
-      expect((await db.query<{ text: string }>(`SELECT text FROM messages WHERE room_id=$1`, [R])).rows
-        .some(row => row.text.startsWith(reportText))).toBe(true);
-    }
+    const notices = (await commands(A, cornerId)).filter(c => c.reason === 'corner_review_needed');
+    expect(notices).toHaveLength(1);
+    expect(notices[0]).toMatchObject({ private: true, source: {
+      body: 'This pull request has no checks and no reviewer. Landing needs your commander\'s yes. Ask your commander using your normal report tool.',
+    } });
+    expect((await commands(B, R)).filter(c => c.reason === 'report' && c.source.body.includes('pending your yes'))).toHaveLength(0);
+    expect((await db.query(`SELECT 1 FROM messages WHERE text LIKE '%ready to land pending your yes%'
+      OR text LIKE '%Landing needs your commander%'`)).rowCount).toBe(0);
+    // Reconciliation replays the same head without another notice or a person-facing report.
+    await advanceCorner(db, cornerId, { kind: 'checks', result: 'passing', sourceMessageId: cornerId });
+    expect((await commands(A, cornerId)).filter(c => c.reason === 'corner_review_needed')).toHaveLength(1);
     githubApp.readCommitCheckRollup.mockResolvedValue({ state: 'pending', total: 0, failing: [], checks: [] });
     try {
       expect(await github.landCorner(cornerId)).toBe(false);

@@ -378,7 +378,8 @@ async function serveMachineHelper(
         !(fault instanceof DaemonApiError && (fault.status === 401 || fault.status === 403))
       )
         return;
-      if (slot && fault instanceof DaemonApiError && fault.status === 400 && !fault.retryable) {
+      if (slot && fault instanceof DaemonApiError && !fault.retryable &&
+          fault.status >= 400 && fault.status < 500 && fault.status !== 401 && fault.status !== 403) {
         setState(slot, 'needs-config', status);
         return;
       }
@@ -387,11 +388,9 @@ async function serveMachineHelper(
           slot,
           fault instanceof DaemonApiError && (fault.status === 401 || fault.status === 403)
             ? 'needs-auth'
-            : /^(?:monolith.*degraded|degraded)(?:[:; ]|$)/.test(status)
-              ? 'restarting'
-              : slot.established
-                ? 'serving'
-                : slot.state,
+            : slot.established
+              ? 'serving'
+              : slot.state,
           fault instanceof DaemonApiError && (fault.status === 401 || fault.status === 403)
             ? `needs reconnect: ${status}`
             : status,
@@ -459,6 +458,7 @@ async function serveMachineHelper(
           break; // Only this refused revision waits; an explicit start/config event resumes it.
         }
         if (
+          (error instanceof DaemonApiError && !error.retryable && error.status >= 400 && error.status < 500) ||
           error instanceof SyntaxError ||
           /invalid agent runtime|stored identity public key mismatch/.test(slot.status)
         ) {

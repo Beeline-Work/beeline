@@ -40,11 +40,12 @@ export async function withTurnReceiptHeartbeat<T>(
   onAuthorityLost?: () => void,
 ): Promise<T> {
   let tail = Promise.resolve();
+  let refused = false;
   const timer = setInterval(() => {
     tail = tail
       .catch(() => undefined)
       .then(() =>
-        api.execute('postAgentTurnReceipt', {
+        refused ? undefined : api.execute('postAgentTurnReceipt', {
           ...receipt,
           status: 'working',
           heartbeat: true,
@@ -52,6 +53,10 @@ export async function withTurnReceiptHeartbeat<T>(
       )
       .then(() => undefined)
       .catch((error: unknown) => {
+        if (error instanceof DaemonApiError && !error.retryable && error.status >= 400 && error.status < 500) {
+          refused = true;
+          clearInterval(timer);
+        }
         onHeartbeatError(error);
         if (isTurnAuthorityLostError(error)) onAuthorityLost?.();
       });

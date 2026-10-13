@@ -501,18 +501,23 @@ describe('a helper joining a corner it did not open', () => {
     await coordinator.shutdown();
   });
 
-  it.each([400, 401, 403, 404, 409].flatMap(status =>
+  it.each([400, 401, 403, 404, 409, 410].flatMap(status =>
     ['restore', 'token'].map(source => ({ status, source }))))(
     'parks a refused $status $source cleanup even if discovery still lists the corner', async ({ status, source }) => {
     let now = 10_000;
     const { remote } = await remoteWithCornerBranch();
     const supervisorRoot = await mkdtemp(resolve(tmpdir(), 'beeline-corner-removed-'));
     roots.push(supervisorRoot);
-    await materializeCornerWorktree({
+    const refusedWorktree = await materializeCornerWorktree({
       cornerId: 'corner-removed', remote, targetBranch: 'main', featureBranch: FEATURE,
       token: 'unused', supervisorRoot,
       committer: { name: 'Helper', publicKey: 'a'.repeat(64) },
     });
+    const excludes = resolve(supervisorRoot, 'generated-ignore');
+    await writeFile(excludes, 'node_modules/\n');
+    await git(refusedWorktree.path, 'config', 'core.excludesFile', excludes);
+    await mkdir(resolve(refusedWorktree.path, 'node_modules'), { recursive: true });
+    await writeFile(resolve(refusedWorktree.path, 'node_modules', 'generated'), 'prune me');
     const identity = identityFromKey('11'.repeat(32), 'Bee');
     const execute = vi.fn(async (name: string) => {
       if (source === 'token') {
@@ -545,6 +550,7 @@ describe('a helper joining a corner it did not open', () => {
       await recovery.sweepArchivedCornerWorktrees(new Map());
       const baseline = execute.mock.calls.length;
       expect(baseline).toBe(source === 'restore' ? 1 : 4);
+      await expect(access(resolve(refusedWorktree.path, 'node_modules'))).rejects.toMatchObject({ code: 'ENOENT' });
       now += 5 * 60_000;
       await recovery.sweepArchivedCornerWorktrees(new Map());
       await recovery.retryPendingCornerReaps(new Set());
@@ -554,9 +560,56 @@ describe('a helper joining a corner it did not open', () => {
       ]));
       await recovery.retryPendingCornerReaps(new Set());
       expect(execute).toHaveBeenCalledTimes(baseline);
+      // Close callbacks must honor the same refusal as reconciliation.
+      await (coordinator as unknown as { reapCornerWorktree(worktree: unknown): Promise<void> })
+        .reapCornerWorktree({ ...refusedWorktree, cornerId: 'corner-removed', branch: FEATURE,
+          parentRoomId: 'room-parent', token: '' });
+      expect(execute).toHaveBeenCalledTimes(baseline);
+      // Reconstruct the coordinator, as a helper restart does: no lost refusal.
+      await coordinator.shutdown();
+      const restarted = new RoomRuntimeCoordinator(
+        (coordinator as unknown as { runtime: AgentRuntimeRecord }).runtime,
+        resolve(supervisorRoot, 'agent.json'),
+        { workspaceRoot: supervisorRoot } as never,
+        { daemonApi: { execute } as unknown as DaemonApiClient, now: () => now },
+      );
+      try {
+        await (restarted as unknown as typeof recovery).sweepArchivedCornerWorktrees(new Map());
+        expect(execute).toHaveBeenCalledTimes(baseline);
+        await expect(access(resolve(supervisorRoot, 'beeline', 'corners', 'corner-removed', 'opener.txt')))
+          .resolves.toBeUndefined();
+      } finally { await restarted.shutdown(); }
     } finally {
       errors.mockRestore();
       await coordinator.shutdown();
+    }
+  });
+
+  it('persists scratch-only cleanup refusals and preserves the files across helper starts', async () => {
+    const supervisorRoot = await mkdtemp(resolve(tmpdir(), 'beeline-scratch-refused-'));
+    roots.push(supervisorRoot);
+    const scratch = resolve(supervisorRoot, 'rooms', 'corner-scratch-refused', 'scratch');
+    await mkdir(scratch, { recursive: true });
+    await writeFile(resolve(scratch, 'unpublished.txt'), 'keep me');
+    const identity = identityFromKey('11'.repeat(32), 'Bee');
+    const execute = vi.fn(async () => { throw new DaemonApiError('daemon room access denied', 403, false); });
+    const runtime = {
+      agent: { name: 'Bee', publicKey: identity.publicKey,
+        secretKeyHex: Buffer.from(identity.secretKey).toString('hex') },
+      rooms: [], communityId: 'workspace', supervisorRoot,
+      transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'token' },
+    } as unknown as AgentRuntimeRecord;
+    for (let start = 0; start < 2; start++) {
+      const coordinator = new RoomRuntimeCoordinator(runtime, resolve(supervisorRoot, 'agent.json'),
+        { workspaceRoot: supervisorRoot } as never,
+        { daemonApi: { execute } as unknown as DaemonApiClient });
+      try {
+        const cleanup = coordinator as unknown as { cleanupArchivedCornerLocalState(id: string): Promise<boolean> };
+        expect(await cleanup.cleanupArchivedCornerLocalState('corner-scratch-refused')).toBe(false);
+        expect(await cleanup.cleanupArchivedCornerLocalState('corner-scratch-refused')).toBe(false);
+        expect(execute).toHaveBeenCalledOnce();
+        expect(await readFile(resolve(scratch, 'unpublished.txt'), 'utf8')).toBe('keep me');
+      } finally { await coordinator.shutdown(); }
     }
   });
 

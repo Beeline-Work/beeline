@@ -91,6 +91,21 @@ describe('turn receipt heartbeat', () => {
     await expect(running).resolves.toBe('dropped');
   });
 
+  it.each([400, 401, 403, 404, 409, 410])('stops refused %s heartbeats even while the task stays running', async (status) => {
+    vi.useFakeTimers();
+    const task = deferred<void>();
+    const execute = vi.fn(async () => { throw new DaemonApiError('refused', status, false); });
+    const running = withTurnReceiptHeartbeat(
+      { execute } as unknown as Pick<DaemonApiClient, 'execute'>,
+      { agentId: 'agent', roomId: 'room', requestId: 'request' },
+      () => task.promise, vi.fn(),
+    );
+    await vi.advanceTimersByTimeAsync(TURN_RECEIPT_HEARTBEAT_MS * 5);
+    expect(execute).toHaveBeenCalledOnce();
+    task.resolve();
+    await running;
+  });
+
   it('never calls onAuthorityLost for a transient heartbeat failure', async () => {
     vi.useFakeTimers();
     const task = deferred<string>();

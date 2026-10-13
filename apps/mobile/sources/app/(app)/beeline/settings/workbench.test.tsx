@@ -126,7 +126,8 @@ vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
 });
 
 import WorkbenchScreen from './workbench';
-import { WALLET_GRANT_ENDED_MESSAGE } from '@/buzz/workbench';
+import { WALLET_GRANT_ENDED_MESSAGE, type WorkbenchView } from '@/buzz/workbench';
+import { workbenchSummary } from '@/buzz/connectors-model';
 import { setWorkbenchSource } from '@/buzz/workbench-source';
 import { MockWorkbenchSource } from '@/buzz/workbench-source.mock';
 import { setWalletSource } from '@/buzz/wallet-source';
@@ -275,6 +276,39 @@ describe('Connectors settings screen', () => {
       .find((row: any) => row.props.title === 'Trusty Squire · squire');
     await vi.waitFor(() => expect(squire()?.props.value).toBe('Connected'));
     expect(squire()?.props.statusGlyph).toBe('live');
+  });
+
+  it('states the Settings total as exactly the rows under Your connections', async () => {
+    const key = (ref: string, service: string) => ({ connectionId: ref, ref, name: 'default', service,
+      hosts: [], state: 'active' as const, ownerId: 'human-dani' });
+    const tool = (id: string, name: string) => ({ id, name, description: '', available: true,
+      status: 'connected' as const });
+    const view: WorkbenchView = {
+      helpers: [
+        { id: 'machine-squire', name: 'squire', online: true, squire: { status: 'connected', reportedAt: 1 } },
+        { id: 'machine-other', name: 'other', online: false },
+      ],
+      // Tiktok-app and Cal.com hold two keys each and draw one row each.
+      connections: [key('k1', 'tiktok-app'), key('k2', 'tiktok-app'), key('k3', 'kaggle'),
+        key('k4', 'cal.com'), key('k5', 'cal.com'), key('k6', 'craigslist')],
+      apps: [
+        { id: 'app-linear', key: 'linear', name: 'Linear', transport: 'registry-mcp', status: 'connected', useCount: 0 },
+        { id: 'app-slack', key: 'slack', name: 'Slack', transport: 'composio', status: 'connecting', useCount: 0 },
+      ],
+      connectors: [tool('trusty-squire', 'Trusty Squire'), tool('google-gmail', 'Gmail'),
+        tool('google-calendar', 'Google Calendar'), tool('google-drive', 'Google Drive'),
+        tool('google-youtube', 'YouTube'), tool('tailscale', 'Tailscale'), tool('wallet', 'Wallet')],
+      linkAccount: { connected: true, pending: false, ineligible: false },
+    };
+    const source = new MockWorkbenchSource();
+    source.readWorkbench = async () => view;
+    setWorkbenchSource(source);
+    const renderer = await render();
+    const rows = renderer.root.findByProps({ testID: 'connectors-your-connections' })
+      .findAllByType('SettingsRow');
+    // 2 machines + 4 key services + 2 apps + Google Workspace + Tailscale + wallet + Link.
+    expect(rows).toHaveLength(12);
+    expect(workbenchSummary(view, 'human-dani').value).toBe(`${rows.length} connected`);
   });
 
   it('connects the recommended wallet by creating it and granting delegation', async () => {

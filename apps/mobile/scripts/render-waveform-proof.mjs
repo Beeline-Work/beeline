@@ -16,7 +16,7 @@ import { View } from 'react-native';
 import { DictationWaveform } from '${mobile}/sources/components/buzz/DictationWaveform';
 import { dictationWaveformLevel, voiceWaveformLevel } from '${mobile}/sources/buzz/waveform-level';
 const inputs = [
-  ['Silence', -2, 0], ['Quiet', 12, 0.01], ['Normal', 20, 0.1], ['Loud', 30, 0.562341325],
+  ['Silence', -2, 0], ['Quiet', 2, 0.01], ['Normal', 4, 0.031622777], ['Loud', 7, 0.177827941],
 ];
 createRoot(document.getElementById('root')).render(<main style={{padding:32,color:'#f0f0f3',fontFamily:'sans-serif'}}>
   <h1>Beeline waveform — injected volume proof</h1>

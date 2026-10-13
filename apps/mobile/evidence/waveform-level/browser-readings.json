@@ -5,11 +5,11 @@
   },
   {
     "id": "dictation-Quiet",
-    "height": 5.46875
+    "height": 6.5625
   },
   {
     "id": "dictation-Normal",
-    "height": 11.25
+    "height": 11.140625
   },
   {
     "id": "dictation-Loud",
@@ -21,11 +21,11 @@
   },
   {
     "id": "voice-Quiet",
-    "height": 3.671875
+    "height": 6.5625
   },
   {
     "id": "voice-Normal",
-    "height": 10.703125
+    "height": 11.140625
   },
   {
     "id": "voice-Loud",

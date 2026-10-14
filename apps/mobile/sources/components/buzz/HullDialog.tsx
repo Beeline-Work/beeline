@@ -14,6 +14,7 @@ import {
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { typeRoles } from '@/buzz/groknight';
+import { clearModalNavigationBarScrim } from '@/buzz/android-modal-navigation-bar';
 import { Button, type ButtonProps } from './Button';
 import { HullSurface } from './MonoHull';
 
@@ -267,6 +268,8 @@ const StableHullModal = React.memo(function StableHullModal({
       navigationBarTranslucent
       onDismiss={onDismiss}
       onRequestClose={onRequestClose}
+      // The sheet paints behind the navigation bar; Android's 3-button scrim would hide it.
+      onShow={clearModalNavigationBarScrim}
       statusBarTranslucent
       transparent
       visible={visible}

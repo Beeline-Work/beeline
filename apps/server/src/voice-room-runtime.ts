@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { markdownToSpeech, MarkdownSpeechStream } from './markdown-to-speech.js';
 import { AccessToken } from 'livekit-server-sdk';
 import { Room, RoomEvent, AudioStream, AudioSource, AudioFrame, LocalAudioTrack,
@@ -52,6 +53,9 @@ export class VoiceRoomRuntime {
   private readonly turnIndices = new Map<string, number>();
   private readonly inputVersions = new Map<string, number>();
   private readonly inputSpeech = new Map<string, { turn: number; playback: Set<string> }>();
+  private readonly pendingTurns = new Map<string, { text: string; source: Promise<string>;
+    controller: AbortController; playbackStarted: boolean; audible: boolean; agent?: VoiceAgent; selected?: string }>();
+  private readonly shutdown = new AbortController();
   /** One-turn avatar taps in a call with several humans. */
   private readonly taps = new Map<string, string>();
   private humans = 1;
@@ -160,7 +164,7 @@ export class VoiceRoomRuntime {
       if (event.event !== 'EndOfTurn') void this.aimSpokenName(human, event.transcript, version);
       // With several humans, anyone may interrupt, but only with real speech.
       const interrupts = this.humans === 1 || voiceInterrupt(event);
-      if (interrupts) { this.speaking?.abort(); this.audio.clearQueue(); }
+      if (interrupts) { this.pendingTurns.get(human)?.controller.abort(); this.speaking?.abort(); this.audio.clearQueue(); }
       if (event.event !== 'EndOfTurn' || !event.transcript.trim() ||
           event.turn_index <= (this.turnIndices.get(human) ?? -1)) return;
       this.turnIndices.set(human, event.turn_index);
@@ -227,82 +231,164 @@ export class VoiceRoomRuntime {
     if (changed || announce) await this.signal({ type: 'humans', count });
   }
 
-  /** `interrupts` is false for speech below the multi-human interrupt threshold. */
   async utterance(human: string, text: string, startedAt = performance.now(), interrupts = true) {
-    const agents = await this.service.agents(this.roomId, human);
-    const humans = await this.service.humanCount(this.callId);
-    void this.countHumans(humans).catch(() => {});
-    // With several humans, a turn below the interrupt threshold never stops a speaking
-    // agent, even when it names one. A pending tap waits for real speech.
-    if (humans > 1 && this.speaking && !interrupts) return;
-    const named = humans > 1 ? openingVoiceName(text, agents) : undefined;
-    const tapped = agents.find(agent => agent.id === this.taps.get(human));
-    this.taps.delete(human);
-    const agent = humans > 1 ? named ?? tapped : namedVoiceTarget(text, agents, this.targets.get(human), humans);
-    if (this.closed) return;
-    if (!agent) { await this.signal({ type: 'unaddressed' }, human); return; }
-    this.targets.set(human, agent.id);
-    await this.signal({ type: 'target', agentId: agent.id }, human);
-    const sourceId = await this.service.recordHuman(this.callId, this.roomId, human, agent, text, this.leaseOwner);
-    this.speaking?.abort(); this.audio.clearQueue();
-    const controller = new AbortController(); this.speaking = controller;
-    let finishSpeech!: () => void;
-    this.speechIdle = new Promise<void>(resolve => { finishSpeech = resolve; });
-    const key = `${human}:${agent.id}`;
-    let history = this.history.get(key)?.map(message => ({ ...message }));
-    const speechText = new MarkdownSpeechStream();
-    let receivedText = ''; let persisted = false; let handedOff = false; let firstAudio = false; let speechQueue = Promise.resolve();
-    try {
-      if (!history) {
-        const rows = await this.service.db.query<{ text: string; author_id: string }>(
-          `SELECT text,author_id FROM messages WHERE room_id=$1 AND author_id=ANY($2::text[])
-            AND id<>$3 AND presentation='message' AND deleted_at IS NULL ORDER BY created_at DESC,id DESC LIMIT 16`,
-          [this.roomId, [human, agent.id], sourceId]);
-        history = rows.rows.reverse().map(row => ({ role: row.author_id === agent.id ? 'assistant' : 'user', content: row.text }));
-      }
-      if (controller.signal.aborted || this.closed) return;
-      history.push({ role: 'user', content: text });
-      const flush = (phrase: string) => {
-        if (!phrase.trim()) return;
-        speechQueue = speechQueue.then(async () => {
-          if (controller.signal.aborted || this.closed) throw new DOMException('Interrupted', 'AbortError');
-          await this.signal({ type: 'speaker', agentId: agent.id });
-          await this.play(phrase, agent, controller.signal, () => {
-            if (!firstAudio) { firstAudio = true; void this.signal({ type: 'latency', firstAudioMs: performance.now() - startedAt }); }
-          });
-        });
-        // The generation continues while playback works; attach immediately to prevent unhandled aborts.
-        void speechQueue.catch(() => {});
-      };
-      const reply = await this.service.config.brain.answer(agent, history, delta => {
-        receivedText += delta;
-        for (const phrase of speechText.push(delta)) flush(phrase);
-      }, controller.signal);
-      if (reply.order) {
-        // The ordinary command owns the visible reply after this handoff.
-        // Keep the spoken acknowledgement out of the message ledger.
-        handedOff = true;
-        await this.service.dispatch(this.callId, sourceId, agent.id);
-      }
-      const answer = reply.text || (reply.order ? "Checking. I’ll tell you when I have it." : '');
-      // The final receipt may include a suffix absent from streamed deltas.
-      if (!reply.text || !receivedText.trim()) { speechText.finish(); flush(answer); }
-      else if (answer.startsWith(receivedText)) speechText.push(answer.slice(receivedText.length)).forEach(flush);
-      if (!handedOff) {
-        await this.service.recordAnswer(this.roomId, agent.id, answer);
-        persisted = true;
-      }
-      history.push({ role: 'assistant', content: answer });
-      this.history.set(key, history.slice(-16));
-      flush(speechText.finish()); await speechQueue;
-    } finally {
-      if (this.speaking === controller) {
-        this.speaking = undefined; finishSpeech();
-        await this.signal({ type: 'speaker', agentId: null });
-      } else finishSpeech();
-      // A barge-in may interrupt generation after a clause was already heard.
-      if (!handedOff && !persisted && receivedText.trim()) await this.service.recordAnswer(this.roomId, agent.id, receivedText.trim());
+    if (this.humans > 1 && this.speaking && !interrupts) return;
+    const traceId = randomUUID();
+    const stages = new Set<string>();
+    const timing = (stage: string) => {
+      if (stages.has(stage)) return;
+      stages.add(stage);
+      console.info('[voice-turn-timing]', JSON.stringify({ traceId, callId: this.callId, stage,
+        elapsedMs: performance.now() - startedAt }));
+    };
+    timing('flux_final');
+    const fragment = text;
+    const previous = this.pendingTurns.get(human);
+    const continuation = previous && !previous.playbackStarted ? previous : undefined;
+    if (continuation) {
+      timing('continuation_restart');
+      continuation.controller.abort();
+      text = `${continuation.text} ${text}`;
     }
+    const controller = new AbortController();
+    let resolveSource!: (id: string) => void;
+    let rejectSource!: (error: unknown) => void;
+    const source = new Promise<string>((resolve, reject) => { resolveSource = resolve; rejectSource = reject; });
+    void source.catch(() => {});
+    const turn: { text: string; source: Promise<string>; controller: AbortController; playbackStarted: boolean; audible: boolean; agent?: VoiceAgent; selected?: string } =
+      { text, source, controller, playbackStarted: false, audible: false, selected: this.targets.get(human) };
+    const generation = new AbortController();
+    let decisionFinal = false;
+    controller.signal.addEventListener('abort', () => { if (!turn.audible || decisionFinal) generation.abort(); }, { once: true });
+    const stopGeneration = () => generation.abort();
+    this.shutdown.signal.addEventListener('abort', stopGeneration, { once: true });
+    // Reserve the draft and its write before any await. Successors share the
+    // initial insert and wait for this revision before editing the same row.
+    this.pendingTurns.set(human, turn);
+    try {
+      const agents = await this.service.agents(this.roomId, human);
+      const humans = await this.service.humanCount(this.callId);
+      void this.countHumans(humans).catch(() => {});
+      let sourceId = continuation ? await continuation.source : '';
+      const selected = this.targets.get(human);
+      const inherited = selected !== continuation?.selected && selected !== continuation?.agent?.id
+        ? selected : continuation?.agent?.id ?? selected;
+      const named = humans > 1 ? openingVoiceName(fragment, agents) : undefined;
+      const tapped = agents.find(agent => agent.id === this.taps.get(human));
+      this.taps.delete(human);
+      const agent = continuation
+        ? namedVoiceTarget(fragment, agents, inherited, 1)
+        : humans > 1 ? named ?? tapped : namedVoiceTarget(text, agents, this.targets.get(human), humans);
+      if (!agent || this.closed) {
+        resolveSource('');
+        if (!agent && !this.closed) await this.signal({ type: 'unaddressed' }, human);
+        if (this.pendingTurns.get(human) === turn) this.pendingTurns.delete(human);
+        return;
+      }
+      turn.agent = agent;
+      if (!controller.signal.aborted) {
+        this.targets.set(human, agent.id);
+        await this.signal({ type: 'target', agentId: agent.id }, human);
+      }
+      if (this.closed) { resolveSource(''); return; }
+      if (!continuation) {
+        sourceId = await this.service.recordHuman(this.callId, this.roomId, human, agent, text, this.leaseOwner);
+      } else if (!controller.signal.aborted) {
+        if (sourceId) await this.service.reviseHuman(this.callId, this.roomId, human, agent, sourceId, text, this.leaseOwner);
+        else sourceId = await this.service.recordHuman(this.callId, this.roomId, human, agent, text, this.leaseOwner);
+      }
+      resolveSource(sourceId);
+      timing('human_committed');
+      if (controller.signal.aborted || this.closed || !sourceId) return;
+      this.speaking?.abort(); this.audio.clearQueue();
+      this.speaking = controller;
+      let finishSpeech!: () => void;
+      this.speechIdle = new Promise<void>(resolve => { finishSpeech = resolve; });
+      const key = `${human}:${agent.id}`;
+      let history = this.history.get(key)?.map(message => ({ ...message }));
+      const speechText = new MarkdownSpeechStream();
+      let receivedText = ''; let handedOff = false; let firstAudio = false; let speechQueue = Promise.resolve();
+      let answer: string | undefined;
+      let completion: Promise<void> | undefined;
+      const commitAudibleReply = () => {
+        if (!firstAudio || answer === undefined || completion) return;
+        // Barge-in cancels playback, never work whose acknowledgement was heard.
+        // Start the write once both the final decision and first audio exist.
+        completion = handedOff ? this.service.dispatch(this.callId, sourceId, agent.id)
+          : this.service.recordAnswer(this.roomId, agent.id, answer);
+        void completion.catch(() => {});
+      };
+      try {
+        if (!history) {
+          const rows = await this.service.db.query<{ text: string; author_id: string }>(
+            `SELECT text,author_id FROM messages WHERE room_id=$1 AND author_id=ANY($2::text[])
+              AND id<>$3 AND presentation='message' AND deleted_at IS NULL ORDER BY created_at DESC,id DESC LIMIT 16`,
+            [this.roomId, [human, agent.id], sourceId]);
+          history = rows.rows.reverse().map(row => ({ role: row.author_id === agent.id ? 'assistant' : 'user', content: row.text }));
+        }
+        if (controller.signal.aborted || this.closed) return;
+        history.push({ role: 'user', content: text });
+        const flush = (phrase: string) => {
+          if (!phrase.trim()) return;
+          speechQueue = speechQueue.then(async () => {
+            if (controller.signal.aborted || this.closed) throw new DOMException('Interrupted', 'AbortError');
+            await this.signal({ type: 'speaker', agentId: agent.id });
+            if (controller.signal.aborted || this.closed) throw new DOMException('Interrupted', 'AbortError');
+            await this.play(phrase, agent, controller.signal, () => {
+              if (!firstAudio) {
+                timing('first_voiced_audio_published');
+                firstAudio = true; turn.audible = true; commitAudibleReply();
+                void this.signal({ type: 'latency', firstAudioMs: performance.now() - startedAt });
+              }
+            }, () => { turn.playbackStarted = true; }, timing);
+          });
+          void speechQueue.catch(() => {});
+        };
+        timing('brain_request');
+        const reply = await this.service.config.brain.answer(agent, history, delta => {
+          if (controller.signal.aborted || this.closed) return;
+          if (delta) timing('brain_first_token');
+          receivedText += delta;
+          for (const phrase of speechText.push(delta)) flush(phrase);
+        }, generation.signal);
+        timing('brain_complete');
+        decisionFinal = true;
+        if (controller.signal.aborted) generation.abort();
+        if (!firstAudio && (controller.signal.aborted || this.closed)) throw new DOMException('Interrupted', 'AbortError');
+        handedOff = !!reply.order;
+        answer = reply.text || (handedOff ? "Checking. I’ll tell you when I have it." : '');
+        commitAudibleReply();
+        if (!reply.text || !receivedText.trim()) { speechText.finish(); flush(answer); }
+        else if (answer.startsWith(receivedText)) speechText.push(answer.slice(receivedText.length)).forEach(flush);
+        flush(speechText.finish()); await speechQueue;
+        if (!firstAudio && (controller.signal.aborted || this.closed)) throw new DOMException('Interrupted', 'AbortError');
+        if (handedOff && !completion) throw new Error('Voice acknowledgement produced no audio');
+        if (!handedOff && !completion) completion = this.service.recordAnswer(this.roomId, agent.id, answer);
+        await completion;
+        if (!controller.signal.aborted && !this.closed) {
+          history.push({ role: 'assistant', content: answer });
+          this.history.set(key, history.slice(-16));
+        }
+        if (this.pendingTurns.get(human) === turn) this.pendingTurns.delete(human);
+      } finally {
+        if (this.speaking === controller) {
+          this.speaking = undefined; finishSpeech();
+          await this.signal({ type: 'speaker', agentId: null });
+        } else finishSpeech();
+        if (this.pendingTurns.get(human) === turn && firstAudio) this.pendingTurns.delete(human);
+        // No unheard text enters the ledger. An in-flight commit owns its row
+        // even if playback was interrupted while the database was writing.
+        if (!completion && !handedOff && firstAudio && receivedText.trim()) {
+          completion = this.service.recordAnswer(this.roomId, agent.id, receivedText.trim());
+        }
+        await completion;
+      }
+    } catch (error) {
+      rejectSource(error);
+      const interrupted = error instanceof Error && error.name === 'AbortError';
+      if ((!interrupted || !controller.signal.aborted || turn.audible) && this.pendingTurns.get(human) === turn) this.pendingTurns.delete(human);
+      throw error;
+    } finally { this.shutdown.signal.removeEventListener('abort', stopGeneration); }
   }
 
   /** Match actual command provenance, never agent thought/draft events. No work deadline. */
@@ -356,10 +442,11 @@ export class VoiceRoomRuntime {
     } finally { this.refreshPending = false; }
   }
 
-  private async play(text: string, agent: VoiceAgent, signal: AbortSignal, onFirstAudio?: () => void) {
+  private async play(text: string, agent: VoiceAgent, signal: AbortSignal, onFirstAudio?: () => void,
+    onFirstVoicedFrame?: () => void, timing?: (stage: string) => void) {
     text = markdownToSpeech(text);
     if (!text) return;
-    let pending = Buffer.alloc(0); let first = true;
+    let pending = Buffer.alloc(0); let first = true; let firstByte = true; let firstPublished = true;
     // 20ms mono frames. Carry odd byte boundaries between provider chunks.
     const frameBytes = VOICE_SAMPLE_RATE / 50 * 2;
     const speech = await this.service.speech(this.roomId);
@@ -371,23 +458,31 @@ export class VoiceRoomRuntime {
     this.recentSpeech.push(spoken);
     if (this.recentSpeech.length > 12) this.recentSpeech.shift();
     try {
+      timing?.('tts_request');
       for await (const bytes of speech.synthesize(spoken.text, voice, signal)) {
         if (signal.aborted || this.closed) throw new DOMException('Interrupted', 'AbortError');
+        if (firstByte && bytes.length) { firstByte = false; timing?.('tts_first_byte'); }
         pending = Buffer.concat([pending, bytes]);
         while (pending.length >= frameBytes) {
           if (signal.aborted || this.closed) throw new DOMException('Interrupted', 'AbortError');
           const samples = new Int16Array(frameBytes / 2);
           for (let i = 0; i < samples.length; i++) samples[i] = pending.readInt16LE(i * 2);
           pending = pending.subarray(frameBytes);
+          const voiced = first && samples.some(sample => Math.abs(sample) > 150);
+          if (voiced) { first = false; onFirstVoicedFrame?.(); }
           await this.audio.captureFrame(new AudioFrame(samples, VOICE_SAMPLE_RATE, 1, samples.length));
-          if (first && samples.some(sample => Math.abs(sample) > 150)) { first = false; onFirstAudio?.(); }
+          if (firstPublished) { firstPublished = false; timing?.('first_audio_published'); }
+          if (!signal.aborted && !this.closed && voiced) onFirstAudio?.();
         }
       }
       if (pending.length > 1) {
         const samples = new Int16Array(Math.floor(pending.length / 2));
         for (let i = 0; i < samples.length; i++) samples[i] = pending.readInt16LE(i * 2);
+        const voiced = first && samples.some(sample => Math.abs(sample) > 150);
+        if (voiced) { first = false; onFirstVoicedFrame?.(); }
         await this.audio.captureFrame(new AudioFrame(samples, VOICE_SAMPLE_RATE, 1, samples.length));
-        if (first && samples.some(sample => Math.abs(sample) > 150)) onFirstAudio?.();
+        if (firstPublished) { firstPublished = false; timing?.('first_audio_published'); }
+        if (!signal.aborted && !this.closed && voiced) onFirstAudio?.();
       }
       await this.audio.waitForPlayout();
     } finally { spoken.until = performance.now() + 1500; }
@@ -396,6 +491,9 @@ export class VoiceRoomRuntime {
   async close() {
     if (this.closed) return;
     this.closed = true; clearInterval(this.timer); this.speaking?.abort(); this.audio.clearQueue();
+    this.shutdown.abort();
+    for (const turn of this.pendingTurns.values()) turn.controller.abort();
+    this.pendingTurns.clear();
     for (const human of this.inputs.keys()) this.stopInput(human);
     await this.room.disconnect(); await this.audio.close();
     await this.service.db.query(`UPDATE voice_calls SET runtime_until=NULL WHERE id=$1 AND runtime_owner=$2`,

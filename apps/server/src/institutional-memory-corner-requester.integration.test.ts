@@ -1,3 +1,4 @@
+import { flushDueCommanderWakes } from './commander-wakes.js';
 import { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
@@ -260,6 +261,8 @@ describe('save_memory requester authority on corner wakes', () => {
 
   it('saves a workspace fact on a merge-watch wake whose corner lost its requester link', async () => {
     expect(await wakeLateCornerWatcher(database, ROOM, AGENT, WATCHED)).toBe(true);
+    await database.query(`UPDATE agent_commands SET wake_after=now() WHERE wake_after IS NOT NULL`);
+    await flushDueCommanderWakes(database);
     const command = (
       await database.query<{ id: string; turn_request_id: string }>(
         `SELECT id,turn_request_id FROM agent_commands WHERE room_id=$1 AND source_message_id=$2`,

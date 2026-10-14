@@ -43,6 +43,20 @@ function socketApi(execute: ReturnType<typeof vi.fn>) {
 }
 
 describe('command intake mechanics', () => {
+  it('includes commander wakes added after the intake snapshot in the one claimed turn', async () => {
+    const abort = new AbortController();
+    const run = vi.fn(async (_command: AgentCommand) => abort.abort());
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getAgentCommands') return { commandProtocol: 1, commands: [command()] };
+      if (name === 'claimAgentCommand') return { id: 'c1', coalescedContext: 'corner one merged\ncorner two merged' };
+      throw new Error(`unexpected operation ${name}`);
+    });
+    await runServerCommandIntake({ ...socketApi(execute), roomId: 'room', agentId: 'agent',
+      context: await context(), signal: abort.signal, stop: vi.fn(), run });
+    expect(run).toHaveBeenCalledOnce();
+    expect(run.mock.calls[0]![0].source.body).toBe('Do it\nAdditional commander wakes in this turn:\ncorner one merged\ncorner two merged');
+  });
+
   it('uses history refreshed by claim as read-only context for the one surviving turn', async () => {
     const abort = new AbortController();
     const run = vi.fn(async (_command: AgentCommand) => abort.abort());

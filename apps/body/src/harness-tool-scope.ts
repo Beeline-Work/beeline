@@ -185,11 +185,22 @@ export function harnessToolScope(agentCommand: string | undefined): {
  */
 export function sessionToolScopeMeta(
   agentCommand: string | undefined,
+  terminalTools = '',
 ): Record<string, unknown> | undefined {
   const meta = matchProfile(agentCommand)?.sessionMeta;
   // Structured-clone so a caller mutating the returned object cannot poison the
   // module-level profile for every later session.
-  return meta ? (JSON.parse(JSON.stringify(meta)) as Record<string, unknown>) : undefined;
+  const result = meta ? (JSON.parse(JSON.stringify(meta)) as Record<string, unknown>) : undefined;
+  if (result && matchProfile(agentCommand)?.metaSystemPrompt) {
+    const claude = result.claudeCode as { options: Record<string, unknown> };
+    // Claude retries a thinking-only end_turn inside its SDK unless a successful
+    // terminal MCP call is present. The local handler enforces wake eligibility.
+    claude.options.env = { CLAUDE_CODE_TERMINAL_MCP_TOOLS: [...new Set([
+      ...terminalTools.split(',').map(name => name.trim()).filter(Boolean),
+      'mcp__beeline-agent__no_reply_needed',
+    ])].join(',') };
+  }
+  return result;
 }
 
 /**

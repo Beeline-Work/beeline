@@ -1,3 +1,4 @@
+import { flushDueCommanderWakes } from './commander-wakes.js';
 import { isServerEventKind } from '@beeline/api-contract/phone';
 import { createHash, randomUUID } from 'node:crypto';
 import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-contract/agent-access';
@@ -145,9 +146,10 @@ export class ConnectionPresence {
    * not a poll or a separately written delivery ledger. */
   async start(): Promise<void> {
     this.startLease();
-    const renudge = () => void renudgeStrandedPendingCommands(this.database).catch(this.report);
+    const renudge = () => void Promise.all([renudgeStrandedPendingCommands(this.database), flushDueCommanderWakes(this.database)]).catch(this.report);
     this.#renudgeTimer = setInterval(renudge, 5_000);
     this.#renudgeTimer.unref?.();
+    await flushDueCommanderWakes(this.database);
     await this.recoverWorkingStalls();
     await this.observe();
   }

@@ -125,6 +125,8 @@ export type PostRoomEventInput = TurnOutputAuthority &
     readonly mentionAgentIds?: readonly string[];
   };
 
+export type AgentReportStatus = 'done' | 'blocked' | 'failed' | 'needs_decision';
+
 export type AgentCommandAction = 'input' | 'resume' | 'stop' | 'restart';
 export type AgentCommand = {
   readonly id: string;
@@ -144,6 +146,7 @@ export type AgentCommand = {
   readonly source: RoomInboxResult['items'][number];
   /** Superseded wakes, quoted as history; only source authorizes this turn. */
   readonly recoveryContext?: string;
+  readonly coalescedContext?: string;
 };
 export type CommandClaimInput = RoomInput & {
   readonly commandId: string;
@@ -280,7 +283,7 @@ export type DaemonOperationMap = {
     RoomInput,
     { readonly commandProtocol: 1; readonly commands: readonly AgentCommand[] }
   >;
-  claimAgentCommand: Operation<CommandClaimInput, WriteResult & { readonly recoveryContext?: string; readonly activitySource?: { readonly body: string; readonly systemEvent: SystemEvent } }>;
+  claimAgentCommand: Operation<CommandClaimInput, WriteResult & { readonly recoveryContext?: string; readonly coalescedContext?: string; readonly activitySource?: { readonly body: string; readonly systemEvent: SystemEvent } }>;
   acknowledgeAgentCommand: Operation<CommandClaimInput, WriteResult>;
   getDaemonBootstrap: Operation<DaemonBootstrapInput, DaemonBootstrapResult>;
   getWorkspaceRoster: Operation<WorkspaceRosterInput, WorkspaceRosterResult>;
@@ -302,7 +305,7 @@ export type DaemonOperationMap = {
     }
   >;
   order: Operation<RoomInput & TurnOutputAuthority & { readonly address: string; readonly text: string }, WriteResult>;
-  report: Operation<RoomInput & TurnOutputAuthority & { readonly text: string }, WriteResult>;
+  report: Operation<RoomInput & TurnOutputAuthority & { readonly status: AgentReportStatus; readonly text: string }, WriteResult>;
   read: Operation<RoomInput & { readonly address: string; readonly limit?: number }, RoomConversationResult>;
   getRoomAuthority: Operation<RoomPrincipalInput, RoomAuthorityResult>;
   getPermissionAuthority: Operation<PermissionAuthorityInput, AuthorityDecisionResult>;

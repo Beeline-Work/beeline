@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { squireReachCause } from './squire-status.js';
+import { nonhumanSilentWake } from './silent-wake.js';
 /**
  * Deliberately narrow MCP server for repository and approved-skill inspection
  * in Room sessions.
@@ -875,9 +876,15 @@ const AGENT_TOOLS: ToolDefinition[] = [
     }, additionalProperties: false },
   },
   {
+    name: 'no_reply_needed',
+    description: 'On a nonhuman report, order or lifecycle wake with nothing to post, acknowledge that no reply is needed, then end silently. This local tool posts nothing and reports nothing. Human-triggered turns cannot use it.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
     name: 'report',
-    description: 'Report one step up to the commander who ordered this work. Report only to the member who gave you the task. If that member is a human, tag them when, in your judgement, they need to decide or should know. No address argument: the corner and order know the return address. Begin done:, blocked:, needs-decision: or failed:. Agent commanders receive this privately. A human commander sees it where they gave the order. If you cannot handle a report, report to your own commander. Report when your assignment is finished, or when you need a decision or are blocked. Don\'t report progress.',
-    inputSchema: { type: 'object', required: ['text'], properties: {
+    description: 'Report one step up to the commander who ordered this work. Report only to the member who gave you the task. If that member is a human, tag them when, in your judgement, they need to decide or should know. No address argument: the corner and order know the return address. Begin done:, blocked:, needs-decision: or failed:. Agent commanders receive this privately. A human commander sees it where they gave the order. If you cannot handle a report, report to your own commander. Report when your assignment is finished, or when you need a decision or are blocked. Don\'t report progress. Supply status done, blocked, failed, or needs_decision matching the text prefix. Corner workers may report done only with a merge-ready or merged PR, or a brief with repositoryWork false. Post progress in the corner instead. Agent DM orders may report done when their assignment is complete.',
+    inputSchema: { type: 'object', required: ['status', 'text'], properties: {
+      status: { type: 'string', enum: ['done', 'blocked', 'failed', 'needs_decision'] },
       text: { type: 'string', pattern: '^(done|blocked|needs-decision|failed):\\s*\\S', minLength: 1, maxLength: 16000 },
     }, additionalProperties: false },
   },
@@ -2379,7 +2386,7 @@ async function activeCommandContext(): Promise<{
   requestId: string;
   generationId: string;
 }> {
-  const { promptSectionIds: _sections, ...value } = await readTurnContextFile();
+  const { promptSectionIds: _sections, commandReason: _reason, ...value } = await readTurnContextFile();
   if (!value.roomId || !value.requestId || !value.generationId)
     throw new Error('no active server command');
   return value as { roomId: string; requestId: string; generationId: string };
@@ -4643,8 +4650,14 @@ export async function callAgentTool(
       const result = await daemonExecute('order', { address: args.address as string, text: args.text as string });
       return `${JSON.stringify(result)}\nAfter ordering another agent, end the turn; its report wakes a new turn; do not sleep or poll.`;
     }
+    case 'no_reply_needed': {
+      await activeCommandContext();
+      const { commandReason } = await readTurnContextFile();
+      if (!nonhumanSilentWake(commandReason)) throw new Error('no_reply_needed requires a nonhuman report, order or lifecycle wake');
+      return JSON.stringify({ acknowledged: true });
+    }
     case 'report':
-      return JSON.stringify(await daemonExecute('report', { text: args.text as string }));
+      return JSON.stringify(await daemonExecute('report', { status: args.status as import('@beeline/api-contract/daemon').AgentReportStatus, text: args.text as string }));
     case 'read':
       return JSON.stringify(await daemonExecute('read', { address: args.address as string, limit: args.limit as number | undefined }));
     case 'inspect_corner': {

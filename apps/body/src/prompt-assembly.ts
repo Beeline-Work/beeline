@@ -174,21 +174,23 @@ export function cornerHasRepositoryWork(brief?: CornerBrief): boolean {
   return true;
 }
 
-export const CORNER_RUNTIME_AUTHOR_CONTRACT = `The current brief's spec — stories, criteria, non-goals, risks — defines scope and done. The commander's order quote and inherited human constraints win any conflict. The short objective is navigation-only, never scope.
+export const CORNER_RUNTIME_AUTHOR_CONTRACT = `Work in this corner. For help, report needs-decision: or blocked: to your commander. Never recruit Room agents.
+The current brief's spec — stories, criteria, non-goals, risks — defines scope and done. The commander's order quote and inherited human constraints win any conflict. The short objective is navigation-only, never scope.
 Meet every story; respect every non-goal and risk.
-Before any code or build action, the brief must hold this ask's outline; opening and prompting inside it is not that outline. When it has none or the ask changed, read the revision and write it with revise_corner_brief first; chat never revises it.
-The dispatching message authorizes the work; build against the brief without asking for separate spec or mock approval. Report needs-decision: to your commander for a material unresolved choice; when a person asks for a spec or mock, produce it before building.
+Before code or build, the brief must outline this ask; chat never revises it. If missing or changed, read the revision and report needs-decision: to your commander for its revision first.
+The dispatch authorizes work; build against the brief without separate spec or mock approval. Report unresolved choices to your commander; when a person asks for a spec or mock, produce it before building.
 Follow the beeline-triage skill's bugfix execution contract when the spec or its approval quote reports a defect.
 Reproduce as triage isolated it with available emulator, Playwright, browser and test runner. Record attempts and observations. If a reproduction is obtained, record it under Reproduction <id>, reusing triage's identifier when it recorded one. If reproduction fails, warn and continue; never stop and never condition the fix on reproduction.
 Fix only the spec and approval quote. With a reproduction, change only what removes it and meets its user stories.
 Deliver files with post_artifact; answer plain chat questions directly.
 No unrequested features, flags, compatibility shims or refactors.`;
 
-export const CORNER_AUTHOR_CONTRACT = `Report with status done, blocked, failed, or needs_decision matching its display prefix. A worker done requires a merge-ready or merged PR, or repositoryWork false. Post progress in this corner instead.
+export const CORNER_AUTHOR_CONTRACT = `Work in this corner. For help, report needs-decision: or blocked: to your commander. Never recruit Room agents.
+Report with status done, blocked, failed, or needs_decision matching its display prefix. A worker done requires a merge-ready or merged PR, or repositoryWork false. Post progress here.
 The current brief's spec — stories, criteria, non-goals, risks — defines scope and done. The commander's order quote and inherited human constraints win any conflict. The short objective is navigation-only, never scope.
 Meet every story; respect every non-goal and risk. Use its file manifest.
-Before any code or build action, the brief must hold this ask's outline; opening and prompting inside it is not that outline. When it has none or the ask changed, read the revision and write it with revise_corner_brief first; chat never revises it.
-The dispatching message authorizes the work; build against the brief without asking for separate spec or mock approval. Report needs-decision: to your commander for a material unresolved choice; when a person asks for a spec or mock, produce it before building.
+Before code or build, the brief must outline this ask; chat never revises it. If missing or changed, read the revision and report needs-decision: to your commander for its revision first.
+The dispatch authorizes work; build against the brief without separate spec or mock approval. Report unresolved choices to your commander; when a person asks for a spec or mock, produce it before building.
 Follow the beeline-triage skill's bugfix execution contract when the spec or its approval quote reports a defect.
 Reproduce as triage isolated it with available emulator, Playwright, browser and test runner. Record attempts and observations. If a reproduction is obtained, record it under Reproduction <id>, reusing triage's identifier when it recorded one. If reproduction fails, warn and continue; never stop and never condition the fix on reproduction.
 Fix only the spec and approval quote. With a reproduction, change only what removes it and meets its user stories.
@@ -868,7 +870,7 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
       brief
         ? `${renderAssignedCornerBrief(brief.brief)}${cornerHasRepositoryWork(brief.brief) ? `\n\nAssigned files:\n${brief.fileLines.join('\n') || '(none)'}` : brief.fileLines.length ? `\n\nBrief attachments:\n${brief.fileLines.join('\n')}` : ''}${brief.missingRequiredFile ? '\nRequired assignment files are unavailable. Pause work that depends on them and report the missing file precisely.' : ''}`
         : surface === 'code-corner'
-          ? `No assigned brief yet. Before any code, write the first brief from the newest human request with ${generatedTitle ? 'rename_corner' : 'revise_corner_brief at expectedRevision 0'}.`
+          ? `No assigned brief yet. Before any code, ${generatedTitle ? 'write the first brief from the newest human request with rename_corner' : 'report needs-decision: to your commander for the first brief'}.`
           : 'No assigned brief: the human messages in this corner are the authority; skip steps that need a brief revision.',
   },
   {

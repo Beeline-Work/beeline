@@ -499,15 +499,15 @@ describe('prompt assembly guards', () => {
 
   it('tells a code-corner author that a human opening the corner and prompting inside it is not the outline', () => {
     const author = assembleSessionPrompt(SESSION_VARIANTS['code-corner-reviewed']!).systemPrompt;
-    expect(author).toContain('the brief must hold this ask\'s outline');
-    expect(author).toContain('opening and prompting inside it is not that outline');
-    expect(author).toContain('When it has none or the ask changed, read the revision and write it with revise_corner_brief first');
-    expect(promptRules.CORNER_AUTHOR_CONTRACT).toContain('opening and prompting inside it is not that outline');
+    expect(author).toContain('the brief must outline this ask');
+    expect(author).toContain('chat never revises it');
+    expect(author).toContain('report needs-decision: to your commander for its revision first');
+    expect(promptRules.CORNER_AUTHOR_CONTRACT).toContain('chat never revises it');
   });
 
   it('authorizes building from dispatch and leaves spec or mock questions to judgment', () => {
     const author = assembleSessionPrompt(SESSION_VARIANTS['code-corner-reviewed']!).systemPrompt;
-    const nudge = "The dispatching message authorizes the work; build against the brief without asking for separate spec or mock approval. Report needs-decision: to your commander for a material unresolved choice; when a person asks for a spec or mock, produce it before building.";
+    const nudge = "The dispatch authorizes work; build against the brief without separate spec or mock approval. Report unresolved choices to your commander; when a person asks for a spec or mock, produce it before building.";
     expect(author).toContain(nudge);
     expect(author).not.toContain('wait for a human reply that approves it');
     expect(author).not.toContain('The request that opened the work is not approval');
@@ -515,6 +515,14 @@ describe('prompt assembly guards', () => {
     expect(promptRules.CORNER_RUNTIME_AUTHOR_CONTRACT).toContain(nudge);
     const room = assembleSessionPrompt(SESSION_VARIANTS.room!).systemPrompt;
     expect(room).toContain('Use the dispatching message as approval; no separate spec or mock approval is required.');
+  });
+
+  it('keeps corner help requests with the commander', () => {
+    for (const contract of [promptRules.CORNER_AUTHOR_CONTRACT, promptRules.CORNER_RUNTIME_AUTHOR_CONTRACT]) {
+      expect(contract).toContain('Work in this corner.');
+      expect(contract).toContain('report needs-decision: or blocked: to your commander');
+      expect(contract).toContain('Never recruit Room agents.');
+    }
   });
 
   it('R8a makes publication conditional on the brief, including dirty-work nudges', () => {
@@ -612,11 +620,11 @@ describe('prompt assembly guards', () => {
     const { brief: _brief, ...unbriefed } = SESSION_VARIANTS['code-corner-reviewed']!;
     const session = assembleSessionPrompt(unbriefed).systemPrompt;
     expect(session).toContain('isolated git worktree on feature/corner-abc');
-    expect(session).toContain('write it with revise_corner_brief first');
+    expect(session).toContain('report needs-decision: to your commander for its revision first');
     expect(session).not.toContain('Open the pull request with gh');
     expect(session).not.toContain(cornerMergeInstruction('sol'));
     const turn = assembleTurnPrompt(TURN_VARIANTS['code-corner-turn']!).text;
-    expect(turn).toContain('Before any code, write the first brief from the newest human request with revise_corner_brief at expectedRevision 0.');
+    expect(turn).toContain('Before any code, report needs-decision: to your commander for the first brief.');
     const generated = assembleTurnPrompt({
       ...TURN_VARIANTS['code-corner-turn']!,
       generatedTitle: 'still harbor corner',

@@ -35,6 +35,9 @@ let mergeableState: string | undefined;
 let pullBaseSha: string | undefined;
 let mainHead: string;
 let failMergeabilityRead: boolean;
+let workflowCount: number;
+let registeredCount: number;
+let onWorkflowRead: (() => Promise<void>) | undefined;
 let requests: string[];
 let server: Server | undefined;
 
@@ -95,6 +98,9 @@ beforeEach(async () => {
   pullBaseSha = undefined;
   mainHead = 'd'.repeat(40);
   failMergeabilityRead = false;
+  workflowCount = 0;
+  registeredCount = 1;
+  onWorkflowRead = undefined;
   requests = [];
   app = new GitHubAppClient({
     appId: '1',
@@ -112,6 +118,14 @@ beforeEach(async () => {
     if (!url.startsWith('https://api.github.test/')) return realFetch(input, init);
     requests.push(url);
     expect(new Headers(init?.headers).get('authorization')).toBe('Bearer room-token');
+    if (url.endsWith('/actions/workflows?per_page=1')) {
+      await onWorkflowRead?.();
+      return Response.json({ total_count: workflowCount });
+    }
+    if (url.includes('/check-suites?') || url.includes('/actions/runs?')) {
+      if (registeredCount) rollupState = 'PENDING';
+      return Response.json({ total_count: registeredCount });
+    }
     // The mergeability refresh reads the pull again after the check rollup.
     if (
       url.endsWith('/pulls/614') &&
@@ -167,7 +181,7 @@ beforeEach(async () => {
     undefined,
     false,
     undefined,
-    (input) => operations.prChecksStatus(input),
+    (input, confirmZeroChecks) => operations.prChecksStatus(input, confirmZeroChecks),
     undefined,
     undefined,
     undefined,
@@ -744,6 +758,77 @@ describe('zero-check worker completion', () => {
     });
     expect(after.reviewer).toEqual(['subscribed_event']);
     expect(after.worker).toEqual([]);
+  });
+
+  it('Reproduction ZC-REGISTRATION: does not wake review before delayed checks register', async () => {
+    rollupState = null;
+    workflowCount = 2;
+    mergeableState = 'clean';
+    pullBaseSha = mainHead;
+    const after = await finishPrTurn(mainHead);
+    expect(after.lifecycle.checks).not.toBe('passing');
+    expect(after.reviewer).toEqual([]);
+    rollupState = 'PENDING';
+    expect(await gate()).toMatchObject({ checks: 'pending', checkCount: 1, mergeAllowed: false });
+    console.info('Reproduction ZC-REGISTRATION: worker completion with empty rollup; delayed checks pending; no passing verdict or reviewer wake');
+  }, 20_000);
+
+  it('replaces a zero-check verdict when a later check webhook registers checks on the same head', async () => {
+    rollupState = null;
+    mergeableState = 'clean';
+    pullBaseSha = mainHead;
+    expect((await finishPrTurn(mainHead)).lifecycle.checks).toBe('passing');
+    rollupState = 'PENDING';
+    await operations.processWebhook('check_run', {
+      installation: { id: 77 }, repository: { id: 101, full_name: 'owner/widgets' }, action: 'created',
+      check_run: { id: 1, name: 'test', status: 'in_progress', conclusion: null,
+        check_suite: { head_branch: `corner/${C}`, head_sha: SHA } },
+    });
+    const lifecycle = (await db.query<{ lifecycle: Record<string, unknown> }>(
+      `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [C],
+    )).rows[0]!.lifecycle;
+    expect(lifecycle).toMatchObject({ checks: 'pending', checksSummary: { total: 1 } });
+    expect(await gate()).toMatchObject({ checks: 'pending', mergeAllowed: false });
+  });
+
+  it('finishes a head with workflows but no registered suites or runs after the bounded settle delay', async () => {
+    rollupState = null;
+    workflowCount = 2;
+    registeredCount = 0;
+    mergeableState = 'clean';
+    pullBaseSha = mainHead;
+    const after = await finishPrTurn(mainHead);
+    expect(after.lifecycle).toMatchObject({ checks: 'passing', checksSummary: { total: 0 } });
+    expect(after.reviewer).toEqual(['subscribed_event']);
+  }, 20_000);
+
+  it('does not transfer absence evidence to a head pushed during confirmation', async () => {
+    rollupState = null;
+    mergeableState = 'clean';
+    pullBaseSha = mainHead;
+    onWorkflowRead = async () => { head = 'f'.repeat(40); };
+    const after = await finishPrTurn(mainHead);
+    expect(after.lifecycle.checks).not.toBe('passing');
+    expect(after.reviewer).toEqual([]);
+  });
+
+  it('does not overwrite a concurrent check webhook with an older empty read', async () => {
+    rollupState = null;
+    mergeableState = 'clean';
+    pullBaseSha = mainHead;
+    onWorkflowRead = async () => {
+      rollupState = 'PENDING';
+      await operations.processWebhook('check_run', {
+        installation: { id: 77 }, repository: { id: 101, full_name: 'owner/widgets' }, action: 'created',
+        check_run: { id: 1, name: 'test', status: 'in_progress', conclusion: null,
+          check_suite: { head_branch: `corner/${C}`, head_sha: SHA } },
+      });
+      // The next provider read lags the webhook's committed rollup.
+      rollupState = null;
+    };
+    const after = await finishPrTurn(mainHead);
+    expect(after.lifecycle).toMatchObject({ checks: 'pending', checksSummary: { total: 1 } });
+    expect(after.reviewer).toEqual([]);
   });
 
   it.each([

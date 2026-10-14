@@ -349,6 +349,7 @@ it('routes zero-check completion through a durable lifecycle fact', async () => 
       ({
         checks: 'pending',
         checkCount: 0,
+        zeroChecksConfirmed: true,
         headSha: head,
         approved: false,
         held: false,

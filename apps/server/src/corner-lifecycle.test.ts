@@ -79,6 +79,7 @@ let githubApp: {
   readPullRequestDiscussion: ReturnType<typeof vi.fn>;
   installationToken: ReturnType<typeof vi.fn>;
   readCommitCheckRollup: ReturnType<typeof vi.fn>;
+  confirmNoChecks: ReturnType<typeof vi.fn>;
 };
 /** Every `fromState:outcome:toState` a test in this file recorded, for the edge-coverage proof. */
 const recordedEdges = new Set<string>();
@@ -134,6 +135,7 @@ beforeAll(async () => {
       mergeability: 'clean' as const,
     })),
     installationToken: vi.fn(async () => ({ token: 'tok', expiresAt: '2030-01-01T00:00:00Z' })),
+    confirmNoChecks: vi.fn(async () => true),
     readCommitCheckRollup: vi.fn(async () => ({
       state: githubRollupState,
       total: 1,
@@ -1217,7 +1219,7 @@ describe('Reproduction R5a: entry paths lock the run before corner rows', () => 
     } else if (path === 'zero-check') {
       await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(jsonb_set(lifecycle,'{checks}','"unknown"'),'{pr,mergeability}','"clean"') WHERE corner_id=$1`, [cornerId]);
       const command = await commissioned(cornerId);
-      const status = { ...(await github.prChecksStatus({ cornerId })), checks: 'pending' as const, checkCount: 0 };
+      const status = { ...(await github.prChecksStatus({ cornerId })), checks: 'pending' as const, checkCount: 0, zeroChecksConfirmed: true };
       const completion = new DaemonService(recording, new LiveHub(), undefined, undefined, false, undefined, false, undefined, async () => {
         // Completion runs after the reply transaction commits; inspect its own locks.
         recording.calls.length = 0;
@@ -2010,7 +2012,7 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
     // Nothing merges until the implementer asks.
     expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
     const wiredDaemon = new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
-      (input) => github.prChecksStatus(input), undefined, undefined, undefined, undefined, undefined, undefined,
+      (input, confirmZeroChecks) => github.prChecksStatus(input, confirmZeroChecks), undefined, undefined, undefined, undefined, undefined, undefined,
       undefined, undefined, undefined, (id: string) => github.landCorner(id));
     await expect(wiredDaemon.execute('mergeCorner', { cornerId }, A))
       .resolves.toEqual({ status: 'merge-started', headSha: SHA });
@@ -2033,7 +2035,7 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
   it('lets any corner member close its pull request without merging; the corner stays open with no PR', async () => {
     const cornerId = await inReview();
     const wiredDaemon = new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
-      (input) => github.prChecksStatus(input), undefined, undefined, undefined, undefined, undefined, undefined,
+      (input, confirmZeroChecks) => github.prChecksStatus(input, confirmZeroChecks), undefined, undefined, undefined, undefined, undefined, undefined,
       undefined, undefined, undefined, (id: string) => github.landCorner(id),
       (id: string) => github.closeCornerPullRequest(id));
     await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id IN ($1,$3) AND identity_id=$2`, [cornerId, B, R]);
@@ -2125,7 +2127,7 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
   it('Reproduction REACH-1: a parent Room agent outside the corner closes, renames, steers, reads, revises and posts to it; an outsider cannot', async () => {
     const cornerId = await inReview();
     const wiredDaemon = new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
-      (input) => github.prChecksStatus(input), undefined, undefined, undefined, undefined, undefined, undefined,
+      (input, confirmZeroChecks) => github.prChecksStatus(input, confirmZeroChecks), undefined, undefined, undefined, undefined, undefined, undefined,
       undefined, undefined, undefined, (id: string) => github.landCorner(id),
       (id: string) => github.closeCornerPullRequest(id), (id: string) => github.readCornerPullRequest(id));
     // B stays in the parent Room but is not a member of the corner.
@@ -2191,7 +2193,7 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
   it('Reproduction R1: a corner member outside the parent Room inspects the corner; an outsider cannot', async () => {
     const cornerId = await inReview();
     const wiredDaemon = new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
-      (input) => github.prChecksStatus(input));
+      (input, confirmZeroChecks) => github.prChecksStatus(input, confirmZeroChecks));
     // A stays in the corner but leaves the parent Room.
     await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [R, A]);
     try {
@@ -2219,7 +2221,7 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
   it('Reproduction R4-TARGET-READ: an unrelated roomId never opens a corner read', async () => {
     const cornerId = await inReview();
     const wiredDaemon = new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
-      (input) => github.prChecksStatus(input));
+      (input, confirmZeroChecks) => github.prChecksStatus(input, confirmZeroChecks));
     const unrelated = randomUUID();
     await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Unrelated')`, [unrelated, W]);
     await db.query(
@@ -2316,7 +2318,7 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
     expect((await db.query(`SELECT 1 FROM corner_merge_approvals WHERE corner_id=$1`, [cornerId])).rowCount).toBe(1);
     expect(await cornerMergeGate(db, cornerId, { number: 7, headSha: SHA })).toMatchObject({ approved: true, open: true });
     const wiredDaemon = new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
-      (input) => github.prChecksStatus(input), undefined, undefined, undefined, undefined, undefined, undefined,
+      (input, confirmZeroChecks) => github.prChecksStatus(input, confirmZeroChecks), undefined, undefined, undefined, undefined, undefined, undefined,
       undefined, undefined, undefined, (id: string) => github.landCorner(id));
     await expect(wiredDaemon.execute('mergeCorner', { cornerId }, A))
       .resolves.toEqual({ status: 'merge-started', headSha: SHA });
@@ -2964,7 +2966,7 @@ describe('zero checks with no reviewer wait for the commander', () => {
   it.each(['agent', 'person'] as const)('lands only after the %s commander says yes on the completed head', async (kind) => {
     const cornerId = await open('owner/widgets');
     githubHead = SHA;
-    githubApp.readCommitCheckRollup.mockResolvedValueOnce({ state: 'pending', total: 0, failing: [], checks: [] });
+    githubApp.readCommitCheckRollup.mockResolvedValue({ state: 'pending', total: 0, failing: [], checks: [] });
     // Use an agent order to establish the same private return route as a dispatched corner.
     await createAgentCommand(db, { roomId: cornerId, agentId: A, sourceMessageId: null,
       privatePayload: { kind: 'order', authorId: kind === 'agent' ? B : H, fromRoomId: R, text: 'Finish the widget' }, reason: 'order' });
@@ -2973,7 +2975,7 @@ describe('zero checks with no reviewer wait for the commander', () => {
       JSON.stringify({ checks: 'unknown', lifecycle: 'in-review', pr: { number: 7,
         url: 'https://github.com/owner/widgets/pull/7', headSha: SHA, mergeability: 'clean' } })]);
     const wired = new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
-      (input) => github.prChecksStatus(input));
+      (input, confirmZeroChecks) => github.prChecksStatus(input, confirmZeroChecks));
     const turn = (await commands(A, cornerId)).at(-1)!;
     await claim(turn);
     await wired.execute('postRoomMessage', { roomId: cornerId, requestId: turn.turnRequestId,
@@ -3231,7 +3233,7 @@ describe('the brief gate on landing: only a brief that assigns repository work m
 
   function wired() {
     return new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
-      (input) => github.prChecksStatus(input), undefined, undefined, undefined, undefined, undefined, undefined,
+      (input, confirmZeroChecks) => github.prChecksStatus(input, confirmZeroChecks), undefined, undefined, undefined, undefined, undefined, undefined,
       undefined, undefined, undefined, (id: string) => github.landCorner(id));
   }
 

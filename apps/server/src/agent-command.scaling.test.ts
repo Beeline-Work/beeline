@@ -10,22 +10,25 @@ const WORKSPACE = '10000000-0000-4000-8000-000000000001';
 const BASE_ROOM = '20000000-0000-4000-8000-000000000001';
 
 class CountingDatabase implements SqlDatabase {
-  queries = 0;
-  transactions = 0;
+  constructor(
+    private readonly database: SqlDatabase,
+    private readonly counts = { queries: 0, transactions: 0 },
+  ) {}
 
-  constructor(private readonly database: SqlDatabase) {}
+  get queries() { return this.counts.queries; }
+  get transactions() { return this.counts.transactions; }
 
   query<Row extends QueryResultRow = QueryResultRow>(
     sql: string,
     values: unknown[] = [],
   ): Promise<QueryResult<Row>> {
-    this.queries += 1;
+    this.counts.queries += 1;
     return this.database.query<Row>(sql, values);
   }
 
   transaction<T>(work: (database: SqlDatabase) => Promise<T>): Promise<T> {
-    this.transactions += 1;
-    return this.database.transaction((database) => work(new CountingDatabase(database)));
+    this.counts.transactions += 1;
+    return this.database.transaction((database) => work(new CountingDatabase(database, this.counts)));
   }
 }
 
@@ -164,8 +167,8 @@ describe('addressed-message routing and claim scaling', () => {
       await database.query(`DELETE FROM rooms WHERE id=$1`, [room]);
 
     for (const result of [baseline, withThirtyAgents, withThirtyMemberships]) {
-      expect(result.queries).toBe(5);
-      expect(result.transactions).toBe(0);
+      expect(result.queries).toBe(7);
+      expect(result.transactions).toBe(1);
       expect(result.notifications.rows.map(({ table_name }) => table_name)).toEqual([
         'agent_commands',
         'agent_commands',
@@ -203,8 +206,8 @@ describe('addressed-message routing and claim scaling', () => {
     const notifications = await database.query<{ count: number }>(
       `SELECT count(*)::integer count FROM claim_live_notification_audit`,
     );
-    expect(counted.queries).toBe(20 * 5);
-    expect(counted.transactions).toBe(0);
+    expect(counted.queries).toBe(20 * 7);
+    expect(counted.transactions).toBe(20);
     expect(notifications.rows[0]?.count).toBe(20 * 3);
   }, 20_000);
 

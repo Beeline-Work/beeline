@@ -402,8 +402,8 @@ export async function createAgentCommand(
     [id, input.roomId, input.sourceMessageId, input.agentId, input.action ?? 'input'],
   )).rows[0];
   if (command?.state === 'pending' && !delayed && (input.reason === 'report' || input.reason === 'human_tag' || input.reason === 'direct_message')) {
-    await flushCommanderWakes(db, input.roomId, input.agentId, command.id);
-    return (await db.query<CommandRow>('SELECT * FROM agent_commands WHERE id=$1', [command.id])).rows[0];
+    if (await flushCommanderWakes(db, input.roomId, input.agentId, command.id))
+      return (await db.query<CommandRow>('SELECT * FROM agent_commands WHERE id=$1', [command.id])).rows[0];
   }
   return command;
   });

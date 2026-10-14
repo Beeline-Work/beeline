@@ -191,7 +191,7 @@ describe('Beeline display branding', () => {
       readFileSync(new URL('../../package.json', import.meta.url), 'utf8'),
     ) as { version: string };
 
-    expect(packageJson.version).toBe('0.2.21');
+    expect(packageJson.version).toBe('0.2.22');
     expect(loadNativeVersion()).toBe(packageJson.version);
     expect(() => assertIosDisplayVersion(packageJson.version)).not.toThrow();
     expect(() => assertIosDisplayVersion('0.2.18-preview.1')).toThrow(
@@ -221,6 +221,18 @@ describe('Beeline display branding', () => {
       }),
     ).toThrow();
   });
+
+  it('retains the photo purpose string in the final iOS plist after config plugins run', async () => {
+    const { getPrebuildConfigAsync } = require('@expo/prebuild-config');
+    const { compileModsAsync } = require('@expo/config-plugins/build/plugins/mod-compiler.js');
+    const projectRoot = fileURLToPath(new URL('../..', import.meta.url));
+    const { exp } = await getPrebuildConfigAsync(projectRoot, { platforms: ['ios'] });
+    await compileModsAsync(exp, { projectRoot, platforms: ['ios'], introspect: true,
+      assertMissingModProviders: false });
+    const plist = exp._internal.modResults.ios.infoPlist;
+    expect(plist.NSPhotoLibraryUsageDescription).toBe('Allow Beeline to attach photos you choose to messages.');
+    expect(plist.NSMicrophoneUsageDescription).toBe('Allow Beeline to use the microphone for speech input.');
+  }, 30_000);
 
   it('uses local signing credentials for iOS only', () => {
     const easBuildProfiles = JSON.parse(easConfig).build as Record<string, EasBuildProfile>;
@@ -286,12 +298,12 @@ describe('Beeline display branding', () => {
     // OTA updates (v0.0.42). apps/mobile/scripts/native-fingerprint.mjs is
     // where the native-compatibility check moved to instead.
     expect(appConfig).toContain(
-      'ios: {\n            runtimeVersion: runtimeVersionOverride || "33"',
+      'ios: {\n            runtimeVersion: runtimeVersionOverride || "34"',
     );
     expect(appConfig).toContain(
-      'android: {\n            runtimeVersion: runtimeVersionOverride || "35"',
+      'android: {\n            runtimeVersion: runtimeVersionOverride || "36"',
     );
-    expect(loadRuntimeVersions()).toEqual({ android: '35', ios: '33' });
+    expect(loadRuntimeVersions()).toEqual({ android: '36', ios: '34' });
     expect(loadRuntimeVersions('23')).toEqual({ android: '23', ios: '23' });
     expect(() => loadRuntimeVersions('not-a-runtime')).toThrow();
   }, 30_000);

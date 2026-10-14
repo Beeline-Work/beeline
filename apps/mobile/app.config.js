@@ -71,7 +71,7 @@ export default {
         scheme,
         userInterfaceStyle: "automatic",
         ios: {
-            runtimeVersion: runtimeVersionOverride || "33",
+            runtimeVersion: runtimeVersionOverride || "34",
             // Keep the launcher identity stable across system appearance modes.
             // iOS masks this full-size source; only Android adaptive layers need
             // the separately inset safe-zone treatment.
@@ -105,7 +105,7 @@ export default {
             }
         },
         android: {
-            runtimeVersion: runtimeVersionOverride || "35",
+            runtimeVersion: runtimeVersionOverride || "36",
             versionCode: 27,
             adaptiveIcon: {
                 foregroundImage: "./sources/assets/images/icon-adaptive.png",
@@ -199,9 +199,11 @@ export default {
             [
                 "expo-image-picker",
                 {
-                    // The system photo picker needs no library access; leave
-                    // microphonePermission unset so the speech-input string stays.
-                    photosPermission: false,
+                    // Apple checks SDK references to photo APIs even when the
+                    // system picker needs no broad library permission. Removing
+                    // this string causes asynchronous upload rejection (90683).
+                    // Leave microphonePermission unset for the speech string.
+                    photosPermission: "Allow Beeline to attach photos you choose to messages.",
                     cameraPermission: false
                 }
             ],

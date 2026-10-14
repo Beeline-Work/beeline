@@ -100,12 +100,14 @@ function conversationService(humans = 2) {
   return { service, speech };
 }
 
-it('switches on a name mid-utterance and ignores unnamed speech from either human, including after an avatar tap', async () => {
+it('switches on an opening name and ignores unnamed speech from either human, including after an avatar tap', async () => {
   const { service } = conversationService();
   const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
   try {
     await runtime.utterance('human', 'Hello Ruby');
     await runtime.utterance('human', 'Please help me, GOOSEY');
+    expect(service.config.brain.answer).toHaveBeenCalledOnce();
+    await runtime.utterance('human', 'Hey GOOSEY, please help me');
     expect(service.config.brain.answer.mock.calls.map(call => call[0].id)).toEqual(['ruby', 'goose']);
     state.room.emit('data', new TextEncoder().encode(JSON.stringify({ type: 'target', agentId: 'ruby' })), { identity: 'human' }, undefined, 'beeline.voice.v1');
     await vi.waitFor(() => expect(service.access).toHaveBeenCalled());
@@ -312,3 +314,34 @@ it('demonstrates one visible reply through voice handoff, normal completion and 
     console.log('Reproduction voice-double-reply: voice handoff → ordinary agent completion → phone shows exactly one reply; repeated Luna rendition → phone shows one rendition.');
   } finally { await voice.close(); await db.close(); }
 }, 30_000);
+it('Reproduction voice-name-1: switches transcript, reply and voice together and retains the target', async () => {
+  const agents = [
+    { id: 'ruby', name: 'Ruby', handle: 'ruby', soul: '', voice: 'ruby-voice' },
+    { id: 'candy', name: 'Candy', handle: 'candy', soul: '', voice: 'candy-voice' },
+  ];
+  const recordHuman = vi.fn(async () => 'source');
+  const answer = vi.fn(async () => ({ text: '' }));
+  const service = { owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret', brain: { answer } },
+    humanCount: vi.fn(async () => 1), agents: vi.fn(async () => agents), recordHuman, recordAnswer: vi.fn(async () => {}),
+    db: { query: vi.fn(async () => ({ rowCount: 1, rows: [] })) }, runtimeClosed: vi.fn() } as unknown as VoiceService;
+  const runtime = await VoiceRoomRuntime.connect(service, 'call', 'room');
+  // Exercise the turn boundary with transport/provider doubles, including actual playback selection.
+  const play = vi.spyOn(runtime as any, 'play').mockResolvedValue(undefined);
+  answer.mockImplementation(async (_agent?: any, _history?: any, delta?: any) => {
+    delta?.('Here is my answer.'); return { text: 'Here is my answer.' };
+  });
+  try {
+    for (const [text, expected] of [
+      ['Ruby, hello', 'ruby'], ['hey Candie what do you think?', 'candy'],
+      ['What does Ruby think?', 'candy'], ['Unknown, help', 'candy'], ['Ruby, come back', 'ruby'],
+    ]) {
+      await runtime.utterance('human', text!);
+      expect(recordHuman.mock.lastCall?.[3]).toMatchObject({ id: expected, handle: expected });
+      expect(answer.mock.lastCall?.[0]).toMatchObject({ id: expected });
+      expect(play.mock.lastCall?.[1]).toMatchObject({ id: expected, voice: `${expected}-voice` });
+      const signals = state.room.localParticipant.publishData.mock.calls.map(([bytes]: any[]) => JSON.parse(new TextDecoder().decode(bytes)));
+      expect(signals.filter((s: any) => s.type === 'target').at(-1)).toEqual({ type: 'target', agentId: expected });
+      console.log(`${text} => transcript/reply/voice/UI target ${expected}`);
+    }
+  } finally { await runtime.close(); }
+});

@@ -45,6 +45,7 @@ import { TERMINAL_PUSH_CLAIMS_SQL } from './push-claim-cleanup.js';
 import { askingMessageSql, cardExpiresAtSql, EXPIRING_CARD_TYPES } from './needs-you.js';
 import { cancelArchivedCornerAssignments } from './corner-close.js';
 import { cornerOwedBackfillSql, cornerOwedSchemaSql } from './corner-owed.js';
+import { CORNER_ATTENTION_SCHEMA } from './corner-attention.js';
 import { backfillCornerFollows, cornerFollowsSchemaSql } from './corner-follow.js';
 import { retryMigrationStep, splitMigrationStatements } from './migration-retry.js';
 import { Pool, type PoolClient, type PoolConfig, type QueryResultRow } from 'pg';
@@ -3145,6 +3146,7 @@ export async function migrate(
   ));
   await ddlScript('corner merge holds', CORNER_MERGE_HOLDS_SCHEMA);
   await ddlScript('corner owed schema', cornerOwedSchemaSql());
+  await ddlScript('corner attention schema', CORNER_ATTENTION_SCHEMA);
   await ddlScript('corner follows schema', cornerFollowsSchemaSql());
   await ddlScript('live notification schema', POSTGRES_LIVE_SCHEMA);
   if (!options.deferData) await migrateData(database);
@@ -3680,7 +3682,7 @@ export async function backfillCornerOwed(database: SqlDatabase): Promise<void> {
     const current = await database.query<{ version: number }>(
       `SELECT version FROM beeline_schema_state`,
     );
-    if ((current.rows[0]?.version ?? 0) >= 17) return;
+    if ((current.rows[0]?.version ?? 0) >= 26) return;
   }
   await database.query(cornerOwedBackfillSql());
 }

@@ -257,15 +257,16 @@ export async function clearNeedsYouQuestions(
 ): Promise<void> {
   await database.query(
     `WITH ${VIEWER_ROOMS}
-     INSERT INTO needs_you_marks(identity_id,message_id,workspace_id,cleared_at)
-     SELECT $2,m.id,$1,now()
+     INSERT INTO needs_you_marks(identity_id,message_id,workspace_id,cleared_at,reminder_dismissed_at)
+     SELECT $2,m.id,$1,now(),now()
      FROM viewer_rooms room
      JOIN messages m ON m.room_id=room.id
      JOIN identities viewer ON viewer.id=$2
      LEFT JOIN needs_you_marks mark ON mark.identity_id=$2 AND mark.message_id=m.id
      WHERE ${QUESTION_WHERE}
      ON CONFLICT(identity_id,message_id)
-       DO UPDATE SET cleared_at=COALESCE(needs_you_marks.cleared_at,now())`,
+       DO UPDATE SET cleared_at=COALESCE(needs_you_marks.cleared_at,now()),
+         reminder_dismissed_at=COALESCE(needs_you_marks.reminder_dismissed_at,EXCLUDED.reminder_dismissed_at)`,
     [workspaceId, viewerId],
   );
 }

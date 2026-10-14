@@ -1,0 +1,1034 @@
+[
+  {
+    "variant": "corner-open-no-pr",
+    "theme": "bone",
+    "source": "Android native before fixture",
+    "screenshot": "android-before-bone-corner-open-no-pr.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "corner-open-no-pr",
+      "Keep lifecycle navigation and status consistent.",
+      "opened-corner",
+      "11:33",
+      "corner \u00b7 opened by @ruby",
+      "Open \u2192",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": []
+  },
+  {
+    "variant": "corner-open-pr",
+    "theme": "bone",
+    "source": "Android native before fixture",
+    "screenshot": "android-before-bone-corner-open-pr.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "corner-open-pr",
+      "Keep lifecycle navigation and status consistent.",
+      "opened-pr",
+      "11:33",
+      "corner \u00b7 opened by @ruby",
+      "Open \u2192",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": []
+  },
+  {
+    "variant": "corner-merged-pr",
+    "theme": "bone",
+    "source": "Android native before fixture",
+    "screenshot": "android-before-bone-corner-merged-pr.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "corner-merged-pr",
+      "PR \u00b7 1 merged",
+      "11:33",
+      "MERGED",
+      "merged-pr",
+      "corner \u00b7 PR #2468",
+      "by @ruby",
+      "Corner \u2192",
+      "View \u2197",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "Corner \u2192",
+      "View \u2197"
+    ]
+  },
+  {
+    "variant": "corner-merged-no-pr",
+    "theme": "bone",
+    "source": "Android native before fixture",
+    "screenshot": "android-before-bone-corner-merged-no-pr.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "corner-merged-no-pr",
+      "PR \u00b7 1 merged",
+      "11:33",
+      "MERGED",
+      "legacy-merged",
+      "corner",
+      "by @ruby",
+      "Corner \u2192",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "Corner \u2192"
+    ]
+  },
+  {
+    "variant": "corner-closed-pr",
+    "theme": "bone",
+    "source": "Android native before fixture",
+    "screenshot": "android-before-bone-corner-closed-pr.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "corner-closed-pr",
+      "PR \u00b7 1 closed",
+      "11:33",
+      "CLOSED",
+      "closed-pr",
+      "corner \u00b7 PR #2468",
+      "by @ruby",
+      "Corner \u2192",
+      "View \u2197",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "Corner \u2192",
+      "View \u2197"
+    ]
+  },
+  {
+    "variant": "corner-closed-no-pr",
+    "theme": "bone",
+    "source": "Android native before fixture",
+    "screenshot": "android-before-bone-corner-closed-no-pr.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "corner-closed-no-pr",
+      "closed-corner",
+      "11:33",
+      "CLOSED",
+      "closed-corner",
+      "corner",
+      "Corner \u2192",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "Corner \u2192"
+    ]
+  },
+  {
+    "variant": "worktree-cleaned",
+    "theme": "bone",
+    "source": "Android native before fixture",
+    "screenshot": "android-before-bone-worktree-cleaned.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "worktree-cleaned",
+      "cleaned-corner",
+      "11:33",
+      "CLOSED",
+      "cleaned-corner",
+      "corner",
+      "Corner \u2192",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "Corner \u2192"
+    ]
+  },
+  {
+    "variant": "corner-checks-failing",
+    "theme": "bone",
+    "source": "Android native before fixture",
+    "screenshot": "android-before-bone-corner-checks-failing.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "corner-checks-failing",
+      "failing-corner",
+      "11:33",
+      "FAILED",
+      "failing-corner",
+      "PR #2468",
+      "Open \u2192",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": []
+  },
+  {
+    "variant": "github-pr-opened",
+    "theme": "bone",
+    "source": "Android native before fixture",
+    "screenshot": "android-before-bone-github-pr-opened.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "github-pr-opened",
+      "PR 1 opened",
+      "11:33",
+      "by @octocat",
+      "OPENED",
+      "Align lifecycle cards",
+      "PR",
+      "View \u2197",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "View \u2197"
+    ]
+  },
+  {
+    "variant": "github-pr-merged",
+    "theme": "bone",
+    "source": "Android native before fixture",
+    "screenshot": "android-before-bone-github-pr-merged.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "github-pr-merged",
+      "PR 1 merged",
+      "11:33",
+      "by @octocat",
+      "MERGED",
+      "Align lifecycle cards",
+      "PR",
+      "View \u2197",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "View \u2197"
+    ]
+  },
+  {
+    "variant": "github-pr-closed",
+    "theme": "bone",
+    "source": "Android native before fixture",
+    "screenshot": "android-before-bone-github-pr-closed.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "github-pr-closed",
+      "PR 1 closed",
+      "11:33",
+      "by @octocat",
+      "CLOSED",
+      "Align lifecycle cards",
+      "PR",
+      "View \u2197",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "View \u2197"
+    ]
+  },
+  {
+    "variant": "github-issue-opened",
+    "theme": "bone",
+    "source": "Android native before fixture",
+    "screenshot": "android-before-bone-github-issue-opened.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "github-issue-opened",
+      "Issue 1 opened",
+      "11:33",
+      "by @octocat",
+      "OPENED",
+      "Align lifecycle cards",
+      "Issue",
+      "View \u2197",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "View \u2197"
+    ]
+  },
+  {
+    "variant": "github-issue-closed",
+    "theme": "bone",
+    "source": "Android native before fixture",
+    "screenshot": "android-before-bone-github-issue-closed.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "github-issue-closed",
+      "Issue 1 closed",
+      "11:33",
+      "by @octocat",
+      "CLOSED",
+      "Align lifecycle cards",
+      "Issue",
+      "View \u2197",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "View \u2197"
+    ]
+  },
+  {
+    "variant": "grouped-corners",
+    "theme": "bone",
+    "source": "Android native before fixture",
+    "screenshot": "android-before-bone-grouped-corners.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "grouped-corners",
+      "PR \u00b7 1 merged, 1 opened",
+      "11:33",
+      "by @ruby \u00b7 11:33 \u2013 11:33",
+      "MERGED",
+      "merged-pr",
+      "corner \u00b7 PR #2468",
+      "by @ruby",
+      "Corner \u2192",
+      "View \u2197",
+      "1 more \u25be",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "Corner \u2192",
+      "View \u2197"
+    ]
+  },
+  {
+    "variant": "grouped-expanded",
+    "theme": "bone",
+    "source": "Android native before fixture",
+    "screenshot": "android-before-bone-grouped-expanded.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "grouped-expanded",
+      "PR \u00b7 1 merged, 1 opened",
+      "11:33",
+      "by @ruby \u00b7 11:33 \u2013 11:33",
+      "MERGED",
+      "merged-pr",
+      "corner \u00b7 PR #2468",
+      "by @ruby",
+      "Corner \u2192",
+      "View \u2197",
+      "OPENED",
+      "opened-corner",
+      "corner \u00b7 @ruby",
+      "less \u25b4",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "Corner \u2192",
+      "View \u2197"
+    ]
+  },
+  {
+    "variant": "group-of-one",
+    "theme": "bone",
+    "source": "Android native before fixture",
+    "screenshot": "android-before-bone-group-of-one.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "group-of-one",
+      "PR \u00b7 1 merged",
+      "11:33",
+      "by @ruby \u00b7 11:33 \u2013 11:33",
+      "MERGED",
+      "merged-pr",
+      "corner \u00b7 PR #2468",
+      "by @ruby",
+      "Corner \u2192",
+      "View \u2197",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "Corner \u2192",
+      "View \u2197"
+    ]
+  },
+  {
+    "variant": "grouped-issues",
+    "theme": "bone",
+    "source": "Android native before fixture",
+    "screenshot": "android-before-bone-grouped-issues.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "grouped-issues",
+      "PR \u00b7 1 closed, 1 opened",
+      "11:33",
+      "by @octocat \u00b7 11:33 \u2013 11:33",
+      "CLOSED",
+      "Align lifecycle cards",
+      "issue",
+      "by @octocat",
+      "View \u2197",
+      "1 more \u25be",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "View \u2197"
+    ]
+  },
+  {
+    "variant": "mixed-activity",
+    "theme": "bone",
+    "source": "Android native before fixture",
+    "screenshot": "android-before-bone-mixed-activity.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "mixed-activity",
+      "PR \u00b7 1 closed, 1 opened",
+      "11:33",
+      "by @octocat, @ruby \u00b7 11:33 \u2013 11:33",
+      "CLOSED",
+      "Align lifecycle cards",
+      "issue",
+      "by @octocat",
+      "View \u2197",
+      "1 more \u25be",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "View \u2197"
+    ]
+  },
+  {
+    "variant": "check-started",
+    "theme": "bone",
+    "source": "Android native before fixture",
+    "screenshot": "android-before-bone-check-started.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "check-started",
+      "Check \u00b7 1 running",
+      "11:33",
+      "by @GitHub \u00b7 11:33 \u2013 11:33",
+      "RUNNING",
+      "TYPECHECK",
+      "Check \u00b7 aaaaaaa",
+      "by @GitHub",
+      "View \u2197",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "View \u2197"
+    ]
+  },
+  {
+    "variant": "check-passed",
+    "theme": "bone",
+    "source": "Android native before fixture",
+    "screenshot": "android-before-bone-check-passed.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "check-passed",
+      "Check \u00b7 1 passed",
+      "11:33",
+      "by @GitHub \u00b7 11:33 \u2013 11:33",
+      "PASSED",
+      "TYPECHECK",
+      "Check \u00b7 aaaaaaa",
+      "by @GitHub",
+      "View \u2197",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "View \u2197"
+    ]
+  },
+  {
+    "variant": "check-failed",
+    "theme": "bone",
+    "source": "Android native before fixture",
+    "screenshot": "android-before-bone-check-failed.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "check-failed",
+      "Check \u00b7 1 failed",
+      "11:33",
+      "by @GitHub \u00b7 11:33 \u2013 11:33",
+      "FAILED",
+      "TYPECHECK",
+      "Check \u00b7 aaaaaaa",
+      "by @GitHub",
+      "View \u2197",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "View \u2197"
+    ]
+  },
+  {
+    "variant": "corner-open-no-pr",
+    "theme": "obsidian",
+    "source": "Android native before fixture",
+    "screenshot": "android-before-obsidian-corner-open-no-pr.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "corner-open-no-pr",
+      "Keep lifecycle navigation and status consistent.",
+      "opened-corner",
+      "11:33",
+      "corner \u00b7 opened by @ruby",
+      "Open \u2192",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": []
+  },
+  {
+    "variant": "corner-open-pr",
+    "theme": "obsidian",
+    "source": "Android native before fixture",
+    "screenshot": "android-before-obsidian-corner-open-pr.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "corner-open-pr",
+      "Keep lifecycle navigation and status consistent.",
+      "opened-pr",
+      "11:33",
+      "corner \u00b7 opened by @ruby",
+      "Open \u2192",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": []
+  },
+  {
+    "variant": "corner-merged-pr",
+    "theme": "obsidian",
+    "source": "Android native before fixture",
+    "screenshot": "android-before-obsidian-corner-merged-pr.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "corner-merged-pr",
+      "PR \u00b7 1 merged",
+      "11:33",
+      "MERGED",
+      "merged-pr",
+      "corner \u00b7 PR #2468",
+      "by @ruby",
+      "Corner \u2192",
+      "View \u2197",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "Corner \u2192",
+      "View \u2197"
+    ]
+  },
+  {
+    "variant": "corner-merged-no-pr",
+    "theme": "obsidian",
+    "source": "Android native before fixture",
+    "screenshot": "android-before-obsidian-corner-merged-no-pr.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "corner-merged-no-pr",
+      "PR \u00b7 1 merged",
+      "11:33",
+      "MERGED",
+      "legacy-merged",
+      "corner",
+      "by @ruby",
+      "Corner \u2192",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "Corner \u2192"
+    ]
+  },
+  {
+    "variant": "corner-closed-pr",
+    "theme": "obsidian",
+    "source": "Android native before fixture",
+    "screenshot": "android-before-obsidian-corner-closed-pr.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "corner-closed-pr",
+      "PR \u00b7 1 closed",
+      "11:33",
+      "CLOSED",
+      "closed-pr",
+      "corner \u00b7 PR #2468",
+      "by @ruby",
+      "Corner \u2192",
+      "View \u2197",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "Corner \u2192",
+      "View \u2197"
+    ]
+  },
+  {
+    "variant": "corner-closed-no-pr",
+    "theme": "obsidian",
+    "source": "Android native before fixture",
+    "screenshot": "android-before-obsidian-corner-closed-no-pr.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "corner-closed-no-pr",
+      "closed-corner",
+      "11:33",
+      "CLOSED",
+      "closed-corner",
+      "corner",
+      "Corner \u2192",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "Corner \u2192"
+    ]
+  },
+  {
+    "variant": "worktree-cleaned",
+    "theme": "obsidian",
+    "source": "Android native before fixture",
+    "screenshot": "android-before-obsidian-worktree-cleaned.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "worktree-cleaned",
+      "cleaned-corner",
+      "11:33",
+      "CLOSED",
+      "cleaned-corner",
+      "corner",
+      "Corner \u2192",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "Corner \u2192"
+    ]
+  },
+  {
+    "variant": "corner-checks-failing",
+    "theme": "obsidian",
+    "source": "Android native before fixture",
+    "screenshot": "android-before-obsidian-corner-checks-failing.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "corner-checks-failing",
+      "failing-corner",
+      "11:33",
+      "FAILED",
+      "failing-corner",
+      "PR #2468",
+      "Open \u2192",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": []
+  },
+  {
+    "variant": "github-pr-opened",
+    "theme": "obsidian",
+    "source": "Android native before fixture",
+    "screenshot": "android-before-obsidian-github-pr-opened.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "github-pr-opened",
+      "PR 1 opened",
+      "11:33",
+      "by @octocat",
+      "OPENED",
+      "Align lifecycle cards",
+      "PR",
+      "View \u2197",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "View \u2197"
+    ]
+  },
+  {
+    "variant": "github-pr-merged",
+    "theme": "obsidian",
+    "source": "Android native before fixture",
+    "screenshot": "android-before-obsidian-github-pr-merged.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "github-pr-merged",
+      "PR 1 merged",
+      "11:33",
+      "by @octocat",
+      "MERGED",
+      "Align lifecycle cards",
+      "PR",
+      "View \u2197",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "View \u2197"
+    ]
+  },
+  {
+    "variant": "github-pr-closed",
+    "theme": "obsidian",
+    "source": "Android native before fixture",
+    "screenshot": "android-before-obsidian-github-pr-closed.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "github-pr-closed",
+      "PR 1 closed",
+      "11:33",
+      "by @octocat",
+      "CLOSED",
+      "Align lifecycle cards",
+      "PR",
+      "View \u2197",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "View \u2197"
+    ]
+  },
+  {
+    "variant": "github-issue-opened",
+    "theme": "obsidian",
+    "source": "Android native before fixture",
+    "screenshot": "android-before-obsidian-github-issue-opened.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "github-issue-opened",
+      "Issue 1 opened",
+      "11:33",
+      "by @octocat",
+      "OPENED",
+      "Align lifecycle cards",
+      "Issue",
+      "View \u2197",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "View \u2197"
+    ]
+  },
+  {
+    "variant": "github-issue-closed",
+    "theme": "obsidian",
+    "source": "Android native before fixture",
+    "screenshot": "android-before-obsidian-github-issue-closed.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "github-issue-closed",
+      "Issue 1 closed",
+      "11:33",
+      "by @octocat",
+      "CLOSED",
+      "Align lifecycle cards",
+      "Issue",
+      "View \u2197",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "View \u2197"
+    ]
+  },
+  {
+    "variant": "grouped-corners",
+    "theme": "obsidian",
+    "source": "Android native before fixture",
+    "screenshot": "android-before-obsidian-grouped-corners.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "grouped-corners",
+      "PR \u00b7 1 merged, 1 opened",
+      "11:33",
+      "by @ruby \u00b7 11:33 \u2013 11:33",
+      "MERGED",
+      "merged-pr",
+      "corner \u00b7 PR #2468",
+      "by @ruby",
+      "Corner \u2192",
+      "View \u2197",
+      "1 more \u25be",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "Corner \u2192",
+      "View \u2197"
+    ]
+  },
+  {
+    "variant": "grouped-expanded",
+    "theme": "obsidian",
+    "source": "Android native before fixture",
+    "screenshot": "android-before-obsidian-grouped-expanded.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "grouped-expanded",
+      "PR \u00b7 1 merged, 1 opened",
+      "11:33",
+      "by @ruby \u00b7 11:33 \u2013 11:33",
+      "MERGED",
+      "merged-pr",
+      "corner \u00b7 PR #2468",
+      "by @ruby",
+      "Corner \u2192",
+      "View \u2197",
+      "OPENED",
+      "opened-corner",
+      "corner \u00b7 @ruby",
+      "less \u25b4",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "Corner \u2192",
+      "View \u2197"
+    ]
+  },
+  {
+    "variant": "group-of-one",
+    "theme": "obsidian",
+    "source": "Android native before fixture",
+    "screenshot": "android-before-obsidian-group-of-one.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "group-of-one",
+      "PR \u00b7 1 merged",
+      "11:33",
+      "by @ruby \u00b7 11:33 \u2013 11:33",
+      "MERGED",
+      "merged-pr",
+      "corner \u00b7 PR #2468",
+      "by @ruby",
+      "Corner \u2192",
+      "View \u2197",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "Corner \u2192",
+      "View \u2197"
+    ]
+  },
+  {
+    "variant": "grouped-issues",
+    "theme": "obsidian",
+    "source": "Android native before fixture",
+    "screenshot": "android-before-obsidian-grouped-issues.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "grouped-issues",
+      "PR \u00b7 1 closed, 1 opened",
+      "11:33",
+      "by @octocat \u00b7 11:33 \u2013 11:33",
+      "CLOSED",
+      "Align lifecycle cards",
+      "issue",
+      "by @octocat",
+      "View \u2197",
+      "1 more \u25be",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "View \u2197"
+    ]
+  },
+  {
+    "variant": "mixed-activity",
+    "theme": "obsidian",
+    "source": "Android native before fixture",
+    "screenshot": "android-before-obsidian-mixed-activity.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "mixed-activity",
+      "PR \u00b7 1 closed, 1 opened",
+      "11:33",
+      "by @octocat, @ruby \u00b7 11:33 \u2013 11:33",
+      "CLOSED",
+      "Align lifecycle cards",
+      "issue",
+      "by @octocat",
+      "View \u2197",
+      "1 more \u25be",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "View \u2197"
+    ]
+  },
+  {
+    "variant": "check-started",
+    "theme": "obsidian",
+    "source": "Android native before fixture",
+    "screenshot": "android-before-obsidian-check-started.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "check-started",
+      "Check \u00b7 1 running",
+      "11:33",
+      "by @GitHub \u00b7 11:33 \u2013 11:33",
+      "RUNNING",
+      "TYPECHECK",
+      "Check \u00b7 aaaaaaa",
+      "by @GitHub",
+      "View \u2197",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "View \u2197"
+    ]
+  },
+  {
+    "variant": "check-passed",
+    "theme": "obsidian",
+    "source": "Android native before fixture",
+    "screenshot": "android-before-obsidian-check-passed.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "check-passed",
+      "Check \u00b7 1 passed",
+      "11:33",
+      "by @GitHub \u00b7 11:33 \u2013 11:33",
+      "PASSED",
+      "TYPECHECK",
+      "Check \u00b7 aaaaaaa",
+      "by @GitHub",
+      "View \u2197",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "View \u2197"
+    ]
+  },
+  {
+    "variant": "check-failed",
+    "theme": "obsidian",
+    "source": "Android native before fixture",
+    "screenshot": "android-before-obsidian-check-failed.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "check-failed",
+      "Check \u00b7 1 failed",
+      "11:33",
+      "by @GitHub \u00b7 11:33 \u2013 11:33",
+      "FAILED",
+      "TYPECHECK",
+      "Check \u00b7 aaaaaaa",
+      "by @GitHub",
+      "View \u2197",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "View \u2197"
+    ]
+  }
+]

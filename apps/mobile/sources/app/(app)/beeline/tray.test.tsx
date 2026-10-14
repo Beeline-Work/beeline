@@ -1213,7 +1213,7 @@ describe('Tray Needs you', () => {
     await act(async () => {
       tree.root.findByProps({ testID: 'needs-you-swipe-grant-1' }).props.onSwipeableOpen('left');
     });
-    expect(cleared()).toEqual([['clearNeedsYou', { workspaceId: 'ws', messageId: 'grant-1' }]]);
+    expect(cleared()).toEqual([['clearNeedsYou', { workspaceId: 'ws', messageId: 'grant-1', dismissReminder: true }]]);
     expect(navigation.push).not.toHaveBeenCalled();
     expect(tree.root.findByProps({ testID: 'needs-you-empty' })).toBeDefined();
   });
@@ -1226,7 +1226,7 @@ describe('Tray Needs you', () => {
     await act(async () => tree.root.findByProps({ testID: 'needs-you-grant-1' }).props.onHoverIn());
     await act(async () => tree.root.findByProps({ testID: 'needs-you-dismiss-grant-1' })
       .props.onPress({ stopPropagation: () => undefined }));
-    expect(cleared()).toEqual([['clearNeedsYou', { workspaceId: 'ws', messageId: 'grant-1' }]]);
+    expect(cleared()).toEqual([['clearNeedsYou', { workspaceId: 'ws', messageId: 'grant-1', dismissReminder: true }]]);
     expect(navigation.push).not.toHaveBeenCalled();
   });
 

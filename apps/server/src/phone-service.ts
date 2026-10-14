@@ -5307,16 +5307,17 @@ export class PhoneService {
     if (typeof input.messageId !== 'string' || !input.messageId)
       throw new Error('messageId is required');
     const cleared = await this.database.query(
-      `INSERT INTO needs_you_marks(identity_id,message_id,workspace_id,cleared_at)
-       SELECT $1,message.id,room.workspace_id,now()
+      `INSERT INTO needs_you_marks(identity_id,message_id,workspace_id,cleared_at,reminder_dismissed_at)
+       SELECT $1,message.id,room.workspace_id,now(),CASE WHEN $4::boolean THEN now() END
        FROM messages message
        JOIN rooms room ON room.id=message.room_id AND room.workspace_id=$3
        JOIN memberships member ON member.room_id=room.id AND member.identity_id=$1
          AND member.removed_at IS NULL
        WHERE message.id=$2
        ON CONFLICT(identity_id,message_id)
-         DO UPDATE SET cleared_at=COALESCE(needs_you_marks.cleared_at,now())`,
-      [viewerId, input.messageId, input.workspaceId],
+         DO UPDATE SET cleared_at=COALESCE(needs_you_marks.cleared_at,now()),
+           reminder_dismissed_at=COALESCE(needs_you_marks.reminder_dismissed_at,EXCLUDED.reminder_dismissed_at)`,
+      [viewerId, input.messageId, input.workspaceId, input.dismissReminder === true],
     );
     if (!cleared.rowCount) throw new Error('message is not available');
   }
@@ -5335,10 +5336,11 @@ export class PhoneService {
     const approvalIds = items.filter((item) => item.approval).map((item) => item.messageId);
     if (approvalIds.length) {
       await this.database.query(
-        `INSERT INTO needs_you_marks(identity_id,message_id,workspace_id,cleared_at)
-         SELECT $1,id,$3,now() FROM unnest($2::text[]) id
+        `INSERT INTO needs_you_marks(identity_id,message_id,workspace_id,cleared_at,reminder_dismissed_at)
+         SELECT $1,id,$3,now(),now() FROM unnest($2::text[]) id
          ON CONFLICT(identity_id,message_id)
-           DO UPDATE SET cleared_at=COALESCE(needs_you_marks.cleared_at,now())`,
+           DO UPDATE SET cleared_at=COALESCE(needs_you_marks.cleared_at,now()),
+           reminder_dismissed_at=COALESCE(needs_you_marks.reminder_dismissed_at,EXCLUDED.reminder_dismissed_at)`,
         [viewerId, approvalIds, input.workspaceId],
       );
     }

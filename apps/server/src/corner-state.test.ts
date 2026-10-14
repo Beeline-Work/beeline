@@ -1,96 +1,50 @@
 import { describe, expect, it } from 'vitest';
-import type { CornerLifecycleView } from '@beeline/api-contract/phone';
 import { deriveCornerState } from './corner-state.js';
+import type { CornerStateFacts } from '@beeline/api-contract/phone';
 
-const lifecycle = (
-  overrides: Partial<CornerLifecycleView> = {},
-): CornerLifecycleView => ({ lifecycle: 'unknown', checks: 'unknown', ...overrides });
-
-describe('deriveCornerState', () => {
+const facts: CornerStateFacts = {
+  archived: false,
+  turnRunning: false,
+  owed: false,
+  lifecycle: { lifecycle: 'working', checks: 'unknown' },
+};
+describe('observed corner states', () => {
   it.each([
-    ['freshly opened', false, false, lifecycle(), { state: 'waiting' }],
-    ['legacy open', false, false, lifecycle({ lifecycle: 'open' as never }), { state: 'waiting' }],
-    ['idle', false, false, lifecycle({ lifecycle: 'working' }), { state: 'waiting' }],
-    ['legacy idle', false, false, lifecycle({ lifecycle: 'idle' as never }), { state: 'waiting' }],
-    ['question', false, false, lifecycle({ reason: 'question' }), { state: 'waiting', reason: 'question' }],
-    ['failure', false, false, lifecycle({ reason: 'failure' }), { state: 'waiting', reason: 'failed' }],
-    ['legacy failure state', false, false, lifecycle({ lifecycle: 'failure' as never }), { state: 'waiting', reason: 'failed' }],
-    ['running', false, true, lifecycle(), { state: 'working' }],
-    ['running with PR', false, true, lifecycle({ pr: { number: 1, url: 'https://example.test/pr/1', title: 'PR', targetBranch: 'main', headSha: 'a' } }), { state: 'working' }],
-    ['PR pending', false, false, lifecycle({ checks: 'pending', pr: { number: 1, url: 'https://example.test/pr/1', title: 'PR', targetBranch: 'main', headSha: 'a' } }), { state: 'review' }],
-    ['PR passing', false, false, lifecycle({ checks: 'passing', pr: { number: 1, url: 'https://example.test/pr/1', title: 'PR', targetBranch: 'main', headSha: 'a' } }), { state: 'review' }],
-    ['PR failing', false, false, lifecycle({ checks: 'failing', pr: { number: 1, url: 'https://example.test/pr/1', title: 'PR', targetBranch: 'main', headSha: 'a' } }), { state: 'review', reason: 'checks-failed' }],
-    ['archived row', true, true, lifecycle(), { state: 'archived' }],
-    ['done', false, true, lifecycle({ lifecycle: 'done' }), { state: 'archived' }],
-    ['merged PR', false, true, lifecycle({ lifecycle: 'in-review', outcome: 'landed', pr: { number: 1, url: 'https://example.test/pr/1', title: 'PR', targetBranch: 'main', headSha: 'a' } }), { state: 'archived' }],
-    ['abandoned', false, true, lifecycle({ outcome: 'abandoned' }), { state: 'archived' }],
-    ['legacy concluded', false, true, lifecycle({ lifecycle: 'concluded' as never }), { state: 'archived' }],
-    ['legacy closed', false, true, lifecycle({ lifecycle: 'closed' as never }), { state: 'archived' }],
-    ['legacy cleaned', false, true, lifecycle({ lifecycle: 'cleaned' as never }), { state: 'archived' }],
-  ] as const)('%s', (_name, archived, turnRunning, facts, expected) => {
-    expect(deriveCornerState({ archived, turnRunning, lifecycle: facts })).toEqual(expected);
+    ['idle', {}, 'idle'],
+    ['worker running', { turnRunning: true }, 'working'],
+    ['worker queued', { workerQueued: true }, 'working'],
+    ['reviewer running or queued', { reviewerActive: true }, 'review'],
+    ['checks running', { lifecycle: { lifecycle: 'in-review', checks: 'pending' } }, 'review'],
+    [
+      'checks done without reviewer',
+      { lifecycle: { lifecycle: 'in-review', checks: 'passing' } },
+      'idle',
+    ],
+    [
+      'checks failed without worker',
+      { lifecycle: { lifecycle: 'in-review', checks: 'failing' } },
+      'idle',
+    ],
+    ['unanswered human request', { owed: true }, 'waiting'],
+    ['legacy ask stage alone', { run: { state: 'ask_human' } }, 'idle'],
+    ['failed turn alone', { run: { state: 'implement', outcome: 'failed' } }, 'idle'],
+    ['finished reviewer', { run: { state: 'review' } }, 'idle'],
+    ['archived', { archived: true, turnRunning: true }, 'archived'],
+    [
+      'merged',
+      { lifecycle: { lifecycle: 'done', checks: 'passing', outcome: 'landed' } },
+      'archived',
+    ],
+    ['closed run', { run: { state: 'closed' } }, 'archived'],
+  ] as const)('%s', (_name, overrides, expected) => {
+    expect(deriveCornerState({ ...facts, ...overrides })).toEqual({ state: expected });
   });
-});
-
-describe('deriveCornerState from the workflow run', () => {
-  const pr = { number: 1, url: 'https://example.test/pr/1', title: 'PR', targetBranch: 'main', headSha: 'a' };
-  it.each([
-    ['opened', undefined, { state: 'waiting' }],
-    ['implement', 'opened', { state: 'waiting' }],
-    ['implement', 'code', { state: 'waiting' }],
-    ['implement', 'no_reviewer', { state: 'waiting' }],
-    ['implement', 'changes_requested', { state: 'waiting' }],
-    ['implement', 'merge_refused', { state: 'waiting' }],
-    ['implement', 'failing', { state: 'review', reason: 'checks-failed' }],
-    ['implement', 'failed', { state: 'waiting', reason: 'failed' }],
-    ['checks', 'pushed', { state: 'review' }],
-    ['review', 'passing', { state: 'review' }],
-    ['review', 'approved', { state: 'review' }],
-    ['ask_human', 'failing', { state: 'waiting', reason: 'question' }],
-    ['landed', 'landed', { state: 'archived' }],
-    ['closed', 'closed', { state: 'archived' }],
-  ] as const)('%s reached by %s', (state, outcome, expected) => {
-    // The lifecycle deliberately disagrees: the run decides.
-    const facts = { archived: false, run: { state, ...(outcome ? { outcome } : {}) }, lifecycle: lifecycle({ checks: 'passing', pr }) };
-    expect(deriveCornerState({ ...facts, turnRunning: false })).toEqual(expected);
-    expect(deriveCornerState({ ...facts, turnRunning: true })).toEqual(
-      expected.state === 'archived' ? expected : { state: 'working' },
-    );
-  });
-
-  it('a run with no recorded outcome takes the lifecycle outcome', () => {
-    const failing = lifecycle({ checks: 'failing', pr });
+  it('gives worker work precedence over review and human blockers', () => {
     expect(
-      deriveCornerState({ archived: false, turnRunning: false, run: { state: 'implement' }, lifecycle: failing }),
-    ).toEqual({ state: 'review', reason: 'checks-failed' });
-    expect(
-      deriveCornerState({
-        archived: false, turnRunning: false, run: { state: 'implement', outcome: 'code' }, lifecycle: failing,
-      }),
-    ).toEqual({ state: 'waiting' });
-  });
-
-  it('an archived Room is archived whatever its run says', () => {
-    expect(deriveCornerState({ archived: true, turnRunning: false, run: { state: 'review' } })).toEqual({
-      state: 'archived',
+      deriveCornerState({ ...facts, workerQueued: true, reviewerActive: true, owed: true }),
+    ).toEqual({ state: 'working' });
+    expect(deriveCornerState({ ...facts, reviewerActive: true, owed: true })).toEqual({
+      state: 'review',
     });
-  });
-});
-
-describe('deriveCornerState with the owed fact', () => {
-  it.each([
-    ['opened', undefined],
-    ['implement', 'code'],
-  ] as const)('%s reads idle with nothing owed and waiting with something owed', (state, outcome) => {
-    const run = { state, ...(outcome ? { outcome } : {}) };
-    expect(deriveCornerState({ archived: false, turnRunning: false, run, owed: false })).toEqual({ state: 'idle' });
-    expect(deriveCornerState({ archived: false, turnRunning: false, run, owed: true })).toEqual({ state: 'waiting' });
-    // A projection that cannot tell keeps it waiting, so nothing owed is hidden.
-    expect(deriveCornerState({ archived: false, turnRunning: false, run })).toEqual({ state: 'waiting' });
-  });
-
-  it('keeps blocked runs waiting even with nothing owed', () => {
-    expect(deriveCornerState({ archived: false, turnRunning: false, run: { state: 'ask_human' }, owed: false })).toEqual({ state: 'waiting', reason: 'question' });
-    expect(deriveCornerState({ archived: false, turnRunning: false, run: { state: 'implement', outcome: 'failed' }, owed: false })).toEqual({ state: 'waiting', reason: 'failed' });
   });
 });

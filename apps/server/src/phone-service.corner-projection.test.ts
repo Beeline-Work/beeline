@@ -71,7 +71,7 @@ async function roomListRow(phone: PhoneService) {
 }
 
 describe('one corner projection for the Room list read, the live frame and the Corners page', () => {
-  it('reads review / checks-failed for implement with no outcome and failing checks everywhere', async () => {
+  it('reads idle for finished failing checks with no running or queued work everywhere', async () => {
     const { database, phone } = await fixture();
     // Mine, so the capped Room list carries it.
     await database.query(`UPDATE corner_facts SET commissioned_by=$2 WHERE corner_id=$1`, [FAILING, VIEWER]);
@@ -80,11 +80,10 @@ describe('one corner projection for the Room list read, the live frame and the C
     const page = (await phone.readCorners(ROOM, VIEWER))!;
     const failing = (list: readonly { id: string; state: string }[] | undefined) =>
       list?.find((corner) => corner.id === FAILING)?.state;
-    expect(failing(read.openCorners)).toBe('review');
-    expect(failing(frame.openCorners)).toBe('review');
+    expect(failing(read.openCorners)).toBe('idle');
+    expect(failing(frame.openCorners)).toBe('idle');
     expect(page.corners.find((item) => item.corner.id === FAILING)).toMatchObject({
-      state: 'review',
-      reason: 'checks-failed',
+      state: 'idle',
     });
   });
 

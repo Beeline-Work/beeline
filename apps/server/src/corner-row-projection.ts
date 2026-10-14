@@ -7,7 +7,7 @@ export const cornerRoomColumnsSql = `c.id,c.workspace_id,${CORNER_ROW_ROOM_COLUM
   (column) => `c.${column}`,
 ).join(',')}`;
 export const CORNER_ROW_FACT_COLUMNS = [
-  'lifecycle', 'workflow_state', 'workflow_outcome', 'commissioned_by', 'owner_agent_id', 'objective',
+  'lifecycle', 'workflow_state', 'workflow_outcome', 'commissioned_by', 'owner_agent_id', 'worker_agent_id', 'objective',
 ] as const;
 /** The latest-message (`lm`) columns, including those its visibility rule reads. */
 export const CORNER_ROW_MESSAGE_COLUMNS = [

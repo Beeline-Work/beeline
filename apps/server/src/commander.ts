@@ -257,7 +257,9 @@ export async function reportToCommander(
         text,
         JSON.stringify(options.attachments ?? []),
         incoming?.id ?? null,
-        ask ? JSON.stringify({ ask }) : null,
+        ask || /^needs-decision:/.test(text)
+          ? JSON.stringify({ ...(ask ? { ask } : {}), ...(/^needs-decision:/.test(text) ? { reportToId: recipient } : {}) })
+          : null,
       ],
     );
   }

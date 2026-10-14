@@ -438,7 +438,7 @@ export type DaemonOperationMap = {
   /** Current member address discovery across Rooms, corners and DMs. */
   listRooms: Operation<RoomInput, { readonly rooms: readonly { readonly roomId: string; readonly name: string; readonly parentRoomId?: string; readonly directMessage: boolean }[] }>;
   /** Every corner, open and closed, under a member Room; across member Rooms from a DM. */
-  listReachableCorners: Operation<RoomInput, CornerListResult>;
+  listReachableCorners: Operation<RoomInput & { activeOnly?: boolean }, CornerListResult>;
   /** Current members of a Room the caller is in, or of a corner it reaches. */
   listRoomMembers: Operation<RoomInput, RoomMemberListResult>;
   /** A reachable corner's pull request: changed files, reviews and comments. */
@@ -997,7 +997,8 @@ export type CornerRestoreResult = {
     readonly pullRequestNumber: number;
     readonly headSha: string;
   };
-  /** `running` while the corner has a working agent turn; otherwise `idle`. */
+  readonly state?: import('./phone-types.js').CornerState;
+  /** Worker or reviewer running/queued, or checks running; otherwise idle. */
   readonly activity?: 'running' | 'idle';
   /** The newest visible message (activity rows excluded); excerpt is at most 280 characters. */
   readonly lastMessage?: {

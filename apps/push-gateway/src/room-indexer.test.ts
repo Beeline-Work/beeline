@@ -582,7 +582,7 @@ describe('RoomIndexer', () => {
     expect(chats?.chats.find((chat) => chat.room.id === ROOM)?.agentState).toBeUndefined();
 
     const corners = await indexer.readCorners(ROOM, VIEWER);
-    expect(corners?.corners).toMatchObject([{ corner: { id: CORNER }, state: 'waiting' }]);
+    expect(corners?.corners).toMatchObject([{ corner: { id: CORNER }, state: 'idle' }]);
   });
 
   it('keeps a predecessor-authored repository binding unverified instead of calling it absent', async () => {
@@ -2060,7 +2060,7 @@ describe('RoomIndexer', () => {
       ],
     );
 
-    expect((await indexer.readCorners(ROOM, VIEWER))?.corners[0]?.state).toBe('waiting');
+    expect((await indexer.readCorners(ROOM, VIEWER))?.corners[0]?.state).toBe('idle');
 
     const publishAgentTurn = async (id: string, createdAt: number, status: string) => {
       await postgres.query(
@@ -2093,10 +2093,10 @@ describe('RoomIndexer', () => {
     expect(parentRoom && 'corners' in parentRoom).toBe(false);
 
     await publishAgentTurn('5', 52, 'complete');
-    expect((await indexer.readCorners(ROOM, VIEWER))?.corners[0]?.state).toBe('waiting');
+    expect((await indexer.readCorners(ROOM, VIEWER))?.corners[0]?.state).toBe('idle');
 
     await publishAgentTurn('6', 53, 'failed');
-    expect((await indexer.readCorners(ROOM, VIEWER))?.corners[0]?.state).toBe('waiting');
+    expect((await indexer.readCorners(ROOM, VIEWER))?.corners[0]?.state).toBe('idle');
   });
 
   it('projects the agent soul and allow-listed model catalog through the indexed agent read', async () => {

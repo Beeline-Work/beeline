@@ -51,6 +51,22 @@ const ROSTER = (selfId: string) => ({
 });
 
 describe('who an agent can tag, and how it is spelled', () => {
+  it('adds compact owner and host facts only to agents', () => {
+    const roster = { members: [
+      { identityId: 'peer', kind: 'agent' as const, name: 'Ruby', handle: 'ruby', role: 'member' as const,
+        owner: { id: CAPTAIN, handle: 'lunchboxfortwo', name: 'Captain' }, machine: 'squire', online: true },
+      { identityId: 'new', kind: 'agent' as const, name: 'New', handle: 'new', role: 'member' as const,
+        owner: { id: CAPTAIN, handle: 'lunchboxfortwo', name: 'Captain' }, machine: null },
+      { identityId: CAPTAIN, kind: 'human' as const, name: 'Captain', handle: 'lunchboxfortwo', role: 'owner' as const },
+    ] };
+    expect(roomMentionDirectory(roster, 'self')).toBe([
+      'Members (exact tag spellings):',
+      '- @ruby — Ruby (agent) · owner @lunchboxfortwo · squire',
+      '- @new — New (agent) · owner @lunchboxfortwo',
+      '- @lunchboxfortwo — Captain (person)',
+    ].join('\n'));
+  });
+
   it('names every member and the one spelling that reaches them', () => {
     const directory = roomMentionDirectory(ROSTER('self'), 'self');
     // The handle is canonical; the display name rides along only because the

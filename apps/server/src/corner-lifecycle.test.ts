@@ -759,14 +759,12 @@ describe('review dispatch and the fix loop cap (row 9)', () => {
     expect(await reasons(cornerId, A)).not.toContain('corner_review');
   });
 
-  it('a reviewer privately orders repairs from the Room on a green head and it stays in review', async () => {
+  it('a reviewer privately orders repairs from its corner on a green head and it stays in review', async () => {
     const cornerId = await toReview();
     const [review] = await commands(B, cornerId);
     await claim(review!, 'review-generation');
-    await expect(daemon.execute('order', { roomId: cornerId, requestId: review!.turnRequestId,
-      generationId: 'review-generation', address: cornerId, text: 'Fix the race condition' }, B))
-      .rejects.toThrow('Corners can only order corners they opened.');
-    await orderRepairsFromRoom(review!, cornerId, 'Fix the race condition');
+    await daemon.execute('order', { roomId: cornerId, requestId: review!.turnRequestId,
+      generationId: 'review-generation', address: cornerId, text: 'Fix the race condition' }, B);
     expect((await commands(A, cornerId)).some(c => c.reason === 'order')).toBe(true);
     expect(await currentState(cornerId)).toBe('review');
     await daemon.execute('approveCornerMerge', { cornerId, headSha: '7'.repeat(40) }, B);
@@ -1097,7 +1095,7 @@ it('Reproduction F1-7: opener revises a delegated sibling from its own command',
   expect((await daemon.execute('listCornerBriefRevisions', { cornerId }, A)).revisions[0]!.revision).toBe(3);
 });
 
-it('a corner member revises from the Room, while a corner turn cannot revise itself', async () => {
+it('a corner member revises from its own corner and the Room', async () => {
   const cornerId = await open('owner/widgets');
   const command = await commissioned(cornerId);
   const G = '8'.repeat(64);
@@ -1108,12 +1106,12 @@ it('a corner member revises from the Room, while a corner turn cannot revise its
   const turn = await createAgentCommand(db, { roomId: cornerId, agentId: G, sourceMessageId: command.sourceMessageId, reason: 'human_tag' });
   await daemon.execute('claimAgentCommand', { roomId: cornerId, commandId: turn!.id, generationId: 'g1' }, G);
   const input = { cornerId, requestId: turn!.turn_request_id, generationId: 'g1', expectedRevision: 1, brief: { ...brief(command.sourceMessageId), spec: 'Heir scope', change: 'Take over' } };
-  await expect(daemon.execute('reviseCornerBrief', input, G)).rejects.toThrow('Corners can only order corners they opened.');
+  expect(await daemon.execute('reviseCornerBrief', input, G)).toMatchObject({ revision: 2 });
   await phone.execute('sendRoomMessage', { roomId: R, messageId: randomBytes(32).toString('hex'), text: '@heir revise the brief' }, H);
   const roomTurn = (await daemon.execute('getAgentCommands', { roomId: R }, G)).commands.at(-1)!;
   await claim(roomTurn);
-  expect(await daemon.execute('reviseCornerBrief', { ...input, roomId: R, requestId: roomTurn.turnRequestId }, G))
-    .toMatchObject({ revision: 2 });
+  expect(await daemon.execute('reviseCornerBrief', { ...input, expectedRevision: 2, roomId: R, requestId: roomTurn.turnRequestId }, G))
+    .toMatchObject({ revision: 3 });
 });
 
 it('Reproduction F1-9: brief history defaults to one revision with a cursor', async () => {

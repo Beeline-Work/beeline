@@ -567,9 +567,6 @@ it('the commander revises from its DM using the stored approval after a check wa
   const check = (await commands(opened.cornerId, WORKER)).find((c) => c.reason === 'corner_check')!;
   await claim(check);
   expect(check.sourceMessageId).toBe(check.id);
-  await expect(daemon.execute('reviseCornerBrief', { ...authority(check), cornerId: opened.cornerId,
-    expectedRevision: 1, brief: { spec: 'CI repair', change: 'Repair CI', approval: { sourceMessageId: check.sourceMessageId } } }, WORKER))
-    .rejects.toThrow('Corners can only order corners they opened.');
   const stored = (await daemon.execute('getCornerRestoreState', { cornerId: opened.cornerId }, RUBY)).brief!;
   await daemon.execute(
     'reviseCornerBrief',

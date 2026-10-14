@@ -380,15 +380,17 @@ it('R8d documents the optional continuation and generic fallback', () => {
   expect(tool.inputSchema.required).toEqual(['service', 'reason']);
 });
 
-it('corner order descriptions prevent ordering up or out', () => {
+it('corner order descriptions forbid ancestors and retain single-agent Room orders', () => {
   const tool = agentToolsFor(true, false, true, true).find(tool => tool.name === 'order')!;
-  expect(tool.description).toContain('only corners this corner opened, directly or transitively');
-  expect(tool.description).toContain('this corner itself are refused');
+  expect(tool.description).toContain('except your parent Room and parent or ancestor corners');
+  expect(tool.description).toContain('name exactly one agent');
+  expect(tool.description).toContain('DM and agent addresses are blocked');
+  expect(tool.description).toContain('This corner and sibling corners are allowed');
 });
 
-it('corner revision and close tools explain the provenance boundary', () => {
+it('corner revision and close tools explain the ancestor boundary', () => {
   const tools = agentToolsFor(true, false, true, true);
   for (const name of ['revise_corner_brief', 'close_corner']) {
-    expect(tools.find(tool => tool.name === name)?.description).toContain('this corner opened, directly or transitively');
+    expect(tools.find(tool => tool.name === name)?.description).toContain('except parent or ancestor corners and the parent Room');
   }
 });

@@ -61,25 +61,36 @@ export async function commandAddress(
   return row;
 }
 
-/** Corner writes target only explicitly recorded opened descendants. */
+/** Corner turns may target reachable addresses except ancestors, DMs and agent addresses. */
 export async function assertCornerCommandTarget(
   db: SqlDatabase, sourceRoomId: string, targetRoomId: string,
 ) {
-  const source = (await db.query<{ parent_id: string | null }>(
-    `SELECT parent_id FROM rooms WHERE id=$1`, [sourceRoomId],
-  )).rows[0];
-  if (!source?.parent_id) return;
-  const allowed = await db.query(
-    `WITH RECURSIVE descendants AS (
-       SELECT corner_id FROM corner_facts WHERE opened_from_corner_id=$1
-       UNION SELECT child.corner_id FROM corner_facts child JOIN descendants parent
-         ON child.opened_from_corner_id=parent.corner_id
-     ) SELECT 1 FROM descendants WHERE corner_id::text=$2 AND corner_id<>$1 LIMIT 1`,
+  const dm = await db.query(
+    `SELECT 1 FROM rooms source WHERE source.id=$1 AND source.parent_id IS NOT NULL
+       AND (EXISTS (SELECT 1 FROM rooms target WHERE target.id::text=lower($2) AND target.direct_participants IS NOT NULL)
+         OR EXISTS (SELECT 1 FROM identities agent WHERE agent.kind='agent'
+           AND (agent.id=$2 OR lower(agent.handle)=lower(ltrim($2,'@'))))) LIMIT 1`,
     [sourceRoomId, targetRoomId],
   );
-  if (!allowed.rowCount)
+  if (dm.rowCount)
     throw new CommandRefusalError(
-      'Corners can only order corners they opened. Report to your commander instead.', 403,
+      "Corners can't order DMs. Report to your commander instead.", 403,
+    );
+  const blocked = await db.query(
+    `WITH RECURSIVE ancestors(id) AS (
+       SELECT id FROM rooms WHERE id=$1 AND parent_id IS NOT NULL
+       UNION
+       SELECT parent.id FROM ancestors ancestor
+       JOIN rooms room ON room.id=ancestor.id
+       LEFT JOIN corner_facts fact ON fact.corner_id=room.id
+       CROSS JOIN LATERAL (VALUES (room.parent_id),(fact.opened_from_corner_id)) parent(id)
+       WHERE parent.id IS NOT NULL
+     ) SELECT 1 FROM ancestors WHERE id<>$1 AND id::text=lower($2) LIMIT 1`,
+    [sourceRoomId, targetRoomId],
+  );
+  if (blocked.rowCount)
+    throw new CommandRefusalError(
+      "Corners can't order their parent Room. Report to your commander instead.", 403,
     );
 }
 

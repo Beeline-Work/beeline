@@ -29,7 +29,7 @@ On squire, the read-only checks on October 13, 2026 found:
 Build `@beeline/body`, then run:
 
 ```sh
-node scripts/prove-claude-silent-wake.mjs /absolute/path/to/installed/claude-agent-acp
+npm run prove:claude-silent-wake -- /absolute/path/to/installed/claude-agent-acp
 ```
 
 The Linux proof clears inherited environment, isolates HOME/XDG and cwd, uses

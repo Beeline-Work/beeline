@@ -60,11 +60,11 @@ describe('native fingerprint gate', () => {
     // already installed carried the literal stamp it was built with, so it
     // could never match the published updates and reported NoUpdatesAvailable.
     // Each platform pin moves by hand only when that platform's native side moves.
-    expect(appConfig).toContain('runtimeVersion: runtimeVersionOverride || "37"');
+    expect(appConfig).toContain('runtimeVersion: runtimeVersionOverride || "38"');
     expect(appConfig).toContain('runtimeVersion: runtimeVersionOverride || "35"');
     expect(appConfig).not.toContain('policy: "fingerprint"');
-    expect(readPinnedRuntimeVersion(mobileRoot)).toEqual({ android: '37', ios: '35' });
-    expect(runtimeVersionsFromConfig(baseline)).toEqual({ android: '37', ios: '35' });
+    expect(readPinnedRuntimeVersion(mobileRoot)).toEqual({ android: '38', ios: '35' });
+    expect(runtimeVersionsFromConfig(baseline)).toEqual({ android: '38', ios: '35' });
   });
 
   it('records one committed fingerprint per platform beside the runtime it belongs to', () => {
@@ -225,7 +225,7 @@ describe('native fingerprint gate', () => {
       expect(recordedRun.stderr).toBe('');
       expect(recordedRun.status).toBe(0);
       const before = JSON.parse(readFileSync(baselineFile, 'utf8'));
-      expect(runtimeVersionsFromConfig(before)).toEqual({ android: '37', ios: '35' });
+      expect(runtimeVersionsFromConfig(before)).toEqual({ android: '38', ios: '35' });
 
       // The retired capability-stripper had iOS mods only. Adding it back must
       // move iOS's fingerprint without changing Android's normalized input.
@@ -266,28 +266,41 @@ module.exports = withoutIosPushCapabilities;\n`,
       writeFileSync(projectConfig, configWithoutStripper);
       unlinkSync(stripper);
 
+      // Android permission changes must leave iOS's native compatibility alone.
+      writeFileSync(projectConfig, configWithoutStripper.replace(
+        '"android.permission.ACCESS_NETWORK_STATE",',
+        '"android.permission.ACCESS_NETWORK_STATE", "android.permission.FOREGROUND_SERVICE_DATA_SYNC",',
+      ));
+      const androidOnly = await runGate(fixture);
+      expect(androidOnly.status).toBe(1);
+      expect(androidOnly.stderr).toContain('Native inputs changed but android.runtimeVersion');
+      expect(androidOnly.stderr).toContain(
+        `ios: ${before.fingerprints.ios} -> ${before.fingerprints.ios} (unchanged)`,
+      );
+      writeFileSync(projectConfig, configWithoutStripper);
+
       appendFileSync(join(project, 'plugins/withEinkCompatibility.js'), '\n// native change\n');
       const dirty = await runGate(fixture);
 
       expect(dirty.status).toBe(1);
-      expect(dirty.stderr).toContain('Native inputs changed but android.runtimeVersion is still "37"');
+      expect(dirty.stderr).toContain('Native inputs changed but android.runtimeVersion is still "38"');
       expect(dirty.stderr).toContain(
         `android: ${before.fingerprints.android} -> `,
       );
       expect(dirty.stderr).toContain(`ios: ${before.fingerprints.ios} -> `);
-      expect(dirty.stderr).toContain('bump android.runtimeVersion in apps/mobile/app.config.js to "38"');
+      expect(dirty.stderr).toContain('bump android.runtimeVersion in apps/mobile/app.config.js to "39"');
       expect(dirty.stderr).toContain('new native build');
 
       // `--write` will not quietly re-record a native change under the old pin:
       // that is the move that strands installed binaries.
       const refused = await runGate(['--write', ...fixture]);
       expect(refused.status).toBe(1);
-      expect(refused.stderr).toContain('Native inputs changed but android.runtimeVersion is still "37"');
+      expect(refused.stderr).toContain('Native inputs changed but android.runtimeVersion is still "38"');
       expect(JSON.parse(readFileSync(baselineFile, 'utf8'))).toEqual(before);
     },
-    // Five real fingerprint runs, each hashing the whole mobile tree plus
+    // Six real fingerprint runs, each hashing the whole mobile tree plus
     // node_modules. A quiet runner does one in tens of seconds, but under the
-    // suite's competing workers each run slows several-fold and five of them
+    // suite's competing workers each run slows several-fold and six of them
     // outgrew 240s — the same head's NATIVE FINGERPRINT job (one run) passed.
     // 600s keeps the 20-minute job comfortable at its observed ~5.5 minutes.
     600_000,

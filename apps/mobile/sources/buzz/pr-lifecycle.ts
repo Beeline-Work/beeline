@@ -1,5 +1,20 @@
-import type { CornerLifecycleView } from '@beeline/api-contract/phone';
+import {
+  cornerDisplayName,
+  cornerShortTitle,
+  type CornerLifecycleView,
+} from '@beeline/api-contract/phone';
 import type { SystemLineMessage } from './system-lines';
+
+// The NAME titles a corner card; a card written before the name existed
+// falls back to the same three-word derivation every other corner surface
+// uses (C89). Single and grouped cards share it so a group of one matches.
+export function lifecycleCornerTitle(fact: {
+  name?: string;
+  objective: string;
+  cornerId: string;
+}): string {
+  return cornerShortTitle(undefined, fact.name ?? cornerDisplayName(fact.objective), fact.cornerId);
+}
 
 export type NotificationLifecycleState =
   | 'Opened'
@@ -72,7 +87,7 @@ function lifecycleItem(message: SystemLineMessage): LifecycleEvent | undefined {
       keys: [`corner:${fact.cornerId}`, ...(pr?.pull ? [pr.key] : [])],
       item: {
         id: message.id,
-        title: fact.name ?? fact.pullRequest?.title ?? fact.objective,
+        title: lifecycleCornerTitle(fact),
         ...(state ? { state } : {}),
         kindLine: prNumber ? `corner · PR #${prNumber}` : 'corner',
         kind: 'corner',

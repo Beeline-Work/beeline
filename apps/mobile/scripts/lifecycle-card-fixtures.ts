@@ -65,6 +65,17 @@ function check(result: 'started' | 'passed' | 'failed'): ChatDisplayMessage {
   ])[0];
 }
 const merged = corner('merged-pr', 'corner-complete', true);
+// A card written before corners had names: no name, a long objective and a PR title.
+const legacy: ChatDisplayMessage = {
+  ...merged,
+  id: 'legacy-named-pr',
+  daemonFact: {
+    ...merged.daemonFact!,
+    cornerId: 'legacy-named-pr',
+    name: undefined,
+    objective: 'Keep every lifecycle card consistent across both platforms',
+  },
+};
 const opened = corner('opened-corner', 'corner-open');
 export const lifecycleFixtures: { name: string; message: ChatDisplayMessage; expand?: boolean }[] =
   [
@@ -95,6 +106,11 @@ export const lifecycleFixtures: { name: string; message: ChatDisplayMessage; exp
     {
       name: 'group-of-one',
       message: foldPrLifecycleRuns([merged, { ...merged, id: 'merged-update' }])[0],
+    },
+    { name: 'corner-merged-pr-nameless', message: legacy },
+    {
+      name: 'nameless-group-of-one',
+      message: foldPrLifecycleRuns([legacy, { ...legacy, id: 'legacy-update' }])[0],
     },
     {
       name: 'issue-group-of-one',

@@ -337,6 +337,26 @@ describe('NotificationLifecycleCard', () => {
     expect(group.root.findAllByProps({ testID: 'notification-run-expand-message' })).toHaveLength(0);
   });
 
+  it('Reproduction lifecycle-cards-4: a nameless legacy corner has one title in single and group-of-one cards', () => {
+    for (const type of ['corner-open', 'corner-complete'] as const) {
+      const single = message({
+        authorIdentity: { pubkey: 'ruby', kind: 'agent', name: 'Ruby', handle: 'ruby' },
+        daemonFact: { type, cornerId: 'corner-42', name: undefined,
+          objective: 'Keep every lifecycle card consistent across both platforms', outcome: 'landed',
+          pullRequest: { number: 42, title: 'Align lifecycle cards', url: 'https://github.com/acme/repo/pull/42' } },
+      });
+      const props = { onOpenCorner: vi.fn(), onOpenUrl: vi.fn() };
+      const one = render(<DaemonFactCard message={single} {...props} />);
+      const group = render(<NotificationLifecycleCard message={foldPrLifecycleRuns([
+        single, { ...single, id: 'duplicate' },
+      ])[0]} {...props} />);
+      const singleRow = one.root.findByType(LifecycleRow);
+      const groupedRow = group.root.findByType(LifecycleRow);
+      expect(groupedRow.props.item.title).toBe(singleRow.props.item.title);
+      expect(groupedRow.props.item.title).not.toBe('Align lifecycle cards');
+    }
+  });
+
   it('renders a deduplicated issue group of one with the identical single issue row', () => {
     for (const action of ['opened', 'closed'] as const) {
       const single = message({ githubEvent: { type: 'issue', action, actor: 'octocat',

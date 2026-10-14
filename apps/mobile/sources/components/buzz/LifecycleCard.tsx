@@ -1,11 +1,10 @@
 import type { ChatDisplayMessage } from '@/buzz/room-view-presentation';
-import { cornerShortTitle, cornerDisplayName } from '@beeline/api-contract/phone';
 import React, { type ReactNode } from 'react';
 import { Text, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
 import { LifecycleRow } from './LifecycleRow';
-import type { NotificationLifecycleRun } from '@/buzz/pr-lifecycle';
+import { lifecycleCornerTitle, type NotificationLifecycleRun } from '@/buzz/pr-lifecycle';
 import { ledgerStamp } from '@/buzz/relative-time';
 
 export function lifecycleDisplayState(state: string) {
@@ -194,14 +193,8 @@ export const DaemonFactCard = React.memo(function DaemonFactCard({
       ? (message.authorIdentity.handle ?? message.authorIdentity.name).replace(/^@/, '')
       : undefined;
   const landedCorner = fact.type === 'corner-complete' && fact.outcome === 'landed';
-  // The NAME titles the card; the objective is its body. A card written
-  // before the name existed falls back to the same three-word derivation
-  // every other corner surface uses (C89).
-  const title = cornerShortTitle(
-    undefined,
-    fact.name ?? cornerDisplayName(fact.objective),
-    fact.cornerId,
-  );
+  // The NAME titles the card; the objective is its body.
+  const title = lifecycleCornerTitle(fact);
   const prNumber = fact.pullRequest?.number;
   const state =
     fact.type === 'corner-open'

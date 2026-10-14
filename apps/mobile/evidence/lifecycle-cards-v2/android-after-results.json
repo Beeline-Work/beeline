@@ -409,6 +409,58 @@
     ]
   },
   {
+    "variant": "corner-merged-pr-nameless",
+    "theme": "bone",
+    "source": "Android native after fixture",
+    "screenshot": "android-after-bone-corner-merged-pr-nameless.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "corner-merged-pr-nameless",
+      "PR \u00b7 1 merged",
+      "11:33",
+      "MERGED",
+      "Keep every lifecycle",
+      "corner \u00b7 PR #2468",
+      "by @ruby",
+      "Corner \u2192",
+      "View \u2197",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "Corner \u2192",
+      "View \u2197"
+    ]
+  },
+  {
+    "variant": "nameless-group-of-one",
+    "theme": "bone",
+    "source": "Android native after fixture",
+    "screenshot": "android-after-bone-nameless-group-of-one.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "nameless-group-of-one",
+      "PR \u00b7 1 merged",
+      "11:33",
+      "MERGED",
+      "Keep every lifecycle",
+      "corner \u00b7 PR #2468",
+      "by @ruby",
+      "Corner \u2192",
+      "View \u2197",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "Corner \u2192",
+      "View \u2197"
+    ]
+  },
+  {
     "variant": "issue-group-of-one",
     "theme": "bone",
     "source": "Android native after fixture",
@@ -952,6 +1004,58 @@
       "11:33",
       "MERGED",
       "merged-pr",
+      "corner \u00b7 PR #2468",
+      "by @ruby",
+      "Corner \u2192",
+      "View \u2197",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "Corner \u2192",
+      "View \u2197"
+    ]
+  },
+  {
+    "variant": "corner-merged-pr-nameless",
+    "theme": "obsidian",
+    "source": "Android native after fixture",
+    "screenshot": "android-after-obsidian-corner-merged-pr-nameless.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "corner-merged-pr-nameless",
+      "PR \u00b7 1 merged",
+      "11:33",
+      "MERGED",
+      "Keep every lifecycle",
+      "corner \u00b7 PR #2468",
+      "by @ruby",
+      "Corner \u2192",
+      "View \u2197",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "Corner \u2192",
+      "View \u2197"
+    ]
+  },
+  {
+    "variant": "nameless-group-of-one",
+    "theme": "obsidian",
+    "source": "Android native after fixture",
+    "screenshot": "android-after-obsidian-nameless-group-of-one.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "nameless-group-of-one",
+      "PR \u00b7 1 merged",
+      "11:33",
+      "MERGED",
+      "Keep every lifecycle",
       "corner \u00b7 PR #2468",
       "by @ruby",
       "Corner \u2192",

@@ -82,6 +82,16 @@
       "header": "PR · 1 merged"
     },
     {
+      "name": "corner-merged-pr-nameless",
+      "actions": 2,
+      "header": "PR · 1 merged"
+    },
+    {
+      "name": "nameless-group-of-one",
+      "actions": 2,
+      "header": "PR · 1 merged"
+    },
+    {
       "name": "issue-group-of-one",
       "actions": 1,
       "header": "Issue · 1 opened"

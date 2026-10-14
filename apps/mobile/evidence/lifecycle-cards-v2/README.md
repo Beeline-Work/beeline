@@ -34,7 +34,7 @@ source marker or inline working/review/status behavior is changed.
 
 ### Android before and after
 
-There are 22 cases × 2 themes. The 21 original cases have e43783c79 before shots; `issue-group-of-one` has a 329612dfc before shot (see Reproduction lifecycle-cards-3). The paired matrix below
+There are 24 cases × 2 themes. The 21 original cases have e43783c79 before shots; `issue-group-of-one` has a 329612dfc before shot (see Reproduction lifecycle-cards-3); the two nameless cases have eb30c471b before shots (see Reproduction lifecycle-cards-4). The paired matrix below
 covers opened, merged and closed corners with/without PRs, cleanup, failing
 checks, PR and issue events, expanded/grouped/one-item/mixed runs, and all check
 states. The JSON manifests record native visible text, available actions and
@@ -60,6 +60,8 @@ including all three actions on the expanded two-row case.
 | grouped-expanded | [PNG](android-before-bone-grouped-expanded.png) | [PNG](android-after-bone-grouped-expanded.png) | [PNG](android-before-obsidian-grouped-expanded.png) | [PNG](android-after-obsidian-grouped-expanded.png) |
 | group-of-one | [PNG](android-before-bone-group-of-one.png) | [PNG](android-after-bone-group-of-one.png) | [PNG](android-before-obsidian-group-of-one.png) | [PNG](android-after-obsidian-group-of-one.png) |
 | issue-group-of-one | [PNG](android-prefix-bone-issue-group-of-one.png) (329612dfc) | [PNG](android-after-bone-issue-group-of-one.png) | [PNG](android-prefix-obsidian-issue-group-of-one.png) (329612dfc) | [PNG](android-after-obsidian-issue-group-of-one.png) |
+| corner-merged-pr-nameless | [PNG](android-prefix-bone-corner-merged-pr-nameless.png) (eb30c471b) | [PNG](android-after-bone-corner-merged-pr-nameless.png) | [PNG](android-prefix-obsidian-corner-merged-pr-nameless.png) (eb30c471b) | [PNG](android-after-obsidian-corner-merged-pr-nameless.png) |
+| nameless-group-of-one | [PNG](android-prefix-bone-nameless-group-of-one.png) (eb30c471b) | [PNG](android-after-bone-nameless-group-of-one.png) | [PNG](android-prefix-obsidian-nameless-group-of-one.png) (eb30c471b) | [PNG](android-after-obsidian-nameless-group-of-one.png) |
 | grouped-issues | [PNG](android-before-bone-grouped-issues.png) | [PNG](android-after-bone-grouped-issues.png) | [PNG](android-before-obsidian-grouped-issues.png) | [PNG](android-after-obsidian-grouped-issues.png) |
 | mixed-activity | [PNG](android-before-bone-mixed-activity.png) | [PNG](android-after-bone-mixed-activity.png) | [PNG](android-before-obsidian-mixed-activity.png) | [PNG](android-after-obsidian-mixed-activity.png) |
 | check-started | [PNG](android-before-bone-check-started.png) | [PNG](android-after-bone-check-started.png) | [PNG](android-before-obsidian-check-started.png) | [PNG](android-after-obsidian-check-started.png) |
@@ -80,15 +82,31 @@ next to the standalone card at the same commit:
 [Bone](android-prefix-bone-github-issue-opened.png), [Obsidian](android-prefix-obsidian-github-issue-opened.png).
 Grouped issue rows at that commit: [grouped Bone](android-prefix-bone-grouped-issues.png),
 [mixed Bone](android-prefix-bone-mixed-activity.png) ([manifest](android-prefix-results.json)).
-The grouped fold now writes `Issue #N`. Both paths show `Issue #2468` in both themes. All 22 after cases were recaptured.
+The grouped fold now writes `Issue #N`. Both paths show `Issue #2468` in both themes. All after cases were recaptured.
+
+#### Reproduction lifecycle-cards-4: nameless legacy corner title
+
+Review of eb30c471b found that a merged corner card written before corners had
+names showed a different title as a standalone card and as a group of one.
+Fixture: `name` undefined, objective "Keep every lifecycle card consistent across
+both platforms", PR title "Align lifecycle cards". The standalone card used the
+three-word name derived from the objective (`Keep every lifecycle`). The grouped
+fold used `name ?? pullRequest.title ?? objective` (`Align lifecycle cards`).
+Before shots come from a native build of eb30c471b plus the two new fixtures:
+[standalone Bone](android-prefix-bone-corner-merged-pr-nameless.png),
+[group of one Bone](android-prefix-bone-nameless-group-of-one.png), and the same
+in Obsidian. The local web proof at that code fails with
+`nameless single/group-of-one row content` ([Bone](web-prefix-bone-nameless.png)).
+Both paths now call `lifecycleCornerTitle`, so both show `Keep every lifecycle`
+in both themes on Android and local web.
 
 ### Browser: local changed code
 
-The actual production components render the same 22 cases through React Native
+The actual production components render the same 24 cases through React Native
 Web in headless Chrome, both themes. Every action is clicked and its exact
 corner/URL callback checked. The test checks header kinds, no header author,
 no horizontal overflow and identical single/group-of-one content and row
-geometry for both the merged corner and the opened issue, plus an identical issue header. Screenshots carry a **LOCAL BUILD** banner:
+geometry for the merged corner, the nameless legacy corner and the opened issue, plus an identical issue header. Screenshots carry a **LOCAL BUILD** banner:
 [Bone](web-local-bone.png), [Obsidian](web-local-obsidian.png).
 Results: [Bone](web-local-bone-results.json), [Obsidian](web-local-obsidian-results.json).
 

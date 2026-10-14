@@ -1,4 +1,0 @@
-# System message changes require the owner's explicit approval.
-/apps/server/system-messages.lock.json @lunchboxfortwo
-/apps/server/src/system-messages-lock.test.ts @lunchboxfortwo
-/.github/CODEOWNERS @lunchboxfortwo

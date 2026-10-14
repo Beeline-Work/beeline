@@ -3,7 +3,6 @@ import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { DaemonService } from './daemon-service.js';
 import { PhoneService } from './phone-service.js';
-import { ensureSystemIdentity } from './system-line.js';
 import { LiveHub } from './live.js';
 import { createAgentCommand, readAgentCommands } from './agent-command.js';
 import {
@@ -23,7 +22,6 @@ let db: PgliteDatabase, daemon: DaemonService, phone: PhoneService;
 beforeAll(async () => {
   db = new PgliteDatabase();
   await migrate(db);
-  await ensureSystemIdentity(db);
   await db.query(
     `INSERT INTO identities(id,kind,name,handle) VALUES
     ($1,'human','Owner','owner'),($2,'agent','Commander','commander'),
@@ -320,32 +318,25 @@ it('indexes a pending approval sent through the owner System DM back to its sour
   await db.query(`UPDATE agent_grants SET status='approved' WHERE id=$1`, [grant]);
   expect(await state()).toBe('idle');
 });
-it.each(['item', 'section'] as const)('re-surfaces the original waiting request without messages and stops after %s dismissal', async (dismissal) => {
+it('Reproduction waiting-tray: consumes reminders without messages or Needs-you changes', async () => {
   await post('decision', 'needs-decision: @owner Choose whether to continue.', WORKER, '25 hours');
-  const before = (await db.query('SELECT id,text FROM messages')).rows;
-  await runCornerAttention(db);
-  expect((await db.query('SELECT id,text FROM messages')).rows).toEqual(before);
   const tray = () => phone.execute('readNeedsYou', { workspaceId: WS }, HUMAN);
-  expect((await tray()).items.map(item => item.messageId)).toContain('decision');
-  expect((await phone.execute('countNeedsYou', { workspaceId: WS }, HUMAN)).count).toBe(1);
-  await phone.execute('clearNeedsYou', { workspaceId: WS, messageId: 'decision' }, HUMAN);
-  expect((await tray()).items).toHaveLength(0);
+  const before = await tray();
+  expect(before.items.map(item => item.messageId)).toContain('decision');
+  const messages = (await db.query('SELECT id,text FROM messages')).rows;
+  const marks = (await db.query('SELECT * FROM needs_you_marks')).rows;
+  await runCornerAttention(db);
+  await runCornerAttention(db);
+  expect(await tray()).toEqual(before);
+  expect((await db.query('SELECT id,text FROM messages')).rows).toEqual(messages);
+  expect((await db.query('SELECT * FROM needs_you_marks')).rows).toEqual(marks);
+  await phone.execute('clearNeedsYou', { workspaceId: WS, messageId: 'decision', dismissReminder: true }, HUMAN);
   await db.query("UPDATE corner_attention_flags SET due_at=now() WHERE kind='waiting'");
   await runCornerAttention(db);
-  expect((await tray()).items.map(item => item.messageId)).toContain('decision');
-  if (dismissal === 'item')
-    await phone.execute('clearNeedsYou', { workspaceId: WS, messageId: 'decision', dismissReminder: true }, HUMAN);
-  else
-    await phone.execute('clearNeedsYouSection', { workspaceId: WS }, HUMAN);
-  await db.query("UPDATE corner_attention_flags SET due_at=now() WHERE kind='waiting'");
-  await runCornerAttention(db);
   expect((await tray()).items).toHaveLength(0);
-  expect((await db.query("SELECT deliveries FROM corner_attention_flags WHERE kind='waiting'")).rows).toEqual([{ deliveries: 2 }]);
-  expect((await db.query('SELECT id,text FROM messages')).rows).toEqual(before);
+  expect((await db.query('SELECT id,text FROM messages')).rows).toEqual(messages);
   expect(await state()).toBe('waiting');
-  await post('answer', 'Continue.', HUMAN);
-  expect(await state()).toBe('idle');
-  console.info('Demonstrated Reproduction waiting-tray: original request returns to Needs you and badge; zero messages; dismissal stops repeats');
+  console.info('Demonstrated Reproduction waiting-tray: zero new messages; original Needs-you entry and marks unchanged; dismissal stays cleared');
 });
 it('ordinary tags and failure stages are not human blockers; active holds are', async () => {
   await post('tag', '@owner Here is the current status.');
@@ -431,24 +422,6 @@ it.each([false, true])('Reproduction bright-meadow-corner: a person commander re
   console.info('Demonstrated Reproduction bright-meadow-corner: person commander: wakes=0; room transcript messages=0; repeated flag=0');
 });
 
-it('waiting reminders addressed to an agent stay private', async () => {
-  await post('agent-request', 'Resolve the request.', HUMAN, '25 hours');
-  await db.query(`INSERT INTO corner_owed(corner_id,person_id,message_id,created_at,answerable,blocking)
-    VALUES($1,$2,'agent-request',now()-interval '25 hours',false,true)`, [C, COMMANDER]);
-  await runCornerAttention(db);
-  await runCornerAttention(db);
-  expect((await readAgentCommands(db, C, COMMANDER)).commands).toHaveLength(1);
-  expect((await db.query("SELECT id FROM messages WHERE id<>'agent-request'")).rows).toEqual([]);
-  expect((await db.query("SELECT deliveries FROM corner_attention_flags WHERE kind='waiting'")).rows).toEqual([{ deliveries: 1 }]);
-});
-
-it('keeps an old untagged blocking report in Needs you through its daily reminder', async () => {
-  await post('old-report', 'needs-decision: Choose the next step.', WORKER, '8 days');
-  await db.query(`UPDATE messages SET card=jsonb_build_object('reportToId',$1::text) WHERE id='old-report'`, [HUMAN]);
-  await runCornerAttention(db);
-  expect((await phone.execute('readNeedsYou', { workspaceId: WS }, HUMAN)).items.map(item => item.messageId)).toContain('old-report');
-  expect((await db.query('SELECT id FROM messages')).rows).toEqual([{ id: 'old-report' }]);
-});
 
 it('preserves already-posted reminders and honors their dismissal', async () => {
   await post('legacy-request', 'needs-decision: @owner Choose the next step.', WORKER, '25 hours');

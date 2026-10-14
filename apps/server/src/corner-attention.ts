@@ -7,7 +7,6 @@ import {
   cornerRowState,
   type CornerStateRow,
 } from './chat-corner-counts.js';
-import { createAgentCommand } from './agent-command.js';
 import { commanderReportAddress, reportToCommander } from './commander.js';
 import { cornerImplementerSql } from './corner-worker.js';
 
@@ -33,8 +32,6 @@ CREATE TABLE IF NOT EXISTS corner_attention_flags (
   deliveries integer NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS corner_attention_flags_corner ON corner_attention_flags(corner_id);
-CREATE INDEX IF NOT EXISTS corner_attention_flags_item_person ON corner_attention_flags(item_id,person_id)
-  WHERE kind='waiting' AND dismissed_at IS NULL;
 CREATE INDEX IF NOT EXISTS corner_attention_flags_due ON corner_attention_flags(due_at)
   WHERE dismissed_at IS NULL AND (kind='waiting' OR sent_at IS NULL);
 
@@ -44,9 +41,8 @@ CREATE OR REPLACE FUNCTION corner_attention_dismiss_reminder() RETURNS trigger
 LANGUAGE plpgsql AS $attention$
 BEGIN
   UPDATE corner_attention_flags flag SET dismissed_at=COALESCE(flag.dismissed_at,NEW.reminder_dismissed_at)
-    WHERE flag.person_id=NEW.identity_id AND (flag.item_id=NEW.message_id OR EXISTS (
-      SELECT 1 FROM messages reminder WHERE reminder.id=NEW.message_id
-        AND reminder.card->>'cornerReminderId'=flag.id));
+    FROM messages reminder WHERE reminder.id=NEW.message_id
+      AND reminder.card->>'cornerReminderId'=flag.id AND flag.person_id=NEW.identity_id;
   RETURN NULL;
 END
 $attention$;
@@ -196,7 +192,6 @@ export async function deliverCornerAttention(db: SqlDatabase): Promise<void> {
         [flag.id],
       );
       if (!claimed.rowCount) return;
-      const current = claimed.rows[0]!;
       if (!row) {
         await tx.query('UPDATE corner_attention_flags SET dismissed_at=now() WHERE id=$1', [
           flag.id,
@@ -229,7 +224,7 @@ export async function deliverCornerAttention(db: SqlDatabase): Promise<void> {
           flag.id,
           { automatic: true, agentOnly: true },
         );
-        if (delivered.delivered === false) return;
+        if ('delivered' in delivered && delivered.delivered === false) return;
         await tx.query('UPDATE corner_attention_flags SET sent_at=now() WHERE id=$1', [flag.id]);
       } else {
         if (state === 'archived') {
@@ -262,51 +257,16 @@ export async function deliverCornerAttention(db: SqlDatabase): Promise<void> {
           return;
         }
         const person = (
-          await tx.query<{ handle: string; kind: string }>(
-            `SELECT handle,kind FROM identities WHERE id=$1`,
+          await tx.query<{ handle: string }>(
+            `SELECT handle FROM identities WHERE id=$1 AND kind='human'`,
             [flag.person_id],
           )
         ).rows[0];
         if (!person?.handle) return;
-        const reminderId = key(flag.id, current.deliveries);
-        if (person.kind === 'agent') {
-          const delivered = await createAgentCommand(tx, {
-            id: reminderId,
-            roomId: row.id,
-            agentId: flag.person_id!,
-            sourceMessageId: null,
-            reason: 'corner_waiting',
-            privatePayload: {
-              kind: 'lifecycle',
-              authorId: SYSTEM_IDENTITY_ID,
-              fromRoomId: row.id,
-              text: `Please resolve the waiting request in ${row.name}.`,
-            },
-          });
-          if (!delivered) return;
-        } else {
-          // Re-surface the original request through the tray's existing mark invalidation.
-          const resurfaced = await tx.query(
-            `INSERT INTO needs_you_marks(identity_id,message_id,workspace_id,first_seen_at)
-             SELECT $1,message.id,room.workspace_id,now() FROM messages message
-             JOIN rooms room ON room.id=message.room_id
-             WHERE message.id=$2 AND message.deleted_at IS NULL
-             ON CONFLICT(identity_id,message_id) DO UPDATE
-               SET cleared_at=NULL,first_seen_at=now()
-               WHERE needs_you_marks.reminder_dismissed_at IS NULL`,
-            [flag.person_id, flag.item_id],
-          );
-          if (!resurfaced.rowCount) {
-            await tx.query('UPDATE corner_attention_flags SET dismissed_at=now() WHERE id=$1', [
-              flag.id,
-            ]);
-            return;
-          }
-        }
         await tx.query(
           `UPDATE corner_attention_flags SET sent_at=now(),due_at=now()+interval '24 hours',
-        reminder_id=$2,deliveries=deliveries+1 WHERE id=$1`,
-          [flag.id, person.kind === 'agent' ? reminderId : flag.item_id],
+        deliveries=deliveries+1 WHERE id=$1`,
+          [flag.id],
         );
       }
     });

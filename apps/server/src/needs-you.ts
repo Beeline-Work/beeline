@@ -244,21 +244,10 @@ export function questionForSql(viewerId: string): string {
   )`;
 }
 
-/** Reads, badges and section clears share the daily re-surfacing of unresolved corner requests. */
-const QUESTION_WHERE = `(${questionForSql('$2')}
+/** Keep the section clear's candidate rule identical to the read, without its 500-row display bound. */
+const QUESTION_WHERE = `${questionForSql('$2')}
   AND m.created_at>now()-${NEEDS_YOU_LOOKBACK}
-  AND ${questionLeavesAtSql()}>now()) OR (
-    ${askingMessageSql('m')} AND m.author_id<>$2 AND mark.cleared_at IS NULL
-    AND EXISTS (
-      SELECT 1 FROM corner_attention_flags flag
-      JOIN rooms corner ON corner.id=flag.corner_id AND corner.archived_at IS NULL
-      JOIN corner_owed owed ON owed.corner_id=flag.corner_id
-        AND owed.message_id=flag.item_id AND owed.person_id=flag.person_id AND owed.blocking
-        AND (owed.expires_at IS NULL OR owed.expires_at>now())
-      WHERE flag.item_id=m.id AND flag.person_id=$2 AND flag.kind='waiting'
-        AND flag.dismissed_at IS NULL AND flag.sent_at>now()-interval '24 hours'
-    )
-  )`;
+  AND ${questionLeavesAtSql()}>now()`;
 
 /** Clear every current question, including ones past the tray read's display limit. */
 export async function clearNeedsYouQuestions(
@@ -274,7 +263,7 @@ export async function clearNeedsYouQuestions(
      JOIN messages m ON m.room_id=room.id
      JOIN identities viewer ON viewer.id=$2
      LEFT JOIN needs_you_marks mark ON mark.identity_id=$2 AND mark.message_id=m.id
-     WHERE (${QUESTION_WHERE})
+     WHERE ${QUESTION_WHERE}
      ON CONFLICT(identity_id,message_id)
        DO UPDATE SET cleared_at=COALESCE(needs_you_marks.cleared_at,now()),
          reminder_dismissed_at=COALESCE(needs_you_marks.reminder_dismissed_at,EXCLUDED.reminder_dismissed_at)`,
@@ -417,7 +406,7 @@ const QUESTION_BRANCH = `
   JOIN identities viewer ON viewer.id=$2
   LEFT JOIN identities author ON author.id=m.author_id
   LEFT JOIN needs_you_marks mark ON mark.identity_id=$2 AND mark.message_id=m.id
-  WHERE (${QUESTION_WHERE})
+  WHERE ${QUESTION_WHERE}
   ORDER BY m.created_at DESC,m.id DESC
   LIMIT ${CANDIDATE_LIMIT}`;
 

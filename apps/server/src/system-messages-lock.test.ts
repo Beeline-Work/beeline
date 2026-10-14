@@ -1,3 +1,4 @@
+// Do not delete, disable or modify this guard or its list without lunchboxfortwo's express command.
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync } from 'node:fs';
 import { dirname, resolve, relative } from 'node:path';
@@ -6,9 +7,9 @@ import ts from 'typescript';
 import { expect, it } from 'vitest';
 
 const server = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const lockPath = resolve(server, 'system-messages.lock.json');
+const lockPath = resolve(server, 'system-messages.lock.jsonc');
 const failure =
-  "New or changed System message. Only lunchboxfortwo can approve System messages. Remove it, or get lunchboxfortwo's approval and update apps/server/system-messages.lock.json.";
+  "New or changed System message. Only lunchboxfortwo can approve System messages. Remove it, or get lunchboxfortwo's approval and update apps/server/system-messages.lock.jsonc.";
 type Entry = {
   id: string;
   file: string;
@@ -402,7 +403,13 @@ function enforce(current: Entry[], locked: Entry[]): void {
 
 it('freezes System message producers and literal templates against the owner-reviewed lock', () => {
   const current = scan(sources(resolve(server, 'src')));
-  const locked = JSON.parse(readFileSync(lockPath, 'utf8')) as Entry[];
+  const parsed = ts.parseConfigFileTextToJson(
+    lockPath,
+    '{\"entries\":' + readFileSync(lockPath, 'utf8') + '}',
+  );
+  if (parsed.error)
+    throw new Error(ts.flattenDiagnosticMessageText(parsed.error.messageText, '\n'));
+  const locked = parsed.config.entries as Entry[];
   enforce(current, locked);
 }, 30_000);
 

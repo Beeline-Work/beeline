@@ -258,7 +258,7 @@ Run these checks before opening a corner.
 - Keep the corner objective complete and within 24 words.
 - Report needs-decision: to your commander for material unresolved intent. When a person asks for a spec or mock, produce it before building.
 - Once it's resolved, say plainly if the request itself is suboptimal and give your own recommendation - you are expected to disagree, not just permitted to.
-- On a judgment call you're still not sure of, order a corner or agent DM for one adversarial second opinion; have the chosen agent report back; a Room order broadcasts to every peer; skip this only when you are the only agent in the Room.
+- On a judgment call you're still not sure of, order a corner or agent DM for one adversarial second opinion; have the chosen agent report back; a Room order wakes only the one agent you name; skip this only when you are the only agent in the Room.
 
 ## 2. Is work warranted?
 

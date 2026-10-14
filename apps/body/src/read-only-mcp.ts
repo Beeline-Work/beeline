@@ -1667,7 +1667,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'connect',
     description:
-      'Connect a service or machine tool. Search with find_connectors only when the service is unclear. The continuation is optional: pass a request-specific sentence stating what you will do after sign-in; without it the card says "continues the request right after". Omit links, secrets, and private data. The server chooses a direct integration or official Registry sign-in first, then Composio, then Trusty Squire. Wait for the connection wake, then use the app ID with list_app_tools and execute_app_tool where applicable. An outage or refusal never permits a silent route switch. Never put sign-in links or credentials in chat. This is setup, not use permission.',
+      'Connect a service or machine tool. Search with find_connectors only when the service is unclear. The continuation is optional: pass a request-specific sentence stating what you will do after sign-in; without it the card says "continues the request right after". Omit links, secrets, and private data. The server chooses a direct integration or official Registry sign-in first, then Composio, then Trusty Squire. For needs_squire, use your own operate_drive with the returned URL and goal. On low_confidence or needs_value, take a flat operate_* step and resume the same session. Save the credential in the vault and call connect again. For a pending owner card, wait for the connection wake, then use the app ID with list_app_tools and execute_app_tool where applicable. An outage or refusal never permits a silent route switch. Never put sign-in links or credentials in chat. This is setup, not use permission.',
     inputSchema: {
       type: 'object',
       required: ['service', 'reason'],
@@ -5049,8 +5049,12 @@ export async function callAgentTool(
       const reason = stringArg(args, 'reason')?.trim();
       if (!service || !reason) throw new Error('service and reason are required');
       const continuation = normalizeAppContinuation(args.continuation);
+      const reach = connectorOfferDepsFromEnv().squireReach;
+      // Refresh vault metadata before the server decides whether this app is ready.
+      const squireAvailable = reach ? (await reach())?.reachable === true : false;
       return JSON.stringify(await daemonExecute('connect', {
         ...await activeCommandContext(), service, reason,
+        squireAvailable,
         ...(continuation ? { continuation } : {}),
         ...(args.reconnect === true ? { reconnect: true } : {}),
         ...(args.noApi === true ? { noApi: true } : {}),

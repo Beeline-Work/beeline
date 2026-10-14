@@ -12,6 +12,8 @@ describe('direct message helper surface', () => {
   it('limits reports to completion, decisions, or blockers', () => {
     const report = agentToolsFor(true, false).find(tool => tool.name === 'report')!;
     expect(report.description).toContain("Report when your assignment is finished, or when you need a decision or are blocked. Don't report progress.");
+    expect(report.inputSchema.required).toEqual(['status', 'text']);
+    expect(report.description).toContain('Post progress in the corner instead');
   });
 
   it('advertises the enforced event and history input limits in tool descriptions', () => {
@@ -368,7 +370,7 @@ it('offers the command grammar across Rooms, corners and DMs, with retired tools
   const dm = assembleSessionPrompt({ surface: 'dm', agentName: 'Bee' }).systemPrompt;
   expect(dm).toContain('list_rooms');
   expect(dm).toContain('across member Rooms');
-  expect(dm).toContain('report(text) one step up to your commander');
+  expect(dm).toContain('report(status, text) one step up to your commander');
 });
 
 it('R8d documents the optional continuation and generic fallback', () => {

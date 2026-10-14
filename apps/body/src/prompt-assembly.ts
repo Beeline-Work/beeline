@@ -183,7 +183,8 @@ Fix only the spec and approval quote. With a reproduction, change only what remo
 Deliver files with post_artifact; answer plain chat questions directly.
 No unrequested features, flags, compatibility shims or refactors.`;
 
-export const CORNER_AUTHOR_CONTRACT = `The current brief's spec — stories, criteria, non-goals, risks — defines scope and done. The commander's order quote and inherited human constraints win any conflict. The short objective is navigation-only, never scope.
+export const CORNER_AUTHOR_CONTRACT = `Report with status done, blocked, failed, or needs_decision matching its display prefix. A worker done requires a merge-ready or merged PR, or repositoryWork false. Post progress in this corner instead.
+The current brief's spec — stories, criteria, non-goals, risks — defines scope and done. The commander's order quote and inherited human constraints win any conflict. The short objective is navigation-only, never scope.
 Meet every story; respect every non-goal and risk. Use its file manifest.
 Before any code or build action, the brief must hold this ask's outline; opening and prompting inside it is not that outline. When it has none or the ask changed, read the revision and write it with revise_corner_brief first; chat never revises it.
 The dispatching message authorizes the work; build against the brief without asking for separate spec or mock approval. Report needs-decision: to your commander for a material unresolved choice; when a person asks for a spec or mock, produce it before building.
@@ -246,7 +247,7 @@ function memoryListsWorkspaceCoreProcedure(memory: string | undefined): boolean 
  */
 export function cornerMergeInstruction(reviewerHandle?: string): string {
   const review = reviewerHandle ? `Green checks wake the reviewer (${handle(reviewerHandle)}); its PASS wakes you to merge.` : 'If review capability is missing, report blocked: to your commander.';
-  return `Once the pull request exists, report its URL when useful and end the turn; do not poll CI. ${review} Call merge_corner when the live gate allows it. Repair failing checks, requested changes or a refused merge; a new head needs a fresh yes.`;
+  return `Once the pull request exists, post its URL in the corner when useful and end the turn; do not poll CI. ${review} Call merge_corner when the live gate allows it. Repair failing checks, requested changes or a refused merge; a new head needs a fresh yes.`;
 }
 
 export function cornerReviewerInstruction(input: {
@@ -384,7 +385,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     layer: 'core',
     surfaces: EVERYWHERE,
     render: () =>
-      'Every exact @handle wakes that member. Copy handles only from the member list. Use order(address, text) privately across member Rooms; report(text) one step up to your commander. Report only to the member who gave you the task. If that member is a human, tag them when, in your judgement, they need to decide or should know. Reports begin done:, blocked:, needs-decision: or failed:; human reports appear where they ordered you.',
+      'Every exact @handle wakes that member. Copy handles only from the member list. Use order(address, text) privately across member Rooms; report(status, text) one step up to your commander. Report only to the member who gave you the task. If that member is a human, tag them when, in your judgement, they need to decide or should know. Reports begin done:, blocked:, needs-decision: or failed:; human reports appear where they ordered you.',
   },
   {
     id: 'core.authority',

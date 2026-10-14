@@ -1,3 +1,4 @@
+import { COMMANDER_WAKE_WINDOW_SECONDS, flushCommanderWakes, lockCommanderWakes } from './commander-wakes.js';
 import { agentMachineOfflineSql } from './machine-offline.js';
 import { reportToCommander } from './commander.js';
 import { subscriptionPromptBody } from './agent-subscriptions.js';
@@ -88,6 +89,9 @@ ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS lifecycle_before text;
 ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS restart_confirmed_at timestamptz;
 ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS cancellation_reason text;
 ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS recovery_context text;
+ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS wake_after timestamptz;
+ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS coalesced_context text;
+CREATE INDEX IF NOT EXISTS agent_commands_delayed_wakes ON agent_commands(wake_after) WHERE state='pending' AND wake_after IS NOT NULL;
 ALTER TABLE agent_commands ADD COLUMN IF NOT EXISTS created_offline boolean;
 ALTER TABLE agent_commands DROP CONSTRAINT IF EXISTS agent_commands_action_check;
 ALTER TABLE agent_commands ADD CONSTRAINT agent_commands_action_check CHECK(action IN ('input','resume','stop','restart'));
@@ -143,6 +147,8 @@ export type CommandRow = {
   lifecycle_before: string | null;
   restart_confirmed_at: Date | null;
   recovery_context: string | null;
+  wake_after?: Date | null;
+  coalesced_context?: string | null;
 };
 
 /**
@@ -156,6 +162,7 @@ function commandRecoveryCtes(roomSql: string, agentSql: string, claimSql = 'NULL
   return `recovery_scope AS MATERIALIZED (
     SELECT command.* FROM agent_commands command
     WHERE command.room_id=${roomSql} AND command.agent_id=${agentSql}
+      AND command.wake_after IS NULL
       AND command.action IN ('input','resume') AND NOT command.avatar_job
       AND (command.state='pending' OR (command.state='claimed' AND
         (command.lease_expires_at<=now() OR command.id=${claimSql})))
@@ -329,6 +336,8 @@ export async function createAgentCommand(
     avatarJob?: boolean;
   },
 ): Promise<CommandRow | undefined> {
+  return db.transaction(async (db) => {
+  await lockCommanderWakes(db, input.roomId, input.agentId);
   // Membership removal serializes with dispatch; lifecycle wakes retain their opening order.
   const member = await db.query<{ opening: CommandRow | null; source_text: string | null }>(
     `SELECT (SELECT to_jsonb(opened) FROM agent_commands opened
@@ -354,12 +363,17 @@ export async function createAgentCommand(
     ? parent.agent_depth : nextAgentDepth(parent.agent_depth) : 0;
   if (depth === undefined) return undefined;
   const id = input.id ?? randomBytes(32).toString('hex');
+  const delayed = input.reason === 'watched_corner' ||
+    (input.reason === 'report' && /^done:/.test(privatePayload?.text ?? ''));
   // Capture known offline presence at dispatch. An absent connection record
   // stays unknown and uses the overdue-claim fallback during recovery.
   const result = await db.query<CommandRow>(
     `INSERT INTO agent_commands
- (id,room_id,agent_id,source_message_id,turn_request_id,action,reason,root_command_id,parent_command_id,root_source_message_id,agent_depth,avatar_job,private_payload,created_offline)
+ (id,room_id,agent_id,source_message_id,turn_request_id,action,reason,root_command_id,parent_command_id,root_source_message_id,agent_depth,avatar_job,private_payload,wake_after,created_offline)
  VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13::jsonb,
+   CASE WHEN $14::boolean THEN COALESCE((SELECT min(wake_after) FROM agent_commands
+     WHERE room_id=$2 AND agent_id=$3 AND state='pending' AND wake_after IS NOT NULL),
+     now()+interval '${COMMANDER_WAKE_WINDOW_SECONDS} seconds') END,
    (SELECT connection.released_at IS NOT NULL OR NOT EXISTS(
      SELECT 1 FROM live_server_instances server WHERE server.instance_id=connection.instance_id
        AND server.renewed_at>now()-interval '${COMMAND_LEASE_SECONDS} seconds')
@@ -379,13 +393,20 @@ export async function createAgentCommand(
       depth,
       input.avatarJob ?? false,
       privatePayload ? JSON.stringify(privatePayload) : null,
+      delayed,
     ],
   );
-  return result.rows[0] ?? (await db.query<CommandRow>(
+  const command = result.rows[0] ?? (await db.query<CommandRow>(
     `SELECT * FROM agent_commands WHERE id=$1 OR (room_id=$2 AND source_message_id=$3
       AND agent_id=$4 AND action=$5) LIMIT 1`,
     [id, input.roomId, input.sourceMessageId, input.agentId, input.action ?? 'input'],
   )).rows[0];
+  if (command?.state === 'pending' && !delayed && (input.reason === 'report' || input.reason === 'human_tag' || input.reason === 'direct_message')) {
+    await flushCommanderWakes(db, input.roomId, input.agentId, command.id);
+    return (await db.query<CommandRow>('SELECT * FROM agent_commands WHERE id=$1', [command.id])).rows[0];
+  }
+  return command;
+  });
 }
 
 export const TAGGED_AGENT_LIFECYCLE_COMMANDS = [
@@ -1009,7 +1030,7 @@ export async function claimAgentCommand(
     await db.query<CommandRow & { turn_claimed: boolean }>(
       `WITH ${commandRecoveryCtes('$2', '$3', '$1')}, eligible AS MATERIALIZED (
            SELECT * FROM agent_commands
-           WHERE id=$1 AND room_id=$2 AND agent_id=$3 AND
+           WHERE id=$1 AND room_id=$2 AND agent_id=$3 AND wake_after IS NULL AND
              (state='pending' OR (state='claimed' AND lease_expires_at<=now()) OR (state='claimed' AND generation_id=$4))
              AND NOT EXISTS(SELECT 1 FROM cancelled_wakes cancelled WHERE cancelled.id=agent_commands.id)
              AND (reason<>'computer_activity' OR (state='claimed' AND generation_id=$4) OR NOT EXISTS (
@@ -1272,7 +1293,7 @@ export async function readAgentCommands(
    AND workflow_skill.slug=workflow_latest.card->>'workflowSlug' AND workflow_skill.kind='workflow'
  LEFT JOIN workspace_skill_versions workflow_version ON workflow_version.skill_id=workflow_skill.id
    AND workflow_version.version=(workflow_latest.card->>'workflowVersion')::int
- WHERE c.room_id=$1 AND c.agent_id=$2 AND (c.state='pending' OR (c.state='claimed' AND c.lease_expires_at<=now()))
+ WHERE c.room_id=$1 AND c.agent_id=$2 AND c.wake_after IS NULL AND (c.state='pending' OR (c.state='claimed' AND c.lease_expires_at<=now()))
    AND NOT EXISTS(SELECT 1 FROM cancelled_wakes cancelled WHERE cancelled.id=c.id)
    AND (c.reason<>'computer_activity' OR NOT EXISTS (
      SELECT 1 FROM agent_commands requested WHERE requested.room_id=c.room_id
@@ -1323,6 +1344,7 @@ export async function readAgentCommands(
       reason: r.reason,
       ...(r.private_payload ? { private: true } : {}),
       ...(r.delivered_context ? { recoveryContext: r.delivered_context } : {}),
+      ...(r.coalesced_context ? { coalescedContext: r.coalesced_context } : {}),
       ...(r.system_event?.scheduleId ? { scheduleId: r.system_event.scheduleId } : {}),
       rootCommandId: r.root_command_id,
       ...(r.parent_command_id ? { parentCommandId: r.parent_command_id } : {}),

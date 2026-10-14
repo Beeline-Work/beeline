@@ -233,9 +233,10 @@ export class VoiceRoomRuntime {
     const agents = await this.service.agents(this.roomId, human);
     const humans = await this.service.humanCount(this.callId);
     void this.countHumans(humans).catch(() => {});
+    // With several humans, a turn below the interrupt threshold never stops a speaking
+    // agent, even when it names one. A pending tap waits for real speech.
+    if (humans > 1 && this.speaking && !interrupts) return;
     const named = humans > 1 ? openingVoiceName(text, agents) : undefined;
-    // A tap cannot turn noise or backchannel into an interrupt; the tap waits for real speech.
-    if (humans > 1 && !named && this.speaking && !interrupts) return;
     const tapped = agents.find(agent => agent.id === this.taps.get(human));
     this.taps.delete(human);
     const agent = humans > 1 ? named ?? tapped : namedVoiceTarget(text, agents, this.targets.get(human), humans);

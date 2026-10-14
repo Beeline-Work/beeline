@@ -832,3 +832,37 @@ it('multi-human: a completed backchannel turn after an avatar tap neither interr
     release();
   } finally { await runtime.close(); }
 });
+
+it('multi-human: a short name-only completed turn does not interrupt a speaking agent', async () => {
+  const call = multiCall(2);
+  const opened: ((event: any) => void)[] = [];
+  call.service.config.stt.mockImplementation(async (onEvent: (event: any) => void) => { opened.push(onEvent); return { send: vi.fn(), close: vi.fn() }; });
+  const runtime = await VoiceRoomRuntime.connect(call.service as unknown as VoiceService, 'call', 'room');
+  let release!: () => void;
+  state.audio.waitForPlayout.mockImplementationOnce(() => new Promise<void>(resolve => { release = resolve; }));
+  state.streams = [new ReadableStream(), new ReadableStream()];
+  const receivers = new Map<string, (event: any) => void>();
+  const say = (human: string, transcript: string, turn: number, seconds: number) =>
+    receivers.get(human)!({ event: 'EndOfTurn', transcript, turn_index: turn, sequence_id: turn,
+      words: transcript.split(' ').map((word, i, all) => ({ word, start: i * seconds / all.length, end: (i + 1) * seconds / all.length, confidence: 0.95 })) });
+  try {
+    for (const human of ['alex', 'sam']) {
+      state.room.emit('track', { kind: 1 }, {}, { identity: human });
+      await vi.waitFor(() => expect(opened).toHaveLength(receivers.size + 1));
+      receivers.set(human, opened.at(-1)!);
+    }
+    await vi.waitFor(() => expect(call.signals()).toContainEqual({ type: 'humans', count: 2 }));
+    say('alex', 'Ruby, explain the plan', 0, 0.8);
+    await vi.waitFor(() => expect(state.audio.waitForPlayout).toHaveBeenCalled());
+    say('sam', 'Ruby', 0, 0.2);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    expect(call.service.config.brain.answer.mock.calls[0]?.[3].aborted).toBe(false);
+    expect(call.service.config.brain.answer).toHaveBeenCalledOnce();
+    // A named turn that meets the threshold still interrupts.
+    say('sam', 'Goosey, your turn', 1, 0.6);
+    await vi.waitFor(() => expect(call.service.config.brain.answer).toHaveBeenCalledTimes(2));
+    expect(call.service.config.brain.answer.mock.calls[0]?.[3].aborted).toBe(true);
+    expect(call.answered()).toEqual(['ruby', 'goose']);
+    release();
+  } finally { await runtime.close(); }
+});

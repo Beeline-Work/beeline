@@ -62,8 +62,8 @@ async function run() {
   check('interim speech stays in the active take', Boolean(node('speech-waveform')) && latest === '');
   Recognizer.current.result('hello web', true); await pause();
   check('final browser transcript reaches the composer', latest === 'hello web');
-  node('mic')!.click(); await pause();
-  check('stop ends capture and sends the committed transcript', Recognizer.stops === 1 && sent === 'hello web' && !node('speech-waveform'));
+  node('send')!.click(); await pause();
+  check('Send ends capture and sends the committed transcript', Recognizer.stops === 1 && sent === 'hello web' && !node('speech-waveform'));
   node('mic')!.click(); await pause();
   Recognizer.current.denied(); await pause();
   check('permission denial stops the take and explains browser site settings', !node('speech-waveform') && Boolean(node('speech-status')?.textContent?.includes('browser site settings')));

@@ -56,15 +56,12 @@ describe('Option A composer chrome', () => {
     expect(focused).not.toMatch(/shadow|glow/i);
   });
 
-  it('uses muted chrome until text is present and keeps the send control always renderable', () => {
-    expect(composer).toContain('sendDisabled && styles.sendButtonTextDisabled');
-    expect(composer).toContain('sendButtonTextDisabled: { color: theme.buzz.textMuted }');
-    expect(composer).toContain('const showSend = voice');
+  it('inks controls in textPrimary, brass only for Send, muted only when disabled, never red', () => {
+    expect(composer).toContain('color={sendDisabled ? theme.buzz.textMuted : theme.buzz.accent}');
     expect(composer).not.toContain('sendButtonArmed');
-    expect(composer).toContain(
-      'attachButtonText: {\n    ...theme.buzz.type.body,\n    color: theme.buzz.textMuted',
-    );
-    expect(composer.match(/hitSlop=\{9\}/g)).toHaveLength(4);
+    expect(composer).not.toMatch(/danger|Danger|>＋<|>\s*↑\s*</);
+    // ＋, voice spot (mic or Stop), Conversation and Send: each a 44pt target.
+    expect(composer.match(/hitSlop=\{9\}/g)).toHaveLength(5);
   });
 
   it('holds Rooms, DMs, corners, and desktop to 16px side margins', () => {

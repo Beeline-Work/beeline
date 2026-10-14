@@ -4,7 +4,6 @@ import {
   Text,
   TextInput,
   TouchableOpacity,
-  Pressable,
   View,
   Keyboard,
   Linking,
@@ -18,7 +17,7 @@ import {
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { groknight } from '@/buzz/groknight';
 import { HullDialog } from './HullDialog';
-import { MicGlyph, WaveformGlyph } from './MicGlyph';
+import { ArrowUpGlyph, COMPOSER_GLYPH_SIZE, MicGlyph, PlusGlyph, StopGlyph, WaveformGlyph } from './MicGlyph';
 import { VoiceBar } from './VoiceBar';
 import { RuntimeErrorBoundary } from './RuntimeErrorBoundary';
 import type { VoiceCallState } from '@/buzz/use-voice-call';
@@ -29,7 +28,7 @@ import { useSpeechInput } from '@/buzz/speech-input';
 import { removeComposerTag, removeLastComposerTag, splitComposerTags } from '@/buzz/composer-tags';
 
 /**
- * A dictated message on its way out. ■ sets `cancelled` until the parent sets
+ * A dictated message on its way out. Stop sets `cancelled` until the parent sets
  * `committed`, the moment the message enters the Room.
  */
 export type DictatedSend = { cancelled: boolean; committed: boolean };
@@ -58,7 +57,7 @@ type Props = {
   onFocus(): void;
   onKeyPress(event: NativeSyntheticEvent<TextInputKeyPressEventData>): void;
   onSelectionChange?(event: NativeSyntheticEvent<TextInputSelectionChangeEventData>): void;
-  /** A dictated send passes its ■ handle; the call may return the send's promise. */
+  /** A dictated send passes its Stop handle; the call may return the send's promise. */
   onSend(dictated?: DictatedSend): unknown;
   /**
    * Speech recognition is available when the hook can use the browser or native
@@ -125,24 +124,6 @@ const TAGS_AS_SPANS = Platform.OS !== 'web';
 /** The leading tags as `@handle` and space runs, in text order. */
 function tagSegments(prefix: string) {
   return prefix.match(/@\S+| +/g) ?? [];
-}
-
-/**
- * Whether the soft keyboard is up for this field. The web and desktop have
- * none, so there the field's focus stands in for it.
- */
-function useKeyboardUp(focused: boolean) {
-  const [visible, setVisible] = React.useState(() => Keyboard.isVisible());
-  React.useEffect(() => {
-    if (Platform.OS === 'web') return;
-    const shown = Keyboard.addListener('keyboardDidShow', () => setVisible(true));
-    const hidden = Keyboard.addListener('keyboardDidHide', () => setVisible(false));
-    return () => {
-      shown.remove();
-      hidden.remove();
-    };
-  }, []);
-  return focused && (Platform.OS === 'web' || visible);
 }
 
 export function ConversationComposer(props: Props) {
@@ -321,7 +302,7 @@ function ConversationComposerContent({
   }, [height, inputRevision, tagSplit.prefix, theme.buzz.type.body]);
 
   // Speech recognition — internal hook, scoped to the composer.
-  // What the current take added to the text, so ■ can take exactly that out.
+  // What the current take added to the text, so Stop can take exactly that out.
   const takeTextRef = React.useRef<string[]>([]);
   const speech = useSpeechInput((transcript) => {
     const separator = value && transcript && !/\s$/.test(value) ? ' ' : '';
@@ -342,26 +323,16 @@ function ConversationComposerContent({
   const speechAvailable = speech.capability === 'available' && speechEnabled !== false;
   // Tags alone are not a message: the field reads as empty and keeps the mic.
   const hasSomethingToSend = canSend ?? Boolean(tagSplit.rest.trim());
-  const listeningWillSend = Boolean(tagSplit.rest.trim() || speech.partialText.trim());
-  const sendDisabled = disabled || !hasSomethingToSend || isCapturingSpeech;
-  const keyboardUp = useKeyboardUp(focused);
-  // With Conversation available, the mic stays beside the waveform/Send slot.
-  // Other composer surfaces keep their existing mic XOR send control:
-  // while dictation is live the control stays the listening/stop control.
-  // Otherwise the keyboard picks:
-  // lowered, it is the mic, and a take adds to any typed text; raised, it is
-  // send once there is typed text. Tags and staged files alone keep the mic:
-  // they go out with the next take or typed text. Without speech the send
-  // control always shows (disabled when nothing is sendable), so the corner is
-  // never empty — including while an agent is working, when a tap queues the
-  // next instruction.
-  const showMic =
-    speechAvailable && (Boolean(voice) || dictationBusy || (!viewerPill && !keyboardUp) || !tagSplit.rest.trim());
-  const showSend = voice
-    ? (Boolean(tagSplit.rest.trim()) || (!speechAvailable && hasSomethingToSend)) && !dictationBusy
-    : !showMic;
+  const sendingSpeech = isFinalizing || sendingTake !== null;
+  // Fixed places: ＋ on the left; the voice spot holds the mic, or Stop while
+  // a take is live; the far right is the go action — Conversation while there
+  // is nothing to send, Send otherwise. While dictating, Send posts the take.
+  // Without Conversation the far right is always Send, disabled when empty,
+  // so it still never moves — including while an agent is working, when a
+  // tap queues the next instruction.
+  const showConversation = Boolean(voice) && !hasSomethingToSend && !dictationBusy;
+  const sendDisabled = disabled || sendingSpeech || (!hasSomethingToSend && !isListening);
   const conversationActive = Boolean(voice?.call || voice?.connecting || voice?.error);
-  const showConversation = Boolean(voice) && !showSend;
   React.useEffect(() => {
     if (Platform.OS !== 'web' || !showConversation || conversationActive) return;
     containerRef.current?.querySelector(`[data-testid="${testIDPrefix}-conversation"]`)
@@ -402,6 +373,24 @@ function ConversationComposerContent({
         return at < 0 ? text : text.slice(0, at) + text.slice(at + part.length);
       }, value),
     );
+  };
+  // Send while dictating: stop, wait for the final words, then send them with
+  // any typed text and staged files.
+  const sendTake = () => {
+    const hadTypedText = Boolean(tagSplit.rest.trim());
+    // Held from the press, so the field stays a waveform from the
+    // transcription through the send.
+    const send: DictatedSend = { cancelled: false, committed: false };
+    const settle = () =>
+      setSendingTake((current) => (current === send ? null : current));
+    setSendingTake(send);
+    void speech.stop().then((captured) => {
+      if (send.cancelled || captured === null || !(hadTypedText || captured)) {
+        settle();
+        return;
+      }
+      void Promise.resolve(onSend(send)).finally(settle);
+    });
   };
   const visibleAttachments = attachments.slice(0, 3);
   const hiddenAttachmentCount = Math.max(0, attachments.length - visibleAttachments.length);
@@ -503,30 +492,21 @@ function ConversationComposerContent({
         style={[styles.inputRow, viewerPill && styles.viewerPillRow, multiline && styles.composerMultiline]}
         testID={`${testIDPrefix}-composer-input-row`}
       >
-        {dictationBusy ? (
-          <TouchableOpacity
-            accessibilityLabel="Discard recording"
-            accessibilityRole="button"
-            hitSlop={9}
-            onPress={discardTake}
-            style={styles.attachButton}
-            testID={`${testIDPrefix}-speech-discard`}
-          >
-            <View style={styles.discardGlyph} />
-          </TouchableOpacity>
-        ) : (
-          <TouchableOpacity
-            accessibilityLabel="Attach photo or document"
-            accessibilityRole="button"
-            disabled={attachDisabled || !onAttach}
-            hitSlop={9}
-            onPress={onAttach}
-            style={styles.attachButton}
-            testID={`${testIDPrefix}-attach-button`}
-          >
-            <Text style={styles.attachButtonText}>＋</Text>
-          </TouchableOpacity>
-        )}
+        {/* ＋ never changes: a file staged while dictating goes with the take. */}
+        <TouchableOpacity
+          accessibilityLabel="Attach photo or document"
+          accessibilityRole="button"
+          disabled={attachDisabled || !onAttach}
+          hitSlop={9}
+          onPress={onAttach}
+          style={styles.attachButton}
+          testID={`${testIDPrefix}-attach-button`}
+        >
+          <PlusGlyph
+            color={attachDisabled || !onAttach ? theme.buzz.textMuted : theme.buzz.textPrimary}
+            testID={`${testIDPrefix}-attach-glyph`}
+          />
+        </TouchableOpacity>
         <View style={styles.inputWrapper}>
           {Platform.OS !== 'web' ? (
             <Text
@@ -704,38 +684,35 @@ function ConversationComposerContent({
             </View>
           ) : null}
         </View>
-        {showMic && speechAvailable ? (
+        {speechAvailable && dictationBusy ? (
+          // Keyed apart from the mic, so a press in flight on one never lands on the other.
           <TouchableOpacity
+            key="stop"
+            accessibilityLabel="Stop recording"
+            accessibilityHint="Discards this take; typed text stays"
+            accessibilityRole="button"
+            disabled={sendingTake?.committed}
+            hitSlop={9}
+            onPress={discardTake}
+            style={styles.controlSlot}
+            testID={`${testIDPrefix}-speech-discard`}
+          >
+            <StopGlyph color={theme.buzz.textPrimary} testID={`${testIDPrefix}-stop-glyph`} />
+          </TouchableOpacity>
+        ) : speechAvailable ? (
+          <TouchableOpacity
+            key="mic"
             accessibilityLabel={
-              isFinalizing || sendingTake
-                ? 'Finishing speech input'
-                : isListening
-                  ? listeningWillSend
-                    ? 'Stop listening and send'
-                    : 'Stop listening'
-                  : speech.state === 'permission-denied' && Platform.OS !== 'web'
-                    ? 'Open microphone settings'
-                    : 'Start speech input'
+              speech.state === 'permission-denied' && Platform.OS !== 'web'
+                ? 'Open microphone settings'
+                : 'Start speech input'
             }
             accessibilityRole="button"
-            accessibilityHint={
-              isFinalizing || sendingTake
-                ? 'Waits for the final transcription before sending'
-                : isListening
-                  ? listeningWillSend
-                    ? 'Stops dictation and sends'
-                    : 'Stops dictation'
-                  : 'Dictates into the message field'
-            }
-            accessibilityState={
-              isFinalizing || sendingTake
-                ? { selected: true, busy: true }
-                : { selected: isListening }
-            }
+            accessibilityHint="Dictates into the message field"
             hitSlop={9}
             delayLongPress={VOICE_LONG_PRESS_MS}
             onPressIn={() => { voiceHeld.current = false; }}
-            onLongPress={voice && !dictationBusy && !disabled ? () => {
+            onLongPress={voice && !disabled ? () => {
               voiceHeld.current = true;
               Keyboard.dismiss();
               void voice.join();
@@ -746,82 +723,75 @@ function ConversationComposerContent({
                 void Linking.openSettings();
                 return;
               }
-              if (isFinalizing || sendingTake) return;
-              if (isListening) {
-                const hadTypedText = Boolean(tagSplit.rest.trim());
-                // Held from the press, so the field stays a waveform from the
-                // transcription through the send.
-                const send: DictatedSend = { cancelled: false, committed: false };
-                const settle = () =>
-                  setSendingTake((current) => (current === send ? null : current));
-                setSendingTake(send);
-                void speech.stop().then((captured) => {
-                  if (send.cancelled || captured === null || !(hadTypedText || captured)) {
-                    settle();
-                    return;
-                  }
-                  void Promise.resolve(onSend(send)).finally(settle);
-                });
-              } else {
-                takeTextRef.current = [];
-                // A take needs no keyboard; lowering it shows the whole Room.
-                Keyboard.dismiss();
-                speech.start();
-              }
+              takeTextRef.current = [];
+              // A take needs no keyboard; lowering it shows the whole Room.
+              Keyboard.dismiss();
+              speech.start();
             }}
             style={[
-              styles.micButton,
+              styles.controlSlot,
               speech.state === 'permission-denied' && styles.micButtonDimmed,
             ]}
             testID={`${testIDPrefix}-mic`}
           >
-            {isFinalizing || sendingTake ? (
-              <BeelineMarkSpinner
-                ink={theme.buzz.accent}
-                live
-                testID={`${testIDPrefix}-speech-finalizing`}
-              />
-            ) : (
-              <MicGlyph color={theme.buzz.textPrimary} testID={`${testIDPrefix}-mic-glyph`} />
-            )}
+            <MicGlyph
+              color={theme.buzz.textPrimary}
+              size={COMPOSER_GLYPH_SIZE}
+              testID={`${testIDPrefix}-mic-glyph`}
+            />
           </TouchableOpacity>
         ) : null}
         {showConversation ? (
-          <View style={styles.sendButton}>
-            <Button
-              label=""
-              variant="quiet"
-              accessibilityLabel="Conversation mode"
-              disabled={disabled || dictationBusy}
-              onPress={() => {
-                Keyboard.dismiss();
-                void voice?.join();
-              }}
-              icon={<WaveformGlyph color={theme.buzz.accent} />}
-              style={styles.conversationButton}
-              testID={`${testIDPrefix}-conversation`}
-            />
-          </View>
-        ) : null}
-        {showSend ? (
-          <Pressable
-            accessibilityLabel="Send message"
+          <TouchableOpacity
+            accessibilityLabel="Conversation mode"
             accessibilityRole="button"
+            disabled={disabled}
+            hitSlop={9}
+            onPress={() => {
+              Keyboard.dismiss();
+              void voice?.join();
+            }}
+            style={styles.controlSlot}
+            testID={`${testIDPrefix}-conversation`}
+          >
+            <WaveformGlyph color={disabled ? theme.buzz.textMuted : theme.buzz.textPrimary} />
+          </TouchableOpacity>
+        ) : (
+          <TouchableOpacity
+            accessibilityLabel={sendingSpeech ? 'Finishing speech input' : 'Send message'}
+            accessibilityHint={
+              sendingSpeech
+                ? 'Waits for the final transcription before sending'
+                : isListening
+                  ? 'Stops dictation and sends'
+                  : undefined
+            }
+            accessibilityRole="button"
+            accessibilityState={{ disabled: sendDisabled, busy: sendingSpeech }}
             disabled={sendDisabled}
             hitSlop={9}
             // Never pass the responder event itself: the Room's handleSend
             // reads its first argument as a MessageShortcut, and a PressEvent
             // (truthy, no `.text`) made it skip the composer-clear block so
             // the field kept its text after every send.
-            onPress={() => onSend?.()}
-            style={styles.sendButton}
+            onPress={() => (isListening ? sendTake() : onSend?.())}
+            style={styles.controlSlot}
             testID={`${testIDPrefix}-send`}
           >
-            <Text style={[styles.sendButtonText, sendDisabled && styles.sendButtonTextDisabled]}>
-              ↑
-            </Text>
-          </Pressable>
-        ) : null}
+            {sendingSpeech ? (
+              <BeelineMarkSpinner
+                ink={theme.buzz.accent}
+                live
+                testID={`${testIDPrefix}-speech-finalizing`}
+              />
+            ) : (
+              <ArrowUpGlyph
+                color={sendDisabled ? theme.buzz.textMuted : theme.buzz.accent}
+                testID={`${testIDPrefix}-send-glyph`}
+              />
+            )}
+          </TouchableOpacity>
+        )}
       </View>
       )}
       {statusLine ? (
@@ -837,7 +807,7 @@ function ConversationComposerContent({
           style={styles.statusLine}
           testID={`${testIDPrefix}-speech-status`}
         >
-          <Text style={[styles.statusText, styles.statusTextError]}>{statusLine}</Text>
+          <Text style={styles.statusText}>{statusLine}</Text>
         </TouchableOpacity>
       ) : null}
       <HullDialog
@@ -864,28 +834,17 @@ function ConversationComposerContent({
   );
 }
 
-const MIC_SIZE = 26;
+const CONTROL_SIZE = 26;
 const INLINE_TAG_GAP = 4;
 /** How long after a touch a caret move counts as that touch's tap. */
 const TAG_TAP_MS = 500;
 
 const styles = StyleSheet.create((theme) => ({
-  // Keep the 44pt target centered in the existing 26pt Send slot.
-  conversationButton: {
-    position: 'absolute',
-    top: '50%',
-    left: '50%',
-    width: 44,
-    height: 44,
-    paddingHorizontal: 0,
-    transform: [{ translateX: -22 }, { translateY: -22 }],
-  },
-  // Speech recognition styles
-  micButton: {
-    width: MIC_SIZE,
-    height: MIC_SIZE,
-    // Same slot and size as the send control it swaps with, so the input's
-    // width never jumps on the mic<->send exchange.
+  // The voice spot and the go action: one 26pt slot each, reached by a 44pt
+  // target, so no swap ever moves a control or the input's width.
+  controlSlot: {
+    width: CONTROL_SIZE,
+    height: CONTROL_SIZE,
     marginLeft: 8,
     alignItems: 'center',
     justifyContent: 'center',
@@ -919,9 +878,6 @@ const styles = StyleSheet.create((theme) => ({
     ...(theme.buzz.type.machine as any),
     color: theme.buzz.ledgerQuiet,
     textTransform: 'uppercase',
-  },
-  statusTextError: {
-    color: theme.buzz.dialogDanger,
   },
   // End speech recognition styles
   composer: {
@@ -981,7 +937,7 @@ const styles = StyleSheet.create((theme) => ({
     fontSize: theme.buzz.transcriptCard.rowKindSize,
     color: theme.buzz.ledgerGhost,
   },
-  attachmentFailed: { color: theme.buzz.danger },
+  attachmentFailed: { color: theme.buzz.textPrimary },
   removeButton: {
     width: 44,
     minHeight: 44,
@@ -993,21 +949,11 @@ const styles = StyleSheet.create((theme) => ({
   moreAttachments: { minHeight: 36, justifyContent: 'center', paddingHorizontal: 16 },
   moreAttachmentsText: { ...theme.buzz.type.meta, color: theme.buzz.accent },
   attachButton: {
-    width: 26,
-    height: 26,
+    width: CONTROL_SIZE,
+    height: CONTROL_SIZE,
     marginRight: 4,
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  attachButtonText: {
-    ...theme.buzz.type.body,
-    color: theme.buzz.textMuted,
-  },
-  discardGlyph: {
-    width: 10,
-    height: 10,
-    borderRadius: theme.buzz.radius,
-    backgroundColor: theme.buzz.textPrimary,
   },
   // A tag reads as a word of the text: the accent on a soft tint.
   inlineTag: {
@@ -1075,16 +1021,4 @@ const styles = StyleSheet.create((theme) => ({
     includeFontPadding: false,
     textAlignVertical: 'center',
   },
-  sendButton: {
-    width: 26,
-    height: 26,
-    marginLeft: 8,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  sendButtonText: {
-    ...theme.buzz.type.body,
-    color: theme.buzz.textPrimary,
-  },
-  sendButtonTextDisabled: { color: theme.buzz.textMuted },
 }));

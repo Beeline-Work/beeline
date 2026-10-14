@@ -7,7 +7,6 @@ import {
   type PrivateCommandPayload,
 } from './agent-command.js';
 import { cornerImplementerSql } from './corner-worker.js';
-import { isCornerReviewer } from './agent-health.js';
 
 export class CommandRefusalError extends Error {
   constructor(
@@ -62,35 +61,25 @@ export async function commandAddress(
   return row;
 }
 
-/** Corner writes target descendants; worker orders also allow the target reviewer or commander. */
+/** Corner turns may target reachable addresses except their ancestors. */
 export async function assertCornerCommandTarget(
-  db: SqlDatabase, sourceRoomId: string, targetRoomId: string, orderingAgentId?: string,
+  db: SqlDatabase, sourceRoomId: string, targetRoomId: string,
 ) {
-  const source = (await db.query<{ parent_id: string | null }>(
-    `SELECT parent_id FROM rooms WHERE id=$1`, [sourceRoomId],
-  )).rows[0];
-  if (!source?.parent_id) return;
-  if (orderingAgentId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(targetRoomId)) {
-    if (await isCornerReviewer(db, targetRoomId, orderingAgentId)) return;
-    const target = (await db.query<{ parent_id: string | null }>(
-      `SELECT parent_id FROM rooms WHERE id=$1`, [targetRoomId],
-    )).rows[0];
-    if (target?.parent_id) {
-      const { recipient } = await commanderReportAddress(db, targetRoomId);
-      if (recipient === orderingAgentId) return;
-    }
-  }
-  const allowed = await db.query(
-    `WITH RECURSIVE descendants AS (
-       SELECT corner_id FROM corner_facts WHERE opened_from_corner_id=$1
-       UNION SELECT child.corner_id FROM corner_facts child JOIN descendants parent
-         ON child.opened_from_corner_id=parent.corner_id
-     ) SELECT 1 FROM descendants WHERE corner_id::text=$2 AND corner_id<>$1 LIMIT 1`,
+  const blocked = await db.query(
+    `WITH RECURSIVE ancestors(id) AS (
+       SELECT id FROM rooms WHERE id=$1 AND parent_id IS NOT NULL
+       UNION
+       SELECT parent.id FROM ancestors ancestor
+       JOIN rooms room ON room.id=ancestor.id
+       LEFT JOIN corner_facts fact ON fact.corner_id=room.id
+       CROSS JOIN LATERAL (VALUES (room.parent_id),(fact.opened_from_corner_id)) parent(id)
+       WHERE parent.id IS NOT NULL
+     ) SELECT 1 FROM ancestors WHERE id<>$1 AND id::text=$2 LIMIT 1`,
     [sourceRoomId, targetRoomId],
   );
-  if (!allowed.rowCount)
+  if (blocked.rowCount)
     throw new CommandRefusalError(
-      'Corners can only order corners they opened. Report to your commander instead.', 403,
+      "Corners can't order their parent Room. Report to your commander instead.", 403,
     );
 }
 
@@ -110,7 +99,7 @@ export async function sendOrder(
     throw new CommandRefusalError('order text must be 1 to 16000 characters', 400);
   const named = agent?.trim().replace(/^@/, '');
   if (agent !== undefined && !named) throw new CommandRefusalError('order agent must name one agent', 400);
-  await assertCornerCommandTarget(db, command.room_id, address, agentId);
+  await assertCornerCommandTarget(db, command.room_id, address);
   const target = await commandAddress(db, address, agentId);
   let worker: string | undefined;
   if (target.parent_id) {

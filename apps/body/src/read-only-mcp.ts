@@ -1948,13 +1948,13 @@ export function agentToolsFor(
     return true;
   }).map((tool) => cornerTurn && tool.name === 'revise_corner_brief' ? {
     ...tool,
-    description: 'Revise a brief only in corners this corner opened, directly or transitively. To change this corner’s own brief, report needs-decision: to your commander. Supply the complete replacement spec, approval source and expected revision.',
+    description: 'Revise a brief in any corner you belong to except parent or ancestor corners and the parent Room. This corner and sibling corners are allowed. Supply the complete replacement spec, approval source and expected revision.',
   } : cornerTurn && tool.name === 'close_corner' ? {
     ...tool,
-    description: 'Close only corners this corner opened, directly or transitively. Closing archives the target and stops its work. To close this corner itself or other work, report to your commander. Attach needed artifacts first.',
+    description: 'Close any corner you belong to except parent or ancestor corners and the parent Room. This corner and sibling corners are allowed. Closing archives the target and stops its work. Attach needed artifacts first.',
   } : cornerTurn && tool.name === 'order' ? {
     ...tool,
-    description: 'From a corner, order only corners this corner opened, directly or transitively. Existing corners without opening provenance, unrelated siblings, parent corners, top-level Rooms, DMs, agent addresses and this corner itself are refused. Corners can only order corners they opened. Report to your commander instead. After ordering another corner, end the turn; its report wakes a new turn. Do not sleep or poll.',
+    description: 'From a corner, order any Room, corner or agent DM address you belong to except your parent Room and parent or ancestor corners. This corner and sibling corners are allowed. At a top-level Room address, name exactly one agent with agent; no broadcasts. Report to your commander for ancestor work. After ordering another agent, end the turn; its report wakes a new turn. Do not sleep or poll.',
   } : tool);
 }
 

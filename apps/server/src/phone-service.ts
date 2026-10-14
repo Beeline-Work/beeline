@@ -13,6 +13,8 @@ import { humanRoomAdmin } from './workflow-admin.js';
 import { setCornerHold } from './corner-holds.js';
 import {
   createAgentCommand,
+  dropQueuedOrdersForStop,
+  lockAgentCommandQueue,
   isTaggedLoginText,
   reconcileConfiguredCornerReviewers,
   routeHumanMessage,
@@ -5988,8 +5990,10 @@ export class PhoneService {
       if (!member) throw new Error('room access denied');
       if (running.author_id !== viewerId && member.role !== 'owner' && member.role !== 'admin')
         throw new Error(TURN_REQUESTER_AUTHORITY_MESSAGE);
-      await database.query(
-        `SELECT id FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3 FOR UPDATE`,
+      await lockAgentCommandQueue(database, input.roomId, input.agentId);
+      const commands = await database.query<CommandRow>(
+        `SELECT * FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3
+         AND action IN ('input','resume') ORDER BY created_at DESC,id DESC FOR UPDATE`,
         [input.roomId, input.agentId, input.requestId],
       );
       const stopped = await database.query(
@@ -6001,13 +6005,14 @@ export class PhoneService {
       // there is nothing left to stop. Nothing is written, so no line claims a
       // stop that never happened.
       if (!stopped.rowCount) throw new Error('running turn not found');
+      const dropped = commands.rows[0] ? await dropQueuedOrdersForStop(database, commands.rows[0]) : 0;
       await systemLine(database, {
         roomId: input.roomId,
         authorId: viewerId,
         subject: identitySubject({ id: stopper.pubkey, kind: stopper.kind, name: stopper.name }),
         verb: 'stopped',
         object: { text: agent.name, id: agent.pubkey },
-        consequence: 'turn cancelled',
+        consequence: `turn cancelled${dropped ? ` · ${dropped} queued ${dropped === 1 ? 'order' : 'orders'} dropped` : ''}`,
         kind: 'turn-cancelled',
         wakes: [input.agentId],
         requestId: input.requestId,

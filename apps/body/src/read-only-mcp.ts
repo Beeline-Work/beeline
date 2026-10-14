@@ -869,9 +869,10 @@ const AGENT_TOOLS: ToolDefinition[] = [
   },
   {
     name: 'order',
-    description: 'Give a top-down instruction to the worker of a corner or agent DM. A top-level Room address broadcasts to every other agent member. Give the instruction at a Room, corner or agent DM address you belong to. Agent-to-agent delivery is private and wakes the recipient without a transcript message. Use a Room id as the address. After ordering another agent, end the turn; its report wakes a new turn. Do not sleep or poll.',
+    description: 'Give a top-down instruction to exactly one agent. A corner address wakes its worker; an agent DM address wakes that agent. At a top-level Room address, agent is required: name one agent member by handle or id. Only that agent wakes. Give the instruction at a Room, corner or agent DM address you belong to. Agent-to-agent delivery is private and wakes the recipient without a transcript message. Use a Room id as the address. After ordering another agent, end the turn; its report wakes a new turn. Do not sleep or poll.',
     inputSchema: { type: 'object', required: ['address', 'text'], properties: {
       address: { type: 'string', format: 'uuid' },
+      agent: { type: 'string', minLength: 1, maxLength: 120, description: 'Handle or id of the one agent to wake. Required at a top-level Room address.' },
       text: { type: 'string', minLength: 1, maxLength: 16000 },
     }, additionalProperties: false },
   },
@@ -4650,7 +4651,7 @@ export async function callAgentTool(
     case 'read_corner_brief':
       return readCornerBrief(args);
     case 'order': {
-      const result = await daemonExecute('order', { address: args.address as string, text: args.text as string });
+      const result = await daemonExecute('order', { address: args.address as string, text: args.text as string, agent: args.agent as string | undefined });
       return `${JSON.stringify(result)}\nAfter ordering another agent, end the turn; its report wakes a new turn; do not sleep or poll.`;
     }
     case 'no_reply_needed': {

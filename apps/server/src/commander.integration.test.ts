@@ -109,10 +109,10 @@ it('nested Room orders forward reports one commander at a time before reaching t
   await db.query(`INSERT INTO rooms(id,workspace_id,name,created_by) VALUES($1,$2,'Agent work',$3)`, [otherRoom, WS, HUMAN]);
   for (const agent of [RUBY, WORKER]) await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
     VALUES($1,$2,$3,'member')`, [WS, otherRoom, agent]);
-  await daemon.execute('order', { ...authority(order), address: ROOM, text: 'Run the project' }, RUBY);
+  await daemon.execute('order', { ...authority(order), address: ROOM, agent: WORKER, text: 'Run the project' }, RUBY);
   const managerOrder = (await commands(ROOM, WORKER)).find(c => c.reason === 'order')!;
   await claim(managerOrder);
-  await daemon.execute('order', { ...authority(managerOrder), address: otherRoom, text: 'Decide the project scope' }, WORKER);
+  await daemon.execute('order', { ...authority(managerOrder), address: otherRoom, agent: RUBY, text: 'Decide the project scope' }, WORKER);
   const childOrder = (await commands(otherRoom, RUBY)).find(c => c.reason === 'order')!;
   await claim(childOrder);
   const text = 'needs-decision: select the final scope';
@@ -207,7 +207,7 @@ it('an ordered corner turn keeps live work and progress in the corner', async ()
   expect((await commands(opened.cornerId, WORKER))).toEqual([]);
 });
 it('a private order to a Room keeps its drafts and activity out of that Room', async () => {
-  await daemon.execute('order', { ...authority(order), address: ROOM, text: 'Check the widget' }, RUBY);
+  await daemon.execute('order', { ...authority(order), address: ROOM, agent: WORKER, text: 'Check the widget' }, RUBY);
   const turn = (await commands(ROOM, WORKER)).find(c => c.reason === 'order')!;
   await claim(turn);
   const before = (await db.query(`SELECT id FROM messages`)).rows;

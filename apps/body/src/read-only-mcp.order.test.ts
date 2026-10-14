@@ -29,3 +29,14 @@ it('preserves an order refusal without claiming delivery or telling the commande
   await expect(callAgentTool('order', { address: 'room', text: 'Compute 17 + 25' }, 'call-2'))
     .rejects.toThrow('403');
 });
+
+it('forwards the one named agent and never describes a Room broadcast', async () => {
+  const fetch = vi.fn(async (_url: URL, _init: RequestInit) => Response.json({ commandIds: ['order-2'] }));
+  vi.stubGlobal('fetch', fetch);
+  await callAgentTool('order', { address: 'room', agent: '@candy', text: 'Check the build' }, 'call-3');
+  expect(JSON.parse(String(fetch.mock.calls[0]![1]!.body))).toEqual({ address: 'room', agent: '@candy', text: 'Check the build' });
+  const tool = agentToolsFor(true, true).find(t => t.name === 'order')!;
+  expect(tool.description).not.toMatch(/broadcast/i);
+  expect(tool.description).toContain('agent is required');
+  expect(Object.keys((tool.inputSchema as { properties: object }).properties)).toContain('agent');
+});

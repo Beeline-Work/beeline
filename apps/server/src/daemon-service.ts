@@ -1067,7 +1067,8 @@ export class DaemonService {
         )) as Output<Name>;
       case 'order':
         return await sendOrder(this.database, this.authorizedCommand!, authenticatedAgentId,
-          String(candidate.address), String(candidate.text)) as Output<Name>;
+          String(candidate.address), String(candidate.text),
+          candidate.agent === undefined ? undefined : String(candidate.agent)) as Output<Name>;
       case 'report': {
         const ask = candidate.ask === undefined
           ? undefined : normalizeTrayAsk(candidate.ask);

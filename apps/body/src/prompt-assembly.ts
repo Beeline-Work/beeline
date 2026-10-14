@@ -348,7 +348,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     layer: 'core',
     surfaces: EVERYWHERE,
     render: () =>
-      'Answer every problem with the finished fix, or with the concrete next step and an offer to take it. Never just restate the problem.',
+      'Answer every problem with the finished fix, or with the concrete next step. Never just restate the problem.',
   },
   {
     id: 'core.finish',

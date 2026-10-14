@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { expect, it, vi } from 'vitest';
-import type { VoiceService } from './voice-service.js';
+import { VoiceService } from './voice-service.js';
 
 const state = vi.hoisted(() => ({ room: undefined as any, streams: [] as ReadableStream<any>[], audio: undefined as any }));
 vi.mock('@livekit/rtc-node', () => ({
@@ -228,5 +228,187 @@ it('speaks the order acknowledgement when the brain streams only whitespace', as
     await runtime.utterance('human', 'Ruby build a widget');
     expect(service.dispatch).toHaveBeenCalledOnce();
     expect(speech.synthesize.mock.calls.map(call => call[0]).join(' ')).toBe('I’ll work on that and tell you when I’m done.');
+  } finally { await runtime.close(); }
+});
+
+/** Real runtime and STT callback; only RTC, providers and persistence are fake. */
+function phantomHarness(answer = 'Hey there is the answer.') {
+  const started = performance.now();
+  const timeline: string[] = [];
+  const messages: string[] = [];
+  const note = (text: string) => timeline.push(`${(performance.now() - started).toFixed(1)}ms ${text}`);
+  let receive!: (event: any) => void;
+  const playing = new Set<() => void>();
+  const agent = { id: 'ronnie', name: 'Ronnie', handle: 'ronnie', soul: '', voice: 'luna' };
+  const speech = { synthesize: vi.fn(async function* (text: string, _voice: string, signal: AbortSignal) {
+    note(`TTS start: ${text}`);
+    yield Buffer.alloc(960, 1);
+    let removeListener = () => {};
+    try {
+      await new Promise<void>((resolve, reject) => {
+        const interrupted = () => { note('barge-in cancel'); reject(new DOMException('Interrupted', 'AbortError')); };
+        playing.add(resolve);
+        removeListener = () => { playing.delete(resolve); signal.removeEventListener('abort', interrupted); };
+        if (signal.aborted) interrupted();
+        else signal.addEventListener('abort', interrupted, { once: true });
+      });
+    } finally { removeListener(); note(`TTS stop: ${text}`); }
+  }) };
+  const service = {
+    owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret',
+      stt: vi.fn(async (onEvent: typeof receive) => { receive = onEvent; return { send() {}, close() {} }; }),
+      brain: { answer: vi.fn(async (_agent: unknown, history: readonly { content: string }[], onText: (text: string) => void, _signal: AbortSignal) => {
+        if (history.at(-1)?.content === 'stop') return { text: '', order: false };
+        onText(answer); return { text: answer, order: false };
+      }) } },
+    access: vi.fn(async () => {}), agents: vi.fn(async () => [agent]),
+    speech: vi.fn(async () => speech), humanCount: vi.fn(async () => 1),
+    recordHuman: vi.fn(async (call: string, room: string, human: string, target: typeof agent, text: string, leaseOwner?: string): Promise<string> => {
+      const writer = { access: service.access, db: {
+        transaction: async (write: (db: { query(sql: string, args: unknown[]): Promise<unknown> }) => Promise<void>) => write({
+          async query(sql, args) {
+            if (sql.startsWith('INSERT INTO messages')) {
+              const content = String(args[3]); messages.push(content); note(`message send: ${content}`);
+            }
+            return { rowCount: 1, rows: [] };
+          },
+        }),
+      } } as unknown as VoiceService;
+      return VoiceService.prototype.recordHuman.call(writer, call, room, human, target, text, leaseOwner);
+    }), recordAnswer: vi.fn(async () => {}),
+    db: { query: vi.fn(async (_sql: string, _args?: unknown[]) => ({ rowCount: 1, rows: [] as any[] })) },
+    runtimeClosed: vi.fn(),
+  };
+  let sequence = 0;
+  return { service, speech, timeline, messages, note,
+    finishPlayback() { for (const finish of playing) finish(); },
+    emit(event: string, transcript: string, turn: number, words?: { confidence: number }[]) {
+      note(`STT ${event} turn=${turn} text=${JSON.stringify(transcript)}`);
+      receive({ event, transcript, turn_index: turn, sequence_id: sequence++, ...(words ? {
+        words: words.map((word, i) => ({ word: transcript.split(' ')[i], start: i * 0.2, end: (i + 1) * 0.2, ...word })),
+      } : {}) });
+    } };
+}
+
+it('Reproduction phantom-1: never sends Hey or Yeah from a noisy turn during TTS; stop still interrupts', async () => {
+  const harness = phantomHarness();
+  const runtime = await VoiceRoomRuntime.connect(harness.service as unknown as VoiceService, 'call', 'room');
+  state.streams = [new ReadableStream()];
+  try {
+    state.room.emit('track', { kind: 1 }, {}, { identity: 'human' });
+    await vi.waitFor(() => expect(harness.service.config.stt).toHaveBeenCalledOnce());
+    harness.emit('EndOfTurn', 'Explain the answer', 0);
+    await vi.waitFor(() => expect(harness.speech.synthesize).toHaveBeenCalledOnce());
+    harness.emit('StartOfTurn', '', 1);
+    harness.emit('Update', 'Hey', 1);
+    harness.emit('EndOfTurn', 'Hey', 1);
+    harness.emit('StartOfTurn', '', 2);
+    harness.emit('Update', 'Yeah', 2);
+    harness.emit('EndOfTurn', 'Yeah', 2);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(harness.service.recordHuman.mock.calls.map(call => call[4])).toEqual(['Explain the answer']);
+    expect(harness.messages).toEqual(['@ronnie Explain the answer']);
+    expect(harness.timeline.filter(line => line.endsWith('barge-in cancel'))).toHaveLength(0);
+    harness.emit('StartOfTurn', '', 3);
+    harness.emit('EndOfTurn', 'stop', 3);
+    await vi.waitFor(() => expect(harness.service.recordHuman).toHaveBeenCalledTimes(2));
+    expect(harness.service.config.brain.answer.mock.calls[0]?.[3]?.aborted).toBe(true);
+  } finally {
+    console.log('Reproduction phantom-1\n' + harness.timeline.join('\n'));
+    await runtime.close();
+  }
+});
+
+it.each(['stop', 'wait', 'no', 'Yeah', 'Please explain something else'])('preserves a real barge-in: %s', async text => {
+  const harness = phantomHarness('Hey stop wait no there is the answer.');
+  const runtime = await VoiceRoomRuntime.connect(harness.service as unknown as VoiceService, 'call', 'room');
+  state.streams = [new ReadableStream()];
+  try {
+    state.room.emit('track', { kind: 1 }, {}, { identity: 'human' });
+    await vi.waitFor(() => expect(harness.service.config.stt).toHaveBeenCalledOnce());
+    harness.emit('EndOfTurn', 'Explain the answer', 0);
+    await vi.waitFor(() => expect(harness.speech.synthesize).toHaveBeenCalledOnce());
+    harness.emit('Update', text, 1, [{ confidence: 0.95 }]);
+    harness.emit('EndOfTurn', text, 1, [{ confidence: 0.95 }]);
+    harness.emit('EndOfTurn', text, 1, [{ confidence: 0.95 }]);
+    await vi.waitFor(() => expect(harness.service.recordHuman).toHaveBeenCalledTimes(2));
+    expect(harness.service.recordHuman.mock.calls[1]?.[4]).toBe(text);
+    expect(harness.service.config.brain.answer.mock.calls[0]?.[3]?.aborted).toBe(true);
+  } finally { await runtime.close(); }
+});
+
+it('keeps echo context until a delayed final and ignores duplicate finals before they cancel audio', async () => {
+  const harness = phantomHarness();
+  const runtime = await VoiceRoomRuntime.connect(harness.service as unknown as VoiceService, 'call', 'room');
+  state.streams = [new ReadableStream()];
+  let clock: ReturnType<typeof vi.spyOn> | undefined;
+  try {
+    state.room.emit('track', { kind: 1 }, {}, { identity: 'human' });
+    await vi.waitFor(() => expect(harness.service.config.stt).toHaveBeenCalledOnce());
+    harness.emit('EndOfTurn', 'Explain the answer', 0);
+    await vi.waitFor(() => expect(harness.speech.synthesize).toHaveBeenCalledOnce());
+    harness.emit('StartOfTurn', '', 0);
+    harness.emit('EndOfTurn', 'Explain the answer', 0);
+    expect(harness.timeline.some(line => line.endsWith('barge-in cancel'))).toBe(false);
+    harness.emit('StartOfTurn', '', 1);
+    harness.emit('Update', 'Hey', 1);
+    harness.finishPlayback();
+    await vi.waitFor(() => expect(harness.timeline.some(line => line.includes('TTS stop:'))).toBe(true));
+    const later = performance.now() + 2000;
+    clock = vi.spyOn(performance, 'now').mockReturnValue(later);
+    harness.emit('EndOfTurn', 'Hey', 1);
+    harness.emit('EndOfTurn', 'Hey', 1);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(harness.service.recordHuman).toHaveBeenCalledOnce();
+    expect(harness.service.config.brain.answer).toHaveBeenCalledOnce();
+    // A new deliberate short utterance after playback is still a valid turn.
+    harness.emit('EndOfTurn', 'Hey', 2);
+    await vi.waitFor(() => expect(harness.service.recordHuman).toHaveBeenCalledTimes(2));
+  } finally { clock?.mockRestore(); await runtime.close(); }
+});
+
+it('rejects a later clause echoed by a recognizer turn that began during the first clause', async () => {
+  const harness = phantomHarness('First sentence. Second sentence.');
+  const runtime = await VoiceRoomRuntime.connect(harness.service as unknown as VoiceService, 'call', 'room');
+  state.streams = [new ReadableStream()];
+  try {
+    state.room.emit('track', { kind: 1 }, {}, { identity: 'human' });
+    await vi.waitFor(() => expect(harness.service.config.stt).toHaveBeenCalledOnce());
+    harness.emit('EndOfTurn', 'Explain the answer', 0);
+    await vi.waitFor(() => expect(harness.speech.synthesize).toHaveBeenCalledOnce());
+    harness.emit('StartOfTurn', '', 1);
+    harness.finishPlayback();
+    await vi.waitFor(() => expect(harness.speech.synthesize).toHaveBeenCalledTimes(2));
+    harness.emit('Update', 'Second sentence', 1, [{ confidence: 0.95 }, { confidence: 0.95 }]);
+    harness.emit('EndOfTurn', 'Second sentence', 1);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(harness.timeline.some(line => line.endsWith('barge-in cancel'))).toBe(false);
+    expect(harness.messages).toEqual(['@ronnie Explain the answer']);
+  } finally { await runtime.close(); }
+});
+
+it('Reproduction phantom-2: an interrupted delegated answer does not replay its opening on refresh', async () => {
+  const harness = phantomHarness();
+  let offered = false, claimed = false;
+  const report = { source_message_id: 'order', id: 'report', text: 'Hey, here is the previous answer.', agent_id: 'ronnie', human_id: 'human' };
+  harness.service.db.query.mockImplementation(async (sql: string) => {
+    if (sql.startsWith('SELECT DISTINCT ON')) return { rowCount: offered && !claimed ? 1 : 0, rows: offered && !claimed ? [report] : [] };
+    if (sql.startsWith('UPDATE voice_orders')) { claimed = true; harness.note('report marked spoken'); }
+    return { rowCount: 1, rows: [] };
+  });
+  const runtime = await VoiceRoomRuntime.connect(harness.service as unknown as VoiceService, 'call', 'room');
+  state.streams = [new ReadableStream()];
+  try {
+    state.room.emit('track', { kind: 1 }, {}, { identity: 'human' });
+    await vi.waitFor(() => expect(harness.service.config.stt).toHaveBeenCalledOnce());
+    offered = true; await runtime.refresh();
+    await vi.waitFor(() => expect(harness.speech.synthesize).toHaveBeenCalledOnce());
+    harness.emit('EndOfTurn', 'stop', 0);
+    await vi.waitFor(() => expect(harness.service.recordHuman).toHaveBeenCalledOnce());
+    await vi.waitFor(() => expect(harness.timeline.some(line => line.includes('TTS stop: Hey, here is the previous answer.'))).toBe(true));
+    await runtime.refresh();
+    await new Promise<void>(resolve => setImmediate(resolve));
+    console.log('Reproduction phantom-2\n' + harness.timeline.join('\n'));
+    expect(harness.speech.synthesize.mock.calls.filter(call => call[0] === report.text)).toHaveLength(1);
   } finally { await runtime.close(); }
 });

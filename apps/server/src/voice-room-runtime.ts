@@ -33,7 +33,7 @@ export function confirmedVoiceSpeech(event: FluxEvent): boolean {
 export function voicePlaybackEcho(transcript: string, playback: string): boolean {
   const words = speechWords(transcript), spoken = speechWords(playback);
   if (!words.length) return false;
-  if (words.length === 1) return spoken.length === 1 && words[0] === spoken[0];
+  if (/^(stop|wait|pause|cancel|no)$/.test(words.join(' '))) return false;
   return spoken.some((_, at) => words.every((word, i) => spoken[at + i] === word));
 }
 
@@ -47,6 +47,7 @@ export class VoiceRoomRuntime {
   private readonly targets = new Map<string, string>();
   private readonly turnIndices = new Map<string, number>();
   private readonly inputVersions = new Map<string, number>();
+  private readonly inputSpeech = new Map<string, { turn: number; playback: Set<string> }>();
   private speaking?: AbortController;
   private speechIdle = Promise.resolve();
   private timer?: ReturnType<typeof setInterval>;
@@ -128,10 +129,22 @@ export class VoiceRoomRuntime {
       stt = await this.service.config.stt(event => {
       if (this.inputVersions.get(human) !== version ||
           event.turn_index <= (this.turnIndices.get(human) ?? -1)) return;
-      if (!confirmedVoiceSpeech(event)) return;
       const recent = this.recentSpeech.filter(spoken => spoken.until > performance.now());
-      if (voicePlaybackEcho(event.transcript, recent.map(spoken => spoken.text).join(' ')) ||
-          recent.some(spoken => voicePlaybackEcho(event.transcript, spoken.text))) return;
+      let input = this.inputSpeech.get(human);
+      if (input?.turn !== event.turn_index) {
+        input = { turn: event.turn_index, playback: new Set() };
+        this.inputSpeech.set(human, input);
+      }
+      for (const spoken of recent) input.playback.add(spoken.text);
+      const context = [...input.playback].join(' ');
+      // Retain a turn's echo context through its final, even after playout
+      // ends. Missing confidence must not make a short playback noise valid.
+      const acknowledgment = /^(hey|yeah|yes|yep|okay|ok|uh|huh|hmm)$/.test(speechWords(event.transcript).join(' '));
+      if (!confirmedVoiceSpeech(event) || voicePlaybackEcho(event.transcript, context) ||
+          (context && acknowledgment && !event.words?.length)) {
+        if (event.event === 'EndOfTurn') this.turnIndices.set(human, event.turn_index);
+        return;
+      }
       // Partial recognized names can aim the strip immediately; only EndOfTurn dispatches.
       if (event.event !== 'EndOfTurn') void this.aimSpokenName(human, event.transcript, version);
       this.speaking?.abort(); this.audio.clearQueue();
@@ -164,6 +177,7 @@ export class VoiceRoomRuntime {
   }
   private stopInput(human: string) {
     this.inputVersions.set(human, (this.inputVersions.get(human) ?? 0) + 1);
+    this.inputSpeech.delete(human);
     const input = this.inputs.get(human);
     if (!input) return;
     this.inputs.delete(human); input.stt?.close(); void input.reader.cancel().catch(() => {});

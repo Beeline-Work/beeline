@@ -8,6 +8,7 @@ import { runtimeDirectory } from './runtime.js';
 import { workspaceAssetRoot } from './workspace-assets.js';
 import { writePrivateFileAtomically } from './atomic-private-file.js';
 import { reclaimWholeStorageObject, capturePrivateProcessUse, ordinaryDirectory, storageTree, isSquirePath, reclaimHelperStorage, type StorageRoomState, type WholeStorageOptions } from './helper-storage.js';
+import { canonicalStoragePath } from './storage-filesystem.js';
 
 const execFileAsync = promisify(execFile);
 export interface StorageOwner { workspaceId: string; roomId: string; kind: 'corners' | 'room-checkouts'; itemId: string; ended?: boolean; landedHeadSha?: string }
@@ -41,8 +42,8 @@ export async function reclaimOwnedCheckout(supervisorRoot: string, owner: Storag
     // Retire the exact checkout's local branch as well as its registration.
     // Otherwise a squash-merged head survives here and pins the entire clone.
     const [commonDir, branch] = local;
-    const repositories = resolve(supervisorRoot, 'beeline/repositories');
-    if (commonDir?.startsWith(`${repositories}/`) && branch?.startsWith('refs/heads/')) {
+    const repositories = canonicalStoragePath(resolve(supervisorRoot, 'beeline/repositories'));
+    if (commonDir && canonicalStoragePath(commonDir).startsWith(`${repositories}/`) && branch?.startsWith('refs/heads/')) {
       await execFileAsync('git', [`--git-dir=${commonDir}`, 'worktree', 'prune', '--expire=now']);
       const repoHead = await execFileAsync('git', [`--git-dir=${commonDir}`, 'symbolic-ref', 'HEAD']).then(result => result.stdout.trim(), () => undefined);
       if (repoHead !== branch) await execFileAsync('git', [`--git-dir=${commonDir}`, 'branch', '--delete', '--force', '--', branch.slice('refs/heads/'.length)])
@@ -309,7 +310,7 @@ export async function pruneUnusedCheckoutStorage(supervisorRoot: string, options
         if (clone) {
           const listing = (await execFileAsync('git', ['-C', path, 'worktree', 'list', '--porcelain'])).stdout;
           for (const line of listing.split('\n'))
-            if (line.startsWith('worktree ') && resolve(line.slice(9)) !== path && await lstat(line.slice(9)).catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return undefined; throw error; })) return false;
+            if (line.startsWith('worktree ') && canonicalStoragePath(line.slice(9)) !== canonicalStoragePath(path) && await lstat(line.slice(9)).catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return undefined; throw error; })) return false;
           if ((await execFileAsync('git', ['-C', path, 'rev-list', '--branches', '--not', '--remotes=origin'])).stdout.trim()) return false;
         }
         if (!(await execFileAsync('git', ['-C', path, 'for-each-ref', '--format=%(refname)', '--contains=HEAD', 'refs/remotes/origin/'])).stdout.trim()) return false;
@@ -319,7 +320,7 @@ export async function pruneUnusedCheckoutStorage(supervisorRoot: string, options
     } });
     if (entries.length && !options.dryRun && !clone) {
       const [common, branch] = local;
-      if (common?.startsWith(`${resolve(supervisorRoot, 'beeline/repositories')}/`) && branch?.startsWith('refs/heads/')) {
+      if (common && canonicalStoragePath(common).startsWith(`${canonicalStoragePath(resolve(supervisorRoot, 'beeline/repositories'))}/`) && branch?.startsWith('refs/heads/')) {
         await execFileAsync('git', [`--git-dir=${common}`, 'worktree', 'prune', '--expire=now']);
         const head = await execFileAsync('git', [`--git-dir=${common}`, 'symbolic-ref', 'HEAD']).then(result => result.stdout.trim(), () => undefined);
         if (head !== branch) await execFileAsync('git', [`--git-dir=${common}`, 'branch', '--delete', '--force', '--', branch.slice(11)])

@@ -70,8 +70,11 @@ This machine also has `orphan-20260904-<64 hex>` and `husk-<64 hex>` directories
 which were never candidates regardless of their age or contents.
 
 **Fix:** recognize all recorded retired-runtime layouts; make only owned
-directories inside an eligible disposable object writable when permission errors
-require it, then retry removal. Never follow links or modify Squire stores.
+directories inside an eligible disposable object writable before removal. Never
+follow links or modify Squire stores. Repairing first also avoids a macOS failure
+seen in native CI: recursive removal rejected on EACCES while sibling removals
+continued, so the subsequent repair inventory failed on a disappearing `codex`
+directory with ENOENT and left the remaining read-only video frames behind.
 Surface actual errors, keep deferred authority, and run ended-owner maintenance
 without waiting for every unrelated Room on the machine to become idle.
 
@@ -192,6 +195,11 @@ could never remove eligible storage.
 **Fix:** use Node filesystem inventory on macOS, `lsof` for actual process/open-file
 use and `mount` for mounted descendants. Normalize the OS-owned `/var` and `/tmp`
 aliases to `/private`; continue rejecting agent-controlled directory aliases.
+Apply that same normalization to Git worktree and common-directory comparisons:
+native Mac regression tests exposed Git returning `/private/var/...` while Beeline
+held `/var/...`. The self-worktree was misidentified as another live checkout,
+retaining both bare and legacy clones. The common-directory containment test also
+failed, retaining accepted local branches after their checkout had been removed.
 Unusable OS evidence still retains storage rather than guessing. No lifecycle
 action is required for inspection.
 

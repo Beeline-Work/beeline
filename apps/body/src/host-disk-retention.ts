@@ -5,6 +5,7 @@ import { promisify } from 'node:util';
 
 const execFileAsync = promisify(execFile);
 import { reclaimWholeStorageObject, type WholeStorageOptions } from './helper-storage.js';
+import { canonicalStoragePath } from './storage-filesystem.js';
 
 export function isDeletedRuntimeName(name: string): boolean {
   return /^(?:[a-f0-9]{64}-\d{13}|orphan-\d{8}-[a-f0-9]{64}|husk-[a-f0-9]{64})$/.test(name);
@@ -35,7 +36,7 @@ export async function pruneRepositoryCaches(supervisorRoot: string, now = Date.n
         .then((result) => result.stdout, () => undefined);
       if (listing === undefined) return false;
       for (const line of listing.split('\n')) {
-        if (line.startsWith('worktree ') && resolve(line.slice(9)) !== path && await lstat(line.slice(9)).catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return undefined; throw error; })) return false;
+        if (line.startsWith('worktree ') && canonicalStoragePath(line.slice(9)) !== canonicalStoragePath(path) && await lstat(line.slice(9)).catch((error: NodeJS.ErrnoException) => { if (error.code === 'ENOENT') return undefined; throw error; })) return false;
       }
       // A remote tip advancing does not make its older local ancestor unpushed.
       const unpublished = await execFileAsync('git', [

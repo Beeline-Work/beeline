@@ -94,15 +94,16 @@ export async function removeStoragePath(root: string, knownTree?: Map<string, Tr
   if (excluded.some(path => path === root || path.startsWith(`${root}/`)))
     throw new Error('refusing removal of Trusty Squire storage');
   if (isSquirePath(root)) throw new Error('refusing removal of Trusty Squire storage');
-  try { await rm(root, { recursive: true, force: true, maxRetries: 3 }); return; }
-  catch (error) {
-    if (!['EACCES', 'EPERM'].includes((error as NodeJS.ErrnoException).code ?? '')) throw error;
-  }
-  const tree = await storageTree(root);
-  if ([...tree.keys()].some(isSquirePath)) throw new Error('refusing removal of Trusty Squire storage');
-  for (const [path, item] of tree) {
-    if (!item.directory) continue;
-    const info = await lstat(path);
+  // Repair before starting rm: recursive rm runs sibling removals concurrently,
+  // so after an EACCES its other children can still be disappearing. A second
+  // inventory then races those removals (observed on macOS as ENOENT).
+  for (const [path, item] of original) {
+    if (!item.directory || path !== root && !path.startsWith(`${root}/`)) continue;
+    const info = await lstat(path).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') return undefined;
+      throw error;
+    });
+    if (!info) continue;
     if (info.isDirectory() && process.getuid?.() === info.uid && (info.mode & 0o700) !== 0o700)
       await chmod(path, info.mode | 0o700);
   }

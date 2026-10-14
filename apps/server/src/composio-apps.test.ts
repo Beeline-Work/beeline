@@ -370,6 +370,62 @@ describe('managed app provider boundary', () => {
       expect(error.message).toBe('provider rejected [staged file] from [staged file]');
     });
 
+    it('conceals a getter-only provider error after staging a Room video', async () => {
+      const KEY = 'ak_fixture_project_key';
+      const message = `provider rejected ${S3KEY} from ${PRESIGNED} with ${KEY}`;
+      const original = Object.assign(new Error(), {
+        status: 429, detail: { source: PRESIGNED, api_key: KEY }, cause: new Error(message),
+      });
+      Object.defineProperty(original, 'message', { get: () => message });
+      const { transport, calls } = youtubeTransport();
+      const failing = vi.fn(async (url: URL | string, init?: RequestInit) => {
+        if (String(url).includes('/tools/execute/')) throw original;
+        return transport(url, init);
+      });
+      const provider = new ComposioApps(KEY, failing as typeof fetch);
+      const args = { videoFile: { beelineObjectId: OBJECT } };
+      const error = await provider.execute({ accountId: ACCOUNT, userId: PERSON, toolkit: 'youtube',
+        tool: 'YOUTUBE_MULTIPART_UPLOAD_VIDEO', arguments: args,
+        files: await resolveAppFiles(args, async () => video()) }).catch((e: unknown) => e as Error);
+      expect(calls.some((call) => call.method === 'PUT')).toBe(true);
+      expect(error).toBeInstanceOf(Error);
+      expect(error).not.toBeInstanceOf(TypeError);
+      expect(error).not.toBe(original);
+      expect(error.message).toBe('provider rejected [staged file] from [staged file] with [redacted]');
+      expect((error as Error & { status: number }).status).toBe(429);
+      expect(original.message).toBe(message);
+      expect(original.detail).toEqual({ source: PRESIGNED, api_key: KEY });
+      expect(error.cause).toBeUndefined();
+      for (const hidden of [KEY, S3KEY, PRESIGNED]) {
+        expect(error.stack).not.toContain(hidden);
+        expect(JSON.stringify(error)).not.toContain(hidden);
+      }
+    });
+
+    it.each(['getter-only', 'frozen'])('does not mutate a %s error thrown by executeStaged', async (kind) => {
+      const provider = new ComposioApps('fixture-only');
+      const message = `provider rejected ${PRESIGNED} with fixture-only`;
+      const original = new Error(message);
+      if (kind === 'getter-only') Object.defineProperty(original, 'message', { get: () => message });
+      else Object.freeze(original);
+      const staged = vi.spyOn(provider as unknown as {
+        executeStaged(input: unknown, hidden: string[]): Promise<unknown>;
+      }, 'executeStaged').mockImplementation(async (_input, hidden) => {
+        hidden.push(PRESIGNED);
+        throw original;
+      });
+      try {
+        const error = await provider.execute({ accountId: ACCOUNT, userId: PERSON, toolkit: 'youtube',
+          tool: 'YOUTUBE_MULTIPART_UPLOAD_VIDEO', arguments: {} }).catch((e: unknown) => e as Error);
+        expect(error).not.toBe(original);
+        expect(error).not.toBeInstanceOf(TypeError);
+        expect(error.message).toBe('provider rejected [staged file] with [redacted]');
+        expect(original.message).toBe(message);
+      } finally {
+        staged.mockRestore();
+      }
+    });
+
     it('passes video and audio artifacts posted with their own mime type', async () => {
       for (const mimeType of ['video/mp4', 'video/quicktime', 'video/webm', 'audio/mpeg',
         'audio/wav', 'audio/mp4']) {

@@ -18,6 +18,7 @@ import {
 } from './postgres-live.js';
 import { PgliteDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
+import { createAgentCommand } from './agent-command.js';
 
 const AUTHOR = 'a'.repeat(64);
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
@@ -951,6 +952,18 @@ describe('Postgres live fanout', () => {
       await write();
       await eventually(() => nudges().length >= 1);
     };
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+      VALUES($1,$2,$3,'member')`, [WORKSPACE,corner,agent]);
+    await expectNudge(() => createAgentCommand(database, {
+      id: 'queued-state-proof', roomId: corner, agentId: agent, sourceMessageId: null,
+      reason: 'order', privatePayload: { text: 'Continue', kind: 'order', authorId: AUTHOR, fromRoomId: ROOM },
+    }));
+    await expectNudge(() => database.query(`UPDATE agent_commands SET state='complete' WHERE id='queued-state-proof'`));
+    await expectNudge(() => database.query(`UPDATE corner_facts SET worker_agent_id=$2 WHERE corner_id=$1`, [corner,agent]));
+    await expectNudge(() => database.query(`INSERT INTO corner_merge_holds(corner_id,actor_id,standing)
+      VALUES($1,$2,'owner')`, [corner,reader]));
+    await expectNudge(() => database.query(`UPDATE corner_merge_holds SET released_at=now(),released_by=$2
+      WHERE corner_id=$1`, [corner,reader]));
     // A review verdict or ask_human moves only the workflow columns.
     await expectNudge(() => database.query(
       `UPDATE corner_facts SET workflow_state='review' WHERE corner_id=$1`, [corner]));

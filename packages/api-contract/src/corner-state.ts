@@ -12,15 +12,16 @@ export type CornerRunFacts = {
 
 export type CornerStateFacts = {
   readonly archived: boolean;
+  /** Running worker receipts; reviewer work has its own input. */
   readonly turnRunning: boolean;
+  readonly workerQueued?: boolean;
+  readonly reviewerActive?: boolean;
   /** The corner's workflow run. Absent only where no run is known; see `cornerRunFromLifecycle`. */
   readonly run?: CornerRunFacts;
   readonly lifecycle?: CornerLifecycleView;
   /**
-   * Whether something in the corner is still owed to a person: a message the
-   * push rule addresses to someone that they have not answered, an open
-   * question card, or a pending grant. Absent where a projection cannot tell;
-   * the corner then stays `waiting` so nothing owed is hidden.
+   * Whether an unresolved blocking item is addressed to a person.
+   * A workflow stage or an ordinary tag alone never establishes a blocker.
    */
   readonly owed?: boolean;
 };
@@ -31,18 +32,15 @@ export type DerivedCornerState = {
 };
 
 /**
- * The run a corner is in when no handoff card records one: a corner opened
- * before the workflow run existed, or a projection (the relay indexer, an older
- * server's Room view) that only carries the lifecycle. The server writes this
- * once as the run of such a corner, so the badge and the server agree.
+ * Recover the workflow stage when no handoff card records one. Displayed state
+ * uses live work and human blockers separately; a stage alone is not activity.
  *
  * - ended (archived, merged, done, abandoned) -> `landed` or `closed`
  * - a PR with failing checks -> `implement`, reached by `failing`
  * - a PR with passing checks -> `review`
  * - a PR with pending or unknown checks -> `checks`
  * - a question waiting on a person -> `ask_human`
- * - a failed turn -> `implement`, reached by `failed` (no contract edge; only
- *   this mapping produces it, so the badge can still say "failed")
+ * - a failed turn -> `implement`, reached by `failed` (no contract edge)
  * - anything else -> `implement`
  */
 export function cornerRunFromLifecycle(input: {
@@ -72,39 +70,15 @@ export function cornerRunFromLifecycle(input: {
   return { state: 'implement' };
 }
 
-/**
- * The phone badge, from the workflow run plus whether a turn is running. A
- * run without an outcome uses the outcome `cornerRunFromLifecycle` reads:
- *
- * | run state                                   | badge                      |
- * | ------------------------------------------- | -------------------------- |
- * | `landed`, `closed`, or an archived Room     | archived                   |
- * | any other, while a turn runs                | working                    |
- * | `checks`, `review`                          | review                     |
- * | `implement` reached by `failing`            | review, checks-failed      |
- * | `ask_human`                                 | waiting, question          |
- * | `implement` reached by `failed`             | waiting, failed            |
- * | `opened`, `implement`, owed                | waiting                    |
- * | the same, nothing owed to anyone            | idle                       |
- */
+/** Observed work and unanswered human blockers; workflow stages only identify closure. */
 export function deriveCornerState(facts: CornerStateFacts): DerivedCornerState {
-  const fallback = cornerRunFromLifecycle({ archived: facts.archived, lifecycle: facts.lifecycle });
-  // A run with no recorded outcome takes the lifecycle's: a corner in
-  // `implement` whose PR checks fail reads checks-failed on every surface.
-  const run = !facts.run
-    ? fallback
-    : facts.run.outcome === undefined && fallback.outcome !== undefined
-      ? { state: facts.run.state, outcome: fallback.outcome }
-      : facts.run;
-  if (facts.archived || run.state === 'landed' || run.state === 'closed')
+  const terminal = cornerRunFromLifecycle({ archived: facts.archived, lifecycle: facts.lifecycle });
+  if (facts.archived || terminal.state === 'landed' || terminal.state === 'closed' ||
+      facts.run?.state === 'landed' || facts.run?.state === 'closed')
     return { state: 'archived' };
-  if (facts.turnRunning) return { state: 'working' };
-  if (run.state === 'checks' || run.state === 'review')
+  if (facts.turnRunning || facts.workerQueued) return { state: 'working' };
+  if (facts.reviewerActive || facts.lifecycle?.checks === 'pending' || facts.lifecycle?.checksSummary?.status === 'pending' ||
+      facts.lifecycle?.checksSummary?.checks.some(check => check.status === 'pending'))
     return { state: 'review' };
-  if (run.state === 'implement' && run.outcome === 'failing')
-    return { state: 'review', reason: 'checks-failed' };
-  if (run.state === 'ask_human') return { state: 'waiting', reason: 'question' };
-  if (run.state === 'implement' && run.outcome === 'failed')
-    return { state: 'waiting', reason: 'failed' };
-  return { state: facts.owed === false ? 'idle' : 'waiting' };
+  return { state: facts.owed === true ? 'waiting' : 'idle' };
 }

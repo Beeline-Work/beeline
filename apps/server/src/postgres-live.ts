@@ -12,7 +12,7 @@ import {
 
 export const POSTGRES_LIVE_CHANNEL = 'beeline_live_v1';
 const PARENT_ONLY_TABLES: ReadonlySet<string> = new Set([
-  'corner_owed', 'corner_follows', 'corner_brief_revisions', 'corner_app_bindings',
+  'corner_owed', 'corner_follows', 'corner_brief_revisions', 'corner_app_bindings', 'corner_merge_holds',
 ]);
 const PARENT_ONLY_SQL = [...PARENT_ONLY_TABLES].map((table) => `'${table}'`).join(',');
 
@@ -139,6 +139,8 @@ BEGIN
       -- while this agent worked becomes deliverable with no write of its own.
       payload = jsonb_build_object('table', TG_TABLE_NAME, 'operation', TG_OP,
         'roomId', COALESCE(NEW.room_id, OLD.room_id), 'agentId', COALESCE(NEW.agent_id, OLD.agent_id),
+        'cornerParentId', CASE WHEN ${rowChangedSql(['state','agent_id','room_id','action'])}
+          THEN (SELECT parent_id FROM rooms WHERE id=COALESCE(NEW.room_id,OLD.room_id)) END,
         'released', CASE
           WHEN TG_OP = 'UPDATE' THEN OLD.state = 'claimed' AND NEW.state <> 'claimed'
           WHEN TG_OP = 'DELETE' THEN OLD.state = 'claimed'

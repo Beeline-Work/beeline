@@ -651,6 +651,10 @@ describe('monolith integration', () => {
   // These fixtures test projections and lifecycle behavior downstream of intake.
   // Supply an explicit command first. Routing/refusal tests call DaemonService
   // directly in agent-command.integration.test.ts and never use this helper.
+  const drainCornerWork = async (cornerId: string) => {
+    await database.query(`UPDATE agent_commands SET state='complete' WHERE room_id=$1`, [cornerId]);
+    await database.query(`UPDATE agent_turns SET status='complete' WHERE room_id=$1`, [cornerId]);
+  };
   const daemonOperation = async (name: string, payload: unknown, token = daemonToken) => {
     const input = { ...(payload as Record<string, unknown>) };
     const fixtureOmitBrief = input.fixtureOmitBrief === true;
@@ -9242,6 +9246,7 @@ describe('monolith integration', () => {
       objective: 'Pick a shape for the widget',
     });
     const { cornerId } = (await created.json()) as { cornerId: string };
+    await drainCornerWork(cornerId);
     // Someone else started it: the viewer neither commissioned nor follows it.
     await database.query(`UPDATE corner_facts SET commissioned_by=NULL WHERE corner_id=$1`, [
       cornerId,
@@ -9272,7 +9277,7 @@ describe('monolith integration', () => {
        VALUES('chat-mine-tagged',$1,$2,'@owner square or round?',now()+interval '2 seconds')`,
       [cornerId, AGENT],
     );
-    expect(await listed()).toEqual(expect.objectContaining({ state: 'waiting', mine: true }));
+    expect(await listed()).toEqual(expect.objectContaining({ state: 'idle', mine: true }));
     // The tag keeps the corner the viewer's after they answer and it moves on.
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text,created_at)
@@ -9299,6 +9304,7 @@ describe('monolith integration', () => {
       objective: 'Pick a size for the widget',
     });
     const { cornerId } = (await created.json()) as { cornerId: string };
+    await drainCornerWork(cornerId);
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text,created_at)
        VALUES('busy-chatter',$1,$2,'Chatter.',now()+interval '5 seconds')`,
@@ -9318,7 +9324,7 @@ describe('monolith integration', () => {
     expect(await order()).toEqual([busy, ROOM]);
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text,created_at)
-       VALUES('corner-hands-back',$1,$2,'@owner small or large?',now()+interval '10 seconds')`,
+       VALUES('corner-hands-back',$1,$2,'needs-decision: @owner small or large?',now()+interval '10 seconds')`,
       [cornerId, AGENT],
     );
     const corner = (await listed())
@@ -9343,6 +9349,7 @@ describe('monolith integration', () => {
       objective: 'Pick a finish for the widget',
     });
     const { cornerId } = (await created.json()) as { cornerId: string };
+    await drainCornerWork(cornerId);
     const listed = async () =>
       (
         (await (await request(`/v1/phone/workspaces/${WORKSPACE}/chats`)).json()) as {
@@ -9374,8 +9381,8 @@ describe('monolith integration', () => {
     expect(await page()).toEqual(expect.objectContaining({ state: 'idle' }));
     expect(await owed()).toBe(false);
 
-    // It tags the viewer: waiting on them, and it pulls their dropdown open.
-    await say('owed-tag', AGENT, '@owner matte or gloss?', '2 seconds');
+    // An explicit decision asks the viewer and pulls their dropdown open.
+    await say('owed-tag', AGENT, 'needs-decision: @owner matte or gloss?', '2 seconds');
     expect(await listed()).toEqual(
       expect.objectContaining({ state: 'waiting', mine: true, attention: true }),
     );
@@ -9395,7 +9402,7 @@ describe('monolith integration', () => {
     expect(await owed()).toBe(false);
   });
 
-  it('expires an unanswered tag after a day but never a question, grant or failed agent wake', async () => {
+  it('expires an ordinary tag while unresolved questions and grants keep waiting', async () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'corner-owed-expiry',
@@ -9403,6 +9410,7 @@ describe('monolith integration', () => {
       objective: 'Pick a box for the widget',
     });
     const { cornerId } = (await created.json()) as { cornerId: string };
+    await drainCornerWork(cornerId);
     const state = async () =>
       (await new PhoneService(database, origin).readCorners(ROOM, HUMAN))?.corners.find(
         (item) => item.corner.id === cornerId,
@@ -9450,10 +9458,10 @@ describe('monolith integration', () => {
        VALUES('expiry-blocked',$1,$2,'Agent could not be reached','system','corner-agent-unreachable',$3::jsonb,${old})`,
       [cornerId, AGENT, JSON.stringify({ recipientIds: [HUMAN], status: 'open' })],
     );
-    expect(await state()).toBe('waiting');
+    expect(await state()).toBe('idle');
   });
 
-  it('keeps owed tags, questions, grants and failed wakes waiting past 21 updates', async () => {
+  it('keeps unresolved human blockers waiting past 21 updates without treating a failed wake as a blocker', async () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'corner-owed-crowded',
@@ -9461,6 +9469,7 @@ describe('monolith integration', () => {
       objective: 'Pick a lid for the widget',
     });
     const { cornerId } = (await created.json()) as { cornerId: string };
+    await drainCornerWork(cornerId);
     const state = async () =>
       (await new PhoneService(database, origin).readCorners(ROOM, HUMAN))?.corners.find(
         (item) => item.corner.id === cornerId,
@@ -9479,7 +9488,7 @@ describe('monolith integration', () => {
 
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text,created_at)
-       VALUES('crowded-tag',$1,$2,'@owner hinged or loose?',now())`,
+       VALUES('crowded-tag',$1,$2,'needs-decision: @owner hinged or loose?',now())`,
       [cornerId, AGENT],
     );
     await crowd();
@@ -9534,7 +9543,7 @@ describe('monolith integration', () => {
       [cornerId, AGENT, `${updates} seconds`, JSON.stringify({ recipientIds: [HUMAN], status: 'open' })],
     );
     await crowd();
-    expect(await state()).toBe('waiting');
+    expect(await state()).toBe('idle');
   });
 
   it('Reproduction F1-3: a committed human message immediately retries a backed-off claim', async () => {

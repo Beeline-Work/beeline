@@ -351,12 +351,13 @@ export default function TrayScreen() {
   );
 
   /** Tapped or dismissed: the cell leaves this tray, and every other device's. */
-  const clear = useCallback(async (item: NeedsYouItemView) => {
+  const clear = useCallback(async (item: NeedsYouItemView, dismissReminder = false) => {
     const removal = removeNeedsYou(item.workspaceId, [item.messageId]);
     try {
       await monolithPhoneOperation('clearNeedsYou', {
         workspaceId: item.workspaceId,
         messageId: item.messageId,
+        ...(dismissReminder ? { dismissReminder: true } : {}),
       });
       removal.settle();
     } catch (cause) {
@@ -412,7 +413,7 @@ export default function TrayScreen() {
   const dismissNeed = useCallback(
     (item: NeedsYouItemView) => {
       AccessibilityInfo.announceForAccessibility('Dismissed from Needs you');
-      void clear(item);
+      void clear(item, true);
     },
     [clear],
   );

@@ -10,6 +10,10 @@ import { grantDecidedBySql } from './needs-you.js';
 
 /** A tag, a reply, or a deliverable stops keeping its corner waiting this long after it was posted. */
 const CORNER_OWED_EXPIRY_HOURS = 24;
+const BLOCKING_ITEM = `COALESCE((item.text ~ '^needs-decision:[[:space:]]*[^[:space:]]'
+  OR (item.card_type='${CHOICE_CARD_TYPE}' AND item.card->>'mode'='question')
+  OR item.card_type IN ('grant-request','permission','connector-offer',
+    'agent-sign-in','app-sign-in','squire-approval')),false)`;
 /** Historical automatic escalations remain readable but never request action. */
 const RETIRED_AUTOMATIC_ATTENTION = [
   CORNER_CHECKS_BLOCKED_CARD_TYPE, CORNER_REVIEW_DEADLOCK_CARD_TYPE, CORNER_MERGE_YES_CARD_TYPE,
@@ -53,6 +57,11 @@ export function addressedToPersonSql(
         AND addressed.author_id=${personIdExpr}
     )
     OR ${tagsKnownIdentitySql(m, personIdExpr, personHandleExpr, personKindExpr)}
+    OR (${m}.text ~ '^needs-decision:' AND COALESCE(${m}.card->>'reportToId',(
+      SELECT source.author_id FROM agent_commands command JOIN messages source
+        ON source.id=command.root_source_message_id AND source.room_id=${m}.room_id
+      WHERE command.id=${m}.request_id AND command.agent_id=${m}.author_id
+    ))=${personIdExpr})
     -- A failed agent wake reaches the requester, or current Workspace managers.
     OR (${m}.card_type='${CORNER_AGENT_UNREACHABLE_CARD_TYPE}'
       AND COALESCE(${m}.card->>'status','open')='open'
@@ -128,13 +137,17 @@ function cornerOwedRowsSql(where: string, bulk: boolean): string {
         )`;
   return `SELECT owed_corner.id,person.id,item.id,item.created_at,
       CASE
+        WHEN ${BLOCKING_ITEM} THEN CASE
+          WHEN item.card->>'expiresAt' ~ '^[0-9]{1,15}$'
+            THEN to_timestamp((item.card->>'expiresAt')::bigint/1000.0) END
         WHEN item.card_type IN ('grant-request','${CORNER_AGENT_UNREACHABLE_CARD_TYPE}') THEN NULL
         WHEN item.card_type='${CHOICE_CARD_TYPE}'
           AND COALESCE(item.card->>'status','open')='open' THEN NULL
         ELSE item.created_at+interval '${CORNER_OWED_EXPIRY_HOURS} hours'
       END,
-      item.card_type IS DISTINCT FROM 'grant-request'
-        AND item.card_type IS DISTINCT FROM '${CHOICE_CARD_TYPE}'
+      COALESCE(item.card_type,'') NOT IN ('grant-request','${CHOICE_CARD_TYPE}',
+        'permission','connector-offer','app-sign-in','agent-sign-in','squire-approval'),
+      ${BLOCKING_ITEM}
     FROM messages item
     LEFT JOIN agent_commands report ON report.id=item.request_id AND report.agent_id=item.author_id
     LEFT JOIN rooms origin ON origin.id=CASE
@@ -142,6 +155,8 @@ function cornerOwedRowsSql(where: string, bulk: boolean): string {
         THEN (report.private_payload->>'originCornerId')::uuid
       ELSE report.room_id END AND origin.parent_id IS NOT NULL
     JOIN rooms owed_corner ON owed_corner.id=CASE
+      WHEN item.card->>'sourceRoomId' ~ '${CANONICAL_UUID}'
+        THEN (item.card->>'sourceRoomId')::uuid
       WHEN item.presentation='message' AND item.text ~ '^(blocked|needs-decision|failed):[[:space:]]*[^[:space:]]'
         THEN COALESCE(origin.id,item.room_id) ELSE item.room_id END
       AND owed_corner.parent_id IS NOT NULL
@@ -164,13 +179,25 @@ function cornerOwedRowsSql(where: string, bulk: boolean): string {
           AND source_member.identity_id=person.id AND source_member.removed_at IS NULL))
       ${
         bulk
-          ? `AND (item.created_at>now()-interval '${CORNER_OWED_EXPIRY_HOURS} hours'
+          ? `AND (${BLOCKING_ITEM} OR item.created_at>now()-interval '${CORNER_OWED_EXPIRY_HOURS} hours'
         OR (item.card_type IN (${NEVER_EXPIRES})
           AND (item.card_type<>'${CHOICE_CARD_TYPE}'
             OR COALESCE(item.card->>'status','open')='open')))`
           : ''
       }
       AND CASE
+        WHEN item.card_type='permission' THEN EXISTS (
+          SELECT 1 FROM permission_authority permission WHERE permission.permission_id=item.card->>'permissionId'
+            AND permission.status='pending' AND permission.principal_id=person.id)
+        WHEN item.card_type IN ('app-sign-in','agent-sign-in') THEN
+          item.card->>'ownerId'=person.id AND item.card->>'status' IN ('starting','pending')
+        WHEN item.card_type='connector-offer' THEN
+          item.card->>'status'='pending' AND item.card->'addressee'->>'pubkey'=person.id
+        WHEN item.card_type='squire-approval' THEN
+          item.card->>'status' IS DISTINCT FROM 'expired'
+          AND NOT EXISTS (SELECT 1 FROM messages decision WHERE decision.room_id=owed_corner.id
+            AND decision.card_type='squire-approval-decision'
+            AND decision.card->>'approvalId'=item.card->>'approvalId')
         WHEN item.card_type='grant-request' THEN EXISTS (
           SELECT 1 FROM jsonb_array_elements(
             CASE WHEN jsonb_typeof(item.card->'grants')='array' THEN item.card->'grants' ELSE '[]'::jsonb END
@@ -180,7 +207,8 @@ function cornerOwedRowsSql(where: string, bulk: boolean): string {
           WHERE ${grantDecidedBySql('pending_grant', 'person.id')}
         )
         WHEN item.card_type='${CHOICE_CARD_TYPE}'
-          THEN ${addressedToPersonSql('item', 'person.id', 'person.handle', 'person.kind')}
+          THEN item.card->>'mode'='question' AND COALESCE(item.card->>'status','open')='open'
+            AND ${addressedToPersonSql('item', 'person.id', 'person.handle', 'person.kind')}
         ELSE ${addressedToPersonSql('item', 'person.id', 'person.handle', 'person.kind')}
           AND ${answered}
       END`;
@@ -196,12 +224,12 @@ function refreshReportedCornersSql(room: string, person: string): string {
           THEN (report.private_payload->>'originCornerId')::uuid ELSE report.room_id END
         AND source_origin.parent_id IS NOT NULL
       WHERE question.room_id=${room} AND question.presentation='message' AND question.deleted_at IS NULL
-        AND question.created_at>now()-interval '${CORNER_OWED_EXPIRY_HOURS} hours'
+        AND (question.text ~ '^needs-decision:' OR question.created_at>now()-interval '${CORNER_OWED_EXPIRY_HOURS} hours')
         AND question.text ~ '^(blocked|needs-decision|failed):[[:space:]]*[^[:space:]]'
     ) origin;`;
 }
 
-const CORNER_OWED_INSERT = `INSERT INTO corner_owed(corner_id,person_id,message_id,created_at,expires_at,answerable)`;
+const CORNER_OWED_INSERT = `INSERT INTO corner_owed(corner_id,person_id,message_id,created_at,expires_at,answerable,blocking)`;
 
 /**
  * `corner_owed` holds every open owed item per person, so readers look owed
@@ -221,9 +249,13 @@ CREATE TABLE IF NOT EXISTS corner_owed (
   created_at timestamptz NOT NULL,
   expires_at timestamptz,
   answerable boolean NOT NULL,
+  blocking boolean NOT NULL DEFAULT false,
   PRIMARY KEY (message_id, person_id)
 );
+ALTER TABLE corner_owed ADD COLUMN IF NOT EXISTS blocking boolean NOT NULL DEFAULT false;
 CREATE INDEX IF NOT EXISTS corner_owed_corner_person_idx ON corner_owed(corner_id, person_id);
+CREATE INDEX IF NOT EXISTS corner_owed_blocking_idx ON corner_owed(corner_id,created_at DESC,message_id DESC)
+  WHERE blocking;
 -- The leader's owed expiry job finds due and next expiries by this index.
 CREATE INDEX IF NOT EXISTS corner_owed_expires_idx ON corner_owed(expires_at)
   WHERE expires_at IS NOT NULL;
@@ -253,6 +285,12 @@ $corner_owed$;
 CREATE OR REPLACE FUNCTION corner_owed_message_changed() RETURNS trigger
 LANGUAGE plpgsql AS $corner_owed$
 BEGIN
+  IF NEW.card_type='squire-approval-decision' THEN
+    PERFORM corner_owed_recompute_message(owed.message_id)
+      FROM corner_owed owed JOIN messages approval ON approval.id=owed.message_id
+      WHERE owed.corner_id=NEW.room_id AND approval.card_type='squire-approval'
+        AND approval.card->>'approvalId'=NEW.card->>'approvalId';
+  END IF;
   -- A reply in the return Room also answers reports owed by their originating corner.
   IF TG_OP='INSERT' AND NEW.presentation='message' AND NEW.deleted_at IS NULL THEN
     DELETE FROM corner_owed owed
@@ -271,6 +309,8 @@ BEGIN
     END IF;
   END IF;
   IF NOT EXISTS (SELECT 1 FROM rooms WHERE id=NEW.room_id AND parent_id IS NOT NULL)
+    AND NOT EXISTS (SELECT 1 FROM rooms WHERE id=CASE WHEN NEW.card->>'sourceRoomId' ~ '${CANONICAL_UUID}'
+      THEN (NEW.card->>'sourceRoomId')::uuid END AND parent_id IS NOT NULL)
     AND NOT EXISTS (SELECT 1 FROM agent_commands report JOIN rooms origin ON origin.id=CASE
       WHEN report.private_payload->>'originCornerId' ~ '${CANONICAL_UUID}'
         THEN (report.private_payload->>'originCornerId')::uuid ELSE report.room_id END
@@ -412,6 +452,20 @@ CREATE TRIGGER corner_owed_grant_update AFTER UPDATE OF status ON agent_grants
   FOR EACH ROW WHEN (OLD.status IS DISTINCT FROM NEW.status)
   EXECUTE FUNCTION corner_owed_grant_changed();
 
+CREATE OR REPLACE FUNCTION corner_owed_permission_changed() RETURNS trigger
+LANGUAGE plpgsql AS $corner_owed$
+BEGIN
+  PERFORM corner_owed_recompute_message(card.id) FROM messages card
+    WHERE card.room_id=NEW.room_id AND card.card_type='permission'
+      AND card.card->>'permissionId'=NEW.permission_id;
+  RETURN NULL;
+END
+$corner_owed$;
+DROP TRIGGER IF EXISTS corner_owed_permission_update ON permission_authority;
+CREATE TRIGGER corner_owed_permission_update AFTER UPDATE OF status ON permission_authority
+  FOR EACH ROW WHEN (OLD.status IS DISTINCT FROM NEW.status)
+  EXECUTE FUNCTION corner_owed_permission_changed();
+
 -- Existing projection rows from the former automatic escalation policy must
 -- not keep a person waiting after release. History itself stays readable.
 DELETE FROM corner_owed owed USING messages item
@@ -423,7 +477,8 @@ WHERE item.id=owed.message_id AND item.card_type IN (${RETIRED_AUTOMATIC_ATTENTI
 export function cornerOwedBackfillSql(): string {
   return `${CORNER_OWED_INSERT}
     ${cornerOwedRowsSql('true', true)}
-    ON CONFLICT DO NOTHING`;
+    ON CONFLICT(message_id,person_id) DO UPDATE SET
+      blocking=EXCLUDED.blocking,expires_at=EXCLUDED.expires_at`;
 }
 
 /**
@@ -438,6 +493,7 @@ export function cornerOwedBackfillSql(): string {
 export function cornerOwedLookupSql(corner: string, viewerExpr: string): string {
   return `LEFT JOIN LATERAL (
     SELECT COALESCE(bool_or(true),false) owed,
+      COALESCE(bool_or(owed_item.blocking),false) blocking,
       COALESCE(bool_or(owed_item.person_id=${viewerExpr}),false) owed_viewer,
       COALESCE(bool_or(owed_item.person_id=${viewerExpr} AND NOT EXISTS (
         SELECT 1 FROM room_read_marks seen

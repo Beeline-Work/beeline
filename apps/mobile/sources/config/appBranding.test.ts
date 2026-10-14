@@ -166,6 +166,20 @@ function resolveEasBuildProfile(
   };
 }
 
+it('keeps Android foreground voice permission while blocking undeclared background microphone services', () => {
+  const { android, ios } = JSON.parse(execFileSync(process.execPath, [
+    '--import', 'tsx', '--input-type=module', '--eval',
+    "import configModule from './app.config.js'; const config = configModule.default ?? configModule; process.stdout.write(JSON.stringify(config.expo));",
+  ], { cwd: fileURLToPath(new URL('../..', import.meta.url)), encoding: 'utf8' }));
+  expect(android.permissions).toContain('android.permission.RECORD_AUDIO');
+  expect(android.permissions.filter((permission: string) => permission.startsWith('android.permission.FOREGROUND_SERVICE'))).toEqual([]);
+  expect(android.blockedPermissions).toEqual(expect.arrayContaining([
+    'android.permission.FOREGROUND_SERVICE',
+    'android.permission.FOREGROUND_SERVICE_MICROPHONE',
+  ]));
+  expect(ios.infoPlist.UIBackgroundModes).toContain('audio');
+});
+
 describe('Beeline display branding', () => {
   const appConfig = readFileSync(new URL('../../app.config.js', import.meta.url), 'utf8');
   const easConfig = readFileSync(new URL('../../eas.json', import.meta.url), 'utf8');
@@ -301,9 +315,9 @@ describe('Beeline display branding', () => {
       'ios: {\n            runtimeVersion: runtimeVersionOverride || "35"',
     );
     expect(appConfig).toContain(
-      'android: {\n            runtimeVersion: runtimeVersionOverride || "37"',
+      'android: {\n            runtimeVersion: runtimeVersionOverride || "38"',
     );
-    expect(loadRuntimeVersions()).toEqual({ android: '37', ios: '35' });
+    expect(loadRuntimeVersions()).toEqual({ android: '38', ios: '35' });
     expect(loadRuntimeVersions('23')).toEqual({ android: '23', ios: '23' });
     expect(() => loadRuntimeVersions('not-a-runtime')).toThrow();
   }, 30_000);

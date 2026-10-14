@@ -111,6 +111,9 @@ export async function computeNativeFingerprints(projectDir) {
         )
           return transformed;
         const value = JSON.parse(transformed);
+        // Platform permission/service changes must not require rebuilding the
+        // other platform. Expo otherwise hashes both platform config blocks.
+        delete value[platform === 'ios' ? 'android' : 'ios'];
         value.plugins = value.plugins?.filter(
           (plugin) => (Array.isArray(plugin) ? plugin[0] : plugin) !== ignoredPlugin,
         );

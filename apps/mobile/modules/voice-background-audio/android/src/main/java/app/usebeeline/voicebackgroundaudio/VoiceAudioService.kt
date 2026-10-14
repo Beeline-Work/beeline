@@ -39,6 +39,10 @@ class VoiceAudioService : Service() {
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+    if (!BACKGROUND_MICROPHONE_ENABLED) {
+      stopSelf(startId)
+      return START_NOT_STICKY
+    }
     val incomingGeneration = intent?.getLongExtra(EXTRA_GENERATION, 0L) ?: 0L
     val allowed = if (intent?.action == ACTION_START) sessionGate.start(incomingGeneration)
       else sessionGate.accepts(incomingGeneration)
@@ -113,6 +117,7 @@ class VoiceAudioService : Service() {
   }
 
   private fun ensureForeground() {
+    if (!BACKGROUND_MICROPHONE_ENABLED) return
     if (Build.VERSION.SDK_INT >= 29) {
       startForeground(NOTIFICATION_ID, buildNotification(), ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
     } else {
@@ -231,6 +236,9 @@ class VoiceAudioService : Service() {
   override fun onBind(intent: Intent?): IBinder? = null
 
   companion object {
+    // Restore only after declaring foreground services in Google Play, restoring
+    // the service manifest entry and unblocking both permissions in app.config.js.
+    const val BACKGROUND_MICROPHONE_ENABLED = false
     const val ACTION_START = "app.usebeeline.voice.START"
     const val ACTION_ACTIVITY = "app.usebeeline.voice.ACTIVITY"
     const val ACTION_IDLE_END = "app.usebeeline.voice.IDLE_END"

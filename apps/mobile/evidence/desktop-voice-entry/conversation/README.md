@@ -14,7 +14,7 @@ Read conversation-proof.mts before running. Run from the repository root at the 
 mkdir -p .voice-proof apps/mobile/.voice-proof/bbc
 cp apps/mobile/evidence/desktop-voice-entry/conversation/conversation-proof.mts .voice-proof/
 cp apps/mobile/evidence/desktop-voice-entry/conversation/*.wav apps/mobile/evidence/desktop-voice-entry/conversation/*.pcm .voice-proof/
-cp apps/mobile/evidence/desktop-voice-entry/conversation/entry.tsx apps/mobile/.voice-proof/bbc/
+cp apps/mobile/evidence/desktop-voice-entry/conversation/entry.tsx.txt apps/mobile/.voice-proof/bbc/entry.tsx
 docker run -d --rm --name conversation-proof --network host --memory 512m --cpus 2 livekit/livekit-server:v1.9.12@sha256:2c13cbf2edcbf13ea7b20d05c10b394d04d8fb3fe358269cff845a90b4de9576 --dev --bind 127.0.0.1 --node-ip 127.0.0.1 --config-body $'port: 17886\nrtc:\n  tcp_port: 17887\n  udp_port: 17888\n  use_external_ip: false\n  node_ip: 127.0.0.1\nlogging:\n  level: warn'
 node --import tsx .voice-proof/conversation-proof.mts
 docker stop conversation-proof

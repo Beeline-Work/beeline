@@ -213,3 +213,16 @@ it('waits for an utterance that starts while a report claim is in flight', async
     expect(speech.synthesize.mock.calls.at(-1)?.[0]).toBe(report.text);
   } finally { await runtime.close(); }
 });
+
+it('speaks the order acknowledgement when the brain streams only whitespace', async () => {
+  const { service, speech } = conversationService(1);
+  service.config.brain.answer.mockImplementation(async (_agent, _history, onText) => {
+    onText(' '); return { text: '', order: true };
+  });
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  try {
+    await runtime.utterance('human', 'Ruby build a widget');
+    expect(service.dispatch).toHaveBeenCalledOnce();
+    expect(speech.synthesize.mock.calls.map(call => call[0]).join(' ')).toBe('I’ll work on that and tell you when I’m done.');
+  } finally { await runtime.close(); }
+});

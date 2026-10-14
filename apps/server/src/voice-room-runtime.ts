@@ -237,7 +237,7 @@ export class VoiceRoomRuntime {
       if (reply.order) await this.service.dispatch(this.callId, sourceId, agent.id);
       const answer = reply.text || (reply.order ? "I’ll work on that and tell you when I’m done." : '');
       // The final receipt may include a suffix absent from streamed deltas.
-      if (!receivedText) pending = answer;
+      if (!reply.text || !receivedText.trim()) pending = answer;
       else if (answer.startsWith(receivedText)) pending += answer.slice(receivedText.length);
       await this.service.recordAnswer(this.roomId, agent.id, answer);
       persisted = true;

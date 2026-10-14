@@ -23,7 +23,7 @@ const note = (event: string) => { metrics.events.push({at:Date.now(),event}); if
 const auth = new TokenAuth(db, async () => ({ subject: 'voice-proof', login: 'voice-proof', name: 'Voice proof' }));
 let agentToken = '';
 const voice = new VoiceService(db, live, {
-  url: 'ws://127.0.0.1:26880', apiKey: 'devkey', apiSecret: 'secret',
+  url: 'ws://127.0.0.1:26882', apiKey: 'devkey', apiSecret: 'secret',
   brain: { async answer(_agent, history, delta) {
     const order = /work/i.test(history.at(-1)?.content ?? '');
     const text = order ? 'I will work on that and reply when it is done.' : 'Hello. I can hear you with the screen off.';
@@ -53,7 +53,7 @@ const voice = new VoiceService(db, live, {
   },
 });
 const join = voice.join.bind(voice);
-voice.join = async (...args) => ({...await join(...args), url: 'ws://10.0.2.2:26880'});
+voice.join = async (...args) => ({...await join(...args), url: 'ws://10.0.2.2:26882'});
 const dispatch = voice.dispatch.bind(voice);
 voice.dispatch = async (...args) => {
   await dispatch(...args);
@@ -64,7 +64,7 @@ voice.dispatch = async (...args) => {
   setTimeout(() => { void (async () => {
     await mkdir('apps/mobile/.voice-proof/screen-off',{recursive:true});
     await writeFile('apps/mobile/.voice-proof/screen-off/greeting.txt','Hello Ruby');
-    await operation('report',{roomId:R,requestId:command.turn_request_id,generationId:'voice-screen-off-proof',text:'done: I created the greeting file. Hello Ruby.'});
+    await operation('report',{roomId:R,requestId:command.turn_request_id,generationId:'voice-screen-off-proof',status:'done',text:'done: I created the greeting file. Hello Ruby.'});
     live.publish({type:'invalidate',roomId:R,reason:'message',agentId:A,requestId:command.turn_request_id}); note('worker report committed');
   })().catch(error=>note(`worker failed: ${String(error)}`)); },35_000);
 };

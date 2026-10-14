@@ -48,14 +48,14 @@ native timer patch; Jellybean integrated the transport and client policy.
   installation because the source archive lacked the expected enclosing directory.
   Replacement `ecbf18ac-13de-4ded-ba85-826f12d4608d` uses an enclosing project root;
   it finished successfully before the timer change. The timer requires replacement
-  build `0e118e3b-c7b2-4788-bd6b-822c82277ef9`, currently queued.
+  build `0e118e3b-c7b2-4788-bd6b-822c82277ef9`, finished successfully at 2026-10-14T06:22:20.118Z (Expo build status verified through its authenticated API).
   No iOS device testing is required or claimed.
 
 The isolated fixture uses the production hook, native module, RTC transport,
 server routes and socket, with local offline speech providers and a disposable
 database. It uses no production accounts or billed transcription. Start the
 fixture with `npx tsx apps/mobile/evidence/voice-screen-off/server.mts`; its `/proof/metrics`
-endpoint reports PCM/STT counts and bounded transcript/event evidence.
+endpoint reports PCM/STT counts and bounded transcript/event evidence. Use an isolated LiveKit server on port 26882 (RTC TCP 26883 and UDP 26900–26920); the fixture uses development-only credentials. The delayed worker report supplies the required `status: done`.
 
 ## Outstanding device acceptance
 

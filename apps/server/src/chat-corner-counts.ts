@@ -3,6 +3,7 @@ import { cornerOwedLookupSql } from './corner-owed.js';
 import { followsCornerSql } from './corner-follow.js';
 import { visibleChatMessageSql } from './read-cursor.js';
 import type { ChatListCorner, CornerLifecycleView } from '@beeline/api-contract/phone';
+import { cornerImplementerSql } from './corner-worker.js';
 
 /** Open corners a Room row lists beyond the viewer's own; every Mine corner is listed. */
 export const OPEN_CORNER_PREVIEW = 8;
@@ -15,6 +16,12 @@ export type CornerStateRow = {
   workflow_state?: string | null;
   workflow_outcome?: string | null;
   latest_turn_status: string | null;
+  worker_active?: boolean;
+  reviewer_active?: boolean;
+  blocking?: boolean;
+  waiting_item_id?: string | null;
+  waiting_person_id?: string | null;
+  waiting_since?: Date | null;
   /** `cornerOwedLookupSql`'s facts for this corner and viewer. */
   owed?: boolean | null;
   owed_viewer?: boolean | null;
@@ -26,12 +33,13 @@ export type CornerStateRow = {
 export function cornerRowState(row: CornerStateRow): DerivedCornerState {
   return deriveCornerState({
     archived: Boolean(row.archived_at),
-    turnRunning: row.latest_turn_status === 'working',
+    turnRunning: row.worker_active ?? row.latest_turn_status === 'working',
+    reviewerActive: row.reviewer_active,
     ...(row.workflow_state
       ? { run: { state: row.workflow_state, outcome: row.workflow_outcome ?? undefined } }
       : {}),
     lifecycle: row.lifecycle ?? undefined,
-    ...(typeof row.owed === 'boolean' ? { owed: row.owed } : {}),
+    owed: row.blocking ?? row.owed ?? false,
   });
 }
 
@@ -48,11 +56,16 @@ export function cornerFactsSql(viewerExpr: string): {
 } {
   return {
     columns: `f.lifecycle,f.workflow_state,f.workflow_outcome,
+      activity.worker_active,activity.reviewer_active,
+      blocker.item_id IS NOT NULL blocking,blocker.item_id waiting_item_id,
+      blocker.person_id waiting_person_id,blocker.created_at waiting_since,
       turn.status latest_turn_status,turn.created_at latest_turn_created_at,
       lm.created_at latest_created_at,
       ${followsCornerSql('c', viewerExpr)} follows_viewer,
       owed.owed,owed.owed_viewer,owed.attention`,
     joins: `LEFT JOIN corner_facts f ON f.corner_id=c.id
+    ${cornerWorkSql()}
+    ${cornerBlockerSql()}
     LEFT JOIN LATERAL (SELECT * FROM messages message WHERE message.room_id=c.id
       AND message.presentation IN ('message','system') AND ${visibleChatMessageSql('message')}
       ORDER BY created_at DESC,id DESC LIMIT 1) lm ON true
@@ -62,6 +75,40 @@ export function cornerFactsSql(viewerExpr: string): {
     member: `EXISTS (SELECT 1 FROM memberships corner_member WHERE corner_member.room_id=c.id
       AND corner_member.identity_id=${viewerExpr} AND corner_member.removed_at IS NULL)`,
   };
+}
+
+/** Worker and reviewer activity from their complete command queues and running receipts. */
+export function cornerWorkSql(): string {
+  return `LEFT JOIN rooms parent ON parent.id=c.parent_id
+    LEFT JOIN LATERAL (SELECT
+      EXISTS(SELECT 1 FROM agent_turns t WHERE t.room_id=c.id AND t.status='working'
+        AND t.agent_id=${cornerImplementerSql('f', 'c')}) OR
+      EXISTS(SELECT 1 FROM agent_commands command WHERE command.room_id=c.id
+        AND command.agent_id=${cornerImplementerSql('f', 'c')}
+        AND command.state IN ('pending','claimed') AND command.action<>'stop') worker_active,
+      EXISTS(SELECT 1 FROM agent_turns t WHERE t.room_id=c.id AND t.status='working'
+        AND t.agent_id=ANY(ARRAY[parent.reviewer_agent_id]||parent.reviewer_fallback_ids)) OR
+      EXISTS(SELECT 1 FROM agent_commands command WHERE command.room_id=c.id
+        AND command.agent_id=ANY(ARRAY[parent.reviewer_agent_id]||parent.reviewer_fallback_ids)
+        AND command.state IN ('pending','claimed') AND command.action<>'stop') reviewer_active
+    ) activity ON true`;
+}
+
+/** Indexed unanswered requests and active human holds; ordinary mentions are not blockers. */
+export function cornerBlockerSql(): string {
+  return `LEFT JOIN LATERAL (
+    SELECT item_id,person_id,created_at FROM (
+      SELECT owed.message_id item_id,owed.person_id,owed.created_at
+      FROM corner_owed owed WHERE owed.corner_id=c.id AND owed.blocking
+        AND (owed.expires_at IS NULL OR owed.expires_at>now())
+      UNION ALL
+      SELECT hold.id::text,hold.actor_id,hold.set_at FROM corner_merge_holds hold
+      JOIN identities holder ON holder.id=hold.actor_id AND holder.kind='human'
+      JOIN memberships holder_member ON holder_member.room_id=c.id
+        AND holder_member.identity_id=hold.actor_id AND holder_member.removed_at IS NULL
+      WHERE hold.corner_id=c.id AND hold.released_at IS NULL
+    ) blockers ORDER BY created_at DESC,item_id DESC,person_id LIMIT 1
+  ) blocker ON true`;
 }
 
 /** Open member corners under `c.parent_id`, newest first. */

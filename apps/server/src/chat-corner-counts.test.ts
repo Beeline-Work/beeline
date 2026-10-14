@@ -15,10 +15,10 @@ const row = (
 describe('chat corner counts', () => {
   it('counts canonical waiting separately from working and review', () => {
     const result = chatCornerCounts([
-      row({ reason: 'question' }),
-      row({ reason: 'failed' }),
+      { ...row({ reason: 'question' }), blocking: true },
+      { ...row({ reason: 'failed' }), blocking: true },
       row({}, 'working'),
-      row({ pr: { url: 'https://github.com/example/repo/pull/1', number: 1 } } as any),
+      row({ checks: 'pending', pr: { url: 'https://github.com/example/repo/pull/1', number: 1 } } as any),
     ]);
     expect(result.get('room')).toMatchObject({ cornerCount: 4, waitingCornerCount: 2 });
     expect(result.get('room')?.openCorners.map((corner) => corner.state)).toEqual([
@@ -81,7 +81,7 @@ describe('chat corner counts', () => {
   it("stamps only the viewer's waiting corners with when they handed back", () => {
     const at = new Date('2026-09-29T12:00:00Z');
     const result = chatCornerCounts([
-      { ...row(), follows_viewer: true, latest_created_at: at },
+      { ...row(), blocking: true, follows_viewer: true, latest_created_at: at },
       { ...row({}, 'working'), follows_viewer: true, latest_created_at: at },
       { ...row(), latest_created_at: at },
     ]);
@@ -105,9 +105,9 @@ describe('chat corner counts', () => {
           'another',
           {
             cornerCount: 1,
-            waitingCornerCount: 1,
+            waitingCornerCount: 0,
             mineCornerCount: 0,
-            openCorners: [{ id: 'corner', name: 'Corner', state: 'waiting' }],
+            openCorners: [{ id: 'corner', name: 'Corner', state: 'idle' }],
           },
         ],
       ]),

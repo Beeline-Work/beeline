@@ -912,9 +912,10 @@ describe('landing and closing from any state (finding 3, implicit edges)', () =>
 
 const SHA = '7'.repeat(40);
 /** The phone badge at implement, checks, review, review with a yes, and landed. */
-const BADGES = ['idle', 'review', 'review', 'review', 'archived'];
+// These fixtures leave the opening worker command queued through the PR stages.
+const BADGES = ['working', 'working', 'working', 'working', 'archived'];
 /** The phone badge at a freshly opened implement and closed. */
-const OPEN_CLOSE_BADGES = ['idle', 'archived'];
+const OPEN_CLOSE_BADGES = ['working', 'archived'];
 const branchOf = (cornerId: string) => `feature/corner-${cornerId.replaceAll('-', '').slice(0, 12)}`;
 
 async function reasons(cornerId: string, agentId: string): Promise<string[]> {
@@ -2351,10 +2352,9 @@ describe('GitHub refusing the merge (AC-6)', () => {
     // No second attempt on the refused head.
     await implementersMerge();
     expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
-    // The badge follows the run, not the still-green lifecycle: the corner
-    // is back with its implementer (AC-9), and owes no person anything.
+    // The queued recovery command keeps the badge working even before claim.
     const listed = (await phone.readCorners(R, H))!.corners.find((row) => row.corner.id === cornerId);
-    expect(listed).toMatchObject({ state: 'idle' });
+    expect(listed).toMatchObject({ state: 'working' });
   });
 });
 
@@ -3442,7 +3442,7 @@ describe('migrating a no-code corner onto implement', () => {
 });
 
 describe('Reproduction IDLE-1: corner status says whether its agent runs or waits', () => {
-  it('reports an agent that posted and ended its turn as idle and awaiting a reply', async () => {
+  it('reports an unanswered human decision as waiting after the worker queue drains', async () => {
     const cornerId = await open('owner/widgets');
     await db.query(`UPDATE agent_turns SET status='complete' WHERE room_id=$1`, [cornerId]);
     await db.query(
@@ -3454,7 +3454,7 @@ describe('Reproduction IDLE-1: corner status says whether its agent runs or wait
       activity: 'running',
     });
     // The outline asks the human, so the corner owes them a reply.
-    const outline = `@human Outline for approval. ${'x'.repeat(400)}`;
+    const outline = `needs-decision: @human Outline for approval. ${'x'.repeat(400)}`;
     await db.query(
       `INSERT INTO messages(id,room_id,author_id,text,presentation,created_at)
        VALUES($1,$2,$3,$4,'message',now()+interval '1 second'),
@@ -3462,8 +3462,10 @@ describe('Reproduction IDLE-1: corner status says whether its agent runs or wait
       [randomBytes(32).toString('hex'), cornerId, A, outline, randomBytes(32).toString('hex')],
     );
     await db.query(`UPDATE agent_turns SET status='complete' WHERE room_id=$1`, [cornerId]);
+    await db.query(`UPDATE agent_commands SET state='complete' WHERE room_id=$1`, [cornerId]);
     const status = await daemon.execute('getCornerRestoreState', { cornerId }, A);
     expect(status).toMatchObject({
+      state: 'waiting',
       activity: 'idle',
       awaiting: 'reply',
       lastMessage: { authorId: A, type: 'message', excerpt: outline.slice(0, 280) },

@@ -902,7 +902,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'inspect_corner',
     description:
-      'Read compact status of a corner you are a member of, or of any corner under a Room you are a member of, by default. Status `activity` is running while its agent has a turn, else idle; `awaiting: reply` means it is idle with no PR and its newest message is from an agent, so it waits on a reply. `lifecycle` is the work stage, not activity. Set mode to transcript for bounded oldest-first pages; pass the returned next.after and next.offset to continue, including long messages. Set from to newest for the newest messages; pass the returned next.before for older ones.',
+      'Read compact status of a corner you are a member of, or of any corner under a Room you are a member of, by default. Status `state` is working, review, waiting, idle or archived, from running/queued work, checks and unresolved human blockers. `lifecycle` is the separate workflow stage. Set mode to transcript for bounded oldest-first pages; pass the returned next.after and next.offset to continue, including long messages. Set from to newest for the newest messages; pass the returned next.before for older ones.',
     inputSchema: {
       type: 'object',
       required: ['cornerId'],
@@ -1486,7 +1486,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
     name: 'list_corners',
     description:
       'List corners under a member Room address. Omit address for the active Room; from a DM this lists corners across all your member Rooms. Includes name, objective, pull request and state.',
-    inputSchema: { type: 'object', properties: { address: { type: 'string', format: 'uuid' } }, additionalProperties: false },
+    inputSchema: { type: 'object', properties: { address: { type: 'string', format: 'uuid' }, activeOnly: { type: 'boolean', description: 'Only open corners.' } }, additionalProperties: false },
   },
   {
     name: 'list_room_members',
@@ -4808,6 +4808,7 @@ export async function callAgentTool(
         : undefined;
       return JSON.stringify({
         cornerId: args.cornerId,
+        state: status.state ?? 'unknown',
         lifecycle: status.lifecycle?.lifecycle ?? 'unknown',
         activity: status.activity ?? 'unknown',
         ...(status.awaiting ? { awaiting: status.awaiting } : {}),
@@ -4854,6 +4855,7 @@ export async function callAgentTool(
       return JSON.stringify(
         await daemonExecute('listReachableCorners', {
           roomId: typeof args.address === 'string' ? args.address : requiredEnv('BEELINE_DAEMON_ROOM_ID'),
+          ...(typeof args.activeOnly === 'boolean' ? { activeOnly: args.activeOnly } : {}),
         }),
       );
     case 'list_room_members':

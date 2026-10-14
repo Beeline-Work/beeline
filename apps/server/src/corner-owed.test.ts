@@ -82,19 +82,22 @@ describe('corner_owed', () => {
     header: false,
   };
   const owedToViewer: Facts = {
-    list: { state: 'waiting', attention: true },
-    page: { state: 'waiting' },
+    list: { state: 'idle', attention: false },
+    page: { state: 'idle' },
     header: true,
   };
   const owedToViewerSeen: Facts = {
-    list: { state: 'waiting', attention: false },
-    page: { state: 'waiting' },
+    list: { state: 'idle', attention: false },
+    page: { state: 'idle' },
     header: true,
   };
   const owedToSomeoneElse: Facts = {
-    list: { state: 'waiting', attention: false },
-    page: { state: 'waiting' },
+    list: { state: 'idle', attention: false },
+    page: { state: 'idle' },
     header: true,
+  };
+  const blockingToViewer: Facts = {
+    list: { state: 'waiting', attention: true }, page: { state: 'waiting' }, header: true,
   };
 
   /**
@@ -105,7 +108,7 @@ describe('corner_owed', () => {
     const owed = `SELECT corner_id::text,person_id,message_id FROM %s
       WHERE expires_at IS NULL OR expires_at>now() ORDER BY 1,2,3`;
     await database.query(`DROP TABLE IF EXISTS corner_owed_expected`);
-    await database.query(`CREATE TEMP TABLE corner_owed_expected (LIKE corner_owed)`);
+    await database.query(`CREATE TEMP TABLE corner_owed_expected (LIKE corner_owed INCLUDING INDEXES)`);
     await database.query(
       cornerOwedBackfillSql().replace(
         'INSERT INTO corner_owed(',
@@ -193,13 +196,13 @@ describe('corner_owed', () => {
     await step(idle);
   });
 
-  it('reads what is owed to another member as waiting, without pulling the viewer', async () => {
+  it('retains what is owed to another member without making an ordinary tag a blocker', async () => {
     await post('tag-other', AGENT, '@other matte or gloss?');
     await step(owedToSomeoneElse);
     await step(
       {
-        list: { state: 'waiting', attention: true },
-        page: { state: 'waiting' },
+        list: { state: 'idle', attention: false },
+        page: { state: 'idle' },
         header: true,
       },
       OTHER,
@@ -219,9 +222,9 @@ describe('corner_owed', () => {
       cardType: 'choice',
       card: question('open'),
     });
-    await step(owedToViewer);
+    await step(blockingToViewer);
     await post('chatter', OWNER, 'Let me think.');
-    await step(owedToViewer);
+    await step(blockingToViewer);
     await database.query(
       `UPDATE messages SET card=jsonb_set(card,'{status}','"answered"') WHERE id='question'`,
     );
@@ -232,7 +235,7 @@ describe('corner_owed', () => {
       cardType: 'choice',
       card: question('open'),
     });
-    await step(owedToViewer);
+    await step(blockingToViewer);
     await database.query(
       `UPDATE messages SET card=jsonb_set(card,'{status}','"closed"') WHERE id='question-2'`,
     );
@@ -252,9 +255,9 @@ describe('corner_owed', () => {
       card: { grants: [{ grantId, kind: 'host', target: 'example.com' }] },
       at: `now()-interval '3 days'`,
     });
-    await step(owedToViewer);
+    await step(blockingToViewer);
     await post('chatter', OWNER, 'Looking.');
-    await step(owedToViewer);
+    await step(blockingToViewer);
     await database.query(`UPDATE agent_grants SET status='approved' WHERE id=$1`, [grantId]);
     await step(idle);
   });

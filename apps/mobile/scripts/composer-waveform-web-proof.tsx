@@ -40,6 +40,7 @@ async function run() {
   check('waveform tap enters Conversation once', joins === 1 && Boolean(node('voice-bar')));
   node('voice-mic')!.click();
   await pause(100);
+  check('desktop hover title survives ending Conversation', node('chat-conversation')?.title === 'Conversation mode');
   const mic = node('chat-mic')!;
   const bounds = mic.getBoundingClientRect();
   const pointer = { bubbles: true, button: 0, buttons: 1,

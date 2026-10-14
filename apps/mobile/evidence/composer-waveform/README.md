@@ -62,3 +62,11 @@ python3 apps/mobile/scripts/composer-waveform-android-proof.py \
 ```
 
 The driver's End coordinates refer to this fixture's 1080x2400 display.
+
+## Reproduction waveform-tooltip-return
+
+Chrome, both Obsidian and Bone: tap waveform → Conversation → End → hover
+restored waveform. Before the fix the title was absent; all four Chrome
+runs failed the restored-title assertion. The title effect now follows
+Conversation visibility, so returning to the composer restores the title.
+The same start/End/title assertion passes in all four Chrome runs.

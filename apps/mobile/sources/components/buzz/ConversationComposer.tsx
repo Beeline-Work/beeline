@@ -360,12 +360,13 @@ function ConversationComposerContent({
   const showSend = voice
     ? (Boolean(tagSplit.rest.trim()) || (!speechAvailable && hasSomethingToSend)) && !dictationBusy
     : !showMic;
+  const conversationActive = Boolean(voice?.call || voice?.connecting || voice?.error);
   const showConversation = Boolean(voice) && !showSend;
   React.useEffect(() => {
-    if (Platform.OS !== 'web' || !showConversation) return;
+    if (Platform.OS !== 'web' || !showConversation || conversationActive) return;
     containerRef.current?.querySelector(`[data-testid="${testIDPrefix}-conversation"]`)
       ?.setAttribute('title', 'Conversation mode');
-  }, [showConversation, testIDPrefix]);
+  }, [showConversation, conversationActive, testIDPrefix]);
 
   // Dictation shows a waveform, never live words. Only a failure that needs
   // the person to act has a line under the composer.
@@ -404,7 +405,6 @@ function ConversationComposerContent({
   };
   const visibleAttachments = attachments.slice(0, 3);
   const hiddenAttachmentCount = Math.max(0, attachments.length - visibleAttachments.length);
-  const conversationActive = Boolean(voice?.call || voice?.connecting || voice?.error);
   return (
     <View
       ref={containerRef as React.Ref<View>}

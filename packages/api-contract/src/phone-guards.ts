@@ -280,12 +280,7 @@ function readViewer(value: unknown): RoomViewer {
             'unreadCount',
             integer(cursor.unreadCount) && cursor.unreadCount >= 0 ? cursor.unreadCount : undefined,
           ),
-          ...field(
-            'unreadAgentTurnCount',
-            integer(cursor.unreadAgentTurnCount) && cursor.unreadAgentTurnCount >= 0
-              ? cursor.unreadAgentTurnCount
-              : undefined,
-          ),
+
         }
       : undefined;
   return {

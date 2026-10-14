@@ -899,7 +899,6 @@ describe('monolith integration', () => {
         messageId: null,
         firstUnreadMessageId: read,
         unreadCount: 2,
-        unreadAgentTurnCount: 0,
       });
       await phone.markRead(id, read, HUMAN);
       const view = await phone.readRoom(id, HUMAN);
@@ -914,7 +913,6 @@ describe('monolith integration', () => {
         messageId: read,
         firstUnreadMessageId: unread,
         unreadCount: 1,
-        unreadAgentTurnCount: 0,
       });
       expect(isRoomView(view)).toBe(true);
       expect(isRoomView({ ...view, viewer: { ...view!.viewer, readCursor: undefined } })).toBe(
@@ -925,14 +923,12 @@ describe('monolith integration', () => {
         messageId: null,
         firstUnreadMessageId: null,
         unreadCount: 0,
-        unreadAgentTurnCount: 0,
       });
       await phone.markRead(id, unread, HUMAN);
       expect((await phone.readRoom(id, HUMAN))?.viewer.readCursor).toEqual({
         messageId: unread,
         firstUnreadMessageId: null,
         unreadCount: 0,
-        unreadAgentTurnCount: 0,
       });
     }
   });

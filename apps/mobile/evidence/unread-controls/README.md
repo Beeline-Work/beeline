@@ -2,8 +2,10 @@
 
 The owner requested removal of the unread-summary feature. Its sheet,
 summary producer, NEW-divider action, slash palette entry, SDK command,
-eligibility state, tests, and dedicated proof fixtures are removed. No
-feature-specific server endpoint, job, model call, or database state exists.
+eligibility state, tests, and dedicated proof fixtures are removed. The feature-only server agent-turn count query and six-turn cap are also
+removed, together with their API field/guard and captured client state. The
+normal server unreadCount and firstUnreadMessageId remain. No dedicated
+endpoint, job, model call, or database state needs migration.
 The similarly named chat-list reconnect method and retired release-push table
 are unrelated and remain outside this change.
 

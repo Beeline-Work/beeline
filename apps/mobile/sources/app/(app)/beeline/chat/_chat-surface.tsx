@@ -883,6 +883,7 @@ export function BuzzChatSurface({
     'sending' | 'delivered' | 'failed' | null
   >(null);
   const [replyTarget, setReplyTarget] = useState<MessageReplyTarget | null>(null);
+  const [turnChromeTopInset, setTurnChromeTopInset] = useState(0);
   const [composerHeight, setComposerHeight] = useState(COMPOSER_MIN_HEIGHT);
   const [inputSelection, setInputSelection] = useState({ start: 0, end: 0 });
   const [highlightedMentionIndex, setHighlightedMentionIndex] = useState(0);
@@ -6645,6 +6646,7 @@ export function BuzzChatSurface({
                 />
               )}
               <RoomCatchUpControls
+                bottomInset={!desktopExperience && !isArchived ? turnChromeTopInset : undefined}
                 corner={isCorner}
                 badgeCount={newMessageBadgeCount}
                 discVisible={newestJumpDiscShown}
@@ -6693,7 +6695,7 @@ export function BuzzChatSurface({
                 lets the transcript keep every touch the line is not using.
                 Desktop keeps the slot inside inputBar. */}
                 {!desktopExperience && (
-                  <TurnBandSlot testID="hanging-turn-chrome">
+                  <TurnBandSlot testID="hanging-turn-chrome" onTopInset={setTurnChromeTopInset}>
                     {composerAck ? (
                       <TurnProgressLine
                         label={composerAck.label}

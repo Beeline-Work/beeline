@@ -29,7 +29,7 @@ vi.mock('react-native-svg', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: Record<string, unknown>) =>
     ReactModule.createElement(name, props, props.children as React.ReactNode);
-  return { default: host('Svg'), Path: host('Path'), G: host('G') };
+  return { default: host('Svg'), Path: host('Path'), Polyline: host('Polyline'), G: host('G') };
 });
 
 vi.mock('react-native-reanimated', async () => {
@@ -61,6 +61,7 @@ vi.mock('react-native-reanimated', async () => {
   };
 });
 
+import { RoomCatchUpControls } from '@/components/buzz/RoomCatchUpControls';
 import { TurnBandSlot, TurnProgressLine, TurnSettledLine } from '@/components/buzz/TurnProgressLine';
 import { beelineThemes, groknight } from './groknight';
 import { ROOM_OPEN_LIST_TAIL_PADDING } from './room-open-geometry';
@@ -284,5 +285,37 @@ describe('the Room turn line paints the transcript margin', () => {
     // its equal air before the composer.
     expect((TURN_LINE_ROW_MIN_HEIGHT - TURN_LABEL_LINE_HEIGHT) / 2).toBeGreaterThan(0);
     expect(TURN_LINE_BAR_MARGIN_BOTTOM).toBeGreaterThan(0);
+  });
+});
+
+
+describe('jump disc follows native status measurements', () => {
+  it('keeps a full hit target above taller status paint and returns when the line disappears', () => {
+    const jumped = vi.fn();
+    function Scene({line}: {line: boolean}) {
+      const [inset, setInset] = React.useState(0);
+      return React.createElement(React.Fragment, null,
+        React.createElement(RoomCatchUpControls, {corner: false, badgeCount: 0,
+          discVisible: true, bottomInset: inset, onJumpToNewest: jumped}),
+        React.createElement(TurnBandSlot, {testID: 'measured-slot', onTopInset: setInset},
+          line ? React.createElement(TurnProgressLine, {label: 'Ruby Mulling…'}) : null));
+    }
+    let renderer!: ReactTestRenderer;
+    act(() => { renderer = create(React.createElement(Scene, {line: true})); });
+    for (const height of [50, 85, 62]) {
+      act(() => hostByTestID(renderer, 'measured-slot').props.onLayout({nativeEvent: {layout: {height}}}));
+      const disc = hostByTestID(renderer, 'newest-jump-disc');
+      const style = Object.assign({}, ...flattenStyle(disc.props.style({pressed: false})));
+      expect(style.bottom).toBe(height - TURN_CHROME_COMPOSER_OVERLAP + 4);
+      expect(style.width).toBe(44);
+      expect(style.height).toBe(44);
+      act(() => disc.props.onPress());
+    }
+    expect(jumped).toHaveBeenCalledTimes(3);
+    act(() => renderer.update(React.createElement(Scene, {line: false})));
+    act(() => hostByTestID(renderer, 'measured-slot').props.onLayout({nativeEvent: {layout: {height: 0}}}));
+    const style = Object.assign({}, ...flattenStyle(hostByTestID(renderer, 'newest-jump-disc').props.style({pressed: false})));
+    expect(style.bottom).toBe(4);
+    act(() => renderer.unmount());
   });
 });

@@ -44,11 +44,13 @@ const BADGE_SIZE = 18;
  */
 export function RoomCatchUpControls({
   corner,
+  bottomInset,
   badgeCount,
   discVisible,
   onJumpToNewest,
 }: {
   corner: boolean;
+  bottomInset?: number;
   badgeCount: number;
   discVisible: boolean;
   onJumpToNewest: () => void;
@@ -65,7 +67,11 @@ export function RoomCatchUpControls({
           }
           accessibilityRole="button"
           onPress={onJumpToNewest}
-          style={({ pressed }) => [styles.hitTarget, pressed && styles.pressed]}
+          style={({ pressed }) => [
+            styles.hitTarget,
+            bottomInset !== undefined && { bottom: bottomInset + 4 },
+            pressed && styles.pressed,
+          ]}
           testID="newest-jump-disc"
         >
           <View style={styles.disc}>
@@ -88,14 +94,7 @@ const styles = StyleSheet.create((theme) => {
     hitTarget: {
       position: 'absolute',
       right: 12,
-      // Clear of the turn line. Both are pinned to the right edge above the
-      // composer, and the line paints the transcript's bottom margin
-      // (`room-bottom-chrome`), so a control sitting on the bottom has the
-      // line's STOP control drawn across it. Lifting by the line's own box
-      // keeps them apart whether or not an agent is working — an offset that
-      // changed with the line would move the disc under the reader. Derived,
-      // never a literal: the lift moved from 37 to 40 the week the composer
-      // top gap became a literal 12 (a338a989), and nothing here had to change.
+      // Desktop and archived transcripts have no measured hanging status slot.
       bottom: 4 + TURN_LINE_ROW_MIN_HEIGHT + TURN_LINE_BAR_MARGIN_BOTTOM,
       width: DISC_SIZE,
       height: DISC_SIZE,

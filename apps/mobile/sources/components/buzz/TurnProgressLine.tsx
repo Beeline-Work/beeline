@@ -9,6 +9,7 @@ import {
   TURN_LINE_ROW_MIN_HEIGHT,
   TURN_LABEL_LINE_HEIGHT,
   roomBottomChromeStyles,
+  TURN_CHROME_COMPOSER_OVERLAP,
 } from '@/buzz/room-bottom-chrome';
 
 /** The stop label sits in the row's own height; hit slop makes up the 44pt target. */
@@ -171,8 +172,10 @@ export function TurnSettledLine({ line, testID }: { line: string; testID?: strin
  */
 export function TurnBandSlot({
   children,
+  onTopInset,
   testID,
 }: {
+  onTopInset?: (height: number) => void;
   children?: React.ReactNode;
   testID?: string;
 }) {
@@ -183,7 +186,15 @@ export function TurnBandSlot({
   // height is identical whether or not the line is showing. It reserves
   // nothing and has no height of its own for the transcript to move by.
   return (
-    <View pointerEvents="box-none" style={[styles.slot, hasLine && styles.coverage]} testID={testID}>
+    <View
+      pointerEvents="box-none"
+      style={[styles.slot, hasLine && styles.coverage]}
+      testID={testID}
+      onLayout={(event) => onTopInset?.(
+        // Layout excludes the paint translation into the composer.
+        hasLine ? Math.max(0, event.nativeEvent.layout.height - TURN_CHROME_COMPOSER_OVERLAP) : 0,
+      )}
+    >
       {children}
     </View>
   );

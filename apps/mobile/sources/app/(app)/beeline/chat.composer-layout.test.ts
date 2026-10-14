@@ -64,7 +64,7 @@ describe('Room composer status layout', () => {
     expect(source).toContain('inputBar: bottomChrome.composerRow,');
     // The band's strip is `TurnBandSlot`, which styles itself from that same
     // shared column and holds the band's measured height.
-    expect(source).toContain('<TurnBandSlot testID="hanging-turn-chrome">');
+    expect(source).toContain('<TurnBandSlot testID="hanging-turn-chrome"');
     expect(source).toContain('styles.bottomChromeStack');
     const stack = source.slice(source.indexOf('styles.bottomChromeStack'));
     expect(stack.indexOf('hanging-turn-chrome')).toBeGreaterThanOrEqual(0);

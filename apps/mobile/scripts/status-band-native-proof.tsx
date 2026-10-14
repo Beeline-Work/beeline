@@ -8,6 +8,7 @@ import Animated, { useAnimatedStyle } from 'react-native-reanimated';
 import { composerBottomPadding } from '../sources/buzz/composer-keyboard';
 import { UnistylesRuntime, useUnistyles } from 'react-native-unistyles';
 import { TurnBandSlot, TurnProgressLine, TurnSettledLine } from '../sources/components/buzz/TurnProgressLine';
+import { RoomCatchUpControls } from '../sources/components/buzz/RoomCatchUpControls';
 import { roomBottomChromeStyles } from '../sources/buzz/room-bottom-chrome';
 import { selectComposerAckPresentation } from '../sources/buzz/room-indicators';
 import { ConversationComposer, COMPOSER_SINGLE_LINE_INPUT_HEIGHT } from '../sources/components/buzz/ConversationComposer';
@@ -26,6 +27,8 @@ function StatusBandScene() {
   const { theme } = useUnistyles();
   const hull = theme.buzz;
   const chrome = roomBottomChromeStyles(hull);
+  const [topInset, setTopInset] = useState(0);
+  const [jumps, setJumps] = useState(0);
   const [state, setState] = useState('working');
   const [queued, setQueued] = useState(false);
   const [value, setValue] = useState('');
@@ -46,7 +49,7 @@ function StatusBandScene() {
   return <KeyboardAvoidingView behavior="translate-with-padding" style={{ flex: 1, backgroundColor: hull.bgTerminal }}>
     <StatusBar barStyle={theme.dark ? 'light-content' : 'dark-content'} />
     <View style={{ paddingTop: StatusBar.currentHeight ?? 24, paddingHorizontal: 16, paddingBottom: 8 }}>
-      <Text style={{ ...hull.type.body, color: hull.textPrimary }}>#issues-triage · native status proof</Text>
+      <Text style={{ ...hull.type.body, color: hull.textPrimary }}>#issues-triage · native status proof · jumps {jumps}</Text>
       <View style={{ flexDirection: 'row', gap: 16 }}>
         {['working', 'pending', 'settled', 'idle'].map(s => <Pressable key={s} onPress={() => { setState(s); setQueued(false); }}><Text style={{ ...hull.type.machine, color: hull.accent }}>{s}</Text></Pressable>)}
       </View>
@@ -57,9 +60,11 @@ function StatusBandScene() {
       <FlatList inverted data={Array.from({ length: 160 }, (_, i) => i)} keyExtractor={String}
         contentContainerStyle={{ paddingTop: 36 }}
         renderItem={({ item }) => <Text style={{ ...hull.type.body, color: hull.textPrimary, paddingHorizontal: 8 }}>Transcript {item} HHHHHHHHHHHHHHHHHHHHHHHHHHH</Text>} />
+      <RoomCatchUpControls corner={false} badgeCount={3} discVisible bottomInset={topInset}
+        onJumpToNewest={() => setJumps(count => count + 1)} />
     </View>
     <View style={chrome.stack}>
-      <TurnBandSlot testID="hanging-turn-chrome">
+      <TurnBandSlot testID="hanging-turn-chrome" onTopInset={setTopInset}>
         {ack ? <TurnProgressLine label={ack.label} startedAt={ack.startedAt} /> : null}
         {state === 'settled' ? <TurnSettledLine line="Ruby finished · 42s" /> : null}
       </TurnBandSlot>

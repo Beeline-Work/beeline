@@ -1,0 +1,165 @@
+{
+  "baseline": false,
+  "results": [
+    {
+      "width": 390,
+      "line": false,
+      "taller": false,
+      "keyboard": false,
+      "gap": 4,
+      "hit": true,
+      "jumped": true,
+      "pass": true
+    },
+    {
+      "width": 390,
+      "line": false,
+      "taller": false,
+      "keyboard": true,
+      "gap": 4,
+      "hit": true,
+      "jumped": true,
+      "pass": true
+    },
+    {
+      "width": 390,
+      "line": false,
+      "taller": true,
+      "keyboard": false,
+      "gap": 4,
+      "hit": true,
+      "jumped": true,
+      "pass": true
+    },
+    {
+      "width": 390,
+      "line": false,
+      "taller": true,
+      "keyboard": true,
+      "gap": 4,
+      "hit": true,
+      "jumped": true,
+      "pass": true
+    },
+    {
+      "width": 390,
+      "line": true,
+      "taller": false,
+      "keyboard": false,
+      "gap": 4,
+      "hit": true,
+      "jumped": true,
+      "pass": true
+    },
+    {
+      "width": 390,
+      "line": true,
+      "taller": false,
+      "keyboard": true,
+      "gap": 4,
+      "hit": true,
+      "jumped": true,
+      "pass": true
+    },
+    {
+      "width": 390,
+      "line": true,
+      "taller": true,
+      "keyboard": false,
+      "gap": 4,
+      "hit": true,
+      "jumped": true,
+      "pass": true
+    },
+    {
+      "width": 390,
+      "line": true,
+      "taller": true,
+      "keyboard": true,
+      "gap": 4,
+      "hit": true,
+      "jumped": true,
+      "pass": true
+    },
+    {
+      "width": 412,
+      "line": false,
+      "taller": false,
+      "keyboard": false,
+      "gap": 4,
+      "hit": true,
+      "jumped": true,
+      "pass": true
+    },
+    {
+      "width": 412,
+      "line": false,
+      "taller": false,
+      "keyboard": true,
+      "gap": 4,
+      "hit": true,
+      "jumped": true,
+      "pass": true
+    },
+    {
+      "width": 412,
+      "line": false,
+      "taller": true,
+      "keyboard": false,
+      "gap": 4,
+      "hit": true,
+      "jumped": true,
+      "pass": true
+    },
+    {
+      "width": 412,
+      "line": false,
+      "taller": true,
+      "keyboard": true,
+      "gap": 4,
+      "hit": true,
+      "jumped": true,
+      "pass": true
+    },
+    {
+      "width": 412,
+      "line": true,
+      "taller": false,
+      "keyboard": false,
+      "gap": 4,
+      "hit": true,
+      "jumped": true,
+      "pass": true
+    },
+    {
+      "width": 412,
+      "line": true,
+      "taller": false,
+      "keyboard": true,
+      "gap": 4,
+      "hit": true,
+      "jumped": true,
+      "pass": true
+    },
+    {
+      "width": 412,
+      "line": true,
+      "taller": true,
+      "keyboard": false,
+      "gap": 4,
+      "hit": true,
+      "jumped": true,
+      "pass": true
+    },
+    {
+      "width": 412,
+      "line": true,
+      "taller": true,
+      "keyboard": true,
+      "gap": 4,
+      "hit": true,
+      "jumped": true,
+      "pass": true
+    }
+  ]
+}

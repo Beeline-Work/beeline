@@ -327,7 +327,7 @@ export class MonolithSession {
     throw new MonolithSessionChangedError();
   }
 
-  async authorization(): Promise<string> {
+  async authorization(fetchImpl: typeof fetch = this.fetchImpl): Promise<string> {
     const current = this.validAccessToken();
     if (current) return current;
     if (!this.access) {
@@ -336,7 +336,7 @@ export class MonolithSession {
       const restored = this.validAccessToken();
       if (restored) return restored;
     }
-    return this.refresh();
+    return this.refresh(fetchImpl);
   }
 
   private validAccessToken(): string | undefined {
@@ -378,15 +378,18 @@ export class MonolithSession {
   async fetch(
     input: string,
     init: RequestInit = {},
-    options: { timeoutMs?: number; idempotent?: boolean } = {},
+    options: { timeoutMs?: number; idempotent?: boolean; fetchImpl?: typeof fetch } = {},
   ): Promise<Response> {
     const sessionRevision = this.sessionRevision;
-    let response = await this.dispatch(input, init, options);
+    const dispatch = () => options.fetchImpl
+      ? this.perform(input, init, options.timeoutMs, options.fetchImpl)
+      : this.dispatch(input, init, options);
+    let response = await dispatch();
     if (response.status !== 401) return response;
     if (sessionRevision !== this.sessionRevision) throw new MonolithSessionChangedError();
     this.access = undefined;
     this.accessRestoreAttempted = true;
-    response = await this.dispatch(input, init, options);
+    response = await dispatch();
     return response;
   }
 
@@ -489,6 +492,7 @@ export class MonolithSession {
     input: string,
     init: RequestInit,
     timeoutMs: number | undefined,
+    fetchImpl: typeof fetch = this.fetchImpl,
   ): Promise<Response> {
     const controller = new AbortController();
     let timedOut = false;
@@ -504,9 +508,9 @@ export class MonolithSession {
     if (init.signal?.aborted) controller.abort();
     try {
       // Token restore or refresh can stall too; the deadline covers it.
-      const authorized = await untilAborted(this.authorization(), controller.signal);
+      const authorized = await untilAborted(this.authorization(fetchImpl), controller.signal);
       const requestStartMs = performance.now();
-      const response = await this.fetchImpl(input, {
+      const response = await fetchImpl(input, {
         ...init,
         signal: controller.signal,
         headers: {
@@ -525,14 +529,14 @@ export class MonolithSession {
     }
   }
 
-  private refresh(): Promise<string> {
-    this.refreshInFlight ??= this.performRefresh().finally(() => {
+  private refresh(fetchImpl: typeof fetch = this.fetchImpl): Promise<string> {
+    this.refreshInFlight ??= this.performRefresh(fetchImpl).finally(() => {
       this.refreshInFlight = undefined;
     });
     return this.refreshInFlight;
   }
 
-  private async performRefresh(): Promise<string> {
+  private async performRefresh(fetchImpl: typeof fetch): Promise<string> {
     const revision = this.credentialRevision;
     const refreshToken =
       this.refreshToken ?? (await (await this.secureStorage()).getItemAsync(REFRESH_KEY));
@@ -547,7 +551,7 @@ export class MonolithSession {
     let response: Response;
     const origin = this.currentOrigin;
     try {
-      response = await untilAborted(this.fetchImpl(`${this.origins[origin]!.origin}/v1/auth/refresh`, {
+      response = await untilAborted(fetchImpl(`${this.origins[origin]!.origin}/v1/auth/refresh`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ refreshToken }),

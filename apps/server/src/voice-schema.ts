@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS voice_participants (
   left_at timestamptz,
   PRIMARY KEY(call_id,identity_id)
 );
+ALTER TABLE voice_participants ADD COLUMN IF NOT EXISTS parked_at timestamptz;
+ALTER TABLE voice_participants ADD COLUMN IF NOT EXISTS session_id text NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS voice_participants_identity_idx ON voice_participants(identity_id);
 CREATE TABLE IF NOT EXISTS voice_orders (
   source_message_id text PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,

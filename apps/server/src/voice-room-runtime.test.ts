@@ -5,7 +5,7 @@ import { VoiceService } from './voice-service.js';
 const state = vi.hoisted(() => ({ room: undefined as any, streams: [] as ReadableStream<any>[], audio: undefined as any }));
 vi.mock('@livekit/rtc-node', () => ({
   Room: class extends EventEmitter {
-    remoteParticipants = new Map();
+    remoteParticipants = new Map([['human', { identity: 'human' }]]);
     localParticipant = { publishTrack: vi.fn(), publishData: vi.fn() };
     constructor() { super(); state.room = this; }
     async connect() {} async disconnect() {}
@@ -31,6 +31,54 @@ import { DaemonService } from './daemon-service.js';
 import { PhoneService } from './phone-service.js';
 import { ConnectionPresence } from './connection-presence.js';
 
+it.each(['stop', 'End conversation.', 'leave conversation'])('ends the participant on confirmed spoken %s without dispatching an agent', async phrase => {
+  let onSpeech!: (event: any) => void;
+  state.streams = [new ReadableStream()];
+  const { service } = conversationService(1);
+  const leave = vi.fn(async () => {});
+  service.config.stt.mockImplementation(async (callback: any) => {
+    onSpeech = callback; return { send: vi.fn(), close: vi.fn() };
+  });
+  const runtime = await VoiceRoomRuntime.connect({ ...service, leave } as unknown as VoiceService, 'call', 'room');
+  try {
+    state.room.emit('track', { kind: 1 }, {}, { identity: 'human' });
+    await vi.waitFor(() => expect(onSpeech).toBeDefined());
+    onSpeech({ event: 'EndOfTurn', turn_index: 0, transcript: phrase,
+      words: phrase.split(' ').map((word, index) => ({ word, confidence: 0.99, start: index * 0.3, end: index * 0.3 + 0.25 })) });
+    await vi.waitFor(() => expect(leave).toHaveBeenCalledWith('call', 'human', true));
+    const [bytes, options] = state.room.localParticipant.publishData.mock.calls.find(([bytes]: any[]) =>
+      JSON.parse(new TextDecoder().decode(bytes)).type === 'stop');
+    expect(JSON.parse(new TextDecoder().decode(bytes))).toEqual({ type: 'stop' });
+    expect(options.destination_identities).toEqual(['human']);
+    expect(service.config.brain.answer).not.toHaveBeenCalled();
+    expect(service.dispatch).not.toHaveBeenCalled();
+    console.log(`confirmed ${phrase} => targeted Stop, participant leaves, no agent dispatch`);
+  } finally { await runtime.close(); }
+});
+
+it('retains an absent RTC participant through a short radio handoff and resets the reconnect grace on return', async () => {
+  let clock = 0;
+  const now = vi.spyOn(performance, 'now').mockImplementation(() => clock);
+  const { service } = conversationService(1);
+  const leave = vi.fn(async () => {});
+  service.db.query.mockImplementation(async (sql: string) => ({ rowCount: 1,
+    rows: sql.includes('SELECT identity_id FROM voice_participants') && !state.room.remoteParticipants.has('human')
+      ? [{ identity_id: 'human' }] : [] as any }));
+  const runtime = await VoiceRoomRuntime.connect({ ...service, leave } as unknown as VoiceService, 'call', 'room');
+  const tick = () => (runtime as any).heartbeat();
+  try {
+    const human = { identity: 'human' };
+    state.room.remoteParticipants.delete('human'); state.room.emit('left', human);
+    clock = 60_000; await tick(); expect(leave).not.toHaveBeenCalled();
+    state.room.remoteParticipants.set('human', human);
+    clock = 119_000; await tick();
+    state.room.remoteParticipants.delete('human'); state.room.emit('left', human);
+    clock = 180_000; await tick(); expect(leave).not.toHaveBeenCalled();
+    clock = 240_000; await tick(); expect(leave).toHaveBeenCalledOnce();
+    console.log('60-second RTC loss => participant retained; return resets grace; abandoned transport eventually removed');
+  } finally { await runtime.close(); now.mockRestore(); }
+});
+
 it('Reproduction MD-TTS-1: conversational streamed replies and delayed reports send natural text to synthesis', async () => {
   const agent = { id: 'agent', name: 'Jellybean', handle: 'jellybean', voice: 'warm' };
   const spoken: string[] = [];
@@ -44,10 +92,10 @@ it('Reproduction MD-TTS-1: conversational streamed replies and delayed reports s
     speech: async () => ({ async *synthesize(text: string) { spoken.push(text); } }),
     recordHuman: vi.fn(async () => 'source'), recordAnswer: vi.fn(async () => {}),
     db: { query: vi.fn(async (sql: string) => ({ rowCount: 1, rows: sql.includes('SELECT DISTINCT') ? reports : [] })) },
-    runtimeClosed: vi.fn() } as unknown as VoiceService;
+    access: vi.fn(async () => {}), leave: vi.fn(async () => {}), runtimeClosed: vi.fn() } as unknown as VoiceService;
   const runtime = await VoiceRoomRuntime.connect(service, 'call', 'room');
   try {
-    await runtime.utterance('human', 'Hello');
+    await runtime.utterance('human', 'Jellybean, hello');
     expect(spoken.join(' ')).toBe('Hello, friend. Visit. Hi jellybean.');
     expect(service.recordAnswer).toHaveBeenCalledWith('room', 'agent', answer);
     reports = [{ source_message_id: 'source', id: 'report', text: '**Done**: [result](https://example.com/a_(b)/details)', agent_id: 'agent', human_id: 'human' }];
@@ -62,13 +110,14 @@ it('cancels microphone input and sends a targeted quota signal when Flux rejects
   state.streams = [new ReadableStream({ cancel })];
   const service = { owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret',
     stt: vi.fn(async () => { throw new VoiceQuotaError(); }) }, access: vi.fn(async () => {}),
-    agents: vi.fn(async () => []), db: { query: vi.fn(async () => ({ rowCount: 1, rows: [] })) },
+    humanCount: vi.fn(async () => 1), agents: vi.fn(async () => []), db: { query: vi.fn(async () => ({ rowCount: 1, rows: [] })) },
     runtimeClosed: vi.fn() } as unknown as VoiceService;
   const runtime = await VoiceRoomRuntime.connect(service, 'call', 'room');
   try {
     state.room.emit('track', { kind: 1 }, {}, { identity: 'human' });
-    await vi.waitFor(() => expect(state.room.localParticipant.publishData).toHaveBeenCalled());
-    const [bytes, options] = state.room.localParticipant.publishData.mock.calls[0];
+    const quota = () => state.room.localParticipant.publishData.mock.calls.find(([bytes]: any[]) => JSON.parse(new TextDecoder().decode(bytes)).code === 'speech-quota-exhausted');
+    await vi.waitFor(() => expect(quota()).toBeDefined());
+    const [bytes, options] = quota()!;
     expect(JSON.parse(new TextDecoder().decode(bytes))).toMatchObject({ code: 'speech-quota-exhausted', message: expect.stringContaining('Daily voice limit') });
     expect(options.destination_identities).toEqual(['human']);
     expect(cancel).toHaveBeenCalledOnce();
@@ -86,7 +135,7 @@ it('buffers first microphone frames during authorization and ignores stale STT f
       stt: vi.fn(async (_event, failure) => {
         callbacks.push(failure); const input = { send: vi.fn(), close: vi.fn() }; inputs.push(input); return input;
       }) },
-    access, agents: vi.fn(async () => []),
+    access, humanCount: vi.fn(async () => 1), agents: vi.fn(async () => []),
     db: { query: vi.fn(async () => ({ rowCount: 1, rows: [] })) }, runtimeClosed: vi.fn(),
   } as unknown as VoiceService;
   let first!: ReadableStreamDefaultController<any>, second!: ReadableStreamDefaultController<any>;
@@ -388,6 +437,7 @@ function phantomHarness(answer = 'Hey there is the answer.') {
     }), recordAnswer: vi.fn(async () => {}),
     db: { query: vi.fn(async (_sql: string, _args?: unknown[]) => ({ rowCount: 1, rows: [] as any[] })) },
     runtimeClosed: vi.fn(),
+    leave: vi.fn(async () => {}),
   };
   let sequence = 0;
   return { service, speech, timeline, messages, note,
@@ -421,7 +471,8 @@ it('Reproduction phantom-1: never sends Hey or Yeah from a noisy turn during TTS
     expect(harness.timeline.filter(line => line.endsWith('barge-in cancel'))).toHaveLength(0);
     harness.emit('StartOfTurn', '', 3);
     harness.emit('EndOfTurn', 'stop', 3);
-    await vi.waitFor(() => expect(harness.service.recordHuman).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(harness.service.leave).toHaveBeenCalledOnce());
+    expect(harness.service.recordHuman).toHaveBeenCalledOnce();
     expect(harness.service.config.brain.answer.mock.calls[0]?.[3]?.aborted).toBe(true);
   } finally {
     console.log('Reproduction phantom-1\n' + harness.timeline.join('\n'));
@@ -441,8 +492,13 @@ it.each(['stop', 'wait', 'no', 'Yeah', 'Please explain something else'])('preser
     harness.emit('Update', text, 1, [{ confidence: 0.95 }]);
     harness.emit('EndOfTurn', text, 1, [{ confidence: 0.95 }]);
     harness.emit('EndOfTurn', text, 1, [{ confidence: 0.95 }]);
-    await vi.waitFor(() => expect(harness.service.recordHuman).toHaveBeenCalledTimes(2));
-    expect(harness.service.recordHuman.mock.calls[1]?.[4]).toBe(text);
+    if (text === 'stop') {
+      await vi.waitFor(() => expect(harness.service.leave).toHaveBeenCalledOnce());
+      expect(harness.service.recordHuman).toHaveBeenCalledOnce();
+    } else {
+      await vi.waitFor(() => expect(harness.service.recordHuman).toHaveBeenCalledTimes(2));
+      expect(harness.service.recordHuman.mock.calls[1]?.[4]).toBe(text);
+    }
     expect(harness.service.config.brain.answer.mock.calls[0]?.[3]?.aborted).toBe(true);
   } finally { await runtime.close(); }
 });
@@ -513,7 +569,7 @@ it('Reproduction phantom-2: an interrupted delegated answer does not replay its 
     await vi.waitFor(() => expect(harness.service.config.stt).toHaveBeenCalledOnce());
     offered = true; await runtime.refresh();
     await vi.waitFor(() => expect(harness.speech.synthesize).toHaveBeenCalledOnce());
-    harness.emit('EndOfTurn', 'stop', 0);
+    harness.emit('EndOfTurn', 'wait', 0);
     await vi.waitFor(() => expect(harness.service.recordHuman).toHaveBeenCalledOnce());
     await vi.waitFor(() => expect(harness.timeline.some(line => line.includes('TTS stop: Hey, here is the previous answer.'))).toBe(true));
     await runtime.refresh();
@@ -531,6 +587,7 @@ it('Reproduction voice-name-1: switches transcript, reply and voice together and
   const recordHuman = vi.fn(async () => 'source');
   const answer = vi.fn(async () => ({ text: '' }));
   const service = { owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret', brain: { answer } },
+    access: vi.fn(async () => {}),
     humanCount: vi.fn(async () => 1), agents: vi.fn(async () => agents), recordHuman, recordAnswer: vi.fn(async () => {}),
     db: { query: vi.fn(async () => ({ rowCount: 1, rows: [] })) }, runtimeClosed: vi.fn() } as unknown as VoiceService;
   const runtime = await VoiceRoomRuntime.connect(service, 'call', 'room');
@@ -552,6 +609,33 @@ it('Reproduction voice-name-1: switches transcript, reply and voice together and
       expect(signals.filter((s: any) => s.type === 'target').at(-1)).toEqual({ type: 'target', agentId: expected });
       console.log(`${text} => transcript/reply/voice/UI target ${expected}`);
     }
+  } finally { await runtime.close(); }
+});
+
+
+it('routes committed park and resume to the RTC owner and drops stale session packets', async () => {
+  const { service } = conversationService();
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  const park = vi.spyOn(runtime, 'park').mockResolvedValue(undefined);
+  const resume = vi.spyOn(runtime, 'resume').mockResolvedValue(undefined);
+  let parked = true;
+  service.db.query.mockImplementation(async (_sql: string, args?: unknown[]) => ({
+    rowCount: args?.length === 4 ? Number(args[2] === 'current' && args[3] === parked) : 1, rows: [],
+  }));
+  const signal = (type: string, sessionId: string) => state.room.emit('data',
+    new TextEncoder().encode(JSON.stringify({ type, sessionId })), { identity: 'human' }, undefined, 'beeline.voice.v1');
+  try {
+    signal('park', 'old');
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(park).not.toHaveBeenCalled();
+    signal('park', 'current');
+    await vi.waitFor(() => expect(park).toHaveBeenCalledWith('human', 'current'));
+    signal('resume', 'current');
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(resume).not.toHaveBeenCalled();
+    parked = false;
+    signal('resume', 'current');
+    await vi.waitFor(() => expect(resume).toHaveBeenCalledWith('human'));
   } finally { await runtime.close(); }
 });
 
@@ -1297,3 +1381,48 @@ it('times one finished turn through streamed brain text, TTS bytes and accepted 
     console.log('LATENCY-AUDIT-1: one finished turn -> stage timings, one brain call, one source and one reply; no provider run.');
   } finally { await runtime.close(); logs.mockRestore(); }
 });
+
+
+it('Reproduction PARK-LEASE-1: a nonowner resume after 25 seconds keeps the parked RTC owner', async () => {
+  const db = new PgliteDatabase(), live = new LiveHub();
+  const human = 'a'.repeat(64), agent = 'b'.repeat(64);
+  const workspace = '11111111-1111-4111-8111-111111111111', room = '22222222-2222-4222-8222-222222222222';
+  const fixture = conversationService(1);
+  const config = { ...fixture.service.config, speech: fixture.speech };
+  const owner = new RealVoiceService(db, live, config), other = new RealVoiceService(db, live, config);
+  const connect = vi.spyOn(VoiceRoomRuntime, 'connect');
+  try {
+    await migrate(db);
+    await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Human','human'),($2,'agent','Ruby','ruby')`, [human, agent]);
+    await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [agent, human]);
+    await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Park lease proof')`, [workspace]);
+    await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [room, workspace]);
+    await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+      ($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,$4,$2,'owner'),($1,$4,$3,'member')`, [workspace, human, agent, room]);
+    const joined = await owner.join(room, human);
+    const call = (await db.query<any>(`SELECT * FROM voice_calls WHERE id=$1`, [joined.call.id])).rows[0];
+    const runtime = (await owner.ensureRuntime(call))!;
+    state.room.remoteParticipants.clear();
+    state.room.remoteParticipants.set(human, { identity: human, trackPublications: new Map() });
+    const retainedRoom = state.room;
+    const resumed = vi.spyOn(runtime, 'resume');
+    const source = await owner.recordHuman(joined.call.id, room, human, (await owner.agents(room, human))[0]!, 'Work until the report is ready');
+    await owner.dispatch(joined.call.id, source, agent);
+    expect(await owner.idle(joined.call.id, human, joined.sessionId)).toEqual({ state: 'parked', agentName: 'Ruby' });
+    // Real PostgreSQL time advances beyond the original runtime lease, with no audio or reads.
+    await new Promise(resolve => setTimeout(resolve, 25_000));
+    await other.resume(joined.call.id, human, joined.sessionId);
+    expect((await db.query(`SELECT runtime_owner FROM voice_calls WHERE id=$1`, [joined.call.id])).rows[0]?.runtime_owner).toBe(call.runtime_owner);
+    expect(connect).toHaveBeenCalledTimes(1);
+    expect(runtime.isClosed).toBe(false);
+    retainedRoom.emit('data', new TextEncoder().encode(JSON.stringify({ type: 'resume', sessionId: joined.sessionId })),
+      { identity: human }, undefined, 'beeline.voice.v1');
+    await vi.waitFor(() => expect(resumed).toHaveBeenCalledWith(human));
+    await resumed.mock.results[0]!.value;
+    expect(state.room).toBe(retainedRoom);
+    await owner.leave(joined.call.id, human);
+    console.log('PARK-LEASE-1: 25-second park, nonowner HTTP resume, unchanged runtime_owner, one RTC connect; RTC/provider doubles, real Pglite service path.');
+  } finally {
+    connect.mockRestore(); await other.close(); await owner.close(); await db.close();
+  }
+}, 40_000);

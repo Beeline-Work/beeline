@@ -1,7 +1,7 @@
 import { AgentVoiceService } from './agent-voice.js';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHmac, timingSafeEqual, randomBytes, randomUUID } from 'node:crypto';
 import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
-import { type VoiceCall, type VoiceJoin, type RoomViewIdentity, voiceDuration } from '@beeline/api-contract/phone';
+import { type VoiceIdleState, type VoiceCall, type VoiceJoin, type RoomViewIdentity, voiceDuration } from '@beeline/api-contract/phone';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-contract/agent-access';
 import type { SqlDatabase } from './database.js';
@@ -120,6 +120,7 @@ export class VoiceService {
     await this.access(roomId, humanId);
     const agents = await this.agents(roomId, humanId);
     if (!agents.length) throw new Error('This conversation has no agent you can address');
+    const sessionId = randomUUID();
     const row = await this.db.transaction(async db => {
       await this.access(roomId, humanId, db);
       await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`voice:${roomId}`]);
@@ -133,21 +134,97 @@ export class VoiceService {
         call = (await db.query<CallRow>(`INSERT INTO voice_calls(id,room_id,message_id) VALUES($1,$2,$3) RETURNING *`,
           [id, roomId, messageId])).rows[0]!;
       }
-      await db.query(`INSERT INTO voice_participants(call_id,identity_id) VALUES($1,$2)
-        ON CONFLICT(call_id,identity_id) DO UPDATE SET left_at=NULL,joined_at=now()`, [call.id, humanId]);
+      await db.query(`INSERT INTO voice_participants(call_id,identity_id,session_id) VALUES($1,$2,$3)
+        ON CONFLICT(call_id,identity_id) DO UPDATE SET left_at=NULL,parked_at=NULL,joined_at=now(),session_id=excluded.session_id`, [call.id, humanId, sessionId]);
       await this.updateCard(call, db);
       return call;
     });
     // Own runtime lease is cross-instance: a second phone never starts a second speaker.
     try { await this.ensureRuntime(row); }
-    catch (error) { await this.leave(row.id, humanId, true); throw error; }
+    catch (error) { await this.leave(row.id, humanId, true, sessionId); throw error; }
     const token = new AccessToken(this.config.apiKey, this.config.apiSecret, { identity: humanId,
       ttl: '10m', metadata: JSON.stringify({ callId: row.id, kind: 'human' }) });
     token.addGrant({ roomJoin: true, room: `beeline-voice-${row.id}`, canPublish: true,
       canSubscribe: true, canPublishData: true, canUpdateOwnMetadata: false });
-    return { call: await this.view(row), url: this.config.url, token: await token.toJwt(),
+    return { sessionId, stopToken: this.stopToken(row.id, humanId, sessionId), call: await this.view(row), url: this.config.url, token: await token.toJwt(),
       agents: agents.map(a => ({ pubkey: a.id, kind: 'agent', name: a.name, handle: a.handle,
         ...(a.face ? { face: a.face } : {}) })) };
+  }
+
+  /** Called on an idle deadline or committed live event, never on a polling timer. */
+  async idleState(callId: string, humanId: string, db = this.db, sessionId?: string): Promise<VoiceIdleState> {
+    const participant = (await db.query<{ room_id: string }>(`SELECT c.room_id FROM voice_calls c
+      JOIN voice_participants p ON p.call_id=c.id AND p.identity_id=$2 AND p.left_at IS NULL
+      WHERE c.id=$1 AND c.ended_at IS NULL AND ($3::text IS NULL OR p.session_id=$3)`, [callId, humanId, sessionId ?? null])).rows[0];
+    if (!participant) return { state: 'ended' };
+    await this.access(participant.room_id, humanId, db);
+    const rows = await db.query<{ name: string; pending: boolean; ready: boolean }>(`SELECT i.name,
+      c.state IN ('pending','claimed') pending,
+      EXISTS(SELECT 1 FROM messages m WHERE m.author_id=o.agent_id AND m.room_id=source.room_id
+        AND (m.id=c.result_message_id OR m.request_id=c.id OR m.request_id=c.turn_request_id)
+        AND m.presentation='message' AND m.deleted_at IS NULL) ready
+      FROM voice_orders o JOIN messages source ON source.id=o.source_message_id
+      JOIN identities i ON i.id=o.agent_id JOIN agent_commands c
+        ON c.source_message_id=o.source_message_id AND c.agent_id=o.agent_id
+      WHERE o.call_id=$1 AND source.author_id=$2 AND o.spoken_message_id IS NULL
+      ORDER BY source.created_at DESC`, [callId, humanId]);
+    const ready = rows.rows.find(row => row.ready);
+    if (ready) return { state: 'ready', agentName: ready.name };
+    const pending = rows.rows.find(row => row.pending);
+    return pending ? { state: 'parked', agentName: pending.name } : { state: 'ended' };
+  }
+
+  async idle(callId: string, humanId: string, sessionId?: string): Promise<VoiceIdleState> {
+    const participant = await this.db.query(`SELECT 1 FROM voice_participants WHERE call_id=$1 AND identity_id=$2 AND left_at IS NULL AND ($3::text IS NULL OR session_id=$3)`, [callId, humanId, sessionId ?? null]);
+    if (!participant.rowCount) return { state: 'ended' };
+    const state = await this.db.transaction(async db => {
+      await db.query(`SELECT id FROM voice_calls WHERE id=$1 FOR UPDATE`, [callId]);
+      const state = await this.idleState(callId, humanId, db, sessionId);
+      if (state.state !== 'ended') {
+        await db.query(`UPDATE voice_participants SET parked_at=now()
+          WHERE call_id=$1 AND identity_id=$2 AND left_at IS NULL AND ($3::text IS NULL OR session_id=$3)`, [callId, humanId, sessionId ?? null]);
+      }
+      return state;
+    });
+    if (state.state === 'ended') { await this.leave(callId, humanId, true, sessionId); return state; }
+    await (await this.runtimes.get(callId))?.park(humanId, sessionId);
+    return state;
+  }
+
+  async resume(callId: string, humanId: string, sessionId: string): Promise<void> {
+    const participant = (await this.db.query<{ room_id: string }>(`SELECT c.room_id FROM voice_calls c
+      JOIN voice_participants p ON p.call_id=c.id WHERE c.id=$1 AND p.identity_id=$2
+      AND p.session_id=$3 AND p.left_at IS NULL AND c.ended_at IS NULL`, [callId, humanId, sessionId])).rows[0];
+    if (!participant) throw new Error('voice session ended');
+    await this.access(participant.room_id, humanId);
+    await this.db.query(`UPDATE voice_participants SET parked_at=NULL WHERE call_id=$1 AND identity_id=$2
+      AND session_id=$3 AND left_at IS NULL`, [callId, humanId, sessionId]);
+    const call = (await this.db.query<CallRow>(`SELECT * FROM voice_calls WHERE id=$1 AND ended_at IS NULL`, [callId])).rows[0];
+    if (!call) throw new Error('voice session ended');
+    const runtime = await this.ensureRuntime(call);
+    await runtime?.resume(humanId);
+  }
+
+  private stopToken(callId: string, humanId: string, sessionId: string): string {
+    const payload = Buffer.from(JSON.stringify({ callId, humanId, sessionId, expires: Date.now() + 86_400_000 })).toString('base64url');
+    const signature = createHmac('sha256', this.config.apiSecret).update(`voice-stop:${payload}`).digest('base64url');
+    return `${payload}.${signature}`;
+  }
+
+  /** This capability grants only leave for the exact session, never Room access. */
+  async nativeStop(callId: string, token: unknown): Promise<boolean> {
+    if (typeof token !== 'string' || token.length > 1024) return false;
+    const [payload, signature, extra] = token.split('.');
+    if (!payload || !signature || extra) return false;
+    const expected = createHmac('sha256', this.config.apiSecret).update(`voice-stop:${payload}`).digest();
+    const received = Buffer.from(signature, 'base64url');
+    if (received.length !== expected.length || !timingSafeEqual(received, expected)) return false;
+    let value: { callId: string; humanId: string; sessionId: string; expires: number };
+    try { value = JSON.parse(Buffer.from(payload, 'base64url').toString()); } catch { return false; }
+    if (value.callId !== callId || typeof value.humanId !== 'string' || typeof value.sessionId !== 'string'
+      || !Number.isFinite(value.expires) || value.expires <= Date.now()) return false;
+    await this.leave(callId, value.humanId, true, value.sessionId);
+    return true;
   }
 
   async updateCard(row: CallRow, db = this.db) {
@@ -159,12 +236,15 @@ export class VoiceService {
     if (row.ended_at) await db.query(`UPDATE messages SET presentation=$2 WHERE id=$1`, [row.message_id, 'system']);
   }
 
-  async leave(callId: string, humanId: string, disconnected = false): Promise<void> {
+  async leave(callId: string, humanId: string, disconnected = false, sessionId?: string): Promise<void> {
     const row = await this.db.transaction(async db => {
       const call = (await db.query<CallRow>(`SELECT * FROM voice_calls WHERE id=$1 FOR UPDATE`, [callId])).rows[0];
       if (!call || call.ended_at) return null;
       if (!disconnected) await this.access(call.room_id, humanId, db);
-      await db.query(`UPDATE voice_participants SET left_at=now() WHERE call_id=$1 AND identity_id=$2`, [callId, humanId]);
+      const left = await db.query(`UPDATE voice_participants SET left_at=now() WHERE call_id=$1 AND identity_id=$2
+        AND ($3::text IS NULL OR session_id=$3) RETURNING identity_id`, [callId, humanId, sessionId ?? null]);
+      if (!left.rowCount) return null;
+      await this.rooms.removeParticipant(`beeline-voice-${callId}`, humanId).catch(() => {});
       if (!(await db.query(`SELECT 1 FROM voice_participants WHERE call_id=$1 AND left_at IS NULL`, [callId])).rowCount) {
         call.ended_at = (await db.query<{ ended_at: Date }>(`UPDATE voice_calls SET ended_at=now() WHERE id=$1 RETURNING ended_at`, [callId])).rows[0]!.ended_at;
       }
@@ -172,7 +252,6 @@ export class VoiceService {
       return call;
     });
     if (!row) return;
-    await this.rooms.removeParticipant(`beeline-voice-${callId}`, humanId).catch(() => {});
     if (row.ended_at) {
       await this.rooms.deleteRoom(`beeline-voice-${callId}`).catch(() => {});
       const runtime = this.runtimes.get(callId);
@@ -183,13 +262,18 @@ export class VoiceService {
 
   ensureRuntime(row: CallRow): Promise<VoiceRoomRuntime | undefined> {
     const existing = this.runtimes.get(row.id);
-    if (existing) return existing;
+    if (existing) return existing.then(runtime => {
+      if (!runtime?.isClosed) return runtime;
+      if (this.runtimes.get(row.id) === existing) this.runtimes.delete(row.id);
+      return this.ensureRuntime(row);
+    });
     // Reserve the promise before the first database await. A lease belongs to
     // this runtime attempt, so a stale close cannot release a successor's lease.
     const leaseOwner = `${this.owner}:${randomUUID()}`;
     const pending = (async () => {
       const claimed = await this.db.query(`UPDATE voice_calls SET runtime_owner=$2,runtime_until=now()+interval '20 seconds'
-        WHERE id=$1 AND ended_at IS NULL AND (runtime_until IS NULL OR runtime_until<now())`, [row.id, leaseOwner]);
+        WHERE id=$1 AND ended_at IS NULL AND (runtime_until IS NULL OR runtime_until<now())
+        AND EXISTS(SELECT 1 FROM voice_participants p WHERE p.call_id=voice_calls.id AND p.left_at IS NULL AND p.parked_at IS NULL)`, [row.id, leaseOwner]);
       if (!claimed.rowCount) return undefined;
       return VoiceRoomRuntime.connect(this, row.id, row.room_id, leaseOwner);
     })().catch(async error => {

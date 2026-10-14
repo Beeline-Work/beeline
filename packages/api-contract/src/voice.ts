@@ -14,13 +14,21 @@ export type VoiceCall = {
 };
 
 export type VoiceJoin = {
+  sessionId: string;
+  /** Capability for native Stop only, fenced to this participant session. */
+  stopToken: string;
   call: VoiceCall;
   url: string;
   token: string;
   agents: readonly RoomViewIdentity[];
 };
 
+export type VoiceIdleState = { state: 'ended' | 'parked' | 'ready'; agentName?: string };
+
 export type VoiceSignal =
+  | { type: 'stop' }
+  | { type: 'resume' | 'park'; sessionId: string }
+  | { type: 'speech' }
   /** A tap also sends the next turn to this agent when several humans are in the call. */
   | { type: 'target'; agentId: string; tap?: boolean }
   | { type: 'humans'; count: number }

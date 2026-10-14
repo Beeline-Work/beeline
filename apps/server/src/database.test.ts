@@ -828,6 +828,13 @@ describe('cascade-path foreign keys stay indexed', () => {
 });
 
 describe('release-owned schema readiness', () => {
+  it('rejects the corner-state schema marker until the inbox migration is released', async () => {
+    const query = vi.fn().mockResolvedValue(result([{ version: 26 }]));
+    await expect(assertSchemaCurrent({ query, transaction: vi.fn() })).rejects.toThrow(
+      /expected schema version 27, found 26/,
+    );
+  });
+
   it('waits through transient pool checkout timeouts without mistaking them for a schema mismatch', async () => {
     const query = vi.fn()
       .mockRejectedValueOnce(new Error('timeout exceeded when trying to connect'))

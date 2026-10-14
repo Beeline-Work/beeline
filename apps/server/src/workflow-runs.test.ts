@@ -17,6 +17,7 @@ import { AgentScheduleLoop } from './agent-schedules.js';
 import { PhoneService } from './phone-service.js';
 import { SCHEDULE_SCHEDULER_ID } from '@beeline/api-contract/scheduled-prompts';
 import { ensureSystemIdentity } from './system-line.js';
+import { flushDueCommanderWakes } from './commander-wakes.js';
 import { FEEDBACK_TRIAGE_CONTRACT } from './feedback-triage-workflow.js';
 import {
   activeRunIdsForSchedule,
@@ -2440,6 +2441,23 @@ async function addAgent(id: string, online = true): Promise<void> {
 }
 
 describe('attempts: stale and repeated handoffs never advance a run twice', () => {
+  it('uses an absorbed workflow wake’s attempt when a private-headed digest omits attempt', async () => {
+    await database.query('INSERT INTO agents(agent_id,owner_id,wake_batch_minutes) VALUES($1,$2,2)', [IMPLEMENTER, OWNER]);
+    await createAgentCommand(database, { roomId: ROOM, agentId: IMPLEMENTER, sourceMessageId: null,
+      reason: 'corner_brief', privatePayload: { text: 'Unrelated lifecycle head', authorId: REVIEWER, fromRoomId: ROOM, kind: 'lifecycle' } });
+    const { runId } = await startedRun();
+    await database.query('UPDATE agent_commands SET wake_after=now() WHERE wake_after IS NOT NULL');
+    await flushDueCommanderWakes(database);
+    const digest = (await readAgentCommands(database, ROOM, IMPLEMENTER)).commands[0]!;
+    const claimed = await database.transaction(tx => claimAgentCommand(tx, ROOM, IMPLEMENTER, digest.id, 'digest-attempt'));
+    await handoff(database, claimed, {
+      runId, outcome: 'pushed', contents: { summary: 'Advanced the first step', prUrl: 'https://test/pr/1' }, attempt: 0,
+    });
+    expect(await handoff(database, claimed, { runId, outcome: 'passing', contents: { headSha: 'old-work' } }))
+      .toEqual({ alreadyAdvanced: true, runId, state: 'checks', seq: 1 });
+    expect((await getWorkflowRun(database, ROOM, runId)).state).toBe('checks');
+    console.info('Demonstrated inbox-workflow-attempt: an absorbed attempt 0 cannot advance the newer visit when a digest handoff omits attempt');
+  });
   it('returns the same result for a repeated handoff with its attempt, writing one card', async () => {
     const { runId } = await startedRun();
     const call = { runId, outcome: 'pushed', contents: { summary: 'x', prUrl: 'y' }, attempt: 0 };

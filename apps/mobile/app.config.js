@@ -91,6 +91,7 @@ export default {
                 NSMicrophoneUsageDescription: "Allow Beeline to use the microphone for speech input.",
                 NSLocalNetworkUsageDescription: "Allow $(PRODUCT_NAME) to find and connect to local devices on your network.",
                 NSBonjourServices: ["_http._tcp", "_https._tcp"],
+                UIBackgroundModes: ["audio"],
                 // ATS:
                 // - NSAllowsLocalNetworking: lets HTTP fetches reach LAN
                 //   addresses (e.g. self-hosted server at 192.168.x.y) without
@@ -119,6 +120,9 @@ export default {
                 "android.permission.ACCESS_NETWORK_STATE",
                 "android.permission.POST_NOTIFICATIONS",
                 "android.permission.RECORD_AUDIO",
+                "android.permission.FOREGROUND_SERVICE",
+                "android.permission.FOREGROUND_SERVICE_MICROPHONE",
+                "android.permission.WAKE_LOCK",
             ],
             blockedPermissions: [
                 "android.permission.ACTIVITY_RECOGNITION",

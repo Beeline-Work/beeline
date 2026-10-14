@@ -2,6 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { pendingGrantToolCall } from './monolith-room-turn.js';
 import { agentToolsFor, callAgentTool, workbenchStatus } from './read-only-mcp.js';
 
 const appId = '11111111-1111-4111-8111-111111111111';
@@ -18,6 +19,9 @@ beforeEach(() => {
   vi.stubEnv('BEELINE_DAEMON_BASE_URL', 'http://daemon.test');
   vi.stubEnv('BEELINE_DAEMON_TOKEN', 'daemon-only');
   vi.stubEnv('BEELINE_DAEMON_AGENT_ID', 'agent-1');
+  vi.stubEnv('BEELINE_DAEMON_ROOM_ID', 'room-1');
+  vi.stubEnv('BEELINE_SQUIRE_RELAY_URL', '');
+  vi.stubEnv('BEELINE_SQUIRE_RELAY_TOKEN', '');
   calls = [];
   answer = () => Response.json({});
   vi.stubGlobal('fetch', async (url: URL, init: RequestInit) => {
@@ -34,6 +38,56 @@ afterEach(() => {
 });
 
 describe('server-mediated connected app tools', () => {
+  it('reports that Squire is not mounted while keeping connect available', async () => {
+    for (const corner of [false, true]) {
+      expect(agentToolsFor(true, false, corner, corner).some(tool => tool.name === 'connect')).toBe(true);
+    }
+    await callAgentTool('connect', { service: 'Example', reason: 'Finish' }, 'call-1');
+    expect(calls).toEqual([{ name: 'connect', input: expect.objectContaining({ squireAvailable: false }) }]);
+  });
+
+  it('refreshes the vault through the mounted agent relay before connect checks readiness', async () => {
+    vi.stubEnv('BEELINE_SQUIRE_RELAY_URL', 'http://squire.test');
+    vi.stubEnv('BEELINE_SQUIRE_RELAY_TOKEN', 'relay-only');
+    const sequence: string[] = [];
+    vi.stubGlobal('fetch', async (url: URL, init: RequestInit) => {
+      const name = String(url).split('/').at(-1)!;
+      const input = JSON.parse(String(init.body));
+      sequence.push(name);
+      if (name === 'mcp') {
+        expect(input.params.name).toBe('list_credentials');
+        return Response.json({ result: { content: [{ type: 'text', text: JSON.stringify({
+          credentials: [] }) }] } });
+      }
+      if (name === 'connect') expect(input.squireAvailable).toBe(true);
+      return Response.json(name === 'connect' ? { status: 'needs_squire', app: 'Example',
+        squire: { url: 'https://example.com', goal: 'Save the login in the vault.' }, next: 'Use your own operate_drive.' } : {});
+    });
+    const reply = await callAgentTool('connect', { service: 'Example', reason: 'Finish' }, 'call-1');
+    expect(JSON.parse(reply))
+      .toMatchObject({ status: 'needs_squire', squire: { url: 'https://example.com' } });
+    expect(pendingGrantToolCall({ title: 'connect', content: reply })).toBe(false);
+    expect(sequence).toEqual(['mcp', 'postConnectorVault', 'connect']);
+  });
+
+  it('reports unavailable when mounted Squire cannot be reached without attempting a browser drive', async () => {
+    vi.stubEnv('BEELINE_SQUIRE_RELAY_URL', 'http://squire.test');
+    vi.stubEnv('BEELINE_SQUIRE_RELAY_TOKEN', 'relay-only');
+    vi.stubGlobal('fetch', async (url: URL, init: RequestInit) => {
+      const name = String(url).split('/').at(-1)!;
+      const input = JSON.parse(String(init.body));
+      if (name === 'mcp') {
+        expect(input.params.name).toBe('list_credentials');
+        return Response.json({ error: 'unavailable' }, { status: 503 });
+      }
+      if (name === 'connect') expect(input.squireAvailable).toBe(false);
+      return Response.json(name === 'connect' ? { status: 'unavailable', app: 'Example',
+        next: 'Trusty Squire is unavailable in this agent session.' } : {});
+    });
+    expect(JSON.parse(await callAgentTool('connect', { service: 'Example', reason: 'Finish' }, 'call-1')))
+      .toMatchObject({ status: 'unavailable' });
+  });
+
   it('passes one bounded request-specific promise into connectApp', async () => {
     const continuation = 'I will finish the requested draft after sign-in.';
     await callAgentTool('connect_app', { app: 'Example', reason: 'Finish the draft',

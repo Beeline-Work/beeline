@@ -5,7 +5,6 @@ import { createAgentSubscription, listAgentSubscriptions, deleteAgentSubscriptio
 import { completeProviderWebhookAssignment, providerWebhookAssignments } from './provider-webhooks.js';
 import { reportAgentSignIn } from './agent-sign-in.js';
 import { FIRST_PARTY_INTEGRATIONS, firstPartyIntegration, settleFirstPartySignIn } from './first-party-integrations.js';
-import { queueAppConnectionJob, readAppConnectionJob, saveAppConnectionOutcome } from './app-connection-jobs.js';
 import { waitForConnection } from './connection-wait.js';
 import { machineSquireReport, queueSquireWork, squireAssignments, squireMachineAddress,
   squireMachineId, squireWorkStatus, reportSquireWork } from './squire-machine.js';
@@ -1701,60 +1700,6 @@ export class DaemonService {
         )) as Output<Name>;
       case 'connect':
         return (await this.connectService(input as Input<'connect'>, authenticatedAgentId)) as Output<Name>;
-      case 'completeAppConnectionJob': {
-        const request = input as Input<'completeAppConnectionJob'>;
-        const outcome = request.outcome.status === 'approval'
-          ? { ...request.outcome, expiresAt: request.outcome.expiresAt ?? Date.now() + 24 * 60 * 60_000 }
-          : request.outcome;
-        let approvalMessageId: string | undefined;
-        const job = await this.database.transaction(async database => {
-          const job = await saveAppConnectionOutcome(database,
-            authenticatedAgentId, request.appId, request.jobId, outcome);
-          if (outcome.decision) {
-          const actor = (await database.query<{ name: string }>('SELECT name FROM identities WHERE id=$1', [authenticatedAgentId])).rows[0]!;
-          await systemLine(database, {
-            id: createHash('sha256').update(`app-connection-decision:${job.jobId}:${outcome.decision.approvalId}`).digest('hex'),
-            roomId: job.roomId, subject: { kind: 'system', name: 'Trusty Squire' },
-            verb: outcome.decision.status, object: `Connect ${job.name}`,
-            presentation: 'card', cardType: 'squire-approval-decision',
-            card: { approvalId: outcome.decision.approvalId, tool: 'operate_drive',
-              title: `Connect ${job.name}`, detail: 'Squire received the owner’s decision.',
-              status: outcome.decision.status, agentId: authenticatedAgentId, agentName: actor.name },
-          });
-          }
-          if (outcome.status === 'approval') {
-            const receipt = await this.squireApproval({ roomId: job.roomId, tool: 'operate_drive',
-              title: `Connect ${job.name}`, detail: 'Complete Squire’s approval to finish connecting this app.',
-              approvalUrl: outcome.approvalUrl, linkKind: 'approval',
-              ...(outcome.approvalId ? { approvalId: outcome.approvalId } : {}),
-              expiresAt: outcome.expiresAt }, authenticatedAgentId, database);
-            approvalMessageId = receipt.id;
-          }
-          return job;
-        });
-        if (approvalMessageId) {
-          const receipt = (await this.database.query<{ room_id: string }>(
-            'SELECT room_id FROM messages WHERE id=$1', [approvalMessageId])).rows[0];
-          if (receipt) this.live.publish({ type: 'invalidate', roomId: receipt.room_id, reason: 'message', agentId: authenticatedAgentId });
-        } else {
-          const parent = (await this.database.query<CommandRow>(
-            `SELECT * FROM agent_commands WHERE id=$1 AND state='complete'`, [job.commandId])).rows[0];
-          if (parent) {
-            await this.database.transaction(async database => {
-              const source = await systemLine(database, { id: `app-connection:${job.jobId}:${request.outcome.status}`,
-                roomId: job.roomId, subject: { kind: 'system', name: job.name },
-                verb: request.outcome.status === 'ready' ? 'connected' : 'could not connect',
-                object: job.name, consequence: request.outcome.status === 'ready'
-                  ? 'The request can continue.' : 'Reconnect to retry.' });
-              if (source.inserted) await createAgentCommand(database, { roomId: job.roomId,
-                agentId: authenticatedAgentId, sourceMessageId: source.id, reason: 'app_connected',
-                parent, retainDepth: true });
-            });
-          }
-        }
-        this.live.publish({ type: 'invalidate', roomId: job.roomId, reason: 'app-connected' });
-        return this.writeResult() as Output<Name>;
-      }
       case 'listAppTools':
         return (await this.listAppTools(input as Input<'listAppTools'>,
           authenticatedAgentId)) as Output<Name>;
@@ -6861,59 +6806,41 @@ export class DaemonService {
         Object.assign(result, { status: 'needs_sign_in', next: 'The sign-in card is ready. Wait for the owner.' });
       });
     }
+    if (outcome.transport !== 'squire-api' && outcome.transport !== 'squire-browser') return result;
     if (!outcome.appId || !outcome.appKey || !commandId) return result;
-    const previousJob = await readAppConnectionJob(this.database, agentId, outcome.appId);
-    const continuing = previousJob && ['queued', 'running', 'approval'].includes(previousJob.state) && !input.reconnect;
-    let jobId = continuing ? previousJob.jobId : undefined;
-    if (!continuing) {
-      const target = `connection-install:${outcome.appKey}`;
-      const consent = (await this.database.query<{ id: string; status: string }>(
-        `SELECT grant_row.id,grant_row.status FROM agent_grants grant_row JOIN agents agent ON agent.agent_id=grant_row.agent_id
-          WHERE agent.owner_id=$1 AND grant_row.kind='mcp' AND grant_row.target=$2 AND NOT grant_row.auto
-            AND (grant_row.expires_at IS NULL OR grant_row.expires_at>now())
-          ORDER BY grant_row.created_at DESC LIMIT 1`, [context.owner.pubkey, target])).rows[0];
-      if (!consent || consent.status === 'revoked') {
-        const asked = await this.requestAgentGrant({ ...input, kind: 'mcp', target,
-          reason: `Connect ${outcome.app} through Trusty Squire for this request` }, agentId, true);
-        await this.database.query('UPDATE agent_grants SET command_id=$2 WHERE id=$1', [asked.grantId, commandId]);
-        Object.assign(result, { status: 'needs_approval', grantId: asked.grantId, next: 'Wait for the owner’s connection approval.' });
-        return result;
-      }
-      if (consent.status !== 'approved' && consent.status !== 'once') {
-        Object.assign(result, { status: consent.status === 'pending' ? 'needs_approval' : 'unavailable',
-          grantId: consent.id, next: consent.status === 'pending' ? 'Wait for the owner’s connection approval.' : 'The owner declined this connection.' });
-        return result;
-      }
-      const queued = await queueAppConnectionJob(this.database, agentId, { appId: outcome.appId,
-        service: outcome.appKey, name: outcome.app, noApi: outcome.transport === 'squire-browser',
-        roomId: input.roomId, commandId, url: appIdentity(service)?.domain ? `https://${appIdentity(service)!.domain}`
-          : `https://www.google.com/search?${new URLSearchParams({ q: `${service} official website` })}` }, input.reconnect === true);
-      jobId = queued.jobId;
-      if (consent.status === 'once') {
-        const consumed = await this.database.query(`UPDATE agent_grants SET expires_at=now()
-          WHERE id=$1 AND status='once' AND (expires_at IS NULL OR expires_at>now()) RETURNING id`, [consent.id]);
-        if (!consumed.rowCount) throw new Error('Connection consent was already used');
-      }
+    if (input.squireAvailable !== true)
+      return { ...result, status: 'unavailable',
+        next: 'Trusty Squire is unavailable in this agent session. Connect Trusty Squire on this machine and start a session with its tools mounted.' };
+    const target = `connection-install:${outcome.appKey}`;
+    const consent = (await this.database.query<{ id: string; status: string }>(
+      `SELECT grant_row.id,grant_row.status FROM agent_grants grant_row JOIN agents agent ON agent.agent_id=grant_row.agent_id
+        WHERE agent.owner_id=$1 AND grant_row.kind='mcp' AND grant_row.target=$2 AND NOT grant_row.auto
+          AND (grant_row.expires_at IS NULL OR grant_row.expires_at>now())
+        ORDER BY grant_row.created_at DESC LIMIT 1`, [context.owner.pubkey, target])).rows[0];
+    if (!consent || consent.status === 'revoked') {
+      const asked = await this.requestAgentGrant({ ...input, kind: 'mcp', target,
+        reason: `Connect ${outcome.app} through Trusty Squire for this request` }, agentId, true);
+      await this.database.query('UPDATE agent_grants SET command_id=$2 WHERE id=$1', [asked.grantId, commandId]);
+      return { ...result, status: 'needs_approval', grantId: asked.grantId,
+        next: 'Wait for the owner’s connection approval.' };
     }
-    if ((await machineSquireReport(this.database, context.owner.pubkey, context.machine.machineId))?.status !== 'connected')
-      return machine('trusty-squire', true);
-    return afterCommit(result, async database => {
-      const job = await waitForConnection(async () => {
-        const row = await readAppConnectionJob(database, agentId, outcome.appId!);
-        if (row && row.jobId !== jobId) return { status: 'error' as const, reason: 'This connection was replaced. Reconnect to retry.' };
-        return row?.outcome;
-      });
-      if (!job) {
-        const failed = { status: 'error' as const, reason: 'The connection worker did not finish. Reconnect to retry.' };
-        if (jobId) await database.transaction(database => saveAppConnectionOutcome(database, agentId, outcome.appId!, jobId!, failed));
-        Object.assign(result, { status: 'error', next: failed.reason });
-        return;
-      }
-      Object.assign(result, job.status === 'ready' ? { status: 'ready', next: `${outcome.app} is ready.` }
-        : job.status === 'approval' ? { status: 'needs_approval', approvalUrl: job.approvalUrl,
-          next: 'Squire’s approval card is ready. Wait for the owner.' }
-        : { status: 'error', next: job.reason });
-    });
+    if (consent.status !== 'approved' && consent.status !== 'once')
+      return { ...result, status: consent.status === 'pending' ? 'needs_approval' : 'unavailable',
+        grantId: consent.id, next: consent.status === 'pending'
+          ? 'Wait for the owner’s connection approval.' : 'The owner declined this connection.' };
+    if (consent.status === 'once') {
+      const consumed = await this.database.query(`UPDATE agent_grants SET expires_at=now()
+        WHERE id=$1 AND status='once' AND (expires_at IS NULL OR expires_at>now()) RETURNING id`, [consent.id]);
+      if (!consumed.rowCount) throw new Error('Connection consent was already used');
+    }
+    const domain = appIdentity(service)?.domain;
+    const url = domain ? `https://${domain}`
+      : `https://www.google.com/search?${new URLSearchParams({ q: `${service} official website` })}`;
+    const goal = outcome.transport === 'squire-browser'
+      ? `Sign in to ${outcome.app} with the owner's saved account and save its login in the vault as service ${outcome.appKey}.`
+      : `Sign up or sign in to ${outcome.app} using the owner's account. Create an API key and capture it securely into the vault as service ${outcome.appKey}. Never reveal a secret in the response.`;
+    return { ...result, status: 'needs_squire', squire: { url, goal },
+      next: 'Use your own Squire operate_drive with the returned URL and goal. On low_confidence or needs_value, take a flat operate_* step, then resume operate_drive on the same session. Keep saved-login approval in Squire. Once a credential for this service is in the vault, call connect again.' };
   }
 
   /** Shared app routing for connect and its hidden one-release alias. */
@@ -8282,7 +8209,6 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   connectApp: true,
   connect: true,
   findConnectors: true,
-  completeAppConnectionJob: true,
   listAppTools: true,
   executeAppTool: true,
   offerConnector: true,

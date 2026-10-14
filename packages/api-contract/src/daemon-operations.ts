@@ -561,10 +561,6 @@ export type DaemonOperationMap = {
   findConnectors: Operation<RoomInput & { readonly query: string }, {
     readonly matches: readonly ConnectorSearchMatch[]; readonly unavailableSources: readonly string[];
   }>;
-  completeAppConnectionJob: Operation<AgentInput & {
-    readonly appId: string; readonly jobId: string;
-    readonly outcome: AppConnectionJobOutcome;
-  }, WriteResult>;
   /** Discover server-mediated tools for one connected app; no credentials are returned. */
   listAppTools: Operation<TurnOutputAuthority & AgentInput & RoomInput & { readonly appId: string;
     readonly query?: string }, { readonly tools: readonly {
@@ -1098,6 +1094,8 @@ export type ConnectAppResult = {
 export type ConnectInput = Omit<ConnectAppInput, 'app'> & {
   readonly service: string;
   readonly switchGoogleAccount?: boolean;
+  /** Set by the agent MCP from this session's granted Squire relay. */
+  readonly squireAvailable?: boolean;
 };
 export type ConnectorSearchMatch = {
   readonly key: string; readonly service: string; readonly name: string; readonly website?: string;
@@ -1105,28 +1103,11 @@ export type ConnectorSearchMatch = {
   readonly status: 'connected' | 'not-connected' | 'broken';
 };
 export type ConnectResult = Omit<ConnectAppResult, 'status'> & {
-  readonly status: 'ready' | 'needs_sign_in' | 'needs_approval' | 'error' | 'unavailable';
+  readonly status: 'ready' | 'needs_sign_in' | 'needs_approval' | 'needs_squire' | 'error' | 'unavailable';
+  /** Instructions for the calling agent's own Squire tools, never a helper job. */
+  readonly squire?: { readonly url: string; readonly goal: string };
   readonly approvalUrl?: string;
   readonly grantId?: string;
-};
-export type AppConnectionJobOutcome = {
-  readonly decision?: { readonly approvalId: string; readonly status: 'approved' | 'denied' | 'expired' };
-} & (
-  | { readonly status: 'ready' }
-  | { readonly status: 'approval'; readonly approvalUrl: string; readonly approvalId?: string;
-      readonly sessionId: string; readonly expiresAt?: number }
-  | { readonly status: 'error'; readonly reason: string });
-export type AppConnectionJob = {
-  readonly appId: string;
-  readonly jobId: string;
-  readonly service: string;
-  readonly name: string;
-  readonly url?: string;
-  readonly noApi: boolean;
-  readonly roomId: string;
-  readonly commandId: string;
-  readonly state: 'queued' | 'running' | 'approval' | 'ready' | 'error';
-  readonly outcome?: AppConnectionJobOutcome;
 };
 export type AgentPresenceResult = {
   readonly status: 'online' | 'offline' | 'dormant';
@@ -1898,7 +1879,6 @@ export type ConnectorKind =
 
 /** The helper's work queue (server → helper delivery). */
 export type ConnectorAssignment =
-  | { readonly kind: 'connect-app'; readonly connectorId: string; readonly job: AppConnectionJob }
   | {
       readonly kind: 'install';
       readonly connectorId: string;

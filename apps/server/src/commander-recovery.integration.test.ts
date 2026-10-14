@@ -745,7 +745,7 @@ it('keeps files queued after an explicit report on the corner final reply', asyn
 it('keeps unrelated Room subscriptions independent of completed orders', async () => {
   await daemon.execute(
     'order',
-    { ...authority(order), address: ROOM, text: 'One-off Room instruction' },
+    { ...authority(order), address: ROOM, agent: WORKER, text: 'One-off Room instruction' },
     RUBY,
   );
   const prior = (await commands(ROOM, WORKER)).find((c) => c.reason === 'order')!;

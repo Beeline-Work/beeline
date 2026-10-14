@@ -304,7 +304,7 @@ export type DaemonOperationMap = {
       readonly attachments: readonly DaemonAttachment[];
     }
   >;
-  order: Operation<RoomInput & TurnOutputAuthority & { readonly address: string; readonly text: string }, WriteResult>;
+  order: Operation<RoomInput & TurnOutputAuthority & { readonly address: string; readonly text: string; readonly agent?: string }, WriteResult>;
   report: Operation<RoomInput & TurnOutputAuthority & { readonly status: AgentReportStatus; readonly text: string; readonly ask?: string }, WriteResult>;
   read: Operation<RoomInput & { readonly address: string; readonly limit?: number }, RoomConversationResult>;
   getRoomAuthority: Operation<RoomPrincipalInput, RoomAuthorityResult>;

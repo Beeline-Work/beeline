@@ -563,7 +563,8 @@ describe('monolith integration', () => {
       });
     }
 
-    // RO3b iii: departing the opening room removes both forms of reuse.
+    // RO3b iii: departing the opening room removes reuse of its messages.
+    // The approval already stored on the current revision still carries it.
     await database.query(
       `UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,
       [corner, AGENT],
@@ -576,7 +577,13 @@ describe('monolith integration', () => {
       'Keep the approved label.',
     ]);
     await expectRefusal(afterDeparture.messageId);
-    await expectRefusal(fix.messageId);
+    const stored = await revise(fix.messageId);
+    expect(stored.status).toBe(200);
+    expectedRevision += 1;
+    expect(await stored.json()).toMatchObject({
+      sourceRoomId: corner,
+      approval: { sourceMessageId: fix.messageId, text: '@bee sweep the feedback', approvedBy: HUMAN },
+    });
     const parentApproval = await turnIn(ROOM);
     await expectRefusal(parentApproval.messageId, [attachments.get(corner)!]);
     // A later parent approval must not replace an inaccessible opening source.

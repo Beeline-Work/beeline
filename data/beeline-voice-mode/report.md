@@ -46,7 +46,7 @@ receive the missing native modules through OTA or use this native voice path.
 Separately, Flux/Aura need a Workers AI quota reset or the captain's Workers Paid
 decision, Fish now has its API key and a successful live Luna/TTS/RTC/order-report proof
 using the documented free S2.1 Pro route (the paid API credit balance was zero).
-Fish is the Workspace default; Aura and Kokoro remain selectable.
+Aura 2 is the only speech provider; Workspace Settings has no provider choice.
 The Fish comparison measured 1660/1347/1446 ms after EndOfTurn (p50 1446 ms);
 Flux EndOfTurn was injected because STT remained quota-bound. LiveKit is already deployed; server
 secrets are staged without restarting production.

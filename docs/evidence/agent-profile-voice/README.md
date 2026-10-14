@@ -6,7 +6,7 @@ The approval board is published at https://animals-fishing-dozen-simulation.tryc
 
 The board now bundles the complete production `AgentProfileView` and `AgentVoiceSection`, including shared Settings typography, identity, rows, buttons and both themes. Only transport data is synthetic; the approved mock-only layout transform has been removed. Frame saves are local fixture receipts, not production writes.
 
-The phones have a 390-pixel content width. Both themes show the overview, voice picker, edit state and another agent with a distinct voice. Frames scroll; the picker initially scrolls to Voice. Fish library data was fetched from the same public licensed English library endpoint used by `FishSpeech.prepare` on 2026-10-13. No cloning or upload controls exist. Play uses the provider's public MP3 sample and stops after eight seconds. Save voice updates only that frame's local state; reloading resets it.
+These historical screenshots predate the Aura-only cleanup. The phones have a 390-pixel content width. Both themes show the overview, voice picker, edit state and another agent with a distinct voice. Frames scroll; the picker initially scrolls to Voice. The fixture now uses synthetic Aura catalog entries and bounded WAV previews. Save voice updates only that frame's local state; reloading resets it.
 
 Browser validation through `chrome-devtools-axi`:
 

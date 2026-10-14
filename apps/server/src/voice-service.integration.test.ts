@@ -1,3 +1,7 @@
+import type { AddressInfo } from 'node:net';
+import { TokenAuth } from './auth.js';
+import { DaemonService } from './daemon-service.js';
+import { createBeelineServer } from './server.js';
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
@@ -103,22 +107,47 @@ it('refuses a removed member and a spectator, including stale call tokens', asyn
   await expect(service.join(R, SECOND)).rejects.toThrow('access denied');
 });
 
-it('defaults to Aura and refuses dormant providers, even when legacy Workspace settings remain', async () => {
+it('ignores an old client provider field while keeping Aura and manager authorization', async () => {
   const phone = new PhoneService(db, 'http://proof');
-  expect((await phone.readWorkspace(W, H))?.workspace.voiceProvider).toBe('aura-2');
-  await phone.execute('updateWorkspace', { workspaceId: W, voiceProvider: 'aura-2' }, H);
-  for (const voiceProvider of ['kokoro-deepinfra', 'fish-s2.1-pro'] as const)
-    await expect(phone.execute('updateWorkspace', { workspaceId: W, voiceProvider }, H)).rejects.toThrow('Unknown voice provider');
-  await expect(phone.execute('updateWorkspace', { workspaceId: W, voiceProvider: 'aura-2' }, SECOND)).rejects.toThrow();
-  const aura = { voices: ['luna', 'apollo'], synthesize: vi.fn() };
-  const dormant = { voices: ['af_heart', 'bm_george'], prepare: vi.fn(), synthesize: vi.fn() };
-  const selectable = new VoiceService(db, live, { ...service.config, providers: { 'aura-2': aura, 'kokoro-deepinfra': dormant, 'fish-s2.1-pro': dormant } });
+  const legacyInput = { workspaceId: W, voiceProvider: 'retired-provider' };
+  await phone.execute('updateWorkspace', legacyInput, H);
+  expect((await phone.readWorkspace(W, H))?.workspace).not.toHaveProperty('voiceProvider');
+  await expect(phone.execute('updateWorkspace', legacyInput, SECOND)).rejects.toThrow();
+  expect(await service.speech(R)).toBe(service.config.speech);
+});
+
+it('demonstrates authenticated Aura saves and WAV previews while ignoring old provider fields', async () => {
+  const auth = new TokenAuth(db, async token => ({ subject: token, login: token, name: token }));
+  await db.query(`INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience,provider_login)
+    VALUES('github','aura-proof-owner',$1,'https://github.com','beeline','aura-proof-owner')`, [H]);
+  const { accessToken } = await auth.exchangeGitHubOidc('aura-proof-owner');
+  const aura = new VoiceService(db, live, { ...service.config, speech: {
+    voices: ['luna', 'apollo'], async *synthesize() { yield new Uint8Array([1, 2, 3, 4]); },
+  } });
+  const server = createBeelineServer({ database: db, auth, phone: new PhoneService(db, 'http://proof'),
+    daemon: new DaemonService(db, live), live, voice: aura, mediaMaximumBytes: 1024 });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  async function post(path: string, body: unknown) {
+    const response = await fetch(origin + path, { method: 'POST', headers: {
+      authorization: `Bearer ${accessToken}`, 'content-type': 'application/json',
+    }, body: JSON.stringify(body) });
+    expect(response.status).toBe(path.includes('/operations/') ? 204 : 200);
+    return response.status === 204 ? undefined : response.json();
+  }
   try {
-    await db.query(`UPDATE workspaces SET voice_provider='fish-s2.1-pro' WHERE id=$1`, [W]);
-    expect(await selectable.speech(R)).toBe(aura);
-    expect(new Set((await selectable.agents(R, H)).map(a => a.voice)).size).toBe(2);
-    expect((await selectable.profiles.catalog(W, A, H)).provider).toBe('aura-2');
-    expect(dormant.prepare).not.toHaveBeenCalled();
-    expect(dormant.synthesize).not.toHaveBeenCalled();
-  } finally { await selectable.close(); }
+    await post('/v1/phone/operations/updateWorkspace', { workspaceId: W, voiceProvider: 'retired-provider' });
+    const profilePath = `/v1/phone/workspaces/${W}/agents/${A}`;
+    const saved = await post(profilePath + '/voices', { provider: 'retired-provider', voiceId: 'apollo' });
+    expect(saved.currentVoiceId).toBe('apollo');
+    expect(saved).not.toHaveProperty('provider');
+    const preview = await post(profilePath + '/voice-preview', { provider: 'retired-provider', voiceId: 'apollo' });
+    const wav = Buffer.from(preview.wavBase64, 'base64');
+    expect(wav.subarray(0, 4).toString()).toBe('RIFF');
+    expect(wav.subarray(44)).toEqual(Buffer.from([1, 2, 3, 4]));
+    console.log('Demonstration AURA-ONLY-1: authenticated old-client workspace update and voice save pass; Apollo persists; preview returns a 24kHz WAV. Speech bytes are a fixture, not a live provider proof.');
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    await aura.close();
+  }
 });

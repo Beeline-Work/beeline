@@ -1,4 +1,4 @@
-/** Release fixture: production Profile/Voice UI, synthetic DTOs, real Fish samples.
+/** Release fixture: production Profile/Voice UI, synthetic DTOs, synthetic Aura catalog.
  * Register this entry temporarily. Back alternates themes; Message alternates agents.
  */
 import React, { useEffect, useMemo, useState } from 'react';
@@ -10,7 +10,6 @@ import { useFonts } from 'expo-font';
 import { UnistylesRuntime } from 'react-native-unistyles';
 import { AgentProfileView } from '../sources/components/buzz/AgentProfileView';
 import type { AgentDetailView } from '@beeline/buzz-client';
-import type { VoiceProvider } from '@beeline/api-contract/phone';
 import voices from './agent-profile-voice-library.json';
 const soul =
   'Kind, proactive, and drawn to distant worlds. Investigate carefully, explain what matters, and see each piece of work through.';
@@ -33,19 +32,18 @@ export default function NativeProfileProof() {
   const api = useMemo(() => {
     let current = voices[second ? 1 : 0]!.id;
     const catalog = () => ({
-      provider: 'fish-s2.1-pro' as const,
       currentVoiceId: current,
       canChange: true,
-      choices: voices.map((v) => ({ id: v.id, name: v.name, sampleUrl: v.sample ?? undefined })),
+      choices: voices.map((v) => ({ id: v.id, name: v.name })),
     });
     return {
       read: async () => catalog(),
-      save: async (_provider: VoiceProvider, id: string) => {
+      save: async (id: string) => {
         current = id;
         return catalog();
       },
-      preview: async (_provider: VoiceProvider, id: string) => ({
-        url: voices.find((v) => v.id === id)!.sample!,
+      preview: async (id: string) => ({
+        wavBase64: 'UklGRiQAAABXQVZFZm10IBAAAAABAAEAwF0AAIC7AAACABAAZGF0YQAAAAA=',
       }),
     };
   }, [second]);

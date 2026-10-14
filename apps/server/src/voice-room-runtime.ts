@@ -1,4 +1,3 @@
-import { stripVoiceEmotion } from './voice-emotion.js';
 import { markdownToSpeech, MarkdownSpeechStream } from './markdown-to-speech.js';
 import { AccessToken } from 'livekit-server-sdk';
 import { Room, RoomEvent, AudioStream, AudioSource, AudioFrame, LocalAudioTrack,
@@ -10,7 +9,7 @@ import { VOICE_SAMPLE_RATE, VoiceQuotaError, type VoiceAgent, type VoiceStt, typ
 import { namedVoiceTarget, openingVoiceName } from './voice-target.js';
 export { namedVoiceTarget } from './voice-target.js';
 
-const speechWords = (text: string) => stripVoiceEmotion(text).toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+const speechWords = (text: string) => text.trim().toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
 
 /** Flux VAD alone can fire on noise. Wait for confident recognized words. */
 export function confirmedVoiceSpeech(event: FluxEvent): boolean {
@@ -362,7 +361,7 @@ export class VoiceRoomRuntime {
     const current = (await this.service.agents(this.roomId)).find(a => a.id === agent.id);
     const voice = current?.voice ?? agent.voice;
     if (signal.aborted || this.closed) throw new DOMException('Interrupted', 'AbortError');
-    const spoken = { text: stripVoiceEmotion(text), until: Infinity };
+    const spoken = { text: text.trim(), until: Infinity };
     this.recentSpeech.push(spoken);
     if (this.recentSpeech.length > 12) this.recentSpeech.shift();
     try {

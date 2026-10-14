@@ -1,0 +1,19 @@
+{
+  "result": "PASS",
+  "capture": "actual Chrome fake-device getUserMedia and Web Audio",
+  "transcription": "stub HTTP response; no speech recognition provider",
+  "text": "Hello desktop.",
+  "sent": "Hello desktop.",
+  "microphoneReleased": true,
+  "blobRevoked": true,
+  "uploads": [
+    {
+      "bytes": 7740,
+      "riff": "RIFF",
+      "format": 17,
+      "sampleRate": 16000,
+      "language": "en",
+      "prompt": "Jellybean%2C%20Ruby"
+    }
+  ]
+}

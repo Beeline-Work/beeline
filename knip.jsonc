@@ -119,6 +119,8 @@
         "scripts/composer-dictation-proof.tsx",
         "scripts/composer-web-dictation-proof.tsx",
         "scripts/composer-desktop-voice-entry-proof.tsx",
+        "scripts/composer-recorder-proof.tsx",
+        "scripts/prove-browser-recorder.mjs",
         "scripts/composer-conversation-proof.tsx",
         "scripts/voice-call-proof.tsx",
         "scripts/composer-tags-proof.tsx",

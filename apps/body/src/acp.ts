@@ -1629,7 +1629,7 @@ export interface OpenAcpConversationOptions {
   client: AcpClient;
   /** Configured harness command, not a bwrap wrapper command. */
   agentCommand: string | undefined;
-  /** In-memory logical conversation id retained across a clean suspension. */
+  /** Logical conversation id retained across suspension or a helper restart. */
   resumeSessionId?: string;
   cwd: string;
   mcpServers?: McpServerWire[];
@@ -1646,10 +1646,10 @@ export type OpenAcpConversationResult = {
 };
 
 /**
- * Prefer the harness's own persisted conversation on an in-process idle wake.
+ * Prefer the harness's own persisted conversation on an idle wake or helper restart.
  * The `create` callback is deliberately lazy: reading durable transcript and
  * constructing `session-reprime.ts` output must happen only when no native
- * conversation exists (daemon restart, unsupported harness, or failed load).
+ * conversation exists (expired idle lease, unsupported harness, or failed load).
  */
 export async function openAcpConversation(
   options: OpenAcpConversationOptions,

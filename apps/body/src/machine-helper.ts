@@ -52,6 +52,7 @@ import {
 import { squireBrokerMeetsComputerUseMinimum } from './squire-host.js';
 import { pruneDeletedRuntimes, pruneRepositoryCaches, pruneMachineStorage } from './host-disk-retention.js';
 import { SessionScheduler } from './session-scheduler.js';
+import { refreshSystemdHelperUnit } from './native-helper.js';
 import { reclaimArchivedMemberStorage, watchStorageFacts, pruneStoppedAgentStorage, pruneEndedOwnerStorage, pruneArchivedCheckoutStorage, pruneUnusedCheckoutStorage } from './storage-owners.js';
 import { monitorPrivateRecoveryReserve } from './shared-asset-capacity.js';
 
@@ -170,6 +171,11 @@ async function serveMachineHelper(
   if (!options.configPaths) await writeHelperPidRecord(supervisorRoot, process.pid);
 
   const layout = beelineInstallLayout(env);
+  // Self-updates do not rerun CLI installation. Upgrade the persistent unit
+  // in place so its restart counter cannot lengthen subsequent handovers.
+  const nativeConfiguration = layout && managedBy === 'systemd'
+    ? refreshSystemdHelperUnit({ env }) : Promise.resolve();
+  void nativeConfiguration.catch(error => console.error('[helper] native unit refresh failed:', error));
   let loadedRelease: string | undefined;
   let loadedReleaseIdentity: InstalledBundleIdentity | undefined;
   let update: ReleaseTransaction | undefined;
@@ -207,8 +213,6 @@ async function serveMachineHelper(
       runningReleaseId(layout, env) ||
       env.BEELINE_EXECUTING_RELEASE ||
       (await activeReleaseId(layout));
-    await withInstallLock(layout, () => pruneHelperReleases(layout, loadedRelease))
-      .catch(error => console.warn('[helper] release pruning deferred:', error));
     loadedReleaseIdentity = await readInstalledBundleIdentity(
       loadedRelease ? { ...layout, libDir: resolve(layout.releasesRoot, loadedRelease) } : layout,
     );
@@ -317,6 +321,7 @@ async function serveMachineHelper(
         for (const agent of hosted.values()) interruptHostedAgent(agent);
       },
       handoff: async (desiredRelease, interrupted) => {
+        await nativeConfiguration;
         if (!quiesceHostedAgents([...hosted.values()], interrupted))
           throw new Error('helper could not close intake for release handoff');
         if (interrupted) {
@@ -640,6 +645,9 @@ async function serveMachineHelper(
       await notifier
         .ready(`ready; ${statusLine()}`)
         .catch((error) => console.error('[helper] ready notification failed:', error));
+    if (layout && !controller.signal.aborted)
+      void withInstallLock(layout, () => pruneHelperReleases(layout, loadedRelease), { waitMs: 0 })
+        .catch(error => console.warn('[helper] release pruning deferred:', error));
     if (!controller.signal.aborted)
       await new Promise<void>((resolveAbort) =>
         controller.signal.addEventListener('abort', () => resolveAbort(), { once: true }),

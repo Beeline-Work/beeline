@@ -5,7 +5,7 @@
 > Fly monolith. The unified release has no legacy host mirror. The runbook is
 > retained only as cutover history; do not execute its mirror-enable steps.
 
-Helpers select the newest release at startup, on a pushed release notice, and once after socket registration from `https://usebeeline.app/dl/manifest.json`. That URL and
+Helpers boot a verified staged release or the verified active release from local disk, then check for the newest release on a pushed release notice and once after socket registration from `https://usebeeline.app/dl/manifest.json`. That URL and
 its relative platform archive and `.sha256` paths remain unchanged.
 The recovery bootstrap migrates old installations forward to one native supervised helper.
 Cloudflare remains the public TLS endpoint; GitHub Pages becomes the origin
@@ -155,9 +155,11 @@ renewing the drain deadline. Forced server minimums use the same transaction
 with immediate interruption and a minimum-version check.
 
 A stable `<prefix>/lib/beeline-bootstrap.mjs` and recorded Node path select the
-body before importing it. `<prefix>/lib/beeline` remains an atomically renamed
+body before importing it. Verified local startup never waits for publication or
+downloads; freshness reconciliation runs while the helper serves.
+`<prefix>/lib/beeline` remains an atomically renamed
 symlink into immutable `beeline-releases/<id>`. Startup serves the last verified
-release if publication is unavailable, with freshness explicitly unconfirmed;
+release while publication freshness is still unconfirmed;
 it never disables the native restart owner. There is no rollback coordinator
 or detached production fallback. `BEELINE_UPDATE_DISABLE=1` disables automatic
 freshness checks, and is visible in local status; explicit updates still work.
@@ -186,15 +188,18 @@ Paths and commands below are relative to the repository root. Read these invaria
 
 - **`<prefix>/lib/beeline` is the active bundle anchor**, a symlink into `lib/beeline-releases/<id>` swung by rename(2) (`self-update.ts`). `BEELINE_UPDATE_DISABLE=1` opts out of automatic updates. Never suggest `npx beeline` (an unrelated package); recovery is `npx usebeeline update`.
 - **Update restarts are silent.** `runMachineHelper` closes the machine link before agent teardown with `HELPER_UPDATE_CLOSE_CODE`/`HELPER_UPDATE_CLOSE_REASON`; `DaemonAgentSession` releases presence without an offline notice only for that signal. Unexpected loss still notices the owner (`machine-offline.test.ts`, `daemon-live.test.ts`, `machine-helper.test.ts`). Release delivery pushes helpers only (`release-notify.ts`).
+- **Linux handovers use a fixed one-second native restart delay.** `native-helper.ts` renders no escalating restart steps. The running helper refreshes the installed unit with `daemon-reload`, without restarting the service. `recovery.startup.test.ts` proves verified staged/active boot makes no publication request; `systemd.test.ts` covers unit convergence.
 - **Routine updates wait at most five minutes for a quiet gap.** `ReleaseNotifier` (`apps/server/src/release-notify.ts`) pushes published helper releases; `MachineLink` (`apps/body/src/machine-link.ts`) reconciles the manifest once after the first registration on each socket, with no periodic update check. `ReleaseTransaction` (`managed-update.ts`) and `quiesceHostedAgents` (`machine-helper.ts`) keep intake open until idle or the deadline, then hand over; the successor activates the selected release. Deadline interruptions use `force-update-journal.ts`; the successor replays `update-interrupted` receipts and reclaims the same commands without spending retries. `machine-helper.test.ts` proves push, reconnect, and both handoffs over isolated HTTP/WebSocket. Installation is checksum verification plus atomic activation; no post-install probe or rollback. Server minimums (426 / `force-update`) interrupt immediately (`managed-update.ts`).
 - `.github/actions/daemon-leg/` builds linux-x64 and darwin bundles; `launchd.ts` supervises macOS (no bwrap). `https://usebeeline.app/dl/manifest.json` stays pinned; runbook `docs/cli-bundle-channel.md`.
 
 ### Installed bundle retention
 
-`self-update.ts` records the displaced bundle as `previousReleaseId`. Activation
-and machine-helper startup prune the release directory under the install lock,
+`self-update.ts` records the displaced bundle as `previousReleaseId`. Explicit
+activation and the serving machine helper prune the release directory under the install lock,
 keeping the current bundle and one previous bundle for rollback. A staged update
 and a still-loaded predecessor remain protected only during the update handoff.
+Bootstrap activation defers pruning until the helper serves, so old bundle
+deletion cannot delay successor import.
 Old installations without rollback metadata select one recent predecessor once;
 later installs use the recorded previous version. Historical release symlinks
 are unlinked without following their targets. Regression coverage:

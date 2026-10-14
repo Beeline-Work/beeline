@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -29,9 +29,7 @@ Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=%h/.local/bin/beeline helper-bootstrap
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
-RestartSec=5s
-RestartSteps=5
-RestartMaxDelaySec=60s
+RestartSec=1s
 WatchdogSec=180s
 CPUWeight=1000
 IOWeight=1000
@@ -53,6 +51,26 @@ AppArmorProfile=-unconfined
 [Install]
 WantedBy=default.target
 `;
+}
+
+/** Converge an already-running install's restart policy without a lifecycle action. */
+export async function refreshSystemdHelperUnit(options: {
+  env?: NodeJS.ProcessEnv; run?: NativeRunner;
+} = {}): Promise<void> {
+  const env = options.env ?? process.env;
+  assertLifecycleTestIsolation(env, Boolean(options.run));
+  const directory = resolve(env.XDG_CONFIG_HOME || resolve(homeFor(env), '.config'), 'systemd/user');
+  const path = resolve(directory, SYSTEMD_HELPER_UNIT_NAME);
+  if ((await readFile(path, 'utf8').catch(() => '')) !== helperServiceUnit()) {
+    await mkdir(directory, { recursive: true, mode: 0o700 });
+    const temporary = `${path}.${process.pid}.tmp`;
+    await writeFile(temporary, helperServiceUnit(), { mode: 0o600 });
+    await rename(temporary, path);
+  }
+  // Retry even when the file matches: a previous helper may have died or
+  // lost the bus between rename and daemon-reload.
+  if (options.run) await options.run(['daemon-reload']);
+  else await exec('systemctl', ['--user', 'daemon-reload'], { env, timeout: 5_000 });
 }
 
 function homeFor(env: NodeJS.ProcessEnv): string {

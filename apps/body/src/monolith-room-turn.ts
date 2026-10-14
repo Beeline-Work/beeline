@@ -20,6 +20,7 @@ import {
 import { type SystemEvent } from '@beeline/api-contract/daemon';
 import {
   AcpClient,
+  openAcpConversation,
   AcpTurnBackstopError,
   TURN_BACKSTOP_MS,
   isPureRetryNarration,
@@ -103,7 +104,7 @@ import {
   type EmptyTurnExplanation,
 } from './empty-turn.js';
 import type { GrantCommandRunner, GrantRunnerEndpoint, GrantWritePolicy } from './grant-runner.js';
-import { roomShellCapability } from './harness-capabilities.js';
+import { harnessSupportsNativeSessionResume, roomShellCapability } from './harness-capabilities.js';
 import {
   agentArgsWithModelSelection,
   applyAgentModelSelection,
@@ -511,7 +512,7 @@ export class MonolithRoomTurnLoop {
   /** The `agent-home.ts` overlay this session writes into; a Room grant keeps it. */
   private sessionStateDirs: string[] = [];
   /** What this exact ACP session has already been prompted with (`warm-transcript.ts`). */
-  private readonly warmTranscript = new WarmTranscript();
+  private readonly warmTranscript: WarmTranscript;
   /** What each turn section last sent to this exact ACP session hashed to (`prompt-section-baseline.ts`). */
   private readonly sectionBaseline = new PromptSectionBaseline();
   /** Local copies already delivered this session, by message id, so transcript renders reuse them. */
@@ -526,6 +527,9 @@ export class MonolithRoomTurnLoop {
 
   constructor(private readonly options: MonolithRoomTurnOptions) {
     this.agent = runtimeIdentity(options.runtime.agent);
+    const nativeResume = harnessSupportsNativeSessionResume(options.config.agentCommand ?? options.config.agentBinary);
+    this.warmTranscript = new WarmTranscript(nativeResume && options.config.agentHomeRoot
+      ? { path: join(options.config.agentHomeRoot, 'warm-transcript.json') } : {});
     this.commandContext = new CommandExecutionContext(options.config.agentHomeRoot);
     this.squireRelay = new SquireTaskRelay(
       this.agent.publicKey,
@@ -673,6 +677,9 @@ export class MonolithRoomTurnLoop {
   interruptForServerMinimum(): InterruptedTurn | undefined {
     const active = this.activeTurn;
     if (!active || active.cancelled) return undefined;
+    // A long-running prompt is active, not 30 minutes idle. Keep its native
+    // conversation eligible when the successor reclaims this journaled turn.
+    this.warmTranscript.complete(this.sessionId, []);
     active.cancelled = true;
     if (this.client && this.sessionId) this.client.sessionCancel(this.sessionId);
     return {
@@ -782,7 +789,8 @@ export class MonolithRoomTurnLoop {
     this.claudeLoginWatch = undefined;
   }
 
-  private async discardSession(): Promise<void> {
+  private async discardSession(preserveConversation = false): Promise<void> {
+    if (!preserveConversation) this.warmTranscript.forgetSession();
     const client = this.client;
     this.stopClaudeLoginWatch();
     this.client = undefined;
@@ -1279,12 +1287,22 @@ export class MonolithRoomTurnLoop {
     this.sessionSurface = directMessage ? 'dm' : 'room';
     this.turnInstructionPrefix = session.turnPrefix;
     this.sessionPromptSectionIds = session.report.map((section) => section.id);
-    const opened = await this.client.sessionNew({
+    const conversationFingerprint = JSON.stringify([fingerprint, command,
+      this.options.config.agentArgs, this.options.cwd, this.turnCheckout?.commit]);
+    const opened = await openAcpConversation({
+      client: this.client,
+      agentCommand: harnessLabel,
+      resumeSessionId: this.warmTranscript.resumeSessionId(conversationFingerprint),
       cwd: this.options.cwd,
       mcpServers: servers,
       mode: 'readonly',
-      systemPrompt: session.systemPrompt,
+      create: () => this.client!.sessionNew({
+        cwd: this.options.cwd, mcpServers: servers, mode: 'readonly', systemPrompt: session.systemPrompt,
+      }),
+      onResumeFailure: error => console.warn('[body] native conversation unavailable; starting cold:', error),
     });
+    if (opened.kind === 'created') this.warmTranscript.forgetSession();
+    this.warmTranscript.rememberSession(opened.sessionId, conversationFingerprint);
     this.sessionId = opened.sessionId;
     this.sessionCwd = this.options.cwd;
     this.sessionCommit = this.turnCheckout?.commit;
@@ -1360,7 +1378,7 @@ export class MonolithRoomTurnLoop {
       onStateChange: (state) => {
         if (state === 'waiting-for-slot') trace?.noteCapacityWait();
       },
-      suspend: () => this.discardSession(),
+      suspend: () => this.discardSession(true),
     };
   }
 

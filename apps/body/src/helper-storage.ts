@@ -176,7 +176,7 @@ const HISTORY_TREES = [
   'user/.local/share/opencode/storage/part',
 ] as const;
 const HISTORY_FILES = /^(?:codex\/(?:history\.jsonl|session_index\.jsonl|(?:state_\d+|thread_history_\d+)\.sqlite(?:-wal|-shm)?)|user\/\.local\/share\/opencode\/opencode\.db(?:-wal|-shm)?)$/;
-const RESUME_FILES = ['user/.pi/pi-acp/session-map.json'];
+const RESUME_FILES = ['user/.pi/pi-acp/session-map.json', 'warm-transcript.json'];
 
 function retainedPaths(root: string, archived: boolean): string[] {
   const homes = ['agent-home', 'scratch/agent-home'];

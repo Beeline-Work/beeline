@@ -175,47 +175,33 @@ export async function bootstrapMachine(env: NodeJS.ProcessEnv = process.env): Pr
   )
     throw new Error('helper bootstrap requires native service ownership; run beeline start');
   const layout = beelineInstallLayout(env) ?? discoveredBeelineInstallLayout(env);
-  let releaseId: string;
-  try {
-    if (env.BEELINE_UPDATE_DISABLE === '1')
-      throw new Error('automatic release selection disabled by BEELINE_UPDATE_DISABLE');
-    const prepared = await prepareMachineRelease(layout, {
-      env,
-      deadlineAt: Date.now() + 180_000,
-      logger: (line) => console.error(line),
-    });
-    releaseId = prepared.releaseId;
-    await withInstallLock(layout, () => activateRelease(layout, releaseId), {
-      waitMs: Math.max(0, bootDeadlineAt - Date.now()),
-    });
-  } catch (error) {
-    const state = await readUpdateState(layout);
-    const candidates = [state.stagedReleaseId, await activeReleaseId(layout)];
-    const verified = await Promise.all(
-      candidates.map(async (id) =>
-        id &&
-        /^[0-9a-f]{64}$/i.test(
-          (
-            await readFile(resolve(layout.releasesRoot, id, '.stage-ok'), 'utf8').catch(() => '')
-          ).trim(),
-        )
-          ? id
-          : undefined,
-      ),
-    );
-    const candidate = verified.find(Boolean);
-    if (!candidate)
-      throw new Error(
-        `startup release selection failed; no verified runnable release: ${String(error)}`,
-      );
-    releaseId = candidate;
-    console.error(
-      `[beeline] serving verified ${releaseId}; release freshness unconfirmed: ${String(error)}`,
-    );
-    await withInstallLock(layout, () => activateRelease(layout, releaseId), {
-      waitMs: Math.max(0, bootDeadlineAt - Date.now()),
-    });
+  // The serving predecessor already verified the staged successor. Never put
+  // publication/download work on the outage path; MachineLink checks freshness
+  // after registration while Room intake is open.
+  const state = await readUpdateState(layout);
+  const active = await activeReleaseId(layout);
+  let releaseId: string | undefined;
+  for (const id of [state.stagedReleaseId, active]) {
+    if (!id || !/^[a-zA-Z0-9][a-zA-Z0-9._-]*$/.test(id)) continue;
+    const digest = await readFile(resolve(layout.releasesRoot, id, '.stage-ok'), 'utf8').catch(() => '');
+    if (/^[0-9a-f]{64}$/i.test(digest.trim()) &&
+        await resolveBundleEntrypoint(resolve(layout.releasesRoot, id))) {
+      releaseId = id;
+      break;
+    }
   }
+  if (!releaseId) {
+    if (env.BEELINE_UPDATE_DISABLE === '1')
+      throw new Error('automatic release selection disabled; no verified runnable release');
+    // Recovery of a missing/broken install still prepares before importing code.
+    releaseId = (await prepareMachineRelease(layout, {
+      env, deadlineAt: Date.now() + 180_000, logger: line => console.error(line),
+    })).releaseId;
+  }
+  if (releaseId !== active)
+    await withInstallLock(layout, () => activateRelease(layout, releaseId!, { deferPruning: true }), {
+      waitMs: Math.max(0, bootDeadlineAt - Date.now()),
+    });
   const entry = await resolveBundleEntrypoint(resolve(layout.releasesRoot, releaseId));
   if (!entry) throw new Error(`selected release ${releaseId} has no body entry`);
   return entry;

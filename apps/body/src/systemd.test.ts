@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanupAgentService, helperServiceUnit, installHelperService, installTrustySquireBrokerService, isCanonicalInstalledLauncher, reloadHelperService, startLocalWatchdog, systemdBrokerUnitPath } from './systemd.js';
 import { squireBrokerInstalledVersion, TRUSTY_SQUIRE_BROKER_UNIT_NAME, trustySquireBrokerUnit } from './squire-host.js';
+import { refreshSystemdHelperUnit } from './native-helper.js';
 const roots: string[] = [];
 
 afterEach(async () => {
@@ -11,6 +12,20 @@ afterEach(async () => {
 });
 
 describe('systemd supervision contract', () => {
+  it('updates a live install restart policy using only daemon-reload', async () => {
+    const home = await mkdtemp(join(tmpdir(), 'beeline-unit-refresh-'));
+    roots.push(home);
+    const env = { ...process.env, HOME: home, XDG_CONFIG_HOME: join(home, '.config') };
+    const path = join(env.XDG_CONFIG_HOME, 'systemd/user/beeline-helper.service');
+    await mkdir(join(env.XDG_CONFIG_HOME, 'systemd/user'), { recursive: true });
+    await writeFile(path, helperServiceUnit().replace('RestartSec=1s', 'RestartSec=5s\nRestartSteps=5\nRestartMaxDelaySec=60s'));
+    const run = vi.fn(async () => ({ stdout: '' }));
+    await refreshSystemdHelperUnit({ env, run });
+    expect(await readFile(path, 'utf8')).toBe(helperServiceUnit());
+    expect(run.mock.calls).toEqual([[['daemon-reload']]]);
+    await refreshSystemdHelperUnit({ env, run });
+    expect(run.mock.calls).toEqual([[['daemon-reload']], [['daemon-reload']]]);
+  });
   it('keeps an idle connected helper alive using only local watchdog progress', async () => {
     vi.useFakeTimers();
     try {
@@ -95,6 +110,9 @@ describe('systemd supervision contract', () => {
     expect(unit).toContain('Type=notify');
     expect(unit).toContain('Environment=BEELINE_MANAGED_BY_SYSTEMD=1');
     expect(unit).toContain('Restart=always');
+    expect(unit).toContain('RestartSec=1s');
+    expect(unit).not.toContain('RestartSteps=');
+    expect(unit).not.toContain('RestartMaxDelaySec=');
     expect(unit).toContain('ExecStart=%h/.local/bin/beeline helper-bootstrap');
     expect(unit).toContain('ExecReload=/bin/kill -HUP $MAINPID');
     expect(unit).not.toContain('RestartPreventExitStatus=');

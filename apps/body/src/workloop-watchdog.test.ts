@@ -113,11 +113,11 @@ it('acknowledges watchdog progress throughout 615 archived refusals while preser
     () => core.requestWorkLoopProgress(), 10, { WATCHDOG_USEC: '180000000' });
   try {
     await vi.waitFor(() => expect(preserve).toHaveBeenCalledTimes(1));
-    // The first optional disk walk is hung, but real reconciliation progress
-    // must acknowledge several watchdog ticks before startup finishes.
+    // Intake is already established while optional preservation and the
+    // archived backlog continue. Neither may delay readiness or the watchdog.
     await vi.waitFor(() => expect(feed.mock.calls.length).toBeGreaterThanOrEqual(3), { timeout: 1_000 });
-    expect(established).not.toHaveBeenCalled();
-    await vi.waitFor(() => expect(established).toHaveBeenCalledTimes(1), { timeout: 10_000 });
+    expect(established).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(pending.size).toBe(0), { timeout: 25_000 });
     expect(pending.size).toBe(0);
     expect(await readdir(resolve(root, 'corner-cleanup-refusals'))).toHaveLength(615);
     expect(preserve).toHaveBeenCalledTimes(1); // one job across the whole backlog
@@ -128,4 +128,4 @@ it('acknowledges watchdog progress throughout 615 archived refusals while preser
   } finally {
     stop(); controller.abort(); release(); await running;
   }
-});
+}, 30_000);

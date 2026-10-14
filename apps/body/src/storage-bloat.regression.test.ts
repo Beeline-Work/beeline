@@ -69,9 +69,12 @@ it('expires old video frames beside recent frames in an open agent home, and rem
   await age(dirname(old));
   const recent = await file(resolve(room, 'agent-home/video-build/new/frame.png'));
   const transcript = await file(resolve(room, 'agent-home/codex/sessions/transcript.jsonl'));
+  const transcriptMemory = await file(resolve(room, 'agent-home/warm-transcript.json'));
+  await age(transcriptMemory);
   const input = { runtimeDir, inUse: async () => false, withIdleRoom: async (_id: string, task: () => Promise<void>) => { await task(); return true; } };
   await reclaimHelperStorage({ ...input, readStates: async () => [{ roomId: 'room', archived: false }] });
   expect(await exists(old)).toBe(false); expect(await exists(recent)).toBe(true); expect(await exists(transcript)).toBe(true);
+  expect(await exists(transcriptMemory)).toBe(true);
   await chmod(dirname(recent), 0o500);
   await reclaimHelperStorage({ ...input, readStates: async () => [{ roomId: 'room', archived: true }] });
   expect(await exists(room)).toBe(false); // The server keeps the transcript.

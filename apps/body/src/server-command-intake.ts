@@ -232,6 +232,7 @@ export async function runServerCommandIntake(options: {
               // The claim is authoritative even if the snapshot predates
               // recovery coalescing. Older servers leave the snapshot intact.
               const recoveryContext = claim?.recoveryContext ?? command.recoveryContext;
+              if (claim?.source) command = { ...command, source: claim.source };
               if (claim?.activitySource) command = {
                 ...command, source: { ...command.source, ...claim.activitySource },
               };
@@ -244,7 +245,7 @@ export async function runServerCommandIntake(options: {
               };
               const coalesced = claim?.coalescedContext ?? command.coalescedContext;
               if (coalesced) command = { ...command, source: { ...command.source,
-                body: command.source.body + '\nAdditional commander wakes in this turn:\n' + coalesced } };
+                body: command.source.body + '\nAdditional inbox wakes in arrival order:\n' + coalesced } };
               claimSucceeded = true;
               break;
             } catch (error) {

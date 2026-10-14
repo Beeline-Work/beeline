@@ -4,6 +4,7 @@ import {
   emitEvent,
   listEventSubscriptions,
   subscribeEvents,
+  setWakeDelivery,
   type AgentScheduleDeps,
 } from './read-only-mcp.js';
 
@@ -25,6 +26,15 @@ function deps(
 }
 
 describe('beeline-agent event tools', () => {
+  it('sets its own whole inbox setting without transmitting an agent identity', async () => {
+    const calls: Call[] = [];
+    const result = await setWakeDelivery({ delivery: 'batch:5', agentId: 'someone-else' },
+      deps(calls, { setWakeDelivery: { delivery: 'batch:5' } }));
+    expect(calls).toEqual([{ name: 'setWakeDelivery', input: { roomId: 'room-1', delivery: 'batch:5' } }]);
+    expect(result).toContain('batch:5');
+    await expect(setWakeDelivery({ delivery: 'batch:0' }, deps(calls))).rejects.toThrow('positive whole minutes');
+    expect(calls).toHaveLength(1);
+  });
   it('an agent subscribes itself, and the reply names the whole resulting list', async () => {
     const calls: Call[] = [];
     const result = await subscribeEvents(
@@ -147,7 +157,7 @@ describe('beeline-agent event tools', () => {
   it('mounts the event tools on the agent surface, in a Room and in a direct message', () => {
     const room = agentToolsFor(true, false).map((tool) => tool.name);
     const dm = agentToolsFor(true, true).map((tool) => tool.name);
-    for (const name of ['subscribe_events', 'list_event_subscriptions', 'emit_event']) {
+    for (const name of ['subscribe_events', 'list_event_subscriptions', 'emit_event', 'set_wake_delivery', 'get_wake_delivery']) {
       expect(room).toContain(name);
       expect(dm).toContain(name);
     }

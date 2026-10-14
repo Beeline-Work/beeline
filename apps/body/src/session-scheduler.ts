@@ -167,10 +167,9 @@ export class SessionScheduler {
   }
 
   /** Fence all hosted turn launches while shared storage is measured/removed. */
-  static async withIdleHostStorage(task: () => Promise<void>): Promise<boolean> {
+  static async withIdleHostStorage(task: () => Promise<void>, options: { allowLiveSessions?: boolean } = {}): Promise<boolean> {
     if (this.hostStoragePaused || this.hostRoomStorage.size || [...this.instances].some(scheduler =>
-      scheduler.live.size || scheduler.busy.size || scheduler.queues.size ||
-      scheduler.drainingKeys.size || scheduler.suspending.size || scheduler.storageMaintenance.size)) return false;
+      (!options.allowLiveSessions && (scheduler.live.size || scheduler.busy.size || scheduler.queues.size || scheduler.drainingKeys.size)) || scheduler.suspending.size || scheduler.storageMaintenance.size)) return false;
     this.hostStoragePaused = true;
     try { await task(); return true; }
     finally {

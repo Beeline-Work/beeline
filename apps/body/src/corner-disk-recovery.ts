@@ -1,7 +1,8 @@
 import { execFile } from 'node:child_process';
-import { lstat, readdir, realpath, rm } from 'node:fs/promises';
+import { readdir } from 'node:fs/promises';
 import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
+import { ordinaryDirectory, removeStoragePath } from './storage-filesystem.js';
 import { writePrivateFileAtomically } from './atomic-private-file.js';
 
 const execFileAsync = promisify(execFile);
@@ -87,8 +88,7 @@ export async function preserveUnpublishedCornerWorktree(
 ): Promise<{ pointer: string; pruned: string[] }> {
   const checkout = resolve(worktree.path);
   const pointer = cornerRecoveryPointerPath(worktree);
-  const info = await lstat(checkout);
-  if (!info.isDirectory() || (await realpath(checkout)) !== checkout) {
+  if (!await ordinaryDirectory(checkout)) {
     throw new Error('refusing to prune a non-canonical corner checkout');
   }
   const head = (await git(checkout, ['rev-parse', '--verify', 'HEAD'])).trim();
@@ -114,7 +114,7 @@ export async function preserveUnpublishedCornerWorktree(
       const path = join(current.path, entry.name);
       if (GENERATED_DIRS.has(entry.name)) {
         if (await ignoredAndUntracked(checkout, path) && shouldContinue()) {
-          await rm(path, { recursive: true, force: true });
+          await removeStoragePath(path);
           pruned.push(relative(checkout, path));
         }
         continue;

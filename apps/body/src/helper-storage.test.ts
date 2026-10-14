@@ -36,7 +36,7 @@ async function age(path: string): Promise<void> {
 }
 
 describe('helper private storage reclamation', () => {
-  it('requires affirmative lifecycle; an open item qualifies only when every descendant has been unused for seven days', async () => {
+  it('requires affirmative lifecycle and expires stale cache files independently of fresh siblings', async () => {
     const f = await fixture();
     const cache = await f.file('agent-home/cache/stale-download');
     await age(dirname(cache));
@@ -45,8 +45,9 @@ describe('helper private storage reclamation', () => {
       expect(await exists(cache)).toBe(true);
     }
     const fresh = await f.file('agent-home/cache/newly-used');
-    expect(await reclaimHelperStorage(f.input)).toEqual([]);
-    expect(await exists(cache)).toBe(true);
+    expect(await reclaimHelperStorage(f.input)).toHaveLength(1);
+    expect(await exists(cache)).toBe(false);
+    expect(await exists(fresh)).toBe(true);
     await age(dirname(cache));
     expect(await reclaimHelperStorage(f.input)).toHaveLength(1);
     expect(await exists(cache)).toBe(false);
@@ -315,7 +316,7 @@ it('preserves old package/cloud/signing credentials and keeps a cache whole when
   await age(f.root);
   await reclaimHelperStorage(f.input);
   for (const path of credentials) expect(await exists(join(f.root, 'agent-home', path)), path).toBe(true);
-  expect(await exists(cache)).toBe(true); // Atomic cache: preserve the complete item, never carve out its token.
+  expect(await exists(cache)).toBe(false); // Keep the token, expire unrelated downloads.
 });
 
 

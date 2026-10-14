@@ -1,14 +1,15 @@
-import { lstat, readdir, readFile, readlink, realpath, rm } from 'node:fs/promises';
+import { lstat, readdir, readFile, readlink } from 'node:fs/promises';
 import { resolve, sep, relative } from 'node:path';
 import { homedir } from 'node:os';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 const execFileAsync = promisify(execFile);
-import { trustySquireLegacyStorePaths } from './trusty-squire-storage.js';
+import { canonicalStoragePath, ordinaryDirectory, storageTree, isSquirePath, removeStoragePath, type TreeEntry } from './storage-filesystem.js';
+export { ordinaryDirectory, storageTree, isSquirePath, removeStoragePath } from './storage-filesystem.js';
 import { SHARED_CREDENTIALS, writeBackRoomClaudeLogin } from './agent-home.js';
 
 export const STORAGE_ITEM_UNUSED_MS = 7 * 24 * 60 * 60_000;
-export interface StorageRoomState { roomId: string; archived: boolean; workspaceId?: string }
+export interface StorageRoomState { roomId: string; archived: boolean; workspaceId?: string; landedHeadSha?: string }
 export interface StorageReclaimEntry {
   roomId: string;
   path: string;
@@ -17,40 +18,8 @@ export interface StorageReclaimEntry {
   freedBytes: number;
 }
 
-/** Refuse links in every ancestor, including the runtime root. */
-export async function ordinaryDirectory(path: string): Promise<boolean> {
-  const info = await lstat(path).catch(() => undefined);
-  return Boolean(info?.isDirectory() && await realpath(path) === resolve(path));
-}
-
-type TreeEntry = { dev: number; ino: number; blocks: number; links: number; directory: boolean; lastUsed: number };
 type Inode = { blocks: number; links: number; paths: string[]; directory: boolean; lastUsed: number };
 
-// Node's directory APIs cannot request O_NOATIME. Linux's read-only inventory
-// uses Python's fd-based listdir, so neither a dry run nor an eligibility scan
-// changes the access dates it is deciding from. No file contents are read.
-const TREE_INVENTORY = String.raw`
-import os, sys, json, stat
-root=sys.argv[1]
-rows=[]
-def visit(path):
-    s=os.lstat(path)
-    directory=stat.S_ISDIR(s.st_mode)
-    rows.append([path,s.st_dev,s.st_ino,s.st_blocks*512,s.st_nlink,directory,max(s.st_atime_ns,s.st_mtime_ns)/1000000])
-    if directory and os.path.basename(path) not in ['.trusty-squire','trusty-squire','squire-host-config']:
-        fd=os.open(path,os.O_RDONLY|os.O_DIRECTORY|os.O_NOATIME|os.O_NOFOLLOW)
-        try: names=os.listdir(fd)
-        finally: os.close(fd)
-        for name in names: visit(os.path.join(path,name))
-visit(root)
-print(json.dumps(rows))
-`;
-export async function storageTree(root: string): Promise<Map<string, TreeEntry>> {
-  const { stdout } = await execFileAsync('/usr/bin/python3', ['-c', TREE_INVENTORY, root], { maxBuffer: 128 * 1024 * 1024 });
-  const rows = JSON.parse(stdout) as Array<[string, number, number, number, number, boolean, number]>;
-  return new Map(rows.map(([path, dev, ino, blocks, links, directory, lastUsed]) =>
-    [path, { dev, ino, blocks, links, directory, lastUsed }]));
-}
 const sortedInventoryPaths = new WeakMap<Map<string, TreeEntry>, string[]>();
 function inventory(path: string, tree: Map<string, TreeEntry>): Map<string, Inode> {
   const inodes = new Map<string, Inode>();
@@ -112,6 +81,12 @@ print(json.dumps({'paths':paths,'uncertain':uncertain}))
 /** Capture OS evidence once per pass. Unreadable same-user evidence fails closed.
  * No signals are sent and no process or helper lifecycle is changed. */
 export async function capturePrivateProcessUse(): Promise<(root: string) => boolean> {
+  if (process.platform === 'darwin' && process.getuid) {
+    try {
+      const { stdout } = await execFileAsync('/usr/sbin/lsof', ['-nP', '-a', '-u', String(process.getuid()), '-Fn'], { maxBuffer: 32 * 1024 * 1024 });
+      return processPathIndex(stdout.split('\n').filter(line => line.startsWith('n/')).map(line => line.slice(1)));
+    } catch { return () => true; }
+  }
   if (process.platform !== 'linux' || !process.getuid) return () => true;
   const paths: string[] = [];
   for (const pid of await readdir('/proc')) {
@@ -158,10 +133,11 @@ export async function capturePrivateProcessUse(): Promise<(root: string) => bool
 function processPathIndex(values: string[]): (root: string) => boolean {
   const paths = [...new Set(values.map(value => {
     const path = value.startsWith('/') ? value : value.slice(value.indexOf('=') + 1);
-    return path.replace(/ \(deleted\)$/, '');
+    return path.startsWith('/') ? canonicalStoragePath(path.replace(/ \(deleted\)$/, '')) : '';
   }).filter(path => path.startsWith('/')))].sort();
   const exact = new Set(paths);
   return root => {
+    root = canonicalStoragePath(root);
     if (exact.has(root)) return true;
     const prefix = `${root}${sep}`;
     let low = 0, high = paths.length;
@@ -293,8 +269,10 @@ function disposalObjects(root: string, archived: boolean, tree: Map<string, Tree
       const splitInstances = /(?:user\/\.android\/avd|android-instances)$/.test(rel);
       if (info.directory && disposable.includes(path) && !splitInstances) {
         if (!containsProtected(path)) objects.push(path);
+        else visit(path);
       } else if (info.directory && (containers.has(path) || splitInstances)) visit(path);
       else if (!containsProtected(path)) objects.push(path);
+      else if (info.directory) visit(path);
     }
   };
   visit(root);
@@ -318,13 +296,33 @@ export async function settleClaudeLogin(root: string, operatorHome: string): Pro
 }
 
 /** A live bind mount must never turn private cleanup into shared-cache cleanup. */
-export async function hasMount(path: string): Promise<boolean> {
-  if (process.platform !== 'linux') return true;
-  const mounts = await readFile('/proc/self/mountinfo', 'utf8');
-  return mounts.split('\n').some(line => {
-    const mount = line.split(' ')[4]?.replace(/\\([0-7]{3})/g, (_, octal: string) => String.fromCharCode(parseInt(octal, 8)));
-    return mount === path || mount?.startsWith(`${path}/`);
-  });
+async function captureMountUse(): Promise<(path: string) => boolean> {
+  let mounts: string[];
+  if (process.platform === 'darwin') {
+    const { stdout } = await execFileAsync('/sbin/mount', []);
+    mounts = stdout.split('\n').flatMap(line => {
+      const raw = / on (.+) \(/.exec(line)?.[1];
+      return raw ? [canonicalStoragePath(raw)] : [];
+    });
+  } else if (process.platform === 'linux') {
+    mounts = (await readFile('/proc/self/mountinfo', 'utf8')).split('\n').flatMap(line => {
+      const mount = line.split(' ')[4]?.replace(/\\([0-7]{3})/g, (_, octal: string) => String.fromCharCode(parseInt(octal, 8)));
+      return mount ? [mount] : [];
+    });
+  } else return () => true;
+  return path => {
+    const target = canonicalStoragePath(path);
+    return mounts.some(mount => mount === target || mount.startsWith(`${target}/`));
+  };
+}
+export async function hasMount(path: string): Promise<boolean> { return (await captureMountUse())(path); }
+function observeMountUse(): (path: string) => Promise<boolean> {
+  let capturedAt = -Infinity;
+  let mounted: (path: string) => boolean = () => true;
+  return async path => {
+    if (Date.now() - capturedAt >= 1_000) { mounted = await captureMountUse(); capturedAt = Date.now(); }
+    return mounted(path);
+  };
 }
 
 /** Decisions come only from explicit server state. The lease prevents new harness
@@ -352,6 +350,7 @@ export async function reclaimHelperStorage(input: {
   const entries: StorageReclaimEntry[] = [];
   let capturedAt = -Infinity;
   let capturedUse: (root: string) => boolean = () => true;
+  const mounted = observeMountUse();
   const observedUse = input.inUse ?? (async (root: string) => {
     if (Date.now() - capturedAt >= 1_000) {
       capturedUse = await capturePrivateProcessUse();
@@ -372,7 +371,8 @@ export async function reclaimHelperStorage(input: {
       if (!input.dryRun && !await settleClaudeLogin(root, input.operatorHome ?? homedir())) return;
       const tree = await storageTree(root);
       const grouped = new Map<string, string[]>();
-      for (const path of disposalObjects(root, state.archived, tree)) {
+      const candidates = disposalObjects(root, state.archived, tree);
+      for (const path of state.archived ? candidates : candidates.flatMap(path => tree.get(path)?.directory ? unusedStorageObjects(path, tree, input.now ?? Date.now()) : [path])) {
         const databaseKey = path.replace(/\.(sqlite|db)(?:-wal|-shm)$/, '.$1');
         const key = /\/avd\/[^/]+\.ini$/.test(databaseKey) ? databaseKey.replace(/\.ini$/, '.avd') : databaseKey;
         const paths = grouped.get(key) ?? [];
@@ -382,7 +382,7 @@ export async function reclaimHelperStorage(input: {
       const removedLinks = new Map<string, number>();
       for (const [path, objectPaths] of grouped) {
         await input.progress?.();
-        if ((await Promise.all(objectPaths.map(hasMount))).some(Boolean)) continue;
+        if ((await Promise.all(objectPaths.map(mounted))).some(Boolean)) continue;
         const before = new Map<string, Inode>();
         for (const objectPath of objectPaths) {
           for (const [key, inode] of inventory(objectPath, tree)) {
@@ -400,7 +400,7 @@ export async function reclaimHelperStorage(input: {
         // Recheck orphan activity after the potentially long filesystem walk.
         if (await ownerInUse() || await emulatorLeased(root, input.emulatorLeaseRoot)) return;
         let freedBytes = 0;
-        if (!input.dryRun) for (const objectPath of objectPaths) await rm(objectPath, { recursive: true });
+        if (!input.dryRun) for (const objectPath of objectPaths) await removeStoragePath(objectPath, tree);
         // Only a successfully removed object contributes. Charge a shared
         // inode on its last removed link, including links across whole items;
         // operator/shared-checkout links outside these objects are never charged.
@@ -415,17 +415,10 @@ export async function reclaimHelperStorage(input: {
       }
     }).catch(error => {
       if (input.onError) input.onError(room.name, error);
-      else console.error(`[body] private storage cleanup deferred for Room ${room.name}; inventory, login or removal did not settle`);
+      else console.error(`[body] private storage cleanup deferred for Room ${room.name}:`, error);
     });
   }
   return entries;
-}
-
-/** Hard exclusion at every depth, including the host/legacy Squire stores. */
-export function isSquirePath(path: string): boolean {
-  const absolute = resolve(path);
-  return absolute.split(sep).some(part => ['.trusty-squire', 'trusty-squire', 'squire-host-config'].includes(part)) ||
-    trustySquireLegacyStorePaths().some(root => absolute === root || absolute.startsWith(`${root}${sep}`));
 }
 
 const squireTreeIndex = new WeakMap<Map<string, TreeEntry>, { ancestors: Set<string>; children: Map<string, string[]> }>();
@@ -452,6 +445,34 @@ function wholeObjectsExceptSquire(root: string, tree: Map<string, TreeEntry>): s
   return (index.children.get(root) ?? []).flatMap(path => wholeObjectsExceptSquire(path, tree));
 }
 
+/** Directory timestamps describe membership changes, not use of every file.
+ * Remove an old subtree at once, or descend around recent siblings. */
+const expirationIndexes = new WeakMap<Map<string, TreeEntry>, { children: Map<string, string[]>; newest: Map<string, number> }>();
+function unusedStorageObjects(root: string, tree: Map<string, TreeEntry>, now: number): string[] {
+  let index = expirationIndexes.get(tree);
+  if (!index) {
+    const children = new Map<string, string[]>();
+    const newest = new Map<string, number>();
+    for (const [path, item] of tree) {
+      const parent = resolve(path, '..');
+      const values = children.get(parent) ?? []; values.push(path); children.set(parent, values);
+      newest.set(path, Number.isFinite(item.lastUsed) ? item.lastUsed : Infinity);
+    }
+    for (const path of [...tree.keys()].sort((a, b) => b.length - a.length)) {
+      const parent = resolve(path, '..');
+      if (newest.has(parent)) newest.set(parent, Math.max(newest.get(parent)!, newest.get(path)!));
+    }
+    index = { children, newest }; expirationIndexes.set(tree, index);
+  }
+  if (!tree.has(root)) return [];
+  if (!tree.get(root)!.directory && /\.(sqlite|db)(?:-wal|-shm)?$/.test(root)) {
+    const base = root.replace(/\.(sqlite|db)(?:-wal|-shm)?$/, '.$1');
+    if ([base, `${base}-wal`, `${base}-shm`].some(path => index!.newest.has(path) && now - index!.newest.get(path)! < STORAGE_ITEM_UNUSED_MS)) return [];
+  }
+  if (now - index.newest.get(root)! >= STORAGE_ITEM_UNUSED_MS) return [root];
+  return (index.children.get(root) ?? []).flatMap(path => unusedStorageObjects(path, tree, now));
+}
+
 export interface WholeStorageOptions {
   dryRun?: boolean;
   now?: number;
@@ -461,6 +482,9 @@ export interface WholeStorageOptions {
   log?: (entry: StorageReclaimEntry) => void;
   beforeRemove?: () => Promise<boolean>;
   onError?: (path: string, error: unknown) => void;
+  /** Expire unused files independently inside regenerable caches. */
+  expireFiles?: boolean;
+  landedHeadSha?: string;
 }
 
 /** An ended owner removes all non-Squire bytes. An idle object is atomic:
@@ -471,15 +495,21 @@ export async function reclaimWholeStorageObject(
   if (isSquirePath(root) || !await ordinaryDirectory(resolve(root, '..'))) return [];
   const info = await lstat(root).catch(() => undefined);
   if (!info || info.isSymbolicLink()) return [];
-  const inUse = options.inUse ?? (async (path: string) => (await capturePrivateProcessUse())(path));
-  if (await inUse(root) || await hasMount(root) || await emulatorLeased(root, options.emulatorLeaseRoot)) return [];
+  let capturedAt = -Infinity;
+  const mounted = observeMountUse();
+  let processUse: (path: string) => boolean = () => true;
+  const inUse = options.inUse ?? (async (path: string) => {
+    if (Date.now() - capturedAt >= 1_000) { processUse = await capturePrivateProcessUse(); capturedAt = Date.now(); }
+    return processUse(path);
+  });
+  if ((!options.expireFiles && await inUse(root)) || await mounted(root) || await emulatorLeased(root, options.emulatorLeaseRoot)) return [];
   const tree = await storageTree(root).catch(error => {
     options.onError?.(root, error);
     return undefined;
   });
   if (!tree) return [];
   if (!ended && [...tree.keys()].some(path => isSquirePath(path) || /(?:^|\/)(?:(?:chrome|chromium|browser|firefox)[-_]?profiles?|\.expo)$/.test(path))) return [];
-  if (!ended && [...tree.values()].some(item => !Number.isFinite(item.lastUsed) ||
+  if (!ended && !options.expireFiles && [...tree.values()].some(item => !Number.isFinite(item.lastUsed) ||
       (options.now ?? Date.now()) - item.lastUsed < STORAGE_ITEM_UNUSED_MS)) return [];
   if (options.beforeRemove && !await options.beforeRemove()) return [];
   if (!options.dryRun) {
@@ -490,11 +520,14 @@ export async function reclaimWholeStorageObject(
   }
   const entries: StorageReclaimEntry[] = [];
   const links = new Map<string, number>();
-  for (const path of ended ? wholeObjectsExceptSquire(root, tree) : [root]) {
-    if (await inUse(root) || await hasMount(path) || await emulatorLeased(root, options.emulatorLeaseRoot)) break;
+  for (const path of ended ? wholeObjectsExceptSquire(root, tree) : options.expireFiles ? unusedStorageObjects(root, tree, options.now ?? Date.now()) : [root]) {
+    if (await inUse(options.expireFiles ? path : root) || await mounted(path) || await emulatorLeased(root, options.emulatorLeaseRoot)) {
+      if (options.expireFiles) continue;
+      break;
+    }
     const before = inventory(path, tree);
     try {
-      if (!options.dryRun) await rm(path, { recursive: true });
+      if (!options.dryRun) await removeStoragePath(path, tree);
       let freedBytes = 0;
       for (const [key, inode] of before) {
         const removed = (links.get(key) ?? 0) + inode.paths.length;
@@ -505,7 +538,10 @@ export async function reclaimWholeStorageObject(
         allocatedBytes: [...before.values()].reduce((sum, inode) => sum + inode.blocks, 0), freedBytes };
       entries.push(entry);
       options.log?.(entry);
-    } catch (error) { console.warn(`[helper] storage object retained ${path}:`, error); }
+    } catch (error) {
+      options.onError?.(path, error);
+      console.warn(`[helper] storage object retained ${path}:`, error);
+    }
   }
   return entries;
 }
@@ -516,11 +552,17 @@ export async function hasNonSquirePayload(root: string): Promise<boolean> {
   if (isSquirePath(root)) return false;
   const info = await lstat(root).catch(error => { if (error.code === 'ENOENT') return undefined; throw error; });
   if (!info) return false;
+  if (process.platform === 'darwin') {
+    const tree = await storageTree(root);
+    const squire = [...tree.keys()].filter(isSquirePath);
+    return [...tree].some(([path, item]) => !isSquirePath(path) &&
+      (!item.directory || !squire.some(saved => saved.startsWith(`${path}/`))));
+  }
   const script = String.raw`
 import os,sys,stat
 excluded={'.trusty-squire','trusty-squire','squire-host-config'}
 def payload(path):
-    if os.path.basename(path) in excluded: return False
+    if os.path.basename(path) in excluded and not (os.path.basename(path)=='trusty-squire' and os.path.basename(os.path.dirname(path))=='skills'): return False
     if not stat.S_ISDIR(os.lstat(path).st_mode): return True
     fd=os.open(path,os.O_RDONLY|os.O_DIRECTORY|os.O_NOATIME|os.O_NOFOLLOW)
     try: names=os.listdir(fd)

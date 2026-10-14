@@ -188,3 +188,14 @@ Paths and commands below are relative to the repository root. Read these invaria
 - **Update restarts are silent.** `runMachineHelper` closes the machine link before agent teardown with `HELPER_UPDATE_CLOSE_CODE`/`HELPER_UPDATE_CLOSE_REASON`; `DaemonAgentSession` releases presence without an offline notice only for that signal. Unexpected loss still notices the owner (`machine-offline.test.ts`, `daemon-live.test.ts`, `machine-helper.test.ts`). Release delivery pushes helpers only (`release-notify.ts`).
 - **Routine updates wait at most five minutes for a quiet gap.** `ReleaseNotifier` (`apps/server/src/release-notify.ts`) pushes published helper releases; `MachineLink` (`apps/body/src/machine-link.ts`) reconciles the manifest once after the first registration on each socket, with no periodic update check. `ReleaseTransaction` (`managed-update.ts`) and `quiesceHostedAgents` (`machine-helper.ts`) keep intake open until idle or the deadline, then hand over; the successor activates the selected release. Deadline interruptions use `force-update-journal.ts`; the successor replays `update-interrupted` receipts and reclaims the same commands without spending retries. `machine-helper.test.ts` proves push, reconnect, and both handoffs over isolated HTTP/WebSocket. Installation is checksum verification plus atomic activation; no post-install probe or rollback. Server minimums (426 / `force-update`) interrupt immediately (`managed-update.ts`).
 - `.github/actions/daemon-leg/` builds linux-x64 and darwin bundles; `launchd.ts` supervises macOS (no bwrap). `https://usebeeline.app/dl/manifest.json` stays pinned; runbook `docs/cli-bundle-channel.md`.
+
+### Installed bundle retention
+
+`self-update.ts` records the displaced bundle as `previousReleaseId`. Activation
+and machine-helper startup prune the release directory under the install lock,
+keeping the current bundle and one previous bundle for rollback. A staged update
+and a still-loaded predecessor remain protected only during the update handoff.
+Old installations without rollback metadata select one recent predecessor once;
+later installs use the recorded previous version. Historical release symlinks
+are unlinked without following their targets. Regression coverage:
+`storage-bloat.regression.test.ts` and `self-update-layout.test.ts`.

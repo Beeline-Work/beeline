@@ -27,7 +27,7 @@ import { distillTurnFailureReason } from './turn-failure-reason.js';
 import { preserveUnpublishedCornerWorktree, queueCornerPreservation } from './corner-disk-recovery.js';
 import { writePrivateFileAtomically } from './atomic-private-file.js';
 import { agentGitIdentity } from './agent-git-identity.js';
-import { reclaimHelperStorage, capturePrivateProcessUse, storageTree, isSquirePath, hasMount, ordinaryDirectory, type StorageRoomState } from './helper-storage.js';
+import { reclaimHelperStorage, capturePrivateProcessUse, removeStoragePath, storageTree, isSquirePath, hasMount, ordinaryDirectory, type StorageRoomState } from './helper-storage.js';
 import { pruneOpenCheckoutObjects, publishStorageFacts, rememberStorageOwner, discoverLegacyStorageOwners, readStorageOwners, reclaimOwnedCheckout } from './storage-owners.js';
 import { SurfaceHealth, type SurfaceHealthState } from './surface-health.js';
 import { RoomSupervisor } from './room-supervisor.js';
@@ -418,13 +418,8 @@ export async function removeCornerWorktreeAndBranches(
       throw new Error(`corner worktree branch mismatch: expected ${localRef}`);
     }
     await assertCornerWorktreePublished(worktree);
-    await execFileAsync('git', [
-      `--git-dir=${worktree.gitCommonDir}`,
-      'worktree',
-      'remove',
-      '--force',
-      worktree.path,
-    ]);
+    await removeStoragePath(worktree.path);
+    await execFileAsync('git', [`--git-dir=${worktree.gitCommonDir}`, 'worktree', 'prune', '--expire=now']);
   } else if (!localExists) {
     // Idempotent retry after a successful close: nothing local remains to
     // prove ownership, so the remote ref must already be gone.
@@ -2033,10 +2028,13 @@ export class RoomRuntimeCoordinator {
     });
     const archived = new Set(states.filter(state => state.archived).map(state => state.roomId));
     for (const owner of await readStorageOwners(this.runtime.supervisorRoot)) {
-      if (!archived.has(owner.roomId) || owner.kind !== 'room-checkouts') continue;
+      if (!archived.has(owner.roomId)) continue;
+      const state = states.find(state => state.roomId === owner.roomId)!;
+      await rememberStorageOwner(this.runtime.supervisorRoot, { ...owner, ended: true, landedHeadSha: state.landedHeadSha });
       if (this.running.has(owner.roomId) || this.startingRooms.has(owner.roomId)) continue;
       await this.scheduler.withIdleStorage(owner.roomId, async () => {
         await reclaimOwnedCheckout(this.runtime.supervisorRoot, owner, {
+          landedHeadSha: state.landedHeadSha,
           log: entry => console.log(`[body] Room ${owner.roomId} checkout deleted ${entry.path}; freed ${entry.freedBytes} bytes`),
         });
       });

@@ -827,6 +827,8 @@ export type DaemonBootstrapResult = {
     readonly workspaceId?: string;
     readonly roomId: string;
     readonly archived: boolean;
+    /** Exact PR head accepted by a confirmed merge, including squash merges. */
+    readonly landedHeadSha?: string;
   }[];
   readonly workspaceIds: readonly string[];
   /** Command-bearing surfaces to bind before background Room discovery. */

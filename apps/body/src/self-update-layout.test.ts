@@ -750,7 +750,7 @@ describe('install.sh over-install swings the active anchor', () => {
       expect(await readlinkTarget(libAnchor)).toBe(`beeline-releases/${v2.commit}`);
       expectFreshShell(prefix, '2.0.0');
 
-      // --- 4. old artifacts remain inert history; forward activation never selects them -
+      // --- 4. activation removes duplicate releases and historical symlink litter ---
       // A release-id-named symlink under releases/, a timestamp-suffixed
       // duplicate of the active release, and a stray beeline.new.* link
       // inside the previous release — exactly what the captain's host held.
@@ -772,7 +772,7 @@ describe('install.sh over-install swings the active anchor', () => {
       installed = await runInstaller({ home: root, baseUrl: remote.baseUrl, binDir, libAnchor });
       expect(installed.status).toBe(0);
       expect(await readlinkTarget(libAnchor)).toBe(`beeline-releases/${v2.commit}`);
-      expect((await readdir(releasesRoot)).sort()).toEqual(['.state', v1.commit, v2.commit, `${v2.commit}-1787443702`, 'deadbeef1111222233334444555566667777888899'].sort());
+      expect((await readdir(releasesRoot)).sort()).toEqual(['.state', v1.commit, v2.commit].sort());
       expect(await collectInstallerLitter(prefix)).toHaveLength(1);
       expectFreshShell(prefix, '2.0.0');
     } finally {

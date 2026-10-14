@@ -61,6 +61,7 @@
  */
 import { createHash } from 'node:crypto';
 import { constants as fsConstants } from 'node:fs';
+import { ordinaryDirectory, removeStoragePath } from './storage-filesystem.js';
 import { assertInstallTestIsolation } from './lifecycle-test-guard.js';
 import {
   access,
@@ -70,6 +71,7 @@ import {
   mkdir,
   open,
   readFile,
+  readdir,
   rename,
   rm,
   symlink,
@@ -302,6 +304,8 @@ export interface UpdateStateFile {
   notifiedReleaseKey?: string;
   /** Verified release staged by the disposable worker, not yet activated. */
   stagedReleaseId?: string;
+  /** The bundle displaced by the last activation, kept for rollback. */
+  previousReleaseId?: string;
 }
 
 /**
@@ -747,6 +751,7 @@ export async function activateRelease(
 ): Promise<void> {
   assertInstallTestIsolation(layout);
   let releaseDir = join(layout.releasesRoot, releaseId);
+  let previousReleaseId = await activeReleaseId(layout);
   await access(join(releaseDir, BUNDLE_ENTRYPOINT), fsConstants.F_OK);
 
   await mkdir(layout.releasesRoot, { recursive: true });
@@ -767,9 +772,11 @@ export async function activateRelease(
       const preservedId = `${legacyId}-${Date.now()}`;
       await rename(layout.libDir, join(layout.releasesRoot, preservedId));
       await normalizeLegacyBundleShape(join(layout.releasesRoot, preservedId));
+      previousReleaseId = preservedId;
     } catch {
       await rename(layout.libDir, legacyDir);
       await normalizeLegacyBundleShape(legacyDir);
+      previousReleaseId = legacyId;
     }
   }
 
@@ -783,6 +790,10 @@ export async function activateRelease(
   // not per-update churn.
   await installRecoveryLauncher(layout, releaseDir);
   await writeBinForwarders(layout, releaseDir);
+  const state = await readUpdateState(layout);
+  await writeUpdateState(layout, { ...state, stagedReleaseId: undefined,
+    previousReleaseId: previousReleaseId && previousReleaseId !== releaseId ? previousReleaseId : state.previousReleaseId });
+  await pruneHelperReleases(layout);
 }
 
 async function installRecoveryLauncher(
@@ -1004,6 +1015,7 @@ export async function prepareLatestRelease(
             deadlineAt: options.deadlineAt,
           });
     await writeUpdateState(layout, {
+      ...(await readUpdateState(layout)),
       lastCheckAt: Date.now(),
       lastCheckResult: 'verified',
       stagedReleaseId: releaseId,
@@ -1018,4 +1030,42 @@ export async function prepareLatestRelease(
     }).catch(() => undefined);
     throw error;
   }
+}
+
+/** Caller holds the install lock. Startup also repairs installations predating
+ * rollback metadata. Only current + previous are durable; a staged update and
+ * a still-loaded predecessor remain protected during the handoff. */
+export async function pruneHelperReleases(layout: BeelineInstallLayout, loadedRelease?: string): Promise<string[]> {
+  assertInstallTestIsolation(layout);
+  if (!await ordinaryDirectory(layout.releasesRoot)) return [];
+  const active = await activeReleaseId(layout);
+  if (!active) return [];
+  const state = await readUpdateState(layout);
+  const candidates = [];
+  for (const entry of await readdir(layout.releasesRoot, { withFileTypes: true })) {
+    if (entry.name.startsWith('.')) continue;
+    if (entry.isSymbolicLink()) {
+      // Unlink historical install litter without following its target.
+      if (![active, state.previousReleaseId, state.stagedReleaseId, loadedRelease].includes(entry.name))
+        await rm(join(layout.releasesRoot, entry.name), { force: true });
+      continue;
+    }
+    if (!entry.isDirectory()) continue;
+    const path = join(layout.releasesRoot, entry.name);
+    if (!await ordinaryDirectory(path)) continue;
+    candidates.push({ id: entry.name, modified: (await lstat(path)).mtimeMs,
+      bootable: await access(join(path, BUNDLE_ENTRYPOINT)).then(() => true, () => false) });
+  }
+  const recordedPrevious = candidates.find(entry => entry.id === state.previousReleaseId && entry.id !== active && entry.bootable)?.id;
+  const previous = recordedPrevious ?? candidates.filter(entry => entry.bootable && entry.id !== active && entry.id !== state.stagedReleaseId)
+    .sort((a, b) => b.modified - a.modified)[0]?.id;
+  const keep = new Set([active, previous, loadedRelease, state.stagedReleaseId]);
+  const removed: string[] = [];
+  for (const entry of candidates) {
+    if (keep.has(entry.id)) continue;
+    await removeStoragePath(join(layout.releasesRoot, entry.id));
+    removed.push(entry.id);
+  }
+  if (previous !== state.previousReleaseId) await writeUpdateState(layout, { ...state, previousReleaseId: previous });
+  return removed;
 }

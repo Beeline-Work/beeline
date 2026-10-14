@@ -1,11 +1,12 @@
 import type { RoomViewIdentity } from './phone-types.js';
 
-export const VOICE_PROVIDERS = ['aura-2', 'kokoro-deepinfra', 'fish-s2.1-pro'] as const;
-export type VoiceProvider = (typeof VOICE_PROVIDERS)[number];
-export const DEFAULT_VOICE_PROVIDER: VoiceProvider = 'fish-s2.1-pro';
+// Retain legacy wire types for stored settings; only Aura 2 is selectable.
+export type VoiceProvider = 'aura-2' | 'kokoro-deepinfra' | 'fish-s2.1-pro';
+export const VOICE_PROVIDERS: readonly VoiceProvider[] = ['aura-2'];
+export const DEFAULT_VOICE_PROVIDER: VoiceProvider = 'aura-2';
 export const VOICE_QUOTA_MESSAGE = 'Daily voice limit reached. Try again tomorrow.';
 export const VOICE_PROVIDER_LABELS: Record<VoiceProvider, string> = {
-  'aura-2': 'Aura-2',
+  'aura-2': 'Aura 2',
   'kokoro-deepinfra': 'Kokoro',
   'fish-s2.1-pro': 'Fish S2.1 Pro',
 };

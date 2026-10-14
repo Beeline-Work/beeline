@@ -29,7 +29,7 @@ vi.mock('./HullDialog', () => ({
 }));
 import { AgentVoiceSection } from './AgentVoiceSection';
 const catalog = {
-  provider: 'fish-s2.1-pro' as const,
+  provider: 'aura-2' as const,
   currentVoiceId: 'one',
   canChange: true,
   choices: [
@@ -43,7 +43,7 @@ const settle = async () => {
   });
 };
 it('uses the saved server receipt, keeps failed drafts, and ignores stale preview responses after Cancel', async () => {
-  let previewResolve!: (value: { url: string }) => void;
+  let previewResolve!: (value: { wavBase64: string }) => void;
   const api = {
     read: vi.fn(async () => catalog),
     save: vi.fn(async (): Promise<AgentVoiceCatalog> => {
@@ -51,7 +51,7 @@ it('uses the saved server receipt, keeps failed drafts, and ignores stale previe
     }),
     preview: vi.fn(
       () =>
-        new Promise<{ url: string }>((resolve) => {
+        new Promise<{ wavBase64: string }>((resolve) => {
           previewResolve = resolve;
         }),
     ),
@@ -70,7 +70,7 @@ it('uses the saved server receipt, keeps failed drafts, and ignores stale previe
   await act(async () =>
     renderer.root.findByProps({ testID: 'cancel-agent-voice' }).props.onPress(),
   );
-  await act(async () => previewResolve({ url: 'https://platform.r2.fish.audio/sample.mp3' }));
+  await act(async () => previewResolve({ wavBase64: 'YWJj' }));
   expect(renderer.root.findAllByProps({ testID: 'voice-library' })).toHaveLength(0);
   await act(async () =>
     renderer.root.findByProps({ testID: 'change-agent-voice' }).props.onPress(),
@@ -88,7 +88,7 @@ it('uses the saved server receipt, keeps failed drafts, and ignores stale previe
   await act(async () => renderer.root.findByProps({ testID: 'save-agent-voice' }).props.onPress());
   await settle();
   expect(renderer.root.findByProps({ testID: 'change-agent-voice' }).props.title).toBe('Two');
-  expect(api.save).toHaveBeenCalledWith('fish-s2.1-pro', 'two');
+  expect(api.save).toHaveBeenCalledWith('aura-2', 'two');
   await act(async () => renderer.unmount());
 });
 it('keeps Save functional when the live profile echo arrives before the write receipt', async () => {

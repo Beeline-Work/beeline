@@ -39,9 +39,9 @@ export function VoiceBar({ voice, fullScreen = false, onAttach, attachDisabled =
         <Text style={styles.attachText}>＋</Text>
       </Pressable>
       <Pressable style={styles.waveform} onLongPress={() => setExpanded(true)}
-        accessibilityLabel={voice.quotaExhausted ? voice.error ?? 'Daily Conversation mode limit reached' : voice.speaker ? `${voice.agents.find(a => a.pubkey === voice.speaker)?.name ?? 'Agent'} speaking` : 'Listening'}
+        accessibilityLabel={voice.error ? voice.error : voice.speaker ? `${voice.agents.find(a => a.pubkey === voice.speaker)?.name ?? 'Agent'} speaking` : 'Listening'}
         accessibilityHint="Hold to open full screen" testID="voice-waveform">
-        {voice.quotaExhausted ? <Text accessibilityRole="alert" style={styles.error} testID="voice-quota-error">{voice.error}</Text>
+        {voice.error ? <Text accessibilityRole="alert" style={styles.error} testID={voice.quotaExhausted ? 'voice-quota-error' : 'voice-connection-error'}>{voice.error}</Text>
           : <DictationWaveform level={voice.level} live={!voice.connecting} />}
       </Pressable>
       <Pressable onPress={() => void voice.end()} accessibilityRole="button" accessibilityLabel="End Conversation mode"

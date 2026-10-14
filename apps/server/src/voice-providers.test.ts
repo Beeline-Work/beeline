@@ -1,10 +1,24 @@
 import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
-import { assignVoiceAgents, fluxFactory, KokoroSpeech, FishSpeech, AuraSpeech, OpenRouterVoiceBrain, VoiceQuotaError } from './voice-providers.js';
+import { assignVoiceAgents, fluxFactory, DeepInfraKokoroSpeech, KokoroSpeech, FishSpeech, AuraSpeech, OpenRouterVoiceBrain, VoiceQuotaError } from './voice-providers.js';
+import { voiceConfigFromEnv } from './voice-service.js';
 import { namedVoiceTarget } from './voice-room-runtime.js';
 
 describe('voice providers', () => {
+  it('keeps Fish and Kokoro dormant even with their credentials configured', () => {
+    const config = voiceConfigFromEnv({ BEELINE_VOICE_OPENROUTER_API_KEY: 'test', LIVEKIT_URL: 'ws://test',
+      LIVEKIT_API_KEY: 'test', LIVEKIT_API_SECRET: 'test', CLOUDFLARE_WORKERS_AI_TOKEN: 'test',
+      CLOUDFLARE_ACCOUNT_ID: 'test', FISH_AUDIO_API_KEY: 'test' });
+    expect(config?.speech).toBeInstanceOf(AuraSpeech);
+    expect(Object.keys(config?.providers ?? {})).toEqual(['aura-2']);
+  });
+  it('retains the dormant Kokoro adapter with its pinned provider for future reactivation', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(new Uint8Array([1, 2])));
+    const iterator = new DeepInfraKokoroSpeech('test', fetcher).synthesize('Hello', 'af_heart', new AbortController().signal);
+    for await (const _bytes of iterator) { /* Mocked adapter only, never a live call. */ }
+    expect(JSON.parse(fetcher.mock.calls[0]![1]!.body as string).provider).toEqual({ order: ['DeepInfra'], allow_fallbacks: false });
+  });
   it('classifies the same Workers AI quota response during Aura playback', async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ errors: [{ code: 4006 }] }), { status: 429 }));
     const reader = new AuraSpeech('test', 'account', fetcher).synthesize('Hello', 'luna', new AbortController().signal)[Symbol.asyncIterator]();
@@ -46,13 +60,27 @@ describe('voice providers', () => {
   });
   it('keeps voices distinct and deterministic, with explicit soul timbre and exact named routing', () => {
     const agents = assignVoiceAgents([
-      { id: 'b', name: 'Ruby', handle: 'ruby', soul: 'Voice: bf_emma\nThoughtful and warm.' },
-      { id: 'a', name: 'Sol', handle: 'sol', soul: 'Voice: bf_emma\nConcise.' },
+      { id: 'b', name: 'Ruby', handle: 'ruby', soul: 'Voice: luna\nThoughtful and warm.' },
+      { id: 'a', name: 'Sol', handle: 'sol', soul: 'Voice: luna\nConcise.' },
     ]);
     expect(agents).toEqual(assignVoiceAgents([...agents].reverse()));
     expect(new Set(agents.map(a => a.voice)).size).toBe(2);
+    expect(agents.find(a => a.id === 'a')?.voice).toBe('luna');
     expect(namedVoiceTarget('resolution', agents, 'b')?.id).toBe('b');
     expect(namedVoiceTarget('Sol, please help Ruby', agents, 'b')?.id).toBe('a');
+  });
+
+  it('requires a spoken name with multiple humans even after selecting an avatar', () => {
+    const agents = assignVoiceAgents([
+      { id: 'ruby', name: 'Ruby Rose', handle: 'ruby', soul: '' },
+      { id: 'goose', name: 'Goosey', handle: 'goose', soul: '' },
+    ]);
+    expect(namedVoiceTarget('What do you think?', agents, 'ruby', 2)).toBeUndefined();
+    expect(namedVoiceTarget('What do you think?', agents, 'goose', 1)?.id).toBe('goose');
+    expect(namedVoiceTarget('Could you help me, GOOSEY?', agents, 'ruby', 2)?.id).toBe('goose');
+    expect(namedVoiceTarget('Over to @GoOsE please', agents, 'ruby', 2)?.id).toBe('goose');
+    expect(namedVoiceTarget('Hello RUBY ROSE', agents, 'goose', 2)?.id).toBe('ruby');
+    expect(namedVoiceTarget('gooseberries', agents, 'ruby', 2)).toBeUndefined();
   });
 
   it('speaks as the existing agent with reasoning off and one ordinary order tool', async () => {

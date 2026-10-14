@@ -5768,6 +5768,7 @@ export function BuzzChatSurface({
         if (isDirectMessage && !item.voiceCall.endedAt) return null;
         return (
           <VoiceCallCard call={item.voiceCall} joined={voice.call?.id === item.voiceCall.id}
+          connecting={voice.connecting} error={voice.error}
           agents={roomSurface?.members.filter(member => member.identity.kind === 'agent').map(member => member.identity)}
           onJoin={() => void voice.join()} />
         );
@@ -6036,6 +6037,8 @@ export function BuzzChatSurface({
     [
       renderCornerMarker,
       voice.call,
+      voice.connecting,
+      voice.error,
       voice.join,
       isDirectMessage,
       roomSurface?.members,

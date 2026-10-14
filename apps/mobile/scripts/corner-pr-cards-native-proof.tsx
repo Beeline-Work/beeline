@@ -12,11 +12,10 @@ import {
   obsidianLargeTheme,
 } from '../sources/theme';
 import {
+  GitHubEventCard,
   DaemonFactCard,
   NotificationLifecycleCard,
 } from '../sources/app/(app)/beeline/chat/RoomMessageVariants';
-import { foldPrLifecycleRuns } from '../sources/buzz/pr-lifecycle';
-import type { ChatDisplayMessage } from '../sources/buzz/room-view-presentation';
 StyleSheet.configure({
   themes: {
     bone: boneTheme,
@@ -28,41 +27,7 @@ StyleSheet.configure({
   },
   settings: { initialTheme: 'bone' },
 });
-const single: ChatDisplayMessage = {
-  id: 'single',
-  text: '',
-  isUser: false,
-  timestamp: 1791991980,
-  authorIdentity: { pubkey: 'ruby', kind: 'agent', name: 'Ruby', handle: 'ruby' },
-  daemonFact: {
-    type: 'corner-complete',
-    cornerId: 'single-corner',
-    name: 'no-room-broadcast',
-    objective: 'Preserve Room broadcasts',
-    outcome: 'landed',
-    pullRequest: {
-      number: 2462,
-      title: 'Preserve Room broadcasts',
-      url: 'https://github.com/Beeline-Work/beeline/pull/2462',
-    },
-  },
-};
-const second: ChatDisplayMessage = {
-  ...single,
-  id: 'grouped',
-  timestamp: 1791996480,
-  daemonFact: {
-    ...single.daemonFact!,
-    cornerId: 'grouped-corner',
-    name: 'multiway-call-tags',
-    pullRequest: {
-      number: 2456,
-      title: 'Route multi-human voice',
-      url: 'https://github.com/Beeline-Work/beeline/pull/2456',
-    },
-  },
-};
-const grouped = foldPrLifecycleRuns([single, second])[0];
+import { lifecycleFixtures } from './lifecycle-card-fixtures';
 function Proof() {
   const [loaded] = useFonts({
     'SpaceGrotesk-Regular': require('../sources/assets/fonts/SpaceGrotesk-Regular.ttf'),
@@ -70,6 +35,8 @@ function Proof() {
     'SpaceGrotesk-SemiBold': require('../sources/assets/fonts/SpaceGrotesk-SemiBold.ttf'),
     'IBMPlexMono-Regular': require('../sources/assets/fonts/IBMPlexMono-Regular.ttf'),
   });
+  const [index, setIndex] = useState(0);
+  const fixture = lifecycleFixtures[index];
   const [result, setResult] = useState('Tap actions to verify their destinations');
   const { theme } = useUnistyles();
   if (!loaded) return null;
@@ -94,10 +61,37 @@ function Proof() {
           </Pressable>
         ))}
       </View>
-      <Text style={{ ...theme.buzz.type.meta, color: theme.buzz.textSecondary }}>Single PR</Text>
-      <DaemonFactCard message={single} {...props} />
-      <Text style={{ ...theme.buzz.type.meta, color: theme.buzz.textSecondary }}>Grouped PRs</Text>
-      <NotificationLifecycleCard message={grouped} {...props} />
+      <View style={{ flexDirection: 'row', gap: 24 }}>
+        <Pressable
+          accessibilityLabel="Previous variant"
+          onPress={() =>
+            setIndex((index + lifecycleFixtures.length - 1) % lifecycleFixtures.length)
+          }
+        >
+          <Text style={{ color: theme.buzz.textPrimary }}>Previous</Text>
+        </Pressable>
+        <Pressable
+          accessibilityLabel="Next variant"
+          onPress={() => setIndex((index + 1) % lifecycleFixtures.length)}
+        >
+          <Text style={{ color: theme.buzz.textPrimary }}>Next</Text>
+        </Pressable>
+      </View>
+      <Text
+        accessibilityLabel={`Variant ${fixture.name}`}
+        style={{ ...theme.buzz.type.meta, color: theme.buzz.textSecondary }}
+      >
+        {fixture.name}
+      </Text>
+      <View key={fixture.name}>
+        {fixture.message.notificationLifecycleRun ? (
+          <NotificationLifecycleCard message={fixture.message} {...props} />
+        ) : fixture.message.githubEvent ? (
+          <GitHubEventCard message={fixture.message} onOpenUrl={props.onOpenUrl} />
+        ) : (
+          <DaemonFactCard message={fixture.message} {...props} />
+        )}
+      </View>
       <Text
         accessibilityLabel={result}
         style={{ ...theme.buzz.type.meta, color: theme.buzz.textPrimary }}

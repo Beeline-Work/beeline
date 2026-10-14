@@ -12,7 +12,9 @@ import {
 } from '@/buzz/room-view-presentation';
 import { selectComposerAckPresentation } from '@/buzz/room-indicators';
 import { formatForwardedMessage } from '@/buzz/message-forward';
-import { CornerPrRow } from '@/components/buzz/CornerPrRow';
+import { LifecycleCard } from '@/components/buzz/LifecycleCard';
+import { lifecycleFixtures } from '../../../../../scripts/lifecycle-card-fixtures';
+import { LifecycleRow } from '@/components/buzz/LifecycleRow';
 import { foldPrLifecycleRuns } from '@/buzz/pr-lifecycle';
 import { resetProvisionalDrafts } from '@/buzz/draft-settle';
 import { ALIVE_RING_PAD } from '@/buzz/identity-mark';
@@ -238,6 +240,39 @@ function message(overrides: Partial<ChatDisplayMessage>): ChatDisplayMessage {
   return { id: 'message', text: 'hello', isUser: false, timestamp: 1, ...overrides };
 }
 
+describe('Reproduction lifecycle-cards-2 shared shell and row', () => {
+  it.each(lifecycleFixtures)('$name uses the shared anatomy and available destinations', ({ message: item }) => {
+    const onOpenCorner = vi.fn();
+    const onOpenUrl = vi.fn();
+    const props = { message: item, onOpenCorner, onOpenUrl };
+    const renderer = render(item.notificationLifecycleRun ? <NotificationLifecycleCard {...props} />
+      : item.githubEvent ? <GitHubEventCard {...props} /> : <DaemonFactCard {...props} />);
+    const shell = renderer.root.findByType(LifecycleCard);
+    expect(shell.props.title).toContain(' · ');
+    expect(shell.props.title).not.toContain('@');
+    const rows = renderer.root.findAllByType(LifecycleRow);
+    expect(rows).toHaveLength(1);
+    const row = rows[0];
+    const buttons = renderer.root.findAllByType('Button');
+    expect(buttons.map((button: ReactTestInstance) => button.props.label)).toEqual([
+      ...(row.props.item.cornerId ? ['Corner →'] : []), ...(row.props.item.url ? ['View ↗'] : []),
+    ]);
+    expect(buttons[0]?.props.variant).toBe('primary');
+    if (buttons.length === 2) expect(buttons[1].props.variant).toBe('quiet');
+    for (const button of buttons) act(() => button.props.onPress());
+    if (row.props.item.cornerId) expect(onOpenCorner).toHaveBeenCalledWith(row.props.item.cornerId);
+    if (row.props.item.url) expect(onOpenUrl).toHaveBeenCalledWith(row.props.item.url);
+    if (item.notificationLifecycleRun && item.notificationLifecycleRun.items.length > 1) {
+      act(() => renderer.root.findByProps({ testID: `notification-run-expand-${item.id}` }).props.onPress());
+      const expanded = renderer.root.findAllByType(LifecycleRow);
+      expect(expanded).toHaveLength(item.notificationLifecycleRun.items.length);
+      for (const child of expanded) {
+        expect(child.findAllByType('Button')).toHaveLength(Number(Boolean(child.props.item.cornerId)) + Number(Boolean(child.props.item.url)));
+      }
+    }
+  });
+});
+
 describe('NotificationLifecycleCard', () => {
   it.each(['android', 'web'])('Reproduction corner-pr-cards-1: single and grouped PR rows share actions on %s', (platform) => {
     const previous = Platform.OS;
@@ -262,7 +297,7 @@ describe('NotificationLifecycleCard', () => {
         .map((node: ReactTestInstance) => node.props.accessibilityLabel).filter(Boolean);
       expect(JSON.stringify(one.toJSON())).toContain('PR · 1 merged');
       for (const tree of [one, group]) {
-        expect(tree.root.findAllByType(CornerPrRow)).toHaveLength(1);
+        expect(tree.root.findAllByType(LifecycleRow)).toHaveLength(1);
         expect(tree.root.findAllByType('Button').map((node: ReactTestInstance) => node.props.variant)).toEqual(['primary', 'quiet']);
         expect(labels(tree)).toContain('Corner →');
         expect(labels(tree)).toContain('View ↗');
@@ -293,8 +328,8 @@ describe('NotificationLifecycleCard', () => {
     const group = render(<NotificationLifecycleCard message={foldPrLifecycleRuns([
       single, { ...single, id: 'duplicate' },
     ])[0]} {...props} />);
-    const singleRow = one.root.findByType(CornerPrRow);
-    const groupedRow = group.root.findByType(CornerPrRow);
+    const singleRow = one.root.findByType(LifecycleRow);
+    const groupedRow = group.root.findByType(LifecycleRow);
     expect({ ...singleRow.props.item, updatedBy: '' }).toEqual({ ...groupedRow.props.item, updatedBy: '' });
     expect(singleRow.props.state).toBe(groupedRow.props.state);
     expect(singleRow.props.stateColor).toEqual(groupedRow.props.stateColor);

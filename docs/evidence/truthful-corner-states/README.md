@@ -35,3 +35,13 @@ Follow-up verification: `npm run corner:prepare`, root typecheck and the 40-test
 Dead-code analysis passed with 91 existing findings and none introduced. Reminder dismissal commits its stop receipt with the Needs-you mark, so delivery does not need a historical dismissal scan.
 
 Inbox-wide wake batching is PR 2 and is not included in this change.
+
+## Reminder open versus dismissal correction
+
+Reproduction reminder-open-2472: the tray's open action called `clearNeedsYou` without explicit dismissal intent, and the reminder trigger treated its `cleared_at` as a request to stop daily repeats. The regression initially failed with one dismissed reminder when none was expected.
+
+The operation now carries `dismissReminder` only for the explicit DISMISS controls. A separate `needs_you_marks.reminder_dismissed_at` receipt drives reminder suppression; opening and normal read expiry do not write it. Explicit section CLEAR writes the same receipt. The request remains unresolved and WAITING after dismissal.
+
+Demonstrated Reproduction reminder-open-2472: the real PhoneService clear path opens the first reminder, the next due delivery occurs, then explicit item dismissal or section CLEAR prevents any later delivery. Both variants print the passing result. The focused attention suite passed 19 tests, the tray suite passed 76 with one existing skip, and Needs-you plus expiry suites passed 38 tests. Build and root typecheck passed. This changes command intent only; no mobile visual layout changed.
+
+The original local-browser bundle tested head 1947c62c7. The correction's exact-head browser evidence is posted separately in the corner and referenced in the current PR body; use that newest bundle for merge acceptance.

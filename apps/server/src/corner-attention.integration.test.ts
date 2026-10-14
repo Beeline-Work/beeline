@@ -316,7 +316,7 @@ it('indexes a pending approval sent through the owner System DM back to its sour
   await db.query(`UPDATE agent_grants SET status='approved' WHERE id=$1`, [grant]);
   expect(await state()).toBe('idle');
 });
-it('keeps unanswered decisions waiting past 24h and stops reminders after the person dismisses', async () => {
+it.each(['item', 'section'] as const)('keeps unanswered decisions waiting past 24h and stops reminders after %s dismissal', async (dismissal) => {
   await post('decision', 'needs-decision: @owner Choose whether to continue.');
   expect(await state()).toBe('waiting');
   await runCornerAttention(db);
@@ -338,6 +338,15 @@ it('keeps unanswered decisions waiting past 24h and stops reminders after the pe
     (await db.query(`SELECT id FROM messages WHERE card->>'cornerReminderId' IS NOT NULL`)).rows,
   ).toHaveLength(1);
   await phone.execute('clearNeedsYou', { workspaceId: WS, messageId: reminder.id }, HUMAN);
+  expect((await db.query(`SELECT 1 FROM corner_attention_flags WHERE kind='waiting' AND dismissed_at IS NOT NULL`)).rowCount).toBe(0);
+  await db.query(`UPDATE corner_attention_flags SET due_at=now() WHERE kind='waiting'`);
+  await runCornerAttention(db);
+  expect((await db.query(`SELECT id FROM messages WHERE card->>'cornerReminderId' IS NOT NULL`)).rows).toHaveLength(2);
+  if (dismissal === 'item')
+    await phone.execute('clearNeedsYou', { workspaceId: WS, messageId: reminder.id, dismissReminder: true }, HUMAN);
+  else
+    await phone.execute('clearNeedsYouSection', { workspaceId: WS }, HUMAN);
+  console.log('Demonstrated Reproduction reminder-open-2472: open preserves daily repeat; explicit dismiss stops repeats; request stays WAITING');
   expect(
     (
       await db.query(
@@ -349,7 +358,7 @@ it('keeps unanswered decisions waiting past 24h and stops reminders after the pe
   await runCornerAttention(db);
   expect(
     (await db.query(`SELECT id FROM messages WHERE card->>'cornerReminderId' IS NOT NULL`)).rows,
-  ).toHaveLength(1);
+  ).toHaveLength(2);
   expect(await state()).toBe('waiting'); // Dismissing a reminder does not decide the request.
   await post('answer', 'Continue.', HUMAN);
   expect(await state()).toBe('idle');

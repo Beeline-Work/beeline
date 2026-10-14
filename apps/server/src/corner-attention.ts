@@ -36,18 +36,20 @@ CREATE INDEX IF NOT EXISTS corner_attention_flags_corner ON corner_attention_fla
 CREATE INDEX IF NOT EXISTS corner_attention_flags_due ON corner_attention_flags(due_at)
   WHERE dismissed_at IS NULL AND (kind='waiting' OR sent_at IS NULL);
 
+ALTER TABLE needs_you_marks ADD COLUMN IF NOT EXISTS reminder_dismissed_at timestamptz;
+
 CREATE OR REPLACE FUNCTION corner_attention_dismiss_reminder() RETURNS trigger
 LANGUAGE plpgsql AS $attention$
 BEGIN
-  UPDATE corner_attention_flags flag SET dismissed_at=COALESCE(flag.dismissed_at,NEW.cleared_at)
+  UPDATE corner_attention_flags flag SET dismissed_at=COALESCE(flag.dismissed_at,NEW.reminder_dismissed_at)
     FROM messages reminder WHERE reminder.id=NEW.message_id
       AND reminder.card->>'cornerReminderId'=flag.id AND flag.person_id=NEW.identity_id;
   RETURN NULL;
 END
 $attention$;
 DROP TRIGGER IF EXISTS corner_attention_reminder_clear ON needs_you_marks;
-CREATE TRIGGER corner_attention_reminder_clear AFTER INSERT OR UPDATE OF cleared_at ON needs_you_marks
-  FOR EACH ROW WHEN (NEW.cleared_at IS NOT NULL)
+CREATE TRIGGER corner_attention_reminder_clear AFTER INSERT OR UPDATE OF reminder_dismissed_at ON needs_you_marks
+  FOR EACH ROW WHEN (NEW.reminder_dismissed_at IS NOT NULL)
   EXECUTE FUNCTION corner_attention_dismiss_reminder();
 
 CREATE OR REPLACE FUNCTION corner_attention_new_work() RETURNS trigger

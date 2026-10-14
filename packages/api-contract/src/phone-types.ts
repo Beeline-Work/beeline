@@ -568,8 +568,6 @@ export type RoomViewer = {
      * not the same as zero, and must not be read as "caught up".
      */
     readonly unreadCount?: number;
-    /** Agent turns completed since the mark, capped at six. */
-    readonly unreadAgentTurnCount?: number;
   };
   readonly identity: RoomViewIdentity;
   readonly role: 'owner' | 'admin' | 'member' | 'spectator';

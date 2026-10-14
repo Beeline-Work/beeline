@@ -74,7 +74,7 @@ export function countsAsUnread(
 /**
  * Queue only incoming rows that arrived while the reader was away from the
  * tail. The first one owns the boundary; later arrivals increase the compact
- * count without moving it, and name themselves for the catch-up strip.
+ * count without moving it.
  */
 export function queueIncomingMessages(
   current: NewMessageQueue,
@@ -156,25 +156,4 @@ export function newMessageBadgeCount(
   newestMessageVisible: boolean,
 ): number {
   return newestMessageVisible ? 0 : queue.count;
-}
-
-/**
- * The offer stands for the server's unread cursor and nothing else, which is
- * the same gate the `/catch-up` verb runs on (`canCatchUp`). It used to be
- * drawn from the live queue, whose count only ever knew about arrivals during
- * this visit — an offer sourced from that could not describe what the reader
- * missed while away, which is the one thing it exists to describe.
- *
- * It waits for a meaningful unread run: six agent turns or fifteen messages,
- * counted by the server before this visit advances its mark.
- */
-export function catchUpOfferEligible(
-  firstUnreadMessageId: string | null,
-  counts: { messages: number; agentTurns: number } | null,
-): boolean {
-  return (
-    firstUnreadMessageId !== null &&
-    counts !== null &&
-    (counts.agentTurns >= 6 || counts.messages >= 15)
-  );
 }

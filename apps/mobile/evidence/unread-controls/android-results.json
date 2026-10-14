@@ -1,0 +1,26 @@
+{
+  "device": "emulator-5554",
+  "result": "PASS",
+  "text": [
+    "Tools",
+    "Ruby",
+    "Isolated DM fixture \u00b7 3 unread agent messages",
+    "WED 14 OCT",
+    "Earlier read history.",
+    "15:20",
+    "Unread messages begin here",
+    "NEW",
+    "The Android verification passed.",
+    "15:26",
+    "The release is ready for its checks.",
+    "15:32",
+    "I will report the result after review.",
+    "15:45",
+    "3 new messages. Jump to newest message",
+    "3"
+  ],
+  "dividerClickable": false,
+  "tapOpenedNothing": true,
+  "longPressOpenedNothing": true,
+  "badge": "3"
+}

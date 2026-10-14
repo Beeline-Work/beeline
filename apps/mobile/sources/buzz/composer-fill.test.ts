@@ -16,12 +16,12 @@ describe('filling the composer from a prompt', () => {
     expect(
       planComposerFill({
         draft: '   ',
-        text: '@scout Please catch me up',
+        text: '@scout Please check the build',
         mention: { handle: '@scout', pubkey: 'agent-1' },
       }).fill,
     ).toEqual({
-      text: '@scout Please catch me up',
-      selection: { start: 25, end: 25 },
+      text: '@scout Please check the build',
+      selection: { start: 29, end: 29 },
       mention: { handle: 'scout', pubkey: 'agent-1' },
     });
   });
@@ -38,12 +38,12 @@ describe('filling the composer from a prompt', () => {
   });
 
   it('leaves the composer alone when the refused caller keeps its own surface up', () => {
-    // The catch-up sheet stays open over the composer, so focusing behind it
+    // A sheet stays open over the composer, so focusing behind it
     // would raise a keyboard under the sheet and answer nothing.
     expect(
       planComposerFill({
         draft: 'half a thought',
-        text: '@scout Please catch me up',
+        text: '@scout Please check the build',
         mention: { handle: 'scout', pubkey: 'agent-1' },
       }),
     ).toEqual({ focus: false, fill: null });

@@ -247,8 +247,7 @@
       "loadingRow",
       "ownerMenu"
     ],
-    "components/buzz/RoomCatchUpControls.tsx": ["RoomCatchUpControls"],
-    "components/buzz/RoomCatchUpSheet.tsx": ["RoomCatchUpSheet"],
+    "components/buzz/RoomUnreadControls.tsx": ["RoomUnreadControls"],
     "components/buzz/RoomContextPreamble.tsx": ["RoomContextPreamble"],
     "components/buzz/RoomCornersHeader.tsx": ["RoomCornersHeader"],
     "components/buzz/RoomCornersList.tsx": [

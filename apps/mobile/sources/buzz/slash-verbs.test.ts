@@ -16,7 +16,6 @@ import {
 const allAvailable: SlashVerbAvailability = {
   canBuild: true,
   canCreatePoll: true,
-  canCatchUp: true,
   canManageSchedules: true,
   canRunWorkflows: true,
   canOpenCorner: true,
@@ -41,7 +40,6 @@ describe('Buzz composer built-in slash verbs', () => {
       {
         ...allAvailable,
         canCreatePoll: false,
-        canCatchUp: false,
         canCloseCorner: false,
         canChangeTargetBranch: false,
       },
@@ -69,7 +67,6 @@ describe('Buzz composer built-in slash verbs', () => {
   it.each([
     ['canBuild', 'build'],
     ['canCreatePoll', 'poll'],
-    ['canCatchUp', 'catch-up'],
     ['canManageSchedules', 'schedule'],
     ['canRunWorkflows', 'workflow'],
     ['canOpenCorner', 'open-corner'],
@@ -118,7 +115,6 @@ describe('the composer verb list stays in sync with the daemon vocabulary', () =
     expect(commands).toEqual([
       'build',
       'poll',
-      'catch-up',
       'schedule',
       'workflow',
       'open-corner',

@@ -4,7 +4,6 @@ import { fastModeConfigAxis } from './agent-model-picker';
 export type BuiltInSlashVerbId =
   | 'build'
   | 'poll'
-  | 'catch-up'
   | 'schedule'
   | 'workflow'
   | 'open-corner'
@@ -24,7 +23,6 @@ export type BuiltInSlashVerb = {
 export type SlashVerbAvailability = {
   canBuild: boolean;
   canCreatePoll: boolean;
-  canCatchUp: boolean;
   canManageSchedules: boolean;
   canRunWorkflows: boolean;
   canOpenCorner: boolean;
@@ -51,16 +49,6 @@ const BUILT_IN_SLASH_VERBS: readonly (BuiltInSlashVerb & {
     label: 'Create poll',
     description: 'Ask this Room a question with a closing time',
     available: 'canCreatePoll',
-  },
-  {
-    id: 'catch-up',
-    command: 'catch-up',
-    label: 'Catch up',
-    // The verb opens the catch-up report over the unread range, which is what
-    // the strip and the badge open. It used to scroll to the first unread row
-    // and say so; the report is where that row is now described.
-    description: 'See what you missed',
-    available: 'canCatchUp',
   },
   {
     id: 'schedule',

@@ -116,7 +116,6 @@ describe('the read cursor over the live phone surface', () => {
           messageId: string | null;
           firstUnreadMessageId: string | null;
           unreadCount?: number;
-          unreadAgentTurnCount?: number;
         };
       };
     };
@@ -183,7 +182,6 @@ describe('the read cursor over the live phone surface', () => {
       messageId: null,
       firstUnreadMessageId: MESSAGES[0]!.id,
       unreadCount: 4,
-      unreadAgentTurnCount: 0,
     });
     expect((await deckRow()).unread).toBe(true);
 
@@ -197,7 +195,6 @@ describe('the read cursor over the live phone surface', () => {
       messageId: MESSAGES[1]!.id,
       firstUnreadMessageId: MESSAGES[2]!.id,
       unreadCount: 2,
-      unreadAgentTurnCount: 0,
     });
 
     // Reaching the newest row settles the Room.
@@ -206,7 +203,6 @@ describe('the read cursor over the live phone surface', () => {
       messageId: MESSAGES[3]!.id,
       firstUnreadMessageId: null,
       unreadCount: 0,
-      unreadAgentTurnCount: 0,
     });
     expect((await deckRow()).unread).toBe(false);
 
@@ -220,41 +216,11 @@ describe('the read cursor over the live phone surface', () => {
       messageId: MESSAGES[1]!.id,
       firstUnreadMessageId: MESSAGES[2]!.id,
       unreadCount: 2,
-      unreadAgentTurnCount: 0,
     });
     expect((await deckRow()).unread).toBe(true);
 
     // The other member's own cursor was never touched by any of it.
     expect((await cursor(otherToken))?.unreadCount).toBe(4);
-  });
-
-  it('counts agent turns from the same read mark, stopping at the offer threshold', async () => {
-    for (let index = 0; index < 7; index += 1) {
-      await database.query(
-        `INSERT INTO agent_turns(room_id,request_id,agent_id,status,started_at,created_at)
-         VALUES($1,$2,$3,'complete',$4,$4)`,
-        [ROOM, `turn-${index}`, AGENT, `2026-09-12 01:00:02.${index}00+00`],
-      );
-    }
-    expect((await cursor())?.unreadAgentTurnCount).toBe(6);
-    await request(`/v1/phone/rooms/${ROOM}/read`, 'POST', { messageId: MESSAGES[1]!.id });
-    expect((await cursor())?.unreadAgentTurnCount).toBe(6);
-    await request(`/v1/phone/rooms/${ROOM}/read`, 'POST', { messageId: MESSAGES[3]!.id });
-    expect((await cursor())?.unreadAgentTurnCount).toBe(0);
-  });
-
-  it('counts a turn that started before the read mark and finished after it', async () => {
-    // `created_at` is when the turn last changed status, so for a complete
-    // turn it is when the answer landed.
-    await database.query(
-      `INSERT INTO agent_turns(room_id,request_id,agent_id,status,started_at,created_at)
-       VALUES($1,'straddling',$2,'complete','2026-09-12 01:00:00.500+00','2026-09-12 01:00:02.500+00')`,
-      [ROOM, AGENT],
-    );
-    await request(`/v1/phone/rooms/${ROOM}/read`, 'POST', { messageId: MESSAGES[1]!.id });
-    expect((await cursor())?.unreadAgentTurnCount).toBe(1);
-    await request(`/v1/phone/rooms/${ROOM}/read`, 'POST', { messageId: MESSAGES[3]!.id });
-    expect((await cursor())?.unreadAgentTurnCount).toBe(0);
   });
 
   it('propagates read changes to this reader’s devices only', async () => {
@@ -315,7 +281,6 @@ describe('the read cursor over the live phone surface', () => {
       messageId: null,
       firstUnreadMessageId: MESSAGES[0]!.id,
       unreadCount: 4,
-      unreadAgentTurnCount: 0,
     });
   });
 
@@ -344,7 +309,6 @@ describe('the read cursor over the live phone surface', () => {
       messageId: MESSAGES[3]!.id,
       firstUnreadMessageId: null,
       unreadCount: 0,
-      unreadAgentTurnCount: 0,
     });
     expect((await deckRow()).unread).toBe(false);
   });
@@ -380,7 +344,6 @@ describe('the read cursor over the live phone surface', () => {
       messageId: own,
       firstUnreadMessageId: null,
       unreadCount: 0,
-      unreadAgentTurnCount: 0,
     });
 
     const refused = await request(`/v1/phone/rooms/${ROOM}/unread`, 'POST', { messageId: own });
@@ -391,7 +354,6 @@ describe('the read cursor over the live phone surface', () => {
       messageId: own,
       firstUnreadMessageId: null,
       unreadCount: 0,
-      unreadAgentTurnCount: 0,
     });
     expect((await deckRow()).unread).toBe(false);
 
@@ -405,7 +367,6 @@ describe('the read cursor over the live phone surface', () => {
       messageId: MESSAGES[2]!.id,
       firstUnreadMessageId: MESSAGES[3]!.id,
       unreadCount: 1,
-      unreadAgentTurnCount: 0,
     });
     expect((await deckRow()).unread).toBe(true);
   });

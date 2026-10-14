@@ -67,6 +67,7 @@
         "scripts/room-viewport-proof.tsx",
         // The native status fixture is bundled through Gradle's entryFile override.
         "scripts/status-band-native-entry.js",
+        "scripts/unread-controls-native-proof.tsx",
         "scripts/jump-disc-proof.mjs",
         "scripts/workspace-picture-clip-proof.tsx",
         "scripts/workspace-picture-seat-proof.tsx",

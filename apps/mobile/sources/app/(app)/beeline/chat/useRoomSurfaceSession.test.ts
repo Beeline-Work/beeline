@@ -540,7 +540,6 @@ describe('useRoomSurfaceSession', () => {
           messageId: 'read',
           firstUnreadMessageId: 'first-new',
           unreadCount: 15,
-          unreadAgentTurnCount: 6,
         },
       },
     };
@@ -558,7 +557,6 @@ describe('useRoomSurfaceSession', () => {
     await flushEffects();
     await act(async () => controls.schedulers[0]!.apply(corner));
     expect(current.firstUnreadMessageId).toBeNull();
-    expect(current.openingUnreadCounts).toBeNull();
     const rows: ChatDisplayMessage[] = [
       { id: 'first-new', text: 'new', isUser: false, timestamp: 1 },
     ];

@@ -28,21 +28,8 @@ const BADGE_SIZE = 18;
  *   something had no way back down but their own thumb;
  * - the badge on that disc, a counter capped at `9+`, cleared by reaching the
  *   newest row rather than by a press. The disc outlives the badge;
- * Catch-up is NOT here. It lives on the unread line itself
- * (`buzz/room-message-cell.tsx`), where the run it would summarize begins,
- * and the `/catch-up` verb opens the same sheet from the composer. Two doors,
- * one of them visible and labelled.
- *
- * This control held that door twice, and both were wrong. A strip under the
- * Room header floated over the transcript in every Room the reader was behind
- * in, which is the one place a reader is trying to read. A long-press on the
- * disc replaced it with an affordance nothing announces.
- *
- * The badge is the disc's own business. Drawing it only when catch-up was on
- * offer hid this visit's arrival count in every Room under the six-turn/
- * fifteen-message threshold.
  */
-export function RoomCatchUpControls({
+export function RoomUnreadControls({
   corner,
   bottomInset,
   badgeCount,

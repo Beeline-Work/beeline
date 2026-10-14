@@ -61,7 +61,7 @@ vi.mock('react-native-reanimated', async () => {
   };
 });
 
-import { RoomCatchUpControls } from '@/components/buzz/RoomCatchUpControls';
+import { RoomUnreadControls } from '@/components/buzz/RoomUnreadControls';
 import { TurnBandSlot, TurnProgressLine, TurnSettledLine } from '@/components/buzz/TurnProgressLine';
 import { beelineThemes, groknight } from './groknight';
 import { ROOM_OPEN_LIST_TAIL_PADDING } from './room-open-geometry';
@@ -295,7 +295,7 @@ describe('jump disc follows native status measurements', () => {
     function Scene({line}: {line: boolean}) {
       const [inset, setInset] = React.useState(0);
       return React.createElement(React.Fragment, null,
-        React.createElement(RoomCatchUpControls, {corner: false, badgeCount: 0,
+        React.createElement(RoomUnreadControls, {corner: false, badgeCount: 0,
           discVisible: true, bottomInset: inset, onJumpToNewest: jumped}),
         React.createElement(TurnBandSlot, {testID: 'measured-slot', onTopInset: setInset},
           line ? React.createElement(TurnProgressLine, {label: 'Ruby Mulling…'}) : null));

@@ -787,6 +787,22 @@ export class GitHubAppClient {
     };
   }
 
+  /** Empty rollups can precede registration; establish absence independently. */
+  async confirmNoChecks(accessToken: string, fullName: string, headSha: string): Promise<boolean> {
+    if (!/^[a-f0-9]{40,64}$/i.test(headSha)) throw new Error('invalid GitHub commit check target');
+    const workflows = await this.readRepositoryJson(accessToken, fullName, 'actions/workflows?per_page=1');
+    if (typeof workflows.total_count !== 'number' || workflows.total_count < 0)
+      throw new Error('GitHub workflow count is invalid');
+    if (workflows.total_count === 0) return true;
+    // Workflows may not have created suites when the worker finishes its turn.
+    await new Promise<void>((resolve) => setTimeout(resolve, 10_000));
+    const [suites, runs] = await Promise.all([
+      this.readRepositoryJson(accessToken, fullName, `commits/${headSha}/check-suites?per_page=1`),
+      this.readRepositoryJson(accessToken, fullName, `actions/runs?head_sha=${headSha}&per_page=1`),
+    ]);
+    return suites.total_count === 0 && runs.total_count === 0;
+  }
+
   /** A completed Actions job's log is available before its workflow run finishes. */
   async readJobLog(accessToken: string, fullName: string, jobId: number): Promise<string> {
     if (!Number.isSafeInteger(jobId) || jobId <= 0) throw new Error('invalid GitHub job id');

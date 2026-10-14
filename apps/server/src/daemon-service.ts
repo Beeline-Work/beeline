@@ -349,7 +349,8 @@ export class DaemonService {
     private readonly liveDiagnosticServerInstance?: string,
     private readonly prChecksStatus?: (
       input: Input<'getPrChecksStatus'>,
-    ) => Promise<Output<'getPrChecksStatus'>>,
+      confirmZeroChecks?: boolean,
+    ) => Promise<Output<'getPrChecksStatus'> & { zeroChecksConfirmed?: boolean }>,
     _legacyProviderSlot?: unknown,
     private readonly institutionalMemoryShadow: InstitutionalMemoryShadowConfig = {
       enabled: false,
@@ -1930,7 +1931,8 @@ export class DaemonService {
    * A repository with no checks emits no check webhook, so its review
    * otherwise waits forever. Resolve that absence only after the
    * worker has finished its PR turn; at PR-open time the same empty rollup is
-   * merely a race with GitHub registering workflows. Completion uses the
+   * merely a race with GitHub registering workflows. Require independent
+   * registration evidence even at worker completion. Completion uses the
    * registered PR, regardless of whether the worker's reply contains its URL.
    * GitHub also runs no workflows for a PR that conflicts with its base, so
    * the zero-check result resolves only once GitHub has computed mergeability
@@ -1959,14 +1961,17 @@ export class DaemonService {
     ).rows[0];
     if (!candidate) return;
 
-    let verdict: Output<'getPrChecksStatus'>;
+    const fetchStartedAt = (await this.database.query<{ now: number }>(
+      `SELECT extract(epoch FROM clock_timestamp())::double precision now`,
+    )).rows[0]!.now;
+    let verdict: Output<'getPrChecksStatus'> & { zeroChecksConfirmed?: boolean };
     try {
-      verdict = await this.prChecksStatus({ cornerId });
+      verdict = await this.prChecksStatus({ cornerId }, true);
     } catch (error) {
       console.error(`[server] zero-check completion read failed for corner ${cornerId}:`, error);
       return;
     }
-    if (verdict.checks !== 'pending' || verdict.checkCount !== 0) return;
+    if (verdict.checks !== 'pending' || verdict.checkCount !== 0 || !verdict.zeroChecksConfirmed) return;
     try {
       await this.refreshMergeability?.(cornerId);
     } catch (error) {
@@ -1995,6 +2000,9 @@ export class DaemonService {
         current.owner_agent_id !== workerAgentId ||
         current.reviewer_agent_id !== candidate.reviewer_agent_id ||
         current.lifecycle.pr?.headSha !== verdict.headSha ||
+        (current.lifecycle.checksSummary?.total ?? 0) > 0 ||
+        ((current.lifecycle.checksSummary as { fetchStartedAt?: number } | undefined)?.fetchStartedAt ??
+          current.lifecycle.checksSummary?.updatedAt ?? 0) > fetchStartedAt ||
         (current.lifecycle.pr.mergeability !== 'clean' &&
           current.lifecycle.pr.mergeability !== 'other') ||
         current.lifecycle.checks === 'passing'
@@ -2009,6 +2017,7 @@ export class DaemonService {
           failing: [],
           checks: [],
           updatedAt: Math.floor((await db.query<{ now: number }>(`SELECT extract(epoch FROM clock_timestamp())::double precision now`)).rows[0]!.now),
+          fetchStartedAt,
         },
       };
       await db.query(

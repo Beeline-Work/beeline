@@ -300,7 +300,7 @@ async function main() {
     undefined,
     process.env.LIVE_PAINT_DIAGNOSTICS === 'true',
     process.env.FLY_MACHINE_ID,
-    github ? (input) => github!.prChecksStatus(input) : undefined,
+    github ? (input, confirmZeroChecks) => github!.prChecksStatus(input, confirmZeroChecks) : undefined,
     undefined,
     institutionalMemory,
     mcpRegistry,

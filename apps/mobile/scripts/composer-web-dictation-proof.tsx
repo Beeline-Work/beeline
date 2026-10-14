@@ -29,6 +29,10 @@ const mode = new URLSearchParams(location.search).get('api') ?? 'prefixed';
 Object.defineProperty(globalThis, 'webkitSpeechRecognition', { configurable: true, value: mode === 'prefixed' ? Recognizer : undefined });
 Object.defineProperty(globalThis, 'SpeechRecognition', { configurable: true, value: mode === 'standard' ? Recognizer : undefined });
 
+// This fixture represents a browser with neither recognition nor capture.
+// WebKit capture without Web Speech has its own rendered server proof.
+if (mode === 'unsupported') Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: undefined });
+
 let latest = ''; let sent = '';
 function Proof() {
   const [value, setValue] = useState(''); latest = value;

@@ -119,6 +119,8 @@
         "scripts/subscriptions-frame.tsx",
         "scripts/composer-dictation-proof.tsx",
         "scripts/composer-web-dictation-proof.tsx",
+        "scripts/composer-server-dictation-proof.tsx",
+        "scripts/prove-server-dictation.mjs",
         "scripts/composer-conversation-proof.tsx",
         "scripts/voice-call-proof.tsx",
         "scripts/composer-tags-proof.tsx",

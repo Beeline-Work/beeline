@@ -865,3 +865,80 @@ describe('useSpeechInput', () => {
     });
   });
 });
+
+describe('server-only desktop dictation', () => {
+  beforeEach(() => {
+    platformState.OS = 'web';
+    Object.assign(mockMod, { requiresServerTranscription: true, supportsRecording: () => true });
+    vi.mocked(dictationTranscriptionAvailable).mockReturnValue(true);
+    upload.finish.mockReset(); upload.add.mockReset(); upload.discard.mockReset();
+  });
+  afterEach(() => {
+    platformState.OS = 'android';
+    delete (mockMod as any).requiresServerTranscription;
+    delete (mockMod as any).supportsRecording;
+  });
+
+  it('transcribes audio without a local hypothesis and preserves the Room lexicon', async () => {
+    upload.finish.mockResolvedValue('Ask Jellybean.');
+    const { speech, onResult } = renderHook(vi.fn(), ['Jellybean']);
+    await act(async () => { await speech().start(); fireEvent('start'); });
+    let captured: boolean | null = null;
+    await act(async () => {
+      const stopped = speech().stop();
+      fireEvent('audioend', { uri: 'blob:desktop-take' }); fireEvent('end');
+      captured = await stopped;
+    });
+    expect(startDictationUpload).toHaveBeenCalledWith(['Jellybean'], 'en-GB');
+    expect(upload.add).toHaveBeenCalledWith('blob:desktop-take');
+    expect(upload.finish).toHaveBeenCalledOnce(); expect(captured).toBe(true);
+    expect(onResult).toHaveBeenCalledExactlyOnceWith('Ask Jellybean.');
+  });
+
+  it('starts the silence window at capture, after the permission prompt', async () => {
+    vi.useFakeTimers(); upload.finish.mockResolvedValue('Recorded words.');
+    const { speech, onResult } = renderHook();
+    await act(async () => { await speech().start(); vi.advanceTimersByTime(20_000); });
+    expect(mockMod.stop).not.toHaveBeenCalled();
+    await act(async () => { fireEvent('start'); vi.advanceTimersByTime(SPEECH_SILENCE_TIMEOUT_MS); });
+    expect(speech().state).toBe('finalizing');
+    await act(async () => { fireEvent('audioend', { uri: 'blob:take' }); fireEvent('end'); });
+    expect(onResult).toHaveBeenCalledWith('Recorded words.');
+  });
+
+  it('finishes a bounded take without restarting capture', async () => {
+    upload.finish.mockResolvedValue('A long take.');
+    const { speech, onResult } = renderHook();
+    await act(async () => { await speech().start(); fireEvent('audioend', { uri: 'blob:take' }); fireEvent('end'); });
+    expect(mockMod.start).toHaveBeenCalledOnce(); expect(onResult).toHaveBeenCalledWith('A long take.');
+    expect(speech().state).toBe('idle');
+  });
+
+  it('reports failed or empty transcription without committing or sending text', async () => {
+    upload.finish.mockResolvedValue(null);
+    const { speech, onResult } = renderHook();
+    await act(async () => { await speech().start(); });
+    let captured: boolean | null = null;
+    await act(async () => { const stopped = speech().stop(); fireEvent('end'); captured = await stopped; });
+    expect(captured).toBe(false); expect(onResult).not.toHaveBeenCalled();
+    expect(speech().state).toBe('nothing-recognised');
+  });
+
+  it('ignores server text returned after discard', async () => {
+    let finish!: (value: string) => void;
+    upload.finish.mockReturnValue(new Promise(resolve => { finish = resolve; }));
+    const { speech, onResult } = renderHook();
+    await act(async () => { await speech().start(); });
+    let stopped!: Promise<boolean | null>;
+    await act(async () => { stopped = speech().stop(); fireEvent('end'); });
+    await act(async () => { speech().cancel(); finish('discarded words'); });
+    expect(await stopped).toBeNull(); expect(onResult).not.toHaveBeenCalled(); expect(speech().state).toBe('idle');
+  });
+
+  it('does not record after the server has reported transcription unavailable', async () => {
+    vi.mocked(dictationTranscriptionAvailable).mockReturnValue(false);
+    const { speech } = renderHook();
+    await act(async () => { await speech().start(); });
+    expect(mockMod.start).not.toHaveBeenCalled(); expect(speech().state).toBe('nothing-recognised');
+  });
+});

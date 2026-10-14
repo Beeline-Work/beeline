@@ -8,9 +8,11 @@ const module = vi.hoisted(() => ({
 vi.mock('expo-speech-recognition/build/ExpoSpeechRecognitionModule', () => ({ ExpoSpeechRecognitionModule: module }));
 import { getRecognitionModule } from './speech-recognition-adapter.web';
 
-beforeEach(() => vi.clearAllMocks());
+const recorder = vi.hoisted(() => ({ available: vi.fn(), create: vi.fn(() => ({ requiresServerTranscription: true })) }));
+vi.mock('./speech-recorder.web', () => ({ speechRecordingAvailable: recorder.available, createSpeechRecorder: recorder.create }));
+beforeEach(() => { vi.clearAllMocks(); recorder.available.mockReturnValue(false); });
 
-it('hides speech where the browser library reports no recognition API', () => {
+it('hides speech only when neither recognition nor recording is available', () => {
   module.isRecognitionAvailable.mockReturnValue(false);
   expect(getRecognitionModule()).toBeNull();
   expect(module.start).not.toHaveBeenCalled();
@@ -34,4 +36,18 @@ it('uses the browser recognizer without calling native permission or recording m
   const listener = vi.fn();
   recognition.addListener?.('result', listener);
   expect(module.addListener).toHaveBeenCalledWith('result', listener);
+});
+
+it('offers the server recorder when Web Speech is unavailable', () => {
+  module.isRecognitionAvailable.mockReturnValue(false);
+  recorder.available.mockReturnValue(true);
+  expect(getRecognitionModule()).toMatchObject({ requiresServerTranscription: true });
+  expect(module.start).not.toHaveBeenCalled();
+});
+
+it('keeps working Web Speech even when recording is also available', () => {
+  module.isRecognitionAvailable.mockReturnValue(true);
+  recorder.available.mockReturnValue(true);
+  expect(getRecognitionModule()?.supportsRecording?.()).toBe(false);
+  expect(recorder.create).not.toHaveBeenCalled();
 });

@@ -325,3 +325,29 @@ describe('dictationPrompt', () => {
     expect(prompt.endsWith('and then ask Jellybean')).toBe(true);
   });
 });
+
+it('revokes browser recording URLs without loading the native file deleter', async () => {
+  const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+  try {
+    const { discardDictationRecordings } = await load();
+    await discardDictationRecordings(['blob:discarded-take']);
+    expect(revoke).toHaveBeenCalledWith('blob:discarded-take');
+    expect(deleted).toEqual([]);
+  } finally { revoke.mockRestore(); }
+});
+
+it('releases a browser recording after reading it, while keeping upload retry bytes', async () => {
+  const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+  try {
+    const { startDictationUpload } = await load();
+    recordings.set('blob:recorded-take', pcmWav(3));
+    sessionFetch.mockResolvedValueOnce(new Response('', { status: 502 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ text: 'retry works' }), { status: 200 }));
+    const take = startDictationUpload([], 'en-US');
+    take.add('blob:recorded-take'); await settle();
+    expect(revoke).toHaveBeenCalledWith('blob:recorded-take');
+    expect(await take.finish()).toBe('retry works');
+    expect(sessionFetch).toHaveBeenCalledTimes(2);
+    expect(deleted).toEqual([]);
+  } finally { revoke.mockRestore(); }
+});

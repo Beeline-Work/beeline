@@ -267,7 +267,7 @@ export function useSpeechInput(
       startOptions.lang,
     );
     let text = onDevice;
-    if (onDevice) {
+    if (onDevice || modRef.current?.requiresServerTranscription) {
       const transcribed = await take.upload.finish();
       if (takeId !== takeIdRef.current) return;
       if (transcribed) text = correctorRef.current.correct([transcribed]);
@@ -277,6 +277,7 @@ export function useSpeechInput(
     const captured = finishStopWithCapture(text);
     if (stopSettlementRef.current) {
       settleExplicitStop(captured);
+      if (!captured && modRef.current?.requiresServerTranscription) setState('nothing-recognised');
       return;
     }
     stopRequestedRef.current = false;
@@ -428,6 +429,12 @@ export function useSpeechInput(
     };
 
     const onEnd = () => {
+      // A recorder ends at its take limit or on capture failure. It has no
+      // platform session limit to restart through, and no local text fallback.
+      if (m.requiresServerTranscription && listeningRef.current) {
+        doStop();
+        setState('finalizing');
+      }
       if (stopRequestedRef.current) {
         if (takeRef.current.upload) {
           void finishTake();
@@ -463,6 +470,12 @@ export function useSpeechInput(
       if (r5) subs.push(r5);
       const r6 = m.addListener('audioend', onAudioEnd);
       if (r6) subs.push(r6);
+      if (m.requiresServerTranscription) {
+        const r7 = m.addListener('start', () => {
+          if (listeningRef.current) armSilenceTimer();
+        });
+        if (r7) subs.push(r7);
+      }
     } catch {
       /* ignore */
     }
@@ -491,6 +504,10 @@ export function useSpeechInput(
     if (capability !== 'available') return;
     const m = modRef.current;
     if (!m) return;
+    if (m.requiresServerTranscription && !dictationTranscriptionAvailable()) {
+      setState('nothing-recognised');
+      return;
+    }
     const attempt = ++startAttemptRef.current;
 
     try {
@@ -538,7 +555,9 @@ export function useSpeechInput(
       stopRequestedRef.current = false;
       listeningRef.current = true;
       setState('listening');
-      armSilenceTimer();
+      // Recorder permission can take longer than the silence window. Arm at
+      // actual capture start; stop/cancel can still invalidate the prompt.
+      if (!m.requiresServerTranscription) armSilenceTimer();
 
       m.start(nativeStartOptions());
     } catch {

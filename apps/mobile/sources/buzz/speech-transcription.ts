@@ -41,6 +41,10 @@ export function dictationTranscriptionAvailable(): boolean {
 
 /** Deletes recordings that will not be transcribed again. */
 export async function discardDictationRecordings(uris: readonly string[]): Promise<void> {
+  for (const uri of uris) {
+    if (uri.startsWith('blob:')) URL.revokeObjectURL(uri);
+  }
+  uris = uris.filter((uri) => !uri.startsWith('blob:'));
   if (!uris.length) return;
   try {
     const { File } = await import('expo-file-system');
@@ -193,6 +197,9 @@ export function startDictationUpload(lexicon: readonly string[], locale: string)
       uris.push(uri);
       step(async () => {
         const recorded = await readFileBytes(uri);
+        // The uploader owns the bytes now, including any retry. Release the
+        // browser recording immediately instead of retaining a whole long take.
+        if (uri.startsWith('blob:')) URL.revokeObjectURL(uri);
         if (!recorded.length) {
           failed = true;
           return;

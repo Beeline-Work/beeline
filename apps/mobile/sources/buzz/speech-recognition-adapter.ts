@@ -9,6 +9,8 @@
  */
 
 export interface SpeechRecognitionInterface {
+  /** A recorder has no local hypotheses; its audio is the only transcript source. */
+  requiresServerTranscription?: boolean;
   start(options: any): void;
   stop(): void;
   abort(): void;

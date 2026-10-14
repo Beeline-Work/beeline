@@ -32,7 +32,8 @@ export function confirmedVoiceSpeech(event: FluxEvent): boolean {
 /** A recognized fragment of our own recent output must not start another answer. */
 export function voicePlaybackEcho(transcript: string, playback: string): boolean {
   const words = speechWords(transcript), spoken = speechWords(playback);
-  if (words.length < 2) return false;
+  if (!words.length) return false;
+  if (words.length === 1) return spoken.length === 1 && words[0] === spoken[0];
   return spoken.some((_, at) => words.every((word, i) => spoken[at + i] === word));
 }
 
@@ -127,8 +128,10 @@ export class VoiceRoomRuntime {
       stt = await this.service.config.stt(event => {
       if (this.inputVersions.get(human) !== version ||
           event.turn_index <= (this.turnIndices.get(human) ?? -1)) return;
-      if (!confirmedVoiceSpeech(event) || voicePlaybackEcho(event.transcript, this.recentSpeech
-        .filter(spoken => spoken.until > performance.now()).map(spoken => spoken.text).join(' '))) return;
+      if (!confirmedVoiceSpeech(event)) return;
+      const recent = this.recentSpeech.filter(spoken => spoken.until > performance.now());
+      if (voicePlaybackEcho(event.transcript, recent.map(spoken => spoken.text).join(' ')) ||
+          recent.some(spoken => voicePlaybackEcho(event.transcript, spoken.text))) return;
       // Partial recognized names can aim the strip immediately; only EndOfTurn dispatches.
       if (event.event !== 'EndOfTurn') void this.aimSpokenName(human, event.transcript, version);
       this.speaking?.abort(); this.audio.clearQueue();

@@ -136,6 +136,10 @@ it('uses confident recognized speech for barge-in and rejects noise and echo fra
 
 it('opens one STT stream for duplicate track events, dispatches one final turn, and ignores noise or echo while speaking', async () => {
   const { service } = conversationService(1);
+  service.config.brain.answer.mockImplementation(async (_agent, _history, onText) => {
+    onText('Sure. Here is the full explanation.');
+    return { text: 'Sure. Here is the full explanation.', order: false };
+  });
   let emit!: (event: any) => void;
   service.config.stt.mockImplementation(async onEvent => { emit = onEvent; return { send: vi.fn(), close: vi.fn() }; });
   let release!: () => void;
@@ -155,7 +159,7 @@ it('opens one STT stream for duplicate track events, dispatches one final turn, 
     emit({ ...end, event: 'StartOfTurn', transcript: '', turn_index: 1 });
     emit({ ...end, event: 'Update', transcript: 'noise words', turn_index: 1,
       words: [{ word: 'noise', confidence: 0.1, start: 0, end: 0.4 }] });
-    emit({ ...end, transcript: 'First sentence', turn_index: 1 });
+    emit({ ...end, transcript: 'Sure', turn_index: 1 });
     expect(state.audio.clearQueue).toHaveBeenCalledTimes(cleared);
     expect(service.config.brain.answer).toHaveBeenCalledOnce();
     emit({ ...end, event: 'Update', transcript: 'Stop please', turn_index: 2,

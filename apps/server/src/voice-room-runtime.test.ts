@@ -23,6 +23,32 @@ vi.mock('@livekit/rtc-node', () => ({
 import { VoiceRoomRuntime, confirmedVoiceSpeech, voicePlaybackEcho } from './voice-room-runtime.js';
 import { VoiceQuotaError } from './voice-providers.js';
 
+it('Reproduction MD-TTS-1: conversational streamed replies and delayed reports send natural text to synthesis', async () => {
+  const agent = { id: 'agent', name: 'Jellybean', handle: 'jellybean', voice: 'warm' };
+  const spoken: string[] = [];
+  const answer = '**Hello, friend.**\n\n[Visit](https://example.com/a_(b)/details).\n\n```ts\nignore me\n```\n\nHi @jellybean.';
+  let reports: any[] = [];
+  const service = { owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret',
+    brain: { answer: async (_agent: unknown, _history: unknown, delta: (text: string) => void) => {
+      for (const character of answer) delta(character);
+      return { text: answer };
+    } } }, agents: vi.fn(async () => [agent]), humanCount: vi.fn(async () => 1),
+    speech: async () => ({ async *synthesize(text: string) { spoken.push(text); } }),
+    recordHuman: vi.fn(async () => 'source'), recordAnswer: vi.fn(async () => {}),
+    db: { query: vi.fn(async (sql: string) => ({ rowCount: 1, rows: sql.includes('SELECT DISTINCT') ? reports : [] })) },
+    runtimeClosed: vi.fn() } as unknown as VoiceService;
+  const runtime = await VoiceRoomRuntime.connect(service, 'call', 'room');
+  try {
+    await runtime.utterance('human', 'Hello');
+    expect(spoken.join(' ')).toBe('Hello, friend. Visit. Hi jellybean.');
+    expect(service.recordAnswer).toHaveBeenCalledWith('room', 'agent', answer);
+    reports = [{ source_message_id: 'source', id: 'report', text: '**Done**: [result](https://example.com/a_(b)/details)', agent_id: 'agent', human_id: 'human' }];
+    await runtime.refresh();
+    await vi.waitFor(() => expect(spoken.at(-1)).toBe('Done: result'));
+    console.log('MD-TTS-1 synthesis:', spoken);
+  } finally { await runtime.close(); }
+});
+
 it('cancels microphone input and sends a targeted quota signal when Flux rejects the handshake', async () => {
   const cancel = vi.fn();
   state.streams = [new ReadableStream({ cancel })];

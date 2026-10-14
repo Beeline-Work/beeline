@@ -926,7 +926,6 @@ export type WorkspaceView = {
   readonly workspace: ChatListWorkspace & {
     readonly about?: string;
     readonly createdAt: number;
-    readonly voiceProvider?: import('./voice.js').VoiceProvider;
   };
   readonly managerSettings?: {
     readonly visibility: 'public' | 'invite-only';

@@ -1,9 +1,10 @@
 export const VOICE_SCHEMA = `
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS chosen_voices jsonb NOT NULL DEFAULT '{}'::jsonb;
-ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS voice_provider text NOT NULL DEFAULT 'aura-2'
-  CHECK (voice_provider IN ('aura-2','kokoro-deepinfra','fish-s2.1-pro'));
-ALTER TABLE workspaces ALTER COLUMN voice_provider SET DEFAULT 'aura-2';
-UPDATE workspaces SET voice_provider='aura-2' WHERE voice_provider<>'aura-2';
+ALTER TABLE workspaces DROP COLUMN IF EXISTS voice_provider;
+UPDATE agents SET chosen_voices = CASE
+  WHEN chosen_voices ? 'aura-2' THEN jsonb_build_object('aura-2', chosen_voices->'aura-2')
+  ELSE '{}'::jsonb END
+WHERE chosen_voices - 'aura-2' <> '{}'::jsonb;
 CREATE TABLE IF NOT EXISTS voice_calls (
   id uuid PRIMARY KEY,
   room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,

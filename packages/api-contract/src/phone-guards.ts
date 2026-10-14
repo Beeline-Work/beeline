@@ -1838,7 +1838,6 @@ export function readWorkspaceView(value: unknown): WorkspaceView | null {
     workspace: {
       ...workspace,
       createdAt: integer(rawWorkspace?.createdAt) ? Number(rawWorkspace.createdAt) : 0,
-      ...field('voiceProvider', oneOf(rawWorkspace?.voiceProvider, ['aura-2', 'kokoro-deepinfra', 'fish-s2.1-pro'])),
       ...field('about', typeof rawWorkspace?.about === 'string' ? rawWorkspace.about : undefined),
     },
     members: readList(item.members, readMember, WORKSPACE_MEMBER_PAGE_SIZE) ?? [],

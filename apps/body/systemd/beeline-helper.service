@@ -12,9 +12,7 @@ Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=%h/.local/bin/beeline helper-bootstrap
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=always
-RestartSec=5s
-RestartSteps=5
-RestartMaxDelaySec=60s
+RestartSec=1s
 WatchdogSec=180s
 CPUWeight=1000
 IOWeight=1000

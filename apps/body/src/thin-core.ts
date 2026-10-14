@@ -154,7 +154,9 @@ export class ThinDaemonCore {
         const wakesBefore = supervisor.wakes;
         try {
           if (shouldDiscover) {
-            const membership = await this.roomRuntime.reconcile();
+            const membership = await this.roomRuntime.reconcile(async () => {
+              if (!established) { await opts.onEstablished?.(); established = true; }
+            });
             if (membership === 'not-member') return 'agent-removed';
             if (membership === 'member' && !established) { await opts.onEstablished?.(); established = true; }
             this.discoveryStatus = membership === 'unknown' ? 'monolith membership degraded' : '';

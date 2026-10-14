@@ -748,6 +748,7 @@ async function replaceFile(path: string, contents: string, mode: number): Promis
 export async function activateRelease(
   layout: BeelineInstallLayout,
   releaseId: string,
+  options: { deferPruning?: boolean } = {},
 ): Promise<void> {
   assertInstallTestIsolation(layout);
   let releaseDir = join(layout.releasesRoot, releaseId);
@@ -793,7 +794,7 @@ export async function activateRelease(
   const state = await readUpdateState(layout);
   await writeUpdateState(layout, { ...state, stagedReleaseId: undefined,
     previousReleaseId: previousReleaseId && previousReleaseId !== releaseId ? previousReleaseId : state.previousReleaseId });
-  await pruneHelperReleases(layout);
+  if (!options.deferPruning) await pruneHelperReleases(layout);
 }
 
 async function installRecoveryLauncher(

@@ -841,7 +841,7 @@ export class RoomRuntimeCoordinator {
     return turns;
   }
 
-  async reconcile(): Promise<WorkspaceMembershipStatus> {
+  async reconcile(onServing?: () => void | Promise<void>): Promise<WorkspaceMembershipStatus> {
     if (this.stopped) return 'member';
     const existingRooms = new Set(this.running.keys());
     this.knownStorageStates = [];
@@ -902,6 +902,20 @@ export class RoomRuntimeCoordinator {
     }
     const desiredTopRooms = topLevelRooms.map((room) => room.roomId);
     const desired = new Set(desiredTopRooms);
+    await mapWithConcurrency(desiredTopRooms, ROOM_JOIN_CONCURRENCY, async (roomId) => {
+      if (this.stopped) return;
+      if (this.running.has(roomId)) return;
+      try {
+        await this.startRoom(roomId);
+      } catch (error) {
+        // One Room's failed start must not block the corner-start pass behind
+        // it: a corner opened while a Room cannot materialize its checkout
+        // would otherwise never start, while every already-running Room keeps
+        // the agent looking healthy. The failed Room retries on the next
+        // reconciliation.
+        console.error(`[thin-core] failed to start Room ${roomId}:`, error);
+      }
+    });
     const desiredCorners = new Map<string, DesiredCorner>();
     const archivedCorners = new Map<string, { cornerId: string; parentRoomId: string }>();
     await mapWithConcurrency(topLevelRooms, ROOM_JOIN_CONCURRENCY, async (room) => {
@@ -949,6 +963,17 @@ export class RoomRuntimeCoordinator {
     for (const roomId of desiredTopRooms) this.surfaceHealth.discover(roomId, 'room');
     for (const cornerId of desiredCorners.keys()) this.surfaceHealth.discover(cornerId, 'corner');
     for (const channelId of desired) this.roomRemovalConfirmations.delete(channelId);
+    await mapWithConcurrency(
+      [...desiredCorners.values()],
+      ROOM_JOIN_CONCURRENCY,
+      async (corner) => {
+        if (this.stopped) return;
+        if (!this.running.has(corner.cornerId)) await this.watchCorner(corner);
+      },
+    );
+    // Readiness belongs to durable command intake, never local retention work.
+    await onServing?.();
+    if (this.stopped) return 'member';
     await this.retryPendingCornerReaps(desired);
     if (this.stopped) return 'member';
     await this.sweepArchivedCornerWorktrees(archivedCorners, desired);
@@ -974,28 +999,6 @@ export class RoomRuntimeCoordinator {
           !this.startingCorners.has(cornerId)) this.monolithCornerParents.delete(cornerId);
     }
     this.surfaceHealth.retain(new Set([...desired, ...this.running.keys()]));
-    await mapWithConcurrency(desiredTopRooms, ROOM_JOIN_CONCURRENCY, async (roomId) => {
-      if (this.stopped) return;
-      if (this.running.has(roomId)) return;
-      try {
-        await this.startRoom(roomId);
-      } catch (error) {
-        // One Room's failed start must not block the corner-start pass behind
-        // it: a corner opened while a Room cannot materialize its checkout
-        // would otherwise never start, while every already-running Room keeps
-        // the agent looking healthy. The failed Room retries on the next
-        // reconciliation.
-        console.error(`[thin-core] failed to start Room ${roomId}:`, error);
-      }
-    });
-    await mapWithConcurrency(
-      [...desiredCorners.values()],
-      ROOM_JOIN_CONCURRENCY,
-      async (corner) => {
-        if (this.stopped) return;
-        if (!this.running.has(corner.cornerId)) await this.watchCorner(corner);
-      },
-    );
     for (const [roomId, running] of this.running)
       if (existingRooms.has(roomId)) running.body.requestReconciliation();
     if (this.roomRemovalConfirmations.size) this.wakeDiscovery();

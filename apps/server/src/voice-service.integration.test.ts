@@ -31,6 +31,19 @@ beforeAll(async () => {
 }, 30_000);
 afterAll(async () => { await service.close(); await db.close(); });
 
+it('stores one rendition when the voice model repeats a formatted answer as plain text', async () => {
+  const answer = 'I’m listening. What were you going to say?';
+  await service.recordAnswer(R, A, '**I’m listening.**\nWhat were you going to say?\n\n' + answer);
+  const rows = await db.query<{ text: string }>(`SELECT text FROM messages WHERE room_id=$1 AND agent_model='openai/gpt-6-luna'`, [R]);
+  expect(rows.rows.map(row => row.text)).toEqual(['**I’m listening.**\nWhat were you going to say?']);
+});
+
+it('preserves distinct paragraphs and intentional repetition within an answer', async () => {
+  const text = 'Say hey hey.\n\nThen say yeah yeah.';
+  await service.recordAnswer(R, B, text);
+  expect((await db.query<{ text: string }>(`SELECT text FROM messages WHERE room_id=$1 AND author_id=$2`, [R, B])).rows.map(row => row.text)).toEqual([text]);
+});
+
 it('joins a second human into one persisted call, targets only Ruby, and ends after the last leaves', async () => {
   const joined = await service.join(R, H);
   const second = await service.join(R, SECOND);

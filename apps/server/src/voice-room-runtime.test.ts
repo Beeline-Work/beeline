@@ -22,6 +22,13 @@ vi.mock('@livekit/rtc-node', () => ({
 }));
 import { VoiceRoomRuntime, confirmedVoiceSpeech, voicePlaybackEcho } from './voice-room-runtime.js';
 import { VoiceQuotaError } from './voice-providers.js';
+import { VoiceService as RealVoiceService } from './voice-service.js';
+import { migrate } from './database.js';
+import { PgliteDatabase } from './test-support.js';
+import { LiveHub } from './live.js';
+import { claimAgentCommand } from './agent-command.js';
+import { DaemonService } from './daemon-service.js';
+import { PhoneService } from './phone-service.js';
 
 it('cancels microphone input and sends a targeted quota signal when Flux rejects the handshake', async () => {
   const cancel = vi.fn();
@@ -227,6 +234,81 @@ it('speaks the order acknowledgement when the brain streams only whitespace', as
   try {
     await runtime.utterance('human', 'Ruby build a widget');
     expect(service.dispatch).toHaveBeenCalledOnce();
+    expect(service.recordAnswer).not.toHaveBeenCalled();
     expect(speech.synthesize.mock.calls.map(call => call[0]).join(' ')).toBe('I’ll work on that and tell you when I’m done.');
   } finally { await runtime.close(); }
 });
+
+it('hands external work to the normal turn without posting a second visible reply', async () => {
+  const { service } = conversationService(1);
+  service.config.brain.answer.mockImplementation(async (_agent, _history, onText) => {
+    onText('You’re right to question it.');
+    return { text: 'You’re right to question it.', order: true };
+  });
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  try {
+    await runtime.utterance('human', 'Ruby reproduce the bug');
+    expect(service.dispatch).toHaveBeenCalledOnce();
+    expect(service.recordAnswer).not.toHaveBeenCalled();
+  } finally { await runtime.close(); }
+});
+
+it('does not fall back to a second visible reply when a handoff fails', async () => {
+  const { service } = conversationService(1);
+  service.config.brain.answer.mockImplementation(async (_agent, _history, onText) => {
+    onText('I’ll check.'); return { text: 'I’ll check.', order: true };
+  });
+  service.dispatch.mockRejectedValueOnce(new Error('dispatch failed'));
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  try {
+    await expect(runtime.utterance('human', 'Ruby check the code')).rejects.toThrow('dispatch failed');
+    expect(service.recordAnswer).not.toHaveBeenCalled();
+  } finally { await runtime.close(); }
+});
+
+it('demonstrates one visible reply through voice handoff, normal completion and the phone read', async () => {
+  const db = new PgliteDatabase();
+  const live = new LiveHub();
+  const human = 'a'.repeat(64), agent = 'b'.repeat(64);
+  const workspace = '11111111-1111-4111-8111-111111111111';
+  const room = '22222222-2222-4222-8222-222222222222';
+  const config = conversationService(1).service.config;
+  config.brain.answer.mockImplementation(async (_agent, _history, onText) => {
+    onText('You’re right to question it.');
+    return { text: 'You’re right to question it.', order: true };
+  });
+  const voice = new RealVoiceService(db, live, { ...config,
+    speech: { synthesize: async function* () { yield new Uint8Array([200, 1]); } } });
+  try {
+    await migrate(db);
+    await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Human','human'),($2,'agent','Ruby','ruby')`, [human, agent]);
+    await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [agent, human]);
+    await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Duplicate reply proof')`, [workspace]);
+    await db.query(`INSERT INTO rooms(id,workspace_id,name,direct_participants) VALUES($1,$2,'DM',$3)`, [room, workspace, [human, agent]]);
+    await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+      ($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,$4,$2,'owner'),($1,$4,$3,'member')`, [workspace, human, agent, room]);
+    const joined = await voice.join(room, human);
+    const call = (await db.query<any>(`SELECT * FROM voice_calls WHERE id=$1`, [joined.call.id])).rows[0];
+    const runtime = await voice.ensureRuntime(call);
+    await runtime!.utterance(human, 'Ruby reproduce the bug');
+    const command = (await db.query<{ id: string; source_message_id: string }>(`SELECT id,source_message_id FROM agent_commands WHERE room_id=$1`, [room])).rows;
+    expect(command).toHaveLength(1);
+    await claimAgentCommand(db, room, agent, command[0]!.id, 'proof-generation');
+    await new DaemonService(db, live).execute('postRoomMessage', {
+      roomId: room, requestId: command[0]!.source_message_id, generationId: 'proof-generation', text: 'The cause is confirmed.',
+    }, agent);
+    const phone = new PhoneService(db, 'http://proof');
+    const replies = (await phone.readRoom(room, human))!.messages.filter(message => message.author.pubkey === agent && message.presentation === 'message');
+    expect(replies.map(reply => reply.text)).toEqual(['The cause is confirmed.']);
+    // A conversation-only answer remains owned by the voice path.
+    config.brain.answer.mockImplementation(async (_agent, _history, onText) => {
+      const answer = '**I’m listening.**\nWhat were you going to say?\n\nI’m listening. What were you going to say?';
+      onText(answer); return { text: answer, order: false };
+    });
+    await runtime!.utterance(human, 'Ruby I’m');
+    const view = (await phone.readRoom(room, human))!;
+    expect(view.messages.filter(message => message.text.includes('I’m listening.')).map(message => message.text))
+      .toEqual(['**I’m listening.**\nWhat were you going to say?']);
+    console.log('Reproduction voice-double-reply: voice handoff → ordinary agent completion → phone shows exactly one reply; repeated Luna rendition → phone shows one rendition.');
+  } finally { await voice.close(); await db.close(); }
+}, 30_000);

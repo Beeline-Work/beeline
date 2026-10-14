@@ -205,7 +205,7 @@ export class VoiceRoomRuntime {
     this.speechIdle = new Promise<void>(resolve => { finishSpeech = resolve; });
     const key = `${human}:${agent.id}`;
     let history = this.history.get(key)?.map(message => ({ ...message }));
-    let pending = ''; let receivedText = ''; let persisted = false; let firstAudio = false; let speechQueue = Promise.resolve();
+    let pending = ''; let receivedText = ''; let persisted = false; let handedOff = false; let firstAudio = false; let speechQueue = Promise.resolve();
     try {
       if (!history) {
         const rows = await this.service.db.query<{ text: string; author_id: string }>(
@@ -237,13 +237,20 @@ export class VoiceRoomRuntime {
           flush(pending.slice(0, match.index + 1)); pending = pending.slice(match.index + match[0].length);
         }
       }, controller.signal);
-      if (reply.order) await this.service.dispatch(this.callId, sourceId, agent.id);
+      if (reply.order) {
+        // The ordinary command owns the visible reply after this handoff.
+        // Keep the spoken acknowledgement out of the message ledger.
+        handedOff = true;
+        await this.service.dispatch(this.callId, sourceId, agent.id);
+      }
       const answer = reply.text || (reply.order ? "I’ll work on that and tell you when I’m done." : '');
       // The final receipt may include a suffix absent from streamed deltas.
       if (!reply.text || !receivedText.trim()) pending = answer;
       else if (answer.startsWith(receivedText)) pending += answer.slice(receivedText.length);
-      await this.service.recordAnswer(this.roomId, agent.id, answer);
-      persisted = true;
+      if (!handedOff) {
+        await this.service.recordAnswer(this.roomId, agent.id, answer);
+        persisted = true;
+      }
       history.push({ role: 'assistant', content: answer });
       this.history.set(key, history.slice(-16));
       flush(pending); await speechQueue;
@@ -253,7 +260,7 @@ export class VoiceRoomRuntime {
         await this.signal({ type: 'speaker', agentId: null });
       } else finishSpeech();
       // A barge-in may interrupt generation after a clause was already heard.
-      if (!persisted && receivedText.trim()) await this.service.recordAnswer(this.roomId, agent.id, receivedText.trim());
+      if (!handedOff && !persisted && receivedText.trim()) await this.service.recordAnswer(this.roomId, agent.id, receivedText.trim());
     }
   }
 

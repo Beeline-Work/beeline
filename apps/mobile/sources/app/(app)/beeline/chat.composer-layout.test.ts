@@ -116,11 +116,12 @@ describe('Room composer status layout', () => {
   });
 
   it('keeps the send arrow separated from the text field', () => {
-    const sendButtonStyle = composerSource.slice(
-      composerSource.indexOf('  sendButton: {'),
-      composerSource.indexOf('  sendButtonText: {'),
+    const controlSlotStyle = composerSource.slice(
+      composerSource.indexOf('  controlSlot: {'),
+      composerSource.indexOf('  micButtonDimmed: {'),
     );
-    expect(sendButtonStyle).toContain('marginLeft: 8');
+    expect(controlSlotStyle).toContain('marginLeft: 8');
+    expect(composerSource).toContain('testID={`${testIDPrefix}-send`}');
   });
 
   it('uses a long-press wrapper to copy a complete turn', () => {

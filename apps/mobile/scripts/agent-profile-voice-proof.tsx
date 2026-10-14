@@ -54,17 +54,16 @@ Object.assign(globalThis, { __boardFixture: { agent: detail } });
 let currentVoiceId = voices[second ? 1 : 0]!.id;
 const fixtureVoiceApi = {
   read: async () => ({
-    provider: 'fish-s2.1-pro' as const,
     currentVoiceId,
     canChange: true,
-    choices: voices.map((v) => ({ id: v.id, name: v.name, sampleUrl: v.sample ?? undefined })),
+    choices: voices.map((v) => ({ id: v.id, name: v.name })),
   }),
-  save: async (_provider: import('@beeline/api-contract/phone').VoiceProvider, id: string) => {
+  save: async (id: string) => {
     currentVoiceId = id;
     return fixtureVoiceApi.read();
   },
-  preview: async (_provider: import('@beeline/api-contract/phone').VoiceProvider, id: string) => ({
-    url: voices.find((v) => v.id === id)!.sample!,
+  preview: async (id: string) => ({
+    wavBase64: 'UklGRiQAAABXQVZFZm10IBAAAAABAAEAwF0AAIC7AAACABAAZGF0YQAAAAA=',
   }),
 };
 function App() {

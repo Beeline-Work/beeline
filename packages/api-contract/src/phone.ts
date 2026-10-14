@@ -26,3 +26,5 @@ export * from './workbench.js';
 export * from './wallet.js';
 export * from './message-search.js';
 export * from './agent-sign-in.js';
+
+export * from './tray-ask.js';

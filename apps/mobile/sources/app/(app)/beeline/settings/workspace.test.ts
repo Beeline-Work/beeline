@@ -990,3 +990,13 @@ describe('public Workspace join links', () => {
     await act(async () => renderer.unmount());
   });
 });
+
+it('demonstrates Workspace Settings without provider controls for an owner', async () => {
+  const renderer = await render();
+  expect(renderer.root.findByProps({ testID: 'workspace-name-row' })).toBeDefined();
+  expect(renderer.root.findByProps({ testID: 'workspace-visibility-row' })).toBeDefined();
+  expect(renderer.root.findAllByProps({ testID: 'workspace-voice-provider' })).toHaveLength(0);
+  expect(renderer.root.findAllByProps({ testID: 'workspace-voice-sheet' })).toHaveLength(0);
+  console.log('Demonstration AURA-ONLY-1: owner opens Workspace Settings; name and visibility render; voice provider row and picker are absent.');
+  await act(async () => renderer.unmount());
+});

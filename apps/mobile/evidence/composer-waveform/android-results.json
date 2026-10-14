@@ -1,0 +1,10 @@
+[
+  "PASS obsidian: typed text replaces waveform with Send and keeps mic",
+  "PASS obsidian: same waveform slot after clearing text",
+  "PASS bone: typed text replaces waveform with Send and keeps mic",
+  "PASS bone: same waveform slot after clearing text",
+  "PASS real native typing exposes Send beside mic",
+  "PASS waveform tap enters Conversation once; End returns to composer",
+  "PASS mic long press enters Conversation once; End returns to composer",
+  "PASS release and End restore composer"
+]

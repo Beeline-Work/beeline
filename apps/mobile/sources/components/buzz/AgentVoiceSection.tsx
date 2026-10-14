@@ -2,10 +2,8 @@ import React, { useEffect, useRef, useState } from 'react';
 import { ScrollView, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import {
-  VOICE_PROVIDER_LABELS,
   type AgentVoiceCatalog,
   type AgentVoicePreview,
-  type VoiceProvider,
 } from '@beeline/api-contract/phone';
 import { SettingsRow } from './SettingsRow';
 import { RoomListSectionHeader } from './RoomListSectionHeader';
@@ -13,11 +11,11 @@ import { HullDialogActions } from './HullDialog';
 import { VoicePreviewPlayer } from './VoicePreviewPlayer';
 
 export type AgentVoiceApi = {
-  /** Stable server read scope; changing Workspace, Room, provider or viewer remounts the picker. */
+  /** Stable server read scope; changing Workspace, Room or viewer remounts the picker. */
   contextKey?: string;
   read: () => Promise<AgentVoiceCatalog>;
-  save: (provider: VoiceProvider, voiceId: string) => Promise<AgentVoiceCatalog>;
-  preview: (provider: VoiceProvider, voiceId: string) => Promise<AgentVoicePreview>;
+  save: (voiceId: string) => Promise<AgentVoiceCatalog>;
+  preview: (voiceId: string) => Promise<AgentVoicePreview>;
 };
 export function AgentVoiceSection({
   agentId,
@@ -100,9 +98,9 @@ export function AgentVoiceSection({
     setPlaying(id);
     const request = previewRequest.current;
     try {
-      const result = await latest.current!.preview(catalog!.provider, id);
+      const result = await latest.current!.preview(id);
       if (request !== previewRequest.current) return;
-      setSource('url' in result ? result.url : `data:audio/wav;base64,${result.wavBase64}`);
+      setSource(`data:audio/wav;base64,${result.wavBase64}`);
       timer.current = setTimeout(stop, 8000);
     } catch (e) {
       if (request === previewRequest.current) {
@@ -118,7 +116,7 @@ export function AgentVoiceSection({
     setError(null);
     const request = generation.current;
     try {
-      const response = await latest.current!.save(catalog.provider, draft);
+      const response = await latest.current!.save(draft);
       if (request !== generation.current) return;
       setCatalog(response);
       setDraft(response.currentVoiceId);
@@ -136,11 +134,7 @@ export function AgentVoiceSection({
       <RoomListSectionHeader title="Voice" inset="content" spacing="flush" />
       <SettingsRow
         title={selected?.name ?? (api && !error ? 'Loading voice…' : 'Voice unavailable')}
-        description={
-          catalog
-            ? `${catalog.provider === 'fish-s2.1-pro' ? 'Fish' : VOICE_PROVIDER_LABELS[catalog.provider]} · Workspace voice provider`
-            : undefined
-        }
+        description={catalog ? 'Aura 2' : undefined}
         action={changeable ? 'Change' : undefined}
         disabled={saving}
         onPress={
@@ -175,9 +169,7 @@ export function AgentVoiceSection({
                 description={
                   draft === voice.id
                     ? 'Selected'
-                    : catalog.provider === 'fish-s2.1-pro'
-                      ? 'Public licensed library voice'
-                      : 'Provider library voice'
+                    : 'Aura voice'
                 }
                 disabled={saving}
                 onPress={() => setDraft(voice.id)}

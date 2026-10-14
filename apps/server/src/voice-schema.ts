@@ -1,9 +1,10 @@
 export const VOICE_SCHEMA = `
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS chosen_voices jsonb NOT NULL DEFAULT '{}'::jsonb;
-ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS voice_provider text NOT NULL DEFAULT 'aura-2'
-  CHECK (voice_provider IN ('aura-2','kokoro-deepinfra','fish-s2.1-pro'));
-ALTER TABLE workspaces ALTER COLUMN voice_provider SET DEFAULT 'aura-2';
-UPDATE workspaces SET voice_provider='aura-2' WHERE voice_provider<>'aura-2';
+ALTER TABLE workspaces DROP COLUMN IF EXISTS voice_provider;
+UPDATE agents SET chosen_voices = CASE
+  WHEN chosen_voices ? 'aura-2' THEN jsonb_build_object('aura-2', chosen_voices->'aura-2')
+  ELSE '{}'::jsonb END
+WHERE chosen_voices - 'aura-2' <> '{}'::jsonb;
 CREATE TABLE IF NOT EXISTS voice_calls (
   id uuid PRIMARY KEY,
   room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
@@ -32,4 +33,11 @@ CREATE TABLE IF NOT EXISTS voice_orders (
 CREATE INDEX IF NOT EXISTS voice_orders_call_idx ON voice_orders(call_id);
 CREATE INDEX IF NOT EXISTS voice_orders_agent_idx ON voice_orders(agent_id);
 CREATE INDEX IF NOT EXISTS voice_orders_spoken_message_idx ON voice_orders(spoken_message_id);
+-- Spoken turns the call runtime recorded. Unless a voice_orders row hands one
+-- to the agent, no helper was woken, so its silence is not an outage.
+CREATE TABLE IF NOT EXISTS voice_messages (
+  message_id text PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+  call_id uuid NOT NULL REFERENCES voice_calls(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS voice_messages_call_idx ON voice_messages(call_id);
 `;

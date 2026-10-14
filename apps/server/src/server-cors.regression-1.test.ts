@@ -83,6 +83,18 @@ describe('web app CORS', () => {
     expect(redeem).toHaveBeenCalledWith('review-secret', '127.0.0.1');
   });
 
+  it('allows the language and Room lexicon headers on dictation preflight', async () => {
+    const { origin } = await start([deployedWebOrigin]);
+    const response = await fetch(`${origin}/v1/phone/transcriptions`, {
+      method: 'OPTIONS',
+      headers: { origin: deployedWebOrigin, 'access-control-request-method': 'POST',
+        'access-control-request-headers': 'authorization,content-type,x-speech-language,x-speech-prompt' },
+    });
+    expect(response.status).toBe(204);
+    const allowed = response.headers.get('access-control-allow-headers')!.split(',').map(value => value.trim());
+    expect(allowed).toEqual(expect.arrayContaining(['authorization', 'content-type', 'x-speech-language', 'x-speech-prompt']));
+  });
+
   it('lets the production web app read its connection check without opening healthz to other origins', async () => {
     const { origin } = await start([deployedWebOrigin]);
     const allowed = await fetch(`${origin}/healthz`, {

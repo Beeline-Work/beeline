@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { squireReachCause } from './squire-status.js';
+import { nonhumanSilentWake } from './silent-wake.js';
 /**
  * Deliberately narrow MCP server for repository and approved-skill inspection
  * in Room sessions.
@@ -42,6 +43,7 @@ import {
   encodeArtifactTitleHeader,
   type ArtifactMimeType,
   type CornerRestoreResult,
+  type ConnectResult,
   type RoomConversationResult,
   type DaemonAttachment,
   FEEDBACK_AGENT_CATEGORIES,
@@ -98,6 +100,7 @@ import {
   type MessageReactionEmoji,
 } from '@beeline/api-contract/phone';
 import { normalizeAppContinuation } from '@beeline/api-contract/app-connections';
+import { squireSessionSignedIn } from './squire-sign-in.js';
 import { REPOSITORY_SUBSCRIPTION_EVENTS } from '@beeline/api-contract/daemon';
 import { READ_ONLY_TOOL_NAMES } from './read-only-policy.js';
 import { findChromiumPage } from './browser-share.js';
@@ -868,17 +871,25 @@ const AGENT_TOOLS: ToolDefinition[] = [
   },
   {
     name: 'order',
-    description: 'Give a top-down instruction to the worker of a corner or agent DM. A top-level Room address broadcasts to every other agent member. Give the instruction at a Room, corner or agent DM address you belong to. Agent-to-agent delivery is private and wakes the recipient without a transcript message. Use a Room id as the address. After ordering another agent, end the turn; its report wakes a new turn. Do not sleep or poll.',
+    description: 'Give a top-down instruction to exactly one agent. A corner address wakes its worker; an agent DM address wakes that agent. At a top-level Room address, agent is required: name one agent member by handle or id. Only that agent wakes. Give the instruction at a Room, corner or agent DM address you belong to. Agent-to-agent delivery is private and wakes the recipient without a transcript message. Use a Room id as the address. After ordering another agent, end the turn; its report wakes a new turn. Do not sleep or poll.',
     inputSchema: { type: 'object', required: ['address', 'text'], properties: {
       address: { type: 'string', format: 'uuid' },
+      agent: { type: 'string', minLength: 1, maxLength: 120, description: 'Handle or id of the one agent to wake. Required at a top-level Room address.' },
       text: { type: 'string', minLength: 1, maxLength: 16000 },
     }, additionalProperties: false },
   },
   {
+    name: 'no_reply_needed',
+    description: 'On a nonhuman report, order or lifecycle wake with nothing to post, acknowledge that no reply is needed, then end silently. This local tool posts nothing and reports nothing. Human-triggered turns cannot use it.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
+  },
+  {
     name: 'report',
-    description: 'Report one step up to the commander who ordered this work. Report only to the member who gave you the task. If that member is a human, tag them when, in your judgement, they need to decide or should know. No address argument: the corner and order know the return address. Begin done:, blocked:, needs-decision: or failed:. Agent commanders receive this privately. A human commander sees it where they gave the order. If you cannot handle a report, report to your own commander. Report when your assignment is finished, or when you need a decision or are blocked. Don\'t report progress.',
-    inputSchema: { type: 'object', required: ['text'], properties: {
-      text: { type: 'string', pattern: '^(done|blocked|needs-decision|failed):\\s*\\S', minLength: 1, maxLength: 16000 },
+    description: 'Report one step up to the commander who ordered this work. Report only to the member who gave you the task. If that member is a human, tag them when, in your judgement, they need to decide or should know. No address argument: the corner and order know the return address. Begin done:, blocked:, needs-decision: or failed:. Agent commanders receive this privately. A human commander sees it where they gave the order. If you cannot handle a report, report to your own commander. Report when your assignment is finished, or when you need a decision or are blocked. Don\'t report progress. The optional ask is a Tray summary; omit it to use automatic extraction: one plain sentence, at most 140 characters. Good: Turn Feedback Fixed notices on or off? Merge example: Approve merge of PR #2412: Agents decide when to tag? Bad: Need input. Supply status done, blocked, failed, or needs_decision matching the text prefix. Corner workers may report done only with a merge-ready or merged PR, or a brief with repositoryWork false. Post progress in the corner instead. Agent DM orders may report done when their assignment is complete.',
+    inputSchema: { type: 'object', required: ['status', 'text'], properties: {
+      ask: { type: 'string', minLength: 1, maxLength: 140 },
+      status: { type: 'string', enum: ['done', 'blocked', 'failed', 'needs_decision'] },
+      text: { type: 'string', minLength: 1, maxLength: 16000 },
     }, additionalProperties: false },
   },
   {
@@ -1659,7 +1670,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'connect',
     description:
-      'Connect a service or machine tool. Search with find_connectors only when the service is unclear. The continuation is optional: pass a request-specific sentence stating what you will do after sign-in; without it the card says "continues the request right after". Omit links, secrets, and private data. The server chooses a direct integration or official Registry sign-in first, then Composio, then Trusty Squire. Wait for the connection wake, then use the app ID with list_app_tools and execute_app_tool where applicable. An outage or refusal never permits a silent route switch. Never put sign-in links or credentials in chat. This is setup, not use permission.',
+      'Connect a service or machine tool. Search with find_connectors only when the service is unclear. The continuation is optional: pass a request-specific sentence stating what you will do after sign-in; without it the card says "continues the request right after". Omit links, secrets, and private data. The server chooses a direct integration or official Registry sign-in first, then Composio, then Trusty Squire. For needs_squire, use your own operate_drive with the returned URL and goal. On low_confidence or needs_value, take a flat operate_* step and resume the same session. Save the credential in the vault and call connect again. A browser app is also ready when your own Squire session is signed in to it: pass signedInUrl, a page only a signed-in user can open, and connect checks it read-only. For a pending owner card, wait for the connection wake, then use the app ID with list_app_tools and execute_app_tool where applicable. An outage or refusal never permits a silent route switch. Never put sign-in links or credentials in chat. This is setup, not use permission.',
     inputSchema: {
       type: 'object',
       required: ['service', 'reason'],
@@ -1676,6 +1687,10 @@ const AGENT_TOOLS: ToolDefinition[] = [
           description: 'One short sentence promising what you will do for this request after sign-in. No links, credentials, account identifiers, or private data.',
         },
         switchGoogleAccount: { type: 'boolean', description: 'Trusty Squire only: sign in with a different Google account.' },
+        signedInUrl: {
+          type: 'string', minLength: 1, maxLength: 2048,
+          description: 'Browser apps only: an https page of the app that only a signed-in user can open, such as its settings or credits page.',
+        },
         reconnect: {
           type: 'boolean',
           description: 'Resolve an app in error again from the top of the route order.',
@@ -1752,6 +1767,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
       type: 'object',
       required: ['prompt', 'options'],
       properties: {
+        ask: { type: 'string', minLength: 1, maxLength: 140, description: 'Optional Tray summary; omit to use the prompt automatically. One plain sentence naming the decision. Good: Ship the OTA tonight? Bad: Need input.' },
         prompt: {
           type: 'string',
           minLength: 1,
@@ -2379,7 +2395,7 @@ async function activeCommandContext(): Promise<{
   requestId: string;
   generationId: string;
 }> {
-  const { promptSectionIds: _sections, ...value } = await readTurnContextFile();
+  const { promptSectionIds: _sections, commandReason: _reason, ...value } = await readTurnContextFile();
   if (!value.roomId || !value.requestId || !value.generationId)
     throw new Error('no active server command');
   return value as { roomId: string; requestId: string; generationId: string };
@@ -3842,12 +3858,37 @@ export interface ConnectorOfferDeps {
   /** Live Tailscale reachability; `enabled` is true when this helper already has it. */
   tailscaleReach?: (enabled: boolean) => Promise<string>;
   squireReach?: () => Promise<{ reachable: boolean; cause?: string } | undefined>;
+  /** One Squire tool call through this agent's task relay; returns the parsed text result. */
+  squireCall?: (tool: string, args?: Record<string, unknown>) => Promise<unknown>;
 }
 
 export function connectorOfferDepsFromEnv(): ConnectorOfferDeps {
   const relayUrl = process.env.BEELINE_SQUIRE_RELAY_URL;
   const relayToken = process.env.BEELINE_SQUIRE_RELAY_TOKEN;
+  const squireCall = relayUrl && relayToken ? async (tool: string, args: Record<string, unknown> = {}) => {
+    const context = await activeCommandContext();
+    const response = await fetch(new URL('/mcp', relayUrl), {
+      method: 'POST',
+      headers: { authorization: `Bearer ${relayToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ ...context, method: 'tools/call',
+        params: { name: tool, arguments: args } }),
+      signal: AbortSignal.timeout(120_000),
+    });
+    const body = await response.json().catch((error) => {
+      if (!response.ok) throw new Error(`Squire relay HTTP ${response.status}`);
+      throw error;
+    }) as { error?: string; result?: {
+      isError?: boolean; content?: Array<{ type: string; text?: string }>;
+    } };
+    if (!response.ok) throw new Error(body.error ?? `Squire relay HTTP ${response.status}`);
+    const result = body.result;
+    const text = result?.content?.find((entry) => entry.type === 'text')?.text;
+    if (result?.isError) throw new Error(text ?? 'Squire MCP tool error');
+    if (text) return JSON.parse(text);
+    throw new Error(`Squire MCP returned no result for ${tool}`);
+  } : undefined;
   return {
+    squireCall,
     roomId: agentScheduleRoomId(),
     execute: daemonExecute,
     tailscaleReach: (enabled) => describeTailscaleReach({ enabled, installIfMissing: enabled }),
@@ -3855,28 +3896,7 @@ export function connectorOfferDepsFromEnv(): ConnectorOfferDeps {
     squireReach: relayUrl && relayToken ? async () => {
       let connections: Awaited<ReturnType<typeof readVault>>;
       try {
-        connections = await readVault({ call: async (tool, args = {}) => {
-          const context = await activeCommandContext();
-          const response = await fetch(new URL('/mcp', relayUrl), {
-            method: 'POST',
-            headers: { authorization: `Bearer ${relayToken}`, 'content-type': 'application/json' },
-            body: JSON.stringify({ ...context, method: 'tools/call',
-              params: { name: tool, arguments: args } }),
-            signal: AbortSignal.timeout(120_000),
-          });
-          const body = await response.json().catch((error) => {
-            if (!response.ok) throw new Error(`Squire relay HTTP ${response.status}`);
-            throw error;
-          }) as { error?: string; result?: {
-            isError?: boolean; content?: Array<{ type: string; text?: string }>;
-          } };
-          if (!response.ok) throw new Error(body.error ?? `Squire relay HTTP ${response.status}`);
-          const result = body.result;
-          const text = result?.content?.find((entry) => entry.type === 'text')?.text;
-          if (result?.isError) throw new Error(text ?? 'Squire MCP tool error');
-          if (text) return JSON.parse(text);
-          throw new Error('Squire MCP returned no vault metadata');
-        } });
+        connections = await readVault({ call: squireCall! });
       } catch (error) {
         // Task authorization and stale turns are not machine failures.
         if (/not authorized|active task|active server command|Squire relay HTTP 403/i.test(
@@ -4188,6 +4208,7 @@ export async function askChoice(
 ): Promise<string> {
   const result = await deps.execute('askRoomChoice', {
     roomId: deps.roomId,
+    ...(typeof args.ask === 'string' ? { ask: args.ask } : {}),
     prompt: args.prompt,
     ...(typeof args.constraint === 'string' ? { constraint: args.constraint } : {}),
     options: choiceOptionArgs(args),
@@ -4640,11 +4661,17 @@ export async function callAgentTool(
     case 'read_corner_brief':
       return readCornerBrief(args);
     case 'order': {
-      const result = await daemonExecute('order', { address: args.address as string, text: args.text as string });
+      const result = await daemonExecute('order', { address: args.address as string, text: args.text as string, agent: args.agent as string | undefined });
       return `${JSON.stringify(result)}\nAfter ordering another agent, end the turn; its report wakes a new turn; do not sleep or poll.`;
     }
+    case 'no_reply_needed': {
+      await activeCommandContext();
+      const { commandReason } = await readTurnContextFile();
+      if (!nonhumanSilentWake(commandReason)) throw new Error('no_reply_needed requires a nonhuman report, order or lifecycle wake');
+      return JSON.stringify({ acknowledged: true });
+    }
     case 'report':
-      return JSON.stringify(await daemonExecute('report', { text: args.text as string }));
+      return JSON.stringify(await daemonExecute('report', { status: args.status as import('@beeline/api-contract/daemon').AgentReportStatus, text: args.text as string, ask: args.ask as string | undefined }));
     case 'read':
       return JSON.stringify(await daemonExecute('read', { address: args.address as string, limit: args.limit as number | undefined }));
     case 'inspect_corner': {
@@ -5033,13 +5060,26 @@ export async function callAgentTool(
       const reason = stringArg(args, 'reason')?.trim();
       if (!service || !reason) throw new Error('service and reason are required');
       const continuation = normalizeAppContinuation(args.continuation);
-      return JSON.stringify(await daemonExecute('connect', {
+      const signedInUrl = stringArg(args, 'signedInUrl')?.trim();
+      const { squireReach: reach, squireCall } = connectorOfferDepsFromEnv();
+      // Refresh vault metadata before the server decides whether this app is ready.
+      const squireAvailable = reach ? (await reach())?.reachable === true : false;
+      const input = {
         ...await activeCommandContext(), service, reason,
+        squireAvailable,
         ...(continuation ? { continuation } : {}),
         ...(args.reconnect === true ? { reconnect: true } : {}),
         ...(args.noApi === true ? { noApi: true } : {}),
         ...(args.switchGoogleAccount === true ? { switchGoogleAccount: true } : {}),
-      }));
+        ...(signedInUrl ? { signedInUrl } : {}),
+      };
+      const result = await daemonExecute('connect', input) as unknown as ConnectResult;
+      // A browser app signed in through OAuth or SSO has no login to save:
+      // the agent's own signed-in Squire session is what makes it ready.
+      if (result.status === 'needs_squire' && result.transport === 'squire-browser' && result.appKey &&
+          signedInUrl && squireCall && await squireSessionSignedIn(squireCall, signedInUrl, result.appKey))
+        return JSON.stringify(await daemonExecute('connect', { ...input, squireSignedIn: true }));
+      return JSON.stringify(result);
     }
     case 'find_connectors': {
       const query = stringArg(args, 'query')?.trim();

@@ -43,10 +43,16 @@ For the current implementation, the release path is:
 The previous Android 33 and iOS 32 pins remain in `COMPAT_RUNTIMES`; old installs
 are not universally cut off from supported OTA JavaScript updates. They cannot
 receive the missing native modules through OTA or use this native voice path.
-Separately, Flux/Aura need a Workers AI quota reset or the captain's Workers Paid
-decision, Fish now has its API key and a successful live Luna/TTS/RTC/order-report proof
-using the documented free S2.1 Pro route (the paid API credit balance was zero).
-Fish is the Workspace default; Aura and Kokoro remain selectable.
-The Fish comparison measured 1660/1347/1446 ms after EndOfTurn (p50 1446 ms);
-Flux EndOfTurn was injected because STT remained quota-bound. LiveKit is already deployed; server
-secrets are staged without restarting production.
+Aura 2 is the only speech provider; Workspace Settings has no provider choice.
+Flux and Aura use Workers AI, whose daily quota can prevent a live rerun until
+reset or an owner-approved paid plan. Historical Aura server measurements and
+their limits are recorded in [the voice runbook](../../docs/voice-mode.md).
+
+For the Aura-only cleanup, Ruby authorized the live acceptance proof after
+deploy when an existing local or staging environment cannot load the provider
+keys. Start one real Android voice call, confirm audible Aura, record time to
+first audio, and compare the same measurement with current main or production.
+Latency must not increase. On failure, immediately revert the cleanup through
+the repository merge gate and report failed. Check Workspace Settings on the
+production web app through the reviewer bypass as well. Do not change production
+secrets or create a credential injection route.

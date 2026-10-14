@@ -544,7 +544,7 @@ describe('prompt assembly guards', () => {
       const text = assembleSessionPrompt(context).systemPrompt;
       expect(text, name).toContain('Report only to the member who gave you the task. If that member is a human, tag them when, in your judgement, they need to decide or should know.');
       expect(text, name).not.toContain('Do not tag a human to escalate.');
-      expect(text, name).toContain('report(text) one step up to your commander.');
+      expect(text, name).toContain('report(status, text) one step up to your commander.');
     }
   });
 
@@ -650,7 +650,7 @@ describe('prompt assembly guards', () => {
     for (const surface of ['code-corner', 'repo-less-corner'] as const) {
       const session = assembleSessionPrompt({ surface, agentName: 'Bee' }).systemPrompt;
       expect(session).toContain('Use order(address, text) privately across member Rooms');
-      expect(session).toContain('report(text) one step up to your commander');
+      expect(session).toContain('report(status, text) one step up to your commander');
       const turn = assembleTurnPrompt({
         surface,
         corners: [{ cornerId: 'sibling-id', parentRoomId: 'room-id', createdBy: 'agent-id', archived: false, objective: 'Other work' }],
@@ -665,11 +665,11 @@ describe('prompt assembly guards', () => {
   it.each(PROMPT_SURFACES)('has one coordination rule and no chain-skipping escalation on %s', (surface) => {
     const context = { surface, agentName: 'Bee', agentCommand: 'codex-acp' };
     const entries = sessionSections(context);
-    const coordination = entries.filter(({ text }) => text.includes('report(text)'));
+    const coordination = entries.filter(({ text }) => text.includes('report(status, text)'));
     expect(coordination.map(({ section }) => section.id)).toEqual(['core.tagging']);
     const session = assembleSessionPrompt(context);
     const turn = assembleTurnPrompt({ surface, sessionPrefix: session.turnPrefix, task: { body: 'Continue' } });
-    expect(turn.text).toContain('report(text) one step up to your commander');
+    expect(turn.text).toContain('report(status, text) one step up to your commander');
     expect(turn.text).not.toContain('to the person who started the chain');
   });
 });

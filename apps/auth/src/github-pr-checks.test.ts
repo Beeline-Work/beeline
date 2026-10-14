@@ -17,7 +17,40 @@ const response = (state: string, nodes: Record<string, unknown>[], totalCount = 
   },
 });
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
+
+describe('zero-check registration evidence', () => {
+  it('confirms a repository with no workflows without a settle delay', async () => {
+    const fetchMock = vi.fn(async (_url: string) => Response.json({ total_count: 0 }));
+    vi.stubGlobal('fetch', fetchMock);
+    expect(await app().confirmNoChecks('token', 'owner/widgets', sha)).toBe(true);
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://api.github.test/repos/owner/widgets/actions/workflows?per_page=1');
+  });
+
+  it.each([[0, 0, true], [1, 0, false], [0, 1, false], [undefined, undefined, false]])(
+    'requires settled absence of suites (%s) and workflow runs (%s)', async (suites, runs, expected) => {
+      vi.useFakeTimers();
+      const requests: string[] = [];
+      vi.stubGlobal('fetch', async (url: string) => {
+        requests.push(url);
+        return Response.json({ total_count: url.includes('/actions/workflows?') ? 2 : url.includes('/check-suites?') ? suites : runs });
+      });
+      const verdict = app().confirmNoChecks('token', 'owner/widgets', sha);
+      await vi.advanceTimersByTimeAsync(9_999);
+      expect(requests).toHaveLength(1);
+      await vi.advanceTimersByTimeAsync(1);
+      expect(await verdict).toBe(expected);
+      expect(requests).toContain(`https://api.github.test/repos/owner/widgets/commits/${sha}/check-suites?per_page=1`);
+      expect(requests).toContain(`https://api.github.test/repos/owner/widgets/actions/runs?head_sha=${sha}&per_page=1`);
+    },
+  );
+
+  it('refuses missing workflow evidence', async () => {
+    vi.stubGlobal('fetch', async () => Response.json({}));
+    await expect(app().confirmNoChecks('token', 'owner/widgets', sha)).rejects.toThrow('workflow count is invalid');
+  });
+});
 
 describe('GitHub PR check reads', () => {
   it('reads a completed job log through the installation-token REST endpoint', async () => {

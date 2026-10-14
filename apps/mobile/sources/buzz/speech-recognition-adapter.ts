@@ -16,6 +16,8 @@ export interface SpeechRecognitionInterface {
   requestPermissionsAsync(): Promise<{ status: string; granted: boolean; canAskAgain: boolean }>;
   supportsOnDeviceRecognition?(): boolean;
   supportsRecording?(): boolean;
+  /** Emits no text of its own; every take is the server's transcription. */
+  transcribesOnServerOnly?: boolean;
   getSupportedLocales?(options: object): Promise<{ locales: string[]; installedLocales: string[] }>;
   androidTriggerOfflineModelDownload?(options: { locale: string }): Promise<{ status: string }>;
   getSpeechRecognitionServices?(): string[];

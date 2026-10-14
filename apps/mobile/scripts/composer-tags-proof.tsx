@@ -309,15 +309,15 @@ async function run() {
   check('R1: the reply banner shows', Boolean(byTestID('reply-composer-banner')));
   check(
     'R1: the agent is a tag and the field holds no typed text',
-    chips().join() === 'ruby' && !byTestID('chat-send'),
+    chips().join() === 'ruby' && state.value === '@ruby ',
   );
 
   // R2 Recording in a quote reply: only the input row changes.
   await dictate('make the stop button keep the reply');
   check('R2: the waveform shows', Boolean(byTestID('chat-speech-waveform')));
   check(
-    'R2: ■ takes the ＋ slot',
-    Boolean(byTestID('chat-speech-discard')) && !byTestID('chat-attach-button'),
+    'R2: Stop takes the mic spot and ＋ stays',
+    Boolean(byTestID('chat-speech-discard')) && !byTestID('chat-mic') && Boolean(byTestID('chat-attach-button')),
   );
   check('R2: the banner stays', Boolean(byTestID('reply-composer-banner')));
   check(
@@ -342,16 +342,16 @@ async function run() {
   );
   if (stopAt === 'reply-dashed') return;
 
-  // R4 Stop and send: the message waits to publish; ■ still drops it.
-  await tap('chat-mic');
+  // R4 Send: the message waits to publish; Stop still drops it.
+  await tap('chat-send');
   await pause();
   check('R4: the message is on its way', state.held.length === 1);
   lines.push(`R4 mark ink: ${markInk('chat-speech-finalizing')}`);
   check(
-    'R4: the gold mark replaces the mic while it is sent',
+    'R4: the gold mark fills the Send slot while it is sent',
     markInk('chat-speech-finalizing') === theme.accent.toLowerCase(),
   );
-  check('R4: ■ stays while it is sent', Boolean(byTestID('chat-speech-discard')));
+  check('R4: Stop stays while it is sent', Boolean(byTestID('chat-speech-discard')));
   check(
     'R4: the waveform stays, frozen, while it is sent',
     (byTestID('chat-speech-waveform')?.children.length ?? 0) > 0,
@@ -360,16 +360,16 @@ async function run() {
   await tap('chat-speech-discard');
   state.held.shift()!();
   await pause();
-  check('R4 ■: nothing reaches the Room', state.sent.length === 0);
+  check('R4 Stop: nothing reaches the Room', state.sent.length === 0);
   check(
-    'R4 ■: the tag and the banner stay',
+    'R4 Stop: the tag and the banner stay',
     chips().join() === 'ruby' && Boolean(byTestID('reply-composer-banner')),
   );
-  check('R4 ■: the dictated words are gone', state.value === '@ruby ');
-  check('R4 ■: ＋ returns', Boolean(byTestID('chat-attach-button')));
+  check('R4 Stop: the dictated words are gone', state.value === '@ruby ');
+  check('R4 Stop: the mic returns', Boolean(byTestID('chat-mic')));
 
   await dictate('make the stop button keep the reply');
-  await tap('chat-mic');
+  await tap('chat-send');
   state.held.shift()!();
   await pause();
   check(
@@ -384,8 +384,8 @@ async function run() {
     !byTestID('reply-composer-banner') && chips().length === 0,
   );
   check(
-    'R4 sent: ＋ returns',
-    Boolean(byTestID('chat-attach-button')) && !byTestID('chat-speech-discard'),
+    'R4 sent: the mic returns',
+    Boolean(byTestID('chat-mic')) && !byTestID('chat-speech-discard'),
   );
 
   // G: a recorded take that Groq transcribes, sent as an untagged quote reply.
@@ -409,11 +409,11 @@ async function run() {
     results: [{ transcript: 'keep the reply thread it' }],
   });
   await pause();
-  await tap('chat-mic');
+  await tap('chat-send');
   const bars = [...(byTestID('chat-speech-waveform')?.children ?? [])] as HTMLElement[];
   check('G: Groq is transcribing the take', state.groq.length === 1);
   check(
-    'G: the gold mark replaces the mic while Groq transcribes',
+    'G: the gold mark fills the Send slot while Groq transcribes',
     markInk('chat-speech-finalizing') === theme.accent.toLowerCase(),
   );
   check(

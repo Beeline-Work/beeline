@@ -57,8 +57,8 @@ async function main() {
       ($3,'agent','Ruby','ruby'),($4,'agent','Sol','sol')`, [H, SECOND, A, B]);
     await db.query(`INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience,provider_login)
       VALUES('github','alex',$1,'https://github.com','beeline','alex'),('github','sam',$2,'https://github.com','beeline','sam')`, [H, SECOND]);
-    await db.query(`INSERT INTO agents(agent_id,owner_id,soul) VALUES($1,$3,'{"instructions":"I am Ruby, warm and concise. Voice: af_heart"}'),
-      ($2,$3,'{"instructions":"I am Sol, direct and calm. Voice: bm_george"}')`, [A, B, H]);
+    await db.query(`INSERT INTO agents(agent_id,owner_id,soul) VALUES($1,$3,'{"instructions":"I am Ruby, warm and concise. Voice: luna"}'),
+      ($2,$3,'{"instructions":"I am Sol, direct and calm. Voice: apollo"}')`, [A, B, H]);
     await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Isolated voice proof')`, [W]);
     await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Voice proof')`, [R, W]);
     for (const who of [H, SECOND, A, B]) await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)

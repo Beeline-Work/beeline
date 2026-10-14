@@ -157,6 +157,7 @@ export function buildChoiceCard(input: {
   agent: RoomViewIdentity;
   requester?: RoomViewIdentity;
   prompt: string;
+  ask?: string;
   constraint?: string;
   options: readonly ChoiceOptionRecord[];
   electorate: readonly string[];
@@ -180,6 +181,7 @@ export function buildChoiceCard(input: {
     agent: input.agent,
     ...(input.requester ? { requester: input.requester } : {}),
     prompt: input.prompt,
+    ask: input.ask ?? input.prompt,
     ...(input.constraint ? { constraint: input.constraint } : {}),
     options: decorateChoiceOptions(input.options, tally),
     electorate: [...input.electorate],
@@ -286,6 +288,7 @@ export async function postRoomChoice(
     agentId: string;
     mode: ChoiceMode;
     prompt: unknown;
+    ask?: string;
     constraint?: unknown;
     options: unknown;
     ttlSeconds?: unknown;
@@ -359,6 +362,7 @@ export async function postRoomChoice(
     status: 'open',
     agent: cardIdentity(agent),
     requester,
+    ask: input.ask,
     prompt,
     constraint,
     options,

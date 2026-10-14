@@ -19,6 +19,7 @@ export function VoiceBar({ voice, fullScreen = false, onAttach, attachDisabled =
     const listener = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduceMotion);
     return () => listener.remove();
   }, []);
+  const tip = useVoiceTip(voice);
   const bar = <View style={styles.bar} testID="voice-bar">
     <View style={styles.targetStrip} testID="conversation-target-strip">
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.agents}
@@ -31,7 +32,9 @@ export function VoiceBar({ voice, fullScreen = false, onAttach, attachDisabled =
           <IdentityMark kind="agent" seed={agent.pubkey} face={agent.face} name={agent.name} size={32} />
         </Pressable>)}
       </ScrollView>
-      <Text style={styles.modeLabel} testID="conversation-mode-label">Conversation mode</Text>
+      {voice.humans > 1 ? <Text style={[styles.modeLabel, styles.tip, tip.flash && styles.tipFlash]} numberOfLines={2}
+        accessibilityLiveRegion={tip.flash ? 'polite' : 'none'} testID="conversation-tip">{tip.text}</Text>
+        : <Text style={styles.modeLabel} testID="conversation-mode-label">Conversation mode</Text>}
     </View>
     <View style={styles.controls}>
       <Pressable onPress={onAttach} disabled={attachDisabled || !onAttach} accessibilityRole="button"
@@ -66,11 +69,38 @@ export function VoiceBar({ voice, fullScreen = false, onAttach, attachDisabled =
   </>;
 }
 
+const TIP_MS = 4_000;
+const FLASH_MS = 1_500;
+
+/** With several humans, agents answer only their name or a one-turn tap. */
+function useVoiceTip(voice: VoiceCallState) {
+  const name = voice.agents[0]?.name ?? 'Agent';
+  const tips = [`Start with a name: “${name}, …”`, 'Tap an avatar to talk to it once', 'Talk over an agent to stop it'];
+  const [tip, setTip] = React.useState(0);
+  const [flash, setFlash] = React.useState(false);
+  const shown = voice.humans > 1;
+  React.useEffect(() => {
+    if (!shown) return;
+    setTip(0);
+    const timer = setInterval(() => setTip(index => (index + 1) % tips.length), TIP_MS);
+    return () => clearInterval(timer);
+  }, [shown, tips.length]);
+  React.useEffect(() => {
+    if (!voice.unaddressed) return;
+    setTip(0); setFlash(true);
+    const timer = setTimeout(() => setFlash(false), FLASH_MS);
+    return () => clearTimeout(timer);
+  }, [voice.unaddressed]);
+  return { text: tips[tip], flash };
+}
+
 const styles = StyleSheet.create(theme => ({
   bar: { width: '100%' },
   targetStrip: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, gap: 8 },
   agents: { flex: 1, minWidth: 0 }, agentContent: { alignItems: 'center' },
   modeLabel: { ...theme.buzz.type.meta, color: theme.buzz.textMuted, textAlign: 'right', flexShrink: 0 },
+  tip: { flexShrink: 1, maxWidth: 220 },
+  tipFlash: { color: theme.buzz.accent },
   controls: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 8 },
   attach: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
   attachText: { ...theme.buzz.type.body, color: theme.buzz.textPrimary },

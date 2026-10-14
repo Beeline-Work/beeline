@@ -129,6 +129,7 @@ describe('corner message attribution', () => {
     const checkGate = vi.fn(async () => ({
       checks: 'pending' as const,
       checkCount: 0,
+      zeroChecksConfirmed: true,
       pullRequest: 'https://github.com/acme/repo/pull/7',
       headSha,
       approvalPending: true,
@@ -381,6 +382,54 @@ describe('corner message attribution', () => {
     // A new head is a new review.
     await greenHead(28, 'd'.repeat(40));
     expect((await commands(B, C)).map((command) => command.reason)).toEqual(['subscribed_event']);
+  });
+
+  it('names the brief revision current at dispatch in the review wake', async () => {
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    for (const revision of [1, 2])
+      await db.query(`INSERT INTO corner_brief_revisions(corner_id,revision,content,spec,author_id,source_room_id)
+        VALUES($1,$2,'Brief','Brief',$3,$4)`, [C, revision, A, R]);
+    await greenHead(29, 'e'.repeat(40));
+    const [review] = await commands(B, C);
+    expect(review?.source.body).toContain('Review against brief revision 2');
+    expect(review?.source.body).not.toContain('revision 1');
+  });
+
+  it('does not wake the reviewer again for the same head and brief revision after a blocking verdict', async () => {
+    const head = 'f'.repeat(40);
+    /** A check verdict on `head`, as the GitHub webhook writes it. */
+    const verdict = async (kind: 'check-passed' | 'rerun') => {
+      if (kind === 'rerun') {
+        await db.query(
+          `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"pending"') WHERE corner_id=$1`, [C]);
+        await advanceCorner(db, C, { kind: 'checks-pending' });
+        await db.query(
+          `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"passing"') WHERE corner_id=$1`, [C]);
+      }
+      await systemLine(db, { roomId: C, authorId: H, subject: { kind: 'github', name: 'GitHub' },
+        verb: 'passed a check', kind: 'check-passed', object: { text: 'ci', headSha: head } });
+    };
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    await db.query(`INSERT INTO corner_brief_revisions(corner_id,revision,content,spec,author_id,source_room_id)
+      VALUES($1,1,'Brief','Brief',$2,$3)`, [C, A, R]);
+    await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [C,
+      JSON.stringify({ checks: 'passing', lifecycle: 'in-review', pr: { number: 30, headSha: head } })]);
+    await verdict('check-passed');
+    const [review] = await commands(B, C);
+    await claim(review!);
+    await result(review!, 'FAIL: the waiver is not in the brief.');
+    // A CI re-run on the same head and the same brief revision.
+    await verdict('rerun');
+    const repeated = (await commands(B, C)).length;
+    console.info(`Reproduction REVIEW-DUP-1: wrong=1 repeat review wake; right=0; observed=${repeated}`);
+    expect(repeated).toBe(0);
+    expect((await commands(A, C)).map((command) => command.reason)).toContain('corner_review_needed');
+    // A revised brief is a new review on the same head.
+    await db.query(`INSERT INTO corner_brief_revisions(corner_id,revision,content,spec,author_id,source_room_id)
+      VALUES($1,2,'Brief','Brief with the waiver',$2,$3)`, [C, A, R]);
+    await verdict('rerun');
+    const [rereview] = await commands(B, C);
+    expect(rereview?.source.body).toContain('Review against brief revision 2');
   });
 
   it('returns missing review configuration to the implementer', async () => {
@@ -818,6 +867,7 @@ describe('the corner implementer the workflow wakes follows a person hand-over',
     const checkGate = vi.fn(async () => ({
       checks: 'pending' as const,
       checkCount: 0,
+      zeroChecksConfirmed: true,
       pullRequest: 'https://github.com/acme/repo/pull/7',
       headSha: '1'.repeat(40),
       approvalPending: true,

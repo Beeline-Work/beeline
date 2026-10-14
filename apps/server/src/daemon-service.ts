@@ -1,13 +1,14 @@
+import { normalizeTrayAsk } from '@beeline/api-contract/phone';
 import { commandAddress, sendOrder, reportToCommander, CommandRefusalError } from './commander.js';
 import { createAgentSubscription, listAgentSubscriptions, deleteAgentSubscription,
   listServiceSubscriptionEvents, subscriptionPromptBody } from './agent-subscriptions.js';
 import { completeProviderWebhookAssignment, providerWebhookAssignments } from './provider-webhooks.js';
 import { reportAgentSignIn } from './agent-sign-in.js';
 import { FIRST_PARTY_INTEGRATIONS, firstPartyIntegration, settleFirstPartySignIn } from './first-party-integrations.js';
-import { queueAppConnectionJob, readAppConnectionJob, saveAppConnectionOutcome } from './app-connection-jobs.js';
 import { waitForConnection } from './connection-wait.js';
 import { machineSquireReport, queueSquireWork, squireAssignments, squireMachineAddress,
-  squireMachineId, squireWorkStatus, reportSquireWork } from './squire-machine.js';
+  squireMachineId, squireWorkStatus, reportSquireWork, recordSquireSignIn, forgetSquireSignIn,
+  squireSignedIn } from './squire-machine.js';
 import { completeSquireMachineOffers } from './connector-offer-completion.js';
 import { activeCornerHolds, setCornerHold } from './corner-holds.js';
 import { cornerFactsSql, cornerRowState, type CornerStateRow } from './chat-corner-counts.js';
@@ -120,7 +121,8 @@ import {
 import { mediaIdFromUrl } from './media-ttl.js';
 import { postRoomChoice } from './room-choice.js';
 import { APP_INPUT_MAX_LENGTH, appIdentity, appResourceTarget, connectorAdapter } from '@beeline/api-contract/workbench';
-import { normalizeAppContinuation, type AppTransport } from '@beeline/api-contract/app-connections';
+import { normalizeAppContinuation, registrableDomain, urlBelongsToApp,
+  type AppTransport } from '@beeline/api-contract/app-connections';
 import { McpRegistryClient, DEFAULT_MCP_REGISTRY_CLIENT } from './mcp-registry.js';
 import { connectorIntentIndex } from './connector-intent-index.js';
 import {
@@ -348,7 +350,8 @@ export class DaemonService {
     private readonly liveDiagnosticServerInstance?: string,
     private readonly prChecksStatus?: (
       input: Input<'getPrChecksStatus'>,
-    ) => Promise<Output<'getPrChecksStatus'>>,
+      confirmZeroChecks?: boolean,
+    ) => Promise<Output<'getPrChecksStatus'> & { zeroChecksConfirmed?: boolean }>,
     _legacyProviderSlot?: unknown,
     private readonly institutionalMemoryShadow: InstitutionalMemoryShadowConfig = {
       enabled: false,
@@ -627,9 +630,10 @@ export class DaemonService {
                 allowCompleted,
               );
         // A corner is the ordered work's own address: its viewers watch the
-        // turn's draft, thoughts and tool rows there. Only the final prose
-        // becomes the private report.
-        if (command.private_payload && (name === 'postRoomMessage' || ([
+        // turn's live work and progress there. Urgent terminal prose still
+        // reports privately; done uses the explicit guarded report tool.
+        if (command.private_payload && ((name === 'postRoomMessage' && (/^(blocked|failed|needs-decision):\s*\S/.test(String(candidate.text ?? '')) || !(await db.query(
+          `SELECT 1 FROM corner_facts WHERE corner_id=$1`, [scopedRoom])).rowCount)) || ([
           'postAgentDraft', 'postAgentThought', 'postAgentActivity',
         ].includes(name) && !(await db.query(
           `SELECT 1 FROM corner_facts WHERE corner_id=$1`, [scopedRoom])).rowCount))) {
@@ -1029,6 +1033,7 @@ export class DaemonService {
         this.live.publish({ type: 'invalidate', roomId: scopedRoom!, reason: 'turn', agentId: authenticatedAgentId });
         return { ...this.writeResult(),
           ...(claimed.row.recovery_context ? { recoveryContext: claimed.row.recovery_context } : {}),
+          ...(claimed.row.coalesced_context ? { coalescedContext: claimed.row.coalesced_context } : {}),
           ...(claimed.activity ? { activitySource: { body: claimed.activity.text, systemEvent: claimed.activity.system_event } } : {}),
         } as Output<Name>;
       }
@@ -1064,9 +1069,13 @@ export class DaemonService {
         )) as Output<Name>;
       case 'order':
         return await sendOrder(this.database, this.authorizedCommand!, authenticatedAgentId,
-          String(candidate.address), String(candidate.text)) as Output<Name>;
-      case 'report':
-        return await this.report(String(candidate.text), authenticatedAgentId) as Output<Name>;
+          String(candidate.address), String(candidate.text),
+          candidate.agent === undefined ? undefined : String(candidate.agent)) as Output<Name>;
+      case 'report': {
+        const ask = candidate.ask === undefined
+          ? undefined : normalizeTrayAsk(candidate.ask);
+        return await this.report(String(candidate.text), authenticatedAgentId, this.authorizedCommand!, this.database, false, candidate.status, ask) as Output<Name>;
+      }
       case 'read': {
         const target = await commandAddress(this.database, String(candidate.address), authenticatedAgentId, true);
         return await this.inbox('getRoomConversation', { roomId: target.id, limit: candidate.limit as number | undefined }, authenticatedAgentId) as Output<Name>;
@@ -1535,6 +1544,13 @@ export class DaemonService {
           input as Input<'postConnectorStatus'>,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'forgetSquireSignIn': {
+        const { url, siteUrl } = input as Input<'forgetSquireSignIn'>;
+        // An OAuth redirect lands on the identity provider; the app is the site the session was sent to.
+        for (const target of [url, siteUrl])
+          if (typeof target === 'string') await forgetSquireSignIn(this.database, authenticatedAgentId, { url: target });
+        return this.writeResult() as Output<Name>;
+      }
       case 'postConnectorVault':
         return (await this.connectorVaultReport(
           input as Input<'postConnectorVault'>,
@@ -1695,60 +1711,6 @@ export class DaemonService {
         )) as Output<Name>;
       case 'connect':
         return (await this.connectService(input as Input<'connect'>, authenticatedAgentId)) as Output<Name>;
-      case 'completeAppConnectionJob': {
-        const request = input as Input<'completeAppConnectionJob'>;
-        const outcome = request.outcome.status === 'approval'
-          ? { ...request.outcome, expiresAt: request.outcome.expiresAt ?? Date.now() + 24 * 60 * 60_000 }
-          : request.outcome;
-        let approvalMessageId: string | undefined;
-        const job = await this.database.transaction(async database => {
-          const job = await saveAppConnectionOutcome(database,
-            authenticatedAgentId, request.appId, request.jobId, outcome);
-          if (outcome.decision) {
-          const actor = (await database.query<{ name: string }>('SELECT name FROM identities WHERE id=$1', [authenticatedAgentId])).rows[0]!;
-          await systemLine(database, {
-            id: createHash('sha256').update(`app-connection-decision:${job.jobId}:${outcome.decision.approvalId}`).digest('hex'),
-            roomId: job.roomId, subject: { kind: 'system', name: 'Trusty Squire' },
-            verb: outcome.decision.status, object: `Connect ${job.name}`,
-            presentation: 'card', cardType: 'squire-approval-decision',
-            card: { approvalId: outcome.decision.approvalId, tool: 'operate_drive',
-              title: `Connect ${job.name}`, detail: 'Squire received the owner’s decision.',
-              status: outcome.decision.status, agentId: authenticatedAgentId, agentName: actor.name },
-          });
-          }
-          if (outcome.status === 'approval') {
-            const receipt = await this.squireApproval({ roomId: job.roomId, tool: 'operate_drive',
-              title: `Connect ${job.name}`, detail: 'Complete Squire’s approval to finish connecting this app.',
-              approvalUrl: outcome.approvalUrl, linkKind: 'approval',
-              ...(outcome.approvalId ? { approvalId: outcome.approvalId } : {}),
-              expiresAt: outcome.expiresAt }, authenticatedAgentId, database);
-            approvalMessageId = receipt.id;
-          }
-          return job;
-        });
-        if (approvalMessageId) {
-          const receipt = (await this.database.query<{ room_id: string }>(
-            'SELECT room_id FROM messages WHERE id=$1', [approvalMessageId])).rows[0];
-          if (receipt) this.live.publish({ type: 'invalidate', roomId: receipt.room_id, reason: 'message', agentId: authenticatedAgentId });
-        } else {
-          const parent = (await this.database.query<CommandRow>(
-            `SELECT * FROM agent_commands WHERE id=$1 AND state='complete'`, [job.commandId])).rows[0];
-          if (parent) {
-            await this.database.transaction(async database => {
-              const source = await systemLine(database, { id: `app-connection:${job.jobId}:${request.outcome.status}`,
-                roomId: job.roomId, subject: { kind: 'system', name: job.name },
-                verb: request.outcome.status === 'ready' ? 'connected' : 'could not connect',
-                object: job.name, consequence: request.outcome.status === 'ready'
-                  ? 'The request can continue.' : 'Reconnect to retry.' });
-              if (source.inserted) await createAgentCommand(database, { roomId: job.roomId,
-                agentId: authenticatedAgentId, sourceMessageId: source.id, reason: 'app_connected',
-                parent, retainDepth: true });
-            });
-          }
-        }
-        this.live.publish({ type: 'invalidate', roomId: job.roomId, reason: 'app-connected' });
-        return this.writeResult() as Output<Name>;
-      }
       case 'listAppTools':
         return (await this.listAppTools(input as Input<'listAppTools'>,
           authenticatedAgentId)) as Output<Name>;
@@ -1924,7 +1886,8 @@ export class DaemonService {
    * A repository with no checks emits no check webhook, so its review
    * otherwise waits forever. Resolve that absence only after the
    * worker has finished its PR turn; at PR-open time the same empty rollup is
-   * merely a race with GitHub registering workflows. Completion uses the
+   * merely a race with GitHub registering workflows. Require independent
+   * registration evidence even at worker completion. Completion uses the
    * registered PR, regardless of whether the worker's reply contains its URL.
    * GitHub also runs no workflows for a PR that conflicts with its base, so
    * the zero-check result resolves only once GitHub has computed mergeability
@@ -1953,14 +1916,17 @@ export class DaemonService {
     ).rows[0];
     if (!candidate) return;
 
-    let verdict: Output<'getPrChecksStatus'>;
+    const fetchStartedAt = (await this.database.query<{ now: number }>(
+      `SELECT extract(epoch FROM clock_timestamp())::double precision now`,
+    )).rows[0]!.now;
+    let verdict: Output<'getPrChecksStatus'> & { zeroChecksConfirmed?: boolean };
     try {
-      verdict = await this.prChecksStatus({ cornerId });
+      verdict = await this.prChecksStatus({ cornerId }, true);
     } catch (error) {
       console.error(`[server] zero-check completion read failed for corner ${cornerId}:`, error);
       return;
     }
-    if (verdict.checks !== 'pending' || verdict.checkCount !== 0) return;
+    if (verdict.checks !== 'pending' || verdict.checkCount !== 0 || !verdict.zeroChecksConfirmed) return;
     try {
       await this.refreshMergeability?.(cornerId);
     } catch (error) {
@@ -1989,6 +1955,9 @@ export class DaemonService {
         current.owner_agent_id !== workerAgentId ||
         current.reviewer_agent_id !== candidate.reviewer_agent_id ||
         current.lifecycle.pr?.headSha !== verdict.headSha ||
+        (current.lifecycle.checksSummary?.total ?? 0) > 0 ||
+        ((current.lifecycle.checksSummary as { fetchStartedAt?: number } | undefined)?.fetchStartedAt ??
+          current.lifecycle.checksSummary?.updatedAt ?? 0) > fetchStartedAt ||
         (current.lifecycle.pr.mergeability !== 'clean' &&
           current.lifecycle.pr.mergeability !== 'other') ||
         current.lifecycle.checks === 'passing'
@@ -2003,6 +1972,7 @@ export class DaemonService {
           failing: [],
           checks: [],
           updatedAt: Math.floor((await db.query<{ now: number }>(`SELECT extract(epoch FROM clock_timestamp())::double precision now`)).rows[0]!.now),
+          fetchStartedAt,
         },
       };
       await db.query(
@@ -5548,7 +5518,29 @@ export class DaemonService {
     );
     return this.writeResult();
   }
-  private async report(text: string, agentId: string, command = this.authorizedCommand!, database = this.database, automatic = false) {
+  private async report(text: string, agentId: string, command = this.authorizedCommand!, database = this.database, automatic = false, status?: unknown, ask?: string) {
+    const prefix = text.match(/^(done|blocked|failed|needs-decision):\s*\S/)?.[1];
+    if (!automatic && (!['done', 'blocked', 'failed', 'needs_decision'].includes(String(status)) ||
+      String(status).replace('_', '-') !== prefix)) {
+      throw new CommandRefusalError('report requires status done, blocked, failed, or needs_decision matching its text prefix', 400);
+    }
+    if (prefix === 'done') {
+      const corner = (await database.query<{ worker: string; merged: boolean; has_pr: boolean }>(
+        `SELECT ${cornerImplementerSql('fact', 'room')} worker,
+          fact.lifecycle->'pr'->>'number' IS NOT NULL has_pr,
+          (fact.lifecycle->>'lifecycle'='landed' OR fact.lifecycle->'pr'->>'mergeCommitSha' IS NOT NULL) merged
+         FROM rooms room JOIN corner_facts fact ON fact.corner_id=room.id WHERE room.id=$1`,
+        [command.room_id])).rows[0];
+      if (corner?.worker === agentId && !corner.merged) {
+        const brief = await currentCornerBrief(database, command.room_id);
+        if (brief?.repositoryWork !== false) {
+          const gate = corner.has_pr ? await this.prChecksStatus?.({ cornerId: command.room_id }) : undefined;
+          if (!gate?.mergeAllowed) throw new CommandRefusalError(
+            'done requires a merge-ready or merged PR; post progress in the corner instead (non-PR deliverables require repositoryWork false)', 409);
+        }
+      }
+    }
+
     const pending = (await database.query<{ id: string; url: string; name: string; mime_type: string; size: number }>(
       `WITH RECURSIVE chain AS (
          SELECT * FROM agent_commands WHERE id=$1
@@ -5566,7 +5558,7 @@ export class DaemonService {
       ...pending.map(row => ({ url: row.url, name: row.name, mimeType: row.mime_type, size: row.size }))]
       .filter((row, index, all) => all.findIndex(other => other.url === row.url) === index);
     const result = await reportToCommander(database, command.room_id, agentId, text, command,
-      createHash('sha256').update(`report:${command.id}:${command.generation_id}:${text}:${JSON.stringify(attachments)}`).digest('hex'), { attachments, automatic });
+      createHash('sha256').update(`report:${command.id}:${command.generation_id}:${text}:${ask ?? ""}:${JSON.stringify(attachments)}`).digest('hex'), { attachments, automatic, ask });
     if ('delivered' in result && !result.delivered) return result;
     for (const attachment of pending) await database.query(
       `DELETE FROM agent_pending_attachments WHERE room_id=$1 AND agent_id=$2 AND id=$3`,
@@ -6143,6 +6135,7 @@ export class DaemonService {
       roomId: input.roomId,
       agentId,
       mode: 'question',
+      ask: input.ask === undefined ? undefined : normalizeTrayAsk(input.ask),
       prompt: input.prompt,
       constraint: input.constraint,
       options: input.options,
@@ -6832,59 +6825,53 @@ export class DaemonService {
         Object.assign(result, { status: 'needs_sign_in', next: 'The sign-in card is ready. Wait for the owner.' });
       });
     }
+    if (outcome.transport !== 'squire-api' && outcome.transport !== 'squire-browser') return result;
     if (!outcome.appId || !outcome.appKey || !commandId) return result;
-    const previousJob = await readAppConnectionJob(this.database, agentId, outcome.appId);
-    const continuing = previousJob && ['queued', 'running', 'approval'].includes(previousJob.state) && !input.reconnect;
-    let jobId = continuing ? previousJob.jobId : undefined;
-    if (!continuing) {
-      const target = `connection-install:${outcome.appKey}`;
-      const consent = (await this.database.query<{ id: string; status: string }>(
-        `SELECT grant_row.id,grant_row.status FROM agent_grants grant_row JOIN agents agent ON agent.agent_id=grant_row.agent_id
-          WHERE agent.owner_id=$1 AND grant_row.kind='mcp' AND grant_row.target=$2 AND NOT grant_row.auto
-            AND (grant_row.expires_at IS NULL OR grant_row.expires_at>now())
-          ORDER BY grant_row.created_at DESC LIMIT 1`, [context.owner.pubkey, target])).rows[0];
-      if (!consent || consent.status === 'revoked') {
-        const asked = await this.requestAgentGrant({ ...input, kind: 'mcp', target,
-          reason: `Connect ${outcome.app} through Trusty Squire for this request` }, agentId, true);
-        await this.database.query('UPDATE agent_grants SET command_id=$2 WHERE id=$1', [asked.grantId, commandId]);
-        Object.assign(result, { status: 'needs_approval', grantId: asked.grantId, next: 'Wait for the owner’s connection approval.' });
-        return result;
-      }
-      if (consent.status !== 'approved' && consent.status !== 'once') {
-        Object.assign(result, { status: consent.status === 'pending' ? 'needs_approval' : 'unavailable',
-          grantId: consent.id, next: consent.status === 'pending' ? 'Wait for the owner’s connection approval.' : 'The owner declined this connection.' });
-        return result;
-      }
-      const queued = await queueAppConnectionJob(this.database, agentId, { appId: outcome.appId,
-        service: outcome.appKey, name: outcome.app, noApi: outcome.transport === 'squire-browser',
-        roomId: input.roomId, commandId, url: appIdentity(service)?.domain ? `https://${appIdentity(service)!.domain}`
-          : `https://www.google.com/search?${new URLSearchParams({ q: `${service} official website` })}` }, input.reconnect === true);
-      jobId = queued.jobId;
-      if (consent.status === 'once') {
-        const consumed = await this.database.query(`UPDATE agent_grants SET expires_at=now()
-          WHERE id=$1 AND status='once' AND (expires_at IS NULL OR expires_at>now()) RETURNING id`, [consent.id]);
-        if (!consumed.rowCount) throw new Error('Connection consent was already used');
-      }
+    if (input.squireAvailable !== true)
+      return { ...result, status: 'unavailable',
+        next: 'Trusty Squire is unavailable in this agent session. Connect Trusty Squire on this machine and start a session with its tools mounted.' };
+    if (outcome.transport === 'squire-browser') {
+      // A session signed in through OAuth or SSO has no login to save in the vault.
+      const signedInUrl = typeof input.signedInUrl === 'string' ? input.signedInUrl : '';
+      const signedInDomain = input.squireSignedIn === true && urlBelongsToApp(signedInUrl, outcome.appKey)
+        ? registrableDomain(new URL(signedInUrl).hostname) : undefined;
+      if (signedInDomain) await recordSquireSignIn(this.database, agentId, outcome.appKey, signedInDomain);
+      else if (input.reconnect) await forgetSquireSignIn(this.database, agentId, { appKey: outcome.appKey });
+      if (await squireSignedIn(this.database, agentId, outcome.appKey))
+        return { ...result, status: 'ready',
+          next: `${outcome.app} is ready: your Squire session is signed in. Use your own operate_* tools on it.` };
     }
-    if ((await machineSquireReport(this.database, context.owner.pubkey, context.machine.machineId))?.status !== 'connected')
-      return machine('trusty-squire', true);
-    return afterCommit(result, async database => {
-      const job = await waitForConnection(async () => {
-        const row = await readAppConnectionJob(database, agentId, outcome.appId!);
-        if (row && row.jobId !== jobId) return { status: 'error' as const, reason: 'This connection was replaced. Reconnect to retry.' };
-        return row?.outcome;
-      });
-      if (!job) {
-        const failed = { status: 'error' as const, reason: 'The connection worker did not finish. Reconnect to retry.' };
-        if (jobId) await database.transaction(database => saveAppConnectionOutcome(database, agentId, outcome.appId!, jobId!, failed));
-        Object.assign(result, { status: 'error', next: failed.reason });
-        return;
-      }
-      Object.assign(result, job.status === 'ready' ? { status: 'ready', next: `${outcome.app} is ready.` }
-        : job.status === 'approval' ? { status: 'needs_approval', approvalUrl: job.approvalUrl,
-          next: 'Squire’s approval card is ready. Wait for the owner.' }
-        : { status: 'error', next: job.reason });
-    });
+    const target = `connection-install:${outcome.appKey}`;
+    const consent = (await this.database.query<{ id: string; status: string }>(
+      `SELECT grant_row.id,grant_row.status FROM agent_grants grant_row JOIN agents agent ON agent.agent_id=grant_row.agent_id
+        WHERE agent.owner_id=$1 AND grant_row.kind='mcp' AND grant_row.target=$2 AND NOT grant_row.auto
+          AND (grant_row.expires_at IS NULL OR grant_row.expires_at>now())
+        ORDER BY grant_row.created_at DESC LIMIT 1`, [context.owner.pubkey, target])).rows[0];
+    if (!consent || consent.status === 'revoked') {
+      const asked = await this.requestAgentGrant({ ...input, kind: 'mcp', target,
+        reason: `Connect ${outcome.app} through Trusty Squire for this request` }, agentId, true);
+      await this.database.query('UPDATE agent_grants SET command_id=$2 WHERE id=$1', [asked.grantId, commandId]);
+      return { ...result, status: 'needs_approval', grantId: asked.grantId,
+        next: 'Wait for the owner’s connection approval.' };
+    }
+    if (consent.status !== 'approved' && consent.status !== 'once')
+      return { ...result, status: consent.status === 'pending' ? 'needs_approval' : 'unavailable',
+        grantId: consent.id, next: consent.status === 'pending'
+          ? 'Wait for the owner’s connection approval.' : 'The owner declined this connection.' };
+    if (consent.status === 'once') {
+      const consumed = await this.database.query(`UPDATE agent_grants SET expires_at=now()
+        WHERE id=$1 AND status='once' AND (expires_at IS NULL OR expires_at>now()) RETURNING id`, [consent.id]);
+      if (!consumed.rowCount) throw new Error('Connection consent was already used');
+    }
+    const domain = appIdentity(service)?.domain;
+    const url = domain ? `https://${domain}`
+      : `https://www.google.com/search?${new URLSearchParams({ q: `${service} official website` })}`;
+    const goal = outcome.transport === 'squire-browser'
+      ? `Sign in to ${outcome.app} with the owner's saved account and save its login in the vault as service ${outcome.appKey}.`
+      : `Sign up or sign in to ${outcome.app} using the owner's account. Create an API key and capture it securely into the vault as service ${outcome.appKey}. Never reveal a secret in the response.`;
+    return { ...result, status: 'needs_squire', squire: { url, goal },
+      next: 'Use your own Squire operate_drive with the returned URL and goal. On low_confidence or needs_value, take a flat operate_* step, then resume operate_drive on the same session. Keep saved-login approval in Squire. Once a credential for this service is in the vault, call connect again.'
+        + (outcome.transport === 'squire-browser' ? ' If your Squire session is already signed in, for example through Google, call connect again with signedInUrl set to a page only a signed-in user can open.' : '') };
   }
 
   /** Shared app routing for connect and its hidden one-release alias. */
@@ -7765,6 +7752,7 @@ export class DaemonService {
         draft,
         attachments,
         command.private_payload ? command.id : command.root_source_message_id,
+        { cornerId: input.cornerId, agentId },
       );
       const revision = input.expectedRevision + 1;
       await db.query(
@@ -8225,6 +8213,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   installConnector: true,
   postConnectorStatus: true,
   postConnectorVault: true,
+  forgetSquireSignIn: true,
   getConnectorStatus: true,
   getConnectorVaultList: true,
   getConnectionDetail: true,
@@ -8253,7 +8242,6 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   connectApp: true,
   connect: true,
   findConnectors: true,
-  completeAppConnectionJob: true,
   listAppTools: true,
   executeAppTool: true,
   offerConnector: true,

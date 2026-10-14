@@ -14,7 +14,7 @@ It keeps only four responsibilities:
 Room data and writes go through `DaemonApiClient`. The helper has no relay transport, legacy
 pairing-code redemption, approval or mandate engine, work calendar, repository lifecycle, or
 GitHub event consumer. Its action surface is `open_corner(room, brief)`, `order(address, text)`,
-`report(text)`, `read(address)` and `watch(address)` through `read-only-mcp.ts`.
+`report(status, text)`, `read(address)` and `watch(address)` through `read-only-mcp.ts`.
 A DM can drive work across every Room the agent belongs to. The caller that opens a corner
 is its commander; orders reach the current implementer and reports return one step up.
 The return route comes from `rooms.created_by` and the existing opening command's parent,

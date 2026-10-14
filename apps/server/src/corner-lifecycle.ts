@@ -736,7 +736,9 @@ async function checksReported(
       await noteCornerAgentUnreachable(db, cornerId, corner.worker_agent_id, event.sourceMessageId);
       return no('the implementer cannot be woken');
     }
-  } else if (plan.outcome === 'passing' && !plan.approved) {
+  } else if (plan.outcome === 'passing' && !plan.approved && !(await blockingReview(db, cornerId, headSha))) {
+    // A blocking verdict on this head and brief revision is handed back by
+    // `ensureReviewDispatch` instead of waking the reviewer again.
     const queued = await queueReviewerCommand(db, {
       roomId: cornerId,
       agentId: plan.reviewerAgentId,
@@ -852,14 +854,15 @@ async function ensureReviewDispatch(
   );
   const reviewed = outstanding.rows[0];
   if (reviewed?.state === 'pending' || reviewed?.state === 'claimed') return OK;
-  if (reviewed) {
+  const ended = reviewed?.id ?? await blockingReview(db, cornerId, pr.headSha);
+  if (ended) {
     const implementerWorking = await db.query(
       `SELECT 1 FROM agent_commands WHERE room_id=$1 AND agent_id=$2
        AND action='input' AND state IN ('pending','claimed') LIMIT 1`,
       [cornerId, corner.worker_agent_id],
     );
     if (implementerWorking.rowCount) return OK;
-    return noteReviewBlocked(db, cornerId, corner, `${pr.headSha}:${reviewed.id}`,
+    return noteReviewBlocked(db, cornerId, corner, `${pr.headSha}:${ended}`,
       'the review ended without a PASS on the current head');
   }
   const sourceId = transition.lastCardId ?? (
@@ -899,16 +902,68 @@ async function ensureReviewDispatch(
   return { ok: true, wake: { queued: true, agentId: reviewerAgentId } };
 }
 
+/**
+ * The reviewer's finished review of this head, dispatched since the current
+ * brief revision, that ended without a PASS (callers have already checked
+ * for a yes on the head) while the corner was still in review. Another
+ * review wake for the same head and brief revision would only repeat that
+ * verdict. A turn that ended after the corner left review (checks re-ran)
+ * gave no verdict.
+ */
+async function blockingReview(
+  db: SqlDatabase,
+  cornerId: string,
+  headSha: string | null,
+): Promise<string | undefined> {
+  if (!headSha) return undefined;
+  return (
+    await db.query<{ id: string }>(
+      `SELECT command.id FROM agent_commands command
+       JOIN rooms corner ON corner.id=command.room_id
+       JOIN rooms parent ON parent.id=corner.parent_id
+       JOIN messages source ON source.id=command.source_message_id
+       JOIN agent_turns turn ON turn.room_id=command.room_id
+         AND turn.agent_id=command.agent_id AND turn.request_id=command.turn_request_id
+       WHERE command.room_id=$1 AND command.action='input'
+         AND command.state='complete' AND turn.status='complete'
+         AND command.agent_id=ANY(ARRAY[parent.reviewer_agent_id]||parent.reviewer_fallback_ids)
+         AND (command.reason='corner_review_dispatch'
+           OR (command.reason='subscribed_event' AND source.system_event->>'kind'='check-passed'))
+         AND source.system_event->'object'->>'headSha'=$2
+         AND command.created_at>=COALESCE(
+           (SELECT max(created_at) FROM corner_brief_revisions WHERE corner_id=$1),'-infinity')
+         AND NOT EXISTS (
+           SELECT 1 FROM messages card WHERE card.room_id=$1 AND card.card_type=$3
+             AND card.card->>'runId'=$1::text AND card.card->>'fromState'='review'
+             AND card.created_at>command.created_at
+             AND card.created_at<=COALESCE(command.completed_at,now()))
+       ORDER BY command.created_at DESC,command.id DESC LIMIT 1`,
+      [cornerId, headSha, CORNER_LIFECYCLE_CARD_TYPE],
+    )
+  ).rows[0]?.id;
+}
+
 async function queueReviewerCommand(
   db: SqlDatabase,
   input: Parameters<typeof createAgentCommand>[1],
 ): Promise<{ command?: CommandRow; error?: string }> {
+  // The wake names the brief revision current at dispatch, so a reviewer
+  // never reviews against a superseded one.
+  const brief = (
+    await db.query<{ revision: number }>(
+      `SELECT revision FROM corner_brief_revisions WHERE corner_id=$1 ORDER BY revision DESC LIMIT 1`,
+      [input.roomId],
+    )
+  ).rows[0];
   // A rejected insert must leave this transaction usable so the failure line
   // can commit. A broken connection still propagates rather than pretending
   // the reviewer was woken.
   await db.query('SAVEPOINT corner_reviewer_dispatch');
   try {
-    const command = await createAgentCommand(db, input);
+    const command = await createAgentCommand(db, {
+      ...input,
+      ...(brief ? { wakeNote: `Review against brief revision ${brief.revision}, the corner's current brief at this dispatch.` } : {}),
+    });
     await db.query('RELEASE SAVEPOINT corner_reviewer_dispatch');
     return { command };
   } catch (error) {

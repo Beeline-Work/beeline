@@ -29,7 +29,6 @@ vi.mock('./HullDialog', () => ({
 }));
 import { AgentVoiceSection } from './AgentVoiceSection';
 const catalog = {
-  provider: 'aura-2' as const,
   currentVoiceId: 'one',
   canChange: true,
   choices: [
@@ -88,7 +87,7 @@ it('uses the saved server receipt, keeps failed drafts, and ignores stale previe
   await act(async () => renderer.root.findByProps({ testID: 'save-agent-voice' }).props.onPress());
   await settle();
   expect(renderer.root.findByProps({ testID: 'change-agent-voice' }).props.title).toBe('Two');
-  expect(api.save).toHaveBeenCalledWith('aura-2', 'two');
+  expect(api.save).toHaveBeenCalledWith('two');
   await act(async () => renderer.unmount());
 });
 it('keeps Save functional when the live profile echo arrives before the write receipt', async () => {

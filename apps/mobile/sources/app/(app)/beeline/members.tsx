@@ -1076,25 +1076,23 @@ export default function BuzzMembers({
         voiceApi={
           identity && relayUrl && workspaceId
             ? {
-                contextKey: `${workspaceId}:${profileRoomId ?? first(params.roomId) ?? ''}:${surface?.workspace.voiceProvider ?? ''}:${identity.publicKey}`,
+                contextKey: `${workspaceId}:${profileRoomId ?? first(params.roomId) ?? ''}:${identity.publicKey}`,
                 read: () =>
                   new RoomViewClient({ baseUrl: relayUrl, identity }).agentVoices(
                     workspaceId,
                     profileAgentId,
                     profileRoomId ?? first(params.roomId),
                   ),
-                save: (provider, voiceId) =>
+                save: (voiceId) =>
                   new RoomViewClient({ baseUrl: relayUrl, identity }).setAgentVoice(
                     workspaceId,
                     profileAgentId,
-                    provider,
                     voiceId,
                   ),
-                preview: (provider, voiceId) =>
+                preview: (voiceId) =>
                   new RoomViewClient({ baseUrl: relayUrl, identity }).previewAgentVoice(
                     workspaceId,
                     profileAgentId,
-                    provider,
                     voiceId,
                   ),
               }

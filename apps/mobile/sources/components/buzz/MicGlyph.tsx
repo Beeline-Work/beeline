@@ -4,6 +4,40 @@ import { DECORATIVE_GLYPH_PROPS } from './decorative-glyph';
 
 export const MIC_GLYPH_STROKE_WIDTH = 1.6;
 
+/** Conversation entry uses the same stroke and canvas as the microphone. */
+export function WaveformGlyph({ color }: { color: string }) {
+  return <Svg {...DECORATIVE_GLYPH_PROPS} width={20} height={20} viewBox="0 0 20 20">
+    <Path d="M2 9v2M6 5v10M10 2v16M14 5v10M18 9v2" fill="none"
+      stroke={color} strokeWidth={MIC_GLYPH_STROKE_WIDTH} strokeLinecap="round" />
+  </Svg>;
+}
+
+/** The composer's other controls, drawn on the microphone's canvas and stroke. */
+export const COMPOSER_GLYPH_SIZE = 20;
+
+function StrokeGlyph({ color, testID, children }: { color: string; testID?: string; children: React.ReactNode }) {
+  return <Svg {...DECORATIVE_GLYPH_PROPS} width={COMPOSER_GLYPH_SIZE} height={COMPOSER_GLYPH_SIZE}
+    viewBox="0 0 20 20" testID={testID} fill="none" stroke={color} strokeWidth={MIC_GLYPH_STROKE_WIDTH}
+    strokeLinecap="round" strokeLinejoin="round">
+    {children}
+  </Svg>;
+}
+
+/** Attach. */
+export function PlusGlyph({ color, testID }: { color: string; testID?: string }) {
+  return <StrokeGlyph color={color} testID={testID}><Path d="M10 4v12M4 10h12" /></StrokeGlyph>;
+}
+
+/** Send. */
+export function ArrowUpGlyph({ color, testID }: { color: string; testID?: string }) {
+  return <StrokeGlyph color={color} testID={testID}><Path d="M10 16V4M5 9l5-5 5 5" /></StrokeGlyph>;
+}
+
+/** Stop a take: an outlined rounded square. */
+export function StopGlyph({ color, testID }: { color: string; testID?: string }) {
+  return <StrokeGlyph color={color} testID={testID}><Rect x="6" y="6" width="8" height="8" rx="2" /></StrokeGlyph>;
+}
+
 /**
  * A microphone: capsule, pickup arc and stand. It stays still in every
  * state; while dictating, the composer's waveform shows that the take is live.

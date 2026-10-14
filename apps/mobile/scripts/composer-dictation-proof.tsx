@@ -120,12 +120,13 @@ async function run() {
     'the waveform stays inside the composer row',
     wave.left >= field.left - 0.5 && wave.right <= field.right + 0.5,
   );
-  check('the stop button takes the attach slot', Boolean(byTestID('chat-speech-discard')));
+  check('Stop takes the mic spot and ＋ stays', Boolean(byTestID('chat-speech-discard')) &&
+    !byTestID('chat-mic') && Boolean(byTestID('chat-attach-button')));
   byTestID('chat-speech-discard')!.click();
   await pause();
   check('stop discards the take', !byTestID('chat-speech-waveform'));
   check('stop sends and commits nothing', composerValue() === '');
-  check('the attach button returns', Boolean(byTestID('chat-attach-button')));
+  check('the mic returns', Boolean(byTestID('chat-mic')));
 }
 
 run()

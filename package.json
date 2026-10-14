@@ -38,6 +38,7 @@
     "prove:reviewer-dispatch": "npx turbo run build --filter=@beeline/server... && node --import tsx scripts/prove-reviewer-dispatch.ts",
     "prove:agent-sign-in": "npx turbo run build --filter=@beeline/server... && node --import tsx scripts/prove-agent-sign-in.ts",
     "prove:command-grammar": "npx turbo run build --filter=@beeline/server... --filter=@beeline/body... && node --import tsx scripts/prove-command-grammar.ts",
+    "prove:claude-silent-wake": "npm run build -w @beeline/body && node scripts/prove-claude-silent-wake.mjs",
     "prove:corner-brief-acceptance": "node scripts/prove-corner-brief-acceptance.mjs",
     "review:exact-head": "node scripts/review-exact-head.mjs",
     "prove:fanout-fixes": "node scripts/prove-fanout-fixes.mjs",
@@ -67,7 +68,7 @@
     "verify:beeline-install": "node scripts/verify-beeline-install.mjs",
     "measure:corner-wake": "node --import tsx scripts/measure-corner-wake.ts",
     "mobile:install": "npm install --prefix apps/mobile",
-    "corner:prepare": "npm run mobile:install && npm run build",
+    "corner:prepare": "npm ci && npm run mobile:install && npm run build",
     "mobile:web": "npm run web --prefix apps/mobile",
     "mobile:typecheck": "npm run typecheck --prefix apps/mobile"
   },

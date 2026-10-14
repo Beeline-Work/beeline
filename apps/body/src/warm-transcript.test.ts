@@ -9,6 +9,20 @@ const rows = (count: number, from = 1, authorId = 'human'): TranscriptRow[] =>
   }));
 
 describe('warm transcript', () => {
+  it('excludes completed task and steer messages from the next warm transcript', () => {
+    const warm = new WarmTranscript();
+    warm.select('session-a', rows(2));
+    warm.complete('session-a', ['m3', 'm4']);
+    expect(warm.select('session-a', rows(5)).rows.map((row) => row.id)).toEqual(['m5']);
+  });
+
+  it('does not mark a task completed in a different session as delivered', () => {
+    const warm = new WarmTranscript();
+    warm.select('session-b', rows(2));
+    warm.complete('session-a', ['m3']);
+    expect(warm.select('session-b', rows(3)).rows.map((row) => row.id)).toEqual(['m3']);
+  });
+
   it('sends the whole window to a session that has never seen it', () => {
     const warm = new WarmTranscript();
     const selection = warm.select('session-a', rows(30));

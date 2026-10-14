@@ -4,6 +4,7 @@ import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { VoiceService } from './voice-service.js';
 import { LiveHub } from './live.js';
+import { VOICE_SCHEMA } from './voice-schema.js';
 import { savedAuraVoice } from './voice-providers.js';
 
 const w = '11111111-1111-4111-8111-111111111111',
@@ -44,11 +45,11 @@ beforeAll(async () => {
 afterAll(async () => db.close());
 it('saves an Aura owner choice ahead of soul and auto-assignment and prevents Room collisions', async () => {
   expect((await profiles.catalog(w, a, h)).currentVoiceId).toBe(ids[0]);
-  await expect(profiles.save(w, a, stranger, 'aura-2', ids[1]!)).rejects.toThrow('owner');
-  await expect(profiles.save(w, a, h, 'aura-2', 'not-a-library-voice')).rejects.toThrow(
+  await expect(profiles.save(w, a, stranger, ids[1]!)).rejects.toThrow('owner');
+  await expect(profiles.save(w, a, h, 'not-a-library-voice')).rejects.toThrow(
     'Unknown voice',
   );
-  expect((await profiles.save(w, a, h, 'aura-2', ids[1]!)).currentVoiceId).toBe(ids[1]);
+  expect((await profiles.save(w, a, h, ids[1]!)).currentVoiceId).toBe(ids[1]);
   const service = new VoiceService(db, new LiveHub(), {
     url: 'ws://localhost:7880',
     apiKey: 'key',
@@ -67,15 +68,10 @@ it('saves an Aura owner choice ahead of soul and auto-assignment and prevents Ro
     );
     expect(assigned.find((v) => v.id === a)?.voice).toBe(ids[1]);
     expect(new Set(assigned.map((v) => v.voice)).size).toBe(2);
-    await expect(profiles.save(w, b, h, 'aura-2', ids[1]!)).rejects.toThrow('Another agent');
-    await profiles.save(w, b, h, 'aura-2', ids[2]!);
+    await expect(profiles.save(w, b, h, ids[1]!)).rejects.toThrow('Another agent');
+    await profiles.save(w, b, h, ids[2]!);
     expect((await service.agents(r, h)).find((v) => v.id === b)?.voice).toBe(ids[2]);
-    await db.query(`UPDATE workspaces SET voice_provider='fish-s2.1-pro' WHERE id=$1`, [w]);
-    // Old stored Workspace settings still resolve to Aura, preserving its saved voice.
-    expect((await profiles.catalog(w, a, h)).provider).toBe('aura-2');
-    expect((await profiles.catalog(w, a, h)).currentVoiceId).toBe(ids[1]);
-    await expect(profiles.save(w, a, h, 'fish-s2.1-pro', '1'.repeat(32))).rejects.toThrow('provider changed');
-    await service.recordAnswer(r, a, '(excited) Good news! [confident] We can fix it (today).');
+    await service.recordAnswer(r, a, 'Good news! We can fix it (today).');
     expect(
       (
         await db.query<{ text: string }>(
@@ -88,11 +84,9 @@ it('saves an Aura owner choice ahead of soul and auto-assignment and prevents Ro
     await service.close();
   }
 });
-it('refuses dormant provider previews, stale membership and unknown choices', async () => {
-  await expect(profiles.preview(w, a, h, 'fish-s2.1-pro', '1'.repeat(32))).rejects.toThrow('provider changed');
-  await expect(profiles.preview(w, a, h, 'kokoro-deepinfra', 'af_heart')).rejects.toThrow('provider changed');
+it('refuses stale membership and unknown choices', async () => {
   expect(speech.synthesize).not.toHaveBeenCalled();
-  await expect(profiles.preview(w, a, h, 'aura-2', 'unknown')).rejects.toThrow('Unknown voice');
+  await expect(profiles.preview(w, a, h, 'unknown')).rejects.toThrow('Unknown voice');
   await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id IS NULL AND identity_id=$1`, [stranger]);
   await expect(profiles.catalog(w, a, stranger)).rejects.toThrow('access denied');
 });
@@ -104,7 +98,7 @@ it('bounds synthesized provider previews and returns valid 24kHz WAV data', asyn
       yield new Uint8Array([1, 2, 3, 4]);
     },
   }));
-  const preview = await fallback.preview(w, a, h, 'aura-2', ids[0]!);
+  const preview = await fallback.preview(w, a, h, ids[0]!);
   expect('wavBase64' in preview).toBe(true);
   if ('wavBase64' in preview) {
     const wav = Buffer.from(preview.wavBase64, 'base64');
@@ -121,7 +115,7 @@ it('denies an agent owner who is now a spectator', async () => {
   );
   try {
     expect((await profiles.catalog(w, a, h)).canChange).toBe(false);
-    await expect(profiles.save(w, a, h, 'aura-2', ids[1]!)).rejects.toThrow('owner');
+    await expect(profiles.save(w, a, h, ids[1]!)).rejects.toThrow('owner');
   } finally {
     await db.query(
       `UPDATE memberships SET role='admin' WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2`,
@@ -130,13 +124,26 @@ it('denies an agent owner who is now a spectator', async () => {
   }
 });
 
-it('translates saved legacy voices deterministically to the Aura library, with Aura choices taking precedence', async () => {
-  const legacy = { 'kokoro-deepinfra': 'af_heart' } as const;
-  const voice = savedAuraVoice(legacy)!;
-  const auraLibrary = new AgentVoiceService(db, async () => ({ voices: [voice, 'luna', 'apollo'], synthesize: vi.fn() }));
-  await db.query(`UPDATE agents SET chosen_voices=$2::jsonb WHERE agent_id=$1`, [a, JSON.stringify(legacy)]);
-  expect((await auraLibrary.catalog(w, a, h)).currentVoiceId).toBe(voice);
-  await expect(auraLibrary.save(w, b, h, 'aura-2', voice)).rejects.toThrow('Another agent');
-  expect(savedAuraVoice({ ...legacy, 'aura-2': 'apollo' })).toBe('apollo');
-  expect(savedAuraVoice({ 'fish-s2.1-pro': '1'.repeat(32) })).toBeDefined();
+it('reads only a valid saved Aura choice', () => {
+  expect(savedAuraVoice({ 'aura-2': 'apollo' })).toBe('apollo');
+  expect(savedAuraVoice({ 'aura-2': 'unknown' })).toBeUndefined();
+  expect(savedAuraVoice({})).toBeUndefined();
+});
+
+it('drops the old provider column and CHECK idempotently while preserving saved Aura voices', async () => {
+  await db.query(`ALTER TABLE workspaces ADD COLUMN voice_provider text NOT NULL DEFAULT 'aura-2'
+    CHECK (voice_provider IN ('aura-2', 'retired-provider'))`);
+  await db.query(`UPDATE agents SET chosen_voices=$2::jsonb WHERE agent_id=$1`,
+    [a, JSON.stringify({ 'aura-2': 'apollo', 'retired-provider': 'old-voice' })]);
+  await db.query(`UPDATE agents SET chosen_voices=$2::jsonb WHERE agent_id=$1`,
+    [b, JSON.stringify({ 'retired-provider': 'old-voice' })]);
+  await db.query(VOICE_SCHEMA);
+  await db.query(VOICE_SCHEMA);
+  expect((await db.query(`SELECT column_name FROM information_schema.columns
+    WHERE table_name='workspaces' AND column_name='voice_provider'`)).rows).toEqual([]);
+  expect((await db.query(`SELECT chosen_voices FROM agents WHERE agent_id=$1`, [a])).rows[0]?.chosen_voices)
+    .toEqual({ 'aura-2': 'apollo' });
+  expect((await db.query(`SELECT chosen_voices FROM agents WHERE agent_id=$1`, [b])).rows[0]?.chosen_voices)
+    .toEqual({});
+  expect((await profiles.catalog(w, a, h)).currentVoiceId).toBe('apollo');
 });

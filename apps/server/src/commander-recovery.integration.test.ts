@@ -1,3 +1,4 @@
+import { flushDueCommanderWakes } from './commander-wakes.js';
 import { advanceCorner } from './corner-lifecycle.js';
 import { randomUUID, randomBytes } from 'node:crypto';
 import { beforeAll, beforeEach, afterAll, expect, it, vi } from 'vitest';
@@ -85,8 +86,11 @@ const authority = (command: AgentCommand) => ({
   requestId: command.turnRequestId,
   generationId: 'proof-generation',
 });
-const commands = (roomId: string, agentId: string) =>
-  readAgentCommands(db, roomId, agentId).then((r) => r.commands);
+const commands = async (roomId: string, agentId: string) => {
+  await db.query(`UPDATE agent_commands SET wake_after=now() WHERE wake_after IS NOT NULL`);
+  await flushDueCommanderWakes(db);
+  return (await readAgentCommands(db, roomId, agentId)).commands;
+};
 async function open() {
   return daemon.execute(
     'createCorner',
@@ -97,7 +101,7 @@ async function open() {
       name: 'Widget',
       objective: 'Build the widget',
       implementer: 'worker',
-      brief: { spec: 'Build the widget', approval: { sourceMessageId: order.sourceMessageId } },
+      brief: { spec: 'Build the widget', repositoryWork: false, approval: { sourceMessageId: order.sourceMessageId } },
     },
     RUBY,
   );
@@ -147,13 +151,13 @@ it('reports a later corner order to its actual orderer', async () => {
   );
   const turn = (await commands(opened.cornerId, WORKER)).find((c) => c.reason === 'order')!;
   await claim(turn);
-  await daemon.execute('report', { ...authority(turn), text: 'done: Other follow-up' }, WORKER);
+  await daemon.execute('report', { status: 'done', ...authority(turn), text: 'done: Other follow-up' }, WORKER);
   expect((await commands(DM, RUBY)).some((c) => c.source.body === 'done: Other follow-up')).toBe(
     false,
   );
   expect((await commands(ROOM, OTHER)).some((c) => c.reason === 'report')).toBe(true);
 });
-it('keeps approval resumes private and reports final prose', async () => {
+it('keeps approval resume provenance and posts progress only in the corner', async () => {
   const opened = await open(),
     turn = await worker(opened.cornerId);
   await systemLine(db, {
@@ -177,12 +181,12 @@ it('keeps approval resumes private and reports final prose', async () => {
   );
   expect(
     (await db.query(`SELECT text FROM messages WHERE text='PRIVATE COORDINATION LEAK'`)).rowCount,
-  ).toBe(0);
+  ).toBe(1);
   expect(
     (await commands(DM, RUBY)).some(
       (c) => c.reason === 'report' && c.source.body === 'done: PRIVATE COORDINATION LEAK',
     ),
-  ).toBe(true);
+  ).toBe(false);
 });
 it('replays private work interrupted by a routine update', async () => {
   const opened = await open(),
@@ -297,7 +301,7 @@ it('delivers artifacts privately and forwards them in human reports', async () =
     },
     WORKER,
   );
-  await daemon.execute('report', { ...authority(turn), text: 'done: report is attached' }, WORKER);
+  await daemon.execute('report', { status: 'done', ...authority(turn), text: 'done: report is attached' }, WORKER);
   await daemon.execute(
     'postRoomMessage',
     { ...authority(turn), text: 'report is attached' },
@@ -317,7 +321,7 @@ it('delivers artifacts privately and forwards them in human reports', async () =
   const report = (await commands(DM, RUBY)).find((c) => c.reason === 'report')!;
   expect(report.source.attachments).toEqual([expect.objectContaining({ name: 'report.txt' })]);
   await claim(report);
-  await daemon.execute('report', { ...authority(report), text: 'done: report is attached' }, RUBY);
+  await daemon.execute('report', { status: 'done', ...authority(report), text: 'done: report is attached' }, RUBY);
   expect(
     (await db.query(`SELECT 1 FROM messages WHERE attachments::text LIKE $1`, ['%' + media + '%']))
       .rowCount,
@@ -345,6 +349,7 @@ it('routes zero-check completion through a durable lifecycle fact', async () => 
       ({
         checks: 'pending',
         checkCount: 0,
+        zeroChecksConfirmed: true,
         headSha: head,
         approved: false,
         held: false,
@@ -470,7 +475,7 @@ it('resumes the incoming human order for a non-opener watch', async () => {
   expect(merged.parentCommandId).toBe(incoming.id);
   await claim(merged);
   await expect(
-    daemon.execute('report', { ...authority(merged), text: 'done: watched corner merged' }, WORKER),
+    daemon.execute('report', { status: 'done', ...authority(merged), text: 'done: watched corner merged' }, WORKER),
   ).resolves.toHaveProperty('id');
 });
 
@@ -606,7 +611,7 @@ it('discovers only reachable member addresses and corners from a DM', async () =
   );
 });
 
-it('delivers plain and file-only ACP final replies to older helpers as private reports', async () => {
+it('keeps file-only corner final replies in the corner without reporting progress', async () => {
   const opened = await open(),
     turn = await worker(opened.cornerId);
   const media = randomUUID();
@@ -630,14 +635,7 @@ it('delivers plain and file-only ACP final replies to older helpers as private r
   );
   await daemon.execute('postRoomMessage', { ...authority(turn), text: '' }, WORKER);
   const returned = (await commands(DM, RUBY)).filter((c) => c.reason === 'report');
-  expect(returned).toHaveLength(1);
-  expect(returned[0]).toMatchObject({
-    private: true,
-    source: {
-      body: 'done: completed the order',
-      attachments: [expect.objectContaining({ name: 'legacy.txt' })],
-    },
-  });
+  expect(returned).toHaveLength(0);
   expect(
     (
       await db.query(`SELECT 1 FROM agent_pending_attachments WHERE request_id=$1`, [
@@ -651,13 +649,13 @@ it('delivers plain and file-only ACP final replies to older helpers as private r
         opened.cornerId,
       ])
     ).rowCount,
-  ).toBe(0);
+  ).toBe(1);
 });
 
 it('acknowledges explicit reports so final prose does not send a second report', async () => {
   const opened = await open(),
     turn = await worker(opened.cornerId);
-  await daemon.execute('report', { ...authority(turn), text: 'done: widget tested' }, WORKER);
+  await daemon.execute('report', { status: 'done', ...authority(turn), text: 'done: widget tested' }, WORKER);
   await daemon.execute(
     'postRoomMessage',
     { ...authority(turn), text: 'The widget is tested' },
@@ -685,7 +683,7 @@ it('human Room reports with an agent-written mention enter the needs-you tray an
   await claim(incoming);
   const delivered = await daemon.execute(
     'report',
-    { ...authority(incoming), text: 'needs-decision: choose an endpoint @captain' },
+    { status: 'needs_decision', ...authority(incoming), ask: 'Which endpoint should we use?', text: 'needs-decision: choose an endpoint @captain' },
     RUBY,
   );
   expect((await phone.execute('readNeedsYou', { workspaceId: WS }, HUMAN)).items).toEqual(
@@ -699,13 +697,13 @@ it('human Room reports with an agent-written mention enter the needs-you tray an
   );
 });
 
-it('delivers files queued after an explicit report on the final reply', async () => {
+it('keeps files queued after an explicit report on the corner final reply', async () => {
   const opened = await open(),
     turn = await worker(opened.cornerId),
     media = randomUUID();
   await daemon.execute(
     'report',
-    { ...authority(turn), text: 'done: preparing the artifact' },
+    { status: 'done', ...authority(turn), text: 'done: preparing the artifact' },
     WORKER,
   );
   await db.query(
@@ -732,10 +730,9 @@ it('delivers files queued after an explicit report on the final reply', async ()
     WORKER,
   );
   const reports = (await commands(DM, RUBY)).filter((c) => c.reason === 'report');
-  expect(reports).toHaveLength(2);
-  expect(reports.at(-1)!.source.attachments).toEqual([
-    expect.objectContaining({ name: 'late.txt' }),
-  ]);
+  expect(reports).toHaveLength(1);
+  expect((await phone.readRoom(opened.cornerId, HUMAN))?.messages.some(message =>
+    message.attachments.some(attachment => attachment.name === 'late.txt'))).toBe(true);
   expect(
     (
       await db.query(`SELECT 1 FROM agent_pending_attachments WHERE request_id=$1`, [
@@ -748,7 +745,7 @@ it('delivers files queued after an explicit report on the final reply', async ()
 it('keeps unrelated Room subscriptions independent of completed orders', async () => {
   await daemon.execute(
     'order',
-    { ...authority(order), address: ROOM, text: 'One-off Room instruction' },
+    { ...authority(order), address: ROOM, agent: WORKER, text: 'One-off Room instruction' },
     RUBY,
   );
   const prior = (await commands(ROOM, WORKER)).find((c) => c.reason === 'order')!;
@@ -842,14 +839,14 @@ it('keeps the originating corner waiting for a decision returned to its parent R
   const turn = await worker(opened.cornerId);
   await daemon.execute(
     'report',
-    { ...authority(turn), text: 'needs-decision: choose endpoint' },
+    { status: 'needs_decision', ...authority(turn), ask: 'Which endpoint should we use?', text: 'needs-decision: choose endpoint' },
     WORKER,
   );
   const returned = (await commands(ROOM, RUBY)).find((c) => c.reason === 'report')!;
   await claim(returned);
   await daemon.execute(
     'report',
-    { ...authority(returned), text: 'needs-decision: choose endpoint @captain' },
+    { status: 'needs_decision', ...authority(returned), ask: 'Which endpoint should we use?', text: 'needs-decision: choose endpoint @captain' },
     RUBY,
   );
   expect(
@@ -890,7 +887,7 @@ it('keeps DM-returned decisions indexed until answered or source membership ends
     turn = await worker(opened.cornerId);
   await daemon.execute(
     'report',
-    { ...authority(turn), text: 'needs-decision: choose endpoint' },
+    { status: 'needs_decision', ...authority(turn), ask: 'Which endpoint should we use?', text: 'needs-decision: choose endpoint' },
     WORKER,
   );
   await daemon.execute(
@@ -902,7 +899,7 @@ it('keeps DM-returned decisions indexed until answered or source membership ends
   await claim(returned);
   await daemon.execute(
     'report',
-    { ...authority(returned), text: 'needs-decision: choose endpoint @captain' },
+    { status: 'needs_decision', ...authority(returned), ask: 'Which endpoint should we use?', text: 'needs-decision: choose endpoint @captain' },
     RUBY,
   );
   expect((await phone.readRoom(opened.cornerId, HUMAN))?.cornerOwed).toBe(true);

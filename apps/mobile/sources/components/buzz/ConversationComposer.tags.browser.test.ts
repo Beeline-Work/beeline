@@ -32,7 +32,7 @@ const FRAMES = ['idle', 'menu', 'many', 'reply-recording', 'reply-dashed', 'send
 
 describe.skipIf(!existsSync(CHROME))('Composer agent tags in a browser', () => {
   for (const theme of ['obsidian', 'bone']) {
-    it(`${theme}: chip, tag menu, many tags, a dictated quote reply that ■ can drop while it is sent, and an untagged Groq reply`, async () => {
+    it(`${theme}: chip, tag menu, many tags, a dictated quote reply that Stop can drop while it is sent, and an untagged Groq reply`, async () => {
       const mobile = process.cwd();
       const { result, status, stderr } = await runBrowserProof({
         entry: path.join(mobile, 'scripts/composer-tags-proof.tsx'),

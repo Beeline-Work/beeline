@@ -125,6 +125,8 @@ export type PostRoomEventInput = TurnOutputAuthority &
     readonly mentionAgentIds?: readonly string[];
   };
 
+export type AgentReportStatus = 'done' | 'blocked' | 'failed' | 'needs_decision';
+
 export type AgentCommandAction = 'input' | 'resume' | 'stop' | 'restart';
 export type AgentCommand = {
   readonly id: string;
@@ -144,6 +146,7 @@ export type AgentCommand = {
   readonly source: RoomInboxResult['items'][number];
   /** Superseded wakes, quoted as history; only source authorizes this turn. */
   readonly recoveryContext?: string;
+  readonly coalescedContext?: string;
 };
 export type CommandClaimInput = RoomInput & {
   readonly commandId: string;
@@ -280,7 +283,7 @@ export type DaemonOperationMap = {
     RoomInput,
     { readonly commandProtocol: 1; readonly commands: readonly AgentCommand[] }
   >;
-  claimAgentCommand: Operation<CommandClaimInput, WriteResult & { readonly recoveryContext?: string; readonly activitySource?: { readonly body: string; readonly systemEvent: SystemEvent } }>;
+  claimAgentCommand: Operation<CommandClaimInput, WriteResult & { readonly recoveryContext?: string; readonly coalescedContext?: string; readonly activitySource?: { readonly body: string; readonly systemEvent: SystemEvent } }>;
   acknowledgeAgentCommand: Operation<CommandClaimInput, WriteResult>;
   getDaemonBootstrap: Operation<DaemonBootstrapInput, DaemonBootstrapResult>;
   getWorkspaceRoster: Operation<WorkspaceRosterInput, WorkspaceRosterResult>;
@@ -301,8 +304,8 @@ export type DaemonOperationMap = {
       readonly attachments: readonly DaemonAttachment[];
     }
   >;
-  order: Operation<RoomInput & TurnOutputAuthority & { readonly address: string; readonly text: string }, WriteResult>;
-  report: Operation<RoomInput & TurnOutputAuthority & { readonly text: string }, WriteResult>;
+  order: Operation<RoomInput & TurnOutputAuthority & { readonly address: string; readonly text: string; readonly agent?: string }, WriteResult>;
+  report: Operation<RoomInput & TurnOutputAuthority & { readonly status: AgentReportStatus; readonly text: string; readonly ask?: string }, WriteResult>;
   read: Operation<RoomInput & { readonly address: string; readonly limit?: number }, RoomConversationResult>;
   getRoomAuthority: Operation<RoomPrincipalInput, RoomAuthorityResult>;
   getPermissionAuthority: Operation<PermissionAuthorityInput, AuthorityDecisionResult>;
@@ -558,10 +561,6 @@ export type DaemonOperationMap = {
   findConnectors: Operation<RoomInput & { readonly query: string }, {
     readonly matches: readonly ConnectorSearchMatch[]; readonly unavailableSources: readonly string[];
   }>;
-  completeAppConnectionJob: Operation<AgentInput & {
-    readonly appId: string; readonly jobId: string;
-    readonly outcome: AppConnectionJobOutcome;
-  }, WriteResult>;
   /** Discover server-mediated tools for one connected app; no credentials are returned. */
   listAppTools: Operation<TurnOutputAuthority & AgentInput & RoomInput & { readonly appId: string;
     readonly query?: string }, { readonly tools: readonly {
@@ -579,6 +578,11 @@ export type DaemonOperationMap = {
   installConnector: Operation<InstallConnectorInput, WriteResult>;
   postConnectorStatus: Operation<PostConnectorStatusInput, WriteResult>;
   postConnectorVault: Operation<PostConnectorVaultInput, WriteResult>;
+  /**
+   * A Squire page showed sign-in controls: drop the agent's recorded sign-in
+   * for its site and for the site the session was sent to (`siteUrl`).
+   */
+  forgetSquireSignIn: Operation<{ readonly url: string; readonly siteUrl?: string }, WriteResult>;
   getConnectorStatus: Operation<GetConnectorStatusInput, ConnectorStatus>;
   getConnectorVaultList: Operation<AgentInput, ConnectorVaultListResult>;
   getConnectionDetail: Operation<AgentInput & ConnectionRefInput, ConnectionDetail>;
@@ -1095,6 +1099,12 @@ export type ConnectAppResult = {
 export type ConnectInput = Omit<ConnectAppInput, 'app'> & {
   readonly service: string;
   readonly switchGoogleAccount?: boolean;
+  /** Set by the agent MCP from this session's granted Squire relay. */
+  readonly squireAvailable?: boolean;
+  /** A page only a signed-in user can open; the agent MCP checks it in the agent's own Squire session. */
+  readonly signedInUrl?: string;
+  /** Set by the agent MCP after that check found `signedInUrl` signed in. */
+  readonly squireSignedIn?: boolean;
 };
 export type ConnectorSearchMatch = {
   readonly key: string; readonly service: string; readonly name: string; readonly website?: string;
@@ -1102,28 +1112,11 @@ export type ConnectorSearchMatch = {
   readonly status: 'connected' | 'not-connected' | 'broken';
 };
 export type ConnectResult = Omit<ConnectAppResult, 'status'> & {
-  readonly status: 'ready' | 'needs_sign_in' | 'needs_approval' | 'error' | 'unavailable';
+  readonly status: 'ready' | 'needs_sign_in' | 'needs_approval' | 'needs_squire' | 'error' | 'unavailable';
+  /** Instructions for the calling agent's own Squire tools, never a helper job. */
+  readonly squire?: { readonly url: string; readonly goal: string };
   readonly approvalUrl?: string;
   readonly grantId?: string;
-};
-export type AppConnectionJobOutcome = {
-  readonly decision?: { readonly approvalId: string; readonly status: 'approved' | 'denied' | 'expired' };
-} & (
-  | { readonly status: 'ready' }
-  | { readonly status: 'approval'; readonly approvalUrl: string; readonly approvalId?: string;
-      readonly sessionId: string; readonly expiresAt?: number }
-  | { readonly status: 'error'; readonly reason: string });
-export type AppConnectionJob = {
-  readonly appId: string;
-  readonly jobId: string;
-  readonly service: string;
-  readonly name: string;
-  readonly url?: string;
-  readonly noApi: boolean;
-  readonly roomId: string;
-  readonly commandId: string;
-  readonly state: 'queued' | 'running' | 'approval' | 'ready' | 'error';
-  readonly outcome?: AppConnectionJobOutcome;
 };
 export type AgentPresenceResult = {
   readonly status: 'online' | 'offline' | 'dormant';
@@ -1418,6 +1411,7 @@ export type CornerResult = {
 export type ChoiceOptionArg = ChoiceOptionInput;
 export type AskRoomChoiceInput = TurnOutputAuthority &
   RoomInput & {
+    readonly ask?: string;
     readonly prompt: string;
     readonly constraint?: string;
     readonly options: readonly ChoiceOptionArg[];
@@ -1894,7 +1888,6 @@ export type ConnectorKind =
 
 /** The helper's work queue (server → helper delivery). */
 export type ConnectorAssignment =
-  | { readonly kind: 'connect-app'; readonly connectorId: string; readonly job: AppConnectionJob }
   | {
       readonly kind: 'install';
       readonly connectorId: string;

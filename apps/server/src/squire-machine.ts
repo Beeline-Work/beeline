@@ -1,5 +1,6 @@
-import type { AppConnectionJob, ConnectorAssignment, ConnectorStatus, PostConnectorStatusInput } from '@beeline/api-contract/daemon';
+import type { ConnectorAssignment, ConnectorStatus, PostConnectorStatusInput } from '@beeline/api-contract/daemon';
 import type { SquireMachineReport } from '@beeline/api-contract/workbench';
+import { appKeyForHost, registrableDomain } from '@beeline/api-contract/app-connections';
 import type { SqlDatabase } from './database.js';
 import { notifyConnectorAssignment } from './postgres-live.js';
 
@@ -17,7 +18,8 @@ type Work = {
   signIn?: ConnectorStatus['signIn'] | null;
   errorMessage?: string;
   ops?: string[];
-  appConnections?: Record<string, AppConnectionJob>;
+  /** Apps this agent's own Squire session was seen signed in to. No cookie or token is kept. */
+  signedInApps?: Record<string, { domain: string; checkedAt: number }>;
 };
 
 export async function machineSquireReport(database: SqlDatabase, ownerId: string, machineId?: string):
@@ -60,7 +62,7 @@ export async function queueSquireWork(database: SqlDatabase, agentId: string,
         steps: [{ label: 'Install on helper', status: 'pending' },
           { label: 'Connect provider account', status: 'pending' }],
         ...(input.forceReloginProvider ? { forceReloginProvider: input.forceReloginProvider } : {}),
-        ops: previous.ops ?? [], appConnections: previous.appConnections }
+        ops: previous.ops ?? [] }
     : { ...previous, generation: previous.generation ?? 0,
         ops: [...new Set([...(previous.ops ?? []), ...(input.op ? [input.op] : [])])] };
   await database.query('UPDATE agents SET squire_work=$2::jsonb WHERE agent_id=$1',
@@ -96,22 +98,6 @@ export async function squireAssignments(database: SqlDatabase, agentId: string):
   const work = row.squire_work;
   const connectorId = squireMachineAddress(row.machine_id);
   const assignments: ConnectorAssignment[] = [];
-  for (const job of Object.values(work.appConnections ?? {})) {
-    if (job.state === 'queued' && !work.install) {
-      const active = await database.query(`SELECT 1 FROM workspace_apps app
-        JOIN rooms room ON room.id=$2 AND room.archived_at IS NULL
-        JOIN agent_commands command ON command.id=$3 AND command.room_id=$2
-          AND command.agent_id=$4 AND command.state<>'cancelled'
-        JOIN agents agent ON agent.agent_id=$4 AND agent.owner_id=app.owner_identity_id
-        WHERE app.id=$1::uuid AND app.state='active'
-          AND EXISTS (SELECT 1 FROM memberships member WHERE member.room_id=$2
-            AND member.identity_id=$4 AND member.removed_at IS NULL)`, [job.appId, job.roomId, job.commandId, agentId]);
-      if (!active.rowCount) continue;
-      assignments.push({ kind: 'connect-app', connectorId: `app:${job.appId}`, job });
-      await database.query(`UPDATE agents SET squire_work=jsonb_set(squire_work,
-        ARRAY['appConnections',$2,'state'],'"running"'::jsonb) WHERE agent_id=$1`, [agentId, job.appId]);
-    }
-  }
   if (work.install) assignments.push({ kind: 'install', connectorId, connectorType: 'trusty-squire',
     pairingGeneration: work.generation,
     ...(work.forceReloginProvider ? { forceReloginProvider: work.forceReloginProvider } : {}) });
@@ -167,4 +153,38 @@ export async function reportSquireWork(database: SqlDatabase, agentId: string,
   }
   await database.query('UPDATE agents SET squire_work=$2::jsonb WHERE agent_id=$1',
     [agentId, JSON.stringify(work)]);
+}
+
+/** Whether this agent's Squire session was last seen signed in to the app. */
+export async function squireSignedIn(database: SqlDatabase, agentId: string, appKey: string): Promise<boolean> {
+  const row = (await database.query<{ squire_work: Work }>(
+    'SELECT squire_work FROM agents WHERE agent_id=$1', [agentId])).rows[0];
+  return Boolean(row?.squire_work.signedInApps?.[appKey]);
+}
+
+/** Record that this agent's Squire session reached the app's own site signed in. */
+export async function recordSquireSignIn(database: SqlDatabase, agentId: string,
+  appKey: string, domain: string): Promise<void> {
+  await database.query(`UPDATE agents SET squire_work=jsonb_set(squire_work,'{signedInApps}',
+      COALESCE(squire_work->'signedInApps','{}'::jsonb)
+        || jsonb_build_object($2::text,jsonb_build_object('domain',$3::text,'checkedAt',$4::bigint)))
+    WHERE agent_id=$1`, [agentId, appKey, domain, Date.now()]);
+}
+
+/** Drop the recorded sign-in for one app, or for every app on a URL's site. */
+export async function forgetSquireSignIn(database: SqlDatabase, agentId: string,
+  target: { appKey: string } | { url: string }): Promise<void> {
+  const row = (await database.query<{ squire_work: Work }>(
+    'SELECT squire_work FROM agents WHERE agent_id=$1 FOR UPDATE', [agentId])).rows[0];
+  const apps = row?.squire_work.signedInApps;
+  if (!apps) return;
+  let host = '';
+  if ('url' in target) try { host = new URL(target.url).hostname; } catch { return; }
+  const domain = host ? registrableDomain(host) : undefined;
+  const key = 'appKey' in target ? target.appKey : appKeyForHost(host);
+  const kept = Object.fromEntries(Object.entries(apps).filter(([appKey, entry]) =>
+    appKey !== key && (!domain || entry.domain !== domain)));
+  if (Object.keys(kept).length === Object.keys(apps).length) return;
+  await database.query(`UPDATE agents SET squire_work=jsonb_set(squire_work,'{signedInApps}',$2::jsonb)
+    WHERE agent_id=$1`, [agentId, JSON.stringify(kept)]);
 }

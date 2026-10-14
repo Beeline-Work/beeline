@@ -1,0 +1,11 @@
+PASS Obsidian: empty and text rows hold + attach, mic
+PASS Obsidian: empty row ends in Conversation
+PASS Obsidian: text row ends in Send
+PASS Obsidian: mic column matches the text row
+PASS Obsidian: Stop in the mic spot ends the take and returns the mic
+PASS Bone: empty and text rows hold + attach, mic
+PASS Bone: empty row ends in Conversation
+PASS Bone: text row ends in Send
+PASS Bone: mic column matches the text row
+PASS Bone: Stop in the mic spot ends the take and returns the mic
+RESULT PASS

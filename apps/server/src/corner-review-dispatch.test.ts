@@ -129,6 +129,7 @@ describe('corner message attribution', () => {
     const checkGate = vi.fn(async () => ({
       checks: 'pending' as const,
       checkCount: 0,
+      zeroChecksConfirmed: true,
       pullRequest: 'https://github.com/acme/repo/pull/7',
       headSha,
       approvalPending: true,
@@ -818,6 +819,7 @@ describe('the corner implementer the workflow wakes follows a person hand-over',
     const checkGate = vi.fn(async () => ({
       checks: 'pending' as const,
       checkCount: 0,
+      zeroChecksConfirmed: true,
       pullRequest: 'https://github.com/acme/repo/pull/7',
       headSha: '1'.repeat(40),
       approvalPending: true,

@@ -677,7 +677,7 @@ export class GitHubOperations {
   }
 
   /** Caller is authorized by DaemonService against the requesting corner membership. */
-  async prChecksStatus(input: { cornerId: string; pullRequest?: number | string }) {
+  async prChecksStatus(input: { cornerId: string; pullRequest?: number | string }, confirmZeroChecks = false) {
     const corner = (
       await this.database.query<{
         parent_id: string;
@@ -729,11 +729,20 @@ export class GitHubOperations {
       throw new Error('invalid pull request number');
     // Always resolve the head: a force-push must never inherit a green predecessor.
     const pr = await this.app.readPullRequest(target.token, target.repository, number);
-    const rollup = await this.app.readCommitCheckRollup(
+    let rollup = await this.app.readCommitCheckRollup(
       target.token,
       target.repository,
       pr.headSha,
     );
+    let zeroChecksConfirmed = false;
+    if (confirmZeroChecks && rollup.total === 0 && rollup.state === 'pending') {
+      const absent = await this.app.confirmNoChecks(target.token, target.repository, pr.headSha);
+      // Re-read after registration evidence: neither a new head nor a newly
+      // registered status context can inherit the earlier empty rollup.
+      const latestPr = await this.app.readPullRequest(target.token, target.repository, number);
+      rollup = await this.app.readCommitCheckRollup(target.token, target.repository, pr.headSha);
+      zeroChecksConfirmed = absent && latestPr.headSha === pr.headSha && rollup.total === 0;
+    }
     // A completed worker handoff can establish that this head genuinely has no
     // checks. Before that point a null rollup is only the ordinary race between
     // opening a PR and GitHub registering its workflows, so it remains pending.
@@ -805,6 +814,7 @@ export class GitHubOperations {
             ? ('building' as const)
             : ('checking' as const);
     return {
+      ...(confirmZeroChecks ? { zeroChecksConfirmed } : {}),
       stage,
       checks,
       checkCount: rollup.total,

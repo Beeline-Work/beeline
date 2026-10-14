@@ -316,6 +316,26 @@ export class VoiceService {
     return id;
   }
 
+  async reviseHuman(callId: string, roomId: string, humanId: string, agent: VoiceAgent,
+    sourceId: string, text: string, leaseOwner: string) {
+    await this.db.transaction(async db => {
+      await this.access(roomId, humanId, db);
+      const joined = await db.query(`SELECT 1 FROM voice_participants p JOIN voice_calls c ON c.id=p.call_id
+        WHERE p.call_id=$1 AND c.room_id=$2 AND p.identity_id=$3 AND p.left_at IS NULL AND c.ended_at IS NULL
+          AND c.runtime_owner=$4 AND c.runtime_until>now() FOR SHARE OF p,c`, [callId, roomId, humanId, leaseOwner]);
+      if (!joined.rowCount) throw new Error('voice call access denied');
+      const changed = await db.query(`UPDATE messages m SET text=$5
+        FROM voice_calls c, voice_participants p
+        WHERE m.id=$1 AND m.room_id=$2 AND m.author_id=$3 AND m.deleted_at IS NULL
+          AND c.id=$4 AND c.room_id=m.room_id AND c.ended_at IS NULL
+          AND c.runtime_owner=$6 AND c.runtime_until>now()
+          AND p.call_id=c.id AND p.identity_id=m.author_id AND p.left_at IS NULL
+          AND m.presentation='message' AND NOT EXISTS (SELECT 1 FROM voice_orders o WHERE o.source_message_id=m.id)`,
+        [sourceId, roomId, humanId, callId, `@${agent.handle} ${text.replace(/@/g, '')}`, leaseOwner]);
+      if (!changed.rowCount) throw new Error('voice call access denied');
+    });
+  }
+
   async dispatch(callId: string, sourceId: string, agentId: string) {
     await this.db.transaction(async db => {
       const row = (await db.query<{ room_id: string; author_id: string; text: string }>(`SELECT m.room_id,m.author_id,m.text FROM messages m

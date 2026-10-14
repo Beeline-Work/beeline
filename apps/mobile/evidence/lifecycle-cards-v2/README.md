@@ -77,16 +77,15 @@ row geometry. Screenshots carry a **LOCAL BUILD** banner:
 [Bone](web-local-bone.png), [Obsidian](web-local-obsidian.png).
 Results: [Bone](web-local-bone-results.json), [Obsidian](web-local-obsidian-results.json).
 
-### Browser: deployed baseline — pending
+### Browser: deployed app — required after release
 
-The required reviewer-bypass session on `web.usebeeline.app` is **not obtained**.
-The first connection attempt returned Registry unavailable. A subsequent attempt
-resolved Usebeeline and requested owner connection approval (grant
-`0922f02f-0ed9-4975-924b-8b5946858234`). That approval is pending. The checked
-reviewer-related vault service names and session environment exposed no reviewer
-bypass credential. No owner session was substituted, and no local screenshot is
-claimed to be from the live site. This acceptance item remains blocked until the
-connection and required reviewer sign-in are available.
+Brief revision 3 moves the reviewer-bypass browser check on
+`web.usebeeline.app` to **after release**, explicitly outside the merge gate.
+The pre-merge browser proof is the local PR build above. The live check is not
+obtained yet; after this change is released, sign in through the GitHub reviewer
+bypass and verify these variants on the deployed app, labeling the evidence as
+production. No local screenshot is claimed to be from the live site. No
+Usebeeline connection grant is required for pre-merge proof.
 
 ## Validation and repeat
 

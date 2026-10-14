@@ -7,31 +7,35 @@ hold the waveform to open the optional full-screen view. Room members join
 through the live call card. After the last person leaves, that card becomes
 `Voice call ended · duration`.
 
-Workspace owners and admins choose **Voice provider** in Workspace settings:
-Fish S2.1 Pro (default), Kokoro on OpenRouter pinned to DeepInfra, or Aura-2.
-Agent Profile presents Soul, Model / difficulty (model name and thinking level),
-then Voice. The agent owner can open Change, preview a provider library voice,
-and Save it. Fish lists only its public licensed English library; there are no
-cloning or upload controls. Previews stop after eight seconds and navigation or
-Cancel stops them. Other Workspace members can read the current voice.
+**Aura 2 is the only active speech provider.** Workspace settings and the server
+resolve to Aura 2, including older saved Fish or Kokoro settings. Their adapters
+remain dormant. Agent Profile presents Soul, Model / difficulty, then Voice.
+The owner can preview an Aura 2 library voice and Save it; other members can
+read the current voice. Previews stop after eight seconds, navigation or Cancel.
 
-Saved provider-specific choices live in `agents.chosen_voices`. They reserve
-their voices before identity/soul-based auto-assignment; changing Workspace
-provider retains the agent's choice for the previous provider. A save refuses
-a voice already chosen by another agent in a shared Room. Room assignment
-still resolves every collision deterministically, including older soul overrides
-and agents later brought together from separate Rooms. An optional `Aura:`,
-`Kokoro:` or `Fish:` voice id in the soul remains a fallback. A Profile opened
-from a Room shows that Room's effective assignment.
+Saved Aura choices live in `agents.chosen_voices`. Existing Fish and Kokoro
+choices map deterministically to an Aura 2 voice until the owner saves an Aura
+choice. Room assignment reserves saved voices and resolves collisions among
+agents deterministically. The profile opened from a Room shows its effective
+assignment. There are no cloning or upload controls.
 
-Fish voice conversation prompts guide sparse emotion cues such as `[excited]`,
-`[confident]`, `[calm]`, `[empathetic]`, `[curious]`, and `[grateful]`. Fish receives
-these inline; parenthesized forms are normalized to Fish's bracket syntax.
-Recognized cues are removed from the visible transcript, including interrupted
-partial cues, while ordinary parentheses and code survive. Other speech providers
-receive text without these cues. The existing clause streaming starts speech as
-before: no additional model request or buffering stage is added. Cue syntax follows
-[Fish's S2 guide](https://fish.audio/blog/fish-audio-s2-fine-grained-ai-voice-control-at-the-word-level/).
+Say an agent's handle or display name anywhere in the utterance to address it;
+matching ignores case and respects word boundaries. Tapping its avatar still
+sets the current target. With two or more humans in the call, every utterance
+must explicitly name an agent to get a reply, including after an avatar tap.
+With exactly one human, unnamed speech follows the current agent.
+
+Playback speaks the full reply, streaming each clause and the remaining tail.
+Noise-only Flux starts cannot interrupt it: barge-in waits for recognized speech
+and uses word confidence when available. Recent playback fragments are excluded
+from input to prevent echo from starting another reply. Flux's
+[word confidence fields](https://developers.deepgram.com/reference/speech-to-text/listen-flux)
+provide the recognition evidence. An interrupted real-work report stays in the
+transcript and does not replay its opening on subsequent refreshes.
+
+A second human uses Join on the Room call card. While connecting, the card says
+Joining and the composer shows the avatars. Connection failures remain readable
+in both the card and VoiceBar.
 
 `agent-voice.ts` owns library reads, owner saves and bounded previews. The
 client renders validated catalog/write receipts, never a guessed voice choice.
@@ -50,7 +54,10 @@ grammar. Real agent reports are matched to their original command and spoken
 back. Agent work has no voice timeout and continues independently of playback.
 Flux receives raw 16 kHz mono PCM over Workers AI WebSockets; speech providers
 stream 24 kHz mono PCM into LiveKit. Barge-in interrupts playback, never the real
-agent's command. Live call ownership uses a database lease across server Machines.
+agent's command. Live call ownership uses a database lease across server Machines. Concurrent joins
+reserve one runtime promise before database work. Each runtime attempt has a unique
+lease token; stale cleanup and input cannot release or dispatch through its successor.
+Duplicate microphone subscriptions and final STT events cannot start a second stream.
 
 ## Deployment
 
@@ -66,11 +73,6 @@ Server secrets:
 - `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET` (same key pair as LiveKit).
 - `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_WORKERS_AI_TOKEN` with Workers AI permission.
 - Existing `OPENROUTER_EMBEDDING_API_KEY`, or `BEELINE_VOICE_OPENROUTER_API_KEY`.
-- `FISH_AUDIO_API_KEY` for Fish. The default model header is `s2.1-pro-free`,
-  the documented free developer route. Set `BEELINE_VOICE_FISH_MODEL=s2.1-pro`
-  only for a funded API account. The supplied key had no paid API credit, but
-  the free route returned real audio. Selecting Fish without its key returns a clear
-  configuration error; it never silently substitutes another provider.
 
 LiveKit credentials are server-only; phones receive scoped call JWTs. Configure
 the secrets before the ordinary unified release. LiveKit/WebRTC first shipped
@@ -121,10 +123,12 @@ Workers AI's free daily neuron allowance is insufficient for continuous voice.
 At HTTP 429/code 4006, the voice bar displays the daily-limit message and
 mutes the microphone; its pressed mic remains available to end the call. Flux
 and Aura need a quota reset or a Workers Paid plan to resume.
-Kokoro and Fish do not consume that allowance for TTS; all providers still use
-Flux for STT. Billing changes remain an owner decision.
+Aura 2 and Flux both use Workers AI. Billing changes remain an owner decision.
 
 ## Isolated proof
+
+[Multiparty release-emulator proof](voice-mode-proof/multiparty-fixes/README.md)
+records named switching, full replies, unnamed-speech silence and one reply stream.
 
 `scripts/prove-voice-mode.ts` creates a disposable in-memory Workspace, two
 humans and two temporary agents. It runs the authenticated server, actual RTC
@@ -139,12 +143,23 @@ VOICE_PROOF_LIVE_FLUX=1 BEELINE_VOICE_TTS_PROVIDER=aura-2 \
   node --import tsx scripts/prove-voice-mode.ts
 ```
 
-Set `VOICE_PROOF_COMPARE=1` for three identical spoken prompts; use
-`kokoro-deepinfra` or `fish-s2.1-pro` to compare providers. `VOICE_PROOF_LABEL`
-selects the ignored output subdirectory. `VOICE_PROOF_HOLD=1` retains the local
-server for the browser fixture (`scripts/serve-voice-ui-proof.ts`) until SIGINT;
-cleanup removes the temporary Workspace and clients. Session files contain
-local proof tokens and must never be committed.
+The multiparty regression proof, `scripts/prove-voice-multiparty.ts`, creates
+another disposable in-memory Workspace and waits for a release emulator's second
+human to Join through the actual call card. It uses live Flux, Luna and Aura 2,
+checks both named agents, complete multi-sentence synthesis, silence for unnamed
+speech, one concurrent reply stream and actual audio on both human clients.
+Its scoped `session.json` and raw logs stay in `.voice-proof/multiparty/`;
+release fixture files under `apps/mobile/.voice-proof/` use a local ignore file.
+
+```sh
+node --import tsx scripts/prove-voice-multiparty.ts
+```
+
+The earlier `VOICE_PROOF_COMPARE=1` runs below are historical provider measurements,
+not the current provider selector. `VOICE_PROOF_LABEL` selects the ignored output
+subdirectory for the earlier proof. `VOICE_PROOF_HOLD=1` retains the local server
+for screenshots until SIGINT. Session files contain local proof tokens and must
+never be committed.
 
 Captured on 2026-10-13, three live Flux→Luna→speech turns per comparison:
 

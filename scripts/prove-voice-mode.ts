@@ -15,7 +15,7 @@ import { DaemonService } from '../apps/server/src/daemon-service.js';
 import { LiveHub } from '../apps/server/src/live.js';
 import { VoiceService } from '../apps/server/src/voice-service.js';
 import { createBeelineServer } from '../apps/server/src/server.js';
-import { AuraSpeech, DeepInfraKokoroSpeech, FishSpeech, OpenRouterVoiceBrain, fluxFactory, type FluxEvent, type VoiceSpeech } from '../apps/server/src/voice-providers.js';
+import { AuraSpeech, OpenRouterVoiceBrain, fluxFactory, type FluxEvent, type VoiceSpeech } from '../apps/server/src/voice-providers.js';
 import { type VoiceJoin, VOICE_DATA_TOPIC } from '@beeline/api-contract/phone';
 
 const H = 'a'.repeat(64), SECOND = 'd'.repeat(64), A = 'b'.repeat(64), B = 'c'.repeat(64);
@@ -23,15 +23,13 @@ const W = randomUUID(), R = randomUUID();
 const output = `.voice-proof/${process.env.VOICE_PROOF_LABEL?.replace(/[^a-z0-9-]/gi, '') ?? 'local'}`;
 
 async function main() {
-  const key = process.env.BEELINE_VOICE_OPENROUTER_API_KEY;
+  const key = process.env.BEELINE_VOICE_OPENROUTER_API_KEY ?? process.env.OPENROUTER_EMBEDDING_API_KEY;
   assert.ok(key, 'BEELINE_VOICE_OPENROUTER_API_KEY required; never write or log it');
   await mkdir(output, { recursive: true });
   const db = new PgliteDatabase(); const live = new LiveHub();
   const brain = new OpenRouterVoiceBrain(key);
   const cloudflareToken = process.env.CLOUDFLARE_WORKERS_AI_TOKEN || process.env.CLOUDFLARE_API_TOKEN;
-  const speech: VoiceSpeech = process.env.BEELINE_VOICE_TTS_PROVIDER === 'fish-s2.1-pro'
-    ? new FishSpeech(process.env.FISH_AUDIO_API_KEY!) : process.env.BEELINE_VOICE_TTS_PROVIDER === 'kokoro-deepinfra'
-      ? new DeepInfraKokoroSpeech(key) : new AuraSpeech(cloudflareToken!, process.env.CLOUDFLARE_ACCOUNT_ID!);
+  const speech: VoiceSpeech = new AuraSpeech(cloudflareToken!, process.env.CLOUDFLARE_ACCOUNT_ID!);
   await speech.prepare?.();
   const humanSpeech = new AuraSpeech(cloudflareToken!, process.env.CLOUDFLARE_ACCOUNT_ID!);
   const sttEvents: Array<(event: FluxEvent) => void> = [];
@@ -182,7 +180,7 @@ async function main() {
     await writeFile(`${output}/session.json`, JSON.stringify({ origin, roomId: R, firstToken, secondToken }));
     const sortedLatencies = [...latencies].sort((a, b) => a - b);
     await writeFile(`${output}/result.json`, JSON.stringify({ stt: useFlux ? 'live Flux' : 'Flux EndOfTurn seam',
-      provider: process.env.BEELINE_VOICE_TTS_PROVIDER ?? 'kokoro-deepinfra',
+      provider: 'aura-2',
       calls: 1, humans: 2, distinctVoices: agents.map(a => ({ name: a.name, voice: a.voice })),
       firstAudioServerMs: latencies, p50FirstAudioServerMs: sortedLatencies[Math.floor(sortedLatencies.length / 2)],
       receivedAudioFrames: Object.fromEntries(received) }, null, 2));

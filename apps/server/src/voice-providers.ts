@@ -32,7 +32,7 @@ export type VoiceAgent = { id: string; name: string; handle: string; soul: strin
 /** Stable per-agent timbre, influenced by its soul; collisions resolve within the Room. */
 export function assignVoiceAgents(
   agents: Omit<VoiceAgent, 'voice'>[],
-  voices: readonly string[] = KOKORO_VOICES,
+  voices: readonly string[] = AURA_VOICES,
 ): VoiceAgent[] {
   if (agents.length > voices.length)
     throw new Error('This Room has more agents than distinct voices available');
@@ -61,8 +61,17 @@ export function assignVoiceAgents(
   });
 }
 
+/** Keep saved Aura choices; deterministically translate dormant provider choices. */
+export function savedAuraVoice(chosen: Partial<Record<VoiceProvider, string>>): string | undefined {
+  if (chosen['aura-2'] && AURA_VOICES.includes(chosen['aura-2'] as typeof AURA_VOICES[number]))
+    return chosen['aura-2'];
+  const legacy = chosen['fish-s2.1-pro'] ?? chosen['kokoro-deepinfra'];
+  return legacy ? AURA_VOICES[createHash('sha256').update(legacy).digest().readUInt32BE(0) % AURA_VOICES.length] : undefined;
+}
+
 export type FluxEvent = { event: 'Update' | 'StartOfTurn' | 'EagerEndOfTurn' | 'TurnResumed' | 'EndOfTurn';
-  transcript: string; turn_index: number; sequence_id: number };
+  transcript: string; turn_index: number; sequence_id: number;
+  words?: readonly { word: string; confidence: number; start: number; end: number }[] };
 export interface VoiceStt {
   send(pcm: Int16Array): void;
   close(): void;

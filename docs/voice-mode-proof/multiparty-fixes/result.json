@@ -1,0 +1,37 @@
+{
+  "stt": "live Flux",
+  "provider": "aura-2",
+  "humans": 2,
+  "agents": [
+    "Ruby",
+    "Goosey"
+  ],
+  "answers": [
+    {
+      "agent": "Ruby",
+      "text": "Lunch is a midday meal. I like something tasty and filling."
+    },
+    {
+      "agent": "Goosey",
+      "text": "Lunch is the midday meal. It can be a quick bite or a leisurely break."
+    }
+  ],
+  "synthesis": [
+    "Lunch is a midday meal.",
+    "I like something tasty and filling.",
+    "Lunch is the midday meal.",
+    "It can be a quick bite or a leisurely break."
+  ],
+  "unnamedSpeechSilent": true,
+  "maximumActiveAnswers": 1,
+  "pcmBytes": 418560,
+  "receivedFrames": 742,
+  "android": {
+    "connected": true,
+    "speaker": null,
+    "audibleFrames": 6,
+    "error": null
+  },
+  "fullReplies": true,
+  "transcriptReplies": 2
+}

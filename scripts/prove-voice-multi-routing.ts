@@ -159,6 +159,14 @@ async function main() {
     }
     await wait(300);
     check('Sam\'s noise and backchannel words do not interrupt Ruby', !story.aborted() && playing > 0, `aborted=${story.aborted()} playing=${playing}`);
+    await sam.room.localParticipant!.publishData(new TextEncoder().encode(JSON.stringify({ type: 'target', agentId: RUBY, tap: true })),
+      { reliable: true, topic: VOICE_DATA_TOPIC });
+    await wait(300);
+    const tapAt = answers.length;
+    say('Sam', 'uh', 'EndOfTurn', 0.2);
+    await wait(1500);
+    check('after Sam taps Ruby, Sam\'s completed "uh" turn does not interrupt or get a reply', !story.aborted() && answers.length === tapAt,
+      `aborted=${story.aborted()} new answers=${answers.length - tapAt}`);
     say('Sam', 'hold on everyone', 'Update');
     const stopped = await until(() => story.aborted(), 3000);
     check('Sam, who did not ask, interrupts Ruby with two real words', stopped);

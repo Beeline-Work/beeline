@@ -159,11 +159,12 @@ export class VoiceRoomRuntime {
       // Partial recognized names can aim the strip immediately; only EndOfTurn dispatches.
       if (event.event !== 'EndOfTurn') void this.aimSpokenName(human, event.transcript, version);
       // With several humans, anyone may interrupt, but only with real speech.
-      if (this.humans === 1 || voiceInterrupt(event)) { this.speaking?.abort(); this.audio.clearQueue(); }
+      const interrupts = this.humans === 1 || voiceInterrupt(event);
+      if (interrupts) { this.speaking?.abort(); this.audio.clearQueue(); }
       if (event.event !== 'EndOfTurn' || !event.transcript.trim() ||
           event.turn_index <= (this.turnIndices.get(human) ?? -1)) return;
       this.turnIndices.set(human, event.turn_index);
-      void this.utterance(human, event.transcript, performance.now()).catch(error => {
+      void this.utterance(human, event.transcript, performance.now(), interrupts).catch(error => {
         if (error instanceof Error && error.name === 'AbortError') return;
         void this.signal({ type: 'error', message: error instanceof VoiceQuotaError ? error.message : 'Voice reply unavailable; your message is in the transcript',
           ...(error instanceof VoiceQuotaError ? { code: error.code } : {}) }, human);
@@ -226,13 +227,17 @@ export class VoiceRoomRuntime {
     if (changed || announce) await this.signal({ type: 'humans', count });
   }
 
-  async utterance(human: string, text: string, startedAt = performance.now()) {
+  /** `interrupts` is false for speech below the multi-human interrupt threshold. */
+  async utterance(human: string, text: string, startedAt = performance.now(), interrupts = true) {
     const agents = await this.service.agents(this.roomId, human);
     const humans = await this.service.humanCount(this.callId);
     void this.countHumans(humans).catch(() => {});
+    const named = humans > 1 ? openingVoiceName(text, agents) : undefined;
+    // A tap cannot turn noise or backchannel into an interrupt; the tap waits for real speech.
+    if (humans > 1 && !named && this.speaking && !interrupts) return;
     const tapped = agents.find(agent => agent.id === this.taps.get(human));
     this.taps.delete(human);
-    const agent = humans > 1 ? openingVoiceName(text, agents) ?? tapped : namedVoiceTarget(text, agents, this.targets.get(human), humans);
+    const agent = humans > 1 ? named ?? tapped : namedVoiceTarget(text, agents, this.targets.get(human), humans);
     if (this.closed) return;
     if (!agent) { await this.signal({ type: 'unaddressed' }, human); return; }
     this.targets.set(human, agent.id);

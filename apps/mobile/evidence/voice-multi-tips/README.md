@@ -13,6 +13,7 @@ LIVEKIT_URL=ws://127.0.0.1:35880 LIVEKIT_API_SECRET=<dev secret> npx tsx scripts
 - `rtc-before-8c30b0d-parent.txt` is main before PR #2456.
 - `rtc-before-8c30b0d.txt` is PR #2456 before this change.
 - `rtc-before-35b1965.txt` is the head before the tapped-backchannel fix.
+- `rtc-before-e4f9d76.txt` is the head before the name-only fix.
 - `rtc-after.txt` is this change.
 
 ## Conversation panel

@@ -40,7 +40,7 @@ async function main() {
   let playing = 0;
   const speech: VoiceSpeech = {
     async *synthesize(text, _voice, signal) {
-      const chunks = text.includes('long story') ? 60 : 4;
+      const chunks = text.includes('long story') ? 200 : 4;
       playing++;
       try {
         for (let i = 0; i < chunks && !signal.aborted; i++) { await wait(50); yield Buffer.alloc(1920, 40); }
@@ -167,6 +167,11 @@ async function main() {
     await wait(1500);
     check('after Sam taps Ruby, Sam\'s completed "uh" turn does not interrupt or get a reply', !story.aborted() && answers.length === tapAt,
       `aborted=${story.aborted()} new answers=${answers.length - tapAt}`);
+    const nameAt = answers.length;
+    say('Sam', 'Ruby', 'EndOfTurn', 0.2);
+    await wait(1500);
+    check('Sam\'s short name-only "Ruby" turn does not interrupt Ruby', !story.aborted() && answers.length === nameAt,
+      `aborted=${story.aborted()} new answers=${answers.length - nameAt}`);
     say('Sam', 'hold on everyone', 'Update');
     const stopped = await until(() => story.aborted(), 3000);
     check('Sam, who did not ask, interrupts Ruby with two real words', stopped);

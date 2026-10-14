@@ -27,16 +27,24 @@ reach the fixture: both Squire HTTP and streaming egress routes returned 502
 voice-provider secrets. No live voice reply or unchanged-latency claim is made.
 Temporary egress grants were revoked and the fixture was cleaned up.
 
-The requested reviewer-bypass check on web.usebeeline.app remains a post-deploy
+Ruby authorized post-deploy acceptance in brief revision 2. Use an existing
+local/staging server environment if it can load the existing provider keys;
+otherwise start one real Android voice call after deploy. Confirm audible Aura,
+record time to first audio, and compare the same measurement against current
+main/production. Latency must not increase. A failure requires an immediate
+revert through the repository merge gate and a failed report. Do not build a
+credential injection route, use Squire proxy, or change production secrets.
+
+The reviewer-bypass check on web.usebeeline.app also remains a post-deploy
 check. This branch has not been deployed. iOS was excluded as requested.
 
 ## Final local checks
 
-After integrating main and PR #2456 head e4f9d761:
+After rebasing the cleanup onto main at #2456 merge 886497ac8:
 
 - Root `npm run typecheck`: passed, including mobile and scripts.
 - `npm run dead-code`: 91 baseline findings, zero introduced.
-- Voice providers, agent voice, service, runtime and targeting: 71 tests passed.
-- API contract suite: 467 tests passed.
+- Voice providers, agent voice, service, runtime and targeting: 72 tests passed.
+- API contract suite: 468 tests passed.
 - Workspace Settings and agent voice picker: 37 tests passed.
 - Tracked voice source/documentation grep: no retired-provider references remain.

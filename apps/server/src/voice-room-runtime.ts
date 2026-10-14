@@ -42,7 +42,7 @@ export class VoiceRoomRuntime {
   private readonly inputVersions = new Map<string, number>();
   private readonly inputSpeech = new Map<string, { turn: number; playback: Set<string> }>();
   private readonly pendingTurns = new Map<string, { text: string; source: Promise<string>;
-    controller: AbortController; audible: boolean; agent?: VoiceAgent; selected?: string }>();
+    controller: AbortController; playbackStarted: boolean; audible: boolean; agent?: VoiceAgent; selected?: string }>();
   private readonly shutdown = new AbortController();
   private speaking?: AbortController;
   private speechIdle = Promise.resolve();
@@ -205,7 +205,7 @@ export class VoiceRoomRuntime {
   async utterance(human: string, text: string, startedAt = performance.now()) {
     const fragment = text;
     const previous = this.pendingTurns.get(human);
-    const continuation = previous && !previous.audible ? previous : undefined;
+    const continuation = previous && !previous.playbackStarted ? previous : undefined;
     if (continuation) {
       continuation.controller.abort();
       text = `${continuation.text} ${text}`;
@@ -215,8 +215,8 @@ export class VoiceRoomRuntime {
     let rejectSource!: (error: unknown) => void;
     const source = new Promise<string>((resolve, reject) => { resolveSource = resolve; rejectSource = reject; });
     void source.catch(() => {});
-    const turn: { text: string; source: Promise<string>; controller: AbortController; audible: boolean; agent?: VoiceAgent; selected?: string } =
-      { text, source, controller, audible: false, selected: this.targets.get(human) };
+    const turn: { text: string; source: Promise<string>; controller: AbortController; playbackStarted: boolean; audible: boolean; agent?: VoiceAgent; selected?: string } =
+      { text, source, controller, playbackStarted: false, audible: false, selected: this.targets.get(human) };
     const generation = new AbortController();
     let decisionFinal = false;
     controller.signal.addEventListener('abort', () => { if (!turn.audible || decisionFinal) generation.abort(); }, { once: true });
@@ -287,12 +287,13 @@ export class VoiceRoomRuntime {
           speechQueue = speechQueue.then(async () => {
             if (controller.signal.aborted || this.closed) throw new DOMException('Interrupted', 'AbortError');
             await this.signal({ type: 'speaker', agentId: agent.id });
+            if (controller.signal.aborted || this.closed) throw new DOMException('Interrupted', 'AbortError');
             await this.play(phrase, agent, controller.signal, () => {
               if (!firstAudio) {
                 firstAudio = true; turn.audible = true; commitAudibleReply();
                 void this.signal({ type: 'latency', firstAudioMs: performance.now() - startedAt });
               }
-            });
+            }, () => { turn.playbackStarted = true; });
           });
           void speechQueue.catch(() => {});
         };
@@ -391,7 +392,8 @@ export class VoiceRoomRuntime {
     } finally { this.refreshPending = false; }
   }
 
-  private async play(text: string, agent: VoiceAgent, signal: AbortSignal, onFirstAudio?: () => void) {
+  private async play(text: string, agent: VoiceAgent, signal: AbortSignal, onFirstAudio?: () => void,
+    onFirstVoicedFrame?: () => void) {
     text = markdownToSpeech(text);
     if (!text) return;
     let pending = Buffer.alloc(0); let first = true;
@@ -414,15 +416,19 @@ export class VoiceRoomRuntime {
           const samples = new Int16Array(frameBytes / 2);
           for (let i = 0; i < samples.length; i++) samples[i] = pending.readInt16LE(i * 2);
           pending = pending.subarray(frameBytes);
+          const voiced = first && samples.some(sample => Math.abs(sample) > 150);
+          if (voiced) { first = false; onFirstVoicedFrame?.(); }
           await this.audio.captureFrame(new AudioFrame(samples, VOICE_SAMPLE_RATE, 1, samples.length));
-          if (!signal.aborted && !this.closed && first && samples.some(sample => Math.abs(sample) > 150)) { first = false; onFirstAudio?.(); }
+          if (!signal.aborted && !this.closed && voiced) onFirstAudio?.();
         }
       }
       if (pending.length > 1) {
         const samples = new Int16Array(Math.floor(pending.length / 2));
         for (let i = 0; i < samples.length; i++) samples[i] = pending.readInt16LE(i * 2);
+        const voiced = first && samples.some(sample => Math.abs(sample) > 150);
+        if (voiced) { first = false; onFirstVoicedFrame?.(); }
         await this.audio.captureFrame(new AudioFrame(samples, VOICE_SAMPLE_RATE, 1, samples.length));
-        if (!signal.aborted && !this.closed && first && samples.some(sample => Math.abs(sample) > 150)) onFirstAudio?.();
+        if (!signal.aborted && !this.closed && voiced) onFirstAudio?.();
       }
       await this.audio.waitForPlayout();
     } finally { spoken.until = performance.now() + 1500; }

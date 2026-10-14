@@ -7,9 +7,10 @@ At baseline `a37868e86eaaced940d95b4d0c2d5bf9674ffff0`, the reproduction in
 
 The fix reserves a source before asynchronous work, serializes edits of that
 source, and restarts generation with the combined text. Confirmed partial speech
-aborts an unheard draft before the next final transcript. The first accepted
-non-silent server audio frame closes the continuation window. Later speech keeps
-the existing barge-in behavior. Dispatch starts once that audio boundary and the
+aborts an unheard draft before the next final transcript. The continuation
+window closes synchronously before capturing the first non-silent frame. Later
+speech keeps the existing barge-in behavior. Latency is measured after capture;
+dispatch starts once the first non-silent frame has been accepted and the
 final order decision exist; interrupting playback cannot cancel the dispatch.
 If the acknowledgement streamed before the order decision, generation finishes
 that decision despite playback cancellation. Unheard cancelled text is never
@@ -29,9 +30,17 @@ Generation runs twice, the cancelled partial produces no visible reply or
 ordinary command, and a duplicate final does not create another acknowledgement.
 Stale runtime leases and removed membership cannot revise that source.
 
-Race tests cover continuation during authorization and insertion, authorization
-failure, serial edits, opening-name and avatar target changes, cancellation
-during the first audio capture, dispatch before playback finishes, an order
+The new full-frame and short-tail capture-boundary tests and speaker-signal
+cancellation test were also run against the prior delivered source, commit
+`0b463a197ce19678aca94e50600cb6b696d89f2d`. All three failed there: capture still
+allowed same-message merging, and cancelled speaker signaling still invoked
+playback. The reviewed source passes these checks.
+
+Race tests cover continuation during authorization and insertion, failures in
+agent lookup, human counting and target signaling, serial edits, opening-name
+and avatar target changes, superseded setup, cancellation during speaker
+signaling, quiet versus voiced frames, the pre-capture boundary, late generation
+deltas, dispatch before playback finishes, an order
 decision arriving after audible barge-in, and persistence racing barge-in.
 
 ## Finished-sentence timing
@@ -64,7 +73,7 @@ npm test --prefix apps/mobile -- --run --pool=forks --maxWorkers=1 --minWorkers=
 NODE_OPTIONS=--max-old-space-size=4096 npm test -w @beeline/api-contract -w @beeline/nostr -w @beeline/buzz-client -- --pool=forks --maxWorkers=1 --minWorkers=1
 ```
 
-Server voice: 94 tests. Mobile voice: 48 tests. Shared packages: 466 API-contract,
+Server voice: 101 tests. Mobile voice: 48 tests. Shared packages: 466 API-contract,
 8 Nostr and 399 client tests. Existing regressions for #2442, #2443, #2446 and
 #2447 remain in the passing voice suites. No mobile or screen-off code changed.
 

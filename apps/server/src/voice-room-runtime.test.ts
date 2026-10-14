@@ -628,16 +628,18 @@ it('a failed authorization after confirmed partial speech does not poison the ne
   } finally { await runtime.close(); }
 });
 
-it('settles a shared source when initial authorization fails and allows the next turn', async () => {
+it.each(['agents', 'humanCount', 'target signal'])('settles a shared source when %s fails and allows the next turn', async stage => {
   const { service } = conversationService(1);
-  const authorization = deferred<typeof roster>();
-  service.agents.mockImplementationOnce(() => authorization.promise);
   const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  const setup = deferred<any>();
+  const failing = stage === 'agents' ? service.agents : stage === 'humanCount' ? service.humanCount : state.room.localParticipant.publishData;
+  failing.mockImplementationOnce(() => setup.promise);
   try {
     const first = runtime.utterance('human', 'Ruby first').catch(error => error.message);
+    await vi.waitFor(() => expect(failing).toHaveBeenCalledOnce());
     const second = runtime.utterance('human', 'continued').catch(error => error.message);
-    authorization.reject(new Error('access denied'));
-    expect(await Promise.all([first, second])).toEqual(['access denied', 'access denied']);
+    setup.reject(new Error('setup failed'));
+    expect(await Promise.all([first, second])).toEqual(['setup failed', 'setup failed']);
     expect(service.recordHuman).not.toHaveBeenCalled();
     await runtime.utterance('human', 'Ruby fresh');
     expect(service.recordHuman).toHaveBeenCalledOnce();
@@ -668,6 +670,85 @@ it('shares an insert in flight and serializes later edits before restarting the 
   } finally { await runtime.close(); }
 });
 
+it('quiet captured frames keep the same-message continuation window open', async () => {
+  const { service, speech } = conversationService(1);
+  speech.synthesize.mockImplementationOnce(async function* (_text, _voice, signal) {
+    yield Buffer.alloc(960);
+    await new Promise<void>((_resolve, reject) => {
+      const abort = () => reject(new DOMException('Interrupted', 'AbortError'));
+      if (signal.aborted) abort(); else signal.addEventListener('abort', abort, { once: true });
+    });
+    yield Buffer.alloc(960, 1);
+  });
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  try {
+    const first = runtime.utterance('human', 'Ruby first').catch(error => { if (error.name !== 'AbortError') throw error; });
+    await vi.waitFor(() => expect(state.audio.captureFrame).toHaveBeenCalledOnce());
+    await runtime.utterance('human', 'continued'); await first;
+    expect(service.recordHuman).toHaveBeenCalledOnce();
+    expect(service.reviseHuman).toHaveBeenCalledOnce();
+    expect(service.recordAnswer).toHaveBeenCalledOnce();
+  } finally { await runtime.close(); }
+});
+
+it('does not call playback after cancellation during an awaited speaker signal', async () => {
+  const { service } = conversationService(1);
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  const speaker = deferred<void>();
+  let waiting = false;
+  state.room.localParticipant.publishData.mockImplementationOnce(async () => {});
+  state.room.localParticipant.publishData.mockImplementation(async (bytes: Uint8Array) => {
+    const signal = JSON.parse(new TextDecoder().decode(bytes));
+    if (!waiting && signal.type === 'speaker' && signal.agentId === 'ruby') { waiting = true; await speaker.promise; }
+  });
+  const play = vi.spyOn(runtime as any, 'play');
+  try {
+    const first = runtime.utterance('human', 'Ruby first').catch(error => { if (error.name !== 'AbortError') throw error; });
+    await vi.waitFor(() => expect(waiting).toBe(true));
+    await runtime.utterance('human', 'continued');
+    speaker.resolve(); await first;
+    expect(play).toHaveBeenCalledTimes(3);
+    expect(service.recordHuman).toHaveBeenCalledOnce();
+    expect(service.recordAnswer).toHaveBeenCalledOnce();
+  } finally { speaker.resolve(); await runtime.close(); }
+});
+
+it('ignores late brain deltas after barge-in while preserving only the heard prefix', async () => {
+  const { service } = conversationService(1);
+  const generation = deferred<any>();
+  let delta!: (text: string) => void;
+  service.config.brain.answer.mockImplementationOnce(async (_agent, _history, onText) => {
+    delta = onText; onText('Heard clause. '); return generation.promise;
+  });
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  try {
+    const first = runtime.utterance('human', 'Ruby first').catch(error => error.message);
+    await vi.waitFor(() => expect(state.room.localParticipant.publishData.mock.calls.map(([bytes]: any[]) => JSON.parse(new TextDecoder().decode(bytes))).some(signal => signal.type === 'latency')).toBe(true));
+    await runtime.utterance('human', 'Ruby another question');
+    delta('Unheard stale delta. '); generation.reject(new Error('provider interrupted'));
+    expect(await first).toBe('provider interrupted');
+    expect(service.recordAnswer.mock.calls.map(call => call[2])).toContain('Heard clause.');
+    expect(service.recordAnswer.mock.calls.some(call => call[2].includes('Unheard'))).toBe(false);
+  } finally { await runtime.close(); }
+});
+
+it('superseded pending setup cannot restore an older target', async () => {
+  const { service } = conversationService(1);
+  const authorization = deferred<typeof roster>();
+  service.agents.mockImplementationOnce(() => authorization.promise);
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  try {
+    const first = runtime.utterance('human', 'Goosey first');
+    const second = runtime.utterance('human', 'Ruby continued');
+    authorization.resolve(roster); await Promise.all([first, second]);
+    expect(service.recordHuman).toHaveBeenCalledOnce();
+    expect(service.config.brain.answer).toHaveBeenCalledOnce();
+    expect(service.config.brain.answer.mock.calls[0]?.[0].id).toBe('ruby');
+    const targets = state.room.localParticipant.publishData.mock.calls.map(([bytes]: any[]) => JSON.parse(new TextDecoder().decode(bytes))).filter(signal => signal.type === 'target');
+    expect(targets.map(signal => signal.agentId)).toEqual(['ruby']);
+  } finally { await runtime.close(); }
+});
+
 it('a continuation can change the authorized target without creating another source', async () => {
   const { service } = conversationService(1);
   service.config.brain.answer.mockImplementationOnce(async (_agent, _history, _delta, signal) => {
@@ -686,9 +767,9 @@ it('a continuation can change the authorized target without creating another sou
   } finally { await runtime.close(); }
 });
 
-it('does not dispatch or persist a pre-audio reply while its first capture is cancelled', async () => {
+it.each([2, 960])('closes the merge window before the first voiced capture (%d bytes) and dispatches only captured audio', async size => {
   const { service } = conversationService(1);
-  service.speech.mockResolvedValue({ synthesize: async function* () { yield Buffer.alloc(960, 1); } } as any);
+  service.speech.mockResolvedValue({ synthesize: async function* () { yield Buffer.alloc(size, 1); } } as any);
   service.config.brain.answer.mockImplementation(async () => ({ text: 'I will do it.', order: true }));
   const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
   const capture = deferred<void>();
@@ -697,9 +778,11 @@ it('does not dispatch or persist a pre-audio reply while its first capture is ca
     const first = runtime.utterance('human', 'Ruby first').catch(() => {});
     await vi.waitFor(() => expect(state.audio.captureFrame).toHaveBeenCalledOnce());
     expect(service.dispatch).not.toHaveBeenCalled();
+    expect(state.room.localParticipant.publishData.mock.calls.map(([bytes]: any[]) => JSON.parse(new TextDecoder().decode(bytes))).some(signal => signal.type === 'latency')).toBe(false);
     const second = runtime.utterance('human', 'continued');
-    capture.resolve(); await second; await first;
-    expect(service.recordHuman).toHaveBeenCalledOnce();
+    await second; capture.resolve(); await first;
+    expect(service.recordHuman).toHaveBeenCalledTimes(2);
+    expect(service.reviseHuman).not.toHaveBeenCalled();
     expect(service.dispatch).toHaveBeenCalledOnce();
     expect(service.recordAnswer).not.toHaveBeenCalled();
   } finally { await runtime.close(); }

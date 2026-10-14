@@ -54,24 +54,29 @@ async function flushCommanderWakes(
   return true;
 }
 
-/** Rebuild only when a recorded workflow source is no longer actionable. */
+/** Rebuild only when a recorded source expired or was stopped. */
 export async function refreshWakeDigests(db: SqlDatabase, roomId: string, agentId: string): Promise<void> {
   await db.transaction(async tx => {
     await lockWakeConsumer(tx, roomId, agentId);
-    const heads = (await tx.query<{ id: string }>(
-      `SELECT id FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND coalesced_context IS NOT NULL
+    const heads = (await tx.query<{ id: string; coalesced_context: string }>(
+      `SELECT id,coalesced_context FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND coalesced_context IS NOT NULL
        AND (state='pending' OR (state='claimed' AND lease_expires_at<=now())
-         OR (state='cancelled' AND cancellation_reason='workflow_attempt_expired'))
+         OR (state='cancelled' AND cancellation_reason IN ('workflow_attempt_expired','stop')))
        ORDER BY inbox_sequence FOR UPDATE`, [roomId, agentId])).rows;
     for (const head of heads) {
-      const ids = (await tx.query<{ id: string }>(
-        `SELECT id FROM agent_commands WHERE room_id=$1 AND agent_id=$2
-         AND (id=$3 OR cancellation_reason='coalesced_into:'||$3)
-         ORDER BY inbox_sequence FOR UPDATE`, [roomId, agentId, head.id])).rows.map(row => row.id);
-      if (!(await expiredWakeDigestSources(tx, roomId, agentId, ids)).length) continue;
+      const recorded = head.coalesced_context.split('\n').filter(Boolean)
+        .map(line => JSON.parse(line).id).filter((id): id is string => typeof id === 'string');
+      const sources = (await tx.query<{ id: string; cancellation_reason: string | null }>(
+        `SELECT id,cancellation_reason FROM agent_commands WHERE room_id=$1 AND agent_id=$2
+         AND (id=$3 OR cancellation_reason='coalesced_into:'||$3 OR id=ANY($4::text[]))
+         ORDER BY inbox_sequence FOR UPDATE`, [roomId, agentId, head.id, recorded])).rows;
+      const ids = sources.filter(source => source.cancellation_reason !== 'stop').map(source => source.id);
+      if (ids.length === sources.length && !(await expiredWakeDigestSources(tx, roomId, agentId, ids)).length) continue;
       // Restore the immutable original sources in this transaction, then apply
       // the normal expiry fence and digest just the surviving commands. A stale
       // cached head loses its claim; the replacement gets its own ordinary claim.
+      await tx.query('UPDATE agent_commands SET coalesced_context=NULL,coalesced_attachments=NULL WHERE id=$1', [head.id]);
+      if (!ids.length) continue;
       await tx.query(
         `UPDATE agent_commands SET state='pending',completed_at=NULL,cancellation_reason=NULL,
           coalesced_context=NULL,coalesced_attachments=NULL,wake_after=now()

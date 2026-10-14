@@ -1248,12 +1248,21 @@ async function provenanceAttempt(
   roomId: string,
   runId: string,
   sourceMessageId: string | null | undefined,
+  digestCommandId?: string,
 ): Promise<number | undefined> {
-  if (!sourceMessageId) return undefined;
+  if (!sourceMessageId && !digestCommandId) return undefined;
   const source = (
     await db.query<{ card_type: string | null; card: WorkflowRunCard | null; created_at: Date }>(
-      `SELECT card_type,card,created_at FROM messages WHERE id=$1 AND room_id=$2`,
-      [sourceMessageId, roomId],
+      `SELECT source.card_type,source.card,source.created_at FROM messages source
+       WHERE source.room_id=$2 AND source.card->>'runId'=$3
+         AND (source.id=$1 OR EXISTS (
+           SELECT 1 FROM agent_commands absorbed
+           LEFT JOIN agent_commands parent ON parent.id=absorbed.parent_command_id
+           WHERE absorbed.room_id=$2 AND absorbed.cancellation_reason='coalesced_into:'||$4
+             AND (absorbed.source_message_id=source.id OR (absorbed.action='resume' AND parent.source_message_id=source.id))
+         ))
+       ORDER BY (source.id=$1) DESC NULLS LAST,source.created_at,source.id LIMIT 1`,
+      [sourceMessageId ?? null, roomId, runId, digestCommandId ?? null],
     )
   ).rows[0];
   if (!source?.card || source.card.runId !== runId) return undefined;
@@ -1340,7 +1349,7 @@ export async function handoff(
     const current = run.seq;
     let attempt =
       input.attempt ??
-      (await provenanceAttempt(db, command.room_id, input.runId, command.source_message_id));
+      (await provenanceAttempt(db, command.room_id, input.runId, command.source_message_id, command.id));
     if (attempt === undefined) {
       // No wake from this run: a bound agent's handoff acts on the current
       // card, once per command.

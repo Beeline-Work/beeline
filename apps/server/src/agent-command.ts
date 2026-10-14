@@ -1092,7 +1092,11 @@ export async function dropQueuedOrdersForStop(db: SqlDatabase, stopped: CommandR
   if (order.private_payload?.kind !== 'order' || order.agent_id !== stopped.agent_id) return 0;
   const dropped = await db.query<CommandRow>(
     `UPDATE agent_commands SET state='cancelled',completed_at=now(),cancellation_reason='stop'
-     WHERE room_id=$1 AND agent_id=$2 AND state='pending' AND action='input'
+     WHERE room_id=$1 AND agent_id=$2 AND action='input'
+       AND (state='pending' OR (state='cancelled' AND EXISTS (
+         SELECT 1 FROM agent_commands digest WHERE digest.room_id=$1 AND digest.agent_id=$2
+           AND digest.state='pending' AND agent_commands.cancellation_reason='coalesced_into:'||digest.id
+       )))
        AND private_payload->>'kind'='order'
        AND private_payload->>'authorId'=$3 AND private_payload->>'fromRoomId'=$4
        AND created_at<=now() AND turn_request_id<>$5
@@ -1103,7 +1107,7 @@ export async function dropQueuedOrdersForStop(db: SqlDatabase, stopped: CommandR
   if (dropped.rowCount) {
     await reportToCommander(db, stopped.room_id, stopped.agent_id,
       `failed: ${dropped.rowCount} queued ${dropped.rowCount === 1 ? 'order was' : 'orders were'} dropped by a Stop; the running turn was cancelled`,
-      dropped.rows[0], createHash('sha256').update(`stop-orders:${stopped.id}`).digest('hex'), { automatic: true });
+      dropped.rows[0], createHash('sha256').update(`stop-orders:${stopped.id}`).digest('hex'), { automatic: true, digestSource: true });
   }
   return dropped.rowCount;
 }

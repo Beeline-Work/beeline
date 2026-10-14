@@ -328,3 +328,45 @@ it('delivers and claims ordinary work inside a browser-led digest despite later 
   await claim(delivered[0]!);
   console.info('Demonstrated inbox-browser: ordinary work in a browser-led digest remains deliverable and claimable ahead of a later batch window');
 });
+it('pins the executing digest to each absorbed workflow visit for step output reads', async () => {
+  await delivery('batch:2');
+  await wake('Private lifecycle head');
+  const firstRun = await workflowWake(), secondRun = await workflowWake();
+  await mature();
+  const digest = (await inbox())[0]!;
+  expect(digest.private).toBe(true);
+  await claim(digest);
+  const visits = (await db.query<{ id: string; commands: string[] }>(
+    "SELECT id,card->'outputCommandIds' commands FROM messages WHERE id=ANY($1::text[]) ORDER BY id", [[firstRun, secondRun]])).rows;
+  expect(visits).toHaveLength(2);
+  expect(visits.every(visit => visit.commands.includes(digest.id))).toBe(true);
+  console.info('Demonstrated inbox-workflow-output: one private-head digest claims two workflow visits; both pin their step outputs to the actual executing command');
+});
+it.each(['head', 'absorbed'] as const)('Stop removes only its sender’s queued %s orders from a mixed digest', async position => {
+  await phone.execute('sendRoomMessage', { roomId: OTHER, messageId: id(), text: '@worker Lead this work' }, HUMAN);
+  const workerCommand = (await inbox(db, OTHER, WORKER))[0]!;
+  await claim(workerCommand);
+  await daemon.execute('order', { ...authority(workerCommand), address: ROOM, agent: 'inbox', text: 'Running sender A order' }, WORKER);
+  const running = (await inbox()).find(command => command.reason === 'order')!;
+  await claim(running);
+  const secondAgent = 'd'.repeat(64);
+  await db.query("INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Second','second') ON CONFLICT DO NOTHING", [secondAgent]);
+  await db.query('INSERT INTO agents(agent_id,owner_id) VALUES($1,$2) ON CONFLICT DO NOTHING', [secondAgent, HUMAN]);
+  await db.query("INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member'),($1,$4,$3,'member')", [WS, ROOM, secondAgent, OTHER]);
+  await delivery('batch:2');
+  const queued = async (authorId: string, text: string) => createAgentCommand(db, {
+    roomId: ROOM, agentId: AGENT, sourceMessageId: null, reason: 'order',
+    privatePayload: { text, authorId, fromRoomId: OTHER, kind: 'order' } });
+  if (position === 'head') { await queued(WORKER, 'A stopped task'); await queued(secondAgent, 'B queued survivor'); }
+  else { await queued(secondAgent, 'B queued survivor'); await queued(WORKER, 'A stopped task'); }
+  await mature();
+  await phone.execute('cancelAgentTurn', { roomId: ROOM, agentId: AGENT, requestId: running.turnRequestId }, HUMAN);
+  const surviving = (await inbox()).filter(command => command.action === 'input');
+  expect(surviving).toHaveLength(1);
+  expect(surviving[0]!.source.body).toBe('B queued survivor');
+  expect(JSON.stringify(surviving[0])).not.toContain('A stopped task');
+  await claim(surviving[0]!);
+  expect((await inbox(db, OTHER, WORKER)).filter(command => command.reason === 'report')).toHaveLength(1);
+  expect((await inbox(db, OTHER, secondAgent)).filter(command => command.reason === 'report')).toHaveLength(0);
+  console.info(`Demonstrated inbox-stop: stopping sender A removes its ${position} queued order, preserves sender B's work and reports the drop only to A`);
+});

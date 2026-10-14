@@ -36,6 +36,7 @@ import {
   type TappedNotificationResponse,
 } from '@/push/notification-response';
 import { resolveBuzzNotificationDestination } from '@/push/notification-destination';
+import { routeVoiceResumeNotification } from '@/buzz/voice-transport';
 import { prefetchPushRoom } from '@/push/push-room-prefetch';
 import {
   markInitialLandingResolved,
@@ -435,6 +436,16 @@ export default function RootLayout() {
   const handledNotificationIds = React.useRef<Set<string>>(new Set());
   const handleNotificationResponse = React.useCallback(
     async (response: TappedNotificationResponse | null) => {
+      const resumeUrl = (response?.notification?.request?.content?.data as { resumeUrl?: unknown } | undefined)?.resumeUrl;
+      if (response?.actionIdentifier === Notifications.DEFAULT_ACTION_IDENTIFIER &&
+          await routeVoiceResumeNotification(resumeUrl, async () => {
+            await rootReady.current!.promise;
+            while (await whenInitialLandingResolved() === 'timeout') { /* Wait for the landing decision's next event. */ }
+            suppressInitialLandingNavigation();
+          })) {
+        await Notifications.clearLastNotificationResponseAsync();
+        return;
+      }
       await routeBuzzNotificationResponse(response, {
         navigator: notificationNavigator,
         handled: handledNotificationIds.current,

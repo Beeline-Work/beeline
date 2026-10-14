@@ -2050,6 +2050,13 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     response.end(logo);
     return;
   }
+  const nativeVoiceStop = url.pathname.match(/^\/v1\/phone\/voice\/([0-9a-f-]{36})\/native-stop$/);
+  if (nativeVoiceStop && method === 'POST') {
+    if (!options.voice) { json(response, 503, { error: 'Voice mode is unavailable' }); return; }
+    const accepted = await options.voice.nativeStop(nativeVoiceStop[1]!, (await body(request)).token);
+    json(response, accepted ? 200 : 403, accepted ? { left: true } : { error: 'invalid_voice_stop' });
+    return;
+  }
   const identityId = await phoneIdentity(request, options);
   if (
     method === 'GET' &&
@@ -2234,15 +2241,21 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     return;
   }
 
-  const voiceMatch = url.pathname.match(/^\/v1\/phone\/voice\/([0-9a-f-]{36})\/(current|join|leave)$/);
+  const voiceMatch = url.pathname.match(/^\/v1\/phone\/voice\/([0-9a-f-]{36})\/(current|join|leave|idle|state|resume)$/);
   if (voiceMatch) {
     if (!options.voice) { json(response, 503, { error: 'Voice mode is unavailable' }); return; }
     if (voiceMatch[2] === 'current' && method === 'GET') {
       json(response, 200, await options.voice.current(voiceMatch[1]!, identityId!));
     } else if (voiceMatch[2] === 'join' && method === 'POST') {
       json(response, 200, await options.voice.join(voiceMatch[1]!, identityId!));
+    } else if (voiceMatch[2] === 'state' && method === 'GET') {
+      json(response, 200, await options.voice.idleState(voiceMatch[1]!, identityId!, undefined, url.searchParams.get('sessionId') ?? undefined));
+    } else if (voiceMatch[2] === 'idle' && method === 'POST') {
+      json(response, 200, await options.voice.idle(voiceMatch[1]!, identityId!, (await body(request)).sessionId as string | undefined));
+    } else if (voiceMatch[2] === 'resume' && method === 'POST') {
+      await options.voice.resume(voiceMatch[1]!, identityId!, (await body(request)).sessionId as string); json(response, 200, { resumed: true });
     } else if (voiceMatch[2] === 'leave' && method === 'POST') {
-      await options.voice.leave(voiceMatch[1]!, identityId!); json(response, 200, { left: true });
+      await options.voice.leave(voiceMatch[1]!, identityId!, false, (await body(request)).sessionId as string | undefined); json(response, 200, { left: true });
     } else { json(response, 405, { error: 'method_not_allowed' }); }
     return;
   }

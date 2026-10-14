@@ -6,14 +6,8 @@ import { VOICE_DATA_TOPIC, type VoiceSignal } from '@beeline/api-contract/phone'
 import type { VoiceService } from './voice-service.js';
 import { VOICE_SAMPLE_RATE, VoiceQuotaError, type VoiceAgent, type VoiceStt } from './voice-providers.js';
 
-export function namedVoiceTarget(text: string, agents: readonly VoiceAgent[], selected?: string): VoiceAgent | undefined {
-  const named = agents.map(agent => ({ agent, at: [agent.name, agent.handle].reduce((first, name) => {
-    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const match = new RegExp(`(?<![\\p{L}\\p{N}_])@?${escaped}(?![\\p{L}\\p{N}_])`, 'iu').exec(text);
-    return match ? Math.min(first, match.index) : first;
-  }, Infinity) })).sort((a, b) => a.at - b.at);
-  return named[0]?.at !== Infinity ? named[0]?.agent : agents.find(a => a.id === selected) ?? agents[0];
-}
+import { namedVoiceTarget } from './voice-target.js';
+export { namedVoiceTarget } from './voice-target.js';
 
 /** One lease-bound call runtime. Real agents continue outside this audio turn. */
 export class VoiceRoomRuntime {

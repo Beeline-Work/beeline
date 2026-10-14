@@ -1418,7 +1418,7 @@ export type CornerResult = {
 export type ChoiceOptionArg = ChoiceOptionInput;
 export type AskRoomChoiceInput = TurnOutputAuthority &
   RoomInput & {
-    readonly ask: string;
+    readonly ask?: string;
     readonly prompt: string;
     readonly constraint?: string;
     readonly options: readonly ChoiceOptionArg[];

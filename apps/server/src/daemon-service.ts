@@ -1067,7 +1067,7 @@ export class DaemonService {
         return await sendOrder(this.database, this.authorizedCommand!, authenticatedAgentId,
           String(candidate.address), String(candidate.text)) as Output<Name>;
       case 'report': {
-        const ask = candidate.ask === undefined && !String(candidate.text).startsWith('needs-decision:')
+        const ask = candidate.ask === undefined
           ? undefined : normalizeTrayAsk(candidate.ask);
         return await this.report(String(candidate.text), authenticatedAgentId, this.authorizedCommand!, this.database, false, ask) as Output<Name>;
       }
@@ -6147,7 +6147,7 @@ export class DaemonService {
       roomId: input.roomId,
       agentId,
       mode: 'question',
-      ask: normalizeTrayAsk(input.ask),
+      ask: input.ask === undefined ? undefined : normalizeTrayAsk(input.ask),
       prompt: input.prompt,
       constraint: input.constraint,
       options: input.options,

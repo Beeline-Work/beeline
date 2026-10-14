@@ -50,6 +50,21 @@ describe('beeline-agent ask_choice and open_poll', () => {
     expect(agentToolsFor(false, false).map((tool) => tool.name)).not.toContain('ask_choice');
   });
 
+  it('does not require ask on report or ask_choice', () => {
+    for (const name of ['report', 'ask_choice']) {
+      const schema = agentToolsFor(true, false).find(tool => tool.name === name)!.inputSchema;
+      expect(schema.required).not.toContain('ask');
+      expect(schema.allOf).toBeUndefined();
+    }
+  });
+
+  it('posts a choice with no agent-authored ask', async () => {
+    const ops: Array<{ name: string; input: Record<string, unknown> }> = [];
+    await askChoice({ prompt: 'Ship the OTA tonight?', options }, deps({ choiceId: 'c-1' }, ops));
+    expect(ops[0]?.input.prompt).toBe('Ship the OTA tonight?');
+    expect(ops[0]?.input).not.toHaveProperty('ask');
+  });
+
   it('posts ask_choice without pausing the turn', async () => {
     const ops: Array<{ name: string; input: Record<string, unknown> }> = [];
     const reply = await askChoice(

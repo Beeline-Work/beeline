@@ -94,8 +94,9 @@ it.each(['needs-decision: choose the product scope', 'needs-decision: choose the
   expect(rows).toEqual([{ room_id: DM, author_id: RUBY, text, card: { ask: 'Which product scope should we use?' } }]);
   expect((await phone.readRoom(DM, HUMAN))?.messages.some(m => m.text === rows[0]!.text)).toBe(true);
 });
-it('refuses needs-decision without a plain ask before writing a report', async () => {
-  await expect(daemon.execute('report', { ...authority(order), text: 'needs-decision: pick scope' }, RUBY)).rejects.toThrow('ask is required');
+it('accepts needs-decision without an ask and validates optional asks', async () => {
+  const reported = await daemon.execute('report', { ...authority(order), text: 'needs-decision: Which scope should we use? @captain' }, RUBY);
+  expect((await phone.execute('readNeedsYou', { workspaceId: WS }, HUMAN)).items.find(item => item.messageId === reported.id)?.text).toBe('Which scope should we use?');
   await expect(daemon.execute('report', { ...authority(order), text: 'needs-decision: pick scope', ask: '**Which scope?**' }, RUBY)).rejects.toThrow('plain text');
 });
 it('nested Room orders forward reports one commander at a time before reaching the human', async () => {

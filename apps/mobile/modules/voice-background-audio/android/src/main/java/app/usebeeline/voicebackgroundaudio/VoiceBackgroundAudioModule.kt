@@ -62,6 +62,7 @@ class VoiceBackgroundAudioModule : Module() {
       context.startService(command(context, VoiceAudioService.ACTION_ACTIVITY)
         .putExtra(VoiceAudioService.EXTRA_ACTIVE, active)
         .putExtra(VoiceAudioService.EXTRA_WAITING_FOR, waitingFor))
+      null
     }
 
     AsyncFunction("endForIdle") { resumeUrl: String?, expectedGeneration: Long ->

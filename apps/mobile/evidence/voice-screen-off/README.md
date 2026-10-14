@@ -11,9 +11,11 @@ The idle acceptance failure was reproduced: after microphone input became silent
 at 05:13:30Z, frames continued and no park occurred for 89 seconds while locked.
 Unlocking at 05:14:59Z immediately ran the overdue JavaScript deadline and ended
 the session. A second run parked at 05:28:01.762Z but left at 05:28:01.802Z,
-before the worker report committed at 05:28:03.571Z. Server requests show idle
-followed by leave without an intervening state read; the precise exception is
-not yet captured. Do not treat that as proof that idleState itself ended it.
+before the worker report committed at 05:28:03.571Z. A later device run captured
+the exception: Android setActivity returned ComponentName, which Expo could not
+serialize. The native callback now returns null. The restart notification now
+uses a package-scoped ACTION_VIEW intent so the launcher cannot drop its Room URL.
+Device confirmation of these two repairs is pending.
 
 Candy measured screen-off survival from 2026-10-14T05:15:57Z through 05:26:34Z:
 21/21 observations had the microphone foreground service, active recording and

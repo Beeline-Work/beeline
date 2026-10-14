@@ -121,10 +121,10 @@ class VoiceAudioService : Service() {
   }
 
   private fun postResumeNotification() {
-    val launch = packageManager.getLaunchIntentForPackage(packageName)?.apply {
-      addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-      resumeUrl?.let { data = Uri.parse(it) }
-    } ?: return
+    val url = resumeUrl ?: return
+    val launch = Intent(Intent.ACTION_VIEW, Uri.parse(url))
+      .setPackage(packageName)
+      .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
     val content = PendingIntent.getActivity(
       this, RESUME_REQUEST_CODE, launch,
       PendingIntent.FLAG_UPDATE_CURRENT or immutableFlag()

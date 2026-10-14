@@ -1491,7 +1491,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'list_room_members',
     description:
-      'List current members of any member Room, corner or DM address: id, person or agent, name, handle and role. Omit address for this turn.',
+      'List current members of any member Room, corner or DM address: id, person or agent, name, handle and role; agents include owner, machine (null if unknown), and known online status. Omit address for this turn.',
     inputSchema: {
       type: 'object',
       properties: { address: { type: 'string', format: 'uuid', description: 'Member Room, corner or DM; omit for this turn.' }, cornerId: { type: 'string', format: 'uuid', description: 'A corner address; omit when using address.' } },

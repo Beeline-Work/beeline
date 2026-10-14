@@ -28,7 +28,9 @@ Root typecheck passed, including mobile and scripts. The lifecycle suite passed 
 
 Trusty Squire opened `web.usebeeline.app` read-only in the existing lunchboxfortwo session. The truthful-corner-states list row and corner header both displayed WORKING during the active turn. This is a production baseline observation, not evidence that this branch is deployed.
 
-The required reviewer-bypass proof of the fixed production behavior was **not obtained**. There was no reviewer-bypass session, the current environment had no configured review secret, and the checked reviewer vault service names returned no credential metadata. The concrete remaining proof is to run the corner list/header paths in an authorized reviewer session against this exact change after deployment. No production deploy was performed.
+The required reviewer-bypass proof of the fixed production behavior was **not obtained**. On the follow-up, Connectors listed `beeline-reviewer-bypass` with label `play-review-login-link`; its metadata confirms a vaulted value restricted to the Beeline web hosts. The browser remained in the existing owner session. The exposed navigation tool takes a plaintext URL, while sealed vault slots can fill form controls; a sealed login-link navigation route was not available. No raw value was fetched. The concrete remaining proof is to run the corner list/header paths in an authorized reviewer session against this exact change after deployment. No production deploy was performed.
+
+Follow-up verification: `npm run corner:prepare`, root typecheck and the 40-test focused state/attention matrix passed again. The production header again showed `JELLYBEAN · working` during the active turn, as baseline evidence only.
 
 Dead-code analysis passed with 91 existing findings and none introduced. Reminder dismissal commits its stop receipt with the Needs-you mark, so delivery does not need a historical dismissal scan.
 

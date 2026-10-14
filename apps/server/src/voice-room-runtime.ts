@@ -6,16 +6,8 @@ import { VOICE_DATA_TOPIC, type VoiceSignal } from '@beeline/api-contract/phone'
 import type { VoiceService } from './voice-service.js';
 import { VOICE_SAMPLE_RATE, VoiceQuotaError, type VoiceAgent, type VoiceStt, type FluxEvent } from './voice-providers.js';
 
-export function namedVoiceTarget(text: string, agents: readonly VoiceAgent[], selected?: string, humans = 1): VoiceAgent | undefined {
-  const named = agents.map(agent => ({ agent, at: [agent.name, agent.handle].reduce((first, name) => {
-    if (!name.trim()) return first;
-    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const match = new RegExp(`(?<![\\p{L}\\p{N}_])@?${escaped}(?![\\p{L}\\p{N}_])`, 'iu').exec(text);
-    return match ? Math.min(first, match.index) : first;
-  }, Infinity) })).sort((a, b) => a.at - b.at);
-  if (named[0]?.at !== undefined && named[0].at !== Infinity) return named[0].agent;
-  return humans === 1 ? agents.find(a => a.id === selected) ?? agents[0] : undefined;
-}
+import { namedVoiceTarget } from './voice-target.js';
+export { namedVoiceTarget } from './voice-target.js';
 
 const speechWords = (text: string) => stripVoiceEmotion(text).toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
 

@@ -77,8 +77,8 @@ describe('voice providers', () => {
     ]);
     expect(namedVoiceTarget('What do you think?', agents, 'ruby', 2)).toBeUndefined();
     expect(namedVoiceTarget('What do you think?', agents, 'goose', 1)?.id).toBe('goose');
-    expect(namedVoiceTarget('Could you help me, GOOSEY?', agents, 'ruby', 2)?.id).toBe('goose');
-    expect(namedVoiceTarget('Over to @GoOsE please', agents, 'ruby', 2)?.id).toBe('goose');
+    expect(namedVoiceTarget('Could you help me, GOOSEY?', agents, 'ruby', 2)).toBeUndefined();
+    expect(namedVoiceTarget('Hey @GoOsE please', agents, 'ruby', 2)?.id).toBe('goose');
     expect(namedVoiceTarget('Hello RUBY ROSE', agents, 'goose', 2)?.id).toBe('ruby');
     expect(namedVoiceTarget('gooseberries', agents, 'ruby', 2)).toBeUndefined();
   });

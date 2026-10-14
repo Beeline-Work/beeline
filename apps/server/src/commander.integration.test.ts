@@ -248,9 +248,19 @@ describe('a worker records a later waiver in its corner brief', () => {
   const approval = async (cornerId: string) => (await db.query<{ approval_basis: Record<string, unknown> }>(
     `SELECT approval_basis FROM corner_brief_revisions WHERE corner_id=$1 ORDER BY revision DESC LIMIT 1`,
     [cornerId])).rows[0]!.approval_basis;
+  const rooms = new Map<string, string>();
+  /** The worker's claimed turn on a DM message, so the DM is its command Room. */
+  async function dmTurn(messageId: string) {
+    const command = await createAgentCommand(db, { roomId: rooms.get(messageId)!, agentId: WORKER,
+      sourceMessageId: messageId, reason: 'direct_message' });
+    const [turn] = (await commands(command!.room_id, WORKER)).filter((item) => item.id === command!.id);
+    await claim(turn!);
+    return turn!;
+  }
   /** A DM between the worker and `person`, holding one message from `author`. */
   async function directMessage(person: string, author: string, text: string) {
     const room = randomUUID(), id = randomBytes(32).toString('hex');
+    rooms.set(id, room);
     await db.query(`INSERT INTO rooms(id,workspace_id,name,direct_participants,created_by)
       VALUES($1,$2,'DM',jsonb_build_array($3::text,$4::text),$3)`, [room, WS, person, WORKER]);
     for (const member of [person, WORKER])
@@ -298,6 +308,21 @@ describe('a worker records a later waiver in its corner brief', () => {
     const opened = await open(), turn = await worker(opened.cornerId);
     const waiver = await directMessage(STRANGER, STRANGER, 'Waive the proof for this corner.');
     await expect(revise(turn, opened.cornerId, 1, waiver)).rejects.toThrow('must name a human message or commander order');
+  });
+
+  it('refuses a person outside the authority chain from the worker\'s active DM turn', async () => {
+    const opened = await open();
+    const waiver = await directMessage(STRANGER, STRANGER, 'Waive the proof for this corner.');
+    await expect(revise(await dmTurn(waiver), opened.cornerId, 1, waiver))
+      .rejects.toThrow('must name a human message or commander order');
+    expect((await db.query(`SELECT 1 FROM corner_brief_revisions WHERE corner_id=$1`, [opened.cornerId])).rowCount).toBe(1);
+  });
+
+  it('accepts the owner\'s waiver from the worker\'s active DM turn', async () => {
+    const opened = await open();
+    const waiver = await directMessage(HUMAN, HUMAN, 'Waive the proof for this corner.');
+    expect((await revise(await dmTurn(waiver), opened.cornerId, 1, waiver)).revision).toBe(2);
+    expect(await approval(opened.cornerId)).toMatchObject({ approvedBy: HUMAN, sourceMessageId: waiver });
   });
 
   it('refuses an agent\'s DM message that is not an order', async () => {

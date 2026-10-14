@@ -204,6 +204,22 @@ type StoredCornerBriefApproval = {
 type ApprovingMessage = { text: string; author_id: string; kind: string; room_id: string };
 
 /**
+ * The corner's authority chain: its commander (who opened it) and its owner
+ * (the person who asked for it, or the person who owns the commander agent).
+ */
+async function cornerAuthority(db: SqlDatabase, cornerId: string): Promise<string[]> {
+  return (
+    await db.query<{ ids: string[] }>(
+      `SELECT ARRAY_REMOVE(ARRAY[room.created_by,fact.commissioned_by,commander.owner_id],NULL) ids
+       FROM rooms room JOIN corner_facts fact ON fact.corner_id=room.id
+       LEFT JOIN agents commander ON commander.agent_id=room.created_by
+       WHERE room.id=$1`,
+      [cornerId],
+    )
+  ).rows[0]?.ids ?? [];
+}
+
+/**
  * A later approval for an existing corner's revision: the approval stored on
  * the current revision, a human message from the corner's commander or owner
  * in a DM they share with the reviser, or a private order from the commander
@@ -231,17 +247,7 @@ async function laterCornerApproval(
     typeof stored.snapshot === 'string' && typeof stored.approvedBy === 'string'
   )
     return { stored: stored as StoredCornerBriefApproval, sourceRoomId: current!.source_room_id };
-  // The commander opened the corner; its owner is the person who asked for
-  // it, or the person who owns the commander agent.
-  const authority = (
-    await db.query<{ ids: string[] }>(
-      `SELECT ARRAY_REMOVE(ARRAY[room.created_by,fact.commissioned_by,commander.owner_id],NULL) ids
-       FROM rooms room JOIN corner_facts fact ON fact.corner_id=room.id
-       LEFT JOIN agents commander ON commander.agent_id=room.created_by
-       WHERE room.id=$1`,
-      [revision.cornerId],
-    )
-  ).rows[0]?.ids ?? [];
+  const authority = await cornerAuthority(db, revision.cornerId);
   if (!authority.length) return undefined;
   const direct = (
     await db.query<ApprovingMessage>(
@@ -316,6 +322,11 @@ export async function resolveCornerBriefApproval(
       )).rows[0];
     }
   }
+  // A revision may run from the reviser's DM; a person's message there counts
+  // only from the corner's authority chain.
+  if (revision && message?.kind === 'human' && !(await cornerAuthority(db, revision.cornerId)).includes(message.author_id) &&
+      (await db.query(`SELECT 1 FROM rooms WHERE id=$1 AND direct_participants IS NOT NULL`, [message.room_id])).rowCount)
+    message = undefined;
   if (revision && (!message || message.kind !== 'human' && !commanderOrder)) {
     const later = await laterCornerApproval(db, revision, draft.approval.sourceMessageId);
     if (later && 'stored' in later) {

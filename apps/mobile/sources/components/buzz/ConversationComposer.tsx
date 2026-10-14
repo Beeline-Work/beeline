@@ -18,7 +18,7 @@ import {
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { groknight } from '@/buzz/groknight';
 import { HullDialog } from './HullDialog';
-import { MicGlyph } from './MicGlyph';
+import { MicGlyph, WaveformGlyph } from './MicGlyph';
 import { VoiceBar } from './VoiceBar';
 import { RuntimeErrorBoundary } from './RuntimeErrorBoundary';
 import type { VoiceCallState } from '@/buzz/use-voice-call';
@@ -345,8 +345,10 @@ function ConversationComposerContent({
   const listeningWillSend = Boolean(tagSplit.rest.trim() || speech.partialText.trim());
   const sendDisabled = disabled || !hasSomethingToSend || isCapturingSpeech;
   const keyboardUp = useKeyboardUp(focused);
-  // The trailing control is mic XOR send, in one slot: while dictation is live
-  // the control stays the listening/stop control. Otherwise the keyboard picks:
+  // With Conversation available, the mic stays beside the waveform/Send slot.
+  // Other composer surfaces keep their existing mic XOR send control:
+  // while dictation is live the control stays the listening/stop control.
+  // Otherwise the keyboard picks:
   // lowered, it is the mic, and a take adds to any typed text; raised, it is
   // send once there is typed text. Tags and staged files alone keep the mic:
   // they go out with the next take or typed text. Without speech the send
@@ -354,8 +356,16 @@ function ConversationComposerContent({
   // never empty — including while an agent is working, when a tap queues the
   // next instruction.
   const showMic =
-    speechAvailable && (dictationBusy || (!viewerPill && !keyboardUp) || !tagSplit.rest.trim());
-  const showSend = !showMic;
+    speechAvailable && (Boolean(voice) || dictationBusy || (!viewerPill && !keyboardUp) || !tagSplit.rest.trim());
+  const showSend = voice
+    ? (Boolean(tagSplit.rest.trim()) || (!speechAvailable && hasSomethingToSend)) && !dictationBusy
+    : !showMic;
+  const showConversation = Boolean(voice) && !showSend;
+  React.useEffect(() => {
+    if (Platform.OS !== 'web' || !showConversation) return;
+    containerRef.current?.querySelector(`[data-testid="${testIDPrefix}-conversation"]`)
+      ?.setAttribute('title', 'Conversation mode');
+  }, [showConversation, testIDPrefix]);
 
   // Dictation shows a waveform, never live words. Only a failure that needs
   // the person to act has a line under the composer.
@@ -776,6 +786,23 @@ function ConversationComposerContent({
             )}
           </TouchableOpacity>
         ) : null}
+        {showConversation ? (
+          <View style={styles.sendButton}>
+            <Button
+              label=""
+              variant="quiet"
+              accessibilityLabel="Conversation mode"
+              disabled={disabled || dictationBusy}
+              onPress={() => {
+                Keyboard.dismiss();
+                void voice?.join();
+              }}
+              icon={<WaveformGlyph color={theme.buzz.accent} />}
+              style={styles.conversationButton}
+              testID={`${testIDPrefix}-conversation`}
+            />
+          </View>
+        ) : null}
         {showSend ? (
           <Pressable
             accessibilityLabel="Send message"
@@ -843,6 +870,16 @@ const INLINE_TAG_GAP = 4;
 const TAG_TAP_MS = 500;
 
 const styles = StyleSheet.create((theme) => ({
+  // Keep the 44pt target centered in the existing 26pt Send slot.
+  conversationButton: {
+    position: 'absolute',
+    top: '50%',
+    left: '50%',
+    width: 44,
+    height: 44,
+    paddingHorizontal: 0,
+    transform: [{ translateX: -22 }, { translateY: -22 }],
+  },
   // Speech recognition styles
   micButton: {
     width: MIC_SIZE,

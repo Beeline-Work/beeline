@@ -119,6 +119,8 @@
         "scripts/composer-dictation-proof.tsx",
         "scripts/composer-web-dictation-proof.tsx",
         "scripts/composer-desktop-voice-entry-proof.tsx",
+        "scripts/composer-waveform-native-proof.tsx",
+        "scripts/composer-waveform-web-proof.tsx",
         "scripts/composer-conversation-proof.tsx",
         "scripts/voice-call-proof.tsx",
         "scripts/composer-tags-proof.tsx",

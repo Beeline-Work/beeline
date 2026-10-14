@@ -328,6 +328,9 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # Unfiltered required gate: even a PR outside server paths runs the freeze.
+      - name: Freeze System message producers and templates
+        run: npm test -w @beeline/server -- --run src/system-messages-lock.test.ts --maxWorkers=1 --minWorkers=1
       - name: Enforce the shared UI component registry
         env:
           UI_POLICY_BASE: ${{ github.event.pull_request.base.sha || github.sha }}

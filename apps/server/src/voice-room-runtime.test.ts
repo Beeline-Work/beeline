@@ -1381,3 +1381,48 @@ it('times one finished turn through streamed brain text, TTS bytes and accepted 
     console.log('LATENCY-AUDIT-1: one finished turn -> stage timings, one brain call, one source and one reply; no provider run.');
   } finally { await runtime.close(); logs.mockRestore(); }
 });
+
+
+it('Reproduction PARK-LEASE-1: a nonowner resume after 25 seconds keeps the parked RTC owner', async () => {
+  const db = new PgliteDatabase(), live = new LiveHub();
+  const human = 'a'.repeat(64), agent = 'b'.repeat(64);
+  const workspace = '11111111-1111-4111-8111-111111111111', room = '22222222-2222-4222-8222-222222222222';
+  const fixture = conversationService(1);
+  const config = { ...fixture.service.config, speech: fixture.speech };
+  const owner = new RealVoiceService(db, live, config), other = new RealVoiceService(db, live, config);
+  const connect = vi.spyOn(VoiceRoomRuntime, 'connect');
+  try {
+    await migrate(db);
+    await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Human','human'),($2,'agent','Ruby','ruby')`, [human, agent]);
+    await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [agent, human]);
+    await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Park lease proof')`, [workspace]);
+    await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [room, workspace]);
+    await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+      ($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,$4,$2,'owner'),($1,$4,$3,'member')`, [workspace, human, agent, room]);
+    const joined = await owner.join(room, human);
+    const call = (await db.query<any>(`SELECT * FROM voice_calls WHERE id=$1`, [joined.call.id])).rows[0];
+    const runtime = (await owner.ensureRuntime(call))!;
+    state.room.remoteParticipants.clear();
+    state.room.remoteParticipants.set(human, { identity: human, trackPublications: new Map() });
+    const retainedRoom = state.room;
+    const resumed = vi.spyOn(runtime, 'resume');
+    const source = await owner.recordHuman(joined.call.id, room, human, (await owner.agents(room, human))[0]!, 'Work until the report is ready');
+    await owner.dispatch(joined.call.id, source, agent);
+    expect(await owner.idle(joined.call.id, human, joined.sessionId)).toEqual({ state: 'parked', agentName: 'Ruby' });
+    // Real PostgreSQL time advances beyond the original runtime lease, with no audio or reads.
+    await new Promise(resolve => setTimeout(resolve, 25_000));
+    await other.resume(joined.call.id, human, joined.sessionId);
+    expect((await db.query(`SELECT runtime_owner FROM voice_calls WHERE id=$1`, [joined.call.id])).rows[0]?.runtime_owner).toBe(call.runtime_owner);
+    expect(connect).toHaveBeenCalledTimes(1);
+    expect(runtime.isClosed).toBe(false);
+    retainedRoom.emit('data', new TextEncoder().encode(JSON.stringify({ type: 'resume', sessionId: joined.sessionId })),
+      { identity: human }, undefined, 'beeline.voice.v1');
+    await vi.waitFor(() => expect(resumed).toHaveBeenCalledWith(human));
+    await resumed.mock.results[0]!.value;
+    expect(state.room).toBe(retainedRoom);
+    await owner.leave(joined.call.id, human);
+    console.log('PARK-LEASE-1: 25-second park, nonowner HTTP resume, unchanged runtime_owner, one RTC connect; RTC/provider doubles, real Pglite service path.');
+  } finally {
+    connect.mockRestore(); await other.close(); await owner.close(); await db.close();
+  }
+}, 40_000);

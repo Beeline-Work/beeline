@@ -63,6 +63,7 @@ export class VoiceRoomRuntime {
   private speechIdle = Promise.resolve();
   private lastTouch = 0;
   private touching = false;
+  private leaseRenewal?: ReturnType<typeof setInterval>;
   private closed = false;
   private refreshPending = false;
   private reportQueue = Promise.resolve();
@@ -123,6 +124,12 @@ export class VoiceRoomRuntime {
     await this.room.connect(this.service.config.url, await token.toJwt(), { autoSubscribe: true, dynacast: false });
     const options = new TrackPublishOptions(); options.source = TrackSource.SOURCE_MICROPHONE;
     await this.room.localParticipant!.publishTrack(LocalAudioTrack.createAudioTrack('beeline-agent-speech', this.audio), options);
+    // RTC ownership outlives audio activity, including a parked pending order.
+    // Renew only the lease here; committed events still drive report reads.
+    this.leaseRenewal = setInterval(() => {
+      void this.renewLease().catch(() => this.close());
+    }, 5000);
+    this.leaseRenewal.unref();
     this.touch();
     await this.countHumans(undefined, true).catch(() => {});
     await this.refresh();
@@ -234,10 +241,15 @@ export class VoiceRoomRuntime {
     this.lastTouch = performance.now(); this.touching = true;
     void this.heartbeat().catch(() => this.close()).finally(() => { this.touching = false; });
   }
-  private async heartbeat() {
+  private async renewLease() {
+    if (this.closed) return false;
     const kept = await this.service.db.query(`UPDATE voice_calls SET runtime_until=now()+interval '20 seconds'
       WHERE id=$1 AND runtime_owner=$2 AND ended_at IS NULL`, [this.callId, this.leaseOwner]);
-    if (!kept.rowCount) { await this.close(); return; }
+    if (!kept.rowCount) { await this.close(); return false; }
+    return true;
+  }
+  private async heartbeat() {
+    if (!await this.renewLease()) return;
     // Token refresh does not re-grant Beeline membership: remove a retired/removed member.
     for (const participant of this.room.remoteParticipants.values()) {
       this.missingSince.delete(participant.identity);
@@ -560,7 +572,9 @@ export class VoiceRoomRuntime {
 
   async close() {
     if (this.closed) return;
-    this.closed = true; this.speaking?.abort(); this.audio.clearQueue();
+    this.closed = true;
+    clearInterval(this.leaseRenewal);
+    this.speaking?.abort(); this.audio.clearQueue();
     this.missingSince.clear();
     this.shutdown.abort();
     for (const turn of this.pendingTurns.values()) turn.controller.abort();

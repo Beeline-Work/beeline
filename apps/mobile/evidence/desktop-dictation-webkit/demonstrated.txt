@@ -1,0 +1,74 @@
+Reproduction desktop-dictation-webkit — replay after #2450 merge
+Product source: a36a02385fd04604acf39f2ca725b5b55c0ed2fe (unchanged by this PR)
+Original #2452 head preserved: 8281ccb82585a9721b50b73a53678f9d023291e3
+Date: 2026-10-14
+Validation: workspace build, 75 focused tests, root typecheck, dead-code baseline (91 existing, 0 introduced) passed.
+Fixture boundaries: generated audio replaces physical microphone; identity/session transport and Groq response are fixtures. Real WebKit, composer, capture graph, encoder, uploader, local authenticated server route and provider request construction.
+
+{
+  "engine": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Safari/605.1.15",
+  "speech": "undefined",
+  "prefixedSpeech": "undefined",
+  "recorder": "undefined",
+  "audioContext": "function",
+  "openingCaptures": 0,
+  "micVisible": true
+}
+[req] POST /v1/phone/transcriptions
+[req] POST /v1/phone/transcriptions
+{
+  "uploads": [
+    {
+      "bytes": 46140,
+      "signature": "RIFF",
+      "prompt": "Beeline, Jellybean",
+      "language": "en"
+    },
+    {
+      "bytes": 5436,
+      "signature": "RIFF",
+      "prompt": "Beeline, Jellybean",
+      "language": "en"
+    }
+  ],
+  "providerUploads": [
+    {
+      "bytes": 46140,
+      "mime": "audio/wav",
+      "model": "whisper-large-v3-turbo",
+      "prompt": "Beeline, Jellybean",
+      "nonzeroAudio": true
+    },
+    {
+      "bytes": 5436,
+      "mime": "audio/wav",
+      "model": "whisper-large-v3-turbo",
+      "prompt": "Beeline, Jellybean",
+      "nonzeroAudio": true
+    }
+  ],
+  "requests": [
+    {
+      "audio": {
+        "channelCount": 1,
+        "echoCancellation": true,
+        "noiseSuppression": true,
+        "autoGainControl": true
+      }
+    },
+    {
+      "audio": {
+        "channelCount": 1,
+        "echoCancellation": true,
+        "noiseSuppression": true,
+        "autoGainControl": true
+      }
+    }
+  ],
+  "tracks": [
+    "ended",
+    "ended"
+  ],
+  "remainingRecordingURLs": 0
+}
+RESULT PASS: WebKit captured generated audio, uploaded WAV through the real server, inserted text, edited and sent; explicit stop sent the second take; provider and physical mic mocked

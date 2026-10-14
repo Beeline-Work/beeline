@@ -1,15 +1,6 @@
 import type { RoomViewIdentity } from './phone-types.js';
 
-// Retain legacy wire types for stored settings; only Aura 2 is selectable.
-export type VoiceProvider = 'aura-2' | 'kokoro-deepinfra' | 'fish-s2.1-pro';
-export const VOICE_PROVIDERS: readonly VoiceProvider[] = ['aura-2'];
-export const DEFAULT_VOICE_PROVIDER: VoiceProvider = 'aura-2';
 export const VOICE_QUOTA_MESSAGE = 'Daily voice limit reached. Try again tomorrow.';
-export const VOICE_PROVIDER_LABELS: Record<VoiceProvider, string> = {
-  'aura-2': 'Aura 2',
-  'kokoro-deepinfra': 'Kokoro',
-  'fish-s2.1-pro': 'Fish S2.1 Pro',
-};
 
 /** Voice is a Room session; its speakers are existing member identities. */
 export type VoiceCall = {
@@ -38,7 +29,11 @@ export type VoiceSignal =
   | { type: 'stop' }
   | { type: 'resume' | 'park'; sessionId: string }
   | { type: 'speech' }
-  | { type: 'target'; agentId: string }
+  /** A tap also sends the next turn to this agent when several humans are in the call. */
+  | { type: 'target'; agentId: string; tap?: boolean }
+  | { type: 'humans'; count: number }
+  /** Several humans are in the call and this turn named no agent, so nobody answers. */
+  | { type: 'unaddressed' }
   | { type: 'speaker'; agentId: string | null }
   | { type: 'error'; message: string; code?: 'speech-quota-exhausted' }
   | { type: 'latency'; firstAudioMs: number };
@@ -80,19 +75,17 @@ export function readVoiceCall(value: unknown): VoiceCall | undefined {
   return call;
 }
 
-/** A Workspace provider's validated library, with the agent's effective current voice. */
+/** The validated Aura library, with the agent's effective current voice. */
 export type AgentVoiceCatalog = {
-  provider: VoiceProvider;
   currentVoiceId: string;
   canChange: boolean;
-  choices: readonly { id: string; name: string; sampleUrl?: string }[];
+  choices: readonly { id: string; name: string }[];
 };
-export type AgentVoicePreview = { url: string } | { wavBase64: string };
+export type AgentVoicePreview = { wavBase64: string };
 export function readAgentVoiceCatalog(value: unknown): AgentVoiceCatalog | null {
   if (!value || typeof value !== 'object') return null;
   const v = value as AgentVoiceCatalog;
   if (
-    !VOICE_PROVIDERS.includes(v.provider) ||
     typeof v.currentVoiceId !== 'string' ||
     typeof v.canChange !== 'boolean' ||
     !Array.isArray(v.choices) ||
@@ -105,29 +98,24 @@ export function readAgentVoiceCatalog(value: unknown): AgentVoiceCatalog | null 
         /^[a-z0-9][\w.-]{0,127}$/i.test(c.id) &&
         typeof c.name === 'string' &&
         c.name.length > 0 &&
-        c.name.length <= 200 &&
-        (c.sampleUrl === undefined || /^https:\/\/platform\.r2\.fish\.audio\//.test(c.sampleUrl)),
+        c.name.length <= 200,
     ) ||
     !v.choices.some((c) => c.id === v.currentVoiceId) ||
     new Set(v.choices.map((c) => c.id)).size !== v.choices.length
   )
     return null;
   return {
-    provider: v.provider,
     currentVoiceId: v.currentVoiceId,
     canChange: v.canChange,
     choices: v.choices.map((c) => ({
       id: c.id,
       name: c.name,
-      ...(c.sampleUrl ? { sampleUrl: c.sampleUrl } : {}),
     })),
   };
 }
 export function readAgentVoicePreview(value: unknown): AgentVoicePreview | null {
   if (!value || typeof value !== 'object') return null;
-  const v = value as { url?: unknown; wavBase64?: unknown };
-  if (typeof v.url === 'string' && /^https:\/\/platform\.r2\.fish\.audio\//.test(v.url))
-    return { url: v.url };
+  const v = value as { wavBase64?: unknown };
   if (
     typeof v.wavBase64 === 'string' &&
     v.wavBase64.length <= 600000 &&

@@ -1,6 +1,6 @@
 import { COMMANDER_WAKE_WINDOW_SECONDS, flushCommanderWakes, lockCommanderWakes } from './commander-wakes.js';
 import { agentMachineOfflineSql } from './machine-offline.js';
-import { reportToCommander } from './commander.js';
+import { commandOrder, reportToCommander } from './commander.js';
 import { subscriptionPromptBody } from './agent-subscriptions.js';
 import {
   AGENT_SIGN_IN_SERVICE_LABELS,
@@ -117,6 +117,7 @@ ALTER TABLE agent_pending_attachments ADD COLUMN IF NOT EXISTS generation_id tex
 `;
 /** Transport data only: orders and reports never become transcript messages. */
 export type PrivateCommandPayload = {
+  ask?: string;
   text: string;
   authorId: string;
   fromRoomId: string;
@@ -158,15 +159,16 @@ export type CommandRow = {
  * Ninety seconds is the normal command lease/claim window; a live turn keeps
  * its ordinary queue even when the person sends several follow-ups.
  */
-function commandRecoveryCtes(roomSql: string, agentSql: string, claimSql = 'NULL::text'): string {
+function commandRecoveryCtes(roomSql: string, agentSql: string, claimSql = 'NULL::text', claimFence = false): string {
   return `recovery_scope AS MATERIALIZED (
     SELECT command.* FROM agent_commands command
+    ${claimFence ? 'CROSS JOIN claim_fence' : ''}
     WHERE command.room_id=${roomSql} AND command.agent_id=${agentSql}
       AND command.wake_after IS NULL
       AND command.action IN ('input','resume') AND NOT command.avatar_job
       AND (command.state='pending' OR (command.state='claimed' AND
         (command.lease_expires_at<=now() OR command.id=${claimSql})))
-    ORDER BY command.created_at,command.id FOR UPDATE
+    ORDER BY command.created_at,command.id FOR UPDATE OF command
   ), recovery_workflows AS MATERIALIZED (
     SELECT command.id,COALESCE(source.card->>'runId',choice_source.card->>'runId',parent_source.card->>'runId') run_id,
       COALESCE(source.card->>'seq',parent_source.card->>'seq') attempt,
@@ -334,6 +336,8 @@ export async function createAgentCommand(
     /** Lifecycle transfer/resumption retains the chain; only agent delegation increments. */
     retainDepth?: boolean;
     avatarJob?: boolean;
+    /** A line appended to a lifecycle wake's text, fixed at dispatch. */
+    wakeNote?: string;
   },
 ): Promise<CommandRow | undefined> {
   return db.transaction(async (db) => {
@@ -353,12 +357,16 @@ export async function createAgentCommand(
   const opening = member.rows[0]!.opening;
   const lifecycle = input.reason.startsWith('corner_') || input.reason === 'subscribed_event' && Boolean(opening);
   const parent = input.parent ?? (lifecycle ? opening ?? undefined : undefined);
+  const sourceText = member.rows[0]!.source_text;
+  const note = input.wakeNote ? `\n${input.wakeNote}` : '';
   const privatePayload = input.privatePayload ?? (parent?.private_payload
     ? { ...parent.private_payload, reportedGenerationId: undefined, kind: 'lifecycle' as const,
-        text: input.action === 'resume' && member.rows[0]!.source_text
-          ? `${parent.private_payload.text}\nResume context: ${member.rows[0]!.source_text}`
-          : member.rows[0]!.source_text ?? parent.private_payload.text }
-    : undefined);
+        text: (input.action === 'resume' && sourceText
+          ? `${parent.private_payload.text}\nResume context: ${sourceText}`
+          : sourceText ?? parent.private_payload.text) + note }
+    : input.wakeNote
+      ? { text: `${sourceText ?? ''}${note}`.trim(), authorId: SYSTEM_IDENTITY_ID, fromRoomId: input.roomId, kind: 'lifecycle' as const }
+      : undefined);
   const depth = parent ? input.retainDepth || lifecycle || input.action === 'resume'
     ? parent.agent_depth : nextAgentDepth(parent.agent_depth) : 0;
   if (depth === undefined) return undefined;
@@ -651,6 +659,7 @@ async function routeTaggedLifecycleCommand(
       await deny('only the requester, its owner, or a Room manager may stop that turn');
       return true;
     }
+    await lockAgentCommandQueue(db, source.room_id, target.agent_id);
     const parent = (
       await db.query<CommandRow>(`SELECT * FROM agent_commands WHERE id=$1 FOR UPDATE`, [
         active.command_id,
@@ -666,18 +675,20 @@ async function routeTaggedLifecycleCommand(
       parent,
       retainDepth: true,
     });
-    await db.query(
+    const settled = await db.query(
       `UPDATE agent_turns SET status='cancelled',created_at=now()
        WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND status='working'`,
       [source.room_id, target.agent_id, active.request_id],
     );
+    if (!settled.rowCount) throw new Error('running turn not found');
+    const dropped = await dropQueuedOrdersForStop(db, parent);
     await db.query(
       `UPDATE agent_commands SET state='cancelled',completed_at=now()
        WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3
          AND action IN ('input','resume') AND state IN ('pending','claimed')`,
       [source.room_id, target.agent_id, active.request_id],
     );
-    await line('stopped its running turn');
+    await line('stopped its running turn', dropped ? `${dropped} queued ${dropped === 1 ? 'order' : 'orders'} dropped` : undefined);
     return true;
   }
   if (action === 'retry') {
@@ -1018,6 +1029,33 @@ export async function renudgeStrandedPendingCommands(db: SqlDatabase): Promise<n
   return Number(result.rows[0]?.count ?? 0);
 }
 
+/** Claims and human Stops serialize before taking command or turn row locks. */
+export async function lockAgentCommandQueue(db: SqlDatabase, roomId: string, agentId: string): Promise<void> {
+  await db.query("SELECT pg_advisory_xact_lock(hashtext('agent-command-queue:' || ($1::uuid)::text || ':' || $2::text))", [roomId, agentId]);
+}
+
+/** The Stop transaction's timestamp fences orders accepted after the Stop. */
+export async function dropQueuedOrdersForStop(db: SqlDatabase, stopped: CommandRow): Promise<number> {
+  const order = await commandOrder(db, stopped);
+  if (order.private_payload?.kind !== 'order' || order.agent_id !== stopped.agent_id) return 0;
+  const dropped = await db.query<CommandRow>(
+    `UPDATE agent_commands SET state='cancelled',completed_at=now(),cancellation_reason='stop'
+     WHERE room_id=$1 AND agent_id=$2 AND state='pending' AND action='input'
+       AND private_payload->>'kind'='order'
+       AND private_payload->>'authorId'=$3 AND private_payload->>'fromRoomId'=$4
+       AND created_at<=now() AND turn_request_id<>$5
+     RETURNING *`,
+    [stopped.room_id, stopped.agent_id, order.private_payload.authorId,
+      order.private_payload.fromRoomId, stopped.turn_request_id],
+  );
+  if (dropped.rowCount) {
+    await reportToCommander(db, stopped.room_id, stopped.agent_id,
+      `failed: ${dropped.rowCount} queued ${dropped.rowCount === 1 ? 'order was' : 'orders were'} dropped by a Stop; the running turn was cancelled`,
+      dropped.rows[0], createHash('sha256').update(`stop-orders:${stopped.id}`).digest('hex'), { automatic: true });
+  }
+  return dropped.rowCount;
+}
+
 export async function claimAgentCommand(
   db: SqlDatabase,
   roomId: string,
@@ -1028,8 +1066,10 @@ export async function claimAgentCommand(
   if (!generation || generation.length > 200) throw new Error('command generation is required');
   const row = (
     await db.query<CommandRow & { turn_claimed: boolean }>(
-      `WITH ${commandRecoveryCtes('$2', '$3', '$1')}, eligible AS MATERIALIZED (
-           SELECT * FROM agent_commands
+      `WITH claim_fence AS MATERIALIZED (
+           SELECT pg_advisory_xact_lock(hashtext('agent-command-queue:' || ($2::uuid)::text || ':' || $3::text))
+         ), ${commandRecoveryCtes('$2', '$3', '$1', true)}, eligible AS MATERIALIZED (
+           SELECT agent_commands.* FROM agent_commands CROSS JOIN claim_fence
            WHERE id=$1 AND room_id=$2 AND agent_id=$3 AND wake_after IS NULL AND
              (state='pending' OR (state='claimed' AND lease_expires_at<=now()) OR (state='claimed' AND generation_id=$4))
              AND NOT EXISTS(SELECT 1 FROM cancelled_wakes cancelled WHERE cancelled.id=agent_commands.id)
@@ -1038,7 +1078,7 @@ export async function claimAgentCommand(
                  AND human.reason<>'computer_activity' AND human.action IN ('input','resume')
                  AND (human.state='pending' OR (human.state='claimed' AND human.lease_expires_at>now()))
              ))
-           FOR UPDATE
+           FOR UPDATE OF agent_commands
          ), working AS (
            INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id)
            SELECT room_id,turn_request_id,agent_id,'working',$4 FROM eligible

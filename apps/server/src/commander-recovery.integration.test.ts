@@ -349,6 +349,7 @@ it('routes zero-check completion through a durable lifecycle fact', async () => 
       ({
         checks: 'pending',
         checkCount: 0,
+        zeroChecksConfirmed: true,
         headSha: head,
         approved: false,
         held: false,
@@ -682,7 +683,7 @@ it('human Room reports with an agent-written mention enter the needs-you tray an
   await claim(incoming);
   const delivered = await daemon.execute(
     'report',
-    { status: 'needs_decision', ...authority(incoming), text: 'needs-decision: choose an endpoint @captain' },
+    { status: 'needs_decision', ...authority(incoming), ask: 'Which endpoint should we use?', text: 'needs-decision: choose an endpoint @captain' },
     RUBY,
   );
   expect((await phone.execute('readNeedsYou', { workspaceId: WS }, HUMAN)).items).toEqual(
@@ -744,7 +745,7 @@ it('keeps files queued after an explicit report on the corner final reply', asyn
 it('keeps unrelated Room subscriptions independent of completed orders', async () => {
   await daemon.execute(
     'order',
-    { ...authority(order), address: ROOM, text: 'One-off Room instruction' },
+    { ...authority(order), address: ROOM, agent: WORKER, text: 'One-off Room instruction' },
     RUBY,
   );
   const prior = (await commands(ROOM, WORKER)).find((c) => c.reason === 'order')!;
@@ -838,14 +839,14 @@ it('keeps the originating corner waiting for a decision returned to its parent R
   const turn = await worker(opened.cornerId);
   await daemon.execute(
     'report',
-    { status: 'needs_decision', ...authority(turn), text: 'needs-decision: choose endpoint' },
+    { status: 'needs_decision', ...authority(turn), ask: 'Which endpoint should we use?', text: 'needs-decision: choose endpoint' },
     WORKER,
   );
   const returned = (await commands(ROOM, RUBY)).find((c) => c.reason === 'report')!;
   await claim(returned);
   await daemon.execute(
     'report',
-    { status: 'needs_decision', ...authority(returned), text: 'needs-decision: choose endpoint @captain' },
+    { status: 'needs_decision', ...authority(returned), ask: 'Which endpoint should we use?', text: 'needs-decision: choose endpoint @captain' },
     RUBY,
   );
   expect(
@@ -886,7 +887,7 @@ it('keeps DM-returned decisions indexed until answered or source membership ends
     turn = await worker(opened.cornerId);
   await daemon.execute(
     'report',
-    { status: 'needs_decision', ...authority(turn), text: 'needs-decision: choose endpoint' },
+    { status: 'needs_decision', ...authority(turn), ask: 'Which endpoint should we use?', text: 'needs-decision: choose endpoint' },
     WORKER,
   );
   await daemon.execute(
@@ -898,7 +899,7 @@ it('keeps DM-returned decisions indexed until answered or source membership ends
   await claim(returned);
   await daemon.execute(
     'report',
-    { status: 'needs_decision', ...authority(returned), text: 'needs-decision: choose endpoint @captain' },
+    { status: 'needs_decision', ...authority(returned), ask: 'Which endpoint should we use?', text: 'needs-decision: choose endpoint @captain' },
     RUBY,
   );
   expect((await phone.readRoom(opened.cornerId, HUMAN))?.cornerOwed).toBe(true);

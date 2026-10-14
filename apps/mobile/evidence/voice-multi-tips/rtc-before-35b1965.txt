@@ -1,0 +1,16 @@
+Two humans joined one call through the join endpoint, over LiveKit RTC.
+PASS every panel learns that 2 humans are in the call ({"Alex":[{"type":"humans","count":1},{"type":"humans","count":2}],"Sam":[{"type":"humans","count":2}]})
+PASS Alex's unnamed speech gets no reply (answers: none)
+PASS only Alex's panel gets the tip highlight signal (Alex 1, Sam 0)
+PASS Sam's "Gussie" reaches Goosy (answered by Goosy)
+PASS Alex's "hey Goosey" reaches Goosy (answered by Goosy)
+PASS Alex's tap does not route Sam's unnamed speech
+PASS Alex's tap sends Alex's next unnamed turn to Ruby (answered by Ruby)
+PASS the tap covers one turn only, then clears
+PASS Sam's noise and backchannel words do not interrupt Ruby (aborted=false playing=1)
+FAIL after Sam taps Ruby, Sam's completed "uh" turn does not interrupt or get a reply (aborted=true new answers=1)
+PASS Sam, who did not ask, interrupts Ruby with two real words
+PASS Alex's panel learns Alex is the only human left
+PASS with one human, the locked agent answers every unnamed turn (answered by Ruby,Ruby)
+end of speech to first reply audio, Alex's answered turns (ms): 136, 130, 113, 124, 117, 112
+1 check(s) failed

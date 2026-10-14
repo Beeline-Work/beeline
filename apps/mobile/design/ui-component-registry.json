@@ -196,7 +196,7 @@
       "MessageSearchRow",
       "Retry"
     ],
-    "components/buzz/MicGlyph.tsx": ["MicGlyph"],
+    "components/buzz/MicGlyph.tsx": ["ArrowUpGlyph", "MicGlyph", "PlusGlyph", "StopGlyph", "StrokeGlyph", "WaveformGlyph"],
     "components/buzz/MonoHull.tsx": [
       "HullActivityTip",
       "HullLivePulse",

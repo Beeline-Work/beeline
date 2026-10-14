@@ -3,7 +3,6 @@ import { SQUIRE_MCP_TARGET } from '@beeline/api-contract/phone';
 import { FIRST_PARTY_INTEGRATIONS } from './first-party-integrations.js';
 import { machineSquireReport, queueSquireWork, queueOwnerSquireWork, squireMachineAddress, squireMachineId, squireWorkStatus } from './squire-machine.js';
 import { listRoomSubscriptions, deleteRoomSubscription } from './agent-subscriptions.js';
-import { VOICE_PROVIDERS, DEFAULT_VOICE_PROVIDER, type VoiceProvider } from '@beeline/api-contract/phone';
 import {
   beginAgentSignInCards,
   AGENT_SIGN_IN_NO_ANSWER_MESSAGE,
@@ -14,6 +13,8 @@ import { humanRoomAdmin } from './workflow-admin.js';
 import { setCornerHold } from './corner-holds.js';
 import {
   createAgentCommand,
+  dropQueuedOrdersForStop,
+  lockAgentCommandQueue,
   isTaggedLoginText,
   reconcileConfiguredCornerReviewers,
   routeHumanMessage,
@@ -1571,7 +1572,6 @@ export class PhoneService {
         ...(row.avatar ? { avatar: assetUrl(row.avatar, this.publicOrigin) } : {}),
         visibility: row.visibility,role: row.role,updatedAt: unix(row.updated_at),
         ...(row.about ? { about: row.about } : {}),createdAt: unix(row.created_at),
-        voiceProvider: DEFAULT_VOICE_PROVIDER,
       },
       ...(managedRooms ? { managerSettings: {
         visibility: row.visibility,rooms: managedRooms,
@@ -5990,8 +5990,10 @@ export class PhoneService {
       if (!member) throw new Error('room access denied');
       if (running.author_id !== viewerId && member.role !== 'owner' && member.role !== 'admin')
         throw new Error(TURN_REQUESTER_AUTHORITY_MESSAGE);
-      await database.query(
-        `SELECT id FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3 FOR UPDATE`,
+      await lockAgentCommandQueue(database, input.roomId, input.agentId);
+      const commands = await database.query<CommandRow>(
+        `SELECT * FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3
+         AND action IN ('input','resume') ORDER BY created_at DESC,id DESC FOR UPDATE`,
         [input.roomId, input.agentId, input.requestId],
       );
       const stopped = await database.query(
@@ -6003,13 +6005,14 @@ export class PhoneService {
       // there is nothing left to stop. Nothing is written, so no line claims a
       // stop that never happened.
       if (!stopped.rowCount) throw new Error('running turn not found');
+      const dropped = commands.rows[0] ? await dropQueuedOrdersForStop(database, commands.rows[0]) : 0;
       await systemLine(database, {
         roomId: input.roomId,
         authorId: viewerId,
         subject: identitySubject({ id: stopper.pubkey, kind: stopper.kind, name: stopper.name }),
         verb: 'stopped',
         object: { text: agent.name, id: agent.pubkey },
-        consequence: 'turn cancelled',
+        consequence: `turn cancelled${dropped ? ` · ${dropped} queued ${dropped === 1 ? 'order' : 'orders'} dropped` : ''}`,
         kind: 'turn-cancelled',
         wakes: [input.agentId],
         requestId: input.requestId,
@@ -6186,8 +6189,6 @@ export class PhoneService {
   private async updateWorkspace(input: Input<'updateWorkspace'>, viewerId: string) {
     await this.database.transaction(async (database) => {
       await this.requireWorkspaceManager(input.workspaceId, viewerId, database);
-      if (input.voiceProvider !== undefined && !VOICE_PROVIDERS.includes(input.voiceProvider))
-        throw new Error('Unknown voice provider');
       const current = (
         await database.query<{ visibility: 'public' | 'invite-only' }>(
           'SELECT visibility FROM workspaces WHERE id=$1 FOR UPDATE',
@@ -6208,8 +6209,8 @@ export class PhoneService {
                 : undefined,
             );
       await database.query(
-        `UPDATE workspaces SET name=COALESCE($2,name),avatar=COALESCE($3,avatar),visibility=COALESCE($4,visibility),voice_provider=COALESCE($5,voice_provider),updated_at=now() WHERE id=$1`,
-        [input.workspaceId, input.name ?? null, avatar, input.visibility ?? null, input.voiceProvider ?? null],
+        `UPDATE workspaces SET name=COALESCE($2,name),avatar=COALESCE($3,avatar),visibility=COALESCE($4,visibility),updated_at=now() WHERE id=$1`,
+        [input.workspaceId, input.name ?? null, avatar, input.visibility ?? null],
       );
     });
   }
@@ -9702,7 +9703,6 @@ export class PhoneService {
   ): Promise<(WorkspaceMemberListView & {
     workspaceRow: {
       id: string; name: string; about: string | null; avatar: string | null;
-      voice_provider: VoiceProvider;
       visibility: 'public' | 'invite-only'; created_at: Date; updated_at: Date;
       role: 'owner' | 'admin' | 'member' | 'spectator';
     };
@@ -9718,7 +9718,6 @@ export class PhoneService {
     const result = await this.database.query<{
       workspace_row: {
         id: string; name: string; about: string | null; avatar: string | null;
-        voice_provider: VoiceProvider;
         visibility: 'public' | 'invite-only'; created_at: Date; updated_at: Date;
         role: 'owner' | 'admin' | 'member' | 'spectator';
       };
@@ -9731,7 +9730,7 @@ export class PhoneService {
       people_total: string;
       agent_total: string;
     }>(`WITH visible_workspace AS (
-        SELECT w.id,w.name,w.about,w.avatar,w.visibility,w.voice_provider,w.created_at,w.updated_at,wm.role
+        SELECT w.id,w.name,w.about,w.avatar,w.visibility,w.created_at,w.updated_at,wm.role
         FROM workspaces w JOIN memberships wm ON wm.workspace_id=w.id AND wm.room_id IS NULL
         WHERE w.id=$1 AND wm.identity_id=$7 AND wm.removed_at IS NULL
       ), viewer_row AS (

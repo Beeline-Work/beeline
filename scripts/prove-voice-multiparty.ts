@@ -52,7 +52,6 @@ async function main() {
   } };
   const service = new VoiceService(db, live, {
     url: process.env.LIVEKIT_URL ?? 'ws://127.0.0.1:17880', apiKey: 'devkey', apiSecret: 'secret', brain, speech,
-    providers: { 'aura-2': speech },
     stt: async (onEvent, onError, hints) => fluxFactory(cf, process.env.CLOUDFLARE_ACCOUNT_ID!)(event => {
       if (event.event === 'EndOfTurn') { finals.push(event.transcript); console.log('Flux final:', event.transcript); }
       onEvent(event);

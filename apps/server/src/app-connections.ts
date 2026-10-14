@@ -421,14 +421,13 @@ async function deriveStatus(database: SqlDatabase, row: AppRow, composio?: Compo
   }
   const connections = await appConnections(database, row.owner_identity_id, row.app_key);
   const active = connections.find((connection) => connection.state === 'active');
+  if (active) return { status: 'connected', connectionReference: active.reference };
   if (!(await squireConnected(database, row.owner_identity_id, row.machine_id)))
     return {
       status: 'error',
       needsSquire: true,
       errorMessage: 'Connect Trusty Squire in Connectors first',
-      ...(active ? { connectionReference: active.reference } : {}),
     };
-  if (active) return { status: 'connected', connectionReference: active.reference };
   if (connections[0])
     return {
       status: 'error',

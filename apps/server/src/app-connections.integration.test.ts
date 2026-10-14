@@ -8,6 +8,7 @@ import { PhoneService } from './phone-service.js';
 import { LiveHub } from './live.js';
 import { McpRegistryClient } from './mcp-registry.js';
 import { applyVaultList } from './workbench.js';
+import { recordSquireSignIn } from './squire-machine.js';
 import { beginComposioAppSignIn, connectApp, readOwnerApps, resolveAppRoute, type AppRouteProbes } from './app-connections.js';
 import { APP_FILE_MAXIMUM_BYTES, ComposioApps } from './composio-apps.js';
 import { ObjectService } from './object-service.js';
@@ -340,34 +341,125 @@ describe('connect_app', () => {
     expect((await database.query(`SELECT id FROM messages WHERE card_type IN ('app-sign-in','connector-offer','agent-grant')`)).rows).toHaveLength(0);
   });
 
-  it.each(['ready', 'approval'] as const)('connect runs an unknown service through Squire to %s after one owner consent', async outcome => {
+  it.each([true, false])('Reproduction squire-connect-1: connect hands Squire setup to the agent (browser=%s)', async noApi => {
     await connectSquire();
     const daemon = daemonWith(fakeRegistry([]).client);
-    const input = { ...turn, service: 'Resend', reason: 'Send email' };
+    const input = { ...turn, service: 'resend.com', reason: 'Send email', noApi, squireAvailable: true };
     const ask = await daemon.execute('connect', input, HELPER);
     expect(ask.status).toBe('needs_approval');
+    expect(ask).not.toHaveProperty('squire');
     expect((await daemon.execute('connect', input, HELPER)).grantId).toBe(ask.grantId);
     expect((await database.query(`SELECT id FROM agent_grants WHERE target='connection-install:resend'`)).rows).toHaveLength(1);
     await database.query(`UPDATE agent_grants SET status='approved',decided_by=$2 WHERE id=$1`, [ask.grantId, OWNER]);
-    const connection = daemon.execute('connect', input, HELPER);
-    let job: import('@beeline/api-contract/daemon').AppConnectionJob | undefined;
-    await vi.waitFor(async () => {
-      const assigned = await daemon.execute('getConnectorAssignments', { agentId: HELPER }, HELPER);
-      const entry = assigned.assignments.find(item => item.kind === 'connect-app');
-      if (entry?.kind === 'connect-app') job = entry.job;
-      expect(job).toBeDefined();
-    });
-    if (outcome === 'ready') await applyVaultList(database,
+    const result = await daemon.execute('connect', input, HELPER);
+    expect(result).toMatchObject({ status: 'needs_squire',
+      transport: noApi ? 'squire-browser' : 'squire-api', squire: { url: 'https://resend.com' } });
+    expect(result.squire?.goal).toContain('vault as service resend');
+    expect(result.next).toContain('same session');
+    expect(result.next).toContain('low_confidence');
+    const assigned = await daemon.execute('getConnectorAssignments', { agentId: HELPER }, HELPER);
+    expect(assigned.assignments).not.toContainEqual(expect.objectContaining({ kind: 'connect-app' }));
+    const work = (await database.query<{ squire_work: Record<string, unknown> }>(
+      'SELECT squire_work FROM agents WHERE agent_id=$1', [HELPER])).rows[0]!.squire_work;
+    expect(work.appConnections).toBeUndefined();
+    await applyVaultList(database,
       { machine_id: 'machine-one', workspace_id: WORKSPACE, owner_identity_id: OWNER }, [{
-        reference: 'vault:resend', service: 'resend', label: 'Resend', fieldNames: ['api_key'],
-        allowedHosts: ['api.resend.com'], createdAt: 1, stale: false, state: 'active' }]);
-    await daemon.execute('completeAppConnectionJob', { agentId: HELPER, appId: job!.appId, jobId: job!.jobId,
-      outcome: outcome === 'ready' ? { status: 'ready' } : { status: 'approval',
-        approvalUrl: 'https://trustysquire.com/approve/fixture', approvalId: 'fixture', sessionId: 'session-fixture' } }, HELPER);
-    const result = await connection;
-    expect(result.status).toBe(outcome === 'ready' ? 'ready' : 'needs_approval');
-    expect(result.next).not.toMatch(/store_credential|operate_|API key/);
-    if (outcome === 'approval') expect(result.approvalUrl).toBe('https://trustysquire.com/approve/fixture');
+        reference: 'vault:resend', service: 'resend', label: 'Resend',
+        fieldNames: noApi ? ['login', 'password'] : ['api_key'],
+        allowedHosts: ['resend.com'], createdAt: 1, stale: false, state: 'active' }]);
+    expect(await daemon.execute('connect', input, HELPER)).toMatchObject({ status: 'ready' });
+    // Readiness is the vault credential, even when no Squire tools are mounted.
+    await database.query(`UPDATE agents SET squire_report=$2::jsonb WHERE agent_id=$1`,
+      [HELPER, JSON.stringify({ status: 'error', reportedAt: Date.now() / 1000 })]);
+    expect(await daemon.execute('connect', { ...input, squireAvailable: false }, HELPER))
+      .toMatchObject({ status: 'ready' });
+    console.info(`Reproduction squire-connect-1: connect -> owner consent -> agent URL/goal (${noApi ? 'browser' : 'API'}) -> no helper job -> vault credential -> ready`);
+  });
+
+  it('connect reports unavailable without mounted Squire tools and queues no hidden job', async () => {
+    await connectSquire();
+    const daemon = daemonWith(fakeRegistry([]).client);
+    for (const squireAvailable of [false, undefined]) {
+      const result = await daemon.execute('connect', { ...turn, service: 'resend.com',
+        reason: 'Send email', noApi: true, squireAvailable }, HELPER);
+      expect(result).toMatchObject({ status: 'unavailable' });
+      expect(result.next).toContain('unavailable in this agent session');
+      expect(result).not.toHaveProperty('squire');
+    }
+    expect((await database.query(`SELECT id FROM agent_grants WHERE target='connection-install:resend'`)).rows).toHaveLength(0);
+  });
+
+  it('connect respects denied consent and consumes one-use consent before agent setup', async () => {
+    await connectSquire();
+    const daemon = daemonWith(fakeRegistry([]).client);
+    const input = { ...turn, service: 'resend.com', reason: 'Send email', noApi: true, squireAvailable: true };
+    const ask = await daemon.execute('connect', input, HELPER);
+    await database.query(`UPDATE agent_grants SET status='denied',decided_by=$2 WHERE id=$1`, [ask.grantId, OWNER]);
+    expect(await daemon.execute('connect', input, HELPER))
+      .toMatchObject({ status: 'unavailable', next: 'The owner declined this connection.' });
+    await database.query(`UPDATE agent_grants SET status='once' WHERE id=$1`, [ask.grantId]);
+    expect(await daemon.execute('connect', input, HELPER)).toMatchObject({ status: 'needs_squire' });
+    const consumed = (await database.query<{ expired: boolean }>(
+      'SELECT expires_at<=now() expired FROM agent_grants WHERE id=$1', [ask.grantId])).rows[0];
+    expect(consumed?.expired).toBe(true);
+    expect(await daemon.execute('connect', input, HELPER)).toMatchObject({ status: 'needs_approval' });
+  });
+
+  it('Reproduction squire-session-1: a signed-in Squire session makes a browser app ready without a vault login', async () => {
+    await connectSquire();
+    const daemon = daemonWith(fakeRegistry([]).client);
+    const input = { ...turn, service: 'resend.com', reason: 'Send email', noApi: true, squireAvailable: true };
+    const ask = await daemon.execute('connect', input, HELPER);
+    await database.query(`UPDATE agent_grants SET status='approved',decided_by=$2 WHERE id=$1`, [ask.grantId, OWNER]);
+    expect(await daemon.execute('connect', input, HELPER)).toMatchObject({ status: 'needs_squire' });
+    // The agent's own Squire session showed the app signed in; no vault login exists.
+    const signedIn = await daemon.execute('connect', { ...input,
+      signedInUrl: 'https://app.resend.com/emails', squireSignedIn: true }, HELPER);
+    expect(signedIn).toMatchObject({ status: 'ready', transport: 'squire-browser' });
+    expect(signedIn).not.toHaveProperty('squire');
+    expect((await database.query(`SELECT 1 FROM workspace_connections`)).rows).toHaveLength(0);
+    // The record is reused, even after the one-use consent is gone.
+    await database.query(`UPDATE agent_grants SET status='revoked' WHERE id=$1`, [ask.grantId]);
+    expect(await daemon.execute('connect', input, HELPER)).toMatchObject({ status: 'ready' });
+    const work = (await database.query<{ squire_work: { signedInApps?: Record<string, unknown> } }>(
+      'SELECT squire_work FROM agents WHERE agent_id=$1', [HELPER])).rows[0]!.squire_work;
+    expect(Object.keys(work.signedInApps ?? {})).toEqual(['resend']);
+    expect(JSON.stringify(work.signedInApps)).not.toMatch(/cookie|token/i);
+    // An OAuth redirect from the app to Google's sign-in page clears the app, not unrelated apps.
+    await recordSquireSignIn(database, HELPER, 'linear', 'linear.app');
+    await daemon.execute('forgetSquireSignIn', { url: 'https://accounts.google.com/signin',
+      siteUrl: 'https://app.resend.com/emails' }, HELPER);
+    expect(await daemon.execute('connect', input, HELPER)).toMatchObject({ status: 'needs_approval' });
+    const after = (await database.query<{ squire_work: { signedInApps?: Record<string, unknown> } }>(
+      'SELECT squire_work FROM agents WHERE agent_id=$1', [HELPER])).rows[0]!.squire_work;
+    expect(Object.keys(after.signedInApps ?? {})).toEqual(['linear']);
+    console.info('Reproduction squire-session-1: signed-in session -> ready; reused; signed-out page -> re-check');
+  });
+
+  it('a signed-in session cannot make an API app ready, another site proves nothing, and reconnect re-checks', async () => {
+    await connectSquire();
+    const daemon = daemonWith(fakeRegistry([]).client);
+    const signed = { signedInUrl: 'https://app.resend.com/emails', squireSignedIn: true };
+    const apiInput = { ...turn, service: 'resend.com', reason: 'Send email', squireAvailable: true };
+    const ask = await daemon.execute('connect', apiInput, HELPER);
+    await database.query(`UPDATE agent_grants SET status='approved',decided_by=$2 WHERE id=$1`, [ask.grantId, OWNER]);
+    expect(await daemon.execute('connect', { ...apiInput, ...signed }, HELPER))
+      .toMatchObject({ status: 'needs_squire', transport: 'squire-api' });
+    const input = { ...apiInput, noApi: true };
+    for (const signedInUrl of ['https://github.com/settings/profile', 'http://app.resend.com/emails', 'not a url'])
+      expect(await daemon.execute('connect', { ...input, signedInUrl, squireSignedIn: true }, HELPER))
+        .toMatchObject({ status: 'needs_squire' });
+    // The agent's own URL is only a claim until the agent MCP checked it.
+    expect(await daemon.execute('connect', { ...input, signedInUrl: signed.signedInUrl }, HELPER))
+      .toMatchObject({ status: 'needs_squire' });
+    const needs = await daemon.execute('connect', input, HELPER);
+    expect(needs.next).toContain('signedInUrl');
+    expect(await daemon.execute('connect', { ...input, ...signed }, HELPER)).toMatchObject({ status: 'ready' });
+    expect(await daemon.execute('connect', { ...input, reconnect: true }, HELPER)).toMatchObject({ status: 'needs_squire' });
+    expect(await daemon.execute('connect', { ...input, ...signed }, HELPER)).toMatchObject({ status: 'ready' });
+    // Without mounted Squire tools the session cannot be used, so it is not ready.
+    expect(await daemon.execute('connect', { ...input, squireAvailable: false }, HELPER))
+      .toMatchObject({ status: 'unavailable' });
   });
 
   it('installs the official Linear Registry MCP for a new agent connection', async () => {

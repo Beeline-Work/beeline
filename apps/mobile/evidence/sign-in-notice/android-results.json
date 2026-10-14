@@ -1,0 +1,10 @@
+[
+  "obsidian: Before: @ruby /login ends on line 3 | After: @ruby login ends on line 2",
+  "PASS obsidian: before hides @ruby /login past the two collapsed lines",
+  "PASS obsidian: after shows @ruby login inside the two collapsed lines",
+  "PASS obsidian: both lines still offer More",
+  "bone: Before: @ruby /login ends on line 3 | After: @ruby login ends on line 2",
+  "PASS bone: before hides @ruby /login past the two collapsed lines",
+  "PASS bone: after shows @ruby login inside the two collapsed lines",
+  "PASS bone: both lines still offer More"
+]

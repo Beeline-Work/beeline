@@ -2209,14 +2209,12 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     else if (method === 'POST') {
       const input = await body(request);
       if (
-        !['aura-2', 'kokoro-deepinfra', 'fish-s2.1-pro'].includes(String(input.provider)) ||
         typeof input.voiceId !== 'string' ||
         input.voiceId.length > 128
       ) {
         json(response, 400, { error: 'Invalid voice selection' });
         return;
       }
-      const provider = input.provider as import('@beeline/api-contract/phone').VoiceProvider;
       if (action === 'voice-preview')
         json(
           response,
@@ -2225,7 +2223,6 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
             workspaceId!,
             agentId!,
             identityId!,
-            provider,
             input.voiceId,
           ),
         );
@@ -2237,7 +2234,6 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
             workspaceId!,
             agentId!,
             identityId!,
-            provider,
             input.voiceId,
           ),
         );

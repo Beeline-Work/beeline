@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { namedVoiceTarget } from './voice-target.js';
+import { nameSound, namedVoiceTarget } from './voice-target.js';
 import type { VoiceAgent } from './voice-providers.js';
 const agents: VoiceAgent[] = [
   { id: 'ruby', name: 'Ruby', handle: 'ruby', soul: '', voice: 'ruby-voice' },
@@ -19,4 +19,20 @@ it('prefers the complete display name and supports handles', () => {
   const roster = [...agents, { ...agents[0]!, id: 'rose', name: 'Ruby Rose', handle: 'rubyrose' }];
   expect(namedVoiceTarget('Hi Ruby Rose help', roster)?.id).toBe('rose');
   expect(namedVoiceTarget('@rubyrose help', roster)?.id).toBe('rose');
+});
+
+it.each(['Gussie, are you there?', 'hey Goosey help', 'Goosy what do you think', 'ok Gussy listen'])('routes the sound of Goosy in %s', text => {
+  const roster = [...agents, { id: 'goosy', name: 'Goosy', handle: 'goosy', soul: '', voice: 'goosy-voice' }];
+  expect(nameSound('Gussie')).toBe(nameSound('Goosy'));
+  expect(nameSound('Goosey')).toBe(nameSound('Goosy'));
+  expect(namedVoiceTarget(text, roster, 'ruby', 2)?.id).toBe('goosy');
+  expect(namedVoiceTarget(text, roster, 'ruby', 1)?.id).toBe('goosy');
+});
+it('resolves an ambiguous sound to no target with several humans and keeps the lock for one human', () => {
+  const roster = [...agents, { id: 'goosy', name: 'Goosy', handle: 'goosy', soul: '', voice: '' },
+    { id: 'gussie', name: 'Gussie', handle: 'gussie', soul: '', voice: '' }];
+  expect(namedVoiceTarget('Goosey help', roster, 'ruby', 2)).toBeUndefined();
+  expect(namedVoiceTarget('Goosey help', roster, 'ruby', 1)?.id).toBe('ruby');
+  expect(namedVoiceTarget('Hoots, hats or hits', [{ id: 'hoots', name: 'Hoots', handle: 'hoots', soul: '', voice: '' }], undefined, 2)?.id).toBe('hoots');
+  expect(namedVoiceTarget('Hats off', [{ id: 'hoots', name: 'Hoots', handle: 'hoots', soul: '', voice: '' }], undefined, 2)).toBeUndefined();
 });

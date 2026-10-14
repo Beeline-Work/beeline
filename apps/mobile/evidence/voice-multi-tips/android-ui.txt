@@ -1,0 +1,14 @@
+# Android 36 (AVD buzzy_api36, google_apis x86_64), 1080x2400 @420dpi, emulator-5558.
+# Release Hermes APK from scripts/voice-multi-tips-native-proof.tsx; bundle built from VoiceBar.tsx with tip maxWidth 220.
+# Hierarchy read via uiautomator2 dump_hierarchy: 'adb shell uiautomator dump' returned 'could not get idle state' (DictationWaveform re-renders every 120 ms).
+# Bounds are pixels; the tip line is 50 px tall (one line) in every state.
+[android-two-humans-tip1] Voice tips proof · humans 2 · unaddressed 0 (dump before and after screencap agree)
+  tip-line text='Start with a name: “Ruby, …”' bounds=[538,1942][1014,1992]
+[android-two-humans-tip2] Voice tips proof · humans 2 · unaddressed 0 (dump before and after screencap agree)
+  tip-line text='Tap an avatar to talk to it once' bounds=[495,1942][1014,1992]
+[android-two-humans-tip3] Voice tips proof · humans 2 · unaddressed 0 (dump before and after screencap agree)
+  tip-line text='Talk over an agent to stop it' bounds=[540,1942][1014,1992]
+[android-dropped-turn-flash] Voice tips proof · humans 2 · unaddressed 1 (screencap within 0.24s of tap; dump taken after; flash colour verified visually only)
+  tip-line text='Start with a name: “Ruby, …”' bounds=[538,1942][1014,1992]
+[android-one-human-label] Voice tips proof · humans 1 · unaddressed 1
+  tip-line text='Conversation mode' bounds=[687,1942][1014,1992]

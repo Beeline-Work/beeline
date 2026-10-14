@@ -6,7 +6,6 @@ import {
 import {
   readAgentVoiceCatalog,
   readAgentVoicePreview,
-  type VoiceProvider,
   readAgentDetailView,
   readAgentPairingClaimView,
   readChatListView,
@@ -129,25 +128,24 @@ class MonolithRoomViewClient {
       readAgentVoiceCatalog,
     );
   }
-  setAgentVoice(workspaceId: string, agentId: string, provider: VoiceProvider, voiceId: string) {
+  setAgentVoice(workspaceId: string, agentId: string, voiceId: string) {
     return this.checked(
       `/v1/phone/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(agentId)}/voices`,
       'POST',
       readAgentVoiceCatalog,
-      { provider, voiceId },
+      { voiceId },
     );
   }
   previewAgentVoice(
     workspaceId: string,
     agentId: string,
-    provider: VoiceProvider,
     voiceId: string,
   ) {
     return this.checked(
       `/v1/phone/workspaces/${encodeURIComponent(workspaceId)}/agents/${encodeURIComponent(agentId)}/voice-preview`,
       'POST',
       readAgentVoicePreview,
-      { provider, voiceId },
+      { voiceId },
     );
   }
   chats(id: string): Promise<ChatListView> {
@@ -419,20 +417,19 @@ export class RoomViewClient {
       return Promise.reject(new Error('Voice selection requires the server'));
     return this.implementation.agentVoices(workspaceId, agentId, roomId);
   }
-  setAgentVoice(workspaceId: string, agentId: string, provider: VoiceProvider, voiceId: string) {
+  setAgentVoice(workspaceId: string, agentId: string, voiceId: string) {
     if (!(this.implementation instanceof MonolithRoomViewClient))
       return Promise.reject(new Error('Voice selection requires the server'));
-    return this.implementation.setAgentVoice(workspaceId, agentId, provider, voiceId);
+    return this.implementation.setAgentVoice(workspaceId, agentId, voiceId);
   }
   previewAgentVoice(
     workspaceId: string,
     agentId: string,
-    provider: VoiceProvider,
     voiceId: string,
   ) {
     if (!(this.implementation instanceof MonolithRoomViewClient))
       return Promise.reject(new Error('Voice selection requires the server'));
-    return this.implementation.previewAgentVoice(workspaceId, agentId, provider, voiceId);
+    return this.implementation.previewAgentVoice(workspaceId, agentId, voiceId);
   }
   chats(id: string) {
     return this.implementation.chats(id);

@@ -1,24 +1,18 @@
 import { EventEmitter } from 'node:events';
 import { describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
-import { assignVoiceAgents, fluxFactory, DeepInfraKokoroSpeech, KokoroSpeech, FishSpeech, AuraSpeech, OpenRouterVoiceBrain, VoiceQuotaError } from './voice-providers.js';
+import { assignVoiceAgents, fluxFactory, AuraSpeech, OpenRouterVoiceBrain, VoiceQuotaError } from './voice-providers.js';
 import { voiceConfigFromEnv } from './voice-service.js';
 import { namedVoiceTarget } from './voice-room-runtime.js';
 
 describe('voice providers', () => {
-  it('keeps Fish and Kokoro dormant even with their credentials configured', () => {
+  it('configures Aura speech', () => {
     const config = voiceConfigFromEnv({ BEELINE_VOICE_OPENROUTER_API_KEY: 'test', LIVEKIT_URL: 'ws://test',
       LIVEKIT_API_KEY: 'test', LIVEKIT_API_SECRET: 'test', CLOUDFLARE_WORKERS_AI_TOKEN: 'test',
-      CLOUDFLARE_ACCOUNT_ID: 'test', FISH_AUDIO_API_KEY: 'test' });
+      CLOUDFLARE_ACCOUNT_ID: 'test' });
     expect(config?.speech).toBeInstanceOf(AuraSpeech);
-    expect(Object.keys(config?.providers ?? {})).toEqual(['aura-2']);
   });
-  it('retains the dormant Kokoro adapter with its pinned provider for future reactivation', async () => {
-    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(new Uint8Array([1, 2])));
-    const iterator = new DeepInfraKokoroSpeech('test', fetcher).synthesize('Hello', 'af_heart', new AbortController().signal);
-    for await (const _bytes of iterator) { /* Mocked adapter only, never a live call. */ }
-    expect(JSON.parse(fetcher.mock.calls[0]![1]!.body as string).provider).toEqual({ order: ['DeepInfra'], allow_fallbacks: false });
-  });
+
   it('classifies the same Workers AI quota response during Aura playback', async () => {
     const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(JSON.stringify({ errors: [{ code: 4006 }] }), { status: 429 }));
     const reader = new AuraSpeech('test', 'account', fetcher).synthesize('Hello', 'luna', new AbortController().signal)[Symbol.asyncIterator]();
@@ -36,28 +30,7 @@ describe('voice providers', () => {
     await failed;
     expect(socket.terminate).toHaveBeenCalledOnce();
   });
-  it('selects licensed library voices and streams Fish PCM before the response ends', async () => {
-    const ids = ['1'.repeat(32), '2'.repeat(32)];
-    let finish!: () => void;
-    const body = new ReadableStream<Uint8Array>({ start(controller) {
-      controller.enqueue(new Uint8Array([7, 8])); finish = () => controller.close();
-    } });
-    const fetcher = vi.fn<typeof fetch>().mockResolvedValueOnce(new Response(JSON.stringify({
-      items: [{ _id: ids[1] }, { _id: ids[0] }, { _id: ids[0] }, { _id: 'invalid' }],
-    }))).mockResolvedValueOnce(new Response(body));
-    const speech = new FishSpeech('test-key', fetcher);
-    await Promise.all([speech.prepare(), speech.prepare()]);
-    expect(fetcher).toHaveBeenCalledTimes(1);
-    expect(String(fetcher.mock.calls[0]![0])).toContain('licensed=true');
-    expect(speech.voices).toEqual(ids);
-    const iterator = speech.synthesize('(excited) Hello', ids[0]!, new AbortController().signal)[Symbol.asyncIterator]();
-    expect((await iterator.next()).value).toEqual(new Uint8Array([7, 8]));
-    const request = fetcher.mock.calls[1]![1]!;
-    expect(request.headers).toMatchObject({ model: 's2.1-pro-free', authorization: 'Bearer test-key' });
-    expect(JSON.parse(request.body as string)).toMatchObject({ format: 'pcm', sample_rate: 24000,
-      reference_id: ids[0], text:'[excited] Hello', latency: 'low' });
-    finish(); expect((await iterator.next()).done).toBe(true);
-  });
+
   it('keeps voices distinct and deterministic, with explicit soul timbre and exact named routing', () => {
     const agents = assignVoiceAgents([
       { id: 'b', name: 'Ruby', handle: 'ruby', soul: 'Voice: luna\nThoughtful and warm.' },
@@ -88,7 +61,7 @@ describe('voice providers', () => {
     const fetcher = vi.fn(async () => new Response(wire));
     const brain = new OpenRouterVoiceBrain('secret', fetcher as typeof fetch);
     const text = vi.fn();
-    const reply = await brain.answer({ id: 'a', name: 'Ruby', handle: 'ruby', soul: 'Warm.', voice: 'af_heart' },
+    const reply = await brain.answer({ id: 'a', name: 'Ruby', handle: 'ruby', soul: 'Warm.', voice: 'luna' },
       [{ role: 'user', content: 'Build it' }], text, new AbortController().signal);
     const body = JSON.parse(fetcher.mock.calls[0]![1]!.body as string);
     expect(body.model).toBe('openai/gpt-6-luna');
@@ -96,76 +69,32 @@ describe('voice providers', () => {
     expect(body.messages[0].content).toContain('You are Ruby');
     expect(body.messages[0].content).toContain('Warm.');
     expect(body.tools.map((tool: { function: { name: string } }) => tool.function.name)).toEqual(['order']);
+    // Lookups the voice layer cannot see go to the real agent with a short spoken line.
+    expect(body.messages[0].content).toContain('read, check or look up anything you cannot see here (other Rooms, corners, reports, memory, keys');
+    expect(body.messages[0].content).toContain('call order at once and say only a short line such as "Checking."');
+    expect(body.tools[0].function.description).toContain('any read or lookup of something outside this conversation');
     expect(reply).toEqual({ text: 'I’ll work on that.', order: true });
     expect(text.mock.calls.flat().join('')).toBe(reply.text);
   });
 
   it('reserves a later saved choice before automatic voices and stale soul overrides', () => {
     const agents = [
-      { id: 'a', name: 'Auto', handle: 'auto', soul: 'Voice: af_heart' },
+      { id: 'a', name: 'Auto', handle: 'auto', soul: 'Voice: luna' },
       {
         id: 'z',
         name: 'Chosen',
         handle: 'chosen',
-        soul: 'Voice: bf_emma',
-        chosenVoice: 'af_heart',
+        soul: 'Voice: apollo',
+        chosenVoice: 'luna',
       },
     ];
-    const assigned = assignVoiceAgents(agents, ['af_heart', 'bf_emma']);
-    expect(assigned.find((a) => a.id === 'z')?.voice).toBe('af_heart');
-    expect(assigned.find((a) => a.id === 'a')?.voice).toBe('bf_emma');
-    expect(assignVoiceAgents([...agents].reverse(), ['af_heart', 'bf_emma'])).toEqual(assigned);
+    const assigned = assignVoiceAgents(agents, ['luna', 'apollo']);
+    expect(assigned.find((a) => a.id === 'z')?.voice).toBe('luna');
+    expect(assigned.find((a) => a.id === 'a')?.voice).toBe('apollo');
+    expect(assignVoiceAgents([...agents].reverse(), ['luna', 'apollo'])).toEqual(assigned);
   });
-  it('streams Fish emotion cues to speech without another generation or waiting for completion', async () => {
-    let finish!: () => void;
-    const body = new ReadableStream<Uint8Array>({
-      start(c) {
-        c.enqueue(
-          new TextEncoder().encode(
-            'data: {"choices":[{"delta":{"content":"[excited] Great news, "}}]}\n\n',
-          ),
-        );
-        finish = () => {
-          c.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
-          c.close();
-        };
-      },
-    });
-    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(body));
-    const brain = new OpenRouterVoiceBrain('key', fetcher);
-    const delta = vi.fn();
-    const reply = brain.answer(
-      {
-        id: 'a',
-        name: 'A',
-        handle: 'a',
-        soul: 'Warm',
-        voice: '1'.repeat(32),
-        voiceProvider: 'fish-s2.1-pro',
-      },
-      [],
-      delta,
-      new AbortController().signal,
-    );
-    await vi.waitFor(() => expect(delta).toHaveBeenCalledWith('[excited] Great news, '));
-    const request = JSON.parse(fetcher.mock.calls[0]![1]!.body as string);
-    expect(request.messages[0].content).toContain('[empathetic]');
-    expect(fetcher).toHaveBeenCalledOnce();
-    finish();
-    expect((await reply).text).toBe('[excited] Great news,');
-  });
-  it('streams Kokoro PCM without waiting for the rest of the body', async () => {
-    let finish!: () => void;
-    const body = new ReadableStream<Uint8Array>({ start(controller) {
-      controller.enqueue(new Uint8Array([1, 2])); finish = () => controller.close();
-    } });
-    const fetcher = vi.fn(async () => new Response(body));
-    const speech = new KokoroSpeech('secret', fetcher as typeof fetch);
-    const reader = speech.synthesize('Hello', 'af_heart', new AbortController().signal)[Symbol.asyncIterator]();
-    expect((await reader.next()).value).toEqual(new Uint8Array([1, 2]));
-    expect(JSON.parse(fetcher.mock.calls[0]![1]!.body as string)).toMatchObject({ model: 'hexgrad/kokoro-82m', voice: 'af_heart', response_format: 'pcm' });
-    finish(); expect((await reader.next()).done).toBe(true);
-  });
+
+
 
   it('uses Flux raw LE PCM and suppresses duplicate/out-of-order events', async () => {
     class Socket extends EventEmitter {

@@ -632,7 +632,13 @@ export class ComposioApps {
     try {
       return conceal(await this.executeStaged(input, hidden));
     } catch (error) {
-      if (error instanceof Error) error.message = conceal(error.message) as string;
+      if (error instanceof Error) {
+        // Provider errors can have read-only messages; their stack and cause may contain secrets.
+        const concealed = new Error(conceal(error.message) as string);
+        const status = (error as Error & { status?: unknown }).status;
+        if (typeof status === 'number') Object.assign(concealed, { status });
+        throw concealed;
+      }
       throw error;
     }
   }

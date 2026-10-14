@@ -45,7 +45,7 @@ Long acceptance: separately measure 10 minutes locked and 60 minutes with period
 
 ## Retained-RTC fix delivery
 
-For the retained-RTC/native-Stop head, use the new APK, not f48c31a0. SHA-256 is `68006e819b8c5121abbdad573d1c1ffcdb4245403a5e2263544d6f85656757fc`. Concatenate the three attached `conversation-native-apk.zip.part1`–`part3` files in numerical order, unzip, and verify `sha256sum app-debug.apk`. The ZIP is split solely to fit the Room's 25 MB artifact limit.
+For the retained-RTC/native-Stop head, use the new APK, not f48c31a0. SHA-256 is `68006e819b8c5121abbdad573d1c1ffcdb4245403a5e2263544d6f85656757fc`. This is the previously verified APK hash, not a claim of reproducible byte identity for a fresh build. Under the owner’s delivery rule, the acceptance corner builds its APK from the pushed head on squire and records that build’s SHA-256. Never attach APKs or other build artifacts to reports to Ruby.
 
 The scratch Gradle build used a writable copy of mobile sources/dependencies and `--no-daemon --max-workers=2 -PreactNativeArchitectures=x86_64 -Dorg.gradle.jvmargs=-Xmx4g`; existing checked-in native caches were read-only. Runtime remains Android37/iOS35, both new relative to main36/34. It is a development client, so restart Metro and the fixture from the new pushed head before acceptance. The SDK/STT setup can be recreated with `python3 -m pip install --target /tmp/voice-proof-python pocketsphinx`.
 

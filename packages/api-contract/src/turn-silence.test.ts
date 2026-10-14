@@ -142,42 +142,43 @@ describe('turn silence phrasing', () => {
     }
   });
 
-  it('tells a Claude agent owner to send @agent login, keeping beeline connect as the fallback', () => {
-    const line = phraseTurnSilence('Candy', { kind: 'not-signed-in' }, {
+  it('leads a Claude sign-in failure with @agent login, keeping beeline connect after it', () => {
+    const line = phraseTurnSilence('@candy', { kind: 'not-signed-in' }, {
       login: { handle: 'candy', harness: 'claude' },
     });
-    expect(`Candy ${line.verb} · ${line.consequence}`).toBe(
-      "Candy could not answer · the helper could not authenticate with Claude. If its login expired, its owner can send `@candy /login` here, or run `beeline connect` on its machine.",
+    const text = `@candy ${line.verb} · ${line.consequence}`;
+    expect(text).toBe(
+      '@candy needs a Claude sign-in · send @candy login here. If that fails, its owner can run `beeline connect` on its machine.',
     );
-    expect(`@candy ${line.verb} · ${line.consequence}`.length).toBeLessThanOrEqual(
-      TURN_SILENCE_LINE_MAX,
-    );
+    expect(text.length).toBeLessThanOrEqual(TURN_SILENCE_LINE_MAX);
+    // A ~390px phone shows two lines (about 80 characters) before More.
+    expect(text.indexOf('@candy login') + '@candy login'.length).toBeLessThanOrEqual(80);
   });
 
   it('names the service, or the key, for every harness that signs in from a Room', () => {
-    const consequence = (harness: 'codex' | 'grok' | 'cursor' | 'pi') =>
-      phraseTurnSilence('Candy', { kind: 'not-signed-in' }, { login: { handle: 'candy', harness } })
-        .consequence;
-    expect(consequence('codex')).toContain('could not authenticate with ChatGPT. If its login expired');
-    expect(consequence('grok')).toContain('could not authenticate with Grok.');
-    expect(consequence('cursor')).toContain('could not authenticate with Cursor.');
-    expect(consequence('pi')).toBe(
-      "the helper could not authenticate with its provider. If its key expired, its owner can send `@candy /login` here, or run `beeline connect` on its machine.",
+    const line = (harness: 'codex' | 'grok' | 'cursor' | 'pi') => {
+      const phrase = phraseTurnSilence('@candy', { kind: 'not-signed-in' }, {
+        login: { handle: 'candy', harness },
+      });
+      return `@candy ${phrase.verb} · ${phrase.consequence}`;
+    };
+    expect(line('codex')).toMatch(/^@candy needs a ChatGPT sign-in · send @candy login here\. /);
+    expect(line('grok')).toMatch(/^@candy needs a Grok sign-in · send @candy login here\. /);
+    expect(line('cursor')).toMatch(/^@candy needs a Cursor sign-in · send @candy login here\. /);
+    expect(line('pi')).toBe(
+      '@candy needs a new provider key · send @candy login here. If that fails, its owner can run `beeline connect` on its machine.',
     );
   });
 
-  it('keeps both sign-in remedies when a long name or handle leaves no room for the explanation', () => {
-    const name = 'MoonScannerAI Research Assistant Prime';
-    const handle = 'moonscannerai-research-assistant';
+  it('keeps the login command when a long name or handle leaves no room for the fallback', () => {
+    const name = 'MoonScannerAI Research Assistant Prime Number Two Of The Fleet';
+    const handle = 'moonscannerai-research-assistant-prime-number-two-fleet';
     const line = phraseTurnSilence(name, { kind: 'not-signed-in' }, {
       login: { handle, harness: 'codex' },
     });
     const text = `${name} ${line.verb} · ${line.consequence}`;
     expect(text.length).toBeLessThanOrEqual(TURN_SILENCE_LINE_MAX);
-    expect(line.consequence).toBe(
-      `Its owner can send \`@${handle} /login\` here, or run \`beeline connect\` on its machine.`,
-    );
-    expect(line.consequence).not.toContain('…');
+    expect(line.consequence).toBe(`send @${handle} login here.`);
   });
 
   it('never assigns the agent pronouns', () => {

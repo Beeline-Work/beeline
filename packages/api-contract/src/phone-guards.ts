@@ -715,6 +715,7 @@ function readChoiceCard(value: unknown): ChoiceCardView | null {
     status: item.status,
     agent,
     prompt: item.prompt,
+    ...field('ask', typeof item.ask === 'string' ? item.ask : undefined),
     options,
     electorate: item.electorate,
     votedCount: item.votedCount,
@@ -1837,7 +1838,6 @@ export function readWorkspaceView(value: unknown): WorkspaceView | null {
     workspace: {
       ...workspace,
       createdAt: integer(rawWorkspace?.createdAt) ? Number(rawWorkspace.createdAt) : 0,
-      ...field('voiceProvider', oneOf(rawWorkspace?.voiceProvider, ['aura-2', 'kokoro-deepinfra', 'fish-s2.1-pro'])),
       ...field('about', typeof rawWorkspace?.about === 'string' ? rawWorkspace.about : undefined),
     },
     members: readList(item.members, readMember, WORKSPACE_MEMBER_PAGE_SIZE) ?? [],

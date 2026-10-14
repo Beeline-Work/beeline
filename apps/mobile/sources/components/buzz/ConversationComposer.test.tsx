@@ -97,7 +97,7 @@ function render(value: string) {
     );
   });
   renderers.push(renderer);
-  return { renderer, onSend, onKeyPress, button: () => renderer.root.findByType('Pressable') };
+  return { renderer, onSend, onKeyPress, button: () => renderer.root.findAllByProps({ testID: 'chat-send' }).find((n: any) => typeof n.type === 'string') };
 }
 beforeEach(() => {
   platform.OS = 'web';
@@ -362,9 +362,9 @@ describe('one composer', () => {
     );
   });
 
-  it.each(['', 'hello'])('idle %j uses the up arrow and disables only an empty send', (value) => {
+  it.each(['', 'hello'])('idle %j uses the drawn up arrow and disables only an empty send', (value) => {
     const f = render(value);
-    expect(f.button().findByType('Text').props.children).toBe('↑');
+    expect(f.button().findAllByProps({ testID: 'chat-send-glyph' })).not.toHaveLength(0);
     expect(f.button().props.disabled).toBe(!value);
   });
   it('keeps the send control present and a tap queues the message while an agent works', async () => {
@@ -374,12 +374,12 @@ describe('one composer', () => {
     const f = render('next instruction');
     expect(f.renderer.root.findAllByProps({ testID: 'chat-send' }).filter((n: any) => typeof n.type === 'string')).toHaveLength(1);
     expect(f.button().props.accessibilityLabel).toBe('Send message');
-    expect(f.button().findByType('Text').props.children).toBe('↑');
+    expect(f.button().findAllByProps({ testID: 'chat-send-glyph' })).not.toHaveLength(0);
     await act(async () => f.button().props.onPress());
     expect(f.onSend).toHaveBeenCalledOnce();
   });
-  it('invokes onSend with no arguments, even when Pressable hands over its press event', async () => {
-    // RN's Pressable calls onPress with the PressEvent. #1340 wired
+  it('invokes onSend with no arguments, even when the press handler hands over its press event', async () => {
+    // RN's touchables call onPress with the PressEvent. #1340 wired
     // `onPress={onSend}` directly, so the Room's handleSend(shortcut?) read
     // that truthy event as a MessageShortcut: the typed text still sent
     // (`shortcut?.text ?? inputTextRef.current`) but the `!shortcut` guard
@@ -460,7 +460,7 @@ describe('Conversation mode inside the composer', () => {
     const aim = vi.fn();
     const voice = { call: null, agents: [{ pubkey: 'ruby', kind: 'agent', name: 'Ruby' }],
       target: null, speaker: null, level: 0, connecting, error, quotaExhausted: false,
-      firstAudioMs: null, join: vi.fn(), end: vi.fn(), aim } as VoiceCallState;
+      firstAudioMs: null, humans: 1, unaddressed: 0, join: vi.fn(), end: vi.fn(), aim } as VoiceCallState;
     await act(async () => f.renderer.update(<ConversationComposer {...props} voice={voice} />));
     expect(f.renderer.root.findByProps({ testID: 'conversation-target-strip' })).toBeTruthy();
     act(() => f.renderer.root.findByProps({ accessibilityLabel: 'Speak to Ruby' }).props.onPress());
@@ -494,5 +494,34 @@ describe('Conversation mode inside the composer', () => {
     expect(f.renderer.root.findByProps({ testID: 'pending-chat-attachment-0' })).toBeTruthy();
     act(() => f.renderer.root.findByProps({ testID: 'chat-send' }).props.onPress());
     expect(f.onSend).toHaveBeenCalledOnce();
+  });
+
+  it('replaces the label with rotating speaking tips only when several humans are in the call', async () => {
+    vi.useFakeTimers();
+    try {
+      const f = render('');
+      const props = f.renderer.root.findByType(ConversationComposer).props;
+      const voice = { call: { id: 'call' }, agents: [{ pubkey: 'goosy', kind: 'agent', name: 'Goosy' }], target: null, speaker: null,
+        level: 0, connecting: false, error: null, quotaExhausted: false, firstAudioMs: null, humans: 1, unaddressed: 0,
+        join: vi.fn(), end: vi.fn(), aim: vi.fn() } as unknown as VoiceCallState;
+      await act(async () => f.renderer.update(<ConversationComposer {...props} voice={voice} />));
+      expect(f.renderer.root.findByProps({ testID: 'conversation-mode-label' }).props.children).toBe('Conversation mode');
+      expect(f.renderer.root.findAllByProps({ testID: 'conversation-tip' })).toHaveLength(0);
+      await act(async () => f.renderer.update(<ConversationComposer {...props} voice={{ ...voice, humans: 2 }} />));
+      const tip = () => f.renderer.root.findByProps({ testID: 'conversation-tip' });
+      expect(f.renderer.root.findAllByProps({ testID: 'conversation-mode-label' })).toHaveLength(0);
+      expect(tip().props.children).toBe('Start with a name: “Goosy, …”');
+      act(() => { vi.advanceTimersByTime(4_000); });
+      expect(tip().props.children).toBe('Tap an avatar to talk to it once');
+      act(() => { vi.advanceTimersByTime(4_000); });
+      expect(tip().props.children).toBe('Talk over an agent to stop it');
+      const plain = tip().props.style.flat().filter(Boolean).at(-1).color;
+      // A dropped unnamed turn returns to the name tip and highlights it briefly.
+      await act(async () => f.renderer.update(<ConversationComposer {...props} voice={{ ...voice, humans: 2, unaddressed: 1 }} />));
+      expect(tip().props.children).toBe('Start with a name: “Goosy, …”');
+      expect(tip().props.style.flat().filter(Boolean).at(-1).color).not.toBe(plain);
+      act(() => { vi.advanceTimersByTime(1_500); });
+      expect(tip().props.style.flat().filter(Boolean).at(-1).color).toBe(plain);
+    } finally { vi.useRealTimers(); }
   });
 });

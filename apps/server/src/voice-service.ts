@@ -1,8 +1,7 @@
 import { AgentVoiceService } from './agent-voice.js';
-import { stripVoiceEmotion } from './voice-emotion.js';
 import { createHmac, timingSafeEqual, randomBytes, randomUUID } from 'node:crypto';
 import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
-import { type VoiceIdleState, type VoiceCall, type VoiceJoin, type RoomViewIdentity, type VoiceProvider, voiceDuration, DEFAULT_VOICE_PROVIDER } from '@beeline/api-contract/phone';
+import { type VoiceIdleState, type VoiceCall, type VoiceJoin, type RoomViewIdentity, voiceDuration } from '@beeline/api-contract/phone';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-contract/agent-access';
 import type { SqlDatabase } from './database.js';
@@ -14,7 +13,7 @@ import { assignVoiceAgents, type VoiceAgent, type VoiceBrain, type VoiceSpeech, 
 import { VoiceRoomRuntime } from './voice-room-runtime.js';
 
 export type VoiceConfig = { url: string; apiKey: string; apiSecret: string; brain: VoiceBrain;
-  speech: VoiceSpeech; providers?: Partial<Record<VoiceProvider, VoiceSpeech>>; stt: VoiceSttFactory };
+  speech: VoiceSpeech; stt: VoiceSttFactory };
 type CallRow = { id: string; room_id: string; message_id: string; started_at: Date; ended_at: Date | null };
 type IdentityRow = { id: string; kind: 'human' | 'agent'; name: string; handle: string | null; face_id: string | null };
 const identity = (row: IdentityRow): RoomViewIdentity => ({ pubkey: row.id, kind: row.kind,
@@ -28,7 +27,7 @@ export class VoiceService {
   private readonly rooms: RoomServiceClient;
   private readonly unsubscribe: () => void;
   constructor(readonly db: SqlDatabase, readonly live: LiveHub, readonly config: VoiceConfig) {
-    this.profiles = new AgentVoiceService(db, provider => this.providerSpeech(provider));
+    this.profiles = new AgentVoiceService(db, () => this.speech());
     this.rooms = new RoomServiceClient(config.url.replace(/^ws/, 'http'), config.apiKey, config.apiSecret);
     this.unsubscribe = live.subscribeAll(event => {
       if (event.type === 'invalidate') {
@@ -57,11 +56,10 @@ export class VoiceService {
         soul: { instructions?: string } | null;
         owner_id: string;
         access_policy: unknown;
-        chosen_voices: Partial<Record<VoiceProvider, string>>;
-        voice_provider: VoiceProvider;
+        chosen_voices: Record<string, string>;
       }
     >(
-      `SELECT i.id,i.kind,i.name,i.handle,i.face_id,a.soul,a.owner_id,a.access_policy,a.chosen_voices,w.voice_provider FROM memberships m
+      `SELECT i.id,i.kind,i.name,i.handle,i.face_id,a.soul,a.owner_id,a.access_policy,a.chosen_voices FROM memberships m
        JOIN identities i ON i.id=m.identity_id AND i.kind='agent' JOIN agents a ON a.agent_id=i.id
        JOIN rooms r ON r.id=m.room_id JOIN workspaces w ON w.id=r.workspace_id
        WHERE m.room_id=$1 AND m.removed_at IS NULL ORDER BY i.id`,
@@ -83,19 +81,14 @@ export class VoiceService {
         handle: a.handle ?? a.name,
         soul: a.soul?.instructions ?? '',
         chosenVoice: savedAuraVoice(a.chosen_voices),
-        voiceProvider: DEFAULT_VOICE_PROVIDER,
         ...(a.face_id ? { face: a.face_id } : {}),
       })),
       speech.voices,
     ).filter((a) => allowed.has(a.id));
   }
 
-  async speech(_roomId: string): Promise<VoiceSpeech> {
-    return this.providerSpeech(DEFAULT_VOICE_PROVIDER);
-  }
-
-  private async providerSpeech(_provider: VoiceProvider): Promise<VoiceSpeech> {
-    const speech = this.config.providers ? this.config.providers[DEFAULT_VOICE_PROVIDER] : this.config.speech;
+  async speech(_roomId?: string): Promise<VoiceSpeech> {
+    const speech = this.config.speech;
     if (!speech) throw new Error('Aura 2 is not configured');
     await speech.prepare?.();
     return speech;
@@ -316,8 +309,9 @@ export class VoiceService {
       const joined = await db.query(`SELECT 1 FROM voice_participants p JOIN voice_calls c ON c.id=p.call_id
         WHERE p.call_id=$1 AND p.identity_id=$2 AND p.left_at IS NULL AND c.ended_at IS NULL AND ($3::text IS NULL OR (c.runtime_owner=$3 AND c.runtime_until>now())) FOR SHARE OF p,c`, [callId, humanId, leaseOwner ?? null]);
       if (!joined.rowCount) throw new Error('voice call access denied');
-      await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`,
-        [id, roomId, humanId, `@${agent.handle} ${text.replace(/@/g, '')}`]);
+      await db.query(`WITH message AS (INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4) RETURNING id)
+        INSERT INTO voice_messages(message_id,call_id) SELECT id,$5 FROM message`,
+        [id, roomId, humanId, `@${agent.handle} ${text.replace(/@/g, '')}`, callId]);
     });
     return id;
   }
@@ -339,7 +333,7 @@ export class VoiceService {
   }
 
   async recordAnswer(roomId: string, agentId: string, text: string) {
-    text=stripVoiceEmotion(text);
+    text=text.trim();
     // Luna can render the same complete answer twice, formatted then plain.
     // Collapse only identical whole renditions separated by a paragraph break;
     // repetitions within a sentence and different paragraphs remain intact.
@@ -371,6 +365,5 @@ export function voiceConfigFromEnv(env = process.env): VoiceConfig | undefined {
   const aura = new AuraSpeech(cloudflareToken, env.CLOUDFLARE_ACCOUNT_ID);
   return { url: env.LIVEKIT_URL, apiKey: env.LIVEKIT_API_KEY, apiSecret: env.LIVEKIT_API_SECRET,
     brain: new OpenRouterVoiceBrain(key), speech: aura,
-    providers: { 'aura-2': aura },
     stt: fluxFactory(cloudflareToken, env.CLOUDFLARE_ACCOUNT_ID) };
 }

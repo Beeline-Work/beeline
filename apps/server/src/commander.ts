@@ -1,3 +1,4 @@
+import { normalizeTrayAsk } from '@beeline/api-contract/phone';
 import { createHash, randomBytes } from 'node:crypto';
 import type { SqlDatabase } from './database.js';
 import {
@@ -60,47 +61,75 @@ export async function commandAddress(
   return row;
 }
 
+/**
+ * One order wakes exactly one agent: a corner's worker, the other agent of an
+ * agent DM, or the `agent` named at a Room address. A Room order never fans out.
+ */
 export async function sendOrder(
   db: SqlDatabase,
   command: CommandRow,
   agentId: string,
   address: string,
   text: string,
+  agent?: string,
 ) {
   if (!text.trim() || text.length > 16_000)
     throw new CommandRefusalError('order text must be 1 to 16000 characters', 400);
+  const named = agent?.trim().replace(/^@/, '');
+  if (agent !== undefined && !named) throw new CommandRefusalError('order agent must name one agent', 400);
   const target = await commandAddress(db, address, agentId);
-  const workers = target.parent_id
-    ? target.worker
-      ? [target.worker]
-      : []
-    : (
-        await db.query<{ id: string }>(
-          `SELECT identity.id FROM memberships member JOIN identities identity
+  let worker: string | undefined;
+  if (target.parent_id) {
+    if (!target.worker) throw new CommandRefusalError('address has no working agent', 409);
+    if (named && named !== target.worker && named.toLowerCase() !== (await agentHandle(db, target.worker)))
+      throw new CommandRefusalError('order agent is not this corner\'s worker; omit agent or use the Room address', 400);
+    worker = target.worker;
+  } else {
+    const direct = (
+      await db.query<{ direct: boolean }>(`SELECT direct_participants IS NOT NULL direct FROM rooms WHERE id=$1`, [address])
+    ).rows[0]?.direct;
+    const agents = (
+      await db.query<{ id: string; handle: string | null }>(
+        `SELECT identity.id,lower(identity.handle) handle FROM memberships member JOIN identities identity
          ON identity.id=member.identity_id AND identity.kind='agent'
        WHERE member.room_id=$1 AND member.removed_at IS NULL AND identity.id<>$2`,
-          [address, agentId],
-        )
-      ).rows.map((row) => row.id);
-  if (!workers.length) throw new CommandRefusalError('address has no working agent', 409);
-  const commands = [];
-  for (const worker of workers) {
-    const queued = await createAgentCommand(db, {
-      id: createHash('sha256')
-        .update(`order:${command.id}:${address}:${worker}:${text}`)
-        .digest('hex'),
-      roomId: address,
-      agentId: worker,
-      sourceMessageId: null,
-      privatePayload: { text, authorId: agentId, fromRoomId: command.room_id, kind: 'order' },
-      reason: 'order',
-      parent: command,
-      retainDepth: true,
-    });
-    if (!queued) throw new CommandRefusalError('order recipient is no longer a member', 403);
-    commands.push(queued.id);
+        [address, agentId],
+      )
+    ).rows;
+    const matches = named
+      ? agents.filter((row) => row.id === named || row.handle === named.toLowerCase())
+      : direct ? agents : [];
+    if (!named && !direct)
+      throw new CommandRefusalError(
+        'a Room order must name exactly one agent: pass agent with its handle or id, or use its DM or corner address',
+        400,
+      );
+    if (named && !matches.length)
+      throw new CommandRefusalError(`order agent ${named} is not another agent member of this address`, 400);
+    if (!matches.length) throw new CommandRefusalError('address has no working agent', 409);
+    if (matches.length > 1)
+      throw new CommandRefusalError('order must name exactly one agent: pass agent with its handle or id', 400);
+    worker = matches[0]!.id;
   }
-  return { id: commands[0]!, createdAt: Math.floor(Date.now() / 1000) };
+  const queued = await createAgentCommand(db, {
+    id: createHash('sha256')
+      .update(`order:${command.id}:${address}:${worker}:${text}`)
+      .digest('hex'),
+    roomId: address,
+    agentId: worker,
+    sourceMessageId: null,
+    privatePayload: { text, authorId: agentId, fromRoomId: command.room_id, kind: 'order' },
+    reason: 'order',
+    parent: command,
+    retainDepth: true,
+  });
+  if (!queued) throw new CommandRefusalError('order recipient is no longer a member', 403);
+  return { id: queued.id, createdAt: Math.floor(Date.now() / 1000) };
+}
+
+async function agentHandle(db: SqlDatabase, id: string) {
+  return (await db.query<{ handle: string | null }>(`SELECT lower(handle) handle FROM identities WHERE id=$1`, [id]))
+    .rows[0]?.handle;
 }
 
 /** Derive the return route from the open command or the current order; no work ledger. */
@@ -111,13 +140,14 @@ export async function reportToCommander(
   text: string,
   command?: CommandRow,
   reportId = randomBytes(32).toString('hex'),
-  options: { automatic?: boolean; attachments?: PrivateCommandPayload['attachments'] } = {},
+  options: { automatic?: boolean; ask?: string; attachments?: PrivateCommandPayload['attachments'] } = {},
 ) {
   if (!/^(done|blocked|needs-decision|failed):\s*\S/.test(text) || text.length > 16_000)
     throw new CommandRefusalError(
       'report must begin done:, blocked:, needs-decision: or failed:',
       400,
     );
+  const ask = options.ask === undefined ? undefined : normalizeTrayAsk(options.ask);
   const strict = Boolean(command) && !options.automatic;
   const { recipient, returnRoom, parent, origin, incoming } = await commanderReportAddress(db, roomId, command);
   if (!recipient || !returnRoom) {
@@ -151,6 +181,7 @@ export async function reportToCommander(
         authorId: agentId,
         fromRoomId: roomId,
         kind: 'report',
+        ask,
         attachments: options.attachments,
         originCornerId: origin,
       },
@@ -168,8 +199,8 @@ export async function reportToCommander(
       );
     // Only a human address is a chat message; private coordination never enters messages.
     await db.query(
-      `INSERT INTO messages(id,room_id,author_id,text,presentation,attachments,request_id)
-       VALUES($1,$2,$3,$4,'message',$5::jsonb,$6) ON CONFLICT(id) DO NOTHING`,
+      `INSERT INTO messages(id,room_id,author_id,text,presentation,attachments,request_id,card)
+       VALUES($1,$2,$3,$4,'message',$5::jsonb,$6,$7::jsonb) ON CONFLICT(id) DO NOTHING`,
       [
         reportId,
         returnRoom,
@@ -177,6 +208,7 @@ export async function reportToCommander(
         text,
         JSON.stringify(options.attachments ?? []),
         incoming?.id ?? null,
+        ask ? JSON.stringify({ ask }) : null,
       ],
     );
   }

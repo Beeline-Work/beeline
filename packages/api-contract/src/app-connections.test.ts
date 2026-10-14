@@ -10,6 +10,7 @@ import {
   registryServerDomain,
   selectOfficialHostedServer,
   normalizeAppContinuation,
+  urlBelongsToApp,
 } from './app-connections.js';
 
 const remote = [{ type: 'streamable-http', url: 'https://mcp.linear.app/mcp' }];
@@ -88,5 +89,17 @@ describe('official hosted MCP servers', () => {
         'linear',
       )?.name,
     ).toBe('app.linear/linear');
+  });
+});
+
+describe('urlBelongsToApp', () => {
+  it('accepts only https pages on the app’s own site', () => {
+    expect(urlBelongsToApp('https://linear.app/settings', 'linear')).toBe(true);
+    expect(urlBelongsToApp('https://dreamina.capcut.com/ai-tool/asset', 'dreamina')).toBe(true);
+    expect(urlBelongsToApp('https://dreamina.capcut.com/ai-tool/asset', 'capcut')).toBe(true);
+    expect(urlBelongsToApp('https://www.google.com/search?q=dreamina', 'dreamina')).toBe(false);
+    expect(urlBelongsToApp('https://capcut.com/dreamina', 'dreamina')).toBe(false);
+    expect(urlBelongsToApp('http://linear.app/settings', 'linear')).toBe(false);
+    expect(urlBelongsToApp('linear.app/settings', 'linear')).toBe(false);
   });
 });

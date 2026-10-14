@@ -272,7 +272,7 @@ describe('mic button visibility', () => {
 });
 
 describe('listening flow', () => {
-  it('tapping mic starts a take: waveform in the field, stop in the attach slot, no status line', async () => {
+  it('tapping mic starts a take: waveform in the field, Stop in the mic spot, ＋ kept, no status line', async () => {
     const { renderer } = render();
     const micBtn = renderer.root.findByProps({ testID: 'chat-mic' });
 
@@ -287,10 +287,11 @@ describe('listening flow', () => {
       0,
     );
     expect(renderer.root.findAllByProps({ testID: 'chat-speech-status' })).toHaveLength(0);
-    expect(renderer.root.findAllByProps({ testID: 'chat-attach-button' })).toHaveLength(0);
+    expect(renderer.root.findByProps({ testID: 'chat-attach-button' })).toBeTruthy();
+    expect(renderer.root.findAllByProps({ testID: 'chat-mic' })).toHaveLength(0);
     expect(
       renderer.root.findByProps({ testID: 'chat-speech-discard' }).props.accessibilityLabel,
-    ).toBe('Discard recording');
+    ).toBe('Stop recording');
   });
 
   it('primes the recogniser with the conversation names when the mic is tapped', async () => {
@@ -363,10 +364,12 @@ describe('listening flow', () => {
     await act(async () => {
       fireEvent('result', { results: [{ transcript: 'accessible words' }], isFinal: false });
     });
-    const mic = renderer.root.findByProps({ testID: 'chat-mic' });
-    expect(mic.props.accessibilityState).toEqual({ selected: true });
-    expect(mic.props.accessibilityLabel).toBe('Stop listening and send');
-    expect(mic.props.accessibilityHint).toBe('Stops dictation and sends');
+    const stop = renderer.root.findByProps({ testID: 'chat-speech-discard' });
+    expect(stop.props.accessibilityLabel).toBe('Stop recording');
+    expect(stop.props.accessibilityHint).toBe('Discards this take; typed text stays');
+    const send = renderer.root.findByProps({ testID: 'chat-send' });
+    expect(send.props.accessibilityLabel).toBe('Send message');
+    expect(send.props.accessibilityHint).toBe('Stops dictation and sends');
   });
 
   it('Reproduction WL2: documented-range Android speech has visible varying bars', async () => {
@@ -399,16 +402,16 @@ describe('listening flow', () => {
     }
   });
 
-  it('keeps the mic a plain microphone with no ring or glow while listening', async () => {
+  it('keeps Stop a plain outlined square with no ring or glow while listening', async () => {
     const { renderer } = render();
     await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
     await act(async () => {});
     await act(async () => fireEvent('volumechange', { value: 10 }));
 
-    const mic = renderer.root.findByProps({ testID: 'chat-mic' });
-    const styles = mic.props.style.flat(Infinity).filter(Boolean);
+    const stop = renderer.root.findByProps({ testID: 'chat-speech-discard' });
+    const styles = [stop.props.style].flat(Infinity).filter(Boolean);
     expect(styles).toEqual([expect.objectContaining({ width: 26, height: 26 })]);
-    expect(renderer.root.findByProps({ testID: 'chat-mic-glyph' }).props.color).toBe('#f0f0f3');
+    expect(renderer.root.findByProps({ testID: 'chat-stop-glyph' }).props.color).toBe('#f0f0f3');
   });
 
   it('commits final result to onChangeText', async () => {
@@ -602,7 +605,7 @@ describe('edge states', () => {
     await act(async () => {});
 
     // Stop without any final result
-    await act(async () => micBtn.props.onPress());
+    await act(async () => renderer.root.findByProps({ testID: 'chat-speech-discard' }).props.onPress());
     await act(async () => fireEvent('end'));
 
     expect(renderer.root.findAllByProps({ testID: 'chat-speech-status' })).toHaveLength(0);
@@ -610,15 +613,16 @@ describe('edge states', () => {
 });
 
 describe('send and mic state', () => {
-  it('keeps the trailing control the mic while listening; send is not rendered', async () => {
+  it('while listening, Stop replaces the mic and Send stays far right', async () => {
     const { renderer } = render({ value: '' });
     expect(renderer.root.findByProps({ testID: 'chat-mic' })).toBeTruthy();
 
     await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
     await act(async () => {});
 
-    expect(renderer.root.findAllByProps({ testID: 'chat-send' })).toHaveLength(0);
-    expect(renderer.root.findByProps({ testID: 'chat-mic' })).toBeTruthy();
+    expect(renderer.root.findAllByProps({ testID: 'chat-mic' })).toHaveLength(0);
+    expect(renderer.root.findByProps({ testID: 'chat-speech-discard' })).toBeTruthy();
+    expect(renderer.root.findByProps({ testID: 'chat-send' }).props.disabled).toBe(false);
   });
 
   it('text input remains editable', async () => {
@@ -641,14 +645,14 @@ describe('send and mic state', () => {
       0,
     );
 
-    // Stop listening
-    await act(async () => micBtn.props.onPress());
+    // Send ends the take
+    await act(async () => renderer.root.findByProps({ testID: 'chat-send' }).props.onPress());
     await act(async () => fireEvent('end'));
     expect(renderer.root.findAllByProps({ testID: 'chat-speech-waveform' })).toHaveLength(0);
     expect(renderer.root.findByProps({ testID: 'chat-attach-button' })).toBeTruthy();
   });
 
-  it('waits for a complete final transcript before sending after a mic press', async () => {
+  it('waits for a complete final transcript before sending after a Send press', async () => {
     const sentText = vi.fn();
     let renderer: any;
     function ControlledComposer() {
@@ -687,14 +691,14 @@ describe('send and mic state', () => {
     await act(async () => {
       fireEvent('result', { results: [{ transcript: 'Sally sell' }], isFinal: false });
     });
-    await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
+    await act(async () => renderer.root.findByProps({ testID: 'chat-send' }).props.onPress());
     expect(sentText).not.toHaveBeenCalled();
-    // The Beeline mark replaces the mic and the waveform freezes while the
-    // take is transcribed; there is no status line.
+    // The Beeline mark fills the Send slot and the waveform freezes while
+    // the take is transcribed; there is no status line.
     expect(
       renderer.root.findAllByProps({ testID: 'chat-speech-finalizing' }).length,
     ).toBeGreaterThan(0);
-    expect(renderer.root.findAllByProps({ testID: 'chat-mic-glyph' })).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'chat-send-glyph' })).toHaveLength(0);
     expect(
       renderer.root.findAllByType(DictationWaveformType).map((node: any) => node.props.live),
     ).toEqual([false]);
@@ -713,7 +717,7 @@ describe('send and mic state', () => {
     expect(renderer.root.findAllByProps({ testID: 'chat-speech-finalizing' })).toHaveLength(0);
   });
 
-  it('one mic press after a committed final sends that text and clears', async () => {
+  it('one Send press after a committed final sends that text and clears', async () => {
     const onSend = vi.fn();
     let renderer: any;
     function ControlledComposer() {
@@ -748,18 +752,18 @@ describe('send and mic state', () => {
       fireEvent('result', { results: [{ transcript: 'already final' }], isFinal: true });
     });
     expect(inputText(renderer.root)).toBe('already final');
-    await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
+    await act(async () => renderer.root.findByProps({ testID: 'chat-send' }).props.onPress());
     await act(async () => fireEvent('end'));
 
     expect(onSend).toHaveBeenCalledOnce();
     expect(inputText(renderer.root)).toBe('');
   });
 
-  it('an empty mic press only stops and does not send', async () => {
+  it('an empty Send press only stops and does not send', async () => {
     const { renderer, onSend } = render({ value: '' });
     await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
     await act(async () => {});
-    await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
+    await act(async () => renderer.root.findByProps({ testID: 'chat-send' }).props.onPress());
     await act(async () => fireEvent('end'));
     expect(onSend).not.toHaveBeenCalled();
     expect(renderer.root.findAllByProps({ testID: 'chat-speech-waveform' })).toHaveLength(0);
@@ -788,7 +792,7 @@ describe('stop button', () => {
     expect(inputText(renderer.root)).toBe('typed ');
   });
 
-  it('discards a take while it is being transcribed, so the mic press sends nothing', async () => {
+  it('discards a take while it is being transcribed, so the Send press sends nothing', async () => {
     vi.useFakeTimers();
     try {
       const { renderer, onSend, onChangeText } = render({ value: '' });
@@ -796,7 +800,7 @@ describe('stop button', () => {
       await act(async () => {
         fireEvent('result', { results: [{ transcript: 'never sent' }], isFinal: false });
       });
-      await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
+      await act(async () => renderer.root.findByProps({ testID: 'chat-send' }).props.onPress());
       expect(
         renderer.root.findAllByProps({ testID: 'chat-speech-finalizing' }).length,
       ).toBeGreaterThan(0);
@@ -876,11 +880,11 @@ describe('stop button while a dictated message is sent', () => {
     await act(async () => {
       fireEvent('result', { results: [{ transcript: words }], isFinal: true });
     });
-    await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
+    await act(async () => renderer.root.findByProps({ testID: 'chat-send' }).props.onPress());
     await act(async () => fireEvent('end'));
   }
 
-  it('keeps ■, the mark and the waveform while the message is sent; ■ drops it and keeps the chip', async () => {
+  it('keeps Stop, the mark and the waveform while the message is sent; Stop drops it and keeps the chip', async () => {
     const { renderer, sends } = renderSending();
     await dictateAndSend(renderer(), 'make it smaller');
 
@@ -890,7 +894,7 @@ describe('stop button while a dictated message is sent', () => {
     expect(root.findAllByProps({ testID: 'chat-speech-discard' }).length).toBeGreaterThan(0);
     expect(root.findAllByProps({ testID: 'chat-speech-finalizing' }).length).toBeGreaterThan(0);
     expect(root.findAllByProps({ testID: 'chat-speech-waveform' }).length).toBeGreaterThan(0);
-    expect(root.findAllByProps({ testID: 'chat-send' })).toHaveLength(0);
+    expect(root.findByProps({ testID: 'chat-send' }).props.disabled).toBe(true);
     expect(renderedText(renderer())).not.toContain('make it smaller');
 
     await act(async () => root.findByProps({ testID: 'chat-speech-discard' }).props.onPress());
@@ -919,19 +923,19 @@ describe('stop button while a dictated message is sent', () => {
     expect(root.findAllByProps({ testID: 'chat-tag-ruby' }).length).toBeGreaterThan(0);
   });
 
-  it('turns ■ back into ＋ once the message enters the Room', async () => {
+  it('turns Stop back into the mic once the message enters the Room', async () => {
     const { renderer, sends } = renderSending();
     await dictateAndSend(renderer(), 'ship it');
-    const discard = renderer().root.findByProps({ testID: 'chat-speech-discard' });
+    const discard = renderer().root.findByProps({ testID: 'chat-speech-discard' }).props.onPress;
 
     await act(async () => sends[0].enterRoom());
-    // A ■ tap that raced the Room entry cannot pull the message back.
-    await act(async () => discard.props.onPress());
+    // A Stop tap that raced the Room entry cannot pull the message back.
+    await act(async () => discard());
 
     const root = renderer().root;
     expect(sends[0].dictated.cancelled).toBe(false);
     expect(root.findAllByProps({ testID: 'chat-speech-discard' })).toHaveLength(0);
-    expect(root.findByProps({ testID: 'chat-attach-button' })).toBeTruthy();
+    expect(root.findByProps({ testID: 'chat-mic' })).toBeTruthy();
     expect(root.findAllByProps({ testID: 'chat-speech-finalizing' })).toHaveLength(0);
   });
 });
@@ -948,7 +952,7 @@ describe('recipient chips', () => {
     expect(tag).toHaveLength(1);
     expect(tag[0].props.children).toBe('@ruby');
     expect(renderer.root.findByProps({ testID: 'chat-mic' })).toBeTruthy();
-    expect(renderer.root.findAllByProps({ testID: 'chat-send' })).toHaveLength(0);
+    expect(renderer.root.findByProps({ testID: 'chat-send' }).props.disabled).toBe(true);
   });
 
   it('wraps typed text under the tags: they are spans of the input, with no column of their own', () => {
@@ -1060,7 +1064,7 @@ describe('recipient chips', () => {
     await act(async () => {
       fireEvent('result', { results: [{ transcript: 'make it smaller' }], isFinal: false });
     });
-    await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
+    await act(async () => renderer.root.findByProps({ testID: 'chat-send' }).props.onPress());
     await act(async () => {
       fireEvent('result', { results: [{ transcript: 'make it smaller' }], isFinal: true });
     });
@@ -1071,7 +1075,7 @@ describe('recipient chips', () => {
     const { renderer, onSend } = render({ value: '@ruby ', tagHandles });
     await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
     await act(async () => {});
-    await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
+    await act(async () => renderer.root.findByProps({ testID: 'chat-send' }).props.onPress());
     await act(async () => fireEvent('end'));
     expect(onSend).not.toHaveBeenCalled();
   });

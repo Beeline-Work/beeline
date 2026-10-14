@@ -1,0 +1,198 @@
+[
+  {
+    "variant": "github-issue-opened",
+    "theme": "bone",
+    "source": "Android native fixture at 329612dfc (before the issue meta-line fix)",
+    "screenshot": "android-prefix-bone-github-issue-opened.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "github-issue-opened",
+      "Issue \u00b7 1 opened",
+      "11:33",
+      "OPENED",
+      "Align lifecycle cards",
+      "Issue #2468",
+      "by @octocat",
+      "View \u2197",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "View \u2197"
+    ]
+  },
+  {
+    "variant": "issue-group-of-one",
+    "theme": "bone",
+    "source": "Android native fixture at 329612dfc (before the issue meta-line fix)",
+    "screenshot": "android-prefix-bone-issue-group-of-one.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "issue-group-of-one",
+      "Issue \u00b7 1 opened",
+      "11:33",
+      "OPENED",
+      "Align lifecycle cards",
+      "issue",
+      "by @octocat",
+      "View \u2197",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "View \u2197"
+    ]
+  },
+  {
+    "variant": "grouped-issues",
+    "theme": "bone",
+    "source": "Android native fixture at 329612dfc (before the issue meta-line fix)",
+    "screenshot": "android-prefix-bone-grouped-issues.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "grouped-issues",
+      "Issue \u00b7 1 closed, 1 opened",
+      "11:33",
+      "CLOSED",
+      "Align lifecycle cards",
+      "issue",
+      "by @octocat",
+      "View \u2197",
+      "1 more \u25be",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "View \u2197"
+    ]
+  },
+  {
+    "variant": "mixed-activity",
+    "theme": "bone",
+    "source": "Android native fixture at 329612dfc (before the issue meta-line fix)",
+    "screenshot": "android-prefix-bone-mixed-activity.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "mixed-activity",
+      "Activity \u00b7 1 closed, 1 opened",
+      "11:33",
+      "CLOSED",
+      "Align lifecycle cards",
+      "issue",
+      "by @octocat",
+      "View \u2197",
+      "1 more \u25be",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "View \u2197"
+    ]
+  },
+  {
+    "variant": "github-issue-opened",
+    "theme": "obsidian",
+    "source": "Android native fixture at 329612dfc (before the issue meta-line fix)",
+    "screenshot": "android-prefix-obsidian-github-issue-opened.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "github-issue-opened",
+      "Issue \u00b7 1 opened",
+      "11:33",
+      "OPENED",
+      "Align lifecycle cards",
+      "Issue #2468",
+      "by @octocat",
+      "View \u2197",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "View \u2197"
+    ]
+  },
+  {
+    "variant": "issue-group-of-one",
+    "theme": "obsidian",
+    "source": "Android native fixture at 329612dfc (before the issue meta-line fix)",
+    "screenshot": "android-prefix-obsidian-issue-group-of-one.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "issue-group-of-one",
+      "Issue \u00b7 1 opened",
+      "11:33",
+      "OPENED",
+      "Align lifecycle cards",
+      "issue",
+      "by @octocat",
+      "View \u2197",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "View \u2197"
+    ]
+  },
+  {
+    "variant": "grouped-issues",
+    "theme": "obsidian",
+    "source": "Android native fixture at 329612dfc (before the issue meta-line fix)",
+    "screenshot": "android-prefix-obsidian-grouped-issues.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "grouped-issues",
+      "Issue \u00b7 1 closed, 1 opened",
+      "11:33",
+      "CLOSED",
+      "Align lifecycle cards",
+      "issue",
+      "by @octocat",
+      "View \u2197",
+      "1 more \u25be",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "View \u2197"
+    ]
+  },
+  {
+    "variant": "mixed-activity",
+    "theme": "obsidian",
+    "source": "Android native fixture at 329612dfc (before the issue meta-line fix)",
+    "screenshot": "android-prefix-obsidian-mixed-activity.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "mixed-activity",
+      "Activity \u00b7 1 closed, 1 opened",
+      "11:33",
+      "CLOSED",
+      "Align lifecycle cards",
+      "issue",
+      "by @octocat",
+      "View \u2197",
+      "1 more \u25be",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "View \u2197"
+    ]
+  }
+]

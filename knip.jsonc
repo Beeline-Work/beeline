@@ -90,6 +90,8 @@
         "scripts/identity-mark-system-proof.tsx",
         "scripts/system-lines-proof.tsx",
         "scripts/pr-accordion-proof.tsx",
+        // Gradle bundles this native screenshot fixture through its entryFile override.
+        "scripts/corner-pr-cards-native-proof.tsx",
         "scripts/ci-accordion-proof.tsx",
         "scripts/tray-empty-proof.tsx",
         "scripts/tray-inline-native-proof.tsx",

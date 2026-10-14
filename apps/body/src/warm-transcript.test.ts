@@ -1,4 +1,7 @@
-import { describe, expect, it } from 'vitest';
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterEach, describe, expect, it } from 'vitest';
 import { WarmTranscript, type TranscriptRow } from './warm-transcript.js';
 
 const rows = (count: number, from = 1, authorId = 'human'): TranscriptRow[] =>
@@ -8,7 +11,72 @@ const rows = (count: number, from = 1, authorId = 'human'): TranscriptRow[] =>
     authorId,
   }));
 
+const roots: string[] = [];
+afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+function persisted() {
+  const root = mkdtempSync(join(tmpdir(), 'beeline-warm-transcript-'));
+  roots.push(root);
+  return { path: join(root, 'warm-transcript.json') };
+}
+
 describe('warm transcript', () => {
+  it('restores delivered rows and completed messages for the same native session after restart', () => {
+    const options = persisted();
+    const first = new WarmTranscript(options);
+    first.rememberSession('native-session', 'configuration');
+    first.select('native-session', rows(3));
+    first.complete('native-session', ['m4']);
+    const restarted = new WarmTranscript(options);
+    expect(restarted.resumeSessionId('configuration')).toBe('native-session');
+    expect(restarted.select('native-session', rows(5)).rows.map(row => row.id)).toEqual(['m5']);
+    expect(statSync(options.path).mode & 0o777).toBe(0o600);
+    expect(readFileSync(options.path, 'utf8')).not.toContain('line 1');
+  });
+
+  it('starts cold for a different native session or changed configuration', () => {
+    const options = persisted();
+    const first = new WarmTranscript(options);
+    first.rememberSession('session-a', 'configuration');
+    first.select('session-a', rows(3));
+    const restarted = new WarmTranscript(options);
+    expect(restarted.resumeSessionId('new-configuration')).toBeUndefined();
+    expect(restarted.select('session-b', rows(3)).rows).toHaveLength(3);
+  });
+
+  it('does not resume across the existing 30-minute idle boundary', () => {
+    let now = 1;
+    const options = { ...persisted(), now: () => now };
+    const first = new WarmTranscript(options);
+    first.rememberSession('session-a', 'configuration');
+    first.select('session-a', rows(3));
+    now += 30 * 60_000;
+    expect(new WarmTranscript(options).resumeSessionId('configuration')).toBeUndefined();
+  });
+
+  it('checkpoints a still-active long turn at update handover without delivering its unfinished ask', () => {
+    let now = 1;
+    const options = { ...persisted(), now: () => now };
+    const first = new WarmTranscript(options);
+    first.rememberSession('session-a', 'configuration');
+    first.select('session-a', rows(3));
+    now += 40 * 60_000;
+    first.complete('session-a', []);
+    const restarted = new WarmTranscript(options);
+    expect(restarted.resumeSessionId('configuration')).toBe('session-a');
+    expect(restarted.select('session-a', rows(4)).rows.map(row => row.id)).toEqual(['m4']);
+  });
+
+  it('invalidates discarded sessions durably and tolerates a truncated record', () => {
+    const options = persisted();
+    const first = new WarmTranscript(options);
+    first.rememberSession('session-a', 'configuration');
+    first.select('session-a', rows(3));
+    first.forgetSession();
+    expect(new WarmTranscript(options).resumeSessionId('configuration')).toBeUndefined();
+    writeFileSync(options.path, '{');
+    expect(new WarmTranscript(options).select('session-a', rows(3)).rows).toHaveLength(3);
+  });
+
   it('excludes completed task and steer messages from the next warm transcript', () => {
     const warm = new WarmTranscript();
     warm.select('session-a', rows(2));

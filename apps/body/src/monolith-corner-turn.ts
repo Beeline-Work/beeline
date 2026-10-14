@@ -30,6 +30,7 @@ import { admitSharedAssets, SharedAssetCapacityError } from './shared-asset-capa
 import type { DaemonAttachment, DaemonOperationMap } from '@beeline/api-contract/daemon';
 import {
   AcpClient,
+  openAcpConversation,
   AcpTurnBackstopError,
   isPureRetryNarration,
   type McpServerWire,
@@ -135,6 +136,7 @@ import {
 } from './prompt-assembly.js';
 import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
 import { WarmTranscript } from './warm-transcript.js';
+import { harnessSupportsNativeSessionResume } from './harness-capabilities.js';
 import { PromptSectionBaseline } from './prompt-section-baseline.js';
 import type { RoomSupervisor } from './room-supervisor.js';
 import { withTurnReceiptHeartbeat } from './turn-receipt-heartbeat.js';
@@ -497,7 +499,7 @@ export class MonolithCornerTurnLoop {
   /** Whether CodeGraph preparation succeeded for the live session. */
   private sessionCodegraphReady = false;
   /** What this exact ACP session has already been prompted with (`warm-transcript.ts`). */
-  private readonly warmTranscript = new WarmTranscript();
+  private readonly warmTranscript: WarmTranscript;
   /** What each turn section last sent to this exact ACP session hashed to (`prompt-section-baseline.ts`). */
   private readonly sectionBaseline = new PromptSectionBaseline();
   /** The live session's environment, read back for pi's own turn record. */
@@ -573,6 +575,9 @@ export class MonolithCornerTurnLoop {
 
   constructor(private readonly options: MonolithCornerTurnOptions) {
     this.agent = runtimeIdentity(options.runtime.agent);
+    const nativeResume = harnessSupportsNativeSessionResume(options.config.agentCommand ?? options.config.agentBinary);
+    this.warmTranscript = new WarmTranscript(nativeResume && options.config.agentHomeRoot
+      ? { path: join(options.config.agentHomeRoot, 'warm-transcript.json') } : {});
     this.commandContext = new CommandExecutionContext(options.config.agentHomeRoot);
     this.squireRelay = new SquireTaskRelay(
       this.agent.publicKey,
@@ -649,6 +654,8 @@ export class MonolithCornerTurnLoop {
     this.forcedStop = true;
     const current = this.currentTurn;
     if (!current) return undefined;
+    // The idle lease starts after active work, including a handover interruption.
+    this.warmTranscript.complete(this.sessionId, []);
     this.stoppedTurns.add(current.requestId);
     if (this.client && this.sessionId) this.client.sessionCancel(this.sessionId);
     return {
@@ -744,7 +751,8 @@ export class MonolithCornerTurnLoop {
     this.claudeLoginWatch = undefined;
   }
 
-  private async discardSession(): Promise<void> {
+  private async discardSession(preserveConversation = false): Promise<void> {
+    if (!preserveConversation) this.warmTranscript.forgetSession();
     const client = this.client;
     this.stopClaudeLoginWatch();
     this.client = undefined;
@@ -1312,12 +1320,22 @@ export class MonolithCornerTurnLoop {
     });
     this.turnSessionPrefix = session.turnPrefix;
     this.sessionPromptSectionIds = session.report.map((section) => section.id);
-    const opened = await this.client.sessionNew({
+    const conversationFingerprint = JSON.stringify([fingerprint, command,
+      this.options.config.agentArgs, this.options.worktreePath]);
+    const opened = await openAcpConversation({
+      client: this.client,
+      agentCommand: harnessLabel,
+      resumeSessionId: this.warmTranscript.resumeSessionId(conversationFingerprint),
       cwd: this.options.worktreePath,
       mcpServers: servers,
       mode: 'edit',
-      systemPrompt: session.systemPrompt,
+      create: () => this.client!.sessionNew({
+        cwd: this.options.worktreePath, mcpServers: servers, mode: 'edit', systemPrompt: session.systemPrompt,
+      }),
+      onResumeFailure: error => console.warn('[body] native conversation unavailable; starting cold:', error),
     });
+    if (opened.kind === 'created') this.warmTranscript.forgetSession();
+    this.warmTranscript.rememberSession(opened.sessionId, conversationFingerprint);
     this.sessionId = opened.sessionId;
     this.sessionFingerprint = fingerprint;
     this.sessionCodegraphReady = codegraphReady;
@@ -1430,7 +1448,7 @@ export class MonolithCornerTurnLoop {
       onStateChange: (state) => {
         if (state === 'waiting-for-slot') trace?.noteCapacityWait();
       },
-      suspend: () => this.discardSession(),
+      suspend: () => this.discardSession(true),
     };
   }
 
@@ -2304,6 +2322,7 @@ export class MonolithCornerTurnLoop {
         toolCalls: trace.toolCallsTotal,
         ...this.turnMetrics,
       });
+      this.warmTranscript.complete(this.sessionId, [requestId]);
       // After the receipt: an operator artifact never delays the answer, and
       // never becomes one — the trace has no way to post a Room row.
       void finishTrace('complete').catch(() => undefined);

@@ -34,7 +34,8 @@ function Proof() {
     <Text style={{ color: '#888', marginBottom: 4 }}>Empty</Text>
     <Composer id="empty" initial="" />
     <Text style={{ color: '#888', marginBottom: 4 }}>Has text</Text>
-    <Composer id="text" initial="@ruby check the multiway corner" />
+    <Composer id="text" initial={Number(new URLSearchParams(location.search).get('width')) < 500
+      ? '@ruby check the multiway' : '@ruby check the multiway corner'} />
     <Text style={{ color: '#888', marginBottom: 4 }}>Dictating</Text>
     <Composer id="dict" initial="@ruby " />
   </View>;

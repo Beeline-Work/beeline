@@ -1,5 +1,4 @@
 import { squireReachCause } from './squire-status.js';
-import { AppConnectionRunner } from './app-connection-runner.js';
 /**
  * The helper's connector work queue (Workbench PR 2).
  *
@@ -128,7 +127,6 @@ export class ConnectorAssignmentLoop {
   private mcp?: SquireMcpClient;
   private readonly brokerInstalled: () => boolean;
   private reporting?: Promise<void>;
-  private appConnections?: AppConnectionRunner;
 
   constructor(options: ConnectorAssignmentLoopOptions) {
     this.agentId = options.agentId;
@@ -160,7 +158,6 @@ export class ConnectorAssignmentLoop {
   }
 
   stop(): void {
-    this.appConnections?.stop();
     this.stopped = true;
     this.connectWatch?.();
     this.connectWatch = undefined;
@@ -216,14 +213,6 @@ export class ConnectorAssignmentLoop {
   }
 
   private async handle(assignment: ConnectorAssignment): Promise<void> {
-    if (assignment.kind === 'connect-app') {
-      this.appConnections ??= new AppConnectionRunner(this.agentId,
-        async (job, outcome) => { await this.api.execute('completeAppConnectionJob', {
-          agentId: this.agentId, appId: job.appId, jobId: job.jobId, outcome }); },
-        async () => { await this.runSync(); });
-      await this.appConnections.run(assignment.job);
-      return;
-    }
     const pairingGeneration =
       assignment.kind === 'install' || assignment.kind === 'uninstall'
         ? assignment.pairingGeneration

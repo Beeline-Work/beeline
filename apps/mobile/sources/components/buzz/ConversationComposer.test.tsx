@@ -97,7 +97,7 @@ function render(value: string) {
     );
   });
   renderers.push(renderer);
-  return { renderer, onSend, onKeyPress, button: () => renderer.root.findByType('Pressable') };
+  return { renderer, onSend, onKeyPress, button: () => renderer.root.findAllByProps({ testID: 'chat-send' }).find((n: any) => typeof n.type === 'string') };
 }
 beforeEach(() => {
   platform.OS = 'web';
@@ -362,9 +362,9 @@ describe('one composer', () => {
     );
   });
 
-  it.each(['', 'hello'])('idle %j uses the up arrow and disables only an empty send', (value) => {
+  it.each(['', 'hello'])('idle %j uses the drawn up arrow and disables only an empty send', (value) => {
     const f = render(value);
-    expect(f.button().findByType('Text').props.children).toBe('↑');
+    expect(f.button().findAllByProps({ testID: 'chat-send-glyph' })).not.toHaveLength(0);
     expect(f.button().props.disabled).toBe(!value);
   });
   it('keeps the send control present and a tap queues the message while an agent works', async () => {
@@ -374,12 +374,12 @@ describe('one composer', () => {
     const f = render('next instruction');
     expect(f.renderer.root.findAllByProps({ testID: 'chat-send' }).filter((n: any) => typeof n.type === 'string')).toHaveLength(1);
     expect(f.button().props.accessibilityLabel).toBe('Send message');
-    expect(f.button().findByType('Text').props.children).toBe('↑');
+    expect(f.button().findAllByProps({ testID: 'chat-send-glyph' })).not.toHaveLength(0);
     await act(async () => f.button().props.onPress());
     expect(f.onSend).toHaveBeenCalledOnce();
   });
-  it('invokes onSend with no arguments, even when Pressable hands over its press event', async () => {
-    // RN's Pressable calls onPress with the PressEvent. #1340 wired
+  it('invokes onSend with no arguments, even when the press handler hands over its press event', async () => {
+    // RN's touchables call onPress with the PressEvent. #1340 wired
     // `onPress={onSend}` directly, so the Room's handleSend(shortcut?) read
     // that truthy event as a MessageShortcut: the typed text still sent
     // (`shortcut?.text ?? inputTextRef.current`) but the `!shortcut` guard

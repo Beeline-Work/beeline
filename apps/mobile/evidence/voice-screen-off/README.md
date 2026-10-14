@@ -1,20 +1,31 @@
 # Conversation mode with the screen locked
 
-Verification remains incomplete. No locked-screen or 60-minute soak success is claimed.
+Verification remains incomplete. Ten-minute locked audio survival was measured;
+the twenty-second idle policy fails while locked. No sixty-minute soak success
+is claimed. Raw observations: [Candy's lifecycle report](candy-locked-lifecycle.md).
 
 ## Reproduction voice-screen-off-1
 
-Original locked-screen failure: **not obtained**. The isolated Android 36 AVD
-was booted through `beeline emulator` on squire. The new debug APK compiled and
-installed. An earlier production-hook session opened STT and ended after its
-idle deadline; this did not establish audible chime or foreground-service cleanup.
+The original screen-lock session death was **not obtained** on this implementation.
+The idle acceptance failure was reproduced: after microphone input became silent
+at 05:13:30Z, frames continued and no park occurred for 89 seconds while locked.
+Unlocking at 05:14:59Z immediately ran the overdue JavaScript deadline and ended
+the session. A second run parked at 05:28:01.762Z but left at 05:28:01.802Z,
+before the worker report committed at 05:28:03.571Z. Server requests show idle
+followed by leave without an intervening state read; the precise exception is
+not yet captured. Do not treat that as proof that idleState itself ended it.
 
-Microphone injection through emulator gRPC `injectAudio` crashed two isolated
-emulators: the default PulseAudio backend and an ALSA null backend. The latter
-returned `UNAVAILABLE: Stream removed (recvmsg:Connection reset by peer (104))`.
-Host PocketSphinx calibration recognized the synthetic phrase, but no successful
-phone microphone recognition or locked-screen playback was measured. Candy is
-running app-level proofs using its verified QEMU WAV microphone backend in a separate diagnostic corner. Guest microphone capture with the screen off was measured there; production Conversation acceptance remains unverified here.
+Candy measured screen-off survival from 2026-10-14T05:15:57Z through 05:26:34Z:
+21/21 observations had the microphone foreground service, active recording and
+playback, and one server participant. STT recognized 32 inputs during the run;
+TTS samples increased and an AudioFlinger playback track was active. App PSS
+ranged from 355888 to 361888 KB. This demonstrates the ten-minute lifecycle path,
+not the full idle policy or an hour-long session.
+
+The working input is QEMU's WAV backend, using qemu_in.wav at emulator startup.
+PulseAudio/ALSA host paths and gRPC injection failed on this host. The remaining
+fix moves the one-shot silence deadline into native scheduling; Candy is preparing
+that native patch while Jellybean owns client integration and the park exception.
 
 ## Automated validation
 

@@ -341,6 +341,19 @@ function nodeText(node: { findAllByType(type: unknown): any[] }): string {
 }
 
 describe('DesktopRoomInspector work pane', () => {
+  it('opens a standalone lifecycle corner through the inspector navigation callback', async () => {
+    const detail = { ...room(), room: corners[0].corner, parent: room().room,
+      messages: [{ id: 'closed-fact', text: 'Corner closed', createdAt: 5, author: agent,
+        presentation: 'system', daemonFact: { type: 'corner-complete', outcome: 'abandoned',
+          cornerId: 'closed-target', name: 'Closed target', objective: 'Keep archived navigation' } }] } as any;
+    const onOpenCorner = vi.fn();
+    const tree = await render(props({ onOpenCorner, client: { room: vi.fn(async () => detail) } }));
+    const card = tree.root.findByType('DaemonFactCard' as any);
+    act(() => card.props.onOpenCorner('closed-target'));
+    expect(onOpenCorner).toHaveBeenCalledWith('closed-target');
+    act(() => tree.unmount());
+  });
+
   it('follows a corner rename from the Room\'s corner record without another read', async () => {
     const options = props({ client: { room: vi.fn(async () => { throw new Error('offline'); }) } });
     const tree = await render(options);

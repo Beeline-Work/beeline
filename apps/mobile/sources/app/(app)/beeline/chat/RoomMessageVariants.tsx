@@ -1,7 +1,9 @@
 import { HullDialogActions } from '@/components/buzz/HullDialog';
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Image, Platform, Pressable, Text, View } from 'react-native';
-export { NotificationLifecycleCard } from '@/components/buzz/PrLifecycleCard';
+export { GitHubEventCard, DaemonFactCard } from '@/components/buzz/LifecycleCard';
+import { NotificationLifecycleCard } from '@/components/buzz/PrLifecycleCard';
+export { NotificationLifecycleCard };
 import { Swipeable } from 'react-native-gesture-handler';
 import { DesktopMessageAction } from '@/components/buzz/DesktopMessageAction';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -12,8 +14,6 @@ import {
 } from '@beeline/buzz-client';
 import {
   CHOICE_NOTE_MAX_LENGTH,
-  cornerDisplayName,
-  cornerShortTitle,
   formatChoiceClock,
 } from '@beeline/api-contract/phone';
 
@@ -89,7 +89,6 @@ import {
   TranscriptCardHandle,
   type TranscriptCardAction,
   type TranscriptCardChoice,
-  type TranscriptCardRow,
 } from '@/components/buzz/TranscriptCard';
 import { forwardedMessageParts } from '@/buzz/message-forward';
 import { agentMessageJsonMarkdown } from '@/buzz/agent-message-json';
@@ -910,187 +909,6 @@ export const TargetBranchProposalCard = React.memo(function TargetBranchProposal
   );
 });
 
-export interface GitHubEventCardProps {
-  message: ChatDisplayMessage;
-  onOpenUrl(url: string): void;
-}
-
-type RepositoryFactCardProps = {
-  title: React.ReactNode;
-  subline?: React.ReactNode;
-  stamp?: string;
-  body?: React.ReactNode;
-  rows?: readonly TranscriptCardRow[];
-  actions?: readonly TranscriptCardAction[];
-  onHeaderPress?(): void;
-  headerExpanded?: boolean;
-  testID: string;
-};
-
-/** Shared visual shell for verified GitHub events and daemon lifecycle facts. */
-const RepositoryFactCard = React.memo(function RepositoryFactCard({
-  title,
-  subline,
-  stamp,
-  body,
-  rows,
-  actions,
-  onHeaderPress,
-  headerExpanded,
-  testID,
-}: RepositoryFactCardProps) {
-  return (
-    <TranscriptCard
-      tier="record"
-      wrapTitle
-      title={title}
-      subline={subline}
-      stamp={stamp}
-      body={body}
-      rows={rows}
-      actions={actions}
-      onHeaderPress={onHeaderPress}
-      headerExpanded={headerExpanded}
-      headerTestID={onHeaderPress ? `${testID}-disclosure` : undefined}
-      testID={testID}
-    />
-  );
-});
-
-export const GitHubEventCard = React.memo(function GitHubEventCard({
-  message,
-  onOpenUrl,
-}: GitHubEventCardProps) {
-  const event = message.githubEvent!;
-  // Only the kinds this build knows how to draw. A card from a newer server
-  // renders nothing rather than taking the Room down with it.
-  const SUBJECTS: Record<string, string> = { 'pull-request': 'PR', issue: 'Issue' };
-  const subject = SUBJECTS[event.type];
-  const state = event.action === 'merged' ? 'merged' : event.action;
-  const tone: 'waiting' | 'settled' | 'failed' =
-    state === 'opened' ? 'waiting' : state === 'failed' ? 'failed' : 'settled';
-  if (!subject) return null;
-  return (
-    <RepositoryFactCard
-      title={`${subject} 1 ${state}`}
-      subline={event.actor ? cardMeta(`by @${event.actor.replace(/^@/, '')}`) : undefined}
-      stamp={ledgerStamp(message.timestamp)}
-      rows={[
-        {
-          id: message.id,
-          state,
-          title: event.title,
-          kindLine: subject,
-          tone,
-          onPress: () => onOpenUrl(event.url),
-        },
-      ]}
-      actions={[
-        {
-          label: 'View ↗',
-          primary: true,
-          accessibilityRole: 'link',
-          onPress: () => onOpenUrl(event.url),
-          testID: `github-event-card-${event.type}-${event.action}-primary-action`,
-        },
-      ]}
-      testID={`github-event-card-${event.type}-${event.action}`}
-    />
-  );
-});
-
-export interface DaemonFactCardProps {
-  message: ChatDisplayMessage;
-  onOpenCorner(cornerId: string): void;
-  onOpenUrl(url: string): void;
-}
-
-export const DaemonFactCard = React.memo(function DaemonFactCard({
-  message,
-  onOpenCorner,
-  onOpenUrl,
-}: DaemonFactCardProps) {
-  const fact = message.daemonFact!;
-  const agent =
-    message.authorIdentity?.kind === 'agent'
-      ? (message.authorIdentity.handle ?? message.authorIdentity.name).replace(/^@/, '')
-      : undefined;
-  const landedCorner = fact.type === 'corner-complete' && fact.outcome === 'landed';
-  // The NAME titles the card; the objective is its body. A card written
-  // before the name existed falls back to the same three-word derivation
-  // every other corner surface uses (C89).
-  const title = cornerShortTitle(undefined, fact.name ?? cornerDisplayName(fact.objective), fact.cornerId);
-  const prNumber = fact.pullRequest?.number;
-  const closedCorner = fact.type === 'corner-complete' || fact.type === 'worktree-cleaned';
-  const state = landedCorner
-    ? 'merged'
-    : fact.type === 'checks-failing'
-      ? 'failed'
-      : fact.type === 'corner-complete'
-        ? 'closed'
-        : fact.type === 'worktree-cleaned'
-          ? 'closed'
-          : undefined;
-  const actions: TranscriptCardAction[] =
-    fact.type === 'corner-complete' && fact.pullRequest
-      ? [
-          {
-            label: 'Corner →',
-            primary: true,
-            accessibilityRole: 'link',
-            onPress: () => onOpenCorner(fact.cornerId),
-            testID: 'corner-summary-card-primary-action',
-          },
-          {
-            label: 'View ↗',
-            accessibilityRole: 'link',
-            onPress: () => onOpenUrl(fact.pullRequest!.url),
-            testID: 'corner-summary-card-secondary-action',
-          },
-        ]
-      : [
-          {
-            label: closedCorner ? 'Corner →' : 'Open →',
-            primary: true,
-            accessibilityRole: 'link',
-            onPress: () => onOpenCorner(fact.cornerId),
-            testID: `daemon-fact-card-${fact.type}-primary-action`,
-          },
-        ];
-  return (
-    <RepositoryFactCard
-      title={landedCorner ? 'PR 1 merged' : title}
-      subline={
-        landedCorner
-          ? cardMeta(`corner · by ${agent ? `@${agent}` : 'agent'}`)
-          : fact.type === 'corner-open'
-            ? cardMeta(`corner · opened by ${agent ? `@${agent}` : 'agent'}`)
-            : undefined
-      }
-      stamp={ledgerStamp(message.timestamp)}
-      body={fact.type === 'corner-open' ? fact.objective : undefined}
-      rows={
-        state
-          ? [
-              {
-                id: message.id,
-                state,
-                title,
-                kindLine: landedCorner
-                  ? `corner${prNumber ? ` · PR #${prNumber}` : ''}`
-                  : prNumber
-                    ? `PR #${prNumber}`
-                    : 'corner',
-                tone: state === 'failed' ? 'failed' : 'settled',
-              },
-            ]
-          : undefined
-      }
-      actions={actions}
-      testID={landedCorner ? 'corner-summary-card' : `daemon-fact-card-${fact.type}`}
-    />
-  );
-});
 
 /**
  * Attachment bytes are kept for 24 hours (`apps/server/src/media-ttl.ts`); the

@@ -491,7 +491,7 @@ function CornerCockpit({
         ) : kind === 'github' ? (
           <GitHubEventCard message={item} onOpenUrl={openUrl} />
         ) : kind === 'daemon' ? (
-          <DaemonFactCard message={item} onOpenCorner={() => undefined} onOpenUrl={openUrl} />
+          <DaemonFactCard message={item} onOpenCorner={onOpenCorner} onOpenUrl={openUrl} />
         ) : kind === 'system' ? (
           <LedgerSystemLine
             id={item.id}

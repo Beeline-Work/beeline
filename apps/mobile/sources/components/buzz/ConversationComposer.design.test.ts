@@ -59,7 +59,7 @@ describe('Option A composer chrome', () => {
   it('uses muted chrome until text is present and keeps the send control always renderable', () => {
     expect(composer).toContain('sendDisabled && styles.sendButtonTextDisabled');
     expect(composer).toContain('sendButtonTextDisabled: { color: theme.buzz.textMuted }');
-    expect(composer).toContain('const showSend = !showMic;');
+    expect(composer).toContain('const showSend = voice');
     expect(composer).not.toContain('sendButtonArmed');
     expect(composer).toContain(
       'attachButtonText: {\n    ...theme.buzz.type.body,\n    color: theme.buzz.textMuted',

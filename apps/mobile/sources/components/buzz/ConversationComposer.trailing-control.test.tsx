@@ -368,3 +368,41 @@ describe('composer trailing control is mic XOR send', () => {
     expect(sendStyle.marginLeft).toBe(8);
   });
 });
+
+
+describe('separate Conversation entry', () => {
+  const voice = () => ({ join: vi.fn(), end: vi.fn(), call: null, connecting: false, error: null });
+  it.each(['android', 'web'])('keeps mic beside waveform and swaps only waveform on %s', os => {
+    platformSetter.setOS(os);
+    const state = voice();
+    const root = render({ voice: state });
+    expect(hosts(root, 'chat-mic')).toHaveLength(1);
+    expect(hosts(root, 'chat-conversation')).toHaveLength(1);
+    expect(hosts(root, 'chat-send')).toHaveLength(0);
+    act(() => hosts(root, 'chat-conversation')[0].props.onPress());
+    expect(state.join).toHaveBeenCalledOnce();
+    expect(mockMod.start).not.toHaveBeenCalled();
+    const renderer = renderers.at(-1);
+    act(() => renderer.update(<ConversationComposer {...root.findByType(ConversationComposer).props} value="hello" />));
+    expect(hosts(root, 'chat-mic')).toHaveLength(1);
+    expect(hosts(root, 'chat-conversation')).toHaveLength(0);
+    expect(hosts(root, 'chat-send')).toHaveLength(1);
+    act(() => keyboard.listeners.get('keyboardDidHide')?.());
+    expect(hosts(root, 'chat-send')).toHaveLength(1);
+  });
+  it('keeps Conversation available without a dictation recognizer', () => {
+    speechModuleState.present = false;
+    const root = render({ voice: voice() });
+    expect(hosts(root, 'chat-conversation')).toHaveLength(1);
+    expect(hosts(root, 'chat-mic')).toHaveLength(0);
+  });
+  it('disables entry with the composer', () => {
+    expect(hosts(render({ voice: voice(), disabled: true }), 'chat-conversation')[0].props.disabled).toBe(true);
+  });
+  it('keeps attachment Send available without dictation', () => {
+    speechModuleState.present = false;
+    const root = render({ voice: voice(), canSend: true });
+    expect(hosts(root, 'chat-send')).toHaveLength(1);
+    expect(hosts(root, 'chat-conversation')).toHaveLength(0);
+  });
+});

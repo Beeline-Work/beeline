@@ -758,14 +758,12 @@ describe('review dispatch and the fix loop cap (row 9)', () => {
     expect(await reasons(cornerId, A)).not.toContain('corner_review');
   });
 
-  it('a reviewer privately orders repairs from the Room on a green head and it stays in review', async () => {
+  it('a reviewer privately orders repairs from its corner on a green head and it stays in review', async () => {
     const cornerId = await toReview();
     const [review] = await commands(B, cornerId);
     await claim(review!, 'review-generation');
-    await expect(daemon.execute('order', { roomId: cornerId, requestId: review!.turnRequestId,
-      generationId: 'review-generation', address: cornerId, text: 'Fix the race condition' }, B))
-      .rejects.toThrow('Corners can only order corners they opened.');
-    await orderRepairsFromRoom(review!, cornerId, 'Fix the race condition');
+    await daemon.execute('order', { roomId: cornerId, requestId: review!.turnRequestId,
+      generationId: 'review-generation', address: cornerId, text: 'Fix the race condition' }, B);
     expect((await commands(A, cornerId)).some(c => c.reason === 'order')).toBe(true);
     expect(await currentState(cornerId)).toBe('review');
     await daemon.execute('approveCornerMerge', { cornerId, headSha: '7'.repeat(40) }, B);

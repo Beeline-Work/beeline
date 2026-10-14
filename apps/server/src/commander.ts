@@ -7,6 +7,7 @@ import {
   type PrivateCommandPayload,
 } from './agent-command.js';
 import { cornerImplementerSql } from './corner-worker.js';
+import { isCornerReviewer } from './agent-health.js';
 
 export class CommandRefusalError extends Error {
   constructor(
@@ -61,14 +62,24 @@ export async function commandAddress(
   return row;
 }
 
-/** Corner writes target only explicitly recorded opened descendants. */
+/** Corner writes target descendants; worker orders also allow the target reviewer or commander. */
 export async function assertCornerCommandTarget(
-  db: SqlDatabase, sourceRoomId: string, targetRoomId: string,
+  db: SqlDatabase, sourceRoomId: string, targetRoomId: string, orderingAgentId?: string,
 ) {
   const source = (await db.query<{ parent_id: string | null }>(
     `SELECT parent_id FROM rooms WHERE id=$1`, [sourceRoomId],
   )).rows[0];
   if (!source?.parent_id) return;
+  if (orderingAgentId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(targetRoomId)) {
+    if (await isCornerReviewer(db, targetRoomId, orderingAgentId)) return;
+    const target = (await db.query<{ parent_id: string | null }>(
+      `SELECT parent_id FROM rooms WHERE id=$1`, [targetRoomId],
+    )).rows[0];
+    if (target?.parent_id) {
+      const { recipient } = await commanderReportAddress(db, targetRoomId);
+      if (recipient === orderingAgentId) return;
+    }
+  }
   const allowed = await db.query(
     `WITH RECURSIVE descendants AS (
        SELECT corner_id FROM corner_facts WHERE opened_from_corner_id=$1
@@ -99,7 +110,7 @@ export async function sendOrder(
     throw new CommandRefusalError('order text must be 1 to 16000 characters', 400);
   const named = agent?.trim().replace(/^@/, '');
   if (agent !== undefined && !named) throw new CommandRefusalError('order agent must name one agent', 400);
-  await assertCornerCommandTarget(db, command.room_id, address);
+  await assertCornerCommandTarget(db, command.room_id, address, agentId);
   const target = await commandAddress(db, address, agentId);
   let worker: string | undefined;
   if (target.parent_id) {

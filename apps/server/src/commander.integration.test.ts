@@ -499,8 +499,8 @@ it('corner orders stay in their explicitly opened subtree', async () => {
   }, RUBY);
   await daemon.execute('order', { ...authority(turn), address: grandchild.cornerId, text: 'Coordinate this widget' }, WORKER);
   await daemon.execute('order', { ...authority(childTurn), address: grandchild.cornerId, text: 'Work in the grandchild' }, RUBY);
-  await expect(daemon.execute('order', { ...authority(childTurn), address: opened.cornerId, text: 'Order parent' }, RUBY))
-    .rejects.toThrow('Corners can only order corners they opened.');
+  // Ruby is this target's recorded commander, even from a child corner.
+  await daemon.execute('order', { ...authority(childTurn), address: opened.cornerId, text: 'Order parent' }, RUBY);
   const grandchildBrief = (await daemon.execute('getCornerRestoreState', { cornerId: grandchild.cornerId }, WORKER)).brief!;
   await daemon.execute('reviseCornerBrief', { ...authority(turn), cornerId: grandchild.cornerId, expectedRevision: 1,
     brief: { spec: 'Clarified grandchild widget', change: 'Clarify', repositoryWork: false,
@@ -561,4 +561,26 @@ it('migration leaves legacy opening provenance empty and preserves new provenanc
     .toEqual({ opened_from_corner_id: null });
   expect((await db.query(`SELECT opened_from_corner_id FROM corner_facts WHERE corner_id=$1`, [child.cornerId])).rows[0])
     .toEqual({ opened_from_corner_id: opened.cornerId });
+});
+
+it.each(['primary reviewer', 'fallback reviewer', 'commander'])('Reproduction reviewer-handback-2471: %s orders its corner worker', async (role) => {
+  const opened = await open();
+  if (role !== 'commander') {
+    await db.query(`UPDATE rooms SET created_by=$2 WHERE id=$1`, [opened.cornerId, WORKER]);
+    await db.query(`UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{authorId}',to_jsonb($2::text)) WHERE room_id=$1`, [opened.cornerId, WORKER]);
+    await db.query(`UPDATE rooms SET reviewer_agent_id=$2,reviewer_fallback_ids=$3 WHERE id=$1`,
+      [ROOM, role === 'primary reviewer' ? RUBY : WORKER, role === 'fallback reviewer' ? [RUBY] : []]);
+  }
+  const queued = await createAgentCommand(db, { roomId: opened.cornerId, agentId: RUBY,
+    sourceMessageId: null, reason: 'corner_review_dispatch',
+    privatePayload: { text: 'Review the widget', authorId: HUMAN, fromRoomId: ROOM, kind: 'order' } });
+  const turn = (await commands(opened.cornerId, RUBY)).find(c => c.id === queued!.id)!;
+  await claim(turn);
+  await daemon.execute('order', { ...authority(turn), address: opened.cornerId, text: 'FAIL: repair the widget' }, RUBY);
+  expect((await commands(opened.cornerId, WORKER)).find(c => c.reason === 'order'))
+    .toMatchObject({ private: true, source: { authorId: RUBY, body: 'FAIL: repair the widget' } });
+  // Review/command authority does not allow revising or closing this corner.
+  await expect(daemon.execute('archiveCorner', { ...authority(turn), cornerId: opened.cornerId }, RUBY))
+    .rejects.toThrow('Corners can only order corners they opened.');
+  console.log(`[reviewer-handback-2471] ${role} → own corner worker: repair order delivered privately`);
 });

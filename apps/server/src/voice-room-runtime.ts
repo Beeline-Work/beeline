@@ -1,4 +1,5 @@
 import { stripVoiceEmotion } from './voice-emotion.js';
+import { markdownToSpeech, MarkdownSpeechStream } from './markdown-to-speech.js';
 import { AccessToken } from 'livekit-server-sdk';
 import { Room, RoomEvent, AudioStream, AudioSource, AudioFrame, LocalAudioTrack,
   TrackPublishOptions, TrackSource, TrackKind, type RemoteParticipant, type RemoteTrack } from '@livekit/rtc-node';
@@ -172,7 +173,8 @@ export class VoiceRoomRuntime {
       history = rows.rows.reverse().map(row => ({ role: row.author_id === agent.id ? 'assistant' : 'user', content: row.text }));
     }
     history.push({ role: 'user', content: text });
-    let pending = ''; let receivedText = ''; let persisted = false; let firstAudio = false; let speechQueue = Promise.resolve();
+    const speechText = new MarkdownSpeechStream();
+    let receivedText = ''; let persisted = false; let firstAudio = false; let speechQueue = Promise.resolve();
     const flush = (phrase: string) => {
       if (!phrase.trim()) return;
       speechQueue = speechQueue.then(async () => {
@@ -187,19 +189,16 @@ export class VoiceRoomRuntime {
     try {
       const reply = await this.service.config.brain.answer(agent, history, delta => {
         receivedText += delta;
-        pending += delta;
-        // Start synthesis on the first clause rather than waiting for the whole reply.
-        const match = /[.!?,;:]\s/.exec(pending);
-        if (match) { flush(pending.slice(0, match.index + 1)); pending = pending.slice(match.index + 2); }
+        for (const phrase of speechText.push(delta)) flush(phrase);
       }, controller.signal);
       if (reply.order) await this.service.dispatch(this.callId, sourceId, agent.id);
       const answer = reply.text || (reply.order ? "I’ll work on that and tell you when I’m done." : '');
-      if (!reply.text) pending = answer;
+      if (!reply.text) speechText.push(answer).forEach(flush);
       await this.service.recordAnswer(this.roomId, agent.id, answer);
       persisted = true;
       history.push({ role: 'assistant', content: answer });
       this.history.set(key, history.slice(-16));
-      flush(pending); await speechQueue;
+      flush(speechText.finish()); await speechQueue;
     } finally {
       // A barge-in may interrupt generation after a clause was already heard.
       if (!persisted && receivedText.trim()) await this.service.recordAnswer(this.roomId, agent.id, receivedText.trim());
@@ -248,6 +247,8 @@ export class VoiceRoomRuntime {
   }
 
   private async play(text: string, agent: VoiceAgent, signal: AbortSignal, onFirstAudio?: () => void) {
+    text = markdownToSpeech(text);
+    if (!text) return;
     let pending = Buffer.alloc(0); let first = true;
     // 20ms mono frames. Carry odd byte boundaries between provider chunks.
     const frameBytes = VOICE_SAMPLE_RATE / 50 * 2;

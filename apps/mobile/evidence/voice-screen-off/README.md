@@ -14,7 +14,7 @@ emulators: the default PulseAudio backend and an ALSA null backend. The latter
 returned `UNAVAILABLE: Stream removed (recvmsg:Connection reset by peer (104))`.
 Host PocketSphinx calibration recognized the synthetic phrase, but no successful
 phone microphone recognition or locked-screen playback was measured. Candy is
-investigating a supported input route in a separate diagnostic corner.
+running app-level proofs using its verified QEMU WAV microphone backend in a separate diagnostic corner. Guest microphone capture with the screen off was measured there; production Conversation acceptance remains unverified here.
 
 ## Automated validation
 
@@ -24,14 +24,14 @@ investigating a supported input route in a separate diagnostic corner.
   requests, reply delivery and socket-reconnect reconciliation, and mic reopening
   after playback. Cold iOS notification routing waits for root/landing readiness,
   retains the same-Room intent across navigation and deduplicates warm link replay. Fake-clock elapsed time is not a measured soak.
-- Server runtime/service: 32 tests passed. Covers spoken Stop, bounded input,
+- Server runtime/service: 37 tests passed after integrating main. Covers spoken Stop, bounded input,
   parked lease recovery, idle end, and stale session generations.
 - Android module compiled; its two native generation-gate tests passed.
 - Debug Android APK built successfully. Device acceptance remains outstanding.
 - iOS cloud attempt `33ae1bb2-1f5f-41b4-8e69-e526a4083c2c` failed before dependency
   installation because the source archive lacked the expected enclosing directory.
   Replacement `ecbf18ac-13de-4ded-ba85-826f12d4608d` uses an enclosing project root;
-  it reached native compilation; its completion result is pending. No iOS device testing is required or claimed.
+  it finished successfully, including native compilation. No iOS device testing is required or claimed.
 
 The isolated fixture uses the production hook, native module, RTC transport,
 server routes and socket, with local offline speech providers and a disposable

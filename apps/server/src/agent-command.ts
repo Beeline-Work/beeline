@@ -1,6 +1,6 @@
 import { COMMANDER_WAKE_WINDOW_SECONDS, flushCommanderWakes, lockCommanderWakes } from './commander-wakes.js';
 import { agentMachineOfflineSql } from './machine-offline.js';
-import { reportToCommander } from './commander.js';
+import { commandOrder, reportToCommander } from './commander.js';
 import { subscriptionPromptBody } from './agent-subscriptions.js';
 import {
   AGENT_SIGN_IN_SERVICE_LABELS,
@@ -652,6 +652,7 @@ async function routeTaggedLifecycleCommand(
       await deny('only the requester, its owner, or a Room manager may stop that turn');
       return true;
     }
+    await lockAgentCommandQueue(db, source.room_id, target.agent_id);
     const parent = (
       await db.query<CommandRow>(`SELECT * FROM agent_commands WHERE id=$1 FOR UPDATE`, [
         active.command_id,
@@ -667,18 +668,20 @@ async function routeTaggedLifecycleCommand(
       parent,
       retainDepth: true,
     });
-    await db.query(
+    const settled = await db.query(
       `UPDATE agent_turns SET status='cancelled',created_at=now()
        WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND status='working'`,
       [source.room_id, target.agent_id, active.request_id],
     );
+    if (!settled.rowCount) throw new Error('running turn not found');
+    const dropped = await dropQueuedOrdersForStop(db, parent);
     await db.query(
       `UPDATE agent_commands SET state='cancelled',completed_at=now()
        WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3
          AND action IN ('input','resume') AND state IN ('pending','claimed')`,
       [source.room_id, target.agent_id, active.request_id],
     );
-    await line('stopped its running turn');
+    await line('stopped its running turn', dropped ? `${dropped} queued ${dropped === 1 ? 'order' : 'orders'} dropped` : undefined);
     return true;
   }
   if (action === 'retry') {
@@ -1019,7 +1022,47 @@ export async function renudgeStrandedPendingCommands(db: SqlDatabase): Promise<n
   return Number(result.rows[0]?.count ?? 0);
 }
 
+/** Claims and human Stops serialize before taking command or turn row locks. */
+export async function lockAgentCommandQueue(db: SqlDatabase, roomId: string, agentId: string): Promise<void> {
+  await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`agent-command-queue:${roomId}:${agentId}`]);
+}
+
+/** The Stop transaction's timestamp fences orders accepted after the Stop. */
+export async function dropQueuedOrdersForStop(db: SqlDatabase, stopped: CommandRow): Promise<number> {
+  const order = await commandOrder(db, stopped);
+  if (order.private_payload?.kind !== 'order' || order.agent_id !== stopped.agent_id) return 0;
+  const dropped = await db.query<CommandRow>(
+    `UPDATE agent_commands SET state='cancelled',completed_at=now(),cancellation_reason='stop'
+     WHERE room_id=$1 AND agent_id=$2 AND state='pending' AND action='input'
+       AND private_payload->>'kind'='order'
+       AND private_payload->>'authorId'=$3 AND private_payload->>'fromRoomId'=$4
+       AND created_at<=now() AND turn_request_id<>$5
+     RETURNING *`,
+    [stopped.room_id, stopped.agent_id, order.private_payload.authorId,
+      order.private_payload.fromRoomId, stopped.turn_request_id],
+  );
+  if (dropped.rowCount) {
+    await reportToCommander(db, stopped.room_id, stopped.agent_id,
+      `failed: ${dropped.rowCount} queued ${dropped.rowCount === 1 ? 'order was' : 'orders were'} dropped by a Stop; the running turn was cancelled`,
+      dropped.rows[0], createHash('sha256').update(`stop-orders:${stopped.id}`).digest('hex'), { automatic: true });
+  }
+  return dropped.rowCount;
+}
+
 export async function claimAgentCommand(
+  db: SqlDatabase,
+  roomId: string,
+  agentId: string,
+  commandId: string,
+  generation: string,
+): Promise<CommandRow> {
+  return db.transaction(async transaction => {
+    await lockAgentCommandQueue(transaction, roomId, agentId);
+    return claimLockedAgentCommand(transaction, roomId, agentId, commandId, generation);
+  });
+}
+
+async function claimLockedAgentCommand(
   db: SqlDatabase,
   roomId: string,
   agentId: string,

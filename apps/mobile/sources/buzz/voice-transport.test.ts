@@ -20,7 +20,7 @@ vi.mock('react-native', () => ({ Linking: {
 } }));
 vi.mock('expo-modules-core', () => ({ requireNativeModule: () => native.background }));
 vi.mock('livekit-client', () => ({ Room: class { constructor(options: unknown) { native.roomOptions = options; if (native.roomFailure) throw native.roomFailure; } } }));
-import { createVoiceRoom, subscribeVoiceResume } from './voice-transport.native';
+import { createVoiceRoom, subscribeVoiceResume, routeVoiceResumeNotification } from './voice-transport.native';
 
 it('starts native audio only when voice mode opens and exposes cleanup for leave/unmount', async () => {
   expect(native.AudioSession.startAudioSession).not.toHaveBeenCalled();
@@ -45,18 +45,25 @@ it('releases native audio if creating the Room fails before the join request', a
 });
 
 
-it('routes an iOS resume notification and directly rejoins its matching Room once', async () => {
+it('retains a cold iOS restart across navigation and consumes it once in the matching Room', async () => {
+  native.openURL.mockClear();
+  const url = 'beeline:///beeline/chat/room-a?voiceResume=cold-notification-1';
+  let release!: () => void;
+  const ready = new Promise<void>(resolve => { release = resolve; });
+  const routing = routeVoiceResumeNotification(url, () => ready);
+  expect(native.openURL).not.toHaveBeenCalled();
+  release();
+  expect(await routing).toBe(true);
+  expect(native.openURL).toHaveBeenCalledWith(url);
   const resume = vi.fn();
   const stop = subscribeVoiceResume('room-a', resume);
-  await vi.waitFor(() => expect(native.response).toBeTypeOf('function'));
-  const url = 'beeline:///beeline/chat/room-a?voiceResume=notification-1';
-  native.response!({ notification: { request: { content: { data: { resumeUrl: url } } } } });
-  expect(resume).toHaveBeenCalledOnce();
-  expect(native.openURL).toHaveBeenCalledWith(url);
+  await vi.waitFor(() => expect(resume).toHaveBeenCalledOnce());
   native.link!({ url });
   expect(resume).toHaveBeenCalledOnce();
-  native.link!({ url: 'https://example.com/beeline/chat/room-a?voiceResume=bad' });
-  expect(resume).toHaveBeenCalledOnce();
+  await routeVoiceResumeNotification(url);
+  expect(native.openURL).toHaveBeenCalledOnce();
+  expect(await routeVoiceResumeNotification('https://example.com/beeline/chat/room-a?voiceResume=bad')).toBe(false);
+  expect(await routeVoiceResumeNotification('beeline://foreign/beeline/chat/room-a?voiceResume=bad')).toBe(false);
   stop();
 });
 

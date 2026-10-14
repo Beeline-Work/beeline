@@ -48,12 +48,35 @@ export async function createVoiceRoom(onStop: () => void = () => {}, roomId?: st
 
 let pendingResumeUrl: string | null = null;
 let consumedResumeUrl: string | null = null;
+let routedResumeUrl: string | null = null;
+
+/** The root retains the restart intent before clearing Expo's cold response. */
+export async function routeVoiceResumeNotification(url: unknown, ready: () => Promise<void> = async () => {}): Promise<boolean> {
+  if (typeof url !== 'string') return false;
+  let parsed: URL;
+  try { parsed = new URL(url); } catch { return false; }
+  if (parsed.protocol !== 'beeline:' || parsed.host || !/^\/beeline\/chat\/[^/]+$/.test(parsed.pathname) || !parsed.searchParams.get('voiceResume')) return false;
+  if (url === consumedResumeUrl || url === routedResumeUrl) return true;
+  await ready();
+  if (url === consumedResumeUrl || url === routedResumeUrl) return true;
+  pendingResumeUrl = url;
+  routedResumeUrl = url;
+  try {
+    const { Linking } = await import('react-native');
+    await Linking.openURL(url);
+  } catch (error) {
+    if (routedResumeUrl === url) routedResumeUrl = null;
+    throw error;
+  }
+  return true;
+}
+
 
 /** Retain one notification intent across the Room navigation it initiates. */
 export function subscribeVoiceResume(roomId: string, resume: () => void): () => void {
   let disposed = false;
   let remove = () => {};
-  void Promise.all([import('react-native'), import('expo-notifications')]).then(([{ Linking }, notifications]) => {
+  void import('react-native').then(({ Linking }) => {
     if (disposed) return;
     const accept = (url: string | null) => {
       if (disposed || !url || url === consumedResumeUrl) return;
@@ -66,21 +89,9 @@ export function subscribeVoiceResume(roomId: string, resume: () => void): () => 
       resume();
     };
     const link = Linking.addEventListener('url', ({ url }) => accept(url));
-    const response = notifications.addNotificationResponseReceivedListener(event => {
-      const url = event.notification.request.content.data?.resumeUrl;
-      if (typeof url !== 'string' || !url.startsWith('beeline:///beeline/chat/')) return;
-      pendingResumeUrl = url;
-      accept(url);
-      void Linking.openURL(url);
-    });
-    remove = () => { link.remove(); response.remove(); };
+    remove = () => { link.remove(); };
     accept(pendingResumeUrl);
     void Linking.getInitialURL().then(url => { if (!disposed) accept(url); });
-    void notifications.getLastNotificationResponseAsync().then(event => {
-      if (disposed) return;
-      const url = event?.notification.request.content.data?.resumeUrl;
-      if (typeof url === 'string') { accept(url); if (url.startsWith('beeline:///beeline/chat/')) void Linking.openURL(url); }
-    });
   }).catch(error => { if (!disposed) console.warn('Conversation notification unavailable', error); });
   return () => { disposed = true; remove(); };
 }

@@ -22,7 +22,8 @@ investigating a supported input route in a separate diagnostic corner.
 - Client transport/hook: 17 tests passed. Covers trusted Stop, pending join
   cancellation, token renewal, one-shot idle end, parked silence without repeated
   requests, reply delivery and socket-reconnect reconciliation, and mic reopening
-  after playback. Fake-clock elapsed time is not a measured soak.
+  after playback. Cold iOS notification routing waits for root/landing readiness,
+  retains the same-Room intent across navigation and deduplicates warm link replay. Fake-clock elapsed time is not a measured soak.
 - Server runtime/service: 32 tests passed. Covers spoken Stop, bounded input,
   parked lease recovery, idle end, and stale session generations.
 - Android module compiled; its two native generation-gate tests passed.
@@ -30,7 +31,7 @@ investigating a supported input route in a separate diagnostic corner.
 - iOS cloud attempt `33ae1bb2-1f5f-41b4-8e69-e526a4083c2c` failed before dependency
   installation because the source archive lacked the expected enclosing directory.
   Replacement `ecbf18ac-13de-4ded-ba85-826f12d4608d` uses an enclosing project root;
-  its compilation result is pending. No iOS device testing is required or claimed.
+  it reached native compilation; its completion result is pending. No iOS device testing is required or claimed.
 
 The isolated fixture uses the production hook, native module, RTC transport,
 server routes and socket, with local offline speech providers and a disposable

@@ -11,3 +11,7 @@ export async function createVoiceRoom(_onStop: () => void = () => {}, roomId?: s
 export function subscribeVoiceResume(_roomId: string, _resume: () => void): () => void {
   return () => {};
 }
+
+export async function routeVoiceResumeNotification(_url: unknown, _ready?: () => Promise<void>): Promise<boolean> {
+  return false;
+}

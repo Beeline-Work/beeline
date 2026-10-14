@@ -882,8 +882,9 @@ const AGENT_TOOLS: ToolDefinition[] = [
   },
   {
     name: 'report',
-    description: 'Report one step up to the commander who ordered this work. Report only to the member who gave you the task. If that member is a human, tag them when, in your judgement, they need to decide or should know. No address argument: the corner and order know the return address. Begin done:, blocked:, needs-decision: or failed:. Agent commanders receive this privately. A human commander sees it where they gave the order. If you cannot handle a report, report to your own commander. Report when your assignment is finished, or when you need a decision or are blocked. Don\'t report progress. Supply status done, blocked, failed, or needs_decision matching the text prefix. Corner workers may report done only with a merge-ready or merged PR, or a brief with repositoryWork false. Post progress in the corner instead. Agent DM orders may report done when their assignment is complete.',
+    description: 'Report one step up to the commander who ordered this work. Report only to the member who gave you the task. If that member is a human, tag them when, in your judgement, they need to decide or should know. No address argument: the corner and order know the return address. Begin done:, blocked:, needs-decision: or failed:. Agent commanders receive this privately. A human commander sees it where they gave the order. If you cannot handle a report, report to your own commander. Report when your assignment is finished, or when you need a decision or are blocked. Don\'t report progress. The optional ask is a Tray summary; omit it to use automatic extraction: one plain sentence, at most 140 characters. Good: Turn Feedback Fixed notices on or off? Merge example: Approve merge of PR #2412: Agents decide when to tag? Bad: Need input. Supply status done, blocked, failed, or needs_decision matching the text prefix. Corner workers may report done only with a merge-ready or merged PR, or a brief with repositoryWork false. Post progress in the corner instead. Agent DM orders may report done when their assignment is complete.',
     inputSchema: { type: 'object', required: ['status', 'text'], properties: {
+      ask: { type: 'string', minLength: 1, maxLength: 140 },
       status: { type: 'string', enum: ['done', 'blocked', 'failed', 'needs_decision'] },
       text: { type: 'string', pattern: '^(done|blocked|needs-decision|failed):\\s*\\S', minLength: 1, maxLength: 16000 },
     }, additionalProperties: false },
@@ -1759,6 +1760,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
       type: 'object',
       required: ['prompt', 'options'],
       properties: {
+        ask: { type: 'string', minLength: 1, maxLength: 140, description: 'Optional Tray summary; omit to use the prompt automatically. One plain sentence naming the decision. Good: Ship the OTA tonight? Bad: Need input.' },
         prompt: {
           type: 'string',
           minLength: 1,
@@ -4195,6 +4197,7 @@ export async function askChoice(
 ): Promise<string> {
   const result = await deps.execute('askRoomChoice', {
     roomId: deps.roomId,
+    ...(typeof args.ask === 'string' ? { ask: args.ask } : {}),
     prompt: args.prompt,
     ...(typeof args.constraint === 'string' ? { constraint: args.constraint } : {}),
     options: choiceOptionArgs(args),
@@ -4657,7 +4660,7 @@ export async function callAgentTool(
       return JSON.stringify({ acknowledged: true });
     }
     case 'report':
-      return JSON.stringify(await daemonExecute('report', { status: args.status as import('@beeline/api-contract/daemon').AgentReportStatus, text: args.text as string }));
+      return JSON.stringify(await daemonExecute('report', { status: args.status as import('@beeline/api-contract/daemon').AgentReportStatus, text: args.text as string, ask: args.ask as string | undefined }));
     case 'read':
       return JSON.stringify(await daemonExecute('read', { address: args.address as string, limit: args.limit as number | undefined }));
     case 'inspect_corner': {

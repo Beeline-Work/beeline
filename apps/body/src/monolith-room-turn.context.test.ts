@@ -33,7 +33,7 @@ const CONVERSATION = Array.from({ length: 200 }, (_, index) => ({
 }));
 
 describe('monolith Room turn context', () => {
-  it('prompts from the newest page and sends only what is new to a warm session', async () => {
+  it('Reproduction FR-cursor: does not list an answered task as new on the next wake', async () => {
     vi.stubEnv('BEELINE_INSTITUTIONAL_MEMORY_ENABLED', 'true');
     const root = await mkdtemp(join(tmpdir(), 'beeline-room-context-'));
     roots.push(root);
@@ -68,6 +68,7 @@ describe('monolith Room turn context', () => {
     } as BodyConfig;
     const conversationReads: Array<Record<string, unknown>> = [];
     const receipts: Array<Record<string, unknown>> = [];
+    const posted: Array<Record<string, unknown>> = [];
     const conversation = CONVERSATION.map((message) =>
       message.id === 'row-250'
         ? { ...message, body: '@greeter answer only the next integer after 10103' }
@@ -95,12 +96,13 @@ describe('monolith Room turn context', () => {
         };
       }
       if (name === 'postAgentTurnReceipt') receipts.push(input);
+      if (name === 'postRoomMessage') posted.push(input);
       if (name === 'getRoomInbox') {
         inboxReads += 1;
         if (inboxReads === 2) return { items: [ask('ask-1', 'first ask')], cursor: 'ask-1' };
         if (inboxReads === 3)
           return {
-            items: [ask('ask-2', '@greeter answer only the next integer after 30303')],
+            items: [{ ...ask('ask-2', 'done: worker finished'), authorId: agent.publicKey, fixtureCommandReason: 'report' }],
             cursor: 'ask-2',
           };
         if (inboxReads === 4)
@@ -154,7 +156,7 @@ describe('monolith Room turn context', () => {
       }
       if (name === 'getRoomConversation') {
         conversationReads.push(input);
-        return { items: conversation, cursor: 'row-250' };
+        return { items: [...conversation, ask('ask-1', 'first ask')], cursor: 'ask-1' };
       }
       if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
       return { id: 'write-id', createdAt: 1 };
@@ -182,7 +184,7 @@ describe('monolith Room turn context', () => {
     vi.spyOn(acp, 'sessionPrompt').mockImplementation(
       async (_sessionId: string, prompt: unknown) => {
         prompts.push(typeof prompt === 'string' ? prompt : JSON.stringify(prompt));
-        return { stopReason: 'end_turn', updates: [], agentText: 'done', toolCalls: [] };
+        return { stopReason: 'end_turn', updates: [], agentText: prompts.length === 2 ? '' : 'done', toolCalls: [] };
       },
     );
     const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
@@ -259,18 +261,22 @@ describe('monolith Room turn context', () => {
     expect(prompts[1]).not.toContain('New in the Room since your last turn');
     expect(prompts[1]).not.toContain('Captain: row 171');
     expect(prompts[1]).not.toContain('after 10103');
-    expect(prompts[1]).toContain('@greeter answer only the next integer after 30303');
-    expect(prompts[1]!.match(/after 30303/g)).toHaveLength(1);
+    expect(prompts[1]).not.toContain('[message id: ask-1]');
+    expect(prompts[1]).not.toContain('first ask');
+    expect(prompts[1]).toContain('done: worker finished');
+    expect(prompts[1]!.match(/done: worker finished/g)).toHaveLength(1);
     // Turn three is a fresh session (the checkout moved), so it replays the window.
     expect(prompts[2]).toContain('Room conversation:');
-    expect(prompts[2]).toContain('Captain: row 171');
+    expect(prompts[2]).toContain('Captain: row 172');
     expect(prompts[2]).toContain('third ask after target branch moved');
     expect(prompts[1]!.trimEnd()).toMatch(
-      /Current task from Captain:\n\n\[message id: ask-2\]\n@greeter answer only the next integer after 30303$/,
+      /Current task from Bee:\n\n\[message id: ask-2\]\ndone: worker finished$/,
     );
     const rendered = (prompt: string) => prompt.match(/Captain: row \d+/g)?.length ?? 0;
     expect(rendered(prompts[0]!)).toBe(79);
     expect(rendered(prompts[1]!)).toBe(0);
     expect(receipts.filter((receipt) => receipt.status === 'complete')).toHaveLength(3);
+    expect(posted.map((message) => message.requestId)).toEqual(['ask-1', 'ask-3']);
+    console.info('Demonstrated FR-cursor: second wake excludes the answered human message; fresh sessions retain conversation context');
   }, 20_000);
 });

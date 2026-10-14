@@ -746,6 +746,20 @@ describe('Room turn failure receipt', () => {
     expect(receipts.some(receipt => receipt.status === 'failed')).toBe(false);
   });
 
+  it.each(['report', 'watched_corner', 'human_tag'])('completes a normal silent %s wake without posting or retrying', async (commandReason) => {
+    const { receipts, posted, attempts } = await runTurn({
+      agentCommand: '/fake-agent',
+      agentKind: 'codex',
+      commandReason,
+      prompt: async () => ({ stopReason: 'end_turn', updates: [], agentText: '', toolCalls: [] }),
+    });
+    expect(attempts).toBe(1);
+    expect(posted).toEqual([]);
+    expect(receipts.filter((receipt) => receipt.status === 'complete')).toHaveLength(1);
+    expect(receipts.some((receipt) => receipt.status === 'failed')).toBe(false);
+    console.info(`Demonstrated FR-silent: ${commandReason} completes once, posts nothing, no retry`);
+  });
+
   it('Reproduction ST-silent: an empty final reply completes without posting or retrying', async () => {
     const cacheRoot = await mkdtemp(join(tmpdir(), 'beeline-room-routing-'));
     roots.push(cacheRoot);

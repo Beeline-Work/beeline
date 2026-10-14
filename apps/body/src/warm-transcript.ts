@@ -1,6 +1,7 @@
 /**
  * A warm ACP session still holds every transcript row an earlier turn in that
- * same session was already prompted with, and every reply it wrote itself, so
+ * same session was already prompted with, completed task and steer messages,
+ * and every reply it wrote itself, so
  * replaying them costs tokens and made old rows read as new. This is the ONE
  * place that decides what a prompt may leave out.
  *
@@ -32,6 +33,12 @@ export type TranscriptSelection = {
 export class WarmTranscript {
   private sessionId: string | undefined;
   private readonly delivered = new Set<string>();
+
+  /** Completed task and steer messages were delivered outside the transcript. */
+  complete(sessionId: string | undefined, messageIds: readonly string[]): void {
+    if (!sessionId || sessionId !== this.sessionId) return;
+    for (const id of messageIds) this.delivered.add(id);
+  }
 
   /**
    * The rows this prompt should render. A row counts as delivered once it has

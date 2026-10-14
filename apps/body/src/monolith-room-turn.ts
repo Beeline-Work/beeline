@@ -1946,6 +1946,7 @@ export class MonolithRoomTurnLoop {
         toolCalls: trace.toolCallsTotal,
         ...this.turnMetrics,
       });
+      this.warmTranscript.complete(this.sessionId, [item.id, ...active.steers.map((steer) => steer.id)]);
       // After the receipt: an operator artifact must never delay the answer,
       // and it never becomes one — the trace has no way to post a Room row.
       void finishTrace('complete').catch(() => undefined);

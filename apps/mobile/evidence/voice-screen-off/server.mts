@@ -3,15 +3,15 @@ import { createServer } from 'node:http';
 import { spawn, execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { PgliteDatabase } from '../apps/server/src/test-support.js';
-import { migrate } from '../apps/server/src/database.js';
-import { TokenAuth } from '../apps/server/src/auth.js';
-import { LiveHub } from '../apps/server/src/live.js';
-import { VoiceService } from '../apps/server/src/voice-service.js';
-import { PhoneService } from '../apps/server/src/phone-service.js';
-import { DaemonService } from '../apps/server/src/daemon-service.js';
-import { createBeelineServer } from '../apps/server/src/server.js';
-import type { FluxEvent } from '../apps/server/src/voice-providers.js';
+import { PgliteDatabase } from '../../../../apps/server/src/test-support.js';
+import { migrate } from '../../../../apps/server/src/database.js';
+import { TokenAuth } from '../../../../apps/server/src/auth.js';
+import { LiveHub } from '../../../../apps/server/src/live.js';
+import { VoiceService } from '../../../../apps/server/src/voice-service.js';
+import { PhoneService } from '../../../../apps/server/src/phone-service.js';
+import { DaemonService } from '../../../../apps/server/src/daemon-service.js';
+import { createBeelineServer } from '../../../../apps/server/src/server.js';
+import type { FluxEvent } from '../../../../apps/server/src/voice-providers.js';
 
 async function main() {
 const H = 'a'.repeat(64), A = 'b'.repeat(64);

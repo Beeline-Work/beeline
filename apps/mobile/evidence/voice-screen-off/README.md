@@ -36,7 +36,7 @@ investigating a supported input route in a separate diagnostic corner.
 The isolated fixture uses the production hook, native module, RTC transport,
 server routes and socket, with local offline speech providers and a disposable
 database. It uses no production accounts or billed transcription. Start the
-fixture with `npx tsx scripts/prove-voice-screen-off.ts`; its `/proof/metrics`
+fixture with `npx tsx apps/mobile/evidence/voice-screen-off/server.mts`; its `/proof/metrics`
 endpoint reports PCM/STT counts and bounded transcript/event evidence.
 
 ## Outstanding device acceptance

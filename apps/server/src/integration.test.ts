@@ -13663,6 +13663,7 @@ describe('monolith integration', () => {
     expect(await loop.runOnce()).toBe(0);
     const requestId = 'c'.repeat(64);
     const asked = await daemonOperation('askRoomChoice', {
+      ask: 'Which option should we use?',
       roomId: ROOM,
       requestId,
       prompt: 'Which branch should I use?',
@@ -13699,6 +13700,7 @@ describe('monolith integration', () => {
 
   it('posts a choice card, settles it in place, shows the pick as a line, and refuses an undersized poll', async () => {
     const posted = await daemonOperation('askRoomChoice', {
+      ask: 'Which option should we use?',
       roomId: ROOM,
       prompt: 'How do you want to push the desk past this?',
       constraint: 'CDP AgentKit needs JWT signing',
@@ -13840,6 +13842,7 @@ describe('monolith integration', () => {
 
   it('expires an unanswered question as skipped and shows the skip as a line', async () => {
     const posted = await daemonOperation('askRoomChoice', {
+      ask: 'Which option should we use?',
       roomId: ROOM,
       prompt: 'Which paper API?',
       ttlSeconds: 300,

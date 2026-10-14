@@ -1,3 +1,4 @@
+import { normalizeTrayAsk } from '@beeline/api-contract/phone';
 import { createHash, randomBytes } from 'node:crypto';
 import type { SqlDatabase } from './database.js';
 import {
@@ -111,13 +112,14 @@ export async function reportToCommander(
   text: string,
   command?: CommandRow,
   reportId = randomBytes(32).toString('hex'),
-  options: { automatic?: boolean; attachments?: PrivateCommandPayload['attachments'] } = {},
+  options: { automatic?: boolean; ask?: string; attachments?: PrivateCommandPayload['attachments'] } = {},
 ) {
   if (!/^(done|blocked|needs-decision|failed):\s*\S/.test(text) || text.length > 16_000)
     throw new CommandRefusalError(
       'report must begin done:, blocked:, needs-decision: or failed:',
       400,
     );
+  const ask = options.ask === undefined ? undefined : normalizeTrayAsk(options.ask);
   const strict = Boolean(command) && !options.automatic;
   const { recipient, returnRoom, parent, origin, incoming } = await commanderReportAddress(db, roomId, command);
   if (!recipient || !returnRoom) {
@@ -151,6 +153,7 @@ export async function reportToCommander(
         authorId: agentId,
         fromRoomId: roomId,
         kind: 'report',
+        ask,
         attachments: options.attachments,
         originCornerId: origin,
       },
@@ -168,8 +171,8 @@ export async function reportToCommander(
       );
     // Only a human address is a chat message; private coordination never enters messages.
     await db.query(
-      `INSERT INTO messages(id,room_id,author_id,text,presentation,attachments,request_id)
-       VALUES($1,$2,$3,$4,'message',$5::jsonb,$6) ON CONFLICT(id) DO NOTHING`,
+      `INSERT INTO messages(id,room_id,author_id,text,presentation,attachments,request_id,card)
+       VALUES($1,$2,$3,$4,'message',$5::jsonb,$6,$7::jsonb) ON CONFLICT(id) DO NOTHING`,
       [
         reportId,
         returnRoom,
@@ -177,6 +180,7 @@ export async function reportToCommander(
         text,
         JSON.stringify(options.attachments ?? []),
         incoming?.id ?? null,
+        ask ? JSON.stringify({ ask }) : null,
       ],
     );
   }

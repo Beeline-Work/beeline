@@ -404,8 +404,7 @@ export type NeedsYouItemView = {
   /** For a corner, its parent Room's name. */
   readonly parentRoomName?: string;
   /**
-   * The asking sentence, the viewer's own tag removed, already shortened by
-   * the server (a long sentence keeps its END behind a leading `…`).
+   * The plain asking sentence, capped at 140 characters by the server.
    */
   readonly text: string;
   /** When the source message was written (Unix seconds). */
@@ -532,6 +531,7 @@ export type SquireApprovalCardView = {
 
 /** One lettered question or Room poll. Options are plates, never ledger rows. */
 export type ChoiceCardView = {
+  readonly ask?: string;
   readonly choiceId: string;
   readonly mode: ChoiceMode;
   readonly status: ChoiceStatus;

@@ -1,5 +1,8 @@
+import { approvalAsk } from './tray-approval-ask.js';
 import {
   AGENT_SIGN_IN_SERVICE_LABELS,
+  plainAsk,
+  shortenAsk,
   CHOICE_CARD_TYPE,
   type AgentSignInHarness,
   type NeedsYouApprovalKind,
@@ -59,8 +62,6 @@ export function questionLeavesAtSql(m = 'm', mark = 'mark'): string {
   return `LEAST(${m}.created_at+${NEEDS_YOU_LOOKBACK},
     ${mark}.first_seen_at+interval '${NEEDS_YOU_EXPIRY_HOURS} hours')`;
 }
-/** Roughly two lines of a phone cell; the desktop list pane is the same width. */
-export const NEEDS_YOU_TEXT_MAX = 80;
 /** A safety cap on qualifying rows only: `askSql` runs before it, so no near-miss can crowd out an ask. */
 const CANDIDATE_LIMIT = 500;
 
@@ -98,22 +99,23 @@ export function askingMessageSql(m?: string): string {
 function sentences(text: string): string[] {
   return text
     .split(/\n+/)
-    .flatMap((line) => line.split(/(?<=[.!?])\s+/))
+    .flatMap((line) => plainAsk(line).split(/(?<=[.!?])\s+/))
     .map((sentence) => sentence.trim())
     .filter(Boolean);
 }
 
 /**
- * The sentence that made the message an ask: the closing question when the
- * message ends with `?`, otherwise the last sentence holding a trigger word.
+ * Prefer a complete question, then the first sentence of an actionable report.
  */
 export function needsYouSentence(text: string): string {
-  const all = sentences(text);
-  const last = all.at(-1) ?? text.trim();
-  if (text.trim().endsWith('?')) return last;
-  for (let index = all.length - 1; index >= 0; index -= 1)
-    if (TRIGGER_WORD.test(all[index]!)) return all[index]!;
-  return last;
+  const all = sentences(text.replace(/^(?:blocked|needs-decision|failed):\s*/, '')).map(plainAsk).filter(Boolean);
+  const question = all.find(sentence => sentence.endsWith('?'));
+  if (question) return question;
+  const report = text.match(/^(?:blocked|needs-decision|failed):\s*(.*)/s);
+  if (report) return plainAsk(sentences(report[1]!)[0] ?? report[1]!);
+  const merge = plainAsk(text).match(/(?:approve|merge approval).*?PR\s*#?(\d+)/i);
+  if (merge) return `Approve merge of PR #${merge[1]}?`;
+  return all.find(sentence => TRIGGER_WORD.test(sentence)) ?? all[0] ?? plainAsk(text);
 }
 
 function escapeRegExp(text: string): string {
@@ -142,29 +144,16 @@ export function withoutReaderTags(sentence: string, readerHandle: string | null)
   return stripped || sentence.trim();
 }
 
-/**
- * Plain string shortening: when the sentence is too long, keep its END — the
- * ask is usually there — and lead with `…`. The cut moves forward to the next
- * word boundary when one is close, so no word is shown half.
- */
-export function keepEnd(text: string, max = NEEDS_YOU_TEXT_MAX): string {
-  const characters = Array.from(text);
-  if (characters.length <= max) return text;
-  let tail = characters.slice(characters.length - (max - 2)).join('');
-  const boundary = tail.search(/\s/);
-  if (boundary >= 0 && boundary <= 20) tail = tail.slice(boundary + 1);
-  return `… ${tail.trimStart()}`;
-}
-
 /** The whole row text for one tagged message, as the reader sees it. */
-export function needsYouRowText(message: string, readerHandle: string | null): string {
-  return keepEnd(withoutReaderTags(needsYouSentence(message), readerHandle));
+export function needsYouRowText(message: string, readerHandle: string | null, ask?: string): string {
+  return shortenAsk(withoutReaderTags(ask || needsYouSentence(message), readerHandle));
 }
 
 type GrantCardEntry = { grantId?: string; kind?: AgentGrantKind; target?: string; reason?: string; script?: CommandGrantScript };
 
 /** The raw card fields the approval rows read; every kind's card is a subset. */
 type ApprovalCard = {
+  ask?: string;
   agent?: { name?: string; pubkey?: string };
   requester?: { name?: string; pubkey?: string };
   grants?: GrantCardEntry[];
@@ -532,6 +521,10 @@ export async function needsYouItems(
       left.row.created_at.getTime() - right.row.created_at.getTime() ||
       (left.row.message_id < right.row.message_id ? -1 : 1),
   );
+  const approvalTypes: Record<NeedsYouApprovalKind, string> = {
+    grant: 'grant-request', 'write-access': 'permission', choice: 'choice',
+    connector: 'connector-offer', 'sign-in': 'app-sign-in', squire: 'squire-approval',
+  };
   const items = built.map(({ row, approval, expiresAt }): NeedsYouItemView => ({
     messageId: row.message_id,
     workspaceId,
@@ -540,8 +533,11 @@ export async function needsYouItems(
     roomKind: row.room_kind,
     ...(row.parent_room_name ? { parentRoomName: row.parent_room_name } : {}),
     text: approval
-      ? keepEnd(`${approval.actor} ${approval.ask} ${approval.subject}`)
-      : needsYouRowText(row.text, row.viewer_handle),
+      ? approvalAsk(approval.kind === 'sign-in' && row.card?.harness ? 'agent-sign-in' : approvalTypes[approval.kind],
+          approval.kind === 'grant'
+            ? { ...row.card, ask: undefined, grants: row.card?.grants?.filter(entry => entry.grantId && row.pending_grant_ids?.includes(entry.grantId)) }
+            : row.card ?? {}) ?? shortenAsk(approval.subject)
+      : needsYouRowText(row.text, row.viewer_handle, typeof row.card?.ask === 'string' ? row.card.ask : undefined),
     createdAt: Math.floor(row.created_at.getTime() / 1000),
     ...(expiresAt !== undefined ? { expiresAt } : {}),
     ...(row.author_id && row.author_kind && row.author_name

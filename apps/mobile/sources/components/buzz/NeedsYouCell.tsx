@@ -75,7 +75,7 @@ export function NeedsYouCell({
   const expiry = needsYouExpiryLabel(item.expiresAt, now);
   const actor = approval?.actor ?? item.author?.name;
   const ask = approval?.ask ?? 'asks you';
-  const subject = approval?.subject ?? item.text;
+  const subject = item.text;
   const meta = [
     ...(approval?.forName ? [`for ${approval.forName}`] : []),
     sourcePath(item),

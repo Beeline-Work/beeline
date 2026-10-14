@@ -1093,7 +1093,7 @@ describe('Tray Needs you', () => {
           roomKind: 'corner',
           roomName: 'sec-filing-desk',
           parentRoomName: 'experiments',
-          text: 'BBC asks to run git push --force-with-lease',
+          text: 'Allow running git push --force-with-lease?',
           expiresAt: undefined,
           approval: {
             kind: 'grant',
@@ -1125,7 +1125,7 @@ describe('Tray Needs you', () => {
       expect(actor.props.children).toBe('BBC');
       expect(ask).toBe(' asks to run');
       expect(tree.root.findByProps({ testID: 'needs-you-text-grant-1' }).props.children).toBe(
-        'git push --force-with-lease',
+        'Allow running git push --force-with-lease?',
       );
       expect(tree.root.findByProps({ testID: 'needs-you-detail-grant-1' }).props.children).toBe(
         'Push ledger fixes to feat/ledger.',
@@ -1603,6 +1603,28 @@ function clearProofShims(mobile: string) {
     '@expo/vector-icons': "import React from 'react'; export const Ionicons = () => React.createElement('span');",
   };
 }
+
+it.skipIf(!existsSync(CHROME))('Reproduction tray-ask-1: Chrome shows complete asks and opens the full message', async () => {
+  const mobile = process.cwd();
+  const shims = clearProofShims(mobile);
+  shims['expo-router'] = `import React from 'react';
+    export const useFocusEffect = effect => React.useEffect(effect, [effect]);
+    export const useLocalSearchParams = () => ({ communityId: 'workspace-1' });
+    export const useRouter = () => ({ back: () => undefined, push: value => { window.__opened = value; } });`;
+  shims['@/sync/transport/monolith-operation'] = `const now = Math.floor(Date.now() / 1000);
+    const base = { workspaceId: 'workspace-1', roomId: 'room-1', roomName: 'launch', roomKind: 'room', createdAt: now - 600 };
+    export const monolithPhoneOperation = async name => name === 'readTray' ? { needs: { items: [
+      { ...base, messageId: 'merge-1', author: { name: 'System' }, text: 'Approve merge of PR #2412?' },
+      { ...base, messageId: 'feedback-1', author: { name: 'Ruby' }, text: 'Turn Feedback Fixed notices on or off?' }
+    ] }, saved: { bookmarks: [] } } : undefined;`;
+  const { result, status, stderr } = await runBrowserProof({
+    entry: path.join(mobile, 'scripts/tray-empty-proof.tsx'), mobile, width: 390,
+    query: '?surface=phone&mode=asks', shims,
+  });
+  expect(status, stderr).toBe(0);
+  expect(result).toContain('PASS Reproduction tray-ask-1');
+  console.log(result);
+}, 90_000);
 
 it.skipIf(!existsSync(CHROME)).each([
   { section: 'needs', surface: 'phone', width: 390 },

@@ -113,6 +113,7 @@ ALTER TABLE agent_pending_attachments ADD COLUMN IF NOT EXISTS generation_id tex
 `;
 /** Transport data only: orders and reports never become transcript messages. */
 export type PrivateCommandPayload = {
+  ask?: string;
   text: string;
   authorId: string;
   fromRoomId: string;

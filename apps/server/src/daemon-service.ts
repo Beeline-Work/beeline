@@ -1,3 +1,4 @@
+import { normalizeTrayAsk } from '@beeline/api-contract/phone';
 import { commandAddress, sendOrder, reportToCommander, CommandRefusalError } from './commander.js';
 import { createAgentSubscription, listAgentSubscriptions, deleteAgentSubscription,
   listServiceSubscriptionEvents, subscriptionPromptBody } from './agent-subscriptions.js';
@@ -1065,8 +1066,11 @@ export class DaemonService {
       case 'order':
         return await sendOrder(this.database, this.authorizedCommand!, authenticatedAgentId,
           String(candidate.address), String(candidate.text)) as Output<Name>;
-      case 'report':
-        return await this.report(String(candidate.text), authenticatedAgentId) as Output<Name>;
+      case 'report': {
+        const ask = candidate.ask === undefined && !String(candidate.text).startsWith('needs-decision:')
+          ? undefined : normalizeTrayAsk(candidate.ask);
+        return await this.report(String(candidate.text), authenticatedAgentId, this.authorizedCommand!, this.database, false, ask) as Output<Name>;
+      }
       case 'read': {
         const target = await commandAddress(this.database, String(candidate.address), authenticatedAgentId, true);
         return await this.inbox('getRoomConversation', { roomId: target.id, limit: candidate.limit as number | undefined }, authenticatedAgentId) as Output<Name>;
@@ -5548,7 +5552,7 @@ export class DaemonService {
     );
     return this.writeResult();
   }
-  private async report(text: string, agentId: string, command = this.authorizedCommand!, database = this.database, automatic = false) {
+  private async report(text: string, agentId: string, command = this.authorizedCommand!, database = this.database, automatic = false, ask?: string) {
     const pending = (await database.query<{ id: string; url: string; name: string; mime_type: string; size: number }>(
       `WITH RECURSIVE chain AS (
          SELECT * FROM agent_commands WHERE id=$1
@@ -5566,7 +5570,7 @@ export class DaemonService {
       ...pending.map(row => ({ url: row.url, name: row.name, mimeType: row.mime_type, size: row.size }))]
       .filter((row, index, all) => all.findIndex(other => other.url === row.url) === index);
     const result = await reportToCommander(database, command.room_id, agentId, text, command,
-      createHash('sha256').update(`report:${command.id}:${command.generation_id}:${text}:${JSON.stringify(attachments)}`).digest('hex'), { attachments, automatic });
+      createHash('sha256').update(`report:${command.id}:${command.generation_id}:${text}:${ask ?? ""}:${JSON.stringify(attachments)}`).digest('hex'), { attachments, automatic, ask });
     if ('delivered' in result && !result.delivered) return result;
     for (const attachment of pending) await database.query(
       `DELETE FROM agent_pending_attachments WHERE room_id=$1 AND agent_id=$2 AND id=$3`,
@@ -6143,6 +6147,7 @@ export class DaemonService {
       roomId: input.roomId,
       agentId,
       mode: 'question',
+      ask: normalizeTrayAsk(input.ask),
       prompt: input.prompt,
       constraint: input.constraint,
       options: input.options,

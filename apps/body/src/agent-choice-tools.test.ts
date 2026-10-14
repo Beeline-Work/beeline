@@ -54,6 +54,7 @@ describe('beeline-agent ask_choice and open_poll', () => {
     const ops: Array<{ name: string; input: Record<string, unknown> }> = [];
     const reply = await askChoice(
       {
+        ask: 'Which approach should we use?',
         prompt: 'How do you want to push the desk past this?',
         constraint: 'CDP AgentKit needs JWT signing',
         options,
@@ -66,7 +67,8 @@ describe('beeline-agent ask_choice and open_poll', () => {
         name: 'askRoomChoice',
         input: {
           roomId: 'room-1',
-          prompt: 'How do you want to push the desk past this?',
+          ask: 'Which approach should we use?',
+        prompt: 'How do you want to push the desk past this?',
           constraint: 'CDP AgentKit needs JWT signing',
           options,
           ttlSeconds: 900,

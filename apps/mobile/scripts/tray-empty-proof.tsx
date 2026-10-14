@@ -174,8 +174,28 @@ async function readClear() {
   report(`PASS ${size} | ${heads} | ${undo!.textContent}`);
 }
 
+/** The screenshot cases show complete plain asks and still open their source. */
+async function readAsks() {
+  createRoot(document.getElementById('root')!).render(<TrayScreen />);
+  await pause();
+  await pause();
+  const asks = [
+    ['merge-1', 'Approve merge of PR #2412?'],
+    ['feedback-1', 'Turn Feedback Fixed notices on or off?'],
+  ];
+  for (const [id, expected] of asks) {
+    const text = document.querySelector(`[data-testid="needs-you-text-${id}"]`)?.textContent;
+    assert(text === expected, `ask ${id} reads ${text}`);
+  }
+  document.querySelector<HTMLElement>('[data-testid="needs-you-feedback-1"]')!.click();
+  await pause();
+  const opened = (window as typeof window & { __opened?: { params?: { notificationMessageId?: string } } }).__opened;
+  assert(opened?.params?.notificationMessageId === 'feedback-1', `tap opened ${JSON.stringify(opened)}`);
+  report(`PASS Reproduction tray-ask-1: ${asks.map(([, text]) => text).join(' | ')} | tap opened feedback-1`);
+}
+
 const mode = new URLSearchParams(location.search).get('mode');
-(mode === 'row'
+(mode === 'asks' ? readAsks() : mode === 'row'
   ? readRow()
   : mode === 'no-link'
     ? readNoLink()

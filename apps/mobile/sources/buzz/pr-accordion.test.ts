@@ -181,7 +181,7 @@ describe('corner and issue lifecycle stacking', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].foldedIds).toEqual(['2']);
     expect(rows[0].notificationLifecycleRun?.items).toMatchObject([
-      { state: 'Opened', kindLine: 'issue', kind: 'issue' },
+      { state: 'Opened', kindLine: 'Issue #2', kind: 'issue' },
     ]);
   });
 
@@ -250,7 +250,7 @@ describe('corner and issue lifecycle stacking', () => {
       cornerId: 'corner-a',
       updatedBy: '5',
     });
-    expect(run.items[1]).not.toHaveProperty('url');
+    expect(run.items[1].url).toBe('https://github.com/acme/repo/pull/42');
   });
 
   it('never joins a corner to a same-numbered PR in another repository', () => {

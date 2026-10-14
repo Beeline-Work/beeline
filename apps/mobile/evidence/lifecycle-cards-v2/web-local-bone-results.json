@@ -1,0 +1,125 @@
+{
+  "source": "local built production components",
+  "variants": [
+    {
+      "name": "corner-open-no-pr",
+      "actions": 1,
+      "header": "Corner · 1 opened"
+    },
+    {
+      "name": "corner-open-pr",
+      "actions": 2,
+      "header": "PR · 1 opened"
+    },
+    {
+      "name": "corner-merged-pr",
+      "actions": 2,
+      "header": "PR · 1 merged"
+    },
+    {
+      "name": "corner-merged-no-pr",
+      "actions": 1,
+      "header": "Corner · 1 merged"
+    },
+    {
+      "name": "corner-closed-pr",
+      "actions": 2,
+      "header": "PR · 1 closed"
+    },
+    {
+      "name": "corner-closed-no-pr",
+      "actions": 1,
+      "header": "Corner · 1 closed"
+    },
+    {
+      "name": "worktree-cleaned",
+      "actions": 1,
+      "header": "Corner · 1 closed"
+    },
+    {
+      "name": "corner-checks-failing",
+      "actions": 2,
+      "header": "PR · 1 failed"
+    },
+    {
+      "name": "github-pr-opened",
+      "actions": 1,
+      "header": "PR · 1 opened"
+    },
+    {
+      "name": "github-pr-merged",
+      "actions": 1,
+      "header": "PR · 1 merged"
+    },
+    {
+      "name": "github-pr-closed",
+      "actions": 1,
+      "header": "PR · 1 closed"
+    },
+    {
+      "name": "github-issue-opened",
+      "actions": 1,
+      "header": "Issue · 1 opened"
+    },
+    {
+      "name": "github-issue-closed",
+      "actions": 1,
+      "header": "Issue · 1 closed"
+    },
+    {
+      "name": "grouped-corners",
+      "actions": 2,
+      "header": "Activity · 1 merged, 1 opened"
+    },
+    {
+      "name": "grouped-expanded",
+      "actions": 3,
+      "header": "Activity · 1 merged, 1 opened"
+    },
+    {
+      "name": "group-of-one",
+      "actions": 2,
+      "header": "PR · 1 merged"
+    },
+    {
+      "name": "corner-merged-pr-nameless",
+      "actions": 2,
+      "header": "PR · 1 merged"
+    },
+    {
+      "name": "nameless-group-of-one",
+      "actions": 2,
+      "header": "PR · 1 merged"
+    },
+    {
+      "name": "issue-group-of-one",
+      "actions": 1,
+      "header": "Issue · 1 opened"
+    },
+    {
+      "name": "grouped-issues",
+      "actions": 1,
+      "header": "Issue · 1 closed, 1 opened"
+    },
+    {
+      "name": "mixed-activity",
+      "actions": 1,
+      "header": "Activity · 1 closed, 1 opened"
+    },
+    {
+      "name": "check-started",
+      "actions": 1,
+      "header": "Check · 1 running"
+    },
+    {
+      "name": "check-passed",
+      "actions": 1,
+      "header": "Check · 1 passed"
+    },
+    {
+      "name": "check-failed",
+      "actions": 1,
+      "header": "Check · 1 failed"
+    }
+  ]
+}

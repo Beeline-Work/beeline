@@ -1,5 +1,20 @@
-import type { CornerLifecycleView } from '@beeline/api-contract/phone';
+import {
+  cornerDisplayName,
+  cornerShortTitle,
+  type CornerLifecycleView,
+} from '@beeline/api-contract/phone';
 import type { SystemLineMessage } from './system-lines';
+
+// The NAME titles a corner card; a card written before the name existed
+// falls back to the same three-word derivation every other corner surface
+// uses (C89). Single and grouped cards share it so a group of one matches.
+export function lifecycleCornerTitle(fact: {
+  name?: string;
+  objective: string;
+  cornerId: string;
+}): string {
+  return cornerShortTitle(undefined, fact.name ?? cornerDisplayName(fact.objective), fact.cornerId);
+}
 
 export type NotificationLifecycleState =
   | 'Opened'
@@ -72,11 +87,12 @@ function lifecycleItem(message: SystemLineMessage): LifecycleEvent | undefined {
       keys: [`corner:${fact.cornerId}`, ...(pr?.pull ? [pr.key] : [])],
       item: {
         id: message.id,
-        title: fact.name ?? fact.pullRequest?.title ?? fact.objective,
+        title: lifecycleCornerTitle(fact),
         ...(state ? { state } : {}),
         kindLine: prNumber ? `corner · PR #${prNumber}` : 'corner',
         kind: 'corner',
         cornerId: fact.cornerId,
+        url: fact.pullRequest?.url,
         actor: message.authorIdentity
           ? (message.authorIdentity.handle ?? message.authorIdentity.name)
           : '',
@@ -100,7 +116,7 @@ function lifecycleItem(message: SystemLineMessage): LifecycleEvent | undefined {
         id: message.id,
         title: event.title,
         state: event.action === 'opened' ? 'Opened' : 'Closed',
-        kindLine: 'issue',
+        kindLine: `Issue #${github.number}`,
         kind: 'issue',
         url: event.url,
         actor: event.actor,
@@ -216,10 +232,8 @@ export function foldPrLifecycleRuns<T extends SystemLineMessage>(messages: reado
       const keepTitle = titled && titled.titleRank > lifecycle.titleRank;
       const cornerId = item.cornerId ?? matches.find((cell) => cell.item.cornerId)?.item.cornerId;
       const prNumber = lifecycle.prNumber ?? matches.find((cell) => cell.prNumber)?.prNumber;
-      // A corner cell links to its corner, not to the PR it absorbed.
-      const url = cornerId
-        ? undefined
-        : (eventUrl ?? matches.find((cell) => cell.item.url)?.item.url);
+      // Keep the external destination alongside the primary corner navigation.
+      const url = eventUrl ?? matches.find((cell) => cell.item.url)?.item.url;
       const actor = item.actor || matches.find((cell) => cell.item.actor)?.item.actor || '';
       const merged: Cell = {
         keys: new Set([...matches.flatMap((cell) => [...cell.keys]), ...lifecycle.keys]),

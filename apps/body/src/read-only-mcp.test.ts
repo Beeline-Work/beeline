@@ -379,3 +379,9 @@ it('R8d documents the optional continuation and generic fallback', () => {
   expect(tool.description).toContain('continues the request right after');
   expect(tool.inputSchema.required).toEqual(['service', 'reason']);
 });
+
+it('corner order descriptions limit recruitment to child corners', () => {
+  const tool = agentToolsFor(true, false, true, true).find(tool => tool.name === 'order')!;
+  expect(tool.description).toContain('only child corners opened by this corner');
+  expect(tool.description).not.toContain('top-level Room');
+});

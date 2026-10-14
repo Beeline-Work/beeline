@@ -1933,7 +1933,10 @@ export function agentToolsFor(
     if (tool.name === 'open_poll') return !directMessage;
     if (tool.name === 'run_granted_command') return commandRunnerAvailable;
     return true;
-  });
+  }).map((tool) => cornerTurn && tool.name === 'order' ? {
+    ...tool,
+    description: 'From a corner, order only child corners opened by this corner. Corners cannot order outside their own child corners. Report to your commander instead. After ordering a child corner, end the turn; its report wakes a new turn. Do not sleep or poll.',
+  } : tool);
 }
 
 const TOOLS = agentToolsFor(

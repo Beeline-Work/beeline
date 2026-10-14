@@ -1,5 +1,5 @@
 import { normalizeTrayAsk } from '@beeline/api-contract/phone';
-import { commandAddress, sendOrder, reportToCommander, CommandRefusalError } from './commander.js';
+import { assertCornerCommandTarget, commandAddress, sendOrder, reportToCommander, CommandRefusalError } from './commander.js';
 import { createAgentSubscription, listAgentSubscriptions, deleteAgentSubscription,
   listServiceSubscriptionEvents, subscriptionPromptBody } from './agent-subscriptions.js';
 import { completeProviderWebhookAssignment, providerWebhookAssignments } from './provider-webhooks.js';
@@ -5770,6 +5770,7 @@ export class DaemonService {
         const command = await authorizeCommandOutput(
           db, input.roomId ?? input.cornerId, agentId, input.requestId, input.generationId,
         );
+        await assertCornerCommandTarget(db, command.room_id, input.cornerId);
         if (current) {
           if (input.brief && (current.spec !== input.brief.spec.trim() ||
               current.repositoryWork !== input.brief.repositoryWork ||
@@ -7405,6 +7406,8 @@ export class DaemonService {
       )
     ).rows[0];
     const targetRoomId = input.targetRoomId ?? host?.parent_id ?? commandRoomId;
+    if (host?.parent_id && targetRoomId !== host.parent_id && targetRoomId !== commandRoomId)
+      await assertCornerCommandTarget(this.database, commandRoomId, targetRoomId);
     const target = (await this.database.query<{ parent_id: string | null }>(`SELECT parent_id FROM rooms WHERE id=$1`, [targetRoomId])).rows[0];
     const roomId = target?.parent_id ?? targetRoomId;
     if (roomId !== commandRoomId) await this.access(roomId, agentId);
@@ -7713,6 +7716,7 @@ export class DaemonService {
       const command = await authorizeCommandOutput(
         db, commandRoomId, agentId, input.requestId, input.generationId,
       );
+      await assertCornerCommandTarget(db, command.room_id, input.cornerId);
       const current = await currentCornerBrief(db, input.cornerId);
       if ((current?.revision ?? 0) !== input.expectedRevision)
         throw new Error('corner brief revision changed; read the current assignment');

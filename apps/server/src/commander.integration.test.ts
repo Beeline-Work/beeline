@@ -16,7 +16,7 @@ import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 
 const HUMAN = 'a'.repeat(64), RUBY = 'b'.repeat(64), WORKER = 'c'.repeat(64);
 const WS = '11111111-1111-4111-8111-111111111111';
-const ROOM = '22222222-2222-4222-8222-222222222222';
+const ROOM = 'bb91a1c7-7cad-4fde-aafc-94fccb651ac8';
 const DM = '33333333-3333-4333-8333-333333333333';
 let db: PgliteDatabase, daemon: DaemonService, phone: PhoneService;
 let order: AgentCommand;
@@ -388,4 +388,82 @@ it('a green head whose reviewer command cannot be queued reports the reason to i
   } finally {
     await db.query(`DROP TRIGGER refuse_review_command ON agent_commands; DROP FUNCTION refuse_review_command()`);
   }
+});
+
+// Reproduction corner-subtree-175524: replay the reported recruitment path.
+it('Reproduction corner-subtree-175524: the reported corner payload creates zero commands', async () => {
+  const cornerId = 'f95aa673-2eb5-491a-930b-51dc1aa2d2ee';
+  await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name,created_by)
+    VALUES($1,$2,$3,'truthful-corner-states',$4)`, [cornerId, WS, ROOM, WORKER]);
+  await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id) VALUES($1,$2)`, [cornerId, WORKER]);
+  for (const member of [WORKER, RUBY]) await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+    VALUES($1,$2,$3,'member')`, [WS, cornerId, member]);
+  const opening = await createAgentCommand(db, { roomId: cornerId, agentId: WORKER,
+    sourceMessageId: null, reason: 'corner_objective',
+    privatePayload: { text: 'Make corner state truthful', authorId: RUBY, fromRoomId: DM, kind: 'order' } });
+  const turn = (await commands(cornerId, WORKER)).find(c => c.id === opening!.id)!;
+  await claim(turn);
+  const before = (await db.query(`SELECT id FROM agent_commands ORDER BY id`)).rows;
+  // The brief supplies this excerpt, not the full private production payload.
+  const text = "Read-only adversarial implementation review for Jellybean's active truthful-corner-states corner...";
+  for (const agent of [undefined, RUBY]) {
+    await expect(daemon.execute('order', { ...authority(turn), address: ROOM, agent, text }, WORKER))
+      .rejects.toThrow('Corners cannot order outside their own child corners. Report to your commander instead.');
+    expect((await db.query(`SELECT id FROM agent_commands ORDER BY id`)).rows).toEqual(before);
+  }
+  console.log('[corner-subtree-175524] f95aa673 corner_objective → bb91a1c7: payload excerpt rejected; zero commands created');
+});
+
+it('corner orders reject Room, DM, sibling, parent, self and agent addresses but accept its own child', async () => {
+  const opened = await open();
+  const sibling = await daemon.execute('createCorner', { ...authority(order), targetRoomId: ROOM,
+    idempotencyKey: 'sibling', name: 'Sibling', objective: 'Build a sibling widget', implementer: 'worker',
+    brief: { spec: 'Sibling widget', repositoryWork: false, approval: { sourceMessageId: order.sourceMessageId } },
+  }, RUBY);
+  const turn = await worker(opened.cornerId);
+  const child = await daemon.execute('createCorner', { ...authority(turn), targetRoomId: ROOM,
+    idempotencyKey: 'delegated-child', name: 'Child', objective: 'Build a child widget', implementer: 'ruby',
+    brief: { spec: 'Child widget', repositoryWork: false, approval: { sourceMessageId: turn.sourceMessageId } },
+  }, WORKER);
+  const before = (await db.query(`SELECT id FROM agent_commands ORDER BY id`)).rows;
+  for (const address of [ROOM, DM, sibling.cornerId, opened.cornerId, RUBY]) {
+    await expect(daemon.execute('order', { ...authority(turn), address, text: 'Do the review', agent: RUBY }, WORKER))
+      .rejects.toThrow('Corners cannot order outside their own child corners. Report to your commander instead.');
+    expect((await db.query(`SELECT id FROM agent_commands ORDER BY id`)).rows).toEqual(before);
+  }
+  await daemon.execute('order', { ...authority(turn), address: child.cornerId, text: 'Review the child widget' }, WORKER);
+  expect((await commands(child.cornerId, RUBY)).some(c => c.reason === 'order')).toBe(true);
+  const childTurn = (await commands(child.cornerId, RUBY)).find(c => c.reason === 'order')!;
+  await claim(childTurn);
+  const grandchild = await daemon.execute('createCorner', { ...authority(childTurn), targetRoomId: ROOM,
+    idempotencyKey: 'grandchild', name: 'Grandchild', objective: 'Build the grandchild widget', implementer: 'worker',
+    brief: { spec: 'Grandchild widget', repositoryWork: false, approval: { sourceMessageId: childTurn.sourceMessageId } },
+  }, RUBY);
+  await expect(daemon.execute('order', { ...authority(turn), address: grandchild.cornerId, text: 'Skip a level' }, WORKER))
+    .rejects.toThrow('Report to your commander instead.');
+  await daemon.execute('order', { ...authority(childTurn), address: grandchild.cornerId, text: 'Work in the grandchild' }, RUBY);
+  await expect(daemon.execute('order', { ...authority(childTurn), address: opened.cornerId, text: 'Wake parent' }, RUBY))
+    .rejects.toThrow('Report to your commander instead.');
+});
+it('a corner cannot revise an unrelated brief to wake its worker or open in another Room', async () => {
+  const opened = await open();
+  const sibling = await daemon.execute('createCorner', { ...authority(order), targetRoomId: ROOM,
+    idempotencyKey: 'sibling', name: 'Sibling', objective: 'Build a sibling widget', implementer: 'worker',
+    brief: { spec: 'Sibling widget', repositoryWork: false, approval: { sourceMessageId: order.sourceMessageId } },
+  }, RUBY);
+  const turn = await worker(opened.cornerId);
+  await expect(daemon.execute('reviseCornerBrief', { ...authority(turn), cornerId: sibling.cornerId,
+    expectedRevision: 1, brief: { spec: 'Recruit sibling', change: 'Wake sibling',
+      approval: { sourceMessageId: turn.sourceMessageId } } }, WORKER))
+    .rejects.toThrow('Report to your commander instead.');
+  await expect(daemon.execute('createCorner', { ...authority(turn), targetRoomId: DM,
+    idempotencyKey: 'escape', name: 'Escape', objective: 'Recruit outside the subtree',
+    brief: { spec: 'Escape', approval: { sourceMessageId: turn.sourceMessageId } } }, WORKER))
+    .rejects.toThrow('Report to your commander instead.');
+});
+it('corner mentions still wake an instance in the same corner', async () => {
+  const opened = await open(), turn = await worker(opened.cornerId);
+  await daemon.execute('postRoomMessage', { ...authority(turn), text: '@ruby review this here' }, WORKER);
+  expect((await commands(opened.cornerId, RUBY)).length).toBeGreaterThan(0);
+  expect((await commands(ROOM, RUBY))).toEqual([]);
 });

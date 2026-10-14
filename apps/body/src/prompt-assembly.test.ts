@@ -507,7 +507,7 @@ describe('prompt assembly guards', () => {
 
   it('authorizes building from dispatch and leaves spec or mock questions to judgment', () => {
     const author = assembleSessionPrompt(SESSION_VARIANTS['code-corner-reviewed']!).systemPrompt;
-    const nudge = "The dispatching message authorizes the work; build against the brief without asking for separate spec or mock approval. Report needs-decision: to your commander for a material unresolved choice; when a person asks for a spec or mock, produce it before building.";
+    const nudge = "The dispatch authorizes work; build against the brief without separate spec or mock approval. Report unresolved choices to your commander; when a person asks for a spec or mock, produce it before building.";
     expect(author).toContain(nudge);
     expect(author).not.toContain('wait for a human reply that approves it');
     expect(author).not.toContain('The request that opened the work is not approval');
@@ -515,6 +515,14 @@ describe('prompt assembly guards', () => {
     expect(promptRules.CORNER_RUNTIME_AUTHOR_CONTRACT).toContain(nudge);
     const room = assembleSessionPrompt(SESSION_VARIANTS.room!).systemPrompt;
     expect(room).toContain('Use the dispatching message as approval; no separate spec or mock approval is required.');
+  });
+
+  it('keeps corner help requests with the commander', () => {
+    for (const contract of [promptRules.CORNER_AUTHOR_CONTRACT, promptRules.CORNER_RUNTIME_AUTHOR_CONTRACT]) {
+      expect(contract).toContain('Work in this corner.');
+      expect(contract).toContain('report needs-decision: or blocked: to your commander');
+      expect(contract).toContain('Never recruit Room agents.');
+    }
   });
 
   it('R8a makes publication conditional on the brief, including dirty-work nudges', () => {

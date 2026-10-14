@@ -715,6 +715,7 @@ function readChoiceCard(value: unknown): ChoiceCardView | null {
     status: item.status,
     agent,
     prompt: item.prompt,
+    ...field('ask', typeof item.ask === 'string' ? item.ask : undefined),
     options,
     electorate: item.electorate,
     votedCount: item.votedCount,

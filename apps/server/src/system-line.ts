@@ -1,3 +1,4 @@
+import { approvalAsk } from './tray-approval-ask.js';
 import { createAgentCommand, type CommandRow, routeSystemCommand } from './agent-command.js';
 import { createHash, randomBytes } from 'node:crypto';
 import {
@@ -480,7 +481,7 @@ export async function systemLine(
         input.requestId ?? null,
         input.durableFact ?? null,
         input.cardType ?? null,
-        input.card ? JSON.stringify(input.card) : null,
+        input.card ? JSON.stringify({ ...input.card, ask: approvalAsk(input.cardType, input.card) }) : null,
         JSON.stringify(event),
         cascade?.causeId ?? null,
         cascade?.rootCauseId ?? null,

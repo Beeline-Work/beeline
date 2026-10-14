@@ -305,7 +305,7 @@ export type DaemonOperationMap = {
     }
   >;
   order: Operation<RoomInput & TurnOutputAuthority & { readonly address: string; readonly text: string }, WriteResult>;
-  report: Operation<RoomInput & TurnOutputAuthority & { readonly status: AgentReportStatus; readonly text: string }, WriteResult>;
+  report: Operation<RoomInput & TurnOutputAuthority & { readonly status: AgentReportStatus; readonly text: string; readonly ask?: string }, WriteResult>;
   read: Operation<RoomInput & { readonly address: string; readonly limit?: number }, RoomConversationResult>;
   getRoomAuthority: Operation<RoomPrincipalInput, RoomAuthorityResult>;
   getPermissionAuthority: Operation<PermissionAuthorityInput, AuthorityDecisionResult>;
@@ -1421,6 +1421,7 @@ export type CornerResult = {
 export type ChoiceOptionArg = ChoiceOptionInput;
 export type AskRoomChoiceInput = TurnOutputAuthority &
   RoomInput & {
+    readonly ask?: string;
     readonly prompt: string;
     readonly constraint?: string;
     readonly options: readonly ChoiceOptionArg[];

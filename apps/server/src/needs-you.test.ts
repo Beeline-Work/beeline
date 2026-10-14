@@ -1,3 +1,5 @@
+import { systemLine } from './system-line.js';
+import { shortenAsk } from '@beeline/api-contract/phone';
 import { readWorkspaceListView } from '@beeline/api-contract/phone';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { backfillSquireApprovalExpiry, migrate } from './database.js';
@@ -5,7 +7,6 @@ import { PhoneService } from './phone-service.js';
 import {
   askSql,
   isNeedsYouAsk,
-  keepEnd,
   needsYouRowText,
   needsYouSentence,
   withoutReaderTags,
@@ -50,22 +51,17 @@ describe('the Needs-you ask rule', () => {
     expect(withoutReaderTags('@adam please', 'ada')).toBe('@adam please');
   });
 
-  it('keeps the END of a long sentence behind a leading ellipsis, cut on a word', () => {
-    const long =
-      'thanks — one thing before I sign off after the long review: can you confirm the App Store review note before we ship?';
-    const short = keepEnd(long, 60);
-    expect(short.startsWith('… ')).toBe(true);
-    expect(short.endsWith('before we ship?')).toBe(true);
-    expect(Array.from(short).length).toBeLessThanOrEqual(60);
-    expect(short.slice(2)).toBe(long.slice(long.length - (short.length - 2)));
-    expect(long.charAt(long.length - (short.length - 2) - 1)).toBe(' ');
-    expect(keepEnd('short enough?', 60)).toBe('short enough?');
-    expect(
-      needsYouRowText(
-        `@ada thanks — one thing before I sign off: can you confirm the App Store review note before we ship?`,
-        'ada',
-      ),
-    ).toBe('… before I sign off: can you confirm the App Store review note before we ship?');
+  it('keeps the start of long asks and strips markdown and long hashes', () => {
+    const long = 'Please confirm the App Store review note ' + 'before we ship '.repeat(15);
+    expect(shortenAsk(long)).toMatch(/^Please confirm/);
+    expect(Array.from(shortenAsk(long)).length).toBeLessThanOrEqual(140);
+    expect(needsYouRowText('needs-decision: Turn **Feedback Fixed** notices on or off?\n**Feedback Fixed notices:** off by default. @ada', 'ada'))
+      .toBe('Turn Feedback Fixed notices on or off?');
+    expect(needsYouRowText('@ada Please approve merge of PR #2412 once checks pass on 43daa85de52a0705f4bed645147c37d451a27188, and a person uses the merge approval', 'ada'))
+      .toBe('Approve merge of PR #2412?');
+    expect(needsYouRowText('@ada approve commit ' + 'a'.repeat(40), 'ada')).toBe('approve commit aaaaaaa');
+    expect(needsYouRowText('needs-decision: Details. **Feedback** off by default. @ada', 'ada', 'Turn Feedback Fixed notices on or off?'))
+      .toBe('Turn Feedback Fixed notices on or off?');
   });
 });
 
@@ -163,6 +159,28 @@ describe('PhoneService Needs-you tray', () => {
       [WORKSPACE, VIEWER, PEER, AGENT, ROOM, CORNER, OTHER_ROOM],
     );
     phone = new PhoneService(database, 'https://server.example');
+  });
+
+  it('Reproduction tray-ask-1: projects full asks for the two screenshot cases', async () => {
+    const merge = await post(ROOM, AGENT, '@ada Please approve merge of PR #2412 once checks pass on 43daa85de52a0705f4bed645147c37d451a27188, and a person uses the merge approval');
+    const feedback = await post(ROOM, AGENT, 'needs-decision: Turn **Feedback Fixed** notices on or off?\n**Feedback Fixed notices:** off by default. @ada');
+    const items = (await read()).items;
+    expect(items.find(item => item.messageId === merge)?.text).toBe('Approve merge of PR #2412?');
+    expect(items.find(item => item.messageId === feedback)?.text).toBe('Turn Feedback Fixed notices on or off?');
+    console.log('Reproduction tray-ask-1: Tray > Needs you →', items.map(item => item.text));
+    await database.query(`UPDATE messages SET card=$2::jsonb WHERE id=$1`, [feedback, JSON.stringify({ ask: 'Enable Feedback Fixed notices?' })]);
+    expect((await read()).items.find(item => item.messageId === feedback)?.text).toBe('Enable Feedback Fixed notices?');
+  });
+
+  it('system approval writers store an explicit ask and Tray renders it', async () => {
+    await database.query(`INSERT INTO permission_authority(permission_id,room_id,principal_id,request_id,scope,status)
+      VALUES('source-ask',$1,$2,'request','{}','pending')`, [ROOM, VIEWER]);
+    await systemLine(database, { id: 'source-approval', roomId: ROOM, authorId: AGENT,
+      subject: { kind: 'agent', id: AGENT, name: 'Hoots' }, verb: 'asked', presentation: 'card', cardType: 'permission',
+      card: { permissionId: 'source-ask', requestId: 'request', agent: { pubkey: AGENT, name: 'Hoots' }, repository: 'owner/beeline', status: 'pending' } });
+    expect((await database.query(`SELECT card->>'ask' ask FROM messages WHERE id='source-approval'`)).rows[0])
+      .toEqual({ ask: 'Approve write access to owner/beeline?' });
+    expect((await read()).items[0]?.text).toBe('Approve write access to owner/beeline?');
   });
 
   it('R12e: projects the switcher room count and unread/approval mark', async () => {
@@ -405,7 +423,7 @@ describe('PhoneService Needs-you tray', () => {
     expect(await count()).toBe(1);
     expect(item).toMatchObject({
       messageId: card,
-      text: 'Hoots asks to run gh pr checks',
+      text: 'Allow running gh pr checks?',
       approval: {
         kind: 'grant',
         actor: 'Hoots',

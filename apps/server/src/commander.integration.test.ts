@@ -90,14 +90,19 @@ it('delivers blocked privately to Ruby and Ruby orders the current worker privat
 });
 it.each(['needs-decision: choose the product scope', 'needs-decision: choose the product scope @captain'])('Ruby posts exactly her report text in the original DM: %s', async (text) => {
   const opened = await open(), turn = await worker(opened.cornerId);
-  await daemon.execute('report', { status: text.split(':')[0]!.replace('-', '_') as import('@beeline/api-contract/daemon').AgentReportStatus, ...authority(turn), text }, WORKER);
+  await daemon.execute('report', { status: text.split(':')[0]!.replace('-', '_') as import('@beeline/api-contract/daemon').AgentReportStatus, ...authority(turn), text, ask: 'Which product scope should we use?' }, WORKER);
   const report = (await commands(DM, RUBY)).find(c => c.reason === 'report')!;
   await claim(report);
-  await daemon.execute('report', { status: text.split(':')[0]!.replace('-', '_') as import('@beeline/api-contract/daemon').AgentReportStatus, ...authority(report), text }, RUBY);
-  const rows = (await db.query(`SELECT room_id,author_id,text FROM messages WHERE text=$1`,
+  await daemon.execute('report', { status: text.split(':')[0]!.replace('-', '_') as import('@beeline/api-contract/daemon').AgentReportStatus, ...authority(report), text, ask: 'Which product scope should we use?' }, RUBY);
+  const rows = (await db.query(`SELECT room_id,author_id,text,card FROM messages WHERE text=$1`,
     [text])).rows;
-  expect(rows).toEqual([{ room_id: DM, author_id: RUBY, text }]);
+  expect(rows).toEqual([{ room_id: DM, author_id: RUBY, text, card: { ask: 'Which product scope should we use?' } }]);
   expect((await phone.readRoom(DM, HUMAN))?.messages.some(m => m.text === rows[0]!.text)).toBe(true);
+});
+it('accepts needs-decision without an ask and validates optional asks', async () => {
+  const reported = await daemon.execute('report', { status: 'needs_decision', ...authority(order), text: 'needs-decision: Which scope should we use? @captain' }, RUBY);
+  expect((await phone.execute('readNeedsYou', { workspaceId: WS }, HUMAN)).items.find(item => item.messageId === reported.id)?.text).toBe('Which scope should we use?');
+  await expect(daemon.execute('report', { status: 'needs_decision', ...authority(order), text: 'needs-decision: pick scope', ask: '**Which scope?**' }, RUBY)).rejects.toThrow('plain text');
 });
 it('nested Room orders forward reports one commander at a time before reaching the human', async () => {
   const otherRoom = randomUUID();
@@ -111,15 +116,15 @@ it('nested Room orders forward reports one commander at a time before reaching t
   const childOrder = (await commands(otherRoom, RUBY)).find(c => c.reason === 'order')!;
   await claim(childOrder);
   const text = 'needs-decision: select the final scope';
-  await daemon.execute('report', { status: text.split(':')[0]!.replace('-', '_') as import('@beeline/api-contract/daemon').AgentReportStatus, ...authority(childOrder), text }, RUBY);
+  await daemon.execute('report', { status: text.split(':')[0]!.replace('-', '_') as import('@beeline/api-contract/daemon').AgentReportStatus, ...authority(childOrder), text, ask: 'Which product scope should we use?' }, RUBY);
   const managerReport = (await commands(ROOM, WORKER)).find(c => c.reason === 'report')!;
   await claim(managerReport);
-  await daemon.execute('report', { status: text.split(':')[0]!.replace('-', '_') as import('@beeline/api-contract/daemon').AgentReportStatus, ...authority(managerReport), text }, WORKER);
+  await daemon.execute('report', { status: text.split(':')[0]!.replace('-', '_') as import('@beeline/api-contract/daemon').AgentReportStatus, ...authority(managerReport), text, ask: 'Which product scope should we use?' }, WORKER);
   const rubyReport = (await commands(DM, RUBY)).find(c => c.reason === 'report')!;
   expect(rubyReport).toMatchObject({ private: true, source: { authorId: WORKER, body: text } });
   expect((await db.query(`SELECT 1 FROM messages WHERE text=$1`, [text])).rowCount).toBe(0);
   await claim(rubyReport);
-  await daemon.execute('report', { status: text.split(':')[0]!.replace('-', '_') as import('@beeline/api-contract/daemon').AgentReportStatus, ...authority(rubyReport), text }, RUBY);
+  await daemon.execute('report', { status: text.split(':')[0]!.replace('-', '_') as import('@beeline/api-contract/daemon').AgentReportStatus, ...authority(rubyReport), text, ask: 'Which product scope should we use?' }, RUBY);
   expect((await db.query(`SELECT room_id,author_id FROM messages WHERE text=$1`, [text])).rows)
     .toEqual([{ room_id: DM, author_id: RUBY }]);
 });
@@ -215,7 +220,7 @@ it('a private order to a Room keeps its drafts and activity out of that Room', a
 it('reconnect recovery keeps every private report, even when each was queued offline', async () => {
   const opened = await open(), turn = await worker(opened.cornerId);
   for (const text of ['blocked: missing input', 'failed: build stopped', 'needs-decision: select scope'])
-    await daemon.execute('report', { status: text.split(':')[0]!.replace('-', '_') as import('@beeline/api-contract/daemon').AgentReportStatus, ...authority(turn), text }, WORKER);
+    await daemon.execute('report', { status: text.split(':')[0]!.replace('-', '_') as import('@beeline/api-contract/daemon').AgentReportStatus, ...authority(turn), text, ask: 'Which product scope should we use?' }, WORKER);
   await db.query(`UPDATE agent_commands SET created_offline=true,created_at=now()-interval '10 minutes' WHERE reason='report'`);
   expect((await commands(DM, RUBY)).filter(c => c.reason === 'report')).toHaveLength(3);
   expect((await commands(DM, RUBY)).filter(c => c.reason === 'report')).toHaveLength(3);

@@ -1,3 +1,4 @@
+import { agentMemberMetadata } from './agent-member-metadata.js';
 import { normalizeTrayAsk } from '@beeline/api-contract/phone';
 import { assertCornerCommandTarget, commandAddress, sendOrder, reportToCommander, CommandRefusalError } from './commander.js';
 import { createAgentSubscription, listAgentSubscriptions, deleteAgentSubscription,
@@ -2791,7 +2792,7 @@ export class DaemonService {
       [input.workspaceId],
     );
     return {
-      members: rows.rows.map((row) => ({
+      members: await agentMemberMetadata(this.database, rows.rows.map((row) => ({
         identityId: row.identity_id,
         kind: row.kind,
         name: row.name,
@@ -2813,7 +2814,7 @@ export class DaemonService {
               },
             }
           : {}),
-      })),
+      }))),
     };
   }
   private async inbox(name: string, input: Input<'getRoomConversation'>, agentId: string) {
@@ -7929,7 +7930,7 @@ export class DaemonService {
        ORDER BY identity.kind,identity.name`,
       [roomId],
     );
-    return { members: rows.rows };
+    return { members: await agentMemberMetadata(this.database, rows.rows) };
   }
 
   /** A plain message into a corner the caller reaches; it wakes nobody. */

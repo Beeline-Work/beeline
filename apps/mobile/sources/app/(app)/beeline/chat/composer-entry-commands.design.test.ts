@@ -22,11 +22,6 @@ describe('permission-aware composer entry commands', () => {
     expect(chat).toContain("case 'poll':");
     expect(chat).toContain('setCreatePollVisible(true)');
     expect(chat).toContain("monolithPhoneOperation('createRoomPoll'");
-    // `catch-up` opened by scrolling to the first unread row when this test
-    // was written. It opens the catch-up report now — the same one the strip
-    // and the badge open — so the assertion follows the verb rather than
-    // passing on the cold-open landing that happens to share that call.
-    expect(chat).toContain("case 'catch-up':\n          if (!isCorner) openCatchUpSheet();");
     expect(chat).toContain("pathname: '/beeline/settings/schedules'");
     expect(chat).toContain("pathname: '/beeline/settings/workflows'");
     expect(chat).toContain('setRenameEditing(true)');

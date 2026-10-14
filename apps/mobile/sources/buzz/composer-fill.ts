@@ -1,5 +1,5 @@
 /**
- * What a composer-fill request — a starter prompt, a catch-up ask — should do.
+ * What a composer-fill request for a starter prompt should do.
  *
  * Words somebody typed are never overwritten, because the composer has no
  * undo. A caller with nothing else to show for the tap asks for

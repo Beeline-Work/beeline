@@ -358,11 +358,10 @@ import {
   newestTranscriptRowId,
 } from '@/buzz/room-new-message-boundary';
 import { useNewMessageControl, useUnreadLineControl } from '@/buzz/use-new-message-control';
-import { RoomCatchUpControls } from '@/components/buzz/RoomCatchUpControls';
+import { BubblePressable } from '@/components/BubblePressable';
+import { RoomUnreadControls } from '@/components/buzz/RoomUnreadControls';
 import { TranscriptScrubber } from '@/components/buzz/TranscriptScrubber';
 import { usePhoneUnderfillHistory } from '@/buzz/phone-underfill-history';
-import { RoomCatchUpSheet } from '@/components/buzz/RoomCatchUpSheet';
-import { buildCatchUpReport } from '@/buzz/room-catch-up-report';
 import { createTranscriptCardMotionStore } from '@/components/buzz/transcript-card-motion-context';
 import {
   isAgentTurnActive,
@@ -836,7 +835,6 @@ export function BuzzChatSurface({
     applyRoomName,
     applyRoomReviewers,
     firstUnreadMessageId,
-    openingUnreadCounts,
     advanceReadCursor,
     acknowledgeReadMark,
     liveOverlays,
@@ -2462,7 +2460,7 @@ export function BuzzChatSurface({
     [roomSurface?.members],
   );
   // The one way anything but typing puts words in the composer: a starter
-  // prompt and a catch-up request both go through here, and `planComposerFill`
+  // Starter prompts go through here, and `planComposerFill`
   // owns what that does to a draft somebody already started.
   const fillComposer = useCallback(
     (text: string, options: { mention?: ComposerMention; focusOnRefusal?: boolean } = {}) => {
@@ -2798,10 +2796,8 @@ export function BuzzChatSurface({
   // just landed, which is the divider readers watched appear at the newest
   // message out of nowhere.
   const {
-    queue: newMessageQueue,
     discVisible: newestJumpDiscShown,
     badgeCount: newMessageBadgeCount,
-    catchUpVisible: catchUpEligible,
     observeVisibleMessages,
     observeTailPinned,
   } = useNewMessageControl({
@@ -2810,88 +2806,9 @@ export function BuzzChatSurface({
     queueableMessages: arrivalMessages,
     arrivingIds: transcriptArrivalObservation.arrivingIds,
     newestMessageId: newestArrivalMessageId,
-    firstUnreadMessageId: isCorner ? null : firstUnreadMessageId,
-    openingUnreadCounts: isCorner ? null : openingUnreadCounts,
     isPinnedToTail: () => !anchoredSegmentActive && scrollController.isPinnedToTail(),
     enabled: !isCorner,
   });
-  // The catch-up sheet, reached from the strip and from a long-press on the
-  // badge. Both doors carry the same unread range — the boundary the reader
-  // fell behind at (the live queue's, or the server's opening cursor before
-  // anything has queued) through the newest row — into the one seam that
-  // builds the sheet's two blocks (`buzz/room-catch-up-report.ts`).
-  const [catchUpSheetVisible, setCatchUpSheetVisible] = useState(false);
-  // The server's cursor first: it is the one boundary that knows where the
-  // reader fell behind BEFORE this visit. The live queue only answers for a
-  // Room that opened read and gained arrivals while they sat in history.
-  const catchUpBoundaryId = isCorner ? null : (firstUnreadMessageId ?? newMessageQueue.boundaryId);
-  // Summarize original messages: folded card hosts lose individual times and text.
-  const catchUpMessages = useMemo(
-    () => anchoredSegmentActive
-      ? mergeDisplayPages(cachedMessages, liveMessages, roomSendFrame.optimistic)
-      : combinedMessages,
-    [anchoredSegmentActive, cachedMessages, liveMessages, roomSendFrame.optimistic, combinedMessages],
-  );
-  const catchUpNewestId = newestTranscriptRowId(catchUpMessages);
-  const catchUpReport = useMemo(
-    () =>
-      !isCorner && catchUpSheetVisible
-        ? buildCatchUpReport({
-            messages: catchUpMessages,
-            boundaryId: catchUpBoundaryId,
-            newestId: catchUpNewestId,
-            viewerPubkey: userPubkey ?? null,
-            // The roster the bylines already resolve against, so an ask whose
-            // requester is not the row's author is still named correctly.
-            identities: conversationIdentities,
-          })
-        : null,
-    [
-      catchUpBoundaryId,
-      catchUpSheetVisible,
-      conversationIdentities,
-      catchUpMessages,
-      isCorner,
-      catchUpNewestId,
-      userPubkey,
-    ],
-  );
-  const openCatchUpSheet = useCallback(() => {
-    if (!isCorner) setCatchUpSheetVisible(true);
-  }, [isCorner]);
-  const closeCatchUpSheet = useCallback(() => setCatchUpSheetVisible(false), []);
-  const catchUpAgents = useMemo(
-    () => roomParticipants.filter((participant) => participant.kind === 'agent'),
-    [roomParticipants],
-  );
-  const draftCatchUpRequest = useCallback(
-    (agent: Pick<RoomMemberOption, 'pubkey' | 'name' | 'handle'>) => {
-      if (
-        isCorner ||
-        !catchUpBoundaryId ||
-        pendingAttachments.length > 0 ||
-        !roomSurface?.viewer.permissions.send
-      )
-        return;
-      const handle = agent.handle.replace(/^@/, '');
-      const prompt = `@${handle} Please catch me up on this Room from message ${catchUpBoundaryId} through the latest message. Summarize key changes, decisions, and anything I need to answer. If part of that history is unavailable, say which part you can see.`;
-      if (fillComposer(prompt, { mention: { handle, pubkey: agent.pubkey } }))
-        setCatchUpSheetVisible(false);
-    },
-    [
-      catchUpBoundaryId,
-      fillComposer,
-      isCorner,
-      pendingAttachments.length,
-      roomSurface?.viewer.permissions.send,
-    ],
-  );
-  const catchUpOfferVisible =
-    !isCorner &&
-    catchUpEligible &&
-    catchUpAgents.length > 0 &&
-    !viewerIsAgent &&
-    Boolean(roomSurface?.viewer.permissions.send);
   const slashVerbs = useMemo(
     () =>
       availableSlashVerbs(
@@ -2902,9 +2819,6 @@ export function BuzzChatSurface({
           canCreatePoll: Boolean(
             !isCorner && !isDirectMessage && !viewerIsAgent && roomSurface?.viewer.permissions.send,
           ),
-          // The verb is the line's door under another name: one gate, so
-          // neither can offer a catch-up the other has withdrawn.
-          canCatchUp: catchUpOfferVisible,
           canManageSchedules: Boolean(
             !isCorner &&
             !isDirectMessage &&
@@ -2937,7 +2851,6 @@ export function BuzzChatSurface({
         currentSlashQuery ?? mentionSlash?.query ?? '',
       ),
     [
-      catchUpOfferVisible,
       currentSlashQuery,
       mentionSlash?.query,
       canManageWorkspace,
@@ -2962,7 +2875,6 @@ export function BuzzChatSurface({
   useEffect(() => {
     setHighlightedSlashVerbIndex(0);
   }, [currentSlashQuery, mentionSlash?.query, paletteItemCount]);
-  useEffect(() => setCatchUpSheetVisible(false), [decodedId]);
   // The desktop transcript's real scroll container and content node — a
   // plain scrollable View over real DOM (`shouldFollowDesktopTail` in
   // `buzz/room-scroll-follow.ts`), not React Native Web's FlatList/
@@ -5566,13 +5478,6 @@ export function BuzzChatSurface({
         case 'poll':
           setCreatePollVisible(true);
           return;
-        // The third door into catch-up, and the same one: the verb opens the
-        // report over the same unread range the strip and the badge open it
-        // over, so the composer cannot say something different about a Room
-        // than the two controls sitting in it.
-        case 'catch-up':
-          if (!isCorner) openCatchUpSheet();
-          return;
         case 'schedule':
           if (!canManageWorkspace || !activeCommunityId) return;
           router.push({
@@ -5626,7 +5531,6 @@ export function BuzzChatSurface({
       handleConnectAgent,
       handleConfirmTargetBranch,
       handleWritePermission,
-      openCatchUpSheet,
       pendingCornerRequest,
       pendingTargetBranchProposal,
       startRenameFromTitle,
@@ -6128,10 +6032,6 @@ export function BuzzChatSurface({
     firstNewMessageId,
     arrivalFlashMessageId,
     sourceLandingFlashMessageId,
-    // The catch-up door rides the unread line, where the run it summarizes
-    // begins, rather than in chrome floating over the transcript.
-    catchUpOffered: catchUpOfferVisible,
-    onOpenCatchUp: openCatchUpSheet,
   });
 
   if (!roomSurface) {
@@ -6656,7 +6556,7 @@ export function BuzzChatSurface({
                   scrollController={scrollController}
                 />
               )}
-              <RoomCatchUpControls
+              <RoomUnreadControls
                 bottomInset={!desktopExperience && !isArchived ? turnChromeTopInset : undefined}
                 corner={isCorner}
                 badgeCount={newMessageBadgeCount}
@@ -6664,26 +6564,13 @@ export function BuzzChatSurface({
                 onJumpToNewest={landAtNewestMessage}
               />
               {tagMenuOpen && (
-                <Pressable
+                <BubblePressable
+                  scaleFeedback={false}
                   accessibilityLabel="Close tag menu"
                   accessibilityRole="button"
                   onPress={() => setTagMenuOpen(false)}
                   style={styles.tagMenuBackdrop}
                   testID="tag-menu-backdrop"
-                />
-              )}
-              {!isCorner && (
-                <RoomCatchUpSheet
-                  agents={catchUpAgents}
-                  canDraft={!inputText.trim() && pendingAttachments.length === 0}
-                  onAskAgent={draftCatchUpRequest}
-                  onClose={closeCatchUpSheet}
-                  onRetry={() => {
-                    retryHydration();
-                    retryOlderTranscriptMessages();
-                  }}
-                  report={catchUpReport}
-                  visible={catchUpSheetVisible}
                 />
               )}
             </View>

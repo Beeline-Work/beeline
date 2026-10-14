@@ -1,9 +1,0 @@
-{
-  "reproduction": "catch-up-1",
-  "device": "emulator-5558",
-  "timeZone": "America/New_York",
-  "sheet": " |  |  |  |  |  |  |  |  | Close catch up |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  | Catch up | Since 15:26 \u00b7 newest 15:45 |  |  | SUMMARY | Ruby: The Catch up fix merged and Android verification passed. Ruby: We decided to retry the release after the build cache refresh. Ruby: The release failed because the build timed out. |  |  | NEEDS YOU | Nothing is waiting on you. |  |  | ASK AN AGENT | Choose an agent, then review and send the request. | Draft catch up request to Ruby | Ruby",
-  "unavailable": " |  |  |  |  |  |  |  |  | Close catch up |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  | Catch up | Since 15:26 \u00b7 newest 15:45 |  |  | SUMMARY | Summary unavailable | Retry summary | Retry summary |  |  | NEEDS YOU | Nothing is waiting on you. |  |  | ASK AN AGENT | Choose an agent, then review and send the request. | Draft catch up request to Ruby | Ruby",
-  "recovered": " |  |  |  |  |  |  |  |  | Close catch up |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  |  | Catch up | Since 15:26 \u00b7 newest 15:45 |  |  | SUMMARY | Ruby: The Catch up fix merged and Android verification passed. Ruby: We decided to retry the release after the build cache refresh. Ruby: The release failed because the build timed out. |  |  | NEEDS YOU | Nothing is waiting on you. |  |  | ASK AN AGENT | Choose an agent, then review and send the request. | Draft catch up request to Ruby | Ruby",
-  "result": "PASS"
-}

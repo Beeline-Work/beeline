@@ -25,7 +25,6 @@
 export const BEELINE_SLASH_COMMANDS = [
   'build',
   'poll',
-  'catch-up',
   'schedule',
   'workflow',
   'open-corner',

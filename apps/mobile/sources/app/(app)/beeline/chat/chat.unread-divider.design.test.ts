@@ -17,26 +17,18 @@ const storeSource = readFileSync(
 );
 
 describe('the chat surface unread-divider wiring', () => {
-  it('draws divider, disc and offer from the one hook, with no second path', () => {
+  it('draws divider and disc from the one hook, with no second path', () => {
     expect(chatSource).toContain('useNewMessageControl({');
     expect(chatSource).toContain('dividerMessageId: firstNewMessageId');
     expect(chatSource).toContain('discVisible: newestJumpDiscShown');
     expect(chatSource).toContain('badgeCount: newMessageBadgeCount');
-    expect(chatSource).toContain('catchUpVisible: catchUpEligible');
-    expect(chatSource).toContain('<RoomCatchUpControls');
+    expect(chatSource).toContain('<RoomUnreadControls');
     expect(chatSource).toContain('discVisible={newestJumpDiscShown}');
-    expect(chatSource).toContain('catchUpOffered: catchUpOfferVisible');
     expect(chatSource).toContain('badgeCount={newMessageBadgeCount}');
-    // `/catch-up` is the line's door under another name, so it closes with it.
-    expect(chatSource).toContain('canCatchUp: catchUpOfferVisible,');
     // Both lists report tail distance, so a corner's chevron follows a scroll
     // that leaves the viewable set unchanged.
     expect(chatSource.match(/(?<!\.)observeTailPinned\(pinned\);/g)).toHaveLength(2);
-    // The coupling this change removed, in either of the shapes it had. The
-    // bare `?? firstUnreadMessageId` fallback is no longer the tell: the
-    // catch-up sheet's range legitimately falls back to the server cursor
-    // when nothing has queued yet. What must never come back is the DIVIDER
-    // being drawn from the live queue.
+    // The divider must not follow the live queue.
     expect(chatSource).not.toContain('firstNewMessageId = newMessageQueue');
     expect(chatSource).not.toContain('dividerMessageId: newMessageQueue');
     expect(chatSource).not.toContain('{newMessageQueue.count > 0 && newMessageQueue.boundaryId &&');
@@ -69,8 +61,6 @@ describe('the chat surface unread-divider wiring', () => {
     // beside it — and the strip that briefly replaced the pill is gone with
     // it, so the transcript carries no floating bar at all.
     expect(chatSource).not.toContain('newestJumpDisc:');
-    expect(chatSource).not.toContain('catchUpStrip');
-    expect(chatSource).not.toContain('catchUpSummary');
   });
 
   it('feeds the hook the list’s own viewability pass', () => {

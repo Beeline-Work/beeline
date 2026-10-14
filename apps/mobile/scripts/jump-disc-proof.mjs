@@ -13,14 +13,14 @@ import { createRoot } from '${mobile}/node_modules/react-dom/client';
 import { flushSync } from '${mobile}/node_modules/react-dom';
 import { View, Text } from 'react-native';
 import { TurnBandSlot, TurnProgressLine } from '${mobile}/sources/components/buzz/TurnProgressLine';
-import { RoomCatchUpControls } from '${mobile}/sources/components/buzz/RoomCatchUpControls';
+import { RoomUnreadControls } from '${mobile}/sources/components/buzz/RoomUnreadControls';
 import { roomBottomChromeStyles } from '${mobile}/sources/buzz/room-bottom-chrome';
 const chrome = roomBottomChromeStyles({bgTerminal:'#F3EEE4',border:'#DED2BC'});
 const root = createRoot(document.getElementById('root'));
 let jumps = 0;
 function Scene({line, taller, keyboard, width}) {
  const [inset,setInset] = useState(0);
- const disc = <RoomCatchUpControls corner={false} badgeCount={3} discVisible bottomInset={${baseline} ? undefined : inset} onJumpToNewest={() => jumps++} />;
+ const disc = <RoomUnreadControls corner={false} badgeCount={3} discVisible bottomInset={${baseline} ? undefined : inset} onJumpToNewest={() => jumps++} />;
  return <View style={{height:keyboard ? 460 : 780,width,backgroundColor:'#F3EEE4'}}>
   <View style={{flex:1,overflow:'hidden'}}><Text>Scrolled older transcript</Text>{disc}</View>
   <View style={chrome.stack}>

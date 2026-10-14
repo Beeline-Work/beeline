@@ -3,7 +3,6 @@ import type { ChatDisplayMessage } from './room-view-presentation';
 import {
   EMPTY_NEW_MESSAGE_QUEUE,
   acknowledgeNewMessageQueue,
-  catchUpOfferEligible,
   messageContainsBoundary,
   newMessageBadgeCount,
   newestJumpDiscVisible,
@@ -71,9 +70,6 @@ export function useUnreadLineControl({
  *   the pinned tail also hides it when viewability is stale after a resize;
  * - the badge on that disc counts the unread run, and reaching the newest row
  *   clears it exactly as a tap on the disc would;
- * - catch-up eligibility, which the line itself carries as its press target.
- *   The offer belongs where the run it would summarize begins, and it dies
- *   with the line.
  *
  * Divider and count used to be drawn from the live queue alone, which is what
  * put a fresh divider under the newest row and left the old pill sitting over
@@ -84,8 +80,6 @@ export function useNewMessageControl({
   queueableMessages,
   arrivingIds,
   newestMessageId,
-  firstUnreadMessageId,
-  openingUnreadCounts,
   isPinnedToTail,
   enabled = true,
   unreadLine,
@@ -96,8 +90,6 @@ export function useNewMessageControl({
   queueableMessages: readonly ChatDisplayMessage[];
   arrivingIds: ReadonlySet<string>;
   newestMessageId: string | null;
-  firstUnreadMessageId: string | null;
-  openingUnreadCounts: { messages: number; agentTurns: number } | null;
   /** Tail distance, also used to suppress a stale jump disc at the visible end. */
   isPinnedToTail: () => boolean;
   /** Room unread state is disabled in corners; only the tail chevron remains. */
@@ -110,7 +102,6 @@ export function useNewMessageControl({
   discVisible: boolean;
   /** What the disc's badge reads, or 0 for no badge. */
   badgeCount: number;
-  catchUpVisible: boolean;
   observeVisibleMessages: (visible: readonly ChatDisplayMessage[]) => void;
   /** The list's scroll handler reports tail distance. */
   observeTailPinned: (pinned: boolean) => void;
@@ -225,12 +216,6 @@ export function useNewMessageControl({
       // that position, so neither Room nor corner needs a jump control.
       !tailPinned,
     badgeCount: enabled ? newMessageBadgeCount(queue, newestMessageVisible) : 0,
-    // The offer rides the line, so it cannot outlive it: no line drawn, no
-    // offer, and reaching the tail takes both.
-    catchUpVisible:
-      enabled &&
-      dividerMessageId !== null &&
-      catchUpOfferEligible(firstUnreadMessageId, openingUnreadCounts),
     observeVisibleMessages,
     observeTailPinned,
     settleQueueAtBoundary,

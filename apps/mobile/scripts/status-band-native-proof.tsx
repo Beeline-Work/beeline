@@ -8,7 +8,7 @@ import Animated, { useAnimatedStyle } from 'react-native-reanimated';
 import { composerBottomPadding } from '../sources/buzz/composer-keyboard';
 import { UnistylesRuntime, useUnistyles } from 'react-native-unistyles';
 import { TurnBandSlot, TurnProgressLine, TurnSettledLine } from '../sources/components/buzz/TurnProgressLine';
-import { RoomCatchUpControls } from '../sources/components/buzz/RoomCatchUpControls';
+import { RoomUnreadControls } from '../sources/components/buzz/RoomUnreadControls';
 import { roomBottomChromeStyles } from '../sources/buzz/room-bottom-chrome';
 import { selectComposerAckPresentation } from '../sources/buzz/room-indicators';
 import { ConversationComposer, COMPOSER_SINGLE_LINE_INPUT_HEIGHT } from '../sources/components/buzz/ConversationComposer';
@@ -60,7 +60,7 @@ function StatusBandScene() {
       <FlatList inverted data={Array.from({ length: 160 }, (_, i) => i)} keyExtractor={String}
         contentContainerStyle={{ paddingTop: 36 }}
         renderItem={({ item }) => <Text style={{ ...hull.type.body, color: hull.textPrimary, paddingHorizontal: 8 }}>Transcript {item} HHHHHHHHHHHHHHHHHHHHHHHHHHH</Text>} />
-      <RoomCatchUpControls corner={false} badgeCount={3} discVisible bottomInset={topInset}
+      <RoomUnreadControls corner={false} badgeCount={3} discVisible bottomInset={topInset}
         onJumpToNewest={() => setJumps(count => count + 1)} />
     </View>
     <View style={chrome.stack}>

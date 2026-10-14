@@ -74,7 +74,9 @@ directories inside an eligible disposable object writable before removal. Never
 follow links or modify Squire stores. Repairing first also avoids a macOS failure
 seen in native CI: recursive removal rejected on EACCES while sibling removals
 continued, so the subsequent repair inventory failed on a disappearing `codex`
-directory with ENOENT and left the remaining read-only video frames behind.
+directory with ENOENT and left the remaining read-only video frames behind. The
+repair indexes directories once per inventory and visits only each disposable
+subtree, avoiding a whole-tree scan for every expired file.
 Surface actual errors, keep deferred authority, and run ended-owner maintenance
 without waiting for every unrelated Room on the machine to become idle.
 

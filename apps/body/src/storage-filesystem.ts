@@ -86,19 +86,33 @@ export function isSquirePath(path: string): boolean {
 
 /** Downloaded tools often ship directories mode 0500/0555. Make only owned
  * directories in this disposable object writable; never follow a link or touch Squire. */
-const squirePathsByTree = new WeakMap<Map<string, TreeEntry>, string[]>();
+const removalIndexes = new WeakMap<Map<string, TreeEntry>, { excluded: string[]; directories: string[] }>();
 export async function removeStoragePath(root: string, knownTree?: Map<string, TreeEntry>): Promise<void> {
   const original = knownTree ?? await storageTree(root);
-  let excluded = squirePathsByTree.get(original);
-  if (!excluded) { excluded = [...original.keys()].filter(isSquirePath); squirePathsByTree.set(original, excluded); }
+  let index = removalIndexes.get(original);
+  if (!index) {
+    index = { excluded: [...original.keys()].filter(isSquirePath),
+      directories: [...original].filter(([, item]) => item.directory).map(([path]) => path).sort() };
+    removalIndexes.set(original, index);
+  }
+  const { excluded, directories } = index;
   if (excluded.some(path => path === root || path.startsWith(`${root}/`)))
     throw new Error('refusing removal of Trusty Squire storage');
   if (isSquirePath(root)) throw new Error('refusing removal of Trusty Squire storage');
   // Repair before starting rm: recursive rm runs sibling removals concurrently,
   // so after an EACCES its other children can still be disappearing. A second
   // inventory then races those removals (observed on macOS as ENOENT).
-  for (const [path, item] of original) {
-    if (!item.directory || path !== root && !path.startsWith(`${root}/`)) continue;
+  const prefix = `${root}/`;
+  let low = 0, high = directories.length;
+  while (low < high) {
+    const middle = (low + high) >>> 1;
+    if (directories[middle]! < prefix) low = middle + 1;
+    else high = middle;
+  }
+  const ownedDirectories = original.get(root)?.directory ? [root] : [];
+  for (let cursor = low; cursor < directories.length && directories[cursor]!.startsWith(prefix); cursor++)
+    ownedDirectories.push(directories[cursor]!);
+  for (const path of ownedDirectories) {
     const info = await lstat(path).catch((error: NodeJS.ErrnoException) => {
       if (error.code === 'ENOENT') return undefined;
       throw error;

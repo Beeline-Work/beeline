@@ -2196,7 +2196,7 @@ export class PhoneService {
     const projectionStartedAt = performance.now();
     const view: RoomView = {
       room:
-        room.parent_id && !paintedRoom.about && facts?.objective
+        room.parent_id && facts?.objective
           ? { ...paintedRoom, about: facts.objective }
           : paintedRoom,
       messages: decorateAttachments(appMessages, attachmentFacts),
@@ -3217,7 +3217,7 @@ export class PhoneService {
       const hasLiveWorkingTurn = corner.latest_turn_status === 'working';
       const derived = cornerRowState({ ...corner, lifecycle });
       const header = roomHeader(corner, this.publicOrigin);
-      const about = header.about ?? (corner.objective?.trim() || undefined);
+      const about = corner.objective?.trim() || header.about;
       const appManifest = readCornerAppManifest(corner.app_manifest);
       return {
         corner: about ? { ...header, about } : header,

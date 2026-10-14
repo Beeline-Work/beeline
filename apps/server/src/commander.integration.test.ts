@@ -638,6 +638,7 @@ it.each(['primary reviewer', 'fallback reviewer', 'commander'])('Reproduction re
 
 it('lets the worker and its commander update an agent corner goal and opening card', async () => {
   const opened = await open(), turn = await worker(opened.cornerId);
+  await db.query(`UPDATE rooms SET about='Legacy version 1.1.17 goal' WHERE id=$1`, [opened.cornerId]);
   await db.query(`INSERT INTO messages(id,room_id,author_id,text,card_type,card)
     VALUES('goal-card',$1,$2,'Opened','daemon-fact',$3::jsonb)`,
     [ROOM, RUBY, JSON.stringify({ cornerId: opened.cornerId, objective: 'Build the widget' })]);
@@ -651,6 +652,8 @@ it('lets the worker and its commander update an agent corner goal and opening ca
     expect((await db.query(`SELECT card FROM messages WHERE id='goal-card'`)).rows[0]!.card)
       .toMatchObject({ objective });
     expect((await phone.readRoom(opened.cornerId, HUMAN))?.room.about).toBe(objective);
+    expect((await phone.readCorners(ROOM, HUMAN))?.corners)
+      .toContainEqual(expect.objectContaining({ corner: expect.objectContaining({ id: opened.cornerId, about: objective }) }));
     expect((await daemon.execute('getCornerRestoreState', { cornerId: opened.cornerId }, actor)).objective)
       .toBe(objective);
     expect((await daemon.execute('listRoomCorners', { roomId: ROOM }, actor)).corners)

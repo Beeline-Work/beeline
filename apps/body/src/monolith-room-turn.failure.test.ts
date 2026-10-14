@@ -746,6 +746,19 @@ describe('Room turn failure receipt', () => {
     expect(receipts.some(receipt => receipt.status === 'failed')).toBe(false);
   });
 
+  it.each(['no-reply', 'repeated-tool-call'])('Reproduction LOOP-1: %s ends the helper turn silently and releases queued wakes', async stopReason => {
+    const { receipts, posted, attempts, sessionsOpened } = await runTurn({
+      agentCommand: '/fake-agent', agentKind: 'codex', commandReason: 'order', turnCount: 2,
+      prompt: async () => ({ stopReason, updates: [], agentText: 'Must never post this final text', toolCalls: [] }),
+    });
+    expect(attempts).toBe(2);
+    expect(sessionsOpened).toBe(2);
+    expect(posted).toEqual([]);
+    expect(receipts.filter(receipt => receipt.status === 'complete')).toHaveLength(2);
+    expect(receipts.some(receipt => receipt.status === 'failed')).toBe(false);
+    console.info('Demonstrated LOOP-1: terminal guard → no Room message; queued wake starts in fresh session');
+  });
+
   it.each(['report', 'order', 'watched_corner', 'corner_check', 'schedule', 'subscribed_event', 'system'])('completes a terminal-tool silent %s wake without posting or retrying', async (commandReason) => {
     const call = { id: 'silent-1', title: 'mcp__beeline-agent__no_reply_needed', status: 'completed' };
     const { receipts, posted, attempts } = await runTurn({

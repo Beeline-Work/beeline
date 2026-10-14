@@ -881,7 +881,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   },
   {
     name: 'no_reply_needed',
-    description: 'On a nonhuman report, order, lifecycle, scheduler or system wake with nothing to post, acknowledge that no reply is needed, then end silently. This local tool posts nothing and reports nothing. Human-triggered turns cannot use it.',
+    description: 'On a nonhuman report, order, lifecycle, scheduler or system wake with nothing to post, end the turn immediately and silently. No further tools or final text are accepted. This tool posts nothing and reports nothing. Human-triggered turns cannot use it.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
@@ -4378,6 +4378,8 @@ async function daemonUploadArtifact(
 export async function callAgentTool(
   name: string, args: JsonObject, toolCallId: string,
 ): Promise<string> {
+  if (process.env.BEELINE_TURN_CONTEXT_FILE && (await readTurnContextFile()).terminalReason)
+    throw new Error('turn has ended; further tool calls are refused');
   switch (name) {
     case 'get_room_message': {
       const message = await daemonExecute('getRoomMessage', {
@@ -4699,6 +4701,10 @@ export async function callAgentTool(
       await activeCommandContext();
       const { commandReason } = await readTurnContextFile();
       if (!nonhumanSilentWake(commandReason)) throw new Error('no_reply_needed requires a nonhuman report, order, lifecycle, scheduler or system wake');
+      await daemonExecute('postAgentTurnReceipt', { status: 'complete', completionKind: 'no-reply' });
+      const path = requiredEnv('BEELINE_TURN_CONTEXT_FILE');
+      const context = await readTurnContextFile();
+      writeFileSync(path, JSON.stringify({ ...context, terminalReason: 'no-reply' }), { mode: 0o600 });
       return JSON.stringify({ acknowledged: true });
     }
     case 'report':
@@ -5233,6 +5239,8 @@ async function handleLine(line: string): Promise<void> {
       // why buried in a transport frame (C90).
       let output: string;
       try {
+        if (process.env.BEELINE_TURN_CONTEXT_FILE && (await readTurnContextFile()).terminalReason)
+          throw new Error('turn has ended; further tool calls are refused');
         output = agentSurface
           ? await callAgentTool(params.name, asObject(params.arguments), toolCallId(params, request.id))
           : await callTool(params.name, asObject(params.arguments));

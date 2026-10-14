@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { once } from 'node:events';
 import { AcpClient, AcpRuntimeExitedError, AcpTurnBackstopError, TURN_BACKSTOP_MS } from './acp.js';
+import { callAgentTool } from './read-only-mcp.js';
 import { distillTurnFailureReason } from './turn-failure-reason.js';
 import { classifyTurnSilence, phraseTurnSilence } from '@beeline/api-contract/daemon';
 
@@ -73,10 +74,13 @@ describe('ACP turn liveness over real stdio', () => {
     root = await mkdtemp(join(tmpdir(), 'beeline-acp-liveness-'));
     const script = join(root, 'agent.mjs');
     await writeFile(script, agentSource);
+    const contextPath = join(root, 'turn.json');
+    await writeFile(contextPath, JSON.stringify({ roomId: 'room', requestId: 'turn', generationId: 'generation', commandReason: 'report' }));
+    vi.stubEnv('BEELINE_TURN_CONTEXT_FILE', contextPath);
     client = new AcpClient({
       agentCommand: process.execPath,
       agentArgs: [script],
-      agentEnv: {},
+      agentEnv: { BEELINE_TURN_CONTEXT_FILE: contextPath },
       agentLabel: 'test-runtime',
       oomKills: { prime: async () => undefined, consume: async () => false },
     });
@@ -85,8 +89,75 @@ describe('ACP turn liveness over real stdio', () => {
   });
   afterEach(async () => {
     vi.useRealTimers();
+    vi.unstubAllEnvs();
+    vi.unstubAllGlobals();
     await client.stop();
     await rm(root, { recursive: true, force: true });
+  });
+
+  it('Reproduction LOOP-1: successful no_reply_needed immediately settles without a final reply', async () => {
+    const opened = once(client, 'session/update');
+    let settled = false;
+    const prompt = client.sessionPrompt(sessionId, 'tool').then(result => { settled = true; return result; });
+    await opened;
+    vi.stubEnv('BEELINE_DAEMON_BASE_URL', 'http://localhost');
+    vi.stubEnv('BEELINE_DAEMON_TOKEN', 'test-token');
+    const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) });
+    vi.stubGlobal('fetch', fetch);
+    expect(JSON.parse(await callAgentTool('no_reply_needed', {}, 'silent'))).toEqual({ acknowledged: true });
+    for (let i = 1; i < 2800; i++) {
+      await expect(callAgentTool('no_reply_needed', {}, 'silent-' + i)).rejects.toThrow('turn has ended');
+    }
+    expect(fetch).toHaveBeenCalledTimes(1);
+    await new Promise(resolve => setTimeout(resolve, 30));
+    expect(settled).toBe(true);
+    expect((await prompt).agentText).toBe('');
+    const wire = vi.spyOn(client as unknown as { write: (message: unknown) => void }, 'write');
+    await (client as unknown as { handlePermission: (id: string, params: unknown) => Promise<void> }).handlePermission(
+      'after-end', { sessionId, options: [{ optionId: 'allow', kind: 'allow_once' }] },
+    );
+    expect(wire).toHaveBeenCalledWith({ jsonrpc: '2.0', id: 'after-end', result: { outcome: { outcome: 'cancelled' } } });
+    wire.mockRestore();
+    console.log('Reproduction LOOP-1: first successful no_reply_needed → prompt ended with no final text');
+  });
+
+  it.each(['mcp__agent__read', 'execute', 'custom_external_tool'])('stops five identical %s calls and releases the next prompt', async title => {
+    const opened = once(client, 'session/update');
+    const prompt = client.sessionPrompt(sessionId, 'tool');
+    await opened;
+    for (let i = 0; i < 5; i++) {
+      await client.setModel(sessionId, JSON.stringify({ sessionUpdate: 'tool_call', toolCallId: 'repeat-' + i,
+        title, rawInput: i % 2 ? { b: 2, a: 1 } : { a: 1, b: 2 }, status: 'in_progress' }));
+    }
+    expect(await prompt).toMatchObject({ stopReason: 'repeated-tool-call', agentText: '' });
+    await writeFile(join(root, 'turn.json'), JSON.stringify({ roomId: 'room', requestId: 'next-turn', generationId: 'generation', commandReason: 'report' }));
+    const next = await client.sessionNew({ cwd: root });
+    expect((await client.sessionPrompt(next.sessionId, 'normal')).agentText).toBe('Turn finished normally.');
+  });
+
+  it('counts no-argument tools and resets on a different tool', async () => {
+    const opened = once(client, 'session/update');
+    const prompt = client.sessionPrompt(sessionId, 'tool');
+    await opened;
+    for (let i = 0; i < 9; i++) {
+      await client.setModel(sessionId, JSON.stringify({ sessionUpdate: 'tool_call', toolCallId: 'empty-' + i,
+        title: i < 4 ? 'status' : 'ping', status: 'completed' }));
+    }
+    expect((await prompt).stopReason).toBe('repeated-tool-call');
+  });
+
+  it('four identical calls then different arguments reset the guard; updates do not count as calls', async () => {
+    const opened = once(client, 'session/update');
+    const prompt = client.sessionPrompt(sessionId, 'tool');
+    await opened;
+    for (let i = 0; i < 8; i++) {
+      await client.setModel(sessionId, JSON.stringify({ sessionUpdate: 'tool_call', toolCallId: 'read-' + i,
+        title: 'read', rawInput: { path: i < 4 ? 'a' : 'b' }, status: 'in_progress' }));
+      await client.setModel(sessionId, JSON.stringify({ sessionUpdate: 'tool_call_update', toolCallId: 'read-' + i,
+        status: 'completed' }));
+    }
+    await client.setModel(sessionId, JSON.stringify({ complete: true }));
+    expect((await prompt).stopReason).toBe('end_turn');
   });
 
   it('Reproduction ACP-L1: a silent release tool survives 40 minutes and finishes normally', async () => {

@@ -1,6 +1,7 @@
 import { randomBytes, randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { migrate } from './database.js';
+import { Pool } from 'pg';
+import { migrate, PostgresDatabase, type SqlDatabase } from './database.js';
 import { taggedIdentityIdsSql } from './message-mentions.js';
 import { PgliteDatabase } from './test-support.js';
 import { PhoneService } from './phone-service.js';
@@ -25,10 +26,132 @@ const W = '11111111-1111-4111-8111-111111111111',
   R = '22222222-2222-4222-8222-222222222222',
   C = '33333333-3333-4333-8333-333333333333';
 const id = () => randomBytes(32).toString('hex');
-let db: PgliteDatabase, phone: PhoneService, daemon: DaemonService, live: LiveHub;
+const stopProofPostgresUrl = process.env.BEELINE_STOP_TEST_POSTGRES_URL;
+if (stopProofPostgresUrl && !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(stopProofPostgresUrl).hostname))
+  throw new Error('Stop proofs require an isolated loopback PostgreSQL');
+let db: SqlDatabase, closeDatabase: () => Promise<void>, phone: PhoneService, daemon: DaemonService, live: LiveHub;
 const commands = (agentId = A, roomId = R) =>
   daemon.execute('getAgentCommands', { roomId }, agentId).then((r) => r.commands);
 const send = (text: string, roomId = R) => phone.execute('sendRoomMessage', { roomId, text }, H);
+
+async function queueStopOrders() {
+  await send('@goosy delegate work');
+  const [root] = await commands(B);
+  await claim(root!);
+  for (let i = 1; i <= 3; i++) {
+    await daemon.execute('order', { roomId: R, address: R, agent: 'hoots', text: `queued task ${i}`,
+      requestId: root!.turnRequestId, generationId: 'g1' }, B);
+  }
+  const queued = await commands();
+  expect(queued).toHaveLength(3);
+  await claim(queued[0]!);
+  return { queued, root: root! };
+}
+
+it('Reproduction stop-queued-orders: Stop drains the queued orders and reports once', async () => {
+  const { queued } = await queueStopOrders();
+  await phone.execute('cancelAgentTurn', { roomId: R, agentId: A, requestId: queued[0]!.turnRequestId }, H);
+  const remaining = (await commands()).filter(command => command.action === 'input');
+  expect(remaining).toHaveLength(0);
+  for (const command of queued) await expect(claim(command, 'stale-helper')).rejects.toThrow();
+  expect((await db.query(`SELECT state FROM agent_commands WHERE id=ANY($1::text[])`,
+    [queued.map(command => command.id)])).rows).toEqual(Array(3).fill({ state: 'cancelled' }));
+  const reports = (await commands(B)).filter(command => command.reason === 'report');
+  expect(reports).toHaveLength(1);
+  expect(reports[0]!.source.body).toContain('2 queued orders were dropped by a Stop');
+  const lines = await db.query<{ text: string }>(
+    `SELECT text FROM messages WHERE room_id=$1 AND system_event->>'kind'='turn-cancelled'
+     AND request_id=$2`, [R, queued[0]!.turnRequestId]);
+  expect(lines.rows).toHaveLength(1);
+  expect(lines.rows[0]!.text).toContain('turn cancelled · 2 queued orders dropped');
+  console.log('Demonstrated Reproduction stop-queued-orders: queue 3, claim first, owner Stop → all 3 cancelled, 0 input commands available, all cached claims refused, one count line and one sender report');
+});
+
+it('Stop preserves other senders, source Rooms, targets, human mentions and newer orders', async () => {
+  const { queued, root } = await queueStopOrders();
+  for (const [authorId, fromRoomId, agentId] of [[H, R, A], [B, C, A], [B, R, B]]) {
+    await createAgentCommand(db, { roomId: R, agentId: agentId!, sourceMessageId: null,
+      privatePayload: { kind: 'order', authorId: authorId!, fromRoomId: fromRoomId!, text: 'survivor' }, reason: 'order' });
+  }
+  await send('@hoots Human follow-up');
+  const newer = await createAgentCommand(db, { roomId: R, agentId: A, sourceMessageId: null,
+    privatePayload: { kind: 'order', authorId: B, fromRoomId: R, text: 'newer order' }, reason: 'order' });
+  await db.query(`UPDATE agent_commands SET created_at=now()+interval '1 minute' WHERE id=$1`, [newer!.id]);
+  await phone.execute('cancelAgentTurn', { roomId: R, agentId: A, requestId: queued[0]!.turnRequestId }, H);
+  const remaining = (await commands()).filter(command => command.action === 'input');
+  expect(remaining).toHaveLength(4);
+  expect(remaining.some(command => command.source.body.includes('Human follow-up'))).toBe(true);
+  expect(remaining.some(command => command.id === newer!.id)).toBe(true);
+  expect((await db.query(`SELECT 1 FROM agent_commands WHERE agent_id=$1 AND state='pending' AND private_payload->>'text'='survivor'`, [B])).rowCount).toBe(1);
+  await daemon.execute('order', { roomId: R, address: R, agent: 'hoots', text: 'after Stop',
+    requestId: root.turnRequestId, generationId: 'g1' }, B);
+  const after = (await commands()).find(command => command.source.body.includes('after Stop'))!;
+  await expect(claim(after)).resolves.toBeUndefined();
+});
+
+it('tagged human Stop also drains orders and reports their count once', async () => {
+  const { queued } = await queueStopOrders();
+  await send('@hoots stop');
+  expect((await commands()).filter(command => command.action === 'input')).toHaveLength(0);
+  expect((await commands(B)).filter(command => command.reason === 'report')).toHaveLength(1);
+  for (const command of queued) await expect(claim(command, 'late-helper')).rejects.toThrow();
+  const line = await db.query<{ text: string }>(`SELECT text FROM messages
+    WHERE room_id=$1 AND system_event->>'verb'='stopped its running turn' ORDER BY created_at DESC LIMIT 1`, [R]);
+  expect(line.rows[0]!.text).toContain('2 queued orders dropped');
+});
+
+it.runIf(Boolean(stopProofPostgresUrl))('Stop holds the claim fence through the drain and preserves an order arriving during Stop', async () => {
+  const { queued, root } = await queueStopOrders();
+  let reached!: () => void, release!: () => void, claimStarted!: () => void;
+  const stopped = new Promise<void>(resolve => { reached = resolve; });
+  const resume = new Promise<void>(resolve => { release = resolve; });
+  const started = new Promise<void>(resolve => { claimStarted = resolve; });
+  const wrapStop = (database: SqlDatabase): SqlDatabase => ({
+    query: async (sql, values) => {
+      const result = await database.query(sql, values);
+      if (sql.includes("UPDATE agent_turns SET status='cancelled',created_at=now()")) {
+        reached();
+        await resume;
+      }
+      return result;
+    },
+    transaction: work => database.transaction(transaction => work(wrapStop(transaction))),
+  });
+  const wrapClaim = (database: SqlDatabase): SqlDatabase => ({
+    query: (sql, values) => {
+      if (sql.includes('pg_advisory_xact_lock')) claimStarted();
+      return database.query(sql, values);
+    },
+    transaction: work => database.transaction(transaction => work(wrapClaim(transaction))),
+  });
+  const stop = new PhoneService(wrapStop(db), 'http://test').execute('cancelAgentTurn',
+    { roomId: R, agentId: A, requestId: queued[0]!.turnRequestId }, H);
+  let claimAttempt: Promise<unknown> | undefined;
+  try {
+    await stopped;
+    claimAttempt = new DaemonService(wrapClaim(db), live).execute('claimAgentCommand',
+      { roomId: R, commandId: queued[1]!.id, generationId: 'racing-helper' }, A);
+    // Attach the rejection handler before releasing Stop.
+    const rejected = expect(claimAttempt).rejects.toThrow('command claim conflict');
+    await started;
+    const fence = await db.transaction(transaction => transaction.query<{ available: boolean }>(
+      `SELECT pg_try_advisory_xact_lock(hashtext($1)) available`, [`agent-command-queue:${R}:${A}`]));
+    expect(fence.rows[0]!.available).toBe(false);
+    await daemon.execute('order', { roomId: R, address: R, agent: 'hoots', text: 'arrived during Stop',
+      requestId: root.turnRequestId, generationId: 'g1' }, B);
+    release();
+    await stop;
+    await rejected;
+    const surviving = (await commands()).filter(command => command.action === 'input');
+    expect(surviving).toHaveLength(1);
+    expect(surviving[0]!.source.body).toContain('arrived during Stop');
+    await claim(surviving[0]!);
+    console.log('Demonstrated Reproduction stop-queued-orders on PostgreSQL: claim fence held after turn cancellation and before drain; racing cached claim refused after commit; order accepted during Stop survived and claimed');
+  } finally {
+    release();
+    await Promise.allSettled([stop, ...(claimAttempt ? [claimAttempt] : [])]);
+  }
+});
 
 it('runs only the newest of three overdue pings, preserving the earlier text as history', async () => {
   await send('@hoots First request');
@@ -293,7 +416,24 @@ it.each([R, C])('projects reply context outside the conversation window in %s', 
   console.log('Reproduction reply-context: phone reply → server wake/inbox/newest-page supplies parent ID, author and bounded excerpt');
 });
 beforeAll(async () => {
-  db = new PgliteDatabase();
+  if (stopProofPostgresUrl) {
+    const schema = `stop_${randomUUID().replaceAll('-', '')}`;
+    const admin = new Pool({ connectionString: stopProofPostgresUrl });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    const postgres = new PostgresDatabase('', 5, { mode: 'migration', pool: new Pool({
+      connectionString: stopProofPostgresUrl, options: `-c search_path=${schema},public`,
+    }) });
+    db = postgres;
+    closeDatabase = async () => {
+      await postgres.close();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    };
+  } else {
+    const pglite = new PgliteDatabase();
+    db = pglite;
+    closeDatabase = () => pglite.close();
+  }
   await migrate(db);
   await db.query(
     `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Human','human'),($2,'agent','Hoots','hoots'),($3,'agent','Goosy','goosy'),($4,'human','Person','person')`,
@@ -326,7 +466,7 @@ beforeAll(async () => {
   live = new LiveHub();
   daemon = new DaemonService(db, live);
 }, 30_000);
-afterAll(async () => db?.close());
+afterAll(async () => closeDatabase?.());
 beforeEach(async () => {
   await db.query(`DELETE FROM agent_connections`);
   await db.query(

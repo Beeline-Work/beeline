@@ -1,0 +1,1 @@
+{"platforms":["android","ios"],"android":{"modules":["app.usebeeline.voicebackgroundaudio.VoiceBackgroundAudioModule"]},"ios":{"modules":["VoiceBackgroundAudioModule"]}}

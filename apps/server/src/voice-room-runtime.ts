@@ -43,12 +43,14 @@ export class VoiceRoomRuntime {
   private readonly inputSpeech = new Map<string, { turn: number; playback: Set<string> }>();
   private speaking?: AbortController;
   private speechIdle = Promise.resolve();
-  private timer?: ReturnType<typeof setInterval>;
+  private lastTouch = 0;
+  private touching = false;
   private closed = false;
   private refreshPending = false;
   private reportQueue = Promise.resolve();
   private readonly queuedReports = new Set<string>();
   private readonly history = new Map<string, { role: 'user' | 'assistant'; content: string }[]>();
+  private readonly missingSince = new Map<string, number>();
   private constructor(private readonly service: VoiceService, readonly callId: string, readonly roomId: string, private readonly leaseOwner: string) {}
 
   static async connect(service: VoiceService, callId: string, roomId: string, leaseOwner: string = service.owner) {
@@ -73,32 +75,32 @@ export class VoiceRoomRuntime {
       if (this.inputs.get(participant.identity)?.participant === participant) this.stopInput(participant.identity);
       // A newer device with the same Beeline identity can replace this RTC
       // participant. Do not let the old socket remove its successor.
-      const timer = setTimeout(() => {
-        if (!this.closed && !this.room.remoteParticipants.has(participant.identity))
-          void this.service.leave(this.callId, participant.identity, true).catch(() => {});
-      }, 1000);
-      timer.unref();
+      if (!this.room.remoteParticipants.has(participant.identity) && !this.missingSince.has(participant.identity))
+        this.missingSince.set(participant.identity, performance.now());
     });
     this.room.on(RoomEvent.DataReceived, (bytes, participant, _kind, topic) => {
       if (!participant || topic !== VOICE_DATA_TOPIC || bytes.length > 2048) return;
       void (async () => {
         const data = JSON.parse(new TextDecoder().decode(bytes)) as VoiceSignal;
-        if (data.type !== 'target') return;
+        if (data.type !== 'target' && data.type !== 'resume') return;
         await this.service.access(this.roomId, participant.identity);
-        const allowed = await this.service.agents(this.roomId, participant.identity);
-        if (allowed.some(a => a.id === data.agentId)) this.targets.set(participant.identity, data.agentId);
+        if (data.type === 'target') {
+          const allowed = await this.service.agents(this.roomId, participant.identity);
+          if (allowed.some(a => a.id === data.agentId)) this.targets.set(participant.identity, data.agentId);
+        }
+        await this.refresh();
       })().catch(() => {});
     });
     this.room.on(RoomEvent.Disconnected, () => { if (!this.closed) void this.close(); });
     await this.room.connect(this.service.config.url, await token.toJwt(), { autoSubscribe: true, dynacast: false });
     const options = new TrackPublishOptions(); options.source = TrackSource.SOURCE_MICROPHONE;
     await this.room.localParticipant!.publishTrack(LocalAudioTrack.createAudioTrack('beeline-agent-speech', this.audio), options);
-    this.timer = setInterval(() => { void this.heartbeat().catch(() => this.close()); }, 5_000);
-    this.timer.unref();
+    this.touch();
     await this.refresh();
   }
 
   private async signal(signal: VoiceSignal, human?: string) {
+    this.touch();
     if (!this.closed) await this.room.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify(signal)),
       { reliable: true, topic: VOICE_DATA_TOPIC, ...(human ? { destinationIdentities: [human] } : {}) });
   }
@@ -113,10 +115,25 @@ export class VoiceRoomRuntime {
     // otherwise clips the first spoken name after a phone publishes its mic.
     const reader = new AudioStream(track, 16_000, 1).getReader();
     this.inputs.set(human, { reader, track, participant });
-    let stt: VoiceStt;
+    let stt: VoiceStt | undefined;
+    // Drain the SDK continuously while opening STT; retain at most two seconds.
+    const buffered: Int16Array[] = [];
+    const pump = (async () => {
+      while (!this.closed && this.inputVersions.get(human) === version) {
+        const frame = await reader.read();
+        if (frame.done) break;
+        this.touch();
+        if (stt) stt.send(frame.value.data);
+        else {
+          buffered.push(frame.value.data.slice());
+          if (buffered.length > 100) buffered.shift();
+        }
+      }
+    })();
+    void pump.catch(() => {});
     try {
       await this.service.access(this.roomId, human);
-      if (!(await this.service.db.query(`SELECT 1 FROM voice_participants WHERE call_id=$1 AND identity_id=$2 AND left_at IS NULL`,
+      if (!(await this.service.db.query(`SELECT 1 FROM voice_participants WHERE call_id=$1 AND identity_id=$2 AND left_at IS NULL AND parked_at IS NULL`,
         [this.callId, human])).rowCount) { this.stopInput(human); return; }
       const hints = (await this.service.agents(this.roomId, human)).flatMap(agent => [agent.name, agent.handle]);
       stt = await this.service.config.stt(event => {
@@ -138,12 +155,20 @@ export class VoiceRoomRuntime {
         if (event.event === 'EndOfTurn') this.turnIndices.set(human, event.turn_index);
         return;
       }
+      void this.signal({ type: 'speech' }, human);
       // Partial recognized names can aim the strip immediately; only EndOfTurn dispatches.
       if (event.event !== 'EndOfTurn') void this.aimSpokenName(human, event.transcript, version);
       this.speaking?.abort(); this.audio.clearQueue();
       if (event.event !== 'EndOfTurn' || !event.transcript.trim() ||
           event.turn_index <= (this.turnIndices.get(human) ?? -1)) return;
       this.turnIndices.set(human, event.turn_index);
+      if (/^(stop|stop conversation|end conversation|leave conversation|stop conversation mode)$/.test(speechWords(event.transcript).join(' '))) {
+        this.inputVersions.set(human, version + 1);
+        this.stopInput(human);
+        void this.signal({ type: 'stop' }, human)
+          .finally(() => this.service.leave(this.callId, human, true)).catch(() => {});
+        return;
+      }
       void this.utterance(human, event.transcript, performance.now()).catch(error => {
         if (error instanceof Error && error.name === 'AbortError') return;
         void this.signal({ type: 'error', message: error instanceof VoiceQuotaError ? error.message : 'Voice reply unavailable; your message is in the transcript',
@@ -161,11 +186,9 @@ export class VoiceRoomRuntime {
     if (this.closed || this.inputVersions.get(human) !== version) { stt.close(); await reader.cancel().catch(() => {}); return; }
     this.inputs.set(human, { stt, reader, track, participant });
     try {
-      while (!this.closed) {
-        const frame = await reader.read();
-        if (frame.done) break;
-        stt.send(frame.value.data);
-      }
+      for (const frame of buffered) stt.send(frame);
+      buffered.length = 0;
+      await pump;
     } finally { if (this.inputs.get(human)?.stt === stt) this.stopInput(human); }
   }
   private stopInput(human: string) {
@@ -175,21 +198,36 @@ export class VoiceRoomRuntime {
     if (!input) return;
     this.inputs.delete(human); input.stt?.close(); void input.reader.cancel().catch(() => {});
   }
+  private touch() {
+    if (this.closed || this.touching || performance.now() - this.lastTouch < 5000) return;
+    this.lastTouch = performance.now(); this.touching = true;
+    void this.heartbeat().catch(() => this.close()).finally(() => { this.touching = false; });
+  }
   private async heartbeat() {
     const kept = await this.service.db.query(`UPDATE voice_calls SET runtime_until=now()+interval '20 seconds'
       WHERE id=$1 AND runtime_owner=$2 AND ended_at IS NULL`, [this.callId, this.leaseOwner]);
     if (!kept.rowCount) { await this.close(); return; }
     // Token refresh does not re-grant Beeline membership: remove a retired/removed member.
     for (const participant of this.room.remoteParticipants.values()) {
+      this.missingSince.delete(participant.identity);
       try { await this.service.access(this.roomId, participant.identity); }
       catch { await this.service.leave(this.callId, participant.identity, true); }
     }
     const missing = await this.service.db.query<{ identity_id: string }>(
-      `SELECT identity_id FROM voice_participants WHERE call_id=$1 AND left_at IS NULL
-        AND joined_at<now()-interval '30 seconds' AND NOT identity_id=ANY($2::text[])`,
+      `SELECT identity_id FROM voice_participants WHERE call_id=$1 AND left_at IS NULL AND parked_at IS NULL
+        AND NOT identity_id=ANY($2::text[])`,
       [this.callId, [...this.room.remoteParticipants.keys()]]);
-    for (const participant of missing.rows) await this.service.leave(this.callId, participant.identity_id, true);
-    await this.refresh();
+    const absent = new Set(missing.rows.map(participant => participant.identity_id));
+    for (const identity of this.missingSince.keys()) if (!absent.has(identity)) this.missingSince.delete(identity);
+    for (const participant of missing.rows) {
+      const since = this.missingSince.get(participant.identity_id);
+      if (since === undefined) this.missingSince.set(participant.identity_id, performance.now());
+      // Allow RTC's retry window and a fresh mobile join after a radio handoff.
+      else if (performance.now() - since >= 120_000 && !this.room.remoteParticipants.has(participant.identity_id)) {
+        await this.service.leave(this.callId, participant.identity_id, true);
+        this.missingSince.delete(participant.identity_id);
+      }
+    }
   }
   private async aimSpokenName(human: string, text: string, version: number) {
     const agent = namedVoiceTarget(text, await this.service.agents(this.roomId, human), undefined, 2);
@@ -268,12 +306,14 @@ let history = this.history.get(key)?.map(message => ({ ...message }));
       const reports = await this.service.db.query<{ source_message_id: string; id: string; text: string; agent_id: string; human_id: string }>(
         `SELECT DISTINCT ON (o.source_message_id) o.source_message_id,m.id,m.text,o.agent_id,source.author_id human_id
          FROM voice_orders o JOIN messages source ON source.id=o.source_message_id
+         JOIN voice_participants p ON p.call_id=o.call_id AND p.identity_id=source.author_id AND p.left_at IS NULL AND p.parked_at IS NULL
          JOIN agent_commands c ON c.source_message_id=o.source_message_id AND c.agent_id=o.agent_id
          JOIN messages m ON m.author_id=o.agent_id AND m.room_id=$2
            AND (m.id=c.result_message_id OR m.request_id=c.id OR m.request_id=c.turn_request_id)
          WHERE o.call_id=$1 AND o.spoken_message_id IS NULL AND m.presentation='message' AND m.deleted_at IS NULL
          ORDER BY o.source_message_id,m.created_at DESC`, [this.callId, this.roomId]);
       for (const report of reports.rows) {
+        if (!this.room.remoteParticipants.has(report.human_id)) continue;
         if (this.queuedReports.has(report.source_message_id)) continue;
         this.queuedReports.add(report.source_message_id);
         this.reportQueue = this.reportQueue.catch(() => {}).then(async () => {
@@ -334,6 +374,7 @@ let history = this.history.get(key)?.map(message => ({ ...message }));
           const samples = new Int16Array(frameBytes / 2);
           for (let i = 0; i < samples.length; i++) samples[i] = pending.readInt16LE(i * 2);
           pending = pending.subarray(frameBytes);
+          this.touch();
           await this.audio.captureFrame(new AudioFrame(samples, VOICE_SAMPLE_RATE, 1, samples.length));
           if (first && samples.some(sample => Math.abs(sample) > 150)) { first = false; onFirstAudio?.(); }
         }
@@ -341,16 +382,27 @@ let history = this.history.get(key)?.map(message => ({ ...message }));
       if (pending.length > 1) {
         const samples = new Int16Array(Math.floor(pending.length / 2));
         for (let i = 0; i < samples.length; i++) samples[i] = pending.readInt16LE(i * 2);
-        await this.audio.captureFrame(new AudioFrame(samples, VOICE_SAMPLE_RATE, 1, samples.length));
+        this.touch();
+          await this.audio.captureFrame(new AudioFrame(samples, VOICE_SAMPLE_RATE, 1, samples.length));
         if (first && samples.some(sample => Math.abs(sample) > 150)) onFirstAudio?.();
       }
       await this.audio.waitForPlayout();
     } finally { spoken.until = performance.now() + 1500; }
   }
 
+  get isClosed() { return this.closed; }
+
+  async closeWhenParked() {
+    const released = await this.service.db.query(`UPDATE voice_calls SET runtime_until=NULL
+      WHERE id=$1 AND runtime_owner=$2 AND NOT EXISTS(SELECT 1 FROM voice_participants
+        WHERE call_id=$1 AND left_at IS NULL AND parked_at IS NULL) RETURNING id`, [this.callId, this.leaseOwner]);
+    if (released.rowCount) await this.close();
+  }
+
   async close() {
     if (this.closed) return;
-    this.closed = true; clearInterval(this.timer); this.speaking?.abort(); this.audio.clearQueue();
+    this.closed = true; this.speaking?.abort(); this.audio.clearQueue();
+    this.missingSince.clear();
     for (const human of this.inputs.keys()) this.stopInput(human);
     await this.room.disconnect(); await this.audio.close();
     await this.service.db.query(`UPDATE voice_calls SET runtime_until=NULL WHERE id=$1 AND runtime_owner=$2`,

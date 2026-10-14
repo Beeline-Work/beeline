@@ -23,13 +23,19 @@ export type VoiceCall = {
 };
 
 export type VoiceJoin = {
+  sessionId: string;
   call: VoiceCall;
   url: string;
   token: string;
   agents: readonly RoomViewIdentity[];
 };
 
+export type VoiceIdleState = { state: 'ended' | 'parked' | 'ready'; agentName?: string };
+
 export type VoiceSignal =
+  | { type: 'stop' }
+  | { type: 'resume' }
+  | { type: 'speech' }
   | { type: 'target'; agentId: string }
   | { type: 'speaker'; agentId: string | null }
   | { type: 'error'; message: string; code?: 'speech-quota-exhausted' }

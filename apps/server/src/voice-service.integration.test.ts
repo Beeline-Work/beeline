@@ -8,7 +8,7 @@ import { PhoneService } from './phone-service.js';
 import { readChatListView, readRoomViewMessage } from '@beeline/api-contract/phone';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 
-vi.mock('./voice-room-runtime.js', () => ({ VoiceRoomRuntime: { connect: vi.fn(async () => ({ close: vi.fn(), refresh: vi.fn() })) } }));
+vi.mock('./voice-room-runtime.js', () => ({ VoiceRoomRuntime: { connect: vi.fn(async () => ({ close: vi.fn(), closeWhenParked: vi.fn(), refresh: vi.fn() })) } }));
 vi.mock('livekit-server-sdk', async original => {
   const actual = await original<typeof import('livekit-server-sdk')>();
   return { ...actual, RoomServiceClient: class { async removeParticipant() {} async deleteRoom() {} } };
@@ -71,6 +71,7 @@ it('coalesces concurrent runtime claims before their database lease resolves', a
   const before = connect.mock.calls.length;
   const call = (await db.query<any>(`INSERT INTO voice_calls(id,room_id,message_id)
     SELECT '33333333-3333-4333-8333-333333333333',$1,m.id FROM messages m WHERE room_id=$1 AND NOT EXISTS (SELECT 1 FROM voice_calls c WHERE c.message_id=m.id) LIMIT 1 RETURNING *`, [R])).rows[0]!;
+  await db.query(`INSERT INTO voice_participants(call_id,identity_id) VALUES($1,$2)`, [call.id, H]);
   try {
     await Promise.all(Array.from({ length: 4 }, () => contender.ensureRuntime(call)));
     expect(connect.mock.calls.length - before).toBe(1);
@@ -108,4 +109,39 @@ it('defaults to Aura and refuses dormant providers, even when legacy Workspace s
     expect(dormant.prepare).not.toHaveBeenCalled();
     expect(dormant.synthesize).not.toHaveBeenCalled();
   } finally { await selectable.close(); }
+});
+
+it('parks only this session’s pending command and prevents recovery from starting parked RTC', async () => {
+  const joined = await service.join(R, H);
+  const agent = (await service.agents(R, H)).find(a => a.id === A)!;
+  const source = await service.recordHuman(joined.call.id, R, H, agent, 'Work until the report is ready');
+  await service.dispatch(joined.call.id, source, A);
+  try {
+    expect(await service.idle(joined.call.id, H)).toEqual({ state: 'parked', agentName: 'Ruby' });
+    expect((await db.query(`SELECT 1 FROM voice_participants WHERE call_id=$1 AND parked_at IS NOT NULL AND left_at IS NULL`, [joined.call.id])).rowCount).toBe(1);
+    await db.query(`UPDATE voice_calls SET runtime_until=NULL WHERE id=$1`, [joined.call.id]);
+    const contender = new VoiceService(db, live, service.config);
+    try { expect(await contender.ensureRuntime((await db.query<any>(`SELECT * FROM voice_calls WHERE id=$1`, [joined.call.id])).rows[0]!)).toBeUndefined(); }
+    finally { await contender.close(); }
+    await db.query(`UPDATE agent_commands SET state='cancelled',completed_at=now() WHERE source_message_id=$1`, [source]);
+    expect(await service.idleState(joined.call.id, H)).toEqual({ state: 'ended' });
+  } finally { await service.leave(joined.call.id, H); }
+});
+
+it('idle with no session command ends participation while unrelated Room work cannot park it', async () => {
+  const joined = await service.join(R, H);
+  expect(await service.idle(joined.call.id, H)).toEqual({ state: 'ended' });
+  expect(await service.current(R, H)).toBeNull();
+});
+
+it('rejects delayed idle and leave from a superseded participation generation', async () => {
+  const old = await service.join(R, H);
+  const current = await service.join(R, H);
+  expect(current.call.id).toBe(old.call.id);
+  expect(current.sessionId).not.toBe(old.sessionId);
+  await service.idle(old.call.id, H, old.sessionId);
+  await service.leave(old.call.id, H, false, old.sessionId);
+  expect((await service.current(R,H))?.participants.map(p => p.pubkey)).toContain(H);
+  expect((await db.query(`SELECT parked_at FROM voice_participants WHERE call_id=$1 AND identity_id=$2`,[current.call.id,H])).rows[0]?.parked_at).toBeNull();
+  await service.leave(current.call.id,H,false,current.sessionId);
 });

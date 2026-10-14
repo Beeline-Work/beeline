@@ -6,18 +6,66 @@ import { expect, it, vi } from 'vitest';
 import { VOICE_DATA_TOPIC, VOICE_QUOTA_MESSAGE } from '@beeline/api-contract/phone';
 
 const fixture = vi.hoisted(() => ({ room: undefined as any, closeAudio: vi.fn(async () => {}),
+  stop: undefined as (() => void) | undefined,
+  live: undefined as (() => void) | undefined,
+  connected: undefined as (() => void) | undefined,
+  parkAudio: vi.fn(async (_agent: string) => {}), resumeAudio: vi.fn(async () => {}), idleEnd: vi.fn(async () => {}),
   fetch: vi.fn(), callId: '11111111-1111-4111-8111-111111111111' }));
 vi.mock('./client-error-report', async original => ({ ...await original<object>(), reportClientError: vi.fn(async () => {}) }));
+vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({ subscribeConnected: (listener: () => void) => { fixture.connected = listener; return () => { fixture.connected = undefined; }; }, register: async (_filters: unknown, listener: () => void) => { fixture.live = listener; return () => { fixture.live = undefined; }; } }) }));
 vi.mock('react-native', () => ({ Platform: { OS: 'android' } }));
-vi.mock('livekit-client', () => ({ RoomEvent: { DataReceived: 'data', Disconnected: 'left' }, Track: {} }));
-vi.mock('./voice-transport', () => ({ createVoiceRoom: async () => ({ room: fixture.room, closeAudio: fixture.closeAudio }) }));
+vi.mock('livekit-client', () => ({ RoomEvent: { DataReceived: 'data', Disconnected: 'left', ActiveSpeakersChanged: 'levels' }, Track: {} }));
+vi.mock('./voice-transport', () => ({ subscribeVoiceResume: () => () => {}, createVoiceRoom: async (stop: () => void) => {
+  fixture.stop = stop; return { room: fixture.room, closeAudio: fixture.closeAudio, parkAudio: fixture.parkAudio, resumeAudio: fixture.resumeAudio, idleEnd: fixture.idleEnd };
+} }));
 vi.mock('./runtime-config', () => ({ getBuzzRuntimeConfig: () => ({ monolithUrl: 'http://proof' }) }));
 vi.mock('@/auth/monolith-session', () => ({ monolithSession: { fetch: (...args: unknown[]) => fixture.fetch(...args) } }));
 fixture.fetch.mockImplementation(async () => new Response(JSON.stringify({
-  call: { id: fixture.callId, roomId: fixture.callId, startedAt: 1, participants: [] },
+  sessionId: 'proof-session', call: { id: fixture.callId, roomId: fixture.callId, startedAt: 1, participants: [] },
   url: 'ws://proof', token: 'test', agents: [],
 })));
 import { useVoiceCall } from './use-voice-call';
+
+it('notification Stop during RTC connect fences the late join and releases audio', async () => {
+  let resolveConnect!: () => void;
+  fixture.closeAudio.mockClear(); fixture.fetch.mockClear();
+  fixture.room = Object.assign(new EventEmitter(), {
+    connect: () => new Promise<void>(resolve => { resolveConnect = resolve; }), disconnect: vi.fn(async () => {}),
+    remoteParticipants: new Map(), localParticipant: { publishData: vi.fn(async () => {}), setMicrophoneEnabled: vi.fn(async () => {}) },
+  });
+  let voice!: ReturnType<typeof useVoiceCall>; let renderer: any;
+  function Probe() { voice = useVoiceCall(fixture.callId, true); return null; }
+  await act(async () => { renderer = create(<Probe />); });
+  try {
+    let joining!: Promise<void>;
+    await act(async () => { joining = voice.join(); });
+    await act(async () => fixture.stop!());
+    await act(async () => { resolveConnect(); await joining; });
+    expect(voice.call).toBeNull();
+    expect(fixture.closeAudio).toHaveBeenCalledOnce();
+    expect(fixture.fetch.mock.calls.filter(([url]) => String(url).endsWith('/leave'))).toHaveLength(1);
+    console.log('notification Stop during connect => no joined call, audio released, server leave');
+  } finally { await act(async () => renderer.unmount()); }
+});
+
+it('accepts spoken Stop only from the trusted voice bridge and clears the lifetime timer', async () => {
+  vi.useFakeTimers(); fixture.closeAudio.mockClear();
+  fixture.room = Object.assign(new EventEmitter(), { connect: async () => {}, disconnect: vi.fn(async () => {}),
+    remoteParticipants: new Map(), localParticipant: { publishData: vi.fn(async () => {}), setMicrophoneEnabled: vi.fn(async () => {}) } });
+  let voice!: ReturnType<typeof useVoiceCall>; let renderer: any;
+  function Probe() { voice = useVoiceCall(fixture.callId, true); return null; }
+  await act(async () => { renderer = create(<Probe />); });
+  try {
+    await act(async () => voice.join());
+    const stop = new TextEncoder().encode(JSON.stringify({ type: 'stop' }));
+    await act(async () => fixture.room.emit('data', stop, { identity: 'peer' }, undefined, VOICE_DATA_TOPIC));
+    expect(voice.call).not.toBeNull();
+    await act(async () => fixture.room.emit('data', stop, { identity: `beeline-voice-${fixture.callId}` }, undefined, VOICE_DATA_TOPIC));
+    expect(voice.call).toBeNull();
+    expect(fixture.closeAudio).toHaveBeenCalledOnce();
+    expect(vi.getTimerCount()).toBe(0);
+  } finally { await act(async () => renderer.unmount()); vi.useRealTimers(); }
+});
 
 it('shows Room agents during a pending or failed join and clears the error on exit', async () => {
   const agents = [{ pubkey: 'ruby', kind: 'agent' as const, name: 'Ruby', face: 'ruby-face' }];
@@ -53,7 +101,7 @@ it.each([
     remoteParticipants: new Map(), localParticipant: { publishData: vi.fn(async () => {}), setMicrophoneEnabled: async () => {} },
   });
   fixture.fetch.mockImplementationOnce(async () => new Response(JSON.stringify({
-    call: { id: fixture.callId, roomId: fixture.callId, startedAt: 1, participants: [] },
+    sessionId: 'proof-session', call: { id: fixture.callId, roomId: fixture.callId, startedAt: 1, participants: [] },
     url: 'wss://proof', token: 'test', agents,
   })));
   let voice!: ReturnType<typeof useVoiceCall>; let renderer: any;
@@ -88,7 +136,7 @@ it('maps local and bridge audio levels through the same fixed volume curve', asy
     const levels: number[] = [];
     for (const amplitude of [0, 0.01, 0.1, 10 ** (-5 / 20)]) {
       fixture.room.localParticipant.audioLevel = amplitude;
-      await act(async () => vi.advanceTimersByTime(60));
+      await act(async () => fixture.room.emit('levels'));
       levels.push(voice.level);
     }
     expect(levels[0]).toBe(0);
@@ -100,7 +148,7 @@ it('maps local and bridge audio levels through the same fixed volume curve', asy
     fixture.room.remoteParticipants.set(bridge, { audioLevel: 0.1 });
     await act(async () => fixture.room.emit('data', new TextEncoder().encode(JSON.stringify({ type: 'speaker', agentId: 'agent' })),
       { identity: bridge }, undefined, VOICE_DATA_TOPIC));
-    await act(async () => vi.advanceTimersByTime(60));
+    await act(async () => fixture.room.emit('levels'));
     expect(voice.level).toBeCloseTo(levels[2]);
     await act(async () => voice.end());
   } finally {
@@ -172,4 +220,84 @@ it('keeps the second human in the joined call across roster rerenders and follow
     await act(async () => voice.aim('ruby'));
     expect(voice.target).toBe('ruby');
   } finally { await act(async () => renderer.unmount()); }
+});
+
+it('obtains a fresh authorized token after terminal RTC loss without ending the call', async () => {
+  fixture.fetch.mockClear(); fixture.closeAudio.mockClear();
+  fixture.room = Object.assign(new EventEmitter(), { connect: vi.fn(async () => {}), disconnect: vi.fn(async () => {}),
+    remoteParticipants: new Map(), localParticipant: { publishData: vi.fn(async () => {}), setMicrophoneEnabled: vi.fn(async () => {}) } });
+  let voice!: ReturnType<typeof useVoiceCall>; let renderer: any;
+  function Probe() { voice = useVoiceCall(fixture.callId, true); return null; }
+  await act(async () => { renderer = create(<Probe />); });
+  try {
+    await act(async () => voice.join());
+    fixture.fetch.mockImplementationOnce(async () => new Response(JSON.stringify({
+      call: voice.call, url: 'ws://proof', token: 'renewed-token', agents: [],
+    })));
+    await act(async () => fixture.room.emit('left'));
+    expect(fixture.room.connect).toHaveBeenLastCalledWith('ws://proof', 'renewed-token');
+    expect(voice.call?.id).toBe(fixture.callId);
+    expect(fixture.closeAudio).not.toHaveBeenCalled();
+    expect(fixture.fetch.mock.calls.filter(([url]) => String(url).endsWith('/leave'))).toHaveLength(0);
+  } finally { await act(async () => renderer.unmount()); }
+});
+
+it.each(['ended', 'parked'] as const)('20 seconds of silence chooses %s and uses no recurring timer', async state => {
+  vi.useFakeTimers(); fixture.fetch.mockClear(); fixture.parkAudio.mockClear(); fixture.idleEnd.mockClear();
+  fixture.room = Object.assign(new EventEmitter(), { connect: vi.fn(async () => {}), disconnect: vi.fn(async () => {}),
+    remoteParticipants: new Map(), localParticipant: { publishData: vi.fn(async () => {}), setMicrophoneEnabled: vi.fn(async () => {}) } });
+  fixture.fetch.mockImplementation(async (url: string) => new Response(JSON.stringify(
+    url.endsWith('/idle') || url.includes('/state') ? { state, agentName: 'Ruby' }
+      : { sessionId: 'proof-session', call: { id: fixture.callId, roomId: fixture.callId, startedAt: 1, participants: [] }, url: 'ws://proof', token: 'test', agents: [] }
+  )));
+  let voice!: ReturnType<typeof useVoiceCall>; let renderer: any;
+  function Probe() { voice = useVoiceCall(fixture.callId, true); return null; }
+  await act(async () => { renderer = create(<Probe />); });
+  try {
+    await act(async () => voice.join());
+    await act(async () => vi.advanceTimersByTimeAsync(19_999));
+    expect(fixture.room.disconnect).not.toHaveBeenCalled();
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    expect(fixture.room.localParticipant.setMicrophoneEnabled).toHaveBeenLastCalledWith(false);
+    if (state === 'ended') {
+      expect(fixture.idleEnd).toHaveBeenCalledOnce(); expect(voice.call).toBeNull();
+    } else {
+      expect(fixture.parkAudio).toHaveBeenCalledWith('Ruby'); expect(voice.call).not.toBeNull();
+      const reads = fixture.fetch.mock.calls.length;
+      await act(async () => vi.advanceTimersByTimeAsync(3_600_000));
+      expect(fixture.fetch).toHaveBeenCalledTimes(reads);
+    }
+    expect(vi.getTimerCount()).toBe(0);
+  } finally { await act(async () => renderer.unmount()); vi.useRealTimers(); }
+});
+
+it('waits parked until a committed socket event, speaks the report, then reopens the mic', async () => {
+  vi.useFakeTimers(); fixture.parkAudio.mockClear(); fixture.resumeAudio.mockClear();
+  let ready = false;
+  fixture.room = Object.assign(new EventEmitter(), { connect: vi.fn(async () => {}), disconnect: vi.fn(async () => {}),
+    remoteParticipants: new Map(), localParticipant: { publishData: vi.fn(async () => {}), setMicrophoneEnabled: vi.fn(async () => {}) } });
+  fixture.fetch.mockImplementation(async (url: string) => new Response(JSON.stringify(
+    url.endsWith('/idle') || url.includes('/state') ? { state: ready ? 'ready' : 'parked', agentName: 'Ruby' }
+      : { sessionId: 'proof-session', call: { id: fixture.callId, roomId: fixture.callId, startedAt: 1, participants: [] }, url: 'ws://proof', token: 'fresh', agents: [] }
+  )));
+  let voice!: ReturnType<typeof useVoiceCall>; let renderer: any;
+  function Probe() { voice = useVoiceCall(fixture.callId, true); return null; }
+  await act(async () => { renderer = create(<Probe />); });
+  try {
+    await act(async () => voice.join());
+    await act(async () => vi.advanceTimersByTimeAsync(20_000));
+    expect(fixture.parkAudio).toHaveBeenCalledOnce();
+    ready = true;
+    await act(async () => fixture.connected!());
+    expect(fixture.resumeAudio).toHaveBeenCalledOnce();
+    expect(fixture.room.connect).toHaveBeenCalledTimes(2);
+    expect(fixture.room.localParticipant.setMicrophoneEnabled).toHaveBeenLastCalledWith(false);
+    const bridge = { identity: `beeline-voice-${fixture.callId}` };
+    const signal = (agentId: string | null) => fixture.room.emit('data', new TextEncoder().encode(JSON.stringify({type:'speaker',agentId})), bridge, undefined, VOICE_DATA_TOPIC);
+    await act(async () => signal('ruby'));
+    expect(fixture.room.localParticipant.setMicrophoneEnabled).toHaveBeenLastCalledWith(false);
+    await act(async () => signal(null));
+    expect(fixture.room.localParticipant.setMicrophoneEnabled).toHaveBeenLastCalledWith(true, expect.any(Object));
+    expect(vi.getTimerCount()).toBe(1);
+  } finally { await act(async () => renderer.unmount()); vi.useRealTimers(); }
 });

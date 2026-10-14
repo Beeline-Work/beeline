@@ -5,7 +5,7 @@ import { VoiceService } from './voice-service.js';
 const state = vi.hoisted(() => ({ room: undefined as any, streams: [] as ReadableStream<any>[], audio: undefined as any }));
 vi.mock('@livekit/rtc-node', () => ({
   Room: class extends EventEmitter {
-    remoteParticipants = new Map();
+    remoteParticipants = new Map([['human', { identity: 'human' }]]);
     localParticipant = { publishTrack: vi.fn(), publishData: vi.fn() };
     constructor() { super(); state.room = this; }
     async connect() {} async disconnect() {}
@@ -22,6 +22,54 @@ vi.mock('@livekit/rtc-node', () => ({
 }));
 import { VoiceRoomRuntime, confirmedVoiceSpeech, voicePlaybackEcho } from './voice-room-runtime.js';
 import { VoiceQuotaError } from './voice-providers.js';
+
+it.each(['stop', 'End conversation.', 'leave conversation'])('ends the participant on confirmed spoken %s without dispatching an agent', async phrase => {
+  let onSpeech!: (event: any) => void;
+  state.streams = [new ReadableStream()];
+  const { service } = conversationService(1);
+  const leave = vi.fn(async () => {});
+  service.config.stt.mockImplementation(async (callback: any) => {
+    onSpeech = callback; return { send: vi.fn(), close: vi.fn() };
+  });
+  const runtime = await VoiceRoomRuntime.connect({ ...service, leave } as unknown as VoiceService, 'call', 'room');
+  try {
+    state.room.emit('track', { kind: 1 }, {}, { identity: 'human' });
+    await vi.waitFor(() => expect(onSpeech).toBeDefined());
+    onSpeech({ event: 'EndOfTurn', turn_index: 0, transcript: phrase,
+      words: phrase.split(' ').map((word, index) => ({ word, confidence: 0.99, start: index * 0.3, end: index * 0.3 + 0.25 })) });
+    await vi.waitFor(() => expect(leave).toHaveBeenCalledWith('call', 'human', true));
+    const [bytes, options] = state.room.localParticipant.publishData.mock.calls.find(([bytes]: any[]) =>
+      JSON.parse(new TextDecoder().decode(bytes)).type === 'stop');
+    expect(JSON.parse(new TextDecoder().decode(bytes))).toEqual({ type: 'stop' });
+    expect(options.destinationIdentities).toEqual(['human']);
+    expect(service.config.brain.answer).not.toHaveBeenCalled();
+    expect(service.dispatch).not.toHaveBeenCalled();
+    console.log(`confirmed ${phrase} => targeted Stop, participant leaves, no agent dispatch`);
+  } finally { await runtime.close(); }
+});
+
+it('retains an absent RTC participant through a short radio handoff and resets the reconnect grace on return', async () => {
+  let clock = 0;
+  const now = vi.spyOn(performance, 'now').mockImplementation(() => clock);
+  const { service } = conversationService(1);
+  const leave = vi.fn(async () => {});
+  service.db.query.mockImplementation(async (sql: string) => ({ rowCount: 1,
+    rows: sql.includes('SELECT identity_id FROM voice_participants') && !state.room.remoteParticipants.has('human')
+      ? [{ identity_id: 'human' }] : [] as any }));
+  const runtime = await VoiceRoomRuntime.connect({ ...service, leave } as unknown as VoiceService, 'call', 'room');
+  const tick = () => (runtime as any).heartbeat();
+  try {
+    const human = { identity: 'human' };
+    state.room.remoteParticipants.delete('human'); state.room.emit('left', human);
+    clock = 60_000; await tick(); expect(leave).not.toHaveBeenCalled();
+    state.room.remoteParticipants.set('human', human);
+    clock = 119_000; await tick();
+    state.room.remoteParticipants.delete('human'); state.room.emit('left', human);
+    clock = 180_000; await tick(); expect(leave).not.toHaveBeenCalled();
+    clock = 240_000; await tick(); expect(leave).toHaveBeenCalledOnce();
+    console.log('60-second RTC loss => participant retained; return resets grace; abandoned transport eventually removed');
+  } finally { await runtime.close(); now.mockRestore(); }
+});
 
 it('Reproduction MD-TTS-1: conversational streamed replies and delayed reports send natural text to synthesis', async () => {
   const agent = { id: 'agent', name: 'Jellybean', handle: 'jellybean', voice: 'warm' };
@@ -306,6 +354,7 @@ function phantomHarness(answer = 'Hey there is the answer.') {
     }), recordAnswer: vi.fn(async () => {}),
     db: { query: vi.fn(async (_sql: string, _args?: unknown[]) => ({ rowCount: 1, rows: [] as any[] })) },
     runtimeClosed: vi.fn(),
+    leave: vi.fn(async () => {}),
   };
   let sequence = 0;
   return { service, speech, timeline, messages, note,
@@ -339,7 +388,8 @@ it('Reproduction phantom-1: never sends Hey or Yeah from a noisy turn during TTS
     expect(harness.timeline.filter(line => line.endsWith('barge-in cancel'))).toHaveLength(0);
     harness.emit('StartOfTurn', '', 3);
     harness.emit('EndOfTurn', 'stop', 3);
-    await vi.waitFor(() => expect(harness.service.recordHuman).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(harness.service.leave).toHaveBeenCalledOnce());
+    expect(harness.service.recordHuman).toHaveBeenCalledOnce();
     expect(harness.service.config.brain.answer.mock.calls[0]?.[3]?.aborted).toBe(true);
   } finally {
     console.log('Reproduction phantom-1\n' + harness.timeline.join('\n'));
@@ -359,8 +409,13 @@ it.each(['stop', 'wait', 'no', 'Yeah', 'Please explain something else'])('preser
     harness.emit('Update', text, 1, [{ confidence: 0.95 }]);
     harness.emit('EndOfTurn', text, 1, [{ confidence: 0.95 }]);
     harness.emit('EndOfTurn', text, 1, [{ confidence: 0.95 }]);
-    await vi.waitFor(() => expect(harness.service.recordHuman).toHaveBeenCalledTimes(2));
-    expect(harness.service.recordHuman.mock.calls[1]?.[4]).toBe(text);
+    if (text === 'stop') {
+      await vi.waitFor(() => expect(harness.service.leave).toHaveBeenCalledOnce());
+      expect(harness.service.recordHuman).toHaveBeenCalledOnce();
+    } else {
+      await vi.waitFor(() => expect(harness.service.recordHuman).toHaveBeenCalledTimes(2));
+      expect(harness.service.recordHuman.mock.calls[1]?.[4]).toBe(text);
+    }
     expect(harness.service.config.brain.answer.mock.calls[0]?.[3]?.aborted).toBe(true);
   } finally { await runtime.close(); }
 });
@@ -431,7 +486,7 @@ it('Reproduction phantom-2: an interrupted delegated answer does not replay its 
     await vi.waitFor(() => expect(harness.service.config.stt).toHaveBeenCalledOnce());
     offered = true; await runtime.refresh();
     await vi.waitFor(() => expect(harness.speech.synthesize).toHaveBeenCalledOnce());
-    harness.emit('EndOfTurn', 'stop', 0);
+    harness.emit('EndOfTurn', 'wait', 0);
     await vi.waitFor(() => expect(harness.service.recordHuman).toHaveBeenCalledOnce());
     await vi.waitFor(() => expect(harness.timeline.some(line => line.includes('TTS stop: Hey, here is the previous answer.'))).toBe(true));
     await runtime.refresh();

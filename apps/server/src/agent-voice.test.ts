@@ -136,6 +136,7 @@ it('translates saved legacy voices deterministically to the Aura library, with A
   const auraLibrary = new AgentVoiceService(db, async () => ({ voices: [voice, 'luna', 'apollo'], synthesize: vi.fn() }));
   await db.query(`UPDATE agents SET chosen_voices=$2::jsonb WHERE agent_id=$1`, [a, JSON.stringify(legacy)]);
   expect((await auraLibrary.catalog(w, a, h)).currentVoiceId).toBe(voice);
+  await expect(auraLibrary.save(w, b, h, 'aura-2', voice)).rejects.toThrow('Another agent');
   expect(savedAuraVoice({ ...legacy, 'aura-2': 'apollo' })).toBe('apollo');
   expect(savedAuraVoice({ 'fish-s2.1-pro': '1'.repeat(32) })).toBeDefined();
 });

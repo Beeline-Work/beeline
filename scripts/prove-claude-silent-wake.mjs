@@ -10,7 +10,7 @@ const root = await fs.mkdtemp(path.join(os.tmpdir(), 'beeline-claude-silent-proo
 console.log('Evidence directory: '+root);
 const installation = process.argv[2];
 if (!installation) throw new Error('Pass the installed claude-agent-acp package directory as the argument');
-const executable = installation + '/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude';
+const executable = process.argv[3] ?? installation + '/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64/claude';
 // Clear inherited routing and authentication before importing/spawning the SDK.
 const systemPath = process.env.PATH;
 for (const key of Object.keys(process.env)) delete process.env[key];
@@ -21,10 +21,13 @@ const built = fileURLToPath(new URL('../apps/body/dist', import.meta.url));
 const {sessionToolScopeMeta}=await import(built+'/harness-tool-scope.js');
 const retrySentence = 'Your previous response had no visible output';
 const results=[];
-for (const mode of ['thinking-only','terminal-success','human-tool-refused','human-provider-error']) {
+for (const mode of ['thinking-only','terminal-success','human-tool-refused','human-provider-error',
+  'reminder-on','reminder-zero','reminder-false','reminder-beeline']) {
+  const reminderProbe = mode.startsWith('reminder-');
   const work = root+'/acp-beeline-'+mode;
   for (const sub of ['home','config','state','runtime','repo']) await fs.mkdir(work+'/'+sub,{recursive:true});
   await fs.writeFile(work+'/context.json',JSON.stringify({roomId:'proof',requestId:'proof',generationId:'proof',commandReason:mode==='human-tool-refused'?'human_tag':'report'}));
+  await fs.writeFile(work+'/repo/proof.txt','Isolated silent tool turn.\n');
   const requests=[]; const frames=[]; let calls=0; let toolCalls=0;
   const server=http.createServer(async(req,res)=>{
     let raw=''; for await(const chunk of req) raw+=chunk;
@@ -39,7 +42,9 @@ for (const mode of ['thinking-only','terminal-success','human-tool-refused','hum
     const withTool=mode!=='thinking-only';
     const toolName=(body.tools??[]).find(t=>t.name.endsWith('no_reply_needed'))?.name;
     let block,stop;
-    if(withTool&&calls===1) {block={type:'tool_use',id:'tool_proof_1',name:toolName??'missing_tool',input:{}};stop='tool_use';}
+    if(reminderProbe&&calls<=8) {block={type:'tool_use',id:'read_proof_'+calls,name:'Read',input:{file_path:work+'/repo/proof.txt'}};stop='tool_use';}
+    else if(withTool&&calls===(reminderProbe?9:1)) {block={type:'tool_use',id:'tool_proof_1',name:toolName??'missing_tool',input:{}};stop='tool_use';}
+    else if(reminderProbe) {block={type:'thinking',thinking:'The silent report wake is complete.',signature:'fake-local-signature'};stop='end_turn';}
     else if(retry||calls>3) {block={type:'text',text:'VISIBLE RETRY PROOF'};stop='end_turn';}
     else {block={type:'thinking',thinking:'The worker report needs no response.',signature:'fake-local-signature'};stop='end_turn';}
     const message={id:'msg_proof_'+calls,type:'message',role:'assistant',model:body.model,content:[block],
@@ -54,7 +59,7 @@ for (const mode of ['thinking-only','terminal-success','human-tool-refused','hum
       event('content_block_delta',{index:0,delta:{type:'signature_delta',signature:block.signature}});
     }else if(block.type==='tool_use'){
       event('content_block_start',{index:0,content_block:{...block,input:{}}});
-      event('content_block_delta',{index:0,delta:{type:'input_json_delta',partial_json:'{}'}});
+      event('content_block_delta',{index:0,delta:{type:'input_json_delta',partial_json:JSON.stringify(block.input)}});
     }else {
       event('content_block_start',{index:0,content_block:{type:'text',text:''}});
       event('content_block_delta',{index:0,delta:{type:'text_delta',text:block.text}});
@@ -70,6 +75,8 @@ for (const mode of ['thinking-only','terminal-success','human-tool-refused','hum
     XDG_CONFIG_HOME:work+'/config',XDG_STATE_HOME:work+'/state',XDG_RUNTIME_DIR:work+'/runtime',
     ANTHROPIC_BASE_URL:endpoint,ANTHROPIC_API_KEY:'fake-local-proof-key',
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC:'1',CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS:'1',
+    // The inherited setting is deliberately on: Beeline must override it.
+    ...(reminderProbe?{CLAUDE_CODE_SILENT_TURN_REMINDER:'1',CLAUDE_CODE_SILENT_TURN_REMINDER_TURNS:'5'}:{}),
     CLAUDE_CODE_TERMINAL_MCP_TOOLS:''};
   const stderr=[];
   const child=spawn(process.execPath,[installation+'/dist/index.js'],{cwd:work+'/repo',env:{...env,CLAUDE_CODE_EXECUTABLE:executable},stdio:['pipe','pipe','pipe']});
@@ -88,8 +95,12 @@ for (const mode of ['thinking-only','terminal-success','human-tool-refused','hum
   });
   try {
     await rpc('initialize',{protocolVersion:1,clientCapabilities:{},clientInfo:{name:'isolated-proof',version:'1.0.0'}});
-    const session=await rpc('session/new',{cwd:work+'/repo',mcpServers:['terminal-success','human-tool-refused'].includes(mode)?[{name:'beeline-agent',command:process.execPath,args:[built+'/read-only-mcp.js'],env:[{name:'BEELINE_MCP_SURFACE',value:'agent'},{name:'BEELINE_TURN_CONTEXT_FILE',value:work+'/context.json'}]}]:[],
-      _meta:{systemPrompt:'This is an isolated proof. Use only the local proof tool when supplied.',claudeCode:{options:{settingSources:[],settings:{},persistSession:false,model:'claude-sonnet-4-5',tools:[],thinking:{type:'enabled',budgetTokens:1024},allowedTools:[name],env:sessionToolScopeMeta('claude-agent-acp').claudeCode.options.env}}}});
+    const sessionEnv={...sessionToolScopeMeta('claude-agent-acp').claudeCode.options.env,
+      ...(mode==='reminder-on'?{CLAUDE_CODE_SILENT_TURN_REMINDER:'1'}:{}),
+      ...(mode==='reminder-zero'?{CLAUDE_CODE_SILENT_TURN_REMINDER:'0'}:{}),
+      ...(mode==='reminder-false'?{CLAUDE_CODE_SILENT_TURN_REMINDER:'false'}:{})};
+    const session=await rpc('session/new',{cwd:work+'/repo',mcpServers:reminderProbe||['terminal-success','human-tool-refused'].includes(mode)?[{name:'beeline-agent',command:process.execPath,args:[built+'/read-only-mcp.js'],env:[{name:'BEELINE_MCP_SURFACE',value:'agent'},{name:'BEELINE_TURN_CONTEXT_FILE',value:work+'/context.json'}]}]:[],
+      _meta:{systemPrompt:'This is an isolated proof. Use only the local proof tool when supplied.',claudeCode:{options:{settingSources:[],settings:{},persistSession:false,model:'claude-sonnet-4-5',tools:reminderProbe?['Read']:[],thinking:{type:'enabled',budgetTokens:1024},allowedTools:reminderProbe?['Read',name]:[name],env:sessionEnv}}}});
     const result=await rpc('session/prompt',{sessionId:session.sessionId,prompt:[{type:'text',text:mode.startsWith('human-')?'Human request: answer this question.':'Nonhuman wake: worker report done. No human request pending. End silently.'}]});
     frames.push({type:'acp_result',result});
   }catch(error){frames.push({type:'probe_error',message:String(error)});}
@@ -100,6 +111,9 @@ for (const mode of ['thinking-only','terminal-success','human-tool-refused','hum
   const result=frames.find(f=>f.type==='acp_result');
   const visible=frames.filter(f=>f.params?.update?.sessionUpdate==='agent_message_chunk').map(f=>f.params.update.content?.text).filter(Boolean);
   const summary={mode,apiCalls:calls,toolCalls,retries:requests.filter(r=>r.retry).length,
+    successfulReads:(requests.at(-1)?.messages??[]).flatMap(m=>Array.isArray(m.content)?m.content:[])
+      .filter(b=>b.type==='tool_result'&&b.tool_use_id?.startsWith('read_proof_')&&!b.is_error).length,
+    reminderRequests:requests.filter(r=>JSON.stringify(r.messages).includes("The user hasn't heard from you in a while")).map(r=>r.call),
     visible,result:result?.result??null,
     errors:frames.filter(f=>f.type==='probe_error')};
   results.push(summary);console.log(JSON.stringify(summary));
@@ -119,4 +133,17 @@ assert.deepEqual(silent.visible,[]);
 assert.equal(silent.result.stopReason,'end_turn');
 assert.equal(failure.errors.length,1);
 assert.ok(failure.visible.some(text=>text.includes('ISOLATED PROVIDER FAILURE')));
+const enabled=results.find(r=>r.mode==='reminder-on');
+assert.ok(enabled.reminderRequests.length>0,'positive control must reproduce the native reminder');
+assert.equal(enabled.successfulReads,8);
+for(const mode of ['reminder-zero','reminder-false','reminder-beeline']) {
+  const result=results.find(r=>r.mode===mode);
+  assert.ok(result.apiCalls>=9,mode+': must pass five silent tool turns');
+  assert.equal(result.successfulReads,8,mode+': eight successful Read tools');
+  assert.deepEqual(result.reminderRequests,[],mode+': no native progress reminder');
+  assert.deepEqual(result.visible,[],mode+': no visible progress or final post');
+  assert.equal(result.errors.length,0);
+  assert.equal(result.result.stopReason,'end_turn');
+}
+console.log('PASS quiet-native-reminder: native enabled control injects a reminder; 0, false and Beeline session env complete eight silent Read turns without reminders or visible posts.');
 console.log('PASS claude-native-thinking-only-20261013: built MCP terminal tool suppresses the internal retry and emits no text; human failure stays visible.');

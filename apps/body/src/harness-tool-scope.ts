@@ -195,10 +195,15 @@ export function sessionToolScopeMeta(
     const claude = result.claudeCode as { options: Record<string, unknown> };
     // Claude retries a thinking-only end_turn inside its SDK unless a successful
     // terminal MCP call is present. The local handler enforces wake eligibility.
-    claude.options.env = { CLAUDE_CODE_TERMINAL_MCP_TOOLS: [...new Set([
-      ...terminalTools.split(',').map(name => name.trim()).filter(Boolean),
-      'mcp__beeline-agent__no_reply_needed',
-    ])].join(',') };
+    claude.options.env = {
+      // Claude's native elapsed-silence reminder ignores server wake provenance.
+      // Beeline's turn prompt owns whether a human is owed a reply.
+      CLAUDE_CODE_SILENT_TURN_REMINDER: '0',
+      CLAUDE_CODE_TERMINAL_MCP_TOOLS: [...new Set([
+        ...terminalTools.split(',').map(name => name.trim()).filter(Boolean),
+        'mcp__beeline-agent__no_reply_needed',
+      ])].join(','),
+    };
   }
   return result;
 }

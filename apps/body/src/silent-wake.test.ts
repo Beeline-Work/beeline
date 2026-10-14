@@ -33,6 +33,7 @@ it('rechecks eligibility when a retained session moves from report to human inpu
 it('declares the exact Claude terminal tool in every new session, retaining existing names and isolated settings', () => {
   const meta = sessionToolScopeMeta('claude-agent-acp', 'other,other') as { claudeCode: { options: { env: Record<string, string>; settings: unknown } } };
   expect(meta.claudeCode.options.env.CLAUDE_CODE_TERMINAL_MCP_TOOLS).toBe('other,mcp__beeline-agent__no_reply_needed');
+  expect(meta.claudeCode.options.env.CLAUDE_CODE_SILENT_TURN_REMINDER).toBe('0');
   expect(meta.claudeCode.options.settings).toHaveProperty('disableClaudeAiConnectors', true);
   expect(sessionToolScopeMeta('codex-acp')?.claudeCode).toBeUndefined();
 });

@@ -1,0 +1,107 @@
+{
+  "reproduction": "quiet-native-reminder",
+  "date": "2026-10-14",
+  "claude": "2.1.296",
+  "sdk": "0.3.293",
+  "acp": "0.89.1",
+  "provider": "isolated scripted loopback Messages API",
+  "results": [
+    {
+      "mode": "thinking-only",
+      "apiCalls": 2,
+      "toolCalls": 0,
+      "retries": 1,
+      "successfulReads": 0,
+      "reminderRequests": [],
+      "visible": [
+        "VISIBLE RETRY PROOF"
+      ],
+      "errors": []
+    },
+    {
+      "mode": "terminal-success",
+      "apiCalls": 2,
+      "toolCalls": 1,
+      "retries": 0,
+      "successfulReads": 0,
+      "reminderRequests": [],
+      "visible": [],
+      "errors": []
+    },
+    {
+      "mode": "human-tool-refused",
+      "apiCalls": 3,
+      "toolCalls": 0,
+      "retries": 1,
+      "successfulReads": 0,
+      "reminderRequests": [],
+      "visible": [
+        "VISIBLE RETRY PROOF"
+      ],
+      "errors": []
+    },
+    {
+      "mode": "human-provider-error",
+      "apiCalls": 1,
+      "toolCalls": 0,
+      "retries": 0,
+      "successfulReads": 0,
+      "reminderRequests": [],
+      "visible": [
+        "API Error: 400 ISOLATED PROVIDER FAILURE"
+      ],
+      "errors": [
+        {
+          "type": "probe_error",
+          "message": "Error: {\"code\":-32603,\"message\":\"Internal error: API Error: 400 ISOLATED PROVIDER FAILURE\",\"data\":{\"errorKind\":\"unknown\"}}"
+        }
+      ]
+    },
+    {
+      "mode": "reminder-on",
+      "apiCalls": 10,
+      "toolCalls": 9,
+      "retries": 0,
+      "successfulReads": 8,
+      "reminderRequests": [
+        6,
+        7,
+        8,
+        9,
+        10
+      ],
+      "visible": [],
+      "errors": []
+    },
+    {
+      "mode": "reminder-zero",
+      "apiCalls": 10,
+      "toolCalls": 9,
+      "retries": 0,
+      "successfulReads": 8,
+      "reminderRequests": [],
+      "visible": [],
+      "errors": []
+    },
+    {
+      "mode": "reminder-false",
+      "apiCalls": 10,
+      "toolCalls": 9,
+      "retries": 0,
+      "successfulReads": 8,
+      "reminderRequests": [],
+      "visible": [],
+      "errors": []
+    },
+    {
+      "mode": "reminder-beeline",
+      "apiCalls": 10,
+      "toolCalls": 9,
+      "retries": 0,
+      "successfulReads": 8,
+      "reminderRequests": [],
+      "visible": [],
+      "errors": []
+    }
+  ]
+}

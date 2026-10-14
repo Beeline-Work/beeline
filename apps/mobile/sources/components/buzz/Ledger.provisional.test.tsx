@@ -120,6 +120,28 @@ it.each(['web', 'ios', 'android'])('renders a workflow system notice without a s
   Platform.OS = 'android';
 });
 
+it('lets only the agent owner tap the login command on a sign-in failure line', () => {
+  const event = {
+    subject: { kind: 'agent' as const, id: 'ruby', name: '@ruby' },
+    verb: 'needs a Claude sign-in',
+    consequence: 'send @ruby login here. If that fails, its owner can run `beeline connect` on its machine.',
+  };
+  const onSendCommand = vi.fn();
+  const owner = render(<LedgerSystemLine id="auth" text="" event={event} stamp="09:41"
+    loginCommand="@ruby login" onSendCommand={onSendCommand} />);
+  const command = owner.root.findByProps({ testID: 'system-line-command-auth' });
+  expect(command.props.children).toBe('@ruby login');
+  act(() => command.props.onPress());
+  expect(onSendCommand).toHaveBeenCalledWith('@ruby login');
+  act(() => owner.unmount());
+
+  const member = render(<LedgerSystemLine id="auth" text="" event={event} stamp="09:41"
+    onSendCommand={onSendCommand} />);
+  expect(member.root.findAllByProps({ testID: 'system-line-command-auth' })).toEqual([]);
+  expect(JSON.stringify(member.toJSON())).toContain('send @ruby login here.');
+  act(() => member.unmount());
+});
+
 function streamingRow(draft = REPLY) {
   return render(
     <ActivityTimeline active handle="Clara" items={[]} mark={MARK} messageDraft={draft} stamp="09:41" />,

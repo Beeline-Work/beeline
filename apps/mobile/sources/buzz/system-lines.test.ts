@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { joinSystemNames, systemLineText } from './system-lines';
+import { joinSystemNames, ownedLoginCommand, systemLineText } from './system-lines';
 
 const joined = (
   id: string,
@@ -114,4 +114,34 @@ it('keeps a corner opened from a message out of a folded lifecycle run', () => {
   // Lifecycle notices and a source-message marker retain their own anchors.
   const folded = Array.from([opened('a', 1), opened('b', 2), opened('m', 3, 'message')]);
   expect(folded.map((m) => m.id)).toEqual(['a', 'b', 'm']);
+});
+
+describe('ownedLoginCommand', () => {
+  const event = {
+    subject: { kind: 'agent' as const, id: 'agent-ruby', name: '@ruby' },
+    verb: 'needs a Claude sign-in',
+    consequence: 'send @ruby login here. If that fails, its owner can run `beeline connect` on its machine.',
+  };
+  const agents = [
+    {
+      identity: { pubkey: 'agent-ruby', kind: 'agent' as const, name: 'Ruby', handle: 'ruby' },
+      owner: { pubkey: 'owner', kind: 'human' as const, name: 'Owner' },
+    },
+  ];
+
+  it("gives the agent's owner the command to tap", () => {
+    expect(ownedLoginCommand(event, 'owner', agents)).toBe('@ruby login');
+  });
+
+  it('gives everyone else no tap', () => {
+    expect(ownedLoginCommand(event, 'someone-else', agents)).toBeUndefined();
+    expect(ownedLoginCommand(event, null, agents)).toBeUndefined();
+    expect(ownedLoginCommand(event, 'owner', [{ identity: agents[0]!.identity }])).toBeUndefined();
+  });
+
+  it('gives no tap on a line that does not name the command', () => {
+    expect(
+      ownedLoginCommand({ ...event, verb: 'is offline', consequence: "the helper isn't running." }, 'owner', agents),
+    ).toBeUndefined();
+  });
 });

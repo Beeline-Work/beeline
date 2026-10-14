@@ -1,4 +1,9 @@
-import type { SystemEvent, SystemSubject } from '@beeline/api-contract/phone';
+import {
+  agentLoginCommand,
+  type SystemEvent,
+  type SystemSubject,
+  type WorkspaceAgentView,
+} from '@beeline/api-contract/phone';
 
 /**
  * System lines on the phone: one grammar, one renderer, one row per message.
@@ -50,4 +55,22 @@ export function systemLineText(event: SystemEvent, subjects?: readonly SystemSub
   const head = [joinSystemNames(names), event.verb].filter(Boolean).join(' ');
   const line = event.object?.text ? `${head} ${event.object.text}` : head;
   return event.consequence ? `${line} · ${event.consequence}` : line;
+}
+
+/**
+ * The `@agent login` command a sign-in failure line names, when the viewer
+ * owns that agent. Only the owner gets a tap; everyone else reads the text,
+ * and the server still checks ownership when the message arrives.
+ */
+export function ownedLoginCommand(
+  event: SystemEvent,
+  viewerPubkey: string | null | undefined,
+  agents: readonly Pick<WorkspaceAgentView, 'identity' | 'owner'>[],
+): string | undefined {
+  if (!viewerPubkey || event.subject.kind !== 'agent' || !event.subject.id) return undefined;
+  const agent = agents.find((candidate) => candidate.identity.pubkey === event.subject.id);
+  const handle = agent?.identity.handle;
+  if (!handle || agent.owner?.pubkey !== viewerPubkey) return undefined;
+  const command = agentLoginCommand(handle);
+  return event.consequence?.includes(command) ? command : undefined;
 }

@@ -745,6 +745,8 @@ export function LedgerSystemLine({
   onOpenIdentity,
   onOpenUrl,
   onOpenBrief,
+  loginCommand,
+  onSendCommand,
 }: {
   id: string;
   text: string;
@@ -754,6 +756,9 @@ export function LedgerSystemLine({
   onOpenUrl?: (url: string) => void;
   /** Opens the corner's latest brief; a revision notice links to it. */
   onOpenBrief?: () => void;
+  /** The `@agent login` command in the consequence; set only for the agent's owner. */
+  loginCommand?: string | undefined;
+  onSendCommand?: (text: string) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [overflows, setOverflows] = useState(false);
@@ -830,7 +835,25 @@ export function LedgerSystemLine({
         spans.push(object.text);
       }
     }
-    if (event.consequence) spans.push(` · ${event.consequence}`);
+    const consequence = event.consequence;
+    const commandAt =
+      consequence && loginCommand && onSendCommand ? consequence.indexOf(loginCommand) : -1;
+    if (consequence && commandAt >= 0) {
+      spans.push(
+        ` · ${consequence.slice(0, commandAt)}`,
+        <Text
+          key="command"
+          style={styles.systemLineLink}
+          accessibilityRole="button"
+          accessibilityLabel={`Send ${loginCommand}`}
+          onPress={() => onSendCommand!(loginCommand!)}
+          testID={`system-line-command-${id}`}
+        >
+          {loginCommand}
+        </Text>,
+        consequence.slice(commandAt + loginCommand!.length),
+      );
+    } else if (consequence) spans.push(` · ${consequence}`);
   }
   return (
     <View style={styles.systemLine} testID={`system-line-${id}`}>

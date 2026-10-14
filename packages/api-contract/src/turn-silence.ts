@@ -8,6 +8,7 @@
  */
 import {
   AGENT_SIGN_IN_SERVICE_LABELS,
+  agentLoginCommand,
   agentSignInUsesKey,
   type AgentSignInHarness,
 } from './agent-sign-in.js';
@@ -321,15 +322,16 @@ export function phraseTurnSilence(
           'could not answer',
           "the helper could not authenticate with the provider. Check its log for the failed turn; if its login expired, run `beeline connect` on the helper's machine.",
         );
-      // Both remedies must survive the cap: a long name or handle drops the
-      // explanation, never a command.
-      const remedies = `send \`@${options.login.handle} /login\` here, or run \`beeline connect\` on its machine.`;
-      const full = `the helper could not authenticate with ${AGENT_SIGN_IN_SERVICE_LABELS[options.login.harness]}. If its ${agentSignInUsesKey(options.login.harness) ? 'key' : 'login'} expired, its owner can ${remedies}`;
-      return capLine(
-        agent,
-        'could not answer',
-        fitsSilenceLine(agent, 'could not answer', full) ? full : `Its owner can ${remedies}`,
-      );
+      // The action leads: a phone shows two lines before More, so the
+      // command a person sends sits first and the machine fallback after it.
+      // A long name or handle drops the fallback, never the command.
+      const { handle, harness } = options.login;
+      const verb = agentSignInUsesKey(harness)
+        ? 'needs a new provider key'
+        : `needs a ${AGENT_SIGN_IN_SERVICE_LABELS[harness]} sign-in`;
+      const command = `send ${agentLoginCommand(handle)} here.`;
+      const full = `${command} If that fails, its owner can run \`beeline connect\` on its machine.`;
+      return capLine(agent, verb, fitsSilenceLine(agent, verb, full) ? full : command);
     }
     case 'workspace-failure':
       return capLine(

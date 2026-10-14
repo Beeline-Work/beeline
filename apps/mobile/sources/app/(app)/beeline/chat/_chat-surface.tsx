@@ -60,6 +60,7 @@ import { githubInstallationRedirectUri } from '@/auth/github-auth-session';
 import { useGitHubInstallationSession } from '@/auth/github-installation-host';
 import { Modal } from '@/modal';
 import { leaveRoomWithConfirmation } from '@/buzz/room-leave';
+import { ownedLoginCommand } from '@/buzz/system-lines';
 import { BuzzRigTransport } from '@/sync/transport';
 import {
   publishViewerConversation,
@@ -5685,6 +5686,11 @@ export function BuzzChatSurface({
       params: activeCommunityId ? { communityId: activeCommunityId } : {},
     } as Href);
   }, [activeCommunityId]);
+  // The owner's tap sends the command as a typed message; the server's owner
+  // check and sign-in card take it from there.
+  const sendSystemLineCommand = useCallback((text: string) => {
+    void handleSend({ text });
+  }, [handleSend]);
   const handleCopyLedgerMessage = useCallback((text: string) => {
     void copyEntireTurn(text, Clipboard.setStringAsync);
   }, []);
@@ -5954,6 +5960,16 @@ export function BuzzChatSurface({
             onOpenIdentity={handleOpenSystemIdentity}
             onOpenUrl={handleOpenGitHubEvent}
             onOpenBrief={openCurrentBrief}
+            {...(item.systemEvent && !viewerIsAgent && !isArchived
+              ? {
+                  loginCommand: ownedLoginCommand(
+                    item.systemEvent,
+                    cacheViewerPubkey,
+                    workspaceRoster?.agents ?? [],
+                  ),
+                  onSendCommand: sendSystemLineCommand,
+                }
+              : {})}
           />
         );
       }
@@ -6108,6 +6124,8 @@ export function BuzzChatSurface({
       isCorner,
       decodedId,
       cornerHeaderSource?.lifecycle,
+      sendSystemLineCommand,
+      workspaceRoster?.agents,
     ],
   );
   const renderItem = useRoomMessageRenderItem({

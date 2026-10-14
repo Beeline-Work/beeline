@@ -552,6 +552,9 @@ export class MonolithRoomTurnLoop {
         options.api.execute('endComputerSession', { roomId: options.roomId, sessionId }).catch(() => {});
       },
       async (lease) => (await options.api.execute('refreshComputerSession', { roomId: options.roomId, ...lease })).live,
+      (url, siteUrl) => {
+        options.api.execute('forgetSquireSignIn', { url, ...(siteUrl ? { siteUrl } : {}) }).catch(() => {});
+      },
     );
     this.options = { ...options, api: this.commandContext.bind(options.api) };
     options.grantRunner?.register(options.roomId, {

@@ -135,6 +135,17 @@ export function appKeyForHost(value: string): string | undefined {
 }
 
 /**
+ * Whether a URL is on the app's own site: its brand domain (`linear.app` for
+ * `linear`) or a host label naming the app (`dreamina.capcut.com` for
+ * `dreamina`). A search page or another brand's site does not belong.
+ */
+export function urlBelongsToApp(url: string, appKey: string): boolean {
+  const host = hostOf(url);
+  if (!host || !/^https:\/\//i.test(url.trim())) return false;
+  return appKeyForHost(host) === appKey || host.split('.').slice(0, -1).some((label) => alnum(label) === appKey);
+}
+
+/**
  * The app a Registry server name belongs to, read ONLY from its verified
  * namespace: a reverse-DNS namespace (`app.linear/…`, `com.notion/…`) names
  * the domain that published it, and `io.github.<owner>/…` names a GitHub

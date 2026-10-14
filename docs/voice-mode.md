@@ -149,7 +149,7 @@ human to Join through the actual call card. It uses live Flux, Luna and Aura 2,
 checks both named agents, complete multi-sentence synthesis, silence for unnamed
 speech, one concurrent reply stream and actual audio on both human clients.
 Its scoped `session.json` and raw logs stay in `.voice-proof/multiparty/`;
-release fixture files under `apps/mobile/.voice-proof/` are also ignored.
+release fixture files under `apps/mobile/.voice-proof/` use a local ignore file.
 
 ```sh
 node --import tsx scripts/prove-voice-multiparty.ts

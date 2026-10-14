@@ -499,10 +499,10 @@ describe('prompt assembly guards', () => {
 
   it('tells a code-corner author that a human opening the corner and prompting inside it is not the outline', () => {
     const author = assembleSessionPrompt(SESSION_VARIANTS['code-corner-reviewed']!).systemPrompt;
-    expect(author).toContain('the brief must hold this ask\'s outline');
-    expect(author).toContain('opening and prompting inside it is not that outline');
-    expect(author).toContain('When it has none or the ask changed, read the revision and write it with revise_corner_brief first');
-    expect(promptRules.CORNER_AUTHOR_CONTRACT).toContain('opening and prompting inside it is not that outline');
+    expect(author).toContain('the brief must outline this ask');
+    expect(author).toContain('chat never revises it');
+    expect(author).toContain('report needs-decision: to your commander for its revision first');
+    expect(promptRules.CORNER_AUTHOR_CONTRACT).toContain('chat never revises it');
   });
 
   it('authorizes building from dispatch and leaves spec or mock questions to judgment', () => {
@@ -620,7 +620,7 @@ describe('prompt assembly guards', () => {
     const { brief: _brief, ...unbriefed } = SESSION_VARIANTS['code-corner-reviewed']!;
     const session = assembleSessionPrompt(unbriefed).systemPrompt;
     expect(session).toContain('isolated git worktree on feature/corner-abc');
-    expect(session).toContain('write it with revise_corner_brief first');
+    expect(session).toContain('report needs-decision: to your commander for its revision first');
     expect(session).not.toContain('Open the pull request with gh');
     expect(session).not.toContain(cornerMergeInstruction('sol'));
     const turn = assembleTurnPrompt(TURN_VARIANTS['code-corner-turn']!).text;

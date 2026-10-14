@@ -1933,9 +1933,15 @@ export function agentToolsFor(
     if (tool.name === 'open_poll') return !directMessage;
     if (tool.name === 'run_granted_command') return commandRunnerAvailable;
     return true;
-  }).map((tool) => cornerTurn && tool.name === 'order' ? {
+  }).map((tool) => cornerTurn && tool.name === 'revise_corner_brief' ? {
     ...tool,
-    description: 'From a corner, order other corners under the same top-level Room, including siblings and delegated child corners. Never order this corner itself, a top-level Room, a DM, an agent address or a corner in another Room. Corners cannot order up or out of their Room. Report to your commander instead. After ordering another corner, end the turn; its report wakes a new turn. Do not sleep or poll.',
+    description: 'Revise a brief only in corners this corner opened, directly or transitively. To change this corner’s own brief, report needs-decision: to your commander. Supply the complete replacement spec, approval source and expected revision.',
+  } : cornerTurn && tool.name === 'close_corner' ? {
+    ...tool,
+    description: 'Close only corners this corner opened, directly or transitively. Closing archives the target and stops its work. To close this corner itself or other work, report to your commander. Attach needed artifacts first.',
+  } : cornerTurn && tool.name === 'order' ? {
+    ...tool,
+    description: 'From a corner, order only corners this corner opened, directly or transitively. Existing corners without opening provenance, unrelated siblings, parent corners, top-level Rooms, DMs, agent addresses and this corner itself are refused. Corners can only order corners they opened. Report to your commander instead. After ordering another corner, end the turn; its report wakes a new turn. Do not sleep or poll.',
   } : tool);
 }
 

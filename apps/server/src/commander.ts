@@ -61,7 +61,7 @@ export async function commandAddress(
   return row;
 }
 
-/** Corner orders stay among corners in the same top-level Room. */
+/** Corner writes target only explicitly recorded opened descendants. */
 export async function assertCornerCommandTarget(
   db: SqlDatabase, sourceRoomId: string, targetRoomId: string,
 ) {
@@ -70,12 +70,16 @@ export async function assertCornerCommandTarget(
   )).rows[0];
   if (!source?.parent_id) return;
   const allowed = await db.query(
-    `SELECT 1 FROM rooms WHERE id::text=$1 AND parent_id=$2 AND id<>$3`,
-    [targetRoomId, source.parent_id, sourceRoomId],
+    `WITH RECURSIVE descendants AS (
+       SELECT corner_id FROM corner_facts WHERE opened_from_corner_id=$1
+       UNION SELECT child.corner_id FROM corner_facts child JOIN descendants parent
+         ON child.opened_from_corner_id=parent.corner_id
+     ) SELECT 1 FROM descendants WHERE corner_id::text=$2 AND corner_id<>$1 LIMIT 1`,
+    [sourceRoomId, targetRoomId],
   );
   if (!allowed.rowCount)
     throw new CommandRefusalError(
-      'Corners cannot order up or out of their Room. Report to your commander instead.', 403,
+      'Corners can only order corners they opened. Report to your commander instead.', 403,
     );
 }
 

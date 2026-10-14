@@ -1791,7 +1791,7 @@ export class DaemonService {
         )) as Output<Name>;
       case 'archiveCorner':
         return (await this.archiveCorner(
-          (input as Input<'archiveCorner'>).cornerId,
+          input as Input<'archiveCorner'>,
           authenticatedAgentId,
         )) as Output<Name>;
       case 'ensureAgentMembership':
@@ -3330,6 +3330,7 @@ export class DaemonService {
     const row = (
       await this.database.query<CornerStateRow & {
         parent_room_id: string;
+        opened_from_corner_id: string | null;
         objective: string;
         title: string;
         title_generated: boolean;
@@ -3346,7 +3347,7 @@ export class DaemonService {
         last_excerpt: string | null;
       }>(
         `SELECT c.parent_id parent_room_id,c.archived_at,${facts.columns},
-           f.objective,c.name title,f.title_generated,f.kind,f.feature_branch,f.request_id,f.close_requested,
+           f.opened_from_corner_id,f.objective,c.name title,f.title_generated,f.kind,f.feature_branch,f.request_id,f.close_requested,
            approval.pull_request_number,approval.head_sha approval_head_sha,
            lm.author_id last_author_id,lm.created_at last_created_at,
            lm.presentation last_type,left(lm.text,280) last_excerpt
@@ -3361,6 +3362,7 @@ export class DaemonService {
     return {
       cornerId,
       ...(row ? { archived: Boolean(row.archived_at), parentRoomId: row.parent_room_id } : {}),
+      ...(row?.opened_from_corner_id ? { openedFromCornerId: row.opened_from_corner_id } : {}),
       objective: row?.objective ?? '',
       ...(held ? { held: true } : {}),
       ...(brief ? { brief } : {}),
@@ -7578,8 +7580,8 @@ export class DaemonService {
         [parent.workspace_id, cornerId, implementerAgentId],
       );
       await db.query(
-        `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by,objective,request_id,open_idempotency_key,lifecycle)
-         VALUES($1,$2,$3,$4,$5,$6,'{"lifecycle":"working","checks":"unknown"}')`,
+        `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by,objective,request_id,open_idempotency_key,opened_from_corner_id,lifecycle)
+         VALUES($1,$2,$3,$4,$5,$6,$7,'{"lifecycle":"working","checks":"unknown"}')`,
         [
           cornerId,
           implementerAgentId,
@@ -7587,6 +7589,7 @@ export class DaemonService {
           objective,
           input.requestId,
           idempotencyKey,
+          host?.parent_id ? commandRoomId : null,
         ],
       );
       if (input.hold === true) {
@@ -7715,6 +7718,7 @@ export class DaemonService {
       const command = await authorizeCommandOutput(
         db, commandRoomId, agentId, input.requestId, input.generationId,
       );
+      await assertCornerCommandTarget(db, command.room_id, input.cornerId);
       const current = await currentCornerBrief(db, input.cornerId);
       if ((current?.revision ?? 0) !== input.expectedRevision)
         throw new Error('corner brief revision changed; read the current assignment');
@@ -7795,10 +7799,18 @@ export class DaemonService {
     });
     return brief!;
   }
-  private async archiveCorner(cornerId: string, agentId: string) {
+  private async archiveCorner(input: Input<'archiveCorner'>, agentId: string) {
+    const { cornerId } = input;
     // The generic gate checks the turn's roomId; the target corner needs its own check.
     await this.reach(cornerId, agentId);
     await this.database.transaction(async (database) => {
+      if (input.requestId) {
+        const command = await authorizeCommandOutput(database, input.roomId ?? cornerId,
+          agentId, input.requestId, input.generationId);
+        await assertCornerCommandTarget(database, command.room_id, cornerId);
+      } else if (input.roomId) {
+        await assertCornerCommandTarget(database, input.roomId, cornerId);
+      }
       await closeCornerState(database, cornerId);
     });
     return this.writeResult();

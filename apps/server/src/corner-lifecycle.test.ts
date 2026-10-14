@@ -984,9 +984,9 @@ async function say(roomId: string, text: string) {
 }
 
 async function revise(cornerId: string, service = daemon) {
-  const command = await commissioned(cornerId);
+  const command = await commissioned(R);
   return service.execute('reviseCornerBrief', {
-    cornerId, requestId: command.turnRequestId, generationId: 'g1', expectedRevision: 1,
+    roomId: R, cornerId, requestId: command.turnRequestId, generationId: 'g1', expectedRevision: 1,
     brief: { ...brief(command.sourceMessageId), spec: 'Revised widget\n\n## Checklist\n- Ship it', change: 'Changed scope' },
   }, A);
 }
@@ -1041,7 +1041,7 @@ it('Reproduction F1-7: opener revises a delegated sibling from its own command',
   expect((await daemon.execute('listCornerBriefRevisions', { cornerId }, A)).revisions[0]!.revision).toBe(3);
 });
 
-it('any agent in the corner revises its brief, not only the one a person handed it to', async () => {
+it('a corner member revises from the Room, while a corner turn cannot revise itself', async () => {
   const cornerId = await open('owner/widgets');
   const command = await commissioned(cornerId);
   const G = '8'.repeat(64);
@@ -1052,7 +1052,12 @@ it('any agent in the corner revises its brief, not only the one a person handed 
   const turn = await createAgentCommand(db, { roomId: cornerId, agentId: G, sourceMessageId: command.sourceMessageId, reason: 'human_tag' });
   await daemon.execute('claimAgentCommand', { roomId: cornerId, commandId: turn!.id, generationId: 'g1' }, G);
   const input = { cornerId, requestId: turn!.turn_request_id, generationId: 'g1', expectedRevision: 1, brief: { ...brief(command.sourceMessageId), spec: 'Heir scope', change: 'Take over' } };
-  expect(await daemon.execute('reviseCornerBrief', input, G)).toMatchObject({ revision: 2 });
+  await expect(daemon.execute('reviseCornerBrief', input, G)).rejects.toThrow('Corners can only order corners they opened.');
+  await phone.execute('sendRoomMessage', { roomId: R, messageId: randomBytes(32).toString('hex'), text: '@heir revise the brief' }, H);
+  const roomTurn = (await daemon.execute('getAgentCommands', { roomId: R }, G)).commands.at(-1)!;
+  await claim(roomTurn);
+  expect(await daemon.execute('reviseCornerBrief', { ...input, roomId: R, requestId: roomTurn.turnRequestId }, G))
+    .toMatchObject({ revision: 2 });
 });
 
 it('Reproduction F1-9: brief history defaults to one revision with a cursor', async () => {
@@ -3224,9 +3229,9 @@ describe('the brief gate on landing: only a brief that assigns repository work m
       await db.query(`DELETE FROM corner_brief_revisions WHERE corner_id=$1`, [cornerId]);
       return;
     }
-    const command = await commissioned(cornerId);
+    const command = await commissioned(R);
     await daemon.execute('reviseCornerBrief', {
-      cornerId, requestId: command.turnRequestId, generationId: 'g1', expectedRevision: 1,
+      roomId: R, cornerId, requestId: command.turnRequestId, generationId: 'g1', expectedRevision: 1,
       brief: { ...brief(command.sourceMessageId), repositoryWork, change: 'Say whether files change' },
     }, A);
   }

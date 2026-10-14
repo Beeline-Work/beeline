@@ -451,7 +451,7 @@ describe('monolith integration', () => {
 
     // RO3a: reuse the human approval that dispatched this sibling corner.
     const revision = await daemonCall('reviseCornerBrief', {
-      ...(await turnIn(cornerId)),
+      ...(await turnIn(ROOM)),
       cornerId,
       expectedRevision: 1,
       brief: {
@@ -507,7 +507,7 @@ describe('monolith integration', () => {
       files: Array<{ objectId: string; purpose: string; required: boolean }> = [],
     ) =>
       daemonCall('reviseCornerBrief', {
-        ...(await turnIn(cornerId)),
+        ...(await turnIn(ROOM)),
         cornerId,
         expectedRevision,
         brief: {
@@ -616,7 +616,7 @@ describe('monolith integration', () => {
       }
       const revise = (roomId: string, expectedRevision: number) =>
         daemonOperation('reviseCornerBrief', {
-          roomId: cornerId,
+          roomId: ROOM,
           cornerId,
           expectedRevision,
           brief: {
@@ -9745,7 +9745,7 @@ describe('monolith integration', () => {
     await database.query(`INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body)
       VALUES($1,$2,'presence','presence','{"status":"online"}')`, [ROOM, AGENT]);
     const revision = await daemonOperation('reviseCornerBrief', {
-      roomId: cornerId,
+      roomId: ROOM,
       cornerId,
       requestId: 'brief-correction',
       expectedRevision: 1,
@@ -9819,7 +9819,7 @@ describe('monolith integration', () => {
       ).rows,
     ).toHaveLength(1);
     const stale = await daemonOperation('reviseCornerBrief', {
-      roomId: cornerId,
+      roomId: ROOM,
       cornerId,
       requestId: 'stale-brief-correction',
       expectedRevision: 1,
@@ -9829,7 +9829,7 @@ describe('monolith integration', () => {
     expect(
       (
         await daemonOperation('reviseCornerBrief', {
-          roomId: cornerId,
+          roomId: ROOM,
           cornerId,
           requestId: 'brief-without-change',
           expectedRevision: 2,
@@ -10174,7 +10174,7 @@ describe('monolith integration', () => {
         ]);
       }
       const revised = await daemonOperation('reviseCornerBrief', {
-        roomId: cornerId, cornerId, requestId: 'worker-brief-correction', expectedRevision: 1,
+        roomId: ROOM, cornerId, requestId: 'worker-brief-correction', expectedRevision: 1,
         brief: { content: 'Keep the corrected behavior.', change: 'Corrected behavior' },
       });
       expect(revised.status).toBe(200);
@@ -10230,7 +10230,7 @@ describe('monolith integration', () => {
       }),
     ]);
     const revised = await daemonOperation('reviseCornerBrief', {
-      roomId: cornerId,
+      roomId: ROOM,
       cornerId,
       requestId: 'reviewer-brief-correction',
       expectedRevision: 1,

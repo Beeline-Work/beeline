@@ -1,12 +1,14 @@
+import { execFileSync } from 'node:child_process';
 import { describe, expect, it } from 'vitest';
 import type { ChatDisplayMessage } from './room-view-presentation';
 import { buildCatchUpReport, catchUpClock } from './room-catch-up-report';
+import { foldPrLifecycleRuns } from './pr-lifecycle';
 
 const VIEWER = 'pk-viewer';
-const AT_0804 = new Date(2026, 8, 22, 8, 4).getTime();
+const AT_0804 = new Date(2026, 8, 22, 8, 4).getTime() / 1000;
 
 function at(minutesAfterStart: number): number {
-  return AT_0804 + minutesAfterStart * 60_000;
+  return AT_0804 + minutesAfterStart * 60;
 }
 
 function said(id: string, name: string, minutes: number, text = id): ChatDisplayMessage {
@@ -49,7 +51,7 @@ describe('the catch-up report', () => {
     );
     expect(report?.rangeLabel).not.toMatch(/\d+\s*(msgs?|messages?)/);
     // The row before the boundary is read history and is not in the range.
-    expect(report?.summary).toBe('From Sol and Nerd.');
+    expect(report?.summary).toBe('Sol: new-0. Nerd: new-1. Sol: new-2.');
     expect(report?.summary).not.toMatch(/^\d/);
   });
 
@@ -99,7 +101,7 @@ describe('the catch-up report', () => {
     });
 
     expect(report?.summary).toBe(
-      'From Sol, Nerd and 1 other. 1 poll opened, 1 merge landed, you were mentioned once.',
+      'Nerd: Ship Friday? Milo: new-2. Sol: over to @you.',
     );
   });
 
@@ -183,7 +185,7 @@ describe('the catch-up report', () => {
       newestId: 'new-1',
       viewerPubkey: VIEWER,
     });
-    expect(report?.summary).toBe('From Sol (@sol) and Sol (@sol-two).');
+    expect(report?.summary).toBe('Sol (@sol): new-0. Sol (@sol-two): new-1.');
   });
 
   it('CHEV-13: names the person who asked for an edit, not the agent that filed it', () => {
@@ -277,4 +279,69 @@ describe('the catch-up report', () => {
 
     expect(report?.needsYou).toEqual([]);
   });
+});
+
+
+describe('Reproduction catch-up-1', () => {
+  const first = Date.parse('2026-10-14T19:26:00Z') / 1000;
+  const last = Date.parse('2026-10-14T19:45:00Z') / 1000;
+  const unread = [
+    { ...said('first', 'Ruby', 0, 'The fix merged and Android verification passed.'), timestamp: first },
+    { ...said('last', 'Ruby', 0, 'The release failed because the build timed out.'), timestamp: last },
+  ];
+  const build = (messages = unread) => buildCatchUpReport({ messages, boundaryId: 'first', newestId: 'last', viewerPubkey: VIEWER });
+
+  it('uses seconds and the device local clock across a non-UTC unread window', () => {
+    const expected = (seconds: number) => {
+      const date = new Date(seconds * 1000);
+      return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+    };
+    expect(catchUpClock(first)).toBe(expected(first));
+    expect(catchUpClock(last)).toBe(expected(last));
+    expect(build()?.rangeLabel).toBe(`Since ${expected(first)} · newest ${expected(last)}`);
+    expect(catchUpClock(first)).not.toBe(catchUpClock(last));
+    expect(build()?.range).toMatchObject({ startedAt: first, endedAt: last });
+  });
+
+  it('formats the production timestamps in a non-UTC device time zone', () => {
+    const moduleUrl = new URL('./room-catch-up-report.ts', import.meta.url).href;
+    const output = execFileSync(process.execPath, ['--import', 'tsx', '--input-type=module', '-e',
+      `import { catchUpClock } from ${JSON.stringify(moduleUrl)}; console.log(catchUpClock(${first}), catchUpClock(${last}));`,
+    ], { env: { ...process.env, TZ: 'America/New_York' }, encoding: 'utf8' });
+    expect(output.trim()).toBe('15:26 15:45');
+  });
+
+  it('states the unread merge result and failure instead of a speaker roll', () => {
+    expect(build()?.summary).toBe('Ruby: The fix merged and Android verification passed. Ruby: The release failed because the build timed out.');
+  });
+
+  it('keeps decisions and outcomes ahead of routine messages, in at most three sentences', () => {
+    const messages = [unread[0]!, said('decision', 'Ruby', 1, 'We decided to ship tomorrow.'), ...Array.from({ length: 6 }, (_, i) => said(`routine-${i}`, 'Ruby', i + 2, 'Still checking the logs.')), unread[1]!];
+    expect(build(messages)?.summary).toBe('Ruby: The fix merged and Android verification passed. Ruby: We decided to ship tomorrow. Ruby: The release failed because the build timed out.');
+  });
+
+  it('returns an unavailable summary for missing or deleted content', () => {
+    expect(build(unread.map((message) => ({ ...message, text: '' })))?.summary).toBeNull();
+    expect(build(unread.map((message) => ({ ...message, deleted: true })))?.summary).toBeNull();
+  });
+});
+
+
+it('keeps multiple outcome sentences from one unread reply and preserves links', () => {
+  const message = said('only', 'Ruby', 0, 'The fix merged. The release failed. Details are at https://github.com/acme/repo/pull/42.');
+  const report = buildCatchUpReport({ messages: [message], boundaryId: 'only', newestId: 'only', viewerPubkey: VIEWER });
+  expect(report?.summary).toBe('Ruby: The fix merged. Ruby: The release failed. Ruby: Details are at https://github.com/acme/repo/pull/42.');
+});
+
+
+it('uses the first and last original unread messages when the transcript folds their cards', () => {
+  const first = Date.parse('2026-10-14T19:26:00Z') / 1000;
+  const messages = ['opened', 'merged'].map((action, index): ChatDisplayMessage => ({
+    id: `pr-${index}`, timestamp: first + index * 19 * 60, text: `Catch up fix ${action}.`, isUser: false,
+    githubEvent: { type: 'pull-request', action, title: 'Catch up fix', actor: 'ruby', branch: 'fix', url: 'https://github.com/acme/repo/pull/42' },
+  }));
+  expect(foldPrLifecycleRuns(messages)).toHaveLength(1);
+  const report = buildCatchUpReport({ messages, boundaryId: 'pr-0', newestId: 'pr-1', viewerPubkey: VIEWER });
+  expect(report?.range).toMatchObject({ startedAt: first, endedAt: first + 19 * 60 });
+  expect(report?.summary).toContain('Catch up fix merged.');
 });

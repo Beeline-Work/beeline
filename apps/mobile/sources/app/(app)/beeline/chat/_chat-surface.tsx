@@ -2825,13 +2825,21 @@ export function BuzzChatSurface({
   // reader fell behind BEFORE this visit. The live queue only answers for a
   // Room that opened read and gained arrivals while they sat in history.
   const catchUpBoundaryId = isCorner ? null : (firstUnreadMessageId ?? newMessageQueue.boundaryId);
+  // Summarize original messages: folded card hosts lose individual times and text.
+  const catchUpMessages = useMemo(
+    () => anchoredSegmentActive
+      ? mergeDisplayPages(cachedMessages, liveMessages, roomSendFrame.optimistic)
+      : combinedMessages,
+    [anchoredSegmentActive, cachedMessages, liveMessages, roomSendFrame.optimistic, combinedMessages],
+  );
+  const catchUpNewestId = newestTranscriptRowId(catchUpMessages);
   const catchUpReport = useMemo(
     () =>
       !isCorner && catchUpSheetVisible
         ? buildCatchUpReport({
-            messages: arrivalMessages,
+            messages: catchUpMessages,
             boundaryId: catchUpBoundaryId,
-            newestId: newestArrivalMessageId,
+            newestId: catchUpNewestId,
             viewerPubkey: userPubkey ?? null,
             // The roster the bylines already resolve against, so an ask whose
             // requester is not the row's author is still named correctly.
@@ -2842,9 +2850,9 @@ export function BuzzChatSurface({
       catchUpBoundaryId,
       catchUpSheetVisible,
       conversationIdentities,
-      arrivalMessages,
+      catchUpMessages,
       isCorner,
-      newestArrivalMessageId,
+      catchUpNewestId,
       userPubkey,
     ],
   );
@@ -6670,6 +6678,10 @@ export function BuzzChatSurface({
                   canDraft={!inputText.trim() && pendingAttachments.length === 0}
                   onAskAgent={draftCatchUpRequest}
                   onClose={closeCatchUpSheet}
+                  onRetry={() => {
+                    retryHydration();
+                    retryOlderTranscriptMessages();
+                  }}
                   report={catchUpReport}
                   visible={catchUpSheetVisible}
                 />

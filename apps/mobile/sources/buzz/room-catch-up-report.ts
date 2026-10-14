@@ -1,5 +1,6 @@
 import type { ChatDisplayMessage } from './room-view-presentation';
 import { boundaryRowIndex } from './room-new-message-boundary';
+import { ledgerStamp } from './relative-time';
 
 /**
  * One speaker in a catch-up range. Identity, not a display name: two people
@@ -60,19 +61,15 @@ export type CatchUpNeedsYouItem = {
 
 export type CatchUpReport = {
   range: CatchUpRange;
-  /** The sheet head: `42 msgs · 08:04–09:46`. */
+  /** Device-local first and last unread times. */
   rangeLabel: string;
-  summary: string;
+  summary: string | null;
   needsYou: readonly CatchUpNeedsYouItem[];
 };
 
-/** 24-hour wall clock, the form the range head is specified in. */
-export function catchUpClock(atMs: number): string {
-  return new Date(atMs).toLocaleTimeString([], {
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  });
+/** Device-local 24-hour clock; transcript timestamps are Unix seconds. */
+export function catchUpClock(atSeconds: number): string {
+  return ledgerStamp(atSeconds);
 }
 
 /**
@@ -89,38 +86,53 @@ function labelFor(author: CatchUpAuthor, within: readonly CatchUpAuthor[]): stri
     : author.name;
 }
 
-/** `Sol`, `Sol and Nerd`, `Sol, Nerd and 3 others` — the roll every catch-up line uses. */
-export function catchUpAuthorRoll(authors: readonly CatchUpAuthor[]): string {
-  const distinct = distinctCatchUpAuthors(authors);
-  const [first, second, ...rest] = distinct;
-  if (!first) return '';
-  if (!second) return labelFor(first, distinct);
-  if (rest.length === 0) return `${labelFor(first, distinct)} and ${labelFor(second, distinct)}`;
-  return `${labelFor(first, distinct)}, ${labelFor(second, distinct)} and ${rest.length} other${
-    rest.length === 1 ? '' : 's'
-  }`;
-}
-
 function messageLine(text: string): string {
   const line = text.replace(/\s+/g, ' ').trim();
   return line.length > 120 ? `${line.slice(0, 119)}…` : line;
 }
 
-/**
- * Everything the catch-up sheet renders, composed from the range's own rows.
- *
- * There is no summarizer in this codebase to call: the merged `/catch-up`
- * composer verb was a jump to the first unread row, and no path anywhere
- * turns a message range into prose. So the Summary block is stated from what
- * the range demonstrably holds — who spoke, what was opened, what landed —
- * and the Needs you block from the asks the transcript already carries: an
- * open choice the reader is an elector of, a repository edit waiting on them,
- * a message that mentions them. Nothing here is inferred.
- *
- * This function is the single seam all three doors go through — the verb, the
- * strip, the badge. A model-backed summarizer replaces its body and none of
- * them change.
- */
+/** Extract up to three content sentences, prioritizing decisions and outcomes. */
+function unreadSummary(messages: readonly ChatDisplayMessage[]): string | null {
+  const authors = distinctCatchUpAuthors(messages.flatMap((message) => {
+    const author = catchUpAuthorOf(message);
+    return author ? [author] : [];
+  }));
+  const candidates = messages.flatMap((message, index) => {
+    if (message.deleted || message.isAgentActivity || message.isAgentDraft || message.isAgentLiveTurn) return [];
+    const text = (message.choice?.prompt ?? message.text)
+      .replace(/```[\s\S]*?```/g, '')
+      .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
+      .replace(/^[ \t]*[#>*-]+[ \t]*/gm, '')
+      .replace(/[*_`]/g, '')
+      .replace(/\s+/g, ' ').trim();
+    if (!text) return [];
+    const sentences = text.split(/(?<=[.!?])\s+/);
+    const author = catchUpAuthorOf(message);
+    const name = author ? labelFor(author, authors) : null;
+    return sentences.map((sentence, sentenceIndex) => {
+      const content = sentence.trim();
+      const line = content.length > 220
+        ? `${content.slice(0, 217).replace(/\s+\S*$/, '')}…`
+        : content;
+      return {
+        index,
+        sentenceIndex,
+        score: /\b(merged?|failed?|failure|decided?|decision|approved?|passed?|result|blocked|shipped?)\b/i.test(content) ? 1 : 0,
+        text: `${name ? `${name}: ` : ''}${line}${/[.!?…]$/.test(line) ? '' : '.'}`,
+      };
+    });
+  });
+  const seen = new Set<string>();
+  const selected = candidates.sort((a, b) => b.score - a.score || b.index - a.index)
+    .filter((candidate) => {
+      if (seen.has(candidate.text)) return false;
+      seen.add(candidate.text);
+      return true;
+    }).slice(0, 3).sort((a, b) => a.index - b.index || a.sentenceIndex - b.sentenceIndex);
+  return selected.map((candidate) => candidate.text).join(' ') || null;
+}
+
+/** Composes the unread overview and existing asks from committed transcript rows. */
 export function buildCatchUpReport({
   messages,
   boundaryId,
@@ -151,35 +163,7 @@ export function buildCatchUpReport({
   const startedAt = range[0]!.timestamp;
   const endedAt = range.at(-1)!.timestamp;
 
-  const authors = distinctCatchUpAuthors(
-    range.flatMap((message) => {
-      const author = message.isUser ? null : catchUpAuthorOf(message);
-      return author ? [author] : [];
-    }),
-  );
-  const pollsOpened = range.filter((message) => message.choice?.mode === 'poll').length;
-  const merges = range.filter((message) => message.durableFact?.kind === 'merge').length;
-  const failures = range.filter((message) => message.durableFact?.kind === 'failure').length;
-  const mentions = viewerPubkey
-    ? range.filter((message) => message.mentionPubkeys?.includes(viewerPubkey)).length
-    : 0;
-
-  // Who, never how many. The rows this range covers are the rows the client
-  // happens to hold, so a total stated from them would be a guess dressed as
-  // a fact; the head states the window instead and lets the reader see it.
-  const roll = catchUpAuthorRoll(authors);
-  const opening = roll ? `From ${roll}.` : '';
-  const clauses = [
-    pollsOpened > 0 ? `${pollsOpened} ${pollsOpened === 1 ? 'poll' : 'polls'} opened` : null,
-    merges > 0 ? `${merges} ${merges === 1 ? 'merge' : 'merges'} landed` : null,
-    failures > 0 ? `${failures} ${failures === 1 ? 'failure' : 'failures'} reported` : null,
-    mentions > 0 ? `you were mentioned ${mentions === 1 ? 'once' : `${mentions} times`}` : null,
-  ].filter((clause): clause is string => clause !== null);
-  const tail =
-    clauses.length === 0
-      ? ''
-      : `${clauses.join(', ').replace(/^./, (first) => first.toUpperCase())}.`;
-  const summary = [opening, tail].filter(Boolean).join(' ') || 'Nothing but messages.';
+  const summary = unreadSummary(range);
 
   const needsYou = range.flatMap((message): CatchUpNeedsYouItem[] => {
     const requesterName = message.authorIdentity?.name ?? 'Someone';

@@ -1,5 +1,6 @@
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import React from 'react';
+import { Button } from './Button';
 import { Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
@@ -28,6 +29,7 @@ export function RoomCatchUpSheet({
   canDraft,
   onAskAgent,
   onClose,
+  onRetry,
   report,
   visible,
 }: {
@@ -35,6 +37,7 @@ export function RoomCatchUpSheet({
   canDraft: boolean;
   onAskAgent: (agent: { pubkey: string; name: string; handle: string }) => void;
   onClose: () => void;
+  onRetry: () => void;
   report: CatchUpReport | null;
   visible: boolean;
 }) {
@@ -48,12 +51,11 @@ export function RoomCatchUpSheet({
       title="Catch up"
       visible={visible}
     >
-      {report && (
-        <View style={styles.block} testID="catch-up-sheet-summary">
-          <RoomListSectionHeader title="Summary" inset="content" spacing="flush" />
-          <Text style={styles.summary}>{report.summary}</Text>
-        </View>
-      )}
+      <View style={styles.block} testID="catch-up-sheet-summary">
+        <RoomListSectionHeader title="Summary" inset="content" spacing="flush" />
+        <Text style={styles.summary}>{report?.summary ?? 'Summary unavailable'}</Text>
+        {!report?.summary && <Button label="Retry summary" variant="quiet" onPress={onRetry} />}
+      </View>
       {report && (
         <View style={styles.block} testID="catch-up-sheet-needs-you">
           <RoomListSectionHeader title="Needs you" inset="content" spacing="flush" />

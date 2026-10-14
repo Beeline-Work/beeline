@@ -1954,7 +1954,7 @@ export function agentToolsFor(
     description: 'Close any corner you belong to except parent or ancestor corners and the parent Room. This corner and sibling corners are allowed. Closing archives the target and stops its work. Attach needed artifacts first.',
   } : cornerTurn && tool.name === 'order' ? {
     ...tool,
-    description: 'From a corner, order any Room, corner or agent DM address you belong to except your parent Room and parent or ancestor corners. This corner and sibling corners are allowed. At a top-level Room address, name exactly one agent with agent; no broadcasts. Report to your commander for ancestor work. After ordering another agent, end the turn; its report wakes a new turn. Do not sleep or poll.',
+    description: 'From a corner, order any Room or corner address you belong to except your parent Room and parent or ancestor corners. DM and agent addresses are blocked; report to your commander instead. This corner and sibling corners are allowed. At a top-level Room address, name exactly one agent with agent; no broadcasts. Report to your commander for ancestor work. After ordering another agent, end the turn; its report wakes a new turn. Do not sleep or poll.',
   } : tool);
 }
 

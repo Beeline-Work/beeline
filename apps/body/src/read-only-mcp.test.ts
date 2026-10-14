@@ -384,6 +384,7 @@ it('corner order descriptions forbid ancestors and retain single-agent Room orde
   const tool = agentToolsFor(true, false, true, true).find(tool => tool.name === 'order')!;
   expect(tool.description).toContain('except your parent Room and parent or ancestor corners');
   expect(tool.description).toContain('name exactly one agent');
+  expect(tool.description).toContain('DM and agent addresses are blocked');
   expect(tool.description).toContain('This corner and sibling corners are allowed');
 });
 

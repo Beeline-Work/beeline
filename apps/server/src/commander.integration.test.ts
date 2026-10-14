@@ -485,7 +485,12 @@ it('Reproduction corner-ancestor-rule: corner orders reach self, siblings and ch
   await daemon.execute('order', { ...authority(turn), address: sibling.cornerId, text: 'Review sibling' }, WORKER);
   await daemon.execute('order', { ...authority(turn), address: otherCorner, text: 'Review other corner' }, WORKER);
   await daemon.execute('order', { ...authority(turn), address: otherRoom, agent: 'ruby', text: 'Review in other Room' }, WORKER);
-  await daemon.execute('order', { ...authority(turn), address: DM, text: 'Review in DM' }, WORKER);
+  const beforeDm = (await db.query(`SELECT id FROM agent_commands ORDER BY id`)).rows;
+  for (const address of [DM, RUBY, 'ruby', '@ruby']) {
+    await expect(daemon.execute('order', { ...authority(turn), address, text: 'Review through DM' }, WORKER))
+      .rejects.toThrow("Corners can't order DMs. Report to your commander instead.");
+    expect((await db.query(`SELECT id FROM agent_commands ORDER BY id`)).rows).toEqual(beforeDm);
+  }
   await expect(daemon.execute('order', { ...authority(turn), address: otherRoom, text: 'Broadcast' }, WORKER))
     .rejects.toThrow('a Room order must name exactly one agent');
   await expect(daemon.execute('order', { ...authority(turn), address: randomUUID(), text: 'No membership' }, WORKER))
@@ -495,7 +500,7 @@ it('Reproduction corner-ancestor-rule: corner orders reach self, siblings and ch
   expect((await daemon.execute('getCornerRestoreState', { cornerId: sibling.cornerId }, WORKER)).openedFromCornerId)
     .toBeUndefined();
   const before = (await db.query(`SELECT id FROM agent_commands ORDER BY id`)).rows;
-  for (const address of [ROOM]) {
+  for (const address of [ROOM, ROOM.toUpperCase()]) {
     await expect(daemon.execute('order', { ...authority(turn), address, text: 'Do the review' }, WORKER))
       .rejects.toThrow("Corners can't order their parent Room. Report to your commander instead.");
     expect((await db.query(`SELECT id FROM agent_commands ORDER BY id`)).rows).toEqual(before);
@@ -529,7 +534,7 @@ it('Reproduction corner-ancestor-rule: corner orders reach self, siblings and ch
     await expect(daemon.execute('archiveCorner', { ...authority(grandchildTurn), cornerId }, WORKER))
       .rejects.toThrow("Corners can't order their parent Room. Report to your commander instead.");
   }
-  console.log('[corner-ancestor-rule] sibling/self/child/unrelated Room/DM orders delivered; ancestors rejected; broadcasts and nonmembers refused');
+  console.log('[corner-ancestor-rule] sibling/self/child/unrelated Room orders delivered; ancestors and DM/agent addresses rejected; broadcasts and nonmembers refused');
   const grandchildBrief = (await daemon.execute('getCornerRestoreState', { cornerId: grandchild.cornerId }, WORKER)).brief!;
   await daemon.execute('reviseCornerBrief', { ...authority(turn), cornerId: grandchild.cornerId, expectedRevision: 1,
     brief: { spec: 'Clarified grandchild widget', change: 'Clarify', repositoryWork: false,

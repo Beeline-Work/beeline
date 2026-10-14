@@ -19,13 +19,14 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { RoomView, RoomViewMessage } from '@beeline/api-contract/phone';
 import { PgliteDatabase } from '../../server/src/test-support.js';
 import { migrate } from '../../server/src/database.js';
+import { flushDueCommanderWakes } from '../../server/src/commander-wakes.js';
 import { PhoneService } from '../../server/src/phone-service.js';
 import { DaemonService } from '../../server/src/daemon-service.js';
 import { LiveHub } from '../../server/src/live.js';
 import { AcpClient, AcpTurnBackstopError, type ToolCallEntry } from './acp.js';
 import type { BodyConfig } from './config.js';
 import type { DaemonApiClient } from './daemon-api-client.js';
-import type { AgentCommand } from '@beeline/api-contract/daemon';
+import type { AgentCommand, AgentReportStatus } from '@beeline/api-contract/daemon';
 import { MonolithRoomTurnLoop, ROOM_PROMPT_BACKSTOP_MS } from './monolith-room-turn.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
 import { SessionScheduler } from './session-scheduler.js';
@@ -174,7 +175,8 @@ async function runScenario(options: {
         onChunk: (delta, full, currentRun) => onChunk?.(delta, full, currentRun),
         onToolCalls: (calls) => onToolCalls?.(calls),
         report: async (text) => {
-          await daemon.execute('report', { ...await activeTurnContext(agentHomeRoot), text }, AGENT);
+          await daemon.execute('report', { ...await activeTurnContext(agentHomeRoot),
+            status: text.split(':')[0]!.replace('-', '_') as AgentReportStatus, text }, AGENT);
         },
         openCorner: async (name, objective) => {
           const context = await activeTurnContext(agentHomeRoot);
@@ -374,6 +376,8 @@ it('a private report alone completes a real ordered turn with no retry or false 
   expect(view.latestAgentTurns).toContainEqual(expect.objectContaining({ agentPubkey: AGENT, status: 'complete' }));
   expect((await db.query(`SELECT status FROM agent_turns WHERE room_id=$1 AND agent_id=$2`, [roomId, AGENT])).rows)
     .toEqual([{ status: 'complete' }]);
+  await db.query(`UPDATE agent_commands SET wake_after=now() WHERE wake_after IS NOT NULL`);
+  await flushDueCommanderWakes(db);
   const reports = (await daemon.execute('getAgentCommands', { roomId }, COMMANDER)).commands.filter(c => c.reason === 'report');
   expect(reports).toHaveLength(1);
   expect(reports[0]).toMatchObject({ private: true, source: { body: text, authorId: AGENT } });

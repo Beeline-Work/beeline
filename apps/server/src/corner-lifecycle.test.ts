@@ -647,7 +647,7 @@ describe('checks dispatch (rows 6-8)', () => {
     const cornerId = await open('owner/widgets');
     const [work] = await commands(A, cornerId);
     await claim(work!);
-    await daemon.execute('report', { roomId: cornerId, requestId: work!.turnRequestId,
+    await daemon.execute('report', { status: 'needs_decision', roomId: cornerId, requestId: work!.turnRequestId,
       generationId: 'g1', text: 'needs-decision: decide whether to continue' }, A);
     expect((await commands(A, R)).some(c => c.reason === 'report' && c.source.body.includes('needs-decision:'))).toBe(true);
     expect((await db.query(`SELECT 1 FROM messages WHERE text='needs-decision: decide whether to continue'`)).rowCount).toBe(0);
@@ -1404,12 +1404,17 @@ describe('each transition wakes the next role exactly once (AC-2)', () => {
     await daemon.execute('order', { roomId: cornerId, requestId: review!.turnRequestId, generationId: 'g1',
       address: cornerId, text: 'Attach the available proof before review' }, B);
     await result(review!, '@hoots attach the production proof before I can PASS.');
-    const [reply] = (await commands(A, cornerId)).slice(-1);
+    const reply = (await commands(A, cornerId)).find(command => command.reason === 'order');
     await claim(reply!);
-    await result(reply!, 'The proof is attached; a required entry point is still unavailable.');
+    await result(reply!, 'blocked: the proof is attached; a required entry point is still unavailable.');
+    for (const tagged of (await commands(A, cornerId)).filter(command => command.reason === 'agent_tag')) {
+      await claim(tagged);
+      await daemon.execute('postAgentTurnReceipt', { roomId: cornerId, requestId: tagged.turnRequestId,
+        generationId: 'g1', agentId: A, status: 'complete', completionKind: 'no-reply' }, A);
+    }
     const returned = (await commands(B, cornerId)).find(command => command.reason === 'report')!;
     await claim(returned);
-    await daemon.execute('report', { roomId: cornerId, requestId: returned.turnRequestId, generationId: 'g1',
+    await daemon.execute('report', { status: 'blocked', roomId: cornerId, requestId: returned.turnRequestId, generationId: 'g1',
       text: 'blocked: required entry point is unavailable' }, B);
     await result(returned, 'Reported the remaining capability blocker to the commander.');
     const before = await cards(cornerId);

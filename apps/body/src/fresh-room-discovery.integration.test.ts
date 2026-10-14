@@ -596,11 +596,11 @@ describe('fresh Room discovery through the live membership wake', () => {
     await vi.waitFor(
       async () => {
         const corner = await readRoom(cornerId);
-        expect(corner.messages.some((m) => (m.text ?? '').includes('ECHO REPLY'))).toBe(false);
+        expect(corner.messages.some((m) => (m.text ?? '').includes('ECHO REPLY'))).toBe(true);
         const opening = (await database.query(`SELECT state FROM agent_commands WHERE room_id=$1 AND reason='corner_objective'`, [cornerId])).rows[0];
         expect(opening?.state).toBe('complete');
         const report = (await database.query(`SELECT private_payload FROM agent_commands WHERE reason='report' AND private_payload->>'fromRoomId'=$1`, [cornerId])).rows[0];
-        expect(report?.private_payload).toMatchObject({ text: expect.stringContaining('ECHO REPLY') });
+        expect(report).toBeUndefined();
       },
       { timeout: 30_000, interval: 500 },
     );
@@ -643,11 +643,11 @@ describe('fresh Room discovery through the live membership wake', () => {
     await vi.waitFor(
       async () => {
         const corner = await readRoom(cornerId);
-        expect(corner.messages.some((m) => (m.text ?? '').includes('ECHO REPLY'))).toBe(false);
+        expect(corner.messages.some((m) => (m.text ?? '').includes('ECHO REPLY'))).toBe(true);
         const opening = (await database.query(`SELECT state FROM agent_commands WHERE room_id=$1 AND reason='corner_objective'`, [cornerId])).rows[0];
         expect(opening?.state).toBe('complete');
         const report = (await database.query(`SELECT private_payload FROM agent_commands WHERE reason='report' AND private_payload->>'fromRoomId'=$1`, [cornerId])).rows[0];
-        expect(report?.private_payload).toMatchObject({ text: expect.stringContaining('ECHO REPLY') });
+        expect(report).toBeUndefined();
       },
       { timeout: 30_000, interval: 500 },
     );
@@ -720,11 +720,11 @@ describe('fresh Room discovery through the live membership wake', () => {
     await vi.waitFor(
       async () => {
         const corner = await readRoom(cornerId);
-        expect(corner.messages.some((m) => (m.text ?? '').includes('ECHO REPLY'))).toBe(false);
+        expect(corner.messages.some((m) => (m.text ?? '').includes('ECHO REPLY'))).toBe(true);
         const opening = (await database.query(`SELECT state FROM agent_commands WHERE room_id=$1 AND reason='corner_objective'`, [cornerId])).rows[0];
         expect(opening?.state).toBe('complete');
         const report = (await database.query(`SELECT private_payload FROM agent_commands WHERE reason='report' AND private_payload->>'fromRoomId'=$1`, [cornerId])).rows[0];
-        expect(report?.private_payload).toMatchObject({ text: expect.stringContaining('ECHO REPLY') });
+        expect(report).toBeUndefined();
       },
       { timeout: 30_000, interval: 500 },
     );

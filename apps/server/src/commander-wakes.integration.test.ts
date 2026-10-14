@@ -39,6 +39,7 @@ beforeAll(async () => {
 afterAll(async () => db.close());
 beforeEach(async () => {
   ready = false; checks.mockClear();
+  await db.query('UPDATE agents SET wake_batch_minutes=0');
   await db.query(`DELETE FROM agent_commands`);
   await db.query(`DELETE FROM workspaces`);
   await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Review command proof')`, [WS]);
@@ -84,6 +85,7 @@ async function expireWindow(database = db) {
   await database.query(`UPDATE agent_commands SET wake_after=now()-interval '1 second' WHERE wake_after IS NOT NULL`);
   await flushDueCommanderWakes(database);
 }
+const batch = () => daemon.execute('setWakeDelivery', { roomId: DM, delivery: 'batch:1' }, RUBY);
 it('Reproduction FR-report: rejects corner progress disguised as done before a PR is ready', async () => {
   const opened = await open(), turn = await worker(opened.cornerId);
   await expect(daemon.execute('report', { ...authority(turn), status: 'done', text: 'done: PR opened, tests running' }, WORKER))
@@ -116,6 +118,7 @@ it('Reproduction report-schema: stores and delivers a complete multi-paragraph r
 });
 it('accepts done with live merge-ready checks, and batches its commander wake', async () => {
   const opened = await open(), turn = await worker(opened.cornerId);
+  await batch();
   ready = true;
   await db.query(`UPDATE corner_facts SET lifecycle=jsonb_build_object('pr',jsonb_build_object('number',42,'headSha',$2::text)) WHERE corner_id=$1`, [opened.cornerId, '9'.repeat(40)]);
   await daemon.execute('report', { ...authority(turn), status: 'done', text: 'done: ready to merge' }, WORKER);
@@ -134,6 +137,7 @@ it('accepts done for a committed merged PR without requiring another GitHub read
 });
 it('allows completed non-PR deliverables and agent DM orders', async () => {
   const opened = await open(false), turn = await worker(opened.cornerId);
+  await batch();
   await daemon.execute('report', { ...authority(turn), status: 'done', text: 'done: non-PR artifact delivered' }, WORKER);
   const workerDM = randomUUID();
   await db.query(`INSERT INTO rooms(id,workspace_id,name,direct_participants) VALUES($1,$2,'Ruby and Worker',jsonb_build_array($3::text,$4::text))`, [workerDM, WS, RUBY, WORKER]);
@@ -150,6 +154,7 @@ it('allows completed non-PR deliverables and agent DM orders', async () => {
   expect(JSON.stringify(reports)).toContain('artifact delivered');
 });
 it('Reproduction FR-batch: merges two lifecycle events five seconds apart into one durable wake', async () => {
+  await batch();
   const first = await event('merge-1', 'Watched corner one: merged');
   await db.query(`UPDATE agent_commands SET created_at=now()-interval '5 seconds',wake_after=now()+interval '55 seconds' WHERE id=$1`, [first!.id]);
   const second = await event('merge-2', 'Watched corner two: merged');
@@ -168,22 +173,28 @@ it('Reproduction FR-batch: merges two lifecycle events five seconds apart into o
   } finally { await restarted.close(); }
   console.info('Demonstrated FR-batch: two merges five seconds apart produce one wake after restart, with both events retained');
 });
-it.each(['blocked', 'failed', 'needs_decision'] as const)('%s reports wake immediately and flush queued facts into the same wake', async status => {
+it.each(['blocked', 'failed', 'needs_decision'] as const)('%s reports share the opted-in inbox window with lifecycle facts', async status => {
   const opened = await open(), turn = await worker(opened.cornerId);
+  await batch();
   await event('merge-1', 'Watched corner one: merged');
   const text = `${status.replace('_', '-')}: urgent result`;
   await daemon.execute('report', { ...authority(turn), status, text }, WORKER);
+  expect((await commands(DM, RUBY)).filter(c => c.id !== order.id)).toHaveLength(0);
+  await expireWindow();
   const pending = (await commands(DM, RUBY)).filter(c => c.id !== order.id);
   expect(pending).toHaveLength(1);
-  expect(pending[0]!.source.body).toBe(text);
-  expect(pending[0]!.coalescedContext).toContain('corner one: merged');
-  console.info(`Demonstrated FR-urgent: ${status} wakes at once and includes the queued merge`);
+  expect(pending[0]!.source.body).toContain('corner one: merged');
+  expect(pending[0]!.coalescedContext).toContain(text);
+  console.info(`Demonstrated inbox report: ${status} follows the agent's batch:1 setting and shares its lifecycle digest`);
 });
-it('a human message bypasses the window and includes queued commander facts', async () => {
+it('a human message bypasses the opted-in window without releasing queued commander facts early', async () => {
+  await batch();
   await event('merge-1', 'Watched corner one: merged');
   await phone.execute('sendRoomMessage', { roomId: DM, messageId: randomBytes(32).toString('hex'), text: 'Change the endpoint' }, HUMAN);
   const pending = (await commands(DM, RUBY)).filter(c => c.id !== order.id);
   expect(pending).toHaveLength(1);
   expect(pending[0]!.source.body).toBe('Change the endpoint');
-  expect(pending[0]!.coalescedContext).toContain('corner one: merged');
+  expect(pending[0]!.coalescedContext).toBeUndefined();
+  await expireWindow();
+  expect((await commands(DM, RUBY)).some(command => command.source.body.includes('corner one: merged'))).toBe(true);
 });

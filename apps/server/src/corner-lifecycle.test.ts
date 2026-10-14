@@ -9,6 +9,7 @@ import { DaemonService } from './daemon-service.js';
 import { GitHubOperations } from './github-operations.js';
 import { LiveHub } from './live.js';
 import { systemLine } from './system-line.js';
+import { flushDueCommanderWakes } from './commander-wakes.js';
 import { addressedToPersonSql } from './corner-owed.js';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
@@ -186,7 +187,7 @@ beforeEach(async () => {
   await db.query(`UPDATE memberships SET event_subscriptions='[]'::jsonb`);
   await db.query(`UPDATE rooms SET reviewer_agent_id=NULL,reviewer_fallback_ids='{}' WHERE id=$1`, [R]);
   await db.query(`DELETE FROM live_outputs`);
-  await db.query(`UPDATE agents SET yolo_mode=true`);
+  await db.query(`UPDATE agents SET yolo_mode=true,wake_batch_minutes=0`);
   githubRollupState = 'pending';
   githubHead = '';
   githubApp.mergePullRequest.mockReset();
@@ -955,6 +956,48 @@ async function inReview(number = 7, headSha = SHA): Promise<string> {
   await greenHead(cornerId, number, headSha);
   return cornerId;
 }
+
+it.each(['immediate', 'batch:5'] as const)('review dispatch stays immediate unless the reviewer opts into %s', async delivery => {
+  await daemon.execute('setWakeDelivery', { roomId: R, delivery: 'batch:8' }, A);
+  await daemon.execute('setWakeDelivery', { roomId: R, delivery }, B);
+  const cornerId = await inReview();
+  expect(await currentState(cornerId)).toBe('review');
+  const recorded = (await db.query<CommandRow>(`SELECT * FROM agent_commands WHERE room_id=$1
+    AND agent_id=$2 AND reason='subscribed_event' ORDER BY inbox_sequence`, [cornerId, B])).rows;
+  expect(recorded).toHaveLength(1);
+  expect(Boolean(recorded[0]!.wake_after)).toBe(delivery !== 'immediate');
+  expect((await commands(B, cornerId)).length).toBe(delivery === 'immediate' ? 1 : 0);
+  // The lifecycle and gate read facts at once, independently of command delivery.
+  expect(await cornerMergeGate(db, cornerId, { number: 7, headSha: SHA })).toMatchObject({ approved: false, open: false });
+  if (delivery !== 'immediate') {
+    await db.query("UPDATE agent_commands SET wake_after=now() WHERE room_id=$1 AND agent_id=$2", [cornerId, B]);
+    await flushDueCommanderWakes(db);
+    expect(await commands(B, cornerId)).toHaveLength(1);
+  }
+  console.info(`Demonstrated inbox-review: worker batch:8 does not delay review dispatch or gate facts; reviewer ${delivery} controls only its own turn delivery`);
+});
+
+it('an absorbed review wake holds the whole digest until the worker releases its lease', async () => {
+  await daemon.execute('setWakeDelivery', { roomId: R, delivery: 'batch:5' }, B);
+  const cornerId = await open('owner/widgets');
+  await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+  const opening = (await commands(A, cornerId))[0]!;
+  await claim(opening);
+  const first = await createAgentCommand(db, { roomId: cornerId, agentId: B, sourceMessageId: null,
+    reason: 'corner_brief', privatePayload: { text: 'Unrelated reviewer fact', authorId: A, fromRoomId: R, kind: 'lifecycle' } });
+  await greenHead(cornerId, 7, SHA);
+  await db.query('UPDATE agent_commands SET wake_after=now() WHERE room_id=$1 AND agent_id=$2', [cornerId, B]);
+  await flushDueCommanderWakes(db);
+  expect(await commands(B, cornerId)).toHaveLength(0);
+  await expect(daemon.execute('claimAgentCommand', { roomId: cornerId, commandId: first!.id, generationId: 'held-review' }, B))
+    .rejects.toThrow('command claim conflict');
+  await result(opening, 'Work is ready.');
+  const digest = (await commands(B, cornerId)).find(command => command.id === first!.id)!;
+  expect(digest.source.body).toBe('Unrelated reviewer fact');
+  expect(digest.coalescedContext).toContain('check-passed');
+  await claim(digest);
+  console.info('Demonstrated inbox-review-gate: absorbed review holds the entire digest and rejects a cached claim during the worker lease; release permits one digest');
+});
 
 function approve(cornerId: string, headSha = SHA, agentId = B) {
   return daemon.execute('approveCornerMerge', { cornerId, headSha }, agentId);

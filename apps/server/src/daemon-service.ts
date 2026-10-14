@@ -56,6 +56,7 @@ import {
 } from './corner-brief.js';
 import {
   AGENT_TO_AGENT_HOP_CAP,
+  wakeBatchMinutes,
   boundReplyExcerpt,
   REPLY_EXCERPT_MAX_LENGTH,
   classifyTurnSilence,
@@ -1029,12 +1030,17 @@ export class DaemonService {
           const activity = row.reason === 'computer_activity' ? (await db.query<{
             text: string; system_event: NonNullable<import('@beeline/api-contract/daemon').AgentCommand['source']['systemEvent']>;
           }>(`SELECT text,system_event FROM messages WHERE id=$1`, [row.source_message_id])).rows[0] : undefined;
-          return { row, activity };
+          const source = row.coalesced_context !== null && row.coalesced_context !== undefined
+            ? (await readAgentCommands(db, scopedRoom!, authenticatedAgentId, [row.id])).commands[0]?.source
+            : undefined;
+          return { row, activity, source };
         });
         this.live.publish({ type: 'invalidate', roomId: scopedRoom!, reason: 'turn', agentId: authenticatedAgentId });
         return { ...this.writeResult(),
           ...(claimed.row.recovery_context ? { recoveryContext: claimed.row.recovery_context } : {}),
-          ...(claimed.row.coalesced_context ? { coalescedContext: claimed.row.coalesced_context } : {}),
+          ...(claimed.row.coalesced_context !== null && claimed.row.coalesced_context !== undefined
+            ? { coalescedContext: claimed.row.coalesced_context } : {}),
+          ...(claimed.source ? { source: claimed.source } : {}),
           ...(claimed.activity ? { activitySource: { body: claimed.activity.text, systemEvent: claimed.activity.system_event } } : {}),
         } as Output<Name>;
       }
@@ -1138,6 +1144,18 @@ export class DaemonService {
           input as Input<'setEventSubscriptions'>,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'setWakeDelivery': {
+        const minutes = wakeBatchMinutes((input as Input<'setWakeDelivery'>).delivery);
+        await this.database.query('UPDATE agents SET wake_batch_minutes=$2,updated_at=now() WHERE agent_id=$1',
+          [authenticatedAgentId, minutes]);
+        return { delivery: minutes ? `batch:${minutes}` : 'immediate' } as Output<Name>;
+      }
+      case 'getWakeDelivery': {
+        const result = await this.database.query<{ wake_batch_minutes: number }>(
+          'SELECT wake_batch_minutes FROM agents WHERE agent_id=$1', [authenticatedAgentId]);
+        const minutes = result.rows[0]!.wake_batch_minutes;
+        return { delivery: minutes ? `batch:${minutes}` : 'immediate' } as Output<Name>;
+      }
       case 'watchCorner':
         return (await this.watchCorner(
           input as Input<'watchCorner'>,
@@ -8152,6 +8170,8 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   listAgentToolSchedules: true,
   createAgentSchedule: true,
   setEventSubscriptions: true,
+  setWakeDelivery: true,
+  getWakeDelivery: true,
   createAgentSubscription: true,
   listServiceSubscriptionEvents: true,
   listAgentSubscriptions: true,

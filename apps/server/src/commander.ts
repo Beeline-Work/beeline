@@ -163,14 +163,40 @@ export async function reportToCommander(
   text: string,
   command?: CommandRow,
   reportId = randomBytes(32).toString('hex'),
-  options: { automatic?: boolean; ask?: string; attachments?: PrivateCommandPayload['attachments'] } = {},
-) {
+  options: { automatic?: boolean; ask?: string; attachments?: PrivateCommandPayload['attachments']; digestSource?: boolean } = {},
+): Promise<{ id: string; createdAt: number; delivered?: boolean }> {
   if ((!options.automatic && !/^(done|blocked|needs-decision|failed):\s*\S/.test(text)) || !text.trim() || text.length > 16_000)
     throw new CommandRefusalError(
       'report must begin done:, blocked:, needs-decision: or failed:',
       400,
     );
   const ask = options.ask === undefined ? undefined : normalizeTrayAsk(options.ask);
+  if (command?.coalesced_context !== null && command?.coalesced_context !== undefined && !options.digestSource) {
+    const sources = (await db.query<CommandRow>(
+      `SELECT * FROM agent_commands WHERE room_id=$1 AND agent_id=$2
+       AND (id=$3 OR cancellation_reason='coalesced_into:'||$3) ORDER BY inbox_sequence`,
+      [roomId, agentId, command.id])).rows;
+    const routes = new Map<string, CommandRow>();
+    for (const source of sources) {
+      const order = await commandOrder(db, source);
+      // Standalone system facts have no orderer. Explicit orders and incoming
+      // messages retain their own return route even when their source was folded.
+      if (order.private_payload?.kind !== 'order' && !(order.source_message_id &&
+        (await db.query('SELECT 1 FROM messages WHERE id=$1 AND system_event IS NULL', [order.source_message_id])).rowCount)) continue;
+      const route = await commanderReportAddress(db, roomId, source);
+      if (route.recipient && route.returnRoom) routes.set(`${route.returnRoom}:${route.recipient}`, source);
+    }
+    if (routes.size) {
+      let first: Awaited<ReturnType<typeof reportToCommander>> | undefined;
+      for (const [route, source] of routes) {
+        const result = await reportToCommander(db, roomId, agentId, text, source,
+          first ? createHash('sha256').update(`${reportId}:${route}`).digest('hex') : reportId,
+          { ...options, digestSource: true });
+        first ??= result;
+      }
+      return first!;
+    }
+  }
   const strict = Boolean(command) && !options.automatic;
   const { recipient, returnRoom, parent, origin, incoming } = await commanderReportAddress(db, roomId, command);
   if (!recipient || !returnRoom) {

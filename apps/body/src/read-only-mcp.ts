@@ -38,6 +38,7 @@ import {
   CORNER_OBJECTIVE_MAX_WORDS,
   cornerTextRefusal,
   normalizeCornerText,
+  wakeBatchMinutes,
   ARTIFACT_MIME_BY_EXTENSION,
   ARTIFACT_MIME_TYPES,
   encodeArtifactTitleHeader,
@@ -1074,6 +1075,18 @@ const AGENT_TOOLS: ToolDefinition[] = [
     inputSchema: { type: 'object', required: ['subscriptionId'], properties: {
       subscriptionId: { type: 'string' },
     }, additionalProperties: false },
+  },
+  {
+    name: 'set_wake_delivery',
+    description: 'Set your own whole wake inbox to immediate (default) or batch:<positive whole minutes>. Applies to all nonhuman wake types in every Room and corner, with one durable digest per active Room/corner per window. Human messages and helper stop/restart controls stay immediate. Already recorded windows finish at their existing deadlines.',
+    inputSchema: { type: 'object', required: ['delivery'], properties: {
+      delivery: { type: 'string', description: 'immediate or batch:<positive whole minutes>, for example batch:5.' },
+    }, additionalProperties: false },
+  },
+  {
+    name: 'get_wake_delivery',
+    description: 'Read your own agent-wide wake inbox setting.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
     name: 'subscribe_events',
@@ -3482,6 +3495,15 @@ export async function subscribeEvents(
   return describeSubscriptions(result, 'You now react to');
 }
 
+export async function setWakeDelivery(
+  args: JsonObject,
+  deps: AgentScheduleDeps = agentScheduleDepsFromEnv(),
+): Promise<string> {
+  wakeBatchMinutes(args.delivery);
+  const result = await deps.execute('setWakeDelivery', { roomId: deps.roomId, delivery: args.delivery });
+  return `Your whole wake inbox is ${String(result.delivery)}; human messages arrive immediately. Digests stay within each Room or corner.`;
+}
+
 export async function listEventSubscriptions(
   deps: AgentScheduleDeps = agentScheduleDepsFromEnv(),
 ): Promise<string> {
@@ -4993,6 +5015,10 @@ export async function callAgentTool(
     }
     case 'subscribe_events':
       return subscribeEvents(args);
+    case 'set_wake_delivery':
+      return setWakeDelivery(args);
+    case 'get_wake_delivery':
+      return JSON.stringify(await daemonExecute('getWakeDelivery', { roomId: agentScheduleRoomId() }));
     case 'watch': {
       const deps = agentScheduleDepsFromEnv();
       const result = await deps.execute('watchCorner', {

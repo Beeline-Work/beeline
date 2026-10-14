@@ -108,6 +108,17 @@ export type SetEventSubscriptionsInput = RoomInput & {
   readonly kinds: readonly string[];
 };
 export type EventSubscriptionsResult = { readonly kinds: readonly ServerEventKind[] };
+export type WakeDeliveryResult = { readonly delivery: 'immediate' | `batch:${number}` };
+
+/** Zero means immediate; batch windows use positive whole minutes. */
+export function wakeBatchMinutes(delivery: unknown): number {
+  if (delivery === 'immediate') return 0;
+  if (typeof delivery === 'string' && /^batch:[1-9][0-9]*$/.test(delivery)) {
+    const minutes = Number(delivery.slice(6));
+    if (Number.isSafeInteger(minutes) && minutes <= 2147483647) return minutes;
+  }
+  throw new Error('delivery must be immediate or batch:<positive whole minutes> (at most 2147483647)');
+}
 
 /**
  * One event this agent emits into the Room it is answering in.
@@ -146,6 +157,7 @@ export type AgentCommand = {
   readonly source: RoomInboxResult['items'][number];
   /** Superseded wakes, quoted as history; only source authorizes this turn. */
   readonly recoveryContext?: string;
+  /** Additional durably recorded inbox wakes in arrival order, within this Room/corner. */
   readonly coalescedContext?: string;
 };
 export type CommandClaimInput = RoomInput & {
@@ -283,7 +295,7 @@ export type DaemonOperationMap = {
     RoomInput,
     { readonly commandProtocol: 1; readonly commands: readonly AgentCommand[] }
   >;
-  claimAgentCommand: Operation<CommandClaimInput, WriteResult & { readonly recoveryContext?: string; readonly coalescedContext?: string; readonly activitySource?: { readonly body: string; readonly systemEvent: SystemEvent } }>;
+  claimAgentCommand: Operation<CommandClaimInput, WriteResult & { readonly recoveryContext?: string; readonly coalescedContext?: string; readonly source?: RoomInboxResult['items'][number]; readonly activitySource?: { readonly body: string; readonly systemEvent: SystemEvent } }>;
   acknowledgeAgentCommand: Operation<CommandClaimInput, WriteResult>;
   getDaemonBootstrap: Operation<DaemonBootstrapInput, DaemonBootstrapResult>;
   getWorkspaceRoster: Operation<WorkspaceRosterInput, WorkspaceRosterResult>;
@@ -313,6 +325,8 @@ export type DaemonOperationMap = {
   listWorkSchedules: Operation<AgentInput, WorkScheduleListResult>;
   createAgentSchedule: Operation<CreateAgentScheduleInput, AgentScheduleResult>;
   setEventSubscriptions: Operation<SetEventSubscriptionsInput, EventSubscriptionsResult>;
+  setWakeDelivery: Operation<RoomInput & WakeDeliveryResult, WakeDeliveryResult>;
+  getWakeDelivery: Operation<RoomInput, WakeDeliveryResult>;
   createAgentSubscription: Operation<RoomInput & { source: SubscriptionSource; event: string; repository?: string;
     channelId?: string; channelName?: string; prompt: string; workflowName?: string }, RoomSubscriptionView>;
   listServiceSubscriptionEvents: Operation<RoomInput, SubscriptionEventCatalog>;

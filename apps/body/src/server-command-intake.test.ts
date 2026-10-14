@@ -43,6 +43,21 @@ function socketApi(execute: ReturnType<typeof vi.fn>) {
 }
 
 describe('command intake mechanics', () => {
+  it('uses a claim-refreshed digest source and clears context removed by workflow expiry', async () => {
+    const abort = new AbortController();
+    const cached = { ...command(), coalescedContext: 'obsolete workflow attempt' };
+    const freshSource = { ...cached.source, attachments: [], body: 'Still valid work' };
+    const run = vi.fn(async (_command: AgentCommand) => abort.abort());
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getAgentCommands') return { commandProtocol: 1, commands: [cached] };
+      if (name === 'claimAgentCommand') return { id: cached.id, source: freshSource, coalescedContext: '' };
+      throw new Error(`unexpected operation ${name}`);
+    });
+    await runServerCommandIntake({ ...socketApi(execute), roomId: 'room', agentId: 'agent',
+      context: await context(), signal: abort.signal, stop: vi.fn(), run });
+    expect(run).toHaveBeenCalledOnce();
+    expect(run.mock.calls[0]![0].source).toEqual(freshSource);
+  });
   it('includes commander wakes added after the intake snapshot in the one claimed turn', async () => {
     const abort = new AbortController();
     const run = vi.fn(async (_command: AgentCommand) => abort.abort());
@@ -54,7 +69,7 @@ describe('command intake mechanics', () => {
     await runServerCommandIntake({ ...socketApi(execute), roomId: 'room', agentId: 'agent',
       context: await context(), signal: abort.signal, stop: vi.fn(), run });
     expect(run).toHaveBeenCalledOnce();
-    expect(run.mock.calls[0]![0].source.body).toBe('Do it\nAdditional commander wakes in this turn:\ncorner one merged\ncorner two merged');
+    expect(run.mock.calls[0]![0].source.body).toBe('Do it\nAdditional inbox wakes in arrival order:\ncorner one merged\ncorner two merged');
   });
 
   it('uses history refreshed by claim as read-only context for the one surviving turn', async () => {

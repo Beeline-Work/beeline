@@ -199,7 +199,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 26;
+export const REQUIRED_SCHEMA_VERSION = 27;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -885,6 +885,7 @@ ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_set_by text;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_set_at timestamptz;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS model_unavailable text;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS fast_mode boolean NOT NULL DEFAULT false;
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS wake_batch_minutes integer NOT NULL DEFAULT 0 CHECK (wake_batch_minutes >= 0);
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS machine_id text;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS machine_name text;
 -- Broker facts are machine reports, not connector lifecycle records.

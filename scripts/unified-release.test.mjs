@@ -1800,7 +1800,11 @@ test('native workflow builds Android locally on the Linux runner and iOS locally
     assert.match(iosCredentials.run, /EAS_SKIP_AUTO_FINGERPRINT=1/);
     assert.match(iosBuild.run, /build --local --platform ios --profile production-ci --non-interactive --output/);
     assert.match(iosBuild.run, /test -s "\$RUNNER_TEMP\/beeline-ios\.ipa"/);
-    assert.match(iosBuild.run, /id:`local-\$\{sha256\}`/);
+    assert.match(iosBuild.run, /python3 ..\/..\/scripts\/ios-build-evidence\.py "\$RUNNER_TEMP\/beeline-ios\.ipa" "\$RUNNER_TEMP\/ios-build\.json"/);
+    assert.match(iosSubmit.run, /ios-store-build\.mjs prepare "\$RUNNER_TEMP\/ios-build\.json"/);
+    assert.match(iosSubmit.run, /ios-store-build\.mjs verify "\$RUNNER_TEMP\/ios-build\.json" "\$RUNNER_TEMP\/ios-upload\.json"/);
+    assert.ok(iosSubmit.run.indexOf('ios-store-build.mjs prepare') < iosSubmit.run.indexOf('xcrun altool --upload-app'));
+    assert.ok(iosSubmit.run.indexOf('ios-store-build.mjs verify') > iosSubmit.run.indexOf('xcrun altool --upload-app'));
     assert.match(
       iosSubmit.run,
       /xcrun altool --upload-app -t ios -f "\$RUNNER_TEMP\/beeline-ios\.ipa" \\\n\s+--apiKey "\$EXPO_ASC_KEY_ID" --apiIssuer "\$EXPO_ASC_ISSUER_ID" --output-format json/,

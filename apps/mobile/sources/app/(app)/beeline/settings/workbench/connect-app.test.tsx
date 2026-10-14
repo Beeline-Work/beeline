@@ -164,6 +164,19 @@ describe('Connect an app', () => {
       .findByType('TouchableOpacity' as never).props.onPress(); await Promise.resolve(); });
     expect(source.appRequests).toEqual([{ app: 'Resend', helperId: 'helper-squire-box' }]);
   });
+  it('centres the search text in its bordered box without the dialog rule', async () => {
+    const renderer = await render();
+    const input = renderer.root.findAll((node: any) => node.type === 'TextInput' && node.props.testID === 'connect-app-input')[0]!;
+    const flat = (style: unknown) => Object.assign({}, ...[style].flat(Infinity as 1).filter(Boolean));
+    let rule = input.parent!;
+    while (rule.type !== 'View') rule = rule.parent!;
+    const wrapper = flat(rule.props.style);
+    expect(wrapper.marginTop).toBe(0);
+    expect(wrapper.borderBottomWidth).toBe(0);
+    const field = flat(input.props.style);
+    expect(field.minHeight).toBe(0);
+    expect(field.paddingVertical).toBe(0);
+  });
   it('lets its last item scroll clear of the system navigation bar', async () => {
     safeArea.bottom = 48;
     try {

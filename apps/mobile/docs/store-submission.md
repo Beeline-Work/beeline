@@ -155,14 +155,20 @@ type cleared then re-uploaded in filename order, then committed).
 The internal-track release is published as *completed* (rolled out to internal testers with no press in Play
 Console).
 
-**`store_ios`** (TestFlight): version check, decodes the `.p8` secret to a
+**`mobile_native_ios`** (TestFlight): decodes the `.p8` secret to a
 runner-temp file and points `EXPO_ASC_API_KEY_PATH` at it **before** the build
 (eas-cli needs it to create or repair the App Store provisioning profile
-non-interactively), runs `eas build --profile production-ci --platform ios
---non-interactive --wait --json`, refuses a build whose app version differs from
-the package version, then `xcrun altool --upload-app` (the release workflow's TestFlight upload; `eas submit --platform ios --profile production --id
-<build> --non-interactive --wait`. TestFlight processing, tester groups and any
-external-tester review stay in App Store Connect. A missing distribution
+non-interactively), runs `eas build --local --profile production-ci --platform
+ios --non-interactive` on the `ios-builder` Mac runner. It inspects the IPA's
+embedded bundle, package version, build number, runtime pin and photo purpose
+string before `xcrun altool --upload-app`. The upload receipt's delivery UUID
+must finish processing successfully and a new matching `VALID` build must
+appear under app `6803948500` within 20 minutes. Apple processing errors,
+including missing purpose strings (90683), fail the job even when altool
+reported transport success. `ios-build.json` records the IPA identity,
+delivery UUID and App Store build ID for the native checkpoint.
+TestFlight groups, external-tester review and production App Store review
+submission remain separate operations in App Store Connect. A missing distribution
 certificate fails the build with one printed command, because eas-cli 22.2.0
 never creates one non-interactively.
 

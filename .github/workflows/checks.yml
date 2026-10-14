@@ -225,6 +225,8 @@ jobs:
               - '.github/actions/**'
               - '.github/actionlint.yaml'
               - 'scripts/verify-workflow-paths.mjs'
+              - 'scripts/ios-store-build*'
+              - 'scripts/ios-build-evidence.py'
               - 'package.json'
               - '**/*.sh'
             # Both deployed containers build from this one root context, so
@@ -1002,6 +1004,8 @@ jobs:
         run: npm run lint:shell
       - name: Test the desktop signing credential gate
         run: node --test scripts/desktop-signing.test.mjs
+      - name: Test iOS upload identity and Apple processing verification
+        run: node --test scripts/ios-store-build.test.mjs
       # Nothing type-checks a `run:` line. TYPECHECK runs this same guard on
       # every pull request (a test can be deleted without touching a workflow);
       # here it is where a workflow author gets the message.

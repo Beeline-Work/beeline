@@ -12,6 +12,15 @@ describe('Approved Room list layout', () => {
     expect(source).toContain('<RoomListSectionHeader title={section.title}');
     expect(source).toContain('openRoom(item.room.id)');
   });
+  it('keeps the ROOMS and DIRECT MESSAGES headers on the 16px screen inset', () => {
+    // The SectionList content has no horizontal padding; cards carry their own
+    // inset, so the header must keep its default screen inset (hull.space.md).
+    expect(source).toContain('<RoomListSectionHeader title={section.title} />');
+    expect(source).not.toMatch(/<RoomListSectionHeader title=\{section.title\}[^>]*inset="content"/);
+    const header = component('RoomListSectionHeader');
+    expect(header).toContain("inset = 'screen'");
+    expect(header).toContain('paddingHorizontal: hull.space.md');
+  });
   it('uses the workspace identity and header actions with the tray beside search', () => {
     expect(source).toContain('<CommunityDrawerTrigger community={activeCommunity}');
     expect(source).toContain('<WorkspaceActionsMenu');

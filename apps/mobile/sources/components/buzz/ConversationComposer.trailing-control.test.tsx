@@ -182,63 +182,107 @@ afterEach(() => {
   act(() => renderers.splice(0).forEach((r) => r.unmount()));
 });
 
-// Steer 2026-09-15: the composer's trailing control is mic XOR send, never
-// both. "Something to send" reuses the send button's own predicate
-// (`canSend ?? Boolean(value.trim())`), so text or a staged attachment — and
-// nothing else — moves the control from mic to send.
-// Steer 2026-10-09: the keyboard picks the slot. Lowered, it is the mic, even
-// over typed text; raised, it is send once there is something to send.
+// Locked mock v4 (2026-10-14): fixed places. ＋ on the left never changes;
+// the voice spot is the mic, or Stop while a take is live; the far right is
+// the go action — Conversation while nothing is typed, Send otherwise.
 
-describe('composer trailing control is mic XOR send', () => {
-  it('shows only the send control when there is text to send and the keyboard is up', () => {
+const voiceState = () => ({ join: vi.fn(), end: vi.fn(), call: null, connecting: false, error: null });
+/** The row's controls, left to right, by testID. */
+function controls(root: any) {
+  const row = hosts(root, 'chat-composer-input-row')[0];
+  const ids: string[] = [];
+  const walk = (node: any) => {
+    if (typeof node === 'string' || !node) return;
+    const id = node.props?.testID;
+    if (typeof node.type === 'string' && ['chat-attach-button', 'chat-mic', 'chat-speech-discard',
+      'chat-conversation', 'chat-send'].includes(id)) ids.push(id);
+    (node.children ?? []).forEach(walk);
+  };
+  walk(row);
+  return ids;
+}
+function rerender(root: any, props: Record<string, any>) {
+  const renderer = renderers[renderers.length - 1];
+  act(() => renderer.update(<ConversationComposer {...root.findByType(ConversationComposer).props} {...props} />));
+}
+async function startTake(root: any) {
+  await act(async () => hosts(root, 'chat-mic')[0].props.onPress());
+  await act(async () => {});
+}
+
+describe('composer controls hold fixed places', () => {
+  it('state matrix: empty, has text, tag-only, dictating', async () => {
+    const tagHandles = new Set(['ruby']);
+    const root = render({ voice: voiceState(), value: '', tagHandles });
+    expect(controls(root)).toEqual(['chat-attach-button', 'chat-mic', 'chat-conversation']);
+    rerender(root, { value: '@ruby ' });
+    expect(controls(root)).toEqual(['chat-attach-button', 'chat-mic', 'chat-conversation']);
+    rerender(root, { value: '@ruby check the corner' });
+    expect(controls(root)).toEqual(['chat-attach-button', 'chat-mic', 'chat-send']);
+    await startTake(root);
+    expect(controls(root)).toEqual(['chat-attach-button', 'chat-speech-discard', 'chat-send']);
+  });
+
+  it('an empty take still offers Send in the go slot, never Conversation', async () => {
+    const root = render({ voice: voiceState(), value: '' });
+    await startTake(root);
+    expect(controls(root)).toEqual(['chat-attach-button', 'chat-speech-discard', 'chat-send']);
+    expect(hosts(root, 'chat-send')[0].props.disabled).toBe(false);
+  });
+
+  it('keeps the same places with the keyboard up or down, focused or not', () => {
     const root = render({ value: 'ready to send', focused: true });
+    expect(controls(root)).toEqual(['chat-attach-button', 'chat-mic', 'chat-send']);
+    act(() => keyboard.listeners.get('keyboardDidHide')?.());
+    expect(controls(root)).toEqual(['chat-attach-button', 'chat-mic', 'chat-send']);
+    rerender(root, { focused: false });
+    expect(controls(root)).toEqual(['chat-attach-button', 'chat-mic', 'chat-send']);
+  });
+
+  it('without Conversation, Send holds the far right, disabled while empty', () => {
+    const root = render({ value: '' });
+    expect(controls(root)).toEqual(['chat-attach-button', 'chat-mic', 'chat-send']);
+    expect(hosts(root, 'chat-send')[0].props.disabled).toBe(true);
+    rerender(root, { value: 'hello' });
+    expect(hosts(root, 'chat-send')[0].props.disabled).toBe(false);
+  });
+
+  it('a staged file alone makes Send the go action', () => {
+    const root = render({
+      voice: voiceState(),
+      value: '',
+      canSend: true,
+      attachments: [{ uri: 'file:///tmp/a.png', name: 'a.png', mimeType: 'image/png', sizeLabel: '1 KB' }],
+    });
+    expect(controls(root)).toEqual(['chat-attach-button', 'chat-mic', 'chat-send']);
+  });
+
+  it('a reply banner alone is not something to send', () => {
+    const root = render({ voice: voiceState(), value: '', reply: { handle: '@cara', preview: 'earlier words' } });
+    expect(controls(root)).toEqual(['chat-attach-button', 'chat-mic', 'chat-conversation']);
+  });
+
+  it('keeps ＋ working while dictating', async () => {
+    const onAttach = vi.fn();
+    const root = render({ value: '', onAttach });
+    await startTake(root);
+    const attach = hosts(root, 'chat-attach-button')[0];
+    expect(attach.props.disabled).toBe(false);
+    act(() => attach.props.onPress());
+    expect(onAttach).toHaveBeenCalledOnce();
+  });
+
+  it('Stop takes the mic spot and discards the take', async () => {
+    const onSend = vi.fn();
+    const onChangeText = vi.fn();
+    const root = render({ value: 'typed', onSend, onChangeText });
+    await startTake(root);
     expect(hosts(root, 'chat-mic')).toHaveLength(0);
-    expect(hosts(root, 'chat-send')).toHaveLength(1);
-  });
-
-  it('shows the mic over typed text once the keyboard is lowered', () => {
-    const root = render({ value: 'ready to send', focused: true });
-    act(() => keyboard.listeners.get('keyboardDidHide')!());
-    expect(hosts(root, 'chat-send')).toHaveLength(0);
-    expect(hosts(root, 'chat-mic')).toHaveLength(1);
-    act(() => keyboard.listeners.get('keyboardDidShow')!());
-    expect(hosts(root, 'chat-send')).toHaveLength(1);
-  });
-
-  it('shows the mic when the field is not focused, though a keyboard is up elsewhere', () => {
-    const root = render({ value: 'ready to send', focused: false });
-    expect(hosts(root, 'chat-send')).toHaveLength(0);
-    expect(hosts(root, 'chat-mic')).toHaveLength(1);
-  });
-
-  it('keeps the mic with the keyboard up while only tags are in the field', () => {
-    const root = render({ value: '@ruby ', focused: true, tagHandles: new Set(['ruby']) });
-    expect(hosts(root, 'chat-send')).toHaveLength(0);
-    expect(hosts(root, 'chat-mic')).toHaveLength(1);
-  });
-
-  it('keeps the mic and a chip for a leading human tag, then shows send for typed text', () => {
-    const props = {
-      focused: true,
-      tagHandles: new Set(['bananaman614305', 'ruby']),
-    };
-    const root = render({ ...props, value: '@bananaman614305 ' });
-    expect(hosts(root, 'chat-tag-bananaman614305')).toHaveLength(1);
-    expect(hosts(root, 'chat-mic')).toHaveLength(1);
-    expect(hosts(root, 'chat-send')).toHaveLength(0);
-
-    const renderer = renderers[renderers.length - 1];
-    act(() =>
-      renderer.update(
-        <ConversationComposer
-          {...renderer.root.findByType(ConversationComposer).props}
-          value="@bananaman614305 hello"
-        />,
-      ),
-    );
-    expect(hosts(root, 'chat-tag-bananaman614305')).toHaveLength(1);
-    expect(hosts(root, 'chat-mic')).toHaveLength(0);
-    expect(hosts(root, 'chat-send')).toHaveLength(1);
+    act(() => hosts(root, 'chat-speech-discard')[0].props.onPress());
+    expect(mockMod.abort).toHaveBeenCalled();
+    expect(onSend).not.toHaveBeenCalled();
+    expect(onChangeText).not.toHaveBeenCalled();
+    expect(controls(root)).toEqual(['chat-attach-button', 'chat-mic', 'chat-send']);
   });
 
   it('lowers the keyboard when the mic starts a take', async () => {
@@ -252,88 +296,6 @@ describe('composer trailing control is mic XOR send', () => {
     // restored unconditionally. The composer takes no `running` prop at all,
     // so no turn state can remove the control — a tap queues the message.
     expect(hosts(render({ value: 'next instruction', focused: true }), 'chat-send')).toHaveLength(1);
-  });
-
-  it('keeps the mic with the keyboard up while only a staged attachment is sendable', () => {
-    // canSend counts staged attachments; the slot follows typed text only.
-    const root = render({
-      value: '@ruby ',
-      canSend: true,
-      focused: true,
-      tagHandles: new Set(['ruby']),
-      attachments: [{ uri: 'file:///tmp/a.png', name: 'a.png', mimeType: 'image/png', sizeLabel: '1 KB' }],
-    });
-    expect(hosts(root, 'chat-send')).toHaveLength(0);
-    expect(hosts(root, 'chat-mic')).toHaveLength(1);
-  });
-
-  it('shows send with the keyboard up once text is typed beside a staged attachment', () => {
-    const root = render({
-      value: 'see this',
-      canSend: true,
-      focused: true,
-      attachments: [{ uri: 'file:///tmp/a.png', name: 'a.png', mimeType: 'image/png', sizeLabel: '1 KB' }],
-    });
-    expect(hosts(root, 'chat-mic')).toHaveLength(0);
-    expect(hosts(root, 'chat-send')).toHaveLength(1);
-  });
-
-  it('shows the mic over a staged attachment once the keyboard is lowered', () => {
-    keyboard.visible = false;
-    const root = render({
-      value: '',
-      canSend: true,
-      focused: true,
-      attachments: [{ uri: 'file:///tmp/a.png', name: 'a.png', mimeType: 'image/png', sizeLabel: '1 KB' }],
-    });
-    expect(hosts(root, 'chat-send')).toHaveLength(0);
-    expect(hosts(root, 'chat-mic')).toHaveLength(1);
-  });
-
-  it('a reply banner alone does not make something sendable: mic stays', () => {
-    const root = render({ value: '', reply: { handle: '@cara', preview: 'earlier words' } });
-    expect(hosts(root, 'chat-send')).toHaveLength(0);
-    expect(hosts(root, 'chat-mic')).toHaveLength(1);
-  });
-
-  it('a staged attachment in the adjuncts row alone does not make something sendable: mic stays', () => {
-    const root = render({
-      value: '',
-      attachments: [{ uri: 'file:///tmp/a.png', name: 'a.png', mimeType: 'image/png', sizeLabel: '1 KB' }],
-    });
-    expect(hosts(root, 'chat-send')).toHaveLength(0);
-    expect(hosts(root, 'chat-mic')).toHaveLength(1);
-  });
-
-  it('while listening, the control stays the mic even as partial transcript fills the input', async () => {
-    const root = render({ value: '' });
-    await act(async () => hosts(root, 'chat-mic')[0].props.onPress());
-    await act(async () => {});
-    expect(hosts(root, 'chat-mic')).toHaveLength(1);
-
-    // Partial transcript arrives and the parent echoes it into the value;
-    // the control must not swap to send mid-dictation.
-    fireEvent('result', { results: [{ transcript: 'partial words so far' }] });
-    const renderer = renderers[renderers.length - 1];
-    act(() => {
-      renderer.update(
-        <ConversationComposer
-          value="partial words so far"
-          height={COMPOSER_SINGLE_LINE_INPUT_HEIGHT}
-          maxHeight={COMPOSER_MAX_INPUT_HEIGHT}
-          focused={false}
-          disabled={false}
-          onBlur={vi.fn()}
-          onChangeText={vi.fn()}
-          onContentSizeChange={vi.fn()}
-          onFocus={vi.fn()}
-          onKeyPress={vi.fn()}
-          onSend={vi.fn()}
-        />,
-      );
-    });
-    expect(hosts(root, 'chat-send')).toHaveLength(0);
-    expect(hosts(root, 'chat-mic')).toHaveLength(1);
   });
 
   it('when speech is unavailable, an empty composer still shows the disabled send control', () => {
@@ -352,23 +314,45 @@ describe('composer trailing control is mic XOR send', () => {
     expect(hosts(mutedRoot, 'chat-send')[0].props.disabled).toBe(true);
   });
 
-  it('both controls share one slot and size so the swap never shifts the input width', () => {
-    const empty = render({ value: '' });
-    const mic = hosts(empty, 'chat-mic')[0];
-    const micStyle = Array.isArray(mic.props.style) ? mic.props.style[0] : mic.props.style;
-    expect(micStyle.width).toBe(26);
-    expect(micStyle.height).toBe(26);
-    expect(micStyle.marginLeft).toBe(8);
+  it('every control is one 26pt slot with a 44pt target and one 20pt drawn glyph', async () => {
+    const slot = (node: any) => {
+      const style = [node.props.style].flat()[0];
+      return [style.width, style.height, 26 + 2 * node.props.hitSlop];
+    };
+    const root = render({ voice: voiceState(), value: '' });
+    const empty = ['chat-attach-button', 'chat-mic', 'chat-conversation'].map(id => slot(hosts(root, id)[0]));
+    rerender(root, { value: 'hello' });
+    const sendSlot = slot(hosts(root, 'chat-send')[0]);
+    await startTake(root);
+    const stopSlot = slot(hosts(root, 'chat-speech-discard')[0]);
+    for (const each of [...empty, sendSlot, stopSlot]) expect(each).toEqual([26, 26, 44]);
+    const glyphs = root.findAll((node: any) => node.type === 'RNSVG')
+      .map((node: any) => [node.props.width, node.props.height, node.props.viewBox]);
+    expect(glyphs.length).toBeGreaterThanOrEqual(3);
+    for (const glyph of glyphs) expect(glyph).toEqual([20, 20, '0 0 20 20']);
+  });
 
-    const ready = render({ value: 'text', focused: true });
-    const send = hosts(ready, 'chat-send')[0];
-    const sendStyle = Array.isArray(send.props.style) ? send.props.style[0] : send.props.style;
-    expect(sendStyle.width).toBe(26);
-    expect(sendStyle.height).toBe(26);
-    expect(sendStyle.marginLeft).toBe(8);
+  it('inks every control in textPrimary; only Send is brass; disabled is muted', async () => {
+    const ink = (root: any, id: string) => root.findAll((node: any) => node.type === 'RNSVG')
+      .filter((node: any) => {
+        let at = node.parent;
+        while (at && at.props?.testID !== id) at = at.parent;
+        return Boolean(at);
+      })
+      .flatMap((node: any) => node.findAll((child: any) => typeof child.props?.stroke === 'string')
+        .map((child: any) => child.props.stroke));
+    const root = render({ voice: voiceState(), value: '' });
+    expect(new Set(ink(root, 'chat-attach-button'))).toEqual(new Set(['#f0f0f3']));
+    expect(new Set(ink(root, 'chat-mic'))).toEqual(new Set(['#f0f0f3']));
+    expect(new Set(ink(root, 'chat-conversation'))).toEqual(new Set(['#f0f0f3']));
+    rerender(root, { value: 'hello' });
+    expect(new Set(ink(root, 'chat-send'))).toEqual(new Set(['#b08a4a']));
+    await startTake(root);
+    expect(new Set(ink(root, 'chat-speech-discard'))).toEqual(new Set(['#f0f0f3']));
+    const idle = render({ value: '' });
+    expect(new Set(ink(idle, 'chat-send'))).toEqual(new Set(['#83838d']));
   });
 });
-
 
 describe('separate Conversation entry', () => {
   const voice = () => ({ join: vi.fn(), end: vi.fn(), call: null, connecting: false, error: null });

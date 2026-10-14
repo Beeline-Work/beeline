@@ -214,6 +214,56 @@ describe('pi MCP bridge', () => {
  * is a bridge that registers tools nobody can call.
  */
 describe('pi MCP bridge, against a live stdio MCP server', () => {
+  it('Reproduction mcp-reload-1: refreshes a changed schema at the next prompt without restarting Pi', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'pi-schema-refresh-'));
+    try {
+      const inventory = resolve(root, 'tools.json');
+      const server = resolve(root, 'server.mjs');
+      await writeFile(server, `import { readFileSync } from 'node:fs';
+import { createInterface } from 'node:readline';
+createInterface({ input: process.stdin }).on('line', line => {
+  const request = JSON.parse(line);
+  if (request.id === undefined) return;
+  const result = request.method === 'tools/list'
+    ? JSON.parse(readFileSync(process.argv[2], 'utf8')) : {};
+  process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: request.id, result }) + '\\n');
+});
+`);
+      const schema = (field: string) => ({ type: 'object', properties: { [field]: { type: 'string' } } });
+      await writeFile(inventory, JSON.stringify({ tools: [
+        { name: 'operate_upload', inputSchema: schema('oldPath') },
+        { name: 'retired', inputSchema: schema('value') },
+      ] }));
+      const path = resolve(root, 'bridge.mjs');
+      await writeFile(path, piMcpBridgeSource([{ name: 'fake', command: process.execPath, args: [server, inventory] }]));
+      const extension = await import(`file://${path}`);
+      const tools = new Map<string, { parameters: unknown }>();
+      const handlers = new Map<string, () => Promise<void>>();
+      let active: string[] = [];
+      await extension.default({
+        registerTool: (tool: { name: string; parameters: unknown }) => {
+          tools.set(tool.name, tool);
+          if (!active.includes(tool.name)) active.push(tool.name);
+        },
+        on: (event: string, handler: () => Promise<void>) => handlers.set(event, handler),
+        getActiveTools: () => active,
+        setActiveTools: (names: string[]) => { active = names; },
+      });
+      await writeFile(inventory, JSON.stringify({ tools: [
+        { name: 'operate_upload', inputSchema: schema('filePath') },
+        { name: 'added', inputSchema: schema('value') },
+      ] }));
+      // Changing the server cannot replace descriptors during a running prompt.
+      expect(tools.get('fake__operate_upload')?.parameters).toEqual(schema('oldPath'));
+      await handlers.get('before_agent_start')?.();
+      expect(tools.get('fake__operate_upload')?.parameters).toEqual(schema('filePath'));
+      expect(active).toContain('fake__added');
+      expect(active).not.toContain('fake__retired');
+      console.info('Reproduction mcp-reload-1: next prompt has filePath and added; retired is inactive; same Pi extension');
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
   type BridgedTool = {
     description: string;
     parameters: unknown;

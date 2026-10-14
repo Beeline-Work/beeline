@@ -13,10 +13,35 @@ function withoutFencedCode(text: string): { text: string; open: boolean } {
   return { text: lines.join('\n'), open: !!fence };
 }
 
+function withoutLinkDestinations(text: string): string {
+  const opening = /!?\[([^\]]*)\]\(/g;
+  let result = '';
+  let consumed = 0;
+  let match: RegExpExecArray | null;
+  while ((match = opening.exec(text))) {
+    let depth = 1;
+    let end = opening.lastIndex;
+    for (; end < text.length; end++) {
+      const character = text[end];
+      if (character === '\n') break;
+      if (character === '\\') { end++; continue; }
+      if (character === '(') depth++;
+      if (character === ')') {
+        depth--;
+        if (depth === 0) break;
+      }
+    }
+    if (depth !== 0) continue;
+    result += text.slice(consumed, match.index) + match[1];
+    consumed = end + 1;
+    opening.lastIndex = consumed;
+  }
+  return result + text.slice(consumed);
+}
+
 /** Normalize only speech input; the transcript keeps the original Markdown. */
 export function markdownToSpeech(text: string): string {
-  return withoutFencedCode(text).text
-    .replace(/!?(\[([^\]]*)\])\([^\n]*?\)/g, '$2')
+  return withoutLinkDestinations(withoutFencedCode(text).text)
     .replace(/^\s*\[[^\]]+\]:\s+\S+.*$/gm, '')
     .replace(/\[([^\]]+)\]\[[^\]]*\]/g, '$1')
     .replace(/^\s*\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?\s*$/gm, '')

@@ -26,7 +26,7 @@ import { VoiceQuotaError } from './voice-providers.js';
 it('Reproduction MD-TTS-1: conversational streamed replies and delayed reports send natural text to synthesis', async () => {
   const agent = { id: 'agent', name: 'Jellybean', handle: 'jellybean', voice: 'warm' };
   const spoken: string[] = [];
-  const answer = '**Hello, friend.**\n\n[Visit](https://example.com).\n\n```ts\nignore me\n```\n\nHi @jellybean.';
+  const answer = '**Hello, friend.**\n\n[Visit](https://example.com/a_(b)/details).\n\n```ts\nignore me\n```\n\nHi @jellybean.';
   let reports: any[] = [];
   const service = { owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret',
     brain: { answer: async (_agent: unknown, _history: unknown, delta: (text: string) => void) => {
@@ -42,7 +42,7 @@ it('Reproduction MD-TTS-1: conversational streamed replies and delayed reports s
     await runtime.utterance('human', 'Hello');
     expect(spoken.join(' ')).toBe('Hello, friend. Visit. Hi jellybean.');
     expect(service.recordAnswer).toHaveBeenCalledWith('room', 'agent', answer);
-    reports = [{ source_message_id: 'source', id: 'report', text: '**Done**: [result](https://example.com)', agent_id: 'agent', human_id: 'human' }];
+    reports = [{ source_message_id: 'source', id: 'report', text: '**Done**: [result](https://example.com/a_(b)/details)', agent_id: 'agent', human_id: 'human' }];
     await runtime.refresh();
     await vi.waitFor(() => expect(spoken.at(-1)).toBe('Done: result'));
     console.log('MD-TTS-1 synthesis:', spoken);

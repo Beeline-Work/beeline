@@ -5,6 +5,9 @@ it.each([
   ['**bold** and *italic* and _soft_ and __strong__', 'bold and italic and soft and strong'],
   ['# Heading\n> Quote\n- First\n* Second\n1. Third', 'Heading. Quote. First. Second. Third'],
   ['[Beeline](https://usebeeline.com) and `code`', 'Beeline and code'],
+  ['[Visit](https://example.com/a_(b)/details)', 'Visit'],
+  ['[Visit](https://example.com/a_(b_(c))/details)', 'Visit'],
+  ['[Visit](https://example.com/a_\\(b\\)/details)', 'Visit'],
   ['Before\n```ts\nconst secret = 1;\n```\nAfter', 'Before. After'],
   ['Before\n~~~js\nnot spoken\n~~~\nAfter', 'Before. After'],
   ['Before\n```js\nunfinished code', 'Before'],
@@ -28,7 +31,7 @@ it('holds streamed list numbers and skips code-only paragraphs', () => {
 });
 
 it('retains split bold, links and fences across every possible chunk boundary', () => {
-  const input = '**Hello, friend.**\n\n[Visit](https://example.com).\n\n```ts\nignored, text.\n\nmore code\n```\n\nBye @jellybean.';
+  const input = '**Hello, friend.**\n\n[Visit](https://example.com/a_(b)/details).\n\n```ts\nignored, text.\n\nmore code\n```\n\nBye @jellybean.';
   for (let at = 0; at <= input.length; at++) {
     const stream = new MarkdownSpeechStream();
     const spoken = [...stream.push(input.slice(0, at)), ...stream.push(input.slice(at)), stream.finish()].filter(Boolean).join(' ');

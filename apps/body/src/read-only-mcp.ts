@@ -880,7 +880,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   },
   {
     name: 'no_reply_needed',
-    description: 'On a nonhuman report, order or lifecycle wake with nothing to post, acknowledge that no reply is needed, then end silently. This local tool posts nothing and reports nothing. Human-triggered turns cannot use it.',
+    description: 'On a nonhuman report, order, lifecycle, scheduler or system wake with nothing to post, acknowledge that no reply is needed, then end silently. This local tool posts nothing and reports nothing. Human-triggered turns cannot use it.',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
@@ -4676,7 +4676,7 @@ export async function callAgentTool(
     case 'no_reply_needed': {
       await activeCommandContext();
       const { commandReason } = await readTurnContextFile();
-      if (!nonhumanSilentWake(commandReason)) throw new Error('no_reply_needed requires a nonhuman report, order or lifecycle wake');
+      if (!nonhumanSilentWake(commandReason)) throw new Error('no_reply_needed requires a nonhuman report, order, lifecycle, scheduler or system wake');
       return JSON.stringify({ acknowledged: true });
     }
     case 'report':

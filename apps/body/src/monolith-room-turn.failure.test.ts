@@ -746,11 +746,15 @@ describe('Room turn failure receipt', () => {
     expect(receipts.some(receipt => receipt.status === 'failed')).toBe(false);
   });
 
-  it.each(['report', 'order', 'watched_corner'])('completes a terminal-tool silent %s wake without posting or retrying', async (commandReason) => {
+  it.each(['report', 'order', 'watched_corner', 'corner_check', 'schedule', 'subscribed_event', 'system'])('completes a terminal-tool silent %s wake without posting or retrying', async (commandReason) => {
     const call = { id: 'silent-1', title: 'mcp__beeline-agent__no_reply_needed', status: 'completed' };
     const { receipts, posted, attempts } = await runTurn({
       agentCommand: '/fake-agent', agentKind: 'claude', commandReason,
-      prompt: async () => ({ stopReason: 'end_turn', updates: [], agentText: '', toolCalls: [call] }),
+      prompt: async ({ text }) => {
+        expect(text).toContain('Do not post an update merely because time has passed');
+        expect(text).not.toContain("The user hasn't heard from you in a while");
+        return { stopReason: 'end_turn', updates: [], agentText: '', toolCalls: [call] };
+      },
     });
     expect(attempts).toBe(1);
     expect(posted).toEqual([]);

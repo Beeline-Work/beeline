@@ -96,10 +96,23 @@ it('Reproduction FR-report: rejects corner progress disguised as done before a P
   console.info('Demonstrated FR-report: unready done refused; progress remains in the corner; commander receives no wake');
 });
 it('requires a status that matches the report prefix', async () => {
+  await expect(daemon.execute('report', { ...authority(order), status: 'done', text: 'Delivered without a prefix' }, RUBY))
+    .rejects.toThrow('matching its text prefix');
   await expect(daemon.execute('report', { ...authority(order), text: 'done: delivered' } as never, RUBY))
     .rejects.toThrow('requires status');
   await expect(daemon.execute('report', { ...authority(order), status: 'done', text: 'blocked: missing input' }, RUBY))
     .rejects.toThrow('matching its text prefix');
+});
+it('Reproduction report-schema: stores and delivers a complete multi-paragraph report', async () => {
+  const opened = await open(), turn = await worker(opened.cornerId);
+  const text = 'blocked: ' + 'Synthetic paragraph for report delivery.\n\n'.repeat(150) + 'End of report.';
+  await daemon.execute('report', { ...authority(turn), status: 'blocked', text }, WORKER);
+  const report = (await commands(DM, RUBY)).find(command => command.reason === 'report')!;
+  expect(report.source.body).toBe(text);
+  expect((await db.query<{ text: string }>(
+    `SELECT private_payload->>'text' text FROM agent_commands WHERE id=$1`, [report.id],
+  )).rows[0]?.text).toBe(text);
+  console.info(`Demonstrated report-schema: server stored and commander received all ${text.length} characters including the final paragraph`);
 });
 it('accepts done with live merge-ready checks, and batches its commander wake', async () => {
   const opened = await open(), turn = await worker(opened.cornerId);

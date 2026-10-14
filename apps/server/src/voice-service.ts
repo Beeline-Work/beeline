@@ -232,8 +232,9 @@ export class VoiceService {
       const joined = await db.query(`SELECT 1 FROM voice_participants p JOIN voice_calls c ON c.id=p.call_id
         WHERE p.call_id=$1 AND p.identity_id=$2 AND p.left_at IS NULL AND c.ended_at IS NULL AND ($3::text IS NULL OR (c.runtime_owner=$3 AND c.runtime_until>now())) FOR SHARE OF p,c`, [callId, humanId, leaseOwner ?? null]);
       if (!joined.rowCount) throw new Error('voice call access denied');
-      await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`,
-        [id, roomId, humanId, `@${agent.handle} ${text.replace(/@/g, '')}`]);
+      await db.query(`WITH message AS (INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4) RETURNING id)
+        INSERT INTO voice_messages(message_id,call_id) SELECT id,$5 FROM message`,
+        [id, roomId, humanId, `@${agent.handle} ${text.replace(/@/g, '')}`, callId]);
     });
     return id;
   }

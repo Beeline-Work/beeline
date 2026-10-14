@@ -32,4 +32,11 @@ CREATE TABLE IF NOT EXISTS voice_orders (
 CREATE INDEX IF NOT EXISTS voice_orders_call_idx ON voice_orders(call_id);
 CREATE INDEX IF NOT EXISTS voice_orders_agent_idx ON voice_orders(agent_id);
 CREATE INDEX IF NOT EXISTS voice_orders_spoken_message_idx ON voice_orders(spoken_message_id);
+-- Spoken turns the call runtime recorded. Unless a voice_orders row hands one
+-- to the agent, no helper was woken, so its silence is not an outage.
+CREATE TABLE IF NOT EXISTS voice_messages (
+  message_id text PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
+  call_id uuid NOT NULL REFERENCES voice_calls(id) ON DELETE CASCADE
+);
+CREATE INDEX IF NOT EXISTS voice_messages_call_idx ON voice_messages(call_id);
 `;

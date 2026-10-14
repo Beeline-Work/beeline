@@ -42,6 +42,8 @@ export class VoiceRoomRuntime {
   private readonly inputVersions = new Map<string, number>();
   private readonly inputSpeech = new Map<string, { turn: number; playback: Set<string> }>();
   private speaking?: AbortController;
+  /** The human whose reply or report is playing; only they barge in without naming an agent. */
+  private speakingFor?: string;
   private speechIdle = Promise.resolve();
   private timer?: ReturnType<typeof setInterval>;
   private closed = false;
@@ -140,7 +142,9 @@ export class VoiceRoomRuntime {
       }
       // Partial recognized names can aim the strip immediately; only EndOfTurn dispatches.
       if (event.event !== 'EndOfTurn') void this.aimSpokenName(human, event.transcript, version);
-      this.speaking?.abort(); this.audio.clearQueue();
+      // Another human's unnamed speech is not addressed to this reply. Their
+      // named turn still interrupts it in utterance().
+      if (!this.speakingFor || this.speakingFor === human) { this.speaking?.abort(); this.audio.clearQueue(); }
       if (event.event !== 'EndOfTurn' || !event.transcript.trim() ||
           event.turn_index <= (this.turnIndices.get(human) ?? -1)) return;
       this.turnIndices.set(human, event.turn_index);
@@ -207,7 +211,7 @@ export class VoiceRoomRuntime {
     await this.signal({ type: 'target', agentId: agent.id }, human);
     const sourceId = await this.service.recordHuman(this.callId, this.roomId, human, agent, text, this.leaseOwner);
     this.speaking?.abort(); this.audio.clearQueue();
-    const controller = new AbortController(); this.speaking = controller;
+    const controller = new AbortController(); this.speaking = controller; this.speakingFor = human;
     let finishSpeech!: () => void;
     this.speechIdle = new Promise<void>(resolve => { finishSpeech = resolve; });
     const key = `${human}:${agent.id}`;
@@ -259,7 +263,7 @@ export class VoiceRoomRuntime {
       flush(speechText.finish()); await speechQueue;
     } finally {
       if (this.speaking === controller) {
-        this.speaking = undefined; finishSpeech();
+        this.speaking = undefined; this.speakingFor = undefined; finishSpeech();
         await this.signal({ type: 'speaker', agentId: null });
       } else finishSpeech();
       // A barge-in may interrupt generation after a clause was already heard.
@@ -300,12 +304,12 @@ export class VoiceRoomRuntime {
             // A new utterance may have started during the asynchronous claim.
             while (this.speaking && !this.closed) await this.speechIdle;
             if (this.closed) return;
-            const controller = new AbortController(); this.speaking = controller;
+            const controller = new AbortController(); this.speaking = controller; this.speakingFor = report.human_id;
             let finishSpeech!: () => void;
             this.speechIdle = new Promise<void>(resolve => { finishSpeech = resolve; });
             try {
               await this.signal({ type: 'speaker', agentId: agent.id }); await this.play(report.text, agent, controller.signal);
-            } finally { finishSpeech(); if (this.speaking === controller) { this.speaking = undefined; await this.signal({ type: 'speaker', agentId: null }); } }
+            } finally { finishSpeech(); if (this.speaking === controller) { this.speaking = undefined; this.speakingFor = undefined; await this.signal({ type: 'speaker', agentId: null }); } }
           } finally { this.queuedReports.delete(report.source_message_id); }
         });
         void this.reportQueue.catch(error => {

@@ -29,6 +29,7 @@ import { LiveHub } from './live.js';
 import { claimAgentCommand } from './agent-command.js';
 import { DaemonService } from './daemon-service.js';
 import { PhoneService } from './phone-service.js';
+import { ConnectionPresence } from './connection-presence.js';
 
 it('Reproduction MD-TTS-1: conversational streamed replies and delayed reports send natural text to synthesis', async () => {
   const agent = { id: 'agent', name: 'Jellybean', handle: 'jellybean', voice: 'warm' };
@@ -376,7 +377,7 @@ function phantomHarness(answer = 'Hey there is the answer.') {
       const writer = { access: service.access, db: {
         transaction: async (write: (db: { query(sql: string, args: unknown[]): Promise<unknown> }) => Promise<void>) => write({
           async query(sql, args) {
-            if (sql.startsWith('INSERT INTO messages')) {
+            if (sql.includes('INSERT INTO messages')) {
               const content = String(args[3]); messages.push(content); note(`message send: ${content}`);
             }
             return { rowCount: 1, rows: [] };
@@ -553,3 +554,126 @@ it('Reproduction voice-name-1: switches transcript, reply and voice together and
     }
   } finally { await runtime.close(); }
 });
+
+it('Reproduction MULTI-1: another human\'s unnamed speech does not cancel the reply to the human who tagged an agent', async () => {
+  const { service } = conversationService(2);
+  const opened: ((event: any) => void)[] = [];
+  service.config.stt.mockImplementation(async (onEvent: (event: any) => void) => {
+    opened.push(onEvent);
+    return { send: vi.fn(), close: vi.fn() };
+  });
+  const receivers = new Map<string, (event: any) => void>();
+  let firstToken!: () => void;
+  service.config.brain.answer.mockImplementation(async (_agent, _history, onText, signal: AbortSignal) => {
+    // The model is still producing its first token when the other human talks.
+    await new Promise<void>((resolve, reject) => {
+      firstToken = resolve;
+      signal.addEventListener('abort', () => reject(new DOMException('Interrupted', 'AbortError')), { once: true });
+    });
+    onText('I’m here. What do you need?');
+    return { text: 'I’m here. What do you need?', order: false };
+  });
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  state.streams = [new ReadableStream(), new ReadableStream()];
+  const words = (text: string) => text.split(' ').map((word, i) => ({ word, start: i * 0.2, end: (i + 1) * 0.2, confidence: 0.95 }));
+  const say = (human: string, event: string, transcript: string, turn: number) =>
+    receivers.get(human)!({ event, transcript, turn_index: turn, sequence_id: turn, words: words(transcript) });
+  try {
+    for (const human of ['starter', 'second']) {
+      state.room.emit('track', { kind: 1 }, {}, { identity: human });
+      await vi.waitFor(() => expect(opened).toHaveLength(receivers.size + 1));
+      receivers.set(human, opened.at(-1)!);
+    }
+    say('second', 'EndOfTurn', 'Ruby are you there', 0);
+    await vi.waitFor(() => expect(service.config.brain.answer).toHaveBeenCalledOnce());
+    say('starter', 'Update', 'ha that is funny', 0);
+    say('starter', 'EndOfTurn', 'ha that is funny', 0);
+    firstToken();
+    await vi.waitFor(() => expect(service.recordAnswer).toHaveBeenCalledWith('room', 'ruby', 'I’m here. What do you need?'));
+    expect(service.config.brain.answer.mock.calls[0]?.[3].aborted).toBe(false);
+    expect(service.recordHuman.mock.calls.map(call => [call[2], call[4]])).toEqual([['second', 'Ruby are you there']]);
+  } finally { await runtime.close(); }
+});
+
+it('Demonstration MULTI-1: two humans in one call both get the agent reply, with no false offline notice', async () => {
+  const db = new PgliteDatabase();
+  const live = new LiveHub();
+  const starter = 'a'.repeat(64), second = 'd'.repeat(64), agent = 'b'.repeat(64);
+  const workspace = '11111111-1111-4111-8111-111111111111';
+  const room = '22222222-2222-4222-8222-222222222222';
+  const started = performance.now();
+  const timeline: string[] = [];
+  const note = (text: string) => timeline.push(`${(performance.now() - started).toFixed(1).padStart(7)}ms ${text}`);
+  const config = conversationService(2).service.config;
+  const opened: ((event: any) => void)[] = [];
+  config.stt.mockImplementation(async (onEvent: (event: any) => void) => { opened.push(onEvent); return { send: vi.fn(), close: vi.fn() }; });
+  const latency: { commit: number; brain: number }[] = [];
+  let endOfTurn = 0;
+  config.brain.answer.mockImplementation(async (_agent, history, onText, signal: AbortSignal) => {
+    latency.push({ commit: 0, brain: performance.now() - endOfTurn });
+    const text = history.at(-1)!.content.includes('Candy') ? 'I’m here, senpai!' : 'I’m here. What do you need?';
+    note(`brain start for "${history.at(-1)!.content}"`);
+    // Luna's first token takes about half a second; the other human talks meanwhile.
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(resolve, 300);
+      signal.addEventListener('abort', () => { clearTimeout(timer); note('reply CANCELLED before its first token'); reject(new DOMException('Interrupted', 'AbortError')); }, { once: true });
+    });
+    onText(text); return { text, order: false };
+  });
+  const voice = new RealVoiceService(db, live, { ...config, speech: { synthesize: async function* () { yield new Uint8Array([200, 1]); } } });
+  const presence = new ConnectionPresence(db, live, 500);
+  const words = (text: string) => text.split(' ').map((word, i) => ({ word, start: i * 0.2, end: (i + 1) * 0.2, confidence: 0.95 }));
+  try {
+    await migrate(db);
+    await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Starter','starter'),($2,'human','Second','second'),($3,'agent','Candy','candy')`, [starter, second, agent]);
+    await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [agent, starter]);
+    await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Multiparty proof')`, [workspace]);
+    await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'experiments')`, [room, workspace]);
+    await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+      ($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,NULL,$4,'member'),($1,$5,$2,'owner'),($1,$5,$3,'member'),($1,$5,$4,'member')`,
+      [workspace, starter, second, agent, room]);
+    await presence.announce(room, agent, { lifecycleId: 'helper-boot' });
+    const joined = await voice.join(room, starter);
+    await voice.join(room, second);
+    const call = (await db.query<any>(`SELECT * FROM voice_calls WHERE id=$1`, [joined.call.id])).rows[0];
+    const runtime = (await voice.ensureRuntime(call))!;
+    state.streams = [new ReadableStream(), new ReadableStream()];
+    const receivers = new Map<string, (event: any) => void>();
+    for (const human of [starter, second]) {
+      state.room.emit('track', { kind: 1 }, {}, { identity: human });
+      await vi.waitFor(() => expect(opened).toHaveLength(receivers.size + 1));
+      receivers.set(human, opened.at(-1)!);
+    }
+    const say = (human: string, event: string, transcript: string, turn: number) => {
+      note(`${human === starter ? 'starter' : 'second '} STT ${event}: "${transcript}"`);
+      if (event === 'EndOfTurn') endOfTurn = performance.now();
+      receivers.get(human)!({ event, transcript, turn_index: turn, sequence_id: turn, words: words(transcript) });
+    };
+    const replies = async () => (await new PhoneService(db, 'http://proof').readRoom(room, starter))!.messages
+      .filter(message => message.author.pubkey === agent && message.presentation === 'message').map(message => message.text);
+    // The call starter tags the agent; the second human is mid-sentence.
+    say(starter, 'EndOfTurn', 'Candy are you there', 0);
+    await vi.waitFor(() => expect(config.brain.answer).toHaveBeenCalledTimes(1));
+    say(second, 'Update', 'ha that is funny', 0);
+    await vi.waitFor(async () => expect(await replies()).toEqual(['I’m here, senpai!']), { timeout: 3000 });
+    note('reply visible to starter');
+    // The second human tags the agent; the starter laughs over the first token.
+    say(second, 'EndOfTurn', 'Candy can you hear me too', 1);
+    await vi.waitFor(() => expect(config.brain.answer).toHaveBeenCalledTimes(2));
+    say(starter, 'Update', 'ha she is cute', 1);
+    await vi.waitFor(async () => expect(await replies()).toHaveLength(2), { timeout: 3000 });
+    note('reply visible to second human');
+    await presence.observe(room);
+    await new Promise(resolve => setTimeout(resolve, 900));
+    const failed = (await db.query(`SELECT text FROM messages WHERE card_type='turn-failed'`)).rows;
+    const status = (await db.query<{ body: { status: string } }>(`SELECT body FROM live_outputs WHERE agent_id=$1 AND kind='presence'`, [agent])).rows[0]!.body.status;
+    note(`after the pickup window: presence=${status}, offline notices=${failed.length}`);
+    expect(failed).toEqual([]);
+    expect(status).toBe('online');
+    await runtime.close();
+  } finally {
+    console.log('Demonstration MULTI-1\n' + timeline.join('\n'));
+    for (const [i, sample] of latency.entries()) console.log(`latency turn ${i}: end of speech -> brain start ${sample.brain.toFixed(1)} ms`);
+    await presence.stop(); await voice.close(); await db.close();
+  }
+}, 30_000);

@@ -198,6 +198,45 @@ describe('delivery-driven presence', () => {
     expect((await body()).status).toBe('online');
     expect(live.latestAgentPresence(AGENT, OTHER)?.status).toBe('online');
   });
+  it('Reproduction VOICE-OFFLINE-1: a spoken turn the call answered itself never reports the helper offline', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    await presence.announce(ROOM, AGENT, { lifecycleId: 'boot-1' });
+    const call = '44444444-4444-4444-8444-444444444444';
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Voice call')`,
+      ['f'.repeat(64), ROOM, HUMAN],
+    );
+    await database.query(`INSERT INTO voice_calls(id,room_id,message_id) VALUES($1,$2,$3)`, [
+      call,
+      ROOM,
+      'f'.repeat(64),
+    ]);
+    await database.query(
+      `WITH message AS (INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@bee Are you there?') RETURNING id)
+       INSERT INTO voice_messages(message_id,call_id) SELECT id,$4 FROM message`,
+      [MESSAGE, ROOM, HUMAN, call],
+    );
+    await presence.observe(ROOM);
+    await elapsed();
+    expect((await body()).status).toBe('online');
+    expect(
+      (await database.query(`SELECT 1 FROM messages WHERE card_type='turn-failed'`)).rowCount,
+    ).toBe(0);
+    // A spoken order does wake the helper, so its silence still counts.
+    const ordered = 'd'.repeat(64);
+    await database.query(
+      `WITH message AS (INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@bee Fix the build') RETURNING id)
+       INSERT INTO voice_messages(message_id,call_id) SELECT id,$4 FROM message`,
+      [ordered, ROOM, HUMAN, call],
+    );
+    await database.query(
+      `INSERT INTO voice_orders(source_message_id,call_id,agent_id) VALUES($1,$2,$3)`,
+      [ordered, call, AGENT],
+    );
+    await presence.observe(ROOM);
+    await elapsed();
+    expect((await body()).status).toBe('offline');
+  });
   it('recovers an outstanding delivery deadline after a server redeploy without polling', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
     await presence.announce(ROOM, AGENT, { lifecycleId: 'boot-1' });

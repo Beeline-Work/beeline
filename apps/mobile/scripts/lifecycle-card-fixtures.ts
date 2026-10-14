@@ -97,6 +97,13 @@ export const lifecycleFixtures: { name: string; message: ChatDisplayMessage; exp
       message: foldPrLifecycleRuns([merged, { ...merged, id: 'merged-update' }])[0],
     },
     {
+      name: 'issue-group-of-one',
+      message: foldPrLifecycleRuns([
+        github('issue-opened', 'issue', 'opened'),
+        github('issue-opened-update', 'issue', 'opened'),
+      ])[0],
+    },
+    {
       name: 'grouped-issues',
       message: foldPrLifecycleRuns([
         github('issue-a', 'issue', 'opened'),

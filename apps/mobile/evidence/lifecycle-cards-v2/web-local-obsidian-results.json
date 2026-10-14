@@ -82,6 +82,11 @@
       "header": "PR · 1 merged"
     },
     {
+      "name": "issue-group-of-one",
+      "actions": 1,
+      "header": "Issue · 1 opened"
+    },
+    {
       "name": "grouped-issues",
       "actions": 1,
       "header": "Issue · 1 closed, 1 opened"

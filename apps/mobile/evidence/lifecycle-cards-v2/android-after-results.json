@@ -409,6 +409,30 @@
     ]
   },
   {
+    "variant": "issue-group-of-one",
+    "theme": "bone",
+    "source": "Android native after fixture",
+    "screenshot": "android-after-bone-issue-group-of-one.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "issue-group-of-one",
+      "Issue \u00b7 1 opened",
+      "11:33",
+      "OPENED",
+      "Align lifecycle cards",
+      "Issue #2468",
+      "by @octocat",
+      "View \u2197",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "View \u2197"
+    ]
+  },
+  {
     "variant": "grouped-issues",
     "theme": "bone",
     "source": "Android native after fixture",
@@ -423,7 +447,7 @@
       "11:33",
       "CLOSED",
       "Align lifecycle cards",
-      "issue",
+      "Issue #2400",
       "by @octocat",
       "View \u2197",
       "1 more \u25be",
@@ -448,7 +472,7 @@
       "11:33",
       "CLOSED",
       "Align lifecycle cards",
-      "issue",
+      "Issue #2468",
       "by @octocat",
       "View \u2197",
       "1 more \u25be",
@@ -940,6 +964,30 @@
     ]
   },
   {
+    "variant": "issue-group-of-one",
+    "theme": "obsidian",
+    "source": "Android native after fixture",
+    "screenshot": "android-after-obsidian-issue-group-of-one.png",
+    "texts": [
+      "bone",
+      "obsidian",
+      "Previous",
+      "Next",
+      "issue-group-of-one",
+      "Issue \u00b7 1 opened",
+      "11:33",
+      "OPENED",
+      "Align lifecycle cards",
+      "Issue #2468",
+      "by @octocat",
+      "View \u2197",
+      "Tap actions to verify their destinations"
+    ],
+    "actions": [
+      "View \u2197"
+    ]
+  },
+  {
     "variant": "grouped-issues",
     "theme": "obsidian",
     "source": "Android native after fixture",
@@ -954,7 +1002,7 @@
       "11:33",
       "CLOSED",
       "Align lifecycle cards",
-      "issue",
+      "Issue #2400",
       "by @octocat",
       "View \u2197",
       "1 more \u25be",
@@ -979,7 +1027,7 @@
       "11:33",
       "CLOSED",
       "Align lifecycle cards",
-      "issue",
+      "Issue #2468",
       "by @octocat",
       "View \u2197",
       "1 more \u25be",

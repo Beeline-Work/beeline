@@ -67,6 +67,13 @@ async function main() {
   const groupedOne = document.querySelector('[data-variant="group-of-one"] [data-testid^="notification-run-cell-"]');
   assert(single.textContent === groupedOne.textContent, 'single/group-of-one row content');
   assert(single.getBoundingClientRect().height === groupedOne.getBoundingClientRect().height, 'single/group-of-one row geometry');
+  const singleIssue = document.querySelector('[data-variant="github-issue-opened"] [data-testid^="notification-run-cell-"]');
+  const issueOne = document.querySelector('[data-variant="issue-group-of-one"] [data-testid^="notification-run-cell-"]');
+  assert(singleIssue.textContent === issueOne.textContent, 'single/group-of-one issue row content');
+  assert(singleIssue.getBoundingClientRect().height === issueOne.getBoundingClientRect().height, 'single/group-of-one issue row geometry');
+  const singleIssueHeader = document.querySelector('[data-variant="github-issue-opened"] [data-testid$="-title"]');
+  const issueOneHeader = document.querySelector('[data-variant="issue-group-of-one"] [data-testid$="-title"]');
+  assert(singleIssueHeader.textContent === issueOneHeader.textContent, 'single/group-of-one issue header');
   assert(document.documentElement.scrollWidth <= innerWidth, 'horizontal overflow');
   document.getElementById('result').textContent = JSON.stringify({source:'local built production components', variants:results});
 }
@@ -81,11 +88,11 @@ main().catch(error=>document.getElementById('result').textContent = 'FAIL: '+err
       });
       expect(proof.status, proof.stderr).toBe(0);
       const result = JSON.parse(proof.result);
-      expect(result.variants).toHaveLength(21);
+      expect(result.variants).toHaveLength(22);
       expect(result.variants.find((v: { name: string }) => v.name === 'mixed-activity').header).toMatch(/^Activity · /);
       expect(result.variants.find((v: { name: string }) => v.name === 'grouped-issues').header).toMatch(/^Issue · /);
       if (output) await writeFile(path.join(output, `web-local-${theme}-results.json`), JSON.stringify(result, null, 2));
-      console.log(`Demonstrated lifecycle-cards-2 ${theme}: 21 local web variants, header/row/action destinations pass`);
+      console.log(`Demonstrated lifecycle-cards-2 ${theme}: 22 local web variants, header/row/action destinations pass`);
     }
   } finally {
     await rm(directory, { recursive: true, force: true });

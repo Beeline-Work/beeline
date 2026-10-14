@@ -101,7 +101,7 @@ function lifecycleItem(message: SystemLineMessage): LifecycleEvent | undefined {
         id: message.id,
         title: event.title,
         state: event.action === 'opened' ? 'Opened' : 'Closed',
-        kindLine: 'issue',
+        kindLine: `Issue #${github.number}`,
         kind: 'issue',
         url: event.url,
         actor: event.actor,

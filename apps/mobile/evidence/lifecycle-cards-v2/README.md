@@ -34,7 +34,7 @@ source marker or inline working/review/status behavior is changed.
 
 ### Android before and after
 
-There are 21 cases × 2 themes × 2 phases (84 PNGs). The paired matrix below
+There are 22 cases × 2 themes. The 21 original cases have e43783c79 before shots; `issue-group-of-one` has a 329612dfc before shot (see Reproduction lifecycle-cards-3). The paired matrix below
 covers opened, merged and closed corners with/without PRs, cleanup, failing
 checks, PR and issue events, expanded/grouped/one-item/mixed runs, and all check
 states. The JSON manifests record native visible text, available actions and
@@ -59,6 +59,7 @@ including all three actions on the expanded two-row case.
 | grouped-corners | [PNG](android-before-bone-grouped-corners.png) | [PNG](android-after-bone-grouped-corners.png) | [PNG](android-before-obsidian-grouped-corners.png) | [PNG](android-after-obsidian-grouped-corners.png) |
 | grouped-expanded | [PNG](android-before-bone-grouped-expanded.png) | [PNG](android-after-bone-grouped-expanded.png) | [PNG](android-before-obsidian-grouped-expanded.png) | [PNG](android-after-obsidian-grouped-expanded.png) |
 | group-of-one | [PNG](android-before-bone-group-of-one.png) | [PNG](android-after-bone-group-of-one.png) | [PNG](android-before-obsidian-group-of-one.png) | [PNG](android-after-obsidian-group-of-one.png) |
+| issue-group-of-one | [PNG](android-prefix-bone-issue-group-of-one.png) (329612dfc) | [PNG](android-after-bone-issue-group-of-one.png) | [PNG](android-prefix-obsidian-issue-group-of-one.png) (329612dfc) | [PNG](android-after-obsidian-issue-group-of-one.png) |
 | grouped-issues | [PNG](android-before-bone-grouped-issues.png) | [PNG](android-after-bone-grouped-issues.png) | [PNG](android-before-obsidian-grouped-issues.png) | [PNG](android-after-obsidian-grouped-issues.png) |
 | mixed-activity | [PNG](android-before-bone-mixed-activity.png) | [PNG](android-after-bone-mixed-activity.png) | [PNG](android-before-obsidian-mixed-activity.png) | [PNG](android-after-obsidian-mixed-activity.png) |
 | check-started | [PNG](android-before-bone-check-started.png) | [PNG](android-after-bone-check-started.png) | [PNG](android-before-obsidian-check-started.png) | [PNG](android-after-obsidian-check-started.png) |
@@ -67,13 +68,27 @@ including all three actions on the expanded two-row case.
 
 [Native before manifest](android-before-results.json) · [Native after manifest](android-after-results.json)
 
+#### Reproduction lifecycle-cards-3: issue meta line
+
+Review of 329612dfc found that a standalone issue card showed `Issue #2468`,
+but the same issue as a deduplicated group of one showed `issue`. The fold
+used a different meta line from the standalone adapter. The `issue-group-of-one`
+case was added for this. It did not exist at e43783c79, so its before
+screenshots come from a native build of 329612dfc:
+[Bone](android-prefix-bone-issue-group-of-one.png), [Obsidian](android-prefix-obsidian-issue-group-of-one.png),
+next to the standalone card at the same commit:
+[Bone](android-prefix-bone-github-issue-opened.png), [Obsidian](android-prefix-obsidian-github-issue-opened.png).
+Grouped issue rows at that commit: [grouped Bone](android-prefix-bone-grouped-issues.png),
+[mixed Bone](android-prefix-bone-mixed-activity.png) ([manifest](android-prefix-results.json)).
+The grouped fold now writes `Issue #N`. Both paths show `Issue #2468` in both themes. All 22 after cases were recaptured.
+
 ### Browser: local changed code
 
-The actual production components render the same 21 cases through React Native
+The actual production components render the same 22 cases through React Native
 Web in headless Chrome, both themes. Every action is clicked and its exact
 corner/URL callback checked. The test checks header kinds, no header author,
-no horizontal overflow and identical merged single/group-of-one content and
-row geometry. Screenshots carry a **LOCAL BUILD** banner:
+no horizontal overflow and identical single/group-of-one content and row
+geometry for both the merged corner and the opened issue, plus an identical issue header. Screenshots carry a **LOCAL BUILD** banner:
 [Bone](web-local-bone.png), [Obsidian](web-local-obsidian.png).
 Results: [Bone](web-local-bone-results.json), [Obsidian](web-local-obsidian-results.json).
 
@@ -95,7 +110,7 @@ Usebeeline connection grant is required for pre-merge proof.
 - Existing historical lifecycle, stacking, check reconciliation, closed-corner,
   source-marker and desktop contract assertions remain unchanged from the revision-2 baseline. Added coverage
   exercises the inspector's standalone Corner navigation.
-- The final 214-test suite passes across 11 files. Root typecheck, UI component policy, design checks and DEAD CODE pass. The
+- Focused card, grouping, check and desktop suites pass (184 tests across 4 files), plus the two-theme local web proof. The full mobile suite passes except load timeouts in unrelated browser files and a local native-fingerprint run polluted by fixture build output. Root typecheck, UI component policy, design checks and DEAD CODE pass. The
   native proof remains an explicit Knip entry point; no baseline expansion.
 
 From `apps/mobile`:

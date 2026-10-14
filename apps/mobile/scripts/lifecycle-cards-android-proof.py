@@ -29,7 +29,7 @@ for theme in ['bone','obsidian']:
     time.sleep(2)
     ns = nodes(); tap_node(next(n for n in ns if n.get('content-desc') == theme))
     next_control = next(n for n in nodes() if n.get('content-desc') == 'Next variant')
-    for index in range(21):
+    for index in range(22):
         if a.only_index is not None and index != a.only_index:
             tap_node(next_control)
             continue

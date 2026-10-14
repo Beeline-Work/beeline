@@ -181,7 +181,7 @@ describe('corner and issue lifecycle stacking', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].foldedIds).toEqual(['2']);
     expect(rows[0].notificationLifecycleRun?.items).toMatchObject([
-      { state: 'Opened', kindLine: 'issue', kind: 'issue' },
+      { state: 'Opened', kindLine: 'Issue #2', kind: 'issue' },
     ]);
   });
 

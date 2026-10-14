@@ -61,6 +61,28 @@ export async function commandAddress(
   return row;
 }
 
+/** Corner writes target only explicitly recorded opened descendants. */
+export async function assertCornerCommandTarget(
+  db: SqlDatabase, sourceRoomId: string, targetRoomId: string,
+) {
+  const source = (await db.query<{ parent_id: string | null }>(
+    `SELECT parent_id FROM rooms WHERE id=$1`, [sourceRoomId],
+  )).rows[0];
+  if (!source?.parent_id) return;
+  const allowed = await db.query(
+    `WITH RECURSIVE descendants AS (
+       SELECT corner_id FROM corner_facts WHERE opened_from_corner_id=$1
+       UNION SELECT child.corner_id FROM corner_facts child JOIN descendants parent
+         ON child.opened_from_corner_id=parent.corner_id
+     ) SELECT 1 FROM descendants WHERE corner_id::text=$2 AND corner_id<>$1 LIMIT 1`,
+    [sourceRoomId, targetRoomId],
+  );
+  if (!allowed.rowCount)
+    throw new CommandRefusalError(
+      'Corners can only order corners they opened. Report to your commander instead.', 403,
+    );
+}
+
 /**
  * One order wakes exactly one agent: a corner's worker, the other agent of an
  * agent DM, or the `agent` named at a Room address. A Room order never fans out.
@@ -77,6 +99,7 @@ export async function sendOrder(
     throw new CommandRefusalError('order text must be 1 to 16000 characters', 400);
   const named = agent?.trim().replace(/^@/, '');
   if (agent !== undefined && !named) throw new CommandRefusalError('order agent must name one agent', 400);
+  await assertCornerCommandTarget(db, command.room_id, address);
   const target = await commandAddress(db, address, agentId);
   let worker: string | undefined;
   if (target.parent_id) {

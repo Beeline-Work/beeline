@@ -113,8 +113,10 @@ describe('mobile OTA release governor', () => {
       { platform: 'android', runtimeVersion: '34' },
       { platform: 'android', runtimeVersion: '35' },
       { platform: 'ios', runtimeVersion: '33' },
+      { platform: 'android', runtimeVersion: '36' },
+      { platform: 'ios', runtimeVersion: '34' },
     ]);
-    expect(releaseUpdateTargets(mobileRoot)).toHaveLength(11);
+    expect(releaseUpdateTargets(mobileRoot)).toHaveLength(13);
     expect(releaseUpdateTargets(mobileRoot)).toContainEqual({ platform: 'android', runtimeVersion: '35' });
     expect(releaseUpdateTargets(mobileRoot)).toContainEqual({ platform: 'ios', runtimeVersion: '33' });
     // Each platform publishes to its pin plus the two latest shipped runtimes.
@@ -128,6 +130,8 @@ describe('mobile OTA release governor', () => {
       { platform: 'android', runtimeVersion: '34' },
       { platform: 'android', runtimeVersion: '35' },
       { platform: 'ios', runtimeVersion: '33' },
+      { platform: 'android', runtimeVersion: '36' },
+      { platform: 'ios', runtimeVersion: '34' },
     ]);
   });
 

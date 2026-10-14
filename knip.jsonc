@@ -83,6 +83,7 @@
         "scripts/render-computer-session-frame.mjs",
         "scripts/transcript-dates-proof.tsx",
         "scripts/tool-output-sheet-proof.tsx",
+        "scripts/direct-message-picker-proof.tsx",
         "scripts/dm-sheet-proof.tsx",
         "scripts/beeline-mark-proof.tsx",
         "scripts/identity-mark-system-proof.tsx",

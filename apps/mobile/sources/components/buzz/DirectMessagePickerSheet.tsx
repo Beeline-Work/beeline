@@ -9,7 +9,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type { WorkspaceMemberDisplayItem } from '@/buzz/room-view-presentation';
 import { Typography } from '@/constants/Typography';
 import { IdentityMark } from './IdentityMark';
-import { HullActionSheetCancel, HullActionSheetModal } from './HullActionSheet';
+import { HULL_SHEET_INSET, HullActionSheetCancel, HullActionSheetModal } from './HullActionSheet';
 
 type DirectMessagePickerSheetProps = {
   busyPubkey: string | null;
@@ -150,7 +150,7 @@ const styles = StyleSheet.create((theme) => {
       ...Typography.default(),
       ...groknight.type.meta,
       minHeight: 44,
-      marginHorizontal: groknight.space.sm,
+      marginHorizontal: HULL_SHEET_INSET,
       paddingHorizontal: 0,
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: groknight.border,

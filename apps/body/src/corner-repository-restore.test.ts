@@ -18,7 +18,7 @@ import { identityFromKey, stageMonolithAgentRuntime } from './runtime.js';
  * A corner is a code corner exactly when its parent Room has a repository.
  * The restore state carries no lane, and a human-opened corner arrives with an
  * empty objective and no brief: it must still cut a worktree on a feature
- * branch, run the code-corner surface, and be told to write the brief first.
+ * branch, run the code-corner surface, and ask its commander to revise the brief first.
  */
 
 const git = promisify(execFile);
@@ -177,7 +177,7 @@ it('cuts a worktree and runs the code-corner surface for a human corner of a rep
     expect(input.systemPrompt).toContain(`isolated git worktree on ${featureBranch}`);
     // No brief yet: nothing is assigned, so the brief comes before any code.
     expect(cornerHasRepositoryWork(undefined)).toBe(false);
-    expect(input.systemPrompt).toContain('write it with revise_corner_brief first');
+    expect(input.systemPrompt).toContain('report needs-decision: to your commander for its revision first');
     expect(input.systemPrompt).not.toContain('repo-less corner');
     const agentServer = (input.mcpServers ?? []).find((server) => server.name === 'beeline-agent');
     const environment = new Map((agentServer?.env ?? []).map(({ name, value }) => [name, value]));

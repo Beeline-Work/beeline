@@ -83,6 +83,7 @@ async function daemonDoor(
                     },
                   },
                   activity: 'running',
+                  state: 'review',
                   lastMessage: {
                     authorId: 'agent',
                     createdAt: '2026-10-10T00:00:00.000Z',
@@ -503,6 +504,14 @@ describe('private command tools', () => {
       address: CORNER,
     });
   });
+  it('passes the open-only corner filter to the server', async () => {
+    const door = await daemonDoor();
+    const response = await callTool(door.origin, { activeOnly: true }, { name: 'list_corners' });
+    expect(response.result?.isError).not.toBe(true);
+    expect(door.calls).toContainEqual(expect.objectContaining({
+      operation: 'listReachableCorners', roomId: ROOM, activeOnly: true,
+    }));
+  });
   it('reads a listed member corner without posting a message', async () => {
     const door = await daemonDoor();
     const response = await callTool(door.origin, { cornerId: CORNER }, { name: 'inspect_corner' });
@@ -510,6 +519,7 @@ describe('private command tools', () => {
     expect(JSON.parse(response.result!.content[0]!.text)).toEqual({
       cornerId: CORNER,
       lifecycle: 'in-review',
+      state: 'review',
       activity: 'running',
       lastMessage: {
         authorId: 'agent',

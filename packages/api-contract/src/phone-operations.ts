@@ -528,7 +528,7 @@ export type ReportMessageIssueResult = { readonly itemId: string; readonly dupli
 export type MessageBookmarkListResult = { readonly bookmarks: readonly MessageBookmarkView[]; readonly next?: string };
 export type NeedsYouListResult = { readonly items: readonly NeedsYouItemView[] };
 export type NeedsYouCountResult = { readonly count: number };
-export type ClearNeedsYouInput = WorkspaceInput & { readonly messageId: string };
+export type ClearNeedsYouInput = WorkspaceInput & { readonly messageId: string; readonly dismissReminder?: boolean };
 /**
  * Stop one turn in progress.
  *

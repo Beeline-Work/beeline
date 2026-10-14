@@ -86,7 +86,7 @@ async function main() {
     for (const who of [H, SECOND, A, B]) await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
       VALUES($1,NULL,$2,'owner'),($1,$3,$2,'member')`, [W, who, R]);
     const firstCredentials = await auth.exchangeGitHubOidc('alex'), secondCredentials = await auth.exchangeGitHubOidc('sam');
-    await new Promise<void>(resolve => server.listen(18096, '0.0.0.0', resolve));
+    await new Promise<void>(resolve => server.listen(18096, '127.0.0.1', resolve));
     const first = await service.join(R, H);
     client.on(RoomEvent.DataReceived, (bytes, _participant, _kind, topic) => {
       if (topic !== VOICE_DATA_TOPIC) return;

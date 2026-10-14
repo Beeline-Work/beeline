@@ -578,8 +578,11 @@ export type DaemonOperationMap = {
   installConnector: Operation<InstallConnectorInput, WriteResult>;
   postConnectorStatus: Operation<PostConnectorStatusInput, WriteResult>;
   postConnectorVault: Operation<PostConnectorVaultInput, WriteResult>;
-  /** A Squire page of this host showed sign-in controls: drop the agent's recorded signed-in session. */
-  forgetSquireSignIn: Operation<{ readonly url: string }, WriteResult>;
+  /**
+   * A Squire page showed sign-in controls: drop the agent's recorded sign-in
+   * for its site and for the site the session was sent to (`siteUrl`).
+   */
+  forgetSquireSignIn: Operation<{ readonly url: string; readonly siteUrl?: string }, WriteResult>;
   getConnectorStatus: Operation<GetConnectorStatusInput, ConnectorStatus>;
   getConnectorVaultList: Operation<AgentInput, ConnectorVaultListResult>;
   getConnectionDetail: Operation<AgentInput & ConnectionRefInput, ConnectionDetail>;

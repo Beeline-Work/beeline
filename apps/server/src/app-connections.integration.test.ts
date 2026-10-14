@@ -8,6 +8,7 @@ import { PhoneService } from './phone-service.js';
 import { LiveHub } from './live.js';
 import { McpRegistryClient } from './mcp-registry.js';
 import { applyVaultList } from './workbench.js';
+import { recordSquireSignIn } from './squire-machine.js';
 import { beginComposioAppSignIn, connectApp, readOwnerApps, resolveAppRoute, type AppRouteProbes } from './app-connections.js';
 import { APP_FILE_MAXIMUM_BYTES, ComposioApps } from './composio-apps.js';
 import { ObjectService } from './object-service.js';
@@ -424,9 +425,14 @@ describe('connect_app', () => {
       'SELECT squire_work FROM agents WHERE agent_id=$1', [HELPER])).rows[0]!.squire_work;
     expect(Object.keys(work.signedInApps ?? {})).toEqual(['resend']);
     expect(JSON.stringify(work.signedInApps)).not.toMatch(/cookie|token/i);
-    // A later Squire page of the site showing sign-in controls clears the record.
-    await daemon.execute('forgetSquireSignIn', { url: 'https://app.resend.com/emails' }, HELPER);
+    // An OAuth redirect from the app to Google's sign-in page clears the app, not unrelated apps.
+    await recordSquireSignIn(database, HELPER, 'linear', 'linear.app');
+    await daemon.execute('forgetSquireSignIn', { url: 'https://accounts.google.com/signin',
+      siteUrl: 'https://app.resend.com/emails' }, HELPER);
     expect(await daemon.execute('connect', input, HELPER)).toMatchObject({ status: 'needs_approval' });
+    const after = (await database.query<{ squire_work: { signedInApps?: Record<string, unknown> } }>(
+      'SELECT squire_work FROM agents WHERE agent_id=$1', [HELPER])).rows[0]!.squire_work;
+    expect(Object.keys(after.signedInApps ?? {})).toEqual(['linear']);
     console.info('Reproduction squire-session-1: signed-in session -> ready; reused; signed-out page -> re-check');
   });
 

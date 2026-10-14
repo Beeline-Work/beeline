@@ -599,8 +599,8 @@ export class MonolithCornerTurnLoop {
         options.api.execute('endComputerSession', { roomId: options.cornerId, sessionId }).catch(() => {});
       },
       async (lease) => (await options.api.execute('refreshComputerSession', { roomId: options.cornerId, ...lease })).live,
-      (url) => {
-        options.api.execute('forgetSquireSignIn', { url }).catch(() => {});
+      (url, siteUrl) => {
+        options.api.execute('forgetSquireSignIn', { url, ...(siteUrl ? { siteUrl } : {}) }).catch(() => {});
       },
     );
     this.options = { ...options, api: this.commandContext.bind(options.api) };

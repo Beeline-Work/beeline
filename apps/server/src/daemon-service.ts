@@ -1543,10 +1543,13 @@ export class DaemonService {
           input as Input<'postConnectorStatus'>,
           authenticatedAgentId,
         )) as Output<Name>;
-      case 'forgetSquireSignIn':
-        await forgetSquireSignIn(this.database, authenticatedAgentId,
-          { url: String((input as Input<'forgetSquireSignIn'>).url ?? '') });
+      case 'forgetSquireSignIn': {
+        const { url, siteUrl } = input as Input<'forgetSquireSignIn'>;
+        // An OAuth redirect lands on the identity provider; the app is the site the session was sent to.
+        for (const target of [url, siteUrl])
+          if (typeof target === 'string') await forgetSquireSignIn(this.database, authenticatedAgentId, { url: target });
         return this.writeResult() as Output<Name>;
+      }
       case 'postConnectorVault':
         return (await this.connectorVaultReport(
           input as Input<'postConnectorVault'>,

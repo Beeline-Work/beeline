@@ -823,11 +823,33 @@ describe('Squire sign-in evidence', () => {
     await request(relay, 'root', 'turn-one', 'tools/call', { name: 'operate_start',
       arguments: { service_url: 'https://dreamina.capcut.com' } });
     expect(signedOut).toHaveBeenCalledOnce();
-    expect(signedOut).toHaveBeenCalledWith('https://dreamina.capcut.com/ai-tool/home');
+    expect(signedOut).toHaveBeenCalledWith('https://dreamina.capcut.com/ai-tool/home', 'https://dreamina.capcut.com');
     rows = [['@e:2', 'b', '@credits'], ['@e:3', 'b', '@sign-in-history']];
     await request(relay, 'root', 'turn-one', 'tools/call', { name: 'operate_observe',
       arguments: { session_id: 'browser-1' } });
     expect(signedOut).toHaveBeenCalledOnce();
+  });
+
+  it('names the site a session was sent to when an OAuth redirect shows sign-in', async () => {
+    const signedOut = vi.fn();
+    const page = (url: string, rows: unknown[][]) => ({ content: [{ type: 'text', text: JSON.stringify({
+      url, session_id: 'browser-1', safe_table: rows }) }] });
+    const answers = [page('https://dreamina.capcut.com/ai-tool/asset', [['@e:1', 'b', '@credits']]),
+      page('https://accounts.google.com/signin', [['@e:2', 'b', '@sign-in|a=login']])];
+    const relay = new SquireTaskRelay('agent', 'room', '/tmp/context', async () => true, homedir(), () => ({
+      pid: 3002,
+      requestMcp: vi.fn(async () => answers.shift()),
+      close: () => {},
+    } as unknown as StdioSquireMcpClient), undefined, undefined, undefined, signedOut);
+    relays.push(relay);
+    relay.activate(command('root', 'turn-one'), 'generation');
+    await request(relay, 'root', 'turn-one', 'tools/call', { name: 'operate_start',
+      arguments: { service_url: 'https://dreamina.capcut.com/ai-tool/asset' } });
+    expect(signedOut).not.toHaveBeenCalled();
+    await request(relay, 'root', 'turn-one', 'tools/call', { name: 'operate_click',
+      arguments: { session_id: 'browser-1', ref: '@e:1' } });
+    expect(signedOut).toHaveBeenCalledWith('https://accounts.google.com/signin',
+      'https://dreamina.capcut.com/ai-tool/asset');
   });
 
   it('reads a Squire login page as signed out', () => {

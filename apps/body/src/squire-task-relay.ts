@@ -145,8 +145,12 @@ export class SquireTaskRelay {
     private readonly onApprovalDecided: (decision: SquireApprovalDecision) => void = () => {},
     private readonly onSessionEnded: (sessionId: string) => void = () => {},
     onShareRenewed: (lease: SquireShareLease) => Promise<boolean> = async () => false,
-    /** A Squire page showed sign-in controls: its site's recorded sign-in is stale. */
-    private readonly onSignedOut: (url: string) => void = () => {},
+    /**
+     * A Squire page showed sign-in controls: its site's recorded sign-in is
+     * stale. `siteUrl` is the page the session was sent to, so an OAuth
+     * redirect to an identity provider still names the app.
+     */
+    private readonly onSignedOut: (url: string, siteUrl?: string) => void = () => {},
   ) {
     this.shareRenewals = new SquireShareRenewals(
       (id, client) => !this.closed && squireSessionOwner(id)?.client === client,
@@ -155,8 +159,11 @@ export class SquireTaskRelay {
     );
   }
 
+  /** The URL each live session was last sent to with operate_start, operate_navigate or operate_drive. */
+  private readonly sessionSites = new Map<string, string>();
+
   private ended(ids: Iterable<string>): void {
-    for (const id of ids) { this.shareRenewals.stop(id); this.onSessionEnded(id); }
+    for (const id of ids) { this.shareRenewals.stop(id); this.sessionSites.delete(id); this.onSessionEnded(id); }
   }
 
   async listen(): Promise<{ url: string; token: string; contextFile: string }> {
@@ -472,8 +479,16 @@ export class SquireTaskRelay {
       // owning relay; only its schedule lineage is recorded here.
       if (this.activeScheduleId)
         for (const id of requestedIds) tagSquireSessionSchedule(id, this.activeScheduleId);
-      const signedOutUrl = input.method === 'tools/call' ? squireSignedOutUrl(result) : undefined;
-      if (signedOutUrl) this.onSignedOut(signedOutUrl);
+      if (input.method === 'tools/call') {
+        const args = input.params?.arguments as Record<string, unknown> | undefined;
+        const ids = requestedIds.length ? requestedIds : sessionIds(result);
+        const target = typeof args?.service_url === 'string' ? args.service_url
+          : typeof args?.url === 'string' ? args.url : undefined;
+        if (target) for (const id of ids) this.sessionSites.set(id, target);
+        const signedOutUrl = squireSignedOutUrl(result);
+        if (signedOutUrl)
+          this.onSignedOut(signedOutUrl, ids.map((id) => this.sessionSites.get(id)).find(Boolean));
+      }
       if (safeToolName === 'operate_share' && requestedIds.length === 1)
         this.shareRenewals.track(requestedIds[0]!, callClient, result);
       const approval = input.method === 'tools/call' && squireApprovalFromMcp(

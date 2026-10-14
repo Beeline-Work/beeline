@@ -1,0 +1,67 @@
+{
+  "engine": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.5 Safari/605.1.15",
+  "speech": "undefined",
+  "prefixedSpeech": "undefined",
+  "recorder": "undefined",
+  "audioContext": "function",
+  "openingCaptures": 0,
+  "micVisible": true
+}
+[req] POST /v1/phone/transcriptions
+[req] POST /v1/phone/transcriptions
+{
+  "uploads": [
+    {
+      "bytes": 116540,
+      "signature": "RIFF",
+      "prompt": "Beeline, Jellybean",
+      "language": "en"
+    },
+    {
+      "bytes": 14652,
+      "signature": "RIFF",
+      "prompt": "Beeline, Jellybean",
+      "language": "en"
+    }
+  ],
+  "providerUploads": [
+    {
+      "bytes": 116540,
+      "mime": "audio/wav",
+      "model": "whisper-large-v3-turbo",
+      "prompt": "Beeline, Jellybean",
+      "nonzeroAudio": true
+    },
+    {
+      "bytes": 14652,
+      "mime": "audio/wav",
+      "model": "whisper-large-v3-turbo",
+      "prompt": "Beeline, Jellybean",
+      "nonzeroAudio": true
+    }
+  ],
+  "requests": [
+    {
+      "audio": {
+        "echoCancellation": true,
+        "noiseSuppression": true,
+        "channelCount": 1
+      },
+      "video": false
+    },
+    {
+      "audio": {
+        "echoCancellation": true,
+        "noiseSuppression": true,
+        "channelCount": 1
+      },
+      "video": false
+    }
+  ],
+  "tracks": [
+    "ended",
+    "ended"
+  ],
+  "remainingRecordingURLs": 0
+}
+RESULT PASS: WebKit captured generated audio, uploaded WAV through the real server, inserted text, edited and sent; explicit stop sent the second take; provider and physical mic mocked

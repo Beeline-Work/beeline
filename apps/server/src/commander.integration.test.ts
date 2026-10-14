@@ -1,3 +1,4 @@
+import { flushDueCommanderWakes } from './commander-wakes.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
 import { advanceCorner } from './corner-lifecycle.js';
 import { randomUUID, randomBytes } from 'node:crypto';
@@ -51,11 +52,15 @@ const claim = (command: AgentCommand) => daemon.execute('claimAgentCommand', {
 }, command.agentId);
 const authority = (command: AgentCommand) => ({ roomId: command.roomId,
   requestId: command.turnRequestId, generationId: 'proof-generation' });
-const commands = (roomId: string, agentId: string) => readAgentCommands(db, roomId, agentId).then(r => r.commands);
+const commands = async (roomId: string, agentId: string) => {
+  await db.query(`UPDATE agent_commands SET wake_after=now() WHERE wake_after IS NOT NULL`);
+  await flushDueCommanderWakes(db);
+  return (await readAgentCommands(db, roomId, agentId)).commands;
+};
 async function open() {
   return daemon.execute('createCorner', { ...authority(order), requestId: order.turnRequestId,
     targetRoomId: ROOM, name: 'Widget', objective: 'Build the widget', implementer: 'worker',
-    brief: { spec: 'Build the widget', approval: { sourceMessageId: order.sourceMessageId } },
+    brief: { spec: 'Build the widget', repositoryWork: false, approval: { sourceMessageId: order.sourceMessageId } },
   }, RUBY);
 }
 async function worker(cornerId: string) {
@@ -73,7 +78,7 @@ it('opens in an unrelated member Room from a DM and records the caller as comman
 });
 it('delivers blocked privately to Ruby and Ruby orders the current worker privately', async () => {
   const opened = await open(), turn = await worker(opened.cornerId);
-  await daemon.execute('report', { ...authority(turn), text: 'blocked: need an endpoint decision' }, WORKER);
+  await daemon.execute('report', { status: 'blocked', ...authority(turn), text: 'blocked: need an endpoint decision' }, WORKER);
   const report = (await commands(DM, RUBY)).find(c => c.reason === 'report')!;
   expect(report).toMatchObject({ private: true, source: { authorId: WORKER, body: 'blocked: need an endpoint decision' } });
   await claim(report);
@@ -85,19 +90,19 @@ it('delivers blocked privately to Ruby and Ruby orders the current worker privat
 });
 it.each(['needs-decision: choose the product scope', 'needs-decision: choose the product scope @captain'])('Ruby posts exactly her report text in the original DM: %s', async (text) => {
   const opened = await open(), turn = await worker(opened.cornerId);
-  await daemon.execute('report', { ...authority(turn), text, ask: 'Which product scope should we use?' }, WORKER);
+  await daemon.execute('report', { status: text.split(':')[0]!.replace('-', '_') as import('@beeline/api-contract/daemon').AgentReportStatus, ...authority(turn), text, ask: 'Which product scope should we use?' }, WORKER);
   const report = (await commands(DM, RUBY)).find(c => c.reason === 'report')!;
   await claim(report);
-  await daemon.execute('report', { ...authority(report), text, ask: 'Which product scope should we use?' }, RUBY);
+  await daemon.execute('report', { status: text.split(':')[0]!.replace('-', '_') as import('@beeline/api-contract/daemon').AgentReportStatus, ...authority(report), text, ask: 'Which product scope should we use?' }, RUBY);
   const rows = (await db.query(`SELECT room_id,author_id,text,card FROM messages WHERE text=$1`,
     [text])).rows;
   expect(rows).toEqual([{ room_id: DM, author_id: RUBY, text, card: { ask: 'Which product scope should we use?' } }]);
   expect((await phone.readRoom(DM, HUMAN))?.messages.some(m => m.text === rows[0]!.text)).toBe(true);
 });
 it('accepts needs-decision without an ask and validates optional asks', async () => {
-  const reported = await daemon.execute('report', { ...authority(order), text: 'needs-decision: Which scope should we use? @captain' }, RUBY);
+  const reported = await daemon.execute('report', { status: 'needs_decision', ...authority(order), text: 'needs-decision: Which scope should we use? @captain' }, RUBY);
   expect((await phone.execute('readNeedsYou', { workspaceId: WS }, HUMAN)).items.find(item => item.messageId === reported.id)?.text).toBe('Which scope should we use?');
-  await expect(daemon.execute('report', { ...authority(order), text: 'needs-decision: pick scope', ask: '**Which scope?**' }, RUBY)).rejects.toThrow('plain text');
+  await expect(daemon.execute('report', { status: 'needs_decision', ...authority(order), text: 'needs-decision: pick scope', ask: '**Which scope?**' }, RUBY)).rejects.toThrow('plain text');
 });
 it('nested Room orders forward reports one commander at a time before reaching the human', async () => {
   const otherRoom = randomUUID();
@@ -111,15 +116,15 @@ it('nested Room orders forward reports one commander at a time before reaching t
   const childOrder = (await commands(otherRoom, RUBY)).find(c => c.reason === 'order')!;
   await claim(childOrder);
   const text = 'needs-decision: select the final scope';
-  await daemon.execute('report', { ...authority(childOrder), text, ask: 'Which product scope should we use?' }, RUBY);
+  await daemon.execute('report', { status: text.split(':')[0]!.replace('-', '_') as import('@beeline/api-contract/daemon').AgentReportStatus, ...authority(childOrder), text, ask: 'Which product scope should we use?' }, RUBY);
   const managerReport = (await commands(ROOM, WORKER)).find(c => c.reason === 'report')!;
   await claim(managerReport);
-  await daemon.execute('report', { ...authority(managerReport), text, ask: 'Which product scope should we use?' }, WORKER);
+  await daemon.execute('report', { status: text.split(':')[0]!.replace('-', '_') as import('@beeline/api-contract/daemon').AgentReportStatus, ...authority(managerReport), text, ask: 'Which product scope should we use?' }, WORKER);
   const rubyReport = (await commands(DM, RUBY)).find(c => c.reason === 'report')!;
   expect(rubyReport).toMatchObject({ private: true, source: { authorId: WORKER, body: text } });
   expect((await db.query(`SELECT 1 FROM messages WHERE text=$1`, [text])).rowCount).toBe(0);
   await claim(rubyReport);
-  await daemon.execute('report', { ...authority(rubyReport), text, ask: 'Which product scope should we use?' }, RUBY);
+  await daemon.execute('report', { status: text.split(':')[0]!.replace('-', '_') as import('@beeline/api-contract/daemon').AgentReportStatus, ...authority(rubyReport), text, ask: 'Which product scope should we use?' }, RUBY);
   expect((await db.query(`SELECT room_id,author_id FROM messages WHERE text=$1`, [text])).rows)
     .toEqual([{ room_id: DM, author_id: RUBY }]);
 });
@@ -175,7 +180,7 @@ it('schedules, check events and chatter in the corner never wake a watcher', asy
     [randomBytes(32).toString('hex'), opened.cornerId, WORKER]);
   expect((await commands(DM, RUBY)).map(c => c.id)).toEqual(before);
 });
-it('an ordered corner turn shows its live work in the corner; its final reply stays a private report', async () => {
+it('an ordered corner turn keeps live work and progress in the corner', async () => {
   const opened = await open(), turn = await worker(opened.cornerId);
   const before = (await db.query(`SELECT id FROM messages`)).rows.length;
   const live = new LiveHub(), seen: unknown[] = [];
@@ -197,8 +202,8 @@ it('an ordered corner turn shows its live work in the corner; its final reply st
   expect(row?.activity).toEqual([expect.objectContaining({ kind: 'tool', title: 'Read widget.ts' })]);
   await watched.execute('postRoomMessage', { ...authority(turn), text: 'private final output' }, WORKER);
   await watched.execute('postAgentTurnReceipt', { ...authority(turn), agentId: WORKER, status: 'complete', completionKind: 'no-reply' }, WORKER);
-  expect((await db.query(`SELECT 1 FROM messages WHERE text='private final output'`)).rowCount).toBe(0);
-  expect((await db.query(`SELECT id FROM messages`)).rows).toHaveLength(before + 1);
+  expect((await db.query(`SELECT 1 FROM messages WHERE text='private final output'`)).rowCount).toBe(1);
+  expect((await db.query(`SELECT id FROM messages`)).rows).toHaveLength(before + 2);
   expect((await commands(opened.cornerId, WORKER))).toEqual([]);
 });
 it('a private order to a Room keeps its drafts and activity out of that Room', async () => {
@@ -215,7 +220,7 @@ it('a private order to a Room keeps its drafts and activity out of that Room', a
 it('reconnect recovery keeps every private report, even when each was queued offline', async () => {
   const opened = await open(), turn = await worker(opened.cornerId);
   for (const text of ['blocked: missing input', 'failed: build stopped', 'needs-decision: select scope'])
-    await daemon.execute('report', { ...authority(turn), text, ask: 'Which product scope should we use?' }, WORKER);
+    await daemon.execute('report', { status: text.split(':')[0]!.replace('-', '_') as import('@beeline/api-contract/daemon').AgentReportStatus, ...authority(turn), text, ask: 'Which product scope should we use?' }, WORKER);
   await db.query(`UPDATE agent_commands SET created_offline=true,created_at=now()-interval '10 minutes' WHERE reason='report'`);
   expect((await commands(DM, RUBY)).filter(c => c.reason === 'report')).toHaveLength(3);
   expect((await commands(DM, RUBY)).filter(c => c.reason === 'report')).toHaveLength(3);
@@ -238,7 +243,7 @@ it('prepares the first brief of a human-opened corner from a member DM', async (
   const opened = await phone.execute('createHumanCorner', { roomId: ROOM, title: 'Widget' }, HUMAN);
   await expect(daemon.execute('renameCorner', { ...authority(order), cornerId: opened.id,
     name: 'Prepared', objective: 'Build the widget',
-    brief: { spec: 'Build the widget', approval: { sourceMessageId: order.sourceMessageId } } }, RUBY))
+    brief: { spec: 'Build the widget', repositoryWork: false, approval: { sourceMessageId: order.sourceMessageId } } }, RUBY))
     .resolves.toMatchObject({ name: 'Prepared' });
 });
 it('private order IDs authorize child briefs without storing private text as messages', async () => {
@@ -251,7 +256,7 @@ it('private order IDs authorize child briefs without storing private text as mes
 });
 it('opening from a report resumes the original order instead of treating the report as approval', async () => {
   const opened = await open(), turn = await worker(opened.cornerId);
-  await daemon.execute('report', { ...authority(turn), text: 'done: widget ready for the next step' }, WORKER);
+  await daemon.execute('report', { status: 'done', ...authority(turn), text: 'done: widget ready for the next step' }, WORKER);
   const report = (await commands(DM, RUBY)).find(c => c.reason === 'report')!;
   await claim(report);
   const next = await daemon.execute('createCorner', { ...authority(report), targetRoomId: ROOM,

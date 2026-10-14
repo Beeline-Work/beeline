@@ -1,4 +1,5 @@
 import { stripVoiceEmotion } from './voice-emotion.js';
+import { markdownToSpeech, MarkdownSpeechStream } from './markdown-to-speech.js';
 import { AccessToken } from 'livekit-server-sdk';
 import { Room, RoomEvent, AudioStream, AudioSource, AudioFrame, LocalAudioTrack,
   TrackPublishOptions, TrackSource, TrackKind, type RemoteParticipant, type RemoteTrack } from '@livekit/rtc-node';
@@ -6,16 +7,8 @@ import { VOICE_DATA_TOPIC, type VoiceSignal } from '@beeline/api-contract/phone'
 import type { VoiceService } from './voice-service.js';
 import { VOICE_SAMPLE_RATE, VoiceQuotaError, type VoiceAgent, type VoiceStt, type FluxEvent } from './voice-providers.js';
 
-export function namedVoiceTarget(text: string, agents: readonly VoiceAgent[], selected?: string, humans = 1): VoiceAgent | undefined {
-  const named = agents.map(agent => ({ agent, at: [agent.name, agent.handle].reduce((first, name) => {
-    if (!name.trim()) return first;
-    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const match = new RegExp(`(?<![\\p{L}\\p{N}_])@?${escaped}(?![\\p{L}\\p{N}_])`, 'iu').exec(text);
-    return match ? Math.min(first, match.index) : first;
-  }, Infinity) })).sort((a, b) => a.at - b.at);
-  if (named[0]?.at !== undefined && named[0].at !== Infinity) return named[0].agent;
-  return humans === 1 ? agents.find(a => a.id === selected) ?? agents[0] : undefined;
-}
+import { namedVoiceTarget } from './voice-target.js';
+export { namedVoiceTarget } from './voice-target.js';
 
 const speechWords = (text: string) => stripVoiceEmotion(text).toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
 
@@ -33,7 +26,7 @@ export function confirmedVoiceSpeech(event: FluxEvent): boolean {
 export function voicePlaybackEcho(transcript: string, playback: string): boolean {
   const words = speechWords(transcript), spoken = speechWords(playback);
   if (!words.length) return false;
-  if (words.length === 1) return spoken.length === 1 && words[0] === spoken[0];
+  if (/^(stop|wait|pause|cancel|no)$/.test(words.join(' '))) return false;
   return spoken.some((_, at) => words.every((word, i) => spoken[at + i] === word));
 }
 
@@ -47,6 +40,7 @@ export class VoiceRoomRuntime {
   private readonly targets = new Map<string, string>();
   private readonly turnIndices = new Map<string, number>();
   private readonly inputVersions = new Map<string, number>();
+  private readonly inputSpeech = new Map<string, { turn: number; playback: Set<string> }>();
   private speaking?: AbortController;
   private speechIdle = Promise.resolve();
   private timer?: ReturnType<typeof setInterval>;
@@ -128,10 +122,22 @@ export class VoiceRoomRuntime {
       stt = await this.service.config.stt(event => {
       if (this.inputVersions.get(human) !== version ||
           event.turn_index <= (this.turnIndices.get(human) ?? -1)) return;
-      if (!confirmedVoiceSpeech(event)) return;
       const recent = this.recentSpeech.filter(spoken => spoken.until > performance.now());
-      if (voicePlaybackEcho(event.transcript, recent.map(spoken => spoken.text).join(' ')) ||
-          recent.some(spoken => voicePlaybackEcho(event.transcript, spoken.text))) return;
+      let input = this.inputSpeech.get(human);
+      if (input?.turn !== event.turn_index) {
+        input = { turn: event.turn_index, playback: new Set() };
+        this.inputSpeech.set(human, input);
+      }
+      for (const spoken of recent) input.playback.add(spoken.text);
+      const context = [...input.playback].join(' ');
+      // Retain a turn's echo context through its final, even after playout
+      // ends. Missing confidence must not make a short playback noise valid.
+      const acknowledgment = /^(hey|yeah|yes|yep|okay|ok|uh|huh|hmm)$/.test(speechWords(event.transcript).join(' '));
+      if (!confirmedVoiceSpeech(event) || voicePlaybackEcho(event.transcript, context) ||
+          (context && acknowledgment && !event.words?.length)) {
+        if (event.event === 'EndOfTurn') this.turnIndices.set(human, event.turn_index);
+        return;
+      }
       // Partial recognized names can aim the strip immediately; only EndOfTurn dispatches.
       if (event.event !== 'EndOfTurn') void this.aimSpokenName(human, event.transcript, version);
       this.speaking?.abort(); this.audio.clearQueue();
@@ -164,6 +170,7 @@ export class VoiceRoomRuntime {
   }
   private stopInput(human: string) {
     this.inputVersions.set(human, (this.inputVersions.get(human) ?? 0) + 1);
+    this.inputSpeech.delete(human);
     const input = this.inputs.get(human);
     if (!input) return;
     this.inputs.delete(human); input.stt?.close(); void input.reader.cancel().catch(() => {});
@@ -205,7 +212,8 @@ export class VoiceRoomRuntime {
     this.speechIdle = new Promise<void>(resolve => { finishSpeech = resolve; });
     const key = `${human}:${agent.id}`;
     let history = this.history.get(key)?.map(message => ({ ...message }));
-    let pending = ''; let receivedText = ''; let persisted = false; let firstAudio = false; let speechQueue = Promise.resolve();
+    const speechText = new MarkdownSpeechStream();
+    let receivedText = ''; let persisted = false; let handedOff = false; let firstAudio = false; let speechQueue = Promise.resolve();
     try {
       if (!history) {
         const rows = await this.service.db.query<{ text: string; author_id: string }>(
@@ -230,30 +238,32 @@ export class VoiceRoomRuntime {
       };
       const reply = await this.service.config.brain.answer(agent, history, delta => {
         receivedText += delta;
-        pending += delta;
-        // Start synthesis on the first clause rather than waiting for the whole reply.
-        let match: RegExpExecArray | null;
-        while ((match = /[.!?,;:]\s+/.exec(pending))) {
-          flush(pending.slice(0, match.index + 1)); pending = pending.slice(match.index + match[0].length);
-        }
+        for (const phrase of speechText.push(delta)) flush(phrase);
       }, controller.signal);
-      if (reply.order) await this.service.dispatch(this.callId, sourceId, agent.id);
+      if (reply.order) {
+        // The ordinary command owns the visible reply after this handoff.
+        // Keep the spoken acknowledgement out of the message ledger.
+        handedOff = true;
+        await this.service.dispatch(this.callId, sourceId, agent.id);
+      }
       const answer = reply.text || (reply.order ? "I’ll work on that and tell you when I’m done." : '');
       // The final receipt may include a suffix absent from streamed deltas.
-      if (!reply.text || !receivedText.trim()) pending = answer;
-      else if (answer.startsWith(receivedText)) pending += answer.slice(receivedText.length);
-      await this.service.recordAnswer(this.roomId, agent.id, answer);
-      persisted = true;
+      if (!reply.text || !receivedText.trim()) { speechText.finish(); flush(answer); }
+      else if (answer.startsWith(receivedText)) speechText.push(answer.slice(receivedText.length)).forEach(flush);
+      if (!handedOff) {
+        await this.service.recordAnswer(this.roomId, agent.id, answer);
+        persisted = true;
+      }
       history.push({ role: 'assistant', content: answer });
       this.history.set(key, history.slice(-16));
-      flush(pending); await speechQueue;
+      flush(speechText.finish()); await speechQueue;
     } finally {
       if (this.speaking === controller) {
         this.speaking = undefined; finishSpeech();
         await this.signal({ type: 'speaker', agentId: null });
       } else finishSpeech();
       // A barge-in may interrupt generation after a clause was already heard.
-      if (!persisted && receivedText.trim()) await this.service.recordAnswer(this.roomId, agent.id, receivedText.trim());
+      if (!handedOff && !persisted && receivedText.trim()) await this.service.recordAnswer(this.roomId, agent.id, receivedText.trim());
     }
   }
 
@@ -309,6 +319,8 @@ export class VoiceRoomRuntime {
   }
 
   private async play(text: string, agent: VoiceAgent, signal: AbortSignal, onFirstAudio?: () => void) {
+    text = markdownToSpeech(text);
+    if (!text) return;
     let pending = Buffer.alloc(0); let first = true;
     // 20ms mono frames. Carry odd byte boundaries between provider chunks.
     const frameBytes = VOICE_SAMPLE_RATE / 50 * 2;

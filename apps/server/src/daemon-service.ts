@@ -628,9 +628,10 @@ export class DaemonService {
                 allowCompleted,
               );
         // A corner is the ordered work's own address: its viewers watch the
-        // turn's draft, thoughts and tool rows there. Only the final prose
-        // becomes the private report.
-        if (command.private_payload && (name === 'postRoomMessage' || ([
+        // turn's live work and progress there. Urgent terminal prose still
+        // reports privately; done uses the explicit guarded report tool.
+        if (command.private_payload && ((name === 'postRoomMessage' && (/^(blocked|failed|needs-decision):\s*\S/.test(String(candidate.text ?? '')) || !(await db.query(
+          `SELECT 1 FROM corner_facts WHERE corner_id=$1`, [scopedRoom])).rowCount)) || ([
           'postAgentDraft', 'postAgentThought', 'postAgentActivity',
         ].includes(name) && !(await db.query(
           `SELECT 1 FROM corner_facts WHERE corner_id=$1`, [scopedRoom])).rowCount))) {
@@ -1030,6 +1031,7 @@ export class DaemonService {
         this.live.publish({ type: 'invalidate', roomId: scopedRoom!, reason: 'turn', agentId: authenticatedAgentId });
         return { ...this.writeResult(),
           ...(claimed.row.recovery_context ? { recoveryContext: claimed.row.recovery_context } : {}),
+          ...(claimed.row.coalesced_context ? { coalescedContext: claimed.row.coalesced_context } : {}),
           ...(claimed.activity ? { activitySource: { body: claimed.activity.text, systemEvent: claimed.activity.system_event } } : {}),
         } as Output<Name>;
       }
@@ -1069,7 +1071,7 @@ export class DaemonService {
       case 'report': {
         const ask = candidate.ask === undefined
           ? undefined : normalizeTrayAsk(candidate.ask);
-        return await this.report(String(candidate.text), authenticatedAgentId, this.authorizedCommand!, this.database, false, ask) as Output<Name>;
+        return await this.report(String(candidate.text), authenticatedAgentId, this.authorizedCommand!, this.database, false, candidate.status, ask) as Output<Name>;
       }
       case 'read': {
         const target = await commandAddress(this.database, String(candidate.address), authenticatedAgentId, true);
@@ -5552,7 +5554,29 @@ export class DaemonService {
     );
     return this.writeResult();
   }
-  private async report(text: string, agentId: string, command = this.authorizedCommand!, database = this.database, automatic = false, ask?: string) {
+  private async report(text: string, agentId: string, command = this.authorizedCommand!, database = this.database, automatic = false, status?: unknown, ask?: string) {
+    const prefix = text.match(/^(done|blocked|failed|needs-decision):\s*\S/)?.[1];
+    if (!automatic && (!['done', 'blocked', 'failed', 'needs_decision'].includes(String(status)) ||
+      String(status).replace('_', '-') !== prefix)) {
+      throw new CommandRefusalError('report requires status done, blocked, failed, or needs_decision matching its text prefix', 400);
+    }
+    if (prefix === 'done') {
+      const corner = (await database.query<{ worker: string; merged: boolean; has_pr: boolean }>(
+        `SELECT ${cornerImplementerSql('fact', 'room')} worker,
+          fact.lifecycle->'pr'->>'number' IS NOT NULL has_pr,
+          (fact.lifecycle->>'lifecycle'='landed' OR fact.lifecycle->'pr'->>'mergeCommitSha' IS NOT NULL) merged
+         FROM rooms room JOIN corner_facts fact ON fact.corner_id=room.id WHERE room.id=$1`,
+        [command.room_id])).rows[0];
+      if (corner?.worker === agentId && !corner.merged) {
+        const brief = await currentCornerBrief(database, command.room_id);
+        if (brief?.repositoryWork !== false) {
+          const gate = corner.has_pr ? await this.prChecksStatus?.({ cornerId: command.room_id }) : undefined;
+          if (!gate?.mergeAllowed) throw new CommandRefusalError(
+            'done requires a merge-ready or merged PR; post progress in the corner instead (non-PR deliverables require repositoryWork false)', 409);
+        }
+      }
+    }
+
     const pending = (await database.query<{ id: string; url: string; name: string; mime_type: string; size: number }>(
       `WITH RECURSIVE chain AS (
          SELECT * FROM agent_commands WHERE id=$1

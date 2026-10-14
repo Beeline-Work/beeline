@@ -240,7 +240,8 @@ afterEach(() => {
   act(() => renderers.splice(0).forEach((r) => r.unmount()));
 });
 
-it('holds the existing mic to enter voice mode without starting a dictation take on release', () => {
+it.each(['android', 'ios', 'web'])('holds the existing mic on %s to enter voice mode without starting a dictation take on release', (platform) => {
+  platformSetter.setOS(platform);
   const join = vi.fn();
   const { renderer } = render({ voice: { call: null, connecting: false, join } });
   const mic = renderer.root.findByProps({ testID: 'chat-mic' });

@@ -49,11 +49,14 @@ describe('the catch-up sheet', () => {
     expect(sheet).not.toContain('filter(');
   });
 
-  it('CHEV-10: the disc is 44 and its lift stays derived from the turn line', () => {
+  it('CHEV-10: the disc is 44 and phone lift follows the actual status slot', () => {
     expect(controls).toContain('const DISC_SIZE = 44');
     expect(controls).toContain(
       'bottom: 4 + TURN_LINE_ROW_MIN_HEIGHT + TURN_LINE_BAR_MARGIN_BOTTOM,',
     );
+    expect(controls).toContain('{ bottom: bottomInset + 4 }');
+    expect(surface).toContain('<TurnBandSlot testID="hanging-turn-chrome" onTopInset={');
+    expect(surface).toContain('bottomInset={!desktopExperience && !isArchived ? turnChromeTopInset : undefined}');
     // The literal that number happens to evaluate to has already moved once.
     expect(controls).not.toMatch(/bottom:\s*\d+,/);
     // A counter capped at 9+, drawn only while it counts something — and on

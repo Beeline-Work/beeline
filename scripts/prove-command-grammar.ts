@@ -20,6 +20,7 @@ const built = (area: string, file: string) => pathToFileURL(resolve(`apps/${area
 
 async function main() {
   const { migrate } = await import(built('server', 'database.js')) as typeof import('../apps/server/src/database.js');
+  const { flushDueCommanderWakes } = await import(built('server', 'commander-wakes.js')) as typeof import('../apps/server/src/commander-wakes.js');
   const { TokenAuth } = await import(built('server', 'auth.js')) as typeof import('../apps/server/src/auth.js');
   const { PhoneService } = await import(built('server', 'phone-service.js')) as typeof import('../apps/server/src/phone-service.js');
   const { DaemonService } = await import(built('server', 'daemon-service.js')) as typeof import('../apps/server/src/daemon-service.js');
@@ -161,8 +162,10 @@ async function main() {
     subscribe(workerApi, corner, workerPush);
     const worker = await pushed(WORKER, command => command.reason === 'corner_objective');
     await claim(worker, workerToken);
+    await assert.rejects(mcp(worker, 'report', { status: 'done', text: 'done: PR opened, tests running' }), /post progress in the corner/);
+    console.log('PASS FR-report: built report tool refuses unready done without waking Ruby');
     const blockedPush = pushed(RUBY, command => command.reason === 'report' && command.source.body.startsWith('blocked:'));
-    await mcp(worker, 'report', { text: 'blocked: need an endpoint decision' });
+    await mcp(worker, 'report', { status: 'blocked', text: 'blocked: need an endpoint decision' });
     const blocked = await blockedPush;
     assert.equal(blocked.private, true);
     await claim(blocked);
@@ -170,12 +173,12 @@ async function main() {
     await mcp(blocked, 'order', { address: corner, text: 'Use the new endpoint' });
     assert.equal((await orderPush).private, true);
     console.log('PASS: private blocked report and private return order arrive through live sockets');
-    await mcp(blocked, 'report', { text: 'needs-decision: choose the endpoint policy' });
+    await mcp(blocked, 'report', { status: 'needs_decision', text: 'needs-decision: choose the endpoint policy' });
     const humanView = await phoneRoom(DM);
     assert.ok(humanView.messages.some(message => message.text === 'needs-decision: choose the endpoint policy'));
     console.log('PASS report-tags-1: an untagged report appears unchanged in the captain’s originating DM');
     const taggedText = `needs-decision: choose the endpoint policy @${humanView.viewer.identity.handle}`;
-    await mcp(blocked, 'report', { text: taggedText });
+    await mcp(blocked, 'report', { status: 'needs_decision', text: taggedText });
     assert.ok((await phoneRoom(DM)).messages.some(message => message.text === taggedText));
     console.log('PASS report-tags-1: an agent-written human mention is preserved exactly once');
     const before = rubyPush.size;
@@ -205,8 +208,11 @@ async function main() {
     await github.processWebhook('pull_request', { installation: { id: 77 }, repository: { id: 101, full_name: 'owner/widgets' }, action: 'closed',
       pull_request: { number: 42, title: 'Widget', html_url: 'https://github.com/owner/widgets/pull/42', merged: true,
         merge_commit_sha: '8'.repeat(40), head: { ref: branch, sha: '9'.repeat(40) }, base: { ref: 'main' } } });
+    assert.equal((await rubyApi.execute('getAgentCommands', { roomId: DM })).commands.some(command => command.reason === 'watched_corner'), false);
+    await db.query(`UPDATE agent_commands SET wake_after=now()-interval '1 second' WHERE wake_after IS NOT NULL`);
+    await flushDueCommanderWakes(db);
     assert.equal((await mergePush).private, true);
-    console.log('PASS: a real merge webhook delivers a private corner lifecycle wake to Ruby');
+    console.log('PASS FR-batch: a real merge webhook is withheld until the durable window expires, then delivers privately through the live socket');
     for (const room of [ROOM, DM, corner]) {
       const view = await phoneRoom(room);
       for (const text of ['blocked: need an endpoint decision', 'Use the new endpoint'])

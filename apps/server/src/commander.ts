@@ -61,32 +61,21 @@ export async function commandAddress(
   return row;
 }
 
-/** Delegation follows opening command provenance, not the UI Room parent. */
+/** Corner orders stay among corners in the same top-level Room. */
 export async function assertCornerCommandTarget(
-  db: SqlDatabase, sourceRoomId: string, targetRoomId: string, directChildOnly = false,
+  db: SqlDatabase, sourceRoomId: string, targetRoomId: string,
 ) {
   const source = (await db.query<{ parent_id: string | null }>(
     `SELECT parent_id FROM rooms WHERE id=$1`, [sourceRoomId],
   )).rows[0];
   if (!source?.parent_id) return;
-  if (!directChildOnly && targetRoomId === sourceRoomId) return;
   const allowed = await db.query(
-    `WITH RECURSIVE openings AS (
-       SELECT DISTINCT ON (opened.room_id) opened.room_id,parent.room_id caller
-       FROM agent_commands opened JOIN agent_commands parent ON parent.id=opened.parent_command_id
-       WHERE opened.reason='corner_objective'
-       ORDER BY opened.room_id,opened.created_at,opened.id
-     ), descendants AS (
-       SELECT room_id FROM openings WHERE caller=$1
-       UNION SELECT child.room_id FROM openings child JOIN descendants parent
-         ON child.caller=parent.room_id WHERE NOT $3::boolean
-     ) SELECT 1 FROM descendants JOIN rooms room ON room.id=descendants.room_id
-       WHERE room.id::text=$2 AND room.parent_id IS NOT NULL LIMIT 1`,
-    [sourceRoomId, targetRoomId, directChildOnly],
+    `SELECT 1 FROM rooms WHERE id::text=$1 AND parent_id=$2 AND id<>$3`,
+    [targetRoomId, source.parent_id, sourceRoomId],
   );
   if (!allowed.rowCount)
     throw new CommandRefusalError(
-      'Corners cannot order outside their own child corners. Report to your commander instead.', 403,
+      'Corners cannot order up or out of their Room. Report to your commander instead.', 403,
     );
 }
 
@@ -106,7 +95,7 @@ export async function sendOrder(
     throw new CommandRefusalError('order text must be 1 to 16000 characters', 400);
   const named = agent?.trim().replace(/^@/, '');
   if (agent !== undefined && !named) throw new CommandRefusalError('order agent must name one agent', 400);
-  await assertCornerCommandTarget(db, command.room_id, address, true);
+  await assertCornerCommandTarget(db, command.room_id, address);
   const target = await commandAddress(db, address, agentId);
   let worker: string | undefined;
   if (target.parent_id) {

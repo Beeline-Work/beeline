@@ -5770,7 +5770,6 @@ export class DaemonService {
         const command = await authorizeCommandOutput(
           db, input.roomId ?? input.cornerId, agentId, input.requestId, input.generationId,
         );
-        await assertCornerCommandTarget(db, command.room_id, input.cornerId);
         if (current) {
           if (input.brief && (current.spec !== input.brief.spec.trim() ||
               current.repositoryWork !== input.brief.repositoryWork ||
@@ -7716,7 +7715,6 @@ export class DaemonService {
       const command = await authorizeCommandOutput(
         db, commandRoomId, agentId, input.requestId, input.generationId,
       );
-      await assertCornerCommandTarget(db, command.room_id, input.cornerId);
       const current = await currentCornerBrief(db, input.cornerId);
       if ((current?.revision ?? 0) !== input.expectedRevision)
         throw new Error('corner brief revision changed; read the current assignment');

@@ -1935,7 +1935,7 @@ export function agentToolsFor(
     return true;
   }).map((tool) => cornerTurn && tool.name === 'order' ? {
     ...tool,
-    description: 'From a corner, order only child corners opened by this corner. Corners cannot order outside their own child corners. Report to your commander instead. After ordering a child corner, end the turn; its report wakes a new turn. Do not sleep or poll.',
+    description: 'From a corner, order other corners under the same top-level Room, including siblings and delegated child corners. Never order this corner itself, a top-level Room, a DM, an agent address or a corner in another Room. Corners cannot order up or out of their Room. Report to your commander instead. After ordering another corner, end the turn; its report wakes a new turn. Do not sleep or poll.',
   } : tool);
 }
 

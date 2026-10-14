@@ -716,6 +716,16 @@ describe('the run lock (a push transition can race a close or another push)', ()
   });
 });
 
+/** Review repair orders originate in the Room; corner turns cannot order themselves. */
+async function orderRepairsFromRoom(review: AgentCommand, cornerId: string, text: string) {
+  const coordination = await createAgentCommand(db, { roomId: R, agentId: B, sourceMessageId: null,
+    privatePayload: { kind: 'order', text: 'Coordinate review repairs', authorId: A, fromRoomId: R },
+    reason: 'order', parent: (await db.query<import('./agent-command.js').CommandRow>(`SELECT * FROM agent_commands WHERE id=$1`, [review.id])).rows[0] });
+  const turn = (await commands(B, R)).find(command => command.id === coordination!.id)!;
+  await claim(turn);
+  await daemon.execute('order', { roomId: R, requestId: turn.turnRequestId, generationId: 'g1', address: cornerId, text }, B);
+}
+
 describe('review dispatch and the fix loop cap (row 9)', () => {
   async function toReview(): Promise<string> {
     const cornerId = await open('owner/widgets');
@@ -748,12 +758,14 @@ describe('review dispatch and the fix loop cap (row 9)', () => {
     expect(await reasons(cornerId, A)).not.toContain('corner_review');
   });
 
-  it('a reviewer privately orders repairs on a green head and it stays in review', async () => {
+  it('a reviewer privately orders repairs from the Room on a green head and it stays in review', async () => {
     const cornerId = await toReview();
     const [review] = await commands(B, cornerId);
     await claim(review!, 'review-generation');
-    await daemon.execute('order', { roomId: cornerId, requestId: review!.turnRequestId,
-      generationId: 'review-generation', address: cornerId, text: 'Fix the race condition' }, B);
+    await expect(daemon.execute('order', { roomId: cornerId, requestId: review!.turnRequestId,
+      generationId: 'review-generation', address: cornerId, text: 'Fix the race condition' }, B))
+      .rejects.toThrow('Corners can only order corners they opened.');
+    await orderRepairsFromRoom(review!, cornerId, 'Fix the race condition');
     expect((await commands(A, cornerId)).some(c => c.reason === 'order')).toBe(true);
     expect(await currentState(cornerId)).toBe('review');
     await daemon.execute('approveCornerMerge', { cornerId, headSha: '7'.repeat(40) }, B);
@@ -1408,8 +1420,7 @@ describe('each transition wakes the next role exactly once (AC-2)', () => {
     await result(opening!, 'The implementation is ready for review.');
     const [review] = await commands(B, cornerId);
     await claim(review!);
-    await daemon.execute('order', { roomId: cornerId, requestId: review!.turnRequestId, generationId: 'g1',
-      address: cornerId, text: 'Attach the available proof before review' }, B);
+    await orderRepairsFromRoom(review!, cornerId, 'Attach the available proof before review');
     await result(review!, '@hoots attach the production proof before I can PASS.');
     const reply = (await commands(A, cornerId)).find(command => command.reason === 'order');
     await claim(reply!);
@@ -1419,9 +1430,9 @@ describe('each transition wakes the next role exactly once (AC-2)', () => {
       await daemon.execute('postAgentTurnReceipt', { roomId: cornerId, requestId: tagged.turnRequestId,
         generationId: 'g1', agentId: A, status: 'complete', completionKind: 'no-reply' }, A);
     }
-    const returned = (await commands(B, cornerId)).find(command => command.reason === 'report')!;
+    const returned = (await commands(B, R)).find(command => command.reason === 'report')!;
     await claim(returned);
-    await daemon.execute('report', { status: 'blocked', roomId: cornerId, requestId: returned.turnRequestId, generationId: 'g1',
+    await daemon.execute('report', { status: 'blocked', roomId: R, requestId: returned.turnRequestId, generationId: 'g1',
       text: 'blocked: required entry point is unavailable' }, B);
     await result(returned, 'Reported the remaining capability blocker to the commander.');
     const before = await cards(cornerId);
@@ -1429,7 +1440,7 @@ describe('each transition wakes the next role exactly once (AC-2)', () => {
       await advanceCorner(db, cornerId, { kind: 'checks', result: 'passing', sourceMessageId: review!.sourceMessageId });
     expect(await reasons(cornerId, A)).toContain('corner_review_needed');
     expect((await reasons(cornerId, A)).filter(reason => reason === 'corner_review_needed')).toHaveLength(1);
-    expect(await reasons(cornerId, B)).toEqual(['subscribed_event', 'report', 'report']);
+    expect(await reasons(cornerId, B)).toEqual(['subscribed_event']);
     expect(await cards(cornerId)).toEqual(before);
     expect(await cornerMergeGate(db, cornerId, { number: 7, headSha: SHA })).toMatchObject({ approved: false, open: false });
     expect((await commands(A, cornerId)).find(command => command.reason === 'corner_review_needed')?.source.body)

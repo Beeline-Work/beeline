@@ -1807,7 +1807,7 @@ export async function noteCornerAgentUnreachable(
       : `${cause}; source ${sourceMessageId}`;
     await reportToCommander(db, cornerId, agentId,
       `blocked: ${failure.agent_name} (${agentId}) could not be reached in corner ${failure.name} (${cornerId}): ${failed}`,
-      command, reportId, { automatic: true });
+      command, reportId, { automatic: true, agentOnly: true });
   });
 }
 

@@ -174,7 +174,7 @@ export async function reportToCommander(
   text: string,
   command?: CommandRow,
   reportId = randomBytes(32).toString('hex'),
-  options: { automatic?: boolean; ask?: string; attachments?: PrivateCommandPayload['attachments']; digestSource?: boolean } = {},
+  options: { automatic?: boolean; agentOnly?: boolean; ask?: string; attachments?: PrivateCommandPayload['attachments']; digestSource?: boolean } = {},
 ): Promise<{ id: string; createdAt: number; delivered?: boolean }> {
   if ((!options.automatic && !/^(done|blocked|needs-decision|failed):\s*\S/.test(text)) || !text.trim() || text.length > 16_000)
     throw new CommandRefusalError(
@@ -230,6 +230,9 @@ export async function reportToCommander(
     console.error(`[commander] ${roomId}: return address no longer has its commander`);
     return { id: reportId, createdAt: Math.floor(Date.now() / 1000), delivered: false };
   }
+  // Automatic attention must never become a transcript post to a person.
+  if (options.agentOnly && member.kind !== 'agent')
+    return { id: reportId, createdAt: Math.floor(Date.now() / 1000) };
   if (member.kind === 'agent') {
     const queued = await createAgentCommand(db, {
       id: reportId,

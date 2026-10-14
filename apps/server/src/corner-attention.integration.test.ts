@@ -140,6 +140,8 @@ it.each([
     await runCornerAttention(db);
     await runCornerAttention(db);
     expect(await commanderFlags()).toHaveLength(1);
+    expect((await commanderFlags())[0]).toMatchObject({ private: true });
+    expect((await db.query('SELECT id FROM messages')).rows).toEqual([]);
     expect((await readAgentCommands(db, C, WORKER)).commands).toHaveLength(0);
     expect((await readAgentCommands(db, C, REVIEWER)).commands).toHaveLength(0);
     console.info(
@@ -316,52 +318,25 @@ it('indexes a pending approval sent through the owner System DM back to its sour
   await db.query(`UPDATE agent_grants SET status='approved' WHERE id=$1`, [grant]);
   expect(await state()).toBe('idle');
 });
-it.each(['item', 'section'] as const)('keeps unanswered decisions waiting past 24h and stops reminders after %s dismissal', async (dismissal) => {
-  await post('decision', 'needs-decision: @owner Choose whether to continue.');
+it('Reproduction waiting-tray: consumes reminders without messages or Needs-you changes', async () => {
+  await post('decision', 'needs-decision: @owner Choose whether to continue.', WORKER, '25 hours');
+  const tray = () => phone.execute('readNeedsYou', { workspaceId: WS }, HUMAN);
+  const before = await tray();
+  expect(before.items.map(item => item.messageId)).toContain('decision');
+  const messages = (await db.query('SELECT id,text FROM messages')).rows;
+  const marks = (await db.query('SELECT * FROM needs_you_marks')).rows;
+  await runCornerAttention(db);
+  await runCornerAttention(db);
+  expect(await tray()).toEqual(before);
+  expect((await db.query('SELECT id,text FROM messages')).rows).toEqual(messages);
+  expect((await db.query('SELECT * FROM needs_you_marks')).rows).toEqual(marks);
+  await phone.execute('clearNeedsYou', { workspaceId: WS, messageId: 'decision', dismissReminder: true }, HUMAN);
+  await db.query("UPDATE corner_attention_flags SET due_at=now() WHERE kind='waiting'");
+  await runCornerAttention(db);
+  expect((await tray()).items).toHaveLength(0);
+  expect((await db.query('SELECT id,text FROM messages')).rows).toEqual(messages);
   expect(await state()).toBe('waiting');
-  await runCornerAttention(db);
-  expect(
-    (await db.query(`SELECT id FROM messages WHERE card->>'cornerReminderId' IS NOT NULL`)).rows,
-  ).toHaveLength(0);
-  await db.query(`UPDATE messages SET created_at=now()-interval '25 hours' WHERE id='decision'`);
-  await db.query(`UPDATE corner_attention_flags SET due_at=now() WHERE kind='waiting'`);
-  await runCornerAttention(db);
-  expect(await state()).toBe('waiting');
-  const reminder = (
-    await db.query<{ id: string }>(
-      `SELECT id FROM messages WHERE card->>'cornerReminderId' IS NOT NULL`,
-    )
-  ).rows[0]!;
-  expect(reminder).toBeDefined();
-  await runCornerAttention(db);
-  expect(
-    (await db.query(`SELECT id FROM messages WHERE card->>'cornerReminderId' IS NOT NULL`)).rows,
-  ).toHaveLength(1);
-  await phone.execute('clearNeedsYou', { workspaceId: WS, messageId: reminder.id }, HUMAN);
-  expect((await db.query(`SELECT 1 FROM corner_attention_flags WHERE kind='waiting' AND dismissed_at IS NOT NULL`)).rowCount).toBe(0);
-  await db.query(`UPDATE corner_attention_flags SET due_at=now() WHERE kind='waiting'`);
-  await runCornerAttention(db);
-  expect((await db.query(`SELECT id FROM messages WHERE card->>'cornerReminderId' IS NOT NULL`)).rows).toHaveLength(2);
-  if (dismissal === 'item')
-    await phone.execute('clearNeedsYou', { workspaceId: WS, messageId: reminder.id, dismissReminder: true }, HUMAN);
-  else
-    await phone.execute('clearNeedsYouSection', { workspaceId: WS }, HUMAN);
-  console.log('Demonstrated Reproduction reminder-open-2472: open preserves daily repeat; explicit dismiss stops repeats; request stays WAITING');
-  expect(
-    (
-      await db.query(
-        `SELECT 1 FROM corner_attention_flags WHERE kind='waiting' AND dismissed_at IS NOT NULL`,
-      )
-    ).rowCount,
-  ).toBe(1);
-  await db.query(`UPDATE corner_attention_flags SET due_at=now() WHERE kind='waiting'`);
-  await runCornerAttention(db);
-  expect(
-    (await db.query(`SELECT id FROM messages WHERE card->>'cornerReminderId' IS NOT NULL`)).rows,
-  ).toHaveLength(2);
-  expect(await state()).toBe('waiting'); // Dismissing a reminder does not decide the request.
-  await post('answer', 'Continue.', HUMAN);
-  expect(await state()).toBe('idle');
+  console.info('Demonstrated Reproduction waiting-tray: zero new messages; original Needs-you entry and marks unchanged; dismissal stays cleared');
 });
 it('ordinary tags and failure stages are not human blockers; active holds are', async () => {
   await post('tag', '@owner Here is the current status.');
@@ -431,4 +406,32 @@ it('Reproduction reminder-supersession-2472: an older unanswered choice resumes 
   await runCornerAttention(db);
   expect((await flags()).deliveries).toBe(2);
   console.log('Demonstrated Reproduction reminder-supersession-2472: choice reminded once; newer blocker pauses it; answer restores WAITING choice and second reminder; repeat=0');
+});
+
+it.each([false, true])('Reproduction bright-meadow-corner: a person commander receives no idle notice (person opened=%s)', async (personOpened) => {
+  if (personOpened) await db.query('UPDATE rooms SET created_by=$1 WHERE id=$2', [HUMAN, C]);
+  await db.query("UPDATE rooms SET name='bright-meadow-corner' WHERE id=$1", [C]);
+  await db.query(`UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{authorId}',to_jsonb($1::text)) WHERE id='opening-order'`, [HUMAN]);
+  const before = (await db.query('SELECT id FROM agent_commands')).rows;
+  await runCornerAttention(db);
+  await runCornerAttention(db);
+  expect((await db.query('SELECT id FROM agent_commands')).rows).toEqual(before);
+  expect((await db.query("SELECT sent_at IS NOT NULL sent FROM corner_attention_flags WHERE kind='idle'")).rows).toEqual([{ sent: true }]);
+  expect(await commanderFlags()).toHaveLength(0);
+  expect((await db.query('SELECT id,text FROM messages WHERE room_id IN ($1,$2)', [ROOM,C])).rows).toEqual([]);
+  console.info('Demonstrated Reproduction bright-meadow-corner: person commander: wakes=0; room transcript messages=0; repeated flag=0');
+});
+
+
+it('preserves already-posted reminders and honors their dismissal', async () => {
+  await post('legacy-request', 'needs-decision: @owner Choose the next step.', WORKER, '25 hours');
+  await runCornerAttention(db);
+  const flag = (await db.query<{ id: string }>("SELECT id FROM corner_attention_flags WHERE kind='waiting'")).rows[0]!;
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,card)
+    VALUES('legacy-reminder',$1,$2,'Please resolve the waiting request.','message',jsonb_build_object('cornerReminderId',$3::text))`, [C, WORKER, flag.id]);
+  await phone.execute('clearNeedsYou', { workspaceId: WS, messageId: 'legacy-reminder', dismissReminder: true }, HUMAN);
+  await db.query("UPDATE corner_attention_flags SET due_at=now() WHERE id=$1", [flag.id]);
+  await runCornerAttention(db);
+  expect((await db.query("SELECT id FROM messages ORDER BY id")).rows).toEqual([{ id: 'legacy-reminder' }, { id: 'legacy-request' }]);
+  expect((await db.query("SELECT deliveries,dismissed_at IS NOT NULL dismissed FROM corner_attention_flags WHERE id=$1", [flag.id])).rows).toEqual([{ deliveries: 1, dismissed: true }]);
 });

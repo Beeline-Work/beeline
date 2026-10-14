@@ -9,7 +9,6 @@ import {
 } from './chat-corner-counts.js';
 import { commanderReportAddress, reportToCommander } from './commander.js';
 import { cornerImplementerSql } from './corner-worker.js';
-import { ensureSystemIdentity } from './system-line.js';
 
 export const CORNER_ATTENTION_SCHEMA = `
 CREATE TABLE IF NOT EXISTS corner_attention_spans (
@@ -193,7 +192,6 @@ export async function deliverCornerAttention(db: SqlDatabase): Promise<void> {
         [flag.id],
       );
       if (!claimed.rowCount) return;
-      const current = claimed.rows[0]!;
       if (!row) {
         await tx.query('UPDATE corner_attention_flags SET dismissed_at=now() WHERE id=$1', [
           flag.id,
@@ -224,7 +222,7 @@ export async function deliverCornerAttention(db: SqlDatabase): Promise<void> {
           `blocked: Corner ${row.name} is idle with no worker schedule or event subscription. Resume, schedule or close it.`,
           undefined,
           flag.id,
-          { automatic: true },
+          { automatic: true, agentOnly: true },
         );
         if ('delivered' in delivered && delivered.delivered === false) return;
         await tx.query('UPDATE corner_attention_flags SET sent_at=now() WHERE id=$1', [flag.id]);
@@ -265,23 +263,10 @@ export async function deliverCornerAttention(db: SqlDatabase): Promise<void> {
           )
         ).rows[0];
         if (!person?.handle) return;
-        await ensureSystemIdentity(tx);
-        const reminderId = key(flag.id, current.deliveries);
-        await tx.query(
-          `INSERT INTO messages(id,room_id,author_id,text,presentation,card)
-        VALUES($1,$2,$3,$4,'message',$5::jsonb) ON CONFLICT DO NOTHING`,
-          [
-            reminderId,
-            row.id,
-            SYSTEM_IDENTITY_ID,
-            `@${person.handle} Please resolve the waiting request in ${row.name}. Dismiss this reminder in Needs you to stop daily reminders.`,
-            JSON.stringify({ cornerReminderId: flag.id }),
-          ],
-        );
         await tx.query(
           `UPDATE corner_attention_flags SET sent_at=now(),due_at=now()+interval '24 hours',
-        reminder_id=$2,deliveries=deliveries+1 WHERE id=$1`,
-          [flag.id, reminderId],
+        deliveries=deliveries+1 WHERE id=$1`,
+          [flag.id],
         );
       }
     });

@@ -167,7 +167,8 @@ describe('addressed-message routing and claim scaling', () => {
       await database.query(`DELETE FROM rooms WHERE id=$1`, [room]);
 
     for (const result of [baseline, withThirtyAgents, withThirtyMemberships]) {
-      expect(result.queries).toBe(7);
+      // Human routing no longer flushes an agent's pending digest window.
+      expect(result.queries).toBe(6);
       expect(result.transactions).toBe(1);
       expect(result.notifications.rows.map(({ table_name }) => table_name)).toEqual([
         'agent_commands',
@@ -206,7 +207,7 @@ describe('addressed-message routing and claim scaling', () => {
     const notifications = await database.query<{ count: number }>(
       `SELECT count(*)::integer count FROM claim_live_notification_audit`,
     );
-    expect(counted.queries).toBe(20 * 7);
+    expect(counted.queries).toBe(20 * 6);
     expect(counted.transactions).toBe(20);
     expect(notifications.rows[0]?.count).toBe(20 * 3);
   }, 20_000);

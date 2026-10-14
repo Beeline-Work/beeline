@@ -1120,61 +1120,76 @@ export async function claimAgentCommand(
   generation: string,
 ): Promise<CommandRow> {
   if (!generation || generation.length > 200) throw new Error('command generation is required');
-  await refreshWakeDigests(db, roomId, agentId);
-  const row = (
-    await db.query<CommandRow & { turn_claimed: boolean }>(
-      `WITH claim_fence AS MATERIALIZED (
-           SELECT pg_advisory_xact_lock(hashtext('agent-command-queue:' || ($2::uuid)::text || ':' || $3::text))
-         ), ${commandRecoveryCtes('$2', '$3', '$1', true)}, eligible AS MATERIALIZED (
-           SELECT agent_commands.* FROM agent_commands CROSS JOIN claim_fence
-           WHERE id=$1 AND room_id=$2 AND agent_id=$3 AND wake_after IS NULL AND
-             (state='pending' OR (state='claimed' AND lease_expires_at<=now()) OR (state='claimed' AND generation_id=$4))
-             AND NOT EXISTS(SELECT 1 FROM cancelled_wakes cancelled WHERE cancelled.id=agent_commands.id)
-             AND ${reviewerQuietSql('agent_commands')}
-             AND (${ordinaryWakeSql('agent_commands')} OR (state='claimed' AND generation_id=$4) OR NOT EXISTS (
-               SELECT 1 FROM agent_commands human WHERE human.room_id=$2 AND human.agent_id=$3
-                 AND human.reason<>'computer_activity' AND human.action IN ('input','resume')
-                 AND human.wake_after IS NULL
-                 AND (human.state='pending' OR (human.state='claimed' AND human.lease_expires_at>now()))
-             ))
-           FOR UPDATE OF agent_commands
-         ), working AS (
-           INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id)
-           SELECT room_id,turn_request_id,agent_id,'working',$4 FROM eligible
-           WHERE action<>'stop' AND action<>'restart'
-           ON CONFLICT(room_id,request_id,agent_id) DO UPDATE SET
-             status='working',generation_id=EXCLUDED.generation_id,failure_reason=NULL,created_at=now(),
-             started_at=CASE WHEN agent_turns.status='working' THEN agent_turns.started_at ELSE now() END
-           WHERE agent_turns.status<>'cancelled'
-           RETURNING 1
-         ), claimed AS (
-           UPDATE agent_commands command SET state='claimed',generation_id=$4,
-             lease_expires_at=now()+interval '90 seconds',claimed_at=now(),
-             recovery_context=COALESCE((SELECT context.recovery_context FROM return_context context WHERE context.id=command.id),command.recovery_context)
-           FROM eligible
-           WHERE command.id=eligible.id AND
-             (eligible.action='stop' OR eligible.action='restart' OR EXISTS(SELECT 1 FROM working))
-           RETURNING command.*
-         ), resolved_corner_attention AS (
-           UPDATE messages notice SET card=jsonb_set(notice.card,'{status}','"resolved"')
-           FROM claimed command
-           WHERE command.action IN ('input','resume') AND notice.room_id=command.room_id
-             AND notice.card_type='${CORNER_AGENT_UNREACHABLE_CARD_TYPE}'
-             AND notice.card->>'agentId'=command.agent_id
-             AND COALESCE(notice.card->>'status','open')='open'
-           RETURNING notice.id
-         ), ${workflowOutputBindingCtes('claimed')}
-         SELECT claimed.*,true turn_claimed FROM claimed
-         UNION ALL
-         SELECT eligible.*,false turn_claimed FROM eligible
-         WHERE eligible.action<>'stop' AND eligible.action<>'restart'
-           AND NOT EXISTS(SELECT 1 FROM working)`,
-      [commandId, roomId, agentId, generation],
-    )
-  ).rows[0];
-  if (!row) throw new Error('command claim conflict');
-  if (!row.turn_claimed) throw new Error('command turn cancelled');
-  return row;
+  for (const digestRefreshed of [false, true]) {
+    const row = (
+      await db.query<CommandRow & { turn_claimed: boolean; needs_digest_refresh: boolean }>(
+        `WITH claim_fence AS MATERIALIZED (
+             SELECT pg_advisory_xact_lock(hashtext('agent-command-queue:' || ($2::uuid)::text || ':' || $3::text))
+           ), digest_refresh AS MATERIALIZED (
+             SELECT command.* FROM agent_commands command CROSS JOIN claim_fence
+             WHERE command.id=$1 AND command.room_id=$2 AND command.agent_id=$3
+               AND command.coalesced_context IS NOT NULL AND NOT $5::boolean
+           ), ${commandRecoveryCtes('$2', '$3', '$1', true)}, eligible AS MATERIALIZED (
+             SELECT agent_commands.* FROM agent_commands CROSS JOIN claim_fence
+             WHERE id=$1 AND room_id=$2 AND agent_id=$3 AND wake_after IS NULL AND
+               (state='pending' OR (state='claimed' AND lease_expires_at<=now()) OR (state='claimed' AND generation_id=$4))
+               AND NOT EXISTS(SELECT 1 FROM cancelled_wakes cancelled WHERE cancelled.id=agent_commands.id)
+               AND NOT EXISTS(SELECT 1 FROM digest_refresh)
+               AND ${reviewerQuietSql('agent_commands')}
+               AND (${ordinaryWakeSql('agent_commands')} OR (state='claimed' AND generation_id=$4) OR NOT EXISTS (
+                 SELECT 1 FROM agent_commands human WHERE human.room_id=$2 AND human.agent_id=$3
+                   AND human.reason<>'computer_activity' AND human.action IN ('input','resume')
+                   AND human.wake_after IS NULL
+                   AND (human.state='pending' OR (human.state='claimed' AND human.lease_expires_at>now()))
+               ))
+             FOR UPDATE OF agent_commands
+           ), working AS (
+             INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id)
+             SELECT room_id,turn_request_id,agent_id,'working',$4 FROM eligible
+             WHERE action<>'stop' AND action<>'restart'
+             ON CONFLICT(room_id,request_id,agent_id) DO UPDATE SET
+               status='working',generation_id=EXCLUDED.generation_id,failure_reason=NULL,created_at=now(),
+               started_at=CASE WHEN agent_turns.status='working' THEN agent_turns.started_at ELSE now() END
+             WHERE agent_turns.status<>'cancelled'
+             RETURNING 1
+           ), claimed AS (
+             UPDATE agent_commands command SET state='claimed',generation_id=$4,
+               lease_expires_at=now()+interval '90 seconds',claimed_at=now(),
+               recovery_context=COALESCE((SELECT context.recovery_context FROM return_context context WHERE context.id=command.id),command.recovery_context)
+             FROM eligible
+             WHERE command.id=eligible.id AND
+               (eligible.action='stop' OR eligible.action='restart' OR EXISTS(SELECT 1 FROM working))
+             RETURNING command.*
+           ), resolved_corner_attention AS (
+             UPDATE messages notice SET card=jsonb_set(notice.card,'{status}','"resolved"')
+             FROM claimed command
+             WHERE command.action IN ('input','resume') AND notice.room_id=command.room_id
+               AND notice.card_type='${CORNER_AGENT_UNREACHABLE_CARD_TYPE}'
+               AND notice.card->>'agentId'=command.agent_id
+               AND COALESCE(notice.card->>'status','open')='open'
+             RETURNING notice.id
+           ), ${workflowOutputBindingCtes('claimed')}
+           SELECT claimed.*,true turn_claimed,false needs_digest_refresh FROM claimed
+           UNION ALL
+           SELECT eligible.*,false turn_claimed,false needs_digest_refresh FROM eligible
+           WHERE eligible.action<>'stop' AND eligible.action<>'restart'
+             AND NOT EXISTS(SELECT 1 FROM working)
+           UNION ALL
+           SELECT digest_refresh.*,false turn_claimed,true needs_digest_refresh FROM digest_refresh`,
+        [commandId, roomId, agentId, generation, digestRefreshed],
+      )
+    ).rows[0];
+    if (!row) throw new Error('command claim conflict');
+    if (row.needs_digest_refresh) {
+      // Ordinary commands retain their single-statement claim. Only a digest
+      // needs the source-expiry and Stop repair transaction before claiming.
+      await refreshWakeDigests(db, roomId, agentId);
+      continue;
+    }
+    if (!row.turn_claimed) throw new Error('command turn cancelled');
+    return row;
+  }
+  throw new Error('command claim conflict');
 }
 
 export async function authorizeCommandOutput(

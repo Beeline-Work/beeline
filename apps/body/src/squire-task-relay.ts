@@ -5,7 +5,7 @@
  * connection; each call still requires the current server-command authority.
  */
 import { createHash, randomUUID } from 'node:crypto';
-import { createServer, type Server } from 'node:http';
+import { createServer, type Server, type ServerResponse } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import { homedir } from 'node:os';
@@ -93,7 +93,6 @@ type TaskConnection = {
   client: StdioSquireMcpClient;
   sessions: Set<string>;
   pendingApprovals: Map<string, PendingApproval>;
-  tools?: unknown;
   dead: boolean;
 };
 
@@ -120,6 +119,16 @@ export class SquireTaskRelay {
   private closed = false;
   private callTail: Promise<void> = Promise.resolve();
   private readonly shareRenewals: SquireShareRenewals;
+  private readonly toolSubscribers = new Set<ServerResponse>();
+  private toolsChanged = false;
+  private hasListedTools = false;
+
+  private flushToolChanges(): void {
+    if (this.active || !this.toolsChanged) return;
+    this.toolsChanged = false;
+    const notification = JSON.stringify({ jsonrpc: '2.0', method: 'notifications/tools/list_changed' });
+    for (const response of this.toolSubscribers) response.write(`data: ${notification}\n\n`);
+  }
 
   constructor(
     private readonly agentId: string,
@@ -170,6 +179,14 @@ export class SquireTaskRelay {
     if (this.closed) throw new Error('Squire task relay is closed');
     if (!this.server) {
       const server = createServer(async (request, response) => {
+        if (request.method === 'GET' && request.url === '/notifications' &&
+            request.headers.authorization === `Bearer ${this.token}`) {
+          response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
+          response.flushHeaders();
+          this.toolSubscribers.add(response);
+          response.on('close', () => this.toolSubscribers.delete(response));
+          return;
+        }
         if (request.method !== 'POST' || request.url !== '/mcp' ||
             request.headers.authorization !== `Bearer ${this.token}`) {
           response.writeHead(403).end();
@@ -222,6 +239,7 @@ export class SquireTaskRelay {
   deactivate(requestId: string, approvalRequestId?: string): void {
     if (this.active?.requestId !== requestId) return;
     this.active = undefined;
+    this.flushToolChanges();
     this.approvalRequestId = approvalRequestId;
     // A human approval is an open continuation, however long the card waits.
     if (approvalRequestId) return;
@@ -246,6 +264,7 @@ export class SquireTaskRelay {
         ![...(this.task?.pendingApprovals.values() ?? [])].some((approval) =>
           approval.requestId === requestId)) return;
     if (this.active?.requestId === requestId) this.active = undefined;
+    this.flushToolChanges();
     if (this.approvalRequestId === requestId) this.approvalRequestId = undefined;
     for (const [id, approval] of this.task?.pendingApprovals ?? [])
       if (approval.requestId === requestId) this.task?.pendingApprovals.delete(id);
@@ -256,6 +275,8 @@ export class SquireTaskRelay {
     if (this.closed) return;
     this.closed = true;
     this.shareRenewals.close();
+    for (const response of this.toolSubscribers) response.end();
+    this.toolSubscribers.clear();
     this.active = undefined;
     this.approvalRequestId = undefined;
     this.retire('helper-exit');
@@ -281,8 +302,20 @@ export class SquireTaskRelay {
       connectionId: randomUUID(), sessions: new Set<string>(), pendingApprovals: new Map(), dead: false,
     } as TaskConnection;
     task.client = this.makeClient({
-      onSpawn: (pid) => this.log('relay-spawn', task, { pid }),
-      onNotification: (message) => this.handleApprovalNotification(task, message),
+      onSpawn: (pid) => {
+        this.log('relay-spawn', task, { pid });
+        if (this.hasListedTools) {
+          this.toolsChanged = true;
+          this.flushToolChanges();
+        }
+      },
+      onNotification: (message) => {
+        if (this.task !== task) return;
+        if (message.method === 'notifications/tools/list_changed') {
+          this.toolsChanged = true;
+          this.flushToolChanges();
+        } else this.handleApprovalNotification(task, message);
+      },
       onDiagnostic: (message) => {
         if (message.startsWith('squire mcp exited')) return;
         const reason = /broker unavailable/i.test(message) ? 'broker-unavailable'
@@ -293,6 +326,7 @@ export class SquireTaskRelay {
         this.log('relay-diagnostic', task, { reason });
       },
       onExit: (pid, code) => {
+        if (this.task !== task) return;
         task.dead = true;
         this.log('relay-exit', task, { pid, exitCode: code,
           sessionId: redactedSessionId(task.sessions.values().next().value) });
@@ -300,6 +334,8 @@ export class SquireTaskRelay {
         this.ended(task.sessions);
         task.sessions.clear();
         task.pendingApprovals.clear();
+        this.toolsChanged = true;
+        this.flushToolChanges();
       },
     });
     this.task = task;
@@ -384,7 +420,7 @@ export class SquireTaskRelay {
       this.log('call-end', task, { method: input.method });
       if (!active) this.scheduleIdle();
       return {
-        protocolVersion: '2024-11-05', capabilities: { tools: {} },
+        protocolVersion: '2024-11-05', capabilities: { tools: { listChanged: true } },
         serverInfo: { name: 'beeline-squire-task-relay', version: '1.0.0' },
       };
     }
@@ -397,9 +433,9 @@ export class SquireTaskRelay {
     const requestedIds = sessionIds(input.params?.arguments);
     this.log('call-start', task, { method: input.method, tool: safeToolName ?? null,
       sessionId: redactedSessionId(requestedIds[0] ?? task.sessions.values().next().value) });
-    if (input.method === 'tools/list' && task.dead && task.tools) {
-      this.log('call-end', task, { method: input.method, source: 'cached' });
-      return task.tools;
+    if (input.method === 'tools/list' && task.dead) {
+      this.retire('inventory-reconnect');
+      task = this.connection(active?.taskId ?? 'inventory');
     }
     // A scheduled turn may inherit a live session from the conversation that
     // created its schedule, or from an earlier run of the same schedule, even
@@ -450,7 +486,7 @@ export class SquireTaskRelay {
       if (this.closed || this.task !== task || (active && (this.active?.taskId !== active.taskId ||
           this.active?.requestId !== active.requestId)))
         throw new Error('Squire task ended while the call was running');
-      if (input.method === 'tools/list') task.tools = result;
+      if (input.method === 'tools/list') this.hasListedTools = true;
       if (!active) this.scheduleIdle();
       if (staleLeaseResult(result)) {
         for (const id of requestedIds) task.sessions.delete(id);
@@ -602,6 +638,33 @@ export function runSquireTaskProxy(env: NodeJS.ProcessEnv = process.env): void {
   const contextFile = env.BEELINE_TURN_CONTEXT_FILE;
   if (!url || !token || !contextFile) throw new Error('Squire task relay is unavailable');
   const lines = createInterface({ input: process.stdin });
+  const notifications = new AbortController();
+  let subscribed = false;
+  const subscribe = async () => {
+    try {
+      const response = await fetch(new URL('/notifications', url), {
+        headers: { authorization: `Bearer ${token}` }, signal: notifications.signal,
+      });
+      if (!response.ok || !response.body) return;
+      let buffer = '';
+      const decoder = new TextDecoder();
+      for await (const chunk of response.body) {
+        buffer += decoder.decode(chunk, { stream: true });
+        let boundary = buffer.indexOf('\n\n');
+        while (boundary >= 0) {
+          const event = buffer.slice(0, boundary);
+          buffer = buffer.slice(boundary + 2);
+          if (event.startsWith('data: ')) {
+            const message = JSON.parse(event.slice(6));
+            if (message.method === 'notifications/tools/list_changed')
+              process.stdout.write(`${JSON.stringify(message)}\n`);
+          }
+          boundary = buffer.indexOf('\n\n');
+        }
+      }
+    } catch { /* The helper or this proxy closed; the MCP client reconnects. */ }
+  };
+  lines.on('close', () => notifications.abort());
   lines.on('line', (line) => {
     void (async () => {
       let input: { id?: string | number; method: string; params?: Record<string, unknown> };
@@ -621,6 +684,10 @@ export function runSquireTaskProxy(env: NodeJS.ProcessEnv = process.env): void {
         const body = await response.json() as { result?: unknown; error?: string };
         if (!response.ok) throw new Error(body.error ?? 'Squire task relay refused the call');
         process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id: input.id, result: body.result })}\n`);
+        if (input.method === 'initialize' && !subscribed) {
+          subscribed = true;
+          void subscribe();
+        }
       } catch (error) {
         process.stdout.write(`${JSON.stringify({ jsonrpc: '2.0', id: input.id,
           error: { code: -32000, message: error instanceof Error ? error.message : 'Squire relay failed' } })}\n`);

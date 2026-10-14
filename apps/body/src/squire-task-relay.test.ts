@@ -75,6 +75,41 @@ async function request(
 }
 
 describe('helper-owned Squire task relay', () => {
+  it('forwards list_changed only after the active turn finishes', async () => {
+    const { relay, notify } = fixture();
+    await request(relay, 'root', 'turn-one', 'tools/list');
+    const endpoint = await relay.listen();
+    const abort = new AbortController();
+    const response = await fetch(`${endpoint.url}/notifications`, {
+      headers: { authorization: `Bearer ${endpoint.token}` }, signal: abort.signal,
+    });
+    const reader = response.body!.getReader();
+    try {
+      relay.activate(command('root', 'turn-one'), 'generation');
+      let delivered = false;
+      const notification = reader.read().then((value) => { delivered = true; return value; });
+      notify({ method: 'notifications/tools/list_changed' });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(delivered).toBe(false);
+      relay.deactivate('turn-one');
+      expect(new TextDecoder().decode((await notification).value)).toContain('notifications/tools/list_changed');
+    } finally {
+      abort.abort();
+      await reader.cancel().catch(() => {});
+    }
+  });
+
+  it('discovers the replacement tool list after reconnect rather than returning dead inventory', async () => {
+    let field = 'oldPath';
+    const { relay, die, stats } = fixture(undefined, undefined, async () => ({ tools: [
+      { name: 'operate_upload', inputSchema: { type: 'object', properties: { [field]: { type: 'string' } } } },
+    ] }));
+    expect(JSON.stringify((await request(relay, 'root', 'turn-one', 'tools/list')).body)).toContain('oldPath');
+    die();
+    field = 'filePath';
+    expect(JSON.stringify((await request(relay, 'root', 'turn-two', 'tools/list')).body)).toContain('filePath');
+    expect(stats().spawns).toBe(2);
+  });
   it('renews a human-controlled share on its owning connection after the model turn ends', async () => {
     const persist = vi.fn(async (_lease: SquireShareLease) => true);
     const url = `https://squire.test/s/${'a'.repeat(43)}/`;

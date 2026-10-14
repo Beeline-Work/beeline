@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { squireReachCause } from './squire-status.js';
+import { nonhumanSilentWake } from './silent-wake.js';
 /**
  * Deliberately narrow MCP server for repository and approved-skill inspection
  * in Room sessions.
@@ -873,6 +874,11 @@ const AGENT_TOOLS: ToolDefinition[] = [
       address: { type: 'string', format: 'uuid' },
       text: { type: 'string', minLength: 1, maxLength: 16000 },
     }, additionalProperties: false },
+  },
+  {
+    name: 'no_reply_needed',
+    description: 'On a nonhuman report, order or lifecycle wake with nothing to post, acknowledge that no reply is needed, then end silently. This local tool posts nothing and reports nothing. Human-triggered turns cannot use it.',
+    inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
     name: 'report',
@@ -2380,7 +2386,7 @@ async function activeCommandContext(): Promise<{
   requestId: string;
   generationId: string;
 }> {
-  const { promptSectionIds: _sections, ...value } = await readTurnContextFile();
+  const { promptSectionIds: _sections, commandReason: _reason, ...value } = await readTurnContextFile();
   if (!value.roomId || !value.requestId || !value.generationId)
     throw new Error('no active server command');
   return value as { roomId: string; requestId: string; generationId: string };
@@ -4643,6 +4649,12 @@ export async function callAgentTool(
     case 'order': {
       const result = await daemonExecute('order', { address: args.address as string, text: args.text as string });
       return `${JSON.stringify(result)}\nAfter ordering another agent, end the turn; its report wakes a new turn; do not sleep or poll.`;
+    }
+    case 'no_reply_needed': {
+      await activeCommandContext();
+      const { commandReason } = await readTurnContextFile();
+      if (!nonhumanSilentWake(commandReason)) throw new Error('no_reply_needed requires a nonhuman report, order or lifecycle wake');
+      return JSON.stringify({ acknowledged: true });
     }
     case 'report':
       return JSON.stringify(await daemonExecute('report', { status: args.status as import('@beeline/api-contract/daemon').AgentReportStatus, text: args.text as string }));

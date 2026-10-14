@@ -25,6 +25,7 @@ export class CommandExecutionContext {
         requestId: command.turnRequestId,
         taskId: command.rootCommandId,
         generationId: this.generationId,
+        commandReason: command.reason,
       }),
       { mode: 0o600 },
     );
@@ -44,6 +45,7 @@ export class CommandExecutionContext {
         requestId: command.turnRequestId,
         taskId: command.rootCommandId,
         generationId: this.generationId,
+        commandReason: command.reason,
         promptSectionIds: [...new Set(ids)],
       }),
       { mode: 0o600 },

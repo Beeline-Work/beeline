@@ -1659,6 +1659,7 @@ export class MonolithRoomTurnLoop {
                   closedCorners,
                   task: {
                     fromName: inboxItemAuthorName(item, names),
+                    commandReason: this.commandContext.current?.reason,
                     reply: item,
                     outsideEvent: this.commandContext.current?.source.systemEvent,
                     body: roomMessagePrompt(

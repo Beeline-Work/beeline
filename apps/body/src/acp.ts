@@ -1079,7 +1079,7 @@ export class AcpClient extends EventEmitter {
     // command would classify every sandboxed session as an unknown harness and
     // silently send no lockdown at all.
     const meta: Record<string, unknown> = {
-      ...(sessionToolScopeMeta(this.agentLabel) ?? {}),
+      ...(sessionToolScopeMeta(this.agentLabel, this.agentEnv.CLAUDE_CODE_TERMINAL_MCP_TOOLS) ?? {}),
     };
     // claude-agent-acp reads the system prompt only from `_meta.systemPrompt`;
     // its top-level `systemPrompt` sibling above is silently ignored there.

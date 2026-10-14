@@ -746,6 +746,19 @@ describe('Room turn failure receipt', () => {
     expect(receipts.some(receipt => receipt.status === 'failed')).toBe(false);
   });
 
+  it.each(['report', 'order', 'watched_corner'])('completes a terminal-tool silent %s wake without posting or retrying', async (commandReason) => {
+    const call = { id: 'silent-1', title: 'mcp__beeline-agent__no_reply_needed', status: 'completed' };
+    const { receipts, posted, attempts } = await runTurn({
+      agentCommand: '/fake-agent', agentKind: 'claude', commandReason,
+      prompt: async () => ({ stopReason: 'end_turn', updates: [], agentText: '', toolCalls: [call] }),
+    });
+    expect(attempts).toBe(1);
+    expect(posted).toEqual([]);
+    expect(receipts.filter(receipt => receipt.status === 'complete')).toHaveLength(1);
+    expect(receipts.some(receipt => receipt.status === 'failed')).toBe(false);
+    console.info(`Demonstrated claude-native-thinking-only-20261013: ${commandReason}, completed terminal tool, zero Room posts or retries`);
+  });
+
   it.each(['report', 'watched_corner', 'human_tag'])('completes a normal silent %s wake without posting or retrying', async (commandReason) => {
     const { receipts, posted, attempts } = await runTurn({
       agentCommand: '/fake-agent',

@@ -1,6 +1,7 @@
 import { boundReplyExcerpt, subscriptionActionPrompt, WORKSPACE_CORE_SKILL_SLUG, type RoomInboxResult, type SystemEvent } from '@beeline/api-contract/daemon';
 import type { CornerBrief, DaemonOperationMap } from '@beeline/api-contract/daemon';
 import { createHash } from 'node:crypto';
+import { nonhumanSilentWake } from './silent-wake.js';
 import type { CornerGitHubCli } from './corner-github-auth.js';
 import { ACP_SESSION_MEMORY_MAX_BYTES } from './acp-resource-scope.js';
 import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
@@ -968,7 +969,10 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
     budgetBytes: 64_000,
     layer: 'turn',
     surfaces: EVERYWHERE,
-    render: ({ task, surface }) =>
+    render: ({ task, surface }) => [
+      nonhumanSilentWake(task.commandReason)
+        ? 'If this nonhuman wake needs no message, call no_reply_needed successfully, then end with no final text. The tool posts nothing. Continue required work and report actual blockers instead of using silence to abandon it.'
+        : '',
       ROOMS.includes(surface)
         ? [
             `Current task from ${task.fromName ?? 'a Room member'}:`,
@@ -985,6 +989,7 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
             ...(task.reply?.replyToMessageId ? [renderReplyContext(task.reply)] : []),
             ...(task.attachmentLines ?? []),
           ].join('\n'),
+    ].filter(Boolean).join('\n\n'),
   },
 ];
 

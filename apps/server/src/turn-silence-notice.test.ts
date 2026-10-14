@@ -323,7 +323,7 @@ describe('first-silence notice', () => {
       AGENT,
     );
     expect(await failureLine(database, requestId)).toEqual({
-      text: "@candy could not answer · the helper could not authenticate with Claude. If its login expired, its owner can send `@candy /login` here, or run `beeline connect` on its machine.",
+      text: "@candy needs a Claude sign-in · send @candy login here. If that fails, its owner can run `beeline connect` on its machine.",
       silence: 'not-signed-in',
       state: 'failed',
     });

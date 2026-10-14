@@ -56,3 +56,26 @@ The spoken handoff acknowledgement remains audio-only; normal work owns its
 visible reply. Conversation-only replies remain in the ledger. Different
 paragraphs and intentional in-sentence repetitions remain intact. This proof
 does not claim real-device audio validation or a production deployment.
+
+## Overlap check against PR #2442
+
+On 2026-10-13, the same service-path regression was copied into a detached
+worktree at `20822ca3e1` (#2442), with its production source unchanged.
+Only the test file was added; RTC/provider doubles and disposable PGlite
+remain the same. Run:
+
+```sh
+npx vitest run apps/server/src/voice-room-runtime.test.ts \
+  -t 'demonstrates one visible reply' --maxWorkers=1 --minWorkers=1
+```
+
+Baseline exit 1: the phone read returned both “You’re right to question it.”
+and “The cause is confirmed.” where one reply was expected. The identical
+test on #2446 exited 0 and printed the single-reply demonstration.
+
+#2442 deduplicates repeated STT final events and report delivery, and its
+“exactly two durable replies” proof covers two conversation utterances. It
+does not suppress the visible Luna acknowledgement when Luna dispatches
+an ordinary agent command. #2446 fixes that distinct handoff duplicate.
+Current main (`23b80efbb`) is already an ancestor of this branch; its spoken
+target regression is preserved alongside this proof.

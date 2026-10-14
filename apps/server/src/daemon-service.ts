@@ -638,10 +638,10 @@ export class DaemonService {
           'postAgentDraft', 'postAgentThought', 'postAgentActivity',
         ].includes(name) && !(await db.query(
           `SELECT 1 FROM corner_facts WHERE corner_id=$1`, [scopedRoom])).rowCount))) {
-          // Final ACP prose is a bottom-up report too; older helpers need no new tool to deliver it.
+          // Final prose keeps the private return route without inventing a status.
           if (name === 'postRoomMessage') {
             const text = String(candidate.text ?? '').trim();
-            await this.report(/^(done|blocked|needs-decision|failed):\s*\S/.test(text) ? text : `done: ${text || 'completed the order'}`, authenticatedAgentId, command, db, true);
+            if (text) await this.report(text, authenticatedAgentId, command, db, true);
             await db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE id=$1`, [command.id]);
             await db.query(`UPDATE agent_turns SET status='complete',created_at=now()
               WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND status<>'cancelled'`,

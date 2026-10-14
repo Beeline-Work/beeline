@@ -9,7 +9,7 @@ import { DaemonService } from './daemon-service.js';
 import { PhoneService } from './phone-service.js';
 import { LiveHub } from './live.js';
 import { GitHubOperations } from './github-operations.js';
-import { createAgentCommand, readAgentCommands } from './agent-command.js';
+import { createAgentCommand, readAgentCommands, noteCornerAgentUnreachable, noteBlockedCornerChecks, type CommandRow } from './agent-command.js';
 import { GITHUB_SUBJECT, systemLine } from './system-line.js';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
@@ -206,7 +206,7 @@ it('an ordered corner turn keeps live work and progress in the corner', async ()
   expect((await db.query(`SELECT id FROM messages`)).rows).toHaveLength(before + 2);
   expect((await commands(opened.cornerId, WORKER))).toEqual([]);
 });
-it('a private order to a Room keeps its drafts and activity out of that Room', async () => {
+it('Reproduction quiet-final: private order prose keeps its return route without an invented status', async () => {
   await daemon.execute('order', { ...authority(order), address: ROOM, agent: WORKER, text: 'Check the widget' }, RUBY);
   const turn = (await commands(ROOM, WORKER)).find(c => c.reason === 'order')!;
   await claim(turn);
@@ -216,6 +216,48 @@ it('a private order to a Room keeps its drafts and activity out of that Room', a
     activity: [{ kind: 'tool', title: 'Read widget.ts', operation: 'read', status: 'completed' }] }, WORKER);
   await daemon.execute('postRoomMessage', { ...authority(turn), text: 'private final output' }, WORKER);
   expect((await db.query(`SELECT id FROM messages`)).rows).toEqual(before);
+  expect((await commands(DM, RUBY)).find(c => c.reason === 'report')?.source.body).toBe('private final output');
+  console.info('Demonstrated quiet-final: ordered Room final text reaches commander unchanged, private, without done prefix');
+});
+
+it('Reproduction quiet-unreachable: names the failed corner and agent once per failure span', async () => {
+  const opened = await open();
+  const pending = (await db.query<CommandRow>('SELECT * FROM agent_commands WHERE room_id=$1 AND agent_id=$2', [opened.cornerId, WORKER])).rows[0]!;
+  await db.query(`UPDATE agent_commands SET created_at=now()-interval '3 minutes' WHERE id=$1`, [pending.id]);
+  await noteBlockedCornerChecks(db);
+  await noteBlockedCornerChecks(db);
+  const reports = (await commands(DM, RUBY)).filter(c => c.reason === 'report');
+  expect(reports).toHaveLength(1);
+  expect(reports[0]!.source.body).toContain(opened.cornerId);
+  expect(reports[0]!.source.body).toContain('Widget');
+  expect(reports[0]!.source.body).toContain('Worker');
+  expect(reports[0]!.source.body).toContain(pending.id);
+  expect(reports[0]!.source.body).toContain('unclaimed');
+  console.info('Demonstrated quiet-unreachable: named corner, agent and failed command, one notice across repeated failures');
+});
+
+it('Reproduction quiet-stale: drops an unreachable notice after a turn has run since the failed wake', async () => {
+  const opened = await open();
+  const pending = (await db.query<CommandRow>('SELECT * FROM agent_commands WHERE room_id=$1 AND agent_id=$2', [opened.cornerId, WORKER])).rows[0]!;
+  await worker(opened.cornerId);
+  await noteCornerAgentUnreachable(db, opened.cornerId, WORKER, pending.id, pending);
+  expect((await commands(DM, RUBY)).filter(c => c.reason === 'report')).toEqual([]);
+  console.info('Demonstrated quiet-stale: worker ran after failed wake; commander receives no unreachable notice');
+});
+
+it('allows one new unreachable notice after a worker turn ends the previous failure span', async () => {
+  const opened = await open();
+  const pending = (await db.query<CommandRow>('SELECT * FROM agent_commands WHERE room_id=$1 AND agent_id=$2', [opened.cornerId, WORKER])).rows[0]!;
+  await noteCornerAgentUnreachable(db, opened.cornerId, WORKER, pending.id, pending);
+  const turn = await worker(opened.cornerId);
+  await daemon.execute('postAgentTurnReceipt', { ...authority(turn), agentId: WORKER, status: 'complete', completionKind: 'no-reply' }, WORKER);
+  const next = (await db.query<CommandRow>(`INSERT INTO agent_commands
+    (id,room_id,agent_id,source_message_id,turn_request_id,action,reason,root_command_id,root_source_message_id,agent_depth)
+    SELECT 'next-failed-wake',room_id,agent_id,source_message_id,'next-failed-wake',action,reason,root_command_id,root_source_message_id,agent_depth
+    FROM agent_commands WHERE id=$1 RETURNING *`, [pending.id])).rows[0]!;
+  await noteCornerAgentUnreachable(db, opened.cornerId, WORKER, next.id, next);
+  await noteCornerAgentUnreachable(db, opened.cornerId, WORKER, next.id, next);
+  expect((await commands(DM, RUBY)).filter(c => c.reason === 'report')).toHaveLength(2);
 });
 it('reconnect recovery keeps every private report, even when each was queued offline', async () => {
   const opened = await open(), turn = await worker(opened.cornerId);

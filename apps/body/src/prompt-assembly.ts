@@ -975,7 +975,9 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
     surfaces: EVERYWHERE,
     render: ({ task, surface }) => [
       nonhumanSilentWake(task.commandReason)
-        ? 'If this nonhuman wake needs no message, call no_reply_needed successfully, then end with no final text. The tool posts nothing. Continue required work and report actual blockers instead of using silence to abandon it.'
+        ? 'This is a nonhuman wake. Do not post an update merely because time has passed or a reminder asks you to say what you are doing. If this nonhuman wake needs no message, call no_reply_needed successfully, then end with no final text. The tool posts nothing. Continue required work and report actual blockers instead of using silence to abandon it.'
+        : ['human_tag', 'direct_message'].includes(task.commandReason ?? '')
+          ? 'Reply to the human message that triggered this turn. A progress reminder is relevant only while that human is still waiting for your reply to their own message.'
         : '',
       ROOMS.includes(surface)
         ? [

@@ -18,7 +18,10 @@ it('rechecks eligibility when a retained session moves from report to human inpu
   await context.enter(command);
   context.notePromptSections(['turn.task']);
   expect(JSON.parse(await readFile(context.path, 'utf8')).commandReason).toBe('report');
-  expect(JSON.parse(await callAgentTool('no_reply_needed', {}, 'silent-1'))).toEqual({ acknowledged: true });
+  for (const reason of ['report', 'order', 'watched_corner', 'schedule', 'subscribed_event', 'system']) {
+    await context.enter({ ...command, reason });
+    expect(JSON.parse(await callAgentTool('no_reply_needed', {}, 'silent-1'))).toEqual({ acknowledged: true });
+  }
   for (const reason of ['human_tag', 'direct_message', 'corner_brief_revision', 'unknown']) {
     await context.enter({ ...command, reason });
     await expect(callAgentTool('no_reply_needed', {}, 'silent-2')).rejects.toThrow('requires a nonhuman');

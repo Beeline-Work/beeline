@@ -88,6 +88,7 @@ async function main() {
     }
     const rubyApi = new DaemonApiClient(origin, rubyToken, RUBY);
     const workerApi = new DaemonApiClient(origin, workerToken, WORKER);
+    off.push(() => rubyApi.closeLive(), () => workerApi.closeLive());
     const rubyPush = new Map<string, AgentCommand>(), workerPush = new Map<string, AgentCommand>();
     const subscriptions = new Map<string, Array<(commands: readonly AgentCommand[]) => void>>();
     function subscribe(api: InstanceType<typeof DaemonApiClient>, room: string, received: Map<string, AgentCommand>) {
@@ -120,7 +121,7 @@ async function main() {
     await claim(initial);
     async function mcp(command: AgentCommand, name: string, args: Record<string, unknown>) {
       const contextPath = join(scratch, `${command.agentId}.json`);
-      await writeFile(contextPath, JSON.stringify({ roomId: command.roomId, requestId: command.turnRequestId, generationId: 'proof-generation' }));
+      await writeFile(contextPath, JSON.stringify({ roomId: command.roomId, requestId: command.turnRequestId, generationId: 'proof-generation', commandReason: command.reason }));
       const child = spawn(process.execPath, [resolve('apps/body/dist/read-only-mcp.js')], { env: {
         ...process.env, BEELINE_MCP_SURFACE: 'agent', BEELINE_AGENT_DM: command.roomId === DM ? '1' : '0',
         BEELINE_DAEMON_ROOM_ID: command.roomId === DM ? DM : ROOM,
@@ -181,10 +182,25 @@ async function main() {
     await mcp(blocked, 'report', { status: 'needs_decision', text: taggedText });
     assert.ok((await phoneRoom(DM)).messages.some(message => message.text === taggedText));
     console.log('PASS report-tags-1: an agent-written human mention is preserved exactly once');
+    const roomOrderPush = pushed(WORKER, command => command.roomId === ROOM && command.reason === 'order');
+    subscribe(workerApi, ROOM, workerPush);
+    await mcp(blocked, 'order', { address: ROOM, agent: 'worker', text: 'Check the widget privately' });
+    const roomOrder = await roomOrderPush;
+    await claim(roomOrder, workerToken);
+    const plainFinalPush = pushed(RUBY, command => command.reason === 'report' && command.source.body === 'Widget checked.');
+    await call('postRoomMessage', { roomId: ROOM, requestId: roomOrder.turnRequestId,
+      generationId: 'proof-generation', text: 'Widget checked.' }, workerToken);
+    assert.equal((await plainFinalPush).source.body, 'Widget checked.');
+    console.log('PASS quiet-final: built service delivers plain final text privately with no invented done prefix');
     const before = rubyPush.size;
+    const schedulePush = pushed(WORKER, command => command.reason === 'schedule');
     await db.query(`INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,max_runs,next_run_at)
       VALUES($1,$2,$3,$4,$4,'{"kind":"interval","everyMinutes":1}','Run the widget check',1,now()-interval '1 minute')`, [randomUUID(), WORKSPACE, corner, WORKER]);
     assert.equal(await new AgentScheduleLoop(db).runOnce(), 1);
+    const scheduled = await schedulePush;
+    await claim(scheduled, workerToken);
+    assert.deepEqual(JSON.parse(await mcp(scheduled, 'no_reply_needed', {})), { acknowledged: true });
+    console.log('PASS quiet-scheduler: actual schedule wake accepts built no_reply_needed and posts nothing');
     // Flush all earlier committed notifications on the same channel, without a polling loop.
     const flushed = new Promise<void>(async resolve => {
       const release = await db.client.listen(POSTGRES_LIVE_CHANNEL, payload => {

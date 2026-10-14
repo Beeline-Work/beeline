@@ -19,7 +19,7 @@ it('shows the exhausted daily quota inside the voice bar with an operable end mi
   const end = vi.fn(); let renderer: any;
   await act(async () => { renderer = create(<VoiceBar voice={{ call: null, agents: [], target: null,
     speaker: null, level: 0, connecting: false, error: VOICE_QUOTA_MESSAGE, quotaExhausted: true,
-    firstAudioMs: null, join: vi.fn(), end, aim: vi.fn() }} />); });
+    firstAudioMs: null, humans: 1, unaddressed: 0, join: vi.fn(), end, aim: vi.fn() }} />); });
   expect(renderer.root.findByProps({ testID: 'voice-quota-error' }).props.children).toBe(VOICE_QUOTA_MESSAGE);
   expect(renderer.root.findAllByType('Waveform')).toHaveLength(0);
   await act(async () => renderer.root.findByProps({ testID: 'voice-mic' }).props.onPress());
@@ -33,7 +33,7 @@ it('keeps a readable join error and agent avatars visible with an operable end c
   await act(async () => { renderer = create(<VoiceBar voice={{ call: null,
     agents: [{ pubkey: 'ruby', kind: 'agent', name: 'Ruby' }, { pubkey: 'goose', kind: 'agent', name: 'Goosey' }],
     target: null, speaker: null, level: 0, connecting: false, error, quotaExhausted: false,
-    firstAudioMs: null, join: vi.fn(), end, aim }} />); });
+    firstAudioMs: null, humans: 1, unaddressed: 0, join: vi.fn(), end, aim }} />); });
   try {
     expect(renderer.root.findByProps({ testID: 'voice-connection-error' }).props.children).toBe(error);
     await act(async () => renderer.root.findByProps({ accessibilityLabel: 'Speak to Goosey' }).props.onPress());

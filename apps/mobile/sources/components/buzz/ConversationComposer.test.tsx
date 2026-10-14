@@ -460,7 +460,7 @@ describe('Conversation mode inside the composer', () => {
     const aim = vi.fn();
     const voice = { call: null, agents: [{ pubkey: 'ruby', kind: 'agent', name: 'Ruby' }],
       target: null, speaker: null, level: 0, connecting, error, quotaExhausted: false,
-      firstAudioMs: null, join: vi.fn(), end: vi.fn(), aim } as VoiceCallState;
+      firstAudioMs: null, humans: 1, unaddressed: 0, join: vi.fn(), end: vi.fn(), aim } as VoiceCallState;
     await act(async () => f.renderer.update(<ConversationComposer {...props} voice={voice} />));
     expect(f.renderer.root.findByProps({ testID: 'conversation-target-strip' })).toBeTruthy();
     act(() => f.renderer.root.findByProps({ accessibilityLabel: 'Speak to Ruby' }).props.onPress());
@@ -494,5 +494,34 @@ describe('Conversation mode inside the composer', () => {
     expect(f.renderer.root.findByProps({ testID: 'pending-chat-attachment-0' })).toBeTruthy();
     act(() => f.renderer.root.findByProps({ testID: 'chat-send' }).props.onPress());
     expect(f.onSend).toHaveBeenCalledOnce();
+  });
+
+  it('replaces the label with rotating speaking tips only when several humans are in the call', async () => {
+    vi.useFakeTimers();
+    try {
+      const f = render('');
+      const props = f.renderer.root.findByType(ConversationComposer).props;
+      const voice = { call: { id: 'call' }, agents: [{ pubkey: 'goosy', kind: 'agent', name: 'Goosy' }], target: null, speaker: null,
+        level: 0, connecting: false, error: null, quotaExhausted: false, firstAudioMs: null, humans: 1, unaddressed: 0,
+        join: vi.fn(), end: vi.fn(), aim: vi.fn() } as unknown as VoiceCallState;
+      await act(async () => f.renderer.update(<ConversationComposer {...props} voice={voice} />));
+      expect(f.renderer.root.findByProps({ testID: 'conversation-mode-label' }).props.children).toBe('Conversation mode');
+      expect(f.renderer.root.findAllByProps({ testID: 'conversation-tip' })).toHaveLength(0);
+      await act(async () => f.renderer.update(<ConversationComposer {...props} voice={{ ...voice, humans: 2 }} />));
+      const tip = () => f.renderer.root.findByProps({ testID: 'conversation-tip' });
+      expect(f.renderer.root.findAllByProps({ testID: 'conversation-mode-label' })).toHaveLength(0);
+      expect(tip().props.children).toBe('Start with a name: “Goosy, …”');
+      act(() => { vi.advanceTimersByTime(4_000); });
+      expect(tip().props.children).toBe('Tap an avatar to talk to it once');
+      act(() => { vi.advanceTimersByTime(4_000); });
+      expect(tip().props.children).toBe('Talk over an agent to stop it');
+      const plain = tip().props.style.flat().filter(Boolean).at(-1).color;
+      // A dropped unnamed turn returns to the name tip and highlights it briefly.
+      await act(async () => f.renderer.update(<ConversationComposer {...props} voice={{ ...voice, humans: 2, unaddressed: 1 }} />));
+      expect(tip().props.children).toBe('Start with a name: “Goosy, …”');
+      expect(tip().props.style.flat().filter(Boolean).at(-1).color).not.toBe(plain);
+      act(() => { vi.advanceTimersByTime(1_500); });
+      expect(tip().props.style.flat().filter(Boolean).at(-1).color).toBe(plain);
+    } finally { vi.useRealTimers(); }
   });
 });

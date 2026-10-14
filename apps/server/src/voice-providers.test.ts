@@ -96,6 +96,10 @@ describe('voice providers', () => {
     expect(body.messages[0].content).toContain('You are Ruby');
     expect(body.messages[0].content).toContain('Warm.');
     expect(body.tools.map((tool: { function: { name: string } }) => tool.function.name)).toEqual(['order']);
+    // Lookups the voice layer cannot see go to the real agent with a short spoken line.
+    expect(body.messages[0].content).toContain('read, check or look up anything you cannot see here (other Rooms, corners, reports, memory, keys');
+    expect(body.messages[0].content).toContain('call order at once and say only a short line such as "Checking."');
+    expect(body.tools[0].function.description).toContain('any read or lookup of something outside this conversation');
     expect(reply).toEqual({ text: 'I’ll work on that.', order: true });
     expect(text.mock.calls.flat().join('')).toBe(reply.text);
   });

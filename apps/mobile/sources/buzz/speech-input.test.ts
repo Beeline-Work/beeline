@@ -659,6 +659,7 @@ describe('useSpeechInput', () => {
 
     afterEach(() => {
       delete (mockMod as any).supportsRecording;
+      delete (mockMod as any).transcribesOnServerOnly;
     });
 
     async function dictate(speech: () => any) {
@@ -788,6 +789,22 @@ describe('useSpeechInput', () => {
       expect(upload.finish).not.toHaveBeenCalled();
       expect(upload.discard).toHaveBeenCalled();
       expect(onResult).not.toHaveBeenCalled();
+    });
+
+    it('commits server-only browser audio without a recognition result', async () => {
+      (mockMod as any).transcribesOnServerOnly = true;
+      upload.finish.mockResolvedValue('Hello desktop.');
+      const { onResult, speech } = renderHook();
+      await act(async () => { await speech().start(); });
+      await act(async () => {
+        const stopped = speech().stop();
+        fireEvent('audioend', { uri: 'blob:desktop-take' });
+        fireEvent('end');
+        expect(await stopped).toBe(true);
+      });
+      expect(upload.add).toHaveBeenCalledWith('blob:desktop-take');
+      expect(upload.finish).toHaveBeenCalledOnce();
+      expect(onResult).toHaveBeenCalledWith('Hello desktop.');
     });
 
     it('keeps the old path when the device cannot record or the server has no key', async () => {

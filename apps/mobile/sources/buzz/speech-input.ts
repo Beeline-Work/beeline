@@ -8,7 +8,8 @@
  * that". Transcripts are corrected against the Room lexicon (speech-correction).
  * Where the device can record, each piece of the take's audio goes to the
  * server's Groq Whisper as it closes; on stop their text replaces the
- * on-device text, which stays the fallback (speech-transcription).
+ * on-device text, which stays the fallback (speech-transcription). A browser
+ * without a recognizer only records, and its text is the server's alone.
  */
 import * as React from 'react';
 import { Platform } from 'react-native';
@@ -267,7 +268,8 @@ export function useSpeechInput(
       startOptions.lang,
     );
     let text = onDevice;
-    if (onDevice) {
+    // A server-only recorder has no on-device text to judge the take by.
+    if (onDevice || modRef.current?.transcribesOnServerOnly) {
       const transcribed = await take.upload.finish();
       if (takeId !== takeIdRef.current) return;
       if (transcribed) text = correctorRef.current.correct([transcribed]);

@@ -42,3 +42,11 @@ Idle: silence with no pending command; after 20 seconds the call ends, foregroun
 Park/reply: inject ruby work; wait for worker claimed, then stop input. After the 20-second deadline, prove parked_at set, STT closed, frame count unchanged and Waiting for Ruby… · Stop notification. At +35 seconds the report commits; before unlock verify TTS playback, parked_at cleared, STT reopened and frames increasing. Stop paths must remove the service and release audio.
 
 Long acceptance: separately measure 10 minutes locked and 60 minutes with periodic recognized input and audible replies. Record call identity, participant state, PSS, open/closed STT counts and transcript; unlock and compare. No polling is added to product code; observations belong only to the runner. No billed providers or BrowserStack spending.
+
+## Retained-RTC fix delivery
+
+For the retained-RTC/native-Stop head, use the new APK, not f48c31a0. SHA-256 is `68006e819b8c5121abbdad573d1c1ffcdb4245403a5e2263544d6f85656757fc`. Concatenate the three attached `conversation-native-apk.zip.part1`–`part3` files in numerical order, unzip, and verify `sha256sum app-debug.apk`. The ZIP is split solely to fit the Room's 25 MB artifact limit.
+
+The scratch Gradle build used a writable copy of mobile sources/dependencies and `--no-daemon --max-workers=2 -PreactNativeArchitectures=x86_64 -Dorg.gradle.jvmargs=-Xmx4g`; existing checked-in native caches were read-only. Runtime remains Android37/iOS35, both new relative to main36/34. It is a development client, so restart Metro and the fixture from the new pushed head before acceptance. The SDK/STT setup can be recreated with `python3 -m pip install --target /tmp/voice-proof-python pocketsphinx`.
+
+Wait for an active Room and STT opened before locking. A lock during microphone foreground-service startup is an invalid run and Android14+ rejects it. For native Stop independence, the isolated proof screen offers **Block JS for native Stop proof** (30 seconds); only use it after the call is active. Tap the actual notification Stop action and inspect server left_at/call before the JS released marker. Coordinates vary; do not reuse a stale shade coordinate. The latest coordinate-based device Stop attempt did not obtain a native-stop request, so this assertion still needs acceptance. Step1 must pass before steps2–4.

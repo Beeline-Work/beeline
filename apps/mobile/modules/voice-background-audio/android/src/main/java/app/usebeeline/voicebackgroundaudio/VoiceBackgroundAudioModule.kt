@@ -68,6 +68,12 @@ class VoiceBackgroundAudioModule : Module() {
       sessionGeneration
     }
 
+    AsyncFunction("configureStop") { url: String, token: String, expectedGeneration: Long ->
+      if (sessionGeneration != 0L && sessionGeneration == expectedGeneration)
+        VoiceAudioService.stopRequests.configure(expectedGeneration, url, token)
+      null
+    }
+
     AsyncFunction("setActivity") { active: Boolean, waitingFor: String?, expectedGeneration: Long ->
       val context = appContext.reactContext ?: return@AsyncFunction null
       if (sessionGeneration == 0L || sessionGeneration != expectedGeneration) return@AsyncFunction null

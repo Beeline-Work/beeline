@@ -1,6 +1,7 @@
 import { NativeModule, requireNativeModule } from 'expo-modules-core';
 
 declare class VoiceBackgroundAudioNative extends NativeModule<{ stopRequested: (event: { generation: number }) => void; resumeRequested: () => void; idleRequested: (event: { generation: number }) => void }> {
+  configureStop(url: string, token: string, generation: number): Promise<void>;
   start(resumeUrl?: string): Promise<number>;
   stop(generation: number): Promise<void>;
   setActivity(active: boolean, waitingFor: string | null, generation: number): Promise<void>;
@@ -12,6 +13,7 @@ declare class VoiceBackgroundAudioNative extends NativeModule<{ stopRequested: (
 const native = requireNativeModule<VoiceBackgroundAudioNative>('VoiceBackgroundAudio');
 
 
+export const configureStop = (url: string, token: string, generation: number) => native.configureStop(url, token, generation);
 export const start = (resumeUrl?: string) => native.start(resumeUrl);
 export const stop = (generation: number) => native.stop(generation);
 export const setActivity = (active: boolean, waitingFor: string | null, generation: number) =>

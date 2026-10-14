@@ -1,12 +1,14 @@
+import { getBuzzRuntimeConfig } from './runtime-config';
 import { monolithSession } from '@/auth/monolith-session';
 import { Room } from 'livekit-client';
 import { PermissionsAndroid, Platform } from 'react-native';
 
-export async function createVoiceRoom(onStop: () => void = () => {}, roomId?: string, onIdle: () => void = () => {}): Promise<{ room: Room; closeAudio(): Promise<void>; parkAudio(agentName: string): Promise<void>; resumeAudio(): Promise<void>; idleEnd(): Promise<void>; armSilence(): Promise<void>; cancelSilence(): Promise<void> }> {
+export async function createVoiceRoom(onStop: () => void = () => {}, roomId?: string, onIdle: () => void = () => {}): Promise<{ room: Room; closeAudio(): Promise<void>; configureStop(callId: string, token: string): Promise<void>; parkAudio(agentName: string): Promise<void>; resumeAudio(): Promise<void>; idleEnd(): Promise<void>; armSilence(): Promise<void>; cancelSilence(): Promise<void> }> {
   // Lazy: installed binaries without WebRTC can still dictate/use the Room.
   const { registerGlobals, AudioSession } = await import('@livekit/react-native');
   const { requireNativeModule } = await import('expo-modules-core');
   const background = requireNativeModule<{
+    configureStop(url: string, token: string, generation: number): Promise<void>;
     start(resumeUrl?: string): Promise<number>; stop(generation: number): Promise<void>;
     setActivity(active: boolean, waitingFor: string | null, generation: number): Promise<void>;
     endForIdle(resumeUrl: string | undefined, generation: number): Promise<void>;
@@ -32,6 +34,9 @@ export async function createVoiceRoom(onStop: () => void = () => {}, roomId?: st
     const room = new Room({ adaptiveStream: false, dynacast: false, publishDefaults: { stopMicTrackOnMute: true },
       reconnectPolicy: { nextRetryDelayInMs: ({ retryCount }) => Math.min(5000, 500 * 2 ** Math.min(retryCount, 4)) } });
     return { room, closeAudio,
+      configureStop: async (callId, token) => {
+        if (!closed && generation !== undefined) await background.configureStop(`${getBuzzRuntimeConfig().monolithUrl}/v1/phone/voice/${callId}/native-stop`, token, generation);
+      },
       armSilence: async () => { if (!closed && generation !== undefined) await background.armSilence(generation); },
       cancelSilence: async () => { if (!closed && generation !== undefined) await background.cancelSilence(generation); },
       parkAudio: async agentName => {

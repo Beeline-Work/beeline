@@ -24,6 +24,8 @@ export type VoiceCall = {
 
 export type VoiceJoin = {
   sessionId: string;
+  /** Capability for native Stop only, fenced to this participant session. */
+  stopToken: string;
   call: VoiceCall;
   url: string;
   token: string;
@@ -34,7 +36,7 @@ export type VoiceIdleState = { state: 'ended' | 'parked' | 'ready'; agentName?: 
 
 export type VoiceSignal =
   | { type: 'stop' }
-  | { type: 'resume' }
+  | { type: 'resume' | 'park'; sessionId: string }
   | { type: 'speech' }
   | { type: 'target'; agentId: string }
   | { type: 'speaker'; agentId: string | null }

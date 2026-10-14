@@ -75,6 +75,7 @@ class VoiceAudioService : Service() {
       ACTION_IDLE_END -> {
         silence.cancel()
         sessionGate.end(generation)
+        stopRequests.take(generation)
         resumeUrl = intent.getStringExtra(EXTRA_RESUME_URL) ?: resumeUrl
         active = true
         updateWakeLock()
@@ -90,11 +91,22 @@ class VoiceAudioService : Service() {
       ACTION_STOP -> {
         silence.cancel()
         sessionGate.end(generation)
-        sendBroadcast(Intent(ACTION_STOP_REQUESTED).setPackage(packageName).putExtra(EXTRA_GENERATION, generation))
+        val endingGeneration = generation
+        val request = stopRequests.take(endingGeneration)
+        sendBroadcast(Intent(ACTION_STOP_REQUESTED).setPackage(packageName).putExtra(EXTRA_GENERATION, endingGeneration))
         releaseWakeLock()
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        foreground = false
-        stopSelf(startId)
+        val finish = {
+          if (generation == endingGeneration) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            foreground = false
+            stopSelf(startId)
+          }
+        }
+        if (request == null) finish() else Thread({
+          request.send()
+          Handler(mainLooper).post { finish() }
+        }, "BeelineVoiceStop").start()
+
       }
     }
     return START_NOT_STICKY
@@ -231,6 +243,7 @@ class VoiceAudioService : Service() {
     const val EXTRA_WAITING_FOR = "waitingFor"
     const val EXTRA_RESUME_URL = "resumeUrl"
     const val EXTRA_GENERATION = "generation"
+    val stopRequests = VoiceStopRequests()
     private val sessionGate = VoiceSessionGate()
     private const val CHANNEL_ID = "voice-conversation"
     private const val NOTIFICATION_ID = 4012

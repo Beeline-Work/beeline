@@ -4,11 +4,14 @@ import { PgliteDatabase } from './test-support.js';
 import { LiveHub } from './live.js';
 import { VoiceService } from './voice-service.js';
 import { VoiceRoomRuntime } from './voice-room-runtime.js';
+import { createBeelineServer } from './server.js';
+import { DaemonService } from './daemon-service.js';
+import { TokenAuth } from './auth.js';
 import { PhoneService } from './phone-service.js';
 import { readChatListView, readRoomViewMessage } from '@beeline/api-contract/phone';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 
-vi.mock('./voice-room-runtime.js', () => ({ VoiceRoomRuntime: { connect: vi.fn(async () => ({ close: vi.fn(), closeWhenParked: vi.fn(), refresh: vi.fn() })) } }));
+vi.mock('./voice-room-runtime.js', () => ({ VoiceRoomRuntime: { connect: vi.fn(async () => ({ close: vi.fn(), park: vi.fn(), resume: vi.fn(), refresh: vi.fn() })) } }));
 vi.mock('livekit-server-sdk', async original => {
   const actual = await original<typeof import('livekit-server-sdk')>();
   return { ...actual, RoomServiceClient: class { async removeParticipant() {} async deleteRoom() {} } };
@@ -132,6 +135,13 @@ it('parks only this session’s pending command and prevents recovery from start
   try {
     expect(await service.idle(joined.call.id, H)).toEqual({ state: 'parked', agentName: 'Ruby' });
     expect((await db.query(`SELECT 1 FROM voice_participants WHERE call_id=$1 AND parked_at IS NOT NULL AND left_at IS NULL`, [joined.call.id])).rowCount).toBe(1);
+    const runtime = await vi.mocked(VoiceRoomRuntime.connect).mock.results.at(-1)!.value;
+    expect(runtime.park).toHaveBeenCalledWith(H, undefined);
+    expect(runtime.close).not.toHaveBeenCalled();
+    await service.resume(joined.call.id, H, joined.sessionId);
+    expect(runtime.resume).toHaveBeenCalledWith(H);
+    expect((await db.query(`SELECT session_id,parked_at FROM voice_participants WHERE call_id=$1 AND identity_id=$2`, [joined.call.id, H])).rows[0]).toMatchObject({ session_id: joined.sessionId, parked_at: null });
+    await db.query(`UPDATE voice_participants SET parked_at=now() WHERE call_id=$1 AND identity_id=$2`, [joined.call.id,H]);
     await db.query(`UPDATE voice_calls SET runtime_until=NULL WHERE id=$1`, [joined.call.id]);
     const contender = new VoiceService(db, live, service.config);
     try { expect(await contender.ensureRuntime((await db.query<any>(`SELECT * FROM voice_calls WHERE id=$1`, [joined.call.id])).rows[0]!)).toBeUndefined(); }
@@ -157,4 +167,34 @@ it('rejects delayed idle and leave from a superseded participation generation', 
   expect((await service.current(R,H))?.participants.map(p => p.pubkey)).toContain(H);
   expect((await db.query(`SELECT parked_at FROM voice_participants WHERE call_id=$1 AND identity_id=$2`,[current.call.id,H])).rows[0]?.parked_at).toBeNull();
   await service.leave(current.call.id,H,false,current.sessionId);
+});
+
+
+it('native Stop ends a parked call and rejects tampering, expiry and successor sessions', async () => {
+  const joined = await service.join(R, H);
+  await db.query(`UPDATE voice_participants SET parked_at=now() WHERE call_id=$1 AND identity_id=$2`, [joined.call.id, H]);
+  expect(await service.nativeStop(joined.call.id, joined.stopToken + 'x')).toBe(false);
+  expect(await service.nativeStop(R, joined.stopToken)).toBe(false);
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 86_400_001);
+  try { expect(await service.nativeStop(joined.call.id, joined.stopToken)).toBe(false); }
+  finally { clock.mockRestore(); }
+  const successor = await service.join(R, H);
+  expect(await service.nativeStop(joined.call.id, joined.stopToken)).toBe(true);
+  expect((await service.current(R, H))?.participants.map(p => p.pubkey)).toContain(H);
+  await db.query(`UPDATE voice_participants SET parked_at=now() WHERE call_id=$1 AND identity_id=$2`, [joined.call.id, H]);
+  const app = createBeelineServer({ database: db, live, voice: service,
+    auth: new TokenAuth(db, async () => ({ subject: 'proof', login: 'proof' })), daemon: new DaemonService(db, live), phone: new PhoneService(db, 'http://proof'),
+    mediaMaximumBytes: 1000, webAppOrigins: [] });
+  await new Promise<void>(resolve => app.listen(0, '127.0.0.1', resolve));
+  try {
+    const address = app.address() as { port: number };
+    const response = await fetch(`http://127.0.0.1:${address.port}/v1/phone/voice/${successor.call.id}/native-stop`, {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token: successor.stopToken }),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ left: true });
+  } finally { await new Promise<void>(resolve => app.close(() => resolve())); }
+  expect(await service.current(R, H)).toBeNull();
+  expect((await db.query(`SELECT left_at FROM voice_participants WHERE call_id=$1 AND identity_id=$2`, [joined.call.id, H])).rows[0]?.left_at).not.toBeNull();
+  console.log('parked native Stop => left_at set, call ended; stale capability cannot end successor');
 });

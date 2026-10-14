@@ -28,6 +28,12 @@ function VoiceProof() {
     <Text testID="status">{failure || voice.error || (voice.connecting ? 'Connecting' : voice.call ? 'Conversation active' : ready ? 'Ready' : 'Signing in')}</Text>
     <Text>Speaker: {voice.speaker ?? 'none'}</Text>
     <View style={{marginVertical:30}}><Button title="Start Conversation" onPress={() => { void voice.join(); }} /></View>
+    <Button title="Block JS for native Stop proof" onPress={() => {
+      console.log('[VOICE-PROOF] JS blocked', Date.now());
+      const until = Date.now() + 30_000;
+      while (Date.now() < until) { /* Deliberate isolated proof: no JS continuation can stop the server. */ }
+      console.log('[VOICE-PROOF] JS released', Date.now());
+    }} />
     <Button title="Stop Conversation" onPress={() => { void voice.end(); }} />
   </SafeAreaView>;
 }

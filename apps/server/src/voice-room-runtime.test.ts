@@ -609,3 +609,30 @@ it('Reproduction voice-name-1: switches transcript, reply and voice together and
     }
   } finally { await runtime.close(); }
 });
+
+
+it('routes committed park and resume to the RTC owner and drops stale session packets', async () => {
+  const { service } = conversationService();
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  const park = vi.spyOn(runtime, 'park').mockResolvedValue(undefined);
+  const resume = vi.spyOn(runtime, 'resume').mockResolvedValue(undefined);
+  let parked = true;
+  service.db.query.mockImplementation(async (_sql: string, args?: unknown[]) => ({
+    rowCount: args?.length === 4 ? Number(args[2] === 'current' && args[3] === parked) : 1, rows: [],
+  }));
+  const signal = (type: string, sessionId: string) => state.room.emit('data',
+    new TextEncoder().encode(JSON.stringify({ type, sessionId })), { identity: 'human' }, undefined, 'beeline.voice.v1');
+  try {
+    signal('park', 'old');
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(park).not.toHaveBeenCalled();
+    signal('park', 'current');
+    await vi.waitFor(() => expect(park).toHaveBeenCalledWith('human', 'current'));
+    signal('resume', 'current');
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(resume).not.toHaveBeenCalled();
+    parked = false;
+    signal('resume', 'current');
+    await vi.waitFor(() => expect(resume).toHaveBeenCalledWith('human'));
+  } finally { await runtime.close(); }
+});

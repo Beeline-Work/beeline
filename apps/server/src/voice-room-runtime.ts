@@ -82,13 +82,20 @@ export class VoiceRoomRuntime {
       if (!participant || topic !== VOICE_DATA_TOPIC || bytes.length > 2048) return;
       void (async () => {
         const data = JSON.parse(new TextDecoder().decode(bytes)) as VoiceSignal;
-        if (data.type !== 'target' && data.type !== 'resume') return;
+        if (data.type !== 'target' && data.type !== 'resume' && data.type !== 'park') return;
         await this.service.access(this.roomId, participant.identity);
         if (data.type === 'target') {
           const allowed = await this.service.agents(this.roomId, participant.identity);
           if (allowed.some(a => a.id === data.agentId)) this.targets.set(participant.identity, data.agentId);
         }
-        await this.refresh();
+        if (data.type === 'target') { await this.refresh(); return; }
+        // HTTP may land on another server; the retained RTC channel reaches
+        // the owner. Durable session/state checks fence queued old packets.
+        if (typeof data.sessionId !== 'string' || !(await this.service.db.query(`SELECT 1 FROM voice_participants
+          WHERE call_id=$1 AND identity_id=$2 AND session_id=$3 AND left_at IS NULL
+          AND (parked_at IS NOT NULL)=$4`, [this.callId, participant.identity, data.sessionId, data.type === 'park'])).rowCount) return;
+        if (data.type === 'park') await this.park(participant.identity, data.sessionId);
+        else await this.resume(participant.identity);
       })().catch(() => {});
     });
     this.room.on(RoomEvent.Disconnected, () => { if (!this.closed) void this.close(); });
@@ -399,11 +406,22 @@ export class VoiceRoomRuntime {
 
   get isClosed() { return this.closed; }
 
-  async closeWhenParked() {
-    const released = await this.service.db.query(`UPDATE voice_calls SET runtime_until=NULL
-      WHERE id=$1 AND runtime_owner=$2 AND NOT EXISTS(SELECT 1 FROM voice_participants
-        WHERE call_id=$1 AND left_at IS NULL AND parked_at IS NULL) RETURNING id`, [this.callId, this.leaseOwner]);
-    if (released.rowCount) await this.close();
+  async park(human: string, sessionId?: string) {
+    if (!(await this.service.db.query(`SELECT 1 FROM voice_participants WHERE call_id=$1 AND identity_id=$2
+      AND left_at IS NULL AND parked_at IS NOT NULL AND ($3::text IS NULL OR session_id=$3)`,
+      [this.callId, human, sessionId ?? null])).rowCount) return;
+    this.stopInput(human);
+  }
+
+  async resume(human: string) {
+    const participant = this.room.remoteParticipants.get(human);
+    if (!participant) throw new Error('voice transport disconnected');
+    await this.heartbeat();
+    for (const publication of participant.trackPublications.values()) {
+      if (publication.track?.kind === TrackKind.KIND_AUDIO) void this.listen(publication.track, participant)
+        .catch(() => this.signal({ type: 'error', message: 'Speech input unavailable; please try again' }, human));
+    }
+    await this.refresh();
   }
 
   async close() {

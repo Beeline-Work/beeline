@@ -1,6 +1,6 @@
 import { AgentVoiceService } from './agent-voice.js';
 import { stripVoiceEmotion } from './voice-emotion.js';
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHmac, timingSafeEqual, randomBytes, randomUUID } from 'node:crypto';
 import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
 import { type VoiceIdleState, type VoiceCall, type VoiceJoin, type RoomViewIdentity, type VoiceProvider, voiceDuration, DEFAULT_VOICE_PROVIDER } from '@beeline/api-contract/phone';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
@@ -153,7 +153,7 @@ export class VoiceService {
       ttl: '10m', metadata: JSON.stringify({ callId: row.id, kind: 'human' }) });
     token.addGrant({ roomJoin: true, room: `beeline-voice-${row.id}`, canPublish: true,
       canSubscribe: true, canPublishData: true, canUpdateOwnMetadata: false });
-    return { sessionId, call: await this.view(row), url: this.config.url, token: await token.toJwt(),
+    return { sessionId, stopToken: this.stopToken(row.id, humanId, sessionId), call: await this.view(row), url: this.config.url, token: await token.toJwt(),
       agents: agents.map(a => ({ pubkey: a.id, kind: 'agent', name: a.name, handle: a.handle,
         ...(a.face ? { face: a.face } : {}) })) };
   }
@@ -190,14 +190,48 @@ export class VoiceService {
       if (state.state !== 'ended') {
         await db.query(`UPDATE voice_participants SET parked_at=now()
           WHERE call_id=$1 AND identity_id=$2 AND left_at IS NULL AND ($3::text IS NULL OR session_id=$3)`, [callId, humanId, sessionId ?? null]);
-        // Serialize RTC removal with a successor join under the call row lock.
-        await this.rooms.removeParticipant(`beeline-voice-${callId}`, humanId).catch(() => {});
       }
       return state;
     });
     if (state.state === 'ended') { await this.leave(callId, humanId, true, sessionId); return state; }
-    await (await this.runtimes.get(callId))?.closeWhenParked();
+    await (await this.runtimes.get(callId))?.park(humanId, sessionId);
     return state;
+  }
+
+  async resume(callId: string, humanId: string, sessionId: string): Promise<void> {
+    const participant = (await this.db.query<{ room_id: string }>(`SELECT c.room_id FROM voice_calls c
+      JOIN voice_participants p ON p.call_id=c.id WHERE c.id=$1 AND p.identity_id=$2
+      AND p.session_id=$3 AND p.left_at IS NULL AND c.ended_at IS NULL`, [callId, humanId, sessionId])).rows[0];
+    if (!participant) throw new Error('voice session ended');
+    await this.access(participant.room_id, humanId);
+    await this.db.query(`UPDATE voice_participants SET parked_at=NULL WHERE call_id=$1 AND identity_id=$2
+      AND session_id=$3 AND left_at IS NULL`, [callId, humanId, sessionId]);
+    const call = (await this.db.query<CallRow>(`SELECT * FROM voice_calls WHERE id=$1 AND ended_at IS NULL`, [callId])).rows[0];
+    if (!call) throw new Error('voice session ended');
+    const runtime = await this.ensureRuntime(call);
+    await runtime?.resume(humanId);
+  }
+
+  private stopToken(callId: string, humanId: string, sessionId: string): string {
+    const payload = Buffer.from(JSON.stringify({ callId, humanId, sessionId, expires: Date.now() + 86_400_000 })).toString('base64url');
+    const signature = createHmac('sha256', this.config.apiSecret).update(`voice-stop:${payload}`).digest('base64url');
+    return `${payload}.${signature}`;
+  }
+
+  /** This capability grants only leave for the exact session, never Room access. */
+  async nativeStop(callId: string, token: unknown): Promise<boolean> {
+    if (typeof token !== 'string' || token.length > 1024) return false;
+    const [payload, signature, extra] = token.split('.');
+    if (!payload || !signature || extra) return false;
+    const expected = createHmac('sha256', this.config.apiSecret).update(`voice-stop:${payload}`).digest();
+    const received = Buffer.from(signature, 'base64url');
+    if (received.length !== expected.length || !timingSafeEqual(received, expected)) return false;
+    let value: { callId: string; humanId: string; sessionId: string; expires: number };
+    try { value = JSON.parse(Buffer.from(payload, 'base64url').toString()); } catch { return false; }
+    if (value.callId !== callId || typeof value.humanId !== 'string' || typeof value.sessionId !== 'string'
+      || !Number.isFinite(value.expires) || value.expires <= Date.now()) return false;
+    await this.leave(callId, value.humanId, true, value.sessionId);
+    return true;
   }
 
   async updateCard(row: CallRow, db = this.db) {

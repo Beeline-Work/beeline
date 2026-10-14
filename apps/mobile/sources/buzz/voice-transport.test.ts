@@ -1,4 +1,5 @@
 vi.mock('@/auth/monolith-session', () => ({ monolithSession: { fetch: vi.fn(async (input: string, init: unknown, options: any) => options.fetchImpl(input, init)) } }));
+vi.mock('./runtime-config', () => ({ getBuzzRuntimeConfig: () => ({ monolithUrl: 'http://proof' }) }));
 vi.mock('expo/fetch', () => ({ fetch: async () => new Response('locked response') }));
 import { expect, it, vi } from 'vitest';
 const native = vi.hoisted(() => ({ roomFailure: null as Error | null, registerGlobals: vi.fn(),
@@ -6,7 +7,7 @@ const native = vi.hoisted(() => ({ roomFailure: null as Error | null, registerGl
   link: undefined as ((event: {url: string}) => void) | undefined,
   response: undefined as ((event: any) => void) | undefined,
   openURL: vi.fn(async () => {}),
-  background: { armSilence: vi.fn(async () => {}), cancelSilence: vi.fn(async () => {}), setActivity: vi.fn(async () => {}), endForIdle: vi.fn(async () => {}), start: vi.fn(async () => 1), stop: vi.fn(async () => {}),
+  background: { configureStop: vi.fn(async () => {}), armSilence: vi.fn(async () => {}), cancelSilence: vi.fn(async () => {}), setActivity: vi.fn(async () => {}), endForIdle: vi.fn(async () => {}), start: vi.fn(async () => 1), stop: vi.fn(async () => {}),
     addListener: vi.fn((_event: string, _listener: (event: { generation: number }) => void) => ({ remove: vi.fn() })) },
   AudioSession: { startAudioSession: vi.fn(async () => {}), stopAudioSession: vi.fn(async () => {}) } }));
 vi.mock('@livekit/react-native', () => native);
@@ -113,4 +114,15 @@ it('delivers native voice HTTP while JavaScript timers remain paused', async () 
     expect(await response.text()).toBe('locked response');
     expect(vi.getTimerCount()).toBe(0);
   } finally { vi.useRealTimers(); }
+});
+
+
+it('configures native Stop for the current session and drops late configuration after close', async () => {
+  native.background.configureStop.mockClear();
+  const transport = await createVoiceRoom();
+  await transport.configureStop('call', 'session-capability');
+  expect(native.background.configureStop).toHaveBeenCalledWith('http://proof/v1/phone/voice/call/native-stop', 'session-capability', 1);
+  await transport.closeAudio();
+  await transport.configureStop('successor', 'stale-capability');
+  expect(native.background.configureStop).toHaveBeenCalledOnce();
 });

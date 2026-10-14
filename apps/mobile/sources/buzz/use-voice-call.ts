@@ -8,7 +8,7 @@ import { errorDiagnostic, reportClientError } from './client-error-report';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { voiceWaveformLevel } from './waveform-level';
 
-async function voiceRequest<T>(id: string, action: 'join' | 'leave' | 'current' | 'idle' | 'state', sessionId?: string): Promise<T> {
+async function voiceRequest<T>(id: string, action: 'join' | 'leave' | 'current' | 'idle' | 'state' | 'resume', sessionId?: string): Promise<T> {
   const response = await voiceFetch(`${getBuzzRuntimeConfig().monolithUrl}/v1/phone/voice/${id}/${action}${action === 'state' && sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ''}`,
     { method: action === 'current' || action === 'state' ? 'GET' : 'POST',
       ...(sessionId && action !== 'state' ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId }) } : {}) });
@@ -84,6 +84,8 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
       if (version !== revision.current) { await release(); return; }
       joined = await voiceRequest<VoiceJoin>(roomId, 'join');
       if (version !== revision.current) { await release(); await voiceRequest(joined.call.id, 'leave', joined.sessionId); return; }
+      await transport.configureStop(joined.call.id, joined.stopToken);
+      if (version !== revision.current) { await release(); await voiceRequest(joined.call.id, 'leave', joined.sessionId); return; }
       setJoinedAgents({ roomId, agents: joined.agents });
       const { room } = transport;
       mode.current = 'active';
@@ -112,13 +114,9 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
             if (state.state === 'ready') {
               mode.current = 'resuming';
               await transport!.resumeAudio();
-              const fresh = await voiceRequest<VoiceJoin>(roomId, 'join');
-              if (!current()) { await voiceRequest(fresh.call.id, 'leave', fresh.sessionId).catch(() => {}); return; }
-              joined = fresh;
-              await room.connect(fresh.url, fresh.token);
-              if (!current()) { await release(); return; }
-              if (session.current) { session.current.callId = fresh.call.id; session.current.sessionId = fresh.sessionId; }
-              await room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ type: 'resume' })),
+              await voiceRequest(joined!.call.id, 'resume', joined!.sessionId);
+              if (!current()) return;
+              await room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ type: 'resume', sessionId: joined!.sessionId })),
                 { reliable: true, topic: VOICE_DATA_TOPIC });
               return;
             }
@@ -126,7 +124,6 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
         } catch (cause) {
           if (current()) {
             if (mode.current === 'resuming') {
-              await room.disconnect().catch(() => {});
               if (current()) await transport!.parkAudio('agent').catch(() => {});
               if (current()) mode.current = 'parked';
             }
@@ -143,7 +140,8 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
           const state = await voiceRequest<VoiceIdleState>(joined!.call.id, 'idle', joined!.sessionId);
           if (!current()) return;
           if (state.state === 'ended') { await finishIdle(); return; }
-          await room.disconnect();
+          await room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ type: 'park', sessionId: joined!.sessionId })),
+            { reliable: true, topic: VOICE_DATA_TOPIC });
           await transport!.parkAudio(state.agentName ?? 'agent');
           if (!current()) return;
           mode.current = 'parked';
@@ -197,10 +195,12 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
           const fresh = await voiceRequest<VoiceJoin>(roomId, 'join');
           if (version !== revision.current) { await voiceRequest(fresh.call.id, 'leave', fresh.sessionId).catch(() => {}); return; }
           joined = fresh;
+          await transport!.configureStop(fresh.call.id, fresh.stopToken);
+          if (version !== revision.current) { await voiceRequest(fresh.call.id, 'leave', fresh.sessionId).catch(() => {}); return; }
           if (session.current?.room === room) { session.current.callId = fresh.call.id; session.current.sessionId = fresh.sessionId; }
           setCall(fresh.call);
           await room.connect(fresh.url, fresh.token);
-          if (version !== revision.current) { await release(); return; }
+          if (version !== revision.current) { await release(); await voiceRequest(fresh.call.id, 'leave', fresh.sessionId).catch(() => {}); return; }
           const agentId = targetRef.current;
           if (agentId) await room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ type: 'target', agentId })),
             { reliable: true, topic: VOICE_DATA_TOPIC });

@@ -36,11 +36,11 @@ async function age(path: string): Promise<void> {
 }
 
 describe('helper private storage reclamation', () => {
-  it('requires affirmative lifecycle and expires stale cache files independently of fresh siblings', async () => {
+  it('preserves failed lifecycle reads and expires stale cache files independently of fresh siblings', async () => {
     const f = await fixture();
     const cache = await f.file('agent-home/cache/stale-download');
     await age(dirname(cache));
-    for (const readStates of [async () => [], async () => { throw new Error('server unreachable'); }]) {
+    for (const readStates of [async () => { throw new Error('server unreachable'); }]) {
       expect(await reclaimHelperStorage({ ...f.input, readStates })).toEqual([]);
       expect(await exists(cache)).toBe(true);
     }

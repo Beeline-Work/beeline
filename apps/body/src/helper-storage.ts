@@ -325,9 +325,10 @@ function observeMountUse(): (path: string) => Promise<boolean> {
   };
 }
 
-/** Decisions come only from explicit server state. The lease prevents new harness
+/** Immediate archive removal requires explicit server state. The lease prevents new harness
  * launches throughout measurement/removal; OS evidence also protects orphan children.
- * Unknown/read-failed state and shared corners/ are never candidates. */
+ * An unlisted Room uses only seven-day file expiry, never immediate archive
+ * cleanup. Failed reads and shared corners/ are never candidates. */
 export async function reclaimHelperStorage(input: {
   runtimeDir: string;
   readStates(): Promise<readonly StorageRoomState[]>;
@@ -343,7 +344,8 @@ export async function reclaimHelperStorage(input: {
   now?: number;
   onError?: (roomId: string, error: unknown) => void;
 }): Promise<StorageReclaimEntry[]> {
-  const states = await input.readStates().catch(() => []);
+  const states = await input.readStates().catch(() => undefined);
+  if (!states) return [];
   const stateById = new Map(states.map(state => [state.roomId, state]));
   const rooms = resolve(input.runtimeDir, 'rooms');
   if (!await ordinaryDirectory(rooms)) return [];
@@ -361,8 +363,11 @@ export async function reclaimHelperStorage(input: {
   for (const room of await readdir(rooms, { withFileTypes: true })) {
     await input.progress?.();
     if (!room.isDirectory() || !/^[a-zA-Z0-9-]{1,80}$/.test(room.name)) continue;
-    const state = stateById.get(room.name);
-    if (!state || typeof state.archived !== 'boolean') continue;
+    const known = stateById.get(room.name);
+    if (known && typeof known.archived !== 'boolean') continue;
+    // Absence never authorizes archive removal; the approved unused-file rule
+    // still applies when a successful inventory no longer names this folder.
+    const state = known ?? { roomId: room.name, archived: false };
     const root = resolve(rooms, room.name);
     if (!await ordinaryDirectory(root)) continue;
     const ownerInUse = async () => (await Promise.all([root, ...(input.relatedRoots?.(room.name) ?? [])].map(observedUse))).some(Boolean);

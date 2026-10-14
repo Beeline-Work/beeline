@@ -85,13 +85,18 @@ A protected token under a cache could likewise preserve unrelated downloads.
 Archived homes were wired for immediate removal, but hit the same read-only
 DevTools removal failure described above. Large inventories used one JSON result
 with a 128 MiB output cap; the live dry run exceeded it for Room
-`bb91a1c7-7cad-4fde-aafc-94fccb651ac8` and retained that Room.
+`bb91a1c7-7cad-4fde-aafc-94fccb651ac8` and retained that Room. Eight private folders were absent from successful lifecycle
+inventories; the old sweep skipped those folders entirely, so their disposable
+files had no seven-day expiry path.
 
 **Fix:** expire disposable private files independently after seven days, keeping
 credentials, browser profiles, settings and local transcript/resume objects for
 open Rooms. Keep database sidecars together. On confirmed archive remove all
 non-Squire private storage immediately; server messages keep the transcript.
-Stream Linux inventory records rather than cap one huge result. Permission repair
+Apply seven-day expiry to disposable files in unlisted private folders too,
+without inventing an archive or removing their credentials/history. Failed
+lifecycle reads still retain storage. Stream Linux inventory records rather than
+cap one huge result. Permission repair
 is shared with retired-runtime cleanup.
 
 ## Corners: a false Squire match and archive access that could never return

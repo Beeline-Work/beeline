@@ -174,3 +174,16 @@ it('expires nested legacy corner and warm-pool checkouts, removing their registr
     await expect(git('git', ['-C', clone, 'show-ref', '--verify', `refs/heads/old-${index}`])).rejects.toBeDefined();
   }
 });
+
+it('expires unlisted private Room files after seven days without inventing an archive or removing credentials/history', async () => {
+  const runtimeDir = await fixture(); const room = resolve(runtimeDir, 'rooms/deleted-room');
+  const old = await file(resolve(room, 'agent-home/video-build/old/frame.png')); await age(old);
+  const credential = await file(resolve(room, 'agent-home/codex/auth.json'), 'credential');
+  const transcript = await file(resolve(room, 'agent-home/codex/sessions/thread'), 'history');
+  const fresh = await file(resolve(room, 'agent-home/video-build/fresh/frame.png'));
+  const entries = await reclaimHelperStorage({ runtimeDir, readStates: async () => [], inUse: async () => false,
+    withIdleRoom: async (_id, task) => { await task(); return true; } });
+  expect(await exists(old)).toBe(false); expect(await exists(fresh)).toBe(true);
+  expect(await readFile(credential, 'utf8')).toBe('credential'); expect(await readFile(transcript, 'utf8')).toBe('history');
+  expect(entries.every(entry => entry.kind === 'open')).toBe(true);
+});

@@ -12,6 +12,8 @@ import {
 } from '@/buzz/room-view-presentation';
 import { selectComposerAckPresentation } from '@/buzz/room-indicators';
 import { formatForwardedMessage } from '@/buzz/message-forward';
+import { CornerPrRow } from '@/components/buzz/CornerPrRow';
+import { foldPrLifecycleRuns } from '@/buzz/pr-lifecycle';
 import { resetProvisionalDrafts } from '@/buzz/draft-settle';
 import { ALIVE_RING_PAD } from '@/buzz/identity-mark';
 import { beelineThemes } from '@/buzz/groknight';
@@ -237,6 +239,69 @@ function message(overrides: Partial<ChatDisplayMessage>): ChatDisplayMessage {
 }
 
 describe('NotificationLifecycleCard', () => {
+  it.each(['android', 'web'])('Reproduction corner-pr-cards-1: single and grouped PR rows share actions on %s', (platform) => {
+    const previous = Platform.OS;
+    Object.defineProperty(Platform, 'OS', { value: platform, configurable: true });
+    try {
+      const single = message({
+        authorIdentity: { pubkey: 'ruby', kind: 'agent', name: 'Ruby', handle: 'ruby' },
+        daemonFact: { type: 'corner-complete', cornerId: 'corner-42', name: 'Same row',
+          objective: 'Same row', outcome: 'landed', pullRequest: {
+            number: 42, title: 'Same row', url: 'https://github.com/acme/repo/pull/42',
+          } },
+      });
+      const grouped = foldPrLifecycleRuns([single, { ...single, id: 'second',
+        daemonFact: { ...single.daemonFact!, cornerId: 'corner-43', pullRequest: {
+          number: 43, title: 'Another row', url: 'https://github.com/acme/repo/pull/43',
+        } } }])[0];
+      const onOpenCorner = vi.fn();
+      const onOpenUrl = vi.fn();
+      const one = render(<DaemonFactCard message={single} onOpenCorner={onOpenCorner} onOpenUrl={onOpenUrl} />);
+      const group = render(<NotificationLifecycleCard message={grouped} onOpenCorner={onOpenCorner} onOpenUrl={onOpenUrl} />);
+      const labels = (tree: ReactTestRenderer) => tree.root.findAllByType('Button')
+        .map((node: ReactTestInstance) => node.props.accessibilityLabel).filter(Boolean);
+      expect(JSON.stringify(one.toJSON())).toContain('PR · 1 merged');
+      for (const tree of [one, group]) {
+        expect(tree.root.findAllByType(CornerPrRow)).toHaveLength(1);
+        expect(tree.root.findAllByType('Button').map((node: ReactTestInstance) => node.props.variant)).toEqual(['primary', 'quiet']);
+        expect(labels(tree)).toContain('Corner →');
+        expect(labels(tree)).toContain('View ↗');
+        const button = (label: string) => tree.root.findAllByType('Button')
+          .find((node: ReactTestInstance) => node.props.accessibilityLabel === label)!;
+        act(() => button('Corner →').props.onPress());
+        act(() => button('View ↗').props.onPress());
+      }
+      expect(onOpenCorner.mock.calls).toEqual([['corner-42'], ['corner-43']]);
+      expect(onOpenUrl.mock.calls).toEqual([
+        ['https://github.com/acme/repo/pull/42'], ['https://github.com/acme/repo/pull/43'],
+      ]);
+    } finally {
+      Object.defineProperty(Platform, 'OS', { value: previous, configurable: true });
+    }
+  });
+
+  it('renders a deduplicated group of one with the identical single PR row', () => {
+    const single = message({
+      authorIdentity: { pubkey: 'ruby', kind: 'agent', name: 'Ruby', handle: 'ruby' },
+      daemonFact: { type: 'corner-complete', cornerId: 'corner-42', name: 'Same row',
+        objective: 'Same row', outcome: 'landed', pullRequest: {
+          number: 42, title: 'Same row', url: 'https://github.com/acme/repo/pull/42',
+        } },
+    });
+    const props = { onOpenCorner: vi.fn(), onOpenUrl: vi.fn() };
+    const one = render(<DaemonFactCard message={single} {...props} />);
+    const group = render(<NotificationLifecycleCard message={foldPrLifecycleRuns([
+      single, { ...single, id: 'duplicate' },
+    ])[0]} {...props} />);
+    const singleRow = one.root.findByType(CornerPrRow);
+    const groupedRow = group.root.findByType(CornerPrRow);
+    expect({ ...singleRow.props.item, updatedBy: '' }).toEqual({ ...groupedRow.props.item, updatedBy: '' });
+    expect(singleRow.props.state).toBe(groupedRow.props.state);
+    expect(singleRow.props.stateColor).toEqual(groupedRow.props.stateColor);
+    expect(singleRow.props.titleColor).toEqual(groupedRow.props.titleColor);
+    expect(group.root.findAllByProps({ testID: 'notification-run-expand-message' })).toHaveLength(0);
+  });
+
   it('opens the corner from a stacked corner cell and the PR from a PR cell', () => {
     const onOpenCorner = vi.fn();
     const onOpenUrl = vi.fn();
@@ -678,11 +743,11 @@ describe('Room message variant components', () => {
     expect(renderer.root.findByProps({ testID: 'corner-summary-card' })).toBeDefined();
     // A legacy card carries no name, so the title is the first three words of
     // its objective; the body still carries the objective whole (C89).
-    expect(JSON.stringify(renderer.toJSON())).toContain('PR 1 merged');
+    expect(JSON.stringify(renderer.toJSON())).toContain('PR · 1 merged');
     // The landed card names the corner AUTHOR, not the Room reviewer — the
     // reviewer is a per-Room setting, so it carries no per-card information.
     const json = JSON.stringify(renderer.toJSON());
-    expect(json).toContain('corner · by ');
+    expect(json).toContain('by ');
     expect(json).toContain('@beebee');
     expect(json).not.toContain('@echo');
     expect(JSON.stringify(renderer.toJSON())).not.toContain('Awaiting @echo');

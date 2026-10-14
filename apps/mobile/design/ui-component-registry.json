@@ -225,6 +225,7 @@
     "components/buzz/PageHeader.tsx": ["PageHeader"],
     "components/buzz/PinGlyph.tsx": ["PinGlyph"],
     "components/buzz/PinnedConversationsEmpty.tsx": ["PinnedConversationsEmpty"],
+    "components/buzz/CornerPrRow.tsx": ["CornerPrRow"],
     "components/buzz/PrLifecycleCard.tsx": ["NotificationLifecycleCard"],
     "components/buzz/ProfileActions.tsx": ["ProfileActions"],
     "components/buzz/ProfileIdentity.tsx": [

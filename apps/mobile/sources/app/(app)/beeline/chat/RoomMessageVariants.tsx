@@ -1,7 +1,8 @@
 import { HullDialogActions } from '@/components/buzz/HullDialog';
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Image, Platform, Pressable, Text, View } from 'react-native';
-export { NotificationLifecycleCard } from '@/components/buzz/PrLifecycleCard';
+import { NotificationLifecycleCard } from '@/components/buzz/PrLifecycleCard';
+export { NotificationLifecycleCard };
 import { Swipeable } from 'react-native-gesture-handler';
 import { DesktopMessageAction } from '@/components/buzz/DesktopMessageAction';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -1031,41 +1032,45 @@ export const DaemonFactCard = React.memo(function DaemonFactCard({
         : fact.type === 'worktree-cleaned'
           ? 'closed'
           : undefined;
-  const actions: TranscriptCardAction[] =
-    fact.type === 'corner-complete' && fact.pullRequest
-      ? [
-          {
-            label: 'Corner →',
-            primary: true,
-            accessibilityRole: 'link',
-            onPress: () => onOpenCorner(fact.cornerId),
-            testID: 'corner-summary-card-primary-action',
+  if (fact.type === 'corner-complete' && (landedCorner || fact.pullRequest)) {
+    return (
+      <NotificationLifecycleCard
+        message={{
+          ...message,
+          notificationLifecycleRun: {
+            subline: '',
+            items: [{
+              id: message.id,
+              title,
+              state: landedCorner ? 'Merged' : 'Closed',
+              kind: 'corner',
+              kindLine: `corner${prNumber ? ` · PR #${prNumber}` : ''}`,
+              cornerId: fact.cornerId,
+              url: fact.pullRequest?.url,
+              actor: agent ?? '',
+              updatedBy: message.id,
+            }],
           },
-          {
-            label: 'View ↗',
-            accessibilityRole: 'link',
-            onPress: () => onOpenUrl(fact.pullRequest!.url),
-            testID: 'corner-summary-card-secondary-action',
-          },
-        ]
-      : [
-          {
-            label: closedCorner ? 'Corner →' : 'Open →',
-            primary: true,
-            accessibilityRole: 'link',
-            onPress: () => onOpenCorner(fact.cornerId),
-            testID: `daemon-fact-card-${fact.type}-primary-action`,
-          },
-        ];
+        }}
+        testID="corner-summary-card"
+        onOpenCorner={onOpenCorner}
+        onOpenUrl={onOpenUrl}
+      />
+    );
+  }
+  const actions: TranscriptCardAction[] = [{
+    label: closedCorner ? 'Corner →' : 'Open →',
+    primary: true,
+    onPress: () => onOpenCorner(fact.cornerId),
+    testID: `daemon-fact-card-${fact.type}-primary-action`,
+  }];
   return (
     <RepositoryFactCard
-      title={landedCorner ? 'PR 1 merged' : title}
+      title={title}
       subline={
-        landedCorner
-          ? cardMeta(`corner · by ${agent ? `@${agent}` : 'agent'}`)
-          : fact.type === 'corner-open'
-            ? cardMeta(`corner · opened by ${agent ? `@${agent}` : 'agent'}`)
-            : undefined
+        fact.type === 'corner-open'
+          ? cardMeta(`corner · opened by ${agent ? `@${agent}` : 'agent'}`)
+          : undefined
       }
       stamp={ledgerStamp(message.timestamp)}
       body={fact.type === 'corner-open' ? fact.objective : undefined}
@@ -1076,18 +1081,14 @@ export const DaemonFactCard = React.memo(function DaemonFactCard({
                 id: message.id,
                 state,
                 title,
-                kindLine: landedCorner
-                  ? `corner${prNumber ? ` · PR #${prNumber}` : ''}`
-                  : prNumber
-                    ? `PR #${prNumber}`
-                    : 'corner',
+                kindLine: prNumber ? `PR #${prNumber}` : 'corner',
                 tone: state === 'failed' ? 'failed' : 'settled',
               },
             ]
           : undefined
       }
       actions={actions}
-      testID={landedCorner ? 'corner-summary-card' : `daemon-fact-card-${fact.type}`}
+      testID={`daemon-fact-card-${fact.type}`}
     />
   );
 });

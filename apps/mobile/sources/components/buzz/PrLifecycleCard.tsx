@@ -6,9 +6,11 @@ import type { ChatDisplayMessage } from '@/buzz/room-view-presentation';
 import type { CornerLifecycleView } from '@beeline/api-contract/phone';
 import { withCornerChecks, type NotificationLifecycleState } from '@/buzz/pr-lifecycle';
 import { TRANSCRIPT_SETTLE_MS, transcriptSteadyColors } from '@/buzz/transcript-motion';
+import { CornerPrRow } from './CornerPrRow';
 import { ledgerStamp } from '@/buzz/relative-time';
 interface NotificationLifecycleCardProps {
   message: ChatDisplayMessage;
+  testID?: string;
   /** In a corner: the corner row the header reads, the source of current check state. */
   cornerLifecycle?: CornerLifecycleView;
   onOpenCorner(cornerId: string): void;
@@ -33,6 +35,7 @@ function cellTone(state: NotificationLifecycleState): 'waiting' | 'settled' | 'f
  */
 export const NotificationLifecycleCard = React.memo(function NotificationLifecycleCard({
   message,
+  testID,
   cornerLifecycle,
   onOpenCorner,
   onOpenUrl,
@@ -147,7 +150,7 @@ export const NotificationLifecycleCard = React.memo(function NotificationLifecyc
       : steadyColor;
 
   return (
-    <View style={styles.ncFrameShell} testID={`notification-run-${message.id}`}>
+    <View style={styles.ncFrameShell} testID={testID ?? `notification-run-${message.id}`}>
       <View style={styles.ncFrame}>
         {/* Header */}
         <View style={styles.ncHead} testID={`notification-run-head-${message.id}`}>
@@ -175,62 +178,17 @@ export const NotificationLifecycleCard = React.memo(function NotificationLifecyc
         </View>
 
         {/* Presented cell: full controls */}
-        <View style={styles.ncCell} testID={`notification-run-cell-${presentedItem.id}`}>
-          <View style={styles.ncCellBody}>
-            <View style={styles.ncStateSlot}>
-              <Animated.Text
-                style={[
-                  styles.ncState,
-                  { color: stateColor(presentedItem.id, steady.rowState[presentedTone]) },
-                ]}
-              >
-                {presentedState}
-              </Animated.Text>
-            </View>
-            <View style={styles.ncCellCopy}>
-              <Animated.Text
-                style={[
-                  styles.ncCellTitle,
-                  { color: stateColor(presentedItem.id, theme.buzz.textPrimary) },
-                ]}
-                numberOfLines={1}
-                ellipsizeMode="tail"
-              >
-                {presentedItem.title}
-              </Animated.Text>
-              <Text style={styles.ncKindLine}>{presentedItem.kindLine}</Text>
-              {presentedItem.actor ? (
-                <Text style={styles.ncAuthor}>
-                  by{' '}
-                  <Text style={styles.ncAuthorHighlight}>
-                    @{presentedItem.actor.replace(/^@/, '')}
-                  </Text>
-                </Text>
-              ) : null}
-            </View>
-          </View>
-          <View style={styles.ncCellFooter}>
-            <View style={styles.ncFooterSpacer} />
-            {presentedItem.cornerId ? (
-              <Pressable
-                accessibilityRole="link"
-                onPress={() => onOpenCorner(presentedItem.cornerId!)}
-                testID={`notification-run-cell-corner-${presentedItem.id}`}
-              >
-                <Text style={styles.ncAction}>Corner →</Text>
-              </Pressable>
-            ) : null}
-            {presentedItem.url ? (
-              <Pressable
-                accessibilityRole="link"
-                onPress={() => onOpenUrl(presentedItem.url!)}
-                testID={`notification-run-cell-url-${presentedItem.id}`}
-              >
-                <Text style={[styles.ncAction, styles.ncActionPrimary]}>View ↗</Text>
-              </Pressable>
-            ) : null}
-          </View>
-        </View>
+        <CornerPrRow
+          item={presentedItem}
+          state={presentedState}
+          stateColor={{ color: stateColor(presentedItem.id, steady.rowState[presentedTone]) }}
+          titleColor={{ color: stateColor(presentedItem.id, theme.buzz.textPrimary) }}
+          testID={`notification-run-cell-${presentedItem.id}`}
+          cornerActionTestID={testID ? `${testID}-primary-action` : `notification-run-cell-corner-${presentedItem.id}`}
+          urlActionTestID={testID ? `${testID}-secondary-action` : `notification-run-cell-url-${presentedItem.id}`}
+          onOpenCorner={onOpenCorner}
+          onOpenUrl={onOpenUrl}
+        />
 
         {/* Contracted cells */}
         {(expanded ? otherItems : []).map((item) => {
@@ -342,10 +300,6 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.buzz.ledgerQuiet,
     marginTop: theme.buzz.space.xs,
   },
-  ncCell: {
-    borderTopWidth: 1,
-    borderTopColor: theme.buzz.border,
-  },
   ncCellBody: {
     minWidth: 0,
     flexDirection: 'row',
@@ -354,23 +308,12 @@ const styles = StyleSheet.create((theme) => ({
     gap: theme.buzz.space.sm,
   },
   ncStateSlot: { width: theme.buzz.transcriptCard.rowStateWidth },
-  ncState: {
-    ...theme.buzz.type.sectionHead,
-    fontFamily: theme.buzz.monoRegular,
-    color: theme.buzz.ledgerQuiet,
-  },
   ncStateContracted: {
     ...theme.buzz.type.sectionHead,
     fontFamily: theme.buzz.monoRegular,
     color: theme.buzz.ledgerQuiet,
   },
   ncCellCopy: { flex: 1, minWidth: 0 },
-  ncCellTitle: {
-    ...theme.buzz.type.bodyStrong,
-    color: theme.buzz.textPrimary,
-    minWidth: 0,
-    marginBottom: theme.buzz.space.xs,
-  },
   ncCellTitleContracted: {
     ...theme.buzz.type.bodyStrong,
     color: theme.buzz.textPrimary,
@@ -382,35 +325,9 @@ const styles = StyleSheet.create((theme) => ({
     color: theme.buzz.ledgerGhost,
     marginTop: theme.buzz.space.xs,
   },
-  ncAuthor: {
-    ...theme.buzz.type.machine,
-    color: theme.buzz.ledgerQuiet,
-    marginTop: 8,
-  },
   ncAuthorHighlight: {
     color: theme.buzz.accent,
     fontStyle: 'normal',
-  },
-  ncCellFooter: {
-    minHeight: theme.buzz.transcriptCard.footerMinHeight,
-    paddingVertical: theme.buzz.transcriptCard.footerVertical,
-    paddingHorizontal: theme.buzz.transcriptCard.side,
-    borderTopWidth: 1,
-    borderTopColor: theme.buzz.border,
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: theme.buzz.space.lg,
-    justifyContent: 'flex-end',
-  },
-  ncFooterSpacer: { flex: 1 },
-  ncAction: {
-    ...theme.buzz.type.body,
-    fontSize: theme.buzz.transcriptCard.actionSize,
-    color: theme.buzz.ledgerQuiet,
-  },
-  ncActionPrimary: {
-    fontFamily: theme.buzz.proseMedium,
-    color: theme.buzz.accent,
   },
   ncCellContracted: {
     borderTopWidth: 1,

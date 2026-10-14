@@ -1,0 +1,22 @@
+[
+  {
+    "theme": "bone",
+    "singleCorner": "single-corner",
+    "singleView": "PR #2462",
+    "groupedCorner": "grouped-corner",
+    "groupedView": "PR #2456",
+    "selectedView": "PR #2462",
+    "expandCollapse": "PASS",
+    "status": "PASS"
+  },
+  {
+    "theme": "obsidian",
+    "singleCorner": "single-corner",
+    "singleView": "PR #2462",
+    "groupedCorner": "grouped-corner",
+    "groupedView": "PR #2456",
+    "selectedView": "PR #2462",
+    "expandCollapse": "PASS",
+    "status": "PASS"
+  }
+]

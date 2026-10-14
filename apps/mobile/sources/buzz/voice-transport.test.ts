@@ -4,8 +4,8 @@ const native = vi.hoisted(() => ({ roomFailure: null as Error | null, registerGl
   link: undefined as ((event: {url: string}) => void) | undefined,
   response: undefined as ((event: any) => void) | undefined,
   openURL: vi.fn(async () => {}),
-  background: { setActivity: vi.fn(async () => {}), endForIdle: vi.fn(async () => {}), start: vi.fn(async () => 1), stop: vi.fn(async () => {}),
-    addListener: vi.fn(() => ({ remove: vi.fn() })) },
+  background: { armSilence: vi.fn(async () => {}), cancelSilence: vi.fn(async () => {}), setActivity: vi.fn(async () => {}), endForIdle: vi.fn(async () => {}), start: vi.fn(async () => 1), stop: vi.fn(async () => {}),
+    addListener: vi.fn((_event: string, _listener: (event: { generation: number }) => void) => ({ remove: vi.fn() })) },
   AudioSession: { startAudioSession: vi.fn(async () => {}), stopAudioSession: vi.fn(async () => {}) } }));
 vi.mock('@livekit/react-native', () => native);
 vi.mock('expo-notifications', () => ({
@@ -80,4 +80,25 @@ it('parks audio without stopping the foreground service and resumes the same nat
   expect(native.background.endForIdle).toHaveBeenCalledWith(undefined, 1);
   await transport.closeAudio();
   expect(native.background.stop).toHaveBeenCalledWith(1);
+});
+
+it('uses native one-shot deadlines and drops idle events from stale or closed sessions', async () => {
+  vi.useFakeTimers();
+  const idle = vi.fn();
+  try {
+    const transport = await createVoiceRoom(() => {}, 'room', idle);
+    const callback = native.background.addListener.mock.calls.filter(([event]) => event === 'idleRequested').at(-1)![1];
+    await transport.armSilence();
+    expect(native.background.armSilence).toHaveBeenLastCalledWith(1);
+    expect(vi.getTimerCount()).toBe(0);
+    callback({ generation: 2 });
+    expect(idle).not.toHaveBeenCalled();
+    callback({ generation: 1 });
+    expect(idle).toHaveBeenCalledOnce();
+    await transport.cancelSilence();
+    expect(native.background.cancelSilence).toHaveBeenLastCalledWith(1);
+    await transport.closeAudio();
+    callback({ generation: 1 });
+    expect(idle).toHaveBeenCalledOnce();
+  } finally { vi.useRealTimers(); }
 });

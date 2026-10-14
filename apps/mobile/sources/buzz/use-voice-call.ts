@@ -45,14 +45,15 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
   const pending = React.useRef(false);
   const speakerRef = React.useRef<string | null>(null);
   const targetRef = React.useRef<string | null>(null);
-  const silenceTimer = React.useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const cancelSilence = React.useRef<(() => Promise<void>) | undefined>(undefined);
   const mode = React.useRef<'active' | 'parking' | 'parked' | 'resuming' | 'ended'>('ended');
   const liveCleanup = React.useRef<(() => void) | null>(null);
   const joiningCleanup = React.useRef<(() => Promise<void>) | null>(null);
 
   const end = React.useCallback(async () => {
     revision.current++;
-    clearTimeout(silenceTimer.current); silenceTimer.current = undefined;
+    const cancelDeadline = cancelSilence.current; cancelSilence.current = undefined;
+    if (cancelDeadline) void cancelDeadline().catch(() => {});
     mode.current = 'ended';
     liveCleanup.current?.(); liveCleanup.current = null;
     const current = session.current; session.current = null;
@@ -76,9 +77,10 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
     let transport: Awaited<ReturnType<typeof createVoiceRoom>> | undefined;
     let joined: VoiceJoin | undefined;
     let closing: Promise<void> | undefined;
+    let expireDeadline: () => Promise<void> = async () => {};
     const release = () => closing ??= closeVoiceTransport(transport);
     try {
-      transport = await createVoiceRoom(() => { void end(); }, roomId);
+      transport = await createVoiceRoom(() => { void end(); }, roomId, () => { void expireDeadline(); });
       joiningCleanup.current = release;
       if (version !== revision.current) { await release(); return; }
       joined = await voiceRequest<VoiceJoin>(roomId, 'join');
@@ -87,10 +89,10 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
       const { room } = transport;
       mode.current = 'active';
       const current = () => version === revision.current;
+      cancelSilence.current = transport.cancelSilence;
       const armSilence = () => {
-        clearTimeout(silenceTimer.current);
         if (!current() || mode.current !== 'active' || speakerRef.current) return;
-        silenceTimer.current = setTimeout(() => { void expireSilence(); }, 20_000);
+        void transport!.armSilence().catch(cause => { if (current()) { void end(); setError(errorDiagnostic(cause).message); } });
       };
       const finishIdle = async () => {
         if (!current()) return;
@@ -137,6 +139,7 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
         if (!current() || mode.current !== 'active' || speakerRef.current) return;
         mode.current = 'parking'; setLevel(0);
         try {
+          await transport!.cancelSilence();
           await room.localParticipant.setMicrophoneEnabled(false);
           const state = await voiceRequest<VoiceIdleState>(joined!.call.id, 'idle', joined!.sessionId);
           if (!current()) return;
@@ -150,6 +153,7 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
           if (current()) { await end(); setError(errorDiagnostic(cause).message); }
         }
       };
+      expireDeadline = expireSilence;
       room.on(RoomEvent.DataReceived, (bytes, participant, _kind, topic) => {
         if (version !== revision.current || topic !== VOICE_DATA_TOPIC || participant?.identity !== `beeline-voice-${joined!.call.id}`) return;
         try {
@@ -158,7 +162,7 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
           if (data.type === 'speech') armSilence();
           if (data.type === 'speaker') {
             speakerRef.current = data.agentId; setSpeaker(data.agentId);
-            clearTimeout(silenceTimer.current);
+            void transport!.cancelSilence().catch(() => { if (current()) void end(); });
             if (!data.agentId && mode.current === 'resuming') {
               void room.localParticipant.setMicrophoneEnabled(!quotaRef.current, { echoCancellation: true, noiseSuppression: true, autoGainControl: false })
                 .then(() => { if (current()) { mode.current = 'active'; armSilence(); } }).catch(() => { void end(); });

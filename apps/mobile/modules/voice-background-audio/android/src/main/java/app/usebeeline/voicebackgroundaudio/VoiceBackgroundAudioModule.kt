@@ -15,21 +15,33 @@ class VoiceBackgroundAudioModule : Module() {
 
   override fun definition() = ModuleDefinition {
     Name("VoiceBackgroundAudio")
-    Events("stopRequested")
+    Events("stopRequested", "idleRequested")
 
     OnCreate {
       val context = appContext.reactContext ?: return@OnCreate
       val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-          if (intent?.action == VoiceAudioService.ACTION_STOP_REQUESTED &&
-              intent.getLongExtra(VoiceAudioService.EXTRA_GENERATION, 0L) == sessionGeneration) {
-            val stoppedGeneration = sessionGeneration
-            sessionGeneration = 0L
-            sendEvent("stopRequested", mapOf("generation" to stoppedGeneration))
+          when (intent?.action) {
+            VoiceAudioService.ACTION_STOP_REQUESTED -> {
+              if (intent.getLongExtra(VoiceAudioService.EXTRA_GENERATION, 0L) == sessionGeneration) {
+                val stoppedGeneration = sessionGeneration
+                sessionGeneration = 0L
+                sendEvent("stopRequested", mapOf("generation" to stoppedGeneration))
+              }
+            }
+            VoiceAudioService.ACTION_IDLE_REQUESTED -> {
+              // Do not clear sessionGeneration: the JS policy decides whether to
+              // park/end or re-arm the deadline after this signal.
+              if (intent.getLongExtra(VoiceAudioService.EXTRA_GENERATION, 0L) == sessionGeneration)
+                sendEvent("idleRequested", mapOf("generation" to sessionGeneration))
+            }
           }
         }
       }
-      val filter = IntentFilter(VoiceAudioService.ACTION_STOP_REQUESTED)
+      val filter = IntentFilter().apply {
+        addAction(VoiceAudioService.ACTION_STOP_REQUESTED)
+        addAction(VoiceAudioService.ACTION_IDLE_REQUESTED)
+      }
       if (Build.VERSION.SDK_INT >= 33) {
         context.registerReceiver(receiver, filter, Context.RECEIVER_NOT_EXPORTED)
       } else {
@@ -62,6 +74,20 @@ class VoiceBackgroundAudioModule : Module() {
       context.startService(command(context, VoiceAudioService.ACTION_ACTIVITY)
         .putExtra(VoiceAudioService.EXTRA_ACTIVE, active)
         .putExtra(VoiceAudioService.EXTRA_WAITING_FOR, waitingFor))
+      null
+    }
+
+    AsyncFunction("armSilence") { expectedGeneration: Long ->
+      val context = appContext.reactContext ?: return@AsyncFunction null
+      if (sessionGeneration == 0L || sessionGeneration != expectedGeneration) return@AsyncFunction null
+      context.startService(command(context, VoiceAudioService.ACTION_ARM_SILENCE))
+      null
+    }
+
+    AsyncFunction("cancelSilence") { expectedGeneration: Long ->
+      val context = appContext.reactContext ?: return@AsyncFunction null
+      if (sessionGeneration == 0L || sessionGeneration != expectedGeneration) return@AsyncFunction null
+      context.startService(command(context, VoiceAudioService.ACTION_CANCEL_SILENCE))
       null
     }
 

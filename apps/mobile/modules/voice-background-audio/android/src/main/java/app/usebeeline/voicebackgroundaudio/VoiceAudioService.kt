@@ -24,10 +24,18 @@ class VoiceAudioService : Service() {
   private var foreground = false
   private var generation = 0L
   private var tone: ToneGenerator? = null
+  private lateinit var silence: VoiceSilenceTimer
 
   override fun onCreate() {
     super.onCreate()
     createChannel()
+    // The deadline lives on the service's main looper, not React Native's
+    // TimingModule, so it still fires while the app is backgrounded/locked.
+    val handler = Handler(mainLooper)
+    silence = VoiceSilenceTimer(
+      schedule = { delayMs, task -> handler.postDelayed(task, delayMs) },
+      unschedule = { task -> handler.removeCallbacks(task) },
+    )
   }
 
   override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -41,6 +49,7 @@ class VoiceAudioService : Service() {
     generation = incomingGeneration
     when (intent?.action) {
       ACTION_START -> {
+        silence.cancel()
         resumeUrl = intent.getStringExtra(EXTRA_RESUME_URL) ?: resumeUrl
         active = true
         waitingFor = null
@@ -54,11 +63,17 @@ class VoiceAudioService : Service() {
         waitingFor = intent.getStringExtra(EXTRA_WAITING_FOR)
         // Keep the mic foreground service alive while parked. Only JS controls
         // capture/replay; this active bit owns the wake lock and notification.
+        // An activity change (park/resume) invalidates any listening deadline;
+        // the JS policy re-arms one if it still wants it.
+        silence.cancel(generation)
         ensureForeground()
         updateWakeLock()
         updateForegroundNotification()
       }
+      ACTION_ARM_SILENCE -> silence.arm(generation) { fired -> requestIdle(fired) }
+      ACTION_CANCEL_SILENCE -> silence.cancel(generation)
       ACTION_IDLE_END -> {
+        silence.cancel()
         sessionGate.end(generation)
         resumeUrl = intent.getStringExtra(EXTRA_RESUME_URL) ?: resumeUrl
         active = true
@@ -73,6 +88,7 @@ class VoiceAudioService : Service() {
         }, 250)
       }
       ACTION_STOP -> {
+        silence.cancel()
         sessionGate.end(generation)
         sendBroadcast(Intent(ACTION_STOP_REQUESTED).setPackage(packageName).putExtra(EXTRA_GENERATION, generation))
         releaseWakeLock()
@@ -172,6 +188,13 @@ class VoiceAudioService : Service() {
     }
   }
 
+  private fun requestIdle(firedGeneration: Long) {
+    if (!sessionGate.accepts(firedGeneration)) return
+    sendBroadcast(
+      Intent(ACTION_IDLE_REQUESTED).setPackage(packageName).putExtra(EXTRA_GENERATION, firedGeneration)
+    )
+  }
+
   private fun createChannel() {
     if (Build.VERSION.SDK_INT >= 26) {
       val manager = getSystemService(NotificationManager::class.java)
@@ -184,6 +207,7 @@ class VoiceAudioService : Service() {
   private fun immutableFlag() = if (Build.VERSION.SDK_INT >= 23) PendingIntent.FLAG_IMMUTABLE else 0
 
   override fun onDestroy() {
+    silence.cancel()
     sessionGate.end(generation)
     releaseWakeLock()
     tone?.release()
@@ -198,6 +222,9 @@ class VoiceAudioService : Service() {
     const val ACTION_START = "app.usebeeline.voice.START"
     const val ACTION_ACTIVITY = "app.usebeeline.voice.ACTIVITY"
     const val ACTION_IDLE_END = "app.usebeeline.voice.IDLE_END"
+    const val ACTION_ARM_SILENCE = "app.usebeeline.voice.ARM_SILENCE"
+    const val ACTION_CANCEL_SILENCE = "app.usebeeline.voice.CANCEL_SILENCE"
+    const val ACTION_IDLE_REQUESTED = "app.usebeeline.voice.IDLE_REQUESTED"
     const val ACTION_STOP = "app.usebeeline.voice.STOP"
     const val ACTION_STOP_REQUESTED = "app.usebeeline.voice.STOP_REQUESTED"
     const val EXTRA_ACTIVE = "active"

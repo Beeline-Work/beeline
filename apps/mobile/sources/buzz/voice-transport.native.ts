@@ -1,7 +1,7 @@
 import { Room } from 'livekit-client';
 import { PermissionsAndroid, Platform } from 'react-native';
 
-export async function createVoiceRoom(onStop: () => void = () => {}, roomId?: string): Promise<{ room: Room; closeAudio(): Promise<void>; parkAudio(agentName: string): Promise<void>; resumeAudio(): Promise<void>; idleEnd(): Promise<void> }> {
+export async function createVoiceRoom(onStop: () => void = () => {}, roomId?: string, onIdle: () => void = () => {}): Promise<{ room: Room; closeAudio(): Promise<void>; parkAudio(agentName: string): Promise<void>; resumeAudio(): Promise<void>; idleEnd(): Promise<void>; armSilence(): Promise<void>; cancelSilence(): Promise<void> }> {
   // Lazy: installed binaries without WebRTC can still dictate/use the Room.
   const { registerGlobals, AudioSession } = await import('@livekit/react-native');
   const { requireNativeModule } = await import('expo-modules-core');
@@ -9,16 +9,20 @@ export async function createVoiceRoom(onStop: () => void = () => {}, roomId?: st
     start(resumeUrl?: string): Promise<number>; stop(generation: number): Promise<void>;
     setActivity(active: boolean, waitingFor: string | null, generation: number): Promise<void>;
     endForIdle(resumeUrl: string | undefined, generation: number): Promise<void>;
-    addListener(event: 'stopRequested', listener: (event: { generation: number }) => void): { remove(): void };
+    armSilence(generation: number): Promise<void>; cancelSilence(generation: number): Promise<void>;
+    addListener(event: 'stopRequested' | 'idleRequested', listener: (event: { generation: number }) => void): { remove(): void };
   }>('VoiceBackgroundAudio');
   if (Platform.OS === 'android' && await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO)
       !== PermissionsAndroid.RESULTS.GRANTED) throw new Error('Microphone permission is required for Conversation mode.');
   registerGlobals();
   let generation: number | undefined;
   const subscription = background.addListener('stopRequested', event => { if (event.generation === generation) onStop(); });
+  let closed = false;
+  const idleSubscription = background.addListener('idleRequested', event => { if (!closed && event.generation === generation) onIdle(); });
   let cleanup: Promise<void> | undefined;
   const closeAudio = () => cleanup ??= (async () => {
-    subscription.remove();
+    closed = true;
+    subscription.remove(); idleSubscription.remove();
     try { await AudioSession.stopAudioSession(); } finally { if (generation !== undefined) await background.stop(generation); }
   })();
   try {
@@ -27,6 +31,8 @@ export async function createVoiceRoom(onStop: () => void = () => {}, roomId?: st
     const room = new Room({ adaptiveStream: false, dynacast: false, publishDefaults: { stopMicTrackOnMute: true },
       reconnectPolicy: { nextRetryDelayInMs: ({ retryCount }) => Math.min(5000, 500 * 2 ** Math.min(retryCount, 4)) } });
     return { room, closeAudio,
+      armSilence: async () => { if (!closed && generation !== undefined) await background.armSilence(generation); },
+      cancelSilence: async () => { if (!closed && generation !== undefined) await background.cancelSilence(generation); },
       parkAudio: async agentName => {
         await AudioSession.stopAudioSession();
         if (generation !== undefined) await background.setActivity(false, agentName, generation);

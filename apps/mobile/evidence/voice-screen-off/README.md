@@ -1,7 +1,8 @@
 # Conversation mode with the screen locked
 
 Verification remains incomplete. Ten-minute locked audio survival was measured;
-the twenty-second idle policy fails while locked. No sixty-minute soak success
+the prior twenty-second idle policy failed while locked; the native timer repair
+is awaiting device confirmation. No sixty-minute soak success
 is claimed. Raw observations: [Candy's lifecycle report](candy-locked-lifecycle.md).
 
 ## Reproduction voice-screen-off-1
@@ -25,26 +26,30 @@ ranged from 355888 to 361888 KB. This demonstrates the ten-minute lifecycle path
 not the full idle policy or an hour-long session.
 
 The working input is QEMU's WAV backend, using qemu_in.wav at emulator startup.
-PulseAudio/ALSA host paths and gRPC injection failed on this host. The remaining
-fix moves the one-shot silence deadline into native scheduling; Candy is preparing
-that native patch while Jellybean owns client integration and the park exception.
+PulseAudio/ALSA host paths and gRPC injection failed on this host. The one-shot silence deadline now uses an Android service Handler and an iOS
+DispatchWorkItem. The native idleRequested event invokes the existing client
+idle/park decision; speech resets the deadline and playback/stop cancels it.
+No native silence deadline depends on React Native timers. Candy supplied the
+native timer patch; Jellybean integrated the transport and client policy.
 
 ## Automated validation
 
 - Root `npm run typecheck` passed.
-- Client transport/hook: 17 tests passed. Covers trusted Stop, pending join
+- Client transport/hook: 18 tests passed. Covers trusted Stop, pending join
   cancellation, token renewal, one-shot idle end, parked silence without repeated
   requests, reply delivery and socket-reconnect reconciliation, and mic reopening
   after playback. Cold iOS notification routing waits for root/landing readiness,
   retains the same-Room intent across navigation and deduplicates warm link replay. Fake-clock elapsed time is not a measured soak.
 - Server runtime/service: 37 tests passed after integrating main. Covers spoken Stop, bounded input,
   parked lease recovery, idle end, and stale session generations.
-- Android module compiled; its two native generation-gate tests passed.
+- Android module compiled; seven one-shot timer tests and two generation-gate tests passed.
 - Debug Android APK built successfully. Device acceptance remains outstanding.
 - iOS cloud attempt `33ae1bb2-1f5f-41b4-8e69-e526a4083c2c` failed before dependency
   installation because the source archive lacked the expected enclosing directory.
   Replacement `ecbf18ac-13de-4ded-ba85-826f12d4608d` uses an enclosing project root;
-  it finished successfully, including native compilation. No iOS device testing is required or claimed.
+  it finished successfully before the timer change. The timer requires replacement
+  build `0e118e3b-c7b2-4788-bd6b-822c82277ef9`, currently queued.
+  No iOS device testing is required or claimed.
 
 The isolated fixture uses the production hook, native module, RTC transport,
 server routes and socket, with local offline speech providers and a disposable

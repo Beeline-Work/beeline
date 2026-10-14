@@ -163,7 +163,7 @@ export async function reportToCommander(
   text: string,
   command?: CommandRow,
   reportId = randomBytes(32).toString('hex'),
-  options: { automatic?: boolean; ask?: string; attachments?: PrivateCommandPayload['attachments']; digestSource?: boolean } = {},
+  options: { automatic?: boolean; agentOnly?: boolean; ask?: string; attachments?: PrivateCommandPayload['attachments']; digestSource?: boolean } = {},
 ): Promise<{ id: string; createdAt: number; delivered?: boolean }> {
   if ((!options.automatic && !/^(done|blocked|needs-decision|failed):\s*\S/.test(text)) || !text.trim() || text.length > 16_000)
     throw new CommandRefusalError(
@@ -219,6 +219,9 @@ export async function reportToCommander(
     console.error(`[commander] ${roomId}: return address no longer has its commander`);
     return { id: reportId, createdAt: Math.floor(Date.now() / 1000), delivered: false };
   }
+  // Automatic attention must never become a transcript post to a person.
+  if (options.agentOnly && member.kind !== 'agent')
+    return { id: reportId, createdAt: Math.floor(Date.now() / 1000) };
   if (member.kind === 'agent') {
     const queued = await createAgentCommand(db, {
       id: reportId,
@@ -340,30 +343,4 @@ export async function commanderReportAddress(db: SqlDatabase, roomId: string, co
       ).rows[0];
   }
   return { recipient, returnRoom, parent, origin, incoming };
-}
-
-/** Automatic corner attention is private, even when a person last steered the worker. */
-export async function wakeCornerCommander(
-  db: SqlDatabase, roomId: string, agentId: string, text: string,
-  id: string, command?: CommandRow,
-): Promise<boolean> {
-  const address = await commanderReportAddress(db, roomId, command);
-  const commander = (await db.query<{ id: string; room_id: string }>(
-    `SELECT identity.id,member.room_id FROM identities identity
-     JOIN memberships member ON member.identity_id=identity.id AND member.removed_at IS NULL
-     JOIN rooms target ON target.id=member.room_id AND target.archived_at IS NULL
-     JOIN rooms corner ON corner.id=$1
-     WHERE identity.kind='agent' AND
-       ((identity.id=$2 AND member.room_id=$3) OR
-        (identity.id=corner.created_by AND member.room_id=corner.parent_id))
-     ORDER BY (identity.id=$2 AND member.room_id=$3) DESC LIMIT 1`,
-    [roomId, address.recipient ?? null, address.returnRoom ?? null],
-  )).rows[0];
-  if (!commander) return false;
-  return Boolean(await createAgentCommand(db, {
-    id, roomId: commander.room_id, agentId: commander.id, sourceMessageId: null,
-    reason: 'report', parent: address.parent, retainDepth: true,
-    privatePayload: { kind: 'report', authorId: agentId, fromRoomId: roomId,
-      originCornerId: roomId, text },
-  }));
 }

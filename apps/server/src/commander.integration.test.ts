@@ -224,10 +224,13 @@ it('Reproduction quiet-unreachable: names the failed corner and agent once per f
   const opened = await open();
   const pending = (await db.query<CommandRow>('SELECT * FROM agent_commands WHERE room_id=$1 AND agent_id=$2', [opened.cornerId, WORKER])).rows[0]!;
   await db.query(`UPDATE agent_commands SET created_at=now()-interval '3 minutes' WHERE id=$1`, [pending.id]);
+  const before = (await db.query('SELECT id FROM messages ORDER BY id')).rows;
   await noteBlockedCornerChecks(db);
   await noteBlockedCornerChecks(db);
   const reports = (await commands(DM, RUBY)).filter(c => c.reason === 'report');
   expect(reports).toHaveLength(1);
+  expect(reports[0]).toMatchObject({ private: true });
+  expect((await db.query('SELECT id FROM messages ORDER BY id')).rows).toEqual(before);
   expect(reports[0]!.source.body).toContain(opened.cornerId);
   expect(reports[0]!.source.body).toContain('Widget');
   expect(reports[0]!.source.body).toContain('Worker');
@@ -236,8 +239,9 @@ it('Reproduction quiet-unreachable: names the failed corner and agent once per f
   console.info('Demonstrated quiet-unreachable: named corner, agent and failed command, one notice across repeated failures');
 });
 
-it('Reproduction human-steered-unreachable: wakes the agent commander with zero transcript additions', async () => {
+it.each([false, true])('Reproduction human-steered-unreachable: a person commander receives no notice (person opened=%s)', async (personOpened) => {
   const opened = await open();
+  if (personOpened) await db.query('UPDATE rooms SET created_by=$1 WHERE id=$2', [HUMAN, opened.cornerId]);
   const pending = (await db.query<CommandRow>('SELECT * FROM agent_commands WHERE room_id=$1 AND agent_id=$2', [opened.cornerId, WORKER])).rows[0]!;
   await db.query(`UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{authorId}',to_jsonb($1::text)) WHERE id=$2`, [HUMAN, pending.id]);
   const humanOrder = (await db.query<CommandRow>('SELECT * FROM agent_commands WHERE id=$1', [pending.id])).rows[0]!;
@@ -246,11 +250,9 @@ it('Reproduction human-steered-unreachable: wakes the agent commander with zero 
   await noteCornerAgentUnreachable(db, opened.cornerId, WORKER, pending.id, humanOrder);
   expect((await db.query('SELECT id FROM messages ORDER BY id')).rows).toEqual(before);
   const wakes = (await commands(ROOM, RUBY)).filter(c => c.reason === 'report');
-  expect(wakes).toHaveLength(1);
-  expect(wakes[0]).toMatchObject({ private: true });
-  expect(wakes[0]!.source.body).toContain('could not be reached');
+  expect(wakes).toHaveLength(0);
   expect((await db.query('SELECT id FROM messages ORDER BY id')).rows).toEqual(before);
-  console.info('Demonstrated Reproduction human-steered-unreachable: commander=1; transcript additions=0; repeat=0');
+  console.info('Demonstrated Reproduction human-steered-unreachable: person commander: wakes=0; transcript additions=0; repeat=0');
 });
 
 it('Reproduction quiet-stale: drops an unreachable notice after a turn has run since the failed wake', async () => {

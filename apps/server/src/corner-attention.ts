@@ -8,7 +8,7 @@ import {
   type CornerStateRow,
 } from './chat-corner-counts.js';
 import { createAgentCommand } from './agent-command.js';
-import { wakeCornerCommander } from './commander.js';
+import { commanderReportAddress, reportToCommander } from './commander.js';
 import { cornerImplementerSql } from './corner-worker.js';
 
 export const CORNER_ATTENTION_SCHEMA = `
@@ -218,14 +218,18 @@ export async function deliverCornerAttention(db: SqlDatabase): Promise<void> {
           );
           return;
         }
-        const delivered = await wakeCornerCommander(
+        const address = await commanderReportAddress(tx, row.id);
+        if (!address.recipient || !address.returnRoom) return;
+        const delivered = await reportToCommander(
           tx,
           row.id,
           SYSTEM_IDENTITY_ID,
-          `Corner ${row.name} is idle with no worker schedule or event subscription. Resume, schedule or close it.`,
+          `blocked: Corner ${row.name} is idle with no worker schedule or event subscription. Resume, schedule or close it.`,
+          undefined,
           flag.id,
+          { automatic: true, agentOnly: true },
         );
-        if (!delivered) return;
+        if (delivered.delivered === false) return;
         await tx.query('UPDATE corner_attention_flags SET sent_at=now() WHERE id=$1', [flag.id]);
       } else {
         if (state === 'archived') {

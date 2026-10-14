@@ -142,6 +142,7 @@ it.each([
     await runCornerAttention(db);
     await runCornerAttention(db);
     expect(await commanderFlags()).toHaveLength(1);
+    expect((await commanderFlags())[0]).toMatchObject({ private: true });
     expect((await db.query('SELECT id FROM messages')).rows).toEqual([]);
     expect((await readAgentCommands(db, C, WORKER)).commands).toHaveLength(0);
     expect((await readAgentCommands(db, C, REVIEWER)).commands).toHaveLength(0);
@@ -416,14 +417,18 @@ it('Reproduction reminder-supersession-2472: an older unanswered choice resumes 
   console.log('Demonstrated Reproduction reminder-supersession-2472: choice reminded once; newer blocker pauses it; answer restores WAITING choice and second reminder; repeat=0');
 });
 
-it('Reproduction bright-meadow-corner: human steering must not turn an idle flag into a room message', async () => {
+it.each([false, true])('Reproduction bright-meadow-corner: a person commander receives no idle notice (person opened=%s)', async (personOpened) => {
+  if (personOpened) await db.query('UPDATE rooms SET created_by=$1 WHERE id=$2', [HUMAN, C]);
   await db.query("UPDATE rooms SET name='bright-meadow-corner' WHERE id=$1", [C]);
   await db.query(`UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{authorId}',to_jsonb($1::text)) WHERE id='opening-order'`, [HUMAN]);
+  const before = (await db.query('SELECT id FROM agent_commands')).rows;
   await runCornerAttention(db);
   await runCornerAttention(db);
-  expect(await commanderFlags()).toHaveLength(1);
+  expect((await db.query('SELECT id FROM agent_commands')).rows).toEqual(before);
+  expect((await db.query("SELECT sent_at IS NOT NULL sent FROM corner_attention_flags WHERE kind='idle'")).rows).toEqual([{ sent: true }]);
+  expect(await commanderFlags()).toHaveLength(0);
   expect((await db.query('SELECT id,text FROM messages WHERE room_id IN ($1,$2)', [ROOM,C])).rows).toEqual([]);
-  console.info('Demonstrated Reproduction bright-meadow-corner: commander wake=1; room transcript messages=0; repeated flag=0');
+  console.info('Demonstrated Reproduction bright-meadow-corner: person commander: wakes=0; room transcript messages=0; repeated flag=0');
 });
 
 it('waiting reminders addressed to an agent stay private', async () => {

@@ -713,7 +713,7 @@ async function checksReported(
         roomId: cornerId, agentId: corner.worker_agent_id,
         sourceMessageId: event.sourceMessageId, reason: 'corner_check',
       });
-      if (!command) await noteCornerAgentUnreachable(db, cornerId, corner.worker_agent_id, event.sourceMessageId);
+      if (!command) await noteCornerAgentUnreachable(db, cornerId, corner.worker_agent_id, event.sourceMessageId, undefined, 'corner_check wake could not be queued');
       return command ? OK : no('the implementer cannot be woken');
     }
     if (repeat) return no(`${plan.outcome} already holds on this head`);
@@ -733,7 +733,7 @@ async function checksReported(
       reason: 'corner_check',
     });
     if (!command) {
-      await noteCornerAgentUnreachable(db, cornerId, corner.worker_agent_id, event.sourceMessageId);
+      await noteCornerAgentUnreachable(db, cornerId, corner.worker_agent_id, event.sourceMessageId, undefined, 'corner_check wake could not be queued');
       return no('the implementer cannot be woken');
     }
   } else if (plan.outcome === 'passing' && !plan.approved && !(await blockingReview(db, cornerId, headSha))) {
@@ -1195,7 +1195,7 @@ async function wake(
   reason: string,
 ): Promise<RevisionWake> {
   const command = await createAgentCommand(db, { roomId: cornerId, agentId, sourceMessageId, reason });
-  if (!command) await noteCornerAgentUnreachable(db, cornerId, agentId, sourceMessageId);
+  if (!command) await noteCornerAgentUnreachable(db, cornerId, agentId, sourceMessageId, undefined, `${reason} wake could not be queued`);
   return command ? { queued: true, agentId } : { queued: false, reason: 'The implementer cannot be woken' };
 }
 

@@ -32,6 +32,9 @@ Build `@beeline/body`, then run:
 npm run prove:claude-silent-wake -- /absolute/path/to/installed/claude-agent-acp
 ```
 
+An optional second argument selects a native Claude executable, for example
+the installed 2.1.296 binary, instead of the SDK's bundled executable.
+
 The Linux proof clears inherited environment, isolates HOME/XDG and cwd, uses
 a fake local Messages API and fake key, and mounts the built Beeline MCP server.
 It saves raw observations in the printed temporary evidence directory. It does
@@ -44,6 +47,29 @@ successful tool call, zero retries, zero assistant text and ACP `end_turn`.
 Human calls to the tool are refused; human provider failures remain visible.
 Room turn-loop regressions separately verify the completed terminal call posts
 no Room reply and completes once.
+
+## Native progress reminder
+
+Reproduction `quiet-native-reminder` (October 14, 2026): Claude Code 2.1.296,
+SDK 0.3.293 and ACP 0.89.1 inject an elapsed-silence progress reminder into
+the sixth provider request after five silent tool turns. Its gate is
+`CLAUDE_CODE_SILENT_TURN_REMINDER`; it is separate from the thinking-only retry.
+
+The proof includes an enabled control and disabled `0`/`false` probes. Each
+runs eight successful local Read tools and the built `no_reply_needed` tool,
+then completes with no assistant text. The enabled control shows the reminder
+starting at request 6; both disabled values omit it from all ten requests.
+The Beeline metadata probe inherits the enabled setting from the ACP process
+and verifies that the SDK session environment overrides it with `0`, with no
+reminder, internal retry or assistant text. Raw observations are saved beside
+the existing thinking-only proof.
+
+The checked result summary is [native-reminder.json](evidence/quiet-wakes/native-reminder.json).
+
+Beeline disables this native reminder for its Claude sessions because the
+native gate cannot distinguish a nonhuman wake from a human waiting for a
+reply. The server-provenance turn prompt preserves the reply owed to the
+human; human silence-tool refusals and provider failures remain covered.
 
 ## Integration limits
 

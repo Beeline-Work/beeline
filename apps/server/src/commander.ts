@@ -165,7 +165,7 @@ export async function reportToCommander(
   reportId = randomBytes(32).toString('hex'),
   options: { automatic?: boolean; ask?: string; attachments?: PrivateCommandPayload['attachments']; digestSource?: boolean } = {},
 ): Promise<{ id: string; createdAt: number; delivered?: boolean }> {
-  if (!/^(done|blocked|needs-decision|failed):\s*\S/.test(text) || text.length > 16_000)
+  if ((!options.automatic && !/^(done|blocked|needs-decision|failed):\s*\S/.test(text)) || !text.trim() || text.length > 16_000)
     throw new CommandRefusalError(
       'report must begin done:, blocked:, needs-decision: or failed:',
       400,

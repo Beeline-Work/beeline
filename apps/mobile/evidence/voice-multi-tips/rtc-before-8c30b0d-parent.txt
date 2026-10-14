@@ -1,0 +1,13 @@
+FAIL every panel learns that 2 humans are in the call ({"Alex":[],"Sam":[]})
+PASS Alex's unnamed speech gets no reply (answers: none)
+FAIL only Alex's panel gets the tip highlight signal (Alex 0, Sam 0)
+FAIL Sam's "Gussie" reaches Goosy (answered by nobody)
+FAIL Alex's "hey Goosey" reaches Goosy (answered by nobody)
+PASS Alex's tap does not route Sam's unnamed speech
+FAIL Alex's tap sends Alex's next unnamed turn to Ruby (answered by nobody)
+FAIL the tap covers one turn only, then clears
+FAIL Sam's noise and backchannel words do not interrupt Ruby (aborted=true playing=0)
+PASS Sam, who did not ask, interrupts Ruby with two real words
+FAIL Alex's panel learns Alex is the only human left
+PASS with one human, the locked agent answers every unnamed turn (answered by Ruby,Ruby)
+end of speech to first reply audio, Alex's answered turns (ms): 591, 865

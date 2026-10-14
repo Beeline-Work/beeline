@@ -30,7 +30,11 @@ export type VoiceJoin = {
 };
 
 export type VoiceSignal =
-  | { type: 'target'; agentId: string }
+  /** A tap also sends the next turn to this agent when several humans are in the call. */
+  | { type: 'target'; agentId: string; tap?: boolean }
+  | { type: 'humans'; count: number }
+  /** Several humans are in the call and this turn named no agent, so nobody answers. */
+  | { type: 'unaddressed' }
   | { type: 'speaker'; agentId: string | null }
   | { type: 'error'; message: string; code?: 'speech-quota-exhausted' }
   | { type: 'latency'; firstAudioMs: number };

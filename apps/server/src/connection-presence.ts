@@ -402,6 +402,14 @@ export class ConnectionPresence {
     if (this.#stopped) return;
     if ((this.#authenticatedAt.get(delivery.agent_id) ?? 0) >= delivery.created_at.getTime())
       return;
+    // The call runtime answers a spoken turn itself and wakes the helper only
+    // through a voice order, so an unordered spoken turn proves nothing.
+    const spokenOnly = await this.database.query(
+      `SELECT 1 FROM voice_messages v WHERE v.message_id=$1 AND NOT EXISTS(
+         SELECT 1 FROM voice_orders o WHERE o.source_message_id=v.message_id AND o.agent_id=$2)`,
+      [delivery.message_id, delivery.agent_id],
+    );
+    if (spokenOnly.rowCount) return;
     const authority = (
       await this.database.query<{
         access_policy: unknown;

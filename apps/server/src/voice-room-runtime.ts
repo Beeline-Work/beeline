@@ -7,7 +7,7 @@ import { VOICE_DATA_TOPIC, type VoiceSignal } from '@beeline/api-contract/phone'
 import type { VoiceService } from './voice-service.js';
 import { VOICE_SAMPLE_RATE, VoiceQuotaError, type VoiceAgent, type VoiceStt, type FluxEvent } from './voice-providers.js';
 
-import { namedVoiceTarget } from './voice-target.js';
+import { namedVoiceTarget, openingVoiceName } from './voice-target.js';
 export { namedVoiceTarget } from './voice-target.js';
 
 const speechWords = (text: string) => stripVoiceEmotion(text).toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
@@ -20,6 +20,18 @@ export function confirmedVoiceSpeech(event: FluxEvent): boolean {
   return words.length > 0 && words.length >= event.words.length * 0.75 &&
     words.every(word => Number.isFinite(word.start) && Number.isFinite(word.end)) &&
     words[words.length - 1]!.end - words[0]!.start >= 0.12;
+}
+
+const BACKCHANNEL = /^(uh|um|uhm|er|erm|ah|oh|ha|haha|hah|hm|hmm|mm|mhm|mmhmm|uhhuh|huh|yeah|yes|yep|yup|ok|okay|right|sure|cool|nice|wow)$/;
+
+/** In a call with several humans, any of them may interrupt an agent, but noise and
+ * backchannel words never do. Confirmed speech needs two words or about 400 ms. */
+export function voiceInterrupt(event: FluxEvent): boolean {
+  const words = speechWords(event.transcript).filter(word => !BACKCHANNEL.test(word.replace(/-/g, '')));
+  if (!words.length) return false;
+  if (words.length >= 2) return true;
+  const timed = event.words?.filter(word => Number.isFinite(word.start) && Number.isFinite(word.end)) ?? [];
+  return timed.length > 0 && timed[timed.length - 1]!.end - timed[0]!.start >= 0.4;
 }
 
 /** A recognized fragment of our own recent output must not start another answer. */
@@ -41,6 +53,9 @@ export class VoiceRoomRuntime {
   private readonly turnIndices = new Map<string, number>();
   private readonly inputVersions = new Map<string, number>();
   private readonly inputSpeech = new Map<string, { turn: number; playback: Set<string> }>();
+  /** One-turn avatar taps in a call with several humans. */
+  private readonly taps = new Map<string, string>();
+  private humans = 1;
   private speaking?: AbortController;
   private speechIdle = Promise.resolve();
   private timer?: ReturnType<typeof setInterval>;
@@ -75,7 +90,7 @@ export class VoiceRoomRuntime {
       // participant. Do not let the old socket remove its successor.
       const timer = setTimeout(() => {
         if (!this.closed && !this.room.remoteParticipants.has(participant.identity))
-          void this.service.leave(this.callId, participant.identity, true).catch(() => {});
+          void this.service.leave(this.callId, participant.identity, true).then(() => this.countHumans()).catch(() => {});
       }, 1000);
       timer.unref();
     });
@@ -86,21 +101,25 @@ export class VoiceRoomRuntime {
         if (data.type !== 'target') return;
         await this.service.access(this.roomId, participant.identity);
         const allowed = await this.service.agents(this.roomId, participant.identity);
-        if (allowed.some(a => a.id === data.agentId)) this.targets.set(participant.identity, data.agentId);
+        if (!allowed.some(a => a.id === data.agentId)) return;
+        this.targets.set(participant.identity, data.agentId);
+        if (data.tap) this.taps.set(participant.identity, data.agentId);
       })().catch(() => {});
     });
+    this.room.on(RoomEvent.ParticipantConnected, () => { void this.countHumans(undefined, true).catch(() => {}); });
     this.room.on(RoomEvent.Disconnected, () => { if (!this.closed) void this.close(); });
     await this.room.connect(this.service.config.url, await token.toJwt(), { autoSubscribe: true, dynacast: false });
     const options = new TrackPublishOptions(); options.source = TrackSource.SOURCE_MICROPHONE;
     await this.room.localParticipant!.publishTrack(LocalAudioTrack.createAudioTrack('beeline-agent-speech', this.audio), options);
     this.timer = setInterval(() => { void this.heartbeat().catch(() => this.close()); }, 5_000);
     this.timer.unref();
+    await this.countHumans(undefined, true).catch(() => {});
     await this.refresh();
   }
 
   private async signal(signal: VoiceSignal, human?: string) {
     if (!this.closed) await this.room.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify(signal)),
-      { reliable: true, topic: VOICE_DATA_TOPIC, ...(human ? { destinationIdentities: [human] } : {}) });
+      { reliable: true, topic: VOICE_DATA_TOPIC, ...(human ? { destination_identities: [human] } : {}) });
   }
   private async listen(track: RemoteTrack, participant: RemoteParticipant) {
     const human = participant.identity;
@@ -140,11 +159,13 @@ export class VoiceRoomRuntime {
       }
       // Partial recognized names can aim the strip immediately; only EndOfTurn dispatches.
       if (event.event !== 'EndOfTurn') void this.aimSpokenName(human, event.transcript, version);
-      this.speaking?.abort(); this.audio.clearQueue();
+      // With several humans, anyone may interrupt, but only with real speech.
+      const interrupts = this.humans === 1 || voiceInterrupt(event);
+      if (interrupts) { this.speaking?.abort(); this.audio.clearQueue(); }
       if (event.event !== 'EndOfTurn' || !event.transcript.trim() ||
           event.turn_index <= (this.turnIndices.get(human) ?? -1)) return;
       this.turnIndices.set(human, event.turn_index);
-      void this.utterance(human, event.transcript, performance.now()).catch(error => {
+      void this.utterance(human, event.transcript, performance.now(), interrupts).catch(error => {
         if (error instanceof Error && error.name === 'AbortError') return;
         void this.signal({ type: 'error', message: error instanceof VoiceQuotaError ? error.message : 'Voice reply unavailable; your message is in the transcript',
           ...(error instanceof VoiceQuotaError ? { code: error.code } : {}) }, human);
@@ -189,6 +210,7 @@ export class VoiceRoomRuntime {
         AND joined_at<now()-interval '30 seconds' AND NOT identity_id=ANY($2::text[])`,
       [this.callId, [...this.room.remoteParticipants.keys()]]);
     for (const participant of missing.rows) await this.service.leave(this.callId, participant.identity_id, true);
+    await this.countHumans();
     await this.refresh();
   }
   private async aimSpokenName(human: string, text: string, version: number) {
@@ -198,11 +220,28 @@ export class VoiceRoomRuntime {
     await this.signal({ type: 'target', agentId: agent.id }, human);
   }
 
-  async utterance(human: string, text: string, startedAt = performance.now()) {
+  /** Every human hears the same count, so each panel shows the same speaking tips. */
+  private async countHumans(count?: number, announce = false) {
+    count ??= await this.service.humanCount(this.callId);
+    const changed = count !== this.humans;
+    this.humans = count;
+    if (changed || announce) await this.signal({ type: 'humans', count });
+  }
+
+  /** `interrupts` is false for speech below the multi-human interrupt threshold. */
+  async utterance(human: string, text: string, startedAt = performance.now(), interrupts = true) {
     const agents = await this.service.agents(this.roomId, human);
     const humans = await this.service.humanCount(this.callId);
-    const agent = namedVoiceTarget(text, agents, this.targets.get(human), humans);
-    if (!agent || this.closed) return;
+    void this.countHumans(humans).catch(() => {});
+    // With several humans, a turn below the interrupt threshold never stops a speaking
+    // agent, even when it names one. A pending tap waits for real speech.
+    if (humans > 1 && this.speaking && !interrupts) return;
+    const named = humans > 1 ? openingVoiceName(text, agents) : undefined;
+    const tapped = agents.find(agent => agent.id === this.taps.get(human));
+    this.taps.delete(human);
+    const agent = humans > 1 ? named ?? tapped : namedVoiceTarget(text, agents, this.targets.get(human), humans);
+    if (this.closed) return;
+    if (!agent) { await this.signal({ type: 'unaddressed' }, human); return; }
     this.targets.set(human, agent.id);
     await this.signal({ type: 'target', agentId: agent.id }, human);
     const sourceId = await this.service.recordHuman(this.callId, this.roomId, human, agent, text, this.leaseOwner);
@@ -246,7 +285,7 @@ export class VoiceRoomRuntime {
         handedOff = true;
         await this.service.dispatch(this.callId, sourceId, agent.id);
       }
-      const answer = reply.text || (reply.order ? "I’ll work on that and tell you when I’m done." : '');
+      const answer = reply.text || (reply.order ? "Checking. I’ll tell you when I have it." : '');
       // The final receipt may include a suffix absent from streamed deltas.
       if (!reply.text || !receivedText.trim()) { speechText.finish(); flush(answer); }
       else if (answer.startsWith(receivedText)) speechText.push(answer.slice(receivedText.length)).forEach(flush);

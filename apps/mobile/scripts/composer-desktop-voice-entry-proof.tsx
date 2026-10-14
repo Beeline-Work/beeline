@@ -11,7 +11,7 @@ function Proof() {
   const voice = {
     call: active ? { id: 'fixture-call' } : null, agents: [], target: null,
     speaker: null, level: 0, connecting: false, error: null,
-    quotaExhausted: false, firstAudioMs: null,
+    quotaExhausted: false, firstAudioMs: null, humans: 1, unaddressed: 0,
     join: async () => { joins++; setActive(true); },
     end: async () => { leaves++; setActive(false); }, aim: () => {},
   } as VoiceCallState;

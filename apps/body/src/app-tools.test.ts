@@ -88,6 +88,79 @@ describe('server-mediated connected app tools', () => {
       .toMatchObject({ status: 'unavailable' });
   });
 
+  describe('Reproduction squire-session-1: a browser app with a signed-in Squire session', () => {
+    const asset = 'https://dreamina.capcut.com/ai-tool/asset';
+    const page = (url: string, rows: unknown[][], stage = 'browse') => ({ url, stage, session_id: 'check-1', safe_table: rows });
+    const run = async (signedInUrl: string | undefined, pages: Record<string, unknown>) => {
+      vi.stubEnv('BEELINE_SQUIRE_RELAY_URL', 'http://squire.test');
+      vi.stubEnv('BEELINE_SQUIRE_RELAY_TOKEN', 'relay-only');
+      const sequence: string[] = [];
+      const connects: Record<string, unknown>[] = [];
+      vi.stubGlobal('fetch', async (url: URL, init: RequestInit) => {
+        const name = String(url).split('/').at(-1)!;
+        const input = JSON.parse(String(init.body));
+        if (name === 'mcp') {
+          const tool = input.params.name as string;
+          const query = input.params.arguments.query as string | undefined;
+          sequence.push(query ? `${tool}:${query}` : tool);
+          const body = tool === 'list_credentials' ? { credentials: [] }
+            : tool === 'operate_finish' ? { closed: true }
+            : tool === 'operate_start' ? pages.start : pages[query!] ?? { ...(pages.start as object), safe_table: [] };
+          return Response.json({ result: { content: [{ type: 'text', text: JSON.stringify(body) }] } });
+        }
+        sequence.push(name);
+        if (name !== 'connect') return Response.json({});
+        connects.push(input);
+        return Response.json(input.squireSignedIn
+          ? { status: 'ready', app: 'Dreamina', appKey: 'dreamina', transport: 'squire-browser', next: 'ready' }
+          : { status: 'needs_squire', app: 'Dreamina', appKey: 'dreamina', transport: 'squire-browser',
+            squire: { url: 'https://www.google.com/search?q=Dreamina', goal: 'Sign in.' }, next: 'Use your own operate_drive.' });
+      });
+      const reply = JSON.parse(await callAgentTool('connect', { service: 'Dreamina', reason: 'Make a video',
+        noApi: true, ...(signedInUrl ? { signedInUrl } : {}) }, 'call-1'));
+      return { reply, sequence, connects };
+    };
+
+    it('is ready after a read-only check of a signed-in-only page', async () => {
+      const { reply, sequence, connects } = await run(asset, {
+        start: page(asset, [['@e:1', 'b', '@credits'], ['@e:2', 'b', '@create']]) });
+      expect(reply).toMatchObject({ status: 'ready' });
+      expect(sequence).toEqual(['list_credentials', 'postConnectorVault', 'connect', 'operate_start',
+        'operate_observe:sign in', 'operate_observe:log in', 'operate_observe:sign up', 'operate_finish', 'connect']);
+      expect(connects[0]).toMatchObject({ signedInUrl: asset });
+      expect(connects[0]).not.toHaveProperty('squireSignedIn');
+      expect(connects[1]).toMatchObject({ signedInUrl: asset, squireSignedIn: true, squireAvailable: true });
+      expect(sequence).not.toContain('operate_drive');
+    });
+
+    it.each([
+      ['a redirect to the public home page', page('https://dreamina.capcut.com/ai-tool/home', [['@e:1', 'b', '@create']])],
+      ['sign-in controls', page(asset, [['@e:1', 'b', '@sign-in|a=login']])],
+      ['a sign-up control', page(asset, [['@e:1', 'l', '@sign-up-now|a=signup']])],
+      ['a login page', page(asset, [], 'auth')],
+      ['a redirect to another site', page('https://accounts.google.com/signin', [])],
+    ])('keeps the needs_squire handback for %s', async (_case, start) => {
+      const { reply, sequence, connects } = await run(asset, { start });
+      expect(reply).toMatchObject({ status: 'needs_squire', squire: { url: 'https://www.google.com/search?q=Dreamina' } });
+      expect(sequence).toEqual(['list_credentials', 'postConnectorVault', 'connect', 'operate_start', 'operate_finish']);
+      expect(connects).toHaveLength(1);
+    });
+
+    it('keeps the handback when only a later query finds sign-in controls', async () => {
+      const { reply, sequence } = await run(asset, { start: page(asset, []),
+        'log in': page(asset, [['@e:9', 'b', '@log-in|a=login|m=t']]) });
+      expect(reply).toMatchObject({ status: 'needs_squire' });
+      expect(sequence.at(-1)).toBe('operate_finish');
+    });
+
+    it.each([undefined, 'https://dreamina.capcut.com/', 'https://github.com/settings/profile'])(
+      'opens no Squire page without a signed-in-only page of the app (%s)', async (signedInUrl) => {
+        const { reply, sequence } = await run(signedInUrl, {});
+        expect(reply).toMatchObject({ status: 'needs_squire' });
+        expect(sequence).not.toContain('operate_start');
+      });
+  });
+
   it('passes one bounded request-specific promise into connectApp', async () => {
     const continuation = 'I will finish the requested draft after sign-in.';
     await callAgentTool('connect_app', { app: 'Example', reason: 'Finish the draft',

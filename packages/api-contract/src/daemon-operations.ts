@@ -578,6 +578,8 @@ export type DaemonOperationMap = {
   installConnector: Operation<InstallConnectorInput, WriteResult>;
   postConnectorStatus: Operation<PostConnectorStatusInput, WriteResult>;
   postConnectorVault: Operation<PostConnectorVaultInput, WriteResult>;
+  /** A Squire page of this host showed sign-in controls: drop the agent's recorded signed-in session. */
+  forgetSquireSignIn: Operation<{ readonly url: string }, WriteResult>;
   getConnectorStatus: Operation<GetConnectorStatusInput, ConnectorStatus>;
   getConnectorVaultList: Operation<AgentInput, ConnectorVaultListResult>;
   getConnectionDetail: Operation<AgentInput & ConnectionRefInput, ConnectionDetail>;
@@ -1096,6 +1098,10 @@ export type ConnectInput = Omit<ConnectAppInput, 'app'> & {
   readonly switchGoogleAccount?: boolean;
   /** Set by the agent MCP from this session's granted Squire relay. */
   readonly squireAvailable?: boolean;
+  /** A page only a signed-in user can open; the agent MCP checks it in the agent's own Squire session. */
+  readonly signedInUrl?: string;
+  /** Set by the agent MCP after that check found `signedInUrl` signed in. */
+  readonly squireSignedIn?: boolean;
 };
 export type ConnectorSearchMatch = {
   readonly key: string; readonly service: string; readonly name: string; readonly website?: string;

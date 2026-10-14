@@ -7,7 +7,8 @@ import { reportAgentSignIn } from './agent-sign-in.js';
 import { FIRST_PARTY_INTEGRATIONS, firstPartyIntegration, settleFirstPartySignIn } from './first-party-integrations.js';
 import { waitForConnection } from './connection-wait.js';
 import { machineSquireReport, queueSquireWork, squireAssignments, squireMachineAddress,
-  squireMachineId, squireWorkStatus, reportSquireWork } from './squire-machine.js';
+  squireMachineId, squireWorkStatus, reportSquireWork, recordSquireSignIn, forgetSquireSignIn,
+  squireSignedIn } from './squire-machine.js';
 import { completeSquireMachineOffers } from './connector-offer-completion.js';
 import { activeCornerHolds, setCornerHold } from './corner-holds.js';
 import { cornerFactsSql, cornerRowState, type CornerStateRow } from './chat-corner-counts.js';
@@ -120,7 +121,8 @@ import {
 import { mediaIdFromUrl } from './media-ttl.js';
 import { postRoomChoice } from './room-choice.js';
 import { APP_INPUT_MAX_LENGTH, appIdentity, appResourceTarget, connectorAdapter } from '@beeline/api-contract/workbench';
-import { normalizeAppContinuation, type AppTransport } from '@beeline/api-contract/app-connections';
+import { normalizeAppContinuation, registrableDomain, urlBelongsToApp,
+  type AppTransport } from '@beeline/api-contract/app-connections';
 import { McpRegistryClient, DEFAULT_MCP_REGISTRY_CLIENT } from './mcp-registry.js';
 import { connectorIntentIndex } from './connector-intent-index.js';
 import {
@@ -1541,6 +1543,10 @@ export class DaemonService {
           input as Input<'postConnectorStatus'>,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'forgetSquireSignIn':
+        await forgetSquireSignIn(this.database, authenticatedAgentId,
+          { url: String((input as Input<'forgetSquireSignIn'>).url ?? '') });
+        return this.writeResult() as Output<Name>;
       case 'postConnectorVault':
         return (await this.connectorVaultReport(
           input as Input<'postConnectorVault'>,
@@ -6820,6 +6826,17 @@ export class DaemonService {
     if (input.squireAvailable !== true)
       return { ...result, status: 'unavailable',
         next: 'Trusty Squire is unavailable in this agent session. Connect Trusty Squire on this machine and start a session with its tools mounted.' };
+    if (outcome.transport === 'squire-browser') {
+      // A session signed in through OAuth or SSO has no login to save in the vault.
+      const signedInUrl = typeof input.signedInUrl === 'string' ? input.signedInUrl : '';
+      const signedInDomain = input.squireSignedIn === true && urlBelongsToApp(signedInUrl, outcome.appKey)
+        ? registrableDomain(new URL(signedInUrl).hostname) : undefined;
+      if (signedInDomain) await recordSquireSignIn(this.database, agentId, outcome.appKey, signedInDomain);
+      else if (input.reconnect) await forgetSquireSignIn(this.database, agentId, { appKey: outcome.appKey });
+      if (await squireSignedIn(this.database, agentId, outcome.appKey))
+        return { ...result, status: 'ready',
+          next: `${outcome.app} is ready: your Squire session is signed in. Use your own operate_* tools on it.` };
+    }
     const target = `connection-install:${outcome.appKey}`;
     const consent = (await this.database.query<{ id: string; status: string }>(
       `SELECT grant_row.id,grant_row.status FROM agent_grants grant_row JOIN agents agent ON agent.agent_id=grant_row.agent_id
@@ -6849,7 +6866,8 @@ export class DaemonService {
       ? `Sign in to ${outcome.app} with the owner's saved account and save its login in the vault as service ${outcome.appKey}.`
       : `Sign up or sign in to ${outcome.app} using the owner's account. Create an API key and capture it securely into the vault as service ${outcome.appKey}. Never reveal a secret in the response.`;
     return { ...result, status: 'needs_squire', squire: { url, goal },
-      next: 'Use your own Squire operate_drive with the returned URL and goal. On low_confidence or needs_value, take a flat operate_* step, then resume operate_drive on the same session. Keep saved-login approval in Squire. Once a credential for this service is in the vault, call connect again.' };
+      next: 'Use your own Squire operate_drive with the returned URL and goal. On low_confidence or needs_value, take a flat operate_* step, then resume operate_drive on the same session. Keep saved-login approval in Squire. Once a credential for this service is in the vault, call connect again.'
+        + (outcome.transport === 'squire-browser' ? ' If your Squire session is already signed in, for example through Google, call connect again with signedInUrl set to a page only a signed-in user can open.' : '') };
   }
 
   /** Shared app routing for connect and its hidden one-release alias. */
@@ -8190,6 +8208,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   installConnector: true,
   postConnectorStatus: true,
   postConnectorVault: true,
+  forgetSquireSignIn: true,
   getConnectorStatus: true,
   getConnectorVaultList: true,
   getConnectionDetail: true,

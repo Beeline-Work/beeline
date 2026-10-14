@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 import { SQUIRE_TASK_IDLE_LEASE_MS, SquireTaskRelay } from './squire-task-relay.js';
+import { squireSignedOutUrl } from './squire-sign-in.js';
 import { grantedHostRouteWires } from './host-mcp-route.js';
 import { piMcpBridgeSource } from './pi-mcp-bridge.js';
 import type { StdioSquireMcpClient } from './squire-mcp-client.js';
@@ -803,5 +804,37 @@ describe('scheduled runs inherit a live Squire session', () => {
     expect((await call(owner, 'room', 'root-3', 'turn-three', 'tools/call', {
       name: 'operate_observe', arguments: { sessionId: 'browser-1' },
     })).status).toBe(400);
+  });
+});
+
+describe('Squire sign-in evidence', () => {
+  it('reports a page that shows sign-in controls so a recorded sign-in is re-checked', async () => {
+    const signedOut = vi.fn();
+    const page = (rows: unknown[][]) => ({ content: [{ type: 'text', text: JSON.stringify({
+      url: 'https://dreamina.capcut.com/ai-tool/home', session_id: 'browser-1', safe_table: rows }) }] });
+    let rows: unknown[][] = [['@e:1', 'b', '@sign-in|a=login']];
+    const relay = new SquireTaskRelay('agent', 'room', '/tmp/context', async () => true, homedir(), () => ({
+      pid: 3001,
+      requestMcp: vi.fn(async () => page(rows)),
+      close: () => {},
+    } as unknown as StdioSquireMcpClient), undefined, undefined, undefined, signedOut);
+    relays.push(relay);
+    relay.activate(command('root', 'turn-one'), 'generation');
+    await request(relay, 'root', 'turn-one', 'tools/call', { name: 'operate_start',
+      arguments: { service_url: 'https://dreamina.capcut.com' } });
+    expect(signedOut).toHaveBeenCalledOnce();
+    expect(signedOut).toHaveBeenCalledWith('https://dreamina.capcut.com/ai-tool/home');
+    rows = [['@e:2', 'b', '@credits'], ['@e:3', 'b', '@sign-in-history']];
+    await request(relay, 'root', 'turn-one', 'tools/call', { name: 'operate_observe',
+      arguments: { session_id: 'browser-1' } });
+    expect(signedOut).toHaveBeenCalledOnce();
+  });
+
+  it('reads a Squire login page as signed out', () => {
+    const result = (stage: string) => ({ content: [{ type: 'text', text: JSON.stringify({
+      url: 'https://app.notion.com/login', stage, safe_table: [] }) }] });
+    expect(squireSignedOutUrl(result('auth'))).toBe('https://app.notion.com/login');
+    expect(squireSignedOutUrl(result('browse'))).toBeUndefined();
+    expect(squireSignedOutUrl({ content: [{ type: 'text', text: 'page observed' }] })).toBeUndefined();
   });
 });

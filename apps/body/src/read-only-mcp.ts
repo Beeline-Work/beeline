@@ -43,6 +43,7 @@ import {
   encodeArtifactTitleHeader,
   type ArtifactMimeType,
   type CornerRestoreResult,
+  type ConnectResult,
   type RoomConversationResult,
   type DaemonAttachment,
   FEEDBACK_AGENT_CATEGORIES,
@@ -99,6 +100,7 @@ import {
   type MessageReactionEmoji,
 } from '@beeline/api-contract/phone';
 import { normalizeAppContinuation } from '@beeline/api-contract/app-connections';
+import { squireSessionSignedIn } from './squire-sign-in.js';
 import { REPOSITORY_SUBSCRIPTION_EVENTS } from '@beeline/api-contract/daemon';
 import { READ_ONLY_TOOL_NAMES } from './read-only-policy.js';
 import { findChromiumPage } from './browser-share.js';
@@ -1667,7 +1669,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'connect',
     description:
-      'Connect a service or machine tool. Search with find_connectors only when the service is unclear. The continuation is optional: pass a request-specific sentence stating what you will do after sign-in; without it the card says "continues the request right after". Omit links, secrets, and private data. The server chooses a direct integration or official Registry sign-in first, then Composio, then Trusty Squire. For needs_squire, use your own operate_drive with the returned URL and goal. On low_confidence or needs_value, take a flat operate_* step and resume the same session. Save the credential in the vault and call connect again. For a pending owner card, wait for the connection wake, then use the app ID with list_app_tools and execute_app_tool where applicable. An outage or refusal never permits a silent route switch. Never put sign-in links or credentials in chat. This is setup, not use permission.',
+      'Connect a service or machine tool. Search with find_connectors only when the service is unclear. The continuation is optional: pass a request-specific sentence stating what you will do after sign-in; without it the card says "continues the request right after". Omit links, secrets, and private data. The server chooses a direct integration or official Registry sign-in first, then Composio, then Trusty Squire. For needs_squire, use your own operate_drive with the returned URL and goal. On low_confidence or needs_value, take a flat operate_* step and resume the same session. Save the credential in the vault and call connect again. A browser app is also ready when your own Squire session is signed in to it: pass signedInUrl, a page only a signed-in user can open, and connect checks it read-only. For a pending owner card, wait for the connection wake, then use the app ID with list_app_tools and execute_app_tool where applicable. An outage or refusal never permits a silent route switch. Never put sign-in links or credentials in chat. This is setup, not use permission.',
     inputSchema: {
       type: 'object',
       required: ['service', 'reason'],
@@ -1684,6 +1686,10 @@ const AGENT_TOOLS: ToolDefinition[] = [
           description: 'One short sentence promising what you will do for this request after sign-in. No links, credentials, account identifiers, or private data.',
         },
         switchGoogleAccount: { type: 'boolean', description: 'Trusty Squire only: sign in with a different Google account.' },
+        signedInUrl: {
+          type: 'string', minLength: 1, maxLength: 2048,
+          description: 'Browser apps only: an https page of the app that only a signed-in user can open, such as its settings or credits page.',
+        },
         reconnect: {
           type: 'boolean',
           description: 'Resolve an app in error again from the top of the route order.',
@@ -3851,12 +3857,37 @@ export interface ConnectorOfferDeps {
   /** Live Tailscale reachability; `enabled` is true when this helper already has it. */
   tailscaleReach?: (enabled: boolean) => Promise<string>;
   squireReach?: () => Promise<{ reachable: boolean; cause?: string } | undefined>;
+  /** One Squire tool call through this agent's task relay; returns the parsed text result. */
+  squireCall?: (tool: string, args?: Record<string, unknown>) => Promise<unknown>;
 }
 
 export function connectorOfferDepsFromEnv(): ConnectorOfferDeps {
   const relayUrl = process.env.BEELINE_SQUIRE_RELAY_URL;
   const relayToken = process.env.BEELINE_SQUIRE_RELAY_TOKEN;
+  const squireCall = relayUrl && relayToken ? async (tool: string, args: Record<string, unknown> = {}) => {
+    const context = await activeCommandContext();
+    const response = await fetch(new URL('/mcp', relayUrl), {
+      method: 'POST',
+      headers: { authorization: `Bearer ${relayToken}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ ...context, method: 'tools/call',
+        params: { name: tool, arguments: args } }),
+      signal: AbortSignal.timeout(120_000),
+    });
+    const body = await response.json().catch((error) => {
+      if (!response.ok) throw new Error(`Squire relay HTTP ${response.status}`);
+      throw error;
+    }) as { error?: string; result?: {
+      isError?: boolean; content?: Array<{ type: string; text?: string }>;
+    } };
+    if (!response.ok) throw new Error(body.error ?? `Squire relay HTTP ${response.status}`);
+    const result = body.result;
+    const text = result?.content?.find((entry) => entry.type === 'text')?.text;
+    if (result?.isError) throw new Error(text ?? 'Squire MCP tool error');
+    if (text) return JSON.parse(text);
+    throw new Error(`Squire MCP returned no result for ${tool}`);
+  } : undefined;
   return {
+    squireCall,
     roomId: agentScheduleRoomId(),
     execute: daemonExecute,
     tailscaleReach: (enabled) => describeTailscaleReach({ enabled, installIfMissing: enabled }),
@@ -3864,28 +3895,7 @@ export function connectorOfferDepsFromEnv(): ConnectorOfferDeps {
     squireReach: relayUrl && relayToken ? async () => {
       let connections: Awaited<ReturnType<typeof readVault>>;
       try {
-        connections = await readVault({ call: async (tool, args = {}) => {
-          const context = await activeCommandContext();
-          const response = await fetch(new URL('/mcp', relayUrl), {
-            method: 'POST',
-            headers: { authorization: `Bearer ${relayToken}`, 'content-type': 'application/json' },
-            body: JSON.stringify({ ...context, method: 'tools/call',
-              params: { name: tool, arguments: args } }),
-            signal: AbortSignal.timeout(120_000),
-          });
-          const body = await response.json().catch((error) => {
-            if (!response.ok) throw new Error(`Squire relay HTTP ${response.status}`);
-            throw error;
-          }) as { error?: string; result?: {
-            isError?: boolean; content?: Array<{ type: string; text?: string }>;
-          } };
-          if (!response.ok) throw new Error(body.error ?? `Squire relay HTTP ${response.status}`);
-          const result = body.result;
-          const text = result?.content?.find((entry) => entry.type === 'text')?.text;
-          if (result?.isError) throw new Error(text ?? 'Squire MCP tool error');
-          if (text) return JSON.parse(text);
-          throw new Error('Squire MCP returned no vault metadata');
-        } });
+        connections = await readVault({ call: squireCall! });
       } catch (error) {
         // Task authorization and stale turns are not machine failures.
         if (/not authorized|active task|active server command|Squire relay HTTP 403/i.test(
@@ -5049,17 +5059,26 @@ export async function callAgentTool(
       const reason = stringArg(args, 'reason')?.trim();
       if (!service || !reason) throw new Error('service and reason are required');
       const continuation = normalizeAppContinuation(args.continuation);
-      const reach = connectorOfferDepsFromEnv().squireReach;
+      const signedInUrl = stringArg(args, 'signedInUrl')?.trim();
+      const { squireReach: reach, squireCall } = connectorOfferDepsFromEnv();
       // Refresh vault metadata before the server decides whether this app is ready.
       const squireAvailable = reach ? (await reach())?.reachable === true : false;
-      return JSON.stringify(await daemonExecute('connect', {
+      const input = {
         ...await activeCommandContext(), service, reason,
         squireAvailable,
         ...(continuation ? { continuation } : {}),
         ...(args.reconnect === true ? { reconnect: true } : {}),
         ...(args.noApi === true ? { noApi: true } : {}),
         ...(args.switchGoogleAccount === true ? { switchGoogleAccount: true } : {}),
-      }));
+        ...(signedInUrl ? { signedInUrl } : {}),
+      };
+      const result = await daemonExecute('connect', input) as unknown as ConnectResult;
+      // A browser app signed in through OAuth or SSO has no login to save:
+      // the agent's own signed-in Squire session is what makes it ready.
+      if (result.status === 'needs_squire' && result.transport === 'squire-browser' && result.appKey &&
+          signedInUrl && squireCall && await squireSessionSignedIn(squireCall, signedInUrl, result.appKey))
+        return JSON.stringify(await daemonExecute('connect', { ...input, squireSignedIn: true }));
+      return JSON.stringify(result);
     }
     case 'find_connectors': {
       const query = stringArg(args, 'query')?.trim();

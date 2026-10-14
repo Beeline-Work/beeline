@@ -404,6 +404,58 @@ describe('connect_app', () => {
     expect(await daemon.execute('connect', input, HELPER)).toMatchObject({ status: 'needs_approval' });
   });
 
+  it('Reproduction squire-session-1: a signed-in Squire session makes a browser app ready without a vault login', async () => {
+    await connectSquire();
+    const daemon = daemonWith(fakeRegistry([]).client);
+    const input = { ...turn, service: 'resend.com', reason: 'Send email', noApi: true, squireAvailable: true };
+    const ask = await daemon.execute('connect', input, HELPER);
+    await database.query(`UPDATE agent_grants SET status='approved',decided_by=$2 WHERE id=$1`, [ask.grantId, OWNER]);
+    expect(await daemon.execute('connect', input, HELPER)).toMatchObject({ status: 'needs_squire' });
+    // The agent's own Squire session showed the app signed in; no vault login exists.
+    const signedIn = await daemon.execute('connect', { ...input,
+      signedInUrl: 'https://app.resend.com/emails', squireSignedIn: true }, HELPER);
+    expect(signedIn).toMatchObject({ status: 'ready', transport: 'squire-browser' });
+    expect(signedIn).not.toHaveProperty('squire');
+    expect((await database.query(`SELECT 1 FROM workspace_connections`)).rows).toHaveLength(0);
+    // The record is reused, even after the one-use consent is gone.
+    await database.query(`UPDATE agent_grants SET status='revoked' WHERE id=$1`, [ask.grantId]);
+    expect(await daemon.execute('connect', input, HELPER)).toMatchObject({ status: 'ready' });
+    const work = (await database.query<{ squire_work: { signedInApps?: Record<string, unknown> } }>(
+      'SELECT squire_work FROM agents WHERE agent_id=$1', [HELPER])).rows[0]!.squire_work;
+    expect(Object.keys(work.signedInApps ?? {})).toEqual(['resend']);
+    expect(JSON.stringify(work.signedInApps)).not.toMatch(/cookie|token/i);
+    // A later Squire page of the site showing sign-in controls clears the record.
+    await daemon.execute('forgetSquireSignIn', { url: 'https://app.resend.com/emails' }, HELPER);
+    expect(await daemon.execute('connect', input, HELPER)).toMatchObject({ status: 'needs_approval' });
+    console.info('Reproduction squire-session-1: signed-in session -> ready; reused; signed-out page -> re-check');
+  });
+
+  it('a signed-in session cannot make an API app ready, another site proves nothing, and reconnect re-checks', async () => {
+    await connectSquire();
+    const daemon = daemonWith(fakeRegistry([]).client);
+    const signed = { signedInUrl: 'https://app.resend.com/emails', squireSignedIn: true };
+    const apiInput = { ...turn, service: 'resend.com', reason: 'Send email', squireAvailable: true };
+    const ask = await daemon.execute('connect', apiInput, HELPER);
+    await database.query(`UPDATE agent_grants SET status='approved',decided_by=$2 WHERE id=$1`, [ask.grantId, OWNER]);
+    expect(await daemon.execute('connect', { ...apiInput, ...signed }, HELPER))
+      .toMatchObject({ status: 'needs_squire', transport: 'squire-api' });
+    const input = { ...apiInput, noApi: true };
+    for (const signedInUrl of ['https://github.com/settings/profile', 'http://app.resend.com/emails', 'not a url'])
+      expect(await daemon.execute('connect', { ...input, signedInUrl, squireSignedIn: true }, HELPER))
+        .toMatchObject({ status: 'needs_squire' });
+    // The agent's own URL is only a claim until the agent MCP checked it.
+    expect(await daemon.execute('connect', { ...input, signedInUrl: signed.signedInUrl }, HELPER))
+      .toMatchObject({ status: 'needs_squire' });
+    const needs = await daemon.execute('connect', input, HELPER);
+    expect(needs.next).toContain('signedInUrl');
+    expect(await daemon.execute('connect', { ...input, ...signed }, HELPER)).toMatchObject({ status: 'ready' });
+    expect(await daemon.execute('connect', { ...input, reconnect: true }, HELPER)).toMatchObject({ status: 'needs_squire' });
+    expect(await daemon.execute('connect', { ...input, ...signed }, HELPER)).toMatchObject({ status: 'ready' });
+    // Without mounted Squire tools the session cannot be used, so it is not ready.
+    expect(await daemon.execute('connect', { ...input, squireAvailable: false }, HELPER))
+      .toMatchObject({ status: 'unavailable' });
+  });
+
   it('installs the official Linear Registry MCP for a new agent connection', async () => {
     const registry = fakeRegistry([linearServer]);
     const provider = fakeComposio();

@@ -13,6 +13,7 @@ import type { AgentCommand } from '@beeline/api-contract/daemon';
 import { StdioSquireMcpClient } from './squire-mcp-client.js';
 import { SquireShareRenewals, type SquireShareLease } from './squire-share-renewals.js';
 import { squireApprovalFromMcp } from './resource-mcp-facade.js';
+import { squireSignedOutUrl } from './squire-sign-in.js';
 import {
   forgetSquireSessions,
   registerSquireSession,
@@ -144,6 +145,8 @@ export class SquireTaskRelay {
     private readonly onApprovalDecided: (decision: SquireApprovalDecision) => void = () => {},
     private readonly onSessionEnded: (sessionId: string) => void = () => {},
     onShareRenewed: (lease: SquireShareLease) => Promise<boolean> = async () => false,
+    /** A Squire page showed sign-in controls: its site's recorded sign-in is stale. */
+    private readonly onSignedOut: (url: string) => void = () => {},
   ) {
     this.shareRenewals = new SquireShareRenewals(
       (id, client) => !this.closed && squireSessionOwner(id)?.client === client,
@@ -469,6 +472,8 @@ export class SquireTaskRelay {
       // owning relay; only its schedule lineage is recorded here.
       if (this.activeScheduleId)
         for (const id of requestedIds) tagSquireSessionSchedule(id, this.activeScheduleId);
+      const signedOutUrl = input.method === 'tools/call' ? squireSignedOutUrl(result) : undefined;
+      if (signedOutUrl) this.onSignedOut(signedOutUrl);
       if (safeToolName === 'operate_share' && requestedIds.length === 1)
         this.shareRenewals.track(requestedIds[0]!, callClient, result);
       const approval = input.method === 'tools/call' && squireApprovalFromMcp(

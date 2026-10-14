@@ -2,7 +2,7 @@
 
 Run `node apps/mobile/scripts/render-agent-profile-voice-proof.mjs` from the repository root. The board is served at `http://127.0.0.1:4187/`; individual frames use `/frame?theme=dark|light&state=picker|edit&agent=second` (all parameters optional).
 
-The approval board is published at https://animals-fishing-dozen-simulation.trycloudflare.com while the local server and tunnel remain running.
+The historical approval board is stored in `board.html`.
 
 The board now bundles the complete production `AgentProfileView` and `AgentVoiceSection`, including shared Settings typography, identity, rows, buttons and both themes. Only transport data is synthetic; the approved mock-only layout transform has been removed. Frame saves are local fixture receipts, not production writes.
 
@@ -13,13 +13,13 @@ Browser validation through `chrome-devtools-axi`:
 - Message and Edit share the same top coordinate at 390-pixel width.
 - Soul precedes Model / difficulty, which precedes Voice.
 - Both themes render without horizontal overflow.
-- A Fish public sample loads and the preview control switches to Stop without an error.
+- A historical provider sample loads and the preview control switches to Stop without an error.
 - Selecting Calm Narrator Voice and then Save voice updates the current voice and closes the picker.
 - The public tunnel renders all eight real-code frames.
 
 Root and mobile dependencies were refreshed and shared SDK packages rebuilt; the full root typecheck passes.
 
-The top-level PNG captures are browser proofs. Native release-build captures and artifact details are recorded separately below. Server persistence, provider catalog/preview API, collision-aware Room assignment and Fish emotion handling are implemented and covered by targeted regressions.
+The top-level PNG captures are browser proofs. Native release-build captures and artifact details are recorded separately below. The current Aura catalog, bounded WAV preview API, server persistence and collision-aware Room assignment are covered by targeted regressions. The historical screenshots below predate that cleanup.
 
 The app-wide alignment approved via firstmate on 2026-10-13 is applied to both mock confirmations: trailing row, quiet Cancel left, primary Save right, shared 44-pixel Button. In profile edit mode, Message remains in its own identity action row; the confirmation row follows the Soul draft.
 
@@ -39,7 +39,7 @@ The disposable Android emulator renders a 390dp-wide viewport (780 × 1920 pixel
 | Saved selection | [Save](android/voice-saved-obsidian.png) | [Save](android/voice-saved-bone.png) |
 | Another agent | [Milo](android/other-agent-obsidian.png) | [Milo](android/other-agent-bone.png) |
 
-[Preview](android/preview-bone.png) played the real public Fish MP3. Android AudioFlinger reported an active app-owned mono 44.1kHz media track, client PID 6837, track 64, stream 3; [audio receipt](android/audio-preview.txt). Cancel/Save use the shared trailing row. Selecting Calm Narrator and Save closed the picker and changed Emberus's current voice; selecting Dave again left Milo on Calm Narrator.
+[Preview](android/preview-bone.png) played the historical provider MP3; this is not an Aura playback proof. Android AudioFlinger reported an active app-owned mono 44.1kHz media track, client PID 6837, track 64, stream 3; [audio receipt](android/audio-preview.txt). Cancel/Save use the shared trailing row. Selecting Calm Narrator and Save closed the picker and changed Emberus's current voice; selecting Dave again left Milo on Calm Narrator.
 
 The fixture imports production Profile/Voice components, with synthetic DTOs and local save receipts. It proves native rendering, preview playback and the receipt-driven UI; database persistence, membership/owner checks and collision-aware Room assignment are covered by server integration tests. It performs no production writes. Only the ignored generated manifest disables OTA updates for this proof so it always runs the embedded fixture. The normal app entry was restored before validation; no native dependencies, runtime pins or shipped configuration changed.
 
@@ -49,4 +49,4 @@ Final checks after restoring the production entry and clean lockfile install: ro
 
 The shared heading's flex text collapsed when directly embedded in the horizontal Recent work/Merged PRs row. `AgentProfileView` now gives it a flexible wrapper with assigned width. This is an Android layout fix, not a capture artifact.
 
-`node apps/mobile/scripts/verify-agent-profile-native-heading.mjs <uiautomator.xml>` checks actual native text bounds, positive dimensions, side-by-side placement and vertical overlap. It fails on [the pre-fix hierarchy](android/recent-work-before.xml), which exposes only Merged PRs, and passes on the final [Obsidian](android/recent-work-obsidian.xml) and [Bone](android/recent-work-bone.xml) hierarchies. Both show RECENT WORK at `[32,1660][583,1690]` beside Merged PRs at `[599,1660][748,1698]`. Picker screenshots above are refreshed from the final release APK.
+`node apps/mobile/scripts/verify-agent-profile-native-heading.mjs <uiautomator.xml>` checks actual native text bounds, positive dimensions, side-by-side placement and vertical overlap. The historical hierarchy snapshots containing the retired voice-provider setting were removed during the Aura-only cleanup. The PNG captures remain historical evidence; run the verifier against a fresh hierarchy to assess the current native heading.

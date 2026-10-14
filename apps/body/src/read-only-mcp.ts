@@ -886,7 +886,7 @@ const AGENT_TOOLS: ToolDefinition[] = [
     inputSchema: { type: 'object', required: ['status', 'text'], properties: {
       ask: { type: 'string', minLength: 1, maxLength: 140 },
       status: { type: 'string', enum: ['done', 'blocked', 'failed', 'needs_decision'] },
-      text: { type: 'string', pattern: '^(done|blocked|needs-decision|failed):\\s*\\S', minLength: 1, maxLength: 16000 },
+      text: { type: 'string', minLength: 1, maxLength: 16000 },
     }, additionalProperties: false },
   },
   {

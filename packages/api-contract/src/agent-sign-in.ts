@@ -147,11 +147,6 @@ export const AGENT_SIGN_IN_PROVIDER_LABELS: Record<AgentSignInKeyProvider, strin
   xai: 'xAI',
 };
 
-/** The exact Room message that opens an agent's sign-in card. */
-export function agentLoginCommand(handle: string): string {
-  return `@${handle} login`;
-}
-
 /** Harnesses that sign in with a provider API key rather than a login page. */
 export function agentSignInUsesKey(harness: AgentSignInHarness): boolean {
   return harness === 'opencode' || harness === 'pi' || harness === 'goose';

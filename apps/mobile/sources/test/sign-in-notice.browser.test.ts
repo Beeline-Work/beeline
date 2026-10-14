@@ -28,7 +28,6 @@ it('Reproduction sign-in-notice-1: the @agent login command shows on a collapsed
         'the helper could not authenticate with Claude. If its login expired, its owner can send \`@ruby /login\` here, or run \`beeline connect\` on its machine.' };
       const phrase = phraseTurnSilence('@ruby', { kind: 'not-signed-in' }, { login: { handle: 'ruby', harness: 'claude' } });
       const after = { subject, verb: phrase.verb, consequence: phrase.consequence };
-      window.sent = [];
       function Proof() {
         const { theme } = useUnistyles();
         document.body.style.background = theme.buzz.bgBase;
@@ -36,11 +35,8 @@ it('Reproduction sign-in-notice-1: the @agent login command shows on a collapsed
         return <div style={{width: 390, boxSizing: 'border-box', padding: 16}}>
           <p style={{color: theme.buzz.textSecondary, fontFamily: 'SpaceGrotesk-Regular'}}>Before</p>
           <LedgerSystemLine id="before" text="" event={before} stamp="09:41"/>
-          <p style={{color: theme.buzz.textSecondary, fontFamily: 'SpaceGrotesk-Regular'}}>After (owner)</p>
-          <LedgerSystemLine id="after" text="" event={after} stamp="09:41"
-            loginCommand="@ruby login" onSendCommand={text => window.sent.push(text)}/>
-          <p style={{color: theme.buzz.textSecondary, fontFamily: 'SpaceGrotesk-Regular'}}>After (member)</p>
-          <LedgerSystemLine id="member" text="" event={after} stamp="09:41"/>
+          <p style={{color: theme.buzz.textSecondary, fontFamily: 'SpaceGrotesk-Regular'}}>After</p>
+          <LedgerSystemLine id="after" text="" event={after} stamp="09:41"/>
         </div>;
       }
       // True when every glyph of the needle lies inside the clamped box.
@@ -64,15 +60,11 @@ it('Reproduction sign-in-notice-1: the @agent login command shows on a collapsed
       document.fonts.load('13px SpaceGrotesk-Regular').then(() =>
         createRoot(document.getElementById('root')).render(<Proof/>));
       setTimeout(() => {
-        document.querySelector('[data-testid="system-line-command-after"]')?.click();
         const more = id => Boolean(document.querySelector('[data-testid="system-line-toggle-' + id + '"]'));
         document.getElementById('result').textContent = JSON.stringify({
           afterText: document.querySelector('[data-testid="system-line-text-after"]')?.textContent,
           beforeShowsCommand: shows('before', '@ruby /login'), beforeHasMore: more('before'),
           afterShowsCommand: shows('after', '@ruby login'), afterHasMore: more('after'),
-          memberShowsCommand: shows('member', '@ruby login'),
-          memberHasTap: Boolean(document.querySelector('[data-testid="system-line-command-member"]')),
-          sent: window.sent,
           width: document.querySelector('[data-testid="system-line-after"]').getBoundingClientRect().right });
       }, 1500);`);
     for (const theme of ['obsidian', 'bone']) {
@@ -91,8 +83,7 @@ it('Reproduction sign-in-notice-1: the @agent login command shows on a collapsed
       expect(result).toMatchObject({
         afterText: '@ruby needs a Claude sign-in · send @ruby login here. If that fails, its owner can run `beeline connect` on its machine.',
         beforeShowsCommand: false, beforeHasMore: true,
-        afterShowsCommand: true, afterHasMore: true, memberShowsCommand: true, memberHasTap: false,
-        sent: ['@ruby login'],
+        afterShowsCommand: true, afterHasMore: true,
       });
       console.log(`Reproduction sign-in-notice-1 Demonstrated ${theme} 390px: ${JSON.stringify(result)}`);
     }

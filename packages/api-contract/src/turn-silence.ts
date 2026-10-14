@@ -8,7 +8,6 @@
  */
 import {
   AGENT_SIGN_IN_SERVICE_LABELS,
-  agentLoginCommand,
   agentSignInUsesKey,
   type AgentSignInHarness,
 } from './agent-sign-in.js';
@@ -329,7 +328,7 @@ export function phraseTurnSilence(
       const verb = agentSignInUsesKey(harness)
         ? 'needs a new provider key'
         : `needs a ${AGENT_SIGN_IN_SERVICE_LABELS[harness]} sign-in`;
-      const command = `send ${agentLoginCommand(handle)} here.`;
+      const command = `send @${handle} login here.`;
       const full = `${command} If that fails, its owner can run \`beeline connect\` on its machine.`;
       return capLine(agent, verb, fitsSilenceLine(agent, verb, full) ? full : command);
     }

@@ -96,7 +96,7 @@ it.each(['needs-decision: choose the product scope', 'needs-decision: choose the
   await daemon.execute('report', { status: text.split(':')[0]!.replace('-', '_') as import('@beeline/api-contract/daemon').AgentReportStatus, ...authority(report), text, ask: 'Which product scope should we use?' }, RUBY);
   const rows = (await db.query(`SELECT room_id,author_id,text,card FROM messages WHERE text=$1`,
     [text])).rows;
-  expect(rows).toEqual([{ room_id: DM, author_id: RUBY, text, card: { ask: 'Which product scope should we use?' } }]);
+  expect(rows).toEqual([{ room_id: DM, author_id: RUBY, text, card: { ask: 'Which product scope should we use?', reportToId: HUMAN } }]);
   expect((await phone.readRoom(DM, HUMAN))?.messages.some(m => m.text === rows[0]!.text)).toBe(true);
 });
 it('accepts needs-decision without an ask and validates optional asks', async () => {

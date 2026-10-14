@@ -1197,7 +1197,7 @@ export class DaemonService {
         return (await this.corners(
           (input as Input<'listReachableCorners'>).roomId,
           authenticatedAgentId,
-          false,
+          (input as Input<'listReachableCorners'>).activeOnly ?? false,
           true,
         )) as Output<Name>;
       case 'listRoomMembers':
@@ -3382,7 +3382,7 @@ export class DaemonService {
           }
         : {}),
       ...(derived
-        ? { activity: derived.state === 'working' ? ('running' as const) : ('idle' as const) }
+        ? { state: derived.state, activity: derived.state === 'working' || derived.state === 'review' ? ('running' as const) : ('idle' as const) }
         : {}),
       ...(row?.last_author_id && row.last_created_at && row.last_type
         ? {
@@ -3394,7 +3394,7 @@ export class DaemonService {
             },
           }
         : {}),
-      ...(derived?.state === 'waiting' && row?.owed ? { awaiting: 'reply' as const } : {}),
+      ...(derived?.state === 'waiting' ? { awaiting: 'reply' as const } : {}),
     };
   }
   private async listCornerBriefRevisions(

@@ -1,6 +1,6 @@
 import { lockCommanderWakes, refreshWakeDigests } from './commander-wakes.js';
 import { agentMachineOfflineSql } from './machine-offline.js';
-import { commandOrder, reportToCommander } from './commander.js';
+import { commandOrder, reportToCommander, wakeCornerCommander } from './commander.js';
 import { subscriptionPromptBody } from './agent-subscriptions.js';
 import {
   AGENT_SIGN_IN_SERVICE_LABELS,
@@ -1805,9 +1805,9 @@ export async function noteCornerAgentUnreachable(
     const failed = command
       ? `command ${command.id} (${command.reason}) remained unclaimed for ${CORNER_CHECKS_BLOCKED_AFTER}`
       : `${cause}; source ${sourceMessageId}`;
-    await reportToCommander(db, cornerId, agentId,
+    await wakeCornerCommander(db, cornerId, agentId,
       `blocked: ${failure.agent_name} (${agentId}) could not be reached in corner ${failure.name} (${cornerId}): ${failed}`,
-      command, reportId, { automatic: true });
+      reportId, command);
   });
 }
 

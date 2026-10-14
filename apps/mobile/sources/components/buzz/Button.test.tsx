@@ -183,6 +183,18 @@ describe('the shared Button anatomy', () => {
     expect(pressable.props.accessibilityState).toMatchObject({ disabled: true, busy: false });
   });
 
+  it('keeps borderless variants borderless while disabled', async () => {
+    active.theme = 'bone';
+    for (const variant of ['quiet', 'destructive'] as const) {
+      const { frame } = await render({ variant, disabled: true });
+      expect(frame().borderColor).toBe('transparent');
+    }
+    for (const variant of ['secondary', 'brass'] as const) {
+      const { frame } = await render({ variant, disabled: true });
+      expect(frame().borderColor).toBe(beelineThemes.bone.border);
+    }
+  });
+
   it('shows the compact loader, marks busy and disables while loading', async () => {
     active.theme = 'bone';
     const { tree, pressable } = await render({ loading: true });

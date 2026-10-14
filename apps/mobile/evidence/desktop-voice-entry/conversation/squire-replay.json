@@ -1,0 +1,115 @@
+[
+  {
+    "engine": "chrome",
+    "head": "324d951ea0cbbcc0ecfe8da5ec8616d379e6ee71",
+    "providers": "scripted STT and brain; local flite speech PCM fixtures",
+    "steps": [
+      "real composer long press joined actual LiveKit call",
+      {
+        "agent": "Ruby",
+        "scriptedTranscript": "Ruby, please say hello.",
+        "serverNonzeroMicSamples": 21633,
+        "playback": {
+          "peak": 0.6835691928863525,
+          "currentTime": 4.044,
+          "paused": false
+        }
+      },
+      {
+        "agent": "Sol",
+        "scriptedTranscript": "Sol, please say hello.",
+        "serverNonzeroMicSamples": 42538,
+        "playback": {
+          "peak": 0.2769736051559448,
+          "currentTime": 8.844,
+          "paused": false
+        }
+      }
+    ],
+    "errors": [],
+    "capabilities": {
+      "userAgent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/148.0.0.0 Safari/537.36",
+      "RTC": "function",
+      "SpeechRecognition": "function",
+      "webkitSpeechRecognition": "function"
+    },
+    "join": {
+      "call": "70da0994-b44e-4f50-8c2f-b6ec125dd254",
+      "connecting": false,
+      "error": null,
+      "target": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "speaker": null
+    },
+    "cleanup": {
+      "tracks": [
+        "ended"
+      ],
+      "captureConstraints": [
+        {
+          "video": false,
+          "audio": {
+            "echoCancellation": true,
+            "noiseSuppression": true,
+            "autoGainControl": false,
+            "deviceId": "WebAudio-68c9db80-3bc5-41b7-981c-abcef36fbe5a",
+            "voiceIsolation": true
+          }
+        }
+      ],
+      "audioElements": [
+        {
+          "paused": true,
+          "currentTime": 0,
+          "readyState": 0,
+          "srcObject": "null",
+          "remoteTracks": []
+        }
+      ],
+      "call": null,
+      "laterAudio": [
+        {
+          "currentTime": 0,
+          "readyState": 0,
+          "srcObject": "null"
+        }
+      ]
+    },
+    "brainCalls": [
+      {
+        "agent": "Ruby",
+        "input": "Ruby, please say hello."
+      },
+      {
+        "agent": "Sol",
+        "input": "Sol, please say hello."
+      }
+    ],
+    "syntheses": [
+      {
+        "who": "Ruby",
+        "voice": "luna",
+        "bytes": 139920
+      },
+      {
+        "who": "Sol",
+        "voice": "apollo",
+        "bytes": 126642
+      }
+    ],
+    "serverInput": {
+      "samples": 172160,
+      "nonzero": 42538,
+      "closed": true
+    },
+    "status": "PASS fixture-provider integration"
+  },
+  {
+    "engine": "webkit",
+    "head": "324d951ea0cbbcc0ecfe8da5ec8616d379e6ee71",
+    "providers": "scripted STT and brain; local flite speech PCM fixtures",
+    "steps": [],
+    "errors": [],
+    "status": "BLOCKED",
+    "failure": "browserType.launch: Target page, context or browser has been closed\nBrowser logs:\n\n<launching> /home/lunchbox/.cache/ms-playwright/webkit-2287/pw_run.sh --inspector-pipe --headless --no-startup-window\n<launched> pid=26140\n[pid=26140][err] /home/lunchbox/.cache/ms-playwright/webkit-2287/minibrowser-wpe/bin/MiniBrowser: error while loading shared libraries: libwoff2dec.so.1.0.2: cannot open shared object file: No such file or directory\nCall log:\n\u001b[2m  - <launching> /home/lunchbox/.cache/ms-playwright/webkit-2287/pw_run.sh --inspector-pipe --headless --no-startup-window\u001b[22m\n\u001b[2m  - <launched> pid=26140\u001b[22m\n\u001b[2m  - [pid=26140][err] /home/lunchbox/.cache/ms-playwright/webkit-2287/minibrowser-wpe/bin/MiniBrowser: error while loading shared libraries: libwoff2dec.so.1.0.2: cannot open shared object file: No such file or directory\u001b[22m\n\u001b[2m  - [pid=26140] <gracefully close start>\u001b[22m\n\u001b[2m  - [pid=26140] <kill>\u001b[22m\n\u001b[2m  - [pid=26140] <will force kill>\u001b[22m\n\u001b[2m  - [pid=26140] <process did exit: exitCode=127, signal=null>\u001b[22m\n\u001b[2m  - [pid=26140] starting temporary directories cleanup\u001b[22m\n\u001b[2m  - [pid=26140] finished temporary directories cleanup\u001b[22m\n\u001b[2m  - [pid=26140] <gracefully close end>\u001b[22m\n"
+  }
+]

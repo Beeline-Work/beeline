@@ -18,7 +18,10 @@ it('rechecks eligibility when a retained session moves from report to human inpu
   await context.enter(command);
   context.notePromptSections(['turn.task']);
   expect(JSON.parse(await readFile(context.path, 'utf8')).commandReason).toBe('report');
-  expect(JSON.parse(await callAgentTool('no_reply_needed', {}, 'silent-1'))).toEqual({ acknowledged: true });
+  for (const reason of ['report', 'order', 'watched_corner', 'schedule', 'subscribed_event', 'system']) {
+    await context.enter({ ...command, reason });
+    expect(JSON.parse(await callAgentTool('no_reply_needed', {}, 'silent-1'))).toEqual({ acknowledged: true });
+  }
   for (const reason of ['human_tag', 'direct_message', 'corner_brief_revision', 'unknown']) {
     await context.enter({ ...command, reason });
     await expect(callAgentTool('no_reply_needed', {}, 'silent-2')).rejects.toThrow('requires a nonhuman');
@@ -30,6 +33,7 @@ it('rechecks eligibility when a retained session moves from report to human inpu
 it('declares the exact Claude terminal tool in every new session, retaining existing names and isolated settings', () => {
   const meta = sessionToolScopeMeta('claude-agent-acp', 'other,other') as { claudeCode: { options: { env: Record<string, string>; settings: unknown } } };
   expect(meta.claudeCode.options.env.CLAUDE_CODE_TERMINAL_MCP_TOOLS).toBe('other,mcp__beeline-agent__no_reply_needed');
+  expect(meta.claudeCode.options.env.CLAUDE_CODE_SILENT_TURN_REMINDER).toBe('0');
   expect(meta.claudeCode.options.settings).toHaveProperty('disableClaudeAiConnectors', true);
   expect(sessionToolScopeMeta('codex-acp')?.claudeCode).toBeUndefined();
 });

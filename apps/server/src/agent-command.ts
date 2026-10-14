@@ -1589,12 +1589,19 @@ export async function noteBlockedCornerChecks(db: SqlDatabase): Promise<number> 
     `SELECT command.* FROM agent_commands command
      JOIN rooms corner ON corner.id=command.room_id AND corner.archived_at IS NULL
      JOIN corner_facts fact ON fact.corner_id=corner.id
+     LEFT JOIN LATERAL (SELECT id,generation_id,claimed_at FROM agent_commands
+       WHERE room_id=command.room_id AND agent_id=command.agent_id AND claimed_at IS NOT NULL
+         AND action IN ('input','resume') ORDER BY claimed_at DESC,id DESC LIMIT 1) ran ON true
      WHERE command.state='pending' AND command.action='input'
        AND command.agent_id=${cornerImplementerSql('fact', 'corner')}
        AND command.created_at<=now()-interval '${CORNER_CHECKS_BLOCKED_AFTER}'
        AND NOT ${agentMachineOfflineSql('command.agent_id')}
+       AND (ran.claimed_at IS NULL OR ran.claimed_at<command.created_at)
        AND NOT EXISTS (SELECT 1 FROM agent_commands notice WHERE notice.id=encode(sha256(convert_to(
-         'unreachable:'||command.room_id::text||':'||command.agent_id||':'||command.id,
+         'unreachable:'||command.room_id::text||':'||command.agent_id||':'||COALESCE(ran.id,'never-run')||':'||COALESCE(ran.generation_id,''),
+         'UTF8')),'hex'))
+       AND NOT EXISTS (SELECT 1 FROM messages notice WHERE notice.id=encode(sha256(convert_to(
+         'unreachable:'||command.room_id::text||':'||command.agent_id||':'||COALESCE(ran.id,'never-run')||':'||COALESCE(ran.generation_id,''),
          'UTF8')),'hex'))
        AND NOT EXISTS (SELECT 1 FROM agent_commands busy WHERE busy.room_id=command.room_id
          AND busy.agent_id=command.agent_id AND busy.state='claimed' AND busy.lease_expires_at>now())
@@ -1602,6 +1609,7 @@ export async function noteBlockedCornerChecks(db: SqlDatabase): Promise<number> 
   );
   for (const command of undelivered.rows) {
     await db.transaction(async db => {
+      await lockAgentCommandQueue(db, command.room_id, command.agent_id);
       const pending = await db.query(`SELECT 1 FROM agent_commands command
         JOIN rooms corner ON corner.id=command.room_id AND corner.archived_at IS NULL
         WHERE command.room_id=$1 AND command.agent_id=$2 AND command.id=$3
@@ -1714,10 +1722,36 @@ export async function noteBlockedCornerChecks(db: SqlDatabase): Promise<number> 
 /** A failed worker wake reports one step up, without human tags or manager fallbacks. */
 export async function noteCornerAgentUnreachable(
   db: SqlDatabase, cornerId: string, agentId: string, sourceMessageId: string, command?: CommandRow,
+  cause = 'the worker wake could not be queued',
 ): Promise<void> {
-  await reportToCommander(db, cornerId, agentId,
-    'blocked: the implementing agent could not be reached to continue this corner',
-    command, createHash('sha256').update(`unreachable:${cornerId}:${agentId}:${sourceMessageId}`).digest('hex'), { automatic: true });
+  await db.transaction(async db => {
+    await lockAgentCommandQueue(db, cornerId, agentId);
+    const failure = (await db.query<{
+      name: string; agent_name: string; last_run: string | null; generation: string | null; recovered: boolean;
+    }>(`SELECT corner.name,identity.name agent_name,ran.id last_run,ran.generation_id generation,
+        ran.claimed_at>=COALESCE(failed.created_at,source.created_at,clock_timestamp()) recovered
+      FROM rooms corner JOIN identities identity ON identity.id=$2
+      LEFT JOIN agent_commands failed ON failed.id=$3 AND failed.room_id=corner.id AND failed.agent_id=$2
+      LEFT JOIN messages source ON source.id=$4
+      LEFT JOIN LATERAL (SELECT id,generation_id,claimed_at FROM agent_commands
+        WHERE room_id=corner.id AND agent_id=$2 AND claimed_at IS NOT NULL AND action IN ('input','resume')
+        ORDER BY claimed_at DESC,id DESC LIMIT 1) ran ON true
+      WHERE corner.id=$1 AND corner.archived_at IS NULL`,
+      [cornerId, agentId, command?.id ?? sourceMessageId, sourceMessageId])).rows[0];
+    if (!failure || failure.recovered) return;
+    // A claimed turn ends the failure span. Different failed wakes before
+    // that next turn share one durable report id, including concurrent sweeps.
+    const reportId = createHash('sha256').update(
+      `unreachable:${cornerId}:${agentId}:${failure.last_run ?? 'never-run'}:${failure.generation ?? ''}`,
+    ).digest('hex');
+    if ((await db.query('SELECT 1 FROM agent_commands WHERE id=$1 UNION ALL SELECT 1 FROM messages WHERE id=$1', [reportId])).rowCount) return;
+    const failed = command
+      ? `command ${command.id} (${command.reason}) remained unclaimed for ${CORNER_CHECKS_BLOCKED_AFTER}`
+      : `${cause}; source ${sourceMessageId}`;
+    await reportToCommander(db, cornerId, agentId,
+      `blocked: ${failure.agent_name} (${agentId}) could not be reached in corner ${failure.name} (${cornerId}): ${failed}`,
+      command, reportId, { automatic: true });
+  });
 }
 
 /** Recover blocker lifecycles whose note or command was lost before delivery. */

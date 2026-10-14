@@ -48,6 +48,17 @@ const repositoryBrief: CornerBrief = {
 };
 
 describe('corner wake reporting (Reproduction schedule-silence-4)', () => {
+  it.each(['report', 'order', 'watched_corner', 'corner_check', 'schedule', 'subscribed_event', 'system'])('makes a %s wake quiet without a progress nudge', (commandReason) => {
+    const text = assembleTurnPrompt({ surface: 'room', task: { body: 'Handle this wake', commandReason } }).text;
+    expect(text).toContain('Do not post an update merely because time has passed');
+    expect(text).toContain('call no_reply_needed successfully');
+    expect(text).not.toContain("The user hasn't heard from you in a while");
+  });
+  it.each(['human_tag', 'direct_message'])('preserves the reply owed on a %s turn', (commandReason) => {
+    const text = assembleTurnPrompt({ surface: 'room', task: { body: 'What happened?', commandReason } }).text;
+    expect(text).toContain('Reply to the human message that triggered this turn');
+    expect(text).not.toContain('call no_reply_needed');
+  });
   it('keeps subscription action trusted and event payload quoted in the turn prompt', () => {
     const text = assembleTurnPrompt({ surface: 'room', task: {
       body: 'outside text', outsideEvent: {

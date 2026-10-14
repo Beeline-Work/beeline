@@ -717,7 +717,11 @@ export function roomMentionDirectory(roster: WorkspaceRoster, selfId: string): s
     if (!memberHandle) continue;
     const name = member.name?.trim() ?? '';
     const kind = member.kind === 'agent' ? 'agent' : 'person';
-    rows.push(`- @${memberHandle}${name && name !== memberHandle ? ` — ${name}` : ''} (${kind})`);
+    const metadata = member.kind === 'agent'
+      ? [member.owner ? `owner ${member.owner.handle ? `@${member.owner.handle}` : member.owner.name}` : '',
+          member.machine ?? ''].filter(Boolean).join(' · ')
+      : '';
+    rows.push(`- @${memberHandle}${name && name !== memberHandle ? ` — ${name}` : ''} (${kind})${metadata ? ` · ${metadata}` : ''}`);
   }
   // Without this line an agent reading the list concludes it is not a member.
   if (selfHandle) rows.push(`You are @${selfHandle}, a member of this Room; you are not listed above.`);

@@ -718,14 +718,19 @@ export type AgentInput = { readonly agentId: string };
 export type AgentRoomInput = AgentInput & RoomInput;
 export type AgentConfigurationInput = AgentInput & { readonly roomId?: string };
 export type CornerInput = { readonly cornerId: string };
+export type AgentMemberMetadata = {
+  readonly owner?: { readonly id: string; readonly handle: string | null; readonly name: string };
+  readonly machine?: string | null;
+  readonly online?: boolean;
+};
 export type RoomMemberListResult = {
-  readonly members: readonly {
+  readonly members: readonly (AgentMemberMetadata & {
     readonly id: string;
     readonly kind: 'human' | 'agent';
     readonly name: string;
     readonly handle: string | null;
     readonly role: string;
-  }[];
+  })[];
 };
 export type CornerPullRequestResult =
   | {
@@ -838,7 +843,7 @@ export type DaemonBootstrapResult = {
   }[];
 };
 export type WorkspaceRosterResult = {
-  readonly members: readonly {
+  readonly members: readonly (AgentMemberMetadata & {
     readonly identityId: string;
     readonly kind: 'human' | 'agent';
     readonly name: string;
@@ -852,7 +857,7 @@ export type WorkspaceRosterResult = {
       readonly authoredBy: string;
       readonly updatedAt: number;
     };
-  }[];
+  })[];
 };
 export type RoomInboxResult = {
   /** Present only when ordinary message rows are server-selected commands. */

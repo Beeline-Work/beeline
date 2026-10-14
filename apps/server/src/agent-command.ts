@@ -335,6 +335,8 @@ export async function createAgentCommand(
     /** Lifecycle transfer/resumption retains the chain; only agent delegation increments. */
     retainDepth?: boolean;
     avatarJob?: boolean;
+    /** A line appended to a lifecycle wake's text, fixed at dispatch. */
+    wakeNote?: string;
   },
 ): Promise<CommandRow | undefined> {
   return db.transaction(async (db) => {
@@ -354,12 +356,16 @@ export async function createAgentCommand(
   const opening = member.rows[0]!.opening;
   const lifecycle = input.reason.startsWith('corner_') || input.reason === 'subscribed_event' && Boolean(opening);
   const parent = input.parent ?? (lifecycle ? opening ?? undefined : undefined);
+  const sourceText = member.rows[0]!.source_text;
+  const note = input.wakeNote ? `\n${input.wakeNote}` : '';
   const privatePayload = input.privatePayload ?? (parent?.private_payload
     ? { ...parent.private_payload, reportedGenerationId: undefined, kind: 'lifecycle' as const,
-        text: input.action === 'resume' && member.rows[0]!.source_text
-          ? `${parent.private_payload.text}\nResume context: ${member.rows[0]!.source_text}`
-          : member.rows[0]!.source_text ?? parent.private_payload.text }
-    : undefined);
+        text: (input.action === 'resume' && sourceText
+          ? `${parent.private_payload.text}\nResume context: ${sourceText}`
+          : sourceText ?? parent.private_payload.text) + note }
+    : input.wakeNote
+      ? { text: `${sourceText ?? ''}${note}`.trim(), authorId: SYSTEM_IDENTITY_ID, fromRoomId: input.roomId, kind: 'lifecycle' as const }
+      : undefined);
   const depth = parent ? input.retainDepth || lifecycle || input.action === 'resume'
     ? parent.agent_depth : nextAgentDepth(parent.agent_depth) : 0;
   if (depth === undefined) return undefined;

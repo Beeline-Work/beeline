@@ -910,7 +910,7 @@ describe('corner close-request delivery', () => {
         }
         return { items: [], cursor: 'latest', closeRequested: true };
       }
-      if (name === 'getCornerRestoreState') return { brief: { id: 'corner-id', revision: 1, authorId: 'author', sourceRoomId: 'room-id', attachments: [], repositoryWork, spec: '## Intent\nRun the desk\n## Non-goals\nNo interval changes' } };
+      if (name === 'getCornerRestoreState') return { objective: 'Ship the current widget goal', brief: { id: 'corner-id', revision: 1, authorId: 'author', sourceRoomId: 'room-id', attachments: [], repositoryWork, spec: '## Intent\nRun the desk\n## Non-goals\nNo interval changes' } };
       if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
       if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
       return { id: 'write-id', createdAt: 1 };
@@ -981,6 +981,13 @@ describe('corner close-request delivery', () => {
     await loop.run();
     await scheduler.dispose();
     expect(sessionPrompt).toHaveBeenCalledTimes(repositoryWork ? 2 : 1);
+    expect(String(sessionPrompt.mock.calls[0]?.[1])).toContain('Ship the current widget goal');
+    const backgroundCompletion = sessionPrompt.mock.calls[0]?.[6];
+    expect(backgroundCompletion).toBeTypeOf('function');
+    backgroundCompletion!({ id: 'late-job', title: 'Run tests', status: 'completed' });
+    await vi.waitFor(() => expect(execute).toHaveBeenCalledWith('postBackgroundToolCompletion',
+      expect.objectContaining({ roomId: 'corner-id', toolCallId: 'late-job', status: 'completed',
+        requestId: expect.any(String), generationId: expect.any(String) })));
     if (repositoryWork) expect(sessionPrompt.mock.calls[1]?.[1]).toContain(CORNER_DELIVERY_NUDGE);
     else {
       const delivered = sessionNew.mock.calls[0]?.[0].systemPrompt + '\n' + sessionPrompt.mock.calls[0]?.[1];

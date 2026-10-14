@@ -1448,6 +1448,7 @@ export class MonolithCornerTurnLoop {
       onStateChange: (state) => {
         if (state === 'waiting-for-slot') trace?.noteCapacityWait();
       },
+      hasBackgroundWork: () => this.client?.hasBackgroundTools ?? false,
       suspend: () => this.discardSession(true),
     };
   }
@@ -1778,7 +1779,7 @@ export class MonolithCornerTurnLoop {
                   surface: this.sessionSurface,
                   modelContextTokens: this.modelContextTokens,
                   sessionPrefix: this.turnSessionPrefix,
-                  objective: this.options.objective,
+                  objective: restored.objective ?? this.options.objective,
                   ...(restored.titleGenerated && restored.title
                     ? { generatedTitle: restored.title }
                     : {}),
@@ -1978,6 +1979,7 @@ export class MonolithCornerTurnLoop {
               // re-pins the session to another provider and runs it again
               // (C92) — against the NEW client and session id.
               const runPromptAttempt = async (prompt: string): Promise<PromptResult> => {
+                const backgroundGeneration = this.commandContext.generationId;
                 activityAttempt += 1;
                 publishedToolCalls.clear();
                 observedToolCalls.clear();
@@ -2029,6 +2031,15 @@ export class MonolithCornerTurnLoop {
                         // it turns out to duplicate the turn's final reply.
                         publishToolCalls(calls, true);
                         publishToolCalls(calls, false, lastNarratedToolCall);
+                      },
+                      (call) => {
+                        if (!requestId || !backgroundGeneration || !call.id) return;
+                        void api.execute('postBackgroundToolCompletion', {
+                          roomId: this.options.cornerId, requestId,
+                          generationId: backgroundGeneration,
+                          toolCallId: call.id, title: call.title ?? call.id,
+                          status: call.status === 'failed' ? 'failed' : 'completed',
+                        }).catch((error) => console.error('[corner] background tool wake failed', redactTurnError(error)));
                       },
                     ),
                   );

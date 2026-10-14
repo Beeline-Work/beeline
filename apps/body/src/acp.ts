@@ -701,6 +701,10 @@ export class AcpClient extends EventEmitter {
   private pending = new Map<number, Pending>();
   private activeRunIds = new Map<string, string>();
   private activePromptSessions = new Set<string>();
+  private detachedTools = new Map<string, {
+    call: ToolCallEntry;
+    complete: (call: ToolCallEntry) => void;
+  }>();
   /** Tool metadata arrives in session/update just before a sparse permission request. */
   private toolCallMetadata = new Map<string, AcpPermissionRequest['toolCall']>();
   /** Latest `available_commands_update` per session, keyed by sessionId. */
@@ -974,6 +978,7 @@ export class AcpClient extends EventEmitter {
     this.pending.clear();
     this.activeRunIds.clear();
     this.activePromptSessions.clear();
+    this.detachedTools.clear();
     this.toolCallMetadata.clear();
     this.sessionCommands.clear();
     if (scope) {
@@ -1024,6 +1029,7 @@ export class AcpClient extends EventEmitter {
     this.alive = false;
     this.activeRunIds.clear();
     this.activePromptSessions.clear();
+    this.detachedTools.clear();
     this.toolCallMetadata.clear();
   }
 
@@ -1199,6 +1205,10 @@ export class AcpClient extends EventEmitter {
    * It receives the current lane snapshot; existing callbacks that ignore
    * arguments remain valid.
    */
+  get hasBackgroundTools(): boolean {
+    return this.detachedTools.size > 0;
+  }
+
   get lastPromptBytes(): number | undefined {
     return this.lastPromptByteCount;
   }
@@ -1210,11 +1220,13 @@ export class AcpClient extends EventEmitter {
     onChunk?: AcpTextChunkHandler,
     onActivity?: AcpStreamHandler,
     onToolCalls?: (calls: readonly ToolCallEntry[]) => void,
+    onBackgroundToolCompletion?: (call: ToolCallEntry) => void,
   ): Promise<PromptResult> {
     this.lastPromptByteCount =
       typeof text === 'string' ? Buffer.byteLength(text, 'utf8') : undefined;
     const updates: SessionUpdate[] = [];
     let promptRunId: string | undefined;
+    let completed = false;
     let terminalReason: string | undefined;
     let endTurn!: (result: { stopReason: string }) => void;
     const terminal = new Promise<{ stopReason: string }>(resolve => { endTurn = resolve; });
@@ -1302,6 +1314,7 @@ export class AcpClient extends EventEmitter {
       const agentText = terminalReason ? '' : finalAgentMessageText(updates, this.agentLabel);
 
       const toolCalls = toolCallEntries(updates);
+      completed = true;
 
       return {
         stopReason: terminalReason ?? result?.stopReason ?? 'end_turn',
@@ -1323,6 +1336,16 @@ export class AcpClient extends EventEmitter {
         this.activeRunIds.delete(sessionId);
       }
       this.off('session/update', onUpdate);
+      if (completed && onBackgroundToolCompletion) {
+        for (const call of toolCallEntries(updates)) {
+          if (call.id && !call.id.startsWith('anonymous-') &&
+              !['completed', 'failed'].includes(call.status ?? '') && !call.resultReceived) {
+            this.detachedTools.set(`${sessionId}\0${call.id}`, {
+              call, complete: onBackgroundToolCompletion,
+            });
+          }
+        }
+      }
     }
   }
 
@@ -1542,6 +1565,16 @@ export class AcpClient extends EventEmitter {
         };
         const activeRunId = this.activeRunIdFromUpdate(params.update);
         if (activeRunId) this.activeRunIds.set(params.sessionId, activeRunId);
+        const key = `${params.sessionId}\0${String(params.update.toolCallId ?? '')}`;
+        const detached = this.detachedTools.get(key);
+        if (detached) {
+          detached.call = { ...detached.call, ...toolCallEntries([u])[0] };
+          if (detached.call.status === 'completed' || detached.call.status === 'failed' ||
+              detached.call.resultReceived) {
+            this.detachedTools.delete(key);
+            detached.complete(detached.call);
+          }
+        }
         this.emit('session/update', u);
       }
       return;

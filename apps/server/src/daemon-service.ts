@@ -1375,6 +1375,30 @@ export class DaemonService {
           input as Input<'postAgentTurnReceipt'>,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'postBackgroundToolCompletion': {
+        const completion = input as Input<'postBackgroundToolCompletion'>;
+        if (!completion.toolCallId || completion.toolCallId.length > 512 ||
+            !['completed', 'failed'].includes(completion.status))
+          throw new Error('invalid background tool completion');
+        await this.access(completion.roomId, authenticatedAgentId);
+        return await this.database.transaction(async (db) => {
+          const origin = await authorizeCommandOutput(db, completion.roomId, authenticatedAgentId,
+            completion.requestId, completion.generationId, true);
+          const commandId = createHash('sha256').update(JSON.stringify([
+            'background-tool', origin.id, completion.generationId, completion.toolCallId,
+          ])).digest('hex');
+          await createAgentCommand(db, {
+            id: commandId, roomId: completion.roomId, agentId: authenticatedAgentId,
+            sourceMessageId: null, parent: origin, retainDepth: true,
+            reason: 'corner_background_tool',
+            privatePayload: {
+              kind: 'lifecycle', authorId: authenticatedAgentId, fromRoomId: completion.roomId,
+              text: `Your background tool ${completion.title.slice(0, 500)} (${completion.toolCallId}) ${completion.status}. Continue the work from its result.`,
+            },
+          });
+          return this.writeResult();
+        }) as Output<Name>;
+      }
       case 'postAgentActivity':
         return (await this.activity(
           input as Input<'postAgentActivity'>,
@@ -1663,7 +1687,8 @@ export class DaemonService {
         const listed = await this.listAgentGrants(authenticatedAgentId, roomId);
         return {
           grants: listed.grants.filter(
-            (grant) => grant.roomId === roomId && grant.requestedBy === requester.id,
+            (grant) => grant.kind === 'command' ||
+              (grant.roomId === roomId && grant.requestedBy === requester.id),
           ),
         } as Output<Name>;
       }
@@ -5791,13 +5816,13 @@ export class DaemonService {
       if (corner.kind === 'human' && !current && (!objective || !input.brief))
         throw new Error('naming a human-opened corner requires its objective and first brief');
       if (objective !== undefined || input.brief) {
-        if (corner.kind !== 'human')
-          throw new Error('corner details may be set while naming a human-opened corner');
+        if (corner.kind !== 'human' && input.brief)
+          throw new Error('corner brief already exists; revise the current brief instead');
         const command = await authorizeCommandOutput(
           db, input.roomId ?? input.cornerId, agentId, input.requestId, input.generationId,
         );
-        if (current) {
-          if (input.brief && (current.spec !== input.brief.spec.trim() ||
+        if (current || corner.kind !== 'human') {
+          if (current && input.brief && (current.spec !== input.brief.spec.trim() ||
               current.repositoryWork !== input.brief.repositoryWork ||
               current.approval?.sourceMessageId !== input.brief.approval.sourceMessageId))
             throw new Error('corner brief already exists; revise the current brief instead');
@@ -5838,6 +5863,11 @@ export class DaemonService {
           );
         }
       }
+      if (objective !== undefined) await db.query(
+        `UPDATE messages SET card=jsonb_set(card,'{objective}',to_jsonb($2::text))
+         WHERE room_id=$3 AND card_type='daemon-fact' AND card->>'cornerId'=$1 AND card ? 'objective'`,
+        [input.cornerId, objective, corner.parent_id],
+      );
       await writeCornerTitle(db, input.cornerId, corner.parent_id, name);
     });
     return { cornerId: input.cornerId, name };
@@ -8234,6 +8264,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   retractAgentLiveOutput: true,
   postAgentTurnReceipt: true,
   postAgentActivity: true,
+  postBackgroundToolCompletion: true,
   postSquireApproval: true,
   postComputerSession: true,
   endComputerSession: true,

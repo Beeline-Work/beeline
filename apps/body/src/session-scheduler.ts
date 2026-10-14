@@ -14,6 +14,8 @@ export interface SessionLifecycle {
   onStateChange?(state: SessionProcessState): Promise<void> | void;
   /** Optional harness-specific idle retention. Capacity/LRU eviction still wins. */
   idleMs?: number;
+  /** Running tools still need the process to push their completion after a turn. */
+  hasBackgroundWork?(): boolean;
 }
 export type SessionProcessState = 'live' | 'suspended' | 'waiting-for-slot';
 
@@ -412,7 +414,7 @@ export class SessionScheduler {
     if (this.busy.has(key) || this.drainingKeys.has(key) || (this.queues.get(key)?.length ?? 0) > 0)
       return;
     const session = this.live.get(key);
-    if (!session) return;
+    if (!session || session.lifecycle.hasBackgroundWork?.()) return;
     this.live.delete(key);
     await this.retire(session);
   }
@@ -626,6 +628,7 @@ export class SessionScheduler {
     const victim = [...this.live.entries()]
       .filter(
         ([candidate, session]) =>
+          !session.lifecycle.hasBackgroundWork?.() &&
           !this.busy.has(candidate) &&
           !this.drainingKeys.has(candidate) &&
           (this.queues.get(candidate)?.length ?? 0) === 0 &&

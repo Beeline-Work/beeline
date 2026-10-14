@@ -11409,7 +11409,7 @@ describe('monolith integration', () => {
     ).toBe(0);
   });
 
-  it('does not reuse an owner command grant on a third-party turn or without command authority', async () => {
+  it('reuses an owner command grant on a third-party turn while requiring command authority', async () => {
     const ownerAsk = (await (
       await operation('sendRoomMessage', {
         roomId: ROOM,
@@ -11447,8 +11447,8 @@ describe('monolith integration', () => {
         await (
           await daemonOperation('listTurnAgentGrants', { roomId: ROOM, requestId: ask.messageId })
         ).json()
-      ).grants,
-    ).toEqual([]);
+      ).grants.map((g: any) => g.grantId),
+    ).toContain(grant.grantId);
     expect(
       (
         await (

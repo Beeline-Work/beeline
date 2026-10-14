@@ -256,6 +256,15 @@ export class VoiceService {
 
   async recordAnswer(roomId: string, agentId: string, text: string) {
     text=stripVoiceEmotion(text);
+    // Luna can render the same complete answer twice, formatted then plain.
+    // Collapse only identical whole renditions separated by a paragraph break;
+    // repetitions within a sentence and different paragraphs remain intact.
+    const rendition = (value: string) => value.replace(/\*\*([^*]+)\*\*/g, '$1').replace(/\s+/g, ' ').trim();
+    for (const boundary of text.matchAll(/\n\s*\n/g)) {
+      const first = text.slice(0, boundary.index).trim();
+      const second = text.slice(boundary.index! + boundary[0].length).trim();
+      if (first && rendition(first) === rendition(second)) { text = first; break; }
+    }
     if (!text.trim()) return;
     await this.db.query(`INSERT INTO messages(id,room_id,author_id,text,agent_model)
       SELECT $1,$2,$3,$4,$5 FROM memberships m JOIN rooms r ON r.id=m.room_id

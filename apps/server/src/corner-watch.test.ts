@@ -1,3 +1,4 @@
+import { flushDueCommanderWakes } from './commander-wakes.js';
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
@@ -69,7 +70,11 @@ const emit = (kind: CornerWatchKind = 'merged') =>
     object: { text: 'Ship widget', url: 'https://github.com/owner/widgets/pull/42' },
     durableFact: 'merge',
   });
-const wakes = () => readAgentCommands(db, A, W).then((r) => r.commands);
+const mature = async () => {
+  await db.query(`UPDATE agent_commands SET wake_after=now() WHERE wake_after IS NOT NULL`);
+  await flushDueCommanderWakes(db);
+};
+const wakes = async () => { await mature(); return (await readAgentCommands(db, A, W)).commands; };
 
 it('Reproduction O-2: a watcher receives a named sibling merge in A', async () => {
 
@@ -156,6 +161,7 @@ it('lets a parent Room watch its child', async () => {
   );
   expect((await watch(['merged'], P)).snapshot.id).toBe(B);
   await emit();
+  await mature();
   expect((await readAgentCommands(db, P, W)).commands).toHaveLength(1);
 });
 

@@ -7,7 +7,8 @@ import {
   cornerRowState,
   type CornerStateRow,
 } from './chat-corner-counts.js';
-import { commanderReportAddress, reportToCommander } from './commander.js';
+import { createAgentCommand } from './agent-command.js';
+import { commanderReportAddress } from './commander.js';
 import { cornerImplementerSql } from './corner-worker.js';
 import { ensureSystemIdentity } from './system-line.js';
 
@@ -217,16 +218,37 @@ export async function deliverCornerAttention(db: SqlDatabase): Promise<void> {
         }
         const address = await commanderReportAddress(tx, row.id);
         if (!address.recipient || !address.returnRoom) return;
-        const delivered = await reportToCommander(
-          tx,
-          row.id,
-          SYSTEM_IDENTITY_ID,
-          `blocked: Corner ${row.name} is idle with no worker schedule or event subscription. Resume, schedule or close it.`,
-          undefined,
-          flag.id,
-          { automatic: true },
-        );
-        if ('delivered' in delivered && delivered.delivered === false) return;
+        // A human steering the worker does not become the recipient of automatic idle flags.
+        const commander = (
+          await tx.query<{ id: string; room_id: string }>(
+            `SELECT identity.id,member.room_id FROM identities identity
+           JOIN memberships member ON member.identity_id=identity.id AND member.removed_at IS NULL
+           JOIN rooms target ON target.id=member.room_id AND target.archived_at IS NULL
+           JOIN rooms corner ON corner.id=$1
+           WHERE identity.kind='agent' AND
+             ((identity.id=$2 AND member.room_id=$3) OR
+              (identity.id=corner.created_by AND member.room_id=corner.parent_id))
+           ORDER BY (identity.id=$2 AND member.room_id=$3) DESC LIMIT 1`,
+            [row.id, address.recipient, address.returnRoom],
+          )
+        ).rows[0];
+        if (!commander) return;
+        const delivered = await createAgentCommand(tx, {
+          id: flag.id,
+          roomId: commander.room_id,
+          agentId: commander.id,
+          sourceMessageId: null,
+          reason: 'corner_idle',
+          parent: address.parent,
+          retainDepth: true,
+          privatePayload: {
+            kind: 'lifecycle',
+            authorId: SYSTEM_IDENTITY_ID,
+            fromRoomId: row.id,
+            text: `Corner ${row.name} is idle with no worker schedule or event subscription. Resume, schedule or close it.`,
+          },
+        });
+        if (!delivered) return;
         await tx.query('UPDATE corner_attention_flags SET sent_at=now() WHERE id=$1', [flag.id]);
       } else {
         if (state === 'archived') {
@@ -259,25 +281,42 @@ export async function deliverCornerAttention(db: SqlDatabase): Promise<void> {
           return;
         }
         const person = (
-          await tx.query<{ handle: string }>(
-            `SELECT handle FROM identities WHERE id=$1 AND kind='human'`,
+          await tx.query<{ handle: string; kind: string }>(
+            `SELECT handle,kind FROM identities WHERE id=$1`,
             [flag.person_id],
           )
         ).rows[0];
         if (!person?.handle) return;
-        await ensureSystemIdentity(tx);
         const reminderId = key(flag.id, current.deliveries);
-        await tx.query(
-          `INSERT INTO messages(id,room_id,author_id,text,presentation,card)
+        if (person.kind === 'agent') {
+          const delivered = await createAgentCommand(tx, {
+            id: reminderId,
+            roomId: row.id,
+            agentId: flag.person_id!,
+            sourceMessageId: null,
+            reason: 'corner_waiting',
+            privatePayload: {
+              kind: 'lifecycle',
+              authorId: SYSTEM_IDENTITY_ID,
+              fromRoomId: row.id,
+              text: `Please resolve the waiting request in ${row.name}.`,
+            },
+          });
+          if (!delivered) return;
+        } else {
+          await ensureSystemIdentity(tx);
+          await tx.query(
+            `INSERT INTO messages(id,room_id,author_id,text,presentation,card)
         VALUES($1,$2,$3,$4,'message',$5::jsonb) ON CONFLICT DO NOTHING`,
-          [
-            reminderId,
-            row.id,
-            SYSTEM_IDENTITY_ID,
-            `@${person.handle} Please resolve the waiting request in ${row.name}. Dismiss this reminder in Needs you to stop daily reminders.`,
-            JSON.stringify({ cornerReminderId: flag.id }),
-          ],
-        );
+            [
+              reminderId,
+              row.id,
+              SYSTEM_IDENTITY_ID,
+              `@${person.handle} Please resolve the waiting request in ${row.name}. Dismiss this reminder in Needs you to stop daily reminders.`,
+              JSON.stringify({ cornerReminderId: flag.id }),
+            ],
+          );
+        }
         await tx.query(
           `UPDATE corner_attention_flags SET sent_at=now(),due_at=now()+interval '24 hours',
         reminder_id=$2,deliveries=deliveries+1 WHERE id=$1`,

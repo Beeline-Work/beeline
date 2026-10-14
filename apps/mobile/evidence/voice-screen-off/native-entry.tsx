@@ -6,6 +6,15 @@ import { registerRootComponent } from 'expo';
 import { monolithSession } from '../../sources/auth/monolith-session';
 import { useVoiceCall } from '../../sources/buzz/use-voice-call';
 
+const request = monolithSession.fetch.bind(monolithSession);
+monolithSession.fetch = async (...args: Parameters<typeof request>) => {
+  const action = args[0].split('/').at(-1);
+  console.log('[VOICE-PROOF]', Date.now(), action, 'before');
+  const response = await request(...args);
+  console.log('[VOICE-PROOF]', Date.now(), action, 'response', response.status);
+  return response;
+};
+
 const ROOM = '22222222-2222-4222-8222-222222222222';
 function VoiceProof() {
   const [ready, setReady] = React.useState(false);

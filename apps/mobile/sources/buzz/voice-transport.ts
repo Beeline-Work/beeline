@@ -1,3 +1,4 @@
+import { monolithSession } from '@/auth/monolith-session';
 import { Room } from 'livekit-client';
 
 export async function createVoiceRoom(_onStop: () => void = () => {}, roomId?: string, onIdle: () => void = () => {}): Promise<{ room: Room; closeAudio(): Promise<void>; parkAudio(agentName: string): Promise<void>; resumeAudio(): Promise<void>; idleEnd(): Promise<void>; armSilence(): Promise<void>; cancelSilence(): Promise<void> }> {
@@ -20,4 +21,8 @@ export function subscribeVoiceResume(_roomId: string, _resume: () => void): () =
 
 export async function routeVoiceResumeNotification(_url: unknown, _ready?: () => Promise<void>): Promise<boolean> {
   return false;
+}
+
+export function voiceFetch(input: string, init: RequestInit): Promise<Response> {
+  return monolithSession.fetch(input, init);
 }

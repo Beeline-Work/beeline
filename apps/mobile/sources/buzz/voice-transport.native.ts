@@ -1,3 +1,4 @@
+import { monolithSession } from '@/auth/monolith-session';
 import { Room } from 'livekit-client';
 import { PermissionsAndroid, Platform } from 'react-native';
 
@@ -100,4 +101,10 @@ export function subscribeVoiceResume(roomId: string, resume: () => void): () => 
     void Linking.getInitialURL().then(url => { if (!disposed) accept(url); });
   }).catch(error => { if (!disposed) console.warn('Conversation notification unavailable', error); });
   return () => { disposed = true; remove(); };
+}
+
+/** Expo fetch delivers native responses without background-paused JS timers. */
+export async function voiceFetch(input: string, init: RequestInit): Promise<Response> {
+  const { fetch } = await import('expo/fetch');
+  return monolithSession.fetch(input, init, { fetchImpl: fetch as typeof globalThis.fetch });
 }

@@ -2,15 +2,14 @@ import * as React from 'react';
 import { Platform } from 'react-native';
 import { RoomEvent, Track, type Room } from 'livekit-client';
 import { VOICE_DATA_TOPIC, type VoiceJoin, type VoiceIdleState, type VoiceSignal, type VoiceCall, type RoomViewIdentity } from '@beeline/api-contract/phone';
-import { monolithSession } from '@/auth/monolith-session';
 import { getBuzzRuntimeConfig } from './runtime-config';
-import { createVoiceRoom, subscribeVoiceResume } from './voice-transport';
+import { createVoiceRoom, subscribeVoiceResume, voiceFetch } from './voice-transport';
 import { errorDiagnostic, reportClientError } from './client-error-report';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { voiceWaveformLevel } from './waveform-level';
 
 async function voiceRequest<T>(id: string, action: 'join' | 'leave' | 'current' | 'idle' | 'state', sessionId?: string): Promise<T> {
-  const response = await monolithSession.fetch(`${getBuzzRuntimeConfig().monolithUrl}/v1/phone/voice/${id}/${action}${action === 'state' && sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ''}`,
+  const response = await voiceFetch(`${getBuzzRuntimeConfig().monolithUrl}/v1/phone/voice/${id}/${action}${action === 'state' && sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ''}`,
     { method: action === 'current' || action === 'state' ? 'GET' : 'POST',
       ...(sessionId && action !== 'state' ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId }) } : {}) });
   const value = await response.json() as T & { error?: string };

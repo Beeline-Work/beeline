@@ -1,3 +1,5 @@
+vi.mock('@/auth/monolith-session', () => ({ monolithSession: { fetch: vi.fn(async (input: string, init: unknown, options: any) => options.fetchImpl(input, init)) } }));
+vi.mock('expo/fetch', () => ({ fetch: async () => new Response('locked response') }));
 import { expect, it, vi } from 'vitest';
 const native = vi.hoisted(() => ({ roomFailure: null as Error | null, registerGlobals: vi.fn(),
   roomOptions: undefined as any,
@@ -100,5 +102,15 @@ it('uses native one-shot deadlines and drops idle events from stale or closed se
     await transport.closeAudio();
     callback({ generation: 1 });
     expect(idle).toHaveBeenCalledOnce();
+  } finally { vi.useRealTimers(); }
+});
+
+it('delivers native voice HTTP while JavaScript timers remain paused', async () => {
+  vi.useFakeTimers();
+  try {
+    const { voiceFetch } = await import('./voice-transport.native');
+    const response = await voiceFetch('https://proof/idle', { method: 'POST' });
+    expect(await response.text()).toBe('locked response');
+    expect(vi.getTimerCount()).toBe(0);
   } finally { vi.useRealTimers(); }
 });

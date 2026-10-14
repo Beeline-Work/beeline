@@ -708,3 +708,21 @@ describe('monolith phone session', () => {
     });
   });
 });
+
+it('uses native fetch for refresh and 401 retry while timers are paused', async () => {
+  secure.clear(); secure.set('buzzy.monolith.refresh.v1', 'refresh');
+  secure.set('buzzy.monolith.identity.v1', 'a'.repeat(64));
+  const fallback = vi.fn(async () => { throw new Error('background-paused fetch'); });
+  let requests = 0; let refreshes = 0;
+  const native = vi.fn(async (input: RequestInfo | URL) => {
+    if (String(input).endsWith('/refresh')) return new Response(JSON.stringify(tokens(++refreshes)));
+    return new Response('ready', { status: ++requests === 1 ? 401 : 200 });
+  });
+  vi.useFakeTimers();
+  try {
+    const session = new MonolithSession('https://server.example', fallback as typeof fetch);
+    const response = await session.fetch('https://server.example/idle', {}, { fetchImpl: native as typeof fetch });
+    expect(await response.text()).toBe('ready'); expect(refreshes).toBe(2);
+    expect(fallback).not.toHaveBeenCalled(); expect(vi.getTimerCount()).toBe(0);
+  } finally { vi.useRealTimers(); }
+});

@@ -15,7 +15,7 @@ vi.mock('./client-error-report', async original => ({ ...await original<object>(
 vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({ subscribeConnected: (listener: () => void) => { fixture.connected = listener; return () => { fixture.connected = undefined; }; }, register: async (_filters: unknown, listener: () => void) => { fixture.live = listener; return () => { fixture.live = undefined; }; } }) }));
 vi.mock('react-native', () => ({ Platform: { OS: 'android' } }));
 vi.mock('livekit-client', () => ({ RoomEvent: { DataReceived: 'data', Disconnected: 'left', ActiveSpeakersChanged: 'levels' }, Track: {} }));
-vi.mock('./voice-transport', () => ({ subscribeVoiceResume: () => () => {}, createVoiceRoom: async (stop: () => void, _roomId: string, idle: () => void) => {
+vi.mock('./voice-transport', () => ({ voiceFetch: (...args: unknown[]) => fixture.fetch(...args), subscribeVoiceResume: () => () => {}, createVoiceRoom: async (stop: () => void, _roomId: string, idle: () => void) => {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const cancelSilence = async () => { clearTimeout(timer); timer = undefined; };
   fixture.stop = stop; return { armSilence: async () => { await cancelSilence(); timer = setTimeout(idle, 20_000); }, cancelSilence, room: fixture.room, closeAudio: async () => { await cancelSilence(); await fixture.closeAudio(); }, parkAudio: fixture.parkAudio, resumeAudio: fixture.resumeAudio, idleEnd: fixture.idleEnd };

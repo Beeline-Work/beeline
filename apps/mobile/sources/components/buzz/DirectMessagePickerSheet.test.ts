@@ -41,6 +41,7 @@ vi.mock('./IdentityMark', () => ({
 }));
 
 vi.mock('./HullActionSheet', () => ({
+  HULL_SHEET_INSET: 24,
   HullActionSheetCancel: (props: any) =>
     React.createElement('HullActionSheetCancel', props, props.children),
   HullActionSheetModal: (props: any) =>

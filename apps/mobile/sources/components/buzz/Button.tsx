@@ -54,6 +54,7 @@ export function Button({
 }: ButtonProps) {
   const isDisabled = Boolean(disabled || loading);
   const primary = variant === 'primary';
+  const borderless = variant === 'quiet' || variant === 'destructive';
   return (
     <Pressable
       accessibilityRole="button"
@@ -68,7 +69,7 @@ export function Button({
         styles.frame,
         primary ? styles.primary : styles[variant],
         pressed && !isDisabled && (primary ? styles.primaryPressed : styles.outlinedPressed),
-        isDisabled && (primary ? styles.primaryDisabled : styles.outlinedDisabled),
+        isDisabled && (primary ? styles.primaryDisabled : !borderless && styles.outlinedDisabled),
         fullWidth && styles.fullWidth,
         style,
       ]}

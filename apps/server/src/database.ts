@@ -1850,6 +1850,9 @@ ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS owner_agent_id text REFERENCES
 -- corner until a person redirects one; owner_agent_id stays the historical
 -- opener, brief author and close authority.
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS worker_agent_id text REFERENCES identities(id);
+-- Explicit opening provenance; existing corners remain NULL. Never infer a backfill.
+ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS opened_from_corner_id uuid REFERENCES rooms(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS corner_facts_opened_from_idx ON corner_facts(opened_from_corner_id);
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS commissioned_by text REFERENCES identities(id);
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS open_idempotency_key text;
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'agent';

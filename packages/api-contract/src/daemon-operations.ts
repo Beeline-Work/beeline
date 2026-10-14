@@ -666,7 +666,7 @@ export type DaemonOperationMap = {
     CornerInput & TurnOutputAuthority & RoomInput & { requestId: string },
     { roomId: string; headSha: string }
   >;
-  archiveCorner: Operation<CornerInput, WriteResult>;
+  archiveCorner: Operation<CornerInput & Partial<RoomInput & TurnOutputAuthority>, WriteResult>;
   ensureAgentMembership: Operation<AgentRoomInput, WriteResult>;
   getWalletToolState: Operation<
     WalletToolStateInput & TurnOutputAuthority & RoomInput,
@@ -958,6 +958,8 @@ export type CornerListResult = {
 };
 export type CornerRestoreResult = {
   readonly cornerId: string;
+  /** Explicit opening corner; absent on existing and Room/DM-opened corners. */
+  readonly openedFromCornerId?: string;
   /** Present on servers that expose archived corners to active-only discovery helpers. */
   readonly archived?: boolean;
   /** Parent Room retained after archival so a helper can locate its local worktree. */

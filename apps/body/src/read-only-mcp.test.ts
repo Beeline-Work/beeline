@@ -379,3 +379,16 @@ it('R8d documents the optional continuation and generic fallback', () => {
   expect(tool.description).toContain('continues the request right after');
   expect(tool.inputSchema.required).toEqual(['service', 'reason']);
 });
+
+it('corner order descriptions prevent ordering up or out', () => {
+  const tool = agentToolsFor(true, false, true, true).find(tool => tool.name === 'order')!;
+  expect(tool.description).toContain('only corners this corner opened, directly or transitively');
+  expect(tool.description).toContain('this corner itself are refused');
+});
+
+it('corner revision and close tools explain the provenance boundary', () => {
+  const tools = agentToolsFor(true, false, true, true);
+  for (const name of ['revise_corner_brief', 'close_corner']) {
+    expect(tools.find(tool => tool.name === name)?.description).toContain('this corner opened, directly or transitively');
+  }
+});

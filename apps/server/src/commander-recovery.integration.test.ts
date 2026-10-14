@@ -549,7 +549,7 @@ it('commits terminal failure when the commander has left', async () => {
     ).rows[0],
   ).toMatchObject({ status: 'failed' });
 });
-it('authorizes a brief revision from the original private order during a check wake', async () => {
+it('the commander revises from its DM using the stored approval after a check wake', async () => {
   const opened = await open();
   const head = '9'.repeat(40);
   await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
@@ -567,19 +567,23 @@ it('authorizes a brief revision from the original private order during a check w
   const check = (await commands(opened.cornerId, WORKER)).find((c) => c.reason === 'corner_check')!;
   await claim(check);
   expect(check.sourceMessageId).toBe(check.id);
+  await expect(daemon.execute('reviseCornerBrief', { ...authority(check), cornerId: opened.cornerId,
+    expectedRevision: 1, brief: { spec: 'CI repair', change: 'Repair CI', approval: { sourceMessageId: check.sourceMessageId } } }, WORKER))
+    .rejects.toThrow('Corners can only order corners they opened.');
+  const stored = (await daemon.execute('getCornerRestoreState', { cornerId: opened.cornerId }, RUBY)).brief!;
   await daemon.execute(
     'reviseCornerBrief',
     {
-      ...authority(check),
+      ...authority(order),
       cornerId: opened.cornerId,
       expectedRevision: 1,
       brief: {
         spec: 'Build the widget with the necessary CI repair',
-        approval: { sourceMessageId: check.sourceMessageId },
+        approval: { sourceMessageId: stored.approval!.sourceMessageId },
         change: 'Repair CI',
       },
     },
-    WORKER,
+    RUBY,
   );
   expect(
     (
@@ -588,7 +592,7 @@ it('authorizes a brief revision from the original private order during a check w
         [opened.cornerId],
       )
     ).rows[0],
-  ).toMatchObject({ snapshot: 'Build the widget' });
+  ).toMatchObject({ snapshot: stored.approval!.text });
 });
 
 it('discovers only reachable member addresses and corners from a DM', async () => {

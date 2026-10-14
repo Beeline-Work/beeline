@@ -59,6 +59,8 @@ export const COMPAT_RUNTIMES = [
   { platform: 'android', runtimeVersion: '34' },
   { platform: 'android', runtimeVersion: '35' },
   { platform: 'ios', runtimeVersion: '33' },
+  { platform: 'android', runtimeVersion: '36' },
+  { platform: 'ios', runtimeVersion: '34' },
 ];
 
 // Every (platform, runtimeVersion) a shipped or submitted native store binary

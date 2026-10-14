@@ -45,7 +45,7 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
   const targetRef = React.useRef<string | null>(null);
 
   const end = React.useCallback(async () => {
-    revision.current++; pending.current = false;
+    revision.current++;
     const current = session.current; session.current = null;
     setCall(null); setSpeaker(null); setLevel(0); setConnecting(false); setError(null);
     setJoinedAgents(null); setTarget(null); targetRef.current = null;
@@ -58,7 +58,8 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
   React.useEffect(() => { if (!enabled) void end(); }, [enabled, end]);
 
   const join = React.useCallback(async () => {
-    if (!enabled || session.current || pending.current) return;
+    if (session.current || pending.current) return;
+    if (!enabled) { setError('You cannot join Conversation mode in this Room.'); return; }
     pending.current = true; const version = ++revision.current;
     setConnecting(true); setError(null); setQuotaExhausted(false); quotaRef.current = false;
     let transport: Awaited<ReturnType<typeof createVoiceRoom>> | undefined;
@@ -74,7 +75,9 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
         try {
           const data = JSON.parse(new TextDecoder().decode(bytes)) as VoiceSignal;
           if (data.type === 'speaker') { speakerRef.current = data.agentId; setSpeaker(data.agentId); }
-          if (data.type === 'target') setTarget(data.agentId);
+          if (data.type === 'target' && joined!.agents.some(agent => agent.pubkey === data.agentId)) {
+            targetRef.current = data.agentId; setTarget(data.agentId);
+          }
           if (data.type === 'error') {
             setError(data.message);
             if (data.code === 'speech-quota-exhausted') {
@@ -117,7 +120,8 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
       if (joined) await voiceRequest(joined.call.id, 'leave').catch(() => {});
       if (version === revision.current) setError(errorDiagnostic(cause).message);
     } finally {
-      if (version === revision.current) { pending.current = false; setConnecting(false); }
+      pending.current = false;
+      if (version === revision.current) setConnecting(false);
     }
   }, [enabled, roomId, end]);
   const aim = React.useCallback((agentId: string) => {

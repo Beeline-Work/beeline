@@ -1,0 +1,10 @@
+{
+  "apkSha256": "1588b76b011c53856893f746d04e8a59cc90e23efa9d5cca8ad4fc8021445baa",
+  "device": "emulator-5594",
+  "androidApi": 36,
+  "build": "assembleRelease",
+  "javascript": "Hermes",
+  "transport": "task-owned LiveKit v1.9.12",
+  "database": "disposable in-memory PGLite Workspace",
+  "hermesHeaderHex": "c61fbc03c103191f"
+}

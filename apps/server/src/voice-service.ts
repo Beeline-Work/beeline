@@ -2,7 +2,7 @@ import { AgentVoiceService } from './agent-voice.js';
 import { stripVoiceEmotion } from './voice-emotion.js';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
-import { type VoiceCall, type VoiceJoin, type RoomViewIdentity, type VoiceProvider, voiceDuration } from '@beeline/api-contract/phone';
+import { type VoiceCall, type VoiceJoin, type RoomViewIdentity, type VoiceProvider, voiceDuration, DEFAULT_VOICE_PROVIDER } from '@beeline/api-contract/phone';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-contract/agent-access';
 import type { SqlDatabase } from './database.js';
@@ -10,7 +10,7 @@ import type { LiveHub } from './live.js';
 import { systemLine, restateSystemLine, ensureSystemIdentity } from './system-line.js';
 import { routeHumanMessage } from './agent-command.js';
 import { assignVoiceAgents, type VoiceAgent, type VoiceBrain, type VoiceSpeech, type VoiceSttFactory,
-  OpenRouterVoiceBrain, DeepInfraKokoroSpeech, AuraSpeech, FishSpeech, fluxFactory, VOICE_MODEL } from './voice-providers.js';
+  OpenRouterVoiceBrain, AuraSpeech, fluxFactory, VOICE_MODEL, savedAuraVoice } from './voice-providers.js';
 import { VoiceRoomRuntime } from './voice-room-runtime.js';
 
 export type VoiceConfig = { url: string; apiKey: string; apiSecret: string; brain: VoiceBrain;
@@ -24,7 +24,7 @@ const identity = (row: IdentityRow): RoomViewIdentity => ({ pubkey: row.id, kind
 export class VoiceService {
   readonly owner = randomUUID();
   readonly profiles: AgentVoiceService;
-  private readonly runtimes = new Map<string, Promise<VoiceRoomRuntime>>();
+  private readonly runtimes = new Map<string, Promise<VoiceRoomRuntime | undefined>>();
   private readonly rooms: RoomServiceClient;
   private readonly unsubscribe: () => void;
   constructor(readonly db: SqlDatabase, readonly live: LiveHub, readonly config: VoiceConfig) {
@@ -33,7 +33,7 @@ export class VoiceService {
     this.unsubscribe = live.subscribeAll(event => {
       if (event.type === 'invalidate') {
         for (const runtime of this.runtimes.values()) void runtime.then(r => {
-          if (r.roomId === event.roomId) return r.refresh();
+          if (r?.roomId === event.roomId) return r.refresh();
         }).catch(() => {});
       }
     });
@@ -82,31 +82,30 @@ export class VoiceService {
         name: a.name,
         handle: a.handle ?? a.name,
         soul: a.soul?.instructions ?? '',
-        chosenVoice: a.chosen_voices[a.voice_provider],
-        voiceProvider: a.voice_provider,
+        chosenVoice: savedAuraVoice(a.chosen_voices),
+        voiceProvider: DEFAULT_VOICE_PROVIDER,
         ...(a.face_id ? { face: a.face_id } : {}),
       })),
       speech.voices,
     ).filter((a) => allowed.has(a.id));
   }
 
-  async speech(roomId: string): Promise<VoiceSpeech> {
-    if (!this.config.providers) return this.config.speech;
-    const row = (
-      await this.db.query<{ voice_provider: VoiceProvider }>(
-        `SELECT w.voice_provider FROM workspaces w JOIN rooms r ON r.workspace_id=w.id WHERE r.id=$1`,
-        [roomId],
-      )
-    ).rows[0];
-    if (!row) throw Error('Room not found');
-    return this.providerSpeech(row.voice_provider);
+  async speech(_roomId: string): Promise<VoiceSpeech> {
+    return this.providerSpeech(DEFAULT_VOICE_PROVIDER);
   }
 
-  private async providerSpeech(provider: VoiceProvider): Promise<VoiceSpeech> {
-    const speech = this.config.providers ? this.config.providers[provider] : this.config.speech;
-    if (!speech) throw new Error('The selected Workspace voice provider is not configured');
+  private async providerSpeech(_provider: VoiceProvider): Promise<VoiceSpeech> {
+    const speech = this.config.providers ? this.config.providers[DEFAULT_VOICE_PROVIDER] : this.config.speech;
+    if (!speech) throw new Error('Aura 2 is not configured');
     await speech.prepare?.();
     return speech;
+  }
+
+  async humanCount(callId: string): Promise<number> {
+    const result = await this.db.query<{ count: number }>(`SELECT count(*)::int count FROM voice_participants p
+      JOIN identities i ON i.id=p.identity_id AND i.kind='human'
+      WHERE p.call_id=$1 AND p.left_at IS NULL`, [callId]);
+    return result.rows[0]?.count ?? 0;
   }
 
   async view(row: CallRow, db = this.db): Promise<VoiceCall> {
@@ -185,22 +184,32 @@ export class VoiceService {
       await this.rooms.deleteRoom(`beeline-voice-${callId}`).catch(() => {});
       const runtime = this.runtimes.get(callId);
       this.runtimes.delete(callId);
-      if (runtime) await (await runtime).close();
+      if (runtime) await (await runtime)?.close();
     }
   }
 
-  async ensureRuntime(row: CallRow) {
-    if (this.runtimes.has(row.id)) return this.runtimes.get(row.id);
-    const claimed = await this.db.query(`UPDATE voice_calls SET runtime_owner=$2,runtime_until=now()+interval '20 seconds'
-      WHERE id=$1 AND ended_at IS NULL AND (runtime_until IS NULL OR runtime_until<now() OR runtime_owner=$2)`, [row.id, this.owner]);
-    if (!claimed.rowCount) return;
-    const runtime = VoiceRoomRuntime.connect(this, row.id, row.room_id).catch(async error => {
-      this.runtimes.delete(row.id);
-      await this.db.query(`UPDATE voice_calls SET runtime_until=NULL WHERE id=$1 AND runtime_owner=$2`, [row.id, this.owner]);
+  ensureRuntime(row: CallRow): Promise<VoiceRoomRuntime | undefined> {
+    const existing = this.runtimes.get(row.id);
+    if (existing) return existing;
+    // Reserve the promise before the first database await. A lease belongs to
+    // this runtime attempt, so a stale close cannot release a successor's lease.
+    const leaseOwner = `${this.owner}:${randomUUID()}`;
+    const pending = (async () => {
+      const claimed = await this.db.query(`UPDATE voice_calls SET runtime_owner=$2,runtime_until=now()+interval '20 seconds'
+        WHERE id=$1 AND ended_at IS NULL AND (runtime_until IS NULL OR runtime_until<now())`, [row.id, leaseOwner]);
+      if (!claimed.rowCount) return undefined;
+      return VoiceRoomRuntime.connect(this, row.id, row.room_id, leaseOwner);
+    })().catch(async error => {
+      await this.db.query(`UPDATE voice_calls SET runtime_until=NULL WHERE id=$1 AND runtime_owner=$2`, [row.id, leaseOwner]);
       throw error;
     });
-    this.runtimes.set(row.id, runtime);
-    return runtime;
+    this.runtimes.set(row.id, pending);
+    void pending.then(runtime => {
+      if (!runtime && this.runtimes.get(row.id) === pending) this.runtimes.delete(row.id);
+    }, () => {
+      if (this.runtimes.get(row.id) === pending) this.runtimes.delete(row.id);
+    });
+    return pending;
   }
 
   /** Startup/leader reconciliation recovers active sessions after a release. */
@@ -216,12 +225,12 @@ export class VoiceService {
     }).catch(() => {});
   }
 
-  async recordHuman(callId: string, roomId: string, humanId: string, agent: VoiceAgent, text: string) {
+  async recordHuman(callId: string, roomId: string, humanId: string, agent: VoiceAgent, text: string, leaseOwner?: string) {
     const id = randomBytes(32).toString('hex');
     await this.db.transaction(async db => {
       await this.access(roomId, humanId, db);
       const joined = await db.query(`SELECT 1 FROM voice_participants p JOIN voice_calls c ON c.id=p.call_id
-        WHERE p.call_id=$1 AND p.identity_id=$2 AND p.left_at IS NULL AND c.ended_at IS NULL FOR SHARE OF p,c`, [callId, humanId]);
+        WHERE p.call_id=$1 AND p.identity_id=$2 AND p.left_at IS NULL AND c.ended_at IS NULL AND ($3::text IS NULL OR (c.runtime_owner=$3 AND c.runtime_until>now())) FOR SHARE OF p,c`, [callId, humanId, leaseOwner ?? null]);
       if (!joined.rowCount) throw new Error('voice call access denied');
       await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`,
         [id, roomId, humanId, `@${agent.handle} ${text.replace(/@/g, '')}`]);
@@ -256,7 +265,7 @@ export class VoiceService {
 
   async close() {
     this.unsubscribe();
-    await Promise.allSettled([...this.runtimes.values()].map(async runtime => (await runtime).close()));
+    await Promise.allSettled([...this.runtimes.values()].map(async runtime => (await runtime)?.close()));
     this.runtimes.clear();
   }
 }
@@ -267,11 +276,8 @@ export function voiceConfigFromEnv(env = process.env): VoiceConfig | undefined {
   if (!key || !env.LIVEKIT_URL || !env.LIVEKIT_API_KEY || !env.LIVEKIT_API_SECRET ||
       !cloudflareToken || !env.CLOUDFLARE_ACCOUNT_ID) return undefined;
   const aura = new AuraSpeech(cloudflareToken, env.CLOUDFLARE_ACCOUNT_ID);
-  const kokoro = new DeepInfraKokoroSpeech(key);
-  const fish = env.FISH_AUDIO_API_KEY ? new FishSpeech(env.FISH_AUDIO_API_KEY, fetch,
-    env.BEELINE_VOICE_FISH_MODEL === 's2.1-pro' ? 's2.1-pro' : 's2.1-pro-free') : undefined;
   return { url: env.LIVEKIT_URL, apiKey: env.LIVEKIT_API_KEY, apiSecret: env.LIVEKIT_API_SECRET,
-    brain: new OpenRouterVoiceBrain(key), speech: fish ?? aura,
-    providers: { 'aura-2': aura, 'kokoro-deepinfra': kokoro, ...(fish ? { 'fish-s2.1-pro': fish } : {}) },
+    brain: new OpenRouterVoiceBrain(key), speech: aura,
+    providers: { 'aura-2': aura },
     stt: fluxFactory(cloudflareToken, env.CLOUDFLARE_ACCOUNT_ID) };
 }

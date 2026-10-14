@@ -27,6 +27,9 @@ and complete display-name precedence have direct regressions. Existing runtime
 routing owns the transcript prefix, voice and persistent target; existing mobile
 VoiceBar renders the server target signal as its selected avatar.
 
-PR #2442 also edits voice runtime routing. This change isolates name matching
-in `voice-target.ts`; multiparty reply policy and provider changes stay outside
-this assignment. Resolve its import/call signature overlap when integrating.
+PR #2442 is integrated from main. Its existing policy keeps unnamed speech
+silent when several humans share the call; one-human follow-ups retain the
+selected target. Opening-name matching applies both to partial target signals
+and final reply dispatch. The routing and STT lifecycle regressions from that PR
+are retained; its mid-sentence routing expectations now follow this assignment's
+opening-address rule.

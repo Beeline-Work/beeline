@@ -19,7 +19,7 @@ function closeSpelling(left: string, right: string): boolean {
 }
 
 /** Only an opening name, optionally after a greeting, changes the voice target. */
-export function namedVoiceTarget(text: string, agents: readonly VoiceAgent[], selected?: string): VoiceAgent | undefined {
+export function namedVoiceTarget(text: string, agents: readonly VoiceAgent[], selected?: string, humans = 1): VoiceAgent | undefined {
   const transcript = words(text);
   if (/^(hey|hi|hello|okay|ok|yo)$/.test(transcript[0] ?? '')) transcript.shift();
   const aliases = agents.flatMap(agent => [agent.name, agent.handle].map(name => ({ agent, parts: words(name) })))
@@ -30,5 +30,6 @@ export function namedVoiceTarget(text: string, agents: readonly VoiceAgent[], se
   const matches = longest ? exact.filter(alias => alias.parts.length === longest)
     : aliases.filter(({ parts }) => parts.length === 1 && closeSpelling(parts[0]!, transcript[0] ?? ''));
   const unique = new Map(matches.map(({ agent }) => [agent.id, agent]));
-  return unique.size === 1 ? [...unique.values()][0] : agents.find(agent => agent.id === selected) ?? agents[0];
+  if (unique.size === 1) return [...unique.values()][0];
+  return humans === 1 ? agents.find(agent => agent.id === selected) ?? agents[0] : undefined;
 }

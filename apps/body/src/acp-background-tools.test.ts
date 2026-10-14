@@ -63,3 +63,92 @@ describe('background tool completion', () => {
     expect(next).not.toHaveBeenCalled();
   });
 });
+
+describe('Claude ACP detached Bash jobs', () => {
+  it.each(['completed', 'failed', 'stopped'])('wakes on async task %s after the Bash call and prompt completed', async (state) => {
+    const { client, wire, update } = harness();
+    const task = (fields: Record<string, unknown>, sessionId = 'session') => wire.handleMessage({
+      method: 'session/update', params: { sessionId, update: { asyncTaskId: 'bash-job', ...fields } },
+    });
+    vi.mocked(wire.request).mockImplementation(async () => {
+      update('session', 'bash-call', 'in_progress');
+      task({ sessionUpdate: 'async_task_spawned', name: 'Build widget', toolCallId: 'bash-call', taskType: 'shell' });
+      // The adapter explicitly completes Bash when it detaches. This does not finish its job.
+      update('session', 'bash-call', 'completed');
+      return { stopReason: 'end_turn' };
+    });
+    const complete = vi.fn();
+    await client.sessionPrompt('session', 'build', 5000, undefined, undefined, undefined, complete);
+    expect(client.hasBackgroundTools).toBe(true);
+    expect(complete).not.toHaveBeenCalled();
+    task({ sessionUpdate: 'async_task_progress', description: 'Build widget', elapsedTimeMs: 2000 });
+    task({ sessionUpdate: 'async_task_state_update', state }, 'other-session');
+    expect(complete).not.toHaveBeenCalled();
+    task({ sessionUpdate: 'async_task_state_update', state });
+    task({ sessionUpdate: 'async_task_state_update', state });
+    expect(complete).toHaveBeenCalledOnce();
+    expect(complete).toHaveBeenCalledWith(expect.objectContaining({
+      id: 'async:bash-job', title: 'Build widget', status: state === 'stopped' ? 'failed' : state,
+    }));
+    expect(client.hasBackgroundTools).toBe(false);
+  });
+
+  it('does not wake for a background task that finishes within its originating prompt', async () => {
+    const { client, wire } = harness();
+    vi.mocked(wire.request).mockImplementation(async () => {
+      for (const update of [
+        { sessionUpdate: 'async_task_spawned', asyncTaskId: 'fast-job', name: 'Fast build' },
+        { sessionUpdate: 'async_task_state_update', asyncTaskId: 'fast-job', state: 'completed' },
+      ]) wire.handleMessage({ method: 'session/update', params: { sessionId: 'session', update } });
+      return { stopReason: 'end_turn' };
+    });
+    const complete = vi.fn();
+    await client.sessionPrompt('session', 'build', 5000, undefined, undefined, undefined, complete);
+    expect(client.hasBackgroundTools).toBe(false);
+    expect(complete).not.toHaveBeenCalled();
+  });
+});
+
+it('uses the async job lifecycle once when the originating tool is also unfinished at end_turn', async () => {
+  const { client, wire, update } = harness();
+  const task = (sessionUpdate: string, state?: string) => wire.handleMessage({
+    method: 'session/update', params: { sessionId: 'session', update: {
+      sessionUpdate, asyncTaskId: 'job', toolCallId: 'bash-call', name: 'Run build', ...(state ? { state } : {}),
+    } },
+  });
+  vi.mocked(wire.request).mockImplementation(async () => {
+    update('session', 'bash-call', 'in_progress');
+    task('async_task_spawned');
+    return { stopReason: 'end_turn' };
+  });
+  const complete = vi.fn();
+  await client.sessionPrompt('session', 'build', 5000, undefined, undefined, undefined, complete);
+  update('session', 'bash-call', 'completed');
+  expect(complete).not.toHaveBeenCalled();
+  task('async_task_state_update', 'completed');
+  expect(complete).toHaveBeenCalledOnce();
+  expect(client.hasBackgroundTools).toBe(false);
+});
+
+it('keeps async job ownership when a later prompt sees progress before finishing', async () => {
+  const { client, wire } = harness();
+  const task = (sessionUpdate: string, state?: string) => wire.handleMessage({
+    method: 'session/update', params: { sessionId: 'session', update: {
+      sessionUpdate, asyncTaskId: 'long-job', name: 'Build', ...(state ? { state } : {}),
+    } },
+  });
+  const first = vi.fn(), later = vi.fn();
+  vi.mocked(wire.request).mockImplementation(async () => {
+    task('async_task_spawned');
+    return { stopReason: 'end_turn' };
+  });
+  await client.sessionPrompt('session', 'start', 5000, undefined, undefined, undefined, first);
+  vi.mocked(wire.request).mockImplementation(async () => {
+    task('async_task_progress');
+    return { stopReason: 'end_turn' };
+  });
+  await client.sessionPrompt('session', 'other work', 5000, undefined, undefined, undefined, later);
+  task('async_task_state_update', 'completed');
+  expect(first).toHaveBeenCalledOnce();
+  expect(later).not.toHaveBeenCalled();
+});

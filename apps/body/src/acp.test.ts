@@ -1535,9 +1535,16 @@ describe('AcpClient live steering', () => {
       agentCommand: await fakeArgumentAgent(),
       agentArgs: ['acp', '--profile', 'operator'],
       agentEnv: {},
+      backgroundTasks: true,
     });
+    const request = vi.spyOn(client as unknown as {
+      request(method: string, params: Record<string, unknown>, timeout: number): Promise<unknown>;
+    }, 'request');
 
     await client.start();
+    expect(request).toHaveBeenCalledWith('initialize', expect.objectContaining({
+      clientCapabilities: { _meta: { jetbrains: { air: { version: 1, capabilities: ['asyncTasks'] } } } },
+    }), expect.any(Number));
     const session = await client.sessionNew({ cwd: process.cwd(), mode: 'readonly' });
     expect(session.sessionId).toBe('portable-session-id');
     const prompt = client.sessionPrompt(session.sessionId, 'first');

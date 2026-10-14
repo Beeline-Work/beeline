@@ -694,6 +694,22 @@ interface Pending {
   lastActivity?: string;
 }
 
+/** Claude ACP's negotiated asyncTasks extension keeps background Bash lifecycle
+ * separate from the tool call, which is already completed once Bash detaches. */
+function asyncTaskCall(update: Record<string, unknown>): ToolCallEntry | undefined {
+  if (typeof update.asyncTaskId !== 'string' || !update.asyncTaskId ||
+      !['async_task_spawned', 'async_task_progress', 'async_task_state_update'].includes(String(update.sessionUpdate)))
+    return undefined;
+  const state = update.state;
+  return {
+    id: `async:${update.asyncTaskId}`,
+    ...(typeof update.name === 'string' ? { title: update.name } :
+      typeof update.description === 'string' ? { title: update.description } : {}),
+    ...(update.sessionUpdate === 'async_task_spawned' ? { status: 'in_progress' } : {}),
+    ...(typeof state === 'string' ? { status: state === 'stopped' ? 'failed' : state } : {}),
+  };
+}
+
 export class AcpClient extends EventEmitter {
   private child: ChildProcessWithoutNullStreams | null = null;
   private buf = '';
@@ -732,6 +748,7 @@ export class AcpClient extends EventEmitter {
   private agentCwd?: string;
   private inheritProcessEnv: boolean;
   private autoApprove: boolean;
+  private backgroundTasks: boolean;
   private osSandbox: boolean;
   private permissionHandler?: AcpPermissionHandler;
   private permissionAllowlist?: AcpPermissionAllowlist;
@@ -778,6 +795,8 @@ export class AcpClient extends EventEmitter {
      * `buildAgentEnv`'s passthrough set.
      */
     inheritProcessEnv?: boolean;
+    /** Negotiate pushed background Bash task lifecycles for corner continuations. */
+    backgroundTasks?: boolean;
     autoApprovePermissions?: boolean;
     permissionHandler?: AcpPermissionHandler;
     /** Host-owned requests allowed while all other permissions are rejected. */
@@ -805,6 +824,7 @@ export class AcpClient extends EventEmitter {
     this.inheritProcessEnv =
       opts.inheritProcessEnv ?? process.env.BUZZY_BODY_AGENT_ENV_INHERIT === '1';
     this.autoApprove = opts.autoApprovePermissions ?? true;
+    this.backgroundTasks = opts.backgroundTasks ?? false;
     this.osSandbox = opts.osSandbox ?? false;
     this.permissionHandler = opts.permissionHandler;
     this.permissionAllowlist = opts.permissionAllowlist;
@@ -892,7 +912,9 @@ export class AcpClient extends EventEmitter {
         'initialize',
         {
           protocolVersion: 1,
-          clientCapabilities: {},
+          clientCapabilities: this.backgroundTasks
+            ? { _meta: { jetbrains: { air: { version: 1, capabilities: ['asyncTasks'] } } } }
+            : {},
         },
         timeoutMs,
       )) as Record<string, unknown>;
@@ -1262,11 +1284,18 @@ export class AcpClient extends EventEmitter {
       );
       return value;
     };
+    const asyncTasks = new Map<string, ToolCallEntry>();
+    const asyncToolCallIds = new Set<string>();
     const onUpdate = (u: SessionUpdate) => {
       if (u.sessionId !== sessionId || terminalReason) return;
       checkTerminalContext();
       if (terminalReason) return;
       updates.push(u);
+      const task = asyncTaskCall(u.update);
+      if (task?.id) {
+        asyncTasks.set(task.id, { ...asyncTasks.get(task.id), ...task });
+        if (typeof u.update.toolCallId === 'string') asyncToolCallIds.add(u.update.toolCallId);
+      }
       promptRunId ??= this.activeRunIdFromUpdate(u.update);
       onActivity?.(agentStreamSnapshot(updates, this.agentLabel));
       const calls = toolCallEntries(updates);
@@ -1337,10 +1366,12 @@ export class AcpClient extends EventEmitter {
       }
       this.off('session/update', onUpdate);
       if (completed && onBackgroundToolCompletion) {
-        for (const call of toolCallEntries(updates)) {
-          if (call.id && !call.id.startsWith('anonymous-') &&
+        for (const call of [...toolCallEntries(updates), ...asyncTasks.values()]) {
+          if (call.id && !asyncToolCallIds.has(call.id) && !call.id.startsWith('anonymous-') &&
               !['completed', 'failed'].includes(call.status ?? '') && !call.resultReceived) {
-            this.detachedTools.set(`${sessionId}\0${call.id}`, {
+            const key = `${sessionId}\0${call.id}`;
+            // Progress during another turn must retain the job's original order.
+            if (!this.detachedTools.has(key)) this.detachedTools.set(key, {
               call, complete: onBackgroundToolCompletion,
             });
           }
@@ -1565,10 +1596,11 @@ export class AcpClient extends EventEmitter {
         };
         const activeRunId = this.activeRunIdFromUpdate(params.update);
         if (activeRunId) this.activeRunIds.set(params.sessionId, activeRunId);
-        const key = `${params.sessionId}\0${String(params.update.toolCallId ?? '')}`;
+        const task = asyncTaskCall(params.update);
+        const key = `${params.sessionId}\0${task?.id ?? String(params.update.toolCallId ?? '')}`;
         const detached = this.detachedTools.get(key);
         if (detached) {
-          detached.call = { ...detached.call, ...toolCallEntries([u])[0] };
+          detached.call = { ...detached.call, ...(task ?? toolCallEntries([u])[0]) };
           if (detached.call.status === 'completed' || detached.call.status === 'failed' ||
               detached.call.resultReceived) {
             this.detachedTools.delete(key);

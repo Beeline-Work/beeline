@@ -1184,6 +1184,7 @@ export class MonolithCornerTurnLoop {
       agentEnv,
       agentCwd: this.options.worktreePath,
       agentLabel: harnessLabel,
+      backgroundTasks: true,
       autoApprovePermissions: true,
       permissionHandler: async () => {
         return 'allow';

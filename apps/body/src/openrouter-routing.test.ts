@@ -3,6 +3,8 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
+import type { Model } from '@earendil-works/pi-ai';
+import { streamSimple } from '@earendil-works/pi-ai/api/openai-completions';
 
 import { OPENROUTER_GLM_5_3_FLASH_ENDPOINTS } from './fixtures/openrouter-endpoints-glm-5.3-flash.js';
 import {
@@ -491,6 +493,46 @@ describe('the model input modalities the pin carries (C87)', () => {
 });
 
 describe('the context window and output cap the pin carries', () => {
+  it.each(['max_tokens', 'max_completion_tokens'] as const)('sends the existing model cap as bounded %s through pi-ai', async (field) => {
+    const limits = openRouterModelLimits([
+      { provider: 'a', uptime: 100, contextLength: 1_048_576, maxCompletionTokens: 943_718, tools: true },
+    ], ['a'])!;
+    const config = withOpenRouterModelRouting({}, {
+      model: MODEL, routing: openRouterRoutingFor(['a']), limits,
+    }) as { providers: { openrouter: { modelOverrides: Record<string, typeof limits> } } };
+    const model: Model<'openai-completions'> = {
+      id: MODEL, name: MODEL, api: 'openai-completions', provider: 'openrouter',
+      baseUrl: 'https://openrouter.ai/api/v1', reasoning: false, input: ['text'],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      ...config.providers.openrouter.modelOverrides[MODEL],
+      compat: { maxTokensField: field },
+    };
+    const requests: Record<string, unknown>[] = [];
+    const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const payload = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      requests.push(payload);
+      if (Number(payload[field]) > OPENROUTER_MAX_OUTPUT_TOKENS)
+        return new Response(JSON.stringify({ error: { message: 'Requested output exceeds credit budget' } }), {
+          status: 402, headers: { 'content-type': 'application/json' },
+        });
+      return new Response('data: {"id":"proof","choices":[{"index":0,"delta":{"content":"OK"},"finish_reason":"stop"}]}\n\ndata: [DONE]\n\n', {
+        headers: { 'content-type': 'text/event-stream' },
+      });
+    }) as unknown as typeof fetch;
+    const context = { messages: [{ role: 'user' as const, content: 'Reply OK', timestamp: 1 }] };
+    // Synthetic credit-budget boundary: this proves the request path, not the
+    // reported production 402, whose exact request has not been obtained.
+    const unbounded = await streamSimple({ ...model, maxTokens: 943_718 }, context, {
+      apiKey: 'synthetic-test-key', fetch: fetchImpl,
+    }).result();
+    expect(unbounded.stopReason).toBe('error');
+    const bounded = await streamSimple(model, context, {
+      apiKey: 'synthetic-test-key', fetch: fetchImpl,
+    }).result();
+    expect(bounded.stopReason).toBe('stop');
+    expect(requests.at(-1)?.[field]).toBe(OPENROUTER_MAX_OUTPUT_TOKENS);
+    console.info(`OpenRouter request proof: existing cap sends ${field}=32768; synthetic 402 absent`);
+  });
   const endpoint = (provider: string, contextLength: number, maxCompletionTokens: number) => ({
     provider,
     uptime: 100,

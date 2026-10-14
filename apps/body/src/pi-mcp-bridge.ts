@@ -347,7 +347,8 @@ function labelOf(name) {
 }
 
 export default async function (pi) {
-  for (const server of SERVERS) {
+  const mounted = new Map();
+  async function refreshServer(server) {
     let tools = [];
     try {
       const listed = await callServer(
@@ -361,16 +362,22 @@ export default async function (pi) {
       // A server that will not list is a server whose tools this session does
       // not have. Say so once; never fail the session over it.
       console.error('[beeline] MCP server ' + server.name + ' did not list its tools:', error);
-      continue;
+      return;
     }
+    const previous = mounted.get(server.name) ?? new Map();
+    const current = new Map();
     for (const tool of tools) {
       if (!tool || typeof tool.name !== 'string') continue;
+      const name = server.name + '__' + tool.name;
+      const descriptor = JSON.stringify(tool);
+      current.set(name, descriptor);
+      if (previous.get(name) === descriptor) continue;
       const schema =
         tool.inputSchema && typeof tool.inputSchema === 'object'
           ? tool.inputSchema
           : { type: 'object', properties: {} };
       pi.registerTool({
-        name: server.name + '__' + tool.name,
+        name,
         label: labelOf(tool.name),
         description: typeof tool.description === 'string' ? tool.description : tool.name,
         parameters: schema,
@@ -398,6 +405,22 @@ export default async function (pi) {
         },
       });
     }
+    // Pi has no unregisterTool API. Removed tools stay registered but cannot
+    // be selected by the model; a later reappearance activates them again.
+    if (mounted.has(server.name) && pi.getActiveTools && pi.setActiveTools) {
+      const active = pi.getActiveTools().filter((name) => !previous.has(name) || current.has(name));
+      for (const name of current.keys())
+        if (!previous.has(name) && !active.includes(name)) active.push(name);
+      pi.setActiveTools(active);
+    }
+    mounted.set(server.name, current);
   }
+  async function refreshTools() {
+    for (const server of SERVERS) await refreshServer(server);
+  }
+  await refreshTools();
+  // Registering descriptors during a prompt can break an in-flight call.
+  // Each prompt reopens discovery, also covering a server replaced silently.
+  pi.on?.('before_agent_start', refreshTools);
 }
 `;

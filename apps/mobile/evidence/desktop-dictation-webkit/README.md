@@ -6,11 +6,15 @@ Playwright WebKit 26.5 has no mic when both Web Speech constructors are absent.
 `AudioContext` and capture are available; opening the composer requests no mic.
 The baseline run with `--reproduce` confirmed `micVisible: false`.
 
-The fallback records mono PCM using Web Audio, closes WAV pieces every 30 seconds,
-and uses the existing dictation uploader, ADPCM compression, authenticated
-transcription endpoint, retry/deadline handling and Room lexicon prompt. The mic
-requests echo cancellation. Silence ends capture; a take also ends at five
-minutes. A Web Speech implementation always takes precedence.
+The implementation landed in #2450 at
+`a36a02385fd04604acf39f2ca725b5b55c0ed2fe`. This proof is replayed against that
+implementation; this PR retains no production speech source or test changes.
+The fallback records mono PCM using Web Audio, encodes 16 kHz WAV pieces after
+eight seconds at a quiet frame or at thirty seconds without a pause, and uses
+the existing uploader, ADPCM compression, authenticated transcription endpoint,
+retry/deadline handling and Room lexicon prompt. The mic requests echo
+cancellation. Silence ends capture. Web Speech takes precedence outside Tauri;
+the desktop shell uses recording for server transcription.
 
 ## Repeat the proof
 
@@ -55,9 +59,10 @@ its output buffer is silent and never plays microphone samples.
 
 ## Validation
 
-The focused speech/recorder/transcription/native-adapter/browser suite passes
-86 tests. The composer speech/trailing-control and design suites pass 77 tests.
-Root typecheck, UI component policy and dead-code validation pass.
+`demonstrated.txt` records the replay against #2450's merged product source.
+`reproduced.txt` records the original missing mic on the pinned baseline.
+The original implementation and evidence remain recoverable at
+`8281ccb82585a9721b50b73a53678f9d023291e3`.
 
 ```sh
 npm run test --prefix apps/mobile -- --run sources/buzz/speech-input.test.ts sources/buzz/speech-transcription.test.ts sources/buzz/speech-recognition-adapter.test.ts sources/buzz/speech-recognition-adapter.web.test.ts sources/buzz/speech-recorder.web.test.ts sources/buzz/speech-dictation-path.test.ts sources/components/buzz/ConversationComposer.dictation.browser.test.ts sources/components/buzz/ConversationComposer.web-dictation.browser.test.ts --maxWorkers=1
@@ -72,9 +77,9 @@ recognition path even when capture is available.
 
 ## Integration
 
-The separately assigned #2450 currently contains overlapping recorder changes
-alongside Tauri shell permissions and cross-origin transcription headers. Those
-recorder changes must be reconciled with this separate dictation PR before
-landing both. This proof uses a same-origin proxy to a real local server; it does
-not establish production cross-origin permissions or native shell microphone
-entitlements.
+#2450 owns the recorder, adapter, speech hook, transcription, server CORS and
+Tauri microphone permissions. This proof uses a same-origin proxy to a real
+local server; it does not establish production cross-origin permissions or
+native shell microphone entitlements. The previously delivered Conversation
+artifact remains pinned to `324d951ea0cbbcc0ecfe8da5ec8616d379e6ee71`, with
+generated/provider fixtures and its native Tauri dependency blocker unchanged.

@@ -1180,12 +1180,7 @@ jobs:
           npm ci
           npx --yes --package="eas-cli@$EAS_CLI_VERSION" -- env -u npm_config_package eas build --local --platform ios --profile production-ci --non-interactive --output "$RUNNER_TEMP/beeline-ios.ipa"
           test -s "$RUNNER_TEMP/beeline-ios.ipa" || { echo 'local EAS build did not produce a non-empty ipa' >&2; exit 1; }
-          sha256=$(shasum -a 256 "$RUNNER_TEMP/beeline-ios.ipa" | awk '{print $1}')
-          node - "$RUNNER_TEMP/ios-build.json" "$RUNNER_TEMP/beeline-ios.ipa" "$sha256" <<'NODE'
-          const fs = require('node:fs');
-          const [output, path, sha256] = process.argv.slice(2);
-          fs.writeFileSync(output, JSON.stringify({source:'local',status:'FINISHED',id:`local-${sha256}`,artifacts:{path},sha256})+'\n');
-          NODE
+          python3 ../../scripts/ios-build-evidence.py "$RUNNER_TEMP/beeline-ios.ipa" "$RUNNER_TEMP/ios-build.json"
       - name: Submit iOS build to TestFlight for a selected store track
         if: inputs.store_track != 'none'
         working-directory: apps/mobile
@@ -1201,6 +1196,9 @@ jobs:
           # variable inherited the nested npx resolves eas-cli instead and fails with
           # "eas-cli-local-build-plugin@<v>: command not found" (exit 127).
           export PATH=/usr/local/opt/node@20/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
+          # Verify the actual IPA targets this App Store app and a new build
+          # number before accepting Apple's transport receipt.
+          node ../../scripts/ios-store-build.mjs prepare "$RUNNER_TEMP/ios-build.json"
           # Upload with Apple's own altool, not `eas submit`: EAS Submit is Expo's cloud
           # queue, and on this account its wait grew from 7 min to 54 min and then past
           # the job's 90-minute timeout (run 34863479172: build done in 19 min, then
@@ -1210,11 +1208,10 @@ jobs:
           cp "$EXPO_ASC_API_KEY_PATH" "$RUNNER_TEMP/private_keys/AuthKey_${EXPO_ASC_KEY_ID}.p8"
           (cd "$RUNNER_TEMP" && xcrun altool --upload-app -t ios -f "$RUNNER_TEMP/beeline-ios.ipa" \
             --apiKey "$EXPO_ASC_KEY_ID" --apiIssuer "$EXPO_ASC_ISSUER_ID" --output-format json) | tee "$RUNNER_TEMP/ios-upload.json"
-          node -e '
-            const r = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
-            if (!r["success-message"]) { console.error("altool upload did not report success:", JSON.stringify(r)); process.exit(1); }
-            console.log(r["success-message"]);
-          ' "$RUNNER_TEMP/ios-upload.json"
+          # altool success only confirms transport. Processing can still fail
+          # (90683 rejected build 87 after a successful upload). Require the
+          # exact delivery to finish and a new VALID build in our App Store app.
+          node ../../scripts/ios-store-build.mjs verify "$RUNNER_TEMP/ios-build.json" "$RUNNER_TEMP/ios-upload.json"
       - name: Preserve iOS build evidence
         uses: actions/upload-artifact@v4
         with:

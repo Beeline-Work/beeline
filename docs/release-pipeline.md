@@ -63,8 +63,15 @@ release as OTA-only requires the explicit `allow_pin_restore` workflow input
 deliberate consent gate, never inferred from pin direction.
 
 iOS store binaries build locally on the self-hosted `macbook-pro-7` Mac runner
-and are submitted to TestFlight from its generated IPA. Android store binaries
-continue to build on EAS cloud and use the existing Google Play authentication
+and are submitted to TestFlight from its generated IPA. The iOS leg inspects the
+IPA's bundle, version, build number, runtime and required photo purpose string
+(`scripts/ios-build-evidence.py`), then verifies the exact Apple delivery UUID
+and a new `VALID` build under App Store app `6803948500`
+(`scripts/ios-store-build.mjs`). Apple processing errors fail immediately;
+missing or unfinished builds fail after 20 minutes. The native checkpoint keeps
+the delivery UUID and App Store build ID. Transport success alone does not
+authorize the native checkpoint or OTA promotion. Android store binaries
+build locally on the Linux runner and use the existing Google Play authentication
 and upload path. Three legs now contend for that single machine: the iOS store
 build, the helper `darwin-x64` bundle, and the `MAC HELPER ACCEPTANCE` PR gate -
 that queueing is why the release budget was widened for attempts that build the

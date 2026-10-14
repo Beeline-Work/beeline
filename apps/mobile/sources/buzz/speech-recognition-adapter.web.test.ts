@@ -5,10 +5,33 @@ const module = vi.hoisted(() => ({
   addListener: vi.fn(() => ({ remove: vi.fn() })),
   getPermissionsAsync: vi.fn(), requestPermissionsAsync: vi.fn(),
 }));
+const browser = vi.hoisted(() => ({ shell: false, recording: false,
+  recorder: { transcribesOnServerOnly: true, start: vi.fn() } }));
+vi.mock('@/utils/isDesktopShell', () => ({ isDesktopShell: () => browser.shell }));
+vi.mock('./speech-recorder.web', () => ({ recordingAvailable: () => browser.recording,
+  createSpeechRecorder: () => browser.recorder }));
 vi.mock('expo-speech-recognition/build/ExpoSpeechRecognitionModule', () => ({ ExpoSpeechRecognitionModule: module }));
 import { getRecognitionModule } from './speech-recognition-adapter.web';
 
-beforeEach(() => vi.clearAllMocks());
+beforeEach(() => { vi.clearAllMocks(); browser.shell = false; browser.recording = false; });
+
+it('keeps Web Speech when recording is also available in an ordinary browser', () => {
+  browser.recording = true;
+  module.isRecognitionAvailable.mockReturnValue(true);
+  expect(getRecognitionModule()?.supportsRecording?.()).toBe(false);
+});
+
+it.each([false, true])('records for server transcription when Web Speech is missing (shell %s)', (shell) => {
+  browser.shell = shell; browser.recording = true;
+  module.isRecognitionAvailable.mockReturnValue(false);
+  expect(getRecognitionModule()).toBe(browser.recorder);
+});
+
+it('never selects Web Speech in the Tauri shell even when the API exists', () => {
+  browser.shell = true; browser.recording = true;
+  module.isRecognitionAvailable.mockReturnValue(true);
+  expect(getRecognitionModule()).toBe(browser.recorder);
+});
 
 it('hides speech where the browser library reports no recognition API', () => {
   module.isRecognitionAvailable.mockReturnValue(false);

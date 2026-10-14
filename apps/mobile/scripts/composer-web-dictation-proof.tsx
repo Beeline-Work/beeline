@@ -26,6 +26,12 @@ class Recognizer extends EventTarget {
   }
 }
 const mode = new URLSearchParams(location.search).get('api') ?? 'prefixed';
+if (mode === 'unsupported') {
+  // This case has neither Web Speech nor recording. Recorder-capable browsers
+  // are exercised separately with actual Chrome fake-audio capture.
+  Object.defineProperty(globalThis, 'AudioContext', { configurable: true, value: undefined });
+  Object.defineProperty(globalThis, 'webkitAudioContext', { configurable: true, value: undefined });
+}
 Object.defineProperty(globalThis, 'webkitSpeechRecognition', { configurable: true, value: mode === 'prefixed' ? Recognizer : undefined });
 Object.defineProperty(globalThis, 'SpeechRecognition', { configurable: true, value: mode === 'standard' ? Recognizer : undefined });
 

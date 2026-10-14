@@ -725,7 +725,7 @@ function ConversationComposerContent({
             hitSlop={9}
             delayLongPress={VOICE_LONG_PRESS_MS}
             onPressIn={() => { voiceHeld.current = false; }}
-            onLongPress={Platform.OS !== 'web' && voice && !dictationBusy && !disabled ? () => {
+            onLongPress={voice && !dictationBusy && !disabled ? () => {
               voiceHeld.current = true;
               Keyboard.dismiss();
               void voice.join();

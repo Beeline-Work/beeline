@@ -42,6 +42,7 @@ serde_json = "1"
 # Service (for example over X11 forwarding); macOS and Windows use their native
 # Keychain and Credential Manager implementations.
 [target.'cfg(target_os = "linux")'.dependencies]
+webkit2gtk = "=2.0.1"
 keyring = { version = "3.6.3", default-features = false, features = ["linux-native"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]

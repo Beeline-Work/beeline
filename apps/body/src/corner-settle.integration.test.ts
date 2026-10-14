@@ -211,7 +211,7 @@ async function runScenario(options: {
       const command = (await daemon.execute('getAgentCommands', { roomId }, COMMANDER)).commands[0]!;
       await daemon.execute('claimAgentCommand', { roomId, commandId: command.id, generationId: 'commander-generation' }, COMMANDER);
       await daemon.execute('order', { roomId, requestId: command.turnRequestId,
-        generationId: 'commander-generation', address: roomId, text: options.ask }, COMMANDER);
+        generationId: 'commander-generation', address: roomId, agent: 'bee', text: options.ask }, COMMANDER);
     }
     await vi.waitFor(() => expect(pushCommands).toBeTypeOf('function'));
     pushCommands?.((await daemon.execute('getAgentCommands', { roomId }, AGENT)).commands);

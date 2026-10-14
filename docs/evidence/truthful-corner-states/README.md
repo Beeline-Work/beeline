@@ -45,3 +45,9 @@ The operation now carries `dismissReminder` only for the explicit DISMISS contro
 Demonstrated Reproduction reminder-open-2472: the real PhoneService clear path opens the first reminder, the next due delivery occurs, then explicit item dismissal or section CLEAR prevents any later delivery. Both variants print the passing result. The focused attention suite passed 19 tests, the tray suite passed 76 with one existing skip, and Needs-you plus expiry suites passed 38 tests. Build and root typecheck passed. This changes command intent only; no mobile visual layout changed.
 
 The original local-browser bundle tested head 1947c62c7. The correction's exact-head browser evidence is posted separately in the corner and referenced in the current PR body; use that newest bundle for merge acceptance.
+
+## Temporary blocker supersession correction
+
+Reproduction reminder-supersession-2472: an open choice older than 24 hours receives its first reminder; a newer needs-decision temporarily becomes the current blocker; when the older reminder comes due, the mismatch branch permanently dismisses it. Answering the newer request restores the original choice to WAITING but deterministic flag insertion cannot revive its reminders. The regression failed before the fix with a non-null dismissal receipt.
+
+Delivery now checks the same indexed blocker eligibility for the older source/person. A still-unanswered superseded source pauses without dismissal; resolved sources are retired. Explicit human dismissal receipts are preserved. The service-path regression sends the human's newer answer through PhoneService, reads the original choice as WAITING, and observes its second reminder with no duplicate. The existing item/section dismissal regressions also pass. The latest exact-head browser bundle in the corner supersedes earlier proof bundles.

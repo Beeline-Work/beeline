@@ -236,9 +236,19 @@ export async function deliverCornerAttention(db: SqlDatabase): Promise<void> {
           return;
         }
         if (row.waiting_item_id !== flag.item_id || row.waiting_person_id !== flag.person_id) {
-          await tx.query('UPDATE corner_attention_flags SET dismissed_at=now() WHERE id=$1', [
-            flag.id,
-          ]);
+          const unresolved = await tx.query(
+            `SELECT 1 FROM rooms c
+             ${cornerBlockerSql('item_id=$2 AND person_id=$3')}
+             WHERE c.id=$1 AND blocker.item_id IS NOT NULL`,
+            [row.id, flag.item_id, flag.person_id],
+          );
+          // A newer blocker pauses this reminder; only resolution or dismissal ends it.
+          await tx.query(
+            unresolved.rowCount
+              ? `UPDATE corner_attention_flags SET due_at=now()+interval '5 seconds' WHERE id=$1`
+              : 'UPDATE corner_attention_flags SET dismissed_at=now() WHERE id=$1',
+            [flag.id],
+          );
           return;
         }
         if (state !== 'waiting') {

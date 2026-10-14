@@ -406,3 +406,29 @@ it('list_corners can return only open corners and keeps archived discovery avail
   await runCornerAttention(db);
   expect(await commanderFlags()).toHaveLength(0);
 });
+
+it('Reproduction reminder-supersession-2472: an older unanswered choice resumes after a newer request is answered', async () => {
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card,created_at)
+    VALUES('older-choice',$1,$2,'@owner Choose a scope.','card','choice',
+      jsonb_build_object('mode','question','status','open','requester',jsonb_build_object('pubkey',$3::text)),now()-interval '25 hours')`,
+    [C, WORKER, HUMAN]);
+  await runCornerAttention(db);
+  const flags = async () => (await db.query<{ deliveries: number; dismissed_at: string | null }>(
+    `SELECT deliveries,dismissed_at FROM corner_attention_flags WHERE item_id='older-choice'`)).rows[0]!;
+  expect((await flags()).deliveries).toBe(1);
+  await post('newer-request', 'needs-decision: @owner Choose the newer scope.');
+  await db.query(`UPDATE corner_attention_flags SET due_at=now() WHERE item_id='older-choice'`);
+  await runCornerAttention(db);
+  expect((await flags()).deliveries).toBe(1);
+  expect((await flags()).dismissed_at).toBeNull();
+  await phone.execute('sendRoomMessage', { roomId: C, messageId: 'f'.repeat(64), text: 'Use the newer scope.' }, HUMAN);
+  const row = (await phone.readCorners(ROOM, HUMAN))!.corners.find(row => row.corner.id === C)!;
+  expect(row.state).toBe('waiting');
+  await db.query(`UPDATE corner_attention_flags SET due_at=now() WHERE item_id='older-choice'`);
+  await runCornerAttention(db);
+  expect((await flags()).deliveries).toBe(2);
+  expect((await flags()).dismissed_at).toBeNull();
+  await runCornerAttention(db);
+  expect((await flags()).deliveries).toBe(2);
+  console.log('Demonstrated Reproduction reminder-supersession-2472: choice reminded once; newer blocker pauses it; answer restores WAITING choice and second reminder; repeat=0');
+});

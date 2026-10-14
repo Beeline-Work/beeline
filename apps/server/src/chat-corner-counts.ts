@@ -95,7 +95,7 @@ export function cornerWorkSql(): string {
 }
 
 /** Indexed unanswered requests and active human holds; ordinary mentions are not blockers. */
-export function cornerBlockerSql(): string {
+export function cornerBlockerSql(sourcePredicate = 'true'): string {
   return `LEFT JOIN LATERAL (
     SELECT item_id,person_id,created_at FROM (
       SELECT owed.message_id item_id,owed.person_id,owed.created_at
@@ -107,7 +107,7 @@ export function cornerBlockerSql(): string {
       JOIN memberships holder_member ON holder_member.room_id=c.id
         AND holder_member.identity_id=hold.actor_id AND holder_member.removed_at IS NULL
       WHERE hold.corner_id=c.id AND hold.released_at IS NULL
-    ) blockers ORDER BY created_at DESC,item_id DESC,person_id LIMIT 1
+    ) blockers WHERE ${sourcePredicate} ORDER BY created_at DESC,item_id DESC,person_id LIMIT 1
   ) blocker ON true`;
 }
 

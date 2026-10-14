@@ -42,6 +42,10 @@ export function dictationTranscriptionAvailable(): boolean {
 /** Deletes recordings that will not be transcribed again. */
 export async function discardDictationRecordings(uris: readonly string[]): Promise<void> {
   if (!uris.length) return;
+  // Browser recordings are object URLs, not cache files.
+  const blobs = uris.filter((uri) => uri.startsWith('blob:'));
+  for (const uri of blobs) URL.revokeObjectURL(uri);
+  if (blobs.length === uris.length) return;
   try {
     const { File } = await import('expo-file-system');
     for (const uri of uris) {

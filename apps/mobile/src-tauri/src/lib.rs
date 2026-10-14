@@ -135,6 +135,22 @@ pub fn run() {
             }
             #[cfg(target_os = "linux")]
             {
+                use tauri::Manager;
+                use webkit2gtk::{
+                    glib::ObjectExt, PermissionRequestExt, UserMediaPermissionRequest, WebViewExt,
+                };
+                if let Some(window) = _app.get_webview_window("main") {
+                    window.with_webview(|webview| {
+                        webview.inner().connect_permission_request(|_, request| {
+                            if request.is::<UserMediaPermissionRequest>() {
+                                request.allow();
+                                true
+                            } else {
+                                false
+                            }
+                        });
+                    })?;
+                }
                 // AppImages have no installer to register their desktop file.
                 // Installed packages already carry their association; direct
                 // AppImages register on launch, including minimal hosts that

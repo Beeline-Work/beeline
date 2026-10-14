@@ -29,3 +29,14 @@ Temporary egress grants were revoked and the fixture was cleaned up.
 
 The requested reviewer-bypass check on web.usebeeline.app remains a post-deploy
 check. This branch has not been deployed. iOS was excluded as requested.
+
+## Final local checks
+
+After integrating main and PR #2456 head e4f9d761:
+
+- Root `npm run typecheck`: passed, including mobile and scripts.
+- `npm run dead-code`: 91 baseline findings, zero introduced.
+- Voice providers, agent voice, service, runtime and targeting: 71 tests passed.
+- API contract suite: 467 tests passed.
+- Workspace Settings and agent voice picker: 37 tests passed.
+- Tracked voice source/documentation grep: no retired-provider references remain.

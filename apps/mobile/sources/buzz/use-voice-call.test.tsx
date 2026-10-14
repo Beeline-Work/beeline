@@ -146,3 +146,30 @@ it('preserves the connection error even if disconnect and audio cleanup also rej
     expect(voice.call).toBeNull();
   } finally { await act(async () => renderer.unmount()); }
 });
+
+it('keeps the second human in the joined call across roster rerenders and follows spoken target signals', async () => {
+  const agents = [{ pubkey: 'ruby', kind: 'agent' as const, name: 'Ruby' }, { pubkey: 'goose', kind: 'agent' as const, name: 'Goosey' }];
+  const call = { id: fixture.callId, roomId: fixture.callId, startedAt: 1,
+    participants: [{ pubkey: 'first', kind: 'human', name: 'First' }, { pubkey: 'second', kind: 'human', name: 'Second' }] };
+  fixture.fetch.mockImplementationOnce(async () => new Response(JSON.stringify({ call, agents, url: 'ws://proof', token: 'test' })));
+  fixture.room = Object.assign(new EventEmitter(), { connect: vi.fn(async () => {}), disconnect: vi.fn(async () => {}),
+    remoteParticipants: new Map(), localParticipant: { publishData: vi.fn(async () => {}), setMicrophoneEnabled: vi.fn(async () => {}) } });
+  let voice!: ReturnType<typeof useVoiceCall>; let renderer: any;
+  function Probe({ roster }: { roster: typeof agents }) { voice = useVoiceCall(fixture.callId, true, roster); return null; }
+  await act(async () => { renderer = create(<Probe roster={agents} />); });
+  try {
+    await act(async () => { await Promise.all([voice.join(), voice.join()]); });
+    expect(fixture.room.connect).toHaveBeenCalledOnce();
+    expect(voice.call).toEqual(call);
+    await act(async () => renderer.update(<Probe roster={[...agents]} />));
+    expect(voice.call).toEqual(call);
+    expect(fixture.room.disconnect).not.toHaveBeenCalled();
+    const bridge = { identity: `beeline-voice-${fixture.callId}` };
+    await act(async () => fixture.room.emit('data', new TextEncoder().encode(JSON.stringify({ type: 'target', agentId: 'goose' })), bridge, undefined, VOICE_DATA_TOPIC));
+    expect(voice.target).toBe('goose');
+    await act(async () => fixture.room.emit('data', new TextEncoder().encode(JSON.stringify({ type: 'target', agentId: 'restricted' })), bridge, undefined, VOICE_DATA_TOPIC));
+    expect(voice.target).toBe('goose');
+    await act(async () => voice.aim('ruby'));
+    expect(voice.target).toBe('ruby');
+  } finally { await act(async () => renderer.unmount()); }
+});

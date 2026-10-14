@@ -1,10 +1,10 @@
 import {
   type AgentVoiceCatalog,
   type AgentVoicePreview,
-  type VoiceProvider,
+  type VoiceProvider, DEFAULT_VOICE_PROVIDER,
 } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
-import { assignVoiceAgents, type VoiceSpeech, VOICE_SAMPLE_RATE } from './voice-providers.js';
+import { assignVoiceAgents, type VoiceSpeech, VOICE_SAMPLE_RATE, savedAuraVoice } from './voice-providers.js';
 
 type Context = {
   voice_provider: VoiceProvider;
@@ -40,7 +40,7 @@ export class AgentVoiceService {
       )
     ).rows[0];
     if (!row) throw Error('Workspace agent access denied');
-    return row;
+    return { ...row, voice_provider: DEFAULT_VOICE_PROVIDER };
   }
   private async library(provider: VoiceProvider) {
     const speech = await this.speechFor(provider);
@@ -83,7 +83,7 @@ export class AgentVoiceService {
           name: a.name,
           handle: a.handle ?? a.name,
           soul: a.soul?.instructions ?? '',
-          chosenVoice: a.chosen_voices[ctx.voice_provider],
+          chosenVoice: savedAuraVoice(a.chosen_voices),
         }))
       : [
           {
@@ -91,7 +91,7 @@ export class AgentVoiceService {
             name: ctx.name,
             handle: ctx.handle ?? ctx.name,
             soul: ctx.soul?.instructions ?? '',
-            chosenVoice: ctx.chosen_voices[ctx.voice_provider],
+            chosenVoice: savedAuraVoice(ctx.chosen_voices),
           },
         ];
     const current = assignVoiceAgents(

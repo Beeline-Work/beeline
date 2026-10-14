@@ -3,7 +3,7 @@ import { SQUIRE_MCP_TARGET } from '@beeline/api-contract/phone';
 import { FIRST_PARTY_INTEGRATIONS } from './first-party-integrations.js';
 import { machineSquireReport, queueSquireWork, queueOwnerSquireWork, squireMachineAddress, squireMachineId, squireWorkStatus } from './squire-machine.js';
 import { listRoomSubscriptions, deleteRoomSubscription } from './agent-subscriptions.js';
-import { VOICE_PROVIDERS, type VoiceProvider } from '@beeline/api-contract/phone';
+import { VOICE_PROVIDERS, DEFAULT_VOICE_PROVIDER, type VoiceProvider } from '@beeline/api-contract/phone';
 import {
   beginAgentSignInCards,
   AGENT_SIGN_IN_NO_ANSWER_MESSAGE,
@@ -1571,7 +1571,7 @@ export class PhoneService {
         ...(row.avatar ? { avatar: assetUrl(row.avatar, this.publicOrigin) } : {}),
         visibility: row.visibility,role: row.role,updatedAt: unix(row.updated_at),
         ...(row.about ? { about: row.about } : {}),createdAt: unix(row.created_at),
-        voiceProvider: row.voice_provider,
+        voiceProvider: DEFAULT_VOICE_PROVIDER,
       },
       ...(managedRooms ? { managerSettings: {
         visibility: row.visibility,rooms: managedRooms,

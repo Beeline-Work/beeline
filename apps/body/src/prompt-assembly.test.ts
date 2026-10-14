@@ -624,7 +624,7 @@ describe('prompt assembly guards', () => {
     expect(session).not.toContain('Open the pull request with gh');
     expect(session).not.toContain(cornerMergeInstruction('sol'));
     const turn = assembleTurnPrompt(TURN_VARIANTS['code-corner-turn']!).text;
-    expect(turn).toContain('Before any code, write the first brief from the newest human request with revise_corner_brief at expectedRevision 0.');
+    expect(turn).toContain('Before any code, report needs-decision: to your commander for the first brief.');
     const generated = assembleTurnPrompt({
       ...TURN_VARIANTS['code-corner-turn']!,
       generatedTitle: 'still harbor corner',

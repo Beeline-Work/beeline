@@ -870,7 +870,7 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
       brief
         ? `${renderAssignedCornerBrief(brief.brief)}${cornerHasRepositoryWork(brief.brief) ? `\n\nAssigned files:\n${brief.fileLines.join('\n') || '(none)'}` : brief.fileLines.length ? `\n\nBrief attachments:\n${brief.fileLines.join('\n')}` : ''}${brief.missingRequiredFile ? '\nRequired assignment files are unavailable. Pause work that depends on them and report the missing file precisely.' : ''}`
         : surface === 'code-corner'
-          ? `No assigned brief yet. Before any code, write the first brief from the newest human request with ${generatedTitle ? 'rename_corner' : 'revise_corner_brief at expectedRevision 0'}.`
+          ? `No assigned brief yet. Before any code, ${generatedTitle ? 'write the first brief from the newest human request with rename_corner' : 'report needs-decision: to your commander for the first brief'}.`
           : 'No assigned brief: the human messages in this corner are the authority; skip steps that need a brief revision.',
   },
   {

@@ -7731,6 +7731,7 @@ export class DaemonService {
         draft,
         attachments,
         command.private_payload ? command.id : command.root_source_message_id,
+        { cornerId: input.cornerId, agentId },
       );
       const revision = input.expectedRevision + 1;
       await db.query(

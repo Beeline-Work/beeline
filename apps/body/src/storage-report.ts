@@ -4,8 +4,8 @@ import { lstat, readFile, readdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import type { DaemonBootstrapResult, CornerListResult } from '@beeline/api-contract/daemon';
 import { capturePrivateProcessUse, hasNonSquirePayload, reclaimWholeStorageObject, reclaimHelperStorage, type StorageReclaimEntry, type StorageRoomState } from './helper-storage.js';
-import { pruneDeletedRuntimes, pruneRepositoryCaches, pruneMachineStorage } from './host-disk-retention.js';
-import { pruneEndedOwnerStorage, pruneOpenCheckoutObjects, discoverLegacyStorageOwners, readStorageOwners, reclaimOwnedCheckout } from './storage-owners.js';
+import { isDeletedRuntimeName, pruneDeletedRuntimes, pruneRepositoryCaches, pruneMachineStorage } from './host-disk-retention.js';
+import { pruneEndedOwnerStorage, pruneUnusedCheckoutStorage, pruneOpenCheckoutObjects, discoverLegacyStorageOwners, readStorageOwners, reclaimOwnedCheckout } from './storage-owners.js';
 import { workspaceAssetRoot } from './workspace-assets.js';
 import { defaultSupervisorRoot, type AgentRuntimeRecord } from './runtime.js';
 
@@ -86,7 +86,7 @@ export async function helperStorageReport(supervisorRoot = defaultSupervisorRoot
       const path = resolve(root, owner.kind, owner.itemId);
       if (!await lstat(path).catch(() => undefined)) continue;
       orphans.push({ path, owner: owner.roomId, reason: 'server-confirmed archived checkout owner' });
-      if (!input.orphanOnly) await reclaimOwnedCheckout(supervisorRoot, owner, options('archived-checkout'));
+      if (!input.orphanOnly) await reclaimOwnedCheckout(supervisorRoot, owner, { ...options('archived-checkout'), landedHeadSha: states.get(owner.roomId)?.landedHeadSha });
     }
   }
   if (!input.orphanOnly) await pruneOpenCheckoutObjects(supervisorRoot, [...states.values()], options('unused-open-checkout-object'), legacyOwners);
@@ -97,12 +97,13 @@ export async function helperStorageReport(supervisorRoot = defaultSupervisorRoot
     }
   }
   for (const entry of await readdir(resolve(root, 'deleted-runtimes')).catch(() => [])) {
-    if (/^[a-f0-9]{64}-\d{13}$/.test(entry) && await hasNonSquirePayload(resolve(root, 'deleted-runtimes', entry))) orphans.push({ path: resolve(root, 'deleted-runtimes', entry), owner: 'retired agent', reason: 'recorded ended-agent tombstone' });
+    if (isDeletedRuntimeName(entry) && await hasNonSquirePayload(resolve(root, 'deleted-runtimes', entry))) orphans.push({ path: resolve(root, 'deleted-runtimes', entry), owner: 'retired agent', reason: 'recorded ended-agent tombstone' });
   }
   if (!input.orphanOnly) await pruneDeletedRuntimes(supervisorRoot, Date.now(), options('deleted-agent-runtime'));
   if (!input.orphanOnly) await pruneEndedOwnerStorage(supervisorRoot, { ...options('ended-owner'),
     log: entry => entries.push({ ...entry, rule: entry.path.includes('/workspaces/') ? 'ended-workspace' : entry.path.includes('/agents/') ? 'deleted-agent-runtime' : 'ended-checkout' }),
   });
+  if (!input.orphanOnly) await pruneUnusedCheckoutStorage(supervisorRoot, options('unused-code-copy'));
   if (!input.orphanOnly) await pruneRepositoryCaches(supervisorRoot, Date.now(), options('unused-bare-clone'));
   if (!input.orphanOnly) await pruneMachineStorage(supervisorRoot, { ...options('unused-machine-object'),
     log: entry => entries.push({ ...entry, rule: entry.path.includes('/workspaces/') ? 'unused-workspace-object' : 'unused-machine-object' }),

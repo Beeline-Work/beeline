@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { access, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { access, chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -33,6 +33,7 @@ it.each([true, false])('keeps unpublished source and records its HEAD; pruning e
   await mkdir(resolve(checkout, 'build'), { recursive: true });
   await writeFile(resolve(checkout, 'apps', 'mobile', 'node_modules', 'package'), 'generated');
   await writeFile(resolve(checkout, 'target', 'object'), 'generated');
+  if (eligible) await chmod(resolve(checkout, 'target'), 0o500);
   await writeFile(resolve(checkout, 'build', 'valuable-untracked.txt'), 'keep');
 
   const saved = await preserveUnpublishedCornerWorktree(

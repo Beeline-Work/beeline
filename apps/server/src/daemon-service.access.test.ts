@@ -37,7 +37,7 @@ describe('daemon room access', () => {
     const query = vi.fn(async <Row>(sql: string): Promise<QueryResult<Row>> => {
       if (sql.includes('SELECT m.room_id, r.parent_id')) return { rows: [
         { room_id: ROOM, parent_id: null, archived: false, repository_revision: 'v1' },
-        { room_id: 'archived-corner', parent_id: ROOM, archived: true },
+        { room_id: 'archived-corner', parent_id: ROOM, archived: true, landed_head_sha: 'b'.repeat(40) },
       ] as Row[], rowCount: 2 };
       return { rows: [], rowCount: 0 };
     });
@@ -45,10 +45,13 @@ describe('daemon room access', () => {
     const result = await daemon.execute('getDaemonBootstrap', { agentId: AGENT }, AGENT);
     expect(result.rooms.map(room => room.roomId)).toEqual([ROOM]);
     expect(result.storageRooms).toEqual([
-      { roomId: ROOM, archived: false }, { roomId: 'archived-corner', archived: true },
+      { roomId: ROOM, archived: false }, { roomId: 'archived-corner', archived: true, landedHeadSha: 'b'.repeat(40) },
     ]);
     expect(query.mock.calls.find(([sql]) => sql.includes('SELECT m.room_id, r.parent_id'))?.[0])
       .toContain('m.identity_id=$1 AND (m.removed_at IS NULL OR r.archived_at IS NOT NULL)');
+    const sql = query.mock.calls.find(([sql]) => sql.includes('SELECT m.room_id, r.parent_id'))?.[0];
+    expect(sql).toContain("f.lifecycle->>'outcome'='landed'");
+    expect(sql).toContain("f.lifecycle->'pr'->>'mergedAt' IS NOT NULL");
   });
 
   it('checks membership once when listing a Room\'s corners', async () => {

@@ -491,6 +491,9 @@ jobs:
         run: npm run bundle:beeline -- --platform darwin-x64
         env:
           BEELINE_INSTALL_VERIFY_ROOT: ${{ runner.temp }}/beeline-install-${{ github.run_id }}-${{ github.run_attempt }}
+      - name: Prove storage expiry and rollback retention on macOS
+        working-directory: apps/body
+        run: npx vitest run src/storage-bloat.regression.test.ts src/helper-storage.darwin.test.ts
       - name: Prove launchd crash, login-bootstrap, and terminal-exit behavior
         working-directory: apps/body
         run: BEELINE_LAUNCHD_ACCEPTANCE=1 npx vitest run src/launchd.test.ts src/launchd-acceptance.test.ts

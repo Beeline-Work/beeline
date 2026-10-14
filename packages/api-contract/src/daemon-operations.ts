@@ -836,11 +836,14 @@ export type DaemonBootstrapInput = AgentInput;
 export type WorkspaceRosterInput = AgentInput & { readonly workspaceId: string };
 export type DaemonBootstrapResult = {
   /** Explicit member Room/corner lifecycle facts for private storage reclamation.
-   * Absent on older servers: helpers must preserve all private storage. */
+   * Absent on older servers: no immediate archive cleanup; disposable files
+   * may still expire under the seven-day unused-file rule. */
   readonly storageRooms?: readonly {
     readonly workspaceId?: string;
     readonly roomId: string;
     readonly archived: boolean;
+    /** Exact PR head accepted by a confirmed merge, including squash merges. */
+    readonly landedHeadSha?: string;
   }[];
   readonly workspaceIds: readonly string[];
   /** Command-bearing surfaces to bind before background Room discovery. */

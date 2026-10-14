@@ -37,6 +37,7 @@ import {
 } from './runtime.js';
 import {
   activeReleaseId,
+  pruneHelperReleases,
   beelineInstallLayout,
   readInstalledBundleIdentity,
   readUpdateState,
@@ -51,7 +52,7 @@ import {
 import { squireBrokerMeetsComputerUseMinimum } from './squire-host.js';
 import { pruneDeletedRuntimes, pruneRepositoryCaches, pruneMachineStorage } from './host-disk-retention.js';
 import { SessionScheduler } from './session-scheduler.js';
-import { reclaimArchivedMemberStorage, watchStorageFacts, pruneStoppedAgentStorage, pruneEndedOwnerStorage } from './storage-owners.js';
+import { reclaimArchivedMemberStorage, watchStorageFacts, pruneStoppedAgentStorage, pruneEndedOwnerStorage, pruneArchivedCheckoutStorage, pruneUnusedCheckoutStorage } from './storage-owners.js';
 import { monitorPrivateRecoveryReserve } from './shared-asset-capacity.js';
 
 /** A failed agent restarts inside the helper after this, doubling to the cap. */
@@ -147,20 +148,21 @@ async function serveMachineHelper(
   const sweepHostDisk = async () => {
     const now = Date.now();
     if (controller.signal.aborted || diskSweepRunning ||
-        [...hosted.values()].some(agent => !agent.core.isWorkspaceIdle()) ||
         now - lastRetentionSweepAt < 6 * 60 * 60_000) return;
     diskSweepRunning = true;
     try {
       const log = (entry: import('./helper-storage.js').StorageReclaimEntry) =>
         console.log(`[helper] storage deleted ${entry.path}; freed ${entry.freedBytes} bytes`);
       const options = { log };
+      await pruneStoppedAgentStorage(supervisorRoot, options);
+      await pruneEndedOwnerStorage(supervisorRoot, options);
+      await pruneDeletedRuntimes(supervisorRoot, now, options);
+      await pruneArchivedCheckoutStorage(supervisorRoot, options);
+      await pruneUnusedCheckoutStorage(supervisorRoot, options);
       const swept = await SessionScheduler.withIdleHostStorage(async () => {
-        await pruneStoppedAgentStorage(supervisorRoot, options);
-        await pruneEndedOwnerStorage(supervisorRoot, options);
-        await pruneDeletedRuntimes(supervisorRoot, now, options);
         await pruneRepositoryCaches(supervisorRoot, now, options);
         await pruneMachineStorage(supervisorRoot, options);
-      });
+      }, { allowLiveSessions: true });
       if (swept) lastRetentionSweepAt = now;
     } catch (error) { console.warn('[helper] idle disk sweep deferred:', error); }
     finally { diskSweepRunning = false; }
@@ -205,6 +207,8 @@ async function serveMachineHelper(
       runningReleaseId(layout, env) ||
       env.BEELINE_EXECUTING_RELEASE ||
       (await activeReleaseId(layout));
+    await withInstallLock(layout, () => pruneHelperReleases(layout, loadedRelease))
+      .catch(error => console.warn('[helper] release pruning deferred:', error));
     loadedReleaseIdentity = await readInstalledBundleIdentity(
       loadedRelease ? { ...layout, libDir: resolve(layout.releasesRoot, loadedRelease) } : layout,
     );

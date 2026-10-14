@@ -2742,8 +2742,11 @@ export class DaemonService {
       `SELECT workspace_id FROM memberships WHERE identity_id=$1 AND room_id IS NULL AND removed_at IS NULL`,
       [agentId],
     );
-    const rooms = await this.database.query<{ room_id: string; parent_id: string | null; workspace_id: string; archived: boolean; repository_revision: string }>(
+    const rooms = await this.database.query<{ room_id: string; parent_id: string | null; workspace_id: string; archived: boolean; landed_head_sha: string | null; repository_revision: string }>(
       `SELECT m.room_id, r.parent_id, r.workspace_id, r.archived_at IS NOT NULL archived,
+              CASE WHEN r.archived_at IS NOT NULL AND f.lifecycle->>'outcome'='landed'
+                AND f.lifecycle->'pr'->>'mergedAt' IS NOT NULL
+                THEN f.lifecycle->'pr'->>'headSha' END landed_head_sha,
               concat_ws(':',r.repository_resolution,COALESCE(r.repository_key,''),
                 COALESCE(r.repository_remote,''),r.repository_target_branch,
                 COALESCE(r.repository_updated_at::text,''),
@@ -2751,6 +2754,7 @@ export class DaemonService {
                 COALESCE(g.active::text,''),COALESCE(g.updated_at::text,'')) repository_revision
        FROM memberships m
        JOIN rooms r ON r.id=m.room_id
+       LEFT JOIN corner_facts f ON f.corner_id=r.id
        LEFT JOIN github_installations i ON i.installation_id=r.github_installation_id
        LEFT JOIN github_repositories g ON r.repository_key='github:' || g.repository_id::text
        WHERE m.identity_id=$1 AND (m.removed_at IS NULL OR r.archived_at IS NOT NULL)`,
@@ -2771,7 +2775,8 @@ export class DaemonService {
       pendingRooms: pending.rows.map(row => ({ roomId: row.room_id,
         ...(row.parent_id ? { parentRoomId: row.parent_id } : {}),
         ...(row.owner_agent_id ? { openedBy: row.owner_agent_id } : {}) })),
-      storageRooms: rooms.rows.map(row => ({ roomId: row.room_id, archived: row.archived, ...(row.workspace_id ? { workspaceId: row.workspace_id } : {}) })),
+      storageRooms: rooms.rows.map(row => ({ roomId: row.room_id, archived: row.archived, ...(row.workspace_id ? { workspaceId: row.workspace_id } : {}),
+        ...(row.landed_head_sha ? { landedHeadSha: row.landed_head_sha } : {}) })),
       rooms: rooms.rows.filter(row => !row.parent_id).map((row) => ({ roomId: row.room_id, archived: row.archived,
         repositoryRevision: row.repository_revision })),
     };

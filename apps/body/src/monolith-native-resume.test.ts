@@ -7,10 +7,10 @@ import type { BodyConfig } from './config.js';
 import { MonolithCornerTurnLoop } from './monolith-corner-turn.js';
 import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
-import { SessionScheduler } from './session-scheduler.js';
+import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
 import type { WarmTranscript } from './warm-transcript.js';
 
-type Loop = { activate(): Promise<string>; discardSession(preserve?: boolean): Promise<void>; warmTranscript: WarmTranscript };
+type Loop = { activate(): Promise<string>; discardSession(preserve?: boolean): Promise<void>; warmTranscript: WarmTranscript; lifecycle(): SessionLifecycle };
 
 it.each([
   ['room', 'codex', 'resume'], ['corner', 'codex', 'resume'],
@@ -74,7 +74,14 @@ it.each([
     const first = await predecessor.activate();
     predecessor.warmTranscript.select(first, rows.slice(0, 1));
     predecessor.warmTranscript.complete(first, ['completed-ask']);
-    await predecessor.discardSession(true);
+    if (surface === 'corner') {
+      const lifecycle = predecessor.lifecycle();
+      const background = vi.spyOn(clients[0]!, 'hasBackgroundTools', 'get');
+      background.mockReturnValue(true);
+      expect(lifecycle.hasBackgroundWork?.()).toBe(true);
+      background.mockReturnValue(false);
+      await lifecycle.suspend();
+    } else await predecessor.discardSession(true);
     if (outcome === 'changed') name = 'New name';
     const successor = make();
     const second = await successor.activate();

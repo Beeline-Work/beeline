@@ -41,7 +41,7 @@ const MACHINE_LINE_PATTERNS: readonly RegExp[] = [
   /^\s*\^+\s*$/,
   /^\s*File "[^"]+", line \d+/,
   // A shell echo of the command itself.
-  /^\s*[$#>]\s+\S/,
+  /^\s*[$#]\s+\S/,
   /^\s*(?:git|npm|npx|yarn|pnpm|node|docker|kubectl|cargo|go|python3?|pip3?)\s+[a-z-]/,
 ];
 

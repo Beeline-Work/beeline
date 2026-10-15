@@ -35,6 +35,37 @@ beforeAll(async () => {
 }, 30_000);
 afterAll(async () => { await service.close(); await db.close(); });
 
+it('finds the last eligible agent message within the exact Room or corner', async () => {
+  const corner = '44444444-4444-4444-8444-444444444444';
+  await db.query(`INSERT INTO rooms(id,workspace_id,name,parent_id) VALUES($1,$2,'Corner',$3)`, [corner, W, R]);
+  const agents = await service.agents(R, H);
+  const add = async (id: string, room: string, author: string, at: number, presentation = 'message', deleted = false) => {
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text,created_at,presentation,deleted_at)
+      VALUES($1,$2,$3,'Activity proof',to_timestamp($4),$5,CASE WHEN $6 THEN now() END)`,
+      [id, room, author, at, presentation, deleted]);
+  };
+  try {
+    expect(await service.lastActiveAgent(R, agents)).toBeUndefined();
+    await add('recent-1', R, A, 100);
+    await add('recent-2', R, B, 200);
+    await add('recent-human', R, H, 300);
+    await add('recent-deleted', R, A, 400, 'message', true);
+    await add('recent-activity', R, A, 500, 'activity');
+    await add('recent-system', R, A, 600, 'system');
+    expect(await service.lastActiveAgent(corner, agents)).toBeUndefined();
+    await add('recent-corner', corner, A, 700);
+    expect(await service.lastActiveAgent(R, agents)).toBe(B);
+    expect(await service.lastActiveAgent(corner, agents)).toBe(A);
+    expect(await service.lastActiveAgent(R, agents.filter(agent => agent.id === A))).toBe(A);
+    expect(await service.lastActiveAgent(R, [])).toBeUndefined();
+    await add('recent-3', R, A, 200);
+    expect(await service.lastActiveAgent(R, agents)).toBe(A);
+  } finally {
+    await db.query(`DELETE FROM messages WHERE id LIKE 'recent-%'`);
+    await db.query(`DELETE FROM rooms WHERE id=$1`, [corner]);
+  }
+});
+
 it('stores one rendition when the voice model repeats a formatted answer as plain text', async () => {
   const answer = 'I’m listening. What were you going to say?';
   await service.recordAnswer(R, A, '**I’m listening.**\nWhat were you going to say?\n\n' + answer);

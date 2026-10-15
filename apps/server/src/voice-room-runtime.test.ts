@@ -169,12 +169,73 @@ function conversationService(humans = 2) {
         onText('First sentence. Second sentence! Third sentence.');
         return { text: 'First sentence. Second sentence! Third sentence.', order: false };
       }) } },
+    lastActiveAgent: vi.fn(async (): Promise<string | undefined> => undefined),
     humanCount: vi.fn(async () => humans), agents: vi.fn(async () => roster), speech: vi.fn(async () => speech),
     access: vi.fn(async () => {}), reviseHuman: vi.fn(async () => {}), recordHuman: vi.fn(async () => 'source'), recordAnswer: vi.fn(async () => {}),
     dispatch: vi.fn(async () => {}), db: { query: vi.fn(async () => ({ rowCount: 1, rows: [] })) }, runtimeClosed: vi.fn(),
   };
   return { service, speech };
 }
+
+it('routes unnamed solo speech to the last active agent despite the initial first-agent selection', async () => {
+  const { service } = conversationService(1);
+  service.lastActiveAgent.mockResolvedValue('goose');
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  try {
+    state.room.emit('data', new TextEncoder().encode(JSON.stringify({ type: 'target', agentId: 'ruby' })),
+      { identity: 'human' }, undefined, 'beeline.voice.v1');
+    await vi.waitFor(() => expect(service.access).toHaveBeenCalled());
+    await runtime.utterance('human', 'What do you think?');
+    expect(service.recordHuman).toHaveBeenCalledWith('call', 'room', 'human', roster[1], 'What do you think?', 'owner');
+    expect(service.config.brain.answer.mock.calls.at(-1)?.[0].id).toBe('goose');
+  } finally { await runtime.close(); }
+});
+
+it('keeps named addresses and deliberate avatar taps ahead of recent solo activity', async () => {
+  const { service } = conversationService(1);
+  service.lastActiveAgent.mockResolvedValue('goose');
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  try {
+    await runtime.utterance('human', 'Ruby, help me');
+    expect(service.config.brain.answer.mock.calls.at(-1)?.[0].id).toBe('ruby');
+    state.room.emit('data', new TextEncoder().encode(JSON.stringify({ type: 'target', agentId: 'ruby', tap: true })),
+      { identity: 'human' }, undefined, 'beeline.voice.v1');
+    await vi.waitFor(() => expect(service.access).toHaveBeenCalled());
+    await runtime.utterance('human', 'Continue please');
+    expect(service.config.brain.answer.mock.calls.at(-1)?.[0].id).toBe('ruby');
+    expect(service.lastActiveAgent).not.toHaveBeenCalled();
+    await runtime.utterance('human', 'And what next?');
+    expect(service.config.brain.answer.mock.calls.at(-1)?.[0].id).toBe('goose');
+  } finally { await runtime.close(); }
+});
+
+it('preserves the first agent and selected target when no agent has been active', async () => {
+  const { service } = conversationService(1);
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  try {
+    await runtime.utterance('human', 'Can you help?');
+    expect(service.config.brain.answer.mock.calls.at(-1)?.[0].id).toBe('ruby');
+    await runtime.utterance('human', 'Goosey help');
+    await runtime.utterance('human', 'Continue please');
+    expect(service.config.brain.answer.mock.calls.at(-1)?.[0].id).toBe('goose');
+    expect(service.lastActiveAgent).toHaveBeenCalledTimes(2);
+  } finally { await runtime.close(); }
+});
+
+it('refreshes recent solo activity each turn and does not use it for multi-human calls', async () => {
+  const { service } = conversationService(1);
+  service.lastActiveAgent.mockResolvedValueOnce('goose').mockResolvedValueOnce('ruby');
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  try {
+    await runtime.utterance('human', 'Can you help?');
+    await runtime.utterance('human', 'What next?');
+    expect(service.config.brain.answer.mock.calls.map(call => call[0].id)).toEqual(['goose', 'ruby']);
+    service.humanCount.mockResolvedValue(2);
+    await runtime.utterance('human', 'Can you help?');
+    expect(service.config.brain.answer).toHaveBeenCalledTimes(2);
+    expect(service.lastActiveAgent).toHaveBeenCalledTimes(2);
+  } finally { await runtime.close(); }
+});
 
 it('switches on an opening name and ignores unnamed speech from either human, including after an avatar tap', async () => {
   const { service } = conversationService();
@@ -421,6 +482,7 @@ function phantomHarness(answer = 'Hey there is the answer.') {
         onText(answer); return { text: answer, order: false };
       }) } },
     access: vi.fn(async () => {}), agents: vi.fn(async () => [agent]),
+    lastActiveAgent: vi.fn(async () => undefined),
     speech: vi.fn(async () => speech), humanCount: vi.fn(async () => 1),
     recordHuman: vi.fn(async (call: string, room: string, human: string, target: typeof agent, text: string, leaseOwner?: string): Promise<string> => {
       const writer = { access: service.access, db: {
@@ -588,6 +650,7 @@ it('Reproduction voice-name-1: switches transcript, reply and voice together and
   const answer = vi.fn(async () => ({ text: '' }));
   const service = { owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret', brain: { answer } },
     access: vi.fn(async () => {}),
+    lastActiveAgent: vi.fn(async () => undefined),
     humanCount: vi.fn(async () => 1), agents: vi.fn(async () => agents), recordHuman, recordAnswer: vi.fn(async () => {}),
     db: { query: vi.fn(async () => ({ rowCount: 1, rows: [] })) }, runtimeClosed: vi.fn() } as unknown as VoiceService;
   const runtime = await VoiceRoomRuntime.connect(service, 'call', 'room');

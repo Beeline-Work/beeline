@@ -87,6 +87,16 @@ export class VoiceService {
     ).filter((a) => allowed.has(a.id));
   }
 
+  /** Only current, addressable agents' committed messages in this exact Room/corner count. */
+  async lastActiveAgent(roomId: string, agents: readonly VoiceAgent[]): Promise<string | undefined> {
+    if (!agents.length) return undefined;
+    const result = await this.db.query<{ author_id: string }>(
+      `SELECT author_id FROM messages WHERE room_id=$1 AND author_id=ANY($2::text[])
+       AND presentation='message' AND deleted_at IS NULL ORDER BY created_at DESC,id DESC LIMIT 1`,
+      [roomId, agents.map(agent => agent.id)]);
+    return result.rows[0]?.author_id;
+  }
+
   async speech(_roomId?: string): Promise<VoiceSpeech> {
     const speech = this.config.speech;
     if (!speech) throw new Error('Aura 2 is not configured');

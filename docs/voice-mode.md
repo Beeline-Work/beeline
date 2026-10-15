@@ -22,7 +22,10 @@ Say an agent's handle or display name anywhere in the utterance to address it;
 matching ignores case and respects word boundaries. Tapping its avatar still
 sets the current target. With two or more humans in the call, every utterance
 must explicitly name an agent to get a reply, including after an avatar tap.
-With exactly one human, unnamed speech follows the current agent.
+With exactly one human, unnamed speech addresses the eligible agent who most
+recently posted a message in that Room or corner. An opening agent name or an
+explicit avatar tap takes priority. If no eligible agent has posted there, the
+current selection (initially the first listed agent) remains the fallback.
 
 Playback speaks the full reply, streaming each clause and the remaining tail.
 Noise-only Flux starts cannot interrupt it: barge-in waits for recognized speech

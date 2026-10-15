@@ -37,6 +37,10 @@ record_asset() {
 }
 if [ "$1" != release ]; then
   fail_or_pass "$GHR_FAKE_API_FAILURES" || exit 1
+  if [[ "$2" == */commits/v* ]] && [ "\${GHR_FAKE_TAGLESS:-}" = true ]; then
+    echo 'HTTP 422: No commit found for SHA' >&2
+    exit 1
+  fi
   [ -z "\${GHR_FAKE_TAG_SHA:-}" ] || printf '%s\\n' "$GHR_FAKE_TAG_SHA"
   exit 0
 fi
@@ -64,6 +68,12 @@ case "$sub" in
     fi
     if [[ " $* " == *" --json isDraft "* ]]; then
       [ -f "$GHR_FAKE_DRAFT" ] && echo true || echo false
+    elif [[ " $* " == *" --json isDraft,targetCommitish "* ]]; then
+      if [ -f "$GHR_FAKE_DRAFT" ]; then
+        printf 'true\\t%s\\n' "\${GHR_FAKE_TARGET:-}"
+      else
+        printf 'false\\tmain\\n'
+      fi
     else
       cat "$GHR_FAKE_ASSETS" 2>/dev/null
     fi
@@ -151,6 +161,8 @@ function runHelper(t, body, presets = {}) {
   env.A = assetA;
   env.B = assetB;
   env.NOTES = notes;
+  if (presets.tagless) env.GHR_FAKE_TAGLESS = 'true';
+  if (presets.target) env.GHR_FAKE_TARGET = presets.target;
   if (presets.tagSha) env.GHR_FAKE_TAG_SHA = presets.tagSha;
   if (presets.releaseExists) writeFileSync(paths.release, '');
   if (presets.draftExists) writeFileSync(paths.draft, '');
@@ -387,4 +399,65 @@ test('initialize preflights a draft release before dependent shipping jobs', () 
   assert.ok(initialize.indexOf('Preflight the release record') < initialize.indexOf('name: unified-release-plan-'));
   const releaseResult = WORKFLOW.match(/^  release_result:[\s\S]*?^  retry:/m)?.[0];
   assert.doesNotMatch(releaseResult, /ghr_create/);
+});
+
+for (const same of [true, false]) {
+  test(`Reproduction tagless-draft: ${same ? 'reuse same SHA' : 'reject different SHA with recovery'}`, (t) => {
+    const target = (same ? 'a' : 'b').repeat(40);
+    const { result, calls } = runHelper(t, 'ghr_requested_version_guard v0.1.64 "$SHA"', {
+      releaseExists: true, draftExists: true, tagless: true, target,
+    });
+    if (same) assert.equal(result.status, 0, result.stderr);
+    else {
+      assert.notEqual(result.status, 0);
+      assert.match(result.stderr, /draft v0\.1\.64/);
+      assert.ok(result.stderr.includes(target));
+      assert.match(result.stderr, /rerun.*recovery/);
+      assert.match(result.stderr, /delete.*only if nothing shipped/);
+    }
+    assert.ok(!calls().some((line) => /^release (create|edit|upload|delete)/.test(line)));
+  });
+}
+
+for (const fixture of [
+  { name: 'published release with missing tag', target: 'a'.repeat(40) },
+  { name: 'draft with a moving branch target', draftExists: true, target: 'main' },
+  { name: 'draft with an empty target', draftExists: true },
+  { name: 'draft during an API outage', draftExists: true, target: 'a'.repeat(40), apiFailures: 99 },
+]) {
+  test(`ghr_requested_version_guard: fails closed for ${fixture.name}`, (t) => {
+    const { result } = runHelper(t, 'ghr_requested_version_guard v0.1.64 "$SHA"', {
+      releaseExists: true, tagless: true, ...fixture,
+    });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /tag commit could not be resolved/);
+  });
+}
+
+test('ghr_requested_version_guard: existing draft tag wins over its target', (t) => {
+  const { result } = runHelper(t, 'ghr_requested_version_guard v0.1.64 "$SHA"', {
+    releaseExists: true, draftExists: true, target: 'a'.repeat(40), tagSha: 'b'.repeat(40),
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /whose tag points at b{40}/);
+});
+
+for (const same of [true, false]) {
+  test(`Reproduction tagless-draft: workflow preflight ${same ? 'reuses' : 'rejects'} existing draft`, (t) => {
+    const preflight = WORKFLOW.match(/- name: Preflight the release record before any component ships[\s\S]*?run: \|\n([\s\S]*?)(?=      - uses:)/)?.[1];
+    assert.ok(preflight);
+    const body = preflight.replace(/^          /gm, '').replace('. scripts/gh-release-retry.sh', `. '${HELPER}'`);
+    const { result, calls } = runHelper(t, `RELEASE_VERSION=v0.1.64\nRELEASE_SHA="$SHA"\n${body}`, {
+      releaseExists: true, draftExists: true, tagless: true, target: (same ? 'a' : 'b').repeat(40),
+    });
+    assert.equal(result.status, same ? 0 : 1, result.stderr);
+    assert.ok(!calls().some((line) => /^release (create|edit|upload|delete)/.test(line)));
+  });
+}
+
+test('ghr_requested_version_guard: transient commit lookup errors do not contaminate the SHA', (t) => {
+  const { result } = runHelper(t, 'ghr_requested_version_guard v0.1.64 "$SHA"', {
+    releaseExists: true, tagSha: 'a'.repeat(40), apiFailures: 2,
+  });
+  assert.equal(result.status, 0, result.stderr);
 });

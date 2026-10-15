@@ -1,0 +1,67 @@
+
+ RUN  v3.2.7 /home/lunchbox/.local/state/beeline/corners/87c41f28-e239-4d85-8629-2fd9555be447/apps/mobile
+
+stderr | sources/app/(app)/beeline/chat/offline-page.render.test.tsx > page-offline-1: renders the cached transcript without an offline notice after a failed refresh
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | sources/app/(app)/beeline/chat/offline-page.render.test.tsx > page-offline-1: failed initial load renders the production error screen and Retry recovers the transcript
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+ ✓ sources/app/(app)/beeline/chat/offline-page.render.test.tsx (2 tests) 6398ms
+   ✓ page-offline-1: renders the cached transcript without an offline notice after a failed refresh  5993ms
+   ✓ page-offline-1: failed initial load renders the production error screen and Retry recovers the transcript  398ms
+stdout | sources/test/corner-open-tray.browser.test.ts > renders corner-open notices, a Corner App failure and tray approval rows in both themes
+Demonstrated corners-pending obsidian: {"room-corners-add-busy":1,"corner-open-row-pending":"Opening corner…Waiting for server · 5s","corner-open-pending":null,"corner-open-row-failed":null,"corner-open-failed":null,"corner-app-screen":null,"tray-approval-grant":null,"tray-approval-squire":null,"tray-approval-choice":null,"mono":[],"overflow":false,"console":["warn: props.pointerEvents is deprecated. Use style.pointerEvents"]}
+
+stdout | sources/test/corner-open-tray.browser.test.ts > renders corner-open notices, a Corner App failure and tray approval rows in both themes
+Demonstrated corners-failed obsidian: {"room-corners-add-busy":0,"corner-open-row-pending":null,"corner-open-pending":null,"corner-open-row-failed":"Corner not openedNo response from server after 15s","corner-open-failed":"Couldn't reach BeelineCheck your connection, then retry.Retry","corner-app-screen":null,"tray-approval-grant":null,"tray-approval-squire":null,"tray-approval-choice":null,"mono":[],"overflow":false,"console":["warn: props.pointerEvents is deprecated. Use style.pointerEvents"]}
+
+stdout | sources/test/corner-open-tray.browser.test.ts > renders corner-open notices, a Corner App failure and tray approval rows in both themes
+Demonstrated room-list-pending obsidian: {"room-corners-add-busy":0,"corner-open-row-pending":null,"corner-open-pending":"Opening corner…Still opening…","corner-open-row-failed":null,"corner-open-failed":null,"corner-app-screen":null,"tray-approval-grant":null,"tray-approval-squire":null,"tray-approval-choice":null,"mono":[],"overflow":false,"console":["warn: props.pointerEvents is deprecated. Use style.pointerEvents"]}
+
+stdout | sources/test/corner-open-tray.browser.test.ts > renders corner-open notices, a Corner App failure and tray approval rows in both themes
+Demonstrated corner-app-error obsidian: {"room-corners-add-busy":0,"corner-open-row-pending":null,"corner-open-pending":null,"corner-open-row-failed":null,"corner-open-failed":null,"corner-app-screen":"Corner AppCould not load this app. Couldn't reach Beeline.","tray-approval-grant":null,"tray-approval-squire":null,"tray-approval-choice":null,"mono":[],"overflow":false,"console":[]}
+
+stdout | sources/test/corner-open-tray.browser.test.ts > renders corner-open notices, a Corner App failure and tray approval rows in both themes
+Demonstrated tray obsidian: {"room-corners-add-busy":0,"corner-open-row-pending":null,"corner-open-pending":null,"corner-open-row-failed":null,"corner-open-failed":null,"corner-app-screen":null,"tray-approval-grant":"BBC asks to run2dgit push --force-with-leasePush ledger fixes to feat/ledger.for Johnny · experiments/sec-filing-desk","tray-approval-squire":"Ruby needs your passkey for40mReveal GROQ_API_KEYWrite it into the Fly secret for push-gateway.@Trusty Squire · expires in 20m","tray-approval-choice":"Candy asks you to choose1hShip the OTA tonight?Ship now · Wait for #2238 voice fixbeeline/release-corner · closes in 6h","mono":["git push --force-with-lease","Reveal GROQ_API_KEY"],"overflow":false,"console":[]}
+
+stdout | sources/test/corner-open-tray.browser.test.ts > renders corner-open notices, a Corner App failure and tray approval rows in both themes
+Demonstrated corners-pending bone: {"room-corners-add-busy":1,"corner-open-row-pending":"Opening corner…Waiting for server · 5s","corner-open-pending":null,"corner-open-row-failed":null,"corner-open-failed":null,"corner-app-screen":null,"tray-approval-grant":null,"tray-approval-squire":null,"tray-approval-choice":null,"mono":[],"overflow":false,"console":["warn: props.pointerEvents is deprecated. Use style.pointerEvents"]}
+
+stdout | sources/test/corner-open-tray.browser.test.ts > renders corner-open notices, a Corner App failure and tray approval rows in both themes
+Demonstrated corners-failed bone: {"room-corners-add-busy":0,"corner-open-row-pending":null,"corner-open-pending":null,"corner-open-row-failed":"Corner not openedNo response from server after 15s","corner-open-failed":"Couldn't reach BeelineCheck your connection, then retry.Retry","corner-app-screen":null,"tray-approval-grant":null,"tray-approval-squire":null,"tray-approval-choice":null,"mono":[],"overflow":false,"console":["warn: props.pointerEvents is deprecated. Use style.pointerEvents"]}
+
+stdout | sources/test/corner-open-tray.browser.test.ts > renders corner-open notices, a Corner App failure and tray approval rows in both themes
+Demonstrated room-list-pending bone: {"room-corners-add-busy":0,"corner-open-row-pending":null,"corner-open-pending":"Opening corner…Still opening…","corner-open-row-failed":null,"corner-open-failed":null,"corner-app-screen":null,"tray-approval-grant":null,"tray-approval-squire":null,"tray-approval-choice":null,"mono":[],"overflow":false,"console":["warn: props.pointerEvents is deprecated. Use style.pointerEvents"]}
+
+stdout | sources/test/corner-open-tray.browser.test.ts > renders corner-open notices, a Corner App failure and tray approval rows in both themes
+Demonstrated corner-app-error bone: {"room-corners-add-busy":0,"corner-open-row-pending":null,"corner-open-pending":null,"corner-open-row-failed":null,"corner-open-failed":null,"corner-app-screen":"Corner AppCould not load this app. Couldn't reach Beeline.","tray-approval-grant":null,"tray-approval-squire":null,"tray-approval-choice":null,"mono":[],"overflow":false,"console":[]}
+
+stdout | sources/test/corner-open-tray.browser.test.ts > renders corner-open notices, a Corner App failure and tray approval rows in both themes
+Demonstrated tray bone: {"room-corners-add-busy":0,"corner-open-row-pending":null,"corner-open-pending":null,"corner-open-row-failed":null,"corner-open-failed":null,"corner-app-screen":null,"tray-approval-grant":"BBC asks to run2dgit push --force-with-leasePush ledger fixes to feat/ledger.for Johnny · experiments/sec-filing-desk","tray-approval-squire":"Ruby needs your passkey for40mReveal GROQ_API_KEYWrite it into the Fly secret for push-gateway.@Trusty Squire · expires in 20m","tray-approval-choice":"Candy asks you to choose1hShip the OTA tonight?Ship now · Wait for #2238 voice fixbeeline/release-corner · closes in 6h","mono":["git push --force-with-lease","Reveal GROQ_API_KEY"],"overflow":false,"console":[]}
+
+ ✓ sources/test/corner-open-tray.browser.test.ts (1 test) 10499ms
+   ✓ renders corner-open notices, a Corner App failure and tray approval rows in both themes  10498ms
+stdout | sources/app/(app)/beeline/chat/useRoomSurfaceSession.test.ts > useRoomSurfaceSession > uses the push read already started before route mount, then covers its watch gap
+[loadAppConfig] Loaded from Constants.expoConfig: []
+[loadAppConfig] Final merged config: {}
+
+stdout | sources/app/(app)/beeline/chat/useRoomSurfaceSession.test.ts > useRoomSurfaceSession > uses the push read already started before route mount, then covers its watch gap
+[loadAppConfig] Loaded from Constants.expoConfig: []
+[loadAppConfig] Final merged config: {}
+
+ ✓ sources/app/(app)/beeline/chat/useRoomSurfaceSession.test.ts (55 tests) 2149ms
+   ✓ useRoomSurfaceSession > re-arms viewport advancement on a fresh visit to the same Room  1271ms
+   ✓ useRoomSurfaceSession > does not capture or advance unread state for a corner  436ms
+ ✓ sources/buzz/button-color.guard.test.ts (2 tests) 690ms
+   ✓ button palette boundary > forbids brass fills on button-like controls in native and web source  688ms
+ ✓ sources/buzz/design-lint.design.test.ts (9 tests) 445ms
+   ✓ design lint > holds every module to its baseline, and the baseline to the scan  437ms
+ ✓ sources/buzz/calm-lint.design.test.ts (8 tests) 101ms
+ ✓ sources/app/(app)/beeline/chat/room-open.design.test.ts (6 tests) 4ms
+
+ Test Files  7 passed (7)
+      Tests  83 passed (83)
+   Start at  09:47:28
+   Duration  25.45s (transform 4.92s, setup 286ms, collect 2.95s, tests 20.29s, environment 1ms, prepare 430ms)
+

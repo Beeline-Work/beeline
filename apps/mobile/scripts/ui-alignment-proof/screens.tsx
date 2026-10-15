@@ -11,7 +11,6 @@ import { CreatePollSheet } from '@/components/buzz/CreatePollSheet';
 import { FacePickerSheet } from '@/components/buzz/FacePickerSheet';
 import { DirectMessagePickerSheet } from '@/components/buzz/DirectMessagePickerSheet';
 import { NewRoomDialog } from '@/components/buzz/NewRoomDialog';
-import { RoomSavedCopyNotice } from '@/components/buzz/RoomSavedCopyNotice';
 import { MessageSearchResults } from '@/components/buzz/MessageSearchResults';
 import { HullDialog } from '@/components/buzz/HullDialog';
 import { ServiceMark } from '@/components/buzz/ServiceMark';

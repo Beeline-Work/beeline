@@ -28,7 +28,6 @@ const decorativeAccentFills = new Set([
   'components/buzz/RoomUnreadControls.tsx:badge',
   'components/buzz/RoomListToolbar.tsx:selectedRule',
   // The offline band under a Room header; its Retry is text, not a plate.
-  'components/buzz/RoomSavedCopyNotice.tsx:band',
   'components/buzz/RoomListToolbar.tsx:needsCount',
   'components/buzz/StateDot.tsx:pulse',
   'components/buzz/TranscriptCard.tsx:initialValues',

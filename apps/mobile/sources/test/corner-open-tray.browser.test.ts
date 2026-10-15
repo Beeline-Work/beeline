@@ -4,7 +4,7 @@ import { expect, it } from 'vitest';
 import { runBrowserProof, webProofShims } from './browserProof';
 
 /**
- * The shipped corner-open notices, offline band, Corner App failure and Task
+ * The shipped corner-open notices, Corner App failure and Task
  * Tray approval rows, rendered in Chrome at phone width in both themes and
  * read back from the DOM. With BEELINE_DESIGN_PROOF_DIR set each frame is
  * also saved as a screenshot for comparison with the approved mocks.
@@ -23,10 +23,6 @@ const FRAMES = {
   'room-list-pending': {
     'corner-open-pending': 'Opening corner…Still opening…',
   },
-  'room-offline': {
-    'room-saved-copy-notice':
-      'Offline — showing the last saved response. TypeError: Network request failedRetry',
-  },
   'corner-app-error': {
     'corner-app-screen': "Corner AppCould not load this app. Couldn't reach Beeline.",
   },
@@ -37,7 +33,7 @@ const FRAMES = {
   },
 } as const;
 
-it('renders corner-open notices, the offline band, a Corner App failure and tray approval rows in both themes', async () => {
+it('renders corner-open notices, a Corner App failure and tray approval rows in both themes', async () => {
   const mobile = process.cwd();
   const directory = await mkdtemp(path.join(mobile, 'sources/test/corner-open-tray-'));
   try {
@@ -50,7 +46,6 @@ it('renders corner-open notices, the offline band, a Corner App failure and tray
       import { useUnistyles } from 'react-native-unistyles';
       import { RoomCornersHeader } from '@/components/buzz/RoomCornersHeader';
       import { CornerOpenRow, CornerOpenToast } from '@/components/buzz/CornerOpenToast';
-      import { RoomSavedCopyNotice } from '@/components/buzz/RoomSavedCopyNotice';
       import { CornerAppScreen } from '@/components/buzz/CornerAppScreen';
       import { NeedsYouCell } from '@/components/buzz/NeedsYouCell';
       import { cornerOpenStarted, cornerOpenTappedAgain, cornerOpenUnreachable } from '@/buzz/corner-open-status';
@@ -102,11 +97,6 @@ it('renders corner-open notices, the offline band, a Corner App failure and tray
             {existing}
           </>}
           {frame === 'room-list-pending' && <>{existing}{existing}</>}
-          {frame === 'room-offline' && <>
-            <View style={{padding: 16, borderBottomWidth: 1, borderColor: theme.buzz.border}}><Text style={ink}>release-corner</Text></View>
-            <RoomSavedCopyNotice message="Offline — showing the last saved response. TypeError: Network request failed" onRetry={() => undefined} />
-            <View style={{padding: 16}}><Text style={quiet}>Candy · 20:48</Text><Text style={ink}>OTA promoted to production channel.</Text></View>
-          </>}
           {frame === 'corner-app-error' && <CornerAppScreen onBack={() => undefined}
             unavailableMessage="Could not load this app. Couldn't reach Beeline." />}
           {frame === 'tray' && tray.map(item => <View key={item.messageId} testID={'tray-approval-' + item.messageId}>

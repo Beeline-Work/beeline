@@ -1,0 +1,51 @@
+
+ RUN  v3.2.7 /home/lunchbox/.local/state/beeline/corners/87c41f28-e239-4d85-8629-2fd9555be447/apps/mobile
+
+stderr | sources/app/(app)/beeline/chat/offline-page.render.test.tsx > page-offline-1: renders the cached transcript without an offline notice after a failed refresh
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | sources/app/(app)/beeline/chat/offline-page.render.test.tsx > page-offline-1: failed initial load renders the production error screen and Retry recovers the transcript
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+ ❯ sources/app/(app)/beeline/chat/offline-page.render.test.tsx (2 tests | 1 failed) 6313ms
+   × page-offline-1: renders the cached transcript without an offline notice after a failed refresh 5998ms
+     → expected '#offline-notice-proof\n#\nOffline — s…' not to match /Offline|last saved response/
+   ✓ page-offline-1: failed initial load renders the production error screen and Retry recovers the transcript  313ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  sources/app/(app)/beeline/chat/offline-page.render.test.tsx > page-offline-1: renders the cached transcript without an offline notice after a failed refresh
+AssertionError: expected '#offline-notice-proof\n#\nOffline — s…' not to match /Offline|last saved response/
+
+- Expected: 
+/Offline|last saved response/
+
++ Received: 
+"#offline-notice-proof
+#
+Offline — showing the last saved response. TypeError: Network request failed
+Retry
+WED 3 JUL
+Casey
+3 JUL 05:46
+
+The saved conversation is still here.
+Message
+"
+
+ ❯ sources/app/(app)/beeline/chat/offline-page.render.test.tsx:75:30
+     73|   await settle();
+     74|   expect(renderedText()).toContain('The saved conversation is still he…
+     75|   expect(renderedText()).not.toMatch(/Offline|last saved response/);
+       |                              ^
+     76|   expect(renderer.root.findAllByProps({ testID: 'room-saved-copy-notic…
+     77| });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 1 passed (2)
+   Start at  09:45:03
+   Duration  9.04s (transform 4.90s, setup 565ms, collect 1.71s, tests 6.31s, environment 0ms, prepare 107ms)
+

@@ -13,7 +13,9 @@ it('rechecks eligibility when a retained session moves from report to human inpu
   root = await mkdtemp(join(tmpdir(), 'silent-wake-'));
   const context = new CommandExecutionContext(root);
   vi.stubEnv('BEELINE_TURN_CONTEXT_FILE', context.path);
-  const fetch = vi.fn(); vi.stubGlobal('fetch', fetch);
+  vi.stubEnv('BEELINE_DAEMON_BASE_URL', 'http://localhost');
+  vi.stubEnv('BEELINE_DAEMON_TOKEN', 'test-token');
+  const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }); vi.stubGlobal('fetch', fetch);
   const command = { roomId: 'room', turnRequestId: 'turn', rootCommandId: 'root', reason: 'report' } as AgentCommand;
   await context.enter(command);
   context.notePromptSections(['turn.task']);
@@ -21,6 +23,8 @@ it('rechecks eligibility when a retained session moves from report to human inpu
   for (const reason of ['report', 'order', 'watched_corner', 'schedule', 'subscribed_event', 'system']) {
     await context.enter({ ...command, reason });
     expect(JSON.parse(await callAgentTool('no_reply_needed', {}, 'silent-1'))).toEqual({ acknowledged: true });
+    await expect(callAgentTool('no_reply_needed', {}, 'silent-again')).rejects.toThrow('turn has ended');
+    await expect(callAgentTool('read', { address: 'room' }, 'read-after')).rejects.toThrow('turn has ended');
   }
   for (const reason of ['human_tag', 'direct_message', 'corner_brief_revision', 'unknown']) {
     await context.enter({ ...command, reason });
@@ -28,7 +32,11 @@ it('rechecks eligibility when a retained session moves from report to human inpu
   }
   await context.leave();
   await expect(callAgentTool('no_reply_needed', {}, 'silent-3')).rejects.toThrow('no active server command');
-  expect(fetch).not.toHaveBeenCalled();
+  expect(fetch).toHaveBeenCalledTimes(6);
+  for (const [url, request] of fetch.mock.calls) {
+    expect(String(url)).toContain('/postAgentTurnReceipt');
+    expect(JSON.parse(request.body)).toMatchObject({ status: 'complete', completionKind: 'no-reply', requestId: 'turn' });
+  }
 });
 it('declares the exact Claude terminal tool in every new session, retaining existing names and isolated settings', () => {
   const meta = sessionToolScopeMeta('claude-agent-acp', 'other,other') as { claudeCode: { options: { env: Record<string, string>; settings: unknown } } };

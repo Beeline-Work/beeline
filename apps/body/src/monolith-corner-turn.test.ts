@@ -1463,6 +1463,7 @@ describe('corner close-request delivery', () => {
     configOverrides?: Partial<BodyConfig>,
     fetchImpl?: typeof fetch,
     sourceOverrides?: Partial<InboxItem>,
+    queuedWake = false,
   ) {
     const root = await mkdtemp(join(tmpdir(), 'beeline-corner-wake-'));
     roots.push(root);
@@ -1497,6 +1498,7 @@ describe('corner close-request delivery', () => {
     };
     let loop: MonolithCornerTurnLoop;
     let inboxSent = false;
+    let terminalReceipts = 0;
     const api = {
       baseUrl: 'https://server.example',
       execute: async (name: string, input: Record<string, unknown>) => {
@@ -1514,6 +1516,8 @@ describe('corner close-request delivery', () => {
                 attachments: [],
                 ...sourceOverrides,
               },
+              ...(queuedWake ? [{ id: 'queued-wake', authorId: '22'.repeat(32), createdAt: 2,
+                type: 'message' as const, body: 'Next wake', attachments: [] }] : []),
             ],
             cursor: 'human-msg',
           };
@@ -1522,7 +1526,8 @@ describe('corner close-request delivery', () => {
         // The server closes a corner through the live socket. Most mechanics
         // fixtures settle one command and then receive that push; the tests
         // with an explicit live socket drive their own close/reconnect events.
-        if (!liveSubscribe && name === 'postAgentTurnReceipt' && input.status !== 'working')
+        if (!liveSubscribe && name === 'postAgentTurnReceipt' && input.status !== 'working' &&
+            ++terminalReceipts === (queuedWake ? 2 : 1))
           queueMicrotask(() => loop.requestClose());
         return result;
       },
@@ -1636,6 +1641,38 @@ describe('corner close-request delivery', () => {
     expect(receipts.some(([, input]) => (input as { completionKind?: string })?.completionKind === 'no-reply')).toBe(false);
     expect(execute.mock.calls.some(([name]) => name === 'postRoomMessage')).toBe(false);
     console.info('Demonstrated ST-silent-corner: one empty completion, no message, complete receipt');
+  });
+
+  it.each(['no-reply', 'repeated-tool-call'])('Reproduction TL-corner-terminal: %s completes silently', async (stopReason) => {
+    const execute = vi.fn(async (name: string, _input: Record<string, unknown>) => {
+      if (name === 'getAgentConfiguration') return { commands: [], yoloMode: false };
+      if (name === 'getWorkspaceRoster') return { members: [] };
+      if (name === 'getCornerRestoreState') return { cornerId: 'corner-id', closeRequested: false,
+        brief: { id: 'corner-id', revision: 1,
+          spec: '## Intent\nBuild\n## User stories\n- user\n## Acceptance criteria\n- done\n## Non-goals\n- none\n## Risks\n- none\n## References\n- none',
+          authorId: TEST_AGENT_PUBLIC_KEY, sourceRoomId: 'room-id', attachments: [] } };
+      if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+      if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
+      return { id: 'write', createdAt: 1 };
+    });
+    const fixture = await cornerHarness(execute, 5, undefined, undefined, undefined, undefined, undefined, true);
+    vi.mocked(fixture.acp.sessionPrompt).mockResolvedValue({ stopReason,
+      updates: [{ sessionId: 'corner-session', update: { sessionUpdate: 'usage_update' } }],
+      agentText: '', toolCalls: [] });
+    const stopped = vi.spyOn(fixture.acp, 'stop').mockResolvedValue(undefined);
+    await writeFile(join(fixture.root, 'unfinished.txt'), 'pending repository work');
+    await fixture.loop.run();
+    await fixture.scheduler.dispose();
+    expect(fixture.acp.sessionPrompt).toHaveBeenCalledTimes(2);
+    expect(fixture.acp.sessionNew).toHaveBeenCalledTimes(2);
+    expect(stopped).toHaveBeenCalledTimes(2);
+    const receipts = execute.mock.calls.filter(([name]) => name === 'postAgentTurnReceipt');
+    expect(receipts.filter(([, input]) => input.status === 'complete').map(([, input]) => input.requestId))
+      .toEqual(['human-msg', 'queued-wake']);
+    expect(receipts).toContainEqual(['postAgentTurnReceipt', expect.objectContaining({status: 'complete'})]);
+    expect(receipts.some(([, input]) => (input as { completionKind?: string })?.completionKind === 'no-reply')).toBe(false);
+    expect(execute.mock.calls.some(([name]) => name === 'postRoomMessage')).toBe(false);
+    console.info(`Demonstrated TL-corner-terminal: ${stopReason}, two wakes completed, fresh session per wake, no message, complete receipts`);
   });
 
   it.each(['repository', 'scratch', 'android-operator', 'goose-unpinned', 'capacity-fallback', 'registry-fallback'])('activates a shared-layout %s corner through the real turn loop', async (shape) => {

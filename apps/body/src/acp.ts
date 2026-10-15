@@ -15,6 +15,7 @@
  */
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { EventEmitter } from 'node:events';
+import { watch, readFileSync, writeFileSync, type FSWatcher } from 'node:fs';
 import { withAdapterInstallLock } from './adapter-install-lock.js';
 import { AcpResourceScope } from './acp-resource-scope.js';
 import type { SessionMode } from './config.js';
@@ -1214,12 +1215,66 @@ export class AcpClient extends EventEmitter {
       typeof text === 'string' ? Buffer.byteLength(text, 'utf8') : undefined;
     const updates: SessionUpdate[] = [];
     let promptRunId: string | undefined;
+    let terminalReason: string | undefined;
+    let endTurn!: (result: { stopReason: string }) => void;
+    const terminal = new Promise<{ stopReason: string }>(resolve => { endTurn = resolve; });
+    const contextPath = this.agentEnv.BEELINE_TURN_CONTEXT_FILE;
+    const stop = (reason: string) => {
+      if (terminalReason) return;
+      terminalReason = reason;
+      this.terminalSessions.add(sessionId);
+      if (contextPath) {
+        try {
+          const context = JSON.parse(readFileSync(contextPath, 'utf8'));
+          writeFileSync(contextPath, JSON.stringify({ ...context, terminalReason: reason }), { mode: 0o600 });
+        } catch (error) {
+          this.emit('terminal/context-error', error);
+        }
+      }
+      endTurn({ stopReason: reason });
+      this.sessionCancel(sessionId);
+    };
+    const checkTerminalContext = () => {
+      if (!contextPath || terminalReason) return;
+      try {
+        const context = JSON.parse(readFileSync(contextPath, 'utf8'));
+        if (context.terminalReason) stop(context.terminalReason);
+      } catch { /* A context rewrite can briefly be empty. */ }
+    };
+    let watcher: FSWatcher | undefined;
+    if (contextPath) watcher = watch(contextPath, checkTerminalContext);
+    const stable = (value: unknown): unknown => {
+      if (Array.isArray(value)) return value.map(stable);
+      if (value && typeof value === 'object') return Object.fromEntries(
+        Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([key, item]) => [key, stable(item)]),
+      );
+      return value;
+    };
     const onUpdate = (u: SessionUpdate) => {
-      if (u.sessionId !== sessionId) return;
+      if (u.sessionId !== sessionId || terminalReason) return;
+      checkTerminalContext();
+      if (terminalReason) return;
       updates.push(u);
       promptRunId ??= this.activeRunIdFromUpdate(u.update);
       onActivity?.(agentStreamSnapshot(updates, this.agentLabel));
-      onToolCalls?.(toolCallEntries(updates));
+      const calls = toolCallEntries(updates);
+      onToolCalls?.(calls);
+      let previous: string | undefined;
+      let repeats = 0;
+      for (const call of calls) {
+        if (!call.title || (call.rawInput === undefined && !['completed', 'failed'].includes(call.status ?? ''))) {
+          previous = undefined;
+          repeats = 0;
+          continue;
+        }
+        const key = JSON.stringify([call.title, stable(call.rawInput ?? {})]);
+        repeats = key === previous ? repeats + 1 : 1;
+        previous = key;
+        if (repeats === 5) {
+          stop('repeated-tool-call');
+          return;
+        }
+      }
       if (onChunk) {
         const delta = agentMessageChunkText(u.update);
         if (delta) {
@@ -1232,7 +1287,7 @@ export class AcpClient extends EventEmitter {
     this.activePromptSessions.add(sessionId);
 
     try {
-      const result = (await this.request(
+      const result = (await Promise.race([terminal, this.request(
         'session/prompt',
         {
           sessionId,
@@ -1241,19 +1296,28 @@ export class AcpClient extends EventEmitter {
         timeoutMs,
         true,
         promptPayloadNote(text),
-      )) as { stopReason?: string };
+      )])) as { stopReason?: string };
 
-      const agentText = finalAgentMessageText(updates, this.agentLabel);
+      checkTerminalContext();
+      const agentText = terminalReason ? '' : finalAgentMessageText(updates, this.agentLabel);
 
       const toolCalls = toolCallEntries(updates);
 
       return {
-        stopReason: result?.stopReason ?? 'end_turn',
+        stopReason: terminalReason ?? result?.stopReason ?? 'end_turn',
         updates,
         agentText,
         toolCalls,
       };
     } finally {
+      watcher?.close();
+      for (const [id, pending] of this.pending) {
+        if (terminalReason && pending.sessionId === sessionId) {
+          this.clearTimer(pending);
+          this.pending.delete(id);
+          pending.resolve({ stopReason: terminalReason });
+        }
+      }
       this.activePromptSessions.delete(sessionId);
       if (promptRunId && this.activeRunIds.get(sessionId) === promptRunId) {
         this.activeRunIds.delete(sessionId);
@@ -1516,8 +1580,14 @@ export class AcpClient extends EventEmitter {
     });
   }
 
+  private readonly terminalSessions = new Set<string>();
+
   private async handlePermission(id: unknown, params: unknown): Promise<void> {
     const p = (params ?? {}) as AcpPermissionRequest;
+    if (p.sessionId && this.terminalSessions.has(p.sessionId)) {
+      this.write({ jsonrpc: '2.0', id, result: { outcome: { outcome: 'cancelled' } } });
+      return;
+    }
     const toolCallId = p.toolCall?.toolCallId;
     const metadataKey = p.sessionId && toolCallId ? `${p.sessionId}\0${toolCallId}` : undefined;
     const tracked = metadataKey ? this.toolCallMetadata.get(metadataKey) : undefined;
@@ -1538,6 +1608,7 @@ export class AcpClient extends EventEmitter {
         decision = 'reject';
       }
     }
+    if (p.sessionId && this.terminalSessions.has(p.sessionId)) decision = 'reject';
     if (decision === 'allow') {
       const allow =
         p?.options?.find((o) => o.kind === 'allow_once' || o.kind === 'allow_always') ??

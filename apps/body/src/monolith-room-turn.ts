@@ -1389,6 +1389,7 @@ export class MonolithRoomTurnLoop {
 
   /** Why a turn carried no answer text, or undefined when it did. */
   private async explainEmpty(result: PromptResult): Promise<EmptyTurnExplanation | undefined> {
+    if (['no-reply', 'repeated-tool-call'].includes(result.stopReason)) return undefined;
     if (durableReplyText(result.agentText)) return undefined;
     // Passive browser updates owe no answer and must not start provider
     // retries. Their receipt acknowledges delivery, even for a textless turn.
@@ -1753,6 +1754,7 @@ export class MonolithRoomTurnLoop {
                   }
                   this.turnMetrics = await this.captureTurnMetrics();
                   await this.writeBackClaudeLogin();
+                  if (result && ['no-reply', 'repeated-tool-call'].includes(result.stopReason)) break;
                   const settledSteerTail = active.steerTail;
                   await settledSteerTail;
                   if (settledSteerTail !== active.steerTail) continue;
@@ -1808,6 +1810,11 @@ export class MonolithRoomTurnLoop {
               };
               let result = await runPrompt();
               trace.promptSettled();
+              if (['no-reply', 'repeated-tool-call'].includes(result.stopReason)) {
+                stream.close();
+                await this.discardSession();
+                return;
+              }
               // An instantly approved device grant cannot reach the running
               // sandbox: replace the session and continue this same turn there.
               const grantedDevice = approvedDeviceGrant(result.toolCalls);
@@ -1863,6 +1870,11 @@ export class MonolithRoomTurnLoop {
                 openCornerCall = openCornerToolCall(result.toolCalls);
                 cornerOpened = openedACorner(openCornerCall);
                 explained = await this.explainEmpty(result);
+              }
+              if (['no-reply', 'repeated-tool-call'].includes(result.stopReason)) {
+                stream.close();
+                await this.discardSession();
+                return;
               }
               // The requester stopped this turn while it ran. A stopped turn
               // publishes nothing at all — no durable reply, no receipt, and no

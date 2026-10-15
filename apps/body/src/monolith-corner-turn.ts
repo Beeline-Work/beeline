@@ -1465,6 +1465,7 @@ export class MonolithCornerTurnLoop {
 
   /** Why a turn carried no answer text, or undefined when it did. */
   private async explainEmpty(result: PromptResult): Promise<EmptyTurnExplanation | undefined> {
+    if (['no-reply', 'repeated-tool-call'].includes(result.stopReason)) return undefined;
     if (durableReplyText(result.agentText)) return undefined;
     // Passive browser updates owe no answer and must not start provider
     // retries. Their receipt acknowledges delivery, even for a textless turn.
@@ -2090,8 +2091,15 @@ export class MonolithCornerTurnLoop {
                   await this.writeBackClaudeLogin();
                 }
               };
+              const completeTerminal = async (result: PromptResult): Promise<boolean> => {
+                if (!['no-reply', 'repeated-tool-call'].includes(result.stopReason)) return false;
+                stream.close();
+                await this.discardSession();
+                return true;
+              };
               let result = await runPrompt();
               trace.promptSettled();
+              if (await completeTerminal(result)) return;
               // An instantly approved device grant cannot reach the running
               // sandbox: replace the session and continue this same turn there.
               const grantedDevice = approvedDeviceGrant(result.toolCalls);
@@ -2107,6 +2115,7 @@ export class MonolithCornerTurnLoop {
                   deviceGrantResumePrompt(grantedDevice, result.agentText),
                 );
                 trace.promptSettled();
+                if (await completeTerminal(result)) return;
               }
               let explained = await this.explainEmpty(result);
               // A checks turn is told to say nothing when nothing changed; its
@@ -2129,6 +2138,7 @@ export class MonolithCornerTurnLoop {
                   );
                   result = await runPrompt();
                   trace.promptSettled();
+                  if (await completeTerminal(result)) return;
                   explained = await this.explainEmpty(result);
                 }
               }
@@ -2146,6 +2156,7 @@ export class MonolithCornerTurnLoop {
                 await trace.measure('activation', () => this.activate(trace));
                 result = await runPrompt();
                 trace.promptSettled();
+                if (await completeTerminal(result)) return;
                 explained = await this.explainEmpty(result);
               }
               // One bounded second chance to deliver repository work. Check
@@ -2217,6 +2228,7 @@ export class MonolithCornerTurnLoop {
                       : CORNER_DELIVERY_NUDGE,
                 );
                 trace.promptSettled();
+                if (await completeTerminal(result)) return;
                 explained = await this.explainEmpty(result);
               }
               // The requester stopped this turn while it ran. What the model

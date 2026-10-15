@@ -1,7 +1,8 @@
 # Feedback triage steps
 
 The procedure for the `feedback-triage` workflow (`docs/workflows/feedback-triage.json`).
-Start it with `start_workflow` and bind `triager` to yourself. Every step is yours. The
+Discover `app_tool(app:beeline:workflow)`, then use `tool:start` and bind `triager`
+to yourself. Advance each step with `tool:advance`. Every step is yours. The
 `approve` step is a card a person answers.
 
 End every step with its handoff in the same turn. A turn that ends without one hands
@@ -24,7 +25,7 @@ carry a `Feedback items:` line, for example:
 gh pr list --repo Beeline-Work/beeline --state merged --search '"Feedback items:" in:body' --json number,title,url,body,mergedAt
 ```
 
-For each one, call `notify_feedback_fixed` with the item ids from that line, a short
+For each one, call `report(kind:fixed)` with the item ids from that line, a short
 plain title for the fix (one line, at most 120 characters), and the pull request URL.
 Omit `notify`: routine resolution sends no DM. Only set `notify: true` when
 a configured System sender explicitly orders Fixed notices for that pull request
@@ -33,7 +34,7 @@ items; repeats resolve nothing twice. Hand off `notified`
 with `fixedPullRequests` listing the URLs you reported, or `none`, and
 `skipReason` and `unnotifiedPullRequests` set to `none`.
 
-If `notify_feedback_fixed` refuses with `System DM access denied`, your owner is
+If `report(kind:fixed)` refuses with `System DM access denied`, your owner is
 not a System sender and no call you make can send these DMs. Do not stop, and do not
 hand off `notified`. Hand off `skipped` with `skipReason` `not_system_sender`,
 `unnotifiedPullRequests` listing the numbers of every pull request you could not

@@ -141,10 +141,14 @@ describe('feedback-triage workflow', () => {
     console.log('Demonstrated cleanup-boot: second migration startup made no feedback seed or workflow description writes');
   });
 
-  it('refreshes the deployed procedure to list occurrence counts despite the old completion marker', async () => {
+  it('refreshes deployed tool guidance and legacy schedule prompts despite the old completion marker', async () => {
     await backfillFeedbackTriageWorkflow(database);
-    await database.query(`DELETE FROM workflow_backfills WHERE name='feedback-triage-v3'`);
-    await database.query(`INSERT INTO workflow_backfills(name) VALUES('feedback-triage-v2') ON CONFLICT DO NOTHING`);
+    await database.query(`DELETE FROM workflow_backfills WHERE name='feedback-triage-v4'`);
+    await database.query(`INSERT INTO workflow_backfills(name) VALUES('feedback-triage-v3') ON CONFLICT DO NOTHING`);
+    await database.query(`UPDATE agent_schedules SET message=$2 WHERE id=$1`, [UNRELATED_SCHEDULE,
+      'Start the feedback-triage workflow with start_workflow, binding triager to yourself, and follow the feedback-triage-steps procedure (load_workspace_skill) at each step.',
+    ]);
+    const before = await schedules();
     await database.query(
       `UPDATE workspace_skill_versions SET markdown='old procedure',content_hash=$2
        WHERE skill_id=(SELECT id FROM workspace_skills WHERE workspace_id=$1 AND slug='feedback-triage-steps')`,
@@ -158,6 +162,22 @@ describe('feedback-triage workflow', () => {
     )).rows[0]!;
     expect(procedure.markdown).toBe(FEEDBACK_TRIAGE_STEPS);
     expect(procedure.markdown).toContain('occurrence_count');
+    expect(procedure.markdown).toContain('app_tool(app:beeline:workflow)');
+    expect(procedure.markdown).toContain('report(kind:fixed)');
+    expect(procedure.markdown).not.toMatch(/start_workflow|notify_feedback_fixed|load_workspace_skill/);
+    const after = await schedules();
+    expect(after.find((row) => row.id === UNRELATED_SCHEDULE)!.message).toBe(FEEDBACK_TRIAGE_SCHEDULE_PROMPT);
+    for (const row of after) {
+      const was = before.find((schedule) => schedule.id === row.id)!;
+      expect(row.cadence).toEqual(was.cadence);
+      expect(row.next_run_at).toEqual(was.next_run_at);
+    }
+    const versions = (await database.query<{ version: number; markdown: string }>(
+      `SELECT version.version,version.markdown FROM workspace_skills skill
+       JOIN workspace_skill_versions version ON version.skill_id=skill.id
+       WHERE skill.workspace_id=$1 AND skill.slug='feedback-triage-steps' ORDER BY version.version`, [WORKSPACE],
+    )).rows;
+    expect(versions.map((version) => version.markdown)).toEqual(['old procedure', FEEDBACK_TRIAGE_STEPS]);
   });
 
   it('leaves an interrupted backfill unmarked and allows an idempotent retry', async () => {

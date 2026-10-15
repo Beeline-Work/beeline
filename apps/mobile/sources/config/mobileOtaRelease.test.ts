@@ -150,6 +150,7 @@ describe('mobile OTA release governor', () => {
       'ios@25',
       'ios@26',
       'ios@27',
+      'android@37',
     ]);
     for (const runtime of RETIRED_COMPAT_RUNTIMES) {
       expect(runtime.evidence).toContain('owner decision');

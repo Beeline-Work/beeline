@@ -1,0 +1,49 @@
+[
+  {
+    "id": "3292da5d01323d3b9bc88dda0d22a1f5800cfde78852de7dfa64f156de82df48",
+    "text": "Trusty Squire saw no answer to Credential access approval · Reveal a saved credential",
+    "createdAt": 1792078499,
+    "createdAtMs": 1792078499555,
+    "version": 1,
+    "author": {
+      "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "human",
+      "name": "System"
+    },
+    "presentation": "system",
+    "systemEvent": {
+      "verb": "saw no answer to",
+      "object": {
+        "text": "Credential access approval"
+      },
+      "subject": {
+        "kind": "system",
+        "name": "Trusty Squire"
+      },
+      "consequence": "Reveal a saved credential"
+    }
+  },
+  {
+    "id": "1c5e770ddb98c29b61774648cabe3660ca15a7ea94ff6d76028a41062a765216",
+    "text": "System handed off implement",
+    "createdAt": 1792078499,
+    "createdAtMs": 1792078499567,
+    "version": 1,
+    "author": {
+      "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "human",
+      "name": "System"
+    },
+    "presentation": "system",
+    "systemEvent": {
+      "verb": "handed off",
+      "object": {
+        "text": "implement"
+      },
+      "subject": {
+        "kind": "system",
+        "name": "System"
+      }
+    }
+  }
+]

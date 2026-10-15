@@ -1,3 +1,4 @@
+import { systemNoticePresentation } from './system-notice-presentation.js';
 import { approvalAsk } from './tray-approval-ask.js';
 import { createAgentCommand, type CommandRow, routeSystemCommand } from './agent-command.js';
 import { createHash, randomBytes } from 'node:crypto';
@@ -477,7 +478,7 @@ export async function systemLine(
         input.roomId,
         authorId,
         text,
-        input.presentation ?? 'system',
+        systemNoticePresentation(input.presentation ?? 'system', input.cardType),
         input.requestId ?? null,
         input.durableFact ?? null,
         input.cardType ?? null,

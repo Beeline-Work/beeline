@@ -1,3 +1,4 @@
+import { systemNoticePresentation } from './system-notice-presentation.js';
 import { notifyAgentConfigChange } from './postgres-live.js';
 import { SQUIRE_MCP_TARGET } from '@beeline/api-contract/phone';
 import { FIRST_PARTY_INTEGRATIONS } from './first-party-integrations.js';
@@ -764,7 +765,11 @@ function projectedMessage(
     createdAtMs: row.created_at.getTime(),
     ...(typeof row.version === 'number' ? { version: row.version } : {}),
     author,
-    presentation: row.deleted_at ? 'system' : row.presentation,
+    presentation: row.deleted_at
+      ? 'system'
+      : row.system_event || row.author_id === SYSTEM_IDENTITY_ID
+        ? systemNoticePresentation(row.presentation, row.card_type)
+        : row.presentation,
     ...(row.deleted_at ? { deleted: true } : {}),
     ...(row.bookmarked ? { bookmarked: true } : {}),
     ...(row.feedback_reported ? { feedbackReported: true } : {}),
@@ -833,6 +838,8 @@ function projectedMessage(
     ...(row.durable_fact ? { durableFact: row.durable_fact } : {}),
     ...(row.system_event ? { systemEvent: row.system_event } : {}),
   };
+  if (base.presentation === 'system' && systemNoticePresentation('card', row.card_type) === 'system')
+    return base;
   if (!row.card_type || !row.card) return base;
   switch (row.card_type) {
     case 'voice-call':

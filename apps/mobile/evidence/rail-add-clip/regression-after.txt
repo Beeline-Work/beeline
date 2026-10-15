@@ -1,0 +1,12 @@
+RUN  v3.2.7 /home/lunchbox/.local/state/beeline/corners/0e8ecdca-cb1d-49ea-ba5b-dd381a0f1b48/apps/mobile
+
+ ✓ sources/components/buzz/CommunityRail.test.ts (12 tests) 57ms
+ ✓ sources/buzz/calm-lint.design.test.ts (8 tests) 83ms
+ ✓ sources/buzz/design-lint.design.test.ts (9 tests) 367ms
+   ✓ design lint > holds every module to its baseline, and the baseline to the scan  356ms
+ ✓ sources/components/buzz/workspace-nav-parity.contract.test.ts (5 tests) 3ms
+
+ Test Files  4 passed (4)
+      Tests  34 passed (34)
+   Start at  00:00:32
+   Duration  908ms (transform 220ms, setup 156ms, collect 245ms, tests 510ms, environment 1ms, prepare 204ms)

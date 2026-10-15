@@ -1,20 +1,24 @@
 # Android signing — release keystore
 
-This directory used to hold the **release keystore** for Buzzy's sideloading
-APK directly. The repo went public, so the keystore and its passwords were
-purged from the tree and from history; the key itself is unchanged and lives
-only in repository secrets (backed up off-machine):
+The Beeline Android sideload signing key was rotated on **2026-10-15** after
+the old keystore and its passwords were found exposed in public git history.
+The old key remains exposed in that history and must never be reused.
+The replacement PKCS12 keystore lives in the Trusty Squire vault under service
+`android-sideload-signing`, label `sideload-2026-10-15`, and in these repository
+secrets:
 
 | Secret                            | Contents                       |
 |-----------------------------------|---------------------------------|
 | `ANDROID_SIDELOAD_KEYSTORE_B64`   | the keystore file, base64-encoded |
-| `ANDROID_SIDELOAD_KEY_ALIAS`      | key alias (`buzz-release`)      |
+| `ANDROID_SIDELOAD_KEY_ALIAS`      | key alias (`beeline-sideload-20261015`) |
 | `ANDROID_SIDELOAD_STORE_PASSWORD` | keystore password               |
 | `ANDROID_SIDELOAD_KEY_PASSWORD`   | key password                    |
 
-**Never rotate this keystore.** An installed sideload app can only be
-upgraded in place by a build signed with this same key — a new key means
-every existing install must be uninstalled and reinstalled.
+Rotate a compromised signing key and replace its fingerprint in both
+app-links files and `scripts/app-associations.mjs`. Keep the Play Store
+fingerprints unchanged. A new key requires existing sideload installs to be
+uninstalled and reinstalled; no sideload APK had been downloaded when this
+rotation was authorized.
 
 ## Usage
 
@@ -32,7 +36,9 @@ export ANDROID_SIDELOAD_KEYSTORE_B64=... ANDROID_SIDELOAD_KEY_ALIAS=... \
 npm run apk:release
 ```
 
-Fetch the values from the repository secrets (or ask whoever holds the
-off-machine backup) — they cannot be recovered from the tree or its history.
+Use the vaulted replacement credential through an approved secret-handling
+route for local builds. GitHub Actions consumes the repository secrets;
+GitHub does not return their values. Never recover signing material from
+public history or write secret values into the repository.
 
 Output APK: `android/app/build/outputs/apk/release/app-release.apk`

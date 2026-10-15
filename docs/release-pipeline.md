@@ -191,4 +191,4 @@ missing artifacts, completion/publication checks, and the workflow time budget.
 ## Compatibility and signing invariants
 
 - Runtime pins in `apps/mobile/app.config.js` must retain old installs in `COMPAT_RUNTIMES` (`ota-release.mjs`).
-- Store submission and signing: [mobile store runbook](../apps/mobile/docs/store-submission.md). The sideload keystore lives only in `ANDROID_SIDELOAD_*` secrets and is never rotated.
+- Store submission and signing: [mobile store runbook](../apps/mobile/docs/store-submission.md). The sideload keystore lives in `ANDROID_SIDELOAD_*` secrets and the Trusty Squire vault; see the [signing guide](../apps/mobile/android-signing/README.md) for rotation and recovery.

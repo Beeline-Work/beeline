@@ -664,7 +664,6 @@ const styles = StyleSheet.create((theme) => {
      * same quiet tier as the rest of the chrome. */
     railCommandGlyph: {
       ...theme.buzz.type.hero,
-      height: 22,
       color: groknight.textSecondary,
       textAlign: 'center',
     },

@@ -1,0 +1,45 @@
+RUN  v3.2.7 /home/lunchbox/.local/state/beeline/corners/0e8ecdca-cb1d-49ea-ba5b-dd381a0f1b48/apps/mobile
+
+ ❯ sources/components/buzz/CommunityRail.test.ts (12 tests | 2 failed) 93ms
+   ✓ Workspace drawer > keeps the desktop Workspace avatar free of an attention overlay 16ms
+   ✓ Workspace drawer > shows one attention mark on the current Workspace trigger when requested 3ms
+   ✓ Workspace drawer > replaces the current Workspace identity with the picker title while open 2ms
+   ✓ Workspace drawer > renders the same picker as an in-column workspace list 5ms
+   ✓ Workspace drawer > is hidden by default and toggles from the active Workspace avatar 14ms
+   ✓ Workspace drawer > keeps Workspace settings out of the drawer 6ms
+   ✓ Workspace drawer > closes after selecting or adding a Workspace 12ms
+   ✓ Workspace drawer > keeps global Settings at the bottom of the switcher and closes before opening it 7ms
+   × Workspace drawer > lets ADD grow to its full text line in rail presentation 10ms
+     → expected 22 to be undefined
+   × Workspace drawer > lets ADD grow to its full text line in column presentation 3ms
+     → expected 22 to be undefined
+   ✓ Workspace drawer > centres the rail SETTINGS label so its first letter clears the rounded screen corner 6ms
+   ✓ Workspace drawer > uses the person avatar as the global Settings identity affordance 4ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  sources/components/buzz/CommunityRail.test.ts > Workspace drawer > lets ADD grow to its full text line in rail presentation
+ FAIL  sources/components/buzz/CommunityRail.test.ts > Workspace drawer > lets ADD grow to its full text line in column presentation
+AssertionError: expected 22 to be undefined
+
+- Expected:
+undefined
+
++ Received:
+22
+
+ ❯ sources/components/buzz/CommunityRail.test.ts:326:31
+    324|     const glyphStyle = flatten(glyph.props.style);
+    325|     const commandStyle = flatten(command.props.style);
+    326|     expect(glyphStyle.height).toBeUndefined();
+       |                               ^
+    327|     expect(glyphStyle.maxHeight).toBeUndefined();
+    328|     expect(commandStyle.height).toBeUndefined();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed | 10 passed (12)
+   Start at  23:58:17
+   Duration  1.29s (transform 456ms, setup 278ms, collect 377ms, tests 93ms, environment 0ms, prepare 101ms)

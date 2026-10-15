@@ -93,6 +93,7 @@ type TaskConnection = {
   client: StdioSquireMcpClient;
   sessions: Set<string>;
   pendingApprovals: Map<string, PendingApproval>;
+  decidedApprovals: Set<string>;
   dead: boolean;
 };
 
@@ -299,7 +300,7 @@ export class SquireTaskRelay {
     if (this.task) return this.task;
     const task = {
       taskId, lastRequestId: this.active?.requestId ?? '',
-      connectionId: randomUUID(), sessions: new Set<string>(), pendingApprovals: new Map(), dead: false,
+      connectionId: randomUUID(), sessions: new Set<string>(), pendingApprovals: new Map(), decidedApprovals: new Set(), dead: false,
     } as TaskConnection;
     task.client = this.makeClient({
       onSpawn: (pid) => {
@@ -333,6 +334,7 @@ export class SquireTaskRelay {
         forgetSquireSessions(task.sessions);
         this.ended(task.sessions);
         task.sessions.clear();
+        for (const approval of task.pendingApprovals.values()) clearTimeout(approval.expiry);
         task.pendingApprovals.clear();
         this.toolsChanged = true;
         this.flushToolChanges();
@@ -394,6 +396,7 @@ export class SquireTaskRelay {
     forgetSquireSessions(this.task.sessions);
     this.ended(this.task.sessions);
     this.task.sessions.clear();
+    for (const approval of this.task.pendingApprovals.values()) clearTimeout(approval.expiry);
     this.task.pendingApprovals.clear();
     this.task = undefined;
   }
@@ -527,6 +530,18 @@ export class SquireTaskRelay {
       }
       if (safeToolName === 'operate_share' && requestedIds.length === 1)
         this.shareRenewals.track(requestedIds[0]!, callClient, result);
+      // A successful vault consume has no approval URL. Correlate it by ID,
+      // before parsing pending links, so its old expiry cannot revoke this turn.
+      const resultApprovalId = resultString(result, 'approval_id');
+      const status = resultString(result, 'status');
+      if (resultApprovalId && (status === 'credential_fetched' ||
+          (status === 'credential_fetch_refused' &&
+            resultString(result, 'reason') !== 'approval_pending'))) {
+        const key = createHash('sha256').update(resultApprovalId).digest('hex');
+        clearTimeout(task.pendingApprovals.get(key)?.expiry);
+        task.pendingApprovals.delete(key);
+        this.rememberDecision(task, key);
+      }
       const approval = input.method === 'tools/call' && squireApprovalFromMcp(
         { id: 1, method: input.method, params: input.params }, { id: 1, result },
       );
@@ -534,20 +549,20 @@ export class SquireTaskRelay {
         const ids = requestedIds.length ? requestedIds : [...task.sessions];
         const approvalKey = createHash('sha256')
           .update(approval.approvalId ?? approval.approvalUrl).digest('hex');
-        const status = resultString(result, 'status');
         // inject_card returns approval_pending; operate_drive wraps it as pending_approval.
         const pending = status === 'approval_pending' || status === 'pending_approval';
         // Vault approvals (fetch_credential, edit_credential, delete_credential,
         // edit_payment_card) have no browser session; they are tracked too.
-        if (pending && (ids.length || approval.approvalId)) {
+        if (pending && !task.decidedApprovals.has(approvalKey) && (ids.length || approval.approvalId)) {
           clearTimeout(task.pendingApprovals.get(approvalKey)?.expiry);
           const entry: PendingApproval = {
-            requestId: active!.requestId, sessionIds: new Set(ids),
+            requestId: task.pendingApprovals.get(approvalKey)?.requestId ?? active!.requestId,
+            sessionIds: new Set(ids),
             tool: approval.tool, title: approval.title, detail: approval.detail,
           };
           const expiresAt = Date.parse(resultString(result, 'expires_at') ?? '');
           if (approval.approvalId && Number.isFinite(expiresAt)) {
-            entry.expiry = setTimeout(() => this.expireApproval(task, approvalKey, entry, approval.approvalId!),
+            entry.expiry = setTimeout(() => this.expireApproval(task, approvalKey, entry),
               Math.min(Math.max(expiresAt - Date.now(), 0), 2 ** 31 - 1));
             entry.expiry.unref?.();
           }
@@ -567,12 +582,13 @@ export class SquireTaskRelay {
         task.dead = true;
         this.ended(task.sessions);
         task.sessions.clear();
+        for (const approval of task.pendingApprovals.values()) clearTimeout(approval.expiry);
         task.pendingApprovals.clear();
         task.client.close();
       }
       this.log('call-error', task, { method: input.method, tool: safeToolName ?? null,
         sessionId: redactedSessionId(requestedIds[0] ?? task.sessions.values().next().value) });
-      if (task.dead)
+      if (task.dead && !(error instanceof Error && /timed out/.test(error.message)))
         throw new Error('Squire MCP connection died and its browser session is gone; call operate_start');
       throw error;
     }
@@ -589,18 +605,19 @@ export class SquireTaskRelay {
     }
   }
 
-  /**
-   * Squire stops watching an approval at its `expires_at` and sends nothing,
-   * so the relay wakes the asking turn itself with `expired`.
-   */
-  private expireApproval(task: TaskConnection, approvalKey: string, entry: PendingApproval,
-    approvalId: string): void {
+  private rememberDecision(task: TaskConnection, key: string): void {
+    task.decidedApprovals.add(key);
+    // A conversation can run indefinitely; retain only recent race fences.
+    if (task.decidedApprovals.size > 256)
+      task.decidedApprovals.delete(task.decidedApprovals.values().next().value!);
+  }
+
+  /** Expiry releases our lease; only Squire can say whether the person answered. */
+  private expireApproval(task: TaskConnection, approvalKey: string, entry: PendingApproval): void {
     if (task.pendingApprovals.get(approvalKey) !== entry) return;
     task.pendingApprovals.delete(approvalKey);
-    this.onApprovalDecided({
-      requestId: entry.requestId, approvalId, status: 'expired',
-      tool: entry.tool, title: entry.title, detail: entry.detail,
-    });
+    // A missing notification is not proof of no answer. In particular a vault
+    // consume can finish after the watcher has stopped at its own deadline.
     if (!this.active && !this.approvalRequestId && !task.pendingApprovals.size) this.scheduleIdle();
   }
 
@@ -623,6 +640,7 @@ export class SquireTaskRelay {
     if (!pending) return;
     clearTimeout(pending.expiry);
     task.pendingApprovals.delete(approvalKey);
+    this.rememberDecision(task, approvalKey);
     this.onApprovalDecided({
       requestId: pending.requestId, approvalId, status,
       tool: pending.tool, title: pending.title, detail: pending.detail,

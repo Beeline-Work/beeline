@@ -179,6 +179,26 @@ describe('StdioSquireMcpClient', () => {
     client.close();
   });
 
+  it('returns a named error for a hung vault approval call within 30 seconds', async () => {
+    vi.useFakeTimers();
+    const { child } = fakeChild({ initialize: {} });
+    const client = new StdioSquireMcpClient({
+      scope: { agentId: 'agent-a', roomId: 'room-a' },
+      spawn: () => child as never,
+    });
+    try {
+      const pending = client.requestMcp('tools/call', {
+        name: 'fetch_credential', arguments: { approval_id: 'fixture-approval' },
+      });
+      const failure = expect(pending).rejects.toThrow('fetch_credential timed out after 30000ms');
+      await vi.advanceTimersByTimeAsync(30_000);
+      await failure;
+    } finally {
+      client.close();
+      vi.useRealTimers();
+    }
+  });
+
   it('does not time out at Squire\'s own longest in-call wait, and names the tool once it does', async () => {
     vi.useFakeTimers();
     try {

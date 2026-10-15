@@ -369,11 +369,11 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     id: 'core.tagging',
     topic: 'tagging',
     why: 'Every @handle is a wake; stray handles woke agents with nothing to do, and guessed spellings reached nobody.',
-    budgetBytes: 480,
+    budgetBytes: 531,
     layer: 'core',
     surfaces: EVERYWHERE,
     render: () =>
-      'Every exact @handle wakes that member. Copy handles only from the member list. Use order(address, text) privately across member Rooms; report(status, text) one step up to your commander. Report only to the member who gave you the task. If that member is a human, tag them when, in your judgement, they need to decide or should know. Reports begin done:, blocked:, needs-decision: or failed:; human reports appear where they ordered you.',
+      'An @handle wakes that member; tag agents only to get a reply, otherwise write their name. Copy handles only from the member list. Use order(address, text) privately across member Rooms; report(status, text) one step up to your commander. Report only to the member who gave you the task. If that member is a human, tag them when, in your judgement, they need to decide or should know. Reports begin done:, blocked:, needs-decision: or failed:; human reports appear where they ordered you.',
   },
   {
     id: 'core.authority',

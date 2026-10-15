@@ -1085,7 +1085,9 @@ export class PhoneService {
     viewerId?: string,
   ): Promise<RoomLiveDelta | null> {
     if (committed.row.room_id !== roomId) return null;
-    const message = projectedMessage(committed.row, this.publicOrigin, viewerId);
+    const message = (await this.decorateCornerOpenCards(roomId, [
+      projectedMessage(committed.row, this.publicOrigin, viewerId),
+    ]))[0]!;
     let facts = this.committedAttachmentFacts.get(committed.row);
     if (!facts) {
       facts = this.attachmentFacts([message]);
@@ -1242,7 +1244,9 @@ export class PhoneService {
       )
     ).rows[0];
     if (!row) return deltas;
-    const base = projectedMessage(row, this.publicOrigin);
+    const base = (await this.decorateCornerOpenCards(roomId, [
+      projectedMessage(row, this.publicOrigin),
+    ]))[0]!;
     const facts = await this.attachmentFacts([base]);
     const preview: ChatListItem['latestMessage'] | null =
       row.deck_latest_id && row.deck_latest_created_at && row.deck_latest_author_id &&
@@ -1271,7 +1275,8 @@ export class PhoneService {
           }
         : null;
     for (const viewer of row.authorized_viewers) {
-      const message = projectedMessage(row, this.publicOrigin, viewer);
+      const message = { ...projectedMessage(row, this.publicOrigin, viewer),
+        ...(base.daemonFact ? { daemonFact: base.daemonFact } : {}) };
       deltas.set(viewer, {
         type: 'message-delta', roomId,
         message: decorateAttachments([message], facts)[0]!,
@@ -2182,16 +2187,16 @@ export class PhoneService {
     }
     const plan = facts?.plan;
     const paintedRoom = roomHeader(room, this.publicOrigin);
-    const briefing = collapsePermissionCards(
+    const briefing = await this.decorateCornerOpenCards(room.parent_id ?? roomId, collapsePermissionCards(
       briefingRows.map((row) => projectedMessage(row, this.publicOrigin)).sort(messageOrder),
-    );
+    ));
     const [attachmentFacts, appMessages] = await Promise.all([
       corner
         ? Promise.resolve(
             enrichment?.attachmentFacts ?? { expired: new Set<string>(), artifacts: new Map() },
           )
         : measured('media', this.attachmentFacts(messages, toolRows, briefing)),
-      measured('app-metadata', this.decorateAppSignInCards(messages)),
+      measured('app-metadata', this.decorateMessageCards(roomId, messages)),
     ]);
     const projectionStartedAt = performance.now();
     const view: RoomView = {
@@ -2456,7 +2461,7 @@ export class PhoneService {
     const rows = loaded.rows.map((row) => reviveDates(row, ['created_at','deleted_at']));
     const attachmentFacts = await this.enrichHistoryRows(rows, viewerId);
     const messages = rows.map((row) => projectedMessage(row, this.publicOrigin, viewerId));
-    const appMessages = await this.decorateAppSignInCards(messages);
+    const appMessages = await this.decorateMessageCards(roomId, messages);
     return { roomId, messages: decorateAttachments(appMessages, attachmentFacts) };
   }
 
@@ -2500,7 +2505,7 @@ export class PhoneService {
     const rows = loaded.rows.map((row) => reviveDates(row, ['created_at','deleted_at']));
     const attachmentFacts = await this.enrichHistoryRows(rows, viewerId);
     const messages = rows.map((row) => projectedMessage(row, this.publicOrigin, viewerId));
-    const appMessages = await this.decorateAppSignInCards(messages);
+    const appMessages = await this.decorateMessageCards(roomId, messages);
     return { roomId, messages: decorateAttachments(appMessages, attachmentFacts) };
   }
 
@@ -2547,7 +2552,7 @@ export class PhoneService {
     const messages = page
       .reverse()
       .map((row) => projectedMessage(row, this.publicOrigin, viewerId));
-    const appMessages = await this.decorateAppSignInCards(messages);
+    const appMessages = await this.decorateMessageCards(roomId, messages);
     return {
       roomId,
       messages: decorateAttachments(appMessages, attachmentFacts),
@@ -6515,7 +6520,7 @@ export class PhoneService {
       ).rows[0];
       if (!access) throw new Error('room access denied');
       if (access.archived_at) throw new Error('room is archived');
-      await writeCornerTitle(database, roomId, access.parent_id, title);
+      await writeCornerTitle(database, roomId, title);
     });
   }
   private async updateRoom(input: Input<'updateRoom'>, viewerId: string) {
@@ -8639,6 +8644,30 @@ export class PhoneService {
       registryVersion: official.version,
     }, ...composioResults];
     return composioResults;
+  }
+
+  /** Resolve navigation labels from current corner state without rewriting historical System cards. */
+  private async decorateCornerOpenCards(roomId: string, messages: RoomViewMessage[]): Promise<RoomViewMessage[]> {
+    const cornerIds = [...new Set(messages.flatMap((message) => {
+      const card = message.daemonFact;
+      return card?.type === 'corner-open' && UUID_PATTERN.test(card.cornerId) ? [card.cornerId] : [];
+    }))];
+    if (!cornerIds.length) return messages;
+    const rows = await this.database.query<{ id: string; name: string; objective: string }>(
+      `SELECT corner.id,corner.name,fact.objective
+       FROM rooms corner JOIN corner_facts fact ON fact.corner_id=corner.id
+       WHERE corner.id=ANY($1::uuid[]) AND corner.parent_id=$2`, [cornerIds, roomId],
+    );
+    const current = new Map(rows.rows.map((row) => [row.id, row]));
+    return messages.map((message) => {
+      const card = message.daemonFact;
+      const corner = card?.type === 'corner-open' ? current.get(card.cornerId) : undefined;
+      return corner ? { ...message, daemonFact: { ...card!, name: corner.name, objective: corner.objective } } : message;
+    });
+  }
+
+  private async decorateMessageCards(roomId: string, messages: RoomViewMessage[]): Promise<RoomViewMessage[]> {
+    return this.decorateCornerOpenCards(roomId, await this.decorateAppSignInCards(messages));
   }
 
   private async decorateAppSignInCards(messages: RoomViewMessage[]): Promise<RoomViewMessage[]> {

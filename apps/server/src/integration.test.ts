@@ -10412,7 +10412,7 @@ describe('monolith integration', () => {
     });
   });
 
-  it('titles a legacy corner card by the first three words of its objective', async () => {
+  it('renders a legacy corner card with its current stored title and objective', async () => {
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'corner-legacy-card',
@@ -10429,7 +10429,7 @@ describe('monolith integration', () => {
     const room = (await new PhoneService(database, origin).readRoom(ROOM, HUMAN))!;
     const card = room.messages.find((message) => message.daemonFact?.cornerId === cornerId);
     expect(card?.daemonFact).toMatchObject({
-      name: 'Rework the room',
+      name: 'Legacy-corner',
       objective: 'Rework the room list so every corner row carries a state mark',
     });
     expect(

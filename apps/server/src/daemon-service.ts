@@ -5863,12 +5863,7 @@ export class DaemonService {
           );
         }
       }
-      if (objective !== undefined) await db.query(
-        `UPDATE messages SET card=jsonb_set(card,'{objective}',to_jsonb($2::text))
-         WHERE room_id=$3 AND card_type='daemon-fact' AND card->>'cornerId'=$1 AND card ? 'objective'`,
-        [input.cornerId, objective, corner.parent_id],
-      );
-      await writeCornerTitle(db, input.cornerId, corner.parent_id, name);
+      await writeCornerTitle(db, input.cornerId, name);
     });
     return { cornerId: input.cornerId, name };
   }

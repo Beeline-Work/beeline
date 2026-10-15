@@ -1913,7 +1913,15 @@ export class MonolithRoomTurnLoop {
               // Close the draft lane before the answer is published: the finished
               // reply must never queue behind a draft nobody will read.
               stream.close();
-              let reply = durableReplyText(result.agentText);
+              // Rooms save no pre-tool prose separately. Commit the same runs
+              // the draft showed when this result ends that stream. Synthetic
+              // recovery replies still stand alone, and an empty final result
+              // must not promote an abandoned draft into an answer.
+              let reply = durableReplyText(
+                result.agentText && stream.lastRunText === result.agentText
+                  ? stream.streamedText
+                  : result.agentText,
+              );
               if (!reply && explained?.recoveredText) {
                 // Text the harness recorded but never streamed. Kept on a
                 // corner-open turn too: it is the same reply the live lane

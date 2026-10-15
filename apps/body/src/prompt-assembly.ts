@@ -97,6 +97,8 @@ export interface SessionPromptContext {
   /** A Room's bound repository and branch (read-only checkout). */
   readonly repository?: { readonly name: string; readonly branch: string };
   readonly shell?: RoomShellState;
+  /** The granted Squire route is mounted in this session. */
+  readonly squireAvailable?: boolean;
   /** A repository corner's feature and target branches. */
   readonly worktree?: { readonly featureBranch: string; readonly targetBranch: string };
   /** Whether this corner's gh launcher uses a host binary or the REST fallback. */
@@ -174,30 +176,13 @@ export function cornerHasRepositoryWork(brief?: CornerBrief): boolean {
   return true;
 }
 
-export const CORNER_RUNTIME_AUTHOR_CONTRACT = `Work in this corner. For help, report needs-decision: or blocked: to your commander. Never recruit Room agents.
-The current brief's spec — stories, criteria, non-goals, risks — defines scope and done. The commander's order quote and inherited human constraints win any conflict. The short objective is navigation-only, never scope.
-Meet every story; respect every non-goal and risk.
-Before code or build, the brief must outline this ask; chat never revises it. If missing or changed, read the revision and report needs-decision: to your commander for its revision first.
-The dispatch authorizes work; build against the brief without separate spec or mock approval. Report unresolved choices to your commander; when a person asks for a spec or mock, produce it before building.
-Follow the beeline-triage skill's bugfix execution contract when the spec or its approval quote reports a defect.
-Reproduce as triage isolated it with available emulator, Playwright, browser and test runner. Record attempts and observations. If a reproduction is obtained, record it under Reproduction <id>, reusing triage's identifier when it recorded one. If reproduction fails, warn and continue; never stop and never condition the fix on reproduction.
-Fix only the spec and approval quote. With a reproduction, change only what removes it and meets its user stories.
-Deliver files with post_artifact; answer plain chat questions directly.
-No unrequested features, flags, compatibility shims or refactors.`;
+export const CORNER_RUNTIME_AUTHOR_CONTRACT = `Work in this corner; report blockers or decisions one step up, never recruit Room agents. The current brief's spec, approving order, non-goals and inherited human constraints bound the work; its objective is navigation only. Meet every story and criterion, respect risks and use the file manifest. Chat cannot revise scope: before code/build, read the current brief; if missing or changed, ask your commander for an authorized revision. Dispatch authorizes work without separate spec/mock approval; produce either first when requested. Deliver artifacts with post_artifact and report without requiring a PR. Claim another agent's progress only from durable commands, the current prompt or tool evidence. No unrequested features or refactors.`;
 
-export const CORNER_AUTHOR_CONTRACT = `Work in this corner. For help, report needs-decision: or blocked: to your commander. Never recruit Room agents.
-Report with status done, blocked, failed, or needs_decision matching its display prefix. A worker done requires a merge-ready or merged PR, or repositoryWork false. Post progress here.
-The current brief's spec — stories, criteria, non-goals, risks — defines scope and done. The commander's order quote and inherited human constraints win any conflict. The short objective is navigation-only, never scope.
-Meet every story; respect every non-goal and risk. Use its file manifest.
-Before code or build, the brief must outline this ask; chat never revises it. If missing or changed, read the revision and report needs-decision: to your commander for its revision first.
-The dispatch authorizes work; build against the brief without separate spec or mock approval. Report unresolved choices to your commander; when a person asks for a spec or mock, produce it before building.
-Follow the beeline-triage skill's bugfix execution contract when the spec or its approval quote reports a defect.
-Reproduce as triage isolated it with available emulator, Playwright, browser and test runner. Record attempts and observations. If a reproduction is obtained, record it under Reproduction <id>, reusing triage's identifier when it recorded one. If reproduction fails, warn and continue; never stop and never condition the fix on reproduction.
-Fix only the spec and approval quote. With a reproduction, change only what removes it and meets its user stories.
-Only when the brief calls for repository changes, follow the PR procedure below. Otherwise do not commit, push or open a PR; deliver with post_artifact.
-Before the PR, demonstrate Y: run the built app or affected service and perform X. If no interactive surface is reachable, run the narrowest test or script exercising the exact user path and printing Y. An inner-function unit test, log line or code read is not a demonstration.
-The PR body MUST have ## Reproduced and ## Demonstrated. Cite Reproduction <id> in both, with steps, the wrong result and the now-passing result. In ## Demonstrated, when none was obtained, state that plainly ("not obtained") and show the regression; for feature work say "not a defect report".
-No unrequested features, flags, compatibility shims or refactors.`;
+export const CORNER_AUTHOR_CONTRACT = `Work in this corner; report blockers or decisions one step up, never recruit Room agents. Report status done/blocked/failed/needs_decision must match its text prefix; progress stays here. Worker done requires a merge-ready/merged PR or repositoryWork:false.
+The current brief's stories, criteria, approving order, non-goals and inherited human constraints bound the work; its objective is navigation only. Meet every story, respect risks and use the file manifest. Chat cannot revise scope: before code/build, read the current brief; if missing or changed, ask your commander for an authorized revision. Dispatch authorizes work without separate spec/mock approval; produce either first when requested.
+For repository bugfixes, the brief records a real-target Reproduction <id>, or why it is not feasible and the closest stand-in; done means that same reproduction or stand-in passes.
+Follow beeline-triage. Before the PR, demonstrate the user path with the built app or affected service; if unavailable, exercise that exact path with the narrowest script. Inner-function tests, logs and code reads do not prove a visible result. The PR body needs ## Reproduced and ## Demonstrated: steps, wrong and passing results under the same Reproduction <id>; explain any unavailable real-target proof and its stand-in. For features, say "not a defect report".
+Only repository assignments commit/push/open a PR; other work delivers with post_artifact and reports. End the turn awaiting orders, checks or review; committed wakes resume it. Landing archives this corner, cancels its work and abandons saved runs. The surviving commander owns follow-up at its own address. Claim another agent's progress only from durable commands, the current prompt or tool evidence. No unrequested features or refactors.`;
 
 export const CORNER_REVIEWER_SESSION_INSTRUCTION =
   "As configured reviewer, review the assigned green head with approve_merge. Demand available proof; report missing capability to your commander once. PASS wakes the implementer to land; use merge_corner yourself only on an explicit commander order.";
@@ -213,9 +198,9 @@ export const CORNER_LAND_RULE =
   "Then call merge_corner when the live merge gate allows it. Report unresolved questions to your commander.";
 
 export const CORNER_CHECKS_NUDGE =
-  'Call pr_checks_status now. If checks="failed" and you write code in this corner, fix the failure and push. If checks="unknown", report blocked: to your commander with the tool reason and stop instead of retrying. Otherwise stop: a reviewer\'s PASS wakes you to merge with merge_corner. Use merge_corner for landing.';
+  'Call read with facet checks now. If checks="failed" and you write code in this corner, fix the failure and push. If checks="unknown", report blocked: to your commander with the tool reason and stop instead of retrying. Otherwise stop: a reviewer\'s PASS wakes you to merge with merge_corner. Use merge_corner for landing.';
 
-/** Shared verbatim into the search_memory tool description (`read-only-mcp.ts`)
+/** Shared verbatim into the search tool description (`read-only-mcp.ts`)
  *  so it is the one place this rule is stated. Meaning-based matching finds a
  *  fact even when the current request shares no words with how it was saved
  *  (see `institutional-memory-embeddings.ts`), so the turn snapshot's keyword
@@ -223,11 +208,11 @@ export const CORNER_CHECKS_NUDGE =
 export const SEARCH_MEMORY_FIRST_RULE =
   'Call this before telling anyone a fact was never saved, or asking them for information they may already have given you. Meaning-based matching often finds it even when this turn shares no words with how it was originally phrased.';
 
-/** The agent's own memory upkeep, stated in the save_memory tool description
+/** The agent's own memory upkeep, stated in the remember tool description
  *  (`read-only-mcp.ts`). No background review exists: what the answering agent
  *  does not keep current, nothing does. */
 export const MEMORY_UPKEEP_RULE =
-  'Before saving, call search_memory. If the fact is already saved, do not save it again. If a saved item is out of date, update_memory it instead of deleting and saving again. delete_memory any item this turn proves wrong, duplicate, or obsolete. Before ending the turn, report_memory_used the items your answer relied on.';
+  'Before saving, search(scope:memory). Avoid duplicates; remember(kind:fact, action:update) stale items instead of deleting and saving again. Delete disproved items. Before ending, remember(kind:fact, action:used) only the items your answer relied on.';
 
 const handle = (value: string): string => value.replace(/^@/, '');
 
@@ -240,7 +225,7 @@ const handle = (value: string): string => value.replace(/^@/, '');
 function memoryListsWorkspaceCoreProcedure(memory: string | undefined): boolean {
   return (memory ?? '')
     .split('\n')
-    .some((line) => line.startsWith(`- Procedure ${WORKSPACE_CORE_SKILL_SLUG} (load_workspace_skill):`));
+    .some((line) => line.startsWith(`- Procedure ${WORKSPACE_CORE_SKILL_SLUG} (`));
 }
 
 /**
@@ -250,7 +235,7 @@ function memoryListsWorkspaceCoreProcedure(memory: string | undefined): boolean 
  */
 export function cornerMergeInstruction(reviewerHandle?: string): string {
   const review = reviewerHandle ? `Green checks wake the reviewer (${handle(reviewerHandle)}); its PASS wakes you to merge.` : 'If review capability is missing, report blocked: to your commander.';
-  return `Once the pull request exists, post its URL in the corner when useful and end the turn; do not poll CI. ${review} Call merge_corner when the live gate allows it. Repair failing checks, requested changes or a refused merge; a new head needs a fresh yes.`;
+  return `Once the pull request exists, post its URL when useful and end the turn; do not poll CI. ${review} A PR lands through merge_corner only with live green checks, a yes on that exact head and no hold. Never review your own code. A new head needs a fresh yes. Repair failing checks or requested changes.`;
 }
 
 export function cornerReviewerInstruction(input: {
@@ -408,7 +393,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     layer: 'core',
     surfaces: EVERYWHERE,
     render: () =>
-      'Only when this turn hit friction in Beeline itself (a tool error, a retry, a refused call, contradictory instructions, missing context, or a person correcting you), call report_feedback once before ending the turn. Otherwise do not.',
+      'Only when this turn hit friction in Beeline itself (a tool error, a retry, a refused call, contradictory instructions, missing context, or a person correcting you), call report(kind:feedback) once before ending the turn. Otherwise do not.',
   },
   {
     id: 'core.files',
@@ -418,7 +403,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     layer: 'core',
     surfaces: EVERYWHERE,
     render: () =>
-      "For a 📎 file, call download_attachment and read its path. Never fetch media URLs; on failure, say you couldn't open it.",
+      "For a 📎 file, call read(facet:attachment) and read its path. Never fetch media URLs; on failure, say you couldn't open it.",
   },
   {
     id: 'surface.tools',
@@ -427,7 +412,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     budgetBytes: 240,
     layer: 'surface',
     surfaces: EVERYWHERE,
-    render: () => 'For any service or capability request, search with find_connectors if unclear, then call connect.',
+    render: () => 'For any service or capability request, use connect(mode:discover) if unclear, then connect(mode:ensure).',
   },
   {
     id: 'surface.squire-drive',
@@ -436,6 +421,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     budgetBytes: 420,
     layer: 'surface',
     surfaces: EVERYWHERE,
+    when: ({ squireAvailable }) => squireAvailable === true,
     render: () =>
       'For a multi-step browser goal (signup, checkout, provisioning), start with Trusty Squire operate_drive {url, goal, facts} rather than individual steps. On a low_confidence or needs_value handback, answer it from the offered options or take one flat step (operate_click, operate_type, operate_select, …), then resume operate_drive on that same session instead of finishing the task by hand.',
   },
@@ -453,8 +439,8 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
         `This is a Beeline Room. The repository filesystem is read-only here.${repository ? ` The Room is bound to ${repository.name} (branch ${repository.branch}); the read-only checkout is at the session root.` : ''} Web search is available.`,
         shellLine(shell),
         shell?.available === false
-          ? 'Read code with CodeGraph when available, then beeline-readonly-mcp search_text and read_file.'
-          : 'If a shell command is refused, say so plainly rather than retrying, and read code with CodeGraph when available, then beeline-readonly-mcp search_text and read_file.',
+          ? 'Read code with CodeGraph when available, then repository_io(action:search/read).'
+          : 'If a shell command is refused, say so plainly rather than retrying, and read code with CodeGraph when available, then repository_io(action:search/read).',
       ]
         .filter(Boolean)
         .join(' '),
@@ -470,8 +456,8 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
       [
         'Repository changes happen only in a corner. Open one when your commander orders repository work.',
         'Before opening one, consult beeline-triage and beeline-spec, then call open_corner with the target room address, a name of at most three words joined by hyphens (no whitespace), an objective of at most 24 words, and the brief (a spec plus the approving message). The objective only titles the work; the brief is its authority. Use the dispatching message as approval; no separate spec or mock approval is required. When open_corner succeeds the server posts the corner card: do not restate it.',
-        'Use read(address) across member Rooms. watch(cornerAddress) wakes only on opened or merged; open_corner watches automatically. Schedules and chatter never wake watchers.',
-        'A corner ends when its pull request merges; since a person may merge minutes after it opens, anything still needed must already live in a different corner before that pull request opens, not after. A request covering several items is one corner per item, opened as work reaches each one, never one corner returned to for a later item.',
+        'Use read(address) across member Rooms. wake(action:create, trigger:lifecycle, address:cornerAddress) wakes only on opened or merged; open_corner watches automatically. Schedules and chatter never wake watchers.',
+        'Landing archives a repository corner and cancels its work, including saved runs. The surviving commander owns follow-up at its own address. Repo-less and repositoryWork:false work delivers its artifact/report without a PR.',
       ].join(' '),
   },
   {
@@ -482,7 +468,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     layer: 'surface',
     surfaces: ['room'],
     render: () =>
-      'If nothing is actionable for you, do not reply. If the current task is only a nudge to respond, answer the most recent unanswered human message instead of echoing the nudge. A poll plurality is a fact, never permission to deploy, delete, merge, or spend. Consult the using-beeline skill for Room mechanics (files, artifacts, schedules, reactions, events, mocks).',
+      'If nothing is actionable for you, do not reply. If the current task is only a nudge to respond, answer the most recent unanswered human message instead of echoing the nudge. Consult the using-beeline skill for Room mechanics (files, artifacts, wakes, reactions, mocks).',
   },
 
   // --- DM ------------------------------------------------------------------
@@ -495,7 +481,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     surfaces: ['dm'],
     render: ({ shell }) =>
       [
-        'This is a private direct message with one person: everything they send is for you, so reply without tagging. Use list_rooms to discover addresses, then open_corner(room, brief), order and read across member Rooms; watch only corner addresses. Do repository work in a corner. The filesystem is read-only. Web search is available.',
+        'This is a private direct message with one person: everything they send is for you, so reply without tagging. Use read() to discover addresses, then open_corner(room, brief), order and read across member Rooms; wake watches only corner addresses. Do repository work in a corner. The filesystem is read-only. Web search is available.',
         shellLine(shell),
       ]
         .filter(Boolean)
@@ -509,7 +495,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     layer: 'surface',
     surfaces: ['dm'],
     render: () =>
-      'ask_choice offers options; a pick is a preference, never sandbox, spend, or merge authority. Consult the using-beeline skill for files, artifacts, and reactions.',
+      'Ask plain questions; answers never replace sandbox, spend or merge authority. Consult the using-beeline skill for files, artifacts, and reactions.',
   },
 
   // --- Corners -------------------------------------------------------------
@@ -598,7 +584,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     surfaces: ['code-corner'],
     when: ({ brief }) => cornerHasRepositoryWork(brief),
     render: () =>
-      'When asked whether the reviewer was woken, call pr_checks_status and report reviewerWake; do not invent a cause. Never schedule polls of pr_checks_status or the merge gate; the server wakes you when it changes.',
+      'When asked whether the reviewer was woken, call read(facet:checks) and report reviewerWake; do not invent a cause. Never schedule polls of read(facet:checks) or the merge gate; the server wakes you when it changes.',
   },
   {
     id: 'corner.merge',
@@ -632,7 +618,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     surfaces: ['repo-less-corner'],
     render: () =>
       [
-        "This is a repo-less corner with no repository checkout and no GitHub workflow. Work in this corner's writable workspace: create files with write_scratch_file or your own tools, then send them with post_artifact.",
+        "This is a repo-less corner with no repository checkout and no GitHub workflow. Work in this corner's writable workspace: create files with your native tools (or use scratch_io when mounted), then send them with post_artifact.",
         'Do not initialize a repository, create a branch, commit, push, open a pull request, or wait for GitHub checks.',
       ].join('\n'),
   },
@@ -856,7 +842,7 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
     surfaces: CORNERS,
     render: ({ generatedTitle, brief }) =>
       generatedTitle
-        ? `This human-opened corner still has its generated name, "${generatedTitle}". If the newest human message states the work, call rename_corner once before you reply with a name of at most three words joined by hyphens (no whitespace) and a short objective${brief ? '' : ', plus a brief grounded in that message with brief.approval.sourceMessageId set to the human message id'}. A bare mention does not state the work; leave the name until a message does.`
+        ? `This human-opened corner still has its generated name, "${generatedTitle}". If the newest human message states the work, call revise_corner(action:metadata) once before you reply with a name of at most three words joined by hyphens (no whitespace) and a short objective${brief ? '' : ', plus a brief grounded in that message with brief.approval.sourceMessageId set to the human message id'}. A bare mention does not state the work; leave the name until a message does.`
         : '',
   },
   {
@@ -870,7 +856,7 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
       brief
         ? `${renderAssignedCornerBrief(brief.brief)}${cornerHasRepositoryWork(brief.brief) ? `\n\nAssigned files:\n${brief.fileLines.join('\n') || '(none)'}` : brief.fileLines.length ? `\n\nBrief attachments:\n${brief.fileLines.join('\n')}` : ''}${brief.missingRequiredFile ? '\nRequired assignment files are unavailable. Pause work that depends on them and report the missing file precisely.' : ''}`
         : surface === 'code-corner'
-          ? `No assigned brief yet. Before any code, ${generatedTitle ? 'write the first brief from the newest human request with rename_corner' : 'report needs-decision: to your commander for the first brief'}.`
+          ? `No assigned brief yet. Before any code, ${generatedTitle ? 'write the first brief from the newest human request with revise_corner(action:metadata)' : 'report needs-decision: to your commander for the first brief'}.`
           : 'No assigned brief: the human messages in this corner are the authority; skip steps that need a brief revision.',
   },
   {
@@ -933,7 +919,7 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
     layer: 'turn',
     surfaces: EVERYWHERE,
     when: ({ memory }) => memoryListsWorkspaceCoreProcedure(memory),
-    render: () => 'At task start, call load_workspace_skill for `workspace-core`.',
+    render: () => 'At task start, call read with facet procedure and slug `workspace-core`.',
   },
   {
     id: 'turn.corners',
@@ -945,7 +931,7 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
     render: ({ surface, corners, closedCorners }) =>
       [
         corners?.length
-          ? `Current corners you belong to (use the exact cornerId with ${surface === 'room' ? 'read, inspect_corner or order' : 'read, inspect_corner or order across member Rooms'}):\n${corners.map(renderOpenCornerLine).join('\n')}`
+          ? `Current corners you belong to (use the exact cornerId with ${surface === 'room' ? 'read or order' : 'read or order across member Rooms'}):\n${corners.map(renderOpenCornerLine).join('\n')}`
           : '',
         surface === 'room' && closedCorners?.length
           ? `Corners you belong to closed in the last 24 hours:\n${closedCorners
@@ -977,7 +963,7 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
     surfaces: EVERYWHERE,
     render: ({ task, surface }) => [
       nonhumanSilentWake(task.commandReason)
-        ? 'This is a nonhuman wake. Do not post an update merely because time has passed or a reminder asks you to say what you are doing. If this nonhuman wake needs no message, call no_reply_needed successfully, then end with no final text. The tool posts nothing. Continue required work and report actual blockers instead of using silence to abandon it.'
+        ? 'This is a nonhuman wake. Do not post an update merely because time has passed or a reminder asks you to say what you are doing. If this nonhuman wake needs no message, use no_reply_needed when mounted, otherwise end silently. The tool posts nothing. Continue required work and report actual blockers instead of using silence to abandon it.'
         : ['human_tag', 'direct_message'].includes(task.commandReason ?? '')
           ? 'Reply to the human message that triggered this turn. A progress reminder is relevant only while that human is still waiting for your reply to their own message.'
         : '',

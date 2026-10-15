@@ -1,14 +1,14 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { validateSavedWorkflow } from '@beeline/api-contract/daemon';
-import { CORNER_BRIEF_PROPERTIES, agentToolsFor, cornerCallText } from './read-only-mcp.js';
+import { CORNER_BRIEF_PROPERTIES, legacyAgentToolsFor as agentToolsFor, cornerCallText } from './read-only-mcp.js';
 import {
   assembleSessionPrompt,
   MEMORY_UPKEEP_RULE,
   SEARCH_MEMORY_FIRST_RULE,
 } from './prompt-assembly.js';
 
-describe('direct message helper surface', () => {
+describe('compatibility schemas for already-running sessions', () => {
   it('limits reports to completion, decisions, or blockers', () => {
     const report = agentToolsFor(true, false).find(tool => tool.name === 'report')!;
     expect(report.description).toContain("Report when your assignment is finished, or when you need a decision or are blocked. Don't report progress.");
@@ -116,9 +116,9 @@ describe('direct message helper surface', () => {
   it('states the agent memory upkeep rule on save_memory', () => {
     const save = agentToolsFor(true, false).find((tool) => tool.name === 'save_memory');
     expect(save?.description).toContain(MEMORY_UPKEEP_RULE);
-    expect(MEMORY_UPKEEP_RULE).toContain('Before saving, call search_memory');
+    expect(MEMORY_UPKEEP_RULE).toContain('Before saving, search(scope:memory)');
     expect(MEMORY_UPKEEP_RULE).toContain('instead of deleting and saving again');
-    expect(MEMORY_UPKEEP_RULE).toContain('report_memory_used');
+    expect(MEMORY_UPKEEP_RULE).toContain('remember(kind:fact, action:used)');
   });
 
   it('states the single-word keyword rule and pattern on save_memory', () => {
@@ -368,7 +368,7 @@ it('offers the command grammar across Rooms, corners and DMs, with retired tools
     for (const name of ['steer_corner', 'ask_corner', 'get_corner_ask']) expect(names).not.toContain(name);
   }
   const dm = assembleSessionPrompt({ surface: 'dm', agentName: 'Bee' }).systemPrompt;
-  expect(dm).toContain('list_rooms');
+  expect(dm).toContain('read()');
   expect(dm).toContain('across member Rooms');
   expect(dm).toContain('report(status, text) one step up to your commander');
 });

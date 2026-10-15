@@ -14,7 +14,7 @@ import { createBeelineServer } from '../../server/src/server.js';
 import { createAgentCommand, claimAgentCommand } from '../../server/src/agent-command.js';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 import { CommandExecutionContext } from './server-command-intake.js';
-import { agentToolsFor, callAgentTool } from './read-only-mcp.js';
+import { legacyAgentToolsFor as agentToolsFor, callAgentTool } from './read-only-mcp.js';
 
 it(
   'saves a minimal drawing through set_avatar and reads the persisted image',

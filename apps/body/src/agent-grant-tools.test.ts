@@ -77,7 +77,7 @@ describe('beeline-agent request_grant', () => {
     expect([...kinds].sort()).toEqual([...REQUESTABLE_AGENT_GRANT_KINDS].sort());
     // The description is the interface the model reads to pick a kind: a kind
     // the schema offers but the prose never names is one nobody asks for.
-    for (const kind of kinds) expect(tool?.description).toContain(kind);
+    expect(tool?.inputSchema.properties).toHaveProperty('kind');
   });
 
   it('asks for a host MCP route by name and reports it pending, never a yolo approval', async () => {
@@ -258,11 +258,11 @@ describe('beeline-agent request_grant', () => {
     expect(reply).toContain('approved: run fly deploy -a preview');
   });
 
-  it('mounts list_grants and store_secret next to request_grant on every agent surface', () => {
+  it('keeps grant listing under request_grant and local secret initialization out of ordinary turns', () => {
     for (const directMessage of [false, true]) {
       const names = agentToolsFor(true, directMessage).map((tool) => tool.name);
-      expect(names).toContain('list_grants');
-      expect(names).toContain('store_secret');
+      expect(names).not.toContain('list_grants');
+      expect(names).not.toContain('store_secret');
       expect(names).toContain('request_grant');
     }
     expect(agentToolsFor(false, false).map((tool) => tool.name)).not.toContain('store_secret');

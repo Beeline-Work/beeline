@@ -66,6 +66,7 @@
     "install:beeline": "bash scripts/install-beeline.sh",
     "bundle:beeline": "node scripts/build-beeline-bundle.mjs",
     "verify:beeline-install": "node scripts/verify-beeline-install.mjs",
+    "measure:agent-tools": "node --import tsx scripts/measure-agent-tool-surface.ts",
     "measure:corner-wake": "node --import tsx scripts/measure-corner-wake.ts",
     "mobile:install": "npm install --prefix apps/mobile",
     "corner:prepare": "npm ci && npm run mobile:install && npm run build",

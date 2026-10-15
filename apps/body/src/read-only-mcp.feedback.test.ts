@@ -18,7 +18,7 @@ const RETIRED_TRIAGE_TOOLS = [
 ];
 
 describe('feedback tools', () => {
-  it('offers report_feedback and notify_feedback_fixed on every surface and no triage tool anywhere', () => {
+  it('offers feedback and fixed variants of report on every surface and no triage tool anywhere', () => {
     const surfaces = {
       room: agentToolsFor(true, false),
       dm: agentToolsFor(true, true),
@@ -29,12 +29,13 @@ describe('feedback tools', () => {
     };
     for (const [surface, tools] of Object.entries(surfaces)) {
       const names = tools.map((tool) => tool.name);
-      expect(names, surface).toContain('report_feedback');
+      expect(names, surface).toContain('report');
+      expect(names, surface).not.toContain('report_feedback');
       // The server decides who may send a Fixed DM, on every call.
-      expect(names, surface).toContain('notify_feedback_fixed');
+      expect(names, surface).not.toContain('notify_feedback_fixed');
       for (const name of RETIRED_TRIAGE_TOOLS) expect(names, surface).not.toContain(name);
     }
-    const report = surfaces.room.find((tool) => tool.name === 'report_feedback')!;
+    const report = surfaces.room.find((tool) => tool.name === 'report')!;
     expect(report.inputSchema.properties).not.toHaveProperty('prompt_section_ids');
     expect((report.inputSchema.properties as Record<string, { enum?: string[] }>).category?.enum).toEqual([
       'simpler_path',

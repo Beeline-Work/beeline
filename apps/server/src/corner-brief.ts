@@ -17,7 +17,7 @@ function boundedText(value: unknown, maximum: number): value is string {
   return typeof value === 'string' && Boolean(value.trim()) && value.length <= maximum;
 }
 
-export function validateCornerBrief(draft: CornerBriefDraft): void {
+export function validateCornerBrief(draft: CornerBriefDraft, repositoryBacked = false): readonly string[] {
   if (!draft || typeof draft !== 'object') throw new Error('corner brief is required');
   if (!boundedText(draft.spec, CORNER_BRIEF_SPEC_MAX_LENGTH))
     throw new Error(
@@ -53,6 +53,14 @@ export function validateCornerBrief(draft: CornerBriefDraft): void {
       throw new Error('invalid corner brief attachment');
     ids.add(normalizedId);
   }
+  // Repository bugfixes record real-target proof, or why infeasible and the closest stand-in.
+  const intent = draft.spec.match(/^## Intent\s*\n([\s\S]*?)(?=^## |$(?![\s\S]))/mi)?.[1] ?? draft.spec;
+  const bugfix = /\b(?:bugfix|bug fix|fix|repair|reported (?:bug|defect)|regression)\b/i.test(intent) &&
+    !/\b(?:new feature|refactor|design only)\b|^[\s>"“]*(?:please\s+)?(?:add|create|build|design|feature)\b/i.test(intent);
+  const reproduction = /(?:^|\n)\s*(?:[-*>]\s*)?(?:#{1,3}\s*)?Reproduction(?: [a-z0-9_-]+)?:\s*\S.+/i.test(draft.spec);
+  const standIn = /Reproduction not feasible:\s*\S.+;\s*Stand-in:\s*\S.+/i.test(draft.spec);
+  return repositoryBacked && draft.repositoryWork !== false && bugfix && !reproduction && !standIn
+    ? ['Repository bugfix brief needs Reproduction <id>: real-target steps and failure, or Reproduction not feasible: reason; Stand-in: closest check. Done repeats that check successfully.'] : [];
 }
 
 export async function resolveCornerBriefAttachments(

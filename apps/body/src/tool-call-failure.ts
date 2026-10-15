@@ -59,6 +59,43 @@ export function isCompletedToolCall(call: ToolCallEntry): boolean {
   return /^completed$/i.test(call.status ?? '');
 }
 
+/** Unwrap only the argument envelopes the supported ACP harnesses emit. */
+function toolCallArguments(input: unknown): Record<string, unknown> | undefined {
+  for (let depth = 0; depth < 4; depth++) {
+    if (typeof input === 'string') {
+      try {
+        input = JSON.parse(input);
+      } catch {
+        return undefined;
+      }
+    }
+    if (!input || typeof input !== 'object' || Array.isArray(input)) return undefined;
+    const record = input as Record<string, unknown>;
+    const nested = record.arguments ?? record.tool_input ?? record.toolInput;
+    if (nested === undefined) return record;
+    input = nested;
+  }
+  return undefined;
+}
+
+/** Checks reads use the same completed-call nudge rule across compact and legacy surfaces. */
+export function isPrChecksRead(call: ToolCallEntry): boolean {
+  if (/(?:^|[._:/-])pr_checks_status$/i.test(call.title ?? '')) return true;
+  return (
+    /(?:^|[._:/-])read$/i.test(call.title ?? '') &&
+    toolCallArguments(call.rawInput)?.facet === 'checks'
+  );
+}
+
+/** Feedback variants of report never count as private work delivery to a commander. */
+export function isPrivateWorkToolCall(call: ToolCallEntry): boolean {
+  if (!isCompletedToolCall(call)) return false;
+  if (/(?:^|[._:/-])(?:order|open_corner)$/i.test(call.title ?? '')) return true;
+  if (!/(?:^|[._:/-])report$/i.test(call.title ?? '')) return false;
+  const kind = toolCallArguments(call.rawInput)?.kind;
+  return kind === undefined || kind === 'commander';
+}
+
 /**
  * The line to log for a failed tool call, or `undefined` when the call did
  * not fail. Secrets are scrubbed with the same redactor the failed-turn

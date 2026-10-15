@@ -25,15 +25,16 @@ describe('workflow run tools', () => {
   });
   afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
-  it('offers read and cancel alongside workflows on Rooms, DMs and corners', () => {
-    for (const tools of [agentToolsFor(true, false), agentToolsFor(true, true), agentToolsFor(true, false, true)]) {
-      expect(tools.map(t => t.name)).toEqual(expect.arrayContaining(['get_workflow_run', 'cancel_workflow_run']));
-    }
-    expect(agentToolsFor(true, false, false, false, true, false).map(t => t.name)).not.toContain('get_workflow_run');
+  it('keeps workflows discoverable without mounting their schemas on ordinary turns', async () => {
+    expect(agentToolsFor(true, false).map(tool => tool.name)).toContain('app_tool');
+    expect(agentToolsFor(true, false).map(tool => tool.name)).not.toContain('get_workflow_run');
+    const discovered = JSON.parse(await callAgentTool('app_tool', { app: 'beeline:workflow' }, 'discover'));
+    expect(discovered.tools.map((tool: { name: string }) => tool.name)).toEqual(['save', 'start', 'read', 'advance', 'cancel', 'archive', 'rebind']);
+    expect(calls).toEqual([]);
   });
 
   it('reads a returned run id without requiring a write turn', async () => {
-    expect(JSON.parse(await callAgentTool('get_workflow_run', { runId: 'run-1' }))).toMatchObject({ runId: 'run-1' });
+    expect(JSON.parse(await callAgentTool('app_tool', { app: 'beeline:workflow', tool: 'read', args: { runId: 'run-1' } }, 'read'))).toMatchObject({ runId: 'run-1' });
     expect(calls).toEqual([{ name: 'getWorkflowRun', input: { roomId: 'room-1', agentId: 'agent-1', runId: 'run-1' } }]);
   });
 
@@ -76,7 +77,7 @@ describe('workflow run tools inside a corner', () => {
   afterEach(() => { vi.unstubAllEnvs(); vi.unstubAllGlobals(); });
 
   it('reads the run stored in the corner, not the parent Room', async () => {
-    await callAgentTool('get_workflow_run', { runId: 'run-1' });
+    await callAgentTool('app_tool', { app: 'beeline:workflow', tool: 'read', args: { runId: 'run-1' } }, 'read');
     expect(calls).toEqual([{ name: 'getWorkflowRun', input: { roomId: 'corner-1', agentId: 'agent-1', runId: 'run-1' } }]);
   });
 

@@ -714,3 +714,49 @@ it('does not resolve an opening card against a corner belonging to another paren
   expect(view?.messages.find(message => message.daemonFact?.cornerId === opened.cornerId)?.daemonFact)
     .toMatchObject({ objective: 'Build the widget' });
 });
+
+it('the same corner reports privately up to its parent Room commander while orders to that Room refuse', async () => {
+  const parentCommand = await createAgentCommand(db, { roomId: ROOM, agentId: RUBY,
+    sourceMessageId: null, reason: 'order', privatePayload: { text: 'Coordinate this task', authorId: WORKER, fromRoomId: DM, kind: 'order' } });
+  const parent = (await commands(ROOM, RUBY)).find(command => command.id === parentCommand!.id)!;
+  await claim(parent);
+  const opened = await daemon.execute('createCorner', { ...authority(parent), targetRoomId: ROOM,
+    name: 'Proof', objective: 'Prove report routing', implementer: 'worker',
+    brief: { spec: 'Deliver proof', repositoryWork: false, approval: { sourceMessageId: parent.id } } }, RUBY);
+  const child = await worker(opened.cornerId);
+  await expect(daemon.execute('order', { ...authority(child), address: ROOM, agent: RUBY, text: 'Recruit parent' }, WORKER))
+    .rejects.toThrow("Corners can't order their parent Room");
+  await daemon.execute('report', { ...authority(child), status: 'blocked', text: 'blocked: need the commander decision' }, WORKER);
+  expect((await commands(ROOM, RUBY)).find(command => command.reason === 'report'))
+    .toMatchObject({ private: true, source: { authorId: WORKER, body: 'blocked: need the commander decision' } });
+  expect((await db.query(`SELECT 1 FROM messages WHERE text=$1`, ['blocked: need the commander decision'])).rowCount).toBe(0);
+});
+
+it('public corner notes stay durable without waking a worker or commander', async () => {
+  const opened = await open();
+  const before = (await db.query(`SELECT id FROM agent_commands ORDER BY id`)).rows;
+  await daemon.execute('postCornerMessage', { ...authority(order), cornerId: opened.cornerId, text: 'A public note without work authority' }, RUBY);
+  expect((await db.query(`SELECT text FROM messages WHERE room_id=$1 AND text=$2`, [opened.cornerId, 'A public note without work authority'])).rowCount).toBe(1);
+  expect((await db.query(`SELECT id FROM agent_commands ORDER BY id`)).rows).toEqual(before);
+});
+
+it('compact wakes manage only self-owned sources and refuse messaging or recipient injection', async () => {
+  const mine = await daemon.execute('manageAgentWake', { ...authority(order), action: 'create', trigger: 'schedule',
+    prompt: 'Inspect my pending work', cadence: { kind: 'interval', everyMinutes: 5 } }, RUBY) as { scheduleId: string };
+  const otherId = randomUUID();
+  await db.query(`INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at)
+    VALUES($1,$2,$3,$4,$4,'{"kind":"interval","everyMinutes":5}'::jsonb,'Other agent work',now())`, [otherId, WS, DM, WORKER]);
+  for (const action of ['update', 'delete'] as const) {
+    await expect(daemon.execute('manageAgentWake', { ...authority(order), action, trigger: 'schedule', scheduleId: otherId, prompt: 'Forged' }, RUBY))
+      .rejects.toThrow('own schedules');
+  }
+  const listed = await daemon.execute('manageAgentWake', { ...authority(order), action: 'list' }, RUBY) as { schedules: { scheduleId: string }[] };
+  expect(listed.schedules.map(schedule => schedule.scheduleId)).toEqual([mine.scheduleId]);
+  const before = (await db.query(`SELECT id FROM agent_commands ORDER BY id`)).rows;
+  for (const forged of [{ agentId: WORKER }, { agent: WORKER }, { operation: 'order' }, { text: 'A message' }])
+    await expect(daemon.execute('manageAgentWake', { ...authority(order), action: 'create', trigger: 'schedule', ...forged } as never, RUBY)).rejects.toThrow(/own wake sources|daemon token does not own requested agent/);
+  await daemon.execute('manageAgentWake', { ...authority(order), action: 'update', trigger: 'schedule', scheduleId: mine.scheduleId, prompt: 'Updated self work' }, RUBY);
+  await daemon.execute('manageAgentWake', { ...authority(order), action: 'delete', trigger: 'schedule', scheduleId: mine.scheduleId }, RUBY);
+  expect((await db.query(`SELECT id FROM agent_commands ORDER BY id`)).rows).toEqual(before);
+  expect((await db.query(`SELECT message FROM agent_schedules WHERE id=$1`, [otherId])).rows[0]).toEqual({ message: 'Other agent work' });
+});

@@ -104,7 +104,7 @@ import {
   type EmptyTurnExplanation,
 } from './empty-turn.js';
 import type { GrantCommandRunner, GrantRunnerEndpoint, GrantWritePolicy } from './grant-runner.js';
-import { harnessSupportsNativeSessionResume, roomShellCapability } from './harness-capabilities.js';
+import { harnessSupportsNativeSessionResume, roomNativeIoProven, roomShellCapability } from './harness-capabilities.js';
 import {
   agentArgsWithModelSelection,
   applyAgentModelSelection,
@@ -124,7 +124,7 @@ import {
 import { TurnStoppedError } from './turn-stop.js';
 import { AgentTurnStream, durableReplyText } from './turn-stream.js';
 import { TurnTrace, TurnTraceFile, type TurnTraceSink } from './turn-trace.js';
-import { isCompletedToolCall, toolCallFailureLine } from './tool-call-failure.js';
+import { isCompletedToolCall, isPrivateWorkToolCall, toolCallFailureLine } from './tool-call-failure.js';
 import { distillTurnFailureReason, redactTurnError, redactToolDetail } from './turn-failure-reason.js';
 import { withTurnReceiptHeartbeat } from './turn-receipt-heartbeat.js';
 import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
@@ -1157,8 +1157,9 @@ export class MonolithRoomTurnLoop {
     // Built before the client: the permission allowlist resolves a harness's
     // own tool-dispatch envelope (grok's `use_tool`) against exactly the
     // servers this session mounts, so it has to know them up front.
+    const shellCapability = roomShellCapability(harnessLabel, { osSandbox: Boolean(this.options.config.bwrapPath) });
     const servers: McpServerWire[] = [
-      readOnlyMcpServer(this.options.config, this.options.cwd),
+      ...(shellCapability === 'runs' ? [] : [readOnlyMcpServer(this.options.config, this.options.cwd)]),
       beelineAgentMcpServer(this.options.config, this.options.api, {
         roomId: this.options.roomId,
         workspaceId: this.options.workspaceId,
@@ -1170,6 +1171,8 @@ export class MonolithRoomTurnLoop {
         attachScratchRoot,
         turnContextPath: this.commandContext.path,
         directMessage,
+        nativeIoProven: roomNativeIoProven(harnessLabel, { osSandbox: Boolean(this.options.config.bwrapPath) }),
+        agentCommand: harnessLabel,
         squireRelay: squireScope.relay,
         ...(this.options.grantRunnerEndpoint && this.options.config.bwrapPath
           ? { grantRunner: this.options.grantRunnerEndpoint }
@@ -1259,10 +1262,8 @@ export class MonolithRoomTurnLoop {
     // the sandbox: Codex executes them in its own read-only mode with no wrap at
     // all, while a harness that asks depends on the gate above. An unmeasured
     // harness states nothing (`roomShellCapability`).
-    const shellCapability = roomShellCapability(harnessLabel, {
-      osSandbox: Boolean(this.options.config.bwrapPath),
-    });
     const session = assembleSessionPrompt({
+      squireAvailable: Boolean(squireScope.relay),
       surface: directMessage ? 'dm' : 'room',
       agentName: self?.name ?? this.agent.name,
       machineHost: await machineHost(),
@@ -1407,9 +1408,7 @@ export class MonolithRoomTurnLoop {
     // Private delivery answers the command without a chat reply. Only an
     // affirmative completed status counts; failed or unfinished calls still
     // owe an answer. Keep any durable text recovered from pi's turn record.
-    if (result.toolCalls.some((call) =>
-      isCompletedToolCall(call) && /(?:^|[._:/-])(?:report|order|open_corner)$/i.test(call.title ?? ''),
-    ) && !durableReplyText(explanation.recoveredText ?? '')) return undefined;
+    if (result.toolCalls.some(isPrivateWorkToolCall) && !durableReplyText(explanation.recoveredText ?? '')) return undefined;
     return explanation;
   }
 

@@ -21,7 +21,7 @@ it('tells the commander to end its turn after delivering an order', async () => 
   expect(result).toContain('end the turn');
   expect(result).toContain('report wakes a new turn');
   expect(result).toContain('do not sleep or poll');
-  expect(agentToolsFor(true, true).find(t => t.name === 'order')!.description).toContain('end the turn');
+  expect(agentToolsFor(true, true).find(t => t.name === 'order')!.description).toContain('End the turn');
 });
 
 it('preserves an order refusal without claiming delivery or telling the commander to wait', async () => {
@@ -37,6 +37,6 @@ it('forwards the one named agent and never describes a Room broadcast', async ()
   expect(JSON.parse(String(fetch.mock.calls[0]![1]!.body))).toEqual({ address: 'room', agent: '@candy', text: 'Check the build' });
   const tool = agentToolsFor(true, true).find(t => t.name === 'order')!;
   expect(tool.description).not.toMatch(/broadcast/i);
-  expect(tool.description).toContain('agent is required');
+  expect(tool.description).toContain('exactly one agent');
   expect(Object.keys((tool.inputSchema as { properties: object }).properties)).toContain('agent');
 });

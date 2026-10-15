@@ -356,8 +356,8 @@ describe('getInstitutionalContext hybrid vector snapshot', () => {
   // A workflow row is a workspace_skills row of kind='workflow' (#1909): the
   // embedding cycle has no kind filter, so it is embedded and found the same
   // way a procedure is, with no code change — this proves it, and that the
-  // index renders it with the workflow (start_workflow) wording, not the
-  // procedure (load_workspace_skill) wording, even when found by meaning
+  // index renders it with the workflow (app_tool beeline:workflow start) wording, not the
+  // procedure (read facet:procedure) wording, even when found by meaning
   // alone with no shared words.
   it('surfaces a kind=workflow skill by meaning alone, with the workflow wording', async () => {
     stubEmbeddingFetch();
@@ -384,7 +384,7 @@ describe('getInstitutionalContext hybrid vector snapshot', () => {
       { roomId: ROOM, requestId: 'turn-5', generationId: 'gen-5' },
       RONNIE,
     );
-    expect(context.text).toContain('Workflow gift-approval (start_workflow)');
+    expect(context.text).toContain('Workflow gift-approval (app_tool beeline:workflow start)');
     expect(context.text).not.toContain('Procedure gift-approval');
   });
 });

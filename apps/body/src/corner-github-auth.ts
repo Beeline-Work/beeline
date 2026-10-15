@@ -510,7 +510,7 @@ async function runRest(args, value) {
     process.stdout.write((pr.html_url || '') + '\\n');
     return { status: 0, authenticationFailed: false };
   }
-  process.stderr.write('Beeline: this host has no gh binary; only gh pr create and gh pr view are provided through the app token. Use git for push and the Beeline pr_checks_status tool for checks.\\n');
+  process.stderr.write('Beeline: this host has no gh binary; only gh pr create and gh pr view are provided through the app token. Use git for push and the Beeline read tool with facet checks.\\n');
   return { status: 1, authenticationFailed: false };
 }
 function isRestCommand(args) {

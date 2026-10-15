@@ -1344,10 +1344,10 @@ function workflowWakeDetail(
     .map(([outcome, target]) => `${outcome} -> ${target}`).join(', ') || 'none';
   // A dispatch card's seq is the attempt this wake is for; a later card makes it stale.
   const attempt = cardType === 'workflow-handoff' && !status
-    ? `\nThis wake is attempt ${card.seq}: pass "attempt": ${card.seq} to handoff. If you cannot do this step, hand off outcome "blocked" with contents {"reason": "..."} and it moves to the next agent on the role.`
+    ? `\nThis wake is attempt ${card.seq}: pass "attempt": ${card.seq} to app_tool’s beeline:workflow advance action. Discover its schema with app_tool(app="beeline:workflow") before acting. If you cannot do this step, hand off outcome "blocked" with contents {"reason": "..."} and it moves to the next agent on the role.`
     : '';
   return `${note}\nYou are in run ${card.runId} of ${card.workflowSlug}. Continue this run; do not start a new one.` +
-    (state ? `\nCurrent state: ${state}${status ? ` (${status})` : ''}. Allowed outcomes: ${allowed}. Read the pinned contract and requirements with get_workflow_run.` : '') +
+    (state ? `\nCurrent state: ${state}${status ? ` (${status})` : ''}. Allowed outcomes: ${allowed}. Read the pinned contract and requirements with app_tool(app="beeline:workflow", tool="read", args={runId}).` : '') +
     attempt;
 }
 

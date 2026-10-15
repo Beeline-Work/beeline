@@ -77,19 +77,15 @@ describe('wallet MCP identity and signing', () => {
     expect(daemonOperationIsSafeToRepeat('walletContractCall', {})).toBe(false);
   });
 
-  it('offers wallet_contract_call and no venue-specific deposit tool', () => {
-    const names = agentToolsFor(true, false, false).map((entry) => entry.name);
-    expect(names).toContain('wallet_contract_call');
-    expect(names).not.toContain('wallet_hyperliquid_deposit');
+  it('discovers wallet operations without mounting wallet schemas on ordinary turns', async () => {
+    const names = agentToolsFor(true, false).map(tool => tool.name);
+    expect(names).toContain('app_tool');
+    expect(names).not.toContain('wallet_contract_call');
+    const catalog = JSON.parse(await callAgentTool('app_tool', { app: 'beeline:wallet' }, 'discover'));
+    const typed = catalog.tools.find((tool: { name: string }) => tool.name === 'sign_typed_data');
+    expect(typed.inputSchema.required).toEqual(['domain', 'types', 'primaryType', 'message']);
+    expect(typed.description).toContain('authorize transfers');
+    expect(catalog.tools.map((tool: { name: string }) => tool.name)).toEqual(expect.arrayContaining(['contract_call', 'link_request', 'link_wait']));
   });
 
-  it('exposes typed data in Room and corner tools with all four required fields', () => {
-    for (const corner of [false, true]) {
-      const tool = agentToolsFor(true, false, corner).find(
-        (entry) => entry.name === 'wallet_sign_typed_data',
-      )!;
-      expect(tool.inputSchema.required).toEqual(['domain', 'types', 'primaryType', 'message']);
-      expect(tool.description).toContain('authorize transfers');
-    }
-  });
 });

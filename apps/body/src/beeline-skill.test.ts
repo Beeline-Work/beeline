@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { PER_ITEM_EVENT_KINDS, SUBSCRIBABLE_EVENT_KINDS } from '@beeline/api-contract/phone';
+import { PER_ITEM_EVENT_KINDS } from '@beeline/api-contract/phone';
 import {
   BEELINE_REVIEW_SKILL_NAME,
   beelineTriageSkillMarkdown,
@@ -34,9 +34,9 @@ describe('using-beeline Room guidance', () => {
     expect(markdown).toContain('These mechanics apply in Rooms, corners and DMs.');
     expect(markdown).toContain('beeline-release: test-release');
     expect(markdown).toContain('beeline-agent');
-    expect(markdown).toContain('beeline-agent fetch_image');
+    expect(markdown).toContain('beeline-agent scratch_io(action:image)');
     expect(markdown).toContain('put them in the HTML as a data: URL');
-    expect(markdown).not.toContain('close_corner');
+    expect(markdown).toContain('close_corner(mode:pr_only)');
     expect(markdown).not.toContain('upgrade_corner_to_code');
     expect(markdown).not.toContain('no action or corner tools');
 
@@ -54,7 +54,7 @@ describe('using-beeline Room guidance', () => {
     expect(room).toContain('Before opening one, consult beeline-triage and beeline-spec');
     expect(room).toContain('If a shell command is refused, say so plainly');
     expect(room).toContain(
-      'read code with CodeGraph when available, then beeline-readonly-mcp search_text and read_file',
+      'read code with CodeGraph when available, then repository_io(action:search/read)',
     );
     expect(room).toContain('Consult the using-beeline skill for Room mechanics');
   });
@@ -63,73 +63,49 @@ describe('using-beeline Room guidance', () => {
     const markdown = usingBeelineSkillMarkdown('test-release');
     const memory = markdown.slice(markdown.indexOf('## Memory'), markdown.indexOf('## Connect an app'));
     for (const tool of [
-      'save_memory',
-      'save_skill',
-      'save_workflow',
-      'start_workflow',
-      'search_history',
-      'report_memory_used',
-      'search_memory',
+      'remember(kind:fact, action:save)',
+      'remember(kind:procedure, action:save)',
+      'app_tool(app:beeline:workflow, tool:save)',
+      'app_tool(app:beeline:workflow, tool:start)',
+      'search(scope:history)',
+      'remember(kind:fact, action:used)',
+      'search(scope:memory)',
       'list_credentials',
-      'connectors_status',
-      'delete_skill',
+      'connect(mode:status)',
+      'remember(kind:procedure, action:delete)',
     ]) {
       expect(memory, tool).toContain(tool);
     }
     expect(memory).toContain('No background reviewer exists');
     // The workspace-core lookup lives in the turn prompt, which knows the
     // Workspace's own procedure list; a static skill cannot, so this section
-    // must not name load_workspace_skill at all.
-    expect(memory).not.toContain('load_workspace_skill');
+    // must not name read(facet:procedure) at all.
+    expect(memory).not.toContain('read(facet:procedure)');
     expect(memory).toContain('`workspace-core`');
     expect(memory).toContain('Never save "X is impossible".');
     expect(memory).toContain('at most 2,200 characters');
     // The upkeep and search-first rules stay in their tool descriptions.
-    expect(memory).not.toContain('Before saving, call search_memory');
+    expect(memory).not.toContain('Before saving, call search(scope:memory)');
     expect(memory).not.toContain('Meaning-based matching');
     expect(markdown.match(/X is impossible/g)).toHaveLength(1);
   });
 
-  it('tells a model it can subscribe itself, which is the point of the tool', () => {
-    // A tool a model never hears about is a tool nobody calls: the welcome
-    // agent could not subscribe, and someone edited a database row for it.
+  it('teaches self-only wake management and event discovery', () => {
     const markdown = usingBeelineSkillMarkdown('test-release');
-    expect(markdown).toContain('beeline-agent create_subscription');
-    expect(markdown).toContain('list_subscription_events');
-    expect(markdown).toContain('list_subscriptions and delete_subscription');
-    expect(markdown).toContain('No approval or URL setup is needed');
-    expect(markdown).toContain('list_event_subscriptions');
-    expect(markdown).toContain('joined');
-    expect(markdown).toContain('You do this yourself');
-    expect(markdown).toContain('beeline-agent emit_event');
+    expect(markdown).toContain('wake manages only your own wake sources');
+    expect(markdown).toContain('events discovers the catalog');
+    expect(markdown).toContain('replace_events replaces your legacy kind list');
+    expect(markdown).toContain('wake never posts, orders or reports');
+    for (const kind of PER_ITEM_EVENT_KINDS) expect(markdown).not.toContain(`${kind} `);
+    expect(markdown).toContain('no item-specific subscriptions');
   });
 
-  it('watches corner lifecycle events without subscriptions or reminder loops', () => {
+  it('watches corner lifecycle with committed wakes rather than reminder loops', () => {
     const markdown = usingBeelineSkillMarkdown('test-release');
-    expect(markdown).toContain('Use watch(address) for corner lifecycle events: opened and merged');
-    expect(markdown).toContain('If a wake needs no message, end the turn silently.');
-    expect(markdown).not.toContain('corner-closed');
+    expect(markdown).toContain('lifecycle watches a reachable corner for opened/merged');
     expect(markdown).toContain('Chatter and schedules never wake watchers');
-    expect(markdown).not.toContain('create a merged subscription');
+    expect(markdown).toContain('use no_reply_needed when mounted; otherwise end silently');
     expect(markdown).toContain('No reminder loops');
-  });
-
-  it('derives the subscribable kinds from SUBSCRIBABLE_EVENT_KINDS so the list cannot drift', () => {
-    const markdown = usingBeelineSkillMarkdown('test-release');
-    for (const kind of SUBSCRIBABLE_EVENT_KINDS) {
-      expect(markdown).toContain(kind);
-    }
-    // A per-item kind answers one ask and wakes its owner directly; it is
-    // never offered as something to subscribe to.
-    for (const kind of PER_ITEM_EVENT_KINDS) {
-      expect(markdown).not.toContain(`${kind} `);
-    }
-    expect(markdown).toContain(
-      'there is nothing to subscribe to for those item-specific events, and asking is refused',
-    );
-    expect(markdown).toContain('ask_choice');
-    expect(markdown).toContain('open_poll');
-    expect(markdown).toContain('A plurality is a fact');
   });
 
   it('lets a direct message drive member Rooms through the command grammar', () => {
@@ -138,7 +114,7 @@ describe('using-beeline Room guidance', () => {
     expect(dm).toContain('reply without tagging');
     expect(dm).toContain('across member Rooms');
     expect(dm).toContain('open_corner');
-    expect(dm).toContain('ask_choice');
+    expect(dm).toContain('Ask plain questions');
     expect(dm).not.toContain('open_poll');
 
     const context = sessionPrompt({ surface: 'dm', agentCommand: 'codex-acp' });
@@ -204,7 +180,7 @@ describe('using-beeline Room guidance', () => {
     const markdown = usingBeelineSkillMarkdown('test-release');
     expect(markdown).not.toContain('this Room has no other way to write one');
     expect(markdown).toContain(
-      'To create a file you can send, call beeline-agent write_scratch_file',
+      'Create files with native tools; where unavailable, use scratch_io',
     );
   });
 
@@ -242,7 +218,7 @@ describe('using-beeline Room guidance', () => {
     for (const surface of ['room', 'dm'] as const) {
       const context = sessionPrompt({ surface, agentCommand: 'codex-acp' });
       expect(context.systemPrompt).toContain(
-        'For any service or capability request, search with find_connectors if unclear, then call connect.',
+        'For any service or capability request, use connect(mode:discover) if unclear, then connect(mode:ensure).',
       );
       expect(context.systemPrompt).not.toContain('For every user request');
       expect(context.systemPrompt).not.toContain('sign up for an account');
@@ -262,7 +238,7 @@ describe('beeline-triage request skill', () => {
     expect(markdown).toContain('When a person asks for a spec or mock, produce it before building');
     expect(markdown).not.toContain('before doing anything else');
     expect(markdown).toContain('you are expected to disagree, not just permitted to');
-    expect(markdown).toContain('order a corner or agent DM for one adversarial second opinion');
+    expect(markdown).toContain('reachable child or sibling corner for one adversarial second opinion');
     expect(markdown).toContain('skip this only when you are the only agent in the Room');
     expect(markdown).toContain('## 2. Is work warranted?');
     expect(markdown).toContain('try to reproduce the exact user-visible behavior');
@@ -445,7 +421,7 @@ describe('using-beeline "Tools and the Connectors" section', () => {
     const tools = markdown.split('## Tools and the Connectors\n')[1]?.split('\n## ')[0];
     expect(tools).toContain('Before asking a person for a code, a status or a file');
     expect(tools).toContain(
-      'call connectors_status and check whether a tool or connected app you already have can get it, then use it',
+      'call connect(mode:status) and check whether a tool or connected app you already have can get it, then use it',
     );
     expect(tools).toContain('an emailed verification code in an already-connected inbox');
     expect(tools).toContain('Report blocked: to your commander only when none can, and say why');
@@ -458,7 +434,7 @@ describe('using-beeline "Tools and the Connectors" section', () => {
     expect(markdown).toContain('## Tools and the Connectors');
     expect(markdown).toContain('A **tool** is something you can use once a human adds it');
     expect(markdown).toContain('a **key** is the credential that tool holds for that human');
-    expect(markdown).toContain('beeline-agent connectors_status');
+    expect(markdown).toContain('beeline-agent connect(mode:status)');
     expect(markdown).toContain('Trusty Squire signs up and signs in to any website hands-off');
     expect(markdown).toContain(
       'operate_drive drives a whole flow, and flat steps (operate_click, operate_type, operate_select,',
@@ -472,7 +448,7 @@ describe('using-beeline "Tools and the Connectors" section', () => {
   });
 
   it('teaches one server-owned connection path in every surface', () => {
-    expect(markdown).toContain('For any service or capability request, search with find_connectors if unclear, then call connect.');
+    expect(markdown).toContain('For any service or capability request, use connect(mode:discover) if unclear, then connect(mode:ensure).');
     expect(markdown).toContain('including in corners');
     expect(markdown).toContain('switchGoogleAccount');
     expect(markdown).toContain('end the turn and wait for its connection wake');
@@ -536,20 +512,20 @@ describe('using-beeline "Showing a mock" section', () => {
 describe('using-beeline "Showing a photograph" section', () => {
   const markdown = usingBeelineSkillMarkdown('test-release');
 
-  it('teaches fetch_image next to Showing a mock, and keeps the validator closed', () => {
+  it('teaches scratch_io(action:image) next to Showing a mock, and keeps the validator closed', () => {
     expect(markdown).toContain('## Showing a photograph');
     expect(markdown.indexOf('## Showing a photograph')).toBeGreaterThan(
       markdown.indexOf('## Showing a mock'),
     );
-    expect(markdown).toContain('beeline-agent fetch_image');
+    expect(markdown).toContain('beeline-agent scratch_io(action:image)');
     expect(markdown).toContain('data:image/jpeg;base64');
     expect(markdown).toContain('do not draw an SVG stand-in');
     expect(markdown).toContain('The validator still refuses every http(s) image reference');
     expect(markdown).toContain('The artifact is a snapshot');
   });
 
-  it('teaches the fetch_image recipe once, and the Squire route once', () => {
-    expect(markdown.split('fetch_image').length - 1).toBe(1);
+  it('teaches the scratch_io(action:image) recipe once, and the Squire route once', () => {
+    expect(markdown.split('scratch_io(action:image)').length - 1).toBe(1);
     const photograph = markdown.split('## Showing a photograph\n')[1]?.split('\n## ')[0];
     expect(photograph).not.toContain('Trusty Squire');
   });

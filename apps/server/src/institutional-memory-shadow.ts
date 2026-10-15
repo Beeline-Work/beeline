@@ -447,8 +447,8 @@ export async function getInstitutionalContext(
     for (const skill of skillCandidates) {
       const line =
         skill.kind === 'workflow'
-          ? `- Workflow ${skill.slug} (start_workflow): ${skill.description}`
-          : `- Procedure ${skill.slug} (load_workspace_skill): ${skill.description}`;
+          ? `- Workflow ${skill.slug} (app_tool beeline:workflow start): ${skill.description}`
+          : `- Procedure ${skill.slug} (read facet:procedure): ${skill.description}`;
       const lineBytes = Buffer.byteLength(line, 'utf8') + 1;
       if (bytesByKind.skills + lineBytes > INSTITUTIONAL_SKILL_INDEX_MAX_BYTES) continue;
       lines.push(line);
@@ -792,7 +792,7 @@ async function lockMemoryTarget(
   if (!row) throw new Error(`institutional memory item ${itemId} is unavailable`);
   if (version !== row.version) {
     throw new Error(
-      `institutional memory item ${itemId} is at version ${row.version}; search_memory again before changing it`,
+      `institutional memory item ${itemId} is at version ${row.version}; search memory again before changing it`,
     );
   }
   return row;

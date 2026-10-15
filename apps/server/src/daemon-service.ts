@@ -56,6 +56,7 @@ import {
 } from './corner-brief.js';
 import {
   AGENT_TO_AGENT_HOP_CAP,
+  REPOSITORY_SUBSCRIPTION_EVENTS,
   wakeBatchMinutes,
   boundReplyExcerpt,
   REPLY_EXCERPT_MAX_LENGTH,
@@ -457,6 +458,7 @@ export class DaemonService {
       'reviseCornerBrief',
       'postRoomEvent',
       'requestAgentGrant',
+      'manageAgentWake',
       'createAgentSubscription',
       'deleteAgentSubscription',
       'authorizeSquireCall',
@@ -1114,6 +1116,8 @@ export class DaemonService {
           input as Input<'getWorkScheduleAuthority'>,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'manageAgentWake':
+        return await this.manageAgentWake(input as Input<'manageAgentWake'>, authenticatedAgentId) as Output<Name>;
       case 'createAgentSchedule':
         return (await this.createAgentSchedule(
           input as Input<'createAgentSchedule'>,
@@ -5237,6 +5241,51 @@ export class DaemonService {
    * mentions it, and every schedule any agent created for itself here. A
    * schedule a person created for another agent stays that person's.
    */
+  /** This facade never dispatches a caller-supplied operation or agent identity. */
+  private async manageAgentWake(input: Input<'manageAgentWake'>, agentId: string): Promise<object> {
+    const allowed = new Set(['roomId', 'requestId', 'generationId', 'taskId', 'action', 'trigger', 'address', 'scheduleId', 'subscriptionId', 'prompt', 'cadence', 'maxRuns', 'workflowName', 'source', 'event', 'repository', 'channelId', 'channelName', 'kinds']);
+    if (Object.keys(input).some(key => !allowed.has(key)))
+      throw new CommandRefusalError('wake only manages the authenticated agent’s own wake sources', 400);
+    const roomId = input.roomId;
+    if (input.action === 'events') return { room: SUBSCRIBABLE_EVENT_KINDS, repository: REPOSITORY_SUBSCRIPTION_EVENTS, service: await this.execute('listServiceSubscriptionEvents', { roomId }, agentId) };
+    if (input.action === 'replace_events') return this.setEventSubscriptions({ roomId, kinds: input.kinds! }, agentId);
+    if (input.action === 'list') {
+      const schedules = (await this.listAgentSchedules({ roomId, agentId }, agentId)).schedules.filter(row => row.agentId === agentId);
+      const subscriptions = await listAgentSubscriptions(this.database, roomId, agentId);
+      const watches = (await this.database.query(
+        `SELECT corner_id address,kinds FROM corner_watches WHERE watcher_room_id=$1 AND agent_id=$2 ORDER BY corner_id`, [roomId, agentId])).rows;
+      const events = await this.listEventSubscriptions({ roomId }, agentId);
+      return { schedules, subscriptions, watches, events };
+    }
+    if (input.trigger === 'schedule') {
+      if (input.action === 'create') return this.createAgentSchedule({ roomId, agentId, requestId: input.requestId,
+        prompt: input.prompt!, cadence: input.cadence!, maxRuns: input.maxRuns, workflowName: input.workflowName } as Input<'createAgentSchedule'>, agentId);
+      if (input.action === 'update' || input.action === 'delete') return this.database.transaction(async db => {
+        const owned = await db.query(`SELECT 1 FROM agent_schedules
+          WHERE id=$1 AND room_id=$2 AND agent_id=$3 AND workflow_run IS NULL FOR UPDATE`, [input.scheduleId, roomId, agentId]);
+        if (!owned.rowCount) throw new CommandRefusalError('wake can only manage your own schedules', 403);
+        if (input.action === 'delete') return this.deleteAgentSchedule({ roomId, agentId, scheduleId: input.scheduleId! }, agentId, db);
+        return this.updateAgentSchedule({ roomId, agentId, scheduleId: input.scheduleId!, prompt: input.prompt,
+          cadence: input.cadence, maxRuns: input.maxRuns, workflowName: input.workflowName }, agentId, db);
+      });
+    }
+    if (input.trigger === 'event') {
+      if (input.action === 'create') return this.execute('createAgentSubscription', {
+        roomId, requestId: input.requestId, generationId: input.generationId,
+        source: input.source!, event: input.event!, prompt: input.prompt!, repository: input.repository,
+        channelId: input.channelId, channelName: input.channelName, workflowName: input.workflowName,
+      } as Input<'createAgentSubscription'>, agentId);
+      if (input.action === 'delete') {
+        await deleteAgentSubscription(this.database, roomId, agentId, input.subscriptionId!, this.composio);
+        return this.writeResult();
+      }
+    }
+    if (input.trigger === 'lifecycle' && (input.action === 'create' || input.action === 'delete'))
+      return this.watchCorner({ roomId, requestId: input.requestId, generationId: input.generationId,
+        cornerId: input.address!, kinds: input.action === 'delete' ? [] : ['opened', 'merged'] }, agentId);
+    throw new CommandRefusalError('unknown wake action/trigger', 400);
+  }
+
   private async listAgentSchedules(input: Input<'listAgentSchedules'>, agentId: string) {
     const rows = await this.database.query<{
       id: string;
@@ -5280,8 +5329,8 @@ export class DaemonService {
     );
     return { schedules };
   }
-  private async deleteAgentSchedule(input: Input<'deleteAgentSchedule'>, agentId: string) {
-    const deleted = await this.database.query(
+  private async deleteAgentSchedule(input: Input<'deleteAgentSchedule'>, agentId: string, db = this.database) {
+    const deleted = await db.query(
       `DELETE FROM agent_schedules
        WHERE id=$1 AND room_id=$2 AND workflow_run IS NULL
          AND (agent_id=$3 OR creator_id=agent_id)`,
@@ -7743,7 +7792,8 @@ export class DaemonService {
         [commandRoomId, agentId, cornerId],
       )
     ).rows[0];
-    return { cornerId, ...(watch ? { watch: { roomId: commandRoomId, kinds: watch.kinds } } : {}) };
+    const warnings = input.brief ? validateCornerBrief(input.brief, repositoryWork) : [];
+    return { cornerId, ...(warnings.length ? { warnings } : {}), ...(watch ? { watch: { roomId: commandRoomId, kinds: watch.kinds } } : {}) };
   }
   private async reviseCornerBrief(input: Input<'reviseCornerBrief'>, agentId: string) {
     validateCornerBrief(input.brief);
@@ -7755,13 +7805,15 @@ export class DaemonService {
       const corner = (
         await db.query<{
           parent_id: string;
+          repository_backed: boolean;
           owner_agent_id: string | null;
           implementer_agent_id: string | null;
           kind: string;
           created_by: string;
         }>(
           `SELECT room.parent_id,fact.owner_agent_id,${cornerImplementerSql('fact', 'room')} implementer_agent_id,
-             fact.kind,room.created_by FROM rooms room
+             fact.kind,room.created_by,EXISTS(SELECT 1 FROM rooms parent WHERE parent.id=room.parent_id
+               AND (parent.repository_resolution='repository' OR parent.repository_key IS NOT NULL)) repository_backed FROM rooms room
          JOIN corner_facts fact ON fact.corner_id=room.id
          WHERE room.id=$1 AND room.archived_at IS NULL FOR UPDATE OF room`,
           [input.cornerId],
@@ -7852,7 +7904,8 @@ export class DaemonService {
         sourceMessageId: note.id,
         command,
       });
-      return { ...(await currentCornerBrief(db, input.cornerId))!, wake: outcome.wake ?? {
+      const warnings = validateCornerBrief(draft, corner.repository_backed);
+      return { ...(await currentCornerBrief(db, input.cornerId))!, ...(warnings.length ? { warnings } : {}), wake: outcome.wake ?? {
         queued: false, reason: 'No lifecycle wake queued',
       } };
     });
@@ -8209,6 +8262,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   getWorkScheduleAuthority: true,
   listAgentToolSchedules: true,
   createAgentSchedule: true,
+  manageAgentWake: true,
   setEventSubscriptions: true,
   setWakeDelivery: true,
   getWakeDelivery: true,

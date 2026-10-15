@@ -154,13 +154,11 @@ describe('beeline-agent event tools', () => {
     ).rejects.toThrow(/5 events deep/);
   });
 
-  it('mounts the event tools on the agent surface, in a Room and in a direct message', () => {
-    const room = agentToolsFor(true, false).map((tool) => tool.name);
-    const dm = agentToolsFor(true, true).map((tool) => tool.name);
-    for (const name of ['subscribe_events', 'list_event_subscriptions', 'emit_event', 'set_wake_delivery', 'get_wake_delivery']) {
-      expect(room).toContain(name);
-      expect(dm).toContain(name);
+  it('exposes only self-wake management on the minimal surface', () => {
+    for (const dm of [false, true]) {
+      const names = agentToolsFor(true, dm).map(tool => tool.name);
+      expect(names).toContain('wake');
+      for (const retired of ['subscribe_events', 'list_event_subscriptions', 'emit_event', 'set_wake_delivery', 'get_wake_delivery']) expect(names).not.toContain(retired);
     }
-    expect(agentToolsFor(false, false).map((tool) => tool.name)).not.toContain('subscribe_events');
   });
 });

@@ -253,7 +253,7 @@ describe('merge-derived restricted Workspace procedures', () => {
     };
     const context = await getInstitutionalContext(database, cornerTurn);
     expect(context.text).toContain(
-      `Workflow feedback-triage (start_workflow): ${contract.description}`,
+      `Workflow feedback-triage (app_tool beeline:workflow start): ${contract.description}`,
     );
     const started = await startWorkflow(database, cornerTurn, {
       name: 'feedback-triage',
@@ -276,7 +276,7 @@ describe('merge-derived restricted Workspace procedures', () => {
     };
     await saveWorkflow(database, command, { contract: describedWorkflow(contract) });
     const context = await getInstitutionalContext(database, command);
-    expect(context.text).toContain('Workflow ship-release (start_workflow): Ship a release safely');
+    expect(context.text).toContain('Workflow ship-release (app_tool beeline:workflow start): Ship a release safely');
     expect(context.text).not.toContain('Procedure ship-release');
     const loaded = await loadWorkspaceSkill(database, command, {
       agentId: OTHER_AGENT,
@@ -566,7 +566,7 @@ describe('save_skill', () => {
     };
     const context = await getInstitutionalContext(database, otherRoomCommand);
     expect(context.text).toContain(
-      'Procedure cartoon-short-video (load_workspace_skill): Storyboard render cartoon clip',
+      'Procedure cartoon-short-video (read facet:procedure): Storyboard render cartoon clip',
     );
     const loaded = await loadWorkspaceSkill(database, otherRoomCommand, {
       agentId: WORKER,
@@ -668,12 +668,12 @@ describe('snapshot skill index budget', () => {
     const lines = after.text.split('\n');
     const skillLines = lines.filter((line) => /^- (Procedure|Workflow) /.test(line));
     expect(skillLines[0]).toBe(
-      '- Procedure workspace-core (load_workspace_skill): Load at task start: machines and checklists',
+      '- Procedure workspace-core (read facet:procedure): Load at task start: machines and checklists',
     );
     expect(skillLines).toContain(
-      '- Procedure cartoon-short-video (load_workspace_skill): Storyboard render cartoon clip',
+      '- Procedure cartoon-short-video (read facet:procedure): Storyboard render cartoon clip',
     );
-    expect(skillLines).toContain('- Workflow ship-release (start_workflow): Ship a release safely');
+    expect(skillLines).toContain('- Workflow ship-release (app_tool beeline:workflow start): Ship a release safely');
 
     // Facts keep exactly what they had: same items, same bytes, inside their cap.
     expect(after.itemIds).toEqual(before.itemIds);
@@ -713,7 +713,7 @@ describe('snapshot skill index budget', () => {
       async () => ({ outcome: 'served', vector: near, ms: 1 }),
     );
     expect(context.text).toContain(
-      '- Procedure schema-ordering (load_workspace_skill): Order schema changes safely',
+      '- Procedure schema-ordering (read facet:procedure): Order schema changes safely',
     );
     expect((await serve('meaning-full-index')).skill_index_bytes).toBeLessThanOrEqual(
       INSTITUTIONAL_SKILL_INDEX_MAX_BYTES,

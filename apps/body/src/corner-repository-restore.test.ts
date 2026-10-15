@@ -177,7 +177,7 @@ it('cuts a worktree and runs the code-corner surface for a human corner of a rep
     expect(input.systemPrompt).toContain(`isolated git worktree on ${featureBranch}`);
     // No brief yet: nothing is assigned, so the brief comes before any code.
     expect(cornerHasRepositoryWork(undefined)).toBe(false);
-    expect(input.systemPrompt).toContain('report needs-decision: to your commander for its revision first');
+    expect(input.systemPrompt).toContain('ask your commander for an authorized revision');
     expect(input.systemPrompt).not.toContain('repo-less corner');
     const agentServer = (input.mcpServers ?? []).find((server) => server.name === 'beeline-agent');
     const environment = new Map((agentServer?.env ?? []).map(({ name, value }) => [name, value]));
@@ -192,10 +192,11 @@ it('cuts a worktree and runs the code-corner surface for a human corner of a rep
     ).map((tool) => tool.name);
     expect(tools).toContain('approve_merge');
     expect(tools).toContain('merge_corner');
-    expect(tools).toContain('close_pull_request');
     expect(tools).toContain('close_corner');
-    expect(tools).toContain('rename_corner');
-    expect(tools).toContain('revise_corner_brief');
+    expect(tools).not.toContain('close_pull_request');
+    expect(tools).toContain('close_corner');
+    expect(tools).toContain('revise_corner');
+    expect(tools).not.toContain('revise_corner_brief');
     expect(tools).not.toContain('upgrade_corner_to_code');
   } finally {
     await coordinator.shutdown();

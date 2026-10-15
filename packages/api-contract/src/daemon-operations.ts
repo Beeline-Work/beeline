@@ -67,6 +67,24 @@ export type CreateAgentScheduleInput = AgentRoomInput & {
   /** Stop (and delete) the schedule after this many runs. */
   readonly maxRuns?: number;
 };
+/** Compact self-only wake management. No recipient or message delivery operation. */
+export type ManageAgentWakeInput = RoomInput & TurnOutputAuthority & {
+  readonly action: 'create' | 'list' | 'update' | 'delete' | 'events' | 'replace_events';
+  readonly trigger?: 'schedule' | 'event' | 'lifecycle';
+  readonly address?: string;
+  readonly scheduleId?: string;
+  readonly subscriptionId?: string;
+  readonly prompt?: string;
+  readonly cadence?: RoomScheduleCadence;
+  readonly maxRuns?: number;
+  readonly workflowName?: string;
+  readonly source?: SubscriptionSource;
+  readonly event?: string;
+  readonly repository?: string;
+  readonly channelId?: string;
+  readonly channelName?: string;
+  readonly kinds?: readonly string[];
+};
 export type AgentScheduleResult = {
   readonly scheduleId: string;
   readonly nextRunAt: number;
@@ -324,6 +342,7 @@ export type DaemonOperationMap = {
   getMissionAuthority: Operation<MissionAuthorityInput, AuthorityDecisionResult>;
   listWorkSchedules: Operation<AgentInput, WorkScheduleListResult>;
   createAgentSchedule: Operation<CreateAgentScheduleInput, AgentScheduleResult>;
+  manageAgentWake: Operation<ManageAgentWakeInput, object>;
   setEventSubscriptions: Operation<SetEventSubscriptionsInput, EventSubscriptionsResult>;
   setWakeDelivery: Operation<RoomInput & WakeDeliveryResult, WakeDeliveryResult>;
   getWakeDelivery: Operation<RoomInput, WakeDeliveryResult>;
@@ -361,7 +380,7 @@ export type DaemonOperationMap = {
   >;
   reviseCornerBrief: Operation<
     ReviseCornerBriefInput,
-    CornerBrief & { readonly wake: { readonly queued: boolean; readonly agentId?: string; readonly reason?: string } }
+    CornerBrief & { readonly warnings?: readonly string[]; readonly wake: { readonly queued: boolean; readonly agentId?: string; readonly reason?: string } }
   >;
   getPrChecksStatus: Operation<
     CornerInput & { pullRequest?: number | string },
@@ -1434,6 +1453,7 @@ export type ReviseCornerBriefInput = TurnOutputAuthority &
   };
 export type CornerResult = {
   readonly cornerId: string;
+  readonly warnings?: readonly string[];
   /** The opener's merge watch, absent when the opener opted out. */
   readonly watch?: { readonly roomId: string; readonly kinds: readonly CornerWatchKind[] };
 };

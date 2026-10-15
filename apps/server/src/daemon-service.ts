@@ -56,7 +56,6 @@ import {
 } from './corner-brief.js';
 import {
   AGENT_TO_AGENT_HOP_CAP,
-  REPOSITORY_SUBSCRIPTION_EVENTS,
   wakeBatchMinutes,
   boundReplyExcerpt,
   REPLY_EXCERPT_MAX_LENGTH,
@@ -458,7 +457,6 @@ export class DaemonService {
       'reviseCornerBrief',
       'postRoomEvent',
       'requestAgentGrant',
-      'manageAgentWake',
       'createAgentSubscription',
       'deleteAgentSubscription',
       'authorizeSquireCall',
@@ -1116,8 +1114,6 @@ export class DaemonService {
           input as Input<'getWorkScheduleAuthority'>,
           authenticatedAgentId,
         )) as Output<Name>;
-      case 'manageAgentWake':
-        return await this.manageAgentWake(input as Input<'manageAgentWake'>, authenticatedAgentId) as Output<Name>;
       case 'createAgentSchedule':
         return (await this.createAgentSchedule(
           input as Input<'createAgentSchedule'>,
@@ -1175,6 +1171,10 @@ export class DaemonService {
           input as Input<'postRoomEvent'>,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'listAgentWatches':
+        return { watches: (await this.database.query<{ address: string; kinds: readonly CornerWatchKind[] }>(
+          `SELECT corner_id address,kinds FROM corner_watches WHERE watcher_room_id=$1 AND agent_id=$2 ORDER BY corner_id`,
+          [(input as Input<'listAgentWatches'>).roomId, authenticatedAgentId])).rows } as Output<Name>;
       case 'listAgentSchedules':
         return (await this.listAgentSchedules(
           input as Input<'listAgentSchedules'>,
@@ -5241,51 +5241,6 @@ export class DaemonService {
    * mentions it, and every schedule any agent created for itself here. A
    * schedule a person created for another agent stays that person's.
    */
-  /** This facade never dispatches a caller-supplied operation or agent identity. */
-  private async manageAgentWake(input: Input<'manageAgentWake'>, agentId: string): Promise<object> {
-    const allowed = new Set(['roomId', 'requestId', 'generationId', 'taskId', 'action', 'trigger', 'address', 'scheduleId', 'subscriptionId', 'prompt', 'cadence', 'maxRuns', 'workflowName', 'source', 'event', 'repository', 'channelId', 'channelName', 'kinds']);
-    if (Object.keys(input).some(key => !allowed.has(key)))
-      throw new CommandRefusalError('wake only manages the authenticated agent’s own wake sources', 400);
-    const roomId = input.roomId;
-    if (input.action === 'events') return { room: SUBSCRIBABLE_EVENT_KINDS, repository: REPOSITORY_SUBSCRIPTION_EVENTS, service: await this.execute('listServiceSubscriptionEvents', { roomId }, agentId) };
-    if (input.action === 'replace_events') return this.setEventSubscriptions({ roomId, kinds: input.kinds! }, agentId);
-    if (input.action === 'list') {
-      const schedules = (await this.listAgentSchedules({ roomId, agentId }, agentId)).schedules.filter(row => row.agentId === agentId);
-      const subscriptions = await listAgentSubscriptions(this.database, roomId, agentId);
-      const watches = (await this.database.query(
-        `SELECT corner_id address,kinds FROM corner_watches WHERE watcher_room_id=$1 AND agent_id=$2 ORDER BY corner_id`, [roomId, agentId])).rows;
-      const events = await this.listEventSubscriptions({ roomId }, agentId);
-      return { schedules, subscriptions, watches, events };
-    }
-    if (input.trigger === 'schedule') {
-      if (input.action === 'create') return this.createAgentSchedule({ roomId, agentId, requestId: input.requestId,
-        prompt: input.prompt!, cadence: input.cadence!, maxRuns: input.maxRuns, workflowName: input.workflowName } as Input<'createAgentSchedule'>, agentId);
-      if (input.action === 'update' || input.action === 'delete') return this.database.transaction(async db => {
-        const owned = await db.query(`SELECT 1 FROM agent_schedules
-          WHERE id=$1 AND room_id=$2 AND agent_id=$3 AND workflow_run IS NULL FOR UPDATE`, [input.scheduleId, roomId, agentId]);
-        if (!owned.rowCount) throw new CommandRefusalError('wake can only manage your own schedules', 403);
-        if (input.action === 'delete') return this.deleteAgentSchedule({ roomId, agentId, scheduleId: input.scheduleId! }, agentId, db);
-        return this.updateAgentSchedule({ roomId, agentId, scheduleId: input.scheduleId!, prompt: input.prompt,
-          cadence: input.cadence, maxRuns: input.maxRuns, workflowName: input.workflowName }, agentId, db);
-      });
-    }
-    if (input.trigger === 'event') {
-      if (input.action === 'create') return this.execute('createAgentSubscription', {
-        roomId, requestId: input.requestId, generationId: input.generationId,
-        source: input.source!, event: input.event!, prompt: input.prompt!, repository: input.repository,
-        channelId: input.channelId, channelName: input.channelName, workflowName: input.workflowName,
-      } as Input<'createAgentSubscription'>, agentId);
-      if (input.action === 'delete') {
-        await deleteAgentSubscription(this.database, roomId, agentId, input.subscriptionId!, this.composio);
-        return this.writeResult();
-      }
-    }
-    if (input.trigger === 'lifecycle' && (input.action === 'create' || input.action === 'delete'))
-      return this.watchCorner({ roomId, requestId: input.requestId, generationId: input.generationId,
-        cornerId: input.address!, kinds: input.action === 'delete' ? [] : ['opened', 'merged'] }, agentId);
-    throw new CommandRefusalError('unknown wake action/trigger', 400);
-  }
-
   private async listAgentSchedules(input: Input<'listAgentSchedules'>, agentId: string) {
     const rows = await this.database.query<{
       id: string;
@@ -5302,9 +5257,10 @@ export class DaemonService {
          schedule.message,schedule.max_runs,schedule.run_count,schedule.next_run_at
        FROM agent_schedules schedule JOIN identities agent ON agent.id=schedule.agent_id
        WHERE schedule.room_id=$1 AND schedule.workflow_run IS NULL
+         AND (NOT $3::boolean OR schedule.agent_id=$2)
          AND (schedule.workflow_slug IS NOT NULL OR schedule.agent_id=$2 OR schedule.creator_id=schedule.agent_id)
        ORDER BY schedule.created_at,schedule.id`,
-      [input.roomId, agentId],
+      [input.roomId, agentId, input.selfOnly === true],
     );
     const schedules = await Promise.all(
       rows.rows.map(async (row) => {
@@ -5329,12 +5285,13 @@ export class DaemonService {
     );
     return { schedules };
   }
-  private async deleteAgentSchedule(input: Input<'deleteAgentSchedule'>, agentId: string, db = this.database) {
-    const deleted = await db.query(
+  private async deleteAgentSchedule(input: Input<'deleteAgentSchedule'>, agentId: string) {
+    const deleted = await this.database.query(
       `DELETE FROM agent_schedules
        WHERE id=$1 AND room_id=$2 AND workflow_run IS NULL
-         AND (agent_id=$3 OR creator_id=agent_id)`,
-      [input.scheduleId, input.roomId, agentId],
+         AND (agent_id=$3 OR creator_id=agent_id)
+         AND (NOT $4::boolean OR agent_id=$3)`,
+      [input.scheduleId, input.roomId, agentId, input.selfOnly === true],
     );
     if (!deleted.rowCount) throw new Error('schedule not found');
     return this.writeResult();
@@ -5371,8 +5328,9 @@ export class DaemonService {
     }
     const existing = (
       await db.query<{ message: string; workflow_slug: string | null }>(
-        `SELECT message,workflow_slug FROM agent_schedules WHERE id=$1 AND room_id=$2 AND workflow_run IS NULL`,
-        [input.scheduleId, input.roomId],
+        `SELECT message,workflow_slug FROM agent_schedules WHERE id=$1 AND room_id=$2 AND workflow_run IS NULL
+           AND (NOT $4::boolean OR agent_id=$3)`,
+        [input.scheduleId, input.roomId, agentId, input.selfOnly === true],
       )
     ).rows[0];
     if (!existing) throw new Error('schedule not found');
@@ -5390,6 +5348,7 @@ export class DaemonService {
          cadence=COALESCE($4::jsonb,cadence),max_runs=COALESCE($5,max_runs),
          next_run_at=COALESCE($6,next_run_at),updated_at=now(),workflow_slug=$7,updated_by=$8
        WHERE id=$1 AND room_id=$2 AND creator_id=agent_id AND workflow_run IS NULL
+         AND (NOT $9::boolean OR agent_id=$8)
        RETURNING next_run_at`,
       [
         input.scheduleId,
@@ -5400,6 +5359,7 @@ export class DaemonService {
         nextRunAt,
         workflowName ?? null,
         agentId,
+        input.selfOnly === true,
       ],
     );
     const row = updated.rows[0];
@@ -8262,7 +8222,6 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   getWorkScheduleAuthority: true,
   listAgentToolSchedules: true,
   createAgentSchedule: true,
-  manageAgentWake: true,
   setEventSubscriptions: true,
   setWakeDelivery: true,
   getWakeDelivery: true,
@@ -8274,6 +8233,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   listEventSubscriptions: true,
   postRoomEvent: true,
   listAgentSchedules: true,
+  listAgentWatches: true,
   deleteAgentSchedule: true,
   updateAgentSchedule: true,
   getAgentToolMandate: true,

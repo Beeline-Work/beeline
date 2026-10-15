@@ -67,24 +67,6 @@ export type CreateAgentScheduleInput = AgentRoomInput & {
   /** Stop (and delete) the schedule after this many runs. */
   readonly maxRuns?: number;
 };
-/** Compact self-only wake management. No recipient or message delivery operation. */
-export type ManageAgentWakeInput = RoomInput & TurnOutputAuthority & {
-  readonly action: 'create' | 'list' | 'update' | 'delete' | 'events' | 'replace_events';
-  readonly trigger?: 'schedule' | 'event' | 'lifecycle';
-  readonly address?: string;
-  readonly scheduleId?: string;
-  readonly subscriptionId?: string;
-  readonly prompt?: string;
-  readonly cadence?: RoomScheduleCadence;
-  readonly maxRuns?: number;
-  readonly workflowName?: string;
-  readonly source?: SubscriptionSource;
-  readonly event?: string;
-  readonly repository?: string;
-  readonly channelId?: string;
-  readonly channelName?: string;
-  readonly kinds?: readonly string[];
-};
 export type AgentScheduleResult = {
   readonly scheduleId: string;
   readonly nextRunAt: number;
@@ -104,11 +86,12 @@ export type AgentScheduleEntry = {
   readonly activeRunIds?: readonly string[];
 };
 export type AgentScheduleListResult = { readonly schedules: readonly AgentScheduleEntry[] };
-export type DeleteAgentScheduleInput = AgentRoomInput & { readonly scheduleId: string };
+export type DeleteAgentScheduleInput = AgentRoomInput & { readonly scheduleId: string; readonly selfOnly?: boolean };
 /** Replaces only the fields given; a new cadence restarts the next run from now. */
 export type UpdateAgentScheduleInput = AgentRoomInput & {
   readonly workflowName?: string;
   readonly scheduleId: string;
+  readonly selfOnly?: boolean;
   readonly prompt?: string;
   readonly cadence?: RoomScheduleCadence;
   readonly maxRuns?: number;
@@ -342,7 +325,6 @@ export type DaemonOperationMap = {
   getMissionAuthority: Operation<MissionAuthorityInput, AuthorityDecisionResult>;
   listWorkSchedules: Operation<AgentInput, WorkScheduleListResult>;
   createAgentSchedule: Operation<CreateAgentScheduleInput, AgentScheduleResult>;
-  manageAgentWake: Operation<ManageAgentWakeInput, object>;
   setEventSubscriptions: Operation<SetEventSubscriptionsInput, EventSubscriptionsResult>;
   setWakeDelivery: Operation<RoomInput & WakeDeliveryResult, WakeDeliveryResult>;
   getWakeDelivery: Operation<RoomInput, WakeDeliveryResult>;
@@ -357,7 +339,8 @@ export type DaemonOperationMap = {
   >;
   listEventSubscriptions: Operation<RoomInput, EventSubscriptionsResult>;
   postRoomEvent: Operation<PostRoomEventInput, WriteResult>;
-  listAgentSchedules: Operation<AgentRoomInput, AgentScheduleListResult>;
+  listAgentSchedules: Operation<AgentRoomInput & { readonly selfOnly?: boolean }, AgentScheduleListResult>;
+  listAgentWatches: Operation<RoomInput, { readonly watches: readonly { readonly address: string; readonly kinds: readonly CornerWatchKind[] }[] }>;
   deleteAgentSchedule: Operation<DeleteAgentScheduleInput, WriteResult>;
   updateAgentSchedule: Operation<UpdateAgentScheduleInput, AgentScheduleResult>;
   getWorkScheduleAuthority: Operation<WorkScheduleAuthorityInput, AuthorityDecisionResult>;

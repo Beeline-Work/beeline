@@ -51,7 +51,11 @@ beforeEach(() => {
     vi.stubEnv(key, value);
   vi.stubGlobal('fetch', async (url: URL, init: RequestInit) => {
     calls.push({ operation: url.pathname.split('/').pop()!, input: JSON.parse(String(init.body)) });
-    return Response.json({ ok: true, name: 'renamed' });
+    return Response.json(
+      url.pathname.endsWith('/watchCorner')
+        ? { kinds: ['opened', 'merged'], state: 'active', snapshot: {} }
+        : { ok: true, name: 'renamed' },
+    );
   });
 });
 afterEach(() => {
@@ -191,8 +195,10 @@ describe('minimal agent surface', () => {
   it('wraps formatted connection readiness and advertises optional capabilities without connecting', async () => {
     const status = JSON.parse(await callAgentTool('connect', { mode: 'status' }, 'status'));
     expect(typeof status.readiness).toBe('string');
-    expect(status.capabilities).toEqual(expect.arrayContaining(['beeline:workflow', 'beeline:wallet', 'beeline:browser_share']));
-    expect(calls.every(call => call.operation === 'readAgentWorkbench')).toBe(true);
+    expect(status.capabilities).toEqual(
+      expect.arrayContaining(['beeline:workflow', 'beeline:wallet', 'beeline:browser_share']),
+    );
+    expect(calls.every((call) => call.operation === 'readAgentWorkbench')).toBe(true);
     const before = calls.length;
     const discovery = JSON.parse(await callAgentTool('connect', { mode: 'discover' }, 'discover'));
     expect(discovery.capabilities).toContain('beeline:workflow');
@@ -246,18 +252,38 @@ describe('minimal agent surface', () => {
     await callAgentTool('wake', { action: 'create', trigger: 'lifecycle', address: 'child' }, 'w');
     expect(calls).toEqual([
       {
-        operation: 'manageAgentWake',
+        operation: 'watchCorner',
         input: {
           roomId: 'corner',
           requestId: 'request',
           generationId: 'generation',
-          action: 'create',
-          trigger: 'lifecycle',
-          address: 'child',
+          cornerId: 'child',
+          kinds: ['opened', 'merged'],
         },
       },
     ]);
   });
+  it('forces self-only schedule management while retaining legacy calls for existing sessions', async () => {
+    await callAgentTool(
+      'wake',
+      { action: 'update', trigger: 'schedule', scheduleId: 'mine', prompt: 'Inspect my work' },
+      'own',
+    );
+    expect(calls[0]).toMatchObject({
+      operation: 'updateAgentSchedule',
+      input: { roomId: 'corner', selfOnly: true, scheduleId: 'mine' },
+    });
+    await callAgentTool(
+      'update_schedule',
+      { scheduleId: 'old', prompt: 'Existing schedule' },
+      'legacy',
+    );
+    expect(calls[1]!.input).not.toHaveProperty('selfOnly');
+    await expect(
+      callAgentTool('wake', { action: 'update', trigger: 'schedule', selfOnly: false }, 'forged'),
+    ).rejects.toThrow('own wake sources');
+  });
+
   it('no prompt section or built-in skill instructs a retired tool', () => {
     const retired = [
       'get_room_message',

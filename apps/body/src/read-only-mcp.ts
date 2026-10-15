@@ -3396,6 +3396,7 @@ function parseScheduleCadence(args: JsonObject): {
 
 export interface AgentScheduleDeps {
   roomId: string;
+  selfOnly?: boolean;
   execute: (name: string, input: JsonObject) => Promise<JsonObject>;
 }
 
@@ -3613,6 +3614,7 @@ export async function updateSchedule(
   const updated = await deps.execute('updateAgentSchedule', {
     roomId: deps.roomId,
     scheduleId,
+    ...(deps.selfOnly ? { selfOnly: true } : {}),
     ...(stringArg(args, 'workflowName') ? { workflowName: stringArg(args, 'workflowName')! } : {}),
     ...(prompt !== undefined ? { prompt } : {}),
     ...(parsed ? { cadence: parsed.cadence } : {}),
@@ -3631,7 +3633,7 @@ export async function deleteSchedule(
 ): Promise<string> {
   const scheduleId = stringArg(args, 'scheduleId')?.trim();
   if (!scheduleId) throw new Error('scheduleId must be a non-empty string');
-  await deps.execute('deleteAgentSchedule', { roomId: deps.roomId, scheduleId });
+  await deps.execute('deleteAgentSchedule', { roomId: deps.roomId, scheduleId, ...(deps.selfOnly ? { selfOnly: true } : {}) });
   return `Schedule ${scheduleId} deleted.`;
 }
 
@@ -4508,7 +4510,35 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
       // Explicit allowlist: no payload can select an arbitrary daemon operation or recipient.
       const allowed = new Set(['action', 'trigger', 'address', 'scheduleId', 'subscriptionId', 'prompt', 'cadence', 'maxRuns', 'workflowName', 'source', 'event', 'repository', 'channelId', 'channelName', 'kinds']);
       if (Object.keys(args).some(key => !allowed.has(key))) throw new Error('wake only manages this agent’s own wake sources');
-      return JSON.stringify(await daemonExecute('manageAgentWake', { ...args, roomId: agentScheduleRoomId() }));
+      const roomId = agentScheduleRoomId();
+      const deps = { ...agentScheduleDepsFromEnv(), selfOnly: true };
+      if (args.action === 'list') {
+        const [schedules, subscriptions, watches, events] = await Promise.all([
+          daemonExecute('listAgentSchedules', { roomId, selfOnly: true }),
+          daemonExecute('listAgentSubscriptions', { roomId }),
+          daemonExecute('listAgentWatches', { roomId }),
+          daemonExecute('listEventSubscriptions', { roomId }),
+        ]);
+        return JSON.stringify({ ...schedules, subscriptions, ...watches, events });
+      }
+      if (args.action === 'events') return JSON.stringify({ room: SUBSCRIBABLE_EVENT_KINDS,
+        repository: REPOSITORY_SUBSCRIPTION_EVENTS,
+        service: await daemonExecute('listServiceSubscriptionEvents', { roomId }) });
+      if (args.action === 'replace_events') return subscribeEvents(args, deps);
+      if (args.trigger === 'schedule') {
+        if (args.action === 'create') return createSchedule(args, deps);
+        if (args.action === 'update') return updateSchedule(args, deps);
+        if (args.action === 'delete') return deleteSchedule(args, deps);
+      }
+      if (args.trigger === 'event') {
+        if (args.action === 'create') return legacy('create_subscription');
+        if (args.action === 'delete') return legacy('delete_subscription');
+      }
+      if (args.trigger === 'lifecycle') {
+        if (args.action === 'create') return legacy('watch');
+        if (args.action === 'delete') return JSON.stringify(await daemonExecute('watchCorner', { roomId, cornerId: args.address, kinds: [] }));
+      }
+      throw new Error('unknown wake action/trigger');
     }
     default: return legacy(name);
   }

@@ -220,7 +220,7 @@ describe('feedback-triage workflow', () => {
     const turn = cornerTurn('schedule-ran');
     const context = await getInstitutionalContext(database, turn);
     expect(context.text).toContain(
-      `Workflow feedback-triage (start_workflow): ${FEEDBACK_TRIAGE_CONTRACT.description}`,
+      `Workflow feedback-triage (app_tool beeline:workflow start): ${FEEDBACK_TRIAGE_CONTRACT.description}`,
     );
     const steps = await loadWorkspaceSkill(database, turn, {
       agentId: TRIAGER,

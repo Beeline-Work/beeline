@@ -181,8 +181,8 @@ describe('corner merge instructions', () => {
     expect(reviewed).toContain('its PASS wakes you to merge');
     expect(reviewed).toContain('the reviewer (echo)');
     for (const instruction of [none, reviewed]) {
-      expect(instruction).toContain('Call merge_corner when the live gate allows it');
-      expect(instruction).toContain('Repair failing checks, requested changes or a refused merge');
+      expect(instruction).toContain('A PR lands through merge_corner only with live green checks');
+      expect(instruction).toContain('Repair failing checks or requested changes');
       expect(instruction).not.toContain('gh pr merge');
       expect(instruction).not.toMatch(/yolo/i);
     }
@@ -251,7 +251,7 @@ describe('corner merge instructions', () => {
     expect(CORNER_DELIVERY_NUDGE).toContain('## Reproduced');
     expect(CORNER_DELIVERY_NUDGE).toContain('## Demonstrated');
     expect(CORNER_CHECKS_NUDGE).not.toMatch(/yolo/i);
-    expect(CORNER_CHECKS_NUDGE).toContain('pr_checks_status');
+    expect(CORNER_CHECKS_NUDGE).toContain('read with facet checks');
     expect(CORNER_CHECKS_NUDGE).toContain('checks="unknown"');
     expect(CORNER_CHECKS_NUDGE).toContain('instead of retrying');
   });
@@ -827,7 +827,7 @@ describe('corner close-request delivery', () => {
     expect(sessionInput).toMatchObject({
       cwd: workspace,
       mode: 'edit',
-      mcpServers: [expect.objectContaining({ name: 'beeline-agent' })],
+      mcpServers: expect.arrayContaining([expect.objectContaining({ name: 'beeline-agent' })]),
       systemPrompt: expect.stringContaining('repo-less corner with no repository checkout'),
     });
     expect(sessionInput?.systemPrompt).not.toContain(CORNER_AUTHOR_CONTRACT);
@@ -993,7 +993,7 @@ describe('corner close-request delivery', () => {
       const delivered = sessionNew.mock.calls[0]?.[0].systemPrompt + '\n' + sessionPrompt.mock.calls[0]?.[1];
       for (const instruction of ['corner:prepare', '## Reproduced', '## Demonstrated', 'Use its file manifest', 'Once the pull request exists', 'pr_checks_status']) expect(delivered).not.toContain(instruction);
       expect(delivered).toContain('post_artifact');
-      expect(delivered).toContain("The commander's order quote and inherited human constraints win any conflict");
+      expect(delivered).toContain("approving order, non-goals and inherited human constraints bound the work");
       expect(delivered).toContain('How is the desk doing?');
       console.log('Reproduction runtime-brief-5 demonstrated: runtime corner delivered brief authority and chat, no coding routine, and no dirty-work delivery nudge');
     }
@@ -3384,7 +3384,7 @@ describe('thin monolith corner turn', () => {
         draft?.('Opening PR', 'Opening PR');
         const checksTurn = prompt.includes('passed a check') || prompt === CORNER_CHECKS_NUDGE;
         const toolCalls = checksTurn
-          ? (status === 'missing' ? [] : [{ id: 'checks', title: 'beeline.pr_checks_status', status }])
+          ? (status === 'missing' ? [] : [{ id: 'checks', title: 'beeline.read', rawInput: { facet: 'checks' }, status }])
           : [
               {
                 id: 'read-1',
@@ -3479,7 +3479,7 @@ describe('thin monolith corner turn', () => {
     expect(secondPrompt).toContain(
       'Corner objective (navigation only, not product authority): Implement the widget',
     );
-    expect(firstPrompt).not.toContain('rename_corner');
+    expect(firstPrompt).not.toContain('revise_corner(action:metadata)');
     expect(firstPrompt).toContain('Members (exact tag spellings):');
     expect(secondPrompt).toContain('Members (exact tag spellings):');
     expect(firstPrompt).toContain('- @goosy-2 — Goosy (agent)');
@@ -3541,12 +3541,12 @@ describe('thin monolith corner turn', () => {
     // session must not name a command that would fail on its first step.
     expect(repositorySystemPrompt).not.toContain('Run npm run corner:prepare first.');
     expect(repositorySystemPrompt).not.toContain('corner:prepare');
-    expect(repositorySystemPrompt).toContain("beeline-triage skill's bugfix execution contract");
-    expect(repositorySystemPrompt).toContain('record it under Reproduction <id>');
+    expect(repositorySystemPrompt).toContain("Follow beeline-triage");
+    expect(repositorySystemPrompt).toContain('the brief records a real-target Reproduction <id>');
     expect(repositorySystemPrompt).toContain(
-      'never stop and never condition the fix on reproduction',
+      'or why it is not feasible and the closest stand-in',
     );
-    expect(repositorySystemPrompt).toContain('when none was obtained, state that plainly');
+    expect(repositorySystemPrompt).toContain('explain any unavailable real-target proof and its stand-in');
     expect(repositorySystemPrompt).not.toContain('do not write a fix for a bug you have not seen');
     expect(repositorySystemPrompt).not.toContain('report_to_room');
     expect(repositorySystemPrompt).not.toMatch(/report .* to the Room/i);
@@ -3558,7 +3558,7 @@ describe('thin monolith corner turn', () => {
     expect(sessionNew).toHaveBeenCalledWith(
       expect.objectContaining({
         systemPrompt: expect.stringContaining(
-          'When asked whether the reviewer was woken, call pr_checks_status and report reviewerWake',
+          'When asked whether the reviewer was woken, call read(facet:checks) and report reviewerWake',
         ),
       }),
     );
@@ -3567,7 +3567,7 @@ describe('thin monolith corner turn', () => {
     expect(sessionNew).toHaveBeenCalledWith(
       expect.objectContaining({
         systemPrompt: expect.stringContaining(
-          'Never schedule polls of pr_checks_status or the merge gate',
+          'Never schedule polls of read(facet:checks) or the merge gate',
         ),
       }),
     );
@@ -3641,7 +3641,7 @@ describe('thin monolith corner turn', () => {
         expect.objectContaining({
           input: expect.objectContaining({
             activity: expect.arrayContaining([
-              expect.objectContaining({ kind: 'tool', title: 'beeline.pr_checks_status' }),
+              expect.objectContaining({ kind: 'tool', title: 'beeline.read' }),
             ]),
           }),
         }),
@@ -3897,7 +3897,7 @@ describe('corner turn rename prompt', () => {
     await scheduler.dispose();
 
     expect(String(sessionPrompt.mock.calls[0]?.[1])).toContain(
-      'This human-opened corner still has its generated name, "still harbor corner". If the newest human message states the work, call rename_corner once before you reply',
+      'This human-opened corner still has its generated name, "still harbor corner". If the newest human message states the work, call revise_corner(action:metadata) once before you reply',
     );
   }, 10_000);
 });

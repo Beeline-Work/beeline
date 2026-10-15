@@ -6,6 +6,7 @@ export const BEELINE_AGENT_MCP_SERVER_NAME = 'beeline-agent';
 const READ_ONLY_MCP_TOOL_SERVER_NAME = READ_ONLY_MCP_SERVER_NAME.replaceAll('-', '_');
 
 export const READ_ONLY_TOOL_NAMES = [
+  'repository_io',
   'list_files',
   'read_file',
   'read_agent_file',
@@ -261,6 +262,10 @@ export function isMountedMcpToolPermissionRequest(
 }
 
 const AGENT_SURFACE_TOOL_NAMES = [
+  'read', 'search', 'remember', 'revise_corner', 'order', 'report',
+  'approve_merge', 'merge_corner', 'set_corner_hold', 'close_corner',
+  'post_to_corner', 'request_grant', 'app_tool', 'wake', 'react_to_message',
+  'run_granted_command', 'no_reply_needed', 'scratch_io',
   'get_avatar',
   'set_avatar',
   'open_corner',

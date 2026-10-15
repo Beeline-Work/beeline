@@ -55,9 +55,9 @@ it('calls watchCorner in the current corner and returns readable state and kinds
 });
 
 it('offers lifecycle watches in a DM without chatter or schedule events', () => {
-  const tool = agentToolsFor(true, true).find(t => t.name === 'watch')!;
-  expect(tool.description).toContain('Chatter, messages and schedules never wake a watcher');
-  expect(tool.inputSchema.required).toEqual(['address']);
+  const tool = agentToolsFor(true, true).find(t => t.name === 'wake')!;
+  expect(tool.description).toContain('lifecycle');
+  expect(tool.inputSchema.required).toEqual(['action']);
 });
 
 it('reports an already merged corner with its merge commit, and a closed one', async () => {
@@ -80,8 +80,8 @@ it('reports an already merged corner with its merge commit, and a closed one', a
 
 it('limits the advertised address to corners, including when called from a Room or DM', () => {
   for (const dm of [false, true]) {
-    const tool = agentToolsFor(true, dm).find(t => t.name === 'watch')!;
-    expect(tool.description).toContain('Top-level Rooms and DMs have no watchable lifecycle');
-    expect(tool.inputSchema.properties.address.description).toContain('Corner address only');
+    const tool = agentToolsFor(true, dm).find(t => t.name === 'wake')!;
+    expect(tool.description).toContain('addressed corner opened/merged');
+    expect(tool.inputSchema.properties).not.toHaveProperty('agent');
   }
 });

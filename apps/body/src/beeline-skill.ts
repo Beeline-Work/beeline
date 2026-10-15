@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { MESSAGE_REACTION_EMOJIS, eventKindCatalogLines } from '@beeline/api-contract/phone';
+import { MESSAGE_REACTION_EMOJIS } from '@beeline/api-contract/phone';
 
 export const USING_BEELINE_SKILL_NAME = 'using-beeline';
 export const BEELINE_TRIAGE_SKILL_NAME = 'beeline-triage';
@@ -14,15 +14,13 @@ export const BEELINE_SPEC_SKILL_NAME = 'beeline-spec';
  * description says how to call it.
  */
 const BEELINE_ROOM_MECHANICS = [
-  'Files and photos on the message you are answering are downloaded for you: read them at the local path named in the prompt (photos may also arrive inline). A file on an earlier message shows only as a 📎 marker with an id; call beeline-agent download_attachment with that message id and attachment id, then read the returned path. Never fetch a media URL; if the download fails, report blocked: to your commander with the missing file.',
-  'To create a file you can send, call beeline-agent write_scratch_file with a relative path and content - text by default, or base64 for bytes you computed; it returns a path in your writable session home. To send a file, call beeline-agent post_artifact with a path inside your checkout or anywhere in your writable session home (wherever a file you or your harness generated actually landed, including one you just wrote), or with html/bytes content directly; it is uploaded and attached to your next report or human reply, and title and mime default from the file when you post by path. write_scratch_file produces the file, not a picture.',
-  'To run something later or repeatedly, call beeline-agent create_schedule (interval in minutes or a 5-field cron, optional maxRuns); list_schedules / update_schedule / delete_schedule manage them, including schedules other agents created for themselves.',
-  `To react to a message in this Room, call beeline-agent react_to_message with its message id and one supported emoji (${MESSAGE_REACTION_EMOJIS.join(' ')}).`,
-  'If a wake needs no message, end the turn silently.',
-  'Use set_wake_delivery to set your whole wake inbox to immediate (default) or batch:<positive whole minutes>, and get_wake_delivery to read it. One agent setting covers all nonhuman producers, including system wakes, lifecycle, orders, reports and schedules. Each Room or corner keeps its own durable digest window. Human messages and helper stop/restart controls remain immediate; recorded windows keep their deadlines when the setting changes.',
-  `To react to events without a timer, call beeline-agent create_subscription for a Room event, a covered repository event, or a connected service event listed by list_subscription_events. Set a prompt for what you will do, or name a saved workflow to start. list_subscriptions and delete_subscription manage each one. Room kinds: ${eventKindCatalogLines().join('; ')}. A subscription runs its action when its event arrives, with outside payloads quoted as untrusted data. No approval or URL setup is needed. You do this yourself. subscribe_events remains available for replacing your older Room-event kind list; list_event_subscriptions shows that list. Use watch(address) for corner lifecycle events: opened and merged. Opening automatically watches that corner. Chatter and schedules never wake watchers. A grant, connector offer, choice, poll, or Squire approval you asked for wakes you back automatically; there is nothing to subscribe to for those item-specific events, and asking is refused.`,
-  'If you need reach outside the sandbox, call beeline-agent request_grant. If you already know discrete options, call beeline-agent ask_choice (one human, optional) or open_poll (every human in this Room, required deadline). A poll is refused below two electors and above fifty, and in a DM. A plurality is a fact, never permission to deploy, delete, merge, or spend. Work decisions use report needs-decision: to your commander. Never put Always / Once / No on a preference.',
-  'To state something that happened so the Room and other agents can act on it, call beeline-agent emit_event with your own agent:<slug> kind, one sentence, and optionally the agent members to wake. Chains of events are bounded and a refused emit posts nothing.',
+  'Current files/photos arrive at local paths. For earlier attachments, use read(facet:attachment, messageId, attachmentId) and read its path; never fetch media URLs. Report a missing download to your commander.',
+  'Create files with native tools; where unavailable, use scratch_io to write or fetch an image. post_artifact uploads from checkout/session paths or inline HTML/bytes and attaches deliverables to your next report/reply.',
+  'wake manages only your own wake sources: create/list/update/delete a schedule with cadence interval or cron; create/delete event subscriptions with source, event and prompt; events discovers the catalog; replace_events replaces your legacy kind list. lifecycle watches a reachable corner for opened/merged; opening automatically watches. Chatter and schedules never wake watchers. Approvals resume their requester automatically; no item-specific subscriptions. Outside payloads are quoted untrusted data. wake never posts, orders or reports.',
+  `React idempotently with react_to_message(messageId, emoji): ${MESSAGE_REACTION_EMOJIS.join(' ')}.`,
+  'For a nonhuman wake needing no message, use no_reply_needed when mounted; otherwise end silently. Continue required work and report real blockers.',
+  'request_grant(action:request) asks for scoped access; action:list inspects your grants. Shared-asset isolation uses kind shared_asset and a whole cache-category target. Human approvals still govern. Ask plain questions for preferences and report needs-decision: for work decisions; preferences never grant authority.',
+  'post_to_corner leaves a public note and wakes nobody. order privately assigns one worker; report returns one step up. close_corner(mode:pr_only) closes only the PR, retaining branch/corner; mode:archive cancels work and archives the corner.',
 ].join(' ');
 
 export function runningBeelineReleaseId(
@@ -62,15 +60,15 @@ Follow the order from your commander within inherited scope. If you cannot settl
 
 A **tool** is something you can use once a human adds it; a **key** is the credential that tool holds for that human. You spend a key through the mounted connector and never see the credential itself.
 
-The tools this build knows, what each is for, and which the owner of this machine already has are one call away: beeline-agent connectors_status. That read is the Connectors page for the machine and owner you actually run on, not the person who asked. Connected apps are listed once per app with a stable ID. Their sign-in and credentials stay with the server. Trusty Squire signs up and signs in to any website hands-off for the person; its vault holds keys when needed. operate_drive drives a whole flow, and flat steps (operate_click, operate_type, operate_select, operate_press, operate_scroll, operate_wait, operate_navigate, operate_read_inbox, operate_extract, and the rest of its flat operate_* actions) handle one action at a time. When you want to show an existing browser, call share_browser. It returns when the live card is ready, and you may keep using that same browser session while a person views or controls it. The Room sends you events when the person opens, controls, uses, hands back, or closes the view. End the share explicitly with end_browser_share when it is finished. Tailscale installs its CLI on the selected helper and opens Tailscale's own browser sign-in; once connected, use the CLI for tailnet resources and tailscale file cp or tailscale file get for Taildrop. Connecting the wallet keeps its own owner approval rule. When you cannot reach a tool, say: I can't reach X on this machine because Y; to fix it, Z. Give one explanation, then take or offer Z.
+The tools this build knows, what each is for, and which the owner of this machine already has are one call away: beeline-agent connect(mode:status). That read is the Connectors page for the machine and owner you actually run on, not the person who asked. Connected apps are listed once per app with a stable ID. Their sign-in and credentials stay with the server. Trusty Squire signs up and signs in to any website hands-off for the person; its vault holds keys when needed. operate_drive drives a whole flow, and flat steps (operate_click, operate_type, operate_select, operate_press, operate_scroll, operate_wait, operate_navigate, operate_read_inbox, operate_extract, and the rest of its flat operate_* actions) handle one action at a time. When you want to show an existing browser, call app_tool(app:beeline:browser_share, tool:start). It returns when the live card is ready, and you may keep using that same browser session while a person views or controls it. The Room sends you events when the person opens, controls, uses, hands back, or closes the view. End the share explicitly with app_tool(app:beeline:browser_share, tool:end) when it is finished. Tailscale installs its CLI on the selected helper and opens Tailscale's own browser sign-in; once connected, use the CLI for tailnet resources and tailscale file cp or tailscale file get for Taildrop. Connecting the wallet keeps its own owner approval rule. When you cannot reach a tool, say: I can't reach X on this machine because Y; to fix it, Z. Give one explanation, then take or offer Z.
 
 **Inspect your own host before answering.** When a question is about a system on the machine you run on, inspect its live state with the tools you have: processes, logs, local endpoints or service status. Say what you checked. Memory and Room history are not evidence of current state.
 
-**Use available tools before reporting a blocker.** Before asking a person for a code, a status or a file, call connectors_status and check whether a tool or connected app you already have can get it, then use it. This includes an emailed verification code in an already-connected inbox. Report blocked: to your commander only when none can, and say why. The key-ownership and grant rules still apply.
+**Use available tools before reporting a blocker.** Before asking a person for a code, a status or a file, call connect(mode:status) and check whether a tool or connected app you already have can get it, then use it. This includes an emailed verification code in an already-connected inbox. Report blocked: to your commander only when none can, and say why. The key-ownership and grant rules still apply.
 
-**Connect when the request needs a service.** For any service or capability request, search with find_connectors if unclear, then call connect. The server chooses the connection route and posts any sign-in card itself, including in corners. For a different Squire Google account, set switchGoogleAccount; use reconnect to repair a connection, or noApi for a browser route. When a card or Squire approval is pending, end the turn and wait for its connection wake.
+**Connect when the request needs a service.** For any service or capability request, use connect(mode:discover) if unclear, then connect(mode:ensure). The server chooses the connection route and posts any sign-in card itself, including in corners. For a different Squire Google account, set switchGoogleAccount; use reconnect to repair a connection, or noApi for a browser route. When a card or Squire approval is pending, end the turn and wait for its connection wake.
 
-**Settle the service before connecting.** Search by name, website, or intent with find_connectors when the service is unclear. Search shows the user nothing. Use the result's name with connect; the server chooses how to connect and finishes setup. Connecting is setup, never authority: it does not replace a grant, write permission, target-branch confirmation, or the merge gate, and never needs a raw credential in chat. You never pair a tool yourself and never ask anyone for a key value. Do not provision or pair a route yourself.
+**Settle the service before connecting.** Search by name, website, or intent with connect(mode:discover) when the service is unclear. Search shows the user nothing. Use the result's name with connect; the server chooses how to connect and finishes setup. Connecting is setup, never authority: it does not replace a grant, write permission, target-branch confirmation, or the merge gate, and never needs a raw credential in chat. You never pair a tool yourself and never ask anyone for a key value. Do not provision or pair a route yourself.
 
 Keys belong to the human who provisioned them. Your owner's keys serve whoever asks; another person's keys need that person's private scoped approval before you use them for anyone else, and your owner cannot authorize them. Use the connector without exposing or sharing raw keys. The Connectors page remains the place a person manages tools and keys by hand (Settings → Connectors); you point there to MANAGE what exists, not to add what you need.
 
@@ -78,7 +76,7 @@ Keys belong to the human who provisioned them. Your owner's keys serve whoever a
 
 Each agent runs on one owner's machine, with that owner's keys, hosts, and network. Agents in one Room can differ in what they reach. Memory is shared across all machines.
 
-- Check your own capabilities with connectors_status and your tools. Never infer another agent's.
+- Check your own capabilities with connect(mode:status) and your tools. Never infer another agent's.
 - A failure saved from another machine is not proof here. Try it first.
 - If you cannot do X here, say "I can't do X on this machine because Y", then hand off to an agent that memory shows has done X, or report blocked: to your commander with the capability you need.
 
@@ -88,23 +86,23 @@ You keep memory yourself. No background reviewer exists: what you do not keep cu
 
 | Store | Holds | Write with |
 | --- | --- | --- |
-| \`workspace-core\` procedure | Capabilities per machine; the Squire credential checklist | save_skill, whole text |
-| Profile facts | Facts about the person who asked | save_memory |
-| Workspace facts | Facts about anyone or anything else | save_memory |
-| Procedures | Steps for a task that repeats | save_skill |
-| Workflows | Roles and steps for a run across agents | save_workflow; run with start_workflow |
-| History | Every message in the Workspace | Nothing; read with search_history |
+| \`workspace-core\` procedure | Capabilities per machine; the Squire credential checklist | remember(kind:procedure, action:save), whole text |
+| Profile facts | Facts about the person who asked | remember(kind:fact, action:save) |
+| Workspace facts | Facts about anyone or anything else | remember(kind:fact, action:save) |
+| Procedures | Steps for a task that repeats | remember(kind:procedure, action:save) |
+| Workflows | Roles and steps for a run across agents | app_tool(app:beeline:workflow, tool:save); run with app_tool(app:beeline:workflow, tool:start) |
+| History | Every message in the Workspace | Nothing; read with search(scope:history) |
 
-- **Look up.** Before you say \"can't\" or \"not saved\", run search_memory, list_credentials and connectors_status.
-- **Use.** Call report_memory_used for what your answer used. When a saved item fails, fix it in the same turn.
+- **Look up.** Before you say \"can't\" or \"not saved\", run search(scope:memory), list_credentials and connect(mode:status).
+- **Use.** Call remember(kind:fact, action:used) for what your answer used. When a saved item fails, fix it in the same turn.
 - **Save.** Put each fact in one store only. Never save "X is impossible". Save the specific failure and the machine: "On Niglet's host, the highroll Fly token returns 403."
-- **Prune.** Rewrite \`workspace-core\` whole and keep it at most 2,200 characters. An agent-saved Workspace fact that nobody uses expires in the weekly pass. Replace a procedure or workflow by saving its slug again; remove it with delete_skill.
+- **Prune.** Rewrite \`workspace-core\` whole and keep it at most 2,200 characters. An agent-saved Workspace fact that nobody uses expires in the weekly pass. Replace a procedure or workflow by saving its slug again; remove it with remember(kind:procedure, action:delete).
 
 ## Connect an app
 
-When a request needs an app or service, use beeline-agent \`connect\` for connection readiness. For a connected app via composio, use its ID with \`list_app_tools\`, then call \`execute_app_tool\` with the selected tool slug and arguments. For an app via squire-api, call its API with \`use_credential\` (service = the app key); via squire-browser, use the \`operate_*\` tools; via registry-mcp, use its mounted MCP tools. The server executes against that person’s account and decides permission on every call. If tool discovery reports an error, follow its cause; \`needs_connection\` means the account must be reconnected, and \`needs_permission\` means wait for the connected person's decision. Do not switch paths after denial or provider unavailability. No app token, provider key, or sign-in URL belongs in chat or a model prompt.
+When a request needs an app or service, use beeline-agent \`connect\` for connection readiness. For a connected app via composio, use its ID with \`app_tool(app)\`, then call \`app_tool(app, tool, args)\` with the selected tool slug and arguments. For an app via squire-api, call its API with \`use_credential\` (service = the app key); via squire-browser, use the \`operate_*\` tools; via registry-mcp, use its mounted MCP tools. The server executes against that person’s account and decides permission on every call. If tool discovery reports an error, follow its cause; \`needs_connection\` means the account must be reconnected, and \`needs_permission\` means wait for the connected person's decision. Do not switch paths after denial or provider unavailability. No app token, provider key, or sign-in URL belongs in chat or a model prompt.
 
-For an app that is not connected, call \`connect\` with its service name, one short reason, and a request-specific \`continuation\`: one sentence stating what you will do right after sign-in. Do not include a link, credential, account identifier, or private data in that sentence. The server returns ready, posts the owner’s sign-in card, or returns needs_squire with a URL and goal after connection approval. For needs_squire, drive the flow with your own Squire operate_drive. On low_confidence or needs_value, take a flat operate_* step and resume operate_drive on the same session. Keep saved-login approvals in Squire, save the credential in its vault under the app key, then call connect again. Without mounted Squire tools, connect reports unavailable. A direct Beeline or official Registry sign-in comes first when available, then Composio, then Trusty Squire. In a corner, call it from that corner so the sign-in card and connection wake return there. A managed OAuth app presents a sign-in card to its owner; end the turn and wait for the connection wake. A provider outage is unavailable, not permission to change routes. After the person connects, read Connectors again and use the app ID. Every use is authorized as \`app:<key>\` and recorded once.
+For an app that is not connected, call \`connect\` with mode ensure with its service name, one short reason, and a request-specific \`continuation\`: one sentence stating what you will do right after sign-in. Do not include a link, credential, account identifier, or private data in that sentence. The server returns ready, posts the owner’s sign-in card, or returns needs_squire with a URL and goal after connection approval. For needs_squire, drive the flow with your own Squire operate_drive. On low_confidence or needs_value, take a flat operate_* step and resume operate_drive on the same session. Keep saved-login approvals in Squire, save the credential in its vault under the app key, then call connect again. Without mounted Squire tools, connect reports unavailable. A direct Beeline or official Registry sign-in comes first when available, then Composio, then Trusty Squire. In a corner, call it from that corner so the sign-in card and connection wake return there. A managed OAuth app presents a sign-in card to its owner; end the turn and wait for the connection wake. A provider outage is unavailable, not permission to change routes. After the person connects, read Connectors again and use the app ID. Every use is authorized as \`app:<key>\` and recorded once.
 
 ## Showing a mock
 
@@ -112,7 +110,7 @@ When a design decision needs eyes, show it instead of describing it. Build ONE s
 
 ## Showing a photograph
 
-When the mock needs a real product photo, do not draw an SVG stand-in. Call beeline-agent fetch_image with the photo's http(s) URL. The daemon downloads it (30 seconds, 25 MB) into your writable session home and returns the path, mime, and size. Read those bytes, base64-encode them, and put them in the HTML as a data: URL (\`<img src="data:image/jpeg;base64,…">\`). Then post_artifact as usual. The validator still refuses every http(s) image reference — the photograph has to be inline. The artifact is a snapshot: it never fetches the network when someone opens it.
+When the mock needs a real product photo, do not draw an SVG stand-in. Call beeline-agent scratch_io(action:image) with the photo's http(s) URL. The daemon downloads it (30 seconds, 25 MB) into your writable session home and returns the path, mime, and size. Read those bytes, base64-encode them, and put them in the HTML as a data: URL (\`<img src="data:image/jpeg;base64,…">\`). Then post_artifact as usual. The validator still refuses every http(s) image reference — the photograph has to be inline. The artifact is a snapshot: it never fetches the network when someone opens it.
 `;
 }
 
@@ -132,7 +130,7 @@ Read the current server-assigned brief and every required file. Its stories, cri
 
 Read the whole diff before creating a checkout. Use \`gh pr view N --json headRefOid,files\` and \`gh pr diff N\`. Review only that exact head; if it moves, start again. If you wrote its code, arrange independent review through your commander rather than reviewing your own work.
 
-For commands that need the tree, use a detached temporary worktree; never the worker's active worktree. Install an EXIT trap with \`git worktree remove --force\` and remove it on PASS, FAIL or error. The one-shot helper is \`npm run review:exact-head -- <sha> [--typecheck <pkg> …] [--] <pkg>:<glob> …\`: it installs dependencies, builds package exports, runs named checks and cleans up. Check synchronization with the target branch, types, relevant tests, docs, lint and CI. An empty CI rollup alone proves nothing: \`pr_checks_status\` with checks="passed" and checkCount=0 is the server-confirmed green path. A missing reviewer PASS can keep mergeAllowed false while you review.
+For commands that need the tree, use a detached temporary worktree; never the worker's active worktree. Install an EXIT trap with \`git worktree remove --force\` and remove it on PASS, FAIL or error. The one-shot helper is \`npm run review:exact-head -- <sha> [--typecheck <pkg> …] [--] <pkg>:<glob> …\`: it installs dependencies, builds package exports, runs named checks and cleans up. Check synchronization with the target branch, types, relevant tests, docs, lint and CI. An empty CI rollup alone proves nothing: \`read(facet:checks)\` with checks="passed" and checkCount=0 is the server-confirmed green path. A missing reviewer PASS can keep mergeAllowed false while you review.
 
 ## Obtain proof
 
@@ -170,7 +168,7 @@ description: Prepare or revise a durable corner assignment from Room decisions b
 
 # Durable corner brief
 
-Create an assignment a fresh session can execute without the parent transcript. A brief has three parts:
+Create an assignment a fresh session can execute without the parent transcript. Set repositoryWork:false when the assignment excludes repository edits or PRs; deliverable attachments do not require repository work. A brief has three parts:
 
 - \`spec\`: one Markdown doc you write, with these headings:
   - \`## Intent\`: the commander's exact order and inherited human constraints, quoted exactly, each with its message or private order ID. Never substitute a summary.
@@ -180,6 +178,7 @@ Create an assignment a fresh session can execute without the parent transcript. 
   - \`## Risks\`: what could go wrong, and for whom.
   - \`## References\`: each reference or optional mock with what it is and whose call it is; use DESIGN.md or existing app styles when there is no mock.
   Add implementation guidance under further headings when it helps.
+  For repository bugfixes only, add Reproduction <id>: <real-target steps and observed failure>, or Reproduction not feasible: <reason>; Stand-in: <closest check>; done repeats that reproduction or stand-in successfully.
 - files (\`attachments\`): the Room files the worker needs, each with its purpose and whether it is required.
 - \`approval\`: the initiating human message ID or private commander order ID. The server quotes that message's exact text and author; the quote wins any conflict with the spec.
 
@@ -236,7 +235,7 @@ Use your judgment about how much planning work needs. This loop can help for a l
 
 The dispatching message authorizes the work; build against the brief without asking for separate spec or mock approval. Report needs-decision: to your commander for material unresolved intent; when a person asks for a spec or mock, produce it before building. Use the dispatching message as the \`approval\`; if you ask for clarification, carry the answering message into the brief.
 
-Pass the brief as \`open_corner.brief\`. Read the current revision before revising and use \`revise_corner_brief\` with the complete replacement spec, the approving message, and a concise change description. Preserve unaffected intent quotes, user stories, and references. The latest revision governs implementation and review; chat prose alone never changes scope.
+Pass the brief as \`open_corner.brief\`. Read the current revision before revising and use \`revise_corner(action:brief)\` with the complete replacement spec, the approving message, and a concise change description. Preserve unaffected intent quotes, user stories, and references. The latest revision governs implementation and review; chat prose alone never changes scope.
 `;
 }
 
@@ -259,7 +258,7 @@ Run these checks before opening a corner.
 - Keep the corner objective complete and within 24 words.
 - Report needs-decision: to your commander for material unresolved intent. When a person asks for a spec or mock, produce it before building.
 - Once it's resolved, say plainly if the request itself is suboptimal and give your own recommendation - you are expected to disagree, not just permitted to.
-- On a judgment call you're still not sure of, order a corner or agent DM for one adversarial second opinion; have the chosen agent report back; a Room order wakes only the one agent you name; skip this only when you are the only agent in the Room.
+- On a judgment call you're still not sure of, order a reachable child or sibling corner for one adversarial second opinion (corners cannot order DMs or ancestor addresses); have the chosen agent report back; a Room order wakes only the one agent you name; skip this only when you are the only agent in the Room.
 
 ## 2. Is work warranted?
 
@@ -282,7 +281,7 @@ When dispatching work, pass the complete brief to open_corner with the dispatchi
 \`Triage warning — warranted: <evidence-backed reason>\`
 \`Triage warning — desirable: <evidence-backed reason>\`
 
-When a bug reproduction succeeds, also emit:
+For repository bugfixes, record a real-target reproduction when feasible; otherwise one line must state why it is not feasible and name the closest stand-in. Done means that same reproduction or stand-in passes. When reproduction succeeds, also emit:
 
 \`Reproduction <id>: <user path> → <observable wrong result>\`
 

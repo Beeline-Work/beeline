@@ -86,11 +86,12 @@ export type AgentScheduleEntry = {
   readonly activeRunIds?: readonly string[];
 };
 export type AgentScheduleListResult = { readonly schedules: readonly AgentScheduleEntry[] };
-export type DeleteAgentScheduleInput = AgentRoomInput & { readonly scheduleId: string };
+export type DeleteAgentScheduleInput = AgentRoomInput & { readonly scheduleId: string; readonly selfOnly?: boolean };
 /** Replaces only the fields given; a new cadence restarts the next run from now. */
 export type UpdateAgentScheduleInput = AgentRoomInput & {
   readonly workflowName?: string;
   readonly scheduleId: string;
+  readonly selfOnly?: boolean;
   readonly prompt?: string;
   readonly cadence?: RoomScheduleCadence;
   readonly maxRuns?: number;
@@ -338,7 +339,8 @@ export type DaemonOperationMap = {
   >;
   listEventSubscriptions: Operation<RoomInput, EventSubscriptionsResult>;
   postRoomEvent: Operation<PostRoomEventInput, WriteResult>;
-  listAgentSchedules: Operation<AgentRoomInput, AgentScheduleListResult>;
+  listAgentSchedules: Operation<AgentRoomInput & { readonly selfOnly?: boolean }, AgentScheduleListResult>;
+  listAgentWatches: Operation<RoomInput, { readonly watches: readonly { readonly address: string; readonly kinds: readonly CornerWatchKind[] }[] }>;
   deleteAgentSchedule: Operation<DeleteAgentScheduleInput, WriteResult>;
   updateAgentSchedule: Operation<UpdateAgentScheduleInput, AgentScheduleResult>;
   getWorkScheduleAuthority: Operation<WorkScheduleAuthorityInput, AuthorityDecisionResult>;
@@ -361,7 +363,7 @@ export type DaemonOperationMap = {
   >;
   reviseCornerBrief: Operation<
     ReviseCornerBriefInput,
-    CornerBrief & { readonly wake: { readonly queued: boolean; readonly agentId?: string; readonly reason?: string } }
+    CornerBrief & { readonly warnings?: readonly string[]; readonly wake: { readonly queued: boolean; readonly agentId?: string; readonly reason?: string } }
   >;
   getPrChecksStatus: Operation<
     CornerInput & { pullRequest?: number | string },
@@ -1434,6 +1436,7 @@ export type ReviseCornerBriefInput = TurnOutputAuthority &
   };
 export type CornerResult = {
   readonly cornerId: string;
+  readonly warnings?: readonly string[];
   /** The opener's merge watch, absent when the opener opted out. */
   readonly watch?: { readonly roomId: string; readonly kinds: readonly CornerWatchKind[] };
 };

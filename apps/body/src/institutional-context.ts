@@ -36,7 +36,7 @@ export const EMPTY_INSTITUTIONAL_CONTEXT: InstitutionalContextSnapshot = {
  * fetch below did not finish in time.
  */
 export const INSTITUTIONAL_CONTEXT_MISSED_TEXT =
-  'institutional memory did not load this turn; use search_memory before concluding anything is not stored.';
+  'institutional memory did not load this turn; use search(scope:memory) before concluding anything is not stored.';
 
 export type InstitutionalContextOutcome = 'served' | 'empty' | 'timed-out';
 

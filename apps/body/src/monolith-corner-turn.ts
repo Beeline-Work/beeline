@@ -68,7 +68,7 @@ import {
 import { isCornerStatusRestatement, isDeliberateCornerNoReply } from './reply-sanitizer.js';
 import { TurnStoppedError } from './turn-stop.js';
 import { AgentTurnStream, durableReplyText } from './turn-stream.js';
-import { isCompletedToolCall, toolCallFailureLine } from './tool-call-failure.js';
+import { isCompletedToolCall, isPrChecksRead, toolCallFailureLine } from './tool-call-failure.js';
 import { captureConnectionUsage, ConnectorUsageRecorder } from './connector-runner.js';
 import { distillTurnFailureReason, redactToolDetail, redactTurnError } from './turn-failure-reason.js';
 import { sessionConfigFingerprint } from './session-config-fingerprint.js';
@@ -76,7 +76,7 @@ import { hasCornerPrepareScript } from './corner-prepare-script.js';
 import { registryMcpHostBindPaths, registryMcpHostDeclarations } from './registry-mcp.js';
 import { installPiMcpBridge } from './pi-mcp-bridge.js';
 import { syncCornerBranch } from './corner-branch-sync.js';
-import { beelineAgentMcpServer } from './room-session.js';
+import { beelineAgentMcpServer, readOnlyMcpServer } from './room-session.js';
 import { allocatedDirectoryBytes, scratchBudgetMessage, scratchGrowthExceedsBudget } from './scratch-lifecycle.js';
 import { awaitInstitutionalContext, startInstitutionalContextFetch } from './institutional-context.js';
 import {
@@ -136,7 +136,7 @@ import {
 } from './prompt-assembly.js';
 import { SessionScheduler, type SessionLifecycle } from './session-scheduler.js';
 import { WarmTranscript } from './warm-transcript.js';
-import { harnessSupportsNativeSessionResume } from './harness-capabilities.js';
+import { harnessSupportsNativeSessionResume, harnessEnforcement } from './harness-capabilities.js';
 import { PromptSectionBaseline } from './prompt-section-baseline.js';
 import type { RoomSupervisor } from './room-supervisor.js';
 import { withTurnReceiptHeartbeat } from './turn-receipt-heartbeat.js';
@@ -1230,7 +1230,9 @@ export class MonolithCornerTurnLoop {
       ),
       reviewerHandle: configuration.reviewerHandle,
     });
+    const nativeIoProven = harnessEnforcement(harnessLabel).enforcement !== 'unknown';
     const servers: McpServerWire[] = [
+      ...(nativeIoProven ? [] : [readOnlyMcpServer(this.options.config, this.options.worktreePath)]),
       ...(repository
         ? [
             {
@@ -1262,6 +1264,8 @@ export class MonolithCornerTurnLoop {
         workspaceId: this.options.workspaceId,
         cornerId: this.options.cornerId,
         reviewer,
+        nativeIoProven,
+        agentCommand: harnessLabel,
         repositoryBacked: Boolean(repository),
         attachRoot: this.options.worktreePath,
         // The whole per-session overlay, not an enumerated subset: see
@@ -1299,6 +1303,7 @@ export class MonolithCornerTurnLoop {
     });
     const persona = configuration.soul ?? self?.soul;
     const session = assembleSessionPrompt({
+      squireAvailable: Boolean(squireScope.relay),
       ...this.sessionPromptContext!,
       machineHost: await machineHost(),
       githubCli: this.cornerGitHubCli,
@@ -2219,7 +2224,7 @@ export class MonolithCornerTurnLoop {
                       : repositoryWork && !repositoryHeld &&
                         !result.toolCalls.some(
                           (call) =>
-                            /(?:^|[._:/-])pr_checks_status$/i.test(call.title ?? '') &&
+                            isPrChecksRead(call) &&
                             isCompletedToolCall(call),
                         ))))
               ) {

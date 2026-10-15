@@ -80,3 +80,20 @@ describe('toolCallFailureLine', () => {
     expect(line).toContain('[REDACTED]');
   });
 });
+
+it('recognizes compact checks reads across harness envelopes while retaining legacy activity', async () => {
+  const { isPrChecksRead } = await import('./tool-call-failure.js');
+  expect(isPrChecksRead({ title: 'beeline.pr_checks_status' })).toBe(true);
+  for (const rawInput of [{ facet: 'checks' }, { server: 'beeline-agent', arguments: { facet: 'checks' } }, { tool_input: { facet: 'checks' } }, JSON.stringify({ facet: 'checks' })])
+    expect(isPrChecksRead({ title: 'mcp__beeline_agent__read', rawInput })).toBe(true);
+  expect(isPrChecksRead({ title: 'beeline.read', rawInput: { facet: 'messages' } })).toBe(false);
+  expect(isPrChecksRead({ title: 'Read file', rawInput: { path: 'checks' } })).toBe(false);
+});
+
+it('counts only completed commander delivery as a private answer, excluding feedback variants', async () => {
+  const { isPrivateWorkToolCall } = await import('./tool-call-failure.js');
+  expect(isPrivateWorkToolCall({ title: 'beeline.report', status: 'completed' })).toBe(true);
+  expect(isPrivateWorkToolCall({ title: 'beeline.report', status: 'completed', rawInput: { arguments: { kind: 'commander' } } })).toBe(true);
+  for (const kind of ['feedback', 'fixed']) expect(isPrivateWorkToolCall({ title: 'beeline.report', status: 'completed', rawInput: { tool_input: { kind } } })).toBe(false);
+  expect(isPrivateWorkToolCall({ title: 'beeline.report', status: 'in_progress' })).toBe(false);
+});

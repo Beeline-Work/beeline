@@ -1171,6 +1171,10 @@ export class DaemonService {
           input as Input<'postRoomEvent'>,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'listAgentWatches':
+        return { watches: (await this.database.query<{ address: string; kinds: readonly CornerWatchKind[] }>(
+          `SELECT corner_id address,kinds FROM corner_watches WHERE watcher_room_id=$1 AND agent_id=$2 ORDER BY corner_id`,
+          [(input as Input<'listAgentWatches'>).roomId, authenticatedAgentId])).rows } as Output<Name>;
       case 'listAgentSchedules':
         return (await this.listAgentSchedules(
           input as Input<'listAgentSchedules'>,
@@ -5253,9 +5257,10 @@ export class DaemonService {
          schedule.message,schedule.max_runs,schedule.run_count,schedule.next_run_at
        FROM agent_schedules schedule JOIN identities agent ON agent.id=schedule.agent_id
        WHERE schedule.room_id=$1 AND schedule.workflow_run IS NULL
+         AND (NOT $3::boolean OR schedule.agent_id=$2)
          AND (schedule.workflow_slug IS NOT NULL OR schedule.agent_id=$2 OR schedule.creator_id=schedule.agent_id)
        ORDER BY schedule.created_at,schedule.id`,
-      [input.roomId, agentId],
+      [input.roomId, agentId, input.selfOnly === true],
     );
     const schedules = await Promise.all(
       rows.rows.map(async (row) => {
@@ -5284,8 +5289,9 @@ export class DaemonService {
     const deleted = await this.database.query(
       `DELETE FROM agent_schedules
        WHERE id=$1 AND room_id=$2 AND workflow_run IS NULL
-         AND (agent_id=$3 OR creator_id=agent_id)`,
-      [input.scheduleId, input.roomId, agentId],
+         AND (agent_id=$3 OR creator_id=agent_id)
+         AND (NOT $4::boolean OR agent_id=$3)`,
+      [input.scheduleId, input.roomId, agentId, input.selfOnly === true],
     );
     if (!deleted.rowCount) throw new Error('schedule not found');
     return this.writeResult();
@@ -5322,8 +5328,9 @@ export class DaemonService {
     }
     const existing = (
       await db.query<{ message: string; workflow_slug: string | null }>(
-        `SELECT message,workflow_slug FROM agent_schedules WHERE id=$1 AND room_id=$2 AND workflow_run IS NULL`,
-        [input.scheduleId, input.roomId],
+        `SELECT message,workflow_slug FROM agent_schedules WHERE id=$1 AND room_id=$2 AND workflow_run IS NULL
+           AND (NOT $4::boolean OR agent_id=$3)`,
+        [input.scheduleId, input.roomId, agentId, input.selfOnly === true],
       )
     ).rows[0];
     if (!existing) throw new Error('schedule not found');
@@ -5341,6 +5348,7 @@ export class DaemonService {
          cadence=COALESCE($4::jsonb,cadence),max_runs=COALESCE($5,max_runs),
          next_run_at=COALESCE($6,next_run_at),updated_at=now(),workflow_slug=$7,updated_by=$8
        WHERE id=$1 AND room_id=$2 AND creator_id=agent_id AND workflow_run IS NULL
+         AND (NOT $9::boolean OR agent_id=$8)
        RETURNING next_run_at`,
       [
         input.scheduleId,
@@ -5351,6 +5359,7 @@ export class DaemonService {
         nextRunAt,
         workflowName ?? null,
         agentId,
+        input.selfOnly === true,
       ],
     );
     const row = updated.rows[0];
@@ -7743,7 +7752,8 @@ export class DaemonService {
         [commandRoomId, agentId, cornerId],
       )
     ).rows[0];
-    return { cornerId, ...(watch ? { watch: { roomId: commandRoomId, kinds: watch.kinds } } : {}) };
+    const warnings = input.brief ? validateCornerBrief(input.brief, repositoryWork) : [];
+    return { cornerId, ...(warnings.length ? { warnings } : {}), ...(watch ? { watch: { roomId: commandRoomId, kinds: watch.kinds } } : {}) };
   }
   private async reviseCornerBrief(input: Input<'reviseCornerBrief'>, agentId: string) {
     validateCornerBrief(input.brief);
@@ -7755,13 +7765,15 @@ export class DaemonService {
       const corner = (
         await db.query<{
           parent_id: string;
+          repository_backed: boolean;
           owner_agent_id: string | null;
           implementer_agent_id: string | null;
           kind: string;
           created_by: string;
         }>(
           `SELECT room.parent_id,fact.owner_agent_id,${cornerImplementerSql('fact', 'room')} implementer_agent_id,
-             fact.kind,room.created_by FROM rooms room
+             fact.kind,room.created_by,EXISTS(SELECT 1 FROM rooms parent WHERE parent.id=room.parent_id
+               AND (parent.repository_resolution='repository' OR parent.repository_key IS NOT NULL)) repository_backed FROM rooms room
          JOIN corner_facts fact ON fact.corner_id=room.id
          WHERE room.id=$1 AND room.archived_at IS NULL FOR UPDATE OF room`,
           [input.cornerId],
@@ -7852,7 +7864,8 @@ export class DaemonService {
         sourceMessageId: note.id,
         command,
       });
-      return { ...(await currentCornerBrief(db, input.cornerId))!, wake: outcome.wake ?? {
+      const warnings = validateCornerBrief(draft, corner.repository_backed);
+      return { ...(await currentCornerBrief(db, input.cornerId))!, ...(warnings.length ? { warnings } : {}), wake: outcome.wake ?? {
         queued: false, reason: 'No lifecycle wake queued',
       } };
     });
@@ -8220,6 +8233,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   listEventSubscriptions: true,
   postRoomEvent: true,
   listAgentSchedules: true,
+  listAgentWatches: true,
   deleteAgentSchedule: true,
   updateAgentSchedule: true,
   getAgentToolMandate: true,

@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { CAPABILITY_ROUTES, REPOSITORY_ROUTES, SCRATCH_ROUTES, minimalTools, repositoryTools, scratchTools } from './minimal-tool-surface.js';
 import { squireReachCause } from './squire-status.js';
 import { nonhumanSilentWake } from './silent-wake.js';
 /**
@@ -1885,9 +1886,8 @@ const AGENT_TOOLS: ToolDefinition[] = [
 ];
 
 const agentSurface = process.env.BEELINE_MCP_SURFACE === 'agent';
-/** The bounded daemon-control tools for one surface. A direct message is
- *  strictly conversational: repository corners are never openable there. */
-export function agentToolsFor(
+/** Compatibility inventory for already-running sessions and legacy schema regression tests. */
+export function legacyAgentToolsFor(
   agentSurface: boolean,
   directMessage: boolean,
   cornerTurn = false,
@@ -1958,6 +1958,26 @@ export function agentToolsFor(
   } : tool);
 }
 
+/** The ordinary surface is stable across warm turns; optional schemas are read through app_tool. */
+export function agentToolsFor(
+  agentSurface: boolean,
+  _directMessage: boolean,
+  cornerTurn = false,
+  repositoryCorner = false,
+  commandRunnerAvailable = true,
+  institutionalMemoryEnabled = process.env.BEELINE_INSTITUTIONAL_MEMORY_ENABLED !== 'false',
+  explicitSilentReceipt = false,
+  nativeIoProven = false,
+): ToolDefinition[] {
+  if (!agentSurface) return repositoryTools(READ_ONLY_TOOLS);
+  const tools = minimalTools(AGENT_TOOLS, cornerTurn).filter(tool =>
+    institutionalMemoryEnabled || !['search', 'remember'].includes(tool.name));
+  if (commandRunnerAvailable) tools.push(AGENT_TOOLS.find(tool => tool.name === 'run_granted_command')!);
+  if (explicitSilentReceipt) tools.push(AGENT_TOOLS.find(tool => tool.name === 'no_reply_needed')!);
+  if (!nativeIoProven) tools.push(...scratchTools(AGENT_TOOLS, cornerTurn && !repositoryCorner));
+  return tools;
+}
+
 const TOOLS = agentToolsFor(
   agentSurface,
   process.env.BEELINE_AGENT_DM === '1',
@@ -1965,6 +1985,8 @@ const TOOLS = agentToolsFor(
   process.env.BEELINE_CORNER_REPOSITORY === '1',
   Boolean(process.env.BEELINE_GRANT_RUNNER_URL),
   process.env.BEELINE_INSTITUTIONAL_MEMORY_ENABLED !== 'false',
+  process.env.BEELINE_EXPLICIT_SILENT_RECEIPT === '1',
+  process.env.BEELINE_NATIVE_IO_PROVEN === '1',
 );
 
 const MAX_ATTACH_BYTES = 25 * 1024 * 1024;
@@ -1972,7 +1994,7 @@ const MAX_ATTACH_BYTES = 25 * 1024 * 1024;
 // permission check's canonical list) — assert they match so the two can't
 // silently drift apart the way they did before this check existed.
 {
-  const declaredNames = new Set(READ_ONLY_TOOLS.map((tool) => tool.name));
+  const declaredNames = new Set([...READ_ONLY_TOOLS, ...repositoryTools(READ_ONLY_TOOLS)].map((tool) => tool.name));
   const policyNames = new Set<string>(READ_ONLY_TOOL_NAMES);
   const mismatched =
     declaredNames.size !== policyNames.size ||
@@ -2384,6 +2406,11 @@ function gitStatus(args: JsonObject): string {
 }
 
 function callTool(name: string, args: JsonObject): string {
+  if (name === 'repository_io') {
+    const operation = REPOSITORY_ROUTES[String(args.action)];
+    if (!operation) throw new Error('unknown repository_io action');
+    return callTool(operation, args);
+  }
   switch (name) {
     case 'list_files':
       return listFiles(args);
@@ -2607,6 +2634,7 @@ async function openCorner(args: JsonObject, toolCallId: string): Promise<string>
     objective,
     ...(args.brief ? { briefRevision: 1 } : {}),
     ...(created.watch ? { watch: created.watch } : {}),
+    ...(Array.isArray(created.warnings) ? { warnings: created.warnings } : {}),
     status: 'starting',
   });
 }
@@ -2794,7 +2822,7 @@ export async function prChecksStatus(args: JsonObject = {}): Promise<string> {
     ...(pullRequest ? { pullRequest } : {}),
     ...(!pullRequest
       ? {
-          next: 'The PR URL is not yet durable in the corner. Print its full URL as your final response and end this turn now; do not call pr_checks_status again in this turn.',
+          next: 'The PR URL is not yet durable in the corner. Print its full URL as your final response and end this turn now; do not call read(facet:checks) again in this turn.',
         }
       : {}),
   });
@@ -3368,6 +3396,7 @@ function parseScheduleCadence(args: JsonObject): {
 
 export interface AgentScheduleDeps {
   roomId: string;
+  selfOnly?: boolean;
   execute: (name: string, input: JsonObject) => Promise<JsonObject>;
 }
 
@@ -3585,6 +3614,7 @@ export async function updateSchedule(
   const updated = await deps.execute('updateAgentSchedule', {
     roomId: deps.roomId,
     scheduleId,
+    ...(deps.selfOnly ? { selfOnly: true } : {}),
     ...(stringArg(args, 'workflowName') ? { workflowName: stringArg(args, 'workflowName')! } : {}),
     ...(prompt !== undefined ? { prompt } : {}),
     ...(parsed ? { cadence: parsed.cadence } : {}),
@@ -3603,7 +3633,7 @@ export async function deleteSchedule(
 ): Promise<string> {
   const scheduleId = stringArg(args, 'scheduleId')?.trim();
   if (!scheduleId) throw new Error('scheduleId must be a non-empty string');
-  await deps.execute('deleteAgentSchedule', { roomId: deps.roomId, scheduleId });
+  await deps.execute('deleteAgentSchedule', { roomId: deps.roomId, scheduleId, ...(deps.selfOnly ? { selfOnly: true } : {}) });
   return `Schedule ${scheduleId} deleted.`;
 }
 
@@ -3730,7 +3760,7 @@ export async function requestGrant(
     if (missing.length) {
       throw new Error(
         `secret ${missing.join(', ')} is not in the operator key store or the daemon environment, so this command grant could never run. ` +
-          'Store it first with store_secret (the value is written into the daemon key store and never echoed), or drop the --with suffix.',
+          'Have the operator initialize the named secret securely, or drop the --with suffix.',
       );
     }
   }
@@ -3846,7 +3876,7 @@ export async function listGrants(
             )
           ).filter((name): name is string => name !== null);
           secretsNote = missing.length
-            ? ` · secrets ${missing.join(', ')} NOT resolvable (store them with store_secret, then ask again)`
+            ? ` · secrets ${missing.join(', ')} NOT resolvable (operator secret setup is required before asking again)`
             : ` · secrets present`;
         }
       } catch {
@@ -4375,7 +4405,165 @@ async function daemonUploadArtifact(
   };
 }
 
-export async function callAgentTool(
+/** Route compact interfaces to the original handlers; never synthesize command authority. */
+export async function callAgentTool(name: string, args: JsonObject, toolCallId: string): Promise<string> {
+  if (process.env.BEELINE_TURN_CONTEXT_FILE && (await readTurnContextFile()).terminalReason)
+    throw new Error('turn has ended; further tool calls are refused');
+  const addressed = { ...args, ...(typeof args.address === 'string' ? { cornerId: args.address } : {}) };
+  const legacy = (operation: string, input = args) => callLegacyAgentTool(operation, input, toolCallId);
+  switch (name) {
+    case 'read': {
+      const facet = args.facet ?? (args.address || args.resource ? 'messages' : 'addresses');
+      const address = args.resource ?? args.address ?? (process.env.BEELINE_DAEMON_CORNER_ID?.trim() || process.env.BEELINE_DAEMON_ROOM_ID);
+      const input = { ...args, ...asObject(args.cursor), address, cornerId: address };
+      switch (facet) {
+        case 'addresses': return legacy('list_rooms', input);
+        case 'corners': return legacy('list_corners', input);
+        case 'members': return legacy('list_room_members', input);
+        case 'messages':
+          // Keep the simple address read for old live calls; explicit facets use bounded cursors.
+          return args.facet ? legacy('inspect_corner', { ...input, mode: 'transcript' }) : legacy('read', input);
+        case 'message': return legacy('get_room_message', { ...input, messageId: args.messageId ?? args.resource });
+        case 'attachment': return legacy('download_attachment', input);
+        case 'brief': return legacy('read_corner_brief', input);
+        case 'status': return legacy('inspect_corner', { ...input, mode: 'status' });
+        case 'checks': return legacy('pr_checks_status', input);
+        case 'pr': return legacy('read_pull_request', input);
+        case 'procedure': return legacy('load_workspace_skill', { ...input, slug: args.slug ?? args.resource });
+        default: throw new Error('unknown read facet');
+      }
+    }
+    case 'search': {
+      if (args.scope !== 'history' && args.scope !== 'memory') throw new Error('scope must be history or memory');
+      return legacy(args.scope === 'history' ? 'search_history' : 'search_memory');
+    }
+    case 'remember': {
+      const routes: Record<string, Record<string, string>> = {
+        fact: { save: 'save_memory', update: 'update_memory', delete: 'delete_memory', used: 'report_memory_used' },
+        procedure: { save: 'save_skill', update: 'save_skill', delete: 'delete_skill' },
+      };
+      const operation = routes[String(args.kind)]?.[String(args.action)];
+      if (!operation) throw new Error('unknown remember kind/action');
+      requireOperationFields(operation, args);
+      return legacy(operation);
+    }
+    case 'revise_corner':
+      if (args.action === 'metadata') return legacy('rename_corner', addressed);
+      if (args.action === 'brief') { requireOperationFields('revise_corner_brief', addressed, ['cornerId']); return legacy('revise_corner_brief', addressed); }
+      throw new Error('action must be metadata or brief');
+    case 'report':
+      if (args.kind === 'feedback') { requireOperationFields('report_feedback', args); return legacy('report_feedback'); }
+      if (args.kind === 'fixed') { requireOperationFields('notify_feedback_fixed', args); return legacy('notify_feedback_fixed'); }
+      if (args.kind !== undefined && args.kind !== 'commander') throw new Error('unknown report kind');
+      return legacy('report');
+    case 'approve_merge': return legacy(name, { ...addressed, headSha: args.head ?? args.headSha });
+    case 'merge_corner':
+      if (args.mode === 'human_yes') return legacy('order_corner_merge', addressed);
+      if (args.mode !== undefined && args.mode !== 'land') throw new Error('mode must be land or human_yes');
+      return legacy(name, addressed);
+    case 'set_corner_hold':
+    case 'post_to_corner': return legacy(name, addressed);
+    case 'close_corner':
+      if (args.mode === 'pr_only') return legacy('close_pull_request', addressed);
+      if (args.mode !== undefined && args.mode !== 'archive') throw new Error('mode must be archive or pr_only');
+      // Omitted mode remains supported for already-running sessions.
+      return legacy(name, addressed);
+    case 'request_grant':
+      if (args.action === 'list') return legacy('list_grants');
+      if (args.action !== undefined && args.action !== 'request') throw new Error('action must be request or list');
+      return legacy(name);
+    case 'connect': {
+      const capabilities = availableCapabilities();
+      if (args.mode === 'status') return JSON.stringify({ readiness: await legacy('connectors_status'), capabilities });
+      if (args.mode === 'discover') return JSON.stringify({ integrations: args.query ? JSON.parse(await legacy('find_connectors')) : [], capabilities });
+      if (args.mode !== undefined && args.mode !== 'ensure') throw new Error('mode must be discover, status or ensure');
+      return legacy(name);
+    }
+    case 'app_tool': {
+      const app = String(args.app ?? '');
+      if (app.startsWith('beeline:')) {
+        const capability = app.slice('beeline:'.length);
+        if (!availableCapabilities().includes(app)) throw new Error('capability unavailable on this surface');
+        const routes = CAPABILITY_ROUTES[capability]!;
+        if (args.tool === undefined) return JSON.stringify({ app, tools: Object.entries(routes).map(([action, operation]) => {
+          const definition = AGENT_TOOLS.find(tool => tool.name === operation)!;
+          return { ...definition, name: action, description: capabilityDescription(definition.description) };
+        }) });
+        const operation = routes[String(args.tool)];
+        if (!operation) throw new Error('unknown capability operation; discover its schema first');
+        const input = asObject(args.args);
+        requireOperationFields(operation, input);
+        return legacy(operation, input);
+      }
+      return args.tool === undefined
+        ? legacy('list_app_tools', { appId: app, query: args.query })
+        : legacy('execute_app_tool', { appId: app, tool: args.tool, arguments: args.args });
+    }
+    case 'scratch_io': {
+      if (process.env.BEELINE_NATIVE_IO_PROVEN === '1') throw new Error('native IO is available');
+      const operation = SCRATCH_ROUTES[String(args.action)];
+      if (!operation) throw new Error('unknown scratch_io action');
+      requireOperationFields(operation, args);
+      return legacy(operation);
+    }
+    case 'wake': {
+      // Explicit allowlist: no payload can select an arbitrary daemon operation or recipient.
+      const allowed = new Set(['action', 'trigger', 'address', 'scheduleId', 'subscriptionId', 'prompt', 'cadence', 'maxRuns', 'workflowName', 'source', 'event', 'repository', 'channelId', 'channelName', 'kinds']);
+      if (Object.keys(args).some(key => !allowed.has(key))) throw new Error('wake only manages this agent’s own wake sources');
+      const roomId = agentScheduleRoomId();
+      const deps = { ...agentScheduleDepsFromEnv(), selfOnly: true };
+      if (args.action === 'list') {
+        const [schedules, subscriptions, watches, events] = await Promise.all([
+          daemonExecute('listAgentSchedules', { roomId, selfOnly: true }),
+          daemonExecute('listAgentSubscriptions', { roomId }),
+          daemonExecute('listAgentWatches', { roomId }),
+          daemonExecute('listEventSubscriptions', { roomId }),
+        ]);
+        return JSON.stringify({ ...schedules, subscriptions, ...watches, events });
+      }
+      if (args.action === 'events') return JSON.stringify({ room: SUBSCRIBABLE_EVENT_KINDS,
+        repository: REPOSITORY_SUBSCRIPTION_EVENTS,
+        service: await daemonExecute('listServiceSubscriptionEvents', { roomId }) });
+      if (args.action === 'replace_events') return subscribeEvents(args, deps);
+      if (args.trigger === 'schedule') {
+        if (args.action === 'create') return createSchedule(args, deps);
+        if (args.action === 'update') return updateSchedule(args, deps);
+        if (args.action === 'delete') return deleteSchedule(args, deps);
+      }
+      if (args.trigger === 'event') {
+        if (args.action === 'create') return legacy('create_subscription');
+        if (args.action === 'delete') return legacy('delete_subscription');
+      }
+      if (args.trigger === 'lifecycle') {
+        if (args.action === 'create') return legacy('watch');
+        if (args.action === 'delete') return JSON.stringify(await daemonExecute('watchCorner', { roomId, cornerId: args.address, kinds: [] }));
+      }
+      throw new Error('unknown wake action/trigger');
+    }
+    default: return legacy(name);
+  }
+}
+
+function requireOperationFields(operation: string, args: JsonObject, optional: string[] = []): void {
+  const required = AGENT_TOOLS.find(tool => tool.name === operation)?.inputSchema.required as string[] | undefined;
+  for (const field of required ?? []) if (args[field] === undefined && !optional.includes(field)) throw new Error(`${field} is required`);
+}
+
+function availableCapabilities(): string[] {
+  return Object.keys(CAPABILITY_ROUTES).filter(capability =>
+    (capability !== 'workflow' || process.env.BEELINE_INSTITUTIONAL_MEMORY_ENABLED !== 'false') &&
+    (capability !== 'corner_app' || Boolean(process.env.BEELINE_DAEMON_CORNER_ID))
+  ).map(capability => `beeline:${capability}`);
+}
+
+function capabilityDescription(description: string): string {
+  for (const [capability, routes] of Object.entries(CAPABILITY_ROUTES))
+    for (const [action, operation] of Object.entries(routes))
+      description = description.replaceAll(operation, `app_tool(beeline:${capability}, ${action})`);
+  return description;
+}
+
+async function callLegacyAgentTool(
   name: string, args: JsonObject, toolCallId: string,
 ): Promise<string> {
   if (process.env.BEELINE_TURN_CONTEXT_FILE && (await readTurnContextFile()).terminalReason)

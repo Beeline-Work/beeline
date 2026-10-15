@@ -189,15 +189,15 @@ describe('server-mediated connected app tools', () => {
 
   it('discovers and executes a connected app with turn authority and no provider secret', async () => {
     expect(agentToolsFor(true, false).map((tool) => tool.name))
-      .toEqual(expect.arrayContaining(['list_app_tools', 'execute_app_tool']));
+      .toEqual(expect.arrayContaining(['app_tool']));
     answer = (name) => Response.json(name === 'listAppTools'
       ? { tools: [{ slug: 'SLACK_POST_MESSAGE', name: 'Post message',
           description: 'Post a message', inputParameters: { type: 'object' } }] }
       : { status: 'executed', data: { ok: true } });
-    expect(JSON.parse(await callAgentTool('list_app_tools', { appId }, 'call-1')).tools)
+    expect(JSON.parse(await callAgentTool('app_tool', { app: appId }, 'call-1')).tools)
       .toHaveLength(1);
-    expect(JSON.parse(await callAgentTool('execute_app_tool', {
-      appId, tool: 'SLACK_POST_MESSAGE', arguments: { text: 'hello' },
+    expect(JSON.parse(await callAgentTool('app_tool', {
+      app: appId, tool: 'SLACK_POST_MESSAGE', args: { text: 'hello' },
     }, 'call-2'))).toEqual({ status: 'executed', data: { ok: true } });
     expect(calls.map((call) => call.name)).toEqual(['listAppTools', 'executeAppTool']);
     for (const call of calls) expect(call.input).toMatchObject({ appId, agentId: 'agent-1',
@@ -207,15 +207,15 @@ describe('server-mediated connected app tools', () => {
 
   it('reports a missing app without trying another provider path', async () => {
     answer = () => Response.json({ error: 'app_unavailable' }, { status: 404 });
-    await expect(callAgentTool('list_app_tools', { appId }, 'call-1'))
+    await expect(callAgentTool('app_tool', { app: appId }, 'call-1'))
       .rejects.toThrow('listAppTools failed (404: app_unavailable)');
     expect(calls.map((call) => call.name)).toEqual(['listAppTools']);
   });
 
   it('preserves the server permission decision for a foreign agent', async () => {
     answer = () => Response.json({ status: 'needs_permission', grantId: 'grant-1' });
-    expect(JSON.parse(await callAgentTool('execute_app_tool', {
-      appId, tool: 'SLACK_POST_MESSAGE', arguments: { text: 'hello' },
+    expect(JSON.parse(await callAgentTool('app_tool', {
+      app: appId, tool: 'SLACK_POST_MESSAGE', args: { text: 'hello' },
     }, 'call-1'))).toEqual({ status: 'needs_permission', grantId: 'grant-1' });
     expect(calls.map((call) => call.name)).toEqual(['executeAppTool']);
   });
@@ -223,7 +223,7 @@ describe('server-mediated connected app tools', () => {
   it('keeps a disconnected account unusable', async () => {
     answer = (name) => Response.json(name === 'listAppTools' ? { tools: [] }
       : { status: 'needs_connection' });
-    expect(JSON.parse(await callAgentTool('list_app_tools', { appId }, 'call-1')))
+    expect(JSON.parse(await callAgentTool('app_tool', { app: appId }, 'call-1')))
       .toEqual({ tools: [] });
     expect(JSON.parse(await callAgentTool('execute_app_tool', {
       appId, tool: 'SLACK_POST_MESSAGE', arguments: {},
@@ -250,7 +250,7 @@ describe('server-mediated connected app tools', () => {
       : { status: 'needs_sign_in', appId, app: 'X', next: 'Sign in from the card.' });
     const names = agentToolsFor(true, false, true, true).map((tool) => tool.name);
     expect(names).toEqual(expect.arrayContaining([
-      'workbench_status', 'connect', 'list_app_tools', 'execute_app_tool',
+      'connect', 'app_tool',
     ]));
     expect(await callAgentTool('workbench_status', {}, 'call-1'))
       .toContain(`X (app:x, id ${appId}) via composio: connecting`);

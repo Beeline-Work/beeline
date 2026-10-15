@@ -1046,7 +1046,7 @@ describe('handoff', () => {
     expect(woken?.source.body).toContain(
       `You are in run ${runId} of corner. Continue this run; do not start a new one.`,
     );
-    expect(woken?.source.body).toContain('This wake is attempt 4: pass "attempt": 4 to handoff.');
+    expect(woken?.source.body).toContain('This wake is attempt 4: pass "attempt": 4 to app_tool’s beeline:workflow advance action.');
   });
 
   it("refuses the bound agent's handoff out of a gate", async () => {
@@ -2132,7 +2132,7 @@ describe('agent workflow run reads and cancellation', () => {
     const wake = commands.find(c => c.source.body.includes(`You are in run ${runId}`));
     expect(wake?.source.body).toContain('Current state: checks');
     expect(wake?.source.body).toContain('passing -> review');
-    expect(wake?.source.body).toContain('This wake is attempt 1: pass "attempt": 1 to handoff.');
+    expect(wake?.source.body).toContain('This wake is attempt 1: pass "attempt": 1 to app_tool’s beeline:workflow advance action.');
   });
 
   it('allows the run requester, removes pending wakes and rejects later handoffs without waking subscribers', async () => {

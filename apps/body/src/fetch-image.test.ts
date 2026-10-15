@@ -34,13 +34,11 @@ function deps(fetchImpl: typeof fetch): FetchImageDeps {
 }
 
 describe('beeline-agent fetch_image', () => {
-  it('is registered on the agent surface in a Room and a corner, never on the read-only surface', () => {
-    expect(agentToolsFor(true, false).map((tool) => tool.name)).toContain('fetch_image');
-    expect(agentToolsFor(true, false, true).map((tool) => tool.name)).toContain('fetch_image');
-    expect(agentToolsFor(true, true).map((tool) => tool.name)).toContain('fetch_image');
-    expect(agentToolsFor(false, false).map((tool) => tool.name)).not.toContain('fetch_image');
-    const tool = agentToolsFor(true, false).find((entry) => entry.name === 'fetch_image');
-    expect(tool?.inputSchema).toMatchObject({ required: ['url'] });
+  it('is available through the IO fallback only when native IO is unproven', () => {
+    const fallback = agentToolsFor(true, false).find(tool => tool.name === 'scratch_io');
+    expect(fallback?.inputSchema.properties).toHaveProperty('url');
+    expect(agentToolsFor(true, false, false, false, true, true, false, true).map(tool => tool.name)).not.toContain('scratch_io');
+    expect(agentToolsFor(true, false).map(tool => tool.name)).not.toContain('fetch_image');
   });
 
   it('writes the photograph to scratch and returns path, mime, and size', async () => {

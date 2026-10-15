@@ -2001,6 +2001,24 @@ describe("the configured reviewer's verdict (AC-4)", () => {
 });
 
 describe('the implementer merges when the gate opens (AC-5)', () => {
+  it('approval, landing and hold release remain separate server operations', async () => {
+    const cornerId = await inReview();
+    const land = vi.fn(async () => true);
+    const wired = new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
+      (input, confirm) => github.prChecksStatus(input, confirm), undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, undefined, land);
+    await expect(wired.execute('mergeCorner', { cornerId }, A)).resolves.toMatchObject({ status: 'blocked' });
+    expect((await db.query(`SELECT 1 FROM corner_merge_approvals WHERE corner_id=$1`, [cornerId])).rowCount).toBe(0);
+    const hold = await phone.execute('setCornerHold', { cornerId }, H);
+    await approve(cornerId);
+    expect(land).not.toHaveBeenCalled();
+    expect(await github.prChecksStatus({ cornerId })).toMatchObject({ approved: true, held: true, mergeAllowed: false });
+    await expect(wired.execute('mergeCorner', { cornerId }, A)).resolves.toMatchObject({ status: 'blocked', blocker: expect.stringContaining('hold') });
+    expect(land).not.toHaveBeenCalled();
+    expect((await db.query(`SELECT released_at FROM corner_merge_holds WHERE id=$1`, [hold.holdId])).rows[0]).toEqual({ released_at: null });
+    expect((await db.query(`SELECT archived_at FROM rooms WHERE id=$1`, [cornerId])).rows[0]).toEqual({ archived_at: null });
+  });
+
   it('opens the gate only for a yes from the configured reviewer or a Workspace admin, on the current head with no hold', async () => {
     const peer = 'f'.repeat(64);
     await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human',$1) ON CONFLICT DO NOTHING`, [peer]);

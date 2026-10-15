@@ -59,7 +59,8 @@ export const FEEDBACK_TRIAGE_STEPS_DESCRIPTION = 'How to run each step of the fe
 export const FEEDBACK_TRIAGE_STEPS = `# Feedback triage steps
 
 The procedure for the \`feedback-triage\` workflow (\`docs/workflows/feedback-triage.json\`).
-Start it with \`start_workflow\` and bind \`triager\` to yourself. Every step is yours. The
+Discover \`app_tool(app:beeline:workflow)\`, then use \`tool:start\` and bind \`triager\`
+to yourself. Advance each step with \`tool:advance\`. Every step is yours. The
 \`approve\` step is a card a person answers.
 
 End every step with its handoff in the same turn. A turn that ends without one hands
@@ -82,7 +83,7 @@ carry a \`Feedback items:\` line, for example:
 gh pr list --repo Beeline-Work/beeline --state merged --search '"Feedback items:" in:body' --json number,title,url,body,mergedAt
 \`\`\`
 
-For each one, call \`notify_feedback_fixed\` with the item ids from that line, a short
+For each one, call \`report(kind:fixed)\` with the item ids from that line, a short
 plain title for the fix (one line, at most 120 characters), and the pull request URL.
 Omit \`notify\`: routine resolution sends no DM. Only set \`notify: true\` when
 a configured System sender explicitly orders Fixed notices for that pull request
@@ -91,7 +92,7 @@ items; repeats resolve nothing twice. Hand off \`notified\`
 with \`fixedPullRequests\` listing the URLs you reported, or \`none\`, and
 \`skipReason\` and \`unnotifiedPullRequests\` set to \`none\`.
 
-If \`notify_feedback_fixed\` refuses with \`System DM access denied\`, your owner is
+If \`report(kind:fixed)\` refuses with \`System DM access denied\`, your owner is
 not a System sender and no call you make can send these DMs. Do not stop, and do not
 hand off \`notified\`. Hand off \`skipped\` with \`skipReason\` \`not_system_sender\`,
 \`unnotifiedPullRequests\` listing the numbers of every pull request you could not
@@ -136,9 +137,13 @@ that corner. Hand off \`dispatched\` with \`corners\` listing each corner's
 \`cornerId\` (from \`open_corner\`), its name and its item ids.
 `;
 
+// Exact match for already-deployed schedules; do not rewrite user-authored prompts.
+const LEGACY_FEEDBACK_TRIAGE_SCHEDULE_PROMPT =
+  'Start the feedback-triage workflow with start_workflow, binding triager to yourself, and follow the feedback-triage-steps procedure (load_workspace_skill) at each step.';
+
 /** The triage corner's schedule prompt; its cadence never changes here. */
 export const FEEDBACK_TRIAGE_SCHEDULE_PROMPT =
-  'Start the feedback-triage workflow with start_workflow, binding triager to yourself, and follow the feedback-triage-steps procedure (load_workspace_skill) at each step.';
+  'Discover app_tool(app:beeline:workflow), then start the feedback-triage workflow with tool:start, binding triager to yourself. Read the feedback-triage-steps procedure with read(facet:procedure) and follow it at each step.';
 
 /**
  * A schedule written for the retired triage tools: the documented sweep
@@ -221,9 +226,9 @@ async function seedSkill(
 export async function backfillFeedbackTriageWorkflow(database: SqlDatabase): Promise<number> {
   const schedules = await database.query<{ id: string; workspace_id: string; room_id: string }>(
     `SELECT schedule.id,schedule.workspace_id,schedule.room_id FROM agent_schedules schedule
-     WHERE ${RETIRED_SWEEP_SCHEDULE_SQL} OR schedule.message=$1
+     WHERE ${RETIRED_SWEEP_SCHEDULE_SQL} OR schedule.message=ANY($1::text[])
      ORDER BY schedule.created_at,schedule.id`,
-    [FEEDBACK_TRIAGE_SCHEDULE_PROMPT],
+    [[FEEDBACK_TRIAGE_SCHEDULE_PROMPT, LEGACY_FEEDBACK_TRIAGE_SCHEDULE_PROMPT]],
   );
   let changed = 0;
   for (const schedule of schedules.rows) {

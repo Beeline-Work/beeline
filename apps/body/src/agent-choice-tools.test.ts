@@ -41,20 +41,12 @@ describe('the one app front door', () => {
 });
 
 describe('beeline-agent ask_choice and open_poll', () => {
-  it('mounts ask_choice in Rooms, corners, and DMs, and open_poll everywhere except DMs', () => {
-    expect(agentToolsFor(true, false).map((tool) => tool.name)).toEqual(
-      expect.arrayContaining(['ask_choice', 'open_poll']),
-    );
-    expect(agentToolsFor(true, true).map((tool) => tool.name)).toContain('ask_choice');
-    expect(agentToolsFor(true, true).map((tool) => tool.name)).not.toContain('open_poll');
-    expect(agentToolsFor(false, false).map((tool) => tool.name)).not.toContain('ask_choice');
-  });
-
-  it('does not require ask on report or ask_choice', () => {
-    for (const name of ['report', 'ask_choice']) {
-      const schema = agentToolsFor(true, false).find(tool => tool.name === name)!.inputSchema;
-      expect(schema.required).not.toContain('ask');
-      expect(schema.allOf).toBeUndefined();
+  it('keeps standalone preference cards out of the minimal surface', () => {
+    for (const tools of [agentToolsFor(true, false), agentToolsFor(true, true), agentToolsFor(true, false, true)]) {
+      const names = tools.map(tool => tool.name);
+      expect(names).not.toContain('ask_choice');
+      expect(names).not.toContain('open_poll');
+      expect((tools.find(tool => tool.name === 'report')!.inputSchema.required ?? [])).not.toContain('ask');
     }
   });
 

@@ -319,6 +319,12 @@ export function roomShellCapability(
   return options.osSandbox ? 'runs' : 'refused';
 }
 
+/** Native IO includes network access: an unwrapped Codex Room has a shell but is offline. */
+export function roomNativeIoProven(command: string | undefined, options: { osSandbox?: boolean } = {}): boolean {
+  return roomShellCapability(command, options) === 'runs' &&
+    (harnessEnforcement(command).enforcement !== 'sandboxed' || options.osSandbox === true);
+}
+
 /**
  * One-line operator line about how a Room's read-only rule is actually held for
  * this harness, or `undefined` when nothing needs saying.
@@ -362,4 +368,9 @@ export function roomSandboxWarning(
     `offline-and-read-only in Codex's own sandbox), or install bubblewrap so the daemon ` +
     `can enforce it at the OS level.`
   );
+}
+
+/** Claude's empty-final retry requires an explicit terminal receipt (prove:claude-silent-wake). */
+export function harnessNeedsSilentReceipt(command: string | undefined): boolean {
+  return Boolean(command && /(^|[/\\])claude-(?:agent|code)-acp(?:\.[a-z]+)?$/i.test(command));
 }

@@ -50,22 +50,22 @@ describe('beeline-agent connectors_status + offer_connector (R5)', () => {
   it('mounts discovery in every turn while connector offers stay in Rooms and DMs', () => {
     for (const directMessage of [false, true]) {
       const names = agentToolsFor(true, directMessage).map((tool) => tool.name);
-      expect(names).toContain('connectors_status');
-      expect(names).toContain('workbench_status');
+      expect(names).not.toContain('connectors_status');
+      expect(names).not.toContain('workbench_status');
       expect(names).toContain('connect');
       expect(names).not.toContain('offer_connector');
     }
     const corner = agentToolsFor(true, false, true).map((tool) => tool.name);
-    expect(corner).toContain('connectors_status');
+    expect(corner).toContain('connect');
     expect(corner).not.toContain('offer_connector');
     expect(agentToolsFor(false, false).map((tool) => tool.name)).not.toContain('offer_connector');
   });
 
-  it('describes connectors_status as this machine and owner, with one failure sentence', () => {
-    const tool = agentToolsFor(true, false).find((entry) => entry.name === 'connectors_status')!;
-    expect(tool.description).toContain('machine and owner you actually run on');
-    expect(tool.description).toContain('vaulted keys by service and label only, never a value');
-    expect(tool.description).toContain('Free to call; it changes nothing');
+  it('advertises silent readiness and separate connection permission', () => {
+    const tool = agentToolsFor(true, false).find(entry => entry.name === 'connect')!;
+    expect(tool.description).toContain('status silently reads readiness');
+    expect(tool.description).toContain('Setup never grants use authority');
+    expect(tool.description).toContain('Never show secrets/sign-in links');
   });
 
   it('connect exposes service and machine flags while legacy offer calls stay hidden', () => {
@@ -73,7 +73,7 @@ describe('beeline-agent connectors_status + offer_connector (R5)', () => {
     expect(names).not.toContain('offer_connector');
     expect(names).not.toContain('connect_app');
     const tool = agentToolsFor(true, false).find(entry => entry.name === 'connect')!;
-    expect(tool.inputSchema.required).toEqual(['service', 'reason']);
+    expect(tool.inputSchema.required).toEqual(['mode']);
     expect(tool.inputSchema.properties).toHaveProperty('switchGoogleAccount');
     expect(tool.inputSchema.properties).toHaveProperty('reconnect');
     expect(tool.inputSchema.properties).toHaveProperty('noApi');

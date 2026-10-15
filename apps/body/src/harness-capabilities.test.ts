@@ -215,3 +215,13 @@ describe('harness permission enforcement', () => {
     expect(roomSandboxWarning('claude-agent-acp', { osSandbox: true })).toBeUndefined();
   });
 });
+
+it('keeps network IO fallback for an offline Codex Room despite its native shell', async () => {
+  const { roomNativeIoProven } = await import('./harness-capabilities.js');
+  expect(roomNativeIoProven('codex-acp')).toBe(false);
+  expect(roomNativeIoProven('codex-acp', { osSandbox: true })).toBe(true);
+  expect(roomNativeIoProven('claude-agent-acp')).toBe(false);
+  expect(roomNativeIoProven('claude-agent-acp', { osSandbox: true })).toBe(true);
+  expect(roomNativeIoProven('pi-acp')).toBe(true);
+  expect(roomNativeIoProven('unmeasured-adapter', { osSandbox: true })).toBe(false);
+});

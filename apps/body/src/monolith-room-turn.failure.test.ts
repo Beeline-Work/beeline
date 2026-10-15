@@ -236,6 +236,19 @@ const laneWrites = (writes: readonly string[]): string[] =>
   );
 
 describe('Room turn failure receipt', () => {
+  it.each(['Recovered answer.', ''])('does not prepend an abandoned draft to a replacement result %j', async (agentText) => {
+    const { posted, receipts } = await runTurn({
+      agentCommand: '/fake-agent',
+      agentKind: 'codex',
+      prompt: async ({ onChunk }) => {
+        onChunk('Abandoned draft.', 'Abandoned draft.', 'Abandoned draft.');
+        return { stopReason: 'end_turn', updates: [], agentText, toolCalls: [] };
+      },
+    });
+    expect(posted.map(message => message.text)).toEqual(agentText ? [agentText] : []);
+    expect(receipts).toContainEqual(expect.objectContaining({ status: 'complete' }));
+  });
+
   it('re-links a credential replaced by the harness and retries the turn once', async () => {
     let operatorCredential = '';
     const { receipts, posted, attempts, agentHomeRoot } = await runTurn({

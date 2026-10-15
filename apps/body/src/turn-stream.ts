@@ -47,11 +47,9 @@ export interface DurableReplyFields {
 /**
  * What a streamed turn leaves behind in the transcript.
  *
- * Only the harness's LAST assistant run is the answer — an earlier run is
- * progress narration around tool work and never becomes part of this final
- * (the rule `finalAgentMessageText` in `acp.ts` already states). It is returned whole:
- * never a slice, so a turn that narrated before a tool call still posts its
- * closing message in full.
+ * The caller selects the prose for its surface: Rooms commit the full draft,
+ * while corners separately save earlier runs and settle the final remainder.
+ * Sanitize that selection whole, without slicing any authored text.
  */
 export function durableReplyText(agentText: string): string {
   return sanitizeAgentReply(agentText);

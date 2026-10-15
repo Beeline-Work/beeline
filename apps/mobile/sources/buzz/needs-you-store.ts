@@ -1,4 +1,4 @@
-import { useEffect, useRef, useSyncExternalStore } from 'react';
+import { useEffect, useSyncExternalStore } from 'react';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { clientResetGeneration, subscribeClientReset } from '@/sync/client-reset';
@@ -12,18 +12,18 @@ export type NeedsYouLiveDelta = { readonly workspaceId: string; readonly sourceR
 export type BookmarkDelta = { readonly messageId: string; readonly bookmark: MessageBookmarkView | null };
 const GAP_REASONS = new Set(['needs-you-gap', 'bookmark-gap', 'reconnect', 'postgres:memberships']);
 
-type Entry = { needs: readonly NeedsYouItemView[] | null; count: number | null;
+type Entry = { needs: readonly NeedsYouItemView[] | null;
   saved: readonly MessageBookmarkView[] | null; next?: string; held: ReadonlySet<string> };
 /** A read replays later live changes, then edits still pending at its start. */
 type Change = { at: number; kind: 'needs' | 'saved'; apply: (entry: Entry) => Entry;
   pending?: boolean; settled?: number };
 type Slot = { key: string; relay: string; pubkey: string; workspaceId: string;
-  /** One order for both sections, count reads, and local edits. */
+  /** One order for both sections, projection reads, and local edits. */
   entry: Entry; clock: number; needsRead: number; savedRead: number;
-  reads: Set<number>; changes: Change[]; countRead?: Promise<{ count: number; at: number }>;
+  reads: Set<number>; changes: Change[]; projectionRead?: Promise<readonly NeedsYouItemView[]>;
   trayRead?: Promise<{ needsError?: string; savedError?: string }>;
   forgotten?: boolean };
-const EMPTY: Entry = { needs: null, count: null, saved: null, held: new Set() };
+const EMPTY: Entry = { needs: null, saved: null, held: new Set() };
 const slots = new Map<string, Slot>();
 const listeners = new Set<() => void>();
 const trayReaders = new Map<string, Set<(reason: string) => void>>();
@@ -110,7 +110,7 @@ function startLive(): void {
     else if (signal.type === 'invalidate' && GAP_REASONS.has(signal.reason)) {
       for (const slot of slots.values()) if (signal.reason !== 'bookmark-gap' && !trayReaders.has(slot.workspaceId)) {
         slot.clock += 1;
-        write(slot, { ...slot.entry, needs: null, count: null }, false);
+        write(slot, { ...slot.entry, needs: null }, false);
       }
       for (const readers of trayReaders.values()) for (const read of readers) read(signal.reason);
     }
@@ -141,7 +141,7 @@ export function applyNeedsYouLiveDelta(delta: NeedsYouLiveDelta): void {
   const slot = current(delta.workspaceId);
   if (!slot || slot.forgotten) return;
   const apply = (entry: Entry): Entry => entry.needs
-    ? { ...entry, needs: needsSlice(entry.needs, delta) } : { ...entry, count: delta.count };
+    ? { ...entry, needs: needsSlice(entry.needs, delta) } : entry;
   changed(slot, { at: 0, kind: 'needs', apply });
   write(slot, apply(slot.entry));
 }
@@ -160,7 +160,7 @@ export async function loadNeedsYouList(workspaceId: string): Promise<readonly Ne
   try {
     const result = await monolithPhoneOperation('readNeedsYou', { workspaceId });
     const entry = replay(slot, 'needs', at,
-      { ...slot.entry, needs: orderedNeeds([...result.items]), count: null });
+      { ...slot.entry, needs: orderedNeeds([...result.items]) });
     if (active(slot) && at > slot.needsRead) {
       slot.needsRead = at;
       slot.forgotten = false;
@@ -201,7 +201,7 @@ export async function loadTrayList(workspaceId: string, force = false): Promise<
     let entry = slot.entry;
     if (result.needs && at > slot.needsRead) {
       entry = replay(slot, 'needs', at,
-        { ...entry, needs: orderedNeeds([...result.needs.items]), count: null });
+        { ...entry, needs: orderedNeeds([...result.needs.items]) });
       slot.needsRead = at;
     }
     if (result.saved && at > slot.savedRead) {
@@ -243,7 +243,7 @@ export function forgetTray(workspaceId: string): void {
   slot.forgotten = true;
   slot.needsRead = slot.savedRead = ++slot.clock;
   slot.changes = [];
-  write(slot, { ...slot.entry, needs: [], saved: [], count: null, next: undefined }, false);
+  write(slot, { ...slot.entry, needs: [], saved: [], next: undefined }, false);
   if (slot.pubkey) for (const kind of ['needs-you', 'bookmarks'] as const)
     void mobileSurfaceCache.remove(address(slot, kind)).catch(() => undefined);
 }
@@ -308,34 +308,30 @@ function useEntry(workspaceId: string | null | undefined): Entry {
     workspaceId && viewer ? slots.get(`${viewer.key}\u0000${workspaceId}`)?.entry ?? EMPTY : EMPTY);
 }
 const EMPTY_SAVED: readonly MessageBookmarkView[] = [];
+const visibleNeeds = (entry: Entry) => entry.needs && entry.held.size
+  ? entry.needs.filter((item) => !entry.held.has(item.messageId)) : entry.needs;
 export function useTrayList(workspaceId: string | null | undefined) {
   const entry = useEntry(workspaceId);
-  return { needs: entry.needs && entry.held.size
-    ? entry.needs.filter((item) => !entry.held.has(item.messageId)) : entry.needs,
+  return { needs: visibleNeeds(entry),
     bookmarks: entry.saved ?? EMPTY_SAVED, next: entry.next };
 }
 export function useNeedsYouCount(workspaceId: string | null | undefined, refreshKey: unknown) {
   const entry = useEntry(workspaceId);
   const generation = useSyncExternalStore(subscribeClientReset, clientResetGeneration);
-  const countedFor = useRef<unknown>(undefined);
   useEffect(() => {
     if (!workspaceId || refreshKey === undefined || entry.needs) return;
-    if (entry.count !== null && countedFor.current === refreshKey) return;
-    countedFor.current = refreshKey;
     let cancelled = false;
     void (async () => {
       const slot = slotFor(await resolveViewer(), workspaceId);
-      const at = slot.clock;
+      if (cancelled || !active(slot) || slot.entry.needs) return;
       try {
-        const request = slot.countRead ??= monolithPhoneOperation('countNeedsYou', { workspaceId })
-          .then(({ count }) => ({ count, at })).finally(() => { slot.countRead = undefined; });
-        const answer = await request;
-        if (!cancelled && !slot.forgotten && slot.clock === answer.at && !slot.entry.needs)
-          write(slot, { ...slot.entry, count: answer.count });
-      } catch { /* Keep the previous count. */ }
+        // The existing badge read seeds complete rows. Concurrent badges share
+        // it; loadNeedsYouList replays deltas received while it was in flight.
+        await (slot.projectionRead ??= loadNeedsYouList(workspaceId)
+          .finally(() => { slot.projectionRead = undefined; }));
+      } catch { /* Keep the previous projection. */ }
     })();
     return () => { cancelled = true; };
-  }, [workspaceId, refreshKey, entry.needs, entry.count, generation]);
-  return entry.needs
-    ? entry.needs.filter((item) => !entry.held.has(item.messageId)).length : entry.count ?? 0;
+  }, [workspaceId, refreshKey, entry.needs, generation]);
+  return visibleNeeds(entry)?.length ?? 0;
 }

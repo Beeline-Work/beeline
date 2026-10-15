@@ -334,7 +334,11 @@ async function main() {
         '\n',
     });
     const tools = parseMcpTools(probe.stdout);
-    if (JSON.stringify(tools) !== JSON.stringify(await expectedReadonlyTools())) {
+    // The read-only server exposes the repository_io facade (plus legacy names
+    // only where a configuration still mounts them); every exposed name must be
+    // a known read-only policy name.
+    const allowed = new Set(await expectedReadonlyTools());
+    if (!tools.includes('repository_io') || tools.some((tool) => !allowed.has(tool))) {
       fail(`unexpected installed read-only tool inventory: ${tools.join(', ')}`);
     }
 

@@ -328,18 +328,19 @@ export class VoiceRoomRuntime {
       const humans = await this.service.humanCount(this.callId);
       void this.countHumans(humans).catch(() => {});
       let sourceId = continuation ? await continuation.source : '';
-      const selected = this.targets.get(human);
+      let selected = this.targets.get(human);
       const inherited = selected !== continuation?.selected && selected !== continuation?.agent?.id
         ? selected : continuation?.agent?.id ?? selected;
       const named = openingVoiceName(continuation ? fragment : text, agents);
       const tapped = agents.find(agent => agent.id === this.taps.get(human));
       this.taps.delete(human);
-      const lastActive = humans === 1 && !continuation && !named && !tapped
-        ? await this.service.lastActiveAgent(this.roomId, agents) : undefined;
+      if (humans === 1 && !continuation && !named && !tapped) {
+        selected = await this.service.lastActiveAgent(this.roomId, agents) ?? selected;
+      }
       const agent = continuation
         ? namedVoiceTarget(fragment, agents, inherited, 1)
         : humans > 1 ? named ?? tapped
-          : named ?? tapped ?? namedVoiceTarget(text, agents, lastActive ?? selected, humans);
+          : named ?? tapped ?? namedVoiceTarget(text, agents, selected, humans);
       if (!agent || this.closed) {
         resolveSource('');
         if (!agent && !this.closed) await this.signal({ type: 'unaddressed' }, human);

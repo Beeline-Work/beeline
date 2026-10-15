@@ -770,3 +770,14 @@ describe('GrantRunnerServer', () => {
     }
   });
 });
+
+describe('systemctl user-bus grant matching', () => {
+  it('matches the owner-approved env prefix and preserves the bus arguments', () => {
+    const target = 'env XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus systemctl --user';
+    const approved = grant({ target });
+    const argv = [...target.split(' '), 'status', 'beeline.service'];
+    expect(matchCommandGrant([approved], WORKSPACE, argv)?.grant.grantId).toBe(approved.grantId);
+    expect(matchCommandGrant([approved], 'other-workspace', argv)).toBeUndefined();
+    expect(matchCommandGrant([approved], WORKSPACE, ['systemctl', '--system', 'status'])).toBeUndefined();
+  });
+});

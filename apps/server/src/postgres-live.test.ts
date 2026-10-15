@@ -984,7 +984,10 @@ describe('Postgres live fanout', () => {
        VALUES($1,$2,'owed-1',now(),now()+interval '1 hour',true)
        ON CONFLICT (message_id,person_id) DO UPDATE SET expires_at=EXCLUDED.expires_at`,
       [corner, reader]));
+    const textNudges = () => parent.filter(event => event.type === 'invalidate' && event.reason === 'corner-text');
+    const priorTitleNudges = textNudges().length;
     await expectNudge(() => database.query(`UPDATE rooms SET name='renamed' WHERE id=$1`, [corner]));
+    await eventually(() => textNudges().length > priorTitleNudges);
     await expectNudge(() => database.query(
       `UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,
       [corner, reader]));
@@ -993,8 +996,12 @@ describe('Postgres live fanout', () => {
 
     // Every other projected column: objective, initiator, owner, row stamp,
     // brief revision, app binding and the newest chat message.
+    const priorGoalNudges = textNudges().length;
     await expectNudge(() => database.query(
       `UPDATE corner_facts SET objective='still fix it' WHERE corner_id=$1`, [corner]));
+    await eventually(() => textNudges().length > priorGoalNudges);
+    await expectNudge(() => database.query(`UPDATE rooms SET updated_at=now() WHERE id=$1`, [corner]));
+    expect(textNudges()).toHaveLength(0);
     await expectNudge(() => database.query(
       `UPDATE corner_facts SET commissioned_by=$2 WHERE corner_id=$1`, [corner, reader]));
     await expectNudge(() => database.query(

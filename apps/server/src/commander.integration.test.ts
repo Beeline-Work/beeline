@@ -635,3 +635,82 @@ it.each(['primary reviewer', 'fallback reviewer', 'commander'])('Reproduction re
     .toMatchObject({ private: true, source: { authorId: RUBY, body: 'FAIL: repair the widget' } });
   console.log(`[reviewer-handback-2471] ${role} → own corner worker: repair order delivered privately`);
 });
+
+it('renders current worker/commander goals on every surface without changing System messages or cards', async () => {
+  const opened = await open(), turn = await worker(opened.cornerId);
+  await db.query(`UPDATE rooms SET about='Legacy version 1.1.17 goal' WHERE id=$1`, [opened.cornerId]);
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text,card_type,card)
+    VALUES('goal-card',$1,$2,'Opened','daemon-fact',$3::jsonb)`,
+    [ROOM, RUBY, JSON.stringify({ type: 'corner-open', cornerId: opened.cornerId, name: 'Widget', objective: 'Build the widget', sourceMessageId: 'source' })]);
+  const stored = (await db.query(`SELECT * FROM messages ORDER BY id`)).rows;
+  const openingId = (await db.query<{ id: string }>(`SELECT id FROM messages WHERE room_id=$1
+    AND card->>'cornerId'=$2 AND id<>'goal-card' AND card->>'type'='corner-open' LIMIT 1`,
+    [ROOM, opened.cornerId])).rows[0]!.id;
+  for (const [actor, command, objective] of [
+    [WORKER, turn, 'Ship version 1.1.18'], [RUBY, order, 'Ship version 1.1.19'],
+  ] as const) {
+    const name = actor === WORKER ? 'Current-widget' : 'Next-widget';
+    await daemon.execute('renameCorner', { ...authority(command), cornerId: opened.cornerId,
+      name, objective }, actor);
+    expect((await db.query(`SELECT objective FROM corner_facts WHERE corner_id=$1`, [opened.cornerId])).rows[0])
+      .toMatchObject({ objective });
+    expect((await db.query(`SELECT * FROM messages ORDER BY id`)).rows).toEqual(stored);
+    const currentCard = { type: 'corner-open', cornerId: opened.cornerId, name, objective };
+    for (const page of [
+      await phone.readRoom(ROOM, HUMAN),
+      await phone.readHistory(ROOM, HUMAN),
+      await phone.readHistoryAround(ROOM, HUMAN, 'goal-card'),
+      await phone.readHistoryAfter(ROOM, HUMAN, openingId),
+    ]) expect(page?.messages.find(message => message.id === 'goal-card')?.daemonFact).toMatchObject(currentCard);
+    const live = await phone.readLiveDelta(ROOM, HUMAN, { type: 'message', messageId: 'goal-card' });
+    expect(live?.type === 'message-delta' ? live.message.daemonFact : undefined).toMatchObject(currentCard);
+    expect((await phone.readRoom(opened.cornerId, HUMAN))?.room.about).toBe(objective);
+    expect((await phone.readCorners(ROOM, HUMAN))?.corners)
+      .toContainEqual(expect.objectContaining({ corner: expect.objectContaining({ id: opened.cornerId, about: objective }) }));
+    expect((await daemon.execute('getCornerRestoreState', { cornerId: opened.cornerId }, actor)).objective)
+      .toBe(objective);
+    expect((await daemon.execute('listRoomCorners', { roomId: ROOM }, actor)).corners)
+      .toContainEqual(expect.objectContaining({ cornerId: opened.cornerId, objective }));
+    expect((await db.query(`SELECT * FROM messages ORDER BY id`)).rows).toEqual(stored);
+  }
+});
+
+it('pushes one background completion continuation with original order provenance after the turn ends', async () => {
+  const opened = await open(), turn = await worker(opened.cornerId);
+  await db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE id=$1`, [turn.id]);
+  const completion = { ...authority(turn), toolCallId: 'build-1', title: 'npm test', status: 'completed' as const };
+  await daemon.execute('postBackgroundToolCompletion', completion, WORKER);
+  await daemon.execute('postBackgroundToolCompletion', completion, WORKER);
+  const wakes = (await commands(opened.cornerId, WORKER)).filter(c => c.reason === 'corner_background_tool');
+  expect(wakes).toHaveLength(1);
+  expect(wakes[0]).toMatchObject({ parentCommandId: turn.id,
+    source: { body: expect.stringContaining('npm test (build-1) completed') } });
+  await claim(wakes[0]!);
+  await daemon.execute('report', { ...authority(wakes[0]!), status: 'blocked', text: 'blocked: test failed' }, WORKER);
+  expect((await commands(DM, RUBY)).some(c => c.reason === 'report')).toBe(true);
+  await expect(daemon.execute('postBackgroundToolCompletion', { ...completion, generationId: 'stale' }, WORKER))
+    .rejects.toThrow('authority rejected');
+  await expect(daemon.execute('postBackgroundToolCompletion', completion, RUBY)).rejects.toThrow();
+  await db.query(`UPDATE agent_commands SET state='cancelled' WHERE id=$1`, [turn.id]);
+  await expect(daemon.execute('postBackgroundToolCompletion', { ...completion, toolCallId: 'other' }, WORKER))
+    .rejects.toThrow('authority rejected');
+});
+
+it('makes an owner-approved systemctl user-bus command available in a subsequent corner turn', async () => {
+  const opened = await open(), turn = await worker(opened.cornerId);
+  const target = 'env XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus systemctl --user';
+  await db.query(`INSERT INTO agent_grants(id,agent_id,workspace_id,room_id,kind,target,reason,requested_by,status,decided_by)
+    VALUES('10000000-0000-4000-8000-000000000099',$1,$2,$3,'command',$4,'Manage user service',$5,'approved',$6)`,
+    [WORKER, WS, ROOM, target, RUBY, HUMAN]);
+  expect((await daemon.execute('listTurnAgentGrants', authority(turn), WORKER)).grants)
+    .toContainEqual(expect.objectContaining({ target }));
+});
+
+it('does not resolve an opening card against a corner belonging to another parent Room', async () => {
+  const opened = await open();
+  await db.query(`UPDATE rooms SET parent_id=$2 WHERE id=$1`, [opened.cornerId, DM]);
+  await db.query(`UPDATE corner_facts SET objective='Private goal in another Room' WHERE corner_id=$1`, [opened.cornerId]);
+  const view = await phone.readRoom(ROOM, HUMAN);
+  expect(view?.messages.find(message => message.daemonFact?.cornerId === opened.cornerId)?.daemonFact)
+    .toMatchObject({ objective: 'Build the widget' });
+});

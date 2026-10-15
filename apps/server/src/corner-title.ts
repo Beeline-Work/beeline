@@ -7,20 +7,11 @@ import type { SqlDatabase } from './database.js';
 export async function writeCornerTitle(
   database: SqlDatabase,
   cornerId: string,
-  parentId: string,
   title: string,
 ) {
   await database.query(`UPDATE rooms SET name=$2,updated_at=now() WHERE id=$1`, [cornerId, title]);
   await database.query(`UPDATE corner_facts SET title_generated=false WHERE corner_id=$1`, [
     cornerId,
   ]);
-  // The marker beneath a forwarded message names the corner it opened, so
-  // it follows the corner's current name rather than the random one it was
-  // opened under.
-  await database.query(
-    `UPDATE messages SET card=jsonb_set(card,'{name}',to_jsonb($3::text))
-     WHERE room_id=$1 AND card_type='daemon-fact' AND card->>'cornerId'=$2
-       AND card->>'sourceMessageId' IS NOT NULL`,
-    [parentId, cornerId, title],
-  );
+  // Opening markers render the current title from rooms; their stored cards stay untouched.
 }

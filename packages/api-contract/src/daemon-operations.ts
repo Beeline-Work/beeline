@@ -468,6 +468,12 @@ export type DaemonOperationMap = {
   retractAgentLiveOutput: Operation<RetractLiveOutputInput, WriteResult>;
   postAgentTurnReceipt: Operation<PostTurnReceiptInput, WriteResult>;
   postAgentActivity: Operation<PostAgentActivityInput, WriteResult>;
+  /** Push a continuation when a tool from this command finishes after its prompt ended. */
+  postBackgroundToolCompletion: Operation<TurnOutputAuthority & RoomInput & {
+    readonly toolCallId: string;
+    readonly title: string;
+    readonly status: 'completed' | 'failed';
+  }, WriteResult>;
   /** Relay a Squire-owned approval page into the agent owner's private
    * Trusty Squire DM. Beeline never settles the approval itself. */
   postSquireApproval: Operation<PostSquireApprovalInput, WriteResult>;
@@ -514,7 +520,7 @@ export type DaemonOperationMap = {
   postCornerPlan: Operation<PostCornerPlanInput, WriteResult>;
   putCornerApp: Operation<PutCornerAppInput, CornerAppWriteResult>;
   requestCornerAppOpen: Operation<RequestCornerAppOpenInput, CornerAppWriteResult>;
-  /** Retitles a corner. A human-opened corner may receive its first objective and brief in the same write. */
+  /** Retitles a corner and optionally updates its goal. A human-opened corner may receive its first brief in the same write. */
   renameCorner: Operation<
     TurnOutputAuthority & CornerInput & {
       readonly roomId?: string;
@@ -979,7 +985,7 @@ export type CornerRestoreResult = {
   readonly archived?: boolean;
   /** Parent Room retained after archival so a helper can locate its local worktree. */
   readonly parentRoomId?: string;
-  /** Immutable objective from the authoritative corner fact. */
+  /** Current objective from the authoritative corner fact. */
   readonly objective: string;
   /** Current immutable assignment, absent on corners opened before briefs. */
   readonly brief?: CornerBrief;

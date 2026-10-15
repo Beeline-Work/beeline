@@ -194,12 +194,12 @@ describe('report_feedback (agent path)', () => {
     expect(stored[1]).toMatchObject({ room_id: CORNER });
   });
 
-  it('answers a duplicate with the existing id and caps new items at ten per UTC day', async () => {
+  it('answers a duplicate with the existing id and caps new items at fifty per UTC day', async () => {
     const first = await report({ summary: 'The grant card never resolves.' });
     const again = await report({ summary: '  the GRANT card never resolves ' });
     expect(again).toEqual({ itemId: first.itemId, duplicate: true });
-    for (let index = 1; index < 10; index++) await report({ summary: `distinct problem ${index}` });
-    await expect(report({ summary: 'eleventh' })).rejects.toThrow('feedback cap reached');
+    for (let index = 1; index < 50; index++) await report({ summary: `distinct problem ${index}` });
+    await expect(report({ summary: 'fifty-first' })).rejects.toThrow('feedback cap reached');
     // A duplicate still answers at the cap.
     await expect(report({ summary: 'the grant card never resolves' })).resolves.toEqual({
       itemId: first.itemId,
@@ -224,9 +224,9 @@ describe('report_feedback (agent path)', () => {
     expect(counts.rows[0]!.occurrences).toEqual([
       expect.objectContaining({ agentId: OUTSIDER, roomId: CORNER, createdAt: expect.any(String) }),
     ]);
-    for (let index = 0; index < 10; index++)
+    for (let index = 0; index < 50; index++)
       await report({ summary: `other problem ${index}` }, ROOM, OUTSIDER);
-    await expect(report({ summary: 'eleventh' }, ROOM, OUTSIDER)).rejects.toThrow(
+    await expect(report({ summary: 'fifty-first' }, ROOM, OUTSIDER)).rejects.toThrow(
       'feedback cap reached',
     );
     await database.query(

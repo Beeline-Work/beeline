@@ -169,6 +169,7 @@ BEGIN
       payload = jsonb_build_object(
         'table', TG_TABLE_NAME, 'operation', TG_OP,
         'roomId', COALESCE(NEW.id, OLD.id),
+        'cornerTextChanged', CASE WHEN TG_OP = 'UPDATE' THEN NEW.name IS DISTINCT FROM OLD.name ELSE false END,
         'repositoryChanged', CASE WHEN TG_OP = 'UPDATE' THEN
           ROW(NEW.repository_key,NEW.repository_remote,NEW.repository_target_branch,
               NEW.repository_resolution,NEW.github_installation_id)
@@ -248,6 +249,7 @@ BEGIN
         'roomId', COALESCE(NEW.corner_id, OLD.corner_id),
         'cornerId', COALESCE(NEW.corner_id, OLD.corner_id),
         'closeRequested', COALESCE(NEW.close_requested, OLD.close_requested, false),
+        'cornerTextChanged', CASE WHEN TG_OP = 'UPDATE' THEN NEW.objective IS DISTINCT FROM OLD.objective ELSE false END,
         'cornerParentId', CASE WHEN ${rowChangedSql(CORNER_ROW_FACT_COLUMNS)}
           THEN (SELECT parent_id FROM rooms WHERE id = COALESCE(NEW.corner_id, OLD.corner_id)) END
       );
@@ -422,6 +424,8 @@ interface LiveNotificationPayload {
   closeRequested?: boolean;
   /** Parent Room of a corner whose corner-list row inputs changed. */
   cornerParentId?: string;
+  /** A current title/goal also changes the parent transcript's opening-card projection. */
+  cornerTextChanged?: boolean;
   pending?: boolean;
   /** An agent_commands row left `claimed`. */
   released?: boolean;
@@ -487,6 +491,7 @@ function decodePayload(value: string | undefined): LiveNotificationPayload | und
       ...(typeof parsed.cornerParentId === 'string'
         ? { cornerParentId: parsed.cornerParentId }
         : {}),
+      ...(parsed.cornerTextChanged === true ? { cornerTextChanged: true } : {}),
       ...(typeof parsed.pending === 'boolean' ? { pending: parsed.pending } : {}),
       ...(parsed.released === true ? { released: true } : {}),
       ...(typeof parsed.repositoryChanged === 'boolean'
@@ -962,6 +967,10 @@ export class PostgresLiveListener {
         : {}),
     };
     this.live.publish(event);
+    // Navigation text also appears in the parent's historical opening-card projection.
+    if (payload.cornerParentId && payload.cornerTextChanged) this.live.publish({
+      type: 'invalidate', roomId: payload.cornerParentId, reason: 'corner-text',
+    });
     // The parent corner list rereads from this id-only hint.
     if (payload.cornerParentId) {
       this.live.publish({

@@ -130,7 +130,7 @@ async function roomWorkspace(database: SqlDatabase, roomId: string): Promise<str
 
 /**
  * `report_feedback`, from inside the agent's authorized turn. The same
- * category, tool and normalized summary match any open agent item; ten
+ * category, tool and normalized summary match any open agent item; fifty
  * new items per agent per UTC day is the cap.
  */
 export async function reportAgentFeedback(

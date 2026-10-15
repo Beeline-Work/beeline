@@ -716,3 +716,21 @@ describe('Workspace session scheduler concurrency', () => {
     await scheduler.dispose();
   });
 });
+
+it('retains a process with background work until its pushed completion clears it', async () => {
+  const scheduler = new SessionScheduler({ maxLiveSessions: 1, maxWarmSessions: 1, idleMs: 60_000 });
+  let running = true;
+  const suspend = vi.fn(async () => undefined);
+  try {
+    await scheduler.run('background-corner', {
+      activate: async () => 'physical', suspend, hasBackgroundWork: () => running,
+    }, async () => undefined);
+    await scheduler.suspendIdle();
+    expect(suspend).not.toHaveBeenCalled();
+    running = false;
+    await scheduler.suspendIdle();
+    expect(suspend).toHaveBeenCalledOnce();
+  } finally {
+    await scheduler.dispose();
+  }
+});

@@ -1257,6 +1257,9 @@ export class AcpClient extends EventEmitter {
       if (terminalReason) return;
       terminalReason = reason;
       this.terminalSessions.add(sessionId);
+      for (const key of this.detachedTools.keys()) {
+        if (key.startsWith(`${sessionId}\0`)) this.detachedTools.delete(key);
+      }
       if (contextPath) {
         try {
           const context = JSON.parse(readFileSync(contextPath, 'utf8'));
@@ -1343,7 +1346,7 @@ export class AcpClient extends EventEmitter {
       const agentText = terminalReason ? '' : finalAgentMessageText(updates, this.agentLabel);
 
       const toolCalls = toolCallEntries(updates);
-      completed = true;
+      completed = !terminalReason;
 
       return {
         stopReason: terminalReason ?? result?.stopReason ?? 'end_turn',

@@ -152,3 +152,38 @@ it('keeps async job ownership when a later prompt sees progress before finishing
   expect(first).toHaveBeenCalledOnce();
   expect(later).not.toHaveBeenCalled();
 });
+
+it('terminal guards discard background wakes only for the terminated session', async () => {
+  const { client, wire, update } = harness();
+  const original = vi.fn(), terminated = vi.fn(), sibling = vi.fn();
+  vi.spyOn(client, 'sessionCancel').mockImplementation(() => undefined);
+  await client.sessionPrompt('session', 'start job', 5000, undefined, undefined, undefined, original);
+  vi.mocked(wire.request).mockImplementation(async () => {
+    update('sibling', 'sibling-job', 'in_progress');
+    return { stopReason: 'end_turn' };
+  });
+  await client.sessionPrompt('sibling', 'other job', 5000, undefined, undefined, undefined, sibling);
+  vi.mocked(wire.request).mockImplementation(async () => {
+    wire.handleMessage({ method: 'session/update', params: { sessionId: 'session', update: {
+      sessionUpdate: 'async_task_spawned', asyncTaskId: 'new-job', name: 'New build',
+    } } });
+    for (let index = 0; index < 5; index++) wire.handleMessage({
+      method: 'session/update', params: { sessionId: 'session', update: {
+        sessionUpdate: 'tool_call', toolCallId: `loop-${index}`, title: 'Loop',
+        rawInput: { query: 'same' }, status: 'in_progress',
+      } },
+    });
+    return { stopReason: 'end_turn' };
+  });
+  const result = await client.sessionPrompt('session', 'loop', 5000, undefined, undefined, undefined, terminated);
+  expect(result.stopReason).toBe('repeated-tool-call');
+  update('session', 'job', 'completed');
+  wire.handleMessage({ method: 'session/update', params: { sessionId: 'session', update: {
+    sessionUpdate: 'async_task_state_update', asyncTaskId: 'new-job', state: 'completed',
+  } } });
+  expect(original).not.toHaveBeenCalled();
+  expect(terminated).not.toHaveBeenCalled();
+  update('sibling', 'sibling-job', 'completed');
+  expect(sibling).toHaveBeenCalledOnce();
+  expect(client.hasBackgroundTools).toBe(false);
+});

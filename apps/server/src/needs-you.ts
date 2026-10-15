@@ -462,7 +462,7 @@ export async function countNeedsYouItems(
   return Number(result.rows[0]?.count ?? 0);
 }
 
-/** Every visible cell, with first-paint question clocks started in the same statement. */
+/** Complete rows; legacy callers start clocks, while preview reads remain side-effect free. */
 export async function needsYouItems(
   database: SqlDatabase,
   workspaceId: string,
@@ -475,6 +475,7 @@ export async function needsYouItems(
     avatar: string | null;
     face_id: string | null;
   }) => RoomViewIdentity,
+  markSeen = true,
 ): Promise<{ items: NeedsYouItemView[] }> {
   const result = await database.query<Row & {
     painted_first_seen_at: Date | null;
@@ -486,7 +487,7 @@ export async function needsYouItems(
      started AS (
        INSERT INTO needs_you_marks(identity_id,message_id,workspace_id)
        SELECT $2,message_id,$1 FROM visible
-       WHERE approval_kind IS NULL AND first_seen_at IS NULL
+       WHERE approval_kind IS NULL AND first_seen_at IS NULL AND $3::boolean
        ON CONFLICT(identity_id,message_id)
          DO UPDATE SET first_seen_at=needs_you_marks.first_seen_at
        RETURNING message_id,first_seen_at
@@ -498,7 +499,7 @@ export async function needsYouItems(
      LEFT JOIN visible ON true
      LEFT JOIN started ON started.message_id=visible.message_id
      LEFT JOIN identities viewer ON viewer.id=$2`,
-    [workspaceId, viewerId],
+    [workspaceId, viewerId, markSeen],
   );
   if (!result.rows[0]?.authorized) throw new Error('workspace membership required');
   const built = result.rows.filter((row) => row.message_id &&
@@ -709,4 +710,26 @@ function approvalView(
     default:
       return undefined;
   }
+}
+
+/** First visible paint, restricted to the viewer's currently available questions. */
+export async function markNeedsYouSeen(database: SqlDatabase, workspaceId: string,
+  viewerId: string, messageIds: readonly string[]): Promise<{ seen: { messageId: string; expiresAt: number }[] }> {
+  if (!Array.isArray(messageIds) || messageIds.length > CANDIDATE_LIMIT ||
+    messageIds.some(id => typeof id !== 'string' || !id || id.length > 256))
+    throw new Error('messageIds must contain at most 500 question ids');
+  const result = await database.query<{ message_id: string | null; first_seen_at: Date | null; authorized: boolean }>(
+    `${NEEDS_YOU_CANDIDATES},
+     started AS (
+       INSERT INTO needs_you_marks(identity_id,message_id,workspace_id)
+       SELECT $2,message_id,$1 FROM candidates
+       WHERE approval_kind IS NULL AND message_id=ANY($3::text[]) AND ${VIEWER_MEMBER}
+       ON CONFLICT(identity_id,message_id) DO UPDATE SET first_seen_at=needs_you_marks.first_seen_at
+       RETURNING message_id,first_seen_at
+     )
+     SELECT started.*,access.authorized FROM (SELECT ${VIEWER_MEMBER} authorized) access
+     LEFT JOIN started ON true`, [workspaceId, viewerId, [...new Set(messageIds)]]);
+  if (!result.rows[0]?.authorized) throw new Error('workspace membership required');
+  return { seen: result.rows.flatMap(row => row.message_id && row.first_seen_at
+    ? [{ messageId: row.message_id, expiresAt: needsYouExpiresAt(row.first_seen_at) }] : []) };
 }

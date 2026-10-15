@@ -189,8 +189,8 @@ export default function BuzzChannels() {
   const [chatList, setChatList] = useState<ChatListView | null>(null);
   useLatencyRouteFrame('/beeline/channels', chatList !== null, true);
   const [welcomeDue, setWelcomeDue] = useState(false);
-  // A covering list read seeds the badge; ordinary changes carry a typed
-  // server count on the live socket.
+  // A covering list read seeds the Needs-you rows behind the badge;
+  // ordinary changes carry typed row deltas on the live socket.
   const [needsYouSignal, setNeedsYouSignal] = useState(0);
   const needsYouCount = useNeedsYouCount(
     chatList?.workspace.id,

@@ -164,8 +164,9 @@ vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
 });
 
 import TrayScreen from './tray';
-import { applyNeedsYouLiveDelta, useNeedsYouCount } from '@/buzz/needs-you-store';
+import { applyNeedsYouLiveDelta, useNeedsYouCount, useTrayList, holdNeedsYou, acknowledgePaintedNeedsYou } from '@/buzz/needs-you-store';
 import { resetClientState } from '@/sync/client-reset';
+import { mobileSurfaceCache } from '@/buzz/surface-storage';
 
 const person = {
   pubkey: 'person-1',
@@ -288,6 +289,8 @@ function textOf(tree: ReactTestRenderer): string {
 }
 
 beforeAll(() => {
+  vi.stubGlobal('requestAnimationFrame', (callback: () => void) => setTimeout(callback, 0));
+  vi.stubGlobal('cancelAnimationFrame', clearTimeout);
   (
     globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
   ).IS_REACT_ACT_ENVIRONMENT = true;
@@ -387,7 +390,7 @@ describe('Tray opened without a communityId', () => {
     workspaceSet.active = 'ws';
     workspaceSet.workspaces = [{ id: 'other' }, { id: 'ws' }];
     const tree = await renderTray();
-    expect(phoneOperation).toHaveBeenCalledWith('readTray', { workspaceId: 'ws' });
+    expect(phoneOperation).toHaveBeenCalledWith('readTray', { workspaceId: 'ws', markSeen: false });
     expect(tree.root.findAllByProps({ testID: 'tray-loader' })).toHaveLength(0);
     expect(tree.root.findByProps({ testID: 'bookmark-msg-1' })).toBeTruthy();
   });
@@ -729,8 +732,118 @@ describe('Needs-you badge and tray', () => {
   }
 
   beforeEach(() => {
-    layout.os = 'ios';
+    layout.os = 'android';
     layout.width = 390;
+  });
+
+  it.each([0, 1, 2, 9, 12])('TRAY-CACHED-EMPTY-1: cold badge read seeds %i rows despite stale disk', async (count) => {
+    const needs = Array.from({ length: count }, (_, i) => need({ messageId: `ask-${i}` }));
+    serveNeeds({ needs });
+    vi.mocked(mobileSurfaceCache.read).mockResolvedValue({ items: [], bookmarks: [] } as never);
+    const tree = await render(false);
+    expect(badge(tree)).toBe(count);
+    await act(async () => tree.update(<BadgeAndTray tray />));
+    const visible = tree.root.findAll((node: any) => typeof node.type === 'string' &&
+      /^needs-you-ask-\d+$/.test(String(node.props.testID ?? ''))).length;
+    expect([visible, badge(tree)]).toEqual([count, count]);
+    expect(phoneOperation.mock.calls.filter(([name]) => name === 'readNeedsYou')).toHaveLength(1);
+    expect(phoneOperation.mock.calls.map(([name]) => name)).toEqual(['readNeedsYou']);
+    vi.mocked(mobileSurfaceCache.read).mockResolvedValue(null);
+  });
+
+  it('keeps badge and local rows equal through live changes and held removals', async () => {
+    serveNeeds({ needs: [need()] });
+    function Probe() {
+      const count = useNeedsYouCount('ws', 1);
+      const { needs } = useTrayList('ws');
+      return React.createElement('Text', { testID: 'pair' }, [needs?.length ?? 0, count].join(':'));
+    }
+    let tree!: ReactTestRenderer;
+    await act(async () => { tree = create(<Probe />); });
+    mountedTrees.push(tree);
+    const pair = () => tree.root.findByProps({ testID: 'pair' }).props.children;
+    expect(pair()).toBe('1:1');
+    await act(async () => applyNeedsYouLiveDelta({ workspaceId: 'ws', sourceRoomId: 'room-2', count: 2,
+      items: [need({ messageId: 'ask-2', roomId: 'room-2' })] as never }));
+    expect(pair()).toBe('2:2');
+    await act(async () => holdNeedsYou('ws', ['ask-1']));
+    expect(pair()).toBe('1:1');
+    await act(async () => applyNeedsYouLiveDelta({ workspaceId: 'ws', sourceRoomId: 'room-2', count: 1, items: [] }));
+    expect(pair()).toBe('0:0');
+    await act(async () => holdNeedsYou('ws', []));
+    expect(pair()).toBe('1:1');
+  });
+
+  it('shares concurrent badge reads and replays live rows that arrive during the read', async () => {
+    let answer!: (value: { items: unknown[] }) => void;
+    phoneOperation.mockImplementation((name: string) => {
+      if (name !== 'readNeedsYou') throw new Error(`Unexpected request ${name}`);
+      return new Promise(resolve => { answer = resolve; });
+    });
+    function Probe() {
+      const first = useNeedsYouCount('ws', 1);
+      const second = useNeedsYouCount('ws', 1);
+      const { needs } = useTrayList('ws');
+      return React.createElement('Text', { testID: 'pair' }, [first, second, needs?.length ?? 0].join(':'));
+    }
+    let tree!: ReactTestRenderer;
+    await act(async () => { tree = create(<Probe />); });
+    mountedTrees.push(tree);
+    expect(phoneOperation).toHaveBeenCalledTimes(1);
+    await act(async () => applyNeedsYouLiveDelta({ workspaceId: 'ws', sourceRoomId: 'room-2', count: 2,
+      items: [need({ messageId: 'ask-2', roomId: 'room-2' })] as never }));
+    await act(async () => answer({ items: [need()] }));
+    expect(tree.root.findByProps({ testID: 'pair' }).props.children).toBe('2:2:2');
+  });
+
+  it('acknowledges exactly painted unseen questions once; badge and reopening send none', async () => {
+    const unseen = need({ expiresAt: undefined });
+    const offscreen = need({ messageId: 'ask-2', expiresAt: undefined });
+    serveNeeds({ needs: [unseen, offscreen] });
+    const original = phoneOperation.getMockImplementation()!;
+    phoneOperation.mockImplementation(async (name: string, input: any) => name === 'markNeedsYouSeen'
+      ? { seen: input.messageIds.map((messageId: string) => ({ messageId, expiresAt: 2_000_000_000 })) }
+      : original(name, input));
+    const tree = await render(false);
+    expect(phoneOperation.mock.calls.map(([name]) => name)).toEqual(['readNeedsYou']);
+    await act(async () => tree.update(<BadgeAndTray tray />));
+    const painted = () => tree.root.findByType('FlatList' as never).props.onViewableItemsChanged({
+      viewableItems: [{ isViewable: true, item: { type: 'needs', item: unseen } }],
+    });
+    await act(async () => { painted(); await new Promise(resolve => setTimeout(resolve, 10)); });
+    expect(phoneOperation.mock.calls.filter(([name]) => name === 'markNeedsYouSeen')).toEqual([
+      ['markNeedsYouSeen', { workspaceId: 'ws', messageIds: ['ask-1'] }],
+    ]);
+    await act(async () => tree.update(<BadgeAndTray tray={false} />));
+    await act(async () => tree.update(<BadgeAndTray tray />));
+    await act(async () => { painted(); await new Promise(resolve => setTimeout(resolve, 10)); });
+    expect(phoneOperation.mock.calls.filter(([name]) => name === 'markNeedsYouSeen')).toHaveLength(1);
+    // A second genuinely visible question starts its own clock, not before.
+    await act(async () => acknowledgePaintedNeedsYou('ws', ['ask-2']));
+    expect(phoneOperation.mock.calls.filter(([name]) => name === 'markNeedsYouSeen')).toHaveLength(2);
+  });
+
+  it('batches viewable unseen questions and does not acknowledge background paint or seen rows', async () => {
+    const questions = [need({ expiresAt: undefined }), need({ messageId: 'ask-2', expiresAt: undefined })];
+    const seen = need({ messageId: 'ask-3' });
+    serveNeeds({ needs: [...questions, seen] });
+    const original = phoneOperation.getMockImplementation()!;
+    phoneOperation.mockImplementation(async (name: string, input: any) => name === 'markNeedsYouSeen'
+      ? { seen: input.messageIds.map((messageId: string) => ({ messageId, expiresAt: 2_000_000_000 })) }
+      : original(name, input));
+    const tree = await render(true);
+    const callback = tree.root.findByType('FlatList' as never).props.onViewableItemsChanged;
+    const viewableItems = [...questions, seen].map(item => ({ isViewable: true, item: { type: 'needs', item } }));
+    appState.current = 'background';
+    await act(async () => { callback({ viewableItems }); await new Promise(resolve => setTimeout(resolve, 10)); });
+    expect(phoneOperation.mock.calls.filter(([name]) => name === 'markNeedsYouSeen')).toHaveLength(0);
+    appState.current = 'active';
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+    expect(phoneOperation.mock.calls.filter(([name]) => name === 'markNeedsYouSeen')).toHaveLength(0);
+    await act(async () => { callback({ viewableItems }); await new Promise(resolve => setTimeout(resolve, 10)); });
+    expect(phoneOperation.mock.calls.filter(([name]) => name === 'markNeedsYouSeen')).toEqual([
+      ['markNeedsYouSeen', { workspaceId: 'ws', messageIds: ['ask-1', 'ask-2'] }],
+    ]);
   });
 
   it('Reproduction NEEDS-YOU-BADGE-1: a dismiss drops the badge with the list', async () => {
@@ -957,8 +1070,8 @@ describe('Needs-you badge and tray', () => {
     serveNeeds(server);
     const tree = await render(false);
     expect(badge(tree)).toBe(2);
-    let answerCount!: (value: { count: number }) => void;
-    phoneOperation.mockImplementation((name: string) => name === 'countNeedsYou'
+    let answerCount!: (value: { items: unknown[] }) => void;
+    phoneOperation.mockImplementation((name: string) => name === 'readNeedsYou'
       ? new Promise((resolve) => { answerCount = resolve; })
       : Promise.resolve(undefined));
     auth.loadBuzzIdentity.mockImplementation(async () => ({ publicKey: 'other-viewer' }));
@@ -967,13 +1080,13 @@ describe('Needs-you badge and tray', () => {
     });
     await act(async () => undefined);
     expect(badge(tree)).toBe(0);
-    await act(async () => answerCount({ count: 0 }));
+    await act(async () => answerCount({ items: [] }));
     expect(badge(tree)).toBe(0);
   });
 
-  it('a count read for the previous account writes nothing after a client reset', async () => {
-    const answers: Array<(value: { count: number }) => void> = [];
-    phoneOperation.mockImplementation((name: string) => name === 'countNeedsYou'
+  it('a projection read for the previous account writes nothing after a client reset', async () => {
+    const answers: Array<(value: { items: unknown[] }) => void> = [];
+    phoneOperation.mockImplementation((name: string) => name === 'readNeedsYou'
       ? new Promise((resolve) => { answers.push(resolve); })
       : Promise.resolve(undefined));
     const tree = await render(false);
@@ -983,9 +1096,9 @@ describe('Needs-you badge and tray', () => {
     await act(async () => undefined);
     // The reset dropped the shared request, so the new account asks on its own.
     expect(answers).toHaveLength(2);
-    await act(async () => answers[0]!({ count: 7 }));
+    await act(async () => answers[0]!({ items: Array.from({ length: 7 }, (_, i) => need({ messageId: `ask-${i}` })) }));
     expect(badge(tree)).toBe(0);
-    await act(async () => answers[1]!({ count: 1 }));
+    await act(async () => answers[1]!({ items: [need()] }));
     expect(badge(tree)).toBe(1);
   });
 

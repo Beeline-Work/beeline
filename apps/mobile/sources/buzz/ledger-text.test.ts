@@ -14,6 +14,23 @@ describe('splitLedgerText', () => {
     'Want me to rebase onto the new tip?',
   ].join('\n');
 
+  it('keeps the R1 launch-post blockquote and its bullets unchanged', () => {
+    const prose = [
+      'Your text with my edits:',
+      '',
+      '> Introducing Beeline, a team chat for humans and agents.',
+      '>',
+      '> Beeline lets your entire team drive all your favorite agents. Key features:',
+      '>',
+      '> - Rooms and corners: conversation stays in rooms.',
+      '> - All your favorite apps: integrations for 1,500+ apps.',
+      '> - Computer use: watch your agents work, live.',
+      '>',
+      '> Enjoy!',
+    ].join('\n');
+    expect(splitLedgerText(prose)).toEqual({ prose, machineLines: 0 });
+  });
+
   it('lifts a git push rejection dump out of the prose', () => {
     const split = splitLedgerText(PUSH_REJECTION);
     expect(split.prose).toBe(

@@ -6,9 +6,12 @@
   "include": ["files", "exports", "types"],
   "includeEntryExports": true,
   "ignoreExportsUsedInFile": true,
-  // Only proof adapters: esbuild supplies these exports through runtime aliases.
+  // Only proof adapters: bundlers supply these exports through runtime aliases.
   // Keep file reachability and production export enforcement enabled.
   "ignoreIssues": {
+    // Type declarations for the JavaScript boundary shared by Expo Go and the
+    // rendered-page test; the runtime module is selected through boundary aliases.
+    "apps/mobile/offline-proof/adapters/services.d.ts": ["exports"],
     "apps/mobile/scripts/ui-alignment-proof/{proof-env,proof-workbench,svg,unistyles}.{ts,tsx}": ["exports"],
   },
   "workspaces": {

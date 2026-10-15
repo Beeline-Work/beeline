@@ -1,3 +1,4 @@
+import { SYSTEM_IDENTITY_PUBKEY } from '@/buzz/system-identity';
 vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
 vi.mock('expo-haptics', () => ({ ImpactFeedbackStyle: { Light: 'Light' }, impactAsync: async () => undefined }));
 vi.mock('react-native-keyboard-controller', async () => { const R = await import('react'); return { KeyboardAvoidingView: (props: any) => R.createElement('View', props, props.children) }; });
@@ -528,6 +529,21 @@ describe('Workbench identities', () => {
 });
 
 describe('Room message variant components', () => {
+  it('renders the System author through the small line instead of a member byline', () => {
+    const text = 'Trusty Squire saw no answer to Credential access approval · Reveal a saved credential';
+    const renderer = render(<OrdinaryLedgerMessage
+      message={message({ id: 'notice-style-1', text, pubkey: SYSTEM_IDENTITY_PUBKEY,
+        authorIdentity: { pubkey: SYSTEM_IDENTITY_PUBKEY, kind: 'human', name: 'System' } })}
+      participantsHydrated viewerPubkey="viewer" speakerWorking={false} continued={false}
+      participantHandles={[]} channelIndex={{ rooms: [], corners: [] }} deliveryFailed={false}
+      onChannelReference={vi.fn()} onReply={vi.fn()} onCopy={vi.fn()}
+      onRetry={vi.fn()} onDismiss={vi.fn()}
+    />);
+    expect(renderer.root.findByType('LedgerSystemLine' as never).props.text).toBe(text);
+    expect(renderer.root.findAllByType('LedgerEntry' as never)).toHaveLength(0);
+    expect(renderer.root.findAllByType('IdentityMark' as never)).toHaveLength(0);
+  });
+
   it('renders a viewer send as prose plus an actionable viewing reference without duplicating its artifact card', () => {
     const renderer = render(<OrdinaryLedgerMessage
       message={message({
@@ -3843,8 +3859,12 @@ describe('Connector receipt cards', () => {
   const receiptMessage = (text: string): ChatDisplayMessage =>
     message({ id: 'connector-receipt', text });
 
-  const renderReceipt = (text: string) => {
+  const renderReceipt = (text: string, systemAuthor = false) => {
     const row = receiptMessage(text);
+    if (systemAuthor) {
+      row.pubkey = SYSTEM_IDENTITY_PUBKEY;
+      row.authorIdentity = { pubkey: SYSTEM_IDENTITY_PUBKEY, kind: 'human', name: 'System' };
+    }
     return render(
       <OrdinaryLedgerMessage
         message={row}
@@ -3880,6 +3900,12 @@ describe('Connector receipt cards', () => {
     // The receipt line itself never double-prints as ledger prose.
     const ledgerProps = ledgerEntryRender.mock.lastCall?.[0];
     expect(ledgerProps.bodyText).toBe('Vercel deploy finished.');
+  });
+
+  it('preserves a working receipt card beside the System author fallback', () => {
+    const renderer = renderReceipt('Deployment finished.\nreceipt: Vercel · deploy', true);
+    expect(renderer.root.findByProps({ testID: 'connector-receipt-card' })).toBeDefined();
+    expect(renderer.root.findByType('LedgerSystemLine' as never).props.text).toBe('Deployment finished.');
   });
 
   it('uses the connector identity logo in its receipt card', () => {

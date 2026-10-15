@@ -1766,6 +1766,14 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
             }
             footerNoteTestID={`corner-proposal-footer-${message.id}`}
           />
+        ) : (message.authorIdentity?.pubkey ?? message.pubkey) === SYSTEM_IDENTITY_PUBKEY ? (
+          <LedgerSystemLine
+            id={message.id}
+            text={renderedBody}
+            {...(message.systemEvent ? { event: message.systemEvent } : {})}
+            stamp={ledgerStamp(message.timestamp)}
+            onOpenUrl={(url) => void openExternalUrl(url).catch(() => undefined)}
+          />
         ) : (
           <LedgerEntry
             itemId={message.id}

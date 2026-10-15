@@ -1,0 +1,68 @@
+[
+  {
+    "id": "96b2263be0249e8b2baa0a7d20af9c7a88ca07fea35b1c7cf3012045c1628b09",
+    "room_id": "dac9d764-e14e-4ca0-b263-cda37ffa737a",
+    "author_id": "972a35ec7a6e572c01c5b0a48cbdc82f6137dd7f35435cf9cc0ec305fdafa248",
+    "text": "Trusty Squire saw no answer to Credential access approval · Reveal a saved credential",
+    "presentation": "card",
+    "card_type": "squire-approval-decision",
+    "card": {
+      "tool": "fetch_credential",
+      "title": "Credential access approval",
+      "detail": "Reveal a saved credential",
+      "status": "expired",
+      "agentId": "7eafb2e0cc049a9b3345f4322024b604358af04cb551d1fc71084ca3a99d7877",
+      "agentName": "Jellybean",
+      "approvalId": "01M501YCY4TM749CV9A4W1M9DG"
+    },
+    "system_event": {
+      "kind": "squire-approval-decided",
+      "verb": "saw no answer to",
+      "object": {
+        "text": "Credential access approval"
+      },
+      "subject": {
+        "kind": "system",
+        "name": "Trusty Squire"
+      },
+      "consequence": "Reveal a saved credential"
+    },
+    "created_at": "2026-10-15 15:22:29.176422+00",
+    "durable_fact": null,
+    "author_kind": "human",
+    "author_name": "System",
+    "author_handle": "system",
+    "author_avatar": "/v1/connectors/logo/system.svg",
+    "author_face": null
+  },
+  {
+    "id": "627ebbd8c4c5d38312d84c641bd2f1ede4bd0e394ff3b5e792cde35e573dc331",
+    "room_id": "dac9d764-e14e-4ca0-b263-cda37ffa737a",
+    "author_id": "7eafb2e0cc049a9b3345f4322024b604358af04cb551d1fc71084ca3a99d7877",
+    "text": "@jellybean could not answer · the turn stalled. Stopped retrying after three tries.",
+    "presentation": "system",
+    "card_type": "turn-failed",
+    "card": {
+      "state": "failed",
+      "agentId": "7eafb2e0cc049a9b3345f4322024b604358af04cb551d1fc71084ca3a99d7877",
+      "requestId": "8ade710ad7885cc788afda990ed3e0e1f80a3779621f9783d52b358ccfb03f26",
+      "silenceKind": "hiccup"
+    },
+    "system_event": {
+      "verb": "could not answer",
+      "subject": {
+        "id": "7eafb2e0cc049a9b3345f4322024b604358af04cb551d1fc71084ca3a99d7877",
+        "kind": "agent",
+        "name": "@jellybean"
+      },
+      "consequence": "the turn stalled. Stopped retrying after three tries."
+    },
+    "created_at": "2026-10-15 15:24:14.875928+00",
+    "durable_fact": null,
+    "author_kind": "agent",
+    "author_name": "Jellybean",
+    "author_handle": "jellybean",
+    "author_avatar": "/v1/agent-avatars/1ebda102-cbb8-4575-b9f8-bf40996b2ece",
+    "author_face": "pigeon"
+  }
+]

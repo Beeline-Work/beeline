@@ -272,7 +272,7 @@ describe('Room turn voice', () => {
       'Keep facts exact regardless of voice. Use plain language in commits, pull requests, and code comments.',
     );
     expect(String(prompt)).toContain(
-      'Every exact @handle wakes that member. Copy handles only from the member list. Use order(address, text) privately across member Rooms; report(status, text) one step up to your commander. Report only to the member who gave you the task. If that member is a human, tag them when, in your judgement, they need to decide or should know.',
+      'An @handle wakes that member; tag agents only to get a reply, otherwise write their name. Copy handles only from the member list. Use order(address, text) privately across member Rooms; report(status, text) one step up to your commander. Report only to the member who gave you the task. If that member is a human, tag them when, in your judgement, they need to decide or should know.',
     );
     expect(String(prompt)).not.toContain('Soul (');
   });

@@ -42,7 +42,7 @@ describe('using-beeline Room guidance', () => {
 
     // Tagging, the corner action, and read-only inspection are always-on rules.
     const room = roomPrompt();
-    expect(room).toContain('Every exact @handle wakes that member.');
+    expect(room).toContain('An @handle wakes that member; tag agents only to get a reply, otherwise write their name.');
     expect(room).toContain(
       'Use order(address, text) privately across member Rooms; report(status, text) one step up to your commander',
     );
@@ -199,7 +199,7 @@ describe('using-beeline Room guidance', () => {
   it('delivers the same Room capabilities through compatibility-only harnesses', () => {
     const context = sessionPrompt({ agentCommand: 'codex-acp' });
     expect(context.systemPrompt).toContain('read-only');
-    expect(context.systemPrompt).toContain('Every exact @handle wakes that member.');
+    expect(context.systemPrompt).toContain('An @handle wakes that member; tag agents only to get a reply, otherwise write their name.');
     expect(context.systemPrompt).toContain('call open_corner');
     expect(context.systemPrompt).toContain(
       'When open_corner succeeds the server posts the corner card: do not restate it.',

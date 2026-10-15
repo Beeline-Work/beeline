@@ -164,7 +164,7 @@ vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
 });
 
 import TrayScreen from './tray';
-import { applyNeedsYouLiveDelta, useNeedsYouCount, useTrayList, holdNeedsYou } from '@/buzz/needs-you-store';
+import { applyNeedsYouLiveDelta, useNeedsYouCount, useTrayList, holdNeedsYou, acknowledgePaintedNeedsYou } from '@/buzz/needs-you-store';
 import { resetClientState } from '@/sync/client-reset';
 import { mobileSurfaceCache } from '@/buzz/surface-storage';
 
@@ -289,6 +289,8 @@ function textOf(tree: ReactTestRenderer): string {
 }
 
 beforeAll(() => {
+  vi.stubGlobal('requestAnimationFrame', (callback: () => void) => setTimeout(callback, 0));
+  vi.stubGlobal('cancelAnimationFrame', clearTimeout);
   (
     globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }
   ).IS_REACT_ACT_ENVIRONMENT = true;
@@ -388,7 +390,7 @@ describe('Tray opened without a communityId', () => {
     workspaceSet.active = 'ws';
     workspaceSet.workspaces = [{ id: 'other' }, { id: 'ws' }];
     const tree = await renderTray();
-    expect(phoneOperation).toHaveBeenCalledWith('readTray', { workspaceId: 'ws' });
+    expect(phoneOperation).toHaveBeenCalledWith('readTray', { workspaceId: 'ws', markSeen: false });
     expect(tree.root.findAllByProps({ testID: 'tray-loader' })).toHaveLength(0);
     expect(tree.root.findByProps({ testID: 'bookmark-msg-1' })).toBeTruthy();
   });
@@ -792,6 +794,56 @@ describe('Needs-you badge and tray', () => {
       items: [need({ messageId: 'ask-2', roomId: 'room-2' })] as never }));
     await act(async () => answer({ items: [need()] }));
     expect(tree.root.findByProps({ testID: 'pair' }).props.children).toBe('2:2:2');
+  });
+
+  it('acknowledges exactly painted unseen questions once; badge and reopening send none', async () => {
+    const unseen = need({ expiresAt: undefined });
+    const offscreen = need({ messageId: 'ask-2', expiresAt: undefined });
+    serveNeeds({ needs: [unseen, offscreen] });
+    const original = phoneOperation.getMockImplementation()!;
+    phoneOperation.mockImplementation(async (name: string, input: any) => name === 'markNeedsYouSeen'
+      ? { seen: input.messageIds.map((messageId: string) => ({ messageId, expiresAt: 2_000_000_000 })) }
+      : original(name, input));
+    const tree = await render(false);
+    expect(phoneOperation.mock.calls.map(([name]) => name)).toEqual(['readNeedsYou']);
+    await act(async () => tree.update(<BadgeAndTray tray />));
+    const painted = () => tree.root.findByType('FlatList' as never).props.onViewableItemsChanged({
+      viewableItems: [{ isViewable: true, item: { type: 'needs', item: unseen } }],
+    });
+    await act(async () => { painted(); await new Promise(resolve => setTimeout(resolve, 10)); });
+    expect(phoneOperation.mock.calls.filter(([name]) => name === 'markNeedsYouSeen')).toEqual([
+      ['markNeedsYouSeen', { workspaceId: 'ws', messageIds: ['ask-1'] }],
+    ]);
+    await act(async () => tree.update(<BadgeAndTray tray={false} />));
+    await act(async () => tree.update(<BadgeAndTray tray />));
+    await act(async () => { painted(); await new Promise(resolve => setTimeout(resolve, 10)); });
+    expect(phoneOperation.mock.calls.filter(([name]) => name === 'markNeedsYouSeen')).toHaveLength(1);
+    // A second genuinely visible question starts its own clock, not before.
+    await act(async () => acknowledgePaintedNeedsYou('ws', ['ask-2']));
+    expect(phoneOperation.mock.calls.filter(([name]) => name === 'markNeedsYouSeen')).toHaveLength(2);
+  });
+
+  it('batches viewable unseen questions and does not acknowledge background paint or seen rows', async () => {
+    const questions = [need({ expiresAt: undefined }), need({ messageId: 'ask-2', expiresAt: undefined })];
+    const seen = need({ messageId: 'ask-3' });
+    serveNeeds({ needs: [...questions, seen] });
+    const original = phoneOperation.getMockImplementation()!;
+    phoneOperation.mockImplementation(async (name: string, input: any) => name === 'markNeedsYouSeen'
+      ? { seen: input.messageIds.map((messageId: string) => ({ messageId, expiresAt: 2_000_000_000 })) }
+      : original(name, input));
+    const tree = await render(true);
+    const callback = tree.root.findByType('FlatList' as never).props.onViewableItemsChanged;
+    const viewableItems = [...questions, seen].map(item => ({ isViewable: true, item: { type: 'needs', item } }));
+    appState.current = 'background';
+    await act(async () => { callback({ viewableItems }); await new Promise(resolve => setTimeout(resolve, 10)); });
+    expect(phoneOperation.mock.calls.filter(([name]) => name === 'markNeedsYouSeen')).toHaveLength(0);
+    appState.current = 'active';
+    await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+    expect(phoneOperation.mock.calls.filter(([name]) => name === 'markNeedsYouSeen')).toHaveLength(0);
+    await act(async () => { callback({ viewableItems }); await new Promise(resolve => setTimeout(resolve, 10)); });
+    expect(phoneOperation.mock.calls.filter(([name]) => name === 'markNeedsYouSeen')).toEqual([
+      ['markNeedsYouSeen', { workspaceId: 'ws', messageIds: ['ask-1', 'ask-2'] }],
+    ]);
   });
 
   it('Reproduction NEEDS-YOU-BADGE-1: a dismiss drops the badge with the list', async () => {

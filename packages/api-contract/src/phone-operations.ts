@@ -106,14 +106,17 @@ export type PhoneOperationMap = {
   /** Report issue: files this message with the Beeline feedback loop. One report per message. */
   reportMessageIssue: { input: ReportMessageIssueInput; output: ReportMessageIssueResult };
   listMessageBookmarks: { input: WorkspaceInput & { readonly before?: string }; output: MessageBookmarkListResult };
-  /** The viewer's Needs-you cells, newest first. Reading starts each cell's 24-hour clock. */
-  readNeedsYou: { input: WorkspaceInput; output: NeedsYouListResult };
-  readTray: { input: WorkspaceInput; output: {
+  /** Needs-you rows. Legacy reads mark seen; markSeen:false previews without starting expiry. */
+  readNeedsYou: { input: WorkspaceInput & { readonly markSeen?: boolean }; output: NeedsYouListResult };
+  readTray: { input: WorkspaceInput & { readonly markSeen?: boolean }; output: {
     readonly needs?: NeedsYouListResult; readonly saved?: MessageBookmarkListResult;
     readonly needsError?: string; readonly savedError?: string;
   } };
   /** The tray badge count. Unlike `readNeedsYou`, it starts no clock. */
   countNeedsYou: { input: WorkspaceInput; output: NeedsYouCountResult };
+  /** Acknowledge only question rows actually painted in the visible Tray. */
+  markNeedsYouSeen: { input: WorkspaceInput & { readonly messageIds: readonly string[] };
+    output: { readonly seen: readonly { readonly messageId: string; readonly expiresAt: number }[] } };
   /** Tapped or dismissed: the cell leaves the viewer's tray on every device. */
   clearNeedsYou: { input: ClearNeedsYouInput; output: void };
   /** Clear every question in one Workspace, including rows beyond the display limit; approvals remain. */

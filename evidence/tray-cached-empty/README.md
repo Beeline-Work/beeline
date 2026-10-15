@@ -28,17 +28,23 @@ Cold-start the baseline store, wait for the badge read, then tap Open Tray.
 
 Cold-start the changed store with identical fixture data, wait for the badge
 read, then tap Open Tray. [After opening](after-open.png): two waiting items,
-two complete question rows, exactly one `readNeedsYou` request. Opening adds
-no request. TRAY-CACHED-EMPTY-1 passes using this native stand-in.
+two complete question rows. [Cold start](after-closed.png) makes exactly one
+`readNeedsYou` request with `markSeen:false`. First visible paint sends one
+`markNeedsYouSeen` write for `ask-1` and `ask-2`; no additional read is made.
+[Reopening](after-reopen.png) keeps the request total at two and sends no
+second acknowledgement. See the [captured request log](request-log.txt). TRAY-CACHED-EMPTY-1 passes using this native stand-in.
 
 The existing row DTO is reused without additional fields. The fixture's
 uncompressed JSON response is 335 bytes versus 11 bytes for its old count.
 This is one initial read per viewer/Workspace store lifetime, shared between
 concurrent badge consumers; refresh keys do not reread held rows. Existing
 socket-gap recovery remains the other read trigger. These are fixture byte
-measurements, not production traffic measurements. The full projection also
-starts the server's existing first-paint question expiry clock when the badge
-loads the rows, rather than waiting for a later Tray list read.
+measurements, not production traffic measurements. Badge and list preview
+reads never start question expiry. The production Tray uses FlatList
+viewability in the focused, active screen, then acknowledges exactly the
+visible unseen question ids after paint. The native stand-in acknowledges
+its two question cells after their native layout; both fit in the viewport.
+Legacy clients retain their default list-read semantics.
 
 ## Repeat
 
@@ -47,7 +53,7 @@ From `apps/mobile/tray-store-proof`, run
 Reverse port 8096 on the isolated emulator and open `exp://127.0.0.1:8096`
 in Expo Go. Cold-start Expo Go between variants.
 
-For the baseline variant, place the pre-change `needs-you-store.ts` at
+For the baseline variant, place `needs-you-store.ts` from baseline `eed0176b49802e04b793f830ed5aae2299c499d0` at
 `apps/mobile/tray-store-proof/before-store.ts` (ignored), and set
 `TRAY_BEFORE=1` when starting Metro. Restart Metro when changing variants.
 
@@ -58,6 +64,11 @@ in-flight badge reads, live deltas during bootstrap, held removals and
 account switches. The new cold-start cases fail against the baseline store;
 the positive cases render zero rows there. The changed store passes.
 
-Validation: 85 component/store tests passed; eight browser proof tests were
+Server coverage also proves that preview reads write no seen marks and
+questions remain available after aging them by 25 hours within the lookback.
+Acknowledging only one question starts only its expiry; repeated writes leave
+that clock unchanged. Unavailable, foreign, cleared and approval ids are ignored.
+
+Validation: 87 component/store tests and 31 server tests passed; eight browser proof tests were
 excluded to keep visual verification Android-only. Root `npm run typecheck`
 passed, including mobile and scripts.

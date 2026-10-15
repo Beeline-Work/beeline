@@ -1,0 +1,38 @@
+Android native stand-in, revision 4
+Cold start:
+TRAY-CACHED-EMPTY-1 · ANDROID
+Tray · 2 need you
+Open Tray →
+Closed · Requests (1): readNeedsYou {"workspaceId":"ws","markSeen":false}
+
+First open:
+TRAY-CACHED-EMPTY-1 · ANDROID
+Tray · 2 need you
+Close Tray
+NEEDS YOU · 2 ROWS
+now
+Approve the Android release?
+#
+Release
+now
+Please review the new welcome copy?
+#
+Design
+First open · Requests (2): readNeedsYou {"workspaceId":"ws","markSeen":false}
+markNeedsYouSeen {"workspaceId":"ws","messageIds":["ask-1","ask-2"]}
+
+Reopen:
+TRAY-CACHED-EMPTY-1 · ANDROID
+Tray · 2 need you
+Close Tray
+NEEDS YOU · 2 ROWS
+1m
+Approve the Android release?
+#
+Release
+1m
+Please review the new welcome copy?
+#
+Design
+Reopened · Requests (2): readNeedsYou {"workspaceId":"ws","markSeen":false}
+markNeedsYouSeen {"workspaceId":"ws","messageIds":["ask-1","ask-2"]}

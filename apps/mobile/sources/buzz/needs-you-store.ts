@@ -22,7 +22,7 @@ type Slot = { key: string; relay: string; pubkey: string; workspaceId: string;
   entry: Entry; clock: number; needsRead: number; savedRead: number;
   reads: Set<number>; changes: Change[]; projectionRead?: Promise<readonly NeedsYouItemView[]>;
   trayRead?: Promise<{ needsError?: string; savedError?: string }>;
-  forgotten?: boolean };
+  forgotten?: boolean; seen?: Set<string>; seeing?: Set<string> };
 const EMPTY: Entry = { needs: null, saved: null, held: new Set() };
 const slots = new Map<string, Slot>();
 const listeners = new Set<() => void>();
@@ -158,7 +158,7 @@ export async function loadNeedsYouList(workspaceId: string): Promise<readonly Ne
   const at = ++slot.clock;
   slot.reads.add(at);
   try {
-    const result = await monolithPhoneOperation('readNeedsYou', { workspaceId });
+    const result = await monolithPhoneOperation('readNeedsYou', { workspaceId, markSeen: false });
     const entry = replay(slot, 'needs', at,
       { ...slot.entry, needs: orderedNeeds([...result.items]) });
     if (active(slot) && at > slot.needsRead) {
@@ -196,7 +196,7 @@ export async function loadTrayList(workspaceId: string, force = false): Promise<
   if (slot.trayRead) return slot.trayRead;
   const at = ++slot.clock;
   slot.reads.add(at);
-  const read = monolithPhoneOperation('readTray', { workspaceId }).then((result) => {
+  const read = monolithPhoneOperation('readTray', { workspaceId, markSeen: false }).then((result) => {
     if (!active(slot) || (slot.forgotten && at <= Math.max(slot.needsRead, slot.savedRead))) return {};
     let entry = slot.entry;
     if (result.needs && at > slot.needsRead) {
@@ -334,4 +334,26 @@ export function useNeedsYouCount(workspaceId: string | null | undefined, refresh
     return () => { cancelled = true; };
   }, [workspaceId, refreshKey, entry.needs, generation]);
   return visibleNeeds(entry)?.length ?? 0;
+}
+
+/** Called only for viewable question cells in the focused Tray, after paint. */
+export async function acknowledgePaintedNeedsYou(workspaceId: string, messageIds: readonly string[]): Promise<void> {
+  const slot = current(workspaceId);
+  if (!slot || slot.forgotten) return;
+  const ids = [...new Set(messageIds)].filter(id => !slot.seen?.has(id) && !slot.seeing?.has(id) &&
+    slot.entry.needs?.some(item => item.messageId === id && !item.approval && item.expiresAt === undefined));
+  if (!ids.length) return;
+  slot.seeing ??= new Set();
+  ids.forEach(id => slot.seeing!.add(id));
+  try {
+    const { seen } = await monolithPhoneOperation('markNeedsYouSeen', { workspaceId, messageIds: ids });
+    if (!active(slot) || slot.forgotten) return;
+    slot.seen ??= new Set();
+    seen.forEach(item => slot.seen!.add(item.messageId));
+    const expiry = new Map(seen.map(item => [item.messageId, item.expiresAt]));
+    const apply = (entry: Entry): Entry => ({ ...entry, needs: entry.needs?.map(item =>
+      expiry.has(item.messageId) ? { ...item, expiresAt: expiry.get(item.messageId)! } : item) ?? null });
+    changed(slot, { at: 0, kind: 'needs', apply });
+    write(slot, apply(slot.entry));
+  } finally { ids.forEach(id => slot.seeing?.delete(id)); }
 }

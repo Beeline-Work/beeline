@@ -262,6 +262,43 @@ describe('PhoneService Needs-you tray', () => {
     expect(await count()).toBe(0);
   });
 
+  it('TRAY-CACHED-EMPTY-1: badge rows leave unseen asks available 25 hours later; only painted ids start expiry', async () => {
+    const first = await post(ROOM, PEER, '@ada please review this');
+    const second = await post(ROOM, PEER, '@ada can you confirm?');
+    const badge = () => phone.execute('readNeedsYou', { workspaceId: WORKSPACE, markSeen: false }, VIEWER);
+    expect((await badge()).items.map(item => item.messageId)).toEqual([first, second]);
+    expect((await badge()).items.every(item => item.expiresAt === undefined)).toBe(true);
+    const trayPreview = await phone.execute('readTray', { workspaceId: WORKSPACE, markSeen: false }, VIEWER);
+    expect(trayPreview.needs?.items.every(item => item.expiresAt === undefined)).toBe(true);
+    expect((await database.query(`SELECT * FROM needs_you_marks`)).rowCount).toBe(0);
+    // Advance the age of the still-unseen asks by 25 hours, within the lookback.
+    await database.query(`UPDATE messages SET created_at=created_at-interval '25 hours' WHERE id=ANY($1::text[])`, [[first, second]]);
+    expect((await badge()).items.map(item => item.messageId)).toEqual([first, second]);
+    expect(await count()).toBe(2);
+    const seen = await phone.execute('markNeedsYouSeen', { workspaceId: WORKSPACE, messageIds: [first] }, VIEWER);
+    expect(seen.seen).toEqual([{ messageId: first, expiresAt: expect.any(Number) }]);
+    expect(seen.seen[0]!.expiresAt).toBeGreaterThan(Date.now() / 1000 + 23 * 3600);
+    const reopened = await phone.execute('markNeedsYouSeen', { workspaceId: WORKSPACE, messageIds: [first] }, VIEWER);
+    expect(reopened).toEqual(seen);
+    expect((await badge()).items.find(item => item.messageId === second)?.expiresAt).toBeUndefined();
+    await database.query(`UPDATE needs_you_marks SET first_seen_at=first_seen_at-interval '25 hours' WHERE message_id=$1`, [first]);
+    expect((await badge()).items.map(item => item.messageId)).toEqual([second]);
+    expect(await count()).toBe(1);
+  });
+
+  it('acknowledges only available questions belonging to this viewer and Workspace', async () => {
+    const own = await post(ROOM, PEER, '@ada please look');
+    const hidden = await post(OTHER_ROOM, PEER, '@ada please look');
+    const unrelated = await post(ROOM, PEER, 'hello');
+    await phone.execute('clearNeedsYou', { workspaceId: WORKSPACE, messageId: own }, VIEWER);
+    const result = await phone.execute('markNeedsYouSeen', {
+      workspaceId: WORKSPACE, messageIds: [own, hidden, unrelated, 'missing'],
+    }, VIEWER);
+    expect(result.seen).toEqual([]);
+    await expect(phone.execute('markNeedsYouSeen', { workspaceId: WORKSPACE, messageIds: [unrelated] }, 'outsider'))
+      .rejects.toThrow('workspace membership required');
+  });
+
   it('uses one database statement and one pool checkout for each tray read and badge count', async () => {
     const id = await post(ROOM, PEER, '@ada please review this');
     const query = vi.spyOn(database, 'query');
@@ -435,6 +472,8 @@ describe('PhoneService Needs-you tray', () => {
       },
     });
     expect(item!.expiresAt).toBeUndefined();
+    expect(await phone.execute('markNeedsYouSeen', { workspaceId: WORKSPACE, messageIds: [card] }, VIEWER))
+      .toEqual({ seen: [] });
 
     // Dismissing it only hides the tray row; it does not decide the grant.
     await phone.execute('clearNeedsYou', { workspaceId: WORKSPACE, messageId: card }, VIEWER);

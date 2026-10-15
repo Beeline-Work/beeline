@@ -5,6 +5,7 @@ import { useIsDesktop } from '@/utils/responsive';
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   AccessibilityInfo,
+  AppState,
   FlatList,
   Pressable,
   Text,
@@ -23,6 +24,7 @@ import { clientResetGeneration, subscribeClientReset } from '@/sync/client-reset
 import { cornerHref } from '@/buzz/corner-navigation';
 import {
   forgetTray,
+  acknowledgePaintedNeedsYou,
   holdNeedsYou,
   loadNeedsYouList,
   loadSavedList,
@@ -152,6 +154,40 @@ export default function TrayScreen() {
   const [paneCornerId, setPaneCornerId] = useState<string | null>(null);
   const [inspectError, setInspectError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
+  const focused = useRef(false);
+  const paintContext = useRef({ workspaceId, ready: false });
+  paintContext.current = { workspaceId, ready: !loading && !noWorkspace };
+  const viewableQuestions = useRef<readonly string[]>([]);
+  const paintFrame = useRef<number | null>(null);
+  const acknowledgePaint = useCallback(() => {
+    if (paintFrame.current !== null) cancelAnimationFrame(paintFrame.current);
+    const context = paintContext.current;
+    paintFrame.current = requestAnimationFrame(() => {
+      paintFrame.current = null;
+      if (!focused.current || AppState.currentState !== 'active' || !context.ready || !paintContext.current.ready ||
+        context.workspaceId !== paintContext.current.workspaceId) return;
+      void acknowledgePaintedNeedsYou(context.workspaceId, viewableQuestions.current)
+        .catch(() => undefined);
+    });
+  }, []);
+  useFocusEffect(useCallback(() => {
+    focused.current = true;
+    acknowledgePaint();
+    return () => {
+      focused.current = false;
+      viewableQuestions.current = [];
+      if (paintFrame.current !== null) cancelAnimationFrame(paintFrame.current);
+    };
+  }, [acknowledgePaint]));
+  const onViewableItemsChanged = useRef(({ viewableItems }: {
+    viewableItems: readonly { item: Row; isViewable?: boolean }[];
+  }) => {
+    viewableQuestions.current = viewableItems.flatMap(({ item, isViewable }) =>
+      isViewable !== false && item.type === 'needs' && !item.item.approval && item.item.expiresAt === undefined
+        ? [item.item.messageId] : []);
+    acknowledgePaint();
+  }).current;
+  const viewabilityConfig = useRef({ itemVisiblePercentThreshold: 1 }).current;
 
   const load = useCallback(async (force = false) => {
     if (!workspaceId) return;
@@ -660,6 +696,8 @@ export default function TrayScreen() {
 
   const list = (
     <FlatList
+      onViewableItemsChanged={onViewableItemsChanged}
+      viewabilityConfig={viewabilityConfig}
       onScroll={(event) => { if (event.nativeEvent.contentOffset.y > 20) savedScroll.current = true; }}
       onEndReached={() => { if (savedScroll.current) void loadMoreSaved(); }}
       onEndReachedThreshold={0.5}

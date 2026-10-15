@@ -13,9 +13,14 @@ export const mobileSurfaceCache = {
   remove: async () => undefined,
 };
 export const sharedLiveConnection = () => ({ register: async () => () => undefined });
-export async function monolithPhoneOperation(name: string) {
-  requests.push(name);
+export async function monolithPhoneOperation(name: string, input: { markSeen?: boolean; messageIds?: string[] }) {
+  requests.push(`${name} ${JSON.stringify(input)}`);
   if (name === 'countNeedsYou') return { count: items.length };
-  if (name === 'readNeedsYou') return { items };
+  if (name === 'readNeedsYou') {
+    if (input.markSeen !== false) throw new Error('Badge read must not start expiry');
+    return { items };
+  }
+  if (name === 'markNeedsYouSeen') return { seen: input.messageIds!.map(messageId =>
+    ({ messageId, expiresAt: Math.floor(Date.now() / 1000) + 86400 })) };
   throw new Error(`Unexpected request: ${name}`);
 }

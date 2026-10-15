@@ -127,7 +127,7 @@ import {
 } from './message-mentions.js';
 import { recordSystemReportMention, reportMessageIssue } from './feedback.js';
 import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
-import { clearNeedsYouQuestions, countNeedsYouItems, needsYouItems } from './needs-you.js';
+import { clearNeedsYouQuestions, countNeedsYouItems, needsYouItems, markNeedsYouSeen } from './needs-you.js';
 import { tombstoneInstitutionalMemoryForMessage } from './institutional-memory-shadow.js';
 import {
   notifyConnectorAssignment,
@@ -4188,6 +4188,10 @@ export class PhoneService {
           input as Input<'countNeedsYou'>,
           viewerId,
         )) as Output<Name>;
+      case 'markNeedsYouSeen': {
+        const request = input as Input<'markNeedsYouSeen'>;
+        return await markNeedsYouSeen(this.database, request.workspaceId, viewerId, request.messageIds) as Output<Name>;
+      }
       case 'clearNeedsYou':
         await this.clearNeedsYou(input as Input<'clearNeedsYou'>, viewerId);
         return undefined as Output<Name>;
@@ -5281,6 +5285,7 @@ export class PhoneService {
       input.workspaceId,
       viewerId,
       (row) => identity(row, this.publicOrigin),
+      input.markSeen !== false,
     );
     return { items };
   }
@@ -10228,6 +10233,7 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'readNeedsYou',
   'readTray',
   'countNeedsYou',
+  'markNeedsYouSeen',
   'clearNeedsYou',
   'clearNeedsYouSection',
   'listRoomSchedules',
@@ -10349,6 +10355,7 @@ const SPECTATOR_READ_OPERATIONS = new Set<keyof PhoneOperationMap>([
   'readNeedsYou',
   'readTray',
   'countNeedsYou',
+  'markNeedsYouSeen',
   'clearNeedsYou',
   'clearNeedsYouSection',
   'readWorkbench',

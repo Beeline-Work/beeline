@@ -182,6 +182,12 @@ export const RETIRED_COMPAT_RUNTIMES = [
   { platform: 'ios', runtimeVersion: '25', evidence: RETIRED_BY_PIN_PLUS_TWO },
   { platform: 'ios', runtimeVersion: '26', evidence: RETIRED_BY_PIN_PLUS_TWO },
   { platform: 'ios', runtimeVersion: '27', evidence: RETIRED_BY_PIN_PLUS_TWO },
+  {
+    platform: 'android',
+    runtimeVersion: '37',
+    evidence:
+      'retired by owner decision (lunchboxfortwo, 2026-10-14: ship v0.1.58 now): never reached users: the only android@37 store binary (unified release v0.1.58 runs 38637553492 and 38638236337) was refused by Google Play at edit commit (HTTP 403, undeclared foreground service permission), and #2480 moved the Android pin to 38 before any android@37 binary was published',
+  },
 ];
 
 function targetKey(target) {

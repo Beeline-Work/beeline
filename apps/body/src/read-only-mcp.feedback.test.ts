@@ -2,6 +2,7 @@ import { mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Check } from 'typebox/value';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 import { agentToolsFor, callAgentTool, reportFeedback } from './read-only-mcp.js';
 import { CommandExecutionContext } from './server-command-intake.js';
@@ -36,6 +37,20 @@ describe('feedback tools', () => {
       for (const name of RETIRED_TRIAGE_TOOLS) expect(names, surface).not.toContain(name);
     }
     const report = surfaces.room.find((tool) => tool.name === 'report')!;
+    for (const tools of Object.values(surfaces)) {
+      const tool = tools.find(tool => tool.name === 'report')!;
+      expect(tool.description).toContain('For kind feedback, category and summary are required');
+      const feedback = { kind: 'feedback', category: 'bug' };
+      expect(Check(tool.inputSchema, feedback)).toBe(false);
+      expect(Check(tool.inputSchema, { ...feedback, summary: '' })).toBe(false);
+      expect(Check(tool.inputSchema, { kind: 'feedback', summary: 'Synthetic feedback' })).toBe(false);
+      expect(Check(tool.inputSchema, { ...feedback, summary: 'Synthetic feedback' })).toBe(true);
+      expect(Check(tool.inputSchema, { status: 'blocked', text: 'blocked: decision needed' })).toBe(true);
+      expect(Check(tool.inputSchema, { kind: 'commander', status: 'done', text: 'done: finished' })).toBe(true);
+      expect(Check(tool.inputSchema, {
+        kind: 'fixed', item_ids: ['fb_1'], title: 'Fixed', pr_url: 'https://github.com/a/b/pull/1',
+      })).toBe(true);
+    }
     expect(report.inputSchema.properties).not.toHaveProperty('prompt_section_ids');
     expect((report.inputSchema.properties as Record<string, { enum?: string[] }>).category?.enum).toEqual([
       'simpler_path',
@@ -83,6 +98,22 @@ describe('report_feedback', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.unstubAllGlobals();
+  });
+
+  it('R1: advertises the summary required by the real feedback dispatcher and forwards it unchanged', async () => {
+    const schema = agentToolsFor(true, false).find(tool => tool.name === 'report')!.inputSchema;
+    const input = { kind: 'feedback', category: 'bug', detail: 'Synthetic schema agreement reproduction' };
+    expect(Check(schema, input)).toBe(false);
+    await expect(callAgentTool('report', input, 'R1-missing')).rejects.toThrow('summary is required');
+    expect(calls).toHaveLength(0);
+
+    const valid = { ...input, summary: 'Synthetic schema agreement' };
+    expect(Check(schema, valid)).toBe(true);
+    expect(JSON.parse(await callAgentTool('report', valid, 'R1-valid'))).toEqual({ itemId: 'fb_1' });
+    expect(calls).toEqual([expect.objectContaining({
+      name: 'reportFeedback',
+      input: expect.objectContaining({ category: valid.category, summary: valid.summary, detail: valid.detail }),
+    })]);
   });
 
   it("attaches the turn's assembled prompt sections and request, never agent-supplied ones", async () => {

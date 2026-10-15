@@ -102,7 +102,7 @@ export class StdioSquireMcpClient {
   /** Raw MCP request for the helper-owned task relay. The child remains the owner. */
   async requestMcp(method: 'tools/list' | 'tools/call', params: Record<string, unknown>): Promise<unknown> {
     await this.ensureSession();
-    return this.request(method, params);
+    return this.request(method, params, typeof params.name === 'string' ? params.name : undefined);
   }
 
   get pid(): number | undefined { return this.child?.pid; }
@@ -194,7 +194,11 @@ export class StdioSquireMcpClient {
     const child = this.child;
     if (!child) return Promise.reject(new Error('Squire MCP session is not running'));
     return new Promise((resolve, reject) => {
-      const timeoutMs = method === 'initialize' ? INITIALIZE_TIMEOUT_MS : CALL_TIMEOUT_MS;
+      // Vault operations return pending instead of waiting for a person. A
+      // hung transport must fail before the turn's liveness deadline.
+      const vaultCall = toolName !== undefined &&
+        ['fetch_credential', 'edit_credential', 'delete_credential', 'edit_payment_card'].includes(toolName);
+      const timeoutMs = method === 'initialize' || vaultCall ? INITIALIZE_TIMEOUT_MS : CALL_TIMEOUT_MS;
       const timer = setTimeout(
         () => {
           this.pending.delete(id);

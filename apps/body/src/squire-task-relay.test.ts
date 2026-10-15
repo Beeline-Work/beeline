@@ -365,7 +365,75 @@ describe('helper-owned Squire task relay', () => {
     expect(stats().exits).toBe(1);
   });
 
-  it('wakes the asking turn when a vault approval expires undecided, then frees the connection', async () => {
+  it('R1: consumes a late approval in a new turn without a false no-answer wake', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    const decisions: unknown[] = [];
+    let consumed = false;
+    const { relay, stats } = fixture(undefined, undefined, async () => ({ content: [{ type: 'text',
+      text: JSON.stringify(consumed ? {
+        status: 'credential_fetched', approval_id: 'late-1', fields: { value: 'fixture-only' },
+      } : {
+        status: 'approval_pending', approval_id: 'late-1',
+        approval_url: 'https://trustysquire.ai/vault/fetch/late-1',
+        expires_at: new Date(Date.now() + 600_000).toISOString(),
+      }),
+    }] }), decision => decisions.push(decision));
+    relay.activate(command('first', 'turn-one'), 'generation');
+    await request(relay, 'first', 'turn-one', 'tools/call', {
+      name: 'fetch_credential', arguments: { service: 'fixture' },
+    });
+    relay.deactivate('turn-one');
+    await vi.advanceTimersByTimeAsync(480_000);
+    consumed = true;
+    relay.activate(command('second', 'turn-two'), 'generation');
+    const result = await request(relay, 'second', 'turn-two', 'tools/call', {
+      name: 'fetch_credential', arguments: { approval_id: 'late-1' },
+    });
+    expect(JSON.stringify(result.body)).toContain('credential_fetched');
+    relay.deactivate('turn-two');
+    await vi.advanceTimersByTimeAsync(120_001);
+    expect(decisions).toEqual([]);
+    await vi.advanceTimersByTimeAsync(SQUIRE_TASK_IDLE_LEASE_MS - 120_001);
+    expect(stats().exits).toBe(1);
+  });
+
+  it('does not re-arm a pending response after its decision raced the call', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    const decisions: unknown[] = [];
+    let duringCall: (() => void) | undefined;
+    const { relay, notify } = fixture(undefined, undefined, async () => {
+      duringCall?.();
+      return { content: [{ type: 'text', text: JSON.stringify({
+        status: 'approval_pending', approval_id: 'race-1',
+        approval_url: 'https://trustysquire.ai/vault/fetch/race-1',
+        expires_at: new Date(Date.now() + 600_000).toISOString(),
+      }) }] };
+    }, decision => decisions.push(decision));
+    relay.activate(command('first', 'turn-one'), 'generation');
+    await request(relay, 'first', 'turn-one', 'tools/call', { name: 'fetch_credential' });
+    duringCall = () => notify({ method: 'notifications/approval_decided',
+      params: { approval_id: 'race-1', status: 'approved' } });
+    await request(relay, 'first', 'turn-one', 'tools/call', {
+      name: 'fetch_credential', arguments: { approval_id: 'race-1' },
+    });
+    relay.deactivate('turn-one');
+    await vi.advanceTimersByTimeAsync(600_001);
+    expect(decisions).toEqual([expect.objectContaining({ status: 'approved', approvalId: 'race-1' })]);
+  });
+
+  it('returns the vault timeout to the caller instead of a browser restart error', async () => {
+    const { relay } = fixture(undefined, undefined, async () => {
+      throw new Error('fetch_credential timed out after 30000ms');
+    });
+    relay.activate(command('first', 'turn-one'), 'generation');
+    const result = await request(relay, 'first', 'turn-one', 'tools/call', {
+      name: 'fetch_credential', arguments: { approval_id: 'hung-1' },
+    });
+    expect(result.status).toBe(400);
+    expect(result.body.error).toBe('fetch_credential timed out after 30000ms');
+  });
+
+  it('releases an elapsed vault wait without inventing a no-answer decision', async () => {
     const decisions: unknown[] = [];
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
     const { relay, stats, notify } = fixture('/tmp/context', async () => true, async () => ({
@@ -383,12 +451,10 @@ describe('helper-owned Squire task relay', () => {
     await vi.advanceTimersByTimeAsync(5 * 60_000 - 1);
     expect(decisions).toEqual([]);
     await vi.advanceTimersByTimeAsync(1);
-    expect(decisions).toEqual([expect.objectContaining({
-      requestId: 'turn-one', approvalId: 'vault-2', status: 'expired', tool: 'fetch_credential',
-    })]);
+    expect(decisions).toEqual([]);
     notify({ jsonrpc: '2.0', method: 'notifications/approval_decided',
       params: { approval_id: 'vault-2', status: 'approved' } });
-    expect(decisions).toHaveLength(1);
+    expect(decisions).toHaveLength(0);
     await vi.advanceTimersByTimeAsync(SQUIRE_TASK_IDLE_LEASE_MS);
     expect(stats().exits).toBe(1);
   });

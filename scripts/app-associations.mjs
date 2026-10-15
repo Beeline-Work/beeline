@@ -25,7 +25,7 @@ export const REQUIRED_APPLE_PATHS = [
 export const REQUIRED_ANDROID_PACKAGES = ['app.usebeeline', 'app.usebeeline.mobile'];
 export const REQUIRED_ANDROID_RELATION = 'delegate_permission/common.handle_all_urls';
 export const REQUIRED_ANDROID_FINGERPRINT =
-  'F1:0A:CD:08:4A:67:32:53:9D:3C:72:27:9C:8D:64:97:EB:3F:3A:3D:C4:EB:FF:74:F9:6C:57:76:D9:99:72:18';
+  'CB:CB:5F:6A:D8:87:2E:1D:B9:5F:9E:79:EA:7B:5F:F8:4F:66:71:AF:8C:E7:47:3F:64:8A:B9:D6:87:CB:97:FA';
 
 export function validateRequiredAssociations({ apple, android }) {
   const errors = [];

@@ -136,8 +136,9 @@ native release build and rejects a release-tagged commit unless the tag is exact
 The release keystore lives only in the `ANDROID_SIDELOAD_*` repository
 secrets, not in the tree — see
 [`android-signing/README.md`](./android-signing/README.md) for the secret
-names and how `apk:release` materializes and signs with them. **Never rotate
-this keystore** (it would break in-place upgrades for existing installs).
+names, the 2026-10-15 key rotation, and how `apk:release` materializes and signs
+with them. A signing-key rotation requires existing sideload installs to be
+uninstalled and reinstalled.
 
 iOS production builds use local EAS credentials (`credentialsSource: "local"`).
 The distribution certificate and App Store provisioning profile were created through

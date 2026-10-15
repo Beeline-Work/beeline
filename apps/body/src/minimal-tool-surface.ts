@@ -76,6 +76,7 @@ export function minimalTools(
     description: string,
     props: ObjectValue,
     required: string[] = [],
+    constraints: ObjectValue = {},
   ): ToolDefinition => ({
     name,
     description,
@@ -84,6 +85,7 @@ export function minimalTools(
       properties: props,
       ...(required.length ? { required } : {}),
       additionalProperties: false,
+      ...constraints,
     },
   });
   const keep = (name: string, description: string) => ({
@@ -184,10 +186,20 @@ export function minimalTools(
     ),
     tool(
       'report',
-      'Report one step up through recorded provenance; no target address. status must match done:/blocked:/failed:/needs-decision:. Agent delivery stays private; progress stays in the corner. Worker done requires merge-ready/merged PR or repositoryWork:false. kind feedback/fixed uses separate feedback authority, never commander delivery.',
+      'Report one step up through recorded provenance; no target address. status must match done:/blocked:/failed:/needs-decision:. Agent delivery stays private; progress stays in the corner. Worker done requires merge-ready/merged PR or repositoryWork:false. kind feedback/fixed uses separate feedback authority, never commander delivery. For kind feedback, category and summary are required.',
       {
         kind: choice('commander', 'feedback', 'fixed'),
         ...properties('report', 'report_feedback', 'notify_feedback_fixed'),
+      },
+      [],
+      {
+        anyOf: [
+          {
+            properties: { kind: choice('feedback') },
+            required: ['kind', ...(definition('report_feedback').inputSchema.required as string[])],
+          },
+          { properties: { kind: choice('commander', 'fixed') } },
+        ],
       },
     ),
     addressed(

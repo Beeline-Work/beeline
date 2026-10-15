@@ -13,14 +13,12 @@ const trace = readFileSync(path.join(root, '../../../buzz/room-open-trace.ts'), 
 const prefetch = readFileSync(path.join(root, '../../../buzz/room-open-prefetch.ts'), 'utf8');
 
 describe('Room open occupancy', () => {
-  it('says when a painted Room is the saved copy because the server read failed', () => {
-    expect(session).toContain('Offline — showing the last saved response.');
-    // The early return covers only the no-surface case; the painted surface
-    // carries the notice and its Retry.
-    const painted = surface.slice(surface.indexOf('if (!roomSurface) {'));
-    expect(painted).toContain(
-      '<RoomSavedCopyNotice message={transcriptHydrationError} onRetry={retryHydration} />',
-    );
+  it('renders no offline banner over a painted Room and retains the failed-load screen', () => {
+    expect(surface).not.toContain('RoomSavedCopyNotice');
+    expect(session).not.toContain('Offline — showing the last saved response.');
+    expect(surface).toContain('testID="room-hydration-error"');
+    expect(surface).toContain("{transcriptHydrationError ?? 'Could not load this conversation.'}");
+    expect(surface).toContain('onPress={retryHydration}');
   });
 
   it('marks navigation dispatch, route mount, and cache-read separately from auth', () => {

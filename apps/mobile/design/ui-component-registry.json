@@ -280,7 +280,6 @@
       "RoomReviewerSurfaceNotice"
     ],
     "components/buzz/RoomRosterSheet.tsx": ["RoomRosterSheet", "trailing"],
-    "components/buzz/RoomSavedCopyNotice.tsx": ["RoomSavedCopyNotice"],
     "components/buzz/RuntimeErrorBoundary.tsx": ["RuntimeErrorBoundary", "RuntimeErrorView"],
     "components/buzz/sandbox-webview.ts": [],
     "components/buzz/ScheduledWorkDetail.tsx": [

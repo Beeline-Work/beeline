@@ -414,7 +414,6 @@ import {
   HeaderMetaRow,
 } from '@/components/buzz/HeaderLadder';
 import { ChannelHeaderTitle } from '@/components/buzz/ChannelHeaderTitle';
-import { RoomSavedCopyNotice } from '@/components/buzz/RoomSavedCopyNotice';
 import { HullDialog, HullDialogInput } from '@/components/buzz/HullDialog';
 import type { ChannelHeaderKind } from '@/buzz/channel-header-title';
 import {
@@ -6309,12 +6308,6 @@ export function BuzzChatSurface({
             )}
           </View>
 
-          {/* The saved copy painted, but the server read failed: say so
-            instead of passing the copy off as current. */}
-          {transcriptHydrationError && (
-            <RoomSavedCopyNotice message={transcriptHydrationError} onRetry={retryHydration} />
-          )}
-
           <RoomReviewerSurfaceNotice
             allowAutoMerge={roomRepository?.allowAutoMerge}
             canManage={canManageWorkspace}
@@ -7727,7 +7720,6 @@ const styles = StyleSheet.create((theme) => {
       textAlign: 'center',
     },
 
-    // ── Offline notice (client-rendered only) ─────────────────────────
     // ── Composer ────────────────────────────────────────────────────
     emptyState: {
       flexGrow: 1,

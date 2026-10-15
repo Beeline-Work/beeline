@@ -1261,8 +1261,6 @@ export function useRoomSurfaceSession({
                     ? 'The server returned an invalid Room response.'
                     : `Could not load this conversation. ${String(error)}`,
               );
-            } else {
-              setHydrationError(`Offline — showing the last saved response. ${String(error)}`);
             }
             if (notificationResponseId && !terminal && !watchStarted) {
               watchStarted = true;

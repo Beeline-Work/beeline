@@ -2134,7 +2134,7 @@ describe('useRoomSurfaceSession', () => {
     await act(async () => renderer.unmount());
   });
 
-  it('keeps stale cached paint on transient errors but clears it on terminal errors', async () => {
+  it('keeps a cached page free of offline notices on network failure but still shows terminal errors', async () => {
     controls.cached = roomView('room-a');
     let current!: UseRoomSurfaceSessionResult;
     let renderer!: ReactTestRenderer;
@@ -2148,10 +2148,10 @@ describe('useRoomSurfaceSession', () => {
     });
     await flushEffects();
 
-    await act(async () => controls.schedulers[0]!.error(new Error('relay unavailable')));
+    await act(async () => controls.schedulers[0]!.error(new TypeError('Network request failed')));
     expect(current.roomSurface?.room.id).toBe('room-a');
     expect(current.hydrationFailed).toBe(false);
-    expect(current.hydrationError).toContain('Offline — showing the last saved response');
+    expect(current.hydrationError).toBeNull();
 
     await act(async () => controls.schedulers[0]!.error(new RoomViewHttpError(403, 'forbidden')));
     expect(current.roomSurface).toBeNull();

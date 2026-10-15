@@ -258,4 +258,4 @@ The product spec is [`spec.md`](https://github.com/Beeline-Work/beeline/blob/mai
 
 ## License
 
-`usebeeline` is published as `UNLICENSED`: free to install and run, not licensed for redistribution. A public source licence has not been chosen yet.
+Beeline is licensed under the [MIT License](https://github.com/Beeline-Work/beeline/blob/main/LICENSE).

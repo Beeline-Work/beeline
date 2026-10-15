@@ -1,4 +1,4 @@
-# Late credential approval: R1
+# Late credential approval: LATE-APPROVAL-1
 
 The reported Android incident occurred on 2026-10-15 in corner
 `dac9d764-e14e-4ca0-b263-cda37ffa737a`. The required screenshot was read from
@@ -39,10 +39,10 @@ preserve every individual retry timestamp.
 
 ## Reproduced
 
-Reproduction R1: request a vault credential; end the asking turn; approve later;
+Reproduction LATE-APPROVAL-1: request a vault credential; end the asking turn; approve later;
 consume the same approval ID from a new turn; pass the original deadline.
 Before the fix, the relay returns `credential_fetched`, then emits an `expired`
-decision for that ID. `squire-task-relay.test.ts` test “R1: consumes a late
+decision for that ID. `squire-task-relay.test.ts` test “LATE-APPROVAL-1: consumes a late
 approval in a new turn without a false no-answer wake” failed with that exact
 unexpected decision before implementation.
 
@@ -53,8 +53,9 @@ accelerated clock; it exercises the same pending/consume/expiry sequence.
 
 ## Demonstrated
 
-After the fix, R1 returns the consumed fixture value, emits no false decision,
-and releases its idle connection. Squire still owns passkey verification and
+After the fix, LATE-APPROVAL-1 returns the consumed fixture value, emits no false decision,
+allows the continuing turn to make another call after the original deadline,
+then completes the relay turn and releases its idle connection. Squire still owns passkey verification and
 single-use delivery; Beeline never caches or replays the value.
 
 The compiled `apps/body/dist/squire-task-relay.js` was also exercised through

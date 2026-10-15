@@ -365,13 +365,16 @@ describe('helper-owned Squire task relay', () => {
     expect(stats().exits).toBe(1);
   });
 
-  it('R1: consumes a late approval in a new turn without a false no-answer wake', async () => {
+  it('LATE-APPROVAL-1: consumes a late approval in a new turn without a false no-answer wake', async () => {
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
     const decisions: unknown[] = [];
-    let consumed = false;
+    let approved = false;
+    let deliveries = 0;
     const { relay, stats } = fixture(undefined, undefined, async () => ({ content: [{ type: 'text',
-      text: JSON.stringify(consumed ? {
+      text: JSON.stringify(approved ? deliveries++ === 0 ? {
         status: 'credential_fetched', approval_id: 'late-1', fields: { value: 'fixture-only' },
+      } : {
+        status: 'credential_fetch_refused', approval_id: 'late-1', reason: 'already_consumed',
       } : {
         status: 'approval_pending', approval_id: 'late-1',
         approval_url: 'https://trustysquire.ai/vault/fetch/late-1',
@@ -384,16 +387,22 @@ describe('helper-owned Squire task relay', () => {
     });
     relay.deactivate('turn-one');
     await vi.advanceTimersByTimeAsync(480_000);
-    consumed = true;
+    approved = true;
     relay.activate(command('second', 'turn-two'), 'generation');
     const result = await request(relay, 'second', 'turn-two', 'tools/call', {
       name: 'fetch_credential', arguments: { approval_id: 'late-1' },
     });
     expect(JSON.stringify(result.body)).toContain('credential_fetched');
-    relay.deactivate('turn-two');
     await vi.advanceTimersByTimeAsync(120_001);
     expect(decisions).toEqual([]);
-    await vi.advanceTimersByTimeAsync(SQUIRE_TASK_IDLE_LEASE_MS - 120_001);
+    // The continuing turn can still call Squire after the old deadline.
+    const repeated = await request(relay, 'second', 'turn-two', 'tools/call', {
+      name: 'fetch_credential', arguments: { approval_id: 'late-1' },
+    });
+    expect(repeated.status).toBe(200);
+    expect(JSON.stringify(repeated.body)).toContain('credential_fetch_refused');
+    relay.deactivate('turn-two');
+    await vi.advanceTimersByTimeAsync(SQUIRE_TASK_IDLE_LEASE_MS);
     expect(stats().exits).toBe(1);
   });
 

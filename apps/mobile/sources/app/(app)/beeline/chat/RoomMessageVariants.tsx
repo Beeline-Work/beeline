@@ -1554,18 +1554,6 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
     },
     [onMention, participantHandles, taggedMentionPubkeys, viewerPubkey, isAgent],
   );
-  // System authors use the same quiet line even when an older server sent
-  // an ordinary message presentation. Dedicated card renderers run before this path.
-  if ((message.authorIdentity?.pubkey ?? message.pubkey) === SYSTEM_IDENTITY_PUBKEY) {
-    return <LedgerSystemLine
-      id={message.id}
-      text={message.text}
-      {...(message.systemEvent ? { event: message.systemEvent } : {})}
-      stamp={ledgerStamp(message.timestamp)}
-      onOpenUrl={(url) => void openExternalUrl(url).catch(() => undefined)}
-    />;
-  }
-
   if (message.isAgentActivity) {
     const excerpt = agentActivityReplyExcerpt(message);
     return (
@@ -1777,6 +1765,14 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
                 : undefined
             }
             footerNoteTestID={`corner-proposal-footer-${message.id}`}
+          />
+        ) : (message.authorIdentity?.pubkey ?? message.pubkey) === SYSTEM_IDENTITY_PUBKEY ? (
+          <LedgerSystemLine
+            id={message.id}
+            text={renderedBody}
+            {...(message.systemEvent ? { event: message.systemEvent } : {})}
+            stamp={ledgerStamp(message.timestamp)}
+            onOpenUrl={(url) => void openExternalUrl(url).catch(() => undefined)}
           />
         ) : (
           <LedgerEntry

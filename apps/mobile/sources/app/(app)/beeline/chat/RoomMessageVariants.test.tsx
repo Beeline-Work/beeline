@@ -3859,8 +3859,12 @@ describe('Connector receipt cards', () => {
   const receiptMessage = (text: string): ChatDisplayMessage =>
     message({ id: 'connector-receipt', text });
 
-  const renderReceipt = (text: string) => {
+  const renderReceipt = (text: string, systemAuthor = false) => {
     const row = receiptMessage(text);
+    if (systemAuthor) {
+      row.pubkey = SYSTEM_IDENTITY_PUBKEY;
+      row.authorIdentity = { pubkey: SYSTEM_IDENTITY_PUBKEY, kind: 'human', name: 'System' };
+    }
     return render(
       <OrdinaryLedgerMessage
         message={row}
@@ -3896,6 +3900,12 @@ describe('Connector receipt cards', () => {
     // The receipt line itself never double-prints as ledger prose.
     const ledgerProps = ledgerEntryRender.mock.lastCall?.[0];
     expect(ledgerProps.bodyText).toBe('Vercel deploy finished.');
+  });
+
+  it('preserves a working receipt card beside the System author fallback', () => {
+    const renderer = renderReceipt('Deployment finished.\nreceipt: Vercel · deploy', true);
+    expect(renderer.root.findByProps({ testID: 'connector-receipt-card' })).toBeDefined();
+    expect(renderer.root.findByType('LedgerSystemLine' as never).props.text).toBe('Deployment finished.');
   });
 
   it('uses the connector identity logo in its receipt card', () => {

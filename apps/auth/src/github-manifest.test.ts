@@ -75,6 +75,8 @@ describe('GitHub App manifest flow', () => {
       pull_requests: 'write',
       issues: 'write',
       actions: 'write',
+      secrets: 'write',
+      environments: 'write',
       workflows: 'write',
       discussions: 'write',
       metadata: 'read',
@@ -84,8 +86,6 @@ describe('GitHub App manifest flow', () => {
     });
     expect(REQUIRED_GITHUB_APP_PERMISSIONS).toEqual(manifest.default_permissions);
     expect(manifest.default_permissions).not.toHaveProperty('administration');
-    expect(manifest.default_permissions).not.toHaveProperty('secrets');
-    expect(manifest.default_permissions).not.toHaveProperty('environments');
     expect(manifest.default_permissions).not.toHaveProperty('organization');
   });
 
@@ -181,6 +181,8 @@ describe('GitHub App configuration drift', () => {
       pull_requests: 'write',
       issues: 'write',
       actions: 'write',
+      secrets: 'write',
+      environments: 'write',
       workflows: 'write',
       discussions: 'write',
       metadata: 'read',
@@ -194,6 +196,11 @@ describe('GitHub App configuration drift', () => {
     const drift = gitHubAppDrift(LIVE_OK);
     expect(drift).toEqual({ ok: true });
     expect(formatGitHubAppDriftLine(drift, LIVE_OK.slug)).toContain('match the required set');
+  });
+
+  it('keeps existing Apps healthy without the new secret and environment grants', () => {
+    const { secrets, environments, ...permissions } = LIVE_OK.permissions;
+    expect(gitHubAppDrift({ ...LIVE_OK, permissions })).toEqual({ ok: true });
   });
 
   it('names every missing event — the empty-events incident shape', () => {

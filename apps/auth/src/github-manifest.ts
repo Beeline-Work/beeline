@@ -24,12 +24,13 @@ import { createHash, timingSafeEqual } from 'node:crypto';
  * Room repository, but receives this complete App grant without a per-token
  * downgrade:
  * - contents, pull_requests, issues, actions, workflows, discussions write
+ * - secrets and environments write for repository configuration
  * - checks and statuses read
  * - metadata read (required for every GitHub App)
  * - starring write, an account permission: the user-token star from the
  *   in-app GitHub star card (`apps/server/src/github-star-prompt.ts`)
  *
- * Administration, secrets, environments, and organization permissions are
+ * Administration and organization permissions are
  * deliberately absent. Keep this list pinned by the manifest tests: changing
  * it changes the approval request for every installed account.
  */
@@ -50,6 +51,8 @@ export const REQUIRED_GITHUB_APP_PERMISSIONS: Readonly<Record<string, string>> =
   pull_requests: 'write',
   issues: 'write',
   actions: 'write',
+  secrets: 'write',
+  environments: 'write',
   workflows: 'write',
   discussions: 'write',
   metadata: 'read',
@@ -207,7 +210,10 @@ export type GitHubAppDrift =
       permissionProblems: Array<{ key: string; have: string; want: string }>;
     };
 
-/** Compare a live GET /app answer against the required events + permissions. */
+// New Apps request these grants, but existing Apps keep working without them.
+const OPTIONAL_EXISTING_APP_PERMISSIONS = new Set(['secrets', 'environments']);
+
+/** Compare a live GET /app answer against the existing-feature requirements. */
 export function gitHubAppDrift(live: GitHubLiveAppConfig): GitHubAppDrift {
   const liveEvents = new Set(
     Array.isArray(live.events) ? live.events.filter((e): e is string => typeof e === 'string') : [],
@@ -218,7 +224,9 @@ export function gitHubAppDrift(live: GitHubLiveAppConfig): GitHubAppDrift {
       ? (live.permissions as Record<string, unknown>)
       : {};
   const permissionProblems = Object.entries(REQUIRED_GITHUB_APP_PERMISSIONS)
-    .filter(([key, want]) => livePermissions[key] !== want)
+    .filter(
+      ([key, want]) => !OPTIONAL_EXISTING_APP_PERMISSIONS.has(key) && livePermissions[key] !== want,
+    )
     .map(([key, want]) => ({ key, have: String(livePermissions[key] ?? 'none'), want }));
   if (missingEvents.length === 0 && permissionProblems.length === 0) return { ok: true };
   return { ok: false, missingEvents, permissionProblems };

@@ -7,6 +7,7 @@ import { GitHubAppClient, GitHubOAuthClient } from './github.js';
 import { OIDC_BIND_KIND, OIDC_BIND_MARKER } from './protocol.js';
 import { buildAuthServer } from './server.js';
 import { AuthStore } from './store.js';
+import { REQUIRED_GITHUB_APP_EVENTS, REQUIRED_GITHUB_APP_PERMISSIONS } from './github-manifest.js';
 import type { FastifyInstance } from 'fastify';
 import {
   DemoOidcProvider,
@@ -130,6 +131,8 @@ describe('GitHub App manifest setup + drift endpoints', () => {
       'status',
     ]);
     expect(manifest.default_permissions.contents).toBe('write');
+    expect(manifest.default_permissions.secrets).toBe('write');
+    expect(manifest.default_permissions.environments).toBe('write');
     expect(manifest.redirect_url).toBe(
       `https://alpha.example/auth/github/app-setup?token=${encodeURIComponent(SETUP_TOKEN)}`,
     );
@@ -187,6 +190,20 @@ describe('GitHub App manifest setup + drift endpoints', () => {
     });
     expect(result.statusCode).toBe(502);
     expect(result.body).toContain('single-use');
+  });
+
+  it('reports an existing App as healthy without secrets and environments', async () => {
+    const permissions = { ...REQUIRED_GITHUB_APP_PERMISSIONS };
+    delete permissions.secrets;
+    delete permissions.environments;
+    liveApp = { slug: 'beeline', events: [...REQUIRED_GITHUB_APP_EVENTS], permissions };
+    const result = await app.inject({
+      method: 'GET',
+      url: `/auth/github/app-drift?token=${SETUP_TOKEN}`,
+      headers: { host: alphaTenant.host },
+    });
+    expect(result.statusCode).toBe(200);
+    expect(result.json()).toEqual({ drift: { ok: true } });
   });
 
   it('reports drift on demand and logs one actionable line', async () => {

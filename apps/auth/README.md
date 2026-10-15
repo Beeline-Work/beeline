@@ -73,10 +73,11 @@ so webhook timing cannot strand the picker. Installation callbacks verify
 membership with the encrypted GitHub user token captured during sign-in. The app's exact required
 permissions and events live in one place — `REQUIRED_GITHUB_APP_PERMISSIONS` and
 `REQUIRED_GITHUB_APP_EVENTS` in `apps/auth/src/github-manifest.ts` (contents write, pull_requests
-write, issues write, actions write, workflows write, discussions write, checks read, statuses read,
+write, issues write, actions write, secrets write, environments write, workflows write, discussions write, checks read, statuses read,
 metadata read; events `star`, `issues`, `pull_request`, `push`, `check_run`, `check_suite`,
-`status`). Administration, secrets, environments, and
-organization permissions are intentionally excluded. The startup drift check enforces this set. The auth
+`status`). Administration and
+organization permissions are intentionally excluded. Secrets and environments are requested for new
+Apps but are optional for existing Apps; their absence does not cause configuration drift or block existing features. The auth
 sidecar mints exact-repository, one-hour installation tokens for Room-member
 daemons after re-checking current relay membership and the Room's admin-authored
 repository binding. Daemons never receive the App private key. Body installs a
@@ -136,12 +137,35 @@ nothing and the repository-activity feed was silently dead.
 4. Install the App on your account or organization from the link on the page.
 
 The startup drift check compares the live App (`GET /app`) against the same
-required events + permissions every time the service boots and logs one plain,
+required events + existing-feature permissions every time the service boots and logs one plain,
 actionable line naming anything missing plus the fix URL
 (`https://github.com/settings/apps/<slug>/permissions`); the same check runs
 on demand at `/auth/github/app-drift?token=<BUZZY_AUTH_SETUP_TOKEN>`. The
 check is best-effort — an unreachable api.github.com logs one line and never
 crashes the service.
+
+### Updating an existing App for repository secrets and environments
+
+The manifest change only affects newly created Apps. The owner must update the existing
+Beeline-Work App on github.com; deploying this code does not change its registration.
+
+1. Open the App owner's **Settings → Developer settings → GitHub Apps** (for an
+   organization-owned App, start at that organization's Settings), then **Edit**
+   beside the Beeline App.
+2. Open **Permissions & events → Repository permissions**. Set **Secrets** and
+   **Environments** to **Read and write**, then **Save changes**. Leave other grants unchanged.
+3. As an owner of Beeline-Work, open GitHub's permission-update notification email
+   and follow **Review permission request** for that installation. Review and accept
+   the two added permissions. The installation can also be reached from
+   **Beeline-Work → Settings → GitHub Apps → Configure** beside the Beeline App.
+4. Retry the repository secrets request with a newly minted installation token:
+   `gh api repos/Beeline-Work/beeline/actions/secrets`. It should return HTTP 200.
+   Do not put secret values in logs or chat.
+
+GitHub retains the installation's previous permissions until its owner approves the update.
+Existing Beeline features continue to work without the new grants. See GitHub's
+[registration update guide](https://docs.github.com/en/apps/maintaining-github-apps/modifying-a-github-app-registration)
+and [permission approval guide](https://docs.github.com/en/apps/using-github-apps/approving-updated-permissions-for-a-github-app).
 
 ### GitHub user-token rotation
 

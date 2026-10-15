@@ -6,15 +6,23 @@ import { PermissionsAndroid, Platform } from 'react-native';
 export async function createVoiceRoom(onStop: () => void = () => {}, roomId?: string, onIdle: () => void = () => {}): Promise<{ room: Room; closeAudio(): Promise<void>; configureStop(callId: string, token: string): Promise<void>; parkAudio(agentName: string): Promise<void>; resumeAudio(): Promise<void>; idleEnd(): Promise<void>; armSilence(): Promise<void>; cancelSilence(): Promise<void> }> {
   // Lazy: installed binaries without WebRTC can still dictate/use the Room.
   const { registerGlobals, AudioSession } = await import('@livekit/react-native');
-  const { requireNativeModule } = await import('expo-modules-core');
-  const background = requireNativeModule<{
+  const { requireOptionalNativeModule } = await import('expo-modules-core');
+  type BackgroundAudio = {
     configureStop(url: string, token: string, generation: number): Promise<void>;
     start(resumeUrl?: string): Promise<number>; stop(generation: number): Promise<void>;
     setActivity(active: boolean, waitingFor: string | null, generation: number): Promise<void>;
     endForIdle(resumeUrl: string | undefined, generation: number): Promise<void>;
     armSilence(generation: number): Promise<void>; cancelSilence(generation: number): Promise<void>;
     addListener(event: 'stopRequested' | 'idleRequested', listener: (event: { generation: number }) => void): { remove(): void };
-  }>('VoiceBackgroundAudio');
+  };
+  // Binaries built before the native module shipped receive this code by OTA:
+  // run the call in the foreground only instead of failing to start.
+  const background: BackgroundAudio = requireOptionalNativeModule<BackgroundAudio>('VoiceBackgroundAudio') ?? {
+    configureStop: async () => {}, start: async () => 0, stop: async () => {},
+    setActivity: async () => {}, endForIdle: async () => {},
+    armSilence: async () => {}, cancelSilence: async () => {},
+    addListener: () => ({ remove() {} }),
+  };
   if (Platform.OS === 'android' && await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO)
       !== PermissionsAndroid.RESULTS.GRANTED) throw new Error('Microphone permission is required for Conversation mode.');
   registerGlobals();

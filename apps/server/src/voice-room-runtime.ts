@@ -331,12 +331,15 @@ export class VoiceRoomRuntime {
       const selected = this.targets.get(human);
       const inherited = selected !== continuation?.selected && selected !== continuation?.agent?.id
         ? selected : continuation?.agent?.id ?? selected;
-      const named = humans > 1 ? openingVoiceName(fragment, agents) : undefined;
+      const named = openingVoiceName(continuation ? fragment : text, agents);
       const tapped = agents.find(agent => agent.id === this.taps.get(human));
       this.taps.delete(human);
+      const lastActive = humans === 1 && !continuation && !named && !tapped
+        ? await this.service.lastActiveAgent(this.roomId, agents) : undefined;
       const agent = continuation
         ? namedVoiceTarget(fragment, agents, inherited, 1)
-        : humans > 1 ? named ?? tapped : namedVoiceTarget(text, agents, this.targets.get(human), humans);
+        : humans > 1 ? named ?? tapped
+          : named ?? tapped ?? namedVoiceTarget(text, agents, lastActive ?? selected, humans);
       if (!agent || this.closed) {
         resolveSource('');
         if (!agent && !this.closed) await this.signal({ type: 'unaddressed' }, human);

@@ -200,20 +200,6 @@ export const CORNER_LAND_RULE =
 export const CORNER_CHECKS_NUDGE =
   'Call read with facet checks now. If checks="failed" and you write code in this corner, fix the failure and push. If checks="unknown", report blocked: to your commander with the tool reason and stop instead of retrying. Otherwise stop: a reviewer\'s PASS wakes you to merge with merge_corner. Use merge_corner for landing.';
 
-/** Shared verbatim into the search tool description (`read-only-mcp.ts`)
- *  so it is the one place this rule is stated. Meaning-based matching finds a
- *  fact even when the current request shares no words with how it was saved
- *  (see `institutional-memory-embeddings.ts`), so the turn snapshot's keyword
- *  miss is never sufficient grounds to tell someone a fact was never stored. */
-export const SEARCH_MEMORY_FIRST_RULE =
-  'Call this before telling anyone a fact was never saved, or asking them for information they may already have given you. Meaning-based matching often finds it even when this turn shares no words with how it was originally phrased.';
-
-/** The agent's own memory upkeep, stated in the remember tool description
- *  (`read-only-mcp.ts`). No background review exists: what the answering agent
- *  does not keep current, nothing does. */
-export const MEMORY_UPKEEP_RULE =
-  'Before saving, search(scope:memory). Avoid duplicates; remember(kind:fact, action:update) stale items instead of deleting and saving again. Delete disproved items. Before ending, remember(kind:fact, action:used) only the items your answer relied on.';
-
 const handle = (value: string): string => value.replace(/^@/, '');
 
 /**

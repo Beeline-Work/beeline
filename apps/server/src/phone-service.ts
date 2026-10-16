@@ -6186,7 +6186,6 @@ export class PhoneService {
    */
   private async createWorkspace(input: Input<'createWorkspace'>, viewerId: string) {
     const id = input.workspaceId ?? randomUUID();
-    let freeAgentId: string | undefined;
     const roomId = await this.database.transaction(async (db) => {
       const inserted = await db.query(
         `INSERT INTO workspaces(id,name) VALUES($1,$2) ON CONFLICT DO NOTHING`,
@@ -6209,14 +6208,13 @@ export class PhoneService {
       // Only a newly created Workspace gets a free starter agent, in the same
       // transaction as its #general, so the creator lands next to it.
       if (inserted.rowCount && this.freeAgents)
-        freeAgentId = await this.freeAgents.createInWorkspace(db, {
+        await this.freeAgents.createInWorkspace(db, {
           workspaceId: id,
           creatorId: viewerId,
           roomId: generalId,
         });
       return generalId;
     });
-    if (freeAgentId) this.freeAgents?.kick(freeAgentId, 'provisioned');
     return { id, roomId };
   }
   private async updateWorkspace(input: Input<'updateWorkspace'>, viewerId: string) {

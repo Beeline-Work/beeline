@@ -4,7 +4,7 @@ import { createServer } from 'node:http';
 import { PgliteDatabase } from '../../../apps/server/src/test-support.ts';
 import { migrate } from '../../../apps/server/dist/database.js';
 import { PhoneService } from '../../../apps/server/dist/phone-service.js';
-import { FreeAgentService, addFreeAgentToWorkspace, FREE_AGENT_REMOVAL_NOTE } from '../../../apps/server/dist/free-agents.js';
+import { FreeAgentService, addFreeAgentToWorkspace, FREE_AGENT_HELLO } from '../../../apps/server/dist/free-agents.js';
 import { handleFreeAgentModelRequest } from '../../../apps/server/dist/free-agent-model-proxy.js';
 const db = new PgliteDatabase();
 await migrate(db);
@@ -23,11 +23,17 @@ const free = new FreeAgentService(db,config,machines,async()=>({exchangeToken:'p
 const phone = new PhoneService(db,config.publicOrigin);
 phone.setFreeAgents(free);
 const workspace = await phone.execute('createWorkspace',{name:'Removal proof'},owner);
-for(let i=0;i<100&&!spec;i++) await new Promise(r=>setTimeout(r,10));
-await new Promise(r=>setTimeout(r,100));
 const agent = (await db.query('SELECT agent_id FROM free_agents WHERE workspace_id=$1',[workspace.id])).rows[0].agent_id;
+const hello = FREE_AGENT_HELLO.replace('<owner>','owner').replace('<handle>','beebee');
+assert.equal((await db.query('SELECT text FROM messages WHERE author_id=$1 AND card_type IS NULL',[agent])).rows[0].text,hello);
+await free.sweep();
+assert.deepEqual(calls,[]);
+assert.equal((await db.query('SELECT 1 FROM agent_commands WHERE agent_id=$1',[agent])).rowCount,0);
+const firstRoom=await phone.readRoom(workspace.roomId,owner);
+assert(firstRoom.messages.some(message=>message.text===hello));
+await phone.execute('sendRoomMessage',{roomId:workspace.roomId,messageId:'e'.repeat(64),text:'@beebee write a welcome note',mentions:[agent]},owner);
+await free.provision(agent);
 const grant = await free.bootstrap(spec.env.BEELINE_FREE_AGENT_BOOTSTRAP);
-assert(grant.soul.includes(FREE_AGENT_REMOVAL_NOTE));
 let upstreamCalls=0;
 const server=createServer((req,res)=>void handleFreeAgentModelRequest(req,res,new URL(req.url,'http://x').pathname,{database:db,config,upstreamKey:'proof-only',fetchImpl:async()=>{upstreamCalls++;return Response.json({});}}));
 await new Promise(r=>server.listen(0,'127.0.0.1',r));
@@ -53,5 +59,5 @@ try {
   assert.equal(await addFreeAgentToWorkspace(db,free,workspace.id),undefined);
   await free.sweep(); await new Promise(r=>setTimeout(r,100));
   assert.equal(calls.length,count);
-  console.log(JSON.stringify({proof:'FREE-REMOVE-1',membersBefore:'Beebee',membersAfter:'absent',removalCommittedDuringFlyFailure:true,bootstrap:'refused',modelHTTP:response.status,upstreamCalls,machineCalls:calls,afterRemovalMentionWakeAndOperatorAdd:'no Machine',helloEndsWith:FREE_AGENT_REMOVAL_NOTE}));
+  console.log(JSON.stringify({proof:'FREE-REMOVE-1',membersBefore:'Beebee',membersAfter:'absent',removalCommittedDuringFlyFailure:true,bootstrap:'refused',modelHTTP:response.status,upstreamCalls,machineCalls:calls,afterRemovalMentionWakeAndOperatorAdd:'no Machine',serverHello:hello,helloBootedMachine:false}));
 } finally {await new Promise(r=>server.close(r));await db.close();}

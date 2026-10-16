@@ -17,8 +17,11 @@ soul. Existing free agents keep their names.
   the same transaction as `ensureFirstRoom`. That call writes the identity, the agent
   row (harness `opencode`, model `beeline/<model>`), the Workspace and `#general`
   memberships, the identity keys sealed with `BEELINE_FREE_AGENT_SEAL_KEY`, a reachable
-  presence row and a public `free_agent_hello` wake on the agent's own joined line.
-  After commit, `FreeAgentService.kick` creates the Machine. A creator owns at most
+  presence row and the exact server-authored `FREE_AGENT_HELLO` message in #general.
+  The hello tags the owner through the normal mention/push path and uses the
+  agent's actual handle. It creates no model turn or Machine. The first real
+  queued work provisions the Machine through `FreeAgentService.kick` or the sweep.
+  A creator owns at most
   `BEELINE_FREE_AGENT_MAX_PER_OWNER` (default 3) free agents.
 - **First boot.** `entrypoint.sh` installs the published helper bundle
   (`BEELINE_LAB=1 install.sh`), then runs `beeline free-agent`. The Machine trades its
@@ -46,11 +49,12 @@ soul. Existing free agents keep their names.
   cleanup deletes the Fly Machine without delaying the removal. The leader retries
   failed deletion, including a Machine created by provisioning already in flight.
   Removed agents cannot bootstrap, wake, reap back into service, or be replaced by
-  `--add-free-agent` in that Workspace. Beebee's first hello ends by explaining how
+  `--add-free-agent` in that Workspace. Beebee's server-posted first hello ends by explaining how
   to remove it from Members.
 - **Existing Workspaces.** An operator gives one its free agent with
   `node apps/server/dist/index.js --add-free-agent <workspaceId>` on a server Machine.
-  The agent goes to the oldest owner and to `#general`, or to the oldest public
+  The agent posts the same hello once and boots only for real work. It goes to
+  the oldest owner and to `#general`, or to the oldest public
   top-level Room when there is no `#general`.
 - **Membership events.** From creation, each free agent's `#general` membership
   carries `event_subscriptions` `joined` and `left`. A join is the existing `joined`

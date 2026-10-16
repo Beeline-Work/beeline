@@ -27,9 +27,10 @@ Ruby owns the production browser check after release and enablement.
 
 Server coverage: all 167 test files exercised in memory-bounded batches; 2,683
 tests passed and seven existing tests skipped. The 239-case integration file was
-split into eight name-filtered batches whose passing counts sum to all 239 cases.
-The final free-agent/model-proxy run passed all 46 tests, including removal,
-nonblocking Fly cleanup, retry, provisioning races, authority and token refusal.
+split into name-filtered batches whose passing counts sum to all 239 cases.
+The 69 affected free-agent, model-proxy, warning and message-producer guard tests
+passed, including removal, nonblocking Fly cleanup, retry, provisioning races,
+authority, token refusal and the exact server hello.
 Repository typecheck and server build passed.
 
 ## Revision 3: model and name
@@ -63,9 +64,22 @@ hashes were cleared; bootstrap was refused; model HTTP returned 401 with zero
 upstream calls; the leader retried deletion; subsequent mention, wake, sweep and
 operator add made no Machine. A separate regression holds provisioning in flight,
 removes Beebee, and confirms the newly returned Machine is deleted without
-restoring its bootstrap. The new hello instruction ends with the pinned sentence:
+restoring its bootstrap. The server-posted hello ends with the pinned sentence:
 “If you don't want me here, open Members and remove me from the Workspace.”
 
 Targeted free-agent, model-proxy and existing removal regressions passed, including
 Workspace owner/admin removal and removal from another joined Workspace. Repository typecheck and
 server build passed. The complete server suite passed in bounded batches, as summarized above.
+
+## Revision 5: exact server hello
+
+The server posts `FREE_AGENT_HELLO` (owner approval 3126e930) as Beebee in the
+creation transaction, replacing
+the model hello turn. Tests pin the complete approved text, owner handle and
+collision-suffixed agent handle. The existing push loop delivers the owner's
+mention; creation and a sweep leave zero commands, model usage or Machine calls.
+The operator add path posts the same hello once across retries.
+
+The runnable built-service proof above now also checks the owner's Room read
+for the exact hello and confirms no Machine boot. It then sends an actual owner
+request before exercising bootstrap, removal, refusal and deletion retry.

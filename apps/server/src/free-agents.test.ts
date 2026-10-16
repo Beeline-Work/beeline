@@ -13,7 +13,7 @@ import type { FreeAgentMachines, FreeAgentMachineSpec } from './fly-machines.js'
 import {
   addFreeAgentToWorkspace,
   FREE_AGENT_EXIT_NOTE,
-  FREE_AGENT_REMOVAL_NOTE,
+  FREE_AGENT_HELLO,
   FREE_AGENT_JOIN_GREETING,
   FreeAgentService,
   generateAgentKeypair,
@@ -21,6 +21,8 @@ import {
   freeAgentConfigFromEnv,
   type FreeAgentConfig,
 } from './free-agents.js';
+import { PushDeliveryLoop } from './background.js';
+import { resolveCurrentMemberMentions } from './message-mentions.js';
 import { LiveHub } from './live.js';
 import { agentMachineOfflineSql } from './machine-offline.js';
 import { PhoneService } from './phone-service.js';
@@ -140,8 +142,16 @@ describe('free starter agents', () => {
     await db.close();
   });
 
-  const createWorkspace = async (name = 'Fresh', viewer = OWNER) =>
-    phone.execute('createWorkspace', { name }, viewer) as Promise<{ id: string; roomId: string }>;
+  // Lifecycle tests start after the owner's first actual request, not the server hello.
+  const createWorkspace = async (name = 'Fresh', viewer = OWNER) => {
+    const result = await phone.execute('createWorkspace', { name }, viewer) as { id: string; roomId: string };
+    const agent = (await db.query<{ agent_id: string }>(`SELECT agent_id FROM free_agents WHERE workspace_id=$1`, [result.id])).rows[0];
+    if (agent) {
+      await createAgentCommand(db, { roomId: result.roomId, agentId: agent.agent_id, sourceMessageId: null, reason: 'human_tag' });
+      await freeAgents.provision(agent.agent_id);
+    }
+    return result;
+  };
 
   const freeAgentOf = async (workspaceId: string) =>
     (
@@ -151,8 +161,8 @@ describe('free starter agents', () => {
       )
     ).rows[0]!;
 
-  it('creates the agent and its provisioning in the same flow as #general, with a pending hello', async () => {
-    const { id, roomId } = await createWorkspace();
+  it('posts the exact hello and notifies the owner without a model turn or Machine boot', async () => {
+    const { id, roomId } = await phone.execute('createWorkspace', { name: 'Fresh' }, OWNER) as { id: string; roomId: string };
     const agent = await freeAgentOf(id);
     expect(agent.state).toMatch(/provisioning|waking/);
 
@@ -181,19 +191,26 @@ describe('free starter agents', () => {
         )
       ).rows,
     ).toEqual([{ room_id: null }, { room_id: roomId }]);
-    // The hello is a pending wake in #general, sourced from its own joined line.
-    const hello = (
-      await db.query<{ state: string; room_id: string; private_payload: unknown; text: string }>(
-        `SELECT command.state,command.room_id,command.private_payload,source.text FROM agent_commands command
-         JOIN messages source ON source.id=command.source_message_id
-         WHERE command.agent_id=$1 AND command.reason='free_agent_hello'`,
-        [agent.agent_id],
-      )
-    ).rows;
+    const hello = (await db.query<{ id: string; text: string }>(
+      `SELECT id,text FROM messages WHERE room_id=$1 AND author_id=$2 AND card_type IS NULL`, [roomId, agent.agent_id],
+    )).rows;
+    const expected = `@lunchboxfortwo Hi, I'm Beebee, your free agent in Beeline. I run on my own small cloud computer, so I can write files, run commands, research and draft things for you. Try "@beebee draft a welcome note for this Workspace" to start. If you don't want me here, open Members and remove me from the Workspace.`;
     expect(hello).toHaveLength(1);
-    // A public wake on its own joined line: its reply is a Room message, not a report.
-    expect(hello[0]).toMatchObject({ state: 'pending', room_id: roomId, private_payload: null });
-    expect(hello[0]!.text).toMatch(/joined · invited by @lunchboxfortwo/);
+    expect(hello[0]!.text).toBe(expected);
+    expect(FREE_AGENT_HELLO.replace('<owner>', 'lunchboxfortwo').replace('<handle>', 'beebee')).toBe(expected);
+    expect(await resolveCurrentMemberMentions(db, roomId, expected, agent.agent_id)).toEqual([{ id: OWNER, kind: 'human', handle: 'lunchboxfortwo' }]);
+    await db.query(`INSERT INTO push_devices(token,identity_id,platform,environment,registered_at)
+      VALUES('hello-owner-device-1234567890',$1,'android','physical',now()-interval '1 minute')`, [OWNER]);
+    await db.query(`INSERT INTO push_delivery_floors(id,started_at) VALUES('message-delivery',now()-interval '1 minute')`);
+    const delivered: Array<{ messageId: string; recipientIdentityId?: string }> = [];
+    await new PushDeliveryLoop(db, { send: async (_token, message) => { delivered.push(message); } }).runOnce();
+    expect(delivered).toContainEqual(expect.objectContaining({ messageId: hello[0]!.id, recipientIdentityId: OWNER }));
+    await freeAgents.sweep();
+    await settle();
+    expect(machines.calls).toEqual([]);
+    expect(exchanges).toEqual([]);
+    expect((await db.query(`SELECT 1 FROM agent_commands WHERE agent_id=$1`, [agent.agent_id])).rowCount).toBe(0);
+    expect((await db.query(`SELECT 1 FROM free_agent_events WHERE agent_id=$1 AND kind='model_usage'`, [agent.agent_id])).rowCount).toBe(0);
     // Reachable before its Machine ever booted.
     const presence = (
       await db.query<{ body: Record<string, unknown> }>(
@@ -203,7 +220,9 @@ describe('free starter agents', () => {
     ).rows[0]!.body;
     expect(presence).toMatchObject({ status: 'online', held: true, asleep: true });
 
-    // The committed create provisions its Machine with no further user action.
+    // Only actual work provisions its Machine.
+    await createAgentCommand(db, { roomId, agentId: agent.agent_id, sourceMessageId: null, reason: 'human_tag' });
+    await freeAgents.provision(agent.agent_id);
     await settle();
     expect(machines.calls).toEqual([`create ${agent.agent_id.slice(0, 4)}`]);
     const spec = machines.specs[0]!;
@@ -229,6 +248,7 @@ describe('free starter agents', () => {
       `SELECT name,handle FROM identities WHERE id=$1`, [agent.agent_id],
     )).rows[0];
     expect(identity).toEqual({ name: 'Beebee', handle: 'beebee_2' });
+    expect((await db.query<{ text: string }>(`SELECT text FROM messages WHERE author_id=$1 AND card_type IS NULL`, [agent.agent_id])).rows[0]!.text).toBe(FREE_AGENT_HELLO.replace('<owner>', 'beebee').replace('<handle>', 'beebee_2'));
   });
 
   it('creates no second agent on a retried create, and stops at the per-owner limit', async () => {
@@ -413,7 +433,7 @@ describe('free starter agents', () => {
     const { id, roomId } = await createWorkspace();
     await settle();
     const agent = await freeAgentOf(id);
-    // The hello is still pending: no sleep.
+    // The owner request is still pending: no sleep.
     expect(await freeAgents.requestSleep(agent.agent_id)).toEqual({ sleep: false });
     await db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE agent_id=$1`, [
       agent.agent_id,
@@ -532,9 +552,18 @@ describe('free starter agents', () => {
         ($1,$3,$4,'lounge','public',now()-interval '2 days'),($2,$3,$4,'general','public',now()-interval '1 day')`,
       [lounge, general, workspaceId, OWNER],
     );
-    const agentId = await addFreeAgentToWorkspace(db, freeAgents, workspaceId);
+    const additions = await Promise.all([
+      addFreeAgentToWorkspace(db, freeAgents, workspaceId),
+      addFreeAgentToWorkspace(db, freeAgents, workspaceId),
+    ]);
+    expect(additions.filter(Boolean)).toHaveLength(1);
+    const agentId = additions.find(Boolean);
     expect(agentId).toBeTruthy();
-    expect(machines.calls).toEqual([`create ${agentId!.slice(0, 4)}`]);
+    expect(machines.calls).toEqual([]);
+    const hello = (await db.query<{ text: string }>(`SELECT text FROM messages WHERE author_id=$1 AND card_type IS NULL`, [agentId])).rows;
+    expect(hello).toEqual([{ text: FREE_AGENT_HELLO.replace('<owner>', 'lunchboxfortwo').replace('<handle>', 'beebee') }]);
+    await freeAgents.sweep();
+    expect(machines.calls).toEqual([]);
     expect(
       (await db.query(`SELECT owner_id FROM free_agents WHERE agent_id=$1`, [agentId])).rows,
     ).toEqual([{ owner_id: OWNER }]);
@@ -544,6 +573,7 @@ describe('free starter agents', () => {
       ).rows,
     ).toEqual([{ room_id: general }]);
     expect(await addFreeAgentToWorkspace(db, freeAgents, workspaceId)).toBeUndefined();
+    expect((await db.query(`SELECT 1 FROM messages WHERE author_id=$1 AND card_type IS NULL`, [agentId])).rowCount).toBe(1);
   });
 
   it('hears #general joins and leaves from creation', async () => {
@@ -599,8 +629,8 @@ describe('free starter agents', () => {
     );
     expect(soul).toContain(FREE_AGENT_JOIN_GREETING);
     expect(soul).toContain(FREE_AGENT_EXIT_NOTE);
-    expect(FREE_AGENT_REMOVAL_NOTE).toBe("If you don't want me here, open Members and remove me from the Workspace.");
-    expect(soul).toContain(`End that first hello with exactly this sentence:\n${FREE_AGENT_REMOVAL_NOTE}`);
+    expect(soul).not.toContain('When you first join, greet');
+    expect(soul).toContain('The server already posts your first hello');
     expect(soul).toContain('Never greet an agent.');
   });
 
@@ -698,7 +728,10 @@ describe('free starter agents', () => {
     const creating = new Promise<void>(resolve => { entered = resolve; });
     const finish = new Promise<void>(resolve => { release = resolve; });
     machines.beforeCreate = async () => { entered(); await finish; };
-    const { id } = await createWorkspace();
+    const { id, roomId } = await phone.execute('createWorkspace', { name: 'Race' }, OWNER) as { id: string; roomId: string };
+    const pending = await freeAgentOf(id);
+    await createAgentCommand(db, { roomId, agentId: pending.agent_id, sourceMessageId: null, reason: 'human_tag' });
+    freeAgents.kick(pending.agent_id);
     await creating;
     const agent = await freeAgentOf(id);
     await phone.execute('removeAgent', { workspaceId: id, agentId: agent.agent_id }, OWNER);

@@ -416,7 +416,7 @@ it.each([false, true])('Reproduction bright-meadow-corner: a person commander re
   await runCornerAttention(db);
   await runCornerAttention(db);
   expect((await db.query('SELECT id FROM agent_commands')).rows).toEqual(before);
-  expect((await db.query("SELECT sent_at IS NOT NULL sent FROM corner_attention_flags WHERE kind='idle'")).rows).toEqual([{ sent: true }]);
+  expect((await db.query("SELECT sent_at IS NOT NULL sent,dismissed_at IS NOT NULL dismissed FROM corner_attention_flags WHERE kind='idle'")).rows).toEqual([{ sent: false, dismissed: true }]);
   expect(await commanderFlags()).toHaveLength(0);
   expect((await db.query('SELECT id,text FROM messages WHERE room_id IN ($1,$2)', [ROOM,C])).rows).toEqual([]);
   console.info('Demonstrated Reproduction bright-meadow-corner: person commander: wakes=0; room transcript messages=0; repeated flag=0');

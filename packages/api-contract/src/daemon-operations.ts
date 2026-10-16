@@ -1159,7 +1159,10 @@ export type AgentPresenceResult = {
 };
 export type RequestCompletionResult = {
   readonly openedCornerId?: string;
+  /** Terminal execution, including failure; inspect outcome before claiming success. */
   readonly completed: boolean;
+  readonly outcome?: 'complete' | 'failed';
+  readonly failureReason?: string;
 };
 export type WriteResult = {
   readonly id: string;
@@ -1169,6 +1172,8 @@ export type WriteResult = {
   readonly hiccupAttempt?: number;
   /** The interrupted command was requeued for the updated helper; no process restart is needed. */
   readonly updateRequeued?: boolean;
+  /** Whether the terminal failure reached its recorded commander; false preserves the failed turn. */
+  readonly failureReportDelivered?: boolean;
 };
 export type PostRoomMessageResult = WriteResult;
 export type ReactToRoomMessageInput = RoomInput & {

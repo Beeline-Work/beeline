@@ -1,3 +1,4 @@
+import { deleteArchivedCornerWakeSources } from './migrations/archived-corner-wakes.js';
 import { retireBotDirectMessages } from './migrations/one-system-thread.js';
 import { VOICE_SCHEMA } from './voice-schema.js';
 import { FREE_AGENTS_SCHEMA } from './free-agents.js';
@@ -3178,6 +3179,8 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
     workflowBackfillOnce(database, 'webhook-retention-v1', compactWebhookDeliveries));
   await dataStep('archived corner assignments', () =>
     workflowBackfillOnce(database, 'archived-corner-assignments-v1', cancelArchivedCornerAssignments));
+  await dataStep('archived corner wakes', () =>
+    workflowBackfillOnce(database, 'archived-corner-wakes-v1', deleteArchivedCornerWakeSources));
   await dataStep('terminal push claims', () =>
     workflowBackfillOnce(database, 'terminal-push-claims-v1', compactPushClaims));
   if (searchDocuments)

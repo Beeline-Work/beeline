@@ -10,10 +10,6 @@ ARG BEELINE_RELEASE_SHA
 RUN node bake-helper.mjs "$BEELINE_RELEASE_VERSION" "$BEELINE_RELEASE_SHA"
 
 FROM node:22-bookworm-slim AS runtime
-ARG BEELINE_RELEASE_VERSION
-ARG BEELINE_RELEASE_SHA
-LABEL app.usebeeline.release.version=$BEELINE_RELEASE_VERSION \
-  app.usebeeline.release.sha=$BEELINE_RELEASE_SHA
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
       bubblewrap ca-certificates curl git less procps python3 python3-venv ripgrep unzip xz-utils \
@@ -25,6 +21,10 @@ RUN test "$PI_VERSION" != latest && test "$PI_ACP_VERSION" != latest \
   && npm cache clean --force
 COPY relay-stack/web/install.sh infra/free-agent/entrypoint.sh /opt/beeline/
 COPY --from=helper-build /root/.local/ /root/.local/
+ARG BEELINE_RELEASE_VERSION
+ARG BEELINE_RELEASE_SHA
+LABEL app.usebeeline.release.version=$BEELINE_RELEASE_VERSION \
+  app.usebeeline.release.sha=$BEELINE_RELEASE_SHA
 ENV HOME=/root
 WORKDIR /root
 STOPSIGNAL SIGTERM

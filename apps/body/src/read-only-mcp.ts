@@ -5098,12 +5098,11 @@ async function callLegacyAgentTool(
         await daemonExecute('readCornerPullRequest', { cornerId: targetCornerId(args) }),
       );
     case 'post_to_corner': {
-      if (typeof args.cornerId !== 'string' || !args.cornerId)
-        throw new Error('cornerId is required');
+      const cornerId = targetCornerId(args);
       if (typeof args.text !== 'string' || !args.text.trim() || args.text.length > 16000)
         throw new Error('text must contain 1 to 16000 characters');
       return JSON.stringify(
-        await daemonExecute('postCornerMessage', { cornerId: args.cornerId, text: args.text }),
+        await daemonExecute('postCornerMessage', { cornerId, text: args.text }),
       );
     }
     case 'write_scratch_file':

@@ -419,6 +419,8 @@ export interface MonolithRoomTurnHealth {
 }
 
 export interface MonolithRoomTurnOptions {
+  /** Prepare this pending Room during boot; never prompt until its command is claimed. */
+  prestartSession?: boolean;
   roomId: string;
   workspaceId: string;
   cwd: string;
@@ -2144,6 +2146,21 @@ export class MonolithRoomTurnLoop {
 
   async run(): Promise<void> {
     const { api, roomId, signal, supervisor } = this.options;
+    const preparation = this.options.prestartSession && !signal?.aborted
+      ? this.options.scheduler.run(roomId, {
+          ...this.lifecycle(),
+          activate: async () => {
+            try {
+              return await this.activate();
+            } catch (error) {
+              await this.discardSession();
+              throw error;
+            }
+          },
+        }, async () => undefined, { priority: 'background' }).catch(error => {
+          console.warn(`[body] Room ${roomId} boot session preparation failed:`, redactTurnError(error));
+        })
+      : Promise.resolve();
     const intake = (progress: () => void) =>
       runServerCommandIntake({
         api,
@@ -2209,6 +2226,7 @@ export class MonolithRoomTurnLoop {
         ? supervisor.supervise(`Room ${roomId}`, signal, intake)
         : intake(() => undefined));
     } finally {
+      await preparation;
       this.squireRelay.close();
       this.options.grantRunner?.unregister(roomId);
       await this.options.scheduler.suspend(roomId);

@@ -31,6 +31,12 @@ soul. Existing free agents keep their names.
   one-time `BEELINE_FREE_AGENT_BOOTSTRAP` at `POST /v1/free-agents/bootstrap`. It gets
   its keys, a fresh daemon exchange token and a revocable model token. The root
   filesystem persists (`rootfs.persist=always`), so later boots skip this step.
+  After bootstrap identifies pending Rooms, managed Pi prepares a session for
+  the first pending top-level Room alongside command intake. It uses that Room's
+  private home and MCP scope, and the existing scheduler reuses the preparation
+  for its claimed turn. Conversation context is fetched after claim; no model
+  request runs during preparation. Other Rooms start on demand. Suspend/resume
+  retains its existing session and does not repeat boot preparation.
 - **Sleep.** The helper reports idleness at `POST /v1/free-agents/sleep` 60 s after the
   last turn ends. The server refuses while a wake is pending. Otherwise it records
   `sleeping` and asks Fly to suspend the Machine. If suspend fails, it stops the

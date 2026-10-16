@@ -46,15 +46,18 @@ export async function summarizeTimeline(directory) {
       dispatch: timeline.wakeRequested,
       wakeToFlyAccepted: elapsed(timeline.flyAccepted, timeline.wakeRequested),
       machinePreparation: boot ? elapsed(timeline.machineStarted, timeline.flyAccepted) : null,
-      helperStartup: boot ? elapsed(timeline.helperConnected, timeline.machineStarted) : null,
+      helperStartup: row.mode !== 'resume' ? elapsed(timeline.helperConnected, timeline.machineStarted) : null,
       claimToModel: elapsed(timeline.modelRequest, timeline.commandClaimed),
       modelFirstByte: elapsed(timeline.modelByte, timeline.modelRequest),
       byteToReply: elapsed(timeline.reply, timeline.modelByte),
     };
-    details.push({ sample: row.sample, mode: row.mode, timeline, segments });
+    const sessionSteps = [...log.matchAll(/session-start (\S+) room=\S+ step=(\S+) elapsedMs=(\d+) stepMs=(\d+)/g)]
+      .filter((x) => Date.parse(x[1]) >= start)
+      .map((x) => ({ step: x[2], elapsedMs: Number(x[3]), stepMs: Number(x[4]), offsetMs: time(x[1]) }));
+    details.push({ sample: row.sample, mode: row.mode, timeline, segments, sessionSteps });
   }
   const summaries = Object.fromEntries(
-    ['first-boot', 'resume'].map((mode) => {
+    ['first-boot', 'resume', 'stopped-restart'].map((mode) => {
       const selected = details.filter((x) => x.mode === mode);
       return [
         mode,

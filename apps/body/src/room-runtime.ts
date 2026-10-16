@@ -866,6 +866,12 @@ export class RoomRuntimeCoordinator {
     // Their intake runs independently while the rest of this sweep continues.
     const pendingRooms = [...(bootstrap.pendingRooms ?? [])].sort((left, right) =>
       Number(Boolean(left.parentRoomId)) - Number(Boolean(right.parentRoomId)));
+    const prestartRoom = this.baseConfig.agentKind === 'pi' &&
+      this.baseConfig.agentEnv.BEELINE_FREE_AGENT_ID &&
+      this.baseConfig.modelSelection?.model?.startsWith('beeline/')
+      ? pendingRooms.find(room => !room.parentRoomId &&
+          topLevelRooms.some(top => top.roomId === room.roomId))?.roomId
+      : undefined;
     await mapWithConcurrency(pendingRooms, ROOM_JOIN_CONCURRENCY, async (room) => {
       if (this.stopped) return;
       // A bootstrap can cover several Workspaces; this core serves only its own.
@@ -876,7 +882,7 @@ export class RoomRuntimeCoordinator {
           await this.startCorner({ cornerId: room.roomId, parentRoomId: room.parentRoomId, openedBy: room.openedBy });
         } else {
           this.surfaceHealth.discover(room.roomId, 'room');
-          await this.startRoom(room.roomId);
+          await this.startRoom(room.roomId, room.roomId === prestartRoom);
         }
       } catch (error) {
         console.error(`[thin-core] pending Room ${room.roomId} start failed:`, error);
@@ -1151,7 +1157,7 @@ export class RoomRuntimeCoordinator {
     });
   }
 
-  private async startRoom(roomId: string): Promise<void> {
+  private async startRoom(roomId: string, prestartSession = false): Promise<void> {
     if (this.stopped) return;
     if (this.running.has(roomId) || this.startingRooms.has(roomId)) return;
     if (SessionScheduler.hostStoragePaused || SessionScheduler.roomStoragePaused(roomId) || this.storageMaintenanceRooms.has(roomId)) {
@@ -1161,7 +1167,7 @@ export class RoomRuntimeCoordinator {
     this.surfaceHealth.discover(roomId, 'room');
     this.startingRooms.add(roomId);
     try {
-      await this.startRoomOnce(roomId);
+      await this.startRoomOnce(roomId, prestartSession);
     } catch (error) {
       this.surfaceHealth.degraded(roomId, 'Room intake failed to start');
       throw error;
@@ -1170,7 +1176,7 @@ export class RoomRuntimeCoordinator {
     }
   }
 
-  private async startRoomOnce(roomId: string): Promise<void> {
+  private async startRoomOnce(roomId: string, prestartSession = false): Promise<void> {
     const controller = new AbortController();
     // The turn loop refreshes checkout before activation. Idle Rooms can
     // subscribe to durable commands without fetching a token or running Git.
@@ -1178,6 +1184,7 @@ export class RoomRuntimeCoordinator {
     const grantRunnerEndpoint = await this.grantRunnerEndpoint();
     const loop = new MonolithRoomTurnLoop({
       roomId,
+      prestartSession,
       workspaceId: this.runtime.communityId,
       cwd,
       refreshCheckout: () => this.refreshRoomCheckout(roomId),

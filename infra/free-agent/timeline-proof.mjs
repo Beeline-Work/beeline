@@ -283,7 +283,7 @@ try {
         [workspace.id],
       )
     ).rows[0];
-    for (const mode of ['first-boot', 'resume']) {
+    for (const mode of ['first-boot', 'resume', 'stopped-restart']) {
       if (mode === 'resume')
         await waitFor('suspended', async () => {
           const machineId = (
@@ -293,6 +293,17 @@ try {
           ).rows[0].fly_machine_id;
           return (await fly(`/${machineId}`)).state === 'suspended';
         });
+      if (mode === 'stopped-restart') {
+        const machineId = (await db.query(
+          'SELECT fly_machine_id FROM free_agents WHERE agent_id=$1', [agent.agent_id],
+        )).rows[0].fly_machine_id;
+        await waitFor('suspended before stop', async () =>
+          (await fly(`/${machineId}`)).state === 'suspended');
+        await fly(`/${machineId}/stop`, 'POST');
+        await waitFor('stopped', async () =>
+          (await fly(`/${machineId}`)).state === 'stopped');
+        mark('stopped-confirmed', { sample, machineId });
+      }
       const messageId = randomBytes(32).toString('hex');
       const before = new Date().toISOString();
       await operation('sendRoomMessage', {

@@ -32,3 +32,28 @@ test('timeline output preserves missing observations and computes medians from s
     await rm(root, { recursive: true, force: true });
   }
 });
+
+
+test('stopped restart keeps its wake timeline and session phase durations', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'beeline-stopped-summary-'));
+  try {
+    const mention = '2026-10-16T12:00:00.000Z';
+    await writeFile(join(root, 'results.json'), JSON.stringify([{
+      sample: 1, mode: 'stopped-restart', mention,
+      events: [{ kind: 'wake_requested', at: mention },
+        { kind: 'connected', at: '2026-10-16T12:00:04.000Z' }],
+      commands: [{ claimed_at: '2026-10-16T12:00:04.100Z' }],
+      marks: [{ step: 'fly-start-accepted', at: '2026-10-16T12:00:01.000Z' }],
+      flyEvents: [{ status: 'started', timestamp: Date.parse(mention) + 2000 }],
+      reply: { created_at: '2026-10-16T12:00:10.000Z' },
+    }]));
+    await writeFile(join(root, '1-stopped-restart-helper.log'),
+      '[body] session-start 2026-10-16T12:00:08.000Z room=room step=model-selection elapsedMs=3800 stepMs=10');
+    const result = await summarizeTimeline(root);
+    assert.equal(result.summaries['stopped-restart'].timeline.sessionReady, 8000);
+    assert.equal(result.summaries['stopped-restart'].segments.helperStartup, 2000);
+    assert.equal(result.details[0].sessionSteps[0].stepMs, 10);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

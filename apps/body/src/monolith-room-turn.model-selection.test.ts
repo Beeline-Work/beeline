@@ -31,6 +31,10 @@ async function activateWith(
   modelSelection: { model?: string; effort?: string },
   options: {
     sessionRaw?: unknown;
+    prestartSession?: boolean;
+    roomId?: string;
+    prompts?: string[];
+    calls?: string[];
     setConfigOptionImpl?: (configId: string, value: string) => Promise<void> | void;
     recordCalls?: Array<{ name: string; input: Record<string, unknown> }>;
   } = {},
@@ -65,6 +69,9 @@ async function activateWith(
     modelSelection,
   } as BodyConfig;
 
+  const roomId = options.roomId ?? 'room-id';
+  let sessionOpened!: () => void;
+  const opened = new Promise<void>(resolve => { sessionOpened = resolve; });
   let bootstrapped = false;
   let delivered = false;
   const receipts: Array<Record<string, unknown>> = [];
@@ -87,6 +94,8 @@ async function activateWith(
         return { items: [], cursor: 'latest' };
       }
       if (!delivered) {
+        if (options.prestartSession) await opened;
+        options.calls?.push('command-available');
         delivered = true;
         return {
           items: [
@@ -104,7 +113,10 @@ async function activateWith(
       }
       return { items: [], cursor: 'latest' };
     }
-    if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+    if (name === 'getRoomConversation') return { items: options.prestartSession ? [{
+      id: `context-${input.roomId}`, authorId: HUMAN, createdAt: 1,
+      type: 'message', body: `Secret for ${input.roomId}: context-${input.roomId}`, attachments: [],
+    }] : [], cursor: 'latest' };
     if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
     return { id: 'write-id', createdAt: 1 };
   });
@@ -119,25 +131,29 @@ async function activateWith(
 
   const acp = new AcpClient({ agentBinary: config.agentBinary, agentEnv: {} });
   vi.spyOn(acp, 'isAlive', 'get').mockReturnValue(true);
-  vi.spyOn(acp, 'start').mockResolvedValue(undefined);
-  vi.spyOn(acp, 'sessionNew').mockResolvedValue({
-    sessionId: 'room-session',
-    raw: options.sessionRaw ?? {
-      configOptions: [
-        {
-          id: 'model-axis',
-          category: 'model',
-          currentValue: 'default-model',
-          options: [{ id: 'default-model' }, { id: 'override-model' }],
-        },
-        {
-          id: 'effort-axis',
-          category: 'effort',
-          currentValue: 'medium',
-          options: [{ id: 'high' }, { id: 'medium' }, { id: 'low' }],
-        },
-      ],
-    },
+  vi.spyOn(acp, 'start').mockImplementation(async () => { options.calls?.push('start'); });
+  vi.spyOn(acp, 'sessionNew').mockImplementation(async () => {
+    options.calls?.push('session-new');
+    sessionOpened();
+    return {
+      sessionId: 'room-session',
+      raw: options.sessionRaw ?? {
+        configOptions: [
+          {
+            id: 'model-axis',
+            category: 'model',
+            currentValue: 'default-model',
+            options: [{ id: 'default-model' }, { id: 'override-model' }],
+          },
+          {
+            id: 'effort-axis',
+            category: 'effort',
+            currentValue: 'medium',
+            options: [{ id: 'high' }, { id: 'medium' }, { id: 'low' }],
+          },
+        ],
+      },
+  };
   });
   vi.spyOn(acp, 'canPromptWithImages').mockReturnValue(false);
   vi.spyOn(acp, 'setModel').mockResolvedValue(undefined);
@@ -147,7 +163,9 @@ async function activateWith(
     await options.setConfigOptionImpl?.(configId, value);
   });
   vi.spyOn(acp, 'stop').mockResolvedValue(undefined);
-  vi.spyOn(acp, 'sessionPrompt').mockImplementation(async () => {
+  vi.spyOn(acp, 'sessionPrompt').mockImplementation(async (_sid, prompt) => {
+    options.calls?.push('prompt');
+    options.prompts?.push(typeof prompt === 'string' ? prompt : JSON.stringify(prompt));
     options.recordCalls?.push({ name: 'sessionPrompt', input: {} });
     return {
     stopReason: 'end_turn',
@@ -160,12 +178,13 @@ async function activateWith(
   const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
   const abort = new AbortController();
   const loop = new MonolithRoomTurnLoop({
-    roomId: 'room-id',
+    roomId,
+    prestartSession: options.prestartSession,
     workspaceId: 'workspace',
     cwd: config.workspaceRoot,
     runtime,
     config,
-    api: commandFixtureApi(api, 'room-id', runtime.agent.publicKey),
+    api: commandFixtureApi(api, roomId, runtime.agent.publicKey),
     scheduler,
     health: { poll: vi.fn(), failure: vi.fn(), presence: vi.fn() },
     signal: abort.signal,
@@ -620,4 +639,19 @@ describe('Room session activation model/effort selection', () => {
       ['effort-axis', 'medium'],
     ]);
   });
+});
+
+
+it('reuses boot preparation and supplies only the commanded Room context', async () => {
+  for (const roomId of ['room-a', 'room-b']) {
+    const calls: string[] = [], prompts: string[] = [];
+    await activateWith({}, {}, { prestartSession: true, roomId, calls, prompts });
+    expect(calls.filter(x => x === 'start')).toHaveLength(1);
+    expect(calls.filter(x => x === 'session-new')).toHaveLength(1);
+    expect(calls.indexOf('session-new')).toBeLessThan(calls.indexOf('command-available'));
+    expect(calls.indexOf('command-available')).toBeLessThan(calls.indexOf('prompt'));
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0]).toContain(`context-${roomId}`);
+    expect(prompts[0]).not.toContain(`context-${roomId === 'room-a' ? 'room-b' : 'room-a'}`);
+  }
 });

@@ -1,4 +1,5 @@
 import { notifyAgentConfigChange } from './postgres-live.js';
+import { recordAgentConnectedAfterNudge } from './free-agent-warning.js';
 import { SQUIRE_MCP_TARGET } from '@beeline/api-contract/phone';
 import { FIRST_PARTY_INTEGRATIONS } from './first-party-integrations.js';
 import { machineSquireReport, queueSquireWork, queueOwnerSquireWork, squireMachineAddress, squireMachineId, squireWorkStatus } from './squire-machine.js';
@@ -3970,6 +3971,7 @@ export class PhoneService {
           machineId, agentId: input.agentPubkey,
         });
       }
+      await recordAgentConnectedAfterNudge(database, pairing.created_by, pairing.workspace_id, input.agentPubkey);
       const exchange = createDaemonExchange
         ? await createDaemonExchange(input.agentPubkey, database)
         : undefined;

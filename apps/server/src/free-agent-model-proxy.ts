@@ -2,6 +2,7 @@ import { randomBytes } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { DEFAULT_FREE_AGENT_LIMITS, FREE_AGENT_BUDGET_MESSAGE, type FreeAgentLimits } from './free-agent-limits.js';
 import type { SqlDatabase } from './database.js';
+import { warnFreeAgentOwner } from './free-agent-warning.js';
 import { recordFreeAgentEvent, tokenHash, type FreeAgentConfig } from './free-agents.js';
 
 /**
@@ -349,7 +350,9 @@ export async function handleFreeAgentModelRequest(
       await db.query(`UPDATE free_agent_budget SET usd=GREATEST(0,usd+$2) WHERE day=$1::date`,
         [day, usd - reservation.reservedUsd]);
       await recordFreeAgentEvent(db, agent.agent_id, 'model_usage', { day, tokens: spent, usd });
-    }).catch(error => console.error('[free-agents] usage charge failed', error));
+    }).then(async () => {
+      if (spent > 0) await warnFreeAgentOwner(options.database, agent.agent_id, agent.owner_id, day, options.config.dailyTokenCap);
+    }).catch(error => console.error('[free-agents] usage charge or warning failed', error));
   const upstreamBase = (options.upstreamBaseUrl ?? 'https://openrouter.ai/api/v1').replace(/\/$/, '');
   const openRouter = new URL(upstreamBase).hostname.endsWith('openrouter.ai');
   const upstreamBody = {

@@ -106,6 +106,17 @@ discards the session. The leader reaper cancels overdue claimed commands after
 the cap plus 60 seconds of grace and stops their Machine even if it is still
 reporting activity. The existing idle, reaper and deletion intervals are unchanged.
 
+At 80% of the daily allowance, settlement writes one private owner/free-agent
+DM warning per owner per UTC day, with the midnight UTC reset and a Members ->
+Add agent link. Delivery does not call a model. The warning records
+`allowance_warning` and `nudge_shown`; pairing a non-free agent in the same
+Workspace within 24 hours records `agent_connected_after_nudge` once per agent.
+Model-authored nudges and guide acceptance are not reliably observable server-side,
+so they are not counted as nudges or guides started. Instructions limit unsolicited
+offers to inaccessible work or the warning, once per UTC day, and guide people
+through running their own CLI without requesting or posting pairing codes.
+Existing free-agent souls receive the guide during data migration.
+
 ## Server configuration
 
 Free agents stay off unless all of these are set: `BEELINE_FREE_AGENTS=1`,

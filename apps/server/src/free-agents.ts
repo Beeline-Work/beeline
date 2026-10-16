@@ -1,7 +1,7 @@
 import { createCipheriv, createDecipheriv, createECDH, createHash, randomBytes } from 'node:crypto';
 import { assignSeededAgentIdentity, resolveFace, uniqueAgentHandle } from '@beeline/api-contract/phone';
 import { createAgentCommand } from './agent-command.js';
-import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
+import type { SqlDatabase } from './database.js';
 import type { FreeAgentMachines } from './fly-machines.js';
 import { joinRooms } from './membership-join.js';
 import { lockIdentityHandleWorkspaces } from './workspace-handles.js';
@@ -381,7 +381,8 @@ async function wakeFreeAgentsForLeaves(database: SqlDatabase): Promise<number> {
      CROSS JOIN LATERAL (
        SELECT m.id,m.card FROM messages m
        WHERE m.room_id=subscriber.room_id
-         AND ${MESSAGE_CURSOR_MS_SQL.replace('created_at', 'm.created_at')}
+         -- The messages_room_cursor_idx expression (MESSAGE_CURSOR_MS_SQL), so the read stays indexed.
+         AND floor(extract(epoch FROM (m.created_at AT TIME ZONE 'UTC'))*1000)::bigint
            >= floor(extract(epoch FROM now()-interval '10 minutes')*1000)::bigint
          AND m.card_type IN ('member-left','member-removed')
      ) line

@@ -7,6 +7,10 @@ none. Code: `apps/server/src/free-agents.ts`, `free-agent-model-proxy.ts`,
 `fly-machines.ts`; helper `apps/body/src/free-agent-vm.ts`, `free-agent-idle.ts`;
 image `infra/free-agent/`.
 
+New free agents are named **Beebee** and use `@beebee`, with the existing numeric
+suffix rule when that handle is already taken. They keep their seeded face and
+soul. Existing free agents keep their names.
+
 ## Lifecycle
 
 - **Creation.** `PhoneService.createWorkspace` calls `createFreeAgentInWorkspace` in
@@ -61,7 +65,7 @@ reaped_idle, deleted_idle and allowance_reached.
 
 The Machine never holds a provider key. OpenCode's `beeline` provider points at
 `POST /v1/free-agents/model/chat/completions` with the agent's model token. The
-proxy pins `BEELINE_FREE_AGENT_MODEL` (default `deepseek/deepseek-v4-flash`). It
+proxy pins `BEELINE_FREE_AGENT_MODEL` (default `deepseek/deepseek-v4.1-flash`). It
 forwards to `BEELINE_FREE_AGENT_MODEL_UPSTREAM` (default OpenRouter) with
 `BEELINE_FREE_AGENT_MODEL_KEY`, which may be a Squire egress grant. Before each call it
 reserves the call's worst case (prompt bound plus a capped reply) against the

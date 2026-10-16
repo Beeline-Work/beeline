@@ -17,6 +17,7 @@ import {
   FreeAgentService,
   generateAgentKeypair,
   openSecrets,
+  freeAgentConfigFromEnv,
   type FreeAgentConfig,
 } from './free-agents.js';
 import { LiveHub } from './live.js';
@@ -149,18 +150,21 @@ describe('free starter agents', () => {
     expect(agent.state).toMatch(/provisioning|waking/);
 
     const identity = (
-      await db.query<{ kind: string; handle: string | null; owner_id: string; selected_model: string }>(
-        `SELECT i.kind,i.handle,a.owner_id,a.selected_model FROM identities i
+      await db.query<{ kind: string; name: string; handle: string | null; owner_id: string; selected_model: string; soul: { name: string; instructions: string } }>(
+        `SELECT i.kind,i.name,i.handle,a.owner_id,a.selected_model,a.soul FROM identities i
          JOIN agents a ON a.agent_id=i.id WHERE i.id=$1`,
         [agent.agent_id],
       )
     ).rows[0]!;
     expect(identity).toMatchObject({
       kind: 'agent',
+      name: 'Beebee',
+      handle: 'beebee',
       owner_id: OWNER,
       selected_model: 'beeline/deepseek/deepseek-v4-flash',
     });
-    expect(identity.handle).toBeTruthy();
+    expect(identity.soul.name).toBe('Beebee');
+    expect(identity.soul.instructions).toContain('You are Beebee');
     // A member of the Workspace and of #general, created in the same transaction.
     expect(
       (
@@ -208,6 +212,16 @@ describe('free starter agents', () => {
         ])
       ).rows.map((row) => row.kind),
     ).toEqual(['created', 'provisioned']);
+  });
+
+  it('keeps the Beebee name and de-duplicates its handle against existing members', async () => {
+    await db.query(`UPDATE identities SET handle='beebee' WHERE id=$1`, [OWNER]);
+    const { id } = await createWorkspace();
+    const agent = await freeAgentOf(id);
+    const identity = (await db.query<{ name: string; handle: string }>(
+      `SELECT name,handle FROM identities WHERE id=$1`, [agent.agent_id],
+    )).rows[0];
+    expect(identity).toEqual({ name: 'Beebee', handle: 'beebee_2' });
   });
 
   it('creates no second agent on a retried create, and stops at the per-owner limit', async () => {
@@ -587,4 +601,10 @@ describe('free starter agents', () => {
     expect(getPublicKey(Buffer.from(pair.secretKey, 'hex'))).toBe(pair.publicKey);
     expect(createECDH('secp256k1')).toBeTruthy();
   });
+});
+
+it('defaults free agents to V4.1 Flash and preserves an explicit model override', () => {
+  const env = { BEELINE_FREE_AGENTS: '1', BEELINE_FREE_AGENT_SEAL_KEY: 'seal', FLY_FREE_AGENT_IMAGE: 'image' };
+  expect(freeAgentConfigFromEnv(env, 'https://server.test')?.model).toBe('deepseek/deepseek-v4.1-flash');
+  expect(freeAgentConfigFromEnv({ ...env, BEELINE_FREE_AGENT_MODEL: 'custom/model' }, 'https://server.test')?.model).toBe('custom/model');
 });

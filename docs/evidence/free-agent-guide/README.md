@@ -29,3 +29,17 @@ tests passed and seven existing tests skipped. Both message-producer snapshots w
 updated for the approved private warning, and their 18 tests passed on rerun.
 Repository typecheck and server build passed. The 239-case integration file was
 split into eight name-filtered batches whose passing counts sum to all 239 cases.
+
+## Revision 3: model and name
+
+FREE-GUIDE-2 exercises the rebuilt server's `createWorkspace` →
+`readWorkspaceMembers` path with an isolated PGlite database and provisioning
+stubbed. The returned roster shows `Beebee` / `@beebee`; the stored selected model
+is `beeline/deepseek/deepseek-v4.1-flash`, and instructions say `You are Beebee`.
+All 62 affected free-agent and producer-guard tests passed, including the new
+default/override and handle-collision cases. Repository typecheck and server build
+passed again. This updates the affected coverage from the full-suite run above.
+
+The optional live Docker/OpenCode turn was not run: Docker and a free-agent image
+are present, but no isolated proof server/database or model key is configured in
+this session. No production settings or existing agents were changed.

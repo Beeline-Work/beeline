@@ -112,7 +112,7 @@ export function freeAgentConfigFromEnv(
   };
   return {
     limits: freeAgentLimitsFromEnv(env),
-    model: env.BEELINE_FREE_AGENT_MODEL || 'deepseek/deepseek-v4-flash',
+    model: env.BEELINE_FREE_AGENT_MODEL || 'deepseek/deepseek-v4.1-flash',
     idleSeconds: number('BEELINE_FREE_AGENT_IDLE_SECONDS', 60),
     maxPerOwner: number('BEELINE_FREE_AGENT_MAX_PER_OWNER', 3),
     dailyTokenCap: number('BEELINE_FREE_AGENT_DAILY_TOKENS', 300_000),
@@ -260,12 +260,12 @@ export async function createFreeAgentInWorkspace(
     takenNames: roster.rows.map((row) => row.name),
   });
   const handle = uniqueAgentHandle(
-    seeded.name,
+    'Beebee',
     roster.rows.flatMap((row) => (row.handle ? [row.handle] : [])),
   );
   await database.query(
     `INSERT INTO identities(id,kind,name,handle,face_id) VALUES($1,'agent',$2,$3,$4)`,
-    [agent.publicKey, seeded.name, handle, seeded.face],
+    [agent.publicKey, 'Beebee', handle, seeded.face],
   );
   await database.query(
     `INSERT INTO agents(agent_id,owner_id,soul,selected_model,machine_id,machine_name)
@@ -274,8 +274,8 @@ export async function createFreeAgentInWorkspace(
       agent.publicKey,
       input.creatorId,
       JSON.stringify({
-        name: seeded.name,
-        instructions: freeAgentInstructions(seeded.soul, seeded.name, config),
+        name: 'Beebee',
+        instructions: freeAgentInstructions(seeded.soul, 'Beebee', config),
         avatarSeed: agent.publicKey,
       }),
       freeAgentHarnessModel(config),

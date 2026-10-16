@@ -1,3 +1,4 @@
+import { captureHelperError } from './sentry.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { MachineControl, machineControlPath } from './machine-control.js';
 import { withKernelLock } from './kernel-lock.js';
@@ -478,6 +479,7 @@ async function serveMachineHelper(
         }
         reason = await runAgent(slot.configPath, host, slot.controller.signal);
       } catch (error) {
+        captureHelperError(error);
         console.error(`[helper] agent ${slot.agentId} failed:`, error);
         await settleDaemonStartFailure(dirname(slot.configPath), error).catch(() => undefined);
         slot.established = false;

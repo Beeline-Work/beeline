@@ -19,6 +19,7 @@
     "@beeline/auth": "*",
     "@beeline/push-gateway": "*",
     "@livekit/rtc-node": "^1.1.0",
+    "@sentry/node": "^10.76.2",
     "aws4fetch": "^1.0.20",
     "cron-parser": "^5.10.0",
     "firebase-admin": "^13.4.0",

@@ -19,6 +19,8 @@ Paths and commands below are relative to the repository root. Read these invaria
 
 ## Feature contracts
 
+- Sentry capture, authenticated Telegram relay, configuration and post-release proof: [error monitoring](error-monitoring.md). Keep Telegram outbound-only and exclude relay failures from recursive capture.
+
 - Private operator dashboard cohorts, fixture exclusions and metric provenance: [dashboard API](operator-dashboard-api.md); aggregate queries and regressions live in `operator-dashboard.ts` and `operator-dashboard.test.ts`.
 
 - Wallet settlement and push authority: [wallet tools](wallet-tools.md), `wallet-notices.ts`, `wallet-webhooks.ts`. Indexed incoming receipts stay in `wallet_transactions` without a System DM. Outgoing transactions, failures, refusals, pending notices and webhook receipts without a history row retain their notices.

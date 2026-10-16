@@ -1,3 +1,5 @@
+import { captureServerError } from './sentry.js';
+import { authenticSentryAlert, sendSentryTelegram, sentryTelegramMessage, type SentryTelegramConfig } from './sentry-telegram.js';
 import { verifyNip98Header } from '@beeline/nostr';
 import { WorkflowAuthorizationError } from './workflow-admin.js';
 import { WorkspaceSkillNotFoundError } from './institutional-skills.js';
@@ -137,6 +139,7 @@ export interface GitHubServerHooks {
 }
 
 export interface ServerOptions {
+  sentryTelegram?: SentryTelegramConfig;
   database: SqlDatabase;
   /** CDP receiver id -> subscription signing secret, server-only. */
   cdpWebhookSecrets?: Readonly<Record<string, string>>;
@@ -656,6 +659,8 @@ export function createBeelineServer(options: ServerOptions): Server {
       if (error instanceof GitHubHttpError && (error.status >= 500 || error.status === 429)) {
         status = 502;
       }
+      // A failing Telegram delivery must not create another alert to itself.
+      if (status >= 500 && url.pathname !== '/api/webhooks/sentry') captureServerError(error);
       console.error(
         '[req-error]',
         method,
@@ -1468,6 +1473,18 @@ async function route(
 ): Promise<void> {
   const url = exactPath(request.url);
   const method = request.method ?? 'GET';
+  if (method === 'POST' && url.pathname === '/api/webhooks/sentry') {
+    if (!authenticSentryAlert(options.sentryTelegram, url.searchParams.get('token'))) {
+      json(response, 401, { error: 'invalid_sentry_webhook' }); return;
+    }
+    let payload: Record<string, unknown>;
+    try { payload = await body(request); }
+    catch { json(response, 400, { error: 'invalid_sentry_alert' }); return; }
+    const message = sentryTelegramMessage(payload);
+    if (!message) { json(response, 400, { error: 'invalid_sentry_alert' }); return; }
+    await sendSentryTelegram(options.sentryTelegram!, message);
+    json(response, 200, { ok: true }); return;
+  }
   if (url.pathname.startsWith('/v1/free-agents/model/')) {
     if (!options.freeAgentModel) json(response, 503, { error: { message: 'free agent model unavailable' } });
     else await handleFreeAgentModelRequest(request, response, url.pathname, options.freeAgentModel);

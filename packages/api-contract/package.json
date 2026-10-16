@@ -58,6 +58,11 @@
       "types": "./dist/wallet.d.ts",
       "import": "./dist/wallet.js",
       "default": "./dist/wallet.js"
+    },
+    "./error-reporting": {
+      "types": "./dist/error-reporting.d.ts",
+      "import": "./dist/error-reporting.js",
+      "default": "./dist/error-reporting.js"
     }
   },
   "scripts": {

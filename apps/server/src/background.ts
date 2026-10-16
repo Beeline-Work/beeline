@@ -1,3 +1,4 @@
+import { captureServerError } from './sentry.js';
 import type { SqlDatabase } from './database.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import {
@@ -905,6 +906,7 @@ export class BackgroundLeader {
           );
         }
       } catch (error) {
+        captureServerError(error);
         console.error('[background] leader cycle failed', error);
         await this.wait();
       } finally {
@@ -984,6 +986,7 @@ export class BackgroundJobRunner {
     } catch (error) {
       health.lastErrorAt = this.now();
       health.consecutiveFailures++;
+      captureServerError(error, { background_job: name });
       console.error(`[background] ${name} failed`, error);
       return { ok: false };
     } finally {

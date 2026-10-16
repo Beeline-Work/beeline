@@ -1758,9 +1758,7 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
       await readOperatorDashboard(
         options.database,
         platforms,
-        process.env.BEELINE_DASHBOARD_LATEST_MOBILE_RELEASE ??
-          process.env.BEELINE_RELEASE_VERSION ??
-          'development',
+        process.env.BEELINE_DASHBOARD_LATEST_MOBILE_RELEASE ?? 'development',
         {
           ...(process.env.BEELINE_DASHBOARD_MIN_RUNTIME_IOS &&
           /^\d+$/.test(process.env.BEELINE_DASHBOARD_MIN_RUNTIME_IOS)

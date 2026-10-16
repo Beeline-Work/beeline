@@ -98,6 +98,15 @@ describe('free agent model proxy', () => {
     console.log('Demonstrated FREE-ABUSE-1: outside turn HTTP 403, zero upstream calls and charge; live turn HTTP 200.');
   });
 
+  it('refuses the former model token after the owner removes the free agent through Members', async () => {
+    await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [AGENT, OWNER]);
+    await db.query(`INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'owner'),($1,$3,'member')`, [WORKSPACE, OWNER, AGENT]);
+    const phone = new PhoneService(db, origin);
+    await phone.execute('removeAgent', { workspaceId: WORKSPACE, agentId: AGENT }, OWNER);
+    expect((await call({ messages: [] })).status).toBe(401);
+    expect(upstream).toEqual([]);
+  });
+
   it('atomically limits parallel owner calls per minute and allows the next minute', async () => {
     const limits = { ...DEFAULT_FREE_AGENT_LIMITS, callsPerMinute: 2 };
     const now = new Date('2026-10-16T12:00:00Z');

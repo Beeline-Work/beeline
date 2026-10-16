@@ -38,8 +38,16 @@ soul. Existing free agents keep their names.
   monotonic clock. It then replaces its socket at once (`LiveLink.reconnectNow`).
 - **Reaper (leader).** A running Machine with no work for 5 minutes is stopped. A
   Machine with no activity for 30 days is deleted. A later wake recreates it from the
-  sealed keys (its files are gone). Retiring the agent itself is not implemented and
-  needs a human decision.
+  sealed keys (its files are gone).
+- **Removal.** The existing Members remove action admits the agent owner or a
+  Workspace owner/admin. Removal from any Workspace retires the free-agent runtime,
+  matching the existing global daemon retirement. Its transaction keeps a permanent `removed_at` tombstone,
+  revokes model/bootstrap and daemon access, and records `removed`. After commit,
+  cleanup deletes the Fly Machine without delaying the removal. The leader retries
+  failed deletion, including a Machine created by provisioning already in flight.
+  Removed agents cannot bootstrap, wake, reap back into service, or be replaced by
+  `--add-free-agent` in that Workspace. Beebee's first hello ends by explaining how
+  to remove it from Members.
 - **Existing Workspaces.** An operator gives one its free agent with
   `node apps/server/dist/index.js --add-free-agent <workspaceId>` on a server Machine.
   The agent goes to the oldest owner and to `#general`, or to the oldest public

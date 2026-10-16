@@ -630,7 +630,7 @@ export async function claimAgentConnection(
     const freeAgent = await db.query<{ previous: string }>(
       `WITH old AS (SELECT agent_id,state FROM free_agents WHERE agent_id=$1 FOR UPDATE)
        UPDATE free_agents f SET state='running',last_activity_at=now(),updated_at=now()
-       FROM old WHERE f.agent_id=old.agent_id AND f.state NOT IN ('failed','destroyed')
+       FROM old WHERE f.agent_id=old.agent_id AND f.removed_at IS NULL AND f.state NOT IN ('failed','destroyed')
        RETURNING old.state previous`,
       [agentId],
     );

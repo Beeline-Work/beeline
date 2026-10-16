@@ -1005,10 +1005,10 @@ export class PhoneService {
   /** Only with a live hub: the cache is unsound without its message invalidations. */
   private readonly outlineCache?: HistoryOutlineCache;
 
-  private freeAgents?: Pick<FreeAgentService, 'createInWorkspace' | 'kick'>;
+  private freeAgents?: Pick<FreeAgentService, 'createInWorkspace' | 'kick' | 'remove'>;
 
   /** Give every newly created Workspace a free starter agent. */
-  setFreeAgents(freeAgents: Pick<FreeAgentService, 'createInWorkspace' | 'kick'>): void {
+  setFreeAgents(freeAgents: Pick<FreeAgentService, 'createInWorkspace' | 'kick' | 'remove'>): void {
     this.freeAgents = freeAgents;
   }
 
@@ -7900,6 +7900,8 @@ export class PhoneService {
         removed,
       }),
     );
+    // Network cleanup is fire-and-forget after the removal commits; the leader retries it.
+    this.freeAgents?.remove(input.agentId);
   }
   /**
    * Deletes the signed-in person's account and personal data — a real

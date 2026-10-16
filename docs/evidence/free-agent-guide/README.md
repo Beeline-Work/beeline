@@ -25,11 +25,12 @@ the local screenshot, owner-session Members check and FREE-GUIDE-2 as pre-merge
 proof (corner decision cdc383c8b896ed9f73100eecce3fd2a160a65dd339e862e6ea052d6de83f29e0).
 Ruby owns the production browser check after release and enablement.
 
-Server coverage: all 167 test files exercised in memory-bounded batches; 2,674
-tests passed and seven existing tests skipped. Both message-producer snapshots were
-updated for the approved private warning, and their 18 tests passed on rerun.
-Repository typecheck and server build passed. The 239-case integration file was
+Server coverage: all 167 test files exercised in memory-bounded batches; 2,683
+tests passed and seven existing tests skipped. The 239-case integration file was
 split into eight name-filtered batches whose passing counts sum to all 239 cases.
+The final free-agent/model-proxy run passed all 46 tests, including removal,
+nonblocking Fly cleanup, retry, provisioning races, authority and token refusal.
+Repository typecheck and server build passed.
 
 ## Revision 3: model and name
 
@@ -37,10 +38,34 @@ FREE-GUIDE-2 exercises the rebuilt server's `createWorkspace` →
 `readWorkspaceMembers` path with an isolated PGlite database and provisioning
 stubbed. The returned roster shows `Beebee` / `@beebee`; the stored selected model
 is `beeline/deepseek/deepseek-v4.1-flash`, and instructions say `You are Beebee`.
-All 62 affected free-agent and producer-guard tests passed, including the new
-default/override and handle-collision cases. Repository typecheck and server build
-passed again. This updates the affected coverage from the full-suite run above.
+Default/override and handle-collision cases are covered by the passing server suite.
 
 The optional live Docker/OpenCode turn was not run: Docker and a free-agent image
 are present, but no isolated proof server/database or model key is configured in
 this session. No production settings or existing agents were changed.
+
+## Revision 4: removal and first hello
+
+Feature proof FREE-REMOVE-1; not a defect report. Re-run after the server build:
+`node --import tsx docs/evidence/free-agent-guide/removal-proof.mjs`.
+The built server was exercised
+with an isolated PGlite database and a synthetic Fly Machines adapter. Production
+cannot run this head before deployment; the adapter deliberately fails deletion
+so the removal and retry path can be demonstrated without a live Machine.
+
+Steps: create Workspace → owner reads Members (Beebee present) → bootstrap →
+Members `removeAgent` while Fly deletion fails → owner reads Members (Beebee
+absent) → retry the old bootstrap and model token → restore Fly → leader sweep →
+mention Beebee, request a wake/provision and run the operator add path.
+
+Passing result: removal committed despite the Fly failure; model and bootstrap
+hashes were cleared; bootstrap was refused; model HTTP returned 401 with zero
+upstream calls; the leader retried deletion; subsequent mention, wake, sweep and
+operator add made no Machine. A separate regression holds provisioning in flight,
+removes Beebee, and confirms the newly returned Machine is deleted without
+restoring its bootstrap. The new hello instruction ends with the pinned sentence:
+“If you don't want me here, open Members and remove me from the Workspace.”
+
+Targeted free-agent, model-proxy and existing removal regressions passed, including
+Workspace owner/admin removal and removal from another joined Workspace. Repository typecheck and
+server build passed. The complete server suite passed in bounded batches, as summarized above.

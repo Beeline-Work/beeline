@@ -276,7 +276,7 @@ export async function handleFreeAgentModelRequest(
     ? (
         await options.database.query<{ agent_id: string; owner_id: string }>(
           `SELECT agent_id,owner_id FROM free_agents
-           WHERE model_token_hash=$1 AND state NOT IN ('failed','destroyed')`,
+           WHERE model_token_hash=$1 AND removed_at IS NULL AND state NOT IN ('failed','destroyed')`,
           [tokenHash(token)],
         )
       ).rows[0]

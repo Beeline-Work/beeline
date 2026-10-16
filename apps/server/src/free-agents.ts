@@ -23,6 +23,8 @@ CREATE TABLE IF NOT EXISTS free_agents (
   state text NOT NULL DEFAULT 'provisioning'
     CHECK (state IN ('provisioning','waking','running','sleeping','stopped','failed','destroyed')),
   fly_machine_id text,
+  removed_at timestamptz,
+  removal_cleaned_at timestamptz,
   sealed_keys text NOT NULL,
   bootstrap_hash text,
   model_token_hash text,
@@ -34,6 +36,8 @@ CREATE TABLE IF NOT EXISTS free_agents (
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE free_agents ADD COLUMN IF NOT EXISTS removed_at timestamptz;
+ALTER TABLE free_agents ADD COLUMN IF NOT EXISTS removal_cleaned_at timestamptz;
 CREATE UNIQUE INDEX IF NOT EXISTS free_agents_bootstrap_hash ON free_agents(bootstrap_hash)
   WHERE bootstrap_hash IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS free_agents_model_token_hash ON free_agents(model_token_hash)
@@ -187,6 +191,9 @@ export function generateAgentKeypair(): { secretKey: string; publicKey: string }
 export const FREE_AGENT_JOIN_GREETING =
   "what up boss? I'm a pro bono agent for beeline. I can help you set up this workspace, invite other humans and agents, or whatever else you might need";
 
+export const FREE_AGENT_REMOVAL_NOTE =
+  "If you don't want me here, open Members and remove me from the Workspace.";
+
 /**
  * The exit note. Both claims hold: leaving or removal keeps the member's
  * messages, and a Workspace admin can add them back (`addRoomMember`,
@@ -211,7 +218,8 @@ You run on your own small Linux cloud computer (${config.cpus} shared CPU, ${con
 
 Do real work when asked: write and edit files, run commands, install tools, research, draft and explain. Keep replies warm, short and concrete.
 
-When you first join, greet the Workspace owner in #general: two or three short sentences that say hello, say what you can do on your own computer, and suggest one small first task. Tell them to tag you with your @handle when they want you.
+When you first join, greet the Workspace owner in #general: two or three short sentences that say hello, say what you can do on your own computer, and suggest one small first task. Tell them to tag you with your @handle when they want you. End that first hello with exactly this sentence:
+${FREE_AGENT_REMOVAL_NOTE}
 
 When people join #general (a "joined" line), always reply, with nothing else, exactly: their @handles, then a space, then this sentence:
 ${FREE_AGENT_JOIN_GREETING}
@@ -396,7 +404,7 @@ async function wakeFreeAgentsForLeaves(database: SqlDatabase): Promise<number> {
   const leaves = await database.query<{ message_id: string; room_id: string; agent_id: string }>(
     `SELECT line.id message_id,subscriber.room_id,subscriber.identity_id agent_id
      FROM memberships subscriber
-     JOIN free_agents f ON f.agent_id=subscriber.identity_id AND f.state<>'failed'
+     JOIN free_agents f ON f.agent_id=subscriber.identity_id AND f.state<>'failed' AND f.removed_at IS NULL
      CROSS JOIN LATERAL (
        SELECT m.id,m.card FROM messages m
        WHERE m.room_id=subscriber.room_id
@@ -440,7 +448,7 @@ export async function recordFreeAgentEvent(
 /** Whether this agent is a free agent the server may wake. */
 export function freeAgentReachableSql(agentIdSql: string): string {
   return `EXISTS (SELECT 1 FROM free_agents reachable_free_agent
-    WHERE reachable_free_agent.agent_id=${agentIdSql} AND reachable_free_agent.state<>'failed')`;
+    WHERE reachable_free_agent.agent_id=${agentIdSql} AND reachable_free_agent.state<>'failed' AND reachable_free_agent.removed_at IS NULL)`;
 }
 
 export interface FreeAgentBootstrapGrant {
@@ -505,6 +513,7 @@ export class FreeAgentService {
 
   /** Bring one agent toward serving: provision when it has no Machine, otherwise wake it. */
   async #advance(agentId: string, cause: WakeCause): Promise<void> {
+    if (await this.cleanupRemoved(agentId)) return;
     if (await this.provision(agentId)) return;
     await this.wake(agentId, cause);
   }
@@ -521,7 +530,7 @@ export class FreeAgentService {
         `UPDATE free_agents SET provision_started_at=clock_timestamp(),
            provision_attempts=provision_attempts+1,updated_at=now(),
            state=CASE WHEN state='destroyed' THEN 'provisioning' ELSE state END
-         WHERE agent_id=$1 AND fly_machine_id IS NULL AND state IN ('provisioning','destroyed')
+         WHERE agent_id=$1 AND removed_at IS NULL AND fly_machine_id IS NULL AND state IN ('provisioning','destroyed')
            AND provision_attempts<5
            AND (provision_started_at IS NULL OR provision_started_at<clock_timestamp()-interval '2 minutes')
          RETURNING agent_id`,
@@ -531,10 +540,11 @@ export class FreeAgentService {
     if (!claimed) return false;
     try {
       const bootstrap = opaque('bfb');
-      await this.database.query(
-        `UPDATE free_agents SET bootstrap_hash=$2,updated_at=now() WHERE agent_id=$1`,
+      const active = await this.database.query(
+        `UPDATE free_agents SET bootstrap_hash=$2,updated_at=now() WHERE agent_id=$1 AND removed_at IS NULL RETURNING agent_id`,
         [agentId, tokenHash(bootstrap)],
       );
+      if (!active.rowCount) return false;
       const existing = await this.machines.find(agentId);
       if (existing) await this.machines.destroy(existing.id);
       const machine = await this.machines.create({
@@ -554,11 +564,14 @@ export class FreeAgentService {
         },
       });
       await this.database.query(
-        `UPDATE free_agents SET fly_machine_id=$2,state='waking',wake_requested_at=clock_timestamp(),
-           provision_error=NULL,updated_at=now()
+        `UPDATE free_agents SET fly_machine_id=$2,
+           state=CASE WHEN removed_at IS NULL THEN 'waking' ELSE state END,
+           wake_requested_at=CASE WHEN removed_at IS NULL THEN clock_timestamp() ELSE NULL END,
+           provision_started_at=NULL,removal_cleaned_at=NULL,provision_error=NULL,updated_at=now()
          WHERE agent_id=$1`,
         [agentId, machine.id],
       );
+      if (await this.cleanupRemoved(agentId)) return false;
       await recordFreeAgentEvent(this.database, agentId, 'provisioned', { machineId: machine.id });
       this.log(`agent ${agentId.slice(0, 12)} provisioned machine ${machine.id}`);
       return true;
@@ -567,7 +580,7 @@ export class FreeAgentService {
       await this.database.query(
         `UPDATE free_agents SET provision_error=$2,provision_started_at=NULL,updated_at=now(),
            state=CASE WHEN provision_attempts>=5 THEN 'failed' ELSE state END
-         WHERE agent_id=$1`,
+         WHERE agent_id=$1 AND removed_at IS NULL`,
         [agentId, message.slice(0, 1000)],
       );
       throw error;
@@ -591,7 +604,7 @@ export class FreeAgentService {
         `UPDATE free_agents f SET state='waking',wake_requested_at=clock_timestamp(),
            last_activity_at=now(),updated_at=now()
          FROM (SELECT agent_id,state previous FROM free_agents WHERE agent_id=$1 FOR UPDATE) old
-         WHERE f.agent_id=old.agent_id AND f.fly_machine_id IS NOT NULL
+         WHERE f.agent_id=old.agent_id AND f.removed_at IS NULL AND f.fly_machine_id IS NOT NULL
            AND (f.state IN ('sleeping','stopped')
              OR (f.state IN ('waking','running')
                AND (f.wake_requested_at IS NULL OR f.wake_requested_at<clock_timestamp()-interval '20 seconds')
@@ -622,7 +635,7 @@ export class FreeAgentService {
         // The Machine is gone (deleted by hand or by Fly). Recreate it.
         await this.database.query(
           `UPDATE free_agents SET fly_machine_id=NULL,state='destroyed',provision_attempts=0,
-             provision_started_at=NULL,updated_at=now() WHERE agent_id=$1`,
+             provision_started_at=NULL,updated_at=now() WHERE agent_id=$1 AND removed_at IS NULL`,
           [agentId],
         );
         return this.provision(agentId);
@@ -641,7 +654,7 @@ export class FreeAgentService {
     const slept = (
       await this.database.query<{ fly_machine_id: string }>(
         `UPDATE free_agents f SET state='sleeping',updated_at=now()
-         WHERE f.agent_id=$1 AND f.fly_machine_id IS NOT NULL AND f.state IN ('running','waking')
+         WHERE f.agent_id=$1 AND f.removed_at IS NULL AND f.fly_machine_id IS NOT NULL AND f.state IN ('running','waking')
            AND NOT EXISTS (SELECT 1 FROM agent_commands command
              WHERE command.agent_id=f.agent_id AND command.state IN ('pending','claimed')
                AND (command.state='claimed' OR command.wake_after IS NULL OR command.wake_after<=now()))
@@ -704,7 +717,7 @@ export class FreeAgentService {
                   i.name,a.soul
            FROM free_agents f JOIN workspaces w ON w.id=f.workspace_id
            JOIN identities i ON i.id=f.agent_id JOIN agents a ON a.agent_id=f.agent_id
-           WHERE f.bootstrap_hash=$1 AND f.state NOT IN ('failed','destroyed')
+           WHERE f.bootstrap_hash=$1 AND f.removed_at IS NULL AND f.state NOT IN ('failed','destroyed')
            FOR UPDATE OF f`,
           [tokenHash(token)],
         )
@@ -746,10 +759,21 @@ export class FreeAgentService {
    * retention window. Returns how many agents it acted on.
    */
   async sweep(): Promise<number> {
-    let acted = await wakeFreeAgentsForLeaves(this.database);
+    let acted = 0;
+    const removed = await this.database.query<{ agent_id: string }>(
+      `SELECT agent_id FROM free_agents WHERE removed_at IS NOT NULL AND removal_cleaned_at IS NULL
+       ORDER BY removed_at LIMIT 20`,
+    );
+    for (const row of removed.rows) {
+      acted++;
+      await this.cleanupRemoved(row.agent_id).catch(error =>
+        this.log(`remove ${row.agent_id.slice(0, 12)}: ${String(error)}`),
+      );
+    }
+    acted += await wakeFreeAgentsForLeaves(this.database);
     const provision = await this.database.query<{ agent_id: string }>(
       `SELECT agent_id FROM free_agents
-       WHERE fly_machine_id IS NULL AND state='provisioning' AND provision_attempts<5
+       WHERE removed_at IS NULL AND fly_machine_id IS NULL AND state='provisioning' AND provision_attempts<5
          AND (provision_started_at IS NULL OR provision_started_at<clock_timestamp()-interval '2 minutes')
        ORDER BY created_at LIMIT 20`,
     );
@@ -761,7 +785,7 @@ export class FreeAgentService {
     }
     const wakes = await this.database.query<{ agent_id: string }>(
       `SELECT f.agent_id FROM free_agents f
-       WHERE (f.fly_machine_id IS NOT NULL OR f.state='destroyed') AND f.state<>'failed'
+       WHERE (f.fly_machine_id IS NOT NULL OR f.state='destroyed') AND f.state<>'failed' AND f.removed_at IS NULL
          AND EXISTS (SELECT 1 FROM agent_commands command
            WHERE command.agent_id=f.agent_id AND command.state='pending'
              AND (command.wake_after IS NULL OR command.wake_after<=now())
@@ -785,7 +809,7 @@ export class FreeAgentService {
       `WITH cancelled AS (
          UPDATE agent_commands command SET state='cancelled',completed_at=clock_timestamp(),
            cancellation_reason='free-agent-time-limit'
-         FROM free_agents f WHERE command.agent_id=f.agent_id AND command.state='claimed'
+         FROM free_agents f WHERE f.removed_at IS NULL AND command.agent_id=f.agent_id AND command.state='claimed'
            AND command.action IN ('input','resume')
            AND COALESCE((SELECT turn.started_at FROM agent_turns turn
              WHERE turn.agent_id=command.agent_id AND turn.room_id=command.room_id
@@ -798,7 +822,7 @@ export class FreeAgentService {
            AND turn.request_id=cancelled.turn_request_id AND turn.status='working'
        )
        UPDATE free_agents f SET state='stopped',updated_at=now()
-       WHERE f.agent_id IN (SELECT agent_id FROM cancelled) AND f.fly_machine_id IS NOT NULL
+       WHERE f.removed_at IS NULL AND f.agent_id IN (SELECT agent_id FROM cancelled) AND f.fly_machine_id IS NOT NULL
        RETURNING f.agent_id,f.fly_machine_id`,
       [(this.config.limits ?? DEFAULT_FREE_AGENT_LIMITS).maxTurnMs + 60_000],
     );
@@ -811,7 +835,7 @@ export class FreeAgentService {
     }
     const idle = await this.database.query<{ agent_id: string; fly_machine_id: string }>(
       `UPDATE free_agents f SET state='sleeping',updated_at=now()
-       WHERE f.fly_machine_id IS NOT NULL AND f.state IN ('running','waking')
+       WHERE f.removed_at IS NULL AND f.fly_machine_id IS NOT NULL AND f.state IN ('running','waking')
          AND f.last_activity_at<clock_timestamp()-make_interval(secs => $1::double precision / 1000)
          AND COALESCE(f.wake_requested_at,f.created_at)<clock_timestamp()-make_interval(secs => $1::double precision / 1000)
          AND NOT EXISTS (SELECT 1 FROM agent_commands command
@@ -830,7 +854,7 @@ export class FreeAgentService {
     }
     const expired = await this.database.query<{ agent_id: string; fly_machine_id: string }>(
       `SELECT f.agent_id,f.fly_machine_id FROM free_agents f
-       WHERE f.fly_machine_id IS NOT NULL AND f.state IN ('sleeping','stopped')
+       WHERE f.removed_at IS NULL AND f.fly_machine_id IS NOT NULL AND f.state IN ('sleeping','stopped')
          AND f.last_activity_at<clock_timestamp()-make_interval(secs => $1::double precision / 1000)
          AND NOT EXISTS (SELECT 1 FROM agent_commands command
            WHERE command.agent_id=f.agent_id
@@ -846,7 +870,7 @@ export class FreeAgentService {
         await this.database.query(
           `UPDATE free_agents SET fly_machine_id=NULL,state='destroyed',bootstrap_hash=NULL,
              provision_attempts=0,provision_started_at=NULL,updated_at=now()
-           WHERE agent_id=$1 AND fly_machine_id=$2`,
+           WHERE agent_id=$1 AND fly_machine_id=$2 AND removed_at IS NULL`,
           [row.agent_id, row.fly_machine_id],
         );
         await recordFreeAgentEvent(this.database, row.agent_id, 'deleted_idle', {
@@ -859,10 +883,39 @@ export class FreeAgentService {
     return acted;
   }
 
+  /** Called only after removal commits; Fly failure cannot fail the Members action. */
+  remove(agentId: string): void {
+    void this.cleanupRemoved(agentId).catch(error =>
+      this.log(`remove ${agentId.slice(0, 12)}: ${String(error)}`),
+    );
+  }
+
+  /** Delete a retired agent's Machine; a failed call leaves durable work for the leader. */
+  async cleanupRemoved(agentId: string): Promise<boolean> {
+    const row = (await this.database.query<{ fly_machine_id: string | null; removal_cleaned_at: Date | null }>(
+      `SELECT fly_machine_id,removal_cleaned_at FROM free_agents WHERE agent_id=$1 AND removed_at IS NOT NULL`,
+      [agentId],
+    )).rows[0];
+    if (!row) return false;
+    if (row.removal_cleaned_at) return true;
+    const machineId = row.fly_machine_id ?? (await this.machines.find(agentId))?.id;
+    if (machineId) await this.machines.destroy(machineId);
+    // A create already in flight can return after this delete. Keep cleanup pending
+    // through its provision lease; its completion stores the new id and retries cleanup.
+    await this.database.query(
+      `UPDATE free_agents SET fly_machine_id=NULL,removal_cleaned_at=CASE
+         WHEN provision_started_at IS NULL OR provision_started_at<clock_timestamp()-interval '2 minutes'
+         THEN clock_timestamp() ELSE NULL END,updated_at=now()
+       WHERE agent_id=$1 AND removed_at IS NOT NULL AND fly_machine_id IS NOT DISTINCT FROM $2`,
+      [agentId, row.fly_machine_id],
+    );
+    return true;
+  }
+
   /** A committed command for any agent: start the Machine if it is a sleeping free agent. */
   kickIfFree(agentId: string): void {
     void this.database
-      .query(`SELECT 1 FROM free_agents WHERE agent_id=$1 AND state<>'failed'`, [agentId])
+      .query(`SELECT 1 FROM free_agents WHERE agent_id=$1 AND state<>'failed' AND removed_at IS NULL`, [agentId])
       .then((found) => {
         if (found.rowCount) this.kick(agentId, 'command');
       })

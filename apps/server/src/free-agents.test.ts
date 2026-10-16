@@ -13,6 +13,7 @@ import type { FreeAgentMachines, FreeAgentMachineSpec } from './fly-machines.js'
 import {
   addFreeAgentToWorkspace,
   FREE_AGENT_EXIT_NOTE,
+  FREE_AGENT_REMOVAL_NOTE,
   FREE_AGENT_JOIN_GREETING,
   FreeAgentService,
   generateAgentKeypair,
@@ -52,9 +53,13 @@ class FakeMachines implements FreeAgentMachines {
   readonly specs: FreeAgentMachineSpec[] = [];
   readonly states = new Map<string, string>();
   failSuspend = false;
+  failDestroy = false;
+  beforeCreate?: () => Promise<void>;
+  beforeDestroy?: () => Promise<void>;
   #next = 0;
 
   async create(spec: FreeAgentMachineSpec) {
+    await this.beforeCreate?.();
     const id = `m${++this.#next}`;
     this.calls.push(`create ${spec.agentId.slice(0, 4)}`);
     this.specs.push(spec);
@@ -81,7 +86,9 @@ class FakeMachines implements FreeAgentMachines {
     this.states.set(id, 'stopped');
   }
   async destroy(id: string) {
+    await this.beforeDestroy?.();
     this.calls.push(`destroy ${id}`);
+    if (this.failDestroy) throw new Error('delete unavailable');
     this.states.set(id, 'destroyed');
   }
   async state(id: string) {
@@ -592,7 +599,117 @@ describe('free starter agents', () => {
     );
     expect(soul).toContain(FREE_AGENT_JOIN_GREETING);
     expect(soul).toContain(FREE_AGENT_EXIT_NOTE);
+    expect(FREE_AGENT_REMOVAL_NOTE).toBe("If you don't want me here, open Members and remove me from the Workspace.");
+    expect(soul).toContain(`End that first hello with exactly this sentence:\n${FREE_AGENT_REMOVAL_NOTE}`);
     expect(soul).toContain('Never greet an agent.');
+  });
+
+  it('removes Beebee through Members, revokes bootstrap and never recreates it on a mention or wake', async () => {
+    const { id, roomId } = await createWorkspace();
+    await settle();
+    const agent = await freeAgentOf(id);
+    const bootstrap = machines.specs[0]!.env.BEELINE_FREE_AGENT_BOOTSTRAP!;
+    const grant = await freeAgents.bootstrap(bootstrap);
+    expect(grant?.modelToken).toBeTruthy();
+    await phone.execute('removeAgent', { workspaceId: id, agentId: agent.agent_id }, OWNER);
+    await settle();
+    expect(machines.calls).toContain('destroy m1');
+    const removed = (await db.query(`SELECT removed_at,bootstrap_hash,model_token_hash FROM free_agents WHERE agent_id=$1`, [agent.agent_id])).rows[0]!;
+    expect(removed.removed_at).toBeTruthy();
+    expect(removed.bootstrap_hash).toBeNull();
+    expect(removed.model_token_hash).toBeNull();
+    expect(await freeAgents.bootstrap(bootstrap)).toBeUndefined();
+    machines.calls.length = 0;
+    await phone.execute('sendRoomMessage', { roomId, messageId: '8'.repeat(64), text: '@beebee are you there?', mentions: [agent.agent_id] }, OWNER);
+    freeAgents.kickIfFree(agent.agent_id);
+    freeAgents.kick(agent.agent_id);
+    expect(await freeAgents.wake(agent.agent_id)).toBe(false);
+    expect(await freeAgents.provision(agent.agent_id)).toBe(false);
+    expect(await freeAgents.requestSleep(agent.agent_id)).toEqual({ sleep: false });
+    expect(await addFreeAgentToWorkspace(db, freeAgents, id)).toBeUndefined();
+    await freeAgents.sweep();
+    await settle();
+    expect(machines.calls).toEqual([]);
+    expect((await db.query(`SELECT kind FROM free_agent_events WHERE agent_id=$1 AND kind='removed'`, [agent.agent_id])).rows).toHaveLength(1);
+  });
+
+  it.each(['owner', 'admin'])('allows a Workspace %s to remove another person\'s Beebee', async role => {
+    const { id } = await createWorkspace();
+    await settle();
+    const agent = await freeAgentOf(id);
+    await phone.execute('addWorkspaceMember', { workspaceId: id, memberId: FRIEND, role }, OWNER);
+    await phone.execute('removeAgent', { workspaceId: id, agentId: agent.agent_id }, FRIEND);
+    await settle();
+    expect(machines.states.get('m1')).toBe('destroyed');
+    expect((await db.query(`SELECT model_token_hash,removed_at FROM free_agents WHERE agent_id=$1`, [agent.agent_id])).rows[0])
+      .toMatchObject({ model_token_hash: null, removed_at: expect.any(Date) });
+  });
+
+  it('retires a free agent even when it is removed from another Workspace it joined', async () => {
+    const { id } = await createWorkspace();
+    await settle();
+    const agent = await freeAgentOf(id);
+    const other = '77777777-7777-4777-8777-777777777777';
+    await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Other')`, [other]);
+    await db.query(`INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'owner'),($1,$3,'member')`, [other, FRIEND, agent.agent_id]);
+    await phone.execute('removeAgent', { workspaceId: other, agentId: agent.agent_id }, FRIEND);
+    await settle();
+    expect(machines.states.get('m1')).toBe('destroyed');
+    expect(await freeAgents.wake(agent.agent_id)).toBe(false);
+    expect(await addFreeAgentToWorkspace(db, freeAgents, id)).toBeUndefined();
+  });
+
+  it('commits removal despite Fly deletion failure and retries it in the leader sweep', async () => {
+    const { id } = await createWorkspace();
+    await settle();
+    const agent = await freeAgentOf(id);
+    machines.failDestroy = true;
+    let deletionStarted!: () => void;
+    let releaseDelete!: () => void;
+    const started = new Promise<void>(resolve => { deletionStarted = resolve; });
+    const blocked = new Promise<void>(resolve => { releaseDelete = resolve; });
+    machines.beforeDestroy = async () => { deletionStarted(); await blocked; };
+    const removal = phone.execute('removeAgent', { workspaceId: id, agentId: agent.agent_id }, OWNER);
+    await started;
+    try {
+      expect(await Promise.race([removal.then(() => true), new Promise(resolve => setTimeout(() => resolve(false), 100))])).toBe(true);
+    } finally {
+      releaseDelete();
+      await removal;
+    }
+    await settle();
+    machines.beforeDestroy = undefined;
+    expect((await db.query(`SELECT removed_at,removal_cleaned_at,fly_machine_id FROM free_agents WHERE agent_id=$1`, [agent.agent_id])).rows[0])
+      .toMatchObject({ removed_at: expect.any(Date), removal_cleaned_at: null, fly_machine_id: 'm1' });
+    machines.failDestroy = false;
+    machines.calls.length = 0;
+    await freeAgents.sweep();
+    expect(machines.calls).toEqual(['destroy m1']);
+    expect((await db.query(`SELECT removal_cleaned_at,fly_machine_id FROM free_agents WHERE agent_id=$1`, [agent.agent_id])).rows[0])
+      .toMatchObject({ removal_cleaned_at: expect.any(Date), fly_machine_id: null });
+    machines.calls.length = 0;
+    await freeAgents.sweep();
+    expect(machines.calls).toEqual([]);
+  });
+
+  it('cleans up a Machine whose provisioning finishes after removal without restoring its bootstrap', async () => {
+    let release!: () => void;
+    let entered!: () => void;
+    const creating = new Promise<void>(resolve => { entered = resolve; });
+    const finish = new Promise<void>(resolve => { release = resolve; });
+    machines.beforeCreate = async () => { entered(); await finish; };
+    const { id } = await createWorkspace();
+    await creating;
+    const agent = await freeAgentOf(id);
+    await phone.execute('removeAgent', { workspaceId: id, agentId: agent.agent_id }, OWNER);
+    release();
+    await settle();
+    expect(machines.calls.filter(call => call.startsWith('create '))).toEqual([`create ${agent.agent_id.slice(0, 4)}`]);
+    expect(machines.states.get('m1')).toBe('destroyed');
+    expect((await db.query(`SELECT removed_at,bootstrap_hash,fly_machine_id FROM free_agents WHERE agent_id=$1`, [agent.agent_id])).rows[0])
+      .toMatchObject({ removed_at: expect.any(Date), bootstrap_hash: null, fly_machine_id: null });
+    await freeAgents.sweep();
+    expect(machines.specs).toHaveLength(1);
   });
 
   it('generates keys in the helper identity format', () => {

@@ -117,3 +117,28 @@ Fly app secret and never fetched, printed, or sent in Machine config env. The
 commander owns unsetting that temporary secret. All model requests stayed at
 or below 65,536 output tokens. This comparison does not exercise a long session
 or Workspace/#general transport; those integration limits remain explicit.
+
+## Workspace and retained-history path
+
+`node infra/free-agent/prove-workspace.mjs` starts an isolated Postgres database,
+the built Beeline server and the built helper inside the pinned Pi image. It
+uses the phone HTTP API to create a Workspace, sends an actual mention command
+to Beebee in #general, then checks the agent's committed reply through the
+phone Room read. This exercises bootstrap, daemon activation, live command
+claiming, the Beeline model proxy, real Pi/ACP, and reply publication. Every
+service, identity, token and helper home is disposable. No production helper
+manager or provider key is used.
+
+Proof `PI-WORKSPACE-1` passed: the new agent row had harness `pi`, the command
+completed, and `PI_GENERAL_PROOF_OK` appeared in the phone Room DTO. Six
+additional 8,000-character context messages each received a visible reply in
+the same Room. Upstream history grew from two to fourteen messages and request
+size from 32,798 to 128,588 bytes. All seven requests used the configured
+`deepseek/deepseek-v4.1-flash` model ID and a 65,536-token output cap.
+
+`workspace-pi-proof.json` contains the visible message IDs and request metadata.
+The local upstream is deterministic: it proves Beeline transport, routing and
+bounded requests across retained history, not DeepSeek behavior near its full
+context window. The separate real Fly comparison supplies the live DeepSeek
+model evidence. All local containers were removed, and the final Fly Machines
+API list was again empty. No PR was opened or merge attempted.

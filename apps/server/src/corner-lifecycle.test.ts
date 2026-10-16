@@ -322,8 +322,14 @@ async function redHead(cornerId: string, number: number, headSha: string) {
 const commands = (agentId: string, roomId: string) =>
   daemon.execute('getAgentCommands', { roomId }, agentId).then((r) => r.commands);
 
-const result = (c: AgentCommand, text: string, generationId = 'g1') =>
-  daemon.execute('postRoomMessage', { roomId: c.roomId, requestId: c.turnRequestId, generationId, text }, c.agentId);
+const result = async (c: AgentCommand, text: string, generationId = 'g1') => {
+  const published = await daemon.execute('postRoomMessage', { roomId: c.roomId, requestId: c.turnRequestId, generationId, text }, c.agentId);
+  // Public corner prose no longer consumes an assignment. Match the real
+  // helper, which always follows publication with its terminal receipt.
+  await daemon.execute('postAgentTurnReceipt', { roomId: c.roomId, requestId: c.turnRequestId,
+    generationId, agentId: c.agentId, status: 'complete' }, c.agentId);
+  return published;
+};
 
 describe('the corner lifecycle contract itself', () => {
   it('validates against the shared workflow-contract schema', () => {

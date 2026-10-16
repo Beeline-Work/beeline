@@ -27,6 +27,7 @@ Keep shared safety rules here; read the area guide below before editing that sub
 | Corners, briefs, membership, commander, merge/review/close | [Corner authority and lifecycle](docs/agent-corners.md) |
 | Server reads, commands, live fanout, mentions, tray, joins | [Server-indexed surfaces and Room reads](docs/agent-server-surfaces.md) |
 | Database, grants, retirement, identities, feedback, wallet, apps/MCP, media | [Server safety and feature invariants](docs/agent-server-invariants.md); [approval matrix](docs/approval-matrix.md) |
+| Free starter agents on Fly Machines: creation, wake/sleep, model proxy | [Free agents](docs/free-agents.md) |
 | Institutional memory and saved workflow runtime | [Memory and workflow invariants](docs/agent-memory-workflows.md); [workflow format and tools](docs/workflows/README.md) |
 | Helper, harness, sandbox, ACP, models, sign-in, connectors | [Body agent invariants](docs/agent-body.md) |
 | System/card grammar, subscriptions, causes, approval resume | [System lines and events](docs/agent-system-events.md) |

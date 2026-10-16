@@ -74,6 +74,8 @@ export class LiveLink {
   #pongDeadline: ReturnType<typeof setTimeout> | undefined;
   #heartbeatDeadline: ReturnType<typeof setTimeout> | undefined;
   #wanted = false;
+  /** The next reconnect skips its backoff (`reconnectNow`). */
+  #immediate = false;
   #updateAnnounced = false;
   #reconnects = 0;
   readonly #openListeners = new Set<() => void>();
@@ -133,6 +135,24 @@ export class LiveLink {
     if (this.#state !== 'update-required' && this.#state !== 'refused') this.#state = 'disconnected';
     socket?.close(forUpdate ? HELPER_UPDATE_CLOSE_CODE : undefined,
       forUpdate ? HELPER_UPDATE_CLOSE_REASON : undefined);
+  }
+
+  /**
+   * Replace the socket now, without backoff. A free agent's Machine calls this
+   * after it resumes from suspension: its old socket may look open but the
+   * server has already let it go.
+   */
+  reconnectNow(): void {
+    if (!this.#wanted || this.#state === 'update-required' || this.#state === 'refused') return;
+    clearTimeout(this.#reconnect);
+    this.#reconnect = undefined;
+    const socket = this.#socket;
+    if (!socket) {
+      this.#connect();
+      return;
+    }
+    this.#immediate = true;
+    socket.terminate();
   }
 
   send(data: string): boolean {
@@ -307,7 +327,8 @@ export class LiveLink {
       this.#failedConnects += 1;
       delay = this.#random() * ceiling;
     }
-    delay = Math.floor(Math.max(delay, this.#retryAfterMs));
+    delay = this.#immediate ? 0 : Math.floor(Math.max(delay, this.#retryAfterMs));
+    this.#immediate = false;
     this.#retryAfterMs = 0;
     this.#reconnects += 1;
     this.#reconnect = setTimeout(() => {

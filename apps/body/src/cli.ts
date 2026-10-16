@@ -286,6 +286,16 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (command === 'free-agent') {
+    // Only a free starter agent's Fly Machine runs this (`free-agent-vm.ts`).
+    installUnhandledRejectionGuard();
+    const { runFreeAgentCommand } = await import('./free-agent-vm.js');
+    const { reason, lifecycle } = await runFreeAgentCommand();
+    daemonLifecycle = lifecycle;
+    lifecycle.exit(reason);
+    return;
+  }
+
   if (command === 'update') {
     await runUpdateCommand(args);
     return;

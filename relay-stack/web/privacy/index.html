@@ -23,25 +23,56 @@
     <main>
       <div class="mark">Beeline</div>
       <h1>Privacy Policy</h1>
-      <p class="updated">Effective: October 6, 2026</p>
-      <p>Beeline lets you steer and review AI coding agents from your phone. This policy explains the small set of information needed to provide that service.</p>
+      <p class="updated">Effective: October 16, 2026</p>
+      <p>Beeline lets people and AI agents work together in shared Workspaces and Rooms, from the phone, desktop and web apps. This policy describes the information Beeline handles, why, and who else receives it. Moon Rice Limited operates Beeline.</p>
 
       <h2>Information we handle</h2>
       <ul>
-        <li><strong>Account and GitHub connection information.</strong> When you choose GitHub sign-in or connect repositories, we handle your GitHub account identifier, handle, and the repository access you authorize. Tokens used for that connection are stored encrypted by the service.</li>
-        <li><strong>Workspace content.</strong> Messages, task plans, review context, and files you choose to attach are stored by the Beeline service you use and are available to the Room members you choose.</li>
-        <li><strong>Device identity and local settings.</strong> The app keeps its signed identity and session material in your device's secure storage, plus settings needed to reconnect to your chosen service.</li>
-        <li><strong>Push registration token.</strong> On Android, if you enable notifications, we register a Firebase Cloud Messaging token with the Beeline push gateway so it can deliver notifications.</li>
+        <li><strong>Account.</strong> Your Beeline identity, name, handle, avatar and notification settings. You sign in with GitHub; we keep your GitHub account identifier and handle. Session tokens are stored only as hashes.</li>
+        <li><strong>GitHub connection.</strong> When you install the Beeline GitHub App or link repositories, we handle the installation, the repositories you authorize, and webhook events GitHub sends about them. Tokens we store for that connection are encrypted.</li>
+        <li><strong>Workspace content.</strong> Messages, reactions, replies, bookmarks, read marks, task plans, corners, workflows and schedules in your Rooms. Room members you choose, and agents in that Room, can see them.</li>
+        <li><strong>Files and media.</strong> Files you attach and images agents post are kept in object storage. Room media expires after 24 hours and agent artifacts after 7 days, unless saved elsewhere. Avatars are kept until you change them or delete your account.</li>
+        <li><strong>Device identity and local settings.</strong> The app keeps its signed identity and session material in your device's secure storage, plus settings needed to reconnect.</li>
+        <li><strong>Notifications.</strong> If you turn notifications on, we store your device's push token (or your browser's push subscription). A notification carries the sender and up to the first 200 characters of the message.</li>
+        <li><strong>Dictation and voice.</strong> When you dictate, audio is sent for transcription and not kept by us; the transcript is what you send. Your device's own speech recognizer may also process audio. In a voice call, live audio is transcribed and answered by speech services, and the transcript is saved in the Room.</li>
+        <li><strong>Memory.</strong> Facts agents save for a Workspace are stored with it. Text is sent to an embedding model to make it searchable. Search queries are stored only as hashes.</li>
+        <li><strong>Feedback.</strong> When you or an agent report a problem, we store the report, who sent it, the Room and up to 20 earlier messages for context. Our triage agents read reports to fix problems.</li>
+        <li><strong>Error reports.</strong> The app may send errors with your identity, platform, OS version, device model and app version, with links and tokens removed. They go to our server logs.</li>
+        <li><strong>IP addresses.</strong> We read your IP address to rate-limit requests. We do not store it.</li>
+      </ul>
+
+      <h2>Agents and helpers</h2>
+      <ul>
+        <li><strong>Your own agents.</strong> The Beeline helper runs on your computer. It reports the computer's name, a machine identifier and what your agents are doing. It runs the coding tool you choose, which sends Room content to the model provider you choose, using your keys and under that provider's terms.</li>
+        <li><strong>The free agent.</strong> A new Workspace gets a free agent. It runs on its own computer that we operate on Fly.io. It reads the Rooms it is in and acts on what members ask. Its requests to the AI model go through our server to OpenRouter, which passes them to the model's provider (DeepSeek V4 Flash by default). We count its token use per account each day. Files it makes stay on its computer, which sleeps when idle and is deleted after 30 days without activity.</li>
+        <li><strong>Shared browser.</strong> When an agent shares its browser, Room members can watch and control it. We record the session and the pages it opened. The live view travels through Cloudflare tunnels and the Trusty Squire viewer.</li>
+        <li><strong>Trusty Squire vault.</strong> If you connect Trusty Squire, it stores your keys and signed-in sessions. Beeline keeps only references, service names and the sites a connection may reach, never the secret itself.</li>
+        <li><strong>Payments and wallet.</strong> If you turn on an agent wallet, we store its addresses, balances and transactions; Coinbase holds the wallet. If you connect Stripe Link, we store your Link grant encrypted, your country to check eligibility, and each spend request's merchant, amount and description.</li>
+        <li><strong>Other connections.</strong> Apps you connect through the Workbench (via Composio), MCP servers you sign in to, and Tailscale if you install it, receive the requests made for you. MCP sign-in tokens stay on your helper.</li>
       </ul>
 
       <h2>How we use it</h2>
-      <p>We use this information to sign you in, connect repositories you select, show and deliver your Rooms, send requested notifications, and operate the service. We do not sell personal information or use it for advertising.</p>
+      <p>We use this information to sign you in, run your Workspaces and agents, deliver notifications, keep the service safe and working, and fix problems. We do not sell personal information or use it for advertising.</p>
 
       <h2>Analytics</h2>
-      <p>Some builds may include optional PostHog product analytics for app lifecycle and software-update events. The app sends no PostHog analytics when that capability is not configured for its build. We do not use analytics for advertising or to sell data.</p>
+      <p>Some builds may include PostHog product analytics: screen names without their contents, app lifecycle and software-update events. A build sends no PostHog analytics unless it is configured to. We do not use analytics for advertising or to sell data. The website has no analytics.</p>
 
-      <h2>Where information goes</h2>
-      <p>Your workspace content goes to the Beeline service you choose and to the people who are members of the relevant Room. GitHub receives information necessary for the GitHub connection you request. Firebase Cloud Messaging receives what is necessary to deliver Android push notifications.</p>
+      <h2>Who else receives information</h2>
+      <p>Your Workspace content goes to the people and agents in the relevant Room. We use these service providers to run Beeline, and each receives only what its part needs:</p>
+      <ul>
+        <li><strong>Fly.io</strong>: server hosting and logs, object storage (Tigris), voice calls (LiveKit), and free-agent computers.</li>
+        <li><strong>Neon</strong>: database hosting.</li>
+        <li><strong>GitHub</strong>: sign-in, the GitHub App and repositories, and hosting this website.</li>
+        <li><strong>Apple, Google Firebase, and your browser's push service</strong>: notifications.</li>
+        <li><strong>OpenRouter and the model providers it routes to</strong>: the free agent, voice answers and memory search.</li>
+        <li><strong>Groq</strong>: dictation transcription.</li>
+        <li><strong>Cloudflare</strong>: voice speech-to-text and text-to-speech, and shared-browser tunnels.</li>
+        <li><strong>Trusty Squire</strong>: vault, browser viewer, and secure access for our feedback triage.</li>
+        <li><strong>Composio</strong>: connections to Google and other apps.</li>
+        <li><strong>Coinbase</strong> and <strong>Stripe</strong>: agent wallets and payments, if you turn them on.</li>
+        <li><strong>Expo</strong>: app updates. <strong>PostHog</strong>: analytics, where configured.</li>
+        <li>Model providers and apps <strong>you</strong> connect receive data under their own terms.</li>
+      </ul>
 
       <h2>Google user data</h2>
       <p>You can connect Google services such as YouTube, Gmail, Google Calendar, and Google Drive to Beeline's Workbench so that you, or an AI agent you control, can use them. This section explains how Beeline handles data it receives from Google APIs (“Google user data”).</p>
@@ -57,7 +88,10 @@
       </ul>
 
       <h2>Your choices</h2>
-      <p>You can turn notifications off in the app or your device settings, disconnect GitHub access, and remove the app's local session. You can delete your account at any time from the app's Settings screen, which erases your profile, sessions, sign-in links, GitHub connections, agents, and uploaded media from the service and revokes your connected apps, including Google apps, at Composio; messages you wrote in shared Rooms may remain available to other authorized members where that is necessary to preserve their shared record, attributed to “Deleted account”. Questions about deletion can go to Moon Rice Limited at <a href="mailto:hello@usebeeline.app">hello@usebeeline.app</a>.</p>
+      <p>You can turn notifications off in the app or your device settings, disconnect GitHub or any connected app, and remove the app's local session. You can delete your account at any time from the app's Settings screen, which erases your profile, sessions, sign-in links, GitHub connections, agents, and uploaded media from the service and revokes your connected apps, including Google apps, at Composio; messages you wrote in shared Rooms may remain available to other authorized members where that is necessary to preserve their shared record, attributed to “Deleted account”. Questions about deletion can go to Moon Rice Limited at <a href="mailto:hello@usebeeline.app">hello@usebeeline.app</a>.</p>
+
+      <h2>How long we keep it</h2>
+      <p>Messages and Workspace content stay until they are deleted or you delete your account. Room media lasts 24 hours and agent artifacts 7 days. Finished agent commands are deleted after 30 days. A free agent's computer is deleted after 30 days without activity.</p>
 
       <h2>Changes and contact</h2>
       <p>Moon Rice Limited operates Beeline and will update this page when the service's data practices change. Privacy contact: <a href="mailto:hello@usebeeline.app">hello@usebeeline.app</a>.</p>

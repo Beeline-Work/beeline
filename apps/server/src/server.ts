@@ -8,6 +8,8 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { serveComputerSession, serveComputerStatus, upgradeBodyComputerSource, upgradeComputerSession, upgradeComputerWaiter } from './computer-session.js';
 import type { Duplex } from 'node:stream';
 import { isTransientDatabaseConnectionError, type SqlDatabase } from './database.js';
+import type { FreeAgentService } from './free-agents.js';
+import { handleFreeAgentModelRequest, type FreeAgentModelProxyOptions } from './free-agent-model-proxy.js';
 import { isAppSignInLink } from './composio-apps.js';
 import type { ComposioApps } from './composio-apps.js';
 import { ingestComposioDelivery } from './composio-delivery.js';
@@ -158,6 +160,10 @@ export interface ServerOptions {
   daemon: DaemonService;
   live: LiveHub;
   connectionPresence?: ConnectionPresence;
+  /** Free starter agents: Machine wake/sleep and first-boot bootstrap. */
+  freeAgents?: FreeAgentService;
+  /** The free agents' model proxy; absent refuses every model call. */
+  freeAgentModel?: FreeAgentModelProxyOptions;
   mediaMaximumBytes: number;
   /** Absent when no S3 env is configured: object writes then refuse with a
    *  clear 503. */
@@ -1462,6 +1468,36 @@ async function route(
 ): Promise<void> {
   const url = exactPath(request.url);
   const method = request.method ?? 'GET';
+  if (url.pathname.startsWith('/v1/free-agents/model/')) {
+    if (!options.freeAgentModel) json(response, 503, { error: { message: 'free agent model unavailable' } });
+    else await handleFreeAgentModelRequest(request, response, url.pathname, options.freeAgentModel);
+    return;
+  }
+  if (method === 'POST' && url.pathname === '/v1/free-agents/bootstrap') {
+    const input = await body(request);
+    const grant =
+      options.freeAgents && typeof input.token === 'string' && input.token.startsWith('bfb_')
+        ? await options.freeAgents.bootstrap(input.token)
+        : undefined;
+    if (!grant) json(response, 401, { error: 'invalid_free_agent_bootstrap' });
+    else {
+      response.setHeader('cache-control', 'no-store');
+      json(response, 200, grant);
+    }
+    return;
+  }
+  if (method === 'POST' && url.pathname === '/v1/free-agents/sleep') {
+    const agentId = await daemonIdentity(request, options);
+    if (!agentId) {
+      await refuseDaemon(request, response, options);
+      return;
+    }
+    const input = await body(request);
+    json(response, 200, options.freeAgents
+      ? await options.freeAgents.requestSleep(agentId, { refresh: input.refresh === true })
+      : { sleep: false });
+    return;
+  }
   const computer = /^\/s\/([A-Za-z0-9_-]{43})\/?$/.exec(url.pathname);
   if (method === 'GET' && computer) {
     await serveComputerSession(request, response, options.database, options.live, computer[1]!);

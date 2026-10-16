@@ -55,6 +55,8 @@ export const COMPONENT_PATH_RULES = [
   { prefix: 'scripts/verify-beeline-install.', components: ['helper'] },
   { prefix: 'scripts/verify-pages-update.', components: ['helper', 'website'] },
   { prefix: '.github/actions/server-leg/', components: ['server'] },
+  { prefix: 'infra/free-agent/', components: ['server'] },
+  { exact: 'fly.beeline-free-agents.toml', components: ['server'] },
   { prefix: '.github/actions/daemon-leg/', components: ['helper'] },
   { prefix: '.github/actions/mobile-ota-leg/', components: ['mobile-ota'] },
   { prefix: '.github/actions/pages-leg/', components: ['helper', 'website'] },

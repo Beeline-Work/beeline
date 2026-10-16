@@ -1,0 +1,8 @@
+# Free starter agents: one Fly Machine per agent, created and woken by
+# beeline-server (apps/server/src/free-agents.ts). The release only builds
+# and pushes the base image here; nothing is deployed from this file.
+app = "beeline-free-agents"
+primary_region = "iad"
+
+[build]
+  dockerfile = "infra/free-agent/Dockerfile"

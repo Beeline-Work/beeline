@@ -1177,7 +1177,10 @@ export class AcpClient extends EventEmitter {
           }>
         | undefined;
       const axis = options?.find((option) => option.id === 'mode' && option.category === 'mode');
-      const desired = mode === 'readonly' ? 'plan' : 'build';
+      // A free starter agent's Fly Machine is its own computer: Room work
+      // there writes files in its home (the OS sandbox still keeps the rest
+      // of the filesystem read-only), so it builds instead of only planning.
+      const desired = mode === 'readonly' && !process.env.BEELINE_FREE_AGENT_ID ? 'plan' : 'build';
       if (!axis?.options?.some((option) => option.value === desired)) {
         if (mode === 'readonly' && !this.osSandbox) {
           throw new Error('OpenCode did not advertise plan mode for an unsandboxed Room');

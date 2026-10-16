@@ -1612,6 +1612,21 @@ describe('AcpClient live steering', () => {
     }
   });
 
+  it('runs a free agent Machine\'s OpenCode Room turn in build mode', async () => {
+    const previous = process.env.BEELINE_FREE_AGENT_ID;
+    process.env.BEELINE_FREE_AGENT_ID = 'a'.repeat(64);
+    const client = new AcpClient({ agentCommand: await fakeOpenCodeAgent(), agentEnv: {}, osSandbox: true });
+    await client.start();
+    try {
+      const session = await client.sessionNew({ cwd: process.cwd(), mode: 'readonly' });
+      expect((await client.sessionPrompt(session.sessionId, 'hello')).agentText).toBe('build');
+    } finally {
+      await client.stop();
+      if (previous === undefined) delete process.env.BEELINE_FREE_AGENT_ID;
+      else process.env.BEELINE_FREE_AGENT_ID = previous;
+    }
+  });
+
   it('refuses an unsandboxed OpenCode Room without plan mode', async () => {
     const client = new AcpClient({ agentCommand: await fakeOpenCodeAgent(false), agentEnv: {} });
     await client.start();

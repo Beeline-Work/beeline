@@ -92,6 +92,15 @@ test('terms page carries the beeline brand tokens and links home', () => {
   assert.match(termsHtml, /--brass:#d7af5f/);
 });
 
+test('terms say free and promotional services, including the free agent, can end at any time', () => {
+  const section = termsHtml.match(/<h2>\d+\. Free and promotional services<\/h2>\s*<p>([\s\S]*?)<\/p>/)?.[1];
+  assert.ok(section, 'free and promotional services section');
+  assert.match(section, /free agent/);
+  assert.match(section, /not obligated to keep offering them/);
+  assert.match(section, /change, limit, suspend, or end any of them at any time/);
+  assert.match(section, /without notice and without liability/);
+});
+
  test('support community link matches the permanent public invite seeded by migration', () => {
   const token = html.match(/href="https:\/\/usebeeline.app\/join\/(inv_[0-9a-f]{64})">Join Beeline Community/)?.[1];
   assert.ok(token);

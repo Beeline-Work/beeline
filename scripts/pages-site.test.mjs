@@ -127,6 +127,17 @@ test('privacy policy explains how Google user data is protected', () => {
   assert.match(html, /revokes your connected apps, including Google apps, at Composio/);
 });
 
+test('privacy policy describes the free agent and names every processor', () => {
+  const html = fs.readFileSync(path.join(WEB_ROOT, 'privacy', 'index.html'), 'utf8');
+  assert.match(html, /<strong>The free agent\.<\/strong>[^<]*Fly\.io[^<]*OpenRouter/);
+  for (const processor of [
+    'Fly.io', 'Neon', 'GitHub', 'Apple', 'Google Firebase', 'OpenRouter', 'Groq', 'Cloudflare',
+    'Trusty Squire', 'Composio', 'Coinbase', 'Stripe', 'Expo', 'PostHog',
+  ]) {
+    assert.ok(html.includes(processor), processor);
+  }
+});
+
 test('refuses a corrupt helper bundle before producing a Pages tree', async () => {
   const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'beeline-pages.'));
   const bundleRoot = path.join(temporary, 'bundle');

@@ -157,6 +157,7 @@ const seconds = (date: Date) => Math.floor(date.getTime() / 1_000);
 import { retireAgentFromWorkspace, settleGrantCard } from './agent-retirement.js';
 import { revokeDaemonCredentials } from './daemon-credential-lifetime.js';
 import { ensureFirstRoom, firstAccessibleRoomId } from './first-room.js';
+import type { FreeAgentService } from './free-agents.js';
 import {
   joinRooms,
   joinWorkspaceMembersToPublicRoom,
@@ -1002,6 +1003,13 @@ export class PhoneService {
   private readonly lastEnrichmentLogAt = new Map<string, number>();
   /** Only with a live hub: the cache is unsound without its message invalidations. */
   private readonly outlineCache?: HistoryOutlineCache;
+
+  private freeAgents?: Pick<FreeAgentService, 'createInWorkspace' | 'kick'>;
+
+  /** Give every newly created Workspace a free starter agent. */
+  setFreeAgents(freeAgents: Pick<FreeAgentService, 'createInWorkspace' | 'kick'>): void {
+    this.freeAgents = freeAgents;
+  }
 
   constructor(
     private readonly database: SqlDatabase,
@@ -6176,6 +6184,7 @@ export class PhoneService {
    */
   private async createWorkspace(input: Input<'createWorkspace'>, viewerId: string) {
     const id = input.workspaceId ?? randomUUID();
+    let freeAgentId: string | undefined;
     const roomId = await this.database.transaction(async (db) => {
       const inserted = await db.query(
         `INSERT INTO workspaces(id,name) VALUES($1,$2) ON CONFLICT DO NOTHING`,
@@ -6194,8 +6203,18 @@ export class PhoneService {
           [id, viewerId],
         );
       }
-      return ensureFirstRoom(db, id, viewerId);
+      const generalId = await ensureFirstRoom(db, id, viewerId);
+      // Only a newly created Workspace gets a free starter agent, in the same
+      // transaction as its #general, so the creator lands next to it.
+      if (inserted.rowCount && this.freeAgents)
+        freeAgentId = await this.freeAgents.createInWorkspace(db, {
+          workspaceId: id,
+          creatorId: viewerId,
+          roomId: generalId,
+        });
+      return generalId;
     });
+    if (freeAgentId) this.freeAgents?.kick(freeAgentId, 'provisioned');
     return { id, roomId };
   }
   private async updateWorkspace(input: Input<'updateWorkspace'>, viewerId: string) {

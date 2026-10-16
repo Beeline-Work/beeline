@@ -118,18 +118,61 @@ export async function freeAgentAllowance(
   return { today: Number(row?.today ?? 0), lifetime: Number(row?.lifetime ?? 0) };
 }
 
-async function charge(
+/** Adjust today's usage by a signed amount (a reservation, or its reconciliation). */
+async function adjustUsage(
   database: Pick<SqlDatabase, 'query'>,
   ownerId: string,
-  now: Date,
+  day: string,
   tokens: number,
 ): Promise<void> {
-  if (tokens <= 0) return;
+  if (tokens === 0) return;
   await database.query(
-    `INSERT INTO free_agent_usage(owner_id,day,tokens) VALUES($1,$2::date,$3)
-     ON CONFLICT(owner_id,day) DO UPDATE SET tokens=free_agent_usage.tokens+EXCLUDED.tokens`,
-    [ownerId, now.toISOString().slice(0, 10), tokens],
+    `INSERT INTO free_agent_usage(owner_id,day,tokens) VALUES($1,$2::date,GREATEST($3::bigint,0))
+     ON CONFLICT(owner_id,day) DO UPDATE SET tokens=GREATEST(free_agent_usage.tokens+$3::bigint,0)`,
+    [ownerId, day, tokens],
   );
+}
+
+/** Output a reply may use when the request names no smaller bound. */
+const DEFAULT_OUTPUT_RESERVATION = 8_192;
+/** Below this many tokens of room, a call is refused as over the allowance. */
+const MINIMUM_CALL_TOKENS = 256;
+
+/**
+ * An upper bound on a request's prompt tokens: no tokenizer this proxy serves
+ * packs fewer than two characters into a token.
+ */
+export function promptTokenBound(body: Record<string, unknown>): number {
+  return Math.ceil(JSON.stringify(body.messages ?? []).length / 2) +
+    Math.ceil(JSON.stringify(body.tools ?? []).length / 2);
+}
+
+/**
+ * Reserve a call's worst case against the owner's allowance before it runs.
+ * Serialized per owner across server instances, so concurrent calls can never
+ * together spend past the daily or lifetime cap; the reply's output is
+ * bounded by what remains. Returns the reservation, or the cap reached.
+ */
+export async function reserveAllowance(
+  database: SqlDatabase,
+  ownerId: string,
+  now: Date,
+  config: Pick<FreeAgentConfig, 'dailyTokenCap' | 'lifetimeTokenCap'>,
+  promptTokens: number,
+  requestedOutput: number | undefined,
+): Promise<{ reserved: number; maxOutput: number } | { limit: 'daily' | 'lifetime' }> {
+  return database.transaction(async (db) => {
+    await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`free-agent-usage:${ownerId}`]);
+    const used = await freeAgentAllowance(db, ownerId, now);
+    const daily = config.dailyTokenCap - used.today;
+    const lifetime = config.lifetimeTokenCap - used.lifetime;
+    const room = Math.min(daily, lifetime) - promptTokens;
+    if (room < MINIMUM_CALL_TOKENS) return { limit: lifetime <= daily ? 'lifetime' : 'daily' };
+    const maxOutput = Math.min(room, requestedOutput ?? DEFAULT_OUTPUT_RESERVATION);
+    const reserved = promptTokens + maxOutput;
+    await adjustUsage(db, ownerId, now.toISOString().slice(0, 10), reserved);
+    return { reserved, maxOutput };
+  });
 }
 
 /** Find the last `usage` object in an OpenAI-style SSE stream. */
@@ -199,18 +242,29 @@ export async function handleFreeAgentModelRequest(
   }
   const now = options.now?.() ?? new Date();
   const stream = body.stream === true;
-  const allowance = await freeAgentAllowance(options.database, agent.owner_id, now);
-  const limit =
-    allowance.lifetime >= options.config.lifetimeTokenCap
-      ? 'lifetime'
-      : allowance.today >= options.config.dailyTokenCap
-        ? 'daily'
-        : undefined;
-  if (limit) {
-    await recordFreeAgentEvent(options.database, agent.agent_id, 'allowance_reached', { limit });
-    sendAssistantText(response, stream, options.config.model, allowanceMessage(limit, options.config));
+  const requested = [body.max_tokens, body.max_completion_tokens]
+    .map(Number)
+    .filter((value) => Number.isFinite(value) && value > 0);
+  const reservation = await reserveAllowance(
+    options.database,
+    agent.owner_id,
+    now,
+    options.config,
+    promptTokenBound(body),
+    requested.length ? Math.min(...requested) : undefined,
+  );
+  if ('limit' in reservation) {
+    await recordFreeAgentEvent(options.database, agent.agent_id, 'allowance_reached', { limit: reservation.limit });
+    sendAssistantText(response, stream, options.config.model, allowanceMessage(reservation.limit, options.config));
     return true;
   }
+  const day = now.toISOString().slice(0, 10);
+  // Settle the reservation once: the reported usage when known, nothing for a
+  // call the upstream refused, and the whole reservation when a reply broke off.
+  const settle = (spent: number) =>
+    adjustUsage(options.database, agent.owner_id, day, spent - reservation.reserved).catch((error) =>
+      console.error('[free-agents] usage charge failed', error),
+    );
   const upstreamBase = (options.upstreamBaseUrl ?? 'https://openrouter.ai/api/v1').replace(/\/$/, '');
   const openRouter = new URL(upstreamBase).hostname.endsWith('openrouter.ai');
   const upstreamBody = {
@@ -226,6 +280,9 @@ export async function handleFreeAgentModelRequest(
           }),
         }),
     model: options.config.model,
+    // The reservation bounds the reply; a larger client bound is dropped.
+    max_tokens: reservation.maxOutput,
+    max_completion_tokens: undefined,
     // OpenRouter's own usage flag; other OpenAI-compatible hosts refuse it.
     ...(openRouter ? { usage: { include: true } } : {}),
     ...(stream ? { stream_options: { include_usage: true } } : {}),
@@ -249,6 +306,7 @@ export async function handleFreeAgentModelRequest(
       },
     );
   } catch (error) {
+    await settle(0);
     if (!response.headersSent)
       sendJson(response, 502, { error: { message: `model upstream unavailable: ${String(error)}` } });
     return true;
@@ -256,6 +314,7 @@ export async function handleFreeAgentModelRequest(
   const contentType = upstream.headers.get('content-type') ?? 'application/json';
   response.writeHead(upstream.status, { 'content-type': contentType, 'cache-control': 'no-store' });
   if (!upstream.body) {
+    await settle(upstream.ok ? reservation.reserved : 0);
     response.end();
     return true;
   }
@@ -273,7 +332,7 @@ export async function handleFreeAgentModelRequest(
       response.write(value);
     }
   } catch {
-    // The caller went away or the upstream broke; charge what was reported.
+    // The caller went away or the upstream broke; settle on what was reported.
   }
   let reported: Usage | undefined = usage.usage;
   if (!stream && upstream.ok) {
@@ -283,9 +342,10 @@ export async function handleFreeAgentModelRequest(
       reported = undefined;
     }
   }
-  // Charge before the reply completes, so the next request sees this one.
-  await charge(options.database, agent.owner_id, now, chargedTokens(reported)).catch((error) =>
-    console.error('[free-agents] usage charge failed', error),
+  // Settle before the reply completes, so the next request sees this one.
+  await settle(
+    reported ? Math.min(chargedTokens(reported), reservation.reserved)
+      : upstream.ok ? reservation.reserved : 0,
   );
   response.end();
   return true;

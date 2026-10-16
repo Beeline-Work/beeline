@@ -135,6 +135,50 @@ describe('free agent model proxy', () => {
     expect(upstream).toEqual([]);
   });
 
+  it('never lets concurrent calls spend past the daily cap, and bounds each reply to what remains', async () => {
+    // 1,000-token daily cap. Every call is held at the upstream until all have
+    // arrived, so each one must have been admitted against the same balance.
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const admitted: Array<{ max_tokens: unknown }> = [];
+    reply = () => Response.json({ choices: [{ message: { role: 'assistant', content: 'ok' } }], usage: { prompt_tokens: 50, completion_tokens: 300 } });
+    const held = async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      admitted.push(JSON.parse(String(init?.body)));
+      await gate;
+      return reply();
+    };
+    server.removeAllListeners('request');
+    server.on('request', (request, response) => {
+      void handleFreeAgentModelRequest(request, response, new URL(request.url!, 'http://x').pathname, {
+        database: db,
+        config: CONFIG,
+        upstreamKey: 'sk-or-server-only',
+        fetchImpl: held as typeof fetch,
+      });
+    });
+    const calls = Array.from({ length: 8 }, () =>
+      call({ max_tokens: 100_000, messages: [{ role: 'user', content: 'go' }] }),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    release();
+    const bodies = await Promise.all(calls.map(async (pending) => (await (await pending).json()).choices[0].message.content));
+    // The admitted calls' reservations fit the cap; the rest were told the allowance is used.
+    const reservedOutput = admitted.reduce((total, body) => total + Number(body.max_tokens), 0);
+    expect(admitted.length).toBeGreaterThan(0);
+    expect(admitted.length).toBeLessThan(8);
+    expect(reservedOutput).toBeLessThanOrEqual(CONFIG.dailyTokenCap);
+    expect(admitted.every((body) => Number(body.max_tokens) < 100_000)).toBe(true);
+    expect(bodies.filter((text) => text === allowanceMessage('daily', CONFIG))).toHaveLength(8 - admitted.length);
+    const spent = await freeAgentAllowance(db, OWNER, new Date());
+    expect(spent.today).toBeLessThanOrEqual(CONFIG.dailyTokenCap);
+  });
+
+  it('refunds a call the upstream refused', async () => {
+    reply = () => new Response('{"error":{"message":"busy"}}', { status: 503, headers: { 'content-type': 'application/json' } });
+    expect((await call({ messages: [{ role: 'user', content: 'hi' }] })).status).toBe(503);
+    expect(await freeAgentAllowance(db, OWNER, new Date())).toEqual({ today: 0, lifetime: 0 });
+  });
+
   it('counts tokens conservatively from partial usage', () => {
     expect(chargedTokens(undefined)).toBe(0);
     expect(chargedTokens({ prompt_tokens: 10, completion_tokens: 5 })).toBe(15);

@@ -42,7 +42,9 @@ function toolCallText(content: unknown): string {
 
 /** True when the harness reported this call as refused or errored. */
 export function isFailedToolCall(call: ToolCallEntry): boolean {
-  return /^(?:failed|error|denied|rejected)$/i.test(call.status ?? '');
+  return /^(?:failed|error|denied|rejected)$/i.test(call.status ?? '') ||
+    Boolean(call.rawOutput && typeof call.rawOutput === 'object' &&
+      (call.rawOutput as { isError?: unknown }).isError === true);
 }
 
 /**
@@ -56,7 +58,7 @@ export function isFailedToolCall(call: ToolCallEntry): boolean {
  * hopes was opened will swallow the turn's answer and leave nothing behind.
  */
 export function isCompletedToolCall(call: ToolCallEntry): boolean {
-  return /^completed$/i.test(call.status ?? '');
+  return /^completed$/i.test(call.status ?? '') && !isFailedToolCall(call);
 }
 
 /** Unwrap only the argument envelopes the supported ACP harnesses emit. */

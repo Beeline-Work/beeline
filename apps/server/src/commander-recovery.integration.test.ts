@@ -361,6 +361,7 @@ it('routes zero-check completion through a durable lifecycle fact', async () => 
     { ...authority(turn), text: 'Finished zero-check work' },
     WORKER,
   );
+  await zero.execute('postAgentTurnReceipt', { ...authority(turn), agentId: WORKER, status: 'complete' }, WORKER);
   expect(
     (await commands(DM, RUBY)).some(
       (c) => c.reason === 'report' && c.source.body.includes('foreign key constraint'),
@@ -858,6 +859,7 @@ it('keeps the originating corner waiting for a decision returned to its parent R
     { ...authority(turn), text: 'Reported the decision' },
     WORKER,
   );
+  await daemon.execute('postAgentTurnReceipt', { ...authority(turn), agentId: WORKER, status: 'complete' }, WORKER);
   const state = async () =>
     (await phone.readCorners(ROOM, HUMAN))?.corners.find(
       (item) => item.corner.id === opened.cornerId,

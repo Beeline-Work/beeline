@@ -192,6 +192,7 @@ function renderedText(renderer: any): string {
 function render(props: Record<string, any> = {}) {
   const onSend = vi.fn();
   const onChangeText = vi.fn();
+  const nativeInput = { setSelection: vi.fn(), blur: vi.fn() };
   let renderer: any;
   act(() => {
     renderer = create(
@@ -210,10 +211,11 @@ function render(props: Record<string, any> = {}) {
         onSend={onSend}
         {...props}
       />,
+      { createNodeMock: (element: any) => element.type === 'TextInput' ? nativeInput : null },
     );
   });
   renderers.push(renderer);
-  return { renderer, onSend, onChangeText };
+  return { renderer, onSend, onChangeText, nativeInput };
 }
 
 beforeEach(() => {
@@ -980,6 +982,32 @@ describe('recipient chips', () => {
     expect(onChangeText).toHaveBeenCalledWith('@ruby hello');
     act(() => input.props.onSelectionChange({ nativeEvent: { selection: { start: 8, end: 8 } } }));
     expect(onSelectionChange.mock.calls[0][0].nativeEvent.selection).toEqual({ start: 8, end: 8 });
+  });
+
+  it.each(['android', 'ios'])('preserves Select all and handle ranges through leading tags on %s', (os) => {
+    platformSetter.setOS(os);
+    const value = '@ruby @sol hello select all draft';
+    const onSelectionChange = vi.fn();
+    const onEditTags = vi.fn();
+    const { renderer, nativeInput } = render({ value, tagHandles, onSelectionChange, onEditTags });
+    const input = inputHost(renderer.root);
+    // Native Select all, a handle dragged into a tag, and a selected tag word
+    // must stay ranges, even immediately after touching the input.
+    for (const selection of [{ start: 0, end: value.length }, { start: 3, end: 18 }, { start: 0, end: 5 }]) {
+      act(() => input.props.onPressIn());
+      act(() => input.props.onSelectionChange({ nativeEvent: { selection } }));
+      expect(nativeInput.setSelection).not.toHaveBeenCalled();
+      expect(nativeInput.blur).not.toHaveBeenCalled();
+      expect(onEditTags).not.toHaveBeenCalled();
+      expect(onSelectionChange).toHaveBeenLastCalledWith({ nativeEvent: { selection } });
+    }
+    // A collapsed caret still stays out of the tag prefix; tapping it opens
+    // the existing tag editor.
+    act(() => input.props.onPressIn());
+    act(() => input.props.onSelectionChange({ nativeEvent: { selection: { start: 3, end: 3 } } }));
+    expect(nativeInput.setSelection).toHaveBeenCalledWith(11, 11);
+    expect(nativeInput.blur).toHaveBeenCalledOnce();
+    expect(onEditTags).toHaveBeenCalledOnce();
   });
 
   it('removes the whole tag a backspace reaches into, and keeps other edits', () => {

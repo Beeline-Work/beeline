@@ -2887,6 +2887,7 @@
       "`SELECT id FROM rooms WHERE id=ANY($1::uuid[]) AND parent_id IS NOT NULL\n     ORDER BY array_position($1::uuid[],id) LIMIT 1`",
       "`SELECT ordered.* FROM agent_commands ordered JOIN rooms corner ON corner.id=ordered.room_id\n     JOIN corner_facts fact ON fact.corner_id=corner.id\n     WHERE corner.id=$1 AND ordered.agent_id=${cornerImplementerSql('fact', 'corner')}\n       AND ordered.private_payload->>'kind'='order'\n     ORDER BY ordered.created_at DESC,ordered.id DESC LIMIT 1`",
       "`SELECT room.created_by,COALESCE(parent.room_id,source.room_id,room.parent_id) return_room,\n         parent.id parent_command FROM rooms room\n       LEFT JOIN LATERAL (SELECT * FROM agent_commands opened\n         WHERE opened.room_id=room.id AND opened.reason='corner_objective'\n         ORDER BY opened.created_at,opened.id LIMIT 1) opened ON true\n       LEFT JOIN agent_commands parent ON parent.id=opened.parent_command_id\n       LEFT JOIN messages source ON source.id=opened.root_source_message_id\n       WHERE room.id=$1 AND room.parent_id IS NOT NULL`",
+      "`WITH RECURSIVE ancestry AS (\n         SELECT room.id,room.archived_at,0 hop,ARRAY[room.id] path FROM rooms room WHERE room.id=$1\n         UNION ALL\n         SELECT ancestor.id,ancestor.archived_at,child.hop+1,child.path||ancestor.id\n         FROM ancestry child JOIN rooms room ON room.id=child.id\n         LEFT JOIN corner_facts fact ON fact.corner_id=room.id\n         JOIN rooms ancestor ON ancestor.id=COALESCE(fact.opened_from_corner_id,room.parent_id)\n         WHERE NOT ancestor.id=ANY(child.path)\n       ) SELECT ancestry.id FROM ancestry LEFT JOIN corner_facts fact ON fact.corner_id=ancestry.id\n       WHERE ancestry.archived_at IS NULL\n         AND COALESCE(fact.lifecycle->>'lifecycle','') NOT IN ('closed','landed')\n       ORDER BY hop LIMIT 1`",
       "`WITH RECURSIVE chain AS (\n       SELECT command.*,0 hop FROM agent_commands command WHERE id=$1\n       UNION ALL SELECT parent.*,child.hop+1 FROM agent_commands parent JOIN chain child\n         ON parent.id=child.parent_command_id\n     ) SELECT chain.* FROM chain LEFT JOIN messages source ON source.id=chain.source_message_id\n     WHERE (chain.private_payload->>'kind'='order' AND (chain.agent_id=$2 OR chain.room_id=$3))\n       OR (chain.private_payload IS NULL AND chain.agent_id=$2 AND source.id IS NOT NULL AND source.system_event IS NULL)\n     ORDER BY hop LIMIT 1`"
     ],
     "occurrences": 1
@@ -5259,41 +5260,6 @@
     "occurrences": 1
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.postRoomMessage:message-write:599d091b2de76177",
-    "file": "apps/server/src/daemon-service.ts",
-    "kind": "message-write",
-    "template": "database.query<CommittedMessageLiveRow>(`WITH inserted AS (\n               INSERT INTO messages(\n                 id,room_id,author_id,text,presentation,request_id,legacy_event,\n                 reply_to_message_id,root_message_id,agent_hop_count,attachments,agent_model\n               ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11::jsonb,\n                 (SELECT selected_model FROM agents WHERE agent_id=$3))\n               RETURNING *\n             ), completed AS (\n               UPDATE agent_commands SET state='complete',completed_at=now(),result_message_id=inserted.id\n               FROM inserted WHERE agent_commands.id=$12\n             ), cleared AS (\n               DELETE FROM live_outputs\n               WHERE room_id=$2 AND agent_id=$3 AND turn_id=$6 AND kind IN ('draft','thought')\n             )\n             SELECT inserted.*,author.kind author_kind,author.name author_name,\n               author.handle author_handle,author.avatar author_avatar,author.face_id author_face,\n               ${taggedIdentityIdsSql('inserted')} tagged_ids\n             FROM inserted JOIN identities author ON author.id=inserted.author_id`, [...values, command!.id])",
-    "literals": [
-      "\"'`[^`\\\\n]*`'\"",
-      "\"'```.*?(```|$)'\"",
-      "'agent'",
-      "'card'",
-      "'claimed'",
-      "'command output authority rejected'",
-      "'command output rejected'",
-      "'command turn cancelled'",
-      "'complete'",
-      "'hex'",
-      "'human'",
-      "'inserted'",
-      "'message'",
-      "'string'",
-      "'tagged.handle'",
-      "`${message}.text`",
-      "`${withoutForwardCaptionSql(textExpr)} ~ ('(^|[^[:alnum:]_.-])@' ||\n    regexp_replace(btrim(ltrim(${handleExpr},'@')),'([.-])','\\\\&','g') ||\n    '[.-]*($|[^[:alnum:]_.-])')`",
-      "`${withoutForwardCaptionSql(textExpr)} ~* '(^|[^[:alnum:]_.-])@channel[.-]*($|[^[:alnum:]_.-])'`",
-      "`'\\\\n\\\\nFORWARDED FROM #[^\\\\n]+$'`",
-      "`ARRAY(\n    SELECT tagged_member.identity_id\n    FROM memberships tagged_member\n    JOIN identities tagged ON tagged.id=tagged_member.identity_id\n    WHERE ${message}.presentation NOT IN ('system','card')\n      AND tagged_member.room_id=${message}.room_id AND tagged_member.removed_at IS NULL\n      AND tagged_member.identity_id<>${message}.author_id\n      AND tagged.handle IS NOT NULL AND btrim(tagged.handle)<>''\n      AND ${handleWrittenIn(`${message}.text`, 'tagged.handle')}\n      AND NOT EXISTS (\n        SELECT 1 FROM memberships rival_member\n        JOIN identities rival ON rival.id=rival_member.identity_id\n        WHERE rival_member.room_id=tagged_member.room_id AND rival_member.removed_at IS NULL\n          AND rival_member.identity_id<>tagged_member.identity_id\n          AND btrim(ltrim(rival.handle,'@'))=btrim(ltrim(tagged.handle,'@'))\n      )\n    UNION\n    ${channelTaggedMembersSql(message)}\n  )`",
-      "`SELECT channel_member.identity_id\n    FROM rooms channel_room\n    JOIN memberships channel_member ON channel_member.room_id=COALESCE(channel_room.parent_id,channel_room.id)\n      AND channel_member.removed_at IS NULL\n    JOIN identities channel_identity ON channel_identity.id=channel_member.identity_id\n      AND channel_identity.kind='human'\n    WHERE channel_room.id=${message}.room_id\n      AND ${message}.presentation NOT IN ('system','card')\n      AND channel_member.identity_id<>${message}.author_id\n      AND ${channelMentionWrittenSql(`${message}.text`)}`",
-      "`SELECT command.*,\n               EXISTS(SELECT 1 FROM agent_turns turn\n                 WHERE turn.room_id=command.room_id AND turn.agent_id=command.agent_id\n                   AND turn.request_id=command.turn_request_id AND turn.status='cancelled') turn_cancelled\n             FROM agent_commands command\n             WHERE command.room_id=$1 AND command.agent_id=$2 AND command.turn_request_id=$3\n               AND command.action IN ('input','resume') AND command.generation_id=$4\n             ORDER BY command.created_at DESC,command.id DESC LIMIT 1 FOR UPDATE OF command`",
-      "`SELECT message.root_message_id,message.agent_hop_count,identity.kind author_kind\n             FROM messages message JOIN identities identity ON identity.id=message.author_id\n             WHERE message.id=$1 AND message.room_id=$2`",
-      "`SELECT url,name,mime_type,size::integer AS size FROM agent_pending_attachments\n           WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND generation_id=$4 ORDER BY created_at,id`",
-      "`WITH inserted AS (\n               INSERT INTO messages(\n                 id,room_id,author_id,text,presentation,request_id,legacy_event,\n                 reply_to_message_id,root_message_id,agent_hop_count,attachments,agent_model\n               ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11::jsonb,\n                 (SELECT selected_model FROM agents WHERE agent_id=$3))\n               RETURNING *\n             ), completed AS (\n               UPDATE agent_commands SET state='complete',completed_at=now(),result_message_id=inserted.id\n               FROM inserted WHERE agent_commands.id=$12\n             ), cleared AS (\n               DELETE FROM live_outputs\n               WHERE room_id=$2 AND agent_id=$3 AND turn_id=$6 AND kind IN ('draft','thought')\n             )\n             SELECT inserted.*,author.kind author_kind,author.name author_name,\n               author.handle author_handle,author.avatar author_avatar,author.face_id author_face,\n               ${taggedIdentityIdsSql('inserted')} tagged_ids\n             FROM inserted JOIN identities author ON author.id=inserted.author_id`",
-      "`regexp_replace(regexp_replace(regexp_replace(${textExpr},${FORWARD_CAPTION_SQL},''),\n    ${FENCED_CODE_SQL},' ','g'),${INLINE_CODE_SQL},' ','g')`"
-    ],
-    "occurrences": 1
-  },
-  {
     "id": "src/daemon-service.ts:DaemonService.postRoomMessage:message-write:5b11a723451fcd15",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "message-write",
@@ -5324,6 +5290,41 @@
       "`SELECT message.root_message_id,message.agent_hop_count,identity.kind author_kind\n             FROM messages message JOIN identities identity ON identity.id=message.author_id\n             WHERE message.id=$1 AND message.room_id=$2`",
       "`SELECT url,name,mime_type,size::integer AS size FROM agent_pending_attachments\n           WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND generation_id=$4 ORDER BY created_at,id`",
       "`WITH inserted AS (\n             INSERT INTO messages(\n               id,room_id,author_id,text,presentation,request_id,legacy_event,\n               reply_to_message_id,root_message_id,agent_hop_count,attachments,agent_model\n             ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11::jsonb,\n               (SELECT selected_model FROM agents WHERE agent_id=$3))\n             RETURNING *\n           )\n           SELECT inserted.*,author.kind author_kind,author.name author_name,\n             author.handle author_handle,author.avatar author_avatar,author.face_id author_face,\n             ${taggedIdentityIdsSql('inserted')} tagged_ids\n           FROM inserted JOIN identities author ON author.id=inserted.author_id`",
+      "`regexp_replace(regexp_replace(regexp_replace(${textExpr},${FORWARD_CAPTION_SQL},''),\n    ${FENCED_CODE_SQL},' ','g'),${INLINE_CODE_SQL},' ','g')`"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/daemon-service.ts:DaemonService.postRoomMessage:message-write:6c87f26cd3af0e5e",
+    "file": "apps/server/src/daemon-service.ts",
+    "kind": "message-write",
+    "template": "database.query<CommittedMessageLiveRow>(`WITH inserted AS (\n               INSERT INTO messages(\n                 id,room_id,author_id,text,presentation,request_id,legacy_event,\n                 reply_to_message_id,root_message_id,agent_hop_count,attachments,agent_model\n               ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11::jsonb,\n                 (SELECT selected_model FROM agents WHERE agent_id=$3))\n               RETURNING *\n             ), completed AS (\n               UPDATE agent_commands SET state='complete',completed_at=now(),result_message_id=inserted.id\n               FROM inserted WHERE agent_commands.id=$12\n                 AND agent_commands.private_payload->>'kind' IS DISTINCT FROM 'order'\n             ), cleared AS (\n               DELETE FROM live_outputs\n               WHERE room_id=$2 AND agent_id=$3 AND turn_id=$6 AND kind IN ('draft','thought')\n             )\n             SELECT inserted.*,author.kind author_kind,author.name author_name,\n               author.handle author_handle,author.avatar author_avatar,author.face_id author_face,\n               ${taggedIdentityIdsSql('inserted')} tagged_ids\n             FROM inserted JOIN identities author ON author.id=inserted.author_id`, [...values, command!.id])",
+    "literals": [
+      "\"'`[^`\\\\n]*`'\"",
+      "\"'```.*?(```|$)'\"",
+      "'agent'",
+      "'card'",
+      "'claimed'",
+      "'command output authority rejected'",
+      "'command output rejected'",
+      "'command turn cancelled'",
+      "'complete'",
+      "'hex'",
+      "'human'",
+      "'inserted'",
+      "'message'",
+      "'string'",
+      "'tagged.handle'",
+      "`${message}.text`",
+      "`${withoutForwardCaptionSql(textExpr)} ~ ('(^|[^[:alnum:]_.-])@' ||\n    regexp_replace(btrim(ltrim(${handleExpr},'@')),'([.-])','\\\\&','g') ||\n    '[.-]*($|[^[:alnum:]_.-])')`",
+      "`${withoutForwardCaptionSql(textExpr)} ~* '(^|[^[:alnum:]_.-])@channel[.-]*($|[^[:alnum:]_.-])'`",
+      "`'\\\\n\\\\nFORWARDED FROM #[^\\\\n]+$'`",
+      "`ARRAY(\n    SELECT tagged_member.identity_id\n    FROM memberships tagged_member\n    JOIN identities tagged ON tagged.id=tagged_member.identity_id\n    WHERE ${message}.presentation NOT IN ('system','card')\n      AND tagged_member.room_id=${message}.room_id AND tagged_member.removed_at IS NULL\n      AND tagged_member.identity_id<>${message}.author_id\n      AND tagged.handle IS NOT NULL AND btrim(tagged.handle)<>''\n      AND ${handleWrittenIn(`${message}.text`, 'tagged.handle')}\n      AND NOT EXISTS (\n        SELECT 1 FROM memberships rival_member\n        JOIN identities rival ON rival.id=rival_member.identity_id\n        WHERE rival_member.room_id=tagged_member.room_id AND rival_member.removed_at IS NULL\n          AND rival_member.identity_id<>tagged_member.identity_id\n          AND btrim(ltrim(rival.handle,'@'))=btrim(ltrim(tagged.handle,'@'))\n      )\n    UNION\n    ${channelTaggedMembersSql(message)}\n  )`",
+      "`SELECT channel_member.identity_id\n    FROM rooms channel_room\n    JOIN memberships channel_member ON channel_member.room_id=COALESCE(channel_room.parent_id,channel_room.id)\n      AND channel_member.removed_at IS NULL\n    JOIN identities channel_identity ON channel_identity.id=channel_member.identity_id\n      AND channel_identity.kind='human'\n    WHERE channel_room.id=${message}.room_id\n      AND ${message}.presentation NOT IN ('system','card')\n      AND channel_member.identity_id<>${message}.author_id\n      AND ${channelMentionWrittenSql(`${message}.text`)}`",
+      "`SELECT command.*,\n               EXISTS(SELECT 1 FROM agent_turns turn\n                 WHERE turn.room_id=command.room_id AND turn.agent_id=command.agent_id\n                   AND turn.request_id=command.turn_request_id AND turn.status='cancelled') turn_cancelled\n             FROM agent_commands command\n             WHERE command.room_id=$1 AND command.agent_id=$2 AND command.turn_request_id=$3\n               AND command.action IN ('input','resume') AND command.generation_id=$4\n             ORDER BY command.created_at DESC,command.id DESC LIMIT 1 FOR UPDATE OF command`",
+      "`SELECT message.root_message_id,message.agent_hop_count,identity.kind author_kind\n             FROM messages message JOIN identities identity ON identity.id=message.author_id\n             WHERE message.id=$1 AND message.room_id=$2`",
+      "`SELECT url,name,mime_type,size::integer AS size FROM agent_pending_attachments\n           WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND generation_id=$4 ORDER BY created_at,id`",
+      "`WITH inserted AS (\n               INSERT INTO messages(\n                 id,room_id,author_id,text,presentation,request_id,legacy_event,\n                 reply_to_message_id,root_message_id,agent_hop_count,attachments,agent_model\n               ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11::jsonb,\n                 (SELECT selected_model FROM agents WHERE agent_id=$3))\n               RETURNING *\n             ), completed AS (\n               UPDATE agent_commands SET state='complete',completed_at=now(),result_message_id=inserted.id\n               FROM inserted WHERE agent_commands.id=$12\n                 AND agent_commands.private_payload->>'kind' IS DISTINCT FROM 'order'\n             ), cleared AS (\n               DELETE FROM live_outputs\n               WHERE room_id=$2 AND agent_id=$3 AND turn_id=$6 AND kind IN ('draft','thought')\n             )\n             SELECT inserted.*,author.kind author_kind,author.name author_name,\n               author.handle author_handle,author.avatar author_avatar,author.face_id author_face,\n               ${taggedIdentityIdsSql('inserted')} tagged_ids\n             FROM inserted JOIN identities author ON author.id=inserted.author_id`",
       "`regexp_replace(regexp_replace(regexp_replace(${textExpr},${FORWARD_CAPTION_SQL},''),\n    ${FENCED_CODE_SQL},' ','g'),${INLINE_CODE_SQL},' ','g')`"
     ],
     "occurrences": 1
@@ -5622,10 +5623,10 @@
     "occurrences": 1
   },
   {
-    "id": "src/daemon-service.ts:DaemonService.squireApproval:systemLine:5337ed17e317b0bc",
+    "id": "src/daemon-service.ts:DaemonService.squireApproval:systemLine:c532d5899691d2d4",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "systemLine",
-    "template": "systemLine(database, {\n    id: messageId,\n    roomId,\n    authorId: SYSTEM_IDENTITY_ID,\n    subject: {\n        kind: 'system',\n        name: connectorDisplayName('trusty-squire'),\n    },\n    verb: 'needs your approval for',\n    object: input.title.trim(),\n    consequence: input.detail.trim(),\n    presentation: 'card',\n    cardType: 'squire-approval',\n    card: {\n        agent,\n        tool: input.tool.trim(),\n        title: input.title.trim(),\n        detail: input.detail.trim(),\n        approvalUrl: approvalUrl.toString(),\n        ...(input.approvalId ? { approvalId: input.approvalId.trim() } : {}),\n        expiresAt: input.expiresAt ?? Date.now() + 24 * 60 * 60000,\n        linkKind: input.linkKind,\n        sourceRoomId: input.roomId,\n        ...(sourceMessageId ? { sourceMessageId } : {}),\n    },\n})",
+    "template": "systemLine(database, {\n    id: messageId,\n    roomId,\n    authorId: SYSTEM_IDENTITY_ID,\n    subject: {\n        kind: 'system',\n        name: connectorDisplayName('trusty-squire'),\n    },\n    verb: 'needs your approval for',\n    object: input.title.trim(),\n    consequence: input.detail.trim(),\n    presentation: 'card',\n    cardType: 'squire-approval',\n    card: {\n        agent,\n        tool: input.tool.trim(),\n        title: input.title.trim(),\n        detail: input.detail.trim(),\n        approvalUrl: approvalUrl.toString(),\n        ...(input.approvalId ? { approvalId: input.approvalId.trim() } : {}),\n        expiresAt: input.expiresAt ?? Date.now() + 24 * 60 * 60000,\n        linkKind: input.linkKind,\n        sourceRoomId: input.roomId,\n        ...(this.authorizedCommand ? { commandId: this.authorizedCommand.id, generationId: this.authorizedCommand.generation_id } : {}),\n        ...(sourceMessageId ? { sourceMessageId } : {}),\n    },\n})",
     "literals": [
       "'/v1/connectors/logo/system.svg'",
       "':'",
@@ -5869,6 +5870,40 @@
       "`buzz-dm:v1:${workspaceId}:${participants.join(':')}`",
       "`free-agent-warning:${ownerId}:${day}`",
       "`https://web.usebeeline.app/beeline/members?communityId=${encodeURIComponent(agent.workspace_id)}&action=add-agent`"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/free-agents.ts:FreeAgentService.createInWorkspace:wrapper:8627c24c4fb3aba4",
+    "file": "apps/server/src/free-agents.ts",
+    "kind": "wrapper",
+    "template": "createFreeAgentInWorkspace(database, this.config, input)",
+    "literals": [],
+    "occurrences": 1
+  },
+  {
+    "id": "src/free-agents.ts:createFreeAgentInWorkspace:message-write:8d98fd9b256b1102",
+    "file": "apps/server/src/free-agents.ts",
+    "kind": "message-write",
+    "template": "database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`, [createHash('sha256').update(`free-agent-hello:${agent.publicKey}`).digest('hex'),\n    input.roomId, agent.publicKey, hello])",
+    "literals": [
+      "'<handle>'",
+      "'<owner>'",
+      "'Beebee'",
+      "'compressed'",
+      "'hex'",
+      "'secp256k1'",
+      "'sha256'",
+      "'workspace-handle-allocation'",
+      "`@<owner> Hi, I'm Beebee, your free agent in Beeline. I run on my own small cloud computer, so I can write files, run commands, research and draft things for you. Try \"@<handle> draft a welcome note for this Workspace\" to start. If you don't want me here, open Members and remove me from the Workspace.`",
+      "`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`",
+      "`SELECT COALESCE(handle,id) handle FROM identities WHERE id=$1`",
+      "`SELECT i.id,i.name,i.face_id,i.handle FROM memberships m JOIN identities i ON i.id=m.identity_id\n     WHERE m.workspace_id=ANY($1::uuid[]) AND m.room_id IS NULL AND m.removed_at IS NULL\n       AND i.hidden_from_roster=false`",
+      "`SELECT id FROM workspaces WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE`",
+      "`SELECT pg_advisory_xact_lock(hashtext($1))`",
+      "`SELECT workspace_id FROM memberships\n     WHERE identity_id=$1 AND room_id IS NULL AND removed_at IS NULL`",
+      "`free-agent-hello:${agent.publicKey}`",
+      "`identity-handle:${identityId}`"
     ],
     "occurrences": 1
   },
@@ -7430,6 +7465,7 @@
       "'claimed'",
       "'failed'",
       "'hiccup'",
+      "'unreported_order:'",
       "`SELECT * FROM agent_commands\n       WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3 AND action IN ('input','resume')\n         AND ((state='pending' AND $4::text IS NULL) OR\n              (state='claimed' AND generation_id=$4))\n       ORDER BY created_at DESC,id DESC LIMIT 1 FOR UPDATE`"
     ],
     "occurrences": 1
@@ -7447,6 +7483,7 @@
       "'failed'",
       "'hiccup'",
       "'turn-failed'",
+      "'unreported_order:'",
       "`SELECT * FROM agent_commands\n       WHERE room_id=$1 AND agent_id=$2 AND turn_request_id=$3 AND action IN ('input','resume')\n         AND ((state='pending' AND $4::text IS NULL) OR\n              (state='claimed' AND generation_id=$4))\n       ORDER BY created_at DESC,id DESC LIMIT 1 FOR UPDATE`"
     ],
     "occurrences": 1
@@ -8817,39 +8854,5 @@
       "`workflow_output_scope AS (\n    SELECT command.id command_id,command.room_id,original.action,original.parent_command_id,\n      command.agent_id,original.source_message_id,\n      COALESCE(${runIdSql},source.card->>'runId',choice_message.card->>'runId') run_id\n    FROM ${commandRelation} command\n    JOIN agent_commands original ON original.room_id=command.room_id AND original.agent_id=command.agent_id\n      AND (original.id=command.id OR original.cancellation_reason='coalesced_into:'||command.id)\n    JOIN messages source ON source.id=original.source_message_id AND source.room_id=command.room_id\n    LEFT JOIN room_choices choice ON choice.id::text=source.card->>'choiceId'\n      AND choice.room_id=command.room_id\n    LEFT JOIN messages choice_message ON choice_message.id=choice.message_id\n    WHERE original.action IN ('input','resume')\n  ), workflow_output_pins AS (\n    SELECT scope.command_id,scope.room_id,COALESCE(parent_visit.id,latest.id) visit_id\n    FROM workflow_output_scope scope\n    LEFT JOIN LATERAL (\n      SELECT message.id FROM messages message\n      JOIN agent_commands parent ON parent.id=scope.parent_command_id AND parent.agent_id=scope.agent_id\n      WHERE scope.action='resume' AND message.room_id=scope.room_id\n        AND message.card_type='workflow-handoff'\n        AND message.card->'outputCommandIds' ? scope.parent_command_id\n        AND (scope.run_id IS NULL OR message.card->>'runId'=scope.run_id)\n      ORDER BY message.created_at DESC,message.id DESC LIMIT 1\n    ) parent_visit ON true\n    LEFT JOIN LATERAL (\n      SELECT message.id\n      FROM messages message\n      WHERE parent_visit.id IS NULL AND message.room_id=scope.room_id\n        AND message.card->>'runId'=scope.run_id\n        AND message.card_type='workflow-handoff'\n        AND message.card->>'toState' IS NOT NULL\n        AND NOT COALESCE((message.card->>'reassigned')::boolean,false)\n      ORDER BY (message.id=scope.source_message_id) DESC,\n        (message.card->>'seq')::int DESC NULLS LAST,message.created_at DESC,message.id DESC\n      LIMIT 1\n    ) latest ON true\n    WHERE parent_visit.id IS NOT NULL OR latest.id IS NOT NULL\n  ), workflow_output_bound AS (\n    UPDATE messages message SET card=jsonb_set(message.card,'{outputCommandIds}',\n      COALESCE(message.card->'outputCommandIds','[]'::jsonb)||to_jsonb(pinned.command_id))\n    FROM workflow_output_pins pinned WHERE message.id=pinned.visit_id\n      AND NOT EXISTS (\n        SELECT 1 FROM messages bound WHERE bound.room_id=pinned.room_id\n          AND bound.card_type=message.card_type AND bound.card->>'runId'=message.card->>'runId'\n          AND bound.card->'outputCommandIds' ? pinned.command_id\n      )\n    RETURNING message.id\n  )`"
     ],
     "occurrences": 1
-  },
-{
-  "id": "src/free-agents.ts:FreeAgentService.createInWorkspace:wrapper:8627c24c4fb3aba4",
-  "file": "apps/server/src/free-agents.ts",
-  "kind": "wrapper",
-  "template": "createFreeAgentInWorkspace(database, this.config, input)",
-  "literals": [],
-  "occurrences": 1
-},
-{
-  "id": "src/free-agents.ts:createFreeAgentInWorkspace:message-write:8d98fd9b256b1102",
-  "file": "apps/server/src/free-agents.ts",
-  "kind": "message-write",
-  "template": "database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`, [createHash('sha256').update(`free-agent-hello:${agent.publicKey}`).digest('hex'),\n    input.roomId, agent.publicKey, hello])",
-  "literals": [
-    "'<handle>'",
-    "'<owner>'",
-    "'Beebee'",
-    "'compressed'",
-    "'hex'",
-    "'secp256k1'",
-    "'sha256'",
-    "'workspace-handle-allocation'",
-    "`@<owner> Hi, I'm Beebee, your free agent in Beeline. I run on my own small cloud computer, so I can write files, run commands, research and draft things for you. Try \"@<handle> draft a welcome note for this Workspace\" to start. If you don't want me here, open Members and remove me from the Workspace.`",
-    "`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`",
-    "`SELECT COALESCE(handle,id) handle FROM identities WHERE id=$1`",
-    "`SELECT i.id,i.name,i.face_id,i.handle FROM memberships m JOIN identities i ON i.id=m.identity_id\n     WHERE m.workspace_id=ANY($1::uuid[]) AND m.room_id IS NULL AND m.removed_at IS NULL\n       AND i.hidden_from_roster=false`",
-    "`SELECT id FROM workspaces WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE`",
-    "`SELECT pg_advisory_xact_lock(hashtext($1))`",
-    "`SELECT workspace_id FROM memberships\n     WHERE identity_id=$1 AND room_id IS NULL AND removed_at IS NULL`",
-    "`free-agent-hello:${agent.publicKey}`",
-    "`identity-handle:${identityId}`"
-  ],
-  "occurrences": 1
-}
+  }
 ]

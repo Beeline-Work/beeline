@@ -156,6 +156,24 @@ describe('ACP turn liveness over real stdio', () => {
     expect((await client.sessionPrompt(next.sessionId, 'normal')).agentText).toBe('Turn finished normally.');
   });
 
+  it('Charles regression: five identical invalid login calls stop once without promoting pre-tool narration', async () => {
+    const opened = once(client, 'session/update');
+    const prompt = client.sessionPrompt(sessionId, 'tool');
+    await opened;
+    await client.setModel(sessionId, JSON.stringify({ sessionUpdate: 'agent_message_chunk',
+      content: { type: 'text', text: 'I will sign in now.' } }));
+    for (let i = 0; i < 5; i++) {
+      await client.setModel(sessionId, JSON.stringify({ sessionUpdate: 'tool_call', toolCallId: 'login-' + i,
+        title: 'mcp__squire__operate_login', rawInput: {}, status: 'failed',
+        content: [{ type: 'content', content: { type: 'text', text: 'Schema validation failed: missing action' } }] }));
+    }
+    const result = await prompt;
+    expect(result).toMatchObject({ stopReason: 'repeated-tool-call', agentText: '' });
+    const logins = result.toolCalls.filter(call => call.title === 'mcp__squire__operate_login');
+    expect(logins).toHaveLength(5);
+    expect(logins.every(call => call.status === 'failed')).toBe(true);
+  });
+
   it('counts no-argument tools and resets on a different tool', async () => {
     const opened = once(client, 'session/update');
     const prompt = client.sessionPrompt(sessionId, 'tool');

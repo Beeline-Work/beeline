@@ -2,7 +2,8 @@
 
 `infra/free-agent/timeline-proof.mjs` measures the real mention-to-reply path on
 Fly with three fresh Workspaces. Each sample covers first boot with no Machine,
-then a mention immediately after the Machine reaches suspended. The helper,
+then a mention immediately after the Machine reaches suspended, then a mention
+after explicitly stopping that suspended Machine and verifying `stopped`. The helper,
 Pi/ACP and model are real. A disposable local server/database and Cloudflare
 quick tunnel isolate the proof from production. Squire egress adds network
 hops to both the Fly API and model path; report that qualification with results.
@@ -64,3 +65,19 @@ Use helper and server builds from the same baseline commit, then repeat all
 six samples on the final head. Record source SHAs, image digests, sample IDs,
 before/after medians and cleanup in the PR and Room artifacts. Cached images
 from older tool contracts are diagnostic runs, not a controlled baseline.
+
+
+## Stopped restart and Room-context experiment
+
+See [the boot-session experiment](beebee-boot-session-measurement.md) for the
+three-run stopped-restart baseline, startup sub-steps and unsuccessful candidate
+comparison. `timeline-summary.mjs` preserves stopped-restart observations and
+extracts the existing monotonic session-start phase marks.
+
+Set `PROOF_ROOM_CONTEXT=1` to append a two-Room context check after the fixed
+nine timing samples. It posts different random codes in two Rooms, stops the
+Machine, boots into the second Room and asks for its earlier code, then asks
+in the original Room. An absent or foreign code fails. The check writes
+`room-context.json`; timing samples remain unchanged. `PROOF_CONTEXT_ONLY=1`
+with `PROOF_ROOM_CONTEXT=1` runs one disposable first boot and that context
+check, for a narrow retry without replacing the comparison sample set.

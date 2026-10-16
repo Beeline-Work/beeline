@@ -274,7 +274,7 @@ try {
     const text = await response.text();
     return text ? JSON.parse(text) : undefined;
   }
-  for (let sample = 1; sample <= 3; sample++) {
+  for (let sample = 1; sample <= (process.env.PROOF_CONTEXT_ONLY === '1' ? 1 : 3); sample++) {
     const workspace = await operation('createWorkspace', { name: `${prefix}-${sample}` });
     workspaces.push(workspace);
     const agent = (
@@ -283,7 +283,7 @@ try {
         [workspace.id],
       )
     ).rows[0];
-    for (const mode of ['first-boot', 'resume', 'stopped-restart']) {
+    for (const mode of (process.env.PROOF_CONTEXT_ONLY === '1' ? ['first-boot'] : ['first-boot', 'resume', 'stopped-restart'])) {
       if (mode === 'resume')
         await waitFor('suspended', async () => {
           const machineId = (
@@ -378,6 +378,41 @@ try {
     const machineId = (
       await db.query(`SELECT fly_machine_id FROM free_agents WHERE agent_id=$1`, [agent.agent_id])
     ).rows[0].fly_machine_id;
+    if (process.env.PROOF_ROOM_CONTEXT === '1' && (sample === 3 || process.env.PROOF_CONTEXT_ONLY === '1')) {
+      const second = await operation('createRoom', { workspaceId: workspace.id, name: 'context-b' });
+      await operation('addRoomMember', { roomId: second.id, memberId: agent.agent_id });
+      const codes = [randomBytes(8).toString('hex'), randomBytes(8).toString('hex')];
+      const rooms = [workspace.roomId, second.id];
+      for (let i = 0; i < rooms.length; i++) await operation('sendRoomMessage', {
+        roomId: rooms[i], messageId: randomBytes(32).toString('hex'),
+        text: `The proof code for this Room is ${codes[i]}.`,
+      });
+      await waitFor('suspended before context proof', async () =>
+        (await fly(`/${machineId}`)).state === 'suspended');
+      await fly(`/${machineId}/stop`, 'POST');
+      await waitFor('stopped before context proof', async () =>
+        (await fly(`/${machineId}`)).state === 'stopped');
+      const contextProof = [];
+      // Boot into B while A also has a known code and a previously used session.
+      for (const i of [1, 0]) {
+        const before = new Date().toISOString();
+        await operation('sendRoomMessage', {
+          roomId: rooms[i], messageId: randomBytes(32).toString('hex'),
+          text: `@${agent.handle} Reply with only the proof code stated earlier in this Room.`,
+          mentions: [agent.agent_id],
+        });
+        const reply = await waitFor('Room context reply', async () => (
+          await db.query(`SELECT text,created_at FROM messages WHERE room_id=$1 AND author_id=$2
+            AND presentation='message' AND created_at>$3 ORDER BY created_at LIMIT 1`,
+            [rooms[i], agent.agent_id, before])
+        ).rows[0]);
+        if (!reply.text.includes(codes[i]) || reply.text.includes(codes[1-i]))
+          throw new Error(`wrong or absent Room context in ${rooms[i]}`);
+        contextProof.push({ roomId: rooms[i], expected: codes[i], reply });
+      }
+      await writeFile(`${directory}/room-context.json`, JSON.stringify(contextProof, null, 2));
+      mark('room-context-passed', { roomIds: rooms });
+    }
     await fly(`/${machineId}?force=true`, 'DELETE');
     machines.delete(machineId);
     mark('machine-destroyed', { machineId });

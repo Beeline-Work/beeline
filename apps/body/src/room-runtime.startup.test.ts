@@ -5,7 +5,11 @@ import { expect, it, vi } from 'vitest';
 import { RoomRuntimeCoordinator } from './room-runtime.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
 
-it('starts Room and corner intake before waiting for archived cleanup', async () => {
+it.each([
+  { agentKind: 'pi', managed: true, prestart: true },
+  { agentKind: 'pi', managed: false, prestart: false },
+  { agentKind: 'codex', managed: true, prestart: false },
+])('starts intake before cleanup and prepares only the first pending managed Pi Room: %j', async ({ agentKind, managed, prestart }) => {
   const root = await mkdtemp(resolve(tmpdir(), 'beeline-intake-first-'));
   const identity = identityFromKey('11'.repeat(32), 'Bee');
   const runtime = { agent: { name: 'Bee', publicKey: identity.publicKey,
@@ -14,12 +18,12 @@ it('starts Room and corner intake before waiting for archived cleanup', async ()
     transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'test' },
   } as AgentRuntimeRecord;
   const execute = vi.fn(async (name: string) => {
-    if (name === 'getDaemonBootstrap') return { workspaceIds: ['workspace'], rooms: [{ roomId: 'room' }] };
+    if (name === 'getDaemonBootstrap') return { workspaceIds: ['workspace'], rooms: [{ roomId: 'room' }, { roomId: 'other' }], pendingRooms: [{ roomId: 'room' }, { roomId: 'other' }] };
     if (name === 'listRoomCorners') return { corners: [{ cornerId: 'corner', parentRoomId: 'room' }] };
     throw new Error(`unexpected operation ${name}`);
   });
   const coordinator = new RoomRuntimeCoordinator(runtime, resolve(root, 'runtime.json'),
-    { workspaceRoot: root } as never, { daemonApi: { execute } as never });
+    { workspaceRoot: root, agentKind, agentEnv: managed ? { BEELINE_FREE_AGENT_ID: identity.publicKey } : {}, modelSelection: { model: 'beeline/deepseek/deepseek-v4.1-flash' } } as never, { daemonApi: { execute } as never });
   const internal = coordinator as unknown as {
     startRoom(id: string): Promise<void>;
     watchCorner(input: { cornerId: string }): Promise<void>;
@@ -34,7 +38,8 @@ it('starts Room and corner intake before waiting for archived cleanup', async ()
   const reconciliation = coordinator.reconcile(serving);
   try {
     await vi.waitFor(() => expect(cleanup).toHaveBeenCalled());
-    expect(start).toHaveBeenCalledWith('room');
+    expect(start).toHaveBeenCalledWith('room', prestart);
+    expect(start).toHaveBeenCalledWith('other', false);
     expect(watch).toHaveBeenCalledWith(expect.objectContaining({ cornerId: 'corner' }));
     expect(serving).toHaveBeenCalledOnce();
   } finally {

@@ -32,6 +32,7 @@ async function activateWith(
   options: {
     sessionRaw?: unknown;
     prestartSession?: boolean;
+    failPreparation?: boolean;
     roomId?: string;
     prompts?: string[];
     calls?: string[];
@@ -135,6 +136,9 @@ async function activateWith(
   vi.spyOn(acp, 'sessionNew').mockImplementation(async () => {
     options.calls?.push('session-new');
     sessionOpened();
+    if (options.failPreparation && options.calls?.filter(x => x === 'session-new').length === 1) {
+      throw new Error('preparation failed');
+    }
     return {
       sessionId: 'room-session',
       raw: options.sessionRaw ?? {
@@ -153,7 +157,7 @@ async function activateWith(
           },
         ],
       },
-  };
+    };
   });
   vi.spyOn(acp, 'canPromptWithImages').mockReturnValue(false);
   vi.spyOn(acp, 'setModel').mockResolvedValue(undefined);
@@ -654,4 +658,13 @@ it('reuses boot preparation and supplies only the commanded Room context', async
     expect(prompts[0]).toContain(`context-${roomId}`);
     expect(prompts[0]).not.toContain(`context-${roomId === 'room-a' ? 'room-b' : 'room-a'}`);
   }
+});
+
+
+it('discards a failed boot session before retrying under the claimed command', async () => {
+  const calls: string[] = [], prompts: string[] = [];
+  await activateWith({}, {}, { prestartSession: true, failPreparation: true, calls, prompts });
+  expect(calls.filter(x => x === 'start')).toHaveLength(2);
+  expect(calls.filter(x => x === 'session-new')).toHaveLength(2);
+  expect(prompts).toHaveLength(1);
 });

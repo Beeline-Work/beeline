@@ -1,6 +1,6 @@
 import { agentMemberMetadata } from './agent-member-metadata.js';
 import { normalizeTrayAsk } from '@beeline/api-contract/phone';
-import { assertCornerCommandTarget, commandAddress, sendOrder, reportToCommander, CommandRefusalError } from './commander.js';
+import { assertCornerCommandTarget, commandAddress, sendOrder, reportToCommander, hasOrderContinuation, CommandRefusalError } from './commander.js';
 import { createAgentSubscription, listAgentSubscriptions, deleteAgentSubscription,
   listServiceSubscriptionEvents, subscriptionPromptBody } from './agent-subscriptions.js';
 import { completeProviderWebhookAssignment, providerWebhookAssignments } from './provider-webhooks.js';
@@ -394,6 +394,7 @@ export class DaemonService {
     input: Input<Name>,
     authenticatedAgentId: string,
   ): Promise<Output<Name>> {
+    input = { ...input };
     const candidate = input as Record<string, unknown>;
     if (typeof candidate.agentId === 'string' && candidate.agentId !== authenticatedAgentId)
       throw new Error('daemon token does not own requested agent');
@@ -563,7 +564,7 @@ export class DaemonService {
         if (name === 'createCorner' || name === 'reviseCornerBrief')
           await lockCornerLifecycle(db, scopedRoom);
         const requestId = candidate.requestId ?? candidate.turnId;
-        if (name === 'postAgentTurnReceipt' && candidate.status === 'failed') {
+        if (name === 'postAgentTurnReceipt' && ['failed', 'complete'].includes(String(candidate.status))) {
           await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
             turnSilenceLockKey(scopedRoom, String(requestId), authenticatedAgentId),
           ]);
@@ -631,6 +632,31 @@ export class DaemonService {
                 candidate.generationId,
                 allowCompleted,
               );
+        // A lost receipt response may be replayed after the fallback consumed
+        // this generation. Never replace its stored failed outcome with success.
+        if (name === 'postAgentTurnReceipt' && candidate.status === 'complete' && command.state === 'complete')
+          return this.writeResult() as Output<Name>;
+        if (name === 'postAgentTurnReceipt' && candidate.status === 'failed' &&
+          String(candidate.reason ?? '').startsWith('unreported_order:') &&
+          command.private_payload?.kind === 'order' &&
+          (command.private_payload.reportedGenerationId === command.generation_id ||
+            await hasOrderContinuation(db, command))) {
+          candidate.status = 'complete';
+          delete candidate.reason;
+          delete candidate.reasonKind;
+        }
+        // A terminal receipt consumes execution, not the assignment's outcome.
+        // Check while this generation still owns the command so the existing
+        // failure reporter can deliver one idempotent report (including old helpers).
+        if (name === 'postAgentTurnReceipt' && candidate.status === 'complete' &&
+          command.state === 'claimed' && command.private_payload?.kind === 'order' &&
+          command.private_payload.reportedGenerationId !== command.generation_id &&
+          !(await hasOrderContinuation(db, command))) {
+          candidate.status = 'failed';
+          delete candidate.completionKind;
+          candidate.reason = 'unreported_order: assigned turn ended without a delivered report or recorded continuation; requested work is unconfirmed';
+          candidate.reasonKind = 'hiccup';
+        }
         // A corner is the ordered work's own address: its viewers watch the
         // turn's live work and progress there. Urgent terminal prose still
         // reports privately; done uses the explicit guarded report tool.
@@ -642,7 +668,11 @@ export class DaemonService {
           // Final prose keeps the private return route without inventing a status.
           if (name === 'postRoomMessage') {
             const text = String(candidate.text ?? '').trim();
-            if (text) await this.report(text, authenticatedAgentId, command, db, true);
+            if (text) {
+              const report = await this.report(text, authenticatedAgentId, command, db, true);
+              if ('delivered' in report && report.delivered === false)
+                throw new CommandRefusalError('Report was not delivered; restore commander membership at the recorded return address, then report again.', 409);
+            } else throw new CommandRefusalError('An assignment outcome requires nonempty report text.', 400);
             await db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE id=$1`, [command.id]);
             await db.query(`UPDATE agent_turns SET status='complete',created_at=now()
               WHERE room_id=$1 AND agent_id=$2 AND request_id=$3 AND status<>'cancelled'`,
@@ -3811,12 +3841,16 @@ export class DaemonService {
   private async completion(input: Input<'getRequestCompletion'>, agentId: string) {
     await this.access(input.roomId, agentId);
     const row = (
-      await this.database.query<{ corner_id: string | null; complete: boolean }>(
-        `SELECT (SELECT id::text FROM rooms WHERE parent_id=$1 AND EXISTS(SELECT 1 FROM corner_facts WHERE corner_id=rooms.id AND request_id=$2) LIMIT 1) corner_id,EXISTS(SELECT 1 FROM agent_turns WHERE room_id=$1 AND request_id=$2 AND status IN('complete','failed')) complete`,
+      await this.database.query<{ corner_id: string | null; status: 'complete' | 'failed' | null; failure_reason: string | null }>(
+        `SELECT (SELECT id::text FROM rooms WHERE parent_id=$1 AND EXISTS(SELECT 1 FROM corner_facts WHERE corner_id=rooms.id AND request_id=$2) LIMIT 1) corner_id,
+          ended.status,ended.failure_reason FROM (SELECT 1) anchor LEFT JOIN LATERAL (
+            SELECT status,failure_reason FROM agent_turns WHERE room_id=$1 AND request_id=$2 AND status IN ('complete','failed')
+            ORDER BY created_at DESC LIMIT 1) ended ON true`,
         [input.roomId, input.requestId],
       )
     ).rows[0]!;
-    return { ...(row.corner_id ? { openedCornerId: row.corner_id } : {}), completed: row.complete };
+    return { ...(row.corner_id ? { openedCornerId: row.corner_id } : {}), completed: Boolean(row.status),
+      ...(row.status ? { outcome: row.status, ...(row.failure_reason ? { failureReason: row.failure_reason } : {}) } : {}) };
   }
   private async postRoomMessage(
     input: Input<'postRoomMessage'>,
@@ -3890,7 +3924,9 @@ export class DaemonService {
       //
       // Command authorization has already rejected cancelled output. Keep the
       // receipt guard as a second terminal-state invariant inside this upsert.
-      if (input.requestId) {
+      // Public corner prose records conversation; only the private report or
+      // a recorded continuation can settle an assigned order.
+      if (input.requestId && command?.private_payload?.kind !== 'order') {
         const settled = await database.query(
           `INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id)
            VALUES($1,$2,$3,'complete',$4)
@@ -3943,6 +3979,7 @@ export class DaemonService {
              ), completed AS (
                UPDATE agent_commands SET state='complete',completed_at=now(),result_message_id=inserted.id
                FROM inserted WHERE agent_commands.id=$12
+                 AND agent_commands.private_payload->>'kind' IS DISTINCT FROM 'order'
              ), cleared AS (
                DELETE FROM live_outputs
                WHERE room_id=$2 AND agent_id=$3 AND turn_id=$6 AND kind IN ('draft','thought')
@@ -4325,7 +4362,7 @@ export class DaemonService {
         ? input.toolCalls!
         : null;
     let committedTurn: CommittedTurnLiveRow | undefined;
-    let silence: { hiccupRestart: boolean; updateRequeued: boolean; attempt: number } | undefined;
+    let silence: { hiccupRestart: boolean; updateRequeued: boolean; attempt: number; reportDelivered?: boolean } | undefined;
     await this.database.transaction(async (database) => {
       if (input.heartbeat) {
         committedTurn = (
@@ -4433,13 +4470,11 @@ export class DaemonService {
       requestId: input.requestId,
       ...(committedTurn ? { committedRow: { type: 'turn' as const, row: committedTurn } } : {}),
     });
-    return this.writeResult(
-      silence?.hiccupRestart
-        ? { hiccupRestart: true, hiccupAttempt: silence.attempt }
-        : silence?.updateRequeued
-          ? { updateRequeued: true }
-          : undefined,
-    );
+    return this.writeResult({
+      ...(silence?.hiccupRestart ? { hiccupRestart: true, hiccupAttempt: silence.attempt }
+        : silence?.updateRequeued ? { updateRequeued: true } : {}),
+      ...(silence?.reportDelivered !== undefined ? { failureReportDelivered: silence.reportDelivered } : {}),
+    });
   }
   /**
    * A failed turn is a fact the Room must carry. The approved first-silence
@@ -4671,6 +4706,7 @@ export class DaemonService {
         expiresAt: input.expiresAt ?? Date.now() + 24 * 60 * 60_000,
         linkKind: input.linkKind,
         sourceRoomId: input.roomId,
+        ...(this.authorizedCommand ? { commandId: this.authorizedCommand.id, generationId: this.authorizedCommand.generation_id } : {}),
         ...(sourceMessageId ? { sourceMessageId } : {}),
       },
     });
@@ -8023,7 +8059,8 @@ export class DaemonService {
     ).rows[0];
     if (!saved) throw new Error('corner is archived');
     this.live.publish({ type: 'invalidate', roomId: input.cornerId, reason: 'message', agentId });
-    return { id: saved.id, createdAt: seconds(saved.created_at) };
+    return { id: saved.id, createdAt: seconds(saved.created_at), stored: true, visible: true,
+      receipt: 'Message stored and visible.' };
   }
 
   /**
@@ -8086,6 +8123,7 @@ export class DaemonService {
     hiccupRestart?: boolean;
     hiccupAttempt?: number;
     updateRequeued?: boolean;
+    failureReportDelivered?: boolean;
   }) {
     return { id: id(), createdAt: Math.floor(Date.now() / 1000), ...extra };
   }

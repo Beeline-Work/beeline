@@ -45,6 +45,7 @@ async function runTurn(options: {
     onToolCalls?: (calls: readonly ToolCallEntry[]) => void;
     /** The requester stops this Room turn, as the Stop button does. */
     stop: (requestId: string) => void;
+    approvalDecision: () => void;
   }) => Promise<Awaited<ReturnType<AcpClient['sessionPrompt']>>>;
 }): Promise<{
   receipts: Array<Record<string, unknown>>;
@@ -181,6 +182,7 @@ async function runTurn(options: {
         attempt: attempts,
         onChunk: (delta, full, currentRun) => onChunk?.(delta, full, currentRun),
         onToolCalls: (calls) => onToolCalls?.(calls),
+        approvalDecision: () => (loop as unknown as { squireRelay: { onApprovalDecided: (decision: unknown) => void } }).squireRelay.onApprovalDecided({ requestId: 'ask-1', approvalId: 'approval', status: 'approved', tool: 'login', title: 'Login', detail: '' }),
         stop: (requestId) =>
           (loop as unknown as { stopTurn(id: string): void }).stopTurn(requestId),
       });
@@ -546,7 +548,7 @@ describe('Room turn failure receipt', () => {
     // receipt that would otherwise clean the row up, leaving a half-written
     // answer pulsing under a turn the Room never settled.
     const timeout = new AcpTurnBackstopError(ROOM_PROMPT_BACKSTOP_MS, 'session/prompt');
-    const { writes, posted } = await runTurn({
+    const { writes, posted, receipts } = await runTurn({
       agentCommand: '/fake-agent',
       agentKind: 'codex',
       rejectWrite: 'postRoomMessage',
@@ -562,6 +564,7 @@ describe('Room turn failure receipt', () => {
 
     expect(posted).toEqual([]);
     expect(writes).toContain('postRoomMessage');
+    expect(receipts).toContainEqual(expect.objectContaining({ status: 'failed', reason: 'postRoomMessage refused' }));
     expect(laneWrites(writes).at(-1)).toBe('retractAgentLiveOutput');
   });
 
@@ -759,18 +762,18 @@ describe('Room turn failure receipt', () => {
     expect(receipts.some(receipt => receipt.status === 'failed')).toBe(false);
   });
 
-  it('FREE-ABUSE-1: publishes the time-limit continuation note and releases the turn', async () => {
+  it('FREE-ABUSE-1: fails exhausted assigned work without publishing synthetic continuation prose', async () => {
     const note = "I've hit the time limit for this turn. Send another message and I can continue from here.";
     const { posted, receipts, attempts } = await runTurn({
       agentCommand: '/fake-agent', agentKind: 'opencode', commandReason: 'order',
       prompt: async () => ({ stopReason: 'free-agent-time-limit', updates: [], agentText: note, toolCalls: [] }),
     });
     expect(attempts).toBe(1);
-    expect(posted).toContainEqual(expect.objectContaining({ text: note }));
-    expect(receipts).toContainEqual(expect.objectContaining({ status: 'complete' }));
+    expect(posted).toEqual([]);
+    expect(receipts).toContainEqual(expect.objectContaining({ status: 'failed', reason: expect.stringContaining('free-agent-time-limit') }));
   });
 
-  it.each(['no-reply', 'repeated-tool-call'])('Reproduction LOOP-1: %s ends the helper turn silently and releases queued wakes', async stopReason => {
+  it.each(['no-reply', 'repeated-tool-call'])('Reproduction LOOP-1: %s releases queued wakes and preserves unsuccessful order stops', async stopReason => {
     const { receipts, posted, attempts, sessionsOpened } = await runTurn({
       agentCommand: '/fake-agent', agentKind: 'codex', commandReason: 'order', turnCount: 2,
       prompt: async () => ({ stopReason, updates: [], agentText: 'Must never post this final text', toolCalls: [] }),
@@ -778,9 +781,33 @@ describe('Room turn failure receipt', () => {
     expect(attempts).toBe(2);
     expect(sessionsOpened).toBe(2);
     expect(posted).toEqual([]);
-    expect(receipts.filter(receipt => receipt.status === 'complete')).toHaveLength(2);
-    expect(receipts.some(receipt => receipt.status === 'failed')).toBe(false);
-    console.info('Demonstrated LOOP-1: terminal guard → no Room message; queued wake starts in fresh session');
+    expect(receipts.filter(receipt => receipt.status === (stopReason === 'repeated-tool-call' ? 'failed' : 'complete'))).toHaveLength(2);
+    console.info('Terminal guard releases queued wakes in a fresh session; repeated-call order stop owns a failed receipt.');
+  });
+
+  it('fails the current turn when its required approval decision cannot be published', async () => {
+    const { receipts } = await runTurn({ agentCommand: '/fake-agent', agentKind: 'codex',
+      commandReason: 'order', rejectWrite: 'postSquireApprovalDecision',
+      prompt: async ({ approvalDecision }) => {
+        approvalDecision();
+        return { stopReason: 'end_turn', updates: [], agentText: '', toolCalls: [] };
+      },
+    });
+    expect(receipts).toContainEqual(expect.objectContaining({ status: 'failed', reason: expect.stringContaining('approval decision was not published') }));
+    expect(receipts.some(receipt => receipt.status === 'complete')).toBe(false);
+  });
+
+  it('Charles regression: five invalid login calls produce one failed receipt with no narration posted', async () => {
+    const { receipts, posted } = await runTurn({
+      agentCommand: '/fake-agent', agentKind: 'pi', commandReason: 'order',
+      prompt: async () => ({ stopReason: 'repeated-tool-call', updates: [], agentText: 'I will sign in now.',
+        toolCalls: Array.from({ length: 5 }, (_, i) => ({ id: `login-${i}`, title: 'mcp__squire__operate_login', rawInput: {}, status: 'failed' })) }),
+    });
+    expect(posted).toEqual([]);
+    expect(receipts.filter(receipt => receipt.status === 'failed')).toEqual([
+      expect.objectContaining({ reason: expect.stringContaining('repeated-tool-call (mcp__squire__operate_login)') }),
+    ]);
+    expect(receipts.some(receipt => receipt.status === 'complete')).toBe(false);
   });
 
   it.each(['report', 'order', 'watched_corner', 'corner_check', 'schedule', 'subscribed_event', 'system'])('completes a terminal-tool silent %s wake without posting or retrying', async (commandReason) => {

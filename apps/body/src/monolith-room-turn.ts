@@ -522,6 +522,8 @@ export class MonolithRoomTurnLoop {
   /** The request id of the turn that paused on a grant card, until its decision arrives. */
   private pausedOnGrantRequestId?: string;
   private pausedOnGrantKind?: PendingCardKind;
+  private readonly approvalDecisionWrites = new Set<Promise<void>>();
+  private readonly approvalDecisionFailures = new Map<string, unknown>();
   /** Operator-local turn traces; built once when the daemon configured a directory. */
   private turnTraceSink?: TurnTraceSink;
 
@@ -548,16 +550,24 @@ export class MonolithRoomTurnLoop {
       options.config.operatorHome ?? homedir(),
       undefined,
       (decision) => {
-        options.api
+        const write = options.api
           .execute('postSquireApprovalDecision', { roomId: options.roomId, ...decision })
-          .catch(() => {});
+          .then(() => { this.approvalDecisionFailures.delete(decision.requestId); })
+          .catch((error: unknown) => {
+            this.approvalDecisionFailures.set(decision.requestId, error);
+            console.error('[thin-core] Squire approval decision publication failed:', redactTurnError(error));
+          });
+        this.approvalDecisionWrites.add(write);
+        void write.finally(() => this.approvalDecisionWrites.delete(write));
       },
       (sessionId) => {
-        options.api.execute('endComputerSession', { roomId: options.roomId, sessionId }).catch(() => {});
+        options.api.execute('endComputerSession', { roomId: options.roomId, sessionId })
+          .catch((error: unknown) => console.error('[thin-core] Squire session end publication failed:', redactTurnError(error)));
       },
       async (lease) => (await options.api.execute('refreshComputerSession', { roomId: options.roomId, ...lease })).live,
       (url, siteUrl) => {
-        options.api.execute('forgetSquireSignIn', { url, ...(siteUrl ? { siteUrl } : {}) }).catch(() => {});
+        options.api.execute('forgetSquireSignIn', { url, ...(siteUrl ? { siteUrl } : {}) })
+          .catch((error: unknown) => console.error('[thin-core] Squire sign-in removal failed:', redactTurnError(error)));
       },
     );
     this.options = { ...options, api: this.commandContext.bind(options.api) };
@@ -1809,6 +1819,13 @@ export class MonolithRoomTurnLoop {
               };
               let result = await runPrompt();
               trace.promptSettled();
+              if (['order', 'corner_objective'].includes(this.commandContext.current?.reason ?? '') &&
+                ['repeated-tool-call', 'free-agent-time-limit', 'login-required'].includes(result.stopReason)) {
+                stream.close();
+                await this.discardSession();
+                const tool = result.toolCalls.at(-1)?.title;
+                throw new Error(`unreported_order: ${result.stopReason}${tool ? ` (${redactToolDetail(tool)})` : ''}; requested work is unconfirmed`);
+              }
               if (result.stopReason === 'free-agent-time-limit') {
                 stream.close();
                 await stream.settle(result.agentText, { triggerMessageId: item.id });
@@ -1875,6 +1892,11 @@ export class MonolithRoomTurnLoop {
                 openCornerCall = openCornerToolCall(result.toolCalls);
                 cornerOpened = openedACorner(openCornerCall);
                 explained = await this.explainEmpty(result);
+              }
+              if (['order', 'corner_objective'].includes(this.commandContext.current?.reason ?? '') && result.stopReason === 'repeated-tool-call') {
+                stream.close();
+                await this.discardSession();
+                throw new Error('unreported_order: repeated-tool-call; requested work is unconfirmed');
               }
               if (['no-reply', 'repeated-tool-call'].includes(result.stopReason)) {
                 stream.close();
@@ -1983,6 +2005,9 @@ export class MonolithRoomTurnLoop {
           this.stopTurn(item.id);
         },
       );
+      await Promise.all(this.approvalDecisionWrites);
+      const decisionFailure = this.approvalDecisionFailures.get(item.id);
+      if (decisionFailure) throw new Error(`Squire approval decision was not published: ${distillTurnFailureReason(decisionFailure).text}`);
       startTraceStats();
       await api.execute('postAgentTurnReceipt', {
         agentId: this.agent.publicKey,
@@ -2031,10 +2056,12 @@ export class MonolithRoomTurnLoop {
         // or sanitizes away settles through the card alone.
         const lastRun = liveStream?.lastRunText ?? '';
         const streamed = isPureRetryNarration(lastRun) ? '' : durableReplyText(lastRun);
+        let settleFailure: unknown;
         if (liveStream) {
           await liveStream
             .settle(streamed, streamed ? { triggerMessageId: item.id } : {})
             .catch((settleError: unknown) => {
+              settleFailure = settleError;
               console.error(
                 `[thin-core] monolith Room ${this.options.roomId} draft settle failed:`,
                 settleError,
@@ -2045,18 +2072,21 @@ export class MonolithRoomTurnLoop {
           // this arm is about to report complete. The retract is idempotent.
           await liveStream.retract();
         }
-        startTraceStats();
-        await api.execute('postAgentTurnReceipt', {
-          agentId: this.agent.publicKey,
-          roomId: this.options.roomId,
-          requestId: item.id,
-          status: 'complete',
-          generationId: this.commandContext.generationId,
-          toolCalls: trace.toolCallsTotal,
-          ...this.turnMetrics,
-        });
-        void finishTrace('complete').catch(() => undefined);
-        return;
+        if (!settleFailure) {
+          startTraceStats();
+          await api.execute('postAgentTurnReceipt', {
+            agentId: this.agent.publicKey,
+            roomId: this.options.roomId,
+            requestId: item.id,
+            status: 'complete',
+            generationId: this.commandContext.generationId,
+            toolCalls: trace.toolCallsTotal,
+            ...this.turnMetrics,
+          });
+          void finishTrace('complete').catch(() => undefined);
+          return;
+        }
+        error = settleFailure;
       }
       // A failed turn ends owning no live output. Only `settle` dissolves the
       // draft on the way out and a throw never reaches one, so without this the
@@ -2087,6 +2117,7 @@ export class MonolithRoomTurnLoop {
       void finishTrace('failed', reason.text).catch(() => undefined);
       throw error;
     } finally {
+      this.approvalDecisionFailures.delete(item.id);
       this.busy = false;
     }
   }

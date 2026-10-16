@@ -574,9 +574,10 @@ function ConversationComposerContent({
               const selection = event.nativeEvent.selection;
               if (TAGS_AS_SPANS) {
                 const prefixEnd = tagSplit.prefix.length;
-                if (selection.start < prefixEnd) {
+                if (selection.start === selection.end && selection.start < prefixEnd) {
                   // The caret never rests inside the tags: typing there would
                   // break them into text. A tap on one opens the tag menu.
+                  // Ranges must remain intact for Select all and selection handles.
                   ownInputRef.current?.setSelection(
                     Math.max(selection.end, prefixEnd),
                     Math.max(selection.end, prefixEnd),

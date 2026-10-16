@@ -9120,7 +9120,9 @@ describe('monolith integration', () => {
           chats: Array<{ room: { id: string }; agentState?: string }>;
         }
       ).chats.find((chat) => chat.room.id === ROOM)!;
-    expect((await roomRow()).agentState).toBeUndefined();
+    // Creating the corner dispatches its initial work before helper pickup.
+    // Completing the parent receipt must not hide that pending corner work.
+    expect((await roomRow()).agentState).toBe('working');
 
     await daemonOperation('postAgentTurnReceipt', {
       roomId: cornerId,

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { AddressInfo } from 'node:net';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
+import { claimAgentCommand } from './agent-command.js';
 import { taggedIdentityIdsSql } from './message-mentions.js';
 import { MemoryObjectStorage, PgliteDatabase } from './test-support.js';
 import { ObjectService } from './object-service.js';
@@ -372,9 +373,9 @@ describe('deleteAccount', () => {
         action,reason,root_command_id,root_source_message_id,agent_depth)
        VALUES('helper-input',$1,$2,'m1','helper-turn','input','mention','helper-input','m1',0)`,
       [CORNER, helper]);
-    await database.query(
-      `INSERT INTO agent_turns(room_id,request_id,agent_id,status)
-       VALUES($1,'helper-turn',$2,'working')`, [CORNER, helper]);
+    // Dispatch already created optimistic activity. Claim it as the helper
+    // would, so deletion must cancel the actual running assignment too.
+    await claimAgentCommand(database, CORNER, helper, 'helper-input', 'helper-generation');
     await phone.execute('deleteAccount', {}, OWNER);
     await expectRowCount(
       `SELECT 1 FROM agent_commands WHERE room_id=$1 AND action IN ('input','resume')

@@ -23,8 +23,11 @@ soul. Existing free agents keep their names.
   queued work provisions the Machine through `FreeAgentService.kick` or the sweep.
   A creator owns at most
   `BEELINE_FREE_AGENT_MAX_PER_OWNER` (default 3) free agents.
-- **First boot.** `entrypoint.sh` installs the published helper bundle
-  (`BEELINE_LAB=1 install.sh`), then runs `beeline free-agent`. The Machine trades its
+- **First boot.** The image builds the thin Beeline helper and its MCP entrypoint
+  from its own release SHA, alongside pinned Pi. `entrypoint.sh` starts it without
+  downloading a bundle. A helper refused by the server's minimum-version gate
+  exits; the entrypoint runs `BEELINE_LAB=1 install.sh` and retries with the
+  published bundle. A failed refresh retains the installed helper. The Machine trades its
   one-time `BEELINE_FREE_AGENT_BOOTSTRAP` at `POST /v1/free-agents/bootstrap`. It gets
   its keys, a fresh daemon exchange token and a revocable model token. The root
   filesystem persists (`rootfs.persist=always`), so later boots skip this step.
@@ -39,6 +42,12 @@ soul. Existing free agents keep their names.
   released connection keeps presence `online`, `held`, `asleep`, so mentions never get
   "its helper is offline". On resume the helper sees the wall clock jump past its
   monotonic clock. It then replaces its socket at once (`LiveLink.reconnectNow`).
+  For every agent, dispatch also writes a working turn before helper pickup.
+  A helper claim replaces the reserved `pending:<command id>` generation in
+  that same row. If nobody claims it in **90 seconds**, the existing server
+  pickup deadline clears the optimistic row and invalidates the Room; the
+  command remains available. Optimistic turns are not helper-presence evidence.
+  Delayed wakes paint when released; passive computer observations stay silent.
 - **Reaper (leader).** A running Machine with no work for 5 minutes is stopped. A
   Machine with no activity for 30 days is deleted. A later wake recreates it from the
   sealed keys (its files are gone).
@@ -201,3 +210,32 @@ warns. `scripts/build-free-agent-image.sh` builds the same image by hand.
 Docker for a local end-to-end run (suspend = `docker pause`). `npm run
 prove:free-agent` runs the end-to-end proof and the rewake latency measurement
 against any server whose database it can read.
+
+The image's helper build takes `BEELINE_RELEASE_SHA` and
+`BEELINE_RELEASE_VERSION`; the hand-build script supplies the checkout SHA.
+`scripts/stage-free-agent-helper.sh` builds the canonical helper bundle from
+that checkout. Image construction verifies its SHA, version and digest, then
+installs it through the existing recovery installer in an isolated build stage.
+`node --test infra/free-agent/entrypoint.test.mjs` exercises both cold-boot paths.
+After building the server and image, `node infra/free-agent/cold-start-proof.mjs`
+creates a disposable local database and fresh test Workspace, then drives the
+real server, image and Pi through a mention and reply. Docker substitutes for
+Fly and an immediate local model response substitutes for the provider; the
+timed artifact identifies both stand-ins. Set `PROOF_IMAGE` to choose an image.
+
+Reproduction `cold-beebee-first-reply`, Tubing Crew on 2026-10-16: mention
+17:52:42Z; Machine booted 17:52:58Z; helper download 17:53:00–17:53:17Z;
+Room serving/first activity 17:53:23Z; model catalog 17:53:27Z; first model call
+17:54:00Z; reply 17:54:09Z (87 seconds total). Session startup logs UTC timestamps
+and monotonic step durations for configuration, home preparation, toolchain,
+MCP bridge, ACP initialization and session creation, separating helper
+preparation from provider time when investigating the 37-second gap. A local
+cold run measured 7,762 ms reinstalling the already-installed Pi/ACP packages
+into a Workspace generation. Rooms and corners now use the installed host
+harness immediately while that optional immutable generation prepares in the
+background. A later cold activation can select the prepared generation;
+an active session never switches executables. Free-agent images prepare the exact
+version-keyed Pi/ACP generation and the normal 128 MiB recovery reserve during
+construction, so a matching image needs neither allocation nor an npm pinning
+job on its first turn. Missing or changed generations retain the Workspace
+preparation path.

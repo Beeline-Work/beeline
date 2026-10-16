@@ -230,6 +230,9 @@ export async function requestFreeAgentSleep(
 }
 
 export async function runFreeAgentCommand(env: NodeJS.ProcessEnv = process.env) {
+  const startedAt = performance.now();
+  const startupStep = (step: string) => console.info(`[free-agent] boot ${new Date().toISOString()} step=${step} elapsedMs=${Math.round(performance.now() - startedAt)}`);
+  startupStep('command');
   const agentId = env.BEELINE_FREE_AGENT_ID?.trim().toLowerCase() ?? '';
   const serverUrl = env.BEELINE_SERVER_URL?.trim() ?? '';
   if (!/^[0-9a-f]{64}$/.test(agentId)) throw new Error('BEELINE_FREE_AGENT_ID is required');
@@ -242,14 +245,18 @@ export async function runFreeAgentCommand(env: NodeJS.ProcessEnv = process.env) 
     // A first boot that died before activating left an exchange-only record.
     await rm(runtimeDirectory(supervisorRoot, agentId), { recursive: true, force: true });
     const grant = await fetchFreeAgentGrant(serverUrl, token);
+    startupStep('bootstrap');
     if (grant.agentId !== agentId) throw new Error('free agent bootstrap returned another agent');
     await stageFreeAgent(env, grant);
     console.log(`[free-agent] staged agent ${agentId.slice(0, 12)} for ${grant.workspaceName}`);
   }
+  startupStep('staged');
   await upgradeFreeAgentHarness(configPath, env);
+  startupStep('harness');
   const settings = JSON.parse(
     await readFile(resolve(supervisorRoot, 'beeline', 'free-agent', 'settings.json'), 'utf8'),
   ) as FreeAgentSettings;
+  startupStep('helper-start');
   return runMachineHelper({
     configPaths: [configPath],
     env,

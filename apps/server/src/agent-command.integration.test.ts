@@ -34,6 +34,26 @@ const commands = (agentId = A, roomId = R) =>
   daemon.execute('getAgentCommands', { roomId }, agentId).then((r) => r.commands);
 const send = (text: string, roomId = R) => phone.execute('sendRoomMessage', { roomId, text }, H);
 
+it('Reproduction cold-beebee-first-reply: paints every mentioned agent before helper pickup', async () => {
+  await send('@hoots @goosy Hello');
+  const before = await phone.readRoom(R, H);
+  expect(before?.latestAgentTurns).toEqual(expect.arrayContaining([
+    expect.objectContaining({ agentPubkey: A, status: 'working' }),
+    expect.objectContaining({ agentPubkey: B, status: 'working' }),
+  ]));
+  const pending = await db.query(`SELECT state FROM agent_commands WHERE agent_id IN ($1,$2)`, [A,B]);
+  expect(pending.rows).toEqual([{ state: 'pending' }, { state: 'pending' }]);
+  await db.query(`UPDATE agent_turns SET started_at=now()-interval '17 minutes' WHERE agent_id=$1`, [A]);
+  const [command] = await commands();
+  await claim(command!, 'real-helper');
+  expect((await db.query<{ fresh: boolean }>(`SELECT started_at>now()-interval '1 second' fresh
+    FROM agent_turns WHERE agent_id=$1`, [A])).rows[0]?.fresh).toBe(true);
+  const after = await phone.readRoom(R, H);
+  expect(after?.latestAgentTurns?.filter(turn => turn.agentPubkey === A)).toEqual([
+    expect.objectContaining({ status: 'working', generationId: 'real-helper' }),
+  ]);
+});
+
 async function queueStopOrders() {
   await send('@goosy delegate work');
   const [root] = await commands(B);
@@ -1765,7 +1785,8 @@ it('rolls the command claim back when a cancelled turn cannot become working', a
   const [c] = await commands();
   await db.query(
     `INSERT INTO agent_turns(room_id,request_id,agent_id,status)
-     VALUES($1,$2,$3,'cancelled')`,
+     VALUES($1,$2,$3,'cancelled') ON CONFLICT(room_id,request_id,agent_id)
+     DO UPDATE SET status='cancelled'`,
     [R, c!.turnRequestId, A],
   );
   await expect(

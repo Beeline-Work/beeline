@@ -4,7 +4,7 @@ import { CommandExecutionContext, runServerCommandIntake } from './server-comman
 import type { InterruptedTurn } from './force-update-journal.js';
 import { SquireTaskRelay } from './squire-task-relay.js';
 import { resourceCallFacts } from './resource-mcp-facade.js';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir, hostname } from 'node:os';
 import { dirname, join } from 'node:path';
 import { machineHost } from './machine-host.js';
@@ -927,6 +927,13 @@ export class MonolithRoomTurnLoop {
   }
 
   private async activate(trace?: TurnTrace): Promise<string> {
+    const startupAt = performance.now();
+    let previousStep = startupAt;
+    const startupStep = (step: string) => {
+      const now = performance.now();
+      console.info(`[body] session-start ${new Date().toISOString()} room=${this.options.roomId} step=${step} elapsedMs=${Math.round(now-startupAt)} stepMs=${Math.round(now-previousStep)}`);
+      previousStep = now;
+    };
     await this.refreshTurnCheckout();
     if (this.client?.isAlive && this.sessionId) {
       if (this.options.config.agentHomeRoot) {
@@ -951,6 +958,7 @@ export class MonolithRoomTurnLoop {
         this.grantedResources(),
         ]);
     const { hostRoutes: grantedHostRoutes, devices: grantedDevices, isolatedCategories } = grants;
+    startupStep('configuration');
     this.isolatedCategories = isolatedCategories;
     const privateAssetRoot = join(runtimeDirectory(this.options.runtime.supervisorRoot,
       this.options.runtime.agent.publicKey), 'private-assets');
@@ -1027,6 +1035,7 @@ export class MonolithRoomTurnLoop {
         })
       : {};
     const command = this.options.config.agentCommand ?? this.options.config.agentBinary;
+    startupStep('home');
     const harnessLabel = harnessIdentityLabel({
       kind: this.options.config.agentKind,
       command,
@@ -1035,6 +1044,7 @@ export class MonolithRoomTurnLoop {
       await admitSharedAssets(this.options.runtime.supervisorRoot, 1024 ** 3)
       ? await prepareWorkspaceAssets(this.options.config.agentSharedAssetRoot)
       : undefined;
+    startupStep('asset-layout');
     let toolchain;
     if (isolatedCategories.length)
       await preparePrivateAssets(privateAssetRoot, isolatedCategories);
@@ -1044,7 +1054,7 @@ export class MonolithRoomTurnLoop {
           ...this.options.config.agentEnv, ...homeOverlay,
           ...workspaceCacheEnv(assets, undefined,
             isolatedCategories.includes('package-cache') ? privateAssetRoot : undefined),
-        });
+        }, { background: true });
       } catch (error) {
         // Pinning is optional: a failed install or registry lookup leaves the
         // host adapter usable, while the Workspace download cache stays shared.
@@ -1052,6 +1062,7 @@ export class MonolithRoomTurnLoop {
       }
     }
     this.sharedAssetsActive = Boolean(assets);
+    startupStep('toolchain');
     const cacheEnv = assets
       ? workspaceCacheEnv(assets, undefined,
           isolatedCategories.includes('package-cache') ? privateAssetRoot : undefined)
@@ -1215,6 +1226,7 @@ export class MonolithRoomTurnLoop {
       agentEnv,
       servers: [...servers, ...grantedRouteServers],
     });
+    startupStep('mcp-bridge');
     // What this session actually mounted, not only the Beeline-owned servers:
     // the isolated home also holds every copied local import and every granted
     // host route. A harness that names the tool but never the protocol (grok's
@@ -1258,6 +1270,7 @@ export class MonolithRoomTurnLoop {
       clientOptions,
     );
     await this.client.start();
+    startupStep('acp-initialize');
     if (assets) await markWorkspaceLayoutLive(assets);
     this.watchClaudeLogin();
     const persona = configuration.soul ?? self?.soul;
@@ -1300,6 +1313,7 @@ export class MonolithRoomTurnLoop {
     this.sessionPromptSectionIds = session.report.map((section) => section.id);
     const conversationFingerprint = JSON.stringify([fingerprint, command,
       this.options.config.agentArgs, this.options.cwd, this.turnCheckout?.commit]);
+    startupStep('session-prompt');
     const opened = await openAcpConversation({
       client: this.client,
       agentCommand: harnessLabel,
@@ -1313,6 +1327,11 @@ export class MonolithRoomTurnLoop {
       onResumeFailure: error => console.warn('[body] native conversation unavailable; starting cold:', error),
     });
     if (opened.kind === 'created') this.warmTranscript.forgetSession();
+    startupStep('session-new');
+    if (agentEnv.PI_CODING_AGENT_DIR) {
+      const discovery = await readFile(join(agentEnv.PI_CODING_AGENT_DIR, 'beeline-mcp-startup.json'), 'utf8').catch(() => undefined);
+      if (discovery) console.info('[body] session-tools', discovery);
+    }
     this.warmTranscript.rememberSession(opened.sessionId, conversationFingerprint);
     this.sessionId = opened.sessionId;
     this.sessionCwd = this.options.cwd;
@@ -1332,6 +1351,7 @@ export class MonolithRoomTurnLoop {
         this.recordModelFallback(applied.appliedSelection, applied.options);
       }
     }
+    startupStep('model-selection');
     return opened.sessionId;
   }
 

@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -112,8 +112,17 @@ describe('coarse Workspace assets', () => {
     expect(first?.command).toContain(assets.tools);
     expect(first?.cliCommand).toContain(assets.tools);
     expect(await prepareWorkspaceAdapter(assets, 'codex', 'codex-acp', env)).toEqual(first);
+    const imageRoot = resolve(root, 'image-toolchains');
+    await mkdir(imageRoot);
+    const generationName = first!.command.split('/').slice(-4, -3)[0]!;
+    const imageGeneration = resolve(imageRoot, generationName);
+    await rename(resolve(assets.tools, generationName), imageGeneration);
+    const imageEnv = { ...env, BEELINE_PREPARED_ADAPTER_ROOT: imageRoot };
+    expect((await prepareWorkspaceAdapter(assets, 'codex', 'codex-acp', imageEnv, { background: true }))?.command)
+      .toBe(resolve(imageGeneration, 'node_modules/.bin/codex-acp'));
+    await rename(imageGeneration, resolve(assets.tools, generationName));
     await writeFile(resolve(root, 'codex/package.json'), JSON.stringify({ name: '@openai/codex', version: '2.0.0' }));
-    const second = await prepareWorkspaceAdapter(assets, 'codex', 'codex-acp', env);
+    const second = await prepareWorkspaceAdapter(assets, 'codex', 'codex-acp', imageEnv);
     expect(second?.command).not.toBe(first?.command);
     const runtime = resolve(root, 'beeline/agents/agent-a');
     const home = resolve(runtime, 'rooms/room-a/agent-home');
@@ -130,6 +139,20 @@ describe('coarse Workspace assets', () => {
     }
     expect(await readFile(first!.command, 'utf8')).toContain('exit 0');
     expect(await prepareWorkspaceAdapter(assets, 'goose', '/usr/bin/goose', env)).toBeUndefined();
+    // A new generation must not delay the first turn for its npm install.
+    await writeFile(resolve(root, 'codex/package.json'), JSON.stringify({ name: '@openai/codex', version: '3.0.0' }));
+    const gate = resolve(root, 'prepare-release');
+    const original = await readFile(npm, 'utf8');
+    await writeFile(npm, original.replace('prefix="$1"', `prefix="$1"\nwhile [ ! -f '${gate}' ]; do sleep 0.01; done`));
+    try {
+      const cold = await prepareWorkspaceAdapter(assets, 'codex', 'codex-acp', env, { background: true });
+      expect(cold).toBeUndefined();
+    } finally {
+      await writeFile(gate, 'ready');
+    }
+    const prepared = await prepareWorkspaceAdapter(assets, 'codex', 'codex-acp', env);
+    expect(prepared?.command).not.toBe(second?.command);
+    expect(await prepareWorkspaceAdapter(assets, 'codex', 'codex-acp', env, { background: true })).toEqual(prepared);
   });
 
   it('publishes AVD metadata without copying or hashing the operator SDK', async () => {

@@ -5,6 +5,7 @@ import { ConnectionPresence, recordAgentEvidence } from './connection-presence.j
 import { LiveHub } from './live.js';
 import { runMaintenance } from './background.js';
 import type { SqlDatabase } from './database.js';
+import { createAgentCommand } from './agent-command.js';
 
 const ROOM = '22222222-2222-4222-8222-222222222222';
 const OTHER = '33333333-3333-4333-8333-333333333333';
@@ -60,6 +61,32 @@ describe('delivery-driven presence', () => {
   async function elapsed() {
     await vi.advanceTimersByTimeAsync(100);
   }
+  it('clears unclaimed optimistic work at the pickup deadline without a reply', async () => {
+    const command = await createAgentCommand(database, {
+      roomId: ROOM, agentId: AGENT, sourceMessageId: null, turnRequestId: MESSAGE, reason: 'human_tag',
+    });
+    await database.query(`UPDATE agent_turns SET created_at=now()-interval '1 second' WHERE request_id=$1`, [MESSAGE]);
+    const invalidations: string[] = [];
+    const unsubscribe = live.subscribeAll(event => {
+      if (event.type === 'invalidate') invalidations.push(event.reason);
+    });
+    await presence.start();
+    // The stored deadline has already elapsed; this exercises recovery as well.
+    await new Promise(resolve => setTimeout(resolve, 100));
+    expect((await database.query(`SELECT * FROM agent_turns WHERE request_id=$1`, [MESSAGE])).rows).toEqual([]);
+    expect((await database.query(`SELECT * FROM messages`)).rows).toEqual([]);
+    expect((await database.query(`SELECT state FROM agent_commands WHERE id=$1`, [command!.id])).rows).toEqual([{ state: 'pending' }]);
+    expect(invalidations).toContain('turn');
+    unsubscribe();
+  });
+  it('does not let the optimistic deadline clear a helper generation that took over', async () => {
+    await createAgentCommand(database, { roomId: ROOM, agentId: AGENT, sourceMessageId: null, turnRequestId: MESSAGE, reason: 'human_tag' });
+    await presence.start();
+    await database.query(`UPDATE agent_turns SET generation_id='real-helper' WHERE request_id=$1`, [MESSAGE]);
+    await new Promise(resolve => setTimeout(resolve, 100));
+    expect((await database.query(`SELECT status,generation_id FROM agent_turns WHERE request_id=$1`, [MESSAGE])).rows)
+      .toEqual([{ status: 'working', generation_id: 'real-helper' }]);
+  });
   it('uses one bounded query and never resolves tags in historical messages during recovery', async () => {
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text,created_at)

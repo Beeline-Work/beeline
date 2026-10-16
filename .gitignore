@@ -60,6 +60,7 @@ relay-stack/web/dl/beeline-bootstrap.mjs.sha256
 .scratch/
 .scratch-target/
 .beeline-tools/
+infra/free-agent/helper-bundle/
 
 # Expo (apps/mobile isolated install)
 apps/mobile/node_modules/

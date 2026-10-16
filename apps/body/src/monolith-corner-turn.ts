@@ -1012,7 +1012,7 @@ export class MonolithCornerTurnLoop {
           ...this.options.config.agentEnv, ...homeOverlay,
           ...workspaceCacheEnv(assets, undefined,
             isolatedCategories.includes('package-cache') ? privateAssetRoot : undefined),
-        });
+        }, { background: true });
       } catch (error) {
         // Pinning is optional: use the installed host adapter while keeping
         // the Workspace download cache shared for this turn.

@@ -371,6 +371,7 @@ export class ConnectionPresence {
            AND message.author_id<>a.agent_id
            AND NOT EXISTS(SELECT 1 FROM agent_turns t
              WHERE t.agent_id=a.agent_id AND t.room_id=message.room_id
+               AND COALESCE(t.generation_id,'') NOT LIKE 'pending:%'
                AND (t.request_id=message.id OR t.created_at>=message.created_at))
          OFFSET 0
        ) m ON true
@@ -457,6 +458,7 @@ export class ConnectionPresence {
          AND COALESCE(p.body->>'evidenceNonce',p.body->>'lifecycleId',p.body->>'observedAt')=$7
          AND EXISTS(SELECT 1 FROM memberships WHERE identity_id=$1 AND room_id=$5 AND removed_at IS NULL)
          AND NOT EXISTS(SELECT 1 FROM agent_turns t WHERE t.agent_id=$1 AND t.room_id=$5
+           AND COALESCE(t.generation_id,'') NOT LIKE 'pending:%'
            AND (t.request_id=$3 OR t.created_at >= $6::timestamptz))`,
       [
         delivery.agent_id,
@@ -479,6 +481,7 @@ export class ConnectionPresence {
          AND NOT EXISTS(
            SELECT 1 FROM agent_turns turn
            WHERE turn.agent_id=$1 AND turn.room_id=$2
+             AND COALESCE(turn.generation_id,'') NOT LIKE 'pending:%'
              AND (turn.request_id=$3 OR turn.created_at>=$4::timestamptz)
          )`,
       [delivery.agent_id, delivery.room_id, delivery.message_id, delivery.created_at],
@@ -574,6 +577,17 @@ export class ConnectionPresence {
         created_at: current.created_at,
         generation_id: current.generation_id,
       });
+      return;
+    }
+    if (current.generation_id?.startsWith('pending:')) {
+      // Pickup has its own deadline. Leave the queued command available for
+      // a returning helper, but stop promising work that nobody has claimed.
+      const removed = await this.database.query(
+        `DELETE FROM agent_turns WHERE room_id=$1 AND request_id=$2 AND agent_id=$3
+           AND status='working' AND generation_id=$4 AND created_at=$5`,
+        [turn.room_id, turn.request_id, turn.agent_id, current.generation_id, current.created_at],
+      );
+      if (removed.rowCount) this.live.publish({ type: 'invalidate', roomId: turn.room_id, reason: 'turn' });
       return;
     }
     await noteFirstSilence(this.database, this.live, {

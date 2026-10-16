@@ -424,6 +424,30 @@ describe('open_corner over the grok wire', () => {
     expect(door.calls.some((call) => call.operation === 'archiveCorner')).toBe(false);
   }, 30_000);
 
+  it('R1: posts to the active corner when post_to_corner is called with only text inside a corner', async () => {
+    const door = await daemonDoor();
+    const { result, error } = await callTool(
+      door.origin,
+      { text: 'A note' },
+      { name: 'post_to_corner', cornerId: CORNER },
+    );
+
+    expect(error).toBeUndefined();
+    expect(result?.isError).not.toBe(true);
+    expect(door.calls).toContainEqual(
+      expect.objectContaining({ operation: 'postCornerMessage', cornerId: CORNER, text: 'A note' }),
+    );
+  }, 30_000);
+
+  it('R1: refuses post_to_corner outside a corner when no corner is named', async () => {
+    const door = await daemonDoor();
+    const { result } = await callTool(door.origin, { text: 'A note' }, { name: 'post_to_corner' });
+
+    expect(result?.isError).toBe(true);
+    expect(result?.content[0]?.text).toBe('cornerId is required outside a corner');
+    expect(door.calls.some((call) => call.operation === 'postCornerMessage')).toBe(false);
+  }, 30_000);
+
   it('acts on a named child corner from a Room turn: close, close PR, rename, read, list and post', async () => {
     const door = await daemonDoor();
     for (const [name, args] of [

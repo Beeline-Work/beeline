@@ -4447,10 +4447,16 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
       requireOperationFields(operation, args);
       return legacy(operation);
     }
-    case 'revise_corner':
+    case 'revise_corner': {
       if (args.action === 'metadata') return legacy('rename_corner', addressed);
-      if (args.action === 'brief') { requireOperationFields('revise_corner_brief', addressed, ['cornerId']); return legacy('revise_corner_brief', addressed); }
-      throw new Error('action must be metadata or brief');
+      if (args.action !== 'brief') throw new Error('action must be metadata or brief');
+      // The unified schema advertises the nested brief that rename_corner uses, so
+      // action:brief accepts it too and flattens it for revise_corner_brief.
+      // Explicit top-level fields win over the nested brief.
+      const input = { ...asObject(args.brief), ...addressed };
+      requireOperationFields('revise_corner_brief', input, ['cornerId']);
+      return legacy('revise_corner_brief', input);
+    }
     case 'report':
       if (args.kind === 'feedback') { requireOperationFields('report_feedback', args); return legacy('report_feedback'); }
       if (args.kind === 'fixed') { requireOperationFields('notify_feedback_fixed', args); return legacy('notify_feedback_fixed'); }

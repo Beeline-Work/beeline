@@ -959,7 +959,8 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
   assert.doesNotMatch(source, /wait_minutes=35|timeout-minutes:\s*55/);
   assert.match(source, /selection:[\s\S]*default: auto/);
   assert.match(source, /description: Recovery only - routine releases keep auto/);
-  assert.match(source, /release-version --previous "\$previous" --sha "\$release_sha"/);
+  assert.match(source, /version_args=\(release-version --sha "\$release_sha" --reserved-versions/);
+  assert.match(source, /version_args\+=\(--previous "\$previous"\)/);
   assert.match(source, /if \[ "\$PLAN_ONLY" = true \]; then/);
   assert.match(source, /release_sha=\$\(git rev-parse HEAD\)/);
   assert.match(source, /release_version=v0\.0\.0/);

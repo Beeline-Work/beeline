@@ -1,4 +1,6 @@
-import { agentPairingCommand } from '../../mobile/sources/buzz/agent-pairing-command.js';
+import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
+import { ModuleKind, transpileModule } from 'typescript';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { migrate, migrateData } from './database.js';
 import { PgliteDatabase } from './test-support.js';
@@ -94,8 +96,13 @@ describe('free agent owner warning', () => {
 });
 
 it('pins trigger limits and the guide to the real Add agent command', async () => {
+  // Compile the pure mobile helper without loading Expo's tsconfig in server-only CI.
+  const source = readFileSync(new URL('../../mobile/sources/buzz/agent-pairing-command.ts', import.meta.url), 'utf8');
+  const pairing = {} as { agentPairingCommand: (code: string) => string };
+  runInNewContext(transpileModule(source, { compilerOptions: { module: ModuleKind.CommonJS } }).outputText,
+    { exports: pairing }, { timeout: 1000 });
   const config = freeAgentConfigFromEnv({ BEELINE_FREE_AGENTS: '1', BEELINE_FREE_AGENT_SEAL_KEY: 'seal', FLY_FREE_AGENT_IMAGE: 'image' })!;
   const instructions = freeAgentInstructions('Soul', 'Fern', config);
-  expect(instructions).toContain(agentPairingCommand('<code>'));
+  expect(instructions).toContain(pairing.agentPairingCommand('<code>'));
   for (const text of ['Members -> Add agent', 'At most one unsolicited nudge per UTC day', 'When explicitly asked, help without this daily restriction', 'own files, apps, logins or local repository', 'job longer than your turn limit', 'Normal conversation is not a trigger', '80% warning counts', 'Claude Code, Codex or OpenCode', 'always-on machine', 'Never create, retrieve, request, repeat or post a pairing code', 'online without confirmation']) expect(instructions).toContain(text);
 });

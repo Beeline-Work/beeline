@@ -83,3 +83,18 @@ The operator add path posts the same hello once across retries.
 The runnable built-service proof above now also checks the owner's Room read
 for the exact hello and confirms no Machine boot. It then sends an actual owner
 request before exercising bootstrap, removal, refusal and deletion retry.
+
+## Server-only CI guide check
+
+Reproduction CI-SHARD-1: GitHub job 116985609439 on head `58d125afd` failed
+before loading the warning tests: the direct import of the mobile pairing helper
+made Vite load `apps/mobile/tsconfig.json`, whose Expo base is absent in the
+server-only job. The test now reads and compiles that pure helper explicitly,
+then executes the actual exported function in an isolated VM context. It still
+pins the guide to the mobile command without requiring the mobile app toolchain.
+
+Passing stand-in: the exact CI shard 1 command (two workers, shard 1/8 and its
+three existing excludes) passed all 21 files: 495 tests passed, one existing skip.
+Expo was temporarily unavailable during that run and restored afterward. The
+isolated warning/guide test also passed all five cases without Expo. No app
+behavior changed; the previously demonstrated product paths remain unchanged.

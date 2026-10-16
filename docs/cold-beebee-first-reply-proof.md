@@ -92,3 +92,26 @@ Workspace preparation for another package version. MCP discovery reports each
 server's elapsed time and runs independent servers concurrently. Separate
 asset-layout and session-prompt timestamps distinguish filesystem and prompt
 work from actual adapter/session creation on the next run.
+
+## Image-prepared toolchain iteration
+
+Local run `8e078fd022d0bb610c634fe34b1564b997418b0a`, fresh Workspace
+`2505d74f-ac27-427e-8364-60087e53ee24`: indicator 42 ms, first model call
+6,588 ms, reply 6,623 ms. Asset layout took 3 ms, toolchain selection 4 ms,
+session prompt 3 ms and session-new 1,439 ms. Agent staging to serving took
+2.39 s; the intervening log reports live model-selection startup validation.
+These local times still exclude Fly pulls and use the deterministic model.
+
+The original image reports 236,750,624 bytes of content through Docker inspect;
+the prepared-reserve iteration reports 236,883,910 bytes, an increase of 133,286
+bytes. Docker's local disk display increases from 1.14 GB to 1.27 GB because the
+zero-filled recovery reserve occupies 128 MiB unpacked. The approximately 336 MB
+unpacked canonical helper layer includes about 282 MiB of CodeGraph and its
+bundled runtime. Removing that payload would change the complete helper's tools.
+Stable OS and Pi layers are already reused across release SHAs. Reusing those
+layers on the Fly host is practical; a cold host still needs the complete pull.
+
+The pinned ACP adapter discards its Pi child's stderr. Startup discovery timing
+therefore uses a bounded JSON snapshot in the private Pi home, read by the
+helper after session creation. It records only server names, UTC times and
+elapsed milliseconds, preserving useful timings without model/provider data.

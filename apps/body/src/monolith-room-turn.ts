@@ -4,7 +4,7 @@ import { CommandExecutionContext, runServerCommandIntake } from './server-comman
 import type { InterruptedTurn } from './force-update-journal.js';
 import { SquireTaskRelay } from './squire-task-relay.js';
 import { resourceCallFacts } from './resource-mcp-facade.js';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { homedir, hostname } from 'node:os';
 import { dirname, join } from 'node:path';
 import { machineHost } from './machine-host.js';
@@ -1318,6 +1318,10 @@ export class MonolithRoomTurnLoop {
     });
     if (opened.kind === 'created') this.warmTranscript.forgetSession();
     startupStep('session-new');
+    if (agentEnv.PI_CODING_AGENT_DIR) {
+      const discovery = await readFile(join(agentEnv.PI_CODING_AGENT_DIR, 'beeline-mcp-startup.json'), 'utf8').catch(() => undefined);
+      if (discovery) console.info('[body] session-tools', discovery);
+    }
     this.warmTranscript.rememberSession(opened.sessionId, conversationFingerprint);
     this.sessionId = opened.sessionId;
     this.sessionCwd = this.options.cwd;

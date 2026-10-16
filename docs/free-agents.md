@@ -206,4 +206,8 @@ cold run measured 7,762 ms reinstalling the already-installed Pi/ACP packages
 into a Workspace generation. Rooms and corners now use the installed host
 harness immediately while that optional immutable generation prepares in the
 background. A later cold activation can select the prepared generation;
-an active session never switches executables.
+an active session never switches executables. Free-agent images prepare the exact
+version-keyed Pi/ACP generation and the normal 128 MiB recovery reserve during
+construction, so a matching image needs neither allocation nor an npm pinning
+job on its first turn. Missing or changed generations retain the Workspace
+preparation path.

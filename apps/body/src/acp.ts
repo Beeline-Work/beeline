@@ -1274,6 +1274,17 @@ export class AcpClient extends EventEmitter {
       endTurn({ stopReason: reason });
       this.sessionCancel(sessionId);
     };
+    const freeAgent = this.agentEnv.BEELINE_FREE_AGENT_ID || this.agentEnv.BEELINE_FREE_AGENT_MODEL_TOKEN;
+    const configuredSeconds = Number(this.agentEnv.BEELINE_FREE_AGENT_MAX_TURN_SECONDS);
+    const maxTurnMs = (Number.isFinite(configuredSeconds) && configuredSeconds > 0 ? configuredSeconds : 900) * 1000;
+    let startedAt = Date.now();
+    if (contextPath) {
+      try {
+        const context = JSON.parse(readFileSync(contextPath, 'utf8'));
+        if (Number.isFinite(context.startedAt)) startedAt = context.startedAt;
+      } catch { /* The prompt timer still bounds a missing context. */ }
+    }
+    const hardTimer = freeAgent ? setTimeout(() => stop('free-agent-time-limit'), Math.max(0, startedAt + maxTurnMs - Date.now())) : undefined;
     const checkTerminalContext = () => {
       if (!contextPath || terminalReason) return;
       try {
@@ -1346,7 +1357,9 @@ export class AcpClient extends EventEmitter {
       )])) as { stopReason?: string };
 
       checkTerminalContext();
-      const agentText = terminalReason ? '' : finalAgentMessageText(updates, this.agentLabel);
+      const agentText = terminalReason === 'free-agent-time-limit'
+        ? "I've hit the time limit for this turn. Send another message and I can continue from here."
+        : terminalReason ? '' : finalAgentMessageText(updates, this.agentLabel);
 
       const toolCalls = toolCallEntries(updates);
       completed = !terminalReason;
@@ -1358,6 +1371,7 @@ export class AcpClient extends EventEmitter {
         toolCalls,
       };
     } finally {
+      if (hardTimer) clearTimeout(hardTimer);
       watcher?.close();
       for (const [id, pending] of this.pending) {
         if (terminalReason && pending.sessionId === sessionId) {

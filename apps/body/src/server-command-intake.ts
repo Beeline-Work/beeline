@@ -12,11 +12,13 @@ export class CommandExecutionContext {
   readonly generationId = randomUUID();
   readonly path: string;
   current?: AgentCommand;
+  private startedAt?: number;
   constructor(root?: string) {
     this.path = join(root ?? tmpdir(), `beeline-command-${this.generationId}.json`);
   }
   async enter(command: AgentCommand): Promise<void> {
     this.current = command;
+    this.startedAt = Date.now();
     await mkdir(dirname(this.path), { recursive: true });
     await writeFile(
       this.path,
@@ -26,6 +28,7 @@ export class CommandExecutionContext {
         taskId: command.rootCommandId,
         generationId: this.generationId,
         commandReason: command.reason,
+        startedAt: this.startedAt,
       }),
       { mode: 0o600 },
     );
@@ -46,6 +49,7 @@ export class CommandExecutionContext {
         taskId: command.rootCommandId,
         generationId: this.generationId,
         commandReason: command.reason,
+        startedAt: this.startedAt,
         promptSectionIds: [...new Set(ids)],
       }),
       { mode: 0o600 },

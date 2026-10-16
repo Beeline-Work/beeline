@@ -759,6 +759,17 @@ describe('Room turn failure receipt', () => {
     expect(receipts.some(receipt => receipt.status === 'failed')).toBe(false);
   });
 
+  it('FREE-ABUSE-1: publishes the time-limit continuation note and releases the turn', async () => {
+    const note = "I've hit the time limit for this turn. Send another message and I can continue from here.";
+    const { posted, receipts, attempts } = await runTurn({
+      agentCommand: '/fake-agent', agentKind: 'opencode', commandReason: 'order',
+      prompt: async () => ({ stopReason: 'free-agent-time-limit', updates: [], agentText: note, toolCalls: [] }),
+    });
+    expect(attempts).toBe(1);
+    expect(posted).toContainEqual(expect.objectContaining({ text: note }));
+    expect(receipts).toContainEqual(expect.objectContaining({ status: 'complete' }));
+  });
+
   it.each(['no-reply', 'repeated-tool-call'])('Reproduction LOOP-1: %s ends the helper turn silently and releases queued wakes', async stopReason => {
     const { receipts, posted, attempts, sessionsOpened } = await runTurn({
       agentCommand: '/fake-agent', agentKind: 'codex', commandReason: 'order', turnCount: 2,

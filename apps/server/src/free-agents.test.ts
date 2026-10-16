@@ -468,6 +468,35 @@ describe('free starter agents', () => {
     expect(await freeAgentOf(id)).toMatchObject({ state: 'waking', fly_machine_id: 'm2' });
   });
 
+  it('does not start or provision Machines after the shared budget is reached', async () => {
+    const { id } = await createWorkspace();
+    await settle();
+    const agent = await freeAgentOf(id);
+    await db.query(`UPDATE free_agents SET state='sleeping' WHERE agent_id=$1`, [agent.agent_id]);
+    await db.query(`INSERT INTO free_agent_budget(day,usd) VALUES(current_date,25)`);
+    machines.calls.length = 0;
+    expect(await freeAgents.wake(agent.agent_id)).toBe(false);
+    await db.query(`UPDATE free_agents SET state='destroyed',fly_machine_id=NULL WHERE agent_id=$1`, [agent.agent_id]);
+    expect(await freeAgents.provision(agent.agent_id)).toBe(false);
+    expect(machines.calls).toEqual([]);
+    expect((await db.query(`SELECT kind FROM free_agent_events WHERE kind='budget_reached'`)).rows).toHaveLength(2);
+  });
+
+  it('FREE-ABUSE-1: reaps a Machine when its command passes the hard cap plus grace', async () => {
+    const { id } = await createWorkspace();
+    await settle();
+    const agent = await freeAgentOf(id);
+    await db.query(`UPDATE free_agents SET state='running',last_activity_at=now(),
+      wake_requested_at=now() WHERE agent_id=$1`, [agent.agent_id]);
+    await db.query(`UPDATE agent_commands SET state='claimed',claimed_at=now()-interval '17 minutes',
+      lease_expires_at=now()+interval '90 seconds' WHERE agent_id=$1`, [agent.agent_id]);
+    machines.calls.length = 0;
+    await freeAgents.sweep();
+    expect(machines.calls).toContain('stop m1');
+    expect((await db.query(`SELECT state,cancellation_reason FROM agent_commands WHERE agent_id=$1`, [agent.agent_id])).rows)
+      .toEqual([{ state: 'cancelled', cancellation_reason: 'free-agent-time-limit' }]);
+  });
+
   it('adds one free agent to an existing Workspace in its #general, owned by its owner', async () => {
     const workspaceId = '44444444-4444-4444-8444-444444444444';
     await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Old')`, [workspaceId]);

@@ -829,9 +829,9 @@ describe('cascade-path foreign keys stay indexed', () => {
 
 describe('release-owned schema readiness', () => {
   it('rejects the previous schema marker until the free agents migration is released', async () => {
-    const query = vi.fn().mockResolvedValue(result([{ version: 27 }]));
+    const query = vi.fn().mockResolvedValue(result([{ version: 28 }]));
     await expect(assertSchemaCurrent({ query, transaction: vi.fn() })).rejects.toThrow(
-      /expected schema version 28, found 27/,
+      /expected schema version 29, found 28/,
     );
   });
 

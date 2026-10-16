@@ -3,6 +3,7 @@ import { assignSeededAgentIdentity, resolveFace, uniqueAgentHandle } from '@beel
 import { createAgentCommand } from './agent-command.js';
 import type { SqlDatabase } from './database.js';
 import type { FreeAgentMachines } from './fly-machines.js';
+import { DEFAULT_FREE_AGENT_LIMITS, freeAgentBudgetReached, freeAgentLimitsFromEnv, type FreeAgentLimits } from './free-agent-limits.js';
 import { joinRooms } from './membership-join.js';
 import { lockIdentityHandleWorkspaces } from './workspace-handles.js';
 
@@ -45,6 +46,15 @@ CREATE TABLE IF NOT EXISTS free_agent_usage (
   tokens bigint NOT NULL DEFAULT 0,
   PRIMARY KEY (owner_id, day)
 );
+CREATE TABLE IF NOT EXISTS free_agent_budget (
+  day date PRIMARY KEY,
+  usd numeric NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS free_agent_call_rate (
+  owner_id text PRIMARY KEY REFERENCES identities(id) ON DELETE CASCADE,
+  minute bigint NOT NULL,
+  calls integer NOT NULL
+);
 CREATE TABLE IF NOT EXISTS free_agent_events (
   id bigserial PRIMARY KEY,
   agent_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
@@ -61,6 +71,7 @@ export const FREE_AGENT_SWEEP_MS = 15_000;
 export const FREE_AGENT_HARNESS = 'opencode';
 
 export interface FreeAgentConfig {
+  limits?: FreeAgentLimits;
   /** Upstream OpenRouter model every proxied request is pinned to. */
   model: string;
   /** Seconds without work before the helper asks to sleep. */
@@ -100,6 +111,7 @@ export function freeAgentConfigFromEnv(
     return Number.isFinite(value) && value > 0 ? value : fallback;
   };
   return {
+    limits: freeAgentLimitsFromEnv(env),
     model: env.BEELINE_FREE_AGENT_MODEL || 'deepseek/deepseek-v4-flash',
     idleSeconds: number('BEELINE_FREE_AGENT_IDLE_SECONDS', 60),
     maxPerOwner: number('BEELINE_FREE_AGENT_MAX_PER_OWNER', 3),
@@ -441,6 +453,7 @@ export interface FreeAgentBootstrapGrant {
   modelToken: string;
   modelBaseUrl: string;
   upstreamModel: string;
+  maxTurnSeconds: number;
   idleSeconds: number;
 }
 
@@ -496,6 +509,7 @@ export class FreeAgentService {
    * mid-create is adopted by lookup on retry.
    */
   async provision(agentId: string): Promise<boolean> {
+    if (await this.#budgetPaused(agentId)) return false;
     const claimed = (
       await this.database.query<{ agent_id: string }>(
         `UPDATE free_agents SET provision_started_at=clock_timestamp(),
@@ -525,6 +539,7 @@ export class FreeAgentService {
         memoryMb: this.config.memoryMb,
         env: {
           BEELINE_FREE_AGENT_ID: agentId,
+          BEELINE_FREE_AGENT_MAX_TURN_SECONDS: String((this.config.limits ?? DEFAULT_FREE_AGENT_LIMITS).maxTurnMs / 1000),
           BEELINE_FREE_AGENT_BOOTSTRAP: bootstrap,
           BEELINE_SERVER_URL: this.config.publicOrigin,
           ...(this.config.installBaseUrl
@@ -557,7 +572,14 @@ export class FreeAgentService {
    * Start the agent's Machine when a wake is pending and the agent is not
    * serving. The row update is the fence: one instance per 20 seconds.
    */
+  async #budgetPaused(agentId: string): Promise<boolean> {
+    if (!await freeAgentBudgetReached(this.database, (this.config.limits ?? DEFAULT_FREE_AGENT_LIMITS).dailyBudgetUsd)) return false;
+    await recordFreeAgentEvent(this.database, agentId, 'budget_reached');
+    return true;
+  }
+
   async wake(agentId: string, cause: WakeCause = 'command'): Promise<boolean> {
+    if (await this.#budgetPaused(agentId)) return false;
     const claimed = (
       await this.database.query<{ fly_machine_id: string; previous: string }>(
         `UPDATE free_agents f SET state='waking',wake_requested_at=clock_timestamp(),
@@ -706,6 +728,7 @@ export class FreeAgentService {
         modelToken,
         modelBaseUrl: `${new URL(this.config.publicOrigin).origin}/v1/free-agents/model`,
         upstreamModel: this.config.model,
+        maxTurnSeconds: (this.config.limits ?? DEFAULT_FREE_AGENT_LIMITS).maxTurnMs / 1000,
         idleSeconds: this.config.idleSeconds,
       };
     });
@@ -752,6 +775,34 @@ export class FreeAgentService {
     }
     // The helper's idle timer is the normal path to sleep; this catches a
     // helper that crashed or never asked, so no Machine runs unattended.
+    const timedOut = await this.database.query<{ agent_id: string; fly_machine_id: string }>(
+      `WITH cancelled AS (
+         UPDATE agent_commands command SET state='cancelled',completed_at=clock_timestamp(),
+           cancellation_reason='free-agent-time-limit'
+         FROM free_agents f WHERE command.agent_id=f.agent_id AND command.state='claimed'
+           AND command.action IN ('input','resume')
+           AND COALESCE((SELECT turn.started_at FROM agent_turns turn
+             WHERE turn.agent_id=command.agent_id AND turn.room_id=command.room_id
+               AND turn.request_id=command.turn_request_id),command.claimed_at)
+             <clock_timestamp()-make_interval(secs => $1::double precision / 1000)
+         RETURNING command.agent_id,command.room_id,command.turn_request_id
+       ), turns AS (
+         UPDATE agent_turns turn SET status='cancelled',failure_reason='free-agent-time-limit'
+         FROM cancelled WHERE turn.agent_id=cancelled.agent_id AND turn.room_id=cancelled.room_id
+           AND turn.request_id=cancelled.turn_request_id AND turn.status='working'
+       )
+       UPDATE free_agents f SET state='stopped',updated_at=now()
+       WHERE f.agent_id IN (SELECT agent_id FROM cancelled) AND f.fly_machine_id IS NOT NULL
+       RETURNING f.agent_id,f.fly_machine_id`,
+      [(this.config.limits ?? DEFAULT_FREE_AGENT_LIMITS).maxTurnMs + 60_000],
+    );
+    for (const row of timedOut.rows) {
+      acted++;
+      await recordFreeAgentEvent(this.database, row.agent_id, 'turn_time_limit');
+      await this.machines.stop(row.fly_machine_id).catch(error =>
+        this.log(`stop ${row.agent_id.slice(0, 12)}: ${String(error)}`),
+      );
+    }
     const idle = await this.database.query<{ agent_id: string; fly_machine_id: string }>(
       `UPDATE free_agents f SET state='sleeping',updated_at=now()
        WHERE f.fly_machine_id IS NOT NULL AND f.state IN ('running','waking')
@@ -759,7 +810,8 @@ export class FreeAgentService {
          AND COALESCE(f.wake_requested_at,f.created_at)<clock_timestamp()-make_interval(secs => $1::double precision / 1000)
          AND NOT EXISTS (SELECT 1 FROM agent_commands command
            WHERE command.agent_id=f.agent_id AND (command.state IN ('pending','claimed')
-             OR command.completed_at>clock_timestamp()-make_interval(secs => $1::double precision / 1000)))
+             OR (command.cancellation_reason IS DISTINCT FROM 'free-agent-time-limit'
+               AND command.completed_at>clock_timestamp()-make_interval(secs => $1::double precision / 1000))))
        RETURNING f.agent_id,f.fly_machine_id`,
       [this.config.reapIdleMs],
     );

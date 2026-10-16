@@ -2444,7 +2444,7 @@ async function activeCommandContext(): Promise<{
   requestId: string;
   generationId: string;
 }> {
-  const { promptSectionIds: _sections, commandReason: _reason, ...value } = await readTurnContextFile();
+  const { promptSectionIds: _sections, commandReason: _reason, startedAt: _startedAt, ...value } = await readTurnContextFile();
   if (!value.roomId || !value.requestId || !value.generationId)
     throw new Error('no active server command');
   return value as { roomId: string; requestId: string; generationId: string };

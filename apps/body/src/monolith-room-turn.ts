@@ -1809,6 +1809,12 @@ export class MonolithRoomTurnLoop {
               };
               let result = await runPrompt();
               trace.promptSettled();
+              if (result.stopReason === 'free-agent-time-limit') {
+                stream.close();
+                await stream.settle(result.agentText, { triggerMessageId: item.id });
+                await this.discardSession();
+                return;
+              }
               if (['no-reply', 'repeated-tool-call'].includes(result.stopReason)) {
                 stream.close();
                 await this.discardSession();

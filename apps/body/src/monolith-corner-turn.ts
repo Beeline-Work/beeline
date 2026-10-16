@@ -2109,6 +2109,12 @@ export class MonolithCornerTurnLoop {
                 }
               };
               const completeTerminal = async (result: PromptResult): Promise<boolean> => {
+                if (result.stopReason === 'free-agent-time-limit') {
+                  stream.close();
+                  await stream.settle(result.agentText, requestedById ? { triggerMessageId: requestId } : {});
+                  await this.discardSession();
+                  return true;
+                }
                 if (!['no-reply', 'repeated-tool-call'].includes(result.stopReason)) return false;
                 stream.close();
                 await this.discardSession();

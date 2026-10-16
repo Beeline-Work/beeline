@@ -71,9 +71,40 @@ left. On completion it settles to the reported usage. A refused call is
 refunded, and a reply that broke off keeps its reservation (default 300K tokens
 a day). There is no lifetime cap unless `BEELINE_FREE_AGENT_LIFETIME_TOKENS` is
 set. A charge
-counts uncached prompt tokens plus completion tokens; cached prompt reads are free.
+counts uncached prompt tokens plus completion tokens plus `ceil(cached × weight)`.
+The cached weight defaults to 0.25 (configurable within 0.10–0.25).
 At the cap the proxy answers, in the agent's voice, that the allowance is used
 and how to connect the person's own agent.
+
+Model calls require a claimed `input`/`resume` command with a live lease and a
+claim younger than the hard turn cap. Pending and completed commands do not
+permit calls, including copied model tokens used from outside Beeline. The
+helper retains the command claim through model retries and tool follow-ups;
+there is no post-completion grace that would authorize idle calls.
+
+A per-owner UTC minute counter defaults to 30 admitted calls, including failed
+upstream attempts. Reservations take a global advisory lock before the owner
+lock. The shared UTC daily dollar budget defaults to **$25**. Each call reserves
+its full uncached prompt and bounded output at configured fallback prices before
+contacting the model. Successful calls settle to OpenRouter `usage.cost`, or to
+configured input/output prices when cost is absent. Failed upstream calls refund
+the reservation; interrupted replies without usage keep it. Each settlement
+records `model_usage` (day, charged tokens, USD). A `budget_reached` event records
+refused model calls and wakes. At the budget, calls return a first-person pause
+message and provisioning/waking cannot start Machines. Queued wakes remain for
+the next UTC day. Operators must keep fallback prices at or above their pinned
+model's worst-case prices; changing models requires checking these prices.
+
+Prompt reservations count UTF-8 bytes for every allowlisted forwarded field,
+including response-format schemas and tool selectors, plus framing overhead. Remote media
+cannot be bounded this way and is refused by the free-agent proxy.
+
+Free-agent ACP turns have a hard wall clock cap of **15 minutes**, measured from
+local command intake across prompt retries. Activity does not extend it. The
+helper cancels the prompt, publishes a short note inviting another message, and
+discards the session. The leader reaper cancels overdue claimed commands after
+the cap plus 60 seconds of grace and stops their Machine even if it is still
+reporting activity. The existing idle, reaper and deletion intervals are unchanged.
 
 ## Server configuration
 
@@ -85,10 +116,16 @@ Free agents stay off unless all of these are set: `BEELINE_FREE_AGENTS=1`,
 `BEELINE_FREE_AGENT_SLEEP_MODE` (`suspend` or `stop`),
 `BEELINE_FREE_AGENT_IDLE_SECONDS`, `BEELINE_FREE_AGENT_REAP_IDLE_SECONDS`,
 `BEELINE_FREE_AGENT_DELETE_AFTER_DAYS`, `BEELINE_FREE_AGENT_DAILY_TOKENS`,
-`BEELINE_FREE_AGENT_LIFETIME_TOKENS`, `BEELINE_FREE_AGENT_INSTALL_BASE_URL` and
+`BEELINE_FREE_AGENT_LIFETIME_TOKENS`,
+`BEELINE_FREE_AGENT_CACHED_TOKEN_WEIGHT` (0.25),
+`BEELINE_FREE_AGENT_CALLS_PER_MINUTE` (30),
+`BEELINE_FREE_AGENT_DAILY_BUDGET_USD` (25),
+`BEELINE_FREE_AGENT_INPUT_USD_PER_MILLION` (1),
+`BEELINE_FREE_AGENT_OUTPUT_USD_PER_MILLION` (5),
+`BEELINE_FREE_AGENT_MAX_TURN_SECONDS` (900), `BEELINE_FREE_AGENT_INSTALL_BASE_URL` and
 `FLY_FREE_AGENT_API_ORIGIN` (proofs only). Fly offers no egress firewall for
 Machines, so outbound traffic is not restricted. The abuse limits are Machine
-size, sleep, the reaper and the token allowances.
+size, sleep, the reaper, live turns, owner token/rate limits and the shared dollar budget.
 
 ## Image and proofs
 

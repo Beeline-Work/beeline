@@ -70,6 +70,7 @@ describe('ACP turn liveness over real stdio', () => {
   let root: string;
   let client: AcpClient;
   let sessionId: string;
+  let agentEnv: Record<string, string>;
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), 'beeline-acp-liveness-'));
     const script = join(root, 'agent.mjs');
@@ -77,10 +78,11 @@ describe('ACP turn liveness over real stdio', () => {
     const contextPath = join(root, 'turn.json');
     await writeFile(contextPath, JSON.stringify({ roomId: 'room', requestId: 'turn', generationId: 'generation', commandReason: 'report' }));
     vi.stubEnv('BEELINE_TURN_CONTEXT_FILE', contextPath);
+    agentEnv = { BEELINE_TURN_CONTEXT_FILE: contextPath };
     client = new AcpClient({
       agentCommand: process.execPath,
       agentArgs: [script],
-      agentEnv: { BEELINE_TURN_CONTEXT_FILE: contextPath },
+      agentEnv,
       agentLabel: 'test-runtime',
       oomKills: { prime: async () => undefined, consume: async () => false },
     });
@@ -93,6 +95,24 @@ describe('ACP turn liveness over real stdio', () => {
     vi.unstubAllGlobals();
     await client.stop();
     await rm(root, { recursive: true, force: true });
+  });
+
+  it('FREE-ABUSE-1: cancels a busy free-agent turn at the wall clock cap and returns a continuation note', async () => {
+    agentEnv.BEELINE_FREE_AGENT_ID = 'free-agent';
+    agentEnv.BEELINE_FREE_AGENT_MAX_TURN_SECONDS = '900';
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    const opened = once(client, 'session/update');
+    const prompt = client.sessionPrompt(sessionId, 'tool');
+    await opened;
+    const cancel = vi.spyOn(client, 'sessionCancel');
+    for (let minute = 0; minute < 14; minute++) {
+      await vi.advanceTimersByTimeAsync(60_000);
+      await client.setModel(sessionId, JSON.stringify({ sessionUpdate: 'tool_call_update', toolCallId: 'poll', status: 'in_progress' }));
+    }
+    expect(cancel).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(cancel).toHaveBeenCalledWith(sessionId);
+    expect(await prompt).toMatchObject({ stopReason: 'free-agent-time-limit', agentText: expect.stringContaining('Send another message') });
   });
 
   it('Reproduction LOOP-1: successful no_reply_needed immediately settles without a final reply', async () => {

@@ -1,4 +1,5 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { isIP } from 'node:net';
 import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-contract/agent-access';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { IncomingMessage, ServerResponse } from 'node:http';
@@ -149,14 +150,34 @@ export function computerSessionUrl(id: string): string {
   return `${origin.replace(/\/$/, '')}/s/${id}/`;
 }
 
+/**
+ * The server fetches and tunnels to a share's upstream URL, so an agent must
+ * not point it at Beeline's own network. Squire shares through Cloudflare
+ * quick tunnels; BEELINE_COMPUTER_SHARE_HOSTS overrides the host list with
+ * comma-separated exact hosts or "*.suffix" entries.
+ */
+export function trustedComputerShareUpstream(upstream: URL): boolean {
+  if (upstream.protocol !== 'https:' || upstream.username || upstream.password) return false;
+  const host = upstream.hostname.toLowerCase().replace(/\.$/, '');
+  if (!host || isIP(host.replace(/^\[|\]$/g, '')) || host === 'localhost'
+    || ['.localhost', '.internal', '.local'].some((suffix) => host.endsWith(suffix))) return false;
+  const allowed = (process.env.BEELINE_COMPUTER_SHARE_HOSTS ?? '*.trycloudflare.com')
+    .split(',').map((entry) => entry.trim().toLowerCase()).filter(Boolean);
+  return allowed.some((entry) => entry.startsWith('*.')
+    ? host.endsWith(entry.slice(1)) && host.length > entry.length - 1
+    : host === entry);
+}
+
 export async function createComputerSession(
   database: SqlDatabase,
   live: LiveHub,
   input: { roomId: string; agentId: string; sessionId: string; upstreamUrl: string; title?: string; expiresAt?: number },
+  allowUpstream: (upstream: URL) => boolean = trustedComputerShareUpstream,
 ): Promise<{ id: string; url: string }> {
   const bodySource = input.upstreamUrl === 'body:';
-  const upstream = bodySource ? undefined : new URL(input.upstreamUrl);
-  if (!bodySource && (!upstream || !['http:', 'https:'].includes(upstream.protocol) || upstream.username || upstream.password))
+  let upstream: URL | undefined;
+  try { upstream = bodySource ? undefined : new URL(input.upstreamUrl); } catch { /* rejected below */ }
+  if (!bodySource && (!upstream || !allowUpstream(upstream)))
     throw new Error('computer share URL is invalid');
   if (!input.sessionId.trim() || input.sessionId.length > 240)
     throw new Error('computer session id is invalid');

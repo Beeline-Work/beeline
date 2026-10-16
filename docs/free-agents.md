@@ -111,8 +111,10 @@ DM warning per owner per UTC day, with the midnight UTC reset and a Members ->
 Add agent link. Delivery does not call a model. The warning records
 `allowance_warning` and `nudge_shown`; pairing a non-free agent in the same
 Workspace within 24 hours records `agent_connected_after_nudge` once per agent.
-Model-authored nudges and guide acceptance are not reliably observable server-side,
-so they are not counted as nudges or guides started. Instructions limit unsolicited
+Reaching the Add agent command within 24 hours of a warning records `guide_started`
+once per warning. This measures that concrete setup step, not conversational acceptance.
+Model-authored nudges are not reliably observable server-side and are not counted.
+Instructions limit unsolicited
 offers to inaccessible work or the warning, once per UTC day, and guide people
 through running their own CLI without requesting or posting pairing codes.
 Existing free-agent souls receive the guide during data migration.

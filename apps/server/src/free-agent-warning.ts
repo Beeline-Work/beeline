@@ -13,10 +13,15 @@ export async function warnFreeAgentOwner(
 ): Promise<void> {
   await database.transaction(async (db) => {
     await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`free-agent-usage:${ownerId}`]);
+    // Usage totals include in-flight reservations. Only settled charges can warn.
     const used = (await db.query<{ tokens: string }>(
-      `SELECT tokens FROM free_agent_usage WHERE owner_id=$1 AND day=$2::date`, [ownerId, day],
+      `SELECT COALESCE(SUM((event.detail->>'tokens')::bigint),0) tokens
+       FROM free_agent_events event JOIN free_agents free ON free.agent_id=event.agent_id
+       WHERE free.owner_id=$1 AND event.kind='model_usage' AND event.detail->>'day'=$2
+         AND event.at>=($2::date::timestamp AT TIME ZONE 'UTC')
+         AND event.at<($2::date::timestamp AT TIME ZONE 'UTC')+interval '2 days'`, [ownerId, day],
     )).rows[0];
-    if (!used || Number(used.tokens) < dailyTokenCap * 0.8) return;
+    if (dailyTokenCap <= 0 || !used || Number(used.tokens) < dailyTokenCap * 0.8) return;
     const agent = (await db.query<{ workspace_id: string }>(
       `SELECT free.workspace_id FROM free_agents free
        WHERE free.agent_id=$1 AND free.owner_id=$2
@@ -68,4 +73,22 @@ export async function recordAgentConnectedAfterNudge(
       AND NOT EXISTS(SELECT 1 FROM free_agent_events event WHERE event.agent_id=free.agent_id
         AND event.kind='agent_connected_after_nudge' AND event.detail->>'connectedAgentId'=$3)`,
   [ownerId, workspaceId, agentId]);
+}
+
+/** A person reaching the real Add agent command is an observable guide start. */
+export async function recordFreeAgentGuideStarted(database: SqlDatabase, ownerId: string, workspaceId: string): Promise<void> {
+  await database.transaction(async db => {
+    await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`free-agent-guide:${ownerId}:${workspaceId}`]);
+    await db.query(`INSERT INTO free_agent_events(agent_id,kind,detail)
+    SELECT free.agent_id,'guide_started',jsonb_build_object('source','add_agent_command','warningId',warning.id)
+    FROM free_agents free JOIN LATERAL (
+      SELECT event.id FROM free_agent_events event WHERE event.agent_id=free.agent_id
+        AND event.kind='allowance_warning' AND event.at>=now()-interval '24 hours'
+      ORDER BY event.at DESC,event.id DESC LIMIT 1
+    ) warning ON true
+    WHERE free.owner_id=$1 AND free.workspace_id=$2
+      AND NOT EXISTS(SELECT 1 FROM free_agent_events started WHERE started.agent_id=free.agent_id
+        AND started.kind='guide_started' AND started.detail->>'warningId'=warning.id::text)`,
+    [ownerId, workspaceId]);
+  });
 }

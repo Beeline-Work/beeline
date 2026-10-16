@@ -1,8 +1,8 @@
 import { agentPairingCommand } from '../../mobile/sources/buzz/agent-pairing-command.js';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { migrate } from './database.js';
+import { migrate, migrateData } from './database.js';
 import { PgliteDatabase } from './test-support.js';
-import { freeAgentConfigFromEnv, freeAgentInstructions } from './free-agents.js';
+import { FREE_AGENT_CONNECT_GUIDE, freeAgentConfigFromEnv, freeAgentInstructions } from './free-agents.js';
 import { recordAgentConnectedAfterNudge, warnFreeAgentOwner } from './free-agent-warning.js';
 import { PhoneService } from './phone-service.js';
 
@@ -22,12 +22,16 @@ describe('free agent owner warning', () => {
     await db.query(`INSERT INTO free_agents(agent_id,workspace_id,owner_id,sealed_keys,state) VALUES($1,$2,$3,'sealed','running')`, [AGENT, WORKSPACE, OWNER]);
   });
   afterEach(async () => { await db.close(); });
-  const usage = async (day: string, tokens: number) => db.query(
-    `INSERT INTO free_agent_usage(owner_id,day,tokens) VALUES($1,$2,$3) ON CONFLICT(owner_id,day) DO UPDATE SET tokens=$3`, [OWNER, day, tokens]);
+  const usage = async (day: string, tokens: number) => {
+    await db.query(`INSERT INTO free_agent_usage(owner_id,day,tokens) VALUES($1,$2,$3) ON CONFLICT(owner_id,day) DO UPDATE SET tokens=$3`, [OWNER, day, tokens]);
+    await db.query(`DELETE FROM free_agent_events WHERE kind='model_usage' AND detail->>'day'=$1`, [day]);
+    await db.query(`INSERT INTO free_agent_events(agent_id,kind,detail,at) VALUES($1,'model_usage',$2::jsonb,($3::date::timestamp AT TIME ZONE 'UTC'))`, [AGENT, JSON.stringify({ day, tokens }), day]);
+  };
   const warn = (day = DAY) => warnFreeAgentOwner(db, AGENT, OWNER, day, 1000);
 
   it('delivers once per UTC day at 80%, privately, through the owner Room read', async () => {
     await usage(DAY, 799);
+    await db.query(`UPDATE free_agent_usage SET tokens=1000`);
     await warn();
     expect((await db.query(`SELECT * FROM messages`)).rowCount).toBe(0);
     await usage(DAY, 800);
@@ -60,6 +64,32 @@ describe('free agent owner warning', () => {
     await db.query(`UPDATE free_agent_events SET at=now()-interval '25 hours'`);
     await recordAgentConnectedAfterNudge(db, OWNER, WORKSPACE, OTHER);
     expect((await db.query(`SELECT * FROM free_agent_events WHERE kind='agent_connected_after_nudge'`)).rowCount).toBe(0);
+  });
+
+  it('records reaching Add agent after a warning as a guide start, without storing codes', async () => {
+    const phone = new PhoneService(db, 'https://server.test');
+    await phone.execute('createAgentPairingCode', { workspaceId: WORKSPACE }, OWNER);
+    expect((await db.query(`SELECT * FROM free_agent_events WHERE kind='guide_started'`)).rowCount).toBe(0);
+    await usage(DAY, 800);
+    await warn();
+    await phone.execute('createAgentPairingCode', { workspaceId: WORKSPACE }, OTHER);
+    expect((await db.query(`SELECT * FROM free_agent_events WHERE kind='guide_started'`)).rowCount).toBe(0);
+    await phone.execute('createAgentPairingCode', { workspaceId: WORKSPACE }, OWNER);
+    await phone.execute('createAgentPairingCode', { workspaceId: WORKSPACE }, OWNER);
+    const events = await db.query(`SELECT detail FROM free_agent_events WHERE kind='guide_started'`);
+    expect(events.rowCount).toBe(1);
+    expect(events.rows[0]!.detail.source).toBe('add_agent_command');
+    expect(Object.keys(events.rows[0]!.detail).sort()).toEqual(['source', 'warningId']);
+  });
+
+  it('updates existing free-agent instructions once while preserving their soul', async () => {
+    await db.query(`INSERT INTO agents(agent_id,owner_id,soul) VALUES($1,$2,$3::jsonb)`, [AGENT, OWNER, JSON.stringify({ name: 'Fern', instructions: 'Original soul', avatarSeed: 'seed' })]);
+    await db.query(`DELETE FROM workflow_backfills WHERE name='free-agent-connect-guide-v1'`);
+    await migrateData(db);
+    await migrateData(db);
+    const soul = (await db.query<{ soul: { instructions: string; avatarSeed: string } }>(`SELECT soul FROM agents WHERE agent_id=$1`, [AGENT])).rows[0]!.soul;
+    expect(soul.instructions).toBe(`Original soul\n\n${FREE_AGENT_CONNECT_GUIDE}`);
+    expect(soul.avatarSeed).toBe('seed');
   });
 });
 

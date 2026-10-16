@@ -3115,23 +3115,32 @@ interface DownloadCandidate {
   /** Scratch directory segment: the message id, or the brief object id. */
   readonly key: string;
   readonly mediaId: string;
-  readonly name: string;
+  /** Sanitized, collision-free file name safe to join under `key`. */
+  readonly safeName: string;
   readonly mimeType?: string;
   readonly size?: number;
   readonly sha256?: string;
   readonly expired?: boolean;
 }
 
+/**
+ * The download candidate for the attachment at `index` of a full message
+ * attachment list. The name comes from the whole list so two attachments whose
+ * names sanitize identically keep distinct filenames, exactly as delivery does.
+ */
 function candidateFromMessage(
   messageId: string,
-  attachment: DaemonAttachment,
+  attachments: readonly DaemonAttachment[],
+  index: number,
 ): DownloadCandidate | null {
+  const attachment = attachments[index];
+  if (!attachment) return null;
   const mediaId = attachmentId(attachment);
   if (!mediaId) return null;
   return {
     key: messageId,
     mediaId,
-    name: attachment.name ?? 'attachment',
+    safeName: safeAttachmentNames(attachments)[index]!,
     ...(attachment.mimeType ? { mimeType: attachment.mimeType } : {}),
     ...(attachment.size !== undefined ? { size: attachment.size } : {}),
     ...(attachment.sha256 ? { sha256: attachment.sha256 } : {}),
@@ -3160,9 +3169,9 @@ async function resolveDownloadAttachment(
       const attachments = (
         Array.isArray(message.attachments) ? message.attachments : []
       ) as DaemonAttachment[];
-      const attachment = attachments.find((item) => attachmentId(item) === wanted);
-      if (attachment) {
-        const candidate = candidateFromMessage(messageId, attachment);
+      const index = attachments.findIndex((item) => attachmentId(item) === wanted);
+      if (index >= 0) {
+        const candidate = candidateFromMessage(messageId, attachments, index);
         if (candidate) return candidate;
       }
     } catch (error) {
@@ -3182,7 +3191,7 @@ async function resolveDownloadAttachment(
     return {
       key: wanted,
       mediaId: attachmentId(brief) ?? wanted,
-      name: brief.name ?? 'attachment',
+      safeName: safeAttachmentNames([brief])[0]!,
       ...(brief.mimeType ? { mimeType: brief.mimeType } : {}),
       ...(brief.size !== undefined ? { size: brief.size } : {}),
       ...(brief.sha256 ? { sha256: brief.sha256 } : {}),
@@ -3224,7 +3233,7 @@ async function downloadAttachment(
       join(
         'attachments',
         attachment.key.replace(/[^\w-]/g, '_'),
-        safeAttachmentNames([{ url: '', name: attachment.name }])[0]!,
+        attachment.safeName,
       ),
     );
   } catch (error) {

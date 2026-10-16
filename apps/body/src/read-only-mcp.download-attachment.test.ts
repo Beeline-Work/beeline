@@ -152,6 +152,16 @@ describe('download_attachment', () => {
     expect(downloads).toEqual([`/v1/media/${IMAGE_ID}`, `/v1/media/${REPORT_ID}`]);
   });
 
+  it('keeps distinct filenames when two message attachments sanitize to the same name', async () => {
+    imageMetadata = { name: 'findings.md' };
+    const image = await download(IMAGE_ID);
+    const report = await download(REPORT_ID);
+    expect(image.path).toBe(join(root, 'attachments', MESSAGE_ID, 'findings.md'));
+    expect(report.path).toBe(join(root, 'attachments', MESSAGE_ID, 'findings-2.md'));
+    expect(await readFile(image.path)).toEqual(IMAGE);
+    expect(await readFile(report.path, 'utf8')).toBe(REPORT);
+  });
+
   it('does not download a file again when the same sha256 is already there', async () => {
     const first = await download(IMAGE_ID);
     const second = await download(IMAGE_ID.toUpperCase());

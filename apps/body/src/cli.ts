@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { captureHelperError, flushHelperErrors } from './sentry.js';
 import { requestMachine } from './machine-control.js';
 import { RESOURCE_FACADE_FLAG, runResourceFacade } from './resource-mcp-facade.js';
 /**
@@ -337,6 +338,7 @@ async function main(): Promise<void> {
 }
 
 main().catch(async (err) => {
+  captureHelperError(err);
   const reason: HelperExitReason = err instanceof DaemonExitError ? err.reason : 'failed';
   // `daemon` is never a human at a keyboard — always the plain, full-detail
   // form (stack included) regardless of whether a TTY happens to be attached.
@@ -355,6 +357,7 @@ main().catch(async (err) => {
   } else {
     console.error(pc.red('[body] fatal:'), err);
   }
+  await flushHelperErrors();
   if (process.argv[2] !== 'daemon') process.exit(1);
   if (daemonLifecycle) daemonLifecycle.exit(reason);
   else process.exit(HELPER_EXIT_CODES[reason]);

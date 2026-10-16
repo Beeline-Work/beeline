@@ -1,3 +1,4 @@
+import { captureHelperError } from './sentry.js';
 import type { EventEmitter } from 'node:events';
 import { DaemonApiError } from './daemon-api-client.js';
 import { isNetworkFailure } from './live-link.js';
@@ -116,8 +117,10 @@ export class HelperLifecycle {
  * feed, a fire-and-forget wake) must not take every Room down with it.
  */
 export function installUnhandledRejectionGuard(emitter: EventEmitter = process): () => void {
-  const log = (reason: unknown) =>
+  const log = (reason: unknown) => {
+    captureHelperError(reason);
     console.error('[thin-core] unhandled rejection (kept running):', reason);
+  };
   emitter.on('unhandledRejection', log);
   return () => emitter.removeListener('unhandledRejection', log);
 }

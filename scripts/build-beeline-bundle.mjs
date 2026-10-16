@@ -225,6 +225,8 @@ async function main() {
       '--target=node20',
       "--banner:js=import { createRequire as __cr } from 'module'; const require = __cr(import.meta.url);",
       '--define:import.meta.url="beeline:bundle"',
+      `--define:BEELINE_BUILD_SENTRY_DSN=${JSON.stringify(process.env.BEELINE_HELPER_SENTRY_DSN ?? '')}`,
+      `--define:BEELINE_BUILD_SENTRY_RELEASE=${JSON.stringify(sourceCommit)}`,
       `--outfile=${resolve(staging, 'lib', 'beeline', 'beeline-cli.mjs')}`,
     ]);
     run('npx', [

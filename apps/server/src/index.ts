@@ -1,3 +1,5 @@
+import { captureServerError, flushServerErrors } from './sentry.js';
+import { sentryTelegramFromEnv } from './sentry-telegram.js';
 import { randomUUID } from 'node:crypto';
 import { assertSchemaCurrent, markSchemaCurrent, migrate, migrateData, PostgresDatabase } from './database.js';
 import { retryMigrationStep } from './migration-retry.js';
@@ -372,6 +374,7 @@ async function main() {
   const backgroundJobs = new BackgroundJobRunner();
   const server = createBeelineServer({
     database,
+    sentryTelegram: sentryTelegramFromEnv(),
     cdpWebhookSecrets: cdpWebhookSecretsFromEnv(),
     databaseBudget: budget,
     enrichmentDatabase,
@@ -599,11 +602,13 @@ const migrationMode =
   : migrationMode
     ? runReleaseMigration()
     : main()
-).catch((error) => {
+).catch(async (error) => {
   console.error(
     migrationMode ? '[migration] failed:' : '[server] startup failed:',
     error instanceof Error ? error.message : String(error),
     (error as { code?: unknown } | null)?.code ?? '',
   );
+  captureServerError(error);
+  await flushServerErrors();
   process.exitCode = 1;
 });

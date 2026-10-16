@@ -24,11 +24,21 @@ export function errorDiagnostic(cause: unknown, stackLines = 6): { message: stri
 
 /** Best effort, loaded only after failure; reporting must never break recovery. */
 export async function reportClientError(scope: ClientErrorScope, cause: unknown): Promise<void> {
+  try {
+    const { captureMobileError } = await import('./sentry');
+    captureMobileError(scope, cause);
+  } catch { /* External telemetry never blocks the existing diagnostic path. */ }
   await sendClientError(scope, cause);
 }
 
 /** Acknowledge the native receipt only after an authenticated successful response. */
 export async function reportNativeCrash(report: NativeCrashReport): Promise<boolean> {
+  try {
+    const { captureMobileError } = await import('./sentry');
+    const error = new Error(report.message);
+    error.stack = report.stack;
+    captureMobileError('native-crash', error);
+  } catch { /* Keep receipt acknowledgement owned by the authenticated endpoint. */ }
   return sendClientError('native-crash', report, report);
 }
 

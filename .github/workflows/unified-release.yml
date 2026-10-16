@@ -66,6 +66,11 @@ on:
         default: false
         required: false
 
+# Public ingestion configuration; auth tokens stay in the Squire vault.
+env:
+  BEELINE_HELPER_SENTRY_DSN: ${{ vars.BEELINE_HELPER_SENTRY_DSN }}
+  EXPO_PUBLIC_SENTRY_DSN: ${{ vars.BEELINE_MOBILE_SENTRY_DSN }}
+
 permissions:
   actions: write
   contents: write

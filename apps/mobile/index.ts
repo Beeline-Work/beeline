@@ -2,6 +2,7 @@
 // (react-native-get-random-values provides crypto.getRandomValues which
 // @noble/hashes, @noble/curves, and nostr-tools require at import time).
 import 'react-native-get-random-values';
+import './sources/buzz/sentry';
 
 import './sources/polyfills/screenOrientation';
 import './sources/polyfills/webViewport';

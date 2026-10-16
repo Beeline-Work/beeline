@@ -811,7 +811,8 @@ export class FreeAgentService {
            AND command.action IN ('input','resume')
            AND COALESCE((SELECT turn.started_at FROM agent_turns turn
              WHERE turn.agent_id=command.agent_id AND turn.room_id=command.room_id
-               AND turn.request_id=command.turn_request_id),command.claimed_at)
+               AND turn.request_id=command.turn_request_id
+               AND COALESCE(turn.generation_id,'') NOT LIKE 'pending:%'),command.claimed_at)
              <clock_timestamp()-make_interval(secs => $1::double precision / 1000)
          RETURNING command.agent_id,command.room_id,command.turn_request_id
        ), turns AS (

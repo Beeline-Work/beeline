@@ -233,6 +233,16 @@ try {
       {
         reproduction: 'cold-beebee-first-reply',
         standIn: 'Docker Machines and deterministic local model',
+        workspaceId: workspace.id,
+        roomId: workspace.roomId,
+        imageId: docker('image', 'inspect', '--format', '{{.Id}}', image),
+        imageReleaseSha: docker(
+          'image',
+          'inspect',
+          '--format',
+          '{{index .Config.Labels "app.usebeeline.release.sha"}}',
+          image,
+        ),
         indicatorMs,
         firstModelMs: modelAt - mentionedAt,
         replyMs,

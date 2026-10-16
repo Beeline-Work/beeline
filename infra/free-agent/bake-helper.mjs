@@ -14,7 +14,7 @@ if (
   manifest.version !== version ||
   bundle?.commit !== commit ||
   bundle?.version !== version ||
-  !bundle?.verified
+  bundle?.verified !== true
 )
   throw new Error('baked helper must match the image release SHA and version');
 const archive = await readFile(`${root}/${bundle.file}`);

@@ -65,6 +65,9 @@ The canonical helper archive measured 77,278,489 bytes. Baking the installed
 helper adds approximately **336 MB unpacked** to the image. An incremental image
 build with the base OS/Pi layers cached took **38.063 seconds**, excluding the
 canonical helper build and its installer/ACP/CodeGraph verification.
+The hand-build script subsequently completed the canonical build, its executable
+verification and the image build in **88.473 seconds**, with existing native
+Buzz tools and cached base OS/Pi layers.
 
 ## Remaining real-target proof
 

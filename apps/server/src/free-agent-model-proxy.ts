@@ -215,7 +215,9 @@ export async function reserveAllowance(
     const dollarRoom = limits.dailyBudgetUsd - budget - promptTokens * limits.inputUsdPerMillion / 1_000_000;
     const affordableOutput = Math.floor(dollarRoom * 1_000_000 / limits.outputUsdPerMillion);
     if (affordableOutput < MINIMUM_CALL_TOKENS) return { limit: 'budget' };
-    const maxOutput = Math.floor(Math.min(room, affordableOutput, requestedOutput ?? DEFAULT_OUTPUT_RESERVATION));
+    const maxOutput = Math.floor(Math.min(
+      room, affordableOutput, requestedOutput ?? DEFAULT_OUTPUT_RESERVATION, limits.maxOutputTokens,
+    ));
     const reserved = promptTokens + maxOutput;
     await adjustUsage(db, ownerId, now.toISOString().slice(0, 10), reserved);
     const reservedUsd = (promptTokens * limits.inputUsdPerMillion + maxOutput * limits.outputUsdPerMillion) / 1_000_000;
@@ -225,6 +227,90 @@ export async function reserveAllowance(
       ON CONFLICT(owner_id) DO UPDATE SET minute=$2,calls=CASE WHEN free_agent_call_rate.minute=$2
         THEN free_agent_call_rate.calls+1 ELSE 1 END`, [ownerId, minute]);
     return { reserved, maxOutput, reservedUsd };
+  });
+}
+
+/** Process-wide cap on upstream model calls in flight. Extra calls wait in arrival order. */
+export class FreeAgentCallGate {
+  #running = 0;
+  #waiting: Array<() => void> = [];
+
+  constructor(readonly limit: number) {}
+
+  /** Resolves with the slot's release, or undefined if the signal aborts or the deadline passes first. */
+  acquire(signal: AbortSignal, deadline: number): Promise<(() => void) | undefined> {
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      const next = this.#waiting.shift();
+      if (next) next();
+      else this.#running -= 1;
+    };
+    if (signal.aborted) return Promise.resolve(undefined);
+    if (this.#running < this.limit && !this.#waiting.length) {
+      this.#running += 1;
+      return Promise.resolve(release);
+    }
+    return new Promise((resolve) => {
+      const done = (granted: boolean) => {
+        clearTimeout(timer);
+        signal.removeEventListener('abort', cancel);
+        resolve(granted ? release : undefined);
+      };
+      const grant = () => done(true);
+      const cancel = () => {
+        const index = this.#waiting.indexOf(grant);
+        if (index >= 0) this.#waiting.splice(index, 1);
+        done(false);
+      };
+      const timer = setTimeout(cancel, Math.max(0, deadline - Date.now()));
+      signal.addEventListener('abort', cancel, { once: true });
+      this.#waiting.push(grant);
+    });
+  }
+}
+
+const callGates = new Map<number, FreeAgentCallGate>();
+
+function callGate(limit: number): FreeAgentCallGate {
+  let gate = callGates.get(limit);
+  if (!gate) callGates.set(limit, (gate = new FreeAgentCallGate(limit)));
+  return gate;
+}
+
+/**
+ * How long OpenRouter retries an in-flight budget refusal. Only the waits after
+ * a refusal count; time queued at the call gate does not.
+ */
+const IN_FLIGHT_RETRY_WINDOW_MS = 3 * 60_000;
+/** Wait used when a refusal names no usable `Retry-After`. */
+const DEFAULT_RETRY_AFTER_MS = 5_000;
+
+/** A `Retry-After` header (seconds or an HTTP date) in milliseconds. */
+export function retryAfterMs(header: string | null, now = Date.now()): number {
+  if (header) {
+    const seconds = Number(header);
+    if (header.trim() && Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+    const at = Date.parse(header);
+    if (Number.isFinite(at)) return Math.max(0, at - now);
+  }
+  return DEFAULT_RETRY_AFTER_MS;
+}
+
+/** Wait, unless the signal aborts first. Returns false on abort. */
+function pause(ms: number, signal: AbortSignal): Promise<boolean> {
+  if (signal.aborted) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const stop = () => {
+      clearTimeout(timer);
+      resolve(false);
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', stop);
+      resolve(true);
+    }, Math.max(0, ms));
+    signal.addEventListener('abort', stop, { once: true });
   });
 }
 
@@ -300,16 +386,17 @@ export async function handleFreeAgentModelRequest(
   }
   const now = options.now?.() ?? new Date();
   const limits = options.config.limits ?? DEFAULT_FREE_AGENT_LIMITS;
-  const active = (await options.database.query(
-    `SELECT 1 FROM agent_commands command LEFT JOIN agent_turns turn
+  const turn = (await options.database.query<{ started: Date | string }>(
+    `SELECT COALESCE(turn.started_at,command.claimed_at) started FROM agent_commands command LEFT JOIN agent_turns turn
        ON turn.agent_id=command.agent_id AND turn.room_id=command.room_id
          AND turn.request_id=command.turn_request_id
        WHERE command.agent_id=$1 AND command.state='claimed'
          AND command.action IN ('input','resume') AND command.lease_expires_at>$2
-         AND COALESCE(turn.started_at,command.claimed_at)>$2::timestamptz-make_interval(secs => $3::double precision / 1000) LIMIT 1`,
+         AND COALESCE(turn.started_at,command.claimed_at)>$2::timestamptz-make_interval(secs => $3::double precision / 1000)
+       ORDER BY started DESC LIMIT 1`,
     [agent.agent_id, now, limits.maxTurnMs],
-  )).rows.length > 0;
-  if (!active) {
+  )).rows[0];
+  if (!turn) {
     sendJson(response, 403, { error: { message: 'free agent model access requires a live turn' } });
     return true;
   }
@@ -376,70 +463,123 @@ export async function handleFreeAgentModelRequest(
   };
   const abort = new AbortController();
   response.on('close', () => abort.abort());
-  let upstream: Response;
-  try {
-    upstream = await (options.fetchImpl ?? fetch)(
-      `${upstreamBase}/chat/completions`,
-      {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${options.upstreamKey}`,
-          'content-type': 'application/json',
-          'x-title': 'Beeline free agent',
-          'http-referer': 'https://usebeeline.app',
-        },
-        body: JSON.stringify(upstreamBody),
-        signal: abort.signal,
-      },
+  // Queued calls keep their reservation, so they give up when the turn cap ends or the caller leaves.
+  const turnDeadline = new Date(turn.started).getTime() + limits.maxTurnMs;
+  const forwardUpstream = async (): Promise<void> => {
+    let upstream: Response;
+    let retryUntil: number | undefined;
+    for (;;) {
+      try {
+        upstream = await (options.fetchImpl ?? fetch)(
+          `${upstreamBase}/chat/completions`,
+          {
+            method: 'POST',
+            headers: {
+              authorization: `Bearer ${options.upstreamKey}`,
+              'content-type': 'application/json',
+              'x-title': 'Beeline free agent',
+              'http-referer': 'https://usebeeline.app',
+            },
+            body: JSON.stringify(upstreamBody),
+            signal: abort.signal,
+          },
+        );
+      } catch (error) {
+        await settle(0, 0);
+        if (!response.headersSent)
+          sendJson(response, 502, { error: { message: `model upstream unavailable: ${String(error)}` } });
+        return;
+      }
+      if (upstream.status !== 402) break;
+      // OpenRouter refuses a call that does not fit the account's in-flight
+      // budget; it fits once running calls finish. Nothing has reached the
+      // caller yet, so retry within the window. Other refusals pass through.
+      const refusal = await upstream.text().catch(() => '');
+      let reason: unknown;
+      try {
+        reason = (JSON.parse(refusal) as { error?: { metadata?: { reason?: unknown } } }).error?.metadata?.reason;
+      } catch {
+        reason = undefined;
+      }
+      const passThrough = async () => {
+        await settle(0, 0);
+        response.writeHead(402, {
+          'content-type': upstream.headers.get('content-type') ?? 'application/json',
+          'cache-control': 'no-store',
+        });
+        response.end(refusal);
+      };
+      retryUntil ??= Math.min(Date.now() + IN_FLIGHT_RETRY_WINDOW_MS, turnDeadline);
+      const wait = retryAfterMs(upstream.headers.get('retry-after'));
+      // Retry only when the wait ends inside the window and the turn.
+      if (reason !== 'in_flight_budget_exhausted' || wait >= retryUntil - Date.now()) {
+        await passThrough();
+        return;
+      }
+      if (!await pause(wait, abort.signal)) {
+        await settle(0, 0);
+        return;
+      }
+      if (Date.now() >= retryUntil) {
+        await passThrough();
+        return;
+      }
+    }
+    const contentType = upstream.headers.get('content-type') ?? 'application/json';
+    response.writeHead(upstream.status, { 'content-type': contentType, 'cache-control': 'no-store' });
+    if (!upstream.body) {
+      await settle(upstream.ok ? reservation.reserved : 0, upstream.ok ? reservation.reservedUsd : 0);
+      response.end();
+      return;
+    }
+    const reader = upstream.body.getReader();
+    const decoder = new TextDecoder();
+    const usage = new StreamUsageReader();
+    let whole = '';
+    try {
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        const text = decoder.decode(value, { stream: true });
+        if (stream) usage.push(text);
+        else if (whole.length < MAX_REQUEST_BYTES) whole += text;
+        response.write(value);
+      }
+    } catch {
+      // The caller went away or the upstream broke; settle on what was reported.
+    }
+    let reported: Usage | undefined = usage.usage;
+    if (!stream && upstream.ok) {
+      try {
+        reported = (JSON.parse(whole) as { usage?: Usage }).usage;
+      } catch {
+        reported = undefined;
+      }
+    }
+    // Settle before the reply completes, so the next request sees this one.
+    await settle(
+      reported ? chargedTokens(reported, limits.cachedTokenWeight)
+        : upstream.ok ? reservation.reserved : 0,
+      !upstream.ok ? 0 : reported
+        ? (typeof reported.cost === 'number' && Number.isFinite(reported.cost) && reported.cost >= 0
+          ? reported.cost
+          : (Math.max(0, Number(reported.prompt_tokens) || 0) * limits.inputUsdPerMillion +
+             Math.max(0, Number(reported.completion_tokens) || 0) * limits.outputUsdPerMillion) / 1_000_000)
+        : reservation.reservedUsd,
     );
-  } catch (error) {
+    response.end();
+  };
+  const release = await callGate(limits.maxConcurrentCalls).acquire(abort.signal, turnDeadline);
+  if (!release) {
     await settle(0, 0);
     if (!response.headersSent)
-      sendJson(response, 502, { error: { message: `model upstream unavailable: ${String(error)}` } });
+      sendJson(response, 503, { error: { message: 'free agent model busy; try again' } });
     return true;
   }
-  const contentType = upstream.headers.get('content-type') ?? 'application/json';
-  response.writeHead(upstream.status, { 'content-type': contentType, 'cache-control': 'no-store' });
-  if (!upstream.body) {
-    await settle(upstream.ok ? reservation.reserved : 0, upstream.ok ? reservation.reservedUsd : 0);
-    response.end();
-    return true;
-  }
-  const reader = upstream.body.getReader();
-  const decoder = new TextDecoder();
-  const usage = new StreamUsageReader();
-  let whole = '';
   try {
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      const text = decoder.decode(value, { stream: true });
-      if (stream) usage.push(text);
-      else if (whole.length < MAX_REQUEST_BYTES) whole += text;
-      response.write(value);
-    }
-  } catch {
-    // The caller went away or the upstream broke; settle on what was reported.
+    await forwardUpstream();
+  } finally {
+    release();
   }
-  let reported: Usage | undefined = usage.usage;
-  if (!stream && upstream.ok) {
-    try {
-      reported = (JSON.parse(whole) as { usage?: Usage }).usage;
-    } catch {
-      reported = undefined;
-    }
-  }
-  // Settle before the reply completes, so the next request sees this one.
-  await settle(
-    reported ? chargedTokens(reported, limits.cachedTokenWeight)
-      : upstream.ok ? reservation.reserved : 0,
-    !upstream.ok ? 0 : reported
-      ? (typeof reported.cost === 'number' && Number.isFinite(reported.cost) && reported.cost >= 0
-        ? reported.cost
-        : (Math.max(0, Number(reported.prompt_tokens) || 0) * limits.inputUsdPerMillion +
-           Math.max(0, Number(reported.completion_tokens) || 0) * limits.outputUsdPerMillion) / 1_000_000)
-      : reservation.reservedUsd,
-  );
-  response.end();
   return true;
 }

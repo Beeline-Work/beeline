@@ -47,8 +47,11 @@ describe('release data cleanup', () => {
           root_command_id,root_source_message_id,agent_depth)
         VALUES($1,$2,$3,'source','turn',$4,'test',$1,'source',0)`,
         [`command-${action}`, CORNER, AGENT, action]);
-    await db.query(`INSERT INTO agent_turns(room_id,request_id,agent_id,status)
-      VALUES($1,'turn',$2,'working')`, [CORNER, AGENT]);
+    // Replace dispatch's optimistic row with the stale helper generation.
+    await db.query(`INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id)
+      VALUES($1,'turn',$2,'working','stale-helper-generation')
+      ON CONFLICT(room_id,request_id,agent_id) DO UPDATE
+        SET status=EXCLUDED.status,generation_id=EXCLUDED.generation_id`, [CORNER, AGENT]);
     await cancelArchivedCornerAssignments(db);
     expect((await db.query(`SELECT DISTINCT state FROM agent_commands
       WHERE room_id=$1`, [CORNER])).rows).toEqual([{ state: 'cancelled' }]);

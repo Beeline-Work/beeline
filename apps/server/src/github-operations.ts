@@ -1983,7 +1983,23 @@ export class GitHubOperations {
         const rollup = await this.app.readCommitCheckRollup(token.token, repository, checkHeadSha);
         // A push can move GitHub's PR head before either its push or synchronize
         // webhook reaches us. The stored head alone cannot authorize a verdict.
-        const failedChecks = rollup.checks.filter(item => item.status === 'failed');
+        // A cancelled job (GitHub cancelled it before a runner picked it up:
+        // no steps, and its log answers 404) carries no code verdict, so it is
+        // never a repair wake. `conclusion` is checked as well as `status` so a
+        // provider read that still maps CANCELLED to failed is also excluded.
+        const interruptedNames = new Set(
+          rollup.checks
+            .filter(
+              item =>
+                item.status === 'cancelled' ||
+                String(item.conclusion ?? '').toUpperCase() === 'CANCELLED',
+            )
+            .map(item => item.name),
+        );
+        const failedChecks = rollup.checks.filter(
+          item => item.status === 'failed' && !interruptedNames.has(item.name),
+        );
+        const interruptedOnly = failedChecks.length === 0 && interruptedNames.size > 0;
         const livePr = target.pr_number && (rollup.state === 'passed' || rollup.state === 'failed' || failedChecks.length > 0)
           ? await this.app.readPullRequest(token.token, repository, Number(target.pr_number))
           : undefined;
@@ -2036,11 +2052,15 @@ export class GitHubOperations {
             status:
               failedChecks.length ? ('failing' as const) : rollup.total === 0 && rollup.state !== 'pending' ? ('unknown' as const) : rollup.state === 'passed'
                 ? ('passing' as const)
-                : rollup.state === 'failed'
-                  ? ('failing' as const)
-                  : ('pending' as const),
+                : rollup.state === 'failed' && interruptedOnly && checksSettled(rollup.checks)
+                  ? ('unknown' as const)
+                  : rollup.state === 'failed'
+                    ? ('failing' as const)
+                    : ('pending' as const),
             total: rollup.total,
-            failing: failedChecks.length ? failedChecks.map(item => item.name) : rollup.failing,
+            failing: failedChecks.length
+              ? failedChecks.map(item => item.name)
+              : rollup.failing.filter(name => !interruptedNames.has(name)),
             checks: rollup.checks,
             updatedAt: Math.floor(fetchStartedAt),
             fetchStartedAt,
@@ -2078,7 +2098,12 @@ export class GitHubOperations {
           if ((newAttempt && !checksSettled(summary.checks)) || (summary.status === 'pending' &&
             (current.checks === 'passing' || current.checks === 'failing')))
             await advanceCorner(database, target.corner_id, { kind: 'checks-pending' });
-          const label = check.status === 'pending' ? 'started' : check.status;
+          const label =
+            check.status === 'pending'
+              ? 'started'
+              : String(check.conclusion ?? '').toUpperCase() === 'CANCELLED'
+                ? 'cancelled'
+                : check.status;
           const becamePassing = summary.status === 'passing' && (current.checks !== 'passing' || newAttempt);
           // The first failed job wakes immediately. Completion wakes once
           // more even when the same job still fails, so a promised rerun or
@@ -2121,6 +2146,10 @@ export class GitHubOperations {
                   : {}),
               ...(becameFailing ? { payload: {
                 failedJobs: jobLogs.filter(item => newFailures.includes(item.name)),
+                // A failure in a run that still has jobs going cannot be
+                // re-run on GitHub; the wake says so instead of implying a
+                // repair is available now.
+                ...(!checksSettled(summary.checks) ? { runInProgress: true } : {}),
                 ...(followup || newAttempt ? { followup: true } : {}),
               } } : {}),
             },

@@ -23,7 +23,8 @@ export type NotificationLifecycleState =
   | 'Closed'
   | 'Checks running'
   | 'Checks passed'
-  | 'Checks failed';
+  | 'Checks failed'
+  | 'Checks cancelled';
 export type NotificationLifecycleRun = {
   subline: string;
   items: {
@@ -283,6 +284,7 @@ const CHECK_STATE = {
   pending: 'Checks running',
   passed: 'Checks passed',
   failed: 'Checks failed',
+  cancelled: 'Checks cancelled',
 } as const satisfies Record<string, NotificationLifecycleState>;
 
 /**

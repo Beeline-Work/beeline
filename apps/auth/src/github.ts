@@ -267,7 +267,7 @@ export interface GitHubCheckRollup {
   readonly failing: readonly string[];
   readonly checks: readonly {
     readonly name: string;
-    readonly status: 'passed' | 'failed' | 'pending';
+    readonly status: 'passed' | 'failed' | 'pending' | 'cancelled';
     readonly conclusion?: string;
     readonly url?: string;
   }[];
@@ -762,7 +762,9 @@ export class GitHubAppClient {
           ? 'pending'
           : ['SUCCESS', 'NEUTRAL', 'SKIPPED'].includes(String(context.conclusion))
             ? 'passed'
-            : 'failed'
+            : String(context.conclusion) === 'CANCELLED'
+              ? 'cancelled'
+              : 'failed'
         : context.state === 'SUCCESS'
           ? 'passed'
           : context.state === 'FAILURE' || context.state === 'ERROR'

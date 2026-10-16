@@ -134,6 +134,26 @@ ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS review_handback_head text;
 ALTER TABLE corner_facts ADD COLUMN IF NOT EXISTS review_handback_count integer NOT NULL DEFAULT 0;
 ALTER TABLE agent_pending_attachments ADD COLUMN IF NOT EXISTS request_id text;
 ALTER TABLE agent_pending_attachments ADD COLUMN IF NOT EXISTS generation_id text;
+
+-- Dispatch paints working before a helper connects. The claim replaces this
+-- reserved generation with the helper's generation in the same turn row.
+CREATE OR REPLACE FUNCTION show_dispatched_agent_work() RETURNS trigger AS $$
+BEGIN
+  IF NEW.state='pending' AND NEW.action IN ('input','resume')
+     AND NEW.wake_after IS NULL AND NEW.reason<>'computer_activity' THEN
+    INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id)
+      VALUES(NEW.room_id,NEW.turn_request_id,NEW.agent_id,'working','pending:' || NEW.id)
+      ON CONFLICT(room_id,request_id,agent_id) DO NOTHING;
+  ELSIF NEW.state IN ('cancelled','complete') THEN
+    DELETE FROM agent_turns WHERE room_id=NEW.room_id AND request_id=NEW.turn_request_id
+      AND agent_id=NEW.agent_id AND generation_id='pending:' || NEW.id;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+DROP TRIGGER IF EXISTS show_dispatched_agent_work ON agent_commands;
+CREATE TRIGGER show_dispatched_agent_work AFTER INSERT OR UPDATE OF state,wake_after
+  ON agent_commands FOR EACH ROW EXECUTE FUNCTION show_dispatched_agent_work();
 `;
 /** Transport data only: orders and reports never become transcript messages. */
 export type PrivateCommandPayload = {

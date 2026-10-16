@@ -5480,6 +5480,7 @@ export class PhoneService {
        FROM agent_commands command
        JOIN agent_turns turn ON turn.room_id=command.room_id
          AND turn.agent_id=command.agent_id AND turn.status='working'
+         AND COALESCE(turn.generation_id,'') NOT LIKE 'pending:%'
          AND turn.request_id<>command.turn_request_id
        WHERE command.source_message_id=$1 AND command.action='input'
        ORDER BY command.agent_id`,

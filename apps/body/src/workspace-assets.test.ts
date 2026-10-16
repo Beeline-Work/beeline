@@ -130,6 +130,20 @@ describe('coarse Workspace assets', () => {
     }
     expect(await readFile(first!.command, 'utf8')).toContain('exit 0');
     expect(await prepareWorkspaceAdapter(assets, 'goose', '/usr/bin/goose', env)).toBeUndefined();
+    // A new generation must not delay the first turn for its npm install.
+    await writeFile(resolve(root, 'codex/package.json'), JSON.stringify({ name: '@openai/codex', version: '3.0.0' }));
+    const gate = resolve(root, 'prepare-release');
+    const original = await readFile(npm, 'utf8');
+    await writeFile(npm, original.replace('prefix="$1"', `prefix="$1"\nwhile [ ! -f '${gate}' ]; do sleep 0.01; done`));
+    try {
+      const cold = await prepareWorkspaceAdapter(assets, 'codex', 'codex-acp', env, { background: true });
+      expect(cold).toBeUndefined();
+    } finally {
+      await writeFile(gate, 'ready');
+    }
+    const prepared = await prepareWorkspaceAdapter(assets, 'codex', 'codex-acp', env);
+    expect(prepared?.command).not.toBe(second?.command);
+    expect(await prepareWorkspaceAdapter(assets, 'codex', 'codex-acp', env, { background: true })).toEqual(prepared);
   });
 
   it('publishes AVD metadata without copying or hashing the operator SDK', async () => {

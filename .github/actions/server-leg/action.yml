@@ -115,7 +115,7 @@ runs:
         RELEASE_VERSION: ${{ inputs.release_version }}
 
     # New free starter agent Machines pull :latest; existing Machines keep
-    # their image and refresh the helper bundle on every cold boot. A failed
+    # their image and refresh the helper when its process exits. A failed
     # push leaves the previous base image in place and never blocks the server.
     - name: Publish the free starter agent base image
       if: inputs.phase == 'promote'
@@ -123,11 +123,15 @@ runs:
       run: |
         set -uo pipefail
         image_label="${RELEASE_VERSION#v}-${RELEASE_SHA:0:12}"
-        if flyctl deploy . \
+        if BEELINE_RELEASE_SHA="$RELEASE_SHA" BEELINE_RELEASE_VERSION="$RELEASE_VERSION" \
+          bash scripts/stage-free-agent-helper.sh \
+          && flyctl deploy . \
           --local-only \
           --config fly.beeline-free-agents.toml \
           --dockerfile infra/free-agent/Dockerfile \
           --app beeline-free-agents \
+          --build-arg "BEELINE_RELEASE_SHA=$RELEASE_SHA" \
+          --build-arg "BEELINE_RELEASE_VERSION=$RELEASE_VERSION" \
           --image-label "$image_label" --build-only --push --yes \
           && flyctl auth docker \
           && docker tag "registry.fly.io/beeline-free-agents:$image_label" registry.fly.io/beeline-free-agents:latest \

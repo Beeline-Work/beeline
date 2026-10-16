@@ -254,6 +254,7 @@ async function installedPackage(binary: string, env: NodeJS.ProcessEnv): Promise
 }
 
 export interface WorkspaceToolchain { command: string; binDir: string; cliCommand: string }
+const adapterPreparations = new Map<string, Promise<WorkspaceToolchain>>();
 
 /** Pin the selected adapter under this Workspace; published generations are never changed. */
 export async function prepareWorkspaceAdapter(
@@ -261,6 +262,7 @@ export async function prepareWorkspaceAdapter(
   kind: AgentKind | undefined,
   command: string,
   env: NodeJS.ProcessEnv,
+  options: { background?: boolean } = {},
 ): Promise<WorkspaceToolchain | undefined> {
   const adapter = kind && ADAPTER_PACKAGES[kind];
   // Unknown or native harnesses still use Workspace caches with their host
@@ -283,28 +285,41 @@ export async function prepareWorkspaceAdapter(
       (await stat(publishedNode).catch(() => undefined))?.isFile()) return selection;
   if (!(await admitSharedAssets(supervisorRoot(paths), 512 * 1024 ** 2)))
     throw new SharedAssetCapacityError();
-  return withGenerationLock(resolve(paths.staging, `adapter-${key}.lock`), async () => {
-    if ((await stat(publishedBinary).catch(() => undefined))?.isFile() &&
-        (await stat(publishedCli).catch(() => undefined))?.isFile() &&
-        (await stat(publishedNode).catch(() => undefined))?.isFile()) return selection;
-    const staged = resolve(paths.staging, `adapter-${key}-${randomUUID()}`);
-    try {
-      await mkdir(staged, { recursive: true, mode: 0o700 });
-      await execFileAsync('npm', [
-        'install', '--prefix', staged, '--no-save', '--no-audit', '--no-fund',
-        `${adapter.name}@${selectedAdapter.version}`, `${selectedCli.name}@${selectedCli.version}`,
-      ], { env, timeout: 180_000, maxBuffer: 128 * 1024 });
-      const stagedBinary = resolve(staged, 'node_modules/.bin', adapter.binary);
-      if (!(await stat(stagedBinary).catch(() => undefined))?.isFile() ||
-          !(await stat(resolve(staged, 'node_modules/.bin', kind)).catch(() => undefined))?.isFile())
-        throw new Error(`Workspace toolchain install did not produce ${adapter.binary} and ${kind}`);
-      await mkdir(resolve(staged, 'bin'));
-      await cp(process.execPath, resolve(staged, 'bin/node'));
-      await rename(staged, published);
-      return selection;
-    } catch (error) {
-      await releaseReserveOnEnospc(supervisorRoot(paths), error);
-      throw error;
-    } finally { await rm(staged, { recursive: true, force: true }); }
-  });
+  let preparation = adapterPreparations.get(published);
+  if (!preparation) {
+    preparation = withGenerationLock(resolve(paths.staging, `adapter-${key}.lock`), async () => {
+      if ((await stat(publishedBinary).catch(() => undefined))?.isFile() &&
+          (await stat(publishedCli).catch(() => undefined))?.isFile() &&
+          (await stat(publishedNode).catch(() => undefined))?.isFile()) return selection;
+      const staged = resolve(paths.staging, `adapter-${key}-${randomUUID()}`);
+      try {
+        await mkdir(staged, { recursive: true, mode: 0o700 });
+        await execFileAsync('npm', [
+          'install', '--prefix', staged, '--no-save', '--no-audit', '--no-fund',
+          `${adapter.name}@${selectedAdapter.version}`, `${selectedCli.name}@${selectedCli.version}`,
+        ], { env, timeout: 180_000, maxBuffer: 128 * 1024 });
+        const stagedBinary = resolve(staged, 'node_modules/.bin', adapter.binary);
+        if (!(await stat(stagedBinary).catch(() => undefined))?.isFile() ||
+            !(await stat(resolve(staged, 'node_modules/.bin', kind)).catch(() => undefined))?.isFile())
+          throw new Error(`Workspace toolchain install did not produce ${adapter.binary} and ${kind}`);
+        await mkdir(resolve(staged, 'bin'));
+        await cp(process.execPath, resolve(staged, 'bin/node'));
+        await rename(staged, published);
+        return selection;
+      } catch (error) {
+        await releaseReserveOnEnospc(supervisorRoot(paths), error);
+        throw error;
+      } finally { await rm(staged, { recursive: true, force: true }); }
+    });
+    adapterPreparations.set(published, preparation);
+    void preparation.finally(() => adapterPreparations.delete(published)).catch(() => {});
+  }
+  if (options.background) {
+    // The installed host adapter already works. Pin its immutable generation
+    // for a later activation without holding this person's first model call
+    // behind a registry download. Never switch a session underneath a turn.
+    void preparation.catch(error => console.warn('[body] Workspace adapter preparation failed; keeping host adapter:', error));
+    return undefined;
+  }
+  return preparation;
 }

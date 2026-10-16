@@ -66,7 +66,8 @@ export async function roomAgentHealth(
      JOIN agents agent ON agent.agent_id=identity.id
      LEFT JOIN LATERAL (
        SELECT status,created_at,request_id,room_id FROM agent_turns
-       WHERE agent_id=agent.agent_id ORDER BY created_at DESC LIMIT 1
+       WHERE agent_id=agent.agent_id AND COALESCE(generation_id,'') NOT LIKE 'pending:%'
+       ORDER BY created_at DESC LIMIT 1
      ) latest ON true
      LEFT JOIN LATERAL (
        SELECT card->>'silenceKind' silence_kind FROM messages

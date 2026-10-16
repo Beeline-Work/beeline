@@ -1,5 +1,6 @@
 import type { SqlDatabase } from './database.js';
-import { REVIEW_IDENTITY_ID } from './review-access.js';
+import { COHORT_SQL } from './operator-dashboard-cohort.js';
+import { dashboardOverview } from './operator-dashboard-overview.js';
 
 export const DASHBOARD_PLATFORMS = ['ios', 'android', 'web', 'macos', 'windows', 'linux'] as const;
 export type DashboardPlatform = (typeof DASHBOARD_PLATFORMS)[number];
@@ -63,23 +64,6 @@ function measuredCount(value: unknown): number | null {
   const n = Number(value);
   return Number.isSafeInteger(n) && n >= 0 ? n : null;
 }
-// Confirmed operator fixtures. Use immutable IDs rather than guessing from a
-// customer's Workspace name. Mixed memberships retain the real person.
-const FIXTURE_WORKSPACE_IDS = [
-  'bee11e00-0000-4000-8000-000000000105', // Play Review
-  'c2e54c45-cf58-4cc1-a620-89b196096e7b', // Firstmate Proof
-  'b81a2815-924c-4bd9-bc04-d38bdee177bc', // Empty screen test
-];
-const FIXTURE_IDS_SQL = FIXTURE_WORKSPACE_IDS.map((id) => `'${id}'`).join(',');
-const COHORT_SQL = `production_workspaces AS (
-  SELECT id FROM workspaces WHERE id NOT IN (${FIXTURE_IDS_SQL})
-), production_identities AS (
-  SELECT i.id FROM identities i WHERE NOT i.hidden_from_roster
-    AND i.id <> '${REVIEW_IDENTITY_ID}'
-    AND (NOT EXISTS (SELECT 1 FROM memberships m WHERE m.identity_id=i.id AND m.room_id IS NULL)
-      OR EXISTS (SELECT 1 FROM memberships m JOIN production_workspaces w ON w.id=m.workspace_id
-        WHERE m.identity_id=i.id AND m.room_id IS NULL))
-)`;
 function number(value: unknown): number {
   return Number(value ?? 0);
 }
@@ -400,8 +384,8 @@ export async function dashboardHealth(database: SqlDatabase, measuredAt: string)
           : functions.filter((entry) => entry.failureRate !== null).map((entry) => entry.function),
       unmeasuredFunctions: failingUnmeasuredFunctions,
       windowHours: 24,
-      failed: measuredCount(failed),
-      total: measuredCount(total),
+      failed: failuresResult.status === 'fulfilled' ? measuredCount(failed) : null,
+      total: failuresResult.status === 'fulfilled' ? measuredCount(total) : null,
     },
     functions,
   };
@@ -515,8 +499,10 @@ export async function readOperatorDashboard(
     dashboardHealth(database, measuredAt),
     dashboardOps(database, measuredAt, releaseVersion, minRuntimes),
   ]);
+  const overview = await dashboardOverview(database, platforms, measuredAt).catch(sectionError);
   return {
     schemaVersion: 1,
+    overview,
     measuredAt,
     platforms: [...platforms],
     usage: usage.status === 'fulfilled' ? usage.value : sectionError(),

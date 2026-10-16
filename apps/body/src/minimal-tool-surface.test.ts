@@ -183,6 +183,21 @@ describe('minimal agent surface', () => {
     await callAgentTool('post_to_corner', { address: 'target', text: 'Public note' }, 'note');
     expect(calls.map((call) => call.operation)).toEqual(['postCornerMessage']);
   });
+  it('defaults post_to_corner to the active corner and refuses outside one', async () => {
+    await callAgentTool('post_to_corner', { text: 'Active note' }, 'active');
+    expect(calls).toEqual([
+      {
+        operation: 'postCornerMessage',
+        input: expect.objectContaining({ cornerId: 'corner', text: 'Active note' }),
+      },
+    ]);
+    calls.length = 0;
+    vi.stubEnv('BEELINE_DAEMON_CORNER_ID', '');
+    await expect(callAgentTool('post_to_corner', { text: 'No corner' }, 'none')).rejects.toThrow(
+      'cornerId is required outside a corner',
+    );
+    expect(calls).toEqual([]);
+  });
   it('routes searches and sourced memory writes without changing privacy/version/used inputs', async () => {
     await callAgentTool('search', { scope: 'history', query: 'prior decision', limit: 3 }, 'h');
     await callAgentTool('search', { scope: 'memory', query: 'preference' }, 'm');

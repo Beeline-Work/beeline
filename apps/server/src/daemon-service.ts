@@ -8008,11 +8008,11 @@ export class DaemonService {
     );
     const saved = (
       await this.database.query<{ id: string; created_at: Date }>(
-        `INSERT INTO messages(id,room_id,author_id,text,presentation,agent_model,agent_hop_count)
-         SELECT $1,room.id,$3,$4,'message',(SELECT selected_model FROM agents WHERE agent_id=$3),$5
+        `INSERT INTO messages(id,room_id,author_id,text,presentation,agent_model)
+         SELECT $1,room.id,$3,$4,'message',(SELECT selected_model FROM agents WHERE agent_id=$3)
          FROM rooms room WHERE room.id=$2 AND room.archived_at IS NULL
          RETURNING id,created_at`,
-        [id(), input.cornerId, agentId, text, command.agent_depth],
+        [id(), input.cornerId, agentId, text],
       )
     ).rows[0];
     if (!saved) throw new Error('corner is archived');

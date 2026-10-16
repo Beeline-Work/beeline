@@ -400,6 +400,8 @@ export async function createAgentCommand(
     parent?: CommandRow;
     /** Lifecycle transfer/resumption retains the chain; only agent delegation increments. */
     retainDepth?: boolean;
+    /** Conversation tags retain chain depth without inheriting assignment privacy. */
+    inheritPrivatePayload?: boolean;
     avatarJob?: boolean;
     /** A line appended to a lifecycle wake's text, fixed at dispatch. */
     wakeNote?: string;
@@ -430,7 +432,7 @@ export async function createAgentCommand(
   const parent = input.parent ?? (lifecycle ? opening ?? undefined : undefined);
   const sourceText = member.rows[0]!.source_text;
   const note = input.wakeNote ? `\n${input.wakeNote}` : '';
-  const privatePayload = input.privatePayload ?? (parent?.private_payload && input.reason !== 'agent_tag'
+  const privatePayload = input.privatePayload ?? (parent?.private_payload && input.inheritPrivatePayload !== false
     ? { ...parent.private_payload, reportedGenerationId: undefined, kind: 'lifecycle' as const,
         text: (input.action === 'resume' && sourceText
           ? `${parent.private_payload.text}\nResume context: ${sourceText}`
@@ -971,6 +973,7 @@ export async function routeAgentResult(
       sourceMessageId: sourceId,
       parent,
       reason: 'agent_tag',
+      inheritPrivatePayload: false,
     });
     if (dispatched) woken.push(mention.handle);
     else notWoken.push({ handle: mention.handle, reason: nextAgentDepth(parent.agent_depth) === undefined

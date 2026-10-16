@@ -24,8 +24,8 @@ requested reviewer-bypass sign-in remains unverified. Its credential is vaulted;
 a secure browser handoff for it has not been established. The owner session is a
 partial stand-in pending a decision on reviewer login/proof.
 
-Server coverage: all 167 test files exercised in memory-bounded batches; 2,675
-tests passed and six existing tests skipped. Both message-producer snapshots were
+Server coverage: all 167 test files exercised in memory-bounded batches; 2,674
+tests passed and seven existing tests skipped. Both message-producer snapshots were
 updated for the approved private warning, and their 18 tests passed on rerun.
 Repository typecheck and server build passed. The 239-case integration file was
 split into eight name-filtered batches whose passing counts sum to all 239 cases.

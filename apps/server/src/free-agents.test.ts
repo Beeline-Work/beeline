@@ -87,6 +87,7 @@ class FakeMachines implements FreeAgentMachines {
     const state = this.states.get(id);
     return state === 'destroyed' ? undefined : state;
   }
+  async waitFor() {}
 }
 
 async function settle(): Promise<void> {

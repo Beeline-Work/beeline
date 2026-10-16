@@ -109,7 +109,7 @@ export function freeAgentConfigFromEnv(
     image,
     region: env.FLY_FREE_AGENT_REGION || 'iad',
     cpus: number('FLY_FREE_AGENT_CPUS', 1),
-    memoryMb: number('FLY_FREE_AGENT_MEMORY_MB', 1024),
+    memoryMb: number('FLY_FREE_AGENT_MEMORY_MB', 2048),
     sleepMode: env.BEELINE_FREE_AGENT_SLEEP_MODE === 'stop' ? 'stop' : 'suspend',
     ...(env.BEELINE_FREE_AGENT_INSTALL_BASE_URL
       ? { installBaseUrl: env.BEELINE_FREE_AGENT_INSTALL_BASE_URL }
@@ -633,15 +633,20 @@ export class FreeAgentService {
     // Let the helper's response leave the Machine before it freezes.
     await new Promise((resolve) => setTimeout(resolve, 250));
     try {
+      let reached: 'suspended' | 'stopped' = mode === 'suspend' ? 'suspended' : 'stopped';
       if (mode === 'suspend') {
         try {
           await this.machines.suspend(machineId);
         } catch (error) {
           this.log(`agent ${agentId.slice(0, 12)} suspend failed, stopping: ${String(error)}`);
           await this.machines.stop(machineId);
+          reached = 'stopped';
         }
       } else await this.machines.stop(machineId);
-      await recordFreeAgentEvent(this.database, agentId, 'slept', { machineId });
+      // A suspend takes seconds to snapshot memory; `slept` marks the Machine
+      // actually asleep, not the request.
+      await this.machines.waitFor(machineId, reached, 60).catch(() => undefined);
+      await recordFreeAgentEvent(this.database, agentId, 'slept', { machineId, state: reached });
     } catch (error) {
       this.log(`agent ${agentId.slice(0, 12)} sleep failed: ${String(error)}`);
     }

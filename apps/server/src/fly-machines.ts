@@ -25,6 +25,8 @@ export interface FreeAgentMachines {
   destroy(id: string): Promise<void>;
   /** Current Fly state (`started`, `suspended`, `stopped`, ...), or undefined when gone. */
   state(id: string): Promise<string | undefined>;
+  /** Resolve once the Machine reaches `state` (Fly's own wait), or reject after the timeout. */
+  waitFor(id: string, state: 'suspended' | 'stopped', timeoutSeconds: number): Promise<void>;
 }
 
 export class FlyApiError extends Error {
@@ -98,6 +100,10 @@ export class FlyMachines implements FreeAgentMachines {
       if (error instanceof FlyApiError && error.status === 404) return;
       throw error;
     }
+  }
+
+  async waitFor(id: string, state: 'suspended' | 'stopped', timeoutSeconds: number): Promise<void> {
+    await this.#request('wait', `/${id}/wait?state=${state}&timeout=${timeoutSeconds}`, 'GET');
   }
 
   async state(id: string): Promise<string | undefined> {

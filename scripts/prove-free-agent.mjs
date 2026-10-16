@@ -117,7 +117,7 @@ const task = await waitFor('the task reply', () => reply(taskAt), 600_000);
 log(`task reply after ${((task.created_at - taskAt) / 1000).toFixed(1)} s: ${task.text.replace(/\s+/g, ' ').slice(0, 500)}`);
 
 if (local) {
-  // Membership: a person joins (exact greeting), then leaves (one exit note).
+  // Membership: a person joins (exact greeting), then leaves #general (one exit note).
   const guest = await throwawayPerson('Guest Proof', 'guest');
   const joinedAt = new Date();
   await operation('addWorkspaceMember', { workspaceId, memberId: guest.person, role: 'member' });
@@ -125,7 +125,7 @@ if (local) {
   const expected = `@${guest.handle} what up boss? I'm a pro bono agent for beeline. I can help you set up this workspace, invite other humans and agents, or whatever else you might need`;
   log(`join greeting after ${((greeting.created_at - joinedAt) / 1000).toFixed(1)} s; exact=${greeting.text === expected}: ${greeting.text}`);
   const leftAt = new Date();
-  await operation('leaveWorkspace', { workspaceId }, guest.bearer);
+  await operation('leaveRoom', { roomId }, guest.bearer);
   const exit = await waitFor('the exit note', () => reply(leftAt), 300_000);
   log(`exit note after ${((exit.created_at - leftAt) / 1000).toFixed(1)} s: ${exit.text}`);
 }

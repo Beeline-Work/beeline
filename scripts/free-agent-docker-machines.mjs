@@ -34,7 +34,7 @@ createServer(async (request, response) => {
   for await (const chunk of request) chunks.push(chunk);
   const body = chunks.length ? JSON.parse(Buffer.concat(chunks).toString()) : {};
   const url = new URL(request.url, 'http://local');
-  const match = /^\/v1\/apps\/[^/]+\/machines(?:\/([^/]+))?(?:\/(start|suspend|stop))?$/.exec(url.pathname);
+  const match = /^\/v1\/apps\/[^/]+\/machines(?:\/([^/]+))?(?:\/(start|suspend|stop|wait))?$/.exec(url.pathname);
   const send = (status, value) => {
     response.writeHead(status, { 'content-type': 'application/json' });
     response.end(JSON.stringify(value));
@@ -80,6 +80,7 @@ createServer(async (request, response) => {
       log(`start ${id} (was ${current})`);
       return send(200, { previous_state: current });
     }
+    if (action === 'wait') return send(200, { ok: true, state: state(id) });
     if (action === 'suspend') {
       docker('pause', id);
       log(`suspend ${id}`);

@@ -39,7 +39,7 @@ describe('workflow run tools', () => {
   });
 
   it('binds cancellation to the active turn and forwards its reason', async () => {
-    await callAgentTool('cancel_workflow_run', { runId: 'run-1', reason: 'Request withdrawn', actorId: 'forged' });
+    await callAgentTool('app_tool', { app:'beeline:workflow', tool:'cancel', args:{ runId: 'run-1', reason: 'Request withdrawn' } });
     expect(calls).toEqual([{ name: 'cancelWorkflowRun', input: {
       roomId: 'room-1', agentId: 'agent-1', runId: 'run-1', reason: 'Request withdrawn',
       requestId: 'request-1', generationId: context.generationId, taskId: 'command-1',
@@ -82,7 +82,7 @@ describe('workflow run tools inside a corner', () => {
   });
 
   it('advances a run with handoff scoped to the corner', async () => {
-    await callAgentTool('handoff', { runId: 'run-1', outcome: 'done', contents: { note: 'ready' } });
+    await callAgentTool('app_tool', { app:'beeline:workflow', tool:'advance', args:{ runId: 'run-1', outcome: 'done', contents: { note: 'ready' } } });
     expect(calls).toEqual([{ name: 'handoff', input: {
       roomId: 'corner-1', agentId: 'agent-1', runId: 'run-1', outcome: 'done', contents: { note: 'ready' },
       requestId: 'request-1', generationId: context.generationId, taskId: 'command-1',
@@ -90,9 +90,9 @@ describe('workflow run tools inside a corner', () => {
   });
 
   it('starts, cancels and reassigns a workflow role scoped to the corner', async () => {
-    await callAgentTool('start_workflow', { name: 'triage', roleBindings: { reviewer: 'agent-1' } });
-    await callAgentTool('cancel_workflow_run', { runId: 'run-1', reason: 'no longer needed' });
-    await callAgentTool('assign_workflow_role', { runId: 'run-1', role: 'reviewer', agentId: 'agent-2' });
+    await callAgentTool('app_tool', { app:'beeline:workflow', tool:'start', args:{ name: 'triage', roleBindings: { reviewer: 'agent-1' } } });
+    await callAgentTool('app_tool', { app:'beeline:workflow', tool:'cancel', args:{ runId: 'run-1', reason: 'no longer needed' } });
+    await callAgentTool('app_tool', { app:'beeline:workflow', tool:'rebind', args:{ runId: 'run-1', role: 'reviewer', agent: 'agent-2' } });
     expect(calls.map((call) => call.input.roomId)).toEqual(['corner-1', 'corner-1', 'corner-1']);
   });
 });

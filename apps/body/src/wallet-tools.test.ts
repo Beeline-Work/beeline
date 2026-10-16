@@ -57,7 +57,7 @@ describe('wallet MCP identity and signing', () => {
       ],
       ['wallet_sign_typed_data', payload],
     ] as const)
-      await expect(callAgentTool(tool, args, 'wallet-call')).resolves.toBe('{"ok":true}');
+      await expect(callAgentTool('app_tool', { app:'beeline:wallet', tool:tool.replace('wallet_', ''), args }, 'wallet-call')).resolves.toBe('{"ok":true}');
     expect(calls).toHaveLength(9);
     expect(calls.find((call) => call.name === 'walletContractCall')?.body).toEqual({
       agentId: 'agent-1',

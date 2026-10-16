@@ -99,10 +99,10 @@ async function fixture(options: { machineReport?: { status: string }; noBroker?:
     lines.once('line', (line) => {
       const response = JSON.parse(line);
       if (response.result?.isError) reject(new Error(response.result.content[0].text));
-      else resolve(response.result.content[0].text);
+      else resolve(JSON.parse(response.result.content[0].text).readiness);
     });
     child.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call',
-      params: { name: 'connectors_status', arguments: {} } }) + '\n');
+      params: { name: 'connect', arguments: {mode:'status'} } }) + '\n');
   });
   return { statusText, calls, closeRelay: () => relay.close(), appView: () => ({ status, cause, connections }),
     mountedTool: () => fetch(`${endpoint.url}/mcp`, {

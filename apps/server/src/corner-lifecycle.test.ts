@@ -2083,7 +2083,7 @@ describe('a person hands the corner to another agent (the implementer follows th
     expect(await workerOf(cornerId)).toBeNull();
   });
 
-  it('Reproduction H1-1: an agent the person asked hands the corner on by tagging the other agent', async () => {
+  it('an agent tag invites conversation without handing the corner on', async () => {
     const cornerId = await open('owner/widgets');
     // The person asks the agent working the corner to give the work to Goosy.
     await say(cornerId, '@hoots hand this corner to goosy');
@@ -2094,7 +2094,7 @@ describe('a person hands the corner to another agent (the implementer follows th
       implementer: await workerOf(cornerId),
       goosyCommands: (await commands(B, cornerId)).map((c) => c.reason),
     });
-    expect(await workerOf(cornerId)).toBe(B);
+    expect(await workerOf(cornerId)).toBe(A);
     expect((await commands(B, cornerId)).some((c) => c.reason === 'agent_tag')).toBe(true);
   });
 
@@ -3373,8 +3373,8 @@ describe("a Workspace owner or admin's yes (order_corner_merge) merges only thro
       undefined, undefined, undefined, undefined, undefined, undefined, undefined,
       undefined, undefined, undefined, landing);
     await order(cornerId, wiredDaemon);
-    // The order tried the one merge path at once; red checks kept it shut.
-    expect(landing).toHaveBeenCalledWith(cornerId);
+    // Recording the yes does not invoke the landing action.
+    expect(landing).not.toHaveBeenCalled();
     expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
     expect(await currentState(cornerId)).toBe('implement');
     expect(await github.prChecksStatus({ cornerId }))
@@ -3463,7 +3463,7 @@ describe("a Workspace owner or admin's yes (order_corner_merge) merges only thro
     expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
   });
 
-  it('an immediate order attempts the merge itself rather than waiting for the next sweep', async () => {
+  it('recording a yes leaves landing to the explicit merge action', async () => {
     const cornerId = await open('owner/widgets');
     await greenHead(cornerId, 7, SHA);
     githubHead = SHA;
@@ -3494,6 +3494,8 @@ describe("a Workspace owner or admin's yes (order_corner_merge) merges only thro
     await claim(direct);
     await wiredDaemon.execute('orderCornerMerge',
       { cornerId, roomId: cornerId, requestId: direct.turnRequestId, generationId: 'g1' }, A);
+    expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
+    expect(await github.landCorner(cornerId)).toBe(true);
     expect(githubApp.mergePullRequest).toHaveBeenCalledWith(77, 101, 'owner/widgets', 7, SHA);
     await mergedWebhook(cornerId, 7, SHA);
     expect(await currentState(cornerId)).toBe('landed');
@@ -3543,14 +3545,15 @@ describe('the brief gate on landing: only a brief that assigns repository work m
       .toMatchObject({ merge_attempt_head: null });
   });
 
-  it.each([false, 'none'] as const)('order_corner_merge is refused when the brief is %s', async (says) => {
+  it.each([false, 'none'] as const)('recording yes cannot land when the brief is %s', async (says) => {
     const cornerId = await waitingForPerson();
     await briefSays(cornerId, says);
     await say(cornerId, '@hoots merge this now');
     const direct = (await commands(A, cornerId)).at(-1)!;
     await claim(direct);
-    await expect(wired().execute('orderCornerMerge',
-      { cornerId, roomId: cornerId, requestId: direct.turnRequestId, generationId: 'g1' }, A)).rejects.toThrow(REFUSAL);
+    await wired().execute('orderCornerMerge',
+      { cornerId, roomId: cornerId, requestId: direct.turnRequestId, generationId: 'g1' }, A);
+    await expect(github.landCorner(cornerId)).rejects.toThrow(REFUSAL);
     expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
   });
 

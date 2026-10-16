@@ -766,6 +766,61 @@ it('compact schedule operations manage only self-owned sources', async () => {
   expect((await db.query(`SELECT message FROM agent_schedules WHERE id=$1`, [otherId])).rows[0]).toEqual({ message: 'Other agent work' });
 });
 
+it.each(['primary', 'fallback'])('vocabulary: commander orders the child %s reviewer and its report returns privately', async kind => {
+  const reviewer = '6'.repeat(64);
+  await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Speedy','speedy') ON CONFLICT DO NOTHING`, [reviewer]);
+  await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, [reviewer,HUMAN]);
+  await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`, [WS,reviewer,ROOM]);
+  await db.query(`UPDATE rooms SET reviewer_agent_id=$2,reviewer_fallback_ids=$3 WHERE id=$1`, [ROOM,kind === 'primary' ? reviewer : null,kind === 'fallback' ? [reviewer] : []]);
+  const opened = await open();
+  await daemon.execute('order', { ...authority(order), address:opened.cornerId, agent:'speedy', text:'Review the exact head' }, RUBY);
+  const review = (await commands(opened.cornerId,reviewer)).find(command => command.reason === 'order')!;
+  expect(review).toMatchObject({private:true,source:{body:'Review the exact head'}});
+  await claim(review);
+  await daemon.execute('report', { ...authority(review), status:'blocked', text:'blocked: waiting for green checks' }, reviewer);
+  expect((await commands(DM,RUBY)).find(command => command.reason === 'report')?.source.body).toBe('blocked: waiting for green checks');
+  expect((await db.query(`SELECT worker_agent_id FROM corner_facts WHERE corner_id=$1`,[opened.cornerId])).rows[0]?.worker_agent_id).not.toBe(reviewer);
+});
+
+it('vocabulary: corner post tags wake conversation in the posted place without an assignment', async () => {
+  const opened = await open();
+  const turn = await worker(opened.cornerId);
+  const posted = await daemon.execute('postCornerMessage', { ...authority(turn), cornerId:opened.cornerId, text:'@ruby discuss the wording; @absent can you join?' }, WORKER);
+  expect(posted.woken).toEqual(['ruby']);
+  expect(posted.notWoken).toContainEqual({handle:'absent',reason:expect.stringContaining('member')});
+  const reply = (await commands(opened.cornerId,RUBY)).find(command => command.reason === 'agent_tag')!;
+  expect(reply.private).toBeFalsy();
+  await claim(reply);
+  await daemon.execute('postRoomMessage', {...authority(reply),text:'Here is my wording suggestion.'},RUBY);
+  expect((await db.query(`SELECT room_id FROM messages WHERE text='Here is my wording suggestion.'`)).rows[0]?.room_id).toBe(opened.cornerId);
+  expect((await commands(DM,RUBY)).some(command => command.reason === 'report')).toBe(false);
+});
+
+it('vocabulary: forbidden corner orders give a usable report step', async () => {
+  const opened = await open(), turn = await worker(opened.cornerId);
+  await expect(daemon.execute('order', {...authority(turn),address:ROOM,agent:'ruby',text:'Do parent work'},WORKER)).rejects.toThrow('Report to your commander');
+  await daemon.execute('report', {...authority(turn),status:'blocked',text:'blocked: parent work needs the commander'},WORKER);
+  expect((await commands(DM,RUBY)).find(command => command.reason === 'report')?.source.body).toContain('parent work');
+});
+
+it('vocabulary: public-note tags preserve the depth-three chain bound', async () => {
+  const opened = await open(), turn = await worker(opened.cornerId);
+  await db.query(`UPDATE agent_commands SET agent_depth=3 WHERE id=$1`,[turn.id]);
+  const posted = await daemon.execute('postCornerMessage', {...authority(turn),cornerId:opened.cornerId,text:'@ruby discuss this at the depth bound'},WORKER);
+  expect(posted.woken).toEqual([]);
+  expect(posted.notWoken).toContainEqual({handle:'ruby',reason:'agent tag chain depth limit reached'});
+  expect((await db.query(`SELECT text FROM messages WHERE id=$1`,[posted.id])).rows[0]?.text).toContain('@ruby');
+});
+
+it('vocabulary: a peer cannot order the reviewer on behalf of the commander', async () => {
+  const reviewer = '6'.repeat(64);
+  await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Speedy','speedy') ON CONFLICT DO NOTHING`,[reviewer]);
+  await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2) ON CONFLICT DO NOTHING`,[reviewer,HUMAN]);
+  await db.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`,[ROOM,reviewer]);
+  const opened = await open(), turn = await worker(opened.cornerId);
+  await expect(daemon.execute('order', {...authority(turn),address:opened.cornerId,agent:'speedy',text:'Review this'},WORKER)).rejects.toThrow('ask your commander');
+});
+
 // Failure visibility uses the real receipt, silence owner and private transport.
 async function privateAssignment() {
   const receipt = await daemon.execute('order', { ...authority(order), address: ROOM, agent: WORKER, text: 'Sign into the saved Amazon login' }, RUBY);
@@ -930,4 +985,5 @@ it('failure visibility: lease expiry does not report a failure after a delivered
   const { reclaimExpiredCommandLeases } = await import('./turn-silence-notice.js');
   await reclaimExpiredCommandLeases(db, new LiveHub());
   expect((await commands(DM, RUBY)).filter(c => c.reason === 'report')).toHaveLength(1);
+
 });

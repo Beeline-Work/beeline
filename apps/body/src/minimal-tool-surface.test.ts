@@ -21,10 +21,14 @@ const names = [
   'revise_corner',
   'order',
   'report',
+  'report_feedback',
+  'notify_feedback_fixed',
   'approve_merge',
   'merge_corner',
+  'record_merge_yes',
   'set_corner_hold',
   'close_corner',
+  'close_corner_pr',
   'post_to_corner',
   'post_artifact',
   'request_grant',
@@ -70,7 +74,7 @@ describe('minimal agent surface', () => {
     [false, true],
     [true, false],
     [true, true],
-  ])('has eighteen stable tools for DM=%s corner=%s', (dm, corner) => {
+  ])('has one stable vocabulary for DM=%s corner=%s', (dm, corner) => {
     expect(
       agentToolsFor(true, dm, corner, corner, false, true, false, true).map((tool) => tool.name),
     ).toEqual(names);
@@ -89,11 +93,11 @@ describe('minimal agent surface', () => {
   });
   it('routes approval, landing, human yes, holds and both close modes separately', async () => {
     await callAgentTool('approve_merge', { address: 'target', headSha: 'a'.repeat(40) }, 'a');
-    await callAgentTool('merge_corner', { address: 'target', mode: 'land' }, 'b');
-    await callAgentTool('merge_corner', { address: 'target', mode: 'human_yes' }, 'c');
-    await callAgentTool('set_corner_hold', { address: 'target', releaseHoldId: 'hold' }, 'd');
-    await callAgentTool('close_corner', { address: 'target', mode: 'pr_only' }, 'e');
-    await callAgentTool('close_corner', { address: 'target', mode: 'archive' }, 'f');
+    await callAgentTool('merge_corner', { address: 'target' }, 'b');
+    await callAgentTool('record_merge_yes', { address: 'target' }, 'c');
+    await callAgentTool('set_corner_hold', { address: 'target', releaseHoldId: '11111111-1111-4111-8111-111111111111' }, 'd');
+    await callAgentTool('close_corner_pr', { address: 'target' }, 'e');
+    await callAgentTool('close_corner', { address: 'target' }, 'f');
     expect(calls.map((call) => call.operation)).toEqual([
       'approveCornerMerge',
       'mergeCorner',
@@ -103,23 +107,22 @@ describe('minimal agent surface', () => {
       'archiveCorner',
     ]);
     expect(calls.every((call) => call.input.cornerId === 'target')).toBe(true);
-    expect(calls[3]!.input.releaseHoldId).toBe('hold');
+    expect(calls[3]!.input.releaseHoldId).toBe('11111111-1111-4111-8111-111111111111');
   });
   it('keeps commander reports, feedback and fixed notices on their own handlers', async () => {
     await callAgentTool(
       'report',
-      { status: 'blocked', text: 'blocked: need a decision', address: 'forged' },
+      { status: 'blocked', text: 'blocked: need a decision' },
       'r',
     );
     await callAgentTool(
-      'report',
-      { kind: 'feedback', category: 'bug', summary: 'Broken attachment' },
+      'report_feedback',
+      { category: 'bug', summary: 'Broken attachment' },
       'f',
     );
     await callAgentTool(
-      'report',
+      'notify_feedback_fixed',
       {
-        kind: 'fixed',
         item_ids: ['item'],
         title: 'Fixed attachment',
         pr_url: 'https://github.com/a/b/pull/1',
@@ -138,6 +141,7 @@ describe('minimal agent surface', () => {
     const tool = agentToolsFor(true, false, true).find((value) => value.name === 'revise_corner')!;
     const input = {
       action: 'brief',
+      address: 'target',
       expectedRevision: 3,
       change: 'Synthetic correction',
       brief: { spec: 'Synthetic spec', approval: { sourceMessageId: 'synthetic-message' } },
@@ -150,7 +154,7 @@ describe('minimal agent surface', () => {
     expect(calls.at(-1)).toEqual({
       operation: 'reviseCornerBrief',
       input: expect.objectContaining({
-        cornerId: 'corner',
+        cornerId: 'target',
         expectedRevision: 3,
         brief: expect.objectContaining({
           spec: 'Synthetic spec',
@@ -161,41 +165,19 @@ describe('minimal agent surface', () => {
     });
   });
 
-  it('R1 keeps top-level spec and approval for revise_corner(action:brief) working', async () => {
-    await callAgentTool(
-      'revise_corner',
-      {
-        action: 'brief',
-        expectedRevision: 2,
-        change: 'Synthetic edit',
-        spec: 'Top-level spec',
-        approval: { sourceMessageId: 'top-level-message' },
-      },
-      'R1-control',
-    );
-    expect(calls.at(-1)!.input.brief).toMatchObject({
-      spec: 'Top-level spec',
-      approval: { sourceMessageId: 'top-level-message' },
-    });
-  });
-
   it('posts a public note without dispatching any wake/order/report', async () => {
     await callAgentTool('post_to_corner', { address: 'target', text: 'Public note' }, 'note');
     expect(calls.map((call) => call.operation)).toEqual(['postCornerMessage']);
   });
-  it('defaults post_to_corner to the active corner and refuses outside one', async () => {
-    await callAgentTool('post_to_corner', { text: 'Active note' }, 'active');
-    expect(calls).toEqual([
-      {
-        operation: 'postCornerMessage',
-        input: expect.objectContaining({ cornerId: 'corner', text: 'Active note' }),
-      },
-    ]);
-    calls.length = 0;
-    vi.stubEnv('BEELINE_DAEMON_CORNER_ID', '');
-    await expect(callAgentTool('post_to_corner', { text: 'No corner' }, 'none')).rejects.toThrow(
-      'cornerId is required outside a corner',
-    );
+  it('requires explicit targets and rejects legacy aliases before side effects', async () => {
+    for (const [name, args] of [
+      ['post_to_corner', { text: 'note' }],
+      ['post_to_corner', { cornerId: 'target', text: 'note' }],
+      ['approve_merge', { address: 'target', head: 'a'.repeat(40) }],
+      ['read', { address: 'target' }],
+      ['read', { facet: 'brief', resource: 'target' }],
+      ['list_rooms', {}],
+    ] as const) await expect(callAgentTool(name, args, 'invalid')).rejects.toThrow();
     expect(calls).toEqual([]);
   });
   it('routes searches and sourced memory writes without changing privacy/version/used inputs', async () => {
@@ -241,7 +223,7 @@ describe('minimal agent surface', () => {
     );
     await callAgentTool(
       'read',
-      { facet: 'brief', resource: 'target', cursor: { beforeRevision: 3 } },
+      { facet: 'brief', address: 'target', cursor: { beforeRevision: 3 } },
       'b',
     );
     await callAgentTool('read', { facet: 'procedure', slug: 'workspace-core' }, 'p');
@@ -295,7 +277,7 @@ describe('minimal agent surface', () => {
     );
     vi.stubEnv('BEELINE_NATIVE_IO_PROVEN', '1');
     await expect(callAgentTool('scratch_io', { action: 'quota' }, 'd')).rejects.toThrow(
-      'native IO',
+      'unavailable',
     );
   });
   it('wake cannot choose messaging operations or another agent', async () => {
@@ -307,7 +289,7 @@ describe('minimal agent surface', () => {
     ]) {
       await expect(
         callAgentTool('wake', { action: 'create', trigger: 'schedule', ...forged }, 'w'),
-      ).rejects.toThrow('own wake sources');
+      ).rejects.toThrow();
     }
     expect(calls).toEqual([]);
     await callAgentTool('wake', { action: 'create', trigger: 'lifecycle', address: 'child' }, 'w');
@@ -324,27 +306,11 @@ describe('minimal agent surface', () => {
       },
     ]);
   });
-  it('forces self-only schedule management while retaining legacy calls for existing sessions', async () => {
-    await callAgentTool(
-      'wake',
-      { action: 'update', trigger: 'schedule', scheduleId: 'mine', prompt: 'Inspect my work' },
-      'own',
-    );
-    expect(calls[0]).toMatchObject({
-      operation: 'updateAgentSchedule',
-      input: { roomId: 'corner', selfOnly: true, scheduleId: 'mine' },
-    });
-    await callAgentTool(
-      'update_schedule',
-      { scheduleId: 'old', prompt: 'Existing schedule' },
-      'legacy',
-    );
-    expect(calls[1]!.input).not.toHaveProperty('selfOnly');
-    await expect(
-      callAgentTool('wake', { action: 'update', trigger: 'schedule', selfOnly: false }, 'forged'),
-    ).rejects.toThrow('own wake sources');
+  it('forces self-only schedule management and rejects legacy calls', async () => {
+    await callAgentTool('wake', { action:'update', trigger:'schedule', scheduleId:'mine', prompt:'Inspect my work' }, 'own');
+    expect(calls[0]).toMatchObject({ operation:'updateAgentSchedule', input:{ roomId:'corner', selfOnly:true, scheduleId:'mine' } });
+    await expect(callAgentTool('update_schedule', { scheduleId:'old', prompt:'Legacy' }, 'old')).rejects.toThrow('unknown');
   });
-
   it('no prompt section or built-in skill instructs a retired tool', () => {
     const retired = [
       'get_room_message',

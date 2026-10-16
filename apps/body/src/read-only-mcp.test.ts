@@ -1,333 +1,6 @@
-import { readFileSync } from 'node:fs';
-import { describe, expect, it } from 'vitest';
-import { validateSavedWorkflow } from '@beeline/api-contract/daemon';
-import { CORNER_BRIEF_PROPERTIES, legacyAgentToolsFor as agentToolsFor, cornerCallText } from './read-only-mcp.js';
-import {
-  assembleSessionPrompt,
-  MEMORY_UPKEEP_RULE,
-  SEARCH_MEMORY_FIRST_RULE,
-} from './prompt-assembly.js';
-
-describe('compatibility schemas for already-running sessions', () => {
-  it('limits reports to completion, decisions, or blockers', () => {
-    const report = agentToolsFor(true, false).find(tool => tool.name === 'report')!;
-    expect(report.description).toContain("Report when your assignment is finished, or when you need a decision or are blocked. Don't report progress.");
-    expect(report.inputSchema.required).toEqual(['status', 'text']);
-    expect(report.description).toContain('Post progress in the corner instead');
-  });
-
-  it('advertises the enforced event and history input limits in tool descriptions', () => {
-    const tools = agentToolsFor(true, false);
-    const event = tools.find(tool => tool.name === 'emit_event')!;
-    const history = tools.find(tool => tool.name === 'search_history')!;
-    expect(event.description).toContain('consequence must be 1–200 characters');
-    expect(event.description).toContain('slug must be 1–40 characters');
-    expect(history.description).toContain('limit must be an integer from 1 to 10');
-  });
-
-  it('opens no corners from a direct message', () => {
-    const tools = agentToolsFor(true, true);
-    const names = tools.map((tool) => tool.name);
-    expect(names).toContain('get_room_message');
-    expect(names).toContain('post_artifact');
-    expect(names).toContain('open_corner');
-    expect(names).not.toContain('delegate_to_agent');
-
-    // The read-only surface is untouched: it never carried daemon tools.
-    const roomTools = agentToolsFor(false, true).map((tool) => tool.name);
-    expect(roomTools).not.toContain('open_corner');
-    expect(roomTools).not.toContain('post_artifact');
-
-    // A top-level Room keeps the bounded daemon controls.
-    expect(agentToolsFor(true, false).map((tool) => tool.name)).toContain('open_corner');
-    expect(agentToolsFor(true, false).map((tool) => tool.name)).not.toContain('delegate_to_agent');
-    expect(agentToolsFor(true, false, true).map((tool) => tool.name)).not.toContain(
-      'approve_merge',
-    );
-    expect(agentToolsFor(true, false, true, true).map((tool) => tool.name)).toContain(
-      'approve_merge',
-    );
-    expect(agentToolsFor(true, false, false, true).map((tool) => tool.name)).toContain(
-      'approve_merge',
-    );
-    expect(agentToolsFor(true, false, true, false).map((tool) => tool.name)).toContain('scratch_status');
-    expect(agentToolsFor(true, false, true, true).map((tool) => tool.name)).not.toContain('scratch_status');
-  });
-
-  it('advertises the memory tools by default and hides them only when explicitly disabled', () => {
-    const byDefault = agentToolsFor(true, false).map((tool) => tool.name);
-    for (const name of ['save_memory', 'update_memory', 'delete_memory', 'report_memory_used']) expect(byDefault).toContain(name);
-    expect(byDefault).not.toContain('propose_memory_item');
-    expect(byDefault).toContain('search_history');
-    expect(byDefault).toContain('search_memory');
-    expect(byDefault).toContain('load_workspace_skill');
-    expect(byDefault).toContain('save_skill');
-    expect(byDefault).toContain('delete_skill');
-    expect(byDefault).toContain('save_workflow');
-    expect(byDefault).toContain('start_workflow');
-    expect(byDefault).toContain('handoff');
-    expect(byDefault).toContain('archive_workflow');
-    expect(byDefault).toContain('assign_workflow_role');
-    const disabled = agentToolsFor(true, false, false, false, true, false).map(
-      (tool) => tool.name,
-    );
-    for (const name of ['save_memory', 'update_memory', 'delete_memory', 'report_memory_used']) expect(disabled).not.toContain(name);
-    expect(disabled).not.toContain('search_history');
-    expect(disabled).not.toContain('search_memory');
-    expect(disabled).not.toContain('load_workspace_skill');
-    expect(disabled).not.toContain('save_skill');
-    expect(disabled).not.toContain('delete_skill');
-    expect(disabled).not.toContain('save_workflow');
-    expect(disabled).not.toContain('start_workflow');
-    expect(disabled).not.toContain('handoff');
-    expect(disabled).not.toContain('archive_workflow');
-    expect(disabled).not.toContain('assign_workflow_role');
-    const enabled = agentToolsFor(true, false, false, false, true, true).map(
-      (tool) => tool.name,
-    );
-    for (const name of ['save_memory', 'update_memory', 'delete_memory', 'report_memory_used']) expect(enabled).toContain(name);
-    expect(enabled).toContain('search_history');
-    expect(enabled).toContain('search_memory');
-    expect(enabled).toContain('load_workspace_skill');
-    expect(enabled).toContain('save_skill');
-    expect(enabled).toContain('delete_skill');
-    expect(enabled).toContain('save_workflow');
-    expect(enabled).toContain('start_workflow');
-    expect(enabled).toContain('handoff');
-    expect(enabled).toContain('archive_workflow');
-    expect(enabled).toContain('assign_workflow_role');
-    const tools = agentToolsFor(true, false);
-    const save = tools.find((tool) => tool.name === 'save_memory');
-    expect(save?.inputSchema.required).toContain('subject_is_requester');
-    expect(save?.inputSchema.required).toContain('person_asked');
-    expect(save?.inputSchema.properties).not.toHaveProperty('memory_kind');
-    expect(tools.find((tool) => tool.name === 'delete_skill')?.inputSchema.required).toEqual([
-      'slug',
-      'version',
-      'source_message_ids',
-    ]);
-    for (const name of ['update_memory', 'delete_memory']) {
-      expect(tools.find((tool) => tool.name === name)?.inputSchema.required).toEqual(
-        expect.arrayContaining(['item_id', 'version', 'source_message_ids', 'person_asked']),
-      );
-    }
-  });
-
-  it('states the agent memory upkeep rule on save_memory', () => {
-    const save = agentToolsFor(true, false).find((tool) => tool.name === 'save_memory');
-    expect(save?.description).toContain(MEMORY_UPKEEP_RULE);
-    expect(MEMORY_UPKEEP_RULE).toContain('Before saving, search(scope:memory)');
-    expect(MEMORY_UPKEEP_RULE).toContain('instead of deleting and saving again');
-    expect(MEMORY_UPKEEP_RULE).toContain('remember(kind:fact, action:used)');
-  });
-
-  it('states the single-word keyword rule and pattern on save_memory', () => {
-    const save = agentToolsFor(true, false).find((tool) => tool.name === 'save_memory');
-    const keywords = (
-      save?.inputSchema as {
-        properties: {
-          keywords: { minItems?: number; items?: { pattern?: string; description?: string } };
-        };
-      }
-    ).properties.keywords;
-    expect(keywords.minItems).toBe(1);
-    expect(keywords.items?.pattern).toBe('^[a-z0-9][a-z0-9_./-]{2,31}$');
-    expect(keywords.items?.description).toContain('single lower-case word');
-  });
-
-  it('tells the agent to call search_memory before ever saying a fact was never saved', () => {
-    const searchMemory = agentToolsFor(true, false).find((tool) => tool.name === 'search_memory');
-    expect(searchMemory?.description).toContain(SEARCH_MEMORY_FIRST_RULE);
-  });
-});
-
-describe('save_workflow description', () => {
-  const description = agentToolsFor(true, false).find((tool) => tool.name === 'save_workflow')!
-    .description;
-
-  it('R8c keeps the procedure in the guide', () => {
-    expect(description.length).toBeLessThanOrEqual(400);
-    expect(description).not.toContain('Minimal valid example');
-    expect(description).not.toContain('Rules:');
-    expect(description).toContain('returns the rule that failed');
-  });
-
-  it('links every workflow tool to the workflow guide, whose example the validator accepts', () => {
-    const guideUrl = 'https://github.com/Beeline-Work/beeline/blob/main/docs/workflows/README.md';
-    const tools = agentToolsFor(true, false);
-    for (const name of ['save_workflow', 'start_workflow', 'handoff', 'assign_workflow_role', 'archive_workflow'])
-      expect(tools.find((tool) => tool.name === name)!.description, name).toContain(guideUrl);
-    const guide = readFileSync(
-      new URL('../../../docs/workflows/README.md', import.meta.url),
-      'utf8',
-    );
-    const example = guide.match(/```json\n([\s\S]*?)\n```/)?.[1];
-    expect(example).toBeDefined();
-    expect(validateSavedWorkflow(JSON.parse(example!))).toBeNull();
-  });
-});
-
-describe('open_corner repository', () => {
-  it('has no lane: the parent Room repository alone decides code or repo-less', () => {
-    const openCorner = agentToolsFor(true, false).find((tool) => tool.name === 'open_corner');
-    const schema = openCorner?.inputSchema as { properties: Record<string, unknown> };
-    expect(schema.properties).not.toHaveProperty('lane');
-  });
-});
-
-describe('approve_merge surface', () => {
-  const names = (cornerTurn: boolean, repositoryCorner: boolean, institutionalMemory: boolean) =>
-    agentToolsFor(true, false, cornerTurn, repositoryCorner, true, institutionalMemory).map(
-      (tool) => tool.name,
-    );
-
-  it('mounts on every repository corner turn, whoever the session booted as', () => {
-    // The Sol case: the configured reviewer's session did not boot as the
-    // reviewer and institutional memory is off, yet it can still record PASS.
-    expect(names(true, true, false)).toContain('approve_merge');
-    expect(names(true, true, true)).toContain('approve_merge');
-  });
-
-  it('admits Room and DM turns that name a corner, while staying off repo-less corner turns', () => {
-    for (const memory of [false, true]) {
-      expect(names(true, false, memory)).not.toContain('approve_merge');
-      expect(names(false, false, memory)).toContain('approve_merge');
-      expect(names(false, true, memory)).toContain('approve_merge');
-    }
-    expect(agentToolsFor(true, true, false, true).map((tool) => tool.name)).toContain(
-      'approve_merge',
-    );
-    expect(agentToolsFor(false, false, true, true).map((tool) => tool.name)).not.toContain(
-      'approve_merge',
-    );
-  });
-
-  it('requires concise proof-first review, with missing capability reported to the commander', () => {
-    const tool = agentToolsFor(true, false, true, true).find(entry => entry.name === 'approve_merge')!;
-    expect(tool.description).toContain('exact current green head');
-    expect(tool.description).toContain('verdict, one blocking reason and the worker');
-    expect(tool.description).toContain('Do not post an outline ledger, message IDs or commit hashes');
-    expect(tool.description).toContain('report blocked: to your commander');
-    expect(tool.description).toContain('PASS wakes the implementer to land');
-  });
-
-  it('requires review of every brief story against available proof', () => {
-    const tool = agentToolsFor(true, false, true, true).find(
-      (entry) => entry.name === 'approve_merge',
-    )!;
-    expect(tool.description).toContain('after verifying the brief and live proof');
-    expect(tool.description).toContain('On FAIL use order to send the worker its next step');
-  });
-});
-
-describe('ask_choice surface', () => {
-  it('tells the agent the card stands alone, with no follow-up message for its reasoning', () => {
-    const tool = agentToolsFor(true, true).find((entry) => entry.name === 'ask_choice')!;
-    expect(tool.description).toContain('it stands alone, so put your reasoning in it, not a later message');
-  });
-});
-
-describe('corner lifecycle tool surfaces', () => {
-  it('advertises open and close only where each operation can succeed', () => {
-    const room = agentToolsFor(true, false);
-    const directMessage = agentToolsFor(true, true);
-    const corner = agentToolsFor(true, false, true);
-    const reviewerCorner = agentToolsFor(true, false, true, true);
-
-    // A Room turn reaches its child corners, so it may close, rename or close
-    // the PR of one by naming its cornerId; a DM has no corners.
-    for (const name of ['close_corner', 'rename_corner', 'close_pull_request'])
-      expect(room.map((tool) => tool.name)).toContain(name);
-    expect(directMessage.map((tool) => tool.name)).toContain('close_corner');
-    expect(room.map((tool) => tool.name)).toContain('open_corner');
-    expect(directMessage.map((tool) => tool.name)).toContain('open_corner');
-
-    for (const tools of [corner, reviewerCorner]) {
-      const names = tools.map((tool) => tool.name);
-      expect(names).toContain('close_corner');
-      expect(names).toContain('publish_corner_app');
-      expect(names).toContain('open_corner_app');
-      expect(names).toContain('rename_corner');
-      expect(names).toContain('open_corner');
-    }
-    const repoLessCorner = agentToolsFor(true, false, true, false, true);
-    expect(repoLessCorner.map((tool) => tool.name)).toContain('close_corner');
-    expect(repoLessCorner.map((tool) => tool.name)).not.toContain('close_pull_request');
-    expect(reviewerCorner.map((tool) => tool.name)).toContain('close_pull_request');
-    expect(directMessage.map((tool) => tool.name)).toContain('close_pull_request');
-    expect(repoLessCorner.map((tool) => tool.name)).toContain('post_artifact');
-    for (const tools of [room, directMessage, corner, reviewerCorner, repoLessCorner]) {
-      expect(tools.map((tool) => tool.name)).not.toContain('upgrade_corner_to_code');
-    }
-    for (const tools of [room, directMessage]) {
-      expect(tools.map((tool) => tool.name)).not.toContain('publish_corner_app');
-      expect(tools.map((tool) => tool.name)).not.toContain('open_corner_app');
-    }
-    expect(directMessage.map((tool) => tool.name)).toContain('rename_corner');
-    for (const name of ['list_corners', 'list_room_members', 'read_pull_request', 'post_to_corner']) {
-      for (const tools of [room, corner, repoLessCorner])
-        expect(tools.map((tool) => tool.name)).toContain(name);
-      expect(directMessage.map((tool) => tool.name)).toContain(name);
-    }
-  });
-});
-
-describe('open_corner arguments', () => {
-  const openCorner = () => agentToolsFor(true, false).find((tool) => tool.name === 'open_corner')!;
-
-  it('asks for a name and says the three-word limit plainly', () => {
-    const schema = openCorner().inputSchema as {
-      required: string[];
-      properties: Record<string, { maxLength?: number; description?: string }>;
-    };
-    expect(schema.required).toEqual(['room', 'brief']);
-    expect(openCorner().description).toContain('AT MOST THREE WORDS');
-    expect(openCorner().description).toContain(
-      'Supply a compact brief for a precise small fix or a complete brief and Room files for complex work.',
-    );
-    expect(openCorner().description).toContain('after any material unresolved choice is settled');
-    expect(openCorner().description).toContain('The dispatching message authorizes work; no separate spec or mock approval is required.');
-    expect(schema.properties.name?.description).toBe(
-      "The corner's title: at most 3 words joined by hyphens, no whitespace.",
-    );
-    const brief = schema.properties.brief as unknown as {
-      required: string[];
-      properties: Record<string, unknown>;
-    };
-    expect(brief.required).toEqual(['spec', 'approval']);
-    expect(Object.keys(brief.properties)).not.toContain('content');
-  });
-
-  it('shares one brief schema with revise_corner_brief, which adds only its revision and change', () => {
-    const revise = agentToolsFor(true, false, true).find(
-      (tool) => tool.name === 'revise_corner_brief',
-    )!.inputSchema as { required: string[]; properties: Record<string, unknown> };
-    const brief = (openCorner().inputSchema as { properties: Record<string, unknown> }).properties
-      .brief as { properties: Record<string, unknown> };
-    expect(brief.properties).toBe(CORNER_BRIEF_PROPERTIES);
-    for (const [key, value] of Object.entries(CORNER_BRIEF_PROPERTIES))
-      expect(revise.properties[key]).toBe(value);
-    expect(
-      Object.keys(revise.properties).filter((key) => !(key in CORNER_BRIEF_PROPERTIES)),
-    ).toEqual(['cornerId', 'expectedRevision', 'change']);
-    expect(revise.required).toEqual(['expectedRevision', 'spec', 'approval', 'change']);
-    expect(CORNER_BRIEF_PROPERTIES.spec).toMatchObject({ minLength: 1, maxLength: 16_000 });
-    expect(CORNER_BRIEF_PROPERTIES.spec.description).toContain('include a mock when requested or useful');
-    expect(CORNER_BRIEF_PROPERTIES.approval.description).toContain('dispatching this work or authorizing its revision');
-    expect(CORNER_BRIEF_PROPERTIES.approval.description).toContain('separate spec approval is not required');
-    expect(CORNER_BRIEF_PROPERTIES.approval).toMatchObject({
-      required: ['sourceMessageId'],
-      additionalProperties: false,
-    });
-  });
-
-  it('advertises bounded brief paging and opener revisions in parent Rooms', () => {
-    const tools = agentToolsFor(true, false);
-    expect(tools.some(tool => tool.name === 'revise_corner_brief')).toBe(true);
-    const read = tools.find(tool => tool.name === 'read_corner_brief')!.inputSchema as { properties: Record<string, unknown> };
-    expect(read.properties.limit).toEqual({ type: 'integer', minimum: 1, maximum: 20, default: 1 });
-  });
-
+import { describe, it, expect } from 'vitest';
+import { cornerCallText } from './read-only-mcp.js';
+describe('corner text', () => {
   it('flattens an untidy call instead of refusing it', () => {
     // A grok-shaped call: the brief arrives with its line breaks intact.
     expect(
@@ -360,37 +33,44 @@ describe('open_corner arguments', () => {
   });
 });
 
-it('offers the command grammar across Rooms, corners and DMs, with retired tools absent', () => {
-  for (const dm of [false, true]) for (const corner of [false, true]) {
-    const names = agentToolsFor(true, dm, corner, true).map(t => t.name);
-    for (const name of ['order', 'report', 'read', 'watch', 'list_rooms', 'open_corner', 'inspect_corner'])
-      expect(names).toContain(name);
-    for (const name of ['steer_corner', 'ask_corner', 'get_corner_ask']) expect(names).not.toContain(name);
-  }
-  const dm = assembleSessionPrompt({ surface: 'dm', agentName: 'Bee' }).systemPrompt;
-  expect(dm).toContain('read()');
-  expect(dm).toContain('across member Rooms');
-  expect(dm).toContain('report(status, text) one step up to your commander');
-});
+import { Check } from 'typebox/value';
+import { agentToolsFor } from './read-only-mcp.js';
+import { CAPABILITY_TOOLS } from './minimal-tool-surface.js';
 
-it('R8d documents the optional continuation and generic fallback', () => {
-  const tool = agentToolsFor(true, false).find((tool) => tool.name === 'connect')!;
-  expect(tool.description).toContain('optional');
-  expect(tool.description).toContain('continues the request right after');
-  expect(tool.inputSchema.required).toEqual(['service', 'reason']);
-});
+const schema = (name: string) => agentToolsFor(true,false,true,true).find(tool => tool.name === name)!.inputSchema;
 
-it('corner order descriptions forbid ancestors and retain single-agent Room orders', () => {
-  const tool = agentToolsFor(true, false, true, true).find(tool => tool.name === 'order')!;
-  expect(tool.description).toContain('except your parent Room and parent or ancestor corners');
-  expect(tool.description).toContain('name exactly one agent');
-  expect(tool.description).toContain('DM and agent addresses are blocked');
-  expect(tool.description).toContain('This corner and sibling corners are allowed');
-});
+describe('canonical tool contracts', () => {
+  it('requires explicit ownership and a sourced complete brief when opening work', () => {
+    const input = {room:'11111111-1111-4111-8111-111111111111',implementer:'worker',brief:{spec:'Build the widget',approval:{sourceMessageId:'human-message'}}};
+    expect(Check(schema('open_corner'),input)).toBe(true);
+    expect(Check(schema('open_corner'),{...input,implementer:undefined})).toBe(false);
+    expect(Check(schema('open_corner'),{...input,brief:{spec:'Build the widget'}})).toBe(false);
+    expect(Check(schema('open_corner'),{...input,brief:{...input.brief,spec:''}})).toBe(false);
+    const revision = {address:'child',action:'brief',brief:input.brief,expectedRevision:2,change:'Approved correction'};
+    expect(Check(schema('revise_corner'),revision)).toBe(true);
+    expect(Check(schema('revise_corner'),{address:revision.address,action:revision.action,brief:revision.brief,change:revision.change})).toBe(false);
+    expect(Check(schema('revise_corner'),{address:'child',action:'metadata',name:'widget',brief:input.brief})).toBe(false);
+    expect(Check(schema('revise_corner'),{address:'child',action:'install_brief',name:'widget',brief:input.brief})).toBe(true);
+  });
 
-it('corner revision and close tools explain the ancestor boundary', () => {
-  const tools = agentToolsFor(true, false, true, true);
-  for (const name of ['revise_corner_brief', 'close_corner']) {
-    expect(tools.find(tool => tool.name === name)?.description).toContain('except parent or ancestor corners and the parent Room');
-  }
+  it('keeps sourced memory mutations and procedure upsert distinct', () => {
+    const procedure = {kind:'procedure',action:'save',slug:'widget',description:'Build widgets',markdown:'Steps'};
+    expect(Check(schema('remember'),procedure)).toBe(true);
+    expect(Check(schema('remember'),{...procedure,action:'update'})).toBe(false);
+    expect(Check(schema('remember'),{kind:'fact',action:'save',body:'Unattributed fact'})).toBe(false);
+    expect(Check(schema('remember'),{kind:'fact',action:'delete',item_id:'item'})).toBe(false);
+  });
+
+  it('separates assignment completion, feedback, discovery and execution', () => {
+    expect(Check(schema('report'),{status:'blocked',text:'blocked: input required'})).toBe(true);
+    expect(Check(schema('report'),{category:'bug',summary:'Broken tool'})).toBe(false);
+    expect(Check(schema('report_feedback'),{category:'bug',summary:'Broken tool'})).toBe(true);
+    expect(Check(schema('app_tool'),{app:'beeline:workflow'})).toBe(true);
+    expect(Check(schema('app_tool'),{app:'beeline:workflow',args:{}})).toBe(false);
+    expect(Check(schema('app_tool'),{app:'beeline:workflow',tool:'read',args:{runId:'run'}})).toBe(true);
+    for (const tools of Object.values(CAPABILITY_TOOLS)) for (const tool of Object.values(tools)) {
+      expect(tool.inputSchema.type).toBe('object');
+      expect(tool.inputSchema.properties).toBeDefined();
+    }
+  });
 });

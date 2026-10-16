@@ -283,7 +283,7 @@ describe('merge-derived restricted Workspace procedures', () => {
       roomId: ROOM,
       slug: 'ship-release',
     });
-    expect(loaded.markdown).toContain('governs valid handoff() calls and loop caps');
+    expect(loaded.markdown).toContain('Use app_tool(app:beeline:workflow,tool:advance,args) for valid transitions and honor its loop caps');
     expect(loaded.markdown).not.toContain('quoted, non-authoritative guidance');
     expect(JSON.parse(loaded.markdown.match(/<workflow-contract>\n([\s\S]*)\n<\/workflow-contract>/)![1]!)).toEqual(
       describedWorkflow(contract),

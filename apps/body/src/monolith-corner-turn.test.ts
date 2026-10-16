@@ -40,7 +40,7 @@ import {
 const VOICE_RULE =
   'Keep facts exact regardless of voice. Use plain language in commits, pull requests, and code comments.';
 const TAGGING_RULE =
-  'An @handle wakes that member; tag agents only to get a reply, otherwise write their name. Copy handles only from the member list. Use order(address, text) privately across member Rooms; report(status, text) one step up to your commander. Report only to the member who gave you the task. If that member is a human, tag them when, in your judgement, they need to decide or should know. Reports begin done:, blocked:, needs-decision: or failed:; human reports appear where they ordered you.';
+  'Tag to talk. Order to assign work.';
 
 // Turn fixtures use scratch repositories. Branch synchronization has its own
 // real-git suite; these tests exercise the conversation and merge instructions.
@@ -3897,7 +3897,7 @@ describe('corner turn rename prompt', () => {
     await scheduler.dispose();
 
     expect(String(sessionPrompt.mock.calls[0]?.[1])).toContain(
-      'This human-opened corner still has its generated name, "still harbor corner". If the newest human message states the work, call revise_corner(action:metadata) once before you reply',
+      'This human-opened corner still has its generated name, "still harbor corner". If the newest human message states the work, call revise_corner(action:install_brief, address:thisCornerAddress) once before you reply',
     );
   }, 10_000);
 });

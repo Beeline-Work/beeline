@@ -23,15 +23,14 @@ import { callAgentTool } from './read-only-mcp.js';
 /**
  * End-to-end proof that a worker can actually execute a workflow run started
  * inside a corner, through the REAL agent MCP tool handlers
- * (`start_workflow`/`get_workflow_run`/`handoff`/`emit_event` in
+ * (the workflow app_tool operations in
  * `read-only-mcp.ts`) talking to a real `apps/server` (real Postgres-shaped
  * schema via pglite, real `DaemonService`/`PhoneService`/auth over HTTP) —
  * reproducing the exact failure the MM desk corner hit: `get_workflow_run`
  * from inside a corner used to send the PARENT Room id and get back 503
  * "workflow run is unavailable in this Room" (fixed by routing workflow-run
  * tools through `agentScheduleRoomId()`, which prefers
- * `BEELINE_DAEMON_CORNER_ID`), and `emit_event` waking an agent by bare
- * `@handle` instead of agent id.
+ * `BEELINE_DAEMON_CORNER_ID`).
  *
  * Every tool call below runs with the corner env exactly as production
  * mounts it: `BEELINE_DAEMON_ROOM_ID` is the PARENT Room, and
@@ -346,10 +345,10 @@ it(
     // ============================================================
     const kickoffA = await seedHumanTag(AUDITOR, '@jellybean start the daily arb run');
     const auditorTurnA0 = await claimTurn(AUDITOR, kickoffA, scratchRoot);
-    const started = await useTool(AUDITOR, auditorTurnA0, 'start_workflow', {
+    const started = await useTool(AUDITOR, auditorTurnA0, 'app_tool', {app:'beeline:workflow',tool:'start',args:{
       name: CONTRACT.name,
       roleBindings,
-    });
+    }});
     const runA = started.runId as string;
     expect(runA).toBeTruthy();
 
@@ -359,34 +358,34 @@ it(
     const scoutCommandA = await pendingCommandFor(SCOUT);
     expect(scoutCommandA.room_id).toBe(CORNER);
     const scoutTurnA = await claimTurn(SCOUT, scoutCommandA, scratchRoot);
-    const scoutRead = await useTool(SCOUT, scoutTurnA, 'get_workflow_run', { runId: runA });
+    const scoutRead = await useTool(SCOUT, scoutTurnA, 'app_tool', {app:'beeline:workflow',tool:'read',args:{ runId: runA }});
     expect(scoutRead).toMatchObject({ runId: runA, state: 'scout', role: 'scout', boundAgentId: SCOUT });
     expect(scoutRead.requiredFields).toEqual(['candidate_pairs', 'scan_scope', 'source_time']);
-    const scoutHandoffA = await useTool(SCOUT, scoutTurnA, 'handoff', {
+    const scoutHandoffA = await useTool(SCOUT, scoutTurnA, 'app_tool', {app:'beeline:workflow',tool:'advance',args:{
       runId: runA,
       outcome: 'batch',
       contents: { candidate_pairs: 7, scan_scope: 'us-equity-pairs', source_time: '2026-10-04T13:00:00Z' },
-    });
+    }});
     expect(scoutHandoffA).toMatchObject({ runId: runA, state: 'verify' });
 
     const verifierCommandA = await pendingCommandFor(VERIFIER);
     expect(verifierCommandA.room_id).toBe(CORNER);
     const verifierTurnA = await claimTurn(VERIFIER, verifierCommandA, scratchRoot);
-    const verifierRead = await useTool(VERIFIER, verifierTurnA, 'get_workflow_run', { runId: runA });
+    const verifierRead = await useTool(VERIFIER, verifierTurnA, 'app_tool', {app:'beeline:workflow',tool:'read',args:{ runId: runA }});
     expect(verifierRead).toMatchObject({ runId: runA, state: 'verify', role: 'verifier', boundAgentId: VERIFIER });
-    const verifierHandoffA = await useTool(VERIFIER, verifierTurnA, 'handoff', {
+    const verifierHandoffA = await useTool(VERIFIER, verifierTurnA, 'app_tool', {app:'beeline:workflow',tool:'advance',args:{
       runId: runA,
       outcome: 'passed',
       contents: { survivors: 5, rejections: 2, rule_evidence: 'spread>cost for 5/7 pairs' },
-    });
+    }});
     expect(verifierHandoffA).toMatchObject({ runId: runA, state: 'simulate' });
 
     const traderCommandA = await pendingCommandFor(TRADER);
     expect(traderCommandA.room_id).toBe(CORNER);
     const traderTurnA = await claimTurn(TRADER, traderCommandA, scratchRoot);
-    const traderRead = await useTool(TRADER, traderTurnA, 'get_workflow_run', { runId: runA });
+    const traderRead = await useTool(TRADER, traderTurnA, 'app_tool', {app:'beeline:workflow',tool:'read',args:{ runId: runA }});
     expect(traderRead).toMatchObject({ runId: runA, state: 'simulate', role: 'trader', boundAgentId: TRADER });
-    const traderHandoffA = await useTool(TRADER, traderTurnA, 'handoff', {
+    const traderHandoffA = await useTool(TRADER, traderTurnA, 'app_tool', {app:'beeline:workflow',tool:'advance',args:{
       runId: runA,
       outcome: 'filled',
       contents: {
@@ -395,15 +394,15 @@ it(
         book_evidence: 'nbbo depth sufficient for all 5 legs',
         fee_model: 'maker-0.1bp',
       },
-    });
+    }});
     expect(traderHandoffA).toMatchObject({ runId: runA, state: 'score' });
 
     const auditorCommandA = await pendingCommandFor(AUDITOR);
     expect(auditorCommandA.room_id).toBe(CORNER);
     const auditorTurnA1 = await claimTurn(AUDITOR, auditorCommandA, scratchRoot);
-    const auditorRead = await useTool(AUDITOR, auditorTurnA1, 'get_workflow_run', { runId: runA });
+    const auditorRead = await useTool(AUDITOR, auditorTurnA1, 'app_tool', {app:'beeline:workflow',tool:'read',args:{ runId: runA }});
     expect(auditorRead).toMatchObject({ runId: runA, state: 'score', role: 'auditor', boundAgentId: AUDITOR });
-    const auditorHandoffA = await useTool(AUDITOR, auditorTurnA1, 'handoff', {
+    const auditorHandoffA = await useTool(AUDITOR, auditorTurnA1, 'app_tool', {app:'beeline:workflow',tool:'advance',args:{
       runId: runA,
       outcome: 'scored',
       contents: {
@@ -413,31 +412,8 @@ it(
         decision: 'approved',
         evidence: 'all 5 fills within fee model',
       },
-    });
+    }});
     expect(auditorHandoffA).toMatchObject({ runId: runA, state: 'done', status: 'done' });
-
-    // From inside the corner, the auditor wakes tomorrow's scout by bare
-    // @handle — exactly what Jellybean tried against Baby ("baby"), and
-    // exactly what PR 2085 made work. `emit_event` replies with plain text
-    // (not JSON), so its posted message is found back by querying the Room.
-    const emittedText = await useToolRaw(AUDITOR, auditorTurnA1, 'emit_event', {
-      kind: 'agent:handoff',
-      consequence: "run A scored and closed; tomorrow's scan is clear to start",
-      mentionAgentIds: ['baby'],
-    });
-    expect(emittedText).toBe('Posted agent:handoff in this Room and woke 1 agent(s).');
-    const emittedMessage = await database.query<{ id: string }>(
-      `SELECT id FROM messages WHERE room_id=$1 AND author_id=$2 AND system_event->>'kind'='agent:handoff'
-       ORDER BY created_at DESC LIMIT 1`,
-      [CORNER, AUDITOR],
-    );
-    const emittedId = emittedMessage.rows[0]?.id;
-    expect(emittedId).toBeTruthy();
-    const wokenByHandle = await database.query<{ agent_id: string }>(
-      `SELECT agent_id FROM agent_commands WHERE source_message_id=$1`,
-      [emittedId],
-    );
-    expect(wokenByHandle.rows.map((row) => row.agent_id)).toEqual([SCOUT]);
 
     const finalStateA = await database.query<{ to_state: string; status: string | null }>(
       `SELECT card->>'toState' to_state,card->>'status' status FROM messages
@@ -454,58 +430,58 @@ it(
     // ============================================================
     const kickoffB = await seedHumanTag(AUDITOR, '@jellybean start another arb run, quieter session');
     const auditorTurnB0 = await claimTurn(AUDITOR, kickoffB, scratchRoot);
-    const startedB = await useTool(AUDITOR, auditorTurnB0, 'start_workflow', {
+    const startedB = await useTool(AUDITOR, auditorTurnB0, 'app_tool', {app:'beeline:workflow',tool:'start',args:{
       name: CONTRACT.name,
       roleBindings,
-    });
+    }});
     const runB = startedB.runId as string;
     expect(runB).toBeTruthy();
     expect(runB).not.toBe(runA);
 
     const scoutCommandB1 = await pendingCommandFor(SCOUT);
     const scoutTurnB1 = await claimTurn(SCOUT, scoutCommandB1, scratchRoot);
-    await useTool(SCOUT, scoutTurnB1, 'handoff', {
+    await useTool(SCOUT, scoutTurnB1, 'app_tool', {app:'beeline:workflow',tool:'advance',args:{
       runId: runB,
       outcome: 'batch',
       contents: { candidate_pairs: 3, scan_scope: 'us-equity-pairs', source_time: '2026-10-05T13:00:00Z' },
-    });
+    }});
 
     // First verify(empty): under the cap (0 prior -> 1), goes back to scout.
     const verifierCommandB1 = await pendingCommandFor(VERIFIER);
     const verifierTurnB1 = await claimTurn(VERIFIER, verifierCommandB1, scratchRoot);
-    const verifyEmpty1 = await useTool(VERIFIER, verifierTurnB1, 'handoff', {
+    const verifyEmpty1 = await useTool(VERIFIER, verifierTurnB1, 'app_tool', {app:'beeline:workflow',tool:'advance',args:{
       runId: runB,
       outcome: 'empty',
       contents: { survivors: 0, rejections: 3, rule_evidence: 'no pair cleared the spread/cost bar' },
-    });
+    }});
     expect(verifyEmpty1).toMatchObject({ runId: runB, state: 'scout' });
 
     const scoutCommandB2 = await pendingCommandFor(SCOUT);
     const scoutTurnB2 = await claimTurn(SCOUT, scoutCommandB2, scratchRoot);
-    await useTool(SCOUT, scoutTurnB2, 'handoff', {
+    await useTool(SCOUT, scoutTurnB2, 'app_tool', {app:'beeline:workflow',tool:'advance',args:{
       runId: runB,
       outcome: 'batch',
       contents: { candidate_pairs: 2, scan_scope: 'us-equity-pairs', source_time: '2026-10-05T13:30:00Z' },
-    });
+    }});
 
     // Second verify(empty) from state 'verify': the cap (1) is now exceeded,
     // so the engine redirects straight to the loop's onExceeded state
     // ('score'), skipping 'simulate' (the trader never touches this run).
     const verifierCommandB2 = await pendingCommandFor(VERIFIER);
     const verifierTurnB2 = await claimTurn(VERIFIER, verifierCommandB2, scratchRoot);
-    const verifyEmpty2 = await useTool(VERIFIER, verifierTurnB2, 'handoff', {
+    const verifyEmpty2 = await useTool(VERIFIER, verifierTurnB2, 'app_tool', {app:'beeline:workflow',tool:'advance',args:{
       runId: runB,
       outcome: 'empty',
       contents: { survivors: 0, rejections: 2, rule_evidence: 'still nothing clears the bar' },
-    });
+    }});
     expect(verifyEmpty2).toMatchObject({ runId: runB, state: 'score' });
 
     const auditorCommandB = await pendingCommandFor(AUDITOR);
     expect(auditorCommandB.room_id).toBe(CORNER);
     const auditorTurnB1 = await claimTurn(AUDITOR, auditorCommandB, scratchRoot);
-    const auditorReadB = await useTool(AUDITOR, auditorTurnB1, 'get_workflow_run', { runId: runB });
+    const auditorReadB = await useTool(AUDITOR, auditorTurnB1, 'app_tool', {app:'beeline:workflow',tool:'read',args:{ runId: runB }});
     expect(auditorReadB).toMatchObject({ runId: runB, state: 'score', role: 'auditor', boundAgentId: AUDITOR });
-    const auditorHandoffB = await useTool(AUDITOR, auditorTurnB1, 'handoff', {
+    const auditorHandoffB = await useTool(AUDITOR, auditorTurnB1, 'app_tool', {app:'beeline:workflow',tool:'advance',args:{
       runId: runB,
       outcome: 'scored',
       contents: {
@@ -515,7 +491,7 @@ it(
         decision: 'no-trade-day',
         evidence: 'both scans came back empty; loop cap exceeded into score',
       },
-    });
+    }});
     expect(auditorHandoffB).toMatchObject({ runId: runB, state: 'done', status: 'done' });
 
     // The trader (Trey) was never dispatched on run B at all.
@@ -571,7 +547,7 @@ it(
       );
     const saver = await seedHumanTag(AUDITOR, '@jellybean save the desk-heal workflow');
     const saverTurn = await claimTurn(AUDITOR, saver, scratchRoot);
-    await useTool(AUDITOR, saverTurn, 'save_workflow', { contract: HEALING });
+    await useTool(AUDITOR, saverTurn, 'app_tool', {app:'beeline:workflow',tool:'save',args:{ contract: HEALING }});
 
     // The schedule was made by the agent itself; its owner is the person who asked.
     const scheduleId = '44444444-4444-4444-8444-444444444444';
@@ -583,10 +559,10 @@ it(
     expect(await new AgentScheduleLoop(database).runOnce()).toBe(1);
     const tick = await pendingCommandFor(AUDITOR);
     const tickTurn = await claimTurn(AUDITOR, tick, scratchRoot);
-    const started = await useTool(AUDITOR, tickTurn, 'start_workflow', {
+    const started = await useTool(AUDITOR, tickTurn, 'app_tool', {app:'beeline:workflow',tool:'start',args:{
       name: 'desk-heal',
       roleBindings: { lead: ['baby', 'vera', 'trey'] },
-    });
+    }});
     const runId = started.runId as string;
 
     // Baby is woken for attempt 0 and never answers.
@@ -602,29 +578,29 @@ it(
     // Vera takes attempt 1 and cannot do it.
     const veraCommand = await pendingCommandFor(VERIFIER);
     const veraTurn = await claimTurn(VERIFIER, veraCommand, scratchRoot);
-    const blocked = await useTool(VERIFIER, veraTurn, 'handoff', {
+    const blocked = await useTool(VERIFIER, veraTurn, 'app_tool', {app:'beeline:workflow',tool:'advance',args:{
       runId,
       outcome: 'blocked',
       contents: { reason: 'no access to the quote database' },
-    });
+    }});
     expect(blocked).toEqual({ runId, state: 'quote', attempt: 2 });
 
     // Trey takes attempt 2 and finishes.
     const treyCommand = await pendingCommandFor(TRADER);
     const treyTurn = await claimTurn(TRADER, treyCommand, scratchRoot);
-    const done = await useTool(TRADER, treyTurn, 'handoff', {
+    const done = await useTool(TRADER, treyTurn, 'app_tool', {app:'beeline:workflow',tool:'advance',args:{
       runId,
       outcome: 'quoted',
       contents: { quotes: 12 },
       attempt: 2,
-    });
+    }});
     expect(done).toEqual({ runId, state: 'done', attempt: 3, status: 'done' });
     // Baby wakes late and repeats attempt 0: nothing moves.
     const babyTurn = await claimTurn(SCOUT, await seedHumanTag(SCOUT, '@baby are you there'), scratchRoot);
-    expect(await useTool(SCOUT, babyTurn, 'handoff', { runId, outcome: 'quoted', contents: { quotes: 1 }, attempt: 0 }))
+    expect(await useTool(SCOUT, babyTurn, 'app_tool', {app:'beeline:workflow',tool:'advance',args:{ runId, outcome: 'quoted', contents: { quotes: 1 }, attempt: 0 }}))
       .toEqual({ alreadyAdvanced: true, runId, state: 'done', seq: 3, status: 'done' });
 
-    const read = await useTool(AUDITOR, tickTurn, 'get_workflow_run', { runId });
+    const read = await useTool(AUDITOR, tickTurn, 'app_tool', {app:'beeline:workflow',tool:'read',args:{ runId }});
     expect(read).toMatchObject({ state: 'done', status: 'done' });
     const humanActions = await database.query(
       `SELECT 1 FROM messages WHERE room_id=$1 AND author_id=$2 AND card->>'runId'=$3`,
@@ -688,14 +664,14 @@ it(
 
     const saver = await seedHumanTag(AUDITOR, '@jellybean save the chat-gate workflow');
     const saverTurn = await claimTurn(AUDITOR, saver, scratchRoot);
-    await useTool(AUDITOR, saverTurn, 'save_workflow', { contract: CHAT_GATE });
+    await useTool(AUDITOR, saverTurn, 'app_tool', {app:'beeline:workflow',tool:'save',args:{ contract: CHAT_GATE }});
 
     const starter = await seedHumanTag(AUDITOR, '@jellybean start the chat-gate workflow');
     const starterTurn = await claimTurn(AUDITOR, starter, scratchRoot);
-    const started = await useTool(AUDITOR, starterTurn, 'start_workflow', {
+    const started = await useTool(AUDITOR, starterTurn, 'app_tool', {app:'beeline:workflow',tool:'start',args:{
       name: 'chat-gate',
       roleBindings: { approver: 'trey', worker: 'baby' },
-    });
+    }});
     const runId = started.runId as string;
 
     // The start state is a gate: it posts the choice card and wakes nobody.
@@ -713,9 +689,9 @@ it(
     // The person answers in chat instead of pressing the card.
     const ask = await seedHumanTag(TRADER, '@trey yes, approved - go ahead');
     const approverTurn = await claimTurn(TRADER, ask, scratchRoot);
-    const settled = await useTool(TRADER, approverTurn, 'handoff', {
+    const settled = await useTool(TRADER, approverTurn, 'app_tool', {app:'beeline:workflow',tool:'advance',args:{
       runId, outcome: 'go', contents: {},
-    });
+    }});
     expect(settled).toEqual({ runId, state: 'work', attempt: 1 });
 
     const source = (
@@ -733,7 +709,7 @@ it(
     ).rows[0]!;
     expect(choice).toEqual({ status: 'answered', voter_id: HUMAN });
 
-    const read = await useTool(AUDITOR, starterTurn, 'get_workflow_run', { runId });
+    const read = await useTool(AUDITOR, starterTurn, 'app_tool', {app:'beeline:workflow',tool:'read',args:{ runId }});
     expect(read.history).toContainEqual(
       expect.objectContaining({
         fromState: 'approve',

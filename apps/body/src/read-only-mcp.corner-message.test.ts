@@ -60,8 +60,7 @@ describe('corner-turn get_room_message room targeting', () => {
       });
     const result = JSON.parse(
       await callAgentTool(
-        'get_room_message',
-        { messageId: 'corner-transcript-id' },
+        'read', { facet: "message", ...{ messageId: 'corner-transcript-id' } },
         'call-1',
       ),
     );
@@ -82,8 +81,7 @@ describe('corner-turn get_room_message room targeting', () => {
 
   it('keeps the offset page on the corner read', async () => {
     await callAgentTool(
-      'get_room_message',
-      { messageId: 'corner-transcript-id', offset: 4000 },
+      'read', { facet: "message", ...{ messageId: 'corner-transcript-id', cursor: { offset: 4000 } } },
       'call-2',
     );
     expect(calls[0]!.input).toMatchObject({

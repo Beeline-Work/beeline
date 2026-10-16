@@ -175,6 +175,9 @@ beforeEach(async () => {
     )
   ).rows)
     recordedEdges.add(row.edge);
+  await db.query(`DELETE FROM agent_schedules`);
+  await db.query(`DELETE FROM agent_subscriptions`);
+  await db.query(`DELETE FROM work_schedules`);
   await db.query(`DELETE FROM agent_commands`);
   await db.query(`DELETE FROM agent_turns`);
   await db.query(`DELETE FROM messages WHERE room_id<>$1`, [R]);
@@ -863,6 +866,55 @@ describe('landing and closing from any state (finding 3, implicit edges)', () =>
       AND action IN ('input','resume') AND state IN ('pending','claimed')`, [cornerId])).rowCount).toBe(0);
     expect((await db.query(`SELECT 1 FROM agent_turns WHERE room_id=$1
       AND status='working'`, [cornerId])).rowCount).toBe(0);
+  });
+
+  async function seedWakeSources(roomId: string) {
+    const id = randomUUID();
+    await db.query(`INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at)
+      VALUES($1,$2,$3,$4,$5,'{"kind":"interval","everyMinutes":60}','wake',now())`, [id, W, roomId, A, H]);
+    await db.query(`INSERT INTO agent_schedule_occurrences(schedule_id,scheduled_for,message_id)
+      VALUES($1,now(),$2)`, [id, randomUUID()]);
+    await db.query(`INSERT INTO agent_subscriptions(id,workspace_id,room_id,agent_id,source,event,prompt)
+      VALUES($1,$2,$3,$4,'room','message','wake')`, [randomUUID(), W, roomId, A]);
+    await db.query(`INSERT INTO work_schedules(schedule_id,agent_id,room_id,revision,schedule)
+      VALUES($1,$2,$3,1,'{}')`, [id, A, roomId]);
+    await db.query(`UPDATE memberships SET event_subscriptions='["message"]' WHERE room_id=$1`, [roomId]);
+    return id;
+  }
+
+  async function expectWakeSources(roomId: string, count: number) {
+    for (const table of ['agent_schedules', 'agent_subscriptions', 'work_schedules'])
+      expect((await db.query(`SELECT 1 FROM ${table} WHERE room_id=$1`, [roomId])).rowCount).toBe(count);
+    expect((await db.query(`SELECT 1 FROM memberships WHERE room_id=$1 AND event_subscriptions<>'[]'::jsonb`,
+      [roomId])).rowCount).toBe(count ? 3 : 0);
+  }
+
+  it.each(['close', 'merge'] as const)('removes corner wake sources on %s and preserves the live Room (Reproduction corner-wake-cleanup)', async (path) => {
+    const cornerId = path === 'close' ? await open() : await inReview();
+    const scheduleId = await seedWakeSources(cornerId);
+    const liveScheduleId = await seedWakeSources(R);
+    if (path === 'close') await phone.execute('requestCornerClose', { roomId: cornerId }, H);
+    else await mergedWebhook(cornerId, 7, SHA);
+    expect((await db.query(`SELECT archived_at FROM rooms WHERE id=$1`, [cornerId])).rows[0].archived_at).not.toBeNull();
+    await expectWakeSources(cornerId, 0);
+    await expectWakeSources(R, 1);
+    expect((await db.query(`SELECT 1 FROM agent_schedule_occurrences WHERE schedule_id=$1`, [scheduleId])).rowCount).toBe(0);
+    expect((await db.query(`SELECT 1 FROM agent_schedule_occurrences WHERE schedule_id=$1`, [liveScheduleId])).rowCount).toBe(1);
+  });
+
+  it('release migration removes existing archived corner wakes and preserves live wakes', async () => {
+    const cornerId = await open();
+    const liveCornerId = await open();
+    await seedWakeSources(cornerId);
+    await seedWakeSources(liveCornerId);
+    await seedWakeSources(R);
+    await db.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`, [cornerId]);
+    await db.query(`DELETE FROM workflow_backfills WHERE name='archived-corner-wakes-v1'`);
+    await migrate(db);
+    await migrate(db);
+    await expectWakeSources(cornerId, 0);
+    await expectWakeSources(liveCornerId, 1);
+    await expectWakeSources(R, 1);
   });
 
   it('a human close request abandons a live saved workflow run inside the corner', async () => {

@@ -12,6 +12,8 @@ import { migrate } from './database.js';
 import type { FreeAgentMachines, FreeAgentMachineSpec } from './fly-machines.js';
 import {
   addFreeAgentToWorkspace,
+  FREE_AGENT_EXIT_NOTE,
+  FREE_AGENT_JOIN_GREETING,
   FreeAgentService,
   generateAgentKeypair,
   openSecrets,
@@ -523,6 +525,67 @@ describe('free starter agents', () => {
       ).rows,
     ).toEqual([{ room_id: general }]);
     expect(await addFreeAgentToWorkspace(db, freeAgents, workspaceId)).toBeUndefined();
+  });
+
+  it('hears #general joins and leaves from creation: people wake it, agents and its own events do not', async () => {
+    const { id, roomId } = await createWorkspace();
+    await settle();
+    const agent = await freeAgentOf(id);
+    expect(
+      (
+        await db.query(`SELECT event_subscriptions FROM memberships WHERE identity_id=$1 AND room_id=$2`, [
+          agent.agent_id,
+          roomId,
+        ])
+      ).rows,
+    ).toEqual([{ event_subscriptions: ['joined', 'left'] }]);
+    const wakes = async () =>
+      (
+        await db.query<{ text: string }>(
+          `SELECT source.text FROM agent_commands command JOIN messages source ON source.id=command.source_message_id
+           WHERE command.agent_id=$1 AND command.reason='subscribed_event' ORDER BY command.created_at`,
+          [agent.agent_id],
+        )
+      ).rows.map((row) => row.text);
+
+    // A person joins the Workspace: one joined event in #general wakes the free agent.
+    await phone.execute('addWorkspaceMember', { workspaceId: id, memberId: FRIEND, role: 'member' }, OWNER);
+    expect(await wakes()).toEqual(['@friend joined · invited by @lunchboxfortwo']);
+
+    // An agent joins: no greeting wake.
+    await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Ordinary','ordinary')`, [ORDINARY]);
+    await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [ORDINARY, OWNER]);
+    await phone.execute('addWorkspaceMember', { workspaceId: id, memberId: ORDINARY, role: 'member' }, OWNER);
+    expect(await wakes()).toHaveLength(1);
+
+    // The person leaves #general, then the Workspace: each departure is one left event.
+    await phone.execute('leaveRoom', { roomId }, FRIEND);
+    expect((await wakes()).at(-1)).toBe('@friend left');
+    await phone.execute('addRoomMember', { roomId, memberIds: [FRIEND] }, OWNER);
+    await phone.execute('leaveWorkspace', { workspaceId: id }, FRIEND);
+    expect((await wakes()).at(-1)).toBe('@friend left');
+    expect(
+      (
+        await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND card_type='member-left'`, [roomId])
+      ).rowCount,
+    ).toBe(2);
+  });
+
+  it('carries the owner\'s exact join greeting and the exit note in the free agent\'s instructions', async () => {
+    const { id } = await createWorkspace();
+    await settle();
+    const agent = await freeAgentOf(id);
+    const soul = (
+      await db.query<{ soul: { instructions: string } }>(`SELECT soul FROM agents WHERE agent_id=$1`, [
+        agent.agent_id,
+      ])
+    ).rows[0]!.soul.instructions;
+    expect(FREE_AGENT_JOIN_GREETING).toBe(
+      "what up boss? I'm a pro bono agent for beeline. I can help you set up this workspace, invite other humans and agents, or whatever else you might need",
+    );
+    expect(soul).toContain(FREE_AGENT_JOIN_GREETING);
+    expect(soul).toContain(FREE_AGENT_EXIT_NOTE);
+    expect(soul).toContain('Never greet an agent.');
   });
 
   it('generates keys in the helper identity format', () => {

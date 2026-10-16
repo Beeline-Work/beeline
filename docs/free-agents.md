@@ -40,6 +40,15 @@ image `infra/free-agent/`.
   `node apps/server/dist/index.js --add-free-agent <workspaceId>` on a server Machine.
   The agent goes to the oldest owner and to `#general`, or to the oldest public
   top-level Room when there is no `#general`.
+- **Membership events.** From creation, each free agent subscribes to `joined` and `left`
+  in `#general` (`memberships.event_subscriptions`). The new `left` kind fires on a Room
+  leave or removal. A Workspace leave or removal stays silent everywhere except a Room
+  with a `left` subscriber (`announceWorkspaceDeparture`). A membership event never
+  wakes the member it is about, and an agent joining never wakes a free agent. The
+  instructions pin the owner's exact join greeting (`FREE_AGENT_JOIN_GREETING`, after
+  the joiners' @handles) and the exit note (`FREE_AGENT_EXIT_NOTE`). Greetings and
+  notes spend the owner's allowance like any turn. Several joins or leaves while the
+  Machine sleeps are coalesced on return into one turn and one message.
 - **Untagged replies.** The owner's untagged message in a top-level Room wakes their
   free agent when it is that Room's only agent.
 

@@ -339,15 +339,22 @@ async function subscribers(
   database: SqlDatabase,
   roomId: string,
   kind: SystemEventKind | undefined,
+  member?: string,
 ): Promise<string[]> {
   if (!kind || !isSubscribableEventKind(kind)) return [];
   try {
+    // A membership event never wakes the member it is about, and an agent's
+    // arrival does not wake a free starter agent: its greeting is for people.
     const rows = await database.query<{ identity_id: string }>(
       `SELECT DISTINCT member.identity_id FROM memberships member
        JOIN identities identity ON identity.id=member.identity_id AND identity.kind='agent'
        WHERE member.room_id=$1 AND member.removed_at IS NULL
-         AND member.event_subscriptions @> $2::jsonb`,
-      [roomId, JSON.stringify([kind])],
+         AND member.event_subscriptions @> $2::jsonb
+         AND member.identity_id IS DISTINCT FROM $3
+         AND NOT ($2::jsonb='["joined"]'::jsonb
+           AND EXISTS(SELECT 1 FROM identities joiner WHERE joiner.id=$3 AND joiner.kind='agent')
+           AND EXISTS(SELECT 1 FROM free_agents f WHERE f.agent_id=member.identity_id))`,
+      [roomId, JSON.stringify([kind]), member ?? null],
     );
     return rows.rows.map((row) => row.identity_id);
   } catch (error) {
@@ -451,7 +458,14 @@ export async function systemLine(
   const wakes = [
     ...new Set([
       ...(input.wakes ?? []),
-      ...(await subscribers(database, input.roomId, input.kind)),
+      ...(await subscribers(
+        database,
+        input.roomId,
+        input.kind,
+        input.kind === 'joined' || input.kind === 'left'
+          ? String(input.card?.identityId ?? input.subject.id ?? '') || undefined
+          : undefined,
+      )),
     ]),
   ].filter(agentId => input.kind !== 'corner-opened' || agentId !== input.subject.id);
   // Only an event carries a cascade. A line with no kind is one nothing reacts

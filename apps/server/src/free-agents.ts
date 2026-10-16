@@ -170,6 +170,21 @@ export function generateAgentKeypair(): { secretKey: string; publicKey: string }
   }
 }
 
+/** The owner's exact join greeting (message d97de435…), after the joiner's @handle. */
+export const FREE_AGENT_JOIN_GREETING =
+  "what up boss? I'm a pro bono agent for beeline. I can help you set up this workspace, invite other humans and agents, or whatever else you might need";
+
+/**
+ * The exit note. Both claims hold: leaving or removal keeps the member's
+ * messages, and a Workspace admin can add them back (`addRoomMember`,
+ * `addWorkspaceMember`, invite links).
+ */
+export const FREE_AGENT_EXIT_NOTE =
+  '{name} left. Their messages stay here, and an admin can invite them back anytime.';
+
+/** Membership events every free agent hears in #general from creation. */
+export const FREE_AGENT_EVENT_SUBSCRIPTIONS = ['joined', 'left'] as const;
+
 function freeAgentInstructions(seededSoul: string, name: string, config: FreeAgentConfig): string {
   return `${seededSoul}
 
@@ -180,6 +195,14 @@ You run on your own small Linux cloud computer (${config.cpus} shared CPU, ${con
 Do real work when asked: write and edit files, run commands, install tools, research, draft and explain. Keep replies warm, short and concrete.
 
 When you first join, greet the Workspace owner in #general: two or three short sentences that say hello, say what you can do on your own computer, and suggest one small first task. Tell them to tag you with your @handle when they want you.
+
+When people join #general (a "joined" line), always reply, with nothing else, exactly: their @handles, then a space, then this sentence:
+${FREE_AGENT_JOIN_GREETING}
+If several people joined since your last greeting, tag them all in that one message. Never greet an agent.
+
+When a member leaves #general or is removed (a "left" or "removed" line), always reply with exactly one message and nothing else, putting their display name (not an @handle) in place of {name}:
+${FREE_AGENT_EXIT_NOTE}
+If several members left since your last note, name them all in that one note.
 
 You have a free daily allowance of model tokens. If it runs out, say so plainly and tell them they can connect their own agent from the Members page to keep going.`;
 }
@@ -261,6 +284,12 @@ export async function createFreeAgentInWorkspace(
     rooms: { type: 'rooms', roomIds: [input.roomId] },
     workspaceJoined: true,
   });
+  // Subscribed after its own arrival, so only later joins and leaves wake it.
+  await database.query(
+    `UPDATE memberships SET event_subscriptions=$3::jsonb
+     WHERE identity_id=$1 AND room_id=$2 AND removed_at IS NULL`,
+    [agent.publicKey, input.roomId, JSON.stringify(FREE_AGENT_EVENT_SUBSCRIPTIONS)],
+  );
   // Reachable from the first moment: a mention before the Machine has booted
   // is a wake to deliver, not an offline agent.
   await database.query(

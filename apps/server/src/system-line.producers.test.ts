@@ -159,7 +159,7 @@ describe('system-line producers', () => {
           presentation: 'system',
           woke: [],
           card_type: 'member-left',
-          system_event: { subject: { kind: 'person', id: MEMBER, name: '@member' }, verb: 'left' },
+          system_event: { subject: { kind: 'person', id: MEMBER, name: '@member' }, verb: 'left', kind: 'left' },
         },
         {
           author_id: OWNER,
@@ -171,6 +171,7 @@ describe('system-line producers', () => {
             subject: { kind: 'person', id: OWNER, name: '@owner' },
             verb: 'removed',
             object: { text: '@candy', id: LATE },
+            kind: 'left',
           },
         },
       ]);

@@ -21,26 +21,32 @@ await db.connect();
 const log = (line) => console.log(`${new Date().toISOString()} ${line}`);
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-let token = process.env.PHONE_TOKEN;
-if (!token) {
+/** A throwaway person and phone token in a disposable local database. */
+async function throwawayPerson(name, handlePrefix) {
   const person = randomBytes(32).toString('hex');
-  token = `bpt_${randomBytes(32).toString('base64url')}`;
-  await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Proof Person',$2)`, [
-    person,
-    `proof${person.slice(0, 6)}`,
-  ]);
+  const bearer = `bpt_${randomBytes(32).toString('base64url')}`;
+  const handle = `${handlePrefix}${person.slice(0, 6)}`;
+  await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human',$2,$3)`, [person, name, handle]);
   await db.query(
     `INSERT INTO phone_access_tokens(token_hash,identity_id,family_id,expires_at)
      VALUES($1,$2,gen_random_uuid(),now()+interval '1 day')`,
-    [createHash('sha256').update(token).digest('hex'), person],
+    [createHash('sha256').update(bearer).digest('hex'), person],
   );
-  log(`created proof person ${person.slice(0, 12)}`);
+  return { person, bearer, handle, name };
 }
 
-async function operation(name, input) {
+let token = process.env.PHONE_TOKEN;
+const local = !token;
+if (!token) {
+  const owner = await throwawayPerson('Proof Person', 'proof');
+  token = owner.bearer;
+  log(`created proof person ${owner.person.slice(0, 12)}`);
+}
+
+async function operation(name, input, bearer = token) {
   const response = await fetch(`${server}/v1/phone/operations/${name}`, {
     method: 'POST',
-    headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+    headers: { authorization: `Bearer ${bearer}`, 'content-type': 'application/json' },
     body: JSON.stringify(input),
   });
   const text = await response.text();
@@ -109,6 +115,20 @@ const taskAt = await send(
 );
 const task = await waitFor('the task reply', () => reply(taskAt), 600_000);
 log(`task reply after ${((task.created_at - taskAt) / 1000).toFixed(1)} s: ${task.text.replace(/\s+/g, ' ').slice(0, 500)}`);
+
+if (local) {
+  // Membership: a person joins (exact greeting), then leaves (one exit note).
+  const guest = await throwawayPerson('Guest Proof', 'guest');
+  const joinedAt = new Date();
+  await operation('addWorkspaceMember', { workspaceId, memberId: guest.person, role: 'member' });
+  const greeting = await waitFor('the join greeting', () => reply(joinedAt), 300_000);
+  const expected = `@${guest.handle} what up boss? I'm a pro bono agent for beeline. I can help you set up this workspace, invite other humans and agents, or whatever else you might need`;
+  log(`join greeting after ${((greeting.created_at - joinedAt) / 1000).toFixed(1)} s; exact=${greeting.text === expected}: ${greeting.text}`);
+  const leftAt = new Date();
+  await operation('leaveWorkspace', { workspaceId }, guest.bearer);
+  const exit = await waitFor('the exit note', () => reply(leftAt), 300_000);
+  log(`exit note after ${((exit.created_at - leftAt) / 1000).toFixed(1)} s: ${exit.text}`);
+}
 
 const event = (kind, after) =>
   db

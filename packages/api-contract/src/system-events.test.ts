@@ -91,6 +91,7 @@ describe('the event kinds beside the prose', () => {
   it('names the server kinds a subscriber may ask for', () => {
     expect([...SERVER_EVENT_KINDS]).toEqual([
       'joined',
+      'left',
       'schedule-ran',
       'corner-opened',
       'check-passed',
@@ -184,6 +185,7 @@ describe('the event kinds beside the prose', () => {
     }
     expect([...SUBSCRIBABLE_EVENT_KINDS]).toEqual([
       'joined',
+      'left',
       'schedule-ran',
       'corner-opened',
       'check-passed',

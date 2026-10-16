@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isFailedToolCall, toolCallFailureLine } from './tool-call-failure.js';
+import { isFailedToolCall, isPrivateWorkToolCall, toolCallFailureLine } from './tool-call-failure.js';
 
 describe('toolCallFailureLine', () => {
   it('says out loud what a refused open_corner was told', () => {
@@ -96,4 +96,10 @@ it('counts only completed commander delivery as a private answer, excluding feed
   expect(isPrivateWorkToolCall({ title: 'beeline.report', status: 'completed', rawInput: { arguments: { kind: 'commander' } } })).toBe(true);
   for (const kind of ['feedback', 'fixed']) expect(isPrivateWorkToolCall({ title: 'beeline.report', status: 'completed', rawInput: { tool_input: { kind } } })).toBe(false);
   expect(isPrivateWorkToolCall({ title: 'beeline.report', status: 'in_progress' })).toBe(false);
+});
+
+// Adapter success cannot turn an MCP refusal into delivered assignment work.
+it('does not accept a completed report whose MCP payload isError is true', () => {
+  const call = { title: 'mcp__beeline-agent__report', status: 'completed', rawOutput: { isError: true } };
+  expect(isPrivateWorkToolCall(call)).toBe(false);
 });

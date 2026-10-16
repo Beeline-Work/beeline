@@ -224,6 +224,13 @@ export async function deliverCornerAttention(db: SqlDatabase): Promise<void> {
           flag.id,
           { automatic: true, agentOnly: true },
         );
+        // Human commanders intentionally receive no automatic idle report.
+        // Consume this informational flag without claiming a sent effect or
+        // retrying an intentionally suppressed notification indefinitely.
+        if (delivered.skipped) {
+          await tx.query('UPDATE corner_attention_flags SET dismissed_at=now() WHERE id=$1', [flag.id]);
+          return;
+        }
         if ('delivered' in delivered && delivered.delivered === false) return;
         await tx.query('UPDATE corner_attention_flags SET sent_at=now() WHERE id=$1', [flag.id]);
       } else {

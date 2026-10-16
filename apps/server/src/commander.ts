@@ -158,7 +158,8 @@ export async function sendOrder(
     retainDepth: true,
   });
   if (!queued) throw new CommandRefusalError('order recipient is no longer a member', 403);
-  return { id: queued.id, createdAt: Math.floor(Date.now() / 1000) };
+  return { id: queued.id, createdAt: Math.floor(Date.now() / 1000),
+    accepted: true, executionConfirmed: false, receipt: 'Order queued privately; not confirmation of execution.' };
 }
 
 async function agentHandle(db: SqlDatabase, id: string) {
@@ -175,7 +176,7 @@ export async function reportToCommander(
   command?: CommandRow,
   reportId = randomBytes(32).toString('hex'),
   options: { automatic?: boolean; agentOnly?: boolean; ask?: string; attachments?: PrivateCommandPayload['attachments']; digestSource?: boolean } = {},
-): Promise<{ id: string; createdAt: number; delivered?: boolean }> {
+): Promise<{ id: string; createdAt: number; delivered?: boolean; receipt?: string; skipped?: boolean }> {
   if ((!options.automatic && !/^(done|blocked|needs-decision|failed):\s*\S/.test(text)) || !text.trim() || text.length > 16_000)
     throw new CommandRefusalError(
       'report must begin done:, blocked:, needs-decision: or failed:',
@@ -199,13 +200,15 @@ export async function reportToCommander(
     }
     if (routes.size) {
       let first: Awaited<ReturnType<typeof reportToCommander>> | undefined;
+      let delivered = true;
       for (const [route, source] of routes) {
         const result = await reportToCommander(db, roomId, agentId, text, source,
           first ? createHash('sha256').update(`${reportId}:${route}`).digest('hex') : reportId,
           { ...options, digestSource: true });
         first ??= result;
+        delivered &&= result.delivered !== false;
       }
-      return first!;
+      return { ...first!, delivered };
     }
   }
   const strict = Boolean(command) && !options.automatic;
@@ -232,7 +235,7 @@ export async function reportToCommander(
   }
   // Automatic attention must never become a transcript post to a person.
   if (options.agentOnly && member.kind !== 'agent')
-    return { id: reportId, createdAt: Math.floor(Date.now() / 1000) };
+    return { id: reportId, createdAt: Math.floor(Date.now() / 1000), delivered: false, skipped: true };
   if (member.kind === 'agent') {
     const queued = await createAgentCommand(db, {
       id: reportId,
@@ -277,7 +280,8 @@ export async function reportToCommander(
       ],
     );
   }
-  return { id: reportId, createdAt: Math.floor(Date.now() / 1000) };
+  return { id: reportId, createdAt: Math.floor(Date.now() / 1000), delivered: true,
+    receipt: member.kind === 'agent' ? 'Report queued privately; not confirmation of execution.' : 'Report stored and visible.' };
 }
 
 /** The recorded return route shared by lifecycle reports and commander approvals. */
@@ -353,5 +357,50 @@ export async function commanderReportAddress(db: SqlDatabase, roomId: string, co
         ])
       ).rows[0];
   }
+  // Follow only the recorded opening ancestry. Keep the original commander;
+  // moving a report never grants a different recipient access to its payload.
+  if (returnRoom) {
+    const live = (await db.query<{ id: string }>(
+      `WITH RECURSIVE ancestry AS (
+         SELECT room.id,room.archived_at,0 hop,ARRAY[room.id] path FROM rooms room WHERE room.id=$1
+         UNION ALL
+         SELECT ancestor.id,ancestor.archived_at,child.hop+1,child.path||ancestor.id
+         FROM ancestry child JOIN rooms room ON room.id=child.id
+         LEFT JOIN corner_facts fact ON fact.corner_id=room.id
+         JOIN rooms ancestor ON ancestor.id=COALESCE(fact.opened_from_corner_id,room.parent_id)
+         WHERE NOT ancestor.id=ANY(child.path)
+       ) SELECT ancestry.id FROM ancestry LEFT JOIN corner_facts fact ON fact.corner_id=ancestry.id
+       WHERE ancestry.archived_at IS NULL
+         AND COALESCE(fact.lifecycle->>'lifecycle','') NOT IN ('closed','landed')
+       ORDER BY hop LIMIT 1`, [returnRoom],
+    )).rows[0];
+    returnRoom = live?.id;
+  }
   return { recipient, returnRoom, parent, origin, incoming };
+}
+
+/** Only durable waits belonging to this execution can discharge an empty order. */
+export async function hasOrderContinuation(database: SqlDatabase, command: CommandRow): Promise<boolean> {
+  const result = await database.query(
+    `SELECT 1 FROM agent_commands current WHERE current.id=$1 AND (
+       EXISTS(SELECT 1 FROM agent_commands child JOIN rooms destination ON destination.id=child.room_id
+         WHERE child.parent_command_id=current.id AND child.state IN ('pending','claimed')
+           AND destination.archived_at IS NULL AND child.created_at>=current.claimed_at
+           AND (child.private_payload->>'kind'='order' OR child.action='resume'
+             OR (child.reason='report' AND child.agent_id=current.agent_id)))
+       OR EXISTS(SELECT 1 FROM agent_grants grant_row WHERE grant_row.command_id=current.id
+         AND grant_row.status='pending' AND grant_row.created_at>=current.claimed_at
+         AND (grant_row.expires_at IS NULL OR grant_row.expires_at>now()))
+       OR EXISTS(SELECT 1 FROM connector_offers offer WHERE offer.command_id=current.id
+         AND offer.status IN ('pending','connecting') AND offer.created_at>=current.claimed_at)
+       OR EXISTS(SELECT 1 FROM messages approval WHERE approval.card_type='squire-approval'
+         AND approval.card->>'commandId'=current.id AND approval.card->>'generationId'=current.generation_id
+         AND NOT EXISTS(SELECT 1 FROM messages decision WHERE decision.card_type='squire-approval-decision'
+           AND decision.card->>'approvalId'=approval.card->>'approvalId'
+           AND decision.card->>'agentId'=current.agent_id)
+         AND (approval.card->>'expiresAt')::bigint>
+           extract(epoch FROM now())*1000)
+     )`, [command.id],
+  );
+  return Boolean(result.rowCount);
 }

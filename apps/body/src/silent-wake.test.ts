@@ -15,6 +15,7 @@ it('rechecks eligibility when a retained session moves from report to human inpu
   vi.stubEnv('BEELINE_TURN_CONTEXT_FILE', context.path);
   vi.stubEnv('BEELINE_DAEMON_BASE_URL', 'http://localhost');
   vi.stubEnv('BEELINE_DAEMON_TOKEN', 'test-token');
+  vi.stubEnv('BEELINE_EXPLICIT_SILENT_RECEIPT', '1');
   const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) }); vi.stubGlobal('fetch', fetch);
   const command = { roomId: 'room', turnRequestId: 'turn', rootCommandId: 'root', reason: 'report' } as AgentCommand;
   await context.enter(command);
@@ -24,7 +25,7 @@ it('rechecks eligibility when a retained session moves from report to human inpu
     await context.enter({ ...command, reason });
     expect(JSON.parse(await callAgentTool('no_reply_needed', {}, 'silent-1'))).toEqual({ acknowledged: true });
     await expect(callAgentTool('no_reply_needed', {}, 'silent-again')).rejects.toThrow('turn has ended');
-    await expect(callAgentTool('read', { address: 'room' }, 'read-after')).rejects.toThrow('turn has ended');
+    await expect(callAgentTool('read', { facet: 'messages', address: 'room' }, 'read-after')).rejects.toThrow('turn has ended');
   }
   for (const reason of ['human_tag', 'direct_message', 'corner_brief_revision', 'unknown']) {
     await context.enter({ ...command, reason });

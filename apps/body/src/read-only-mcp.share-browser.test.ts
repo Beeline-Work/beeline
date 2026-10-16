@@ -13,7 +13,7 @@ function squireError(code: string, message: string) {
 }
 
 async function share(): Promise<Error | undefined> {
-  return callAgentTool('share_browser', { source: 'squire', sessionId: 'session-1' }, 'call-1')
+  return callAgentTool('app_tool', { app:'beeline:browser_share', tool:'start', args:{ source: 'squire', sessionId: 'session-1' } }, 'call-1')
     .then(() => undefined, (failure: Error) => failure);
 }
 
@@ -144,7 +144,7 @@ describe('share_browser Squire refusal', () => {
       return Response.json({ id: 'card-1', url: 'https://server.test/s/card-1/' });
     });
 
-    const result = JSON.parse(await callAgentTool('share_browser', { source: 'squire', sessionId: 'session-1' }, 'call-1') as string);
+    const result = JSON.parse(await callAgentTool('app_tool', { app:'beeline:browser_share', tool:'start', args:{ source: 'squire', sessionId: 'session-1' } }, 'call-1') as string);
     expect(result).toMatchObject({ cardId: 'card-1', status: 'live' });
     expect(posted[0]).toMatchObject({ sessionId: 'session-1', expiresAt: Date.parse(expiresAt) });
   });

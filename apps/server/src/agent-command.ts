@@ -26,6 +26,8 @@ import {
   hasSystemReportMention,
   resolveCurrentMemberMentions,
   taggedIdentityIdsSql,
+  typedMentionHandles,
+  isChannelMentionToken,
 } from './message-mentions.js';
 import { CORNER_LIFECYCLE_CARD_TYPE } from './room-choice.js';
 import { ensureSystemIdentity, GITHUB_SUBJECT, systemLine } from './system-line.js';
@@ -418,6 +420,8 @@ export async function createAgentCommand(
     parent?: CommandRow;
     /** Lifecycle transfer/resumption retains the chain; only agent delegation increments. */
     retainDepth?: boolean;
+    /** Conversation tags retain chain depth without inheriting assignment privacy. */
+    inheritPrivatePayload?: boolean;
     avatarJob?: boolean;
     /** A line appended to a lifecycle wake's text, fixed at dispatch. */
     wakeNote?: string;
@@ -448,7 +452,7 @@ export async function createAgentCommand(
   const parent = input.parent ?? (lifecycle ? opening ?? undefined : undefined);
   const sourceText = member.rows[0]!.source_text;
   const note = input.wakeNote ? `\n${input.wakeNote}` : '';
-  const privatePayload = input.privatePayload ?? (parent?.private_payload
+  const privatePayload = input.privatePayload ?? (parent?.private_payload && input.inheritPrivatePayload !== false
     ? { ...parent.private_payload, reportedGenerationId: undefined, kind: 'lifecycle' as const,
         text: (input.action === 'resume' && sourceText
           ? `${parent.private_payload.text}\nResume context: ${sourceText}`
@@ -926,18 +930,6 @@ export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Prom
 }
 
 /**
- * Whether a person's own message names an agent by its display name as a whole
- * word. The hand-over authority is the person's request, so the name must
- * stand alone: "resolution" does not name an agent called Sol.
- */
-function namesAgentByDisplayName(text: string, name: string | undefined): boolean {
-  const trimmed = name?.trim();
-  if (!trimmed) return false;
-  const escaped = trimmed.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`(?<![\\p{L}\\p{N}_])${escaped}(?![\\p{L}\\p{N}_])`, 'iu').test(text);
-}
-
-/**
  * A person's agent tag in a corner names that corner's current implementer, so
  * the corner lifecycle's wakes follow the person's choice instead of
  * the corner's never-changing opener (`corner_facts.owner_agent_id`). The
@@ -975,81 +967,39 @@ export async function routeAgentResult(
   db: SqlDatabase,
   parent: CommandRow,
   sourceId: string,
-): Promise<void> {
-  // An agent-to-agent tag hands work on, so only an agent it names is a target;
-  // a person this reply tags is reached by push and highlight, not by a turn.
-  const source = (
-    await db.query<{ tagged_agent_ids: string[] }>(
-      `SELECT ARRAY(
-     SELECT tagged.id FROM identities tagged
-     WHERE tagged.id=ANY(${taggedIdentityIdsSql('m')}) AND tagged.kind='agent'
-   ) tagged_agent_ids
-   FROM messages m WHERE m.id=$1 AND m.room_id=$2 AND m.author_id=$3`,
-      [sourceId, parent.room_id, parent.agent_id],
-    )
-  ).rows[0];
-  if (!source) return;
-  const targets = new Set(source.tagged_agent_ids);
-  targets.delete(parent.agent_id);
-  // An agent's own tag moves the corner implementer only when a real person
-  // asked for THIS hand-over in this turn: the person's request is the
-  // permission, never the agents' own chatter. The turn's source message must
-  // be from a current corner member who is a person — `@system`, the
-  // scheduler and the reviewer are hidden humans that hold no corner
-  // membership, so the join is what tells a person apart from a machine line —
-  // and it must name the target agent, by @handle or by display name. A tag
-  // written only to ask a peer for input leaves the implementer where it was.
-  const personRequest = (
-    await db.query<{ text: string; author_id: string }>(
-      `SELECT source.text, source.author_id FROM rooms corner
-       JOIN messages source ON source.id=$2
-       JOIN memberships member ON member.room_id=corner.id
-         AND member.identity_id=source.author_id AND member.removed_at IS NULL
-       JOIN identities person ON person.id=source.author_id AND person.kind='human'
-       WHERE corner.id=$1 AND corner.parent_id IS NOT NULL
-         AND source.room_id IN (corner.id,corner.parent_id)`,
-      [parent.room_id, parent.source_message_id],
-    )
-  ).rows[0];
-  const namedAgents = new Set<string>();
-  if (personRequest) {
-    for (const mention of await resolveCurrentMemberMentions(
-      db,
-      parent.room_id,
-      personRequest.text,
-      personRequest.author_id,
-    ))
-      if (mention.kind === 'agent') namedAgents.add(mention.id);
+) {
+  const source = (await db.query<{ text: string }>(
+    `SELECT text FROM messages WHERE id=$1 AND room_id=$2 AND author_id=$3`,
+    [sourceId, parent.room_id, parent.agent_id],
+  )).rows[0];
+  const woken: string[] = [];
+  const notWoken: { handle: string; reason: string }[] = [];
+  if (!source) return { woken, notWoken };
+  const mentions = await resolveCurrentMemberMentions(db, parent.room_id, source.text, parent.agent_id);
+  for (const handle of typedMentionHandles(source.text)) {
+    if (isChannelMentionToken(handle)) continue;
+    if (!mentions.some(mention => mention.handle === handle))
+      notWoken.push({ handle, reason: 'not another current member or not an unambiguous handle' });
   }
-  const targetNames = new Map<string, string>();
-  if (personRequest && targets.size) {
-    const rows = (
-      await db.query<{ id: string; name: string }>(
-        `SELECT id,name FROM identities WHERE id=ANY($1)`,
-        [[...targets]],
-      )
-    ).rows;
-    for (const row of rows) targetNames.set(row.id, row.name);
-  }
-  for (const agentId of targets) {
+  for (const mention of mentions) {
+    if (mention.kind !== 'agent') {
+      notWoken.push({ handle: mention.handle, reason: 'person tagged; no agent turn' });
+      continue;
+    }
+    // Tags are conversation, never a delegation or an implementer change.
     const dispatched = await createAgentCommand(db, {
       roomId: parent.room_id,
-      agentId,
+      agentId: mention.id,
       sourceMessageId: sourceId,
       parent,
       reason: 'agent_tag',
+      inheritPrivatePayload: false,
     });
-    // The hand-over follows a real dispatch and a person's own naming of the
-    // target: a tag that could not wake the target, or a tag the person never
-    // asked for, must not leave the role pointing at it. `setCornerImplementer`
-    // itself still refuses the reviewer and its fallbacks.
-    const personNamedTarget =
-      personRequest !== undefined &&
-      (namedAgents.has(agentId) ||
-        namesAgentByDisplayName(personRequest.text, targetNames.get(agentId)));
-    if (dispatched && personNamedTarget)
-      await setCornerImplementer(db, parent.room_id, agentId);
+    if (dispatched) woken.push(mention.handle);
+    else notWoken.push({ handle: mention.handle, reason: nextAgentDepth(parent.agent_depth) === undefined
+      ? 'agent tag chain depth limit reached' : 'agent or place is no longer available' });
   }
+  return { woken, notWoken };
 }
 
 /**

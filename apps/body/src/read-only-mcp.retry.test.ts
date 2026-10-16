@@ -61,7 +61,7 @@ describe('daemon tool-call network retry', () => {
       if (calls === 1) throw bareFetchFailed();
       return Response.json({ subscriptions: [] });
     });
-    await expect(callAgentTool('list_subscriptions', {}, 'call-1')).resolves.toBe(
+    await expect(callAgentTool('read', { facet:'addresses' }, 'call-1')).resolves.toBe(
       JSON.stringify({ subscriptions: [] }),
     );
     expect(calls).toBe(2);
@@ -77,7 +77,7 @@ describe('daemon tool-call network retry', () => {
         });
       return Response.json({ subscriptions: [] });
     });
-    await expect(callAgentTool('list_subscriptions', {}, 'call-1')).resolves.toBe(
+    await expect(callAgentTool('read', { facet:'addresses' }, 'call-1')).resolves.toBe(
       JSON.stringify({ subscriptions: [] }),
     );
     expect(calls).toBe(2);
@@ -89,8 +89,8 @@ describe('daemon tool-call network retry', () => {
       calls += 1;
       throw bareFetchFailed();
     });
-    await expect(callAgentTool('list_subscriptions', {}, 'call-1')).rejects.toThrow(
-      'daemon operation listAgentSubscriptions failed with a network error after 3 attempts',
+    await expect(callAgentTool('read', { facet:'addresses' }, 'call-1')).rejects.toThrow(
+      'daemon operation listRooms failed with a network error after 3 attempts',
     );
     expect(calls).toBe(3);
   });
@@ -104,8 +104,8 @@ describe('daemon tool-call network retry', () => {
         headers: { 'content-type': 'application/json' },
       });
     });
-    await expect(callAgentTool('list_subscriptions', {}, 'call-1')).rejects.toThrow(
-      'daemon operation listAgentSubscriptions failed (500: boom)',
+    await expect(callAgentTool('read', { facet:'addresses' }, 'call-1')).rejects.toThrow(
+      'daemon operation listRooms failed (500: boom)',
     );
     expect(calls).toBe(1);
   });
@@ -117,7 +117,7 @@ describe('daemon tool-call network retry', () => {
       calls += 1;
       throw bareFetchFailed();
     });
-    await expect(callAgentTool('close_corner', {}, 'call-1')).rejects.toThrow(
+    await expect(callAgentTool('close_corner', { address:'corner-1' }, 'call-1')).rejects.toThrow(
       'daemon operation archiveCorner failed with a network error before the server answered; the call may not have run',
     );
     expect(calls).toBe(1);

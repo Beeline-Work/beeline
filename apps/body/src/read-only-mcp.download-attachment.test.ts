@@ -134,7 +134,7 @@ describe('download_attachment', () => {
   });
 
   const download = (attachmentId: string, messageId = MESSAGE_ID) =>
-    callAgentTool('download_attachment', { messageId, attachmentId }, 'call').then(JSON.parse);
+    callAgentTool('read', { facet: "attachment", ...{ messageId, attachmentId } }, 'call').then(JSON.parse);
 
   it('returns readable local paths for an image and a markdown artifact', async () => {
     const image = await download(IMAGE_ID);
@@ -228,8 +228,7 @@ describe('download_attachment', () => {
 
   const downloadBrief = (attachmentId: string, messageId?: string) =>
     callAgentTool(
-      'download_attachment',
-      messageId ? { messageId, attachmentId } : { attachmentId },
+      'read', { facet: "attachment", ...messageId ? { messageId, attachmentId } : { attachmentId } },
       'call',
     ).then(JSON.parse);
 
@@ -317,7 +316,7 @@ describe('download_attachment', () => {
 
   it('get_room_message names each attachment id for download_attachment', async () => {
     const message = JSON.parse(
-      await callAgentTool('get_room_message', { messageId: MESSAGE_ID }, 'read'),
+      await callAgentTool('read', { facet: "message", ...{ messageId: MESSAGE_ID } }, 'read'),
     );
     expect(message.attachments.map((attachment: { id: string }) => attachment.id)).toEqual([
       IMAGE_ID,

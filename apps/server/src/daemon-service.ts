@@ -44,7 +44,6 @@ import {
 import { cornerImplementerSql } from './corner-worker.js';
 import {
   CORNER_BRIEF_REVISION_SELECT,
-  CornerBriefMergeRefusedError,
   type CornerBriefRow,
   cornerBriefRevisionHash,
   currentCornerBrief,
@@ -441,6 +440,7 @@ export class DaemonService {
     const turnWrites = new Set([
       'postAgentAvatar',
       'postRoomMessage',
+      'postCornerMessage',
       'postAgentAttachment',
       'postAgentDraft',
       'postAgentThought',
@@ -1852,14 +1852,8 @@ export class DaemonService {
           return actor.author_id;
         });
         const yes = await recordPersonMergeYes(this.database, order.cornerId, actorId);
-        // The yes is durable either way; with green checks and no hold it
-        // merges now, through the one merge path.
-        try {
-          await this.landCorner?.(order.cornerId);
-        } catch (error) {
-          if (error instanceof CornerBriefMergeRefusedError) throw error;
-          console.error(`[server] merge order's immediate land attempt failed for corner ${order.cornerId}:`, error);
-        }
+        // Recording consent is a separate action from landing. The caller uses
+        // merge_corner for the single agent-facing landing action.
         return { roomId: yes.roomId, headSha: yes.headSha } as Output<Name>;
       }
       case 'createCorner':
@@ -8040,12 +8034,12 @@ export class DaemonService {
     return { members: await agentMemberMetadata(this.database, rows.rows) };
   }
 
-  /** A plain message into a corner the caller reaches; it wakes nobody. */
+  /** A public message; tags use the same conversation wake rule as final replies. */
   private async postCornerMessage(input: Input<'postCornerMessage'>, agentId: string) {
     const text = typeof input.text === 'string' ? input.text.trim() : '';
     if (!text || text.length > 16000) throw new Error('message text must be 1 to 16000 characters');
     await this.reach(input.cornerId, agentId);
-    await authorizeCommandOutput(
+    const command = this.authorizedCommand ?? await authorizeCommandOutput(
       this.database, input.roomId, agentId, input.requestId, input.generationId,
     );
     const saved = (
@@ -8058,9 +8052,11 @@ export class DaemonService {
       )
     ).rows[0];
     if (!saved) throw new Error('corner is archived');
+    const delivery = await routeAgentResult(this.database, { ...command, room_id: input.cornerId }, saved.id);
     this.live.publish({ type: 'invalidate', roomId: input.cornerId, reason: 'message', agentId });
-    return { id: saved.id, createdAt: seconds(saved.created_at), stored: true, visible: true,
-      receipt: 'Message stored and visible.' };
+    return { id: saved.id, createdAt: seconds(saved.created_at), effect: 'conversation',
+      address: input.cornerId, visibility: 'public', reportsAssignment: false, ...delivery,
+      stored: true, visible: true, receipt: 'Message stored and visible.' };
   }
 
   /**

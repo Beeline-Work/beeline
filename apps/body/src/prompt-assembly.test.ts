@@ -567,7 +567,7 @@ describe('prompt assembly guards', () => {
   it('lets agents decide when to tag their human commander', () => {
     for (const [name, context] of Object.entries(SESSION_VARIANTS)) {
       const text = assembleSessionPrompt(context).systemPrompt;
-      expect(text, name).toContain('Report only to the member who gave you the task. If that member is a human, tag them when, in your judgement, they need to decide or should know.');
+      expect(text, name).toContain('Report only to whoever assigned you. If human, tag them when they need to decide or know.');
       expect(text, name).not.toContain('Do not tag a human to escalate.');
       expect(text, name).toContain('report(status, text) one step up to your commander.');
     }
@@ -576,9 +576,9 @@ describe('prompt assembly guards', () => {
   it('documents Connectors discovery and connection in every agent turn', () => {
     for (const [name, context] of Object.entries(SESSION_VARIANTS)) {
       const text = assembleSessionPrompt(context).systemPrompt;
-      expect(text, name).toContain('use connect(mode:discover) if unclear, then connect(mode:ensure).');
+      expect(text, name).toContain('use connect(mode:discover) if unclear, then connect(mode:ensure, service, reason, continuation).');
       if (context.surface.includes('corner'))
-        expect(text, name).toContain('use connect(mode:discover) if unclear, then connect(mode:ensure).');
+        expect(text, name).toContain('use connect(mode:discover) if unclear, then connect(mode:ensure, service, reason, continuation).');
     }
   });
 
@@ -607,7 +607,7 @@ describe('prompt assembly guards', () => {
     for (const [name, context] of Object.entries(SESSION_VARIANTS)) {
       const text = assembleSessionPrompt(context).systemPrompt;
       expect(text, name).toContain('Never just restate the problem.');
-      expect(text, name).toContain('Finish the work before you end the turn, or delegate it.');
+      expect(text, name).toContain('Do the assigned work yourself unless instructed to delegate or a verified capability gap requires it.');
     }
   });
 
@@ -644,7 +644,7 @@ describe('prompt assembly guards', () => {
       ...TURN_VARIANTS['code-corner-turn']!,
       generatedTitle: 'still harbor corner',
     }).text;
-    expect(generated).toContain('write the first brief from the newest human request with revise_corner(action:metadata).');
+    expect(generated).toContain('write the first brief from the newest human request with revise_corner(action:install_brief, address, name, brief).');
     const repoLess = assembleTurnPrompt({ ...TURN_VARIANTS['code-corner-turn']!, surface: 'repo-less-corner' }).text;
     expect(repoLess).toContain('No assigned brief: the human messages in this corner are the authority');
   });
@@ -657,7 +657,7 @@ describe('prompt assembly guards', () => {
     }).text;
     expect(named).not.toContain('revise_corner(action:metadata)');
     expect(generated).toContain(
-      'This human-opened corner still has its generated name, "still harbor corner". If the newest human message states the work, call revise_corner(action:metadata) once before you reply',
+      'This human-opened corner still has its generated name, "still harbor corner". If the newest human message states the work, call revise_corner(action:install_brief, address:thisCornerAddress) once before you reply',
     );
     expect(generated.indexOf('Corner objective')).toBeLessThan(
       generated.indexOf('still has its generated name'),
@@ -672,7 +672,7 @@ describe('prompt assembly guards', () => {
   it('gives both corner lanes sibling steer context without Room question instructions', () => {
     for (const surface of ['code-corner', 'repo-less-corner'] as const) {
       const session = assembleSessionPrompt({ surface, agentName: 'Bee' }).systemPrompt;
-      expect(session).toContain('Use order(address, text) privately across member Rooms');
+      expect(session).toContain('order(address, agent, text) assigns privately');
       expect(session).toContain('report(status, text) one step up to your commander');
       const turn = assembleTurnPrompt({
         surface,

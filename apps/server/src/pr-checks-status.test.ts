@@ -576,9 +576,10 @@ describe('PR-scoped check gate', () => {
     lines.on('line', (line) => replies.push(line));
     const callGate = async (id: number) => {
       child.stdin.write(
-        `${JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'pr_checks_status', arguments: { pullRequest: 614 } } })}\n`,
+        `${JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name: 'read', arguments: { facet:'checks', address:C, pullRequest:614 } } })}\n`,
       );
-      await vi.waitFor(() => expect(replies).toHaveLength(id));
+      // Includes cold Node/tsx startup and the first server read on a busy CI runner.
+      await vi.waitFor(() => expect(replies).toHaveLength(id), { timeout: 10_000 });
       const response = JSON.parse(replies[id - 1]!) as {
         result: { content: Array<{ text: string }> };
       };

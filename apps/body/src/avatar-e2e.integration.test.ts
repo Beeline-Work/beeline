@@ -14,7 +14,7 @@ import { createBeelineServer } from '../../server/src/server.js';
 import { createAgentCommand, claimAgentCommand } from '../../server/src/agent-command.js';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 import { CommandExecutionContext } from './server-command-intake.js';
-import { legacyAgentToolsFor as agentToolsFor, callAgentTool } from './read-only-mcp.js';
+import { callAgentTool } from './read-only-mcp.js';
 
 it(
   'saves a minimal drawing through set_avatar and reads the persisted image',
@@ -85,11 +85,11 @@ it(
       vi.stubEnv('BEELINE_DAEMON_CORNER_ID', '');
       vi.stubEnv('BEELINE_TURN_CONTEXT_FILE', context.path);
       const drawing = [{ type: 'circle', cx: 50, cy: 50, r: 30, fill: 'bone' }];
-      const saved = JSON.parse(await callAgentTool('set_avatar', { drawing }, 'avatar-call')) as {
+      const saved = JSON.parse(await callAgentTool('app_tool', { app:'beeline:avatar', tool:'set', args:{ drawing } }, 'avatar-call')) as {
         id: string;
       };
       expect(saved.id).toBeTruthy();
-      const read = JSON.parse(await callAgentTool('get_avatar', {}, 'avatar-read')) as {
+      const read = JSON.parse(await callAgentTool('app_tool', { app:'beeline:avatar', tool:'read', args:{} }, 'avatar-read')) as {
         drawing: unknown;
       };
       expect(read.drawing).toEqual(drawing);
@@ -112,8 +112,7 @@ it(
       );
       // Exercise every advertised attribute, including optional ones, through the
       // same save path. An attribute from another shape must not be advertised.
-      const schema = agentToolsFor(true, false).find((tool) => tool.name === 'set_avatar')!
-        .inputSchema as {
+      const schema = JSON.parse(await callAgentTool('app_tool', { app:'beeline:avatar' }, 'discover')).tools.find((tool: {name:string}) => tool.name === 'set').inputSchema as {
         properties: { drawing: { items: ShapeSchema & { anyOf?: ShapeSchema[] } } };
       };
       type ShapeSchema = { properties: { type: { enum: string[] } } & Record<string, unknown> };
@@ -147,10 +146,10 @@ it(
             ]),
           );
           const receipt = JSON.parse(
-            await callAgentTool('set_avatar', { drawing: [shape] }, `schema-${type}`),
+            await callAgentTool('app_tool', { app:'beeline:avatar', tool:'set', args:{ drawing: [shape] } }, `schema-${type}`),
           ) as { id: string };
           expect(receipt.id).toBeTruthy();
-          expect(JSON.parse(await callAgentTool('get_avatar', {}, `read-${type}`)).drawing).toEqual(
+          expect(JSON.parse(await callAgentTool('app_tool', { app:'beeline:avatar', tool:'read', args:{} }, `read-${type}`)).drawing).toEqual(
             [shape],
           );
         }

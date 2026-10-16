@@ -92,7 +92,7 @@ describe('historical attachment tool delivery', () => {
   });
 
   it('Reproduction R1: reads an earlier message file through get_room_message with an attachment-free trigger', async () => {
-    const result = JSON.parse(await callAgentTool('get_room_message', { messageId }, 'R1'));
+    const result = JSON.parse(await callAgentTool('read', { facet: "message", ...{ messageId } }, 'R1'));
     expect(result.nextOffset).toBe(4000);
     expect(result.attachments[0].path).toEqual(expect.any(String));
     const observed = await readFile(result.attachments[0].path, 'utf8');
@@ -105,7 +105,7 @@ describe('historical attachment tool delivery', () => {
 
   it('does not download or return files after an unauthorized message read', async () => {
     denied = true;
-    await expect(callAgentTool('get_room_message', { messageId }, 'denied')).rejects.toThrow(
+    await expect(callAgentTool('read', { facet: "message", ...{ messageId } }, 'denied')).rejects.toThrow(
       '403: FORBIDDEN',
     );
     expect(downloads).toBe(0);
@@ -117,7 +117,7 @@ describe('historical attachment tool delivery', () => {
   ])('returns a reason instead of a path for unavailable metadata %j', async (value, reason) => {
     metadata = value;
     const result = JSON.parse(
-      await callAgentTool('get_room_message', { messageId }, 'unavailable'),
+      await callAgentTool('read', { facet: "message", ...{ messageId } }, 'unavailable'),
     );
     expect(result.attachments[0].path).toBeUndefined();
     expect(result.attachments[0].reason).toContain(reason);
@@ -126,7 +126,7 @@ describe('historical attachment tool delivery', () => {
 
   it('reports a media failure after three attempts without dropping message text or references', async () => {
     mediaStatus = 503;
-    const result = JSON.parse(await callAgentTool('get_room_message', { messageId }, 'failed'));
+    const result = JSON.parse(await callAgentTool('read', { facet: "message", ...{ messageId } }, 'failed'));
     expect(result.attachments[0].reason).toBe('download failed: HTTP 503');
     expect(result.attachments[0].url).toBe(`${base}/v1/media/plan`);
     expect(result.body).toBe('Plan attached to an earlier authorized message');
@@ -135,7 +135,7 @@ describe('historical attachment tool delivery', () => {
 
   it('returns a stated reason when the session has no scratch directory', async () => {
     vi.stubEnv('BEELINE_ATTACH_SCRATCH_ROOT', '');
-    const result = JSON.parse(await callAgentTool('get_room_message', { messageId }, 'no-scratch'));
+    const result = JSON.parse(await callAgentTool('read', { facet: "message", ...{ messageId } }, 'no-scratch'));
     expect(result.attachments[0].reason).toBe('download failed: no session scratch directory');
     expect(downloads).toBe(0);
   });

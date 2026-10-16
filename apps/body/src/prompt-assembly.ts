@@ -200,20 +200,6 @@ export const CORNER_LAND_RULE =
 export const CORNER_CHECKS_NUDGE =
   'Call read with facet checks now. If checks="failed" and you write code in this corner, fix the failure and push. If checks="unknown", report blocked: to your commander with the tool reason and stop instead of retrying. Otherwise stop: a reviewer\'s PASS wakes you to merge with merge_corner. Use merge_corner for landing.';
 
-/** Shared verbatim into the search tool description (`read-only-mcp.ts`)
- *  so it is the one place this rule is stated. Meaning-based matching finds a
- *  fact even when the current request shares no words with how it was saved
- *  (see `institutional-memory-embeddings.ts`), so the turn snapshot's keyword
- *  miss is never sufficient grounds to tell someone a fact was never stored. */
-export const SEARCH_MEMORY_FIRST_RULE =
-  'Call this before telling anyone a fact was never saved, or asking them for information they may already have given you. Meaning-based matching often finds it even when this turn shares no words with how it was originally phrased.';
-
-/** The agent's own memory upkeep, stated in the remember tool description
- *  (`read-only-mcp.ts`). No background review exists: what the answering agent
- *  does not keep current, nothing does. */
-export const MEMORY_UPKEEP_RULE =
-  'Before saving, search(scope:memory). Avoid duplicates; remember(kind:fact, action:update) stale items instead of deleting and saving again. Delete disproved items. Before ending, remember(kind:fact, action:used) only the items your answer relied on.';
-
 const handle = (value: string): string => value.replace(/^@/, '');
 
 /**
@@ -343,7 +329,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     layer: 'core',
     surfaces: EVERYWHERE,
     render: () =>
-      'Finish the work before you end the turn, or delegate it. Follow tool results. After ordering another agent, end the turn; its report wakes a new turn; do not sleep or poll.',
+      'Do the assigned work yourself unless instructed to delegate or a verified capability gap requires it. Follow tool results. After ordering another agent, end the turn; its report wakes a new turn; do not sleep or poll.',
   },
   {
     id: 'core.truth',
@@ -373,7 +359,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     layer: 'core',
     surfaces: EVERYWHERE,
     render: () =>
-      'An @handle wakes that member; tag agents only to get a reply, otherwise write their name. Copy handles only from the member list. Use order(address, text) privately across member Rooms; report(status, text) one step up to your commander. Report only to the member who gave you the task. If that member is a human, tag them when, in your judgement, they need to decide or should know. Reports begin done:, blocked:, needs-decision: or failed:; human reports appear where they ordered you.',
+      'Tag to talk. Order to assign work. @handle invites a reply here, with no assignment or report owed. Copy exact member handles. order(address, agent, text) assigns privately; a Room requires agent. report(status, text) one step up to your commander. Report only to whoever assigned you. If human, tag them when they need to decide or know. Reports begin done:, blocked:, needs-decision: or failed:; human reports appear where they ordered you.',
   },
   {
     id: 'core.authority',
@@ -393,7 +379,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     layer: 'core',
     surfaces: EVERYWHERE,
     render: () =>
-      'Only when this turn hit friction in Beeline itself (a tool error, a retry, a refused call, contradictory instructions, missing context, or a person correcting you), call report(kind:feedback) once before ending the turn. Otherwise do not.',
+      'After Beeline errors, retries, refusals, contradictions, context gaps or corrections, call report_feedback(category:bug, summary:<one sentence>) once. Separately report the assigned outcome. Otherwise skip feedback.',
   },
   {
     id: 'core.files',
@@ -403,7 +389,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     layer: 'core',
     surfaces: EVERYWHERE,
     render: () =>
-      "For a 📎 file, call read(facet:attachment) and read its path. Never fetch media URLs; on failure, say you couldn't open it.",
+      "For a 📎 file, call read(facet:attachment, messageId, attachmentId) and read its path. Never fetch media URLs; on failure, say you couldn't open it.",
   },
   {
     id: 'surface.tools',
@@ -412,7 +398,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     budgetBytes: 240,
     layer: 'surface',
     surfaces: EVERYWHERE,
-    render: () => 'For any service or capability request, use connect(mode:discover) if unclear, then connect(mode:ensure).',
+    render: () => 'For any service or capability request, use connect(mode:discover) if unclear, then connect(mode:ensure, service, reason, continuation).',
   },
   {
     id: 'surface.squire-drive',
@@ -456,7 +442,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
       [
         'Repository changes happen only in a corner. Open one when your commander orders repository work.',
         'Before opening one, consult beeline-triage and beeline-spec, then call open_corner with the target room address, a name of at most three words joined by hyphens (no whitespace), an objective of at most 24 words, and the brief (a spec plus the approving message). The objective only titles the work; the brief is its authority. Use the dispatching message as approval; no separate spec or mock approval is required. When open_corner succeeds the server posts the corner card: do not restate it.',
-        'Use read(address) across member Rooms. wake(action:create, trigger:lifecycle, address:cornerAddress) wakes only on opened or merged; open_corner watches automatically. Schedules and chatter never wake watchers.',
+        'Use read(facet:messages, address) across member Rooms. wake(action:create, trigger:lifecycle, address:cornerAddress) wakes only on opened or merged; open_corner watches automatically. Schedules and chatter never wake watchers.',
         'Landing archives a repository corner and cancels its work, including saved runs. The surviving commander owns follow-up at its own address. Repo-less and repositoryWork:false work delivers its artifact/report without a PR.',
       ].join(' '),
   },
@@ -481,7 +467,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     surfaces: ['dm'],
     render: ({ shell }) =>
       [
-        'This is a private direct message with one person: everything they send is for you, so reply without tagging. Use read() to discover addresses, then open_corner(room, brief), order and read across member Rooms; wake watches only corner addresses. Do repository work in a corner. The filesystem is read-only. Web search is available.',
+        'This is a private direct message with one person: everything they send is for you, so reply without tagging. Use read(facet:addresses) to discover addresses, then open_corner(room, implementer, brief), order and read across member Rooms; wake watches only corner addresses. Do repository work in a corner. The filesystem is read-only. Web search is available.',
         shellLine(shell),
       ]
         .filter(Boolean)
@@ -507,7 +493,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     layer: 'surface',
     surfaces: ['code-corner', 'repo-less-corner'],
     render: () =>
-      'When a person asks you to hand this corner to another agent, tag in your reply only an agent that person named by handle or display name: it moves the implementer role here. A tag for any other reason does not move the role. Do not open a second corner for a hand-over.',
+      'Agent tags invite conversation here and never change the implementer. Do the assigned work unless instructed to delegate or a verified capability gap requires it. Assign work with order at an explicit reachable address; report one step up when the intended recipient is forbidden.',
   },
   {
     id: 'corner.worktree',
@@ -842,7 +828,7 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
     surfaces: CORNERS,
     render: ({ generatedTitle, brief }) =>
       generatedTitle
-        ? `This human-opened corner still has its generated name, "${generatedTitle}". If the newest human message states the work, call revise_corner(action:metadata) once before you reply with a name of at most three words joined by hyphens (no whitespace) and a short objective${brief ? '' : ', plus a brief grounded in that message with brief.approval.sourceMessageId set to the human message id'}. A bare mention does not state the work; leave the name until a message does.`
+        ? `This human-opened corner still has its generated name, "${generatedTitle}". If the newest human message states the work, call revise_corner(action:${brief ? 'metadata' : 'install_brief'}, address:thisCornerAddress) once before you reply with a name of at most three words joined by hyphens (no whitespace) and a short objective${brief ? '' : ', plus a brief grounded in that message with brief.approval.sourceMessageId set to the human message id'}. A bare mention does not state the work; leave the name until a message does.`
         : '',
   },
   {
@@ -856,7 +842,7 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
       brief
         ? `${renderAssignedCornerBrief(brief.brief)}${cornerHasRepositoryWork(brief.brief) ? `\n\nAssigned files:\n${brief.fileLines.join('\n') || '(none)'}` : brief.fileLines.length ? `\n\nBrief attachments:\n${brief.fileLines.join('\n')}` : ''}${brief.missingRequiredFile ? '\nRequired assignment files are unavailable. Pause work that depends on them and report the missing file precisely.' : ''}`
         : surface === 'code-corner'
-          ? `No assigned brief yet. Before any code, ${generatedTitle ? 'write the first brief from the newest human request with revise_corner(action:metadata)' : 'report needs-decision: to your commander for the first brief'}.`
+          ? `No assigned brief yet. Before any code, ${generatedTitle ? 'write the first brief from the newest human request with revise_corner(action:install_brief, address, name, brief)' : 'report needs-decision: to your commander for the first brief'}.`
           : 'No assigned brief: the human messages in this corner are the authority; skip steps that need a brief revision.',
   },
   {
@@ -931,7 +917,7 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
     render: ({ surface, corners, closedCorners }) =>
       [
         corners?.length
-          ? `Current corners you belong to (use the exact cornerId with ${surface === 'room' ? 'read or order' : 'read or order across member Rooms'}):\n${corners.map(renderOpenCornerLine).join('\n')}`
+          ? `Current corners you belong to (use the exact address with ${surface === 'room' ? 'read or order' : 'read or order across member Rooms'}):\n${corners.map(renderOpenCornerLine).join('\n')}`
           : '',
         surface === 'room' && closedCorners?.length
           ? `Corners you belong to closed in the last 24 hours:\n${closedCorners

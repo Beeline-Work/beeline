@@ -214,40 +214,37 @@ async function callTool(
 describe('open_corner over the grok wire', () => {
   it('lets a configured reviewer address approve_merge from a DM', async () => {
     const door = await daemonDoor();
-    const response = await callTool(door.origin, { cornerId: CORNER, headSha: 'b'.repeat(40) },
+    const response = await callTool(door.origin, {address:CORNER,headSha: 'b'.repeat(40)},
       { name: 'approve_merge', directMessage: true });
     expect(response.result?.isError).toBeUndefined();
     expect(door.calls.at(-1)).toMatchObject({ operation: 'approveCornerMerge', cornerId: CORNER, headSha: 'b'.repeat(40) });
   }, 30_000);
   it('forwards the exact implementer handle through the MCP opening path', async () => {
     const door = await daemonDoor();
-    const response = await callTool(door.origin, {
-      name: 'Dispatch-work', objective: 'Dispatch this work', implementer: 'beta',
-      brief: { spec: 'Dispatch this work', approval: { sourceMessageId: 'approved' } },
-    });
+    const response = await callTool(door.origin, {room:ROOM,name: 'Dispatch-work',objective: 'Dispatch this work',implementer: 'beta',brief: { spec: 'Dispatch this work', approval: { sourceMessageId: 'approved' } }});
     expect(response.result?.isError).not.toBe(true);
     expect(door.calls.find((call) => call.operation === 'createCorner')).toMatchObject({
       roomId: ROOM, implementer: 'beta', requestId: 'command-request', generationId: 'g1',
       brief: { spec: 'Dispatch this work', approval: { sourceMessageId: 'approved' } },
     });
-    expect(JSON.parse(response.result!.content[0]!.text)).toMatchObject({ cornerId: CORNER, status: 'starting' });
+    expect(JSON.parse(response.result!.content[0]!.text)).toMatchObject({ address: CORNER, status: 'starting' });
   });
 
   it('gives separate calls in one turn independent idempotency keys', async () => {
     const door = await daemonDoor();
     await callTool(
       door.origin,
-      { name: 'First-fix', objective: 'Fix the first independent problem' },
+      {room:ROOM,name: 'First-fix',objective: 'Fix the first independent problem',implementer:'worker',brief:{spec:'Synthetic assigned work',approval:{sourceMessageId:'approved'}}},
       { toolCallId: 'call-first' },
     );
     await callTool(
       door.origin,
-      { name: 'Second-fix', objective: 'Fix the second independent problem' },
+      {room:ROOM,name: 'Second-fix',objective: 'Fix the second independent problem',implementer:'worker',brief:{spec:'Synthetic assigned work',approval:{sourceMessageId:'approved'}}},
       { toolCallId: 'call-second' },
     );
     await callTool(
       door.origin,
-      { name: 'First-fix', objective: 'Fix the first independent problem' },
+      {room:ROOM,name: 'First-fix',objective: 'Fix the first independent problem',implementer:'worker',brief:{spec:'Synthetic assigned work',approval:{sourceMessageId:'approved'}}},
       { toolCallId: 'call-first' },
     );
 
@@ -263,11 +260,11 @@ describe('open_corner over the grok wire', () => {
 
   it('R4: sends an atomic initial hold and bound hold/release calls', async () => {
     const door = await daemonDoor();
-    const opened = await callTool(door.origin, { name: 'Held-work', objective: 'Keep this work held', hold: true });
+    const opened = await callTool(door.origin, {room:ROOM,name: 'Held-work',objective: 'Keep this work held',hold: true,implementer:'worker',brief:{spec:'Synthetic assigned work',approval:{sourceMessageId:'approved'}}});
     expect(opened.result?.isError).toBeUndefined();
     expect(door.calls.find(call => call.operation === 'createCorner')).toMatchObject({ hold: true });
     for (const args of [{}, { releaseHoldId: ROOM }]) {
-      const result = await callTool(door.origin, args, { name: 'set_corner_hold', cornerId: CORNER });
+      const result = await callTool(door.origin, {address:CORNER,...args}, { name: 'set_corner_hold', cornerId: CORNER });
       expect(result.error).toBeUndefined();
       expect(result.result?.isError).toBeUndefined();
       expect(door.calls.at(-1)).toMatchObject({ operation: 'setCornerHold', cornerId: CORNER,
@@ -277,15 +274,13 @@ describe('open_corner over the grok wire', () => {
 
   it('opens a corner from the multi-line brief that used to be refused', async () => {
     const door = await daemonDoor();
-    const { result, error } = await callTool(door.origin, {
-      name: 'corner-name',
-      objective:
-        'Ship the corner name parameter.\nMake grok able to open a corner.\nUpdate every surface that draws the title.',
-    });
+    const { result, error } = await callTool(door.origin, {room:ROOM,name: 'corner-name',objective:
+        'Ship the corner name parameter.\nMake grok able to open a corner.\nUpdate every surface that draws the title.',implementer:'worker',brief:{spec:'Synthetic assigned work',approval:{sourceMessageId:'approved'}}});
     expect(error).toBeUndefined();
     expect(result?.isError).toBeUndefined();
     expect(JSON.parse(result!.content[0]!.text)).toEqual({
-      cornerId: CORNER,
+      address: CORNER,
+      briefRevision: 1,
       name: 'corner-name',
       objective:
         'Ship the corner name parameter. Make grok able to open a corner. Update every surface that draws the title.',
@@ -311,14 +306,14 @@ describe('open_corner over the grok wire', () => {
     const door = await daemonDoor();
     const { result, error } = await callTool(
       door.origin,
-      { name: 'Sibling-fix', objective: 'Fix the problem found while working this corner' },
+      {room:ROOM,name: 'Sibling-fix',objective: 'Fix the problem found while working this corner',implementer:'worker',brief:{spec:'Synthetic assigned work',approval:{sourceMessageId:'approved'}}},
       { cornerId: CORNER },
     );
 
     expect(error).toBeUndefined();
     expect(result?.isError).toBeUndefined();
     expect(JSON.parse(result!.content[0]!.text)).toMatchObject({
-      cornerId: CORNER,
+      address: CORNER,
       name: 'Sibling-fix',
       status: 'starting',
     });
@@ -337,15 +332,12 @@ describe('open_corner over the grok wire', () => {
 
   it('opens a chat-only corner without inventing repository fields', async () => {
     const door = await daemonDoor({ resolution: 'none' });
-    const { result, error } = await callTool(door.origin, {
-      name: 'Render-clip',
-      objective: 'Generate a short video clip and attach it here',
-    });
+    const { result, error } = await callTool(door.origin, {room:ROOM,name: 'Render-clip',objective: 'Generate a short video clip and attach it here',implementer:'worker',brief:{spec:'Synthetic assigned work',approval:{sourceMessageId:'approved'}}});
 
     expect(error).toBeUndefined();
     expect(result?.isError).toBeUndefined();
     expect(JSON.parse(result!.content[0]!.text)).toMatchObject({
-      cornerId: CORNER,
+      address: CORNER,
       status: 'starting',
     });
     const created = door.calls.find((call) => call.operation === 'createCorner');
@@ -364,7 +356,7 @@ describe('open_corner over the grok wire', () => {
     const door = await daemonDoor({ resolution: 'none' });
     const { result, error } = await callTool(
       door.origin,
-      {},
+      {address:CORNER},
       {
         name: 'close_corner',
         cornerId: CORNER,
@@ -382,7 +374,7 @@ describe('open_corner over the grok wire', () => {
     const door = await daemonDoor();
     const { result, error } = await callTool(
       door.origin,
-      {},
+      {address:CORNER},
       {
         name: 'close_corner',
         cornerId: CORNER,
@@ -404,8 +396,8 @@ describe('open_corner over the grok wire', () => {
     const door = await daemonDoor();
     const { result, error } = await callTool(
       door.origin,
-      {},
-      { name: 'close_pull_request', cornerId: CORNER, repositoryCorner: true },
+      {address:CORNER},
+      { name: 'close_corner_pr', cornerId: CORNER, repositoryCorner: true },
     );
 
     expect(error).toBeUndefined();
@@ -420,15 +412,15 @@ describe('open_corner over the grok wire', () => {
     const { result } = await callTool(door.origin, {}, { name: 'close_corner' });
 
     expect(result?.isError).toBe(true);
-    expect(result?.content[0]?.text).toBe('cornerId is required outside a corner');
+    expect(result?.content[0]?.text).toContain('required: address');
     expect(door.calls.some((call) => call.operation === 'archiveCorner')).toBe(false);
   }, 30_000);
 
-  it('R1: posts to the active corner when post_to_corner is called with only text inside a corner', async () => {
+  it('R1: posts to the explicitly addressed corner from a corner turn', async () => {
     const door = await daemonDoor();
     const { result, error } = await callTool(
       door.origin,
-      { text: 'A note' },
+      {text: 'A note',address:CORNER},
       { name: 'post_to_corner', cornerId: CORNER },
     );
 
@@ -441,23 +433,23 @@ describe('open_corner over the grok wire', () => {
 
   it('R1: refuses post_to_corner outside a corner when no corner is named', async () => {
     const door = await daemonDoor();
-    const { result } = await callTool(door.origin, { text: 'A note' }, { name: 'post_to_corner' });
+    const { result } = await callTool(door.origin, {text: 'A note'}, { name: 'post_to_corner' });
 
     expect(result?.isError).toBe(true);
-    expect(result?.content[0]?.text).toBe('cornerId is required outside a corner');
+    expect(result?.content[0]?.text).toContain('required: address');
     expect(door.calls.some((call) => call.operation === 'postCornerMessage')).toBe(false);
   }, 30_000);
 
   it('acts on a named child corner from a Room turn: close, close PR, rename, read, list and post', async () => {
     const door = await daemonDoor();
     for (const [name, args] of [
-      ['close_corner', { cornerId: CORNER }],
-      ['close_pull_request', { cornerId: CORNER }],
-      ['rename_corner', { cornerId: CORNER, name: 'New-name' }],
-      ['read_pull_request', { cornerId: CORNER }],
-      ['list_corners', {}],
-      ['list_room_members', { cornerId: CORNER }],
-      ['post_to_corner', { cornerId: CORNER, text: 'A note' }],
+      ['close_corner', { address: CORNER }],
+      ['close_corner_pr', { address: CORNER }],
+      ['revise_corner', { address: CORNER, action:'metadata', name: 'New-name' }],
+      ['read', { facet:'pr', address: CORNER }],
+      ['read', { facet:'corners' }],
+      ['read', { facet:'members', address: CORNER }],
+      ['post_to_corner', { address: CORNER, text: 'A note' }],
     ] as const) {
       const { result } = await callTool(door.origin, args, { name });
       expect(result?.isError, name).not.toBe(true);
@@ -475,10 +467,7 @@ describe('open_corner over the grok wire', () => {
 
   it('answers a genuine refusal as a tool result the model reads, not a protocol error', async () => {
     const door = await daemonDoor();
-    const { result, error } = await callTool(door.origin, {
-      name: 'corner-name',
-      objective: Array.from({ length: 61 }, (_, index) => `word${index}`).join(' '),
-    });
+    const { result, error } = await callTool(door.origin, {room:ROOM,name: 'corner-name',objective: Array.from({ length: 61 }, (_, index) => `word${index}`).join(' '),implementer:'worker',brief:{spec:'Synthetic assigned work',approval:{sourceMessageId:'approved'}}});
     expect(error).toBeUndefined();
     expect(result?.isError).toBe(true);
     expect(result?.content[0]?.text).toBe('the objective is 61 words; the limit is 24');
@@ -487,7 +476,7 @@ describe('open_corner over the grok wire', () => {
 
   it('derives optional navigation names from the supplied brief', async () => {
     const door = await daemonDoor();
-    const { result } = await callTool(door.origin, { room: ROOM, brief: { spec: 'Ship the widget', approval: { sourceMessageId: 'request' } } });
+    const { result } = await callTool(door.origin, {room: ROOM,brief: { spec: 'Ship the widget', approval: { sourceMessageId: 'request' } },implementer:'worker'});
     expect(result?.isError).not.toBe(true);
     expect(door.calls).toContainEqual(expect.objectContaining({ operation: 'createCorner', targetRoomId: ROOM, name: 'Ship-the-widget', objective: 'Ship the widget' }));
   }, 30_000);
@@ -498,7 +487,7 @@ describe('private command tools', () => {
     const door = await daemonDoor();
     const response = await callTool(
       door.origin,
-      { address: CORNER, text: 'Change the endpoint' },
+      {address: CORNER,text: 'Change the endpoint'},
       { name: 'order' },
     );
     expect(response.result?.isError).not.toBe(true);
@@ -515,7 +504,7 @@ describe('private command tools', () => {
     const door = await daemonDoor();
     const response = await callTool(
       door.origin,
-      { address: CORNER, text: 'What is blocking the endpoint?' },
+      {address: CORNER,text: 'What is blocking the endpoint?'},
       { name: 'order' },
     );
     expect(response.result?.isError).not.toBe(true);
@@ -530,7 +519,7 @@ describe('private command tools', () => {
   });
   it('passes the open-only corner filter to the server', async () => {
     const door = await daemonDoor();
-    const response = await callTool(door.origin, { activeOnly: true }, { name: 'list_corners' });
+    const response = await callTool(door.origin, {facet:'corners',activeOnly: true}, { name: 'read' });
     expect(response.result?.isError).not.toBe(true);
     expect(door.calls).toContainEqual(expect.objectContaining({
       operation: 'listReachableCorners', roomId: ROOM, activeOnly: true,
@@ -538,7 +527,7 @@ describe('private command tools', () => {
   });
   it('reads a listed member corner without posting a message', async () => {
     const door = await daemonDoor();
-    const response = await callTool(door.origin, { cornerId: CORNER }, { name: 'inspect_corner' });
+    const response = await callTool(door.origin, {facet:'status',address:CORNER}, { name: 'read' });
     expect(response.result?.isError).not.toBe(true);
     expect(JSON.parse(response.result!.content[0]!.text)).toEqual({
       cornerId: CORNER,
@@ -552,7 +541,7 @@ describe('private command tools', () => {
         excerpt: 'Tests pending',
       },
       pr: { number: 42, url: 'https://github.com/owner/widgets/pull/42', title: 'Ship endpoint' },
-      head: 'b'.repeat(40),
+      headSha: 'b'.repeat(40),
       checks: 'pending',
       verdict: {
         stage: 'checking',
@@ -574,12 +563,8 @@ describe('private command tools', () => {
     const door = await daemonDoor();
     const response = await callTool(
       door.origin,
-      {
-        cornerId: CORNER,
-        mode: 'transcript',
-        after: '123,aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
-      },
-      { name: 'inspect_corner' },
+      {facet:'messages',address:CORNER,cursor:{after: '123,aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'}},
+      { name: 'read' },
     );
     expect(response.result?.isError).not.toBe(true);
     expect(door.calls.find((call) => call.operation === 'getRoomConversation')).toMatchObject({
@@ -601,8 +586,8 @@ describe('private command tools', () => {
     const door = await daemonDoor(undefined, items);
     const response = await callTool(
       door.origin,
-      { cornerId: CORNER, mode: 'transcript', from: 'newest' },
-      { name: 'inspect_corner' },
+      {facet:'messages',address:CORNER,from: 'newest'},
+      { name: 'read' },
     );
     const page = JSON.parse(response.result!.content[0]!.text);
     expect(page.items.map((item: { id: string }) => item.id)).toEqual(
@@ -617,8 +602,8 @@ describe('private command tools', () => {
     });
     await callTool(
       door.origin,
-      { cornerId: CORNER, mode: 'transcript', from: 'newest', before: page.next.before },
-      { name: 'inspect_corner' },
+      {facet:'messages',address:CORNER,from: 'newest',cursor:{before: page.next.before}},
+      { name: 'read' },
     );
     expect(door.calls.filter((call) => call.operation === 'getRoomConversation').at(-1)).toMatchObject({
       window: 'recent',
@@ -638,8 +623,8 @@ describe('private command tools', () => {
     const door = await daemonDoor(undefined, items);
     const response = await callTool(
       door.origin,
-      { cornerId: CORNER, mode: 'transcript' },
-      { name: 'inspect_corner' },
+      {facet:'messages',address:CORNER},
+      { name: 'read' },
     );
     const raw = response.result!.content[0]!.text;
     const page = JSON.parse(raw);
@@ -653,8 +638,8 @@ describe('private command tools', () => {
     });
     const continuation = await callTool(
       door.origin,
-      { cornerId: CORNER, mode: 'transcript', ...page.next },
-      { name: 'inspect_corner' },
+      {facet:'messages',address:CORNER,cursor:{...page.next}},
+      { name: 'read' },
     );
     expect(JSON.parse(continuation.result!.content[0]!.text).items[0]).toMatchObject({
       id: 'message-0',
@@ -675,8 +660,8 @@ describe('private command tools', () => {
     const door = await daemonDoor(undefined, items);
     const response = await callTool(
       door.origin,
-      { cornerId: CORNER, mode: 'transcript' },
-      { name: 'inspect_corner' },
+      {facet:'messages',address:CORNER},
+      { name: 'read' },
     );
     const page = JSON.parse(response.result!.content[0]!.text);
     expect(page.items).toHaveLength(8);
@@ -706,14 +691,14 @@ describe('private command tools', () => {
     const door = await daemonDoor(undefined, items);
     const first = await callTool(
       door.origin,
-      { cornerId: CORNER, mode: 'transcript' },
-      { name: 'inspect_corner' },
+      {facet:'messages',address:CORNER},
+      { name: 'read' },
     );
     const next = JSON.parse(first.result!.content[0]!.text).next;
     const second = await callTool(
       door.origin,
-      { cornerId: CORNER, mode: 'transcript', ...next },
-      { name: 'inspect_corner' },
+      {facet:'messages',address:CORNER,cursor:{...next}},
+      { name: 'read' },
     );
     const page = JSON.parse(second.result!.content[0]!.text);
     expect(page.items.map((item: { id: string }) => item.id)).toEqual(['long', 'next']);
@@ -733,8 +718,8 @@ describe('private command tools', () => {
     const door = await daemonDoor(undefined, items);
     const response = await callTool(
       door.origin,
-      { cornerId: CORNER, mode: 'transcript' },
-      { name: 'inspect_corner' },
+      {facet:'messages',address:CORNER},
+      { name: 'read' },
     );
     const raw = response.result!.content[0]!.text;
     expect(raw.length).toBeLessThanOrEqual(12000);
@@ -747,7 +732,7 @@ describe('private command tools', () => {
       const sibling = '33333333-3333-4333-8333-333333333333';
       const steer = await callTool(
         door.origin,
-        { text: 'Use the new endpoint', address: sibling },
+        {text: 'Use the new endpoint',address: sibling},
         { name: 'order', cornerId: CORNER, repositoryCorner },
       );
       expect(steer.error).toBeUndefined();
@@ -768,7 +753,7 @@ describe('private command tools', () => {
     const door = await daemonDoor();
     const steer = await callTool(
       door.origin,
-      { text: 'Use v2', address: CORNER },
+      {text: 'Use v2',address: CORNER},
       { name: 'order', cornerId: CORNER },
     );
     expect(steer.result?.isError ?? Boolean(steer.error)).toBe(false);
@@ -778,7 +763,7 @@ describe('private command tools', () => {
     const door = await daemonDoor();
     const steer = await callTool(
       door.origin,
-      { text: 'Use v2', address: CORNER },
+      {text: 'Use v2',address: CORNER},
       {
         name: 'order',
         directMessage: true,
@@ -794,7 +779,7 @@ describe('avatar skill tools over MCP', () => {
   it('sends generated geometry with active command authority and reads back refinement context', async () => {
     const { origin, calls } = await daemonDoor();
     const drawing = [{ type: 'circle', cx: 50, cy: 50, r: 30, fill: 'bone' }];
-    const saved = await callTool(origin, { drawing }, { name: 'set_avatar' });
+    const saved = await callTool(origin, {app:'beeline:avatar',tool:'set',args:{drawing}}, { name: 'app_tool' });
     expect(saved.error).toBeUndefined();
     expect(saved.result?.isError).not.toBe(true);
     expect(calls).toContainEqual({
@@ -804,7 +789,7 @@ describe('avatar skill tools over MCP', () => {
       generationId: 'g1',
       drawing,
     });
-    await callTool(origin, {}, { name: 'get_avatar' });
+    await callTool(origin, {app:'beeline:avatar',tool:'read',args:{}}, { name: 'app_tool' });
     expect(calls).toContainEqual({ operation: 'getAgentAvatar', roomId: ROOM });
   });
 });

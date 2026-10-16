@@ -76,7 +76,7 @@ it('keeps corner and agent DM orders unchanged', async () => {
   await daemon.execute('order', { ...authority(), address: opened.cornerId, text: 'Use the new endpoint' }, JELLYBEAN);
   expect(await orderWakes()).toEqual([{ agent_id: CANDY, room_id: opened.cornerId }]);
   await expect(daemon.execute('order', { ...authority(), address: opened.cornerId, agent: 'baby', text: 'Wrong worker' }, JELLYBEAN))
-    .rejects.toThrow("not this corner's worker");
+    .rejects.toThrow("agent must be this corner's implementer");
 
   const agentDM = randomUUID();
   await db.query(`INSERT INTO rooms(id,workspace_id,name,direct_participants) VALUES($1,$2,'Jellybean and Earth',jsonb_build_array($3::text,$4::text))`, [agentDM, WS, JELLYBEAN, EARTH]);

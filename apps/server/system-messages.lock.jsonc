@@ -5853,6 +5853,26 @@
     "occurrences": 1
   },
   {
+    "id": "src/free-agent-warning.ts:warnFreeAgentOwner:message-write:e12cb4c30806015f",
+    "file": "apps/server/src/free-agent-warning.ts",
+    "kind": "message-write",
+    "template": "db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING id`, [id, roomId, agentId, text])",
+    "literals": [
+      "':'",
+      "'hex'",
+      "'sha256'",
+      "`${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`",
+      "`I've used 80% of today's free allowance. It resets at midnight UTC. Want help running and connecting your own agent on your computer or an always-on machine? Open [Members -> Add agent](${link}) to get started.`",
+      "`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING id`",
+      "`SELECT free.workspace_id FROM free_agents free\n       WHERE free.agent_id=$1 AND free.owner_id=$2\n       AND EXISTS(SELECT 1 FROM memberships m WHERE m.workspace_id=free.workspace_id\n         AND m.room_id IS NULL AND m.identity_id=$2 AND m.removed_at IS NULL)`",
+      "`SELECT id FROM rooms WHERE workspace_id=$1 AND direct_participants=$2::jsonb`",
+      "`buzz-dm:v1:${workspaceId}:${participants.join(':')}`",
+      "`free-agent-warning:${ownerId}:${day}`",
+      "`https://web.usebeeline.app/beeline/members?communityId=${encodeURIComponent(agent.workspace_id)}&action=add-agent`"
+    ],
+    "occurrences": 1
+  },
+  {
     "id": "src/github-operations.ts:GitHubOperations.mergeCorner:systemLine:a3631ff7edcd4615",
     "file": "apps/server/src/github-operations.ts",
     "kind": "systemLine",

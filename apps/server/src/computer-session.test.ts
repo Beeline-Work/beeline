@@ -23,7 +23,7 @@ import { assembleTurnPrompt } from '../../body/src/prompt-assembly.js';
 import type { DaemonApiClient } from '../../body/src/daemon-api-client.js';
 import {
   computerViewToken, createComputerSession, endComputerSession, expireComputerSessions, getComputerSession, refreshComputerSession, serveComputerSession,
-  serveComputerStatus, startComputerExpirySweep, upgradeBodyComputerSource, upgradeComputerSession, upgradeComputerWaiter,
+  serveComputerStatus, startComputerExpirySweep, trustedComputerShareUpstream, upgradeBodyComputerSource, upgradeComputerSession, upgradeComputerWaiter,
 } from './computer-session.js';
 
 const HUMAN = 'a'.repeat(64);
@@ -31,6 +31,8 @@ const OTHER = 'c'.repeat(64);
 const AGENT = 'b'.repeat(64);
 const WORKSPACE = '11111111-1111-4111-8111-111111111119';
 const ROOM = '22222222-2222-4222-8222-222222222229';
+/** Test Squire servers listen on loopback, which production shares reject. */
+const testSquire = (upstream: URL) => ['127.0.0.1', 'squire.test'].includes(upstream.hostname);
 
 function opened(socket: WebSocket): Promise<void> {
   return new Promise((resolve, reject) => { socket.once('open', resolve); socket.once('error', reject); });
@@ -330,7 +332,7 @@ describe('computer session handoff', () => {
     try {
       const share = await createComputerSession(database, live, {
         roomId: ROOM, agentId: AGENT, sessionId: 'squire-operate-1', upstreamUrl, title: 'Squire tab',
-      });
+      }, testSquire);
       const access = await computerViewToken(database, share.id, HUMAN);
       const loading = await (await fetch(`${origin}/s/${share.id}/?access=${access}`)).text();
       expect(loading).toContain('Connecting to browser');
@@ -394,7 +396,7 @@ describe('computer session handoff', () => {
       const share = await createComputerSession(database, live, {
         roomId, agentId: AGENT, sessionId: `form-submit-${roomId}`,
         upstreamUrl: `http://127.0.0.1:${(squire.address() as AddressInfo).port}/s/form/`,
-      });
+      }, testSquire);
       let viewer: WebSocket | undefined;
       try {
         const access = await computerViewToken(database, share.id, HUMAN);
@@ -475,11 +477,44 @@ describe('computer session handoff', () => {
     });
   }
 
+  it('rejects share upstreams outside the trusted Squire tunnel hosts', async () => {
+    const token = 'r'.repeat(43);
+    for (const upstreamUrl of [
+      'http://127.0.0.1/', 'http://[::1]/', 'http://10.0.0.1/', 'http://[fdaa::1]/', 'http://x.internal/',
+      'http://169.254.169.254/', 'https://127.0.0.1/', 'https://[fdaa::1]/', 'https://localhost/',
+      'https://db.internal/', 'https://printer.local/', 'https://evil.example/', 'https://trycloudflare.com/',
+      'https://faketrycloudflare.com/', `http://share.trycloudflare.com/s/${token}/`,
+      `https://user:pass@share.trycloudflare.com/s/${token}/`, 'not a url',
+    ]) {
+      await expect(createComputerSession(database, live, {
+        roomId: ROOM, agentId: AGENT, sessionId: `rejected-${upstreamUrl}`, upstreamUrl,
+      }), upstreamUrl).rejects.toThrow('computer share URL is invalid');
+    }
+    const trusted = await createComputerSession(database, live, {
+      roomId: ROOM, agentId: AGENT, sessionId: 'trusted-tunnel',
+      upstreamUrl: `https://quiet-river-1.trycloudflare.com/s/${token}/`,
+    });
+    expect((await getComputerSession(database, trusted.id))?.upstream_url).toBe(`https://quiet-river-1.trycloudflare.com/s/${token}/`);
+    expect((await createComputerSession(database, live, {
+      roomId: ROOM, agentId: AGENT, sessionId: 'trusted-body', upstreamUrl: 'body:',
+    })).id).toBeTruthy();
+    const previous = process.env.BEELINE_COMPUTER_SHARE_HOSTS;
+    process.env.BEELINE_COMPUTER_SHARE_HOSTS = 'share.squire.example';
+    try {
+      expect(trustedComputerShareUpstream(new URL(`https://share.squire.example/s/${token}/`))).toBe(true);
+      expect(trustedComputerShareUpstream(new URL(`https://quiet-river-1.trycloudflare.com/s/${token}/`))).toBe(false);
+    } finally {
+      if (previous === undefined) delete process.env.BEELINE_COMPUTER_SHARE_HOSTS;
+      else process.env.BEELINE_COMPUTER_SHARE_HOSTS = previous;
+    }
+    await database.query(`UPDATE computer_sessions SET status='ended' WHERE source_session_id IN ('trusted-tunnel','trusted-body')`);
+  });
+
   it('keeps renewed leases live, binds renewal to owner/source, and never revives an ended card', async () => {
     const upstreamUrl = `https://squire.test/s/${'r'.repeat(43)}/`;
     const share = await createComputerSession(database, live, {
       roomId: ROOM, agentId: AGENT, sessionId: 'rolling-share', upstreamUrl, expiresAt: Date.now() + 1_000,
-    });
+    }, testSquire);
     const daemon = new DaemonService(database, live);
     const renew = (expiresAt: number) => daemon.execute('refreshComputerSession', {
       roomId: ROOM, sessionId: 'rolling-share', upstreamUrl, expiresAt,
@@ -506,7 +541,7 @@ describe('computer session handoff', () => {
     const upstreamUrl = `http://127.0.0.1:${(gone.address() as AddressInfo).port}/s/${'r'.repeat(43)}/`;
     const share = await createComputerSession(database, live, {
       roomId: ROOM, agentId: AGENT, sessionId: 'renewal-race', upstreamUrl, expiresAt: Date.now() + 1_000,
-    });
+    }, testSquire);
     await database.query(`UPDATE computer_sessions SET expires_at=now()-interval '1 second' WHERE id=$1`, [share.id]);
     const racing = new Proxy(database, { get(target, property) {
       if (property === 'query') return async (sql: string, values?: unknown[]) => {
@@ -543,10 +578,10 @@ describe('computer session handoff', () => {
     try {
       const share = await createComputerSession(database, live, {
         roomId: ROOM, agentId: AGENT, sessionId: 'squire-expires', upstreamUrl, expiresAt: Date.now() + 1_500,
-      });
+      }, testSquire);
       const lasting = await createComputerSession(database, live, {
         roomId: ROOM, agentId: AGENT, sessionId: 'squire-no-expiry', upstreamUrl,
-      });
+      }, testSquire);
       const access = await computerViewToken(database, share.id, HUMAN);
       const viewer = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/stream?access=${access}`);
       await opened(viewer);
@@ -696,7 +731,7 @@ describe('computer session handoff', () => {
     const share = await createComputerSession(database, live, {
       roomId: ROOM, agentId: AGENT, sessionId: 'warm-squire',
       upstreamUrl: `http://127.0.0.1:${(squire.address() as AddressInfo).port}/s/warm/`,
-    });
+    }, testSquire);
     const access = await computerViewToken(database, share.id, HUMAN);
     const url = `${origin}/s/${share.id}/?access=${access}`;
     await fetch(url + '&preview=1');

@@ -9,7 +9,7 @@ Room, a repeated request created no duplicate, and only the requested model call
 reached the upstream. Regression coverage lives in `free-agent-model-proxy.test.ts`
 and `free-agent-warning.test.ts`.
 
-![Warning rendered by the app's LedgerEntry component](allowance-warning.png)
+![Beebee's warning rendered by the app's LedgerEntry component](allowance-warning.png)
 
 This screenshot is a local web component build, using the app's real `LedgerEntry`
 and markdown renderer with the warning text emitted by that built-server proof.
@@ -20,9 +20,10 @@ It is a renderer stand-in, not a screenshot of a deployed server or the full Exp
 On production, the existing owner's browser session reached Workspace menu →
 Members at `/beeline/members?communityId=18e555f7-e191-452b-9b0f-b825f58ee4ba` and
 showed the Add agents control. No pairing code was generated. The specifically
-requested reviewer-bypass sign-in remains unverified. Its credential is vaulted;
-a secure browser handoff for it has not been established. The owner session is a
-partial stand-in pending a decision on reviewer login/proof.
+requested reviewer-bypass sign-in is deferred until after deployment. Ruby accepted
+the local screenshot, owner-session Members check and FREE-GUIDE-2 as pre-merge
+proof (corner decision cdc383c8b896ed9f73100eecce3fd2a160a65dd339e862e6ea052d6de83f29e0).
+Ruby owns the production browser check after release and enablement.
 
 Server coverage: all 167 test files exercised in memory-bounded batches; 2,674
 tests passed and seven existing tests skipped. Both message-producer snapshots were

@@ -150,42 +150,6 @@ export async function backfillInheritedCornerMemberships(database: SqlDatabase):
  * join's membership writes are real, so a lookup failure logs and emits
  * nowhere rather than failing the join.
  */
-/**
- * A Workspace departure is silent, except where an agent subscribed to `left`
- * (a free starter agent in #general): there it is one `left` event. Call
- * before the memberships are removed.
- */
-export async function announceWorkspaceDeparture(
-  database: SqlDatabase,
-  workspaceId: string,
-  identity: { id: string; kind: 'human' | 'agent'; name: string; handle?: string | null },
-): Promise<void> {
-  const rooms = await database.query<{ room_id: string }>(
-    `SELECT member.room_id FROM memberships member JOIN rooms room ON room.id=member.room_id
-     WHERE member.workspace_id=$1 AND member.identity_id=$2 AND member.removed_at IS NULL
-       AND room.parent_id IS NULL AND room.direct_participants IS NULL AND room.archived_at IS NULL`,
-    [workspaceId, identity.id],
-  );
-  const announced = await subscriberRooms(
-    database,
-    rooms.rows.map((row) => row.room_id),
-    'left',
-  );
-  for (const roomId of announced)
-    await systemLine(database, {
-      roomId,
-      subject: {
-        kind: identity.kind === 'agent' ? 'agent' : 'person',
-        id: identity.id,
-        name: systemIdentityMention({ ...identity, handle: identity.handle ?? null }),
-      },
-      verb: 'left',
-      kind: 'left',
-      cardType: 'member-left',
-      card: { identityId: identity.id },
-    });
-}
-
 async function subscriberRooms(
   database: SqlDatabase,
   roomIds: readonly string[],

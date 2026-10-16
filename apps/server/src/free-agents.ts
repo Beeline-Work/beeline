@@ -1,7 +1,7 @@
 import { createCipheriv, createDecipheriv, createECDH, createHash, randomBytes } from 'node:crypto';
 import { assignSeededAgentIdentity, resolveFace, uniqueAgentHandle } from '@beeline/api-contract/phone';
 import { createAgentCommand } from './agent-command.js';
-import type { SqlDatabase } from './database.js';
+import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
 import type { FreeAgentMachines } from './fly-machines.js';
 import { joinRooms } from './membership-join.js';
 import { lockIdentityHandleWorkspaces } from './workspace-handles.js';
@@ -203,6 +203,7 @@ If several people joined since your last greeting, tag them all in that one mess
 When a member leaves #general or is removed (a "left" or "removed" line), always reply with exactly one message and nothing else, putting their display name (not an @handle) in place of {name}:
 ${FREE_AGENT_EXIT_NOTE}
 If several members left since your last note, name them all in that one note.
+Leaving the Workspace itself is silent in Beeline; you only hear about leaves and removals in #general.
 
 You have a free daily allowance of model tokens. If it runs out, say so plainly and tell them they can connect their own agent from the Members page to keep going.`;
 }
@@ -364,6 +365,44 @@ export async function addFreeAgentToWorkspace(
   });
   if (agentId) await service.provision(agentId);
   return agentId;
+}
+
+/**
+ * A member leaving or being removed from a Room already writes its System
+ * line; a free agent subscribed to `left` there gets one wake on that line.
+ * The leader runs this on every committed message, so the note follows the
+ * leave within moments. Returns how many wakes it queued.
+ */
+async function wakeFreeAgentsForLeaves(database: SqlDatabase): Promise<number> {
+  const leaves = await database.query<{ message_id: string; room_id: string; agent_id: string }>(
+    `SELECT line.id message_id,subscriber.room_id,subscriber.identity_id agent_id
+     FROM memberships subscriber
+     JOIN free_agents f ON f.agent_id=subscriber.identity_id AND f.state<>'failed'
+     CROSS JOIN LATERAL (
+       SELECT m.id,m.card FROM messages m
+       WHERE m.room_id=subscriber.room_id
+         AND ${MESSAGE_CURSOR_MS_SQL.replace('created_at', 'm.created_at')}
+           >= floor(extract(epoch FROM now()-interval '10 minutes')*1000)::bigint
+         AND m.card_type IN ('member-left','member-removed')
+     ) line
+     WHERE subscriber.room_id IS NOT NULL AND subscriber.removed_at IS NULL
+       AND subscriber.event_subscriptions @> '["left"]'::jsonb
+       AND line.card->>'identityId' IS DISTINCT FROM subscriber.identity_id
+       AND NOT EXISTS (SELECT 1 FROM agent_commands command
+         WHERE command.agent_id=subscriber.identity_id AND command.source_message_id=line.id)
+     LIMIT 50`,
+  );
+  let queued = 0;
+  for (const leave of leaves.rows) {
+    const command = await createAgentCommand(database, {
+      roomId: leave.room_id,
+      agentId: leave.agent_id,
+      sourceMessageId: leave.message_id,
+      reason: 'subscribed_event',
+    });
+    if (command) queued++;
+  }
+  return queued;
 }
 
 export async function recordFreeAgentEvent(
@@ -671,7 +710,7 @@ export class FreeAgentService {
    * retention window. Returns how many agents it acted on.
    */
   async sweep(): Promise<number> {
-    let acted = 0;
+    let acted = await wakeFreeAgentsForLeaves(this.database);
     const provision = await this.database.query<{ agent_id: string }>(
       `SELECT agent_id FROM free_agents
        WHERE fly_machine_id IS NULL AND state='provisioning' AND provision_attempts<5

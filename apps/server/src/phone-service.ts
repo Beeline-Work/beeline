@@ -159,7 +159,6 @@ import { revokeDaemonCredentials } from './daemon-credential-lifetime.js';
 import { ensureFirstRoom, firstAccessibleRoomId } from './first-room.js';
 import type { FreeAgentService } from './free-agents.js';
 import {
-  announceWorkspaceDeparture,
   joinRooms,
   joinWorkspaceMembersToPublicRoom,
   syncTopLevelSharedRoomRoles,
@@ -6266,9 +6265,6 @@ export class PhoneService {
         );
         if (!otherOwner.rowCount) throw new Error('workspace manager cannot leave as sole owner');
       }
-      await announceWorkspaceDeparture(database, input.workspaceId, {
-        id: leaver.pubkey, kind: leaver.kind, name: leaver.name, handle: leaver.handle ?? null,
-      });
       await database.query(
         `UPDATE memberships SET removed_at=now() WHERE workspace_id=$1 AND identity_id=$2`,
         [input.workspaceId, viewerId],
@@ -6737,7 +6733,6 @@ export class PhoneService {
         roomId,
         subject: identitySubject({ id: leaver.pubkey, kind: leaver.kind, name: leaver.name }),
         verb: 'left',
-        kind: 'left',
         cardType: 'member-left',
         card: { identityId: viewerId },
       });
@@ -6821,7 +6816,6 @@ export class PhoneService {
         subject: identitySubject({ id: remover.pubkey, kind: remover.kind, name: remover.name }),
         verb: 'removed',
         object: { text: removed.name, id: removed.pubkey },
-        kind: 'left',
         cardType: 'member-removed',
         card: { identityId: input.memberId },
       });
@@ -6949,9 +6943,6 @@ export class PhoneService {
       if (target.role === 'owner') {
         throw new Error('workspace manager cannot remove an owner');
       }
-      await announceWorkspaceDeparture(database, input.workspaceId, {
-        id: removed.pubkey, kind: removed.kind, name: removed.name, handle: removed.handle ?? null,
-      });
       await database.query(
         `UPDATE memberships SET removed_at=now() WHERE workspace_id=$1 AND identity_id=$2`,
         [input.workspaceId, input.memberId],

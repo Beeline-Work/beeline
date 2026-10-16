@@ -520,17 +520,18 @@ describe('free starter agents', () => {
     await phone.execute('addWorkspaceMember', { workspaceId: id, memberId: FRIEND, role: 'member' }, OWNER);
     expect(await wakes()).toEqual(['@friend joined · invited by @lunchboxfortwo']);
 
-    // The person leaves #general, then the Workspace: each departure is one left event.
+    // The person leaves #general: the next sweep queues one wake on the leave line.
     await phone.execute('leaveRoom', { roomId }, FRIEND);
+    expect(await freeAgents.sweep()).toBeGreaterThanOrEqual(1);
     expect((await wakes()).at(-1)).toBe('@friend left');
+    // Each leave is one wake, never repeated.
+    await freeAgents.sweep();
+    expect(await wakes()).toHaveLength(2);
+    // A removal by an admin is a leave too.
     await phone.execute('addRoomMember', { roomId, memberIds: [FRIEND] }, OWNER);
-    await phone.execute('leaveWorkspace', { workspaceId: id }, FRIEND);
-    expect((await wakes()).at(-1)).toBe('@friend left');
-    expect(
-      (
-        await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND card_type='member-left'`, [roomId])
-      ).rowCount,
-    ).toBe(2);
+    await phone.execute('removeRoomMember', { roomId, memberId: FRIEND }, OWNER);
+    await freeAgents.sweep();
+    expect((await wakes()).at(-1)).toBe('@lunchboxfortwo removed @friend');
   });
 
   it('carries the owner\'s exact join greeting and the exit note in the free agent\'s instructions', async () => {

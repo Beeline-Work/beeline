@@ -139,6 +139,13 @@ them. Missing identities, unknown selections, missing carried references, and
 absent selected artifacts fail closed. Helper fleet uptake is recorded once as
 post-release observability; installed-helper convergence never gates delivery.
 
+Routine version allocation skips every version already held by a GitHub release
+record, including unpublished drafts from terminated or partially shipped
+attempts. Those records and assets remain intact; the next routine dispatch
+gets a fresh version without deleting a draft or retrying a terminated identity.
+Explicit recovery keeps the existing identity and termination guards. A release
+listing failure stops initialization before anything ships.
+
 A repeat routine dispatch at an already-delivered HEAD succeeds as a no-op. It
 does not rebuild components, replace the release index, upload release assets,
 or send a duplicate client notification.

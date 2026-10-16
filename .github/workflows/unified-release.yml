@@ -205,10 +205,15 @@ jobs:
               release_version="$REQUESTED_VERSION"
               # Never silently reuse an unrelated old release with this tag.
               ghr_requested_version_guard "$release_version" "$(git rev-parse --verify "$release_sha^{commit}")"
-            elif [ -f "$previous" ]; then
-              release_version=$(node scripts/unified-release.mjs release-version --previous "$previous" --sha "$release_sha")
             else
-              release_version=v0.0.1
+              # Every existing record reserves its version, including a draft
+              # left by a terminated or partially shipped attempt. Keep those
+              # records/assets intact; routine dispatch always gets a fresh
+              # identity. Explicit recovery above retains its strict guard.
+              ghr_api "repos/$GITHUB_REPOSITORY/releases" --paginate --jq '.[].tag_name' > "$RUNNER_TEMP/reserved-release-versions.txt"
+              version_args=(release-version --sha "$release_sha" --reserved-versions "$RUNNER_TEMP/reserved-release-versions.txt")
+              if [ -f "$previous" ]; then version_args+=(--previous "$previous"); fi
+              release_version=$(node scripts/unified-release.mjs "${version_args[@]}")
             fi
           fi
           release_id="${release_version}-${release_sha}"

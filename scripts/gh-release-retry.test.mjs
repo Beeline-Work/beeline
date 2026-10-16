@@ -41,6 +41,10 @@ if [ "$1" != release ]; then
     echo 'HTTP 422: No commit found for SHA' >&2
     exit 1
   fi
+  if [[ "$2" == */releases ]]; then
+    printf '%s\\n' "\${GHR_FAKE_RESERVED:-}"
+    exit 0
+  fi
   [ -z "\${GHR_FAKE_TAG_SHA:-}" ] || printf '%s\\n' "$GHR_FAKE_TAG_SHA"
   exit 0
 fi
@@ -368,7 +372,7 @@ test('initialize guards only a requested version against an existing release at 
   assert.ok(step, 'identity step found in unified-release.yml');
   assert.match(step, /GH_TOKEN: \$\{\{ github\.token \}\}/);
   assert.match(step, /\. scripts\/gh-release-retry\.sh/);
-  const requested = step.match(/if \[ -n "\$REQUESTED_VERSION" \]; then([\s\S]*?)\n\s*elif /)?.[1];
+  const requested = step.match(/if \[ -n "\$REQUESTED_VERSION" \]; then([\s\S]*?)\n\s*else/)?.[1];
   assert.ok(requested, 'requested-version branch found');
   assert.match(requested, /ghr_requested_version_guard "\$release_version" "\$\(git rev-parse --verify "\$release_sha\^\{commit\}"\)"/);
   assert.equal(step.match(/ghr_requested_version_guard/g).length, 1, 'auto-computed and plan-only versions are not guarded');
@@ -460,4 +464,55 @@ test('ghr_requested_version_guard: transient commit lookup errors do not contami
     releaseExists: true, tagSha: 'a'.repeat(40), apiFailures: 2,
   });
   assert.equal(result.status, 0, result.stderr);
+});
+
+// Execute the routine allocation shell from initialize with a fake GitHub API,
+// then pass its version into the real planner. No deploy or real API is used.
+const routineAllocation = WORKFLOW.match(/(# Every existing record reserves its version[\s\S]*?release_version=\$\(node scripts\/unified-release\.mjs "\$\{version_args\[@\]\}"\))/)?.[1]
+  ?.replace(/^              /gm, '')
+  .replace('node scripts/unified-release.mjs', `node '${join(REPO, 'scripts/unified-release.mjs')}'`);
+
+for (const fixture of [
+  { name: 'terminated v0.1.71 draft after successful v0.1.70', reserved: ['v0.1.71'], expected: 'v0.1.72' },
+  { name: 'multiple reserved drafts and published records', reserved: ['v0.1.71', 'v0.1.72', 'v0.1.73'], expected: 'v0.1.74' },
+  { name: 'no abandoned draft', reserved: [], expected: 'v0.1.71' },
+  { name: 'repeat successful HEAD remains a no-op', reserved: ['v0.1.70', 'v0.1.71'], sameSource: true, expected: 'v0.1.70' },
+  { name: 'first release skips a reserved draft', reserved: ['v0.0.1'], noPrevious: true, expected: 'v0.0.2' },
+]) {
+  test(`routine initialize: ${fixture.name}`, (t) => {
+    assert.ok(routineAllocation, 'routine workflow allocation found');
+    const oldSha = 'b'.repeat(40);
+    const { result, calls } = runHelper(t, `
+      export RUNNER_TEMP="$PWD"
+      export GHR_FAKE_RESERVED='${fixture.reserved.join('\n')}'
+      release_sha="$SHA"
+      previous="$PWD/previous.json"
+      node -e 'require("node:fs").writeFileSync(process.argv[1], JSON.stringify({version:"v0.1.70",sourceSha:process.argv[2]}))' "$previous" '${fixture.sameSource ? 'a'.repeat(40) : oldSha}'
+      ${fixture.noPrevious ? 'rm "$previous"' : ''}
+      # Failed components may already have shipped. Its immutable draft stays
+      # reserved even though the identity can never be retried.
+      printf '%s' '{"version":"v0.1.71","sourceSha":"${oldSha}","terminated":true}' > terminated-attempt.json
+      ${routineAllocation}
+      echo "allocated=$release_version"
+      ${fixture.sameSource ? '' : `node '${join(REPO, 'scripts/unified-release.mjs')}' plan --version "$release_version" --sha "$release_sha" --selection all --state "$PWD/new-state.json" --summary "$PWD/plan.json"`}
+      test -f terminated-attempt.json
+    `);
+    assert.equal(result.status, 0, result.stderr);
+    assert.match(result.stdout, new RegExp(`allocated=${fixture.expected.replaceAll('.', '\\.')}(?:\\n|$)`));
+    assert.ok(calls().includes("api repos/o/r/releases --paginate --jq .[].tag_name"));
+    assert.ok(!calls().some((line) => /^release (create|edit|upload|delete)/.test(line)), 'allocation preserves every existing record and asset');
+  });
+}
+
+test('routine initialize fails closed when reserved versions cannot be read', (t) => {
+  assert.ok(routineAllocation);
+  const { result, calls } = runHelper(t, `
+    export RUNNER_TEMP="$PWD"
+    previous="$PWD/missing.json"
+    release_sha="$SHA"
+    ${routineAllocation}
+  `, { apiFailures: 99 });
+  assert.notEqual(result.status, 0);
+  assert.equal(calls().length, 5);
+  assert.match(result.stderr, /giving up/);
 });

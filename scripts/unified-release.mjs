@@ -249,17 +249,19 @@ export function validateReleaseIdentity(version, sourceSha) {
   return { version, sourceSha };
 }
 
-export function nextReleaseVersion(previous) {
-  if (!previous) return 'v0.0.1';
-  const match = VERSION.exec(previous);
+export function nextReleaseVersion(previous, reservedVersions = []) {
+  const match = VERSION.exec(previous ?? 'v0.0.0');
   if (!match) fail(`cannot increment invalid release version: ${previous}`);
-  return `v${match[1]}.${match[2]}.${Number(match[3]) + 1}`;
+  const reserved = new Set(reservedVersions);
+  let patch = Number(match[3]) + 1;
+  while (reserved.has(`v${match[1]}.${match[2]}.${patch}`)) patch += 1;
+  return `v${match[1]}.${match[2]}.${patch}`;
 }
 
-export function releaseVersionForSource(previous, sourceSha) {
+export function releaseVersionForSource(previous, sourceSha, reservedVersions = []) {
   validateReleaseIdentity(previous?.version, previous?.sourceSha);
   validateReleaseIdentity(previous.version, sourceSha);
-  return previous.sourceSha === sourceSha ? previous.version : nextReleaseVersion(previous.version);
+  return previous.sourceSha === sourceSha ? previous.version : nextReleaseVersion(previous.version, reservedVersions);
 }
 
 function assertComponent(component) {
@@ -595,7 +597,9 @@ async function main(argv) {
   }
   if (command === 'release-version') {
     const previous = args.previous ? readJson(args.previous) : undefined;
-    process.stdout.write(`${previous ? releaseVersionForSource(previous, args.sha) : 'v0.0.1'}\n`);
+    const reservedVersions = args['reserved-versions']
+      ? readFileSync(args['reserved-versions'], 'utf8').split(/\r?\n/).filter(Boolean) : [];
+    process.stdout.write(`${previous ? releaseVersionForSource(previous, args.sha, reservedVersions) : nextReleaseVersion(undefined, reservedVersions)}\n`);
     return;
   }
   if (command === 'component-paths') {

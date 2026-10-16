@@ -17,6 +17,7 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { watch, readFileSync, writeFileSync, type FSWatcher } from 'node:fs';
 import { withAdapterInstallLock } from './adapter-install-lock.js';
+import { piStartupEnvironment } from './pi-startup.js';
 import { AcpResourceScope } from './acp-resource-scope.js';
 import type { SessionMode } from './config.js';
 import {
@@ -843,7 +844,10 @@ export class AcpClient extends EventEmitter {
     // probe at exit time (which would miss it).
     await this.oomKills.prime().catch(() => undefined);
     this.stopping = false;
-    const childEnv = this.inheritProcessEnv ? { ...process.env, ...this.agentEnv } : this.agentEnv;
+    const childEnv = piStartupEnvironment(
+      this.agentLabel,
+      this.inheritProcessEnv ? { ...process.env, ...this.agentEnv } : this.agentEnv,
+    );
     this.resourceScope = this.useResourceScope && !this.resourceScopeUnavailable
       ? new AcpResourceScope(this.resourceScopeMemoryMaxBytes) : undefined;
     const launch = this.resourceScope?.launch(this.agentCommand, this.agentArgs, childEnv);

@@ -1,0 +1,806 @@
+{
+  "definition": "Fly start request dispatched to ACP initialize response; excludes image provisioning; includes API latency",
+  "task": true,
+  "results": [
+    {
+      "sample": 1,
+      "image": "registry.fly.io/beeline-free-agents:cmp-opencode-3976d8a70",
+      "machineId": "80d211a6056448",
+      "startRequestedAt": 1792161937567,
+      "harness": "opencode",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "bootOnly": false,
+      "processStartedAt": 1792161940372,
+      "requests": [
+        {
+          "model": "deepseek/deepseek-v4.1-flash",
+          "maxTokens": 32000,
+          "stream": true,
+          "status": 200
+        },
+        {
+          "model": "deepseek/deepseek-v4.1-flash",
+          "maxTokens": 32000,
+          "stream": true,
+          "status": 200
+        },
+        {
+          "model": "deepseek/deepseek-v4.1-flash",
+          "maxTokens": 32000,
+          "stream": true,
+          "status": 200
+        },
+        {
+          "model": "deepseek/deepseek-v4.1-flash",
+          "maxTokens": 32000,
+          "stream": true,
+          "status": 200
+        }
+      ],
+      "usage": [
+        {
+          "prompt_tokens": 605,
+          "completion_tokens": 299,
+          "total_tokens": 904
+        },
+        {
+          "prompt_tokens": 7404,
+          "completion_tokens": 61,
+          "total_tokens": 7465
+        },
+        {
+          "prompt_tokens": 7568,
+          "completion_tokens": 123,
+          "total_tokens": 7691
+        },
+        {
+          "prompt_tokens": 7706,
+          "completion_tokens": 8,
+          "total_tokens": 7714
+        }
+      ],
+      "harnessSpawnedAt": 1792161940419,
+      "initializeAnsweredAt": 1792161948935,
+      "initializeMs": 8516,
+      "agentInfo": {
+        "name": "OpenCode",
+        "version": "1.18.31"
+      },
+      "turnStartedAt": 1792161951230,
+      "turnMs": 3458,
+      "usageDrainMs": 0,
+      "stopReason": "end_turn",
+      "artifactPassed": true,
+      "replyPassed": true,
+      "replyLength": 15,
+      "taskPassed": true,
+      "usageObserved": true,
+      "requestCount": 4,
+      "usageCount": 4,
+      "promptTokens": 23283,
+      "completionTokens": 491,
+      "totalTokens": 23774,
+      "machineStartToInitializeMs": 11368
+    },
+    {
+      "sample": 1,
+      "image": "registry.fly.io/beeline-free-agents:cmp-pi-3976d8a70",
+      "machineId": "845006f2642118",
+      "startRequestedAt": 1792161970301,
+      "harness": "pi",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "bootOnly": false,
+      "processStartedAt": 1792161973155,
+      "requests": [
+        {
+          "model": "deepseek/deepseek-v4.1-flash",
+          "maxTokens": 65536,
+          "stream": true,
+          "status": 200
+        },
+        {
+          "model": "deepseek/deepseek-v4.1-flash",
+          "maxTokens": 65536,
+          "stream": true,
+          "status": 200
+        },
+        {
+          "model": "deepseek/deepseek-v4.1-flash",
+          "maxTokens": 65536,
+          "stream": true,
+          "status": 200
+        }
+      ],
+      "usage": [
+        {
+          "prompt_tokens": 1592,
+          "completion_tokens": 45,
+          "total_tokens": 1637
+        },
+        {
+          "prompt_tokens": 1696,
+          "completion_tokens": 109,
+          "total_tokens": 1805
+        },
+        {
+          "prompt_tokens": 1830,
+          "completion_tokens": 8,
+          "total_tokens": 1838
+        }
+      ],
+      "harnessSpawnedAt": 1792161973209,
+      "initializeAnsweredAt": 1792161973902,
+      "initializeMs": 693,
+      "agentInfo": {
+        "name": "pi-acp",
+        "title": "pi ACP adapter",
+        "version": "0.0.34"
+      },
+      "turnStartedAt": 1792161976568,
+      "turnMs": 2293,
+      "usageDrainMs": 0,
+      "stopReason": "end_turn",
+      "artifactPassed": true,
+      "replyPassed": true,
+      "replyLength": 15,
+      "taskPassed": true,
+      "usageObserved": true,
+      "requestCount": 3,
+      "usageCount": 3,
+      "promptTokens": 5118,
+      "completionTokens": 162,
+      "totalTokens": 5280,
+      "machineStartToInitializeMs": 3601
+    },
+    {
+      "sample": 2,
+      "image": "registry.fly.io/beeline-free-agents:cmp-pi-3976d8a70",
+      "machineId": "820120f77ee2d8",
+      "startRequestedAt": 1792161992174,
+      "harness": "pi",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "bootOnly": false,
+      "processStartedAt": 1792161994862,
+      "requests": [
+        {
+          "model": "deepseek/deepseek-v4.1-flash",
+          "maxTokens": 65536,
+          "stream": true,
+          "status": 200
+        },
+        {
+          "model": "deepseek/deepseek-v4.1-flash",
+          "maxTokens": 65536,
+          "stream": true,
+          "status": 200
+        },
+        {
+          "model": "deepseek/deepseek-v4.1-flash",
+          "maxTokens": 65536,
+          "stream": true,
+          "status": 200
+        }
+      ],
+      "usage": [
+        {
+          "prompt_tokens": 1592,
+          "completion_tokens": 45,
+          "total_tokens": 1637
+        },
+        {
+          "prompt_tokens": 1696,
+          "completion_tokens": 108,
+          "total_tokens": 1804
+        },
+        {
+          "prompt_tokens": 1828,
+          "completion_tokens": 8,
+          "total_tokens": 1836
+        }
+      ],
+      "harnessSpawnedAt": 1792161994908,
+      "initializeAnsweredAt": 1792161995550,
+      "initializeMs": 642,
+      "agentInfo": {
+        "name": "pi-acp",
+        "title": "pi ACP adapter",
+        "version": "0.0.34"
+      },
+      "turnStartedAt": 1792161997938,
+      "turnMs": 2055,
+      "usageDrainMs": 0,
+      "stopReason": "end_turn",
+      "artifactPassed": true,
+      "replyPassed": true,
+      "replyLength": 15,
+      "taskPassed": true,
+      "usageObserved": true,
+      "requestCount": 3,
+      "usageCount": 3,
+      "promptTokens": 5116,
+      "completionTokens": 161,
+      "totalTokens": 5277,
+      "machineStartToInitializeMs": 3376
+    },
+    {
+      "sample": 2,
+      "image": "registry.fly.io/beeline-free-agents:cmp-opencode-3976d8a70",
+      "machineId": "8d99900c262298",
+      "startRequestedAt": 1792162017190,
+      "harness": "opencode",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "bootOnly": false,
+      "processStartedAt": 1792162019803,
+      "requests": [
+        {
+          "model": "deepseek/deepseek-v4.1-flash",
+          "maxTokens": 32000,
+          "stream": true,
+          "status": 200
+        },
+        {
+          "model": "deepseek/deepseek-v4.1-flash",
+          "maxTokens": 32000,
+          "stream": true,
+          "status": 200
+        },
+        {
+          "model": "deepseek/deepseek-v4.1-flash",
+          "maxTokens": 32000,
+          "stream": true,
+          "status": 200
+        },
+        {
+          "model": "deepseek/deepseek-v4.1-flash",
+          "maxTokens": 32000,
+          "stream": true,
+          "status": 200
+        },
+        {
+          "model": "deepseek/deepseek-v4.1-flash",
+          "maxTokens": 32000,
+          "stream": true,
+          "status": 200
+        }
+      ],
+      "usage": [
+        {
+          "prompt_tokens": 605,
+          "completion_tokens": 65,
+          "total_tokens": 670
+        },
+        {
+          "prompt_tokens": 7404,
+          "completion_tokens": 59,
+          "total_tokens": 7463
+        },
+        {
+          "prompt_tokens": 7542,
+          "completion_tokens": 54,
+          "total_tokens": 7596
+        },
+        {
+          "prompt_tokens": 7699,
+          "completion_tokens": 121,
+          "total_tokens": 7820
+        },
+        {
+          "prompt_tokens": 7835,
+          "completion_tokens": 8,
+          "total_tokens": 7843
+        }
+      ],
+      "harnessSpawnedAt": 1792162019853,
+      "initializeAnsweredAt": 1792162028537,
+      "initializeMs": 8684,
+      "agentInfo": {
+        "name": "OpenCode",
+        "version": "1.18.31"
+      },
+      "turnStartedAt": 1792162030631,
+      "turnMs": 5327,
+      "usageDrainMs": 0,
+      "stopReason": "end_turn",
+      "artifactPassed": true,
+      "replyPassed": true,
+      "replyLength": 15,
+      "taskPassed": true,
+      "usageObserved": true,
+      "requestCount": 5,
+      "usageCount": 5,
+      "promptTokens": 31085,
+      "completionTokens": 307,
+      "totalTokens": 31392,
+      "machineStartToInitializeMs": 11347
+    },
+    {
+      "sample": 3,
+      "image": "registry.fly.io/beeline-free-agents:cmp-opencode-3976d8a70",
+      "machineId": "879093a0159d28",
+      "startRequestedAt": 1792162062194,
+      "harness": "opencode",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "bootOnly": false,
+      "processStartedAt": 1792162064901,
+      "requests": [
+        {
+          "model": "deepseek/deepseek-v4.1-flash",
+          "maxTokens": 32000,
+          "stream": true,
+          "status": 200
+        },
+        {
+          "model": "deepseek/deepseek-v4.1-flash",
+          "maxTokens": 32000,
+          "stream": true,
+          "status": 200
+        },
+        {
+          "model": "deepseek/deepseek-v4.1-flash",
+          "maxTokens": 32000,
+          "stream": true,
+          "status": 200
+        },
+        {
+          "model": "deepseek/deepseek-v4.1-flash",
+          "maxTokens": 32000,
+          "stream": true,
+          "status": 200
+        }
+      ],
+      "usage": [
+        {
+          "prompt_tokens": 7404,
+          "completion_tokens": 60,
+          "total_tokens": 7464
+        },
+        {
+          "prompt_tokens": 605,
+          "completion_tokens": 79,
+          "total_tokens": 684
+        },
+        {
+          "prompt_tokens": 7567,
+          "completion_tokens": 120,
+          "total_tokens": 7687
+        },
+        {
+          "prompt_tokens": 7702,
+          "completion_tokens": 8,
+          "total_tokens": 7710
+        }
+      ],
+      "harnessSpawnedAt": 1792162064928,
+      "initializeAnsweredAt": 1792162073591,
+      "initializeMs": 8663,
+      "agentInfo": {
+        "name": "OpenCode",
+        "version": "1.18.31"
+      },
+      "turnStartedAt": 1792162075737,
+      "turnMs": 4149,
+      "usageDrainMs": 0,
+      "stopReason": "end_turn",
+      "artifactPassed": true,
+      "replyPassed": true,
+      "replyLength": 15,
+      "taskPassed": true,
+      "usageObserved": true,
+      "requestCount": 4,
+      "usageCount": 4,
+      "promptTokens": 23278,
+      "completionTokens": 267,
+      "totalTokens": 23545,
+      "machineStartToInitializeMs": 11397
+    },
+    {
+      "sample": 3,
+      "image": "registry.fly.io/beeline-free-agents:cmp-pi-3976d8a70",
+      "machineId": "84500dc2d41028",
+      "startRequestedAt": 1792162095434,
+      "harness": "pi",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "bootOnly": false,
+      "processStartedAt": 1792162098283,
+      "requests": [
+        {
+          "model": "deepseek/deepseek-v4.1-flash",
+          "maxTokens": 65536,
+          "stream": true,
+          "status": 200
+        },
+        {
+          "model": "deepseek/deepseek-v4.1-flash",
+          "maxTokens": 65536,
+          "stream": true,
+          "status": 200
+        },
+        {
+          "model": "deepseek/deepseek-v4.1-flash",
+          "maxTokens": 65536,
+          "stream": true,
+          "status": 200
+        }
+      ],
+      "usage": [
+        {
+          "prompt_tokens": 1592,
+          "completion_tokens": 45,
+          "total_tokens": 1637
+        },
+        {
+          "prompt_tokens": 1696,
+          "completion_tokens": 109,
+          "total_tokens": 1805
+        },
+        {
+          "prompt_tokens": 1830,
+          "completion_tokens": 8,
+          "total_tokens": 1838
+        }
+      ],
+      "harnessSpawnedAt": 1792162098337,
+      "initializeAnsweredAt": 1792162099040,
+      "initializeMs": 703,
+      "agentInfo": {
+        "name": "pi-acp",
+        "title": "pi ACP adapter",
+        "version": "0.0.34"
+      },
+      "turnStartedAt": 1792162101630,
+      "turnMs": 2064,
+      "usageDrainMs": 0,
+      "stopReason": "end_turn",
+      "artifactPassed": true,
+      "replyPassed": true,
+      "replyLength": 15,
+      "taskPassed": true,
+      "usageObserved": true,
+      "requestCount": 3,
+      "usageCount": 3,
+      "promptTokens": 5118,
+      "completionTokens": 162,
+      "totalTokens": 5280,
+      "machineStartToInitializeMs": 3606
+    },
+    {
+      "sample": 4,
+      "image": "registry.fly.io/beeline-free-agents:cmp-pi-3976d8a70",
+      "machineId": "80167eb652d508",
+      "startRequestedAt": 1792162116377,
+      "harness": "pi",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "bootOnly": false,
+      "processStartedAt": 1792162119365,
+      "requests": [
+        {
+          "model": "deepseek/deepseek-v4.1-flash",
+          "maxTokens": 65536,
+          "stream": true,
+          "status": 200
+        },
+        {
+          "model": "deepseek/deepseek-v4.1-flash",
+          "maxTokens": 65536,
+          "stream": true,
+          "status": 200
+        },
+        {
+          "model": "deepseek/deepseek-v4.1-flash",
+          "maxTokens": 65536,
+          "stream": true,
+          "status": 200
+        }
+      ],
+      "usage": [
+        {
+          "prompt_tokens": 1592,
+          "completion_tokens": 54,
+          "total_tokens": 1646
+        },
+        {
+          "prompt_tokens": 1775,
+          "completion_tokens": 113,
+          "total_tokens": 1888
+        },
+        {
+          "prompt_tokens": 1916,
+          "completion_tokens": 8,
+          "total_tokens": 1924
+        }
+      ],
+      "harnessSpawnedAt": 1792162119413,
+      "initializeAnsweredAt": 1792162120146,
+      "initializeMs": 733,
+      "agentInfo": {
+        "name": "pi-acp",
+        "title": "pi ACP adapter",
+        "version": "0.0.34"
+      },
+      "turnStartedAt": 1792162122941,
+      "turnMs": 2283,
+      "usageDrainMs": 0,
+      "stopReason": "end_turn",
+      "artifactPassed": true,
+      "replyPassed": true,
+      "replyLength": 15,
+      "taskPassed": true,
+      "usageObserved": true,
+      "requestCount": 3,
+      "usageCount": 3,
+      "promptTokens": 5283,
+      "completionTokens": 175,
+      "totalTokens": 5458,
+      "machineStartToInitializeMs": 3769
+    },
+    {
+      "sample": 4,
+      "image": "registry.fly.io/beeline-free-agents:cmp-opencode-3976d8a70",
+      "machineId": "d895de5b7de9e8",
+      "startRequestedAt": 1792162137018,
+      "harness": "opencode",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "bootOnly": false,
+      "processStartedAt": 1792162139777,
+      "requests": [
+        {
+          "model": "deepseek/deepseek-v4.1-flash",
+          "maxTokens": 32000,
+          "stream": true,
+          "status": 200
+        },
+        {
+          "model": "deepseek/deepseek-v4.1-flash",
+          "maxTokens": 32000,
+          "stream": true,
+          "status": 200
+        },
+        {
+          "model": "deepseek/deepseek-v4.1-flash",
+          "maxTokens": 32000,
+          "stream": true,
+          "status": 200
+        },
+        {
+          "model": "deepseek/deepseek-v4.1-flash",
+          "maxTokens": 32000,
+          "stream": true,
+          "status": 200
+        }
+      ],
+      "usage": [
+        {
+          "prompt_tokens": 7404,
+          "completion_tokens": 60,
+          "total_tokens": 7464
+        },
+        {
+          "prompt_tokens": 7567,
+          "completion_tokens": 123,
+          "total_tokens": 7690
+        },
+        {
+          "prompt_tokens": 7705,
+          "completion_tokens": 8,
+          "total_tokens": 7713
+        },
+        {
+          "prompt_tokens": 605,
+          "completion_tokens": 895,
+          "total_tokens": 1500
+        }
+      ],
+      "harnessSpawnedAt": 1792162139822,
+      "initializeAnsweredAt": 1792162148013,
+      "initializeMs": 8191,
+      "agentInfo": {
+        "name": "OpenCode",
+        "version": "1.18.31"
+      },
+      "turnStartedAt": 1792162149811,
+      "turnMs": 3167,
+      "usageDrainMs": 252,
+      "stopReason": "end_turn",
+      "artifactPassed": true,
+      "replyPassed": true,
+      "replyLength": 15,
+      "taskPassed": true,
+      "usageObserved": true,
+      "requestCount": 4,
+      "usageCount": 4,
+      "promptTokens": 23281,
+      "completionTokens": 1086,
+      "totalTokens": 24367,
+      "machineStartToInitializeMs": 10995
+    },
+    {
+      "sample": 5,
+      "image": "registry.fly.io/beeline-free-agents:cmp-opencode-3976d8a70",
+      "machineId": "83d193ea511098",
+      "startRequestedAt": 1792162168205,
+      "harness": "opencode",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "bootOnly": false,
+      "processStartedAt": 1792162171010,
+      "requests": [
+        {
+          "model": "deepseek/deepseek-v4.1-flash",
+          "maxTokens": 32000,
+          "stream": true,
+          "status": 200
+        },
+        {
+          "model": "deepseek/deepseek-v4.1-flash",
+          "maxTokens": 32000,
+          "stream": true,
+          "status": 200
+        },
+        {
+          "model": "deepseek/deepseek-v4.1-flash",
+          "maxTokens": 32000,
+          "stream": true,
+          "status": 200
+        },
+        {
+          "model": "deepseek/deepseek-v4.1-flash",
+          "maxTokens": 32000,
+          "stream": true,
+          "status": 200
+        }
+      ],
+      "usage": [
+        {
+          "prompt_tokens": 7404,
+          "completion_tokens": 61,
+          "total_tokens": 7465
+        },
+        {
+          "prompt_tokens": 605,
+          "completion_tokens": 631,
+          "total_tokens": 1236
+        },
+        {
+          "prompt_tokens": 7568,
+          "completion_tokens": 125,
+          "total_tokens": 7693
+        },
+        {
+          "prompt_tokens": 7708,
+          "completion_tokens": 8,
+          "total_tokens": 7716
+        }
+      ],
+      "harnessSpawnedAt": 1792162171057,
+      "initializeAnsweredAt": 1792162178705,
+      "initializeMs": 7648,
+      "agentInfo": {
+        "name": "OpenCode",
+        "version": "1.18.31"
+      },
+      "turnStartedAt": 1792162180626,
+      "turnMs": 3793,
+      "usageDrainMs": 0,
+      "stopReason": "end_turn",
+      "artifactPassed": true,
+      "replyPassed": true,
+      "replyLength": 15,
+      "taskPassed": true,
+      "usageObserved": true,
+      "requestCount": 4,
+      "usageCount": 4,
+      "promptTokens": 23285,
+      "completionTokens": 825,
+      "totalTokens": 24110,
+      "machineStartToInitializeMs": 10500
+    },
+    {
+      "sample": 5,
+      "image": "registry.fly.io/beeline-free-agents:cmp-pi-3976d8a70",
+      "machineId": "811d3e1ce20428",
+      "startRequestedAt": 1792162193122,
+      "harness": "pi",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "bootOnly": false,
+      "processStartedAt": 1792162196117,
+      "requests": [
+        {
+          "model": "deepseek/deepseek-v4.1-flash",
+          "maxTokens": 65536,
+          "stream": true,
+          "status": 200
+        },
+        {
+          "model": "deepseek/deepseek-v4.1-flash",
+          "maxTokens": 65536,
+          "stream": true,
+          "status": 200
+        },
+        {
+          "model": "deepseek/deepseek-v4.1-flash",
+          "maxTokens": 65536,
+          "stream": true,
+          "status": 200
+        }
+      ],
+      "usage": [
+        {
+          "prompt_tokens": 1592,
+          "completion_tokens": 59,
+          "total_tokens": 1651
+        },
+        {
+          "prompt_tokens": 1710,
+          "completion_tokens": 121,
+          "total_tokens": 1831
+        },
+        {
+          "prompt_tokens": 1870,
+          "completion_tokens": 8,
+          "total_tokens": 1878
+        }
+      ],
+      "harnessSpawnedAt": 1792162196166,
+      "initializeAnsweredAt": 1792162197774,
+      "initializeMs": 1608,
+      "agentInfo": {
+        "name": "pi-acp",
+        "title": "pi ACP adapter",
+        "version": "0.0.34"
+      },
+      "turnStartedAt": 1792162200134,
+      "turnMs": 2460,
+      "usageDrainMs": 0,
+      "stopReason": "end_turn",
+      "artifactPassed": true,
+      "replyPassed": true,
+      "replyLength": 15,
+      "taskPassed": true,
+      "usageObserved": true,
+      "requestCount": 3,
+      "usageCount": 3,
+      "promptTokens": 5172,
+      "completionTokens": 188,
+      "totalTokens": 5360,
+      "machineStartToInitializeMs": 4652
+    }
+  ],
+  "cleanupFailed": [],
+  "mediansMs": {
+    "opencode": 11347,
+    "pi": 3606
+  },
+  "collection": "corrected collection with complete per-request usage",
+  "modelRoute": "OpenRouter api/v1; DeepSeek V4.1 Flash; token inherited from Fly app secret, never passed in Machine config env",
+  "secretPresenceCheck": {
+    "present": true,
+    "checkMachineDeleted": true
+  },
+  "cleanupVerified": {
+    "machinesListedAfterAllRuns": 0,
+    "allTestMachinesDestroyed": true
+  },
+  "metrics": {
+    "opencode": {
+      "samples": 5,
+      "taskPassed": 5,
+      "artifactPassed": 5,
+      "medians": {
+        "promptTokens": 23283,
+        "completionTokens": 491,
+        "totalTokens": 24110,
+        "turnMs": 3793
+      }
+    },
+    "pi": {
+      "samples": 5,
+      "taskPassed": 5,
+      "artifactPassed": 5,
+      "medians": {
+        "promptTokens": 5118,
+        "completionTokens": 162,
+        "totalTokens": 5280,
+        "turnMs": 2283
+      }
+    }
+  }
+}

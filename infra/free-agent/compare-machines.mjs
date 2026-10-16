@@ -8,8 +8,8 @@ const sha = process.argv[2];
 if (!/^[a-f0-9]{7,40}$/.test(sha ?? '')) throw new Error('expected image commit SHA');
 if (!process.env.FLY_API_TOKEN) throw new Error('FLY_API_TOKEN is required in the backend environment');
 const task = process.argv.includes('--task');
-if (task && (!process.env.MODEL_BASE_URL || !process.env.BEELINE_FREE_AGENT_MODEL_TOKEN))
-  throw new Error('task mode requires a backend model route and scoped token');
+if (task && !process.env.MODEL_BASE_URL)
+  throw new Error('task mode requires MODEL_BASE_URL; the Machine receives its token from the Fly app secret');
 const base = 'https://api.machines.dev/v1/apps/beeline-free-agents/machines';
 const runner = await readFile(new URL('./compare-harness.mjs', import.meta.url));
 const results = [];
@@ -31,8 +31,7 @@ try {
       try {
         const image = `registry.fly.io/beeline-free-agents:cmp-${harness}-${sha}`;
         const env = { COMPARISON_KEEP_ALIVE: '1',
-          ...(task ? { MODEL_BASE_URL: process.env.MODEL_BASE_URL,
-            BEELINE_FREE_AGENT_MODEL_TOKEN: process.env.BEELINE_FREE_AGENT_MODEL_TOKEN } : {}) };
+          ...(task ? { MODEL_BASE_URL: process.env.MODEL_BASE_URL } : {}) };
         const machine = await api('', 'POST', { name: `cmp-${harness}-${sha.slice(0, 7)}-${sample}-${Date.now().toString(36)}`,
           region: 'iad', skip_launch: true, config: { image,
             init: { exec: ['node', '/opt/compare-harness.mjs', harness, ...(task ? [] : ['--boot'])] },
@@ -71,7 +70,9 @@ try {
           machineStartToInitializeMs: result.initializeAnsweredAt ? result.initializeAnsweredAt - startRequestedAt : null };
         results.push(row);
         console.log(JSON.stringify(row));
-        if (result.error || (task && (!result.taskPassed || !result.usageObserved))) throw new Error(`${harness} comparison failed`);
+        if (!task && result.error) throw new Error(`${harness} boot comparison failed`);
+        // Keep task failures in the denominator and finish all five samples.
+        if (task && (!result.taskPassed || !result.usageObserved)) process.exitCode = 1;
       } finally {
         if (id) {
           try { await api(`/${id}?force=true`, 'DELETE'); }

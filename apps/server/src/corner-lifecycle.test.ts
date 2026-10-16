@@ -322,14 +322,16 @@ async function redHead(cornerId: string, number: number, headSha: string) {
 const commands = (agentId: string, roomId: string) =>
   daemon.execute('getAgentCommands', { roomId }, agentId).then((r) => r.commands);
 
-const result = async (c: AgentCommand, text: string, generationId = 'g1') => {
-  const published = await daemon.execute('postRoomMessage', { roomId: c.roomId, requestId: c.turnRequestId, generationId, text }, c.agentId);
-  // Public corner prose no longer consumes an assignment. Match the real
-  // helper, which always follows publication with its terminal receipt.
+const result = (c: AgentCommand, text: string, generationId = 'g1') =>
+  daemon.execute('postRoomMessage', { roomId: c.roomId, requestId: c.turnRequestId, generationId, text }, c.agentId);
+
+/** A fixture that finishes execution, including the real helper's final receipt. */
+async function terminalResult(c: AgentCommand, text: string, generationId = 'g1') {
+  const published = await result(c, text, generationId);
   await daemon.execute('postAgentTurnReceipt', { roomId: c.roomId, requestId: c.turnRequestId,
     generationId, agentId: c.agentId, status: 'complete' }, c.agentId);
   return published;
-};
+}
 
 describe('the corner lifecycle contract itself', () => {
   it('validates against the shared workflow-contract schema', () => {
@@ -1047,7 +1049,7 @@ it('an absorbed review wake holds the whole digest until the worker releases its
   expect(await commands(B, cornerId)).toHaveLength(0);
   await expect(daemon.execute('claimAgentCommand', { roomId: cornerId, commandId: first!.id, generationId: 'held-review' }, B))
     .rejects.toThrow('command claim conflict');
-  await result(opening, 'Work is ready.');
+  await terminalResult(opening, 'Work is ready.');
   const digest = (await commands(B, cornerId)).find(command => command.id === first!.id)!;
   expect(digest.source.body).toBe('Unrelated reviewer fact');
   expect(digest.coalescedContext).toContain('check-passed');
@@ -1276,7 +1278,7 @@ describe('Reproduction S-07: every reviewer waits for a quiet corner', () => {
     const delivered = (await commands(reviewerId, cornerId)).some(c => c.id === review!.id);
     console.info(`Reproduction S-07: ${reviewerId === F ? 'fallback' : 'primary'} review with live worker lease → delivered=${delivered}`);
     expect(delivered).toBe(false);
-    await result(worker, 'Worker finished');
+    await terminalResult(worker, 'Worker finished');
     expect((await commands(reviewerId, cornerId)).some(c => c.id === review!.id)).toBe(true);
   });
 
@@ -1517,7 +1519,7 @@ describe('each transition wakes the next role exactly once (AC-2)', () => {
     const cornerId = await inReview();
     const [opening] = await commands(A, cornerId);
     await claim(opening!);
-    await result(opening!, 'The implementation is ready for review.');
+    await terminalResult(opening!, 'The implementation is ready for review.');
     const [review] = await commands(B, cornerId);
     await claim(review!);
     await orderRepairsFromRoom(review!, cornerId, 'Attach the available proof before review');

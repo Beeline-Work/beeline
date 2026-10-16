@@ -3,6 +3,13 @@
 infra/*
 !infra/voice-livekit
 !infra/voice-livekit/**
+!infra/free-agent
+!infra/free-agent/**
+!relay-stack
+relay-stack/*
+!relay-stack/web
+relay-stack/web/*
+!relay-stack/web/install.sh
 !package.json
 !package-lock.json
 !tsconfig.base.json

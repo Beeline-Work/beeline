@@ -25,6 +25,7 @@ import {
 import { supervisor } from './helper-service.js';
 import { installLaunchdTrustySquireBrokerService } from './launchd.js';
 import { MachineLink } from './machine-link.js';
+import { FreeAgentIdle } from './free-agent-idle.js';
 import { ReleaseTransaction, withInstallLock } from './managed-update.js';
 import {
   clearHelperPidRecordIfPid,
@@ -99,6 +100,15 @@ async function serveMachineHelper(
     runUpdateWorker?: () => Promise<void>;
     signals?: EventEmitter;
     exitProcess?: (code: number) => void;
+    /**
+     * A free agent's Machine: sleep after this idle window (`free-agent-idle.ts`).
+     * Its helper never updates in place; `refresh` asks the server to stop
+     * rather than suspend, so the next boot installs the newer release.
+     */
+    freeAgentIdle?: {
+      idleMs: number;
+      requestSleep: (options: { refresh: boolean }) => Promise<boolean>;
+    };
   } = {},
 ): Promise<{ reason: HelperExitReason; lifecycle: HelperLifecycle }> {
   const runAgent = options.runAgent ?? runAgentRuntime;
@@ -306,7 +316,8 @@ async function serveMachineHelper(
     lifecycle.stop(reason);
   };
 
-  if (layout)
+  let freeAgentRefresh = false;
+  if (layout && !options.freeAgentIdle)
     update = new ReleaseTransaction({
       layout,
       loadedRelease,
@@ -425,7 +436,13 @@ async function serveMachineHelper(
       if (slot.state === 'starting' || slot.state === 'restarting') setState(slot, 'serving');
     },
     tickUpdate,
-    notifyReleaseAvailable: (releaseKey) => update?.notify(releaseKey),
+    notifyReleaseAvailable: (releaseKey) => {
+      if (options.freeAgentIdle) {
+        if (releaseKey.split(':')[1] !== loadedReleaseIdentity?.commit) freeAgentRefresh = true;
+        return;
+      }
+      update?.notify(releaseKey);
+    },
     requestForceUpdate,
   };
 
@@ -635,6 +652,21 @@ async function serveMachineHelper(
     () => restartHelper('failed'),
   );
 
+  const freeAgentIdle = options.freeAgentIdle;
+  const idle = freeAgentIdle
+    ? new FreeAgentIdle({
+        idleMs: freeAgentIdle.idleMs,
+        requestSleep: () => freeAgentIdle.requestSleep({ refresh: freeAgentRefresh }),
+        activeTurns: () =>
+          [...hosted.values()].reduce((total, agent) => total + agent.core.activeTurnCount(), 0),
+        onResume: () => {
+          for (const link of links.values()) link.reconnectNow();
+        },
+        log: (line) => console.log(`[helper] free agent ${line}`),
+      })
+    : undefined;
+  idle?.start();
+
   try {
     console.log(`[helper] hosting ${initial.length} agent(s) on one machine socket per server`);
     for (const configPath of initial) await startSlot(configPath);
@@ -658,6 +690,7 @@ async function serveMachineHelper(
     }
     await Promise.all([...slots.values()].map((slot) => slot.running));
   } finally {
+    idle?.stop();
     signals.off('SIGHUP', onHangup);
     stopWatchdog();
     update?.dispose();

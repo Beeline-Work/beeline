@@ -55,6 +55,13 @@ import { retireWelcomeWorkspace, welcomeRetirementPreflight } from './welcome-re
 import { feedbackConfigFromEnv } from './feedback.js';
 import { FeedbackGitHub } from './feedback-github.js';
 import { startComputerExpirySweep } from './computer-session.js';
+import {
+  addFreeAgentToWorkspace,
+  FREE_AGENT_SWEEP_MS,
+  FreeAgentService,
+  freeAgentConfigFromEnv,
+} from './free-agents.js';
+import { FlyMachines } from './fly-machines.js';
 
 function required(name: string) {
   const value = process.env[name];
@@ -337,6 +344,31 @@ async function main() {
   const speechTranscriber = speechTranscriberFromEnv();
   const voiceConfig = voiceConfigFromEnv();
   const voice = voiceConfig ? new VoiceService(database, live, voiceConfig) : undefined;
+  const freeAgentConfig = freeAgentConfigFromEnv(process.env, publicOrigin);
+  const freeAgents = freeAgentConfig && process.env.FLY_FREE_AGENT_API_TOKEN
+    ? new FreeAgentService(
+        database,
+        freeAgentConfig,
+        new FlyMachines(
+          process.env.FLY_FREE_AGENT_API_TOKEN,
+          process.env.FLY_FREE_AGENT_APP || 'beeline-free-agents',
+          fetch,
+          process.env.FLY_FREE_AGENT_API_ORIGIN || undefined,
+        ),
+        (agentId, transaction) => auth.createDaemonExchange(agentId, transaction),
+      )
+    : undefined;
+  if (freeAgents) phone.setFreeAgents(freeAgents);
+  const freeAgentModel = freeAgentConfig && process.env.BEELINE_FREE_AGENT_MODEL_KEY
+    ? {
+        database,
+        config: freeAgentConfig,
+        upstreamKey: process.env.BEELINE_FREE_AGENT_MODEL_KEY,
+        ...(process.env.BEELINE_FREE_AGENT_MODEL_UPSTREAM
+          ? { upstreamBaseUrl: process.env.BEELINE_FREE_AGENT_MODEL_UPSTREAM }
+          : {}),
+      }
+    : undefined;
   const backgroundJobs = new BackgroundJobRunner();
   const server = createBeelineServer({
     database,
@@ -357,6 +389,8 @@ async function main() {
     composioReceiverUrl: `${publicOrigin}/v1/connectors/events/composio`,
     live,
     connectionPresence,
+    ...(freeAgents ? { freeAgents } : {}),
+    ...(freeAgentModel ? { freeAgentModel } : {}),
     review,
     releaseNotify,
     ...(speechTranscriber ? { speechTranscriber } : {}),
@@ -450,9 +484,11 @@ async function main() {
             ...(institutionalAnchors ? { anchors: institutionalAnchors } : {}),
           }));
       }
+      if (freeAgents) await backgroundJobs.run('free-agents', () => freeAgents.sweep());
       const nextDue = await backgroundJobs.run('schedule-next-due', () => schedules.nextDueAt());
       return Math.min(
         reconciliationMs,
+        ...(freeAgents ? [FREE_AGENT_SWEEP_MS] : []),
         ...(nextDue.ok && nextDue.value ? [Math.max(0, nextDue.value.getTime() - Date.now())] : []),
         ...(deadlineDue.ok && deadlineDue.value !== null
           ? [Math.max(0, deadlineDue.value)] : []),
@@ -462,6 +498,19 @@ async function main() {
   );
   if (push) liveListener.setPushWake(() => { pushPending = true; leader.wake(); });
   liveListener.setOwedWake(() => leader.wake());
+  // A committed wake for a sleeping free agent starts its Machine at once;
+  // the leader sweep retries anything this misses.
+  const stopFreeAgentWake = freeAgents
+    ? live.subscribeAll((event) => {
+        if (
+          event.type === 'invalidate' &&
+          event.reason === 'postgres:agent_commands' &&
+          event.operation === 'INSERT' &&
+          event.targetAgentId
+        )
+          freeAgents.kickIfFree(event.targetAgentId);
+      })
+    : undefined;
   const stopBackgroundWake = live.subscribeAll((event) => {
     if (
       event.type === 'invalidate' &&
@@ -483,6 +532,7 @@ async function main() {
     leader.stop();
     stopComputerExpiry();
     stopBackgroundWake();
+    stopFreeAgentWake?.();
     await voice?.close();
     await connectionPresence.stop();
     await liveListener.stop();
@@ -499,6 +549,35 @@ async function main() {
   process.once('SIGTERM', () => void stop());
 }
 
+/** `--add-free-agent <workspaceId>`: give an existing Workspace its free agent. */
+async function runAddFreeAgent(workspaceId: string | undefined): Promise<void> {
+  if (!workspaceId) throw new Error('--add-free-agent requires a Workspace id');
+  const config = freeAgentConfigFromEnv(process.env, required('PUBLIC_ORIGIN'));
+  if (!config) throw new Error('free agents are not configured on this server');
+  const database = new PostgresDatabase(required('DATABASE_URL'), 1, { mode: 'long-running' });
+  try {
+    const service = new FreeAgentService(
+      database,
+      config,
+      new FlyMachines(
+        required('FLY_FREE_AGENT_API_TOKEN'),
+        process.env.FLY_FREE_AGENT_APP || 'beeline-free-agents',
+        fetch,
+        process.env.FLY_FREE_AGENT_API_ORIGIN || undefined,
+      ),
+      async () => {
+        throw new Error('bootstrap is served by the running server');
+      },
+    );
+    const agentId = await addFreeAgentToWorkspace(database, service, workspaceId);
+    console.log(agentId
+      ? `[free-agents] added free agent ${agentId} to Workspace ${workspaceId}`
+      : `[free-agents] Workspace ${workspaceId} already has a free agent, or its owner is at the limit`);
+  } finally {
+    await database.close();
+  }
+}
+
 async function runWelcomeRetirementPreflight(): Promise<void> {
   const database = new PostgresDatabase(required('MIGRATION_DATABASE_URL'), 1, {
     mode: 'long-running',
@@ -511,9 +590,12 @@ async function runWelcomeRetirementPreflight(): Promise<void> {
 }
 
 const migrationMode =
-  process.argv[2] === '--migrate' || process.argv[2] === '--welcome-retirement-preflight';
+  process.argv[2] === '--migrate' || process.argv[2] === '--welcome-retirement-preflight' ||
+  process.argv[2] === '--add-free-agent';
 (process.argv[2] === '--welcome-retirement-preflight'
   ? runWelcomeRetirementPreflight()
+  : process.argv[2] === '--add-free-agent'
+    ? runAddFreeAgent(process.argv[3])
   : migrationMode
     ? runReleaseMigration()
     : main()

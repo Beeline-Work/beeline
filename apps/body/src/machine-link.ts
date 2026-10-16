@@ -284,6 +284,11 @@ export class MachineLink {
     if (!this.#channels.size) this.link.stop();
   }
 
+  /** Open a fresh socket at once; every channel re-registers on it. */
+  reconnectNow(): void {
+    this.link.reconnectNow();
+  }
+
   stop(forUpdate = false): void {
     this.#channels.clear();
     this.link.stop(forUpdate);

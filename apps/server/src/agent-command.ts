@@ -827,9 +827,11 @@ export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Prom
       direct_participants: string[] | null;
       parent_id: string | null;
       tagged_ids: string[];
+      owns_free_agent: boolean;
     }>(
       `SELECT m.room_id,m.author_id,m.text,r.direct_participants,r.parent_id,
-   ${taggedIdentityIdsSql('m')} tagged_ids
+   ${taggedIdentityIdsSql('m')} tagged_ids,
+   EXISTS(SELECT 1 FROM free_agents f WHERE f.owner_id=m.author_id) owns_free_agent
  FROM messages m JOIN identities i ON i.id=m.author_id AND i.kind='human'
  JOIN rooms r ON r.id=m.room_id
  WHERE m.id=$1`,
@@ -849,6 +851,24 @@ export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Prom
     ...(hasSystemReportMention(source.text) ? [] : (source.direct_participants ?? [])),
   ]);
   targets.delete(source.author_id);
+  // A free starter agent alone in a top-level Room answers its owner's
+  // untagged messages: a new person replying to its hello should not need
+  // to know about tags first.
+  if (source.owns_free_agent && !source.tagged_ids.length && !source.parent_id && !source.direct_participants) {
+    const freeAgent = (
+      await db.query<{ agent_id: string }>(
+        `SELECT f.agent_id FROM free_agents f
+         JOIN memberships m ON m.identity_id=f.agent_id AND m.room_id=$1 AND m.removed_at IS NULL
+         WHERE f.owner_id=$2 AND f.state<>'failed'
+           AND NOT EXISTS (SELECT 1 FROM memberships other
+             JOIN identities other_identity ON other_identity.id=other.identity_id
+               AND other_identity.kind='agent'
+             WHERE other.room_id=$1 AND other.removed_at IS NULL AND other.identity_id<>f.agent_id)`,
+        [source.room_id, source.author_id],
+      )
+    ).rows[0];
+    if (freeAgent) targets.add(freeAgent.agent_id);
+  }
   for (const target of targets) {
     const agent = (
       await db.query<{ owner_id: string; access_policy: unknown }>(

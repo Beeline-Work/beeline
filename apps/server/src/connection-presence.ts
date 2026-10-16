@@ -8,6 +8,7 @@ import type { CommittedTurnLiveRow, LiveHub } from './live.js';
 import { tagsKnownIdentitySql } from './message-mentions.js';
 import { noteFirstSilence } from './turn-silence-notice.js';
 import { lockAgentMachine } from './machine-offline.js';
+import { freeAgentReachableSql } from './free-agents.js';
 import { systemLine } from './system-line.js';
 import { POSTGRES_LIVE_CHANNEL } from './postgres-live.js';
 import { renudgeStrandedPendingCommands } from './agent-command.js';
@@ -625,6 +626,19 @@ export async function claimAgentConnection(
       [agentId, connection.connectionId, connection.instanceId],
     );
     await writeAgentAnnouncement(db, undefined, agentId, metadata, connection, true);
+    // A free agent's Machine is serving again; the wake latency ends here.
+    const freeAgent = await db.query<{ previous: string }>(
+      `WITH old AS (SELECT agent_id,state FROM free_agents WHERE agent_id=$1 FOR UPDATE)
+       UPDATE free_agents f SET state='running',last_activity_at=now(),updated_at=now()
+       FROM old WHERE f.agent_id=old.agent_id AND f.state NOT IN ('failed','destroyed')
+       RETURNING old.state previous`,
+      [agentId],
+    );
+    if (freeAgent.rows[0])
+      await db.query(
+        `INSERT INTO free_agent_events(agent_id,kind,detail) VALUES($1,'connected',$2::jsonb)`,
+        [agentId, JSON.stringify({ previous: freeAgent.rows[0].previous })],
+      );
     return Number(claimed.rows[0]?.epoch ?? 0);
   });
   await database.query(`SELECT pg_notify($1, $2)`, [
@@ -654,7 +668,7 @@ export async function releaseAgentConnection(
     );
     if (!current.rowCount) return false;
     await db.query(
-      `UPDATE live_outputs SET body=body || jsonb_build_object('status','offline','held',false,
+      `UPDATE live_outputs SET body=body || ${releasedPresenceSql('$1')} || jsonb_build_object(
          'observedAt',GREATEST($3::bigint,COALESCE((body->>'observedAt')::bigint,0)+1)),
          updated_at=clock_timestamp()
        WHERE agent_id=$1 AND kind='presence' AND body->>'connectionId'=$2`,
@@ -664,6 +678,17 @@ export async function releaseAgentConnection(
   });
   if (released) await broadcastAgentPresence(database, live, agentId);
   return released;
+}
+
+/**
+ * Presence once an agent's connection ends. An ordinary agent goes offline.
+ * A free agent's Machine sleeps and is started by its next wake, so it stays
+ * reachable (`held`) and is marked `asleep`.
+ */
+function releasedPresenceSql(agentIdSql: string): string {
+  return `(CASE WHEN ${freeAgentReachableSql(agentIdSql)}
+    THEN jsonb_build_object('status','online','held',true,'asleep',true)
+    ELSE jsonb_build_object('status','offline','held',false) END)`;
 }
 
 /** Release every connection held by a server instance whose lease expired. */
@@ -680,8 +705,7 @@ export async function releaseStaleServerConnections(
            AND server.renewed_at>clock_timestamp()-make_interval(secs => $1::double precision / 1000))
        RETURNING connection.agent_id,connection.connection_id
      ), demoted AS (
-       UPDATE live_outputs presence SET body=presence.body || jsonb_build_object(
-         'status','offline','held',false,
+       UPDATE live_outputs presence SET body=presence.body || ${releasedPresenceSql('stale.agent_id')} || jsonb_build_object(
          'observedAt',GREATEST($2::bigint,COALESCE((presence.body->>'observedAt')::bigint,0)+1)),
          updated_at=clock_timestamp()
        FROM stale

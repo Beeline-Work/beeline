@@ -1,5 +1,6 @@
 import { retireBotDirectMessages } from './migrations/one-system-thread.js';
 import { VOICE_SCHEMA } from './voice-schema.js';
+import { FREE_AGENTS_SCHEMA } from './free-agents.js';
 import { backfillComputerObservations } from './system-line.js';
 import { scheduleWorkflowSlugSql } from './workflow-admin.js';
 import { AGENT_SUBSCRIPTIONS_SCHEMA } from './agent-subscriptions.js';
@@ -199,7 +200,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 27;
+export const REQUIRED_SCHEMA_VERSION = 28;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -2964,6 +2965,7 @@ export async function migrate(
     `ALTER TABLE wallet_bindings ADD COLUMN IF NOT EXISTS delegation_standing boolean NOT NULL DEFAULT false`,
   );
   await ddlScript('agent command schema', AGENT_COMMAND_SCHEMA);
+  await ddlScript('free agents schema', FREE_AGENTS_SCHEMA);
   await retryMigrationStep('pending command re-nudge index', () => createIndexConcurrently(
     database, 'agent_commands_pending_renudge',
     `CREATE INDEX CONCURRENTLY agent_commands_pending_renudge ON agent_commands(created_at)

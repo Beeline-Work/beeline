@@ -9,6 +9,7 @@ import {
   handleFreeAgentModelRequest,
   StreamUsageReader,
   reserveAllowance,
+  retryAfterMs,
   type FreeAgentModelProxyOptions,
 } from './free-agent-model-proxy.js';
 import { freeAgentConfigFromEnv, tokenHash } from './free-agents.js';
@@ -172,6 +173,8 @@ describe('free agent model proxy', () => {
       BEELINE_FREE_AGENT_DAILY_BUDGET_USD: '12', BEELINE_FREE_AGENT_MAX_TURN_SECONDS: '60' })).toMatchObject({
       cachedTokenWeight: 0.1, callsPerMinute: 5, dailyBudgetUsd: 12, maxTurnMs: 60_000,
     });
+    expect(freeAgentLimitsFromEnv({ BEELINE_FREE_AGENT_MAX_OUTPUT_TOKENS: '16000', BEELINE_FREE_AGENT_MAX_CONCURRENT_CALLS: '3' }))
+      .toMatchObject({ maxOutputTokens: 16_000, maxConcurrentCalls: 3 });
     expect(chargedTokens({ prompt_tokens: 100, completion_tokens: 5, prompt_tokens_details: { cached_tokens: 91 } }, 0.1)).toBe(24);
   });
 
@@ -392,5 +395,78 @@ describe('free agent model proxy', () => {
     reader.push('data: {"usage":{"prompt_tokens":3');
     reader.push(',"completion_tokens":4}}\n\ndata: [DONE]\n');
     expect(reader.usage).toEqual({ prompt_tokens: 3, completion_tokens: 4 });
+  });
+  it('defaults the reply cap to at least 32,768 tokens and 8 concurrent calls', () => {
+    // "8k max tokens is too small."
+    expect(DEFAULT_FREE_AGENT_LIMITS.maxOutputTokens).toBeGreaterThanOrEqual(32_768);
+    expect(freeAgentLimitsFromEnv({}).maxOutputTokens).toBe(32_768);
+    expect(freeAgentLimitsFromEnv({}).maxConcurrentCalls).toBe(8);
+  });
+
+  it('FREE-CAP-1: sends a 65,536-token request upstream with max_tokens 32,768', async () => {
+    config = { ...CONFIG, dailyTokenCap: 1_000_000, lifetimeTokenCap: 0 };
+    expect((await call({ max_tokens: 65_536, messages: [{ role: 'user', content: 'hi' }] })).status).toBe(200);
+    expect(upstream).toHaveLength(1);
+    expect(upstream[0]!.body.max_tokens).toBe(32_768);
+    console.log('Demonstrated FREE-CAP-1: requested 65536 reply tokens; upstream max_tokens 32768.');
+  });
+
+  it('FREE-INFLIGHT-1: 20 parallel calls ride out the in-flight 402 with at most 8 upstream calls running', async () => {
+    config = { ...CONFIG, dailyTokenCap: 1_000_000, lifetimeTokenCap: 0 };
+    const refused = new Set<string>();
+    let running = 0;
+    let peak = 0;
+    let attempts = 0;
+    const flaky = (async (_input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      attempts += 1;
+      running += 1;
+      peak = Math.max(peak, running);
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        const id = String(JSON.parse(String(init?.body)).messages[0].content);
+        if (!refused.has(id)) {
+          refused.add(id);
+          return new Response(JSON.stringify({ error: { code: 402, message: 'in-flight budget exhausted',
+            metadata: { reason: 'in_flight_budget_exhausted', limit_source: 'openrouter_in_flight_budget' } } }),
+            { status: 402, headers: { 'content-type': 'application/json', 'retry-after': '0' } });
+        }
+        return reply();
+      } finally {
+        running -= 1;
+      }
+    }) as typeof fetch;
+    server.removeAllListeners('request');
+    server.on('request', (request, response) => {
+      void handleFreeAgentModelRequest(request, response, new URL(request.url!, 'http://x').pathname, {
+        database: db, config, upstreamKey: 'sk-or-server-only', fetchImpl: flaky,
+      });
+    });
+    const responses = await Promise.all(Array.from({ length: 20 }, async (_, i) => {
+      const response = await call({ messages: [{ role: 'user', content: `call ${i}` }] });
+      return { status: response.status, content: (await response.json()).choices?.[0]?.message?.content };
+    }));
+    expect(responses).toEqual(Array(20).fill({ status: 200, content: 'done' }));
+    expect(attempts).toBe(40);
+    expect(peak).toBeLessThanOrEqual(8);
+    expect(peak).toBe(8);
+    // Each call settles once, at its reported usage: 200 uncached + 40 completion + ceil(300 * 0.25).
+    expect((await freeAgentAllowance(db, OWNER, new Date())).today).toBe(20 * 315);
+    console.log(`Demonstrated FREE-INFLIGHT-1: 20/20 calls HTTP 200 after an in-flight 402 each; ${attempts} upstream attempts, peak ${peak} in flight; charged ${20 * 315} tokens once each.`);
+  });
+
+  it('passes other 402 refusals through without retry and refunds them', async () => {
+    reply = () => new Response(JSON.stringify({ error: { code: 402, message: 'no credits',
+      metadata: { reason: 'openrouter_credits' } } }), { status: 402, headers: { 'content-type': 'application/json', 'retry-after': '0' } });
+    const response = await call({ messages: [{ role: 'user', content: 'hi' }] });
+    expect(response.status).toBe(402);
+    expect((await response.json()).error.metadata.reason).toBe('openrouter_credits');
+    expect(upstream).toHaveLength(1);
+    expect(await freeAgentAllowance(db, OWNER, new Date())).toEqual({ today: 0, lifetime: 0 });
+  });
+
+  it('reads Retry-After as seconds or an HTTP date', () => {
+    expect(retryAfterMs('120')).toBe(120_000);
+    expect(retryAfterMs(new Date(10_000).toUTCString(), 4_000)).toBe(6_000);
+    expect(retryAfterMs(null)).toBe(5_000);
   });
 });

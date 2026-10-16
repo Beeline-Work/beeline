@@ -100,6 +100,29 @@ The cached weight defaults to 0.25 (configurable within 0.10–0.25).
 At the cap the proxy answers, in the agent's voice, that the allowance is used
 and how to connect the person's own agent.
 
+The proxy caps every reply at `BEELINE_FREE_AGENT_MAX_OUTPUT_TOKENS` (default
+32,768). It sends upstream the smallest of this cap, the harness's own
+`max_tokens`, and the allowance and budget room. A request with no bound
+reserves 8,192. Pi still asks for 65,536, so the cap changes with a server
+restart and needs no image rebuild.
+
+OpenRouter holds each running call's prompt plus `max_tokens` cost against an
+account in-flight budget. A call that does not fit gets HTTP 402 with
+`error.metadata.reason` `in_flight_budget_exhausted` and a `Retry-After`. The
+proxy waits for `Retry-After` (5 s when absent) and tries again, for up to 3
+minutes from the first such refusal and never past the turn cap. The call's
+reservation stays in place and settles once, whatever the number of attempts.
+Retries happen before any byte reaches the Machine. Other 402 reasons and other
+errors pass through and are refunded.
+
+Each server process runs at most `BEELINE_FREE_AGENT_MAX_CONCURRENT_CALLS`
+(default 8) upstream calls at once, across all free agents. Further calls wait
+in arrival order. A call keeps its slot while it waits out a `Retry-After`.
+Time in this queue does not count toward the 3-minute retry window. A queued
+call gives up when its caller disconnects or its turn reaches the 15-minute
+cap, refunds its reservation and gets HTTP 503. The limit is per process:
+production runs two machines, so the real ceiling is twice the setting.
+
 Model calls require a claimed `input`/`resume` command with a live lease and a
 claim younger than the hard turn cap. Pending and completed commands do not
 permit calls, including copied model tokens used from outside Beeline. The
@@ -159,7 +182,10 @@ Free agents stay off unless all of these are set: `BEELINE_FREE_AGENTS=1`,
 `BEELINE_FREE_AGENT_DAILY_BUDGET_USD` (25),
 `BEELINE_FREE_AGENT_INPUT_USD_PER_MILLION` (1),
 `BEELINE_FREE_AGENT_OUTPUT_USD_PER_MILLION` (5),
-`BEELINE_FREE_AGENT_MAX_TURN_SECONDS` (900), `BEELINE_FREE_AGENT_INSTALL_BASE_URL` and
+`BEELINE_FREE_AGENT_MAX_TURN_SECONDS` (900),
+`BEELINE_FREE_AGENT_MAX_OUTPUT_TOKENS` (32768),
+`BEELINE_FREE_AGENT_MAX_CONCURRENT_CALLS` (8, per server process),
+`BEELINE_FREE_AGENT_INSTALL_BASE_URL` and
 `FLY_FREE_AGENT_API_ORIGIN` (proofs only). Fly offers no egress firewall for
 Machines, so outbound traffic is not restricted. The abuse limits are Machine
 size, sleep, the reaper, live turns, owner token/rate limits and the shared dollar budget.

@@ -7,6 +7,10 @@ export interface FreeAgentLimits {
   inputUsdPerMillion: number;
   outputUsdPerMillion: number;
   maxTurnMs: number;
+  /** Largest reply a call may ask the upstream for, whatever the harness requests. */
+  maxOutputTokens: number;
+  /** Upstream model calls one server process runs at once; further calls wait. */
+  maxConcurrentCalls: number;
 }
 
 export const DEFAULT_FREE_AGENT_LIMITS: FreeAgentLimits = {
@@ -17,6 +21,8 @@ export const DEFAULT_FREE_AGENT_LIMITS: FreeAgentLimits = {
   inputUsdPerMillion: 1,
   outputUsdPerMillion: 5,
   maxTurnMs: 15 * 60_000,
+  maxOutputTokens: 32_768,
+  maxConcurrentCalls: 8,
 };
 
 export function freeAgentLimitsFromEnv(env: NodeJS.ProcessEnv): FreeAgentLimits {
@@ -31,6 +37,8 @@ export function freeAgentLimitsFromEnv(env: NodeJS.ProcessEnv): FreeAgentLimits 
     inputUsdPerMillion: positive('BEELINE_FREE_AGENT_INPUT_USD_PER_MILLION', 1),
     outputUsdPerMillion: positive('BEELINE_FREE_AGENT_OUTPUT_USD_PER_MILLION', 5),
     maxTurnMs: positive('BEELINE_FREE_AGENT_MAX_TURN_SECONDS', 900) * 1000,
+    maxOutputTokens: Math.max(1, Math.floor(positive('BEELINE_FREE_AGENT_MAX_OUTPUT_TOKENS', 32_768))),
+    maxConcurrentCalls: Math.max(1, Math.floor(positive('BEELINE_FREE_AGENT_MAX_CONCURRENT_CALLS', 8))),
   };
 }
 

@@ -6007,14 +6007,17 @@
     "occurrences": 1
   },
   {
-    "id": "src/github-operations.ts:GitHubOperations.refreshCheckRollup:wrapper:29358d5be5a3158d",
+    "id": "src/github-operations.ts:GitHubOperations.refreshCheckRollup:wrapper:bd0b80f90f45243a",
     "file": "apps/server/src/github-operations.ts",
     "kind": "wrapper",
-    "template": "this.systemNote(target.corner_id, target.author_id, {\n    subject: GITHUB_SUBJECT,\n    verb: becameFailing ? 'found failing checks on' : `${label} a check`,\n    ...(becamePassing\n        ? { kind: 'check-passed' as const }\n        : becameFailing\n            ? { kind: 'check-failed' as const }\n            : {}),\n    object: becameFailing\n        ? {\n            text: current.pr?.title ??\n                (current.pr?.number ? `pull request #${current.pr.number}` : 'the pull request'),\n            ...(current.pr?.url ? { url: current.pr.url } : {}),\n            ...(check.headSha ? { headSha: check.headSha } : {}),\n        }\n        : {\n            text: check.name,\n            ...(check.url ? { url: check.url } : {}),\n            ...(check.headSha ? { headSha: check.headSha } : {}),\n        },\n    ...(becameFailing\n        ? { consequence: `failing ${failing.join(', ')}` }\n        : check.status === 'failed' && check.conclusion && check.conclusion !== 'failure'\n            ? { consequence: check.conclusion }\n            : {}),\n    ...(becameFailing ? { payload: {\n            failedJobs: jobLogs.filter(item => newFailures.includes(item.name)),\n            ...(followup || newAttempt ? { followup: true } : {}),\n        } } : {}),\n}, becamePassing\n    ? `github:checks:green:${check.headSha}:${attempt}`\n    : becameFailing\n        ? `github:checks:failed:${check.headSha}:${attempt}:${followup ? 'followup' : 'first'}`\n        : `github:checks:${label}:${check.name}:${check.headSha ?? hash(JSON.stringify(check))}`, database)",
+    "template": "this.systemNote(target.corner_id, target.author_id, {\n    subject: GITHUB_SUBJECT,\n    verb: becameFailing ? 'found failing checks on' : `${label} a check`,\n    ...(becamePassing\n        ? { kind: 'check-passed' as const }\n        : becameFailing\n            ? { kind: 'check-failed' as const }\n            : {}),\n    object: becameFailing\n        ? {\n            text: current.pr?.title ??\n                (current.pr?.number ? `pull request #${current.pr.number}` : 'the pull request'),\n            ...(current.pr?.url ? { url: current.pr.url } : {}),\n            ...(check.headSha ? { headSha: check.headSha } : {}),\n        }\n        : {\n            text: check.name,\n            ...(check.url ? { url: check.url } : {}),\n            ...(check.headSha ? { headSha: check.headSha } : {}),\n        },\n    ...(becameFailing\n        ? { consequence: `failing ${failing.join(', ')}` }\n        : check.status === 'failed' && check.conclusion && check.conclusion !== 'failure'\n            ? { consequence: check.conclusion }\n            : {}),\n    ...(becameFailing ? { payload: {\n            failedJobs: jobLogs.filter(item => newFailures.includes(item.name)),\n            ...(!checksSettled(summary.checks) ? { runInProgress: true } : {}),\n            ...(followup || newAttempt ? { followup: true } : {}),\n        } } : {}),\n}, becamePassing\n    ? `github:checks:green:${check.headSha}:${attempt}`\n    : becameFailing\n        ? `github:checks:failed:${check.headSha}:${attempt}:${followup ? 'followup' : 'first'}`\n        : `github:checks:${label}:${check.name}:${check.headSha ?? hash(JSON.stringify(check))}`, database)",
     "literals": [
+      "''",
       "', '",
+      "'CANCELLED'",
       "'GitHub'",
       "'\\n'",
+      "'cancelled'",
       "'check-failed'",
       "'check-passed'",
       "'failed'",

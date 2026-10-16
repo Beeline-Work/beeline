@@ -68,6 +68,7 @@ export interface FreeAgentConfig {
   /** Free agents one person may own; later Workspaces get none. */
   maxPerOwner: number;
   dailyTokenCap: number;
+  /** Lifetime allowance per owner; 0 means none (the default). */
   lifetimeTokenCap: number;
   /** Key that seals the agent's identity keys at rest. */
   sealSecret: string;
@@ -103,7 +104,7 @@ export function freeAgentConfigFromEnv(
     idleSeconds: number('BEELINE_FREE_AGENT_IDLE_SECONDS', 60),
     maxPerOwner: number('BEELINE_FREE_AGENT_MAX_PER_OWNER', 3),
     dailyTokenCap: number('BEELINE_FREE_AGENT_DAILY_TOKENS', 300_000),
-    lifetimeTokenCap: number('BEELINE_FREE_AGENT_LIFETIME_TOKENS', 3_000_000),
+    lifetimeTokenCap: number('BEELINE_FREE_AGENT_LIFETIME_TOKENS', 0),
     sealSecret,
     publicOrigin: env.BEELINE_FREE_AGENT_SERVER_ORIGIN || publicOrigin,
     image,

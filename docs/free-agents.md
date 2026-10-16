@@ -65,13 +65,14 @@ proxy pins `BEELINE_FREE_AGENT_MODEL` (default `deepseek/deepseek-v4-flash`). It
 forwards to `BEELINE_FREE_AGENT_MODEL_UPSTREAM` (default OpenRouter) with
 `BEELINE_FREE_AGENT_MODEL_KEY`, which may be a Squire egress grant. Before each call it
 reserves the call's worst case (prompt bound plus a capped reply) against the
-owner's daily and lifetime allowance, under a per-owner lock. Concurrent calls
-therefore cannot spend past either cap, and each reply is bounded to the room
+owner's daily allowance, under a per-owner lock. Concurrent calls
+therefore cannot spend past the cap, and each reply is bounded to the room
 left. On completion it settles to the reported usage. A refused call is
-refunded, and a reply that broke off keeps its reservation (defaults 300K and 3M
-tokens). A charge
+refunded, and a reply that broke off keeps its reservation (default 300K tokens
+a day). There is no lifetime cap unless `BEELINE_FREE_AGENT_LIFETIME_TOKENS` is
+set. A charge
 counts uncached prompt tokens plus completion tokens; cached prompt reads are free.
-At either cap the proxy answers, in the agent's voice, that the allowance is used
+At the cap the proxy answers, in the agent's voice, that the allowance is used
 and how to connect the person's own agent.
 
 ## Server configuration

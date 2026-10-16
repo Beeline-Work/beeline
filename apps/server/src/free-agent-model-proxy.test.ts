@@ -9,13 +9,14 @@ import {
   handleFreeAgentModelRequest,
   StreamUsageReader,
 } from './free-agent-model-proxy.js';
-import { tokenHash } from './free-agents.js';
+import { freeAgentConfigFromEnv, tokenHash } from './free-agents.js';
 import { PgliteDatabase } from './test-support.js';
 
 const OWNER = 'a'.repeat(64);
 const AGENT = 'b'.repeat(64);
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const TOKEN = `bfm_${'x'.repeat(43)}`;
+const ENABLED_ENV = { BEELINE_FREE_AGENTS: '1', BEELINE_FREE_AGENT_SEAL_KEY: 'seal', FLY_FREE_AGENT_IMAGE: 'image' };
 const CONFIG = { model: 'deepseek/deepseek-v4-flash', dailyTokenCap: 1_000, lifetimeTokenCap: 5_000 };
 
 describe('free agent model proxy', () => {
@@ -125,7 +126,35 @@ describe('free agent model proxy', () => {
     ).toEqual([{ detail: { limit: 'daily' } }, { detail: { limit: 'daily' } }]);
   });
 
-  it('stops for good at the lifetime allowance, across days', async () => {
+  it('has no lifetime cap by default: an account past 3M lifetime tokens still spends within its daily cap', async () => {
+    expect(freeAgentConfigFromEnv(ENABLED_ENV, 'https://beeline.example')).toMatchObject({
+      dailyTokenCap: 300_000,
+      lifetimeTokenCap: 0,
+    });
+    await db.query(
+      `INSERT INTO free_agent_usage(owner_id,day,tokens) VALUES($1,'2026-01-01',2000000),($1,'2026-01-02',1500000)`,
+      [OWNER],
+    );
+    const uncapped = { ...CONFIG, lifetimeTokenCap: 0 };
+    server.removeAllListeners('request');
+    server.on('request', (request, response) => {
+      void handleFreeAgentModelRequest(request, response, new URL(request.url!, 'http://x').pathname, {
+        database: db,
+        config: uncapped,
+        upstreamKey: 'sk-or-server-only',
+        fetchImpl: (async (_url: string | URL, init?: RequestInit) => {
+          upstream.push({ url: '', authorization: null, body: JSON.parse(String(init?.body)) });
+          return reply();
+        }) as typeof fetch,
+      });
+    });
+    const body = await (await call({ messages: [{ role: 'user', content: 'more' }] })).json();
+    expect(body.choices[0].message.content).toBe('done');
+    expect(upstream).toHaveLength(1);
+    expect(await freeAgentAllowance(db, OWNER, new Date())).toEqual({ today: 240, lifetime: 3_500_240 });
+  });
+
+  it('stops for good at a configured lifetime allowance, across days', async () => {
     await db.query(
       `INSERT INTO free_agent_usage(owner_id,day,tokens) VALUES($1,'2026-01-01',3000),($1,'2026-01-02',2000)`,
       [OWNER],

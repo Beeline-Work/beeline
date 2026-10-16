@@ -7,7 +7,7 @@ import { recordFreeAgentEvent, tokenHash, type FreeAgentConfig } from './free-ag
  * The only model access a free agent's Machine has: an OpenAI-compatible
  * `chat/completions` endpoint authenticated by the agent's revocable model
  * token. The server pins the model, adds the OpenRouter key and charges the
- * owner's daily and lifetime allowances. The allowance counts uncached
+ * owner's daily allowance (and a lifetime one, when configured). The allowance counts uncached
  * prompt tokens plus completion tokens; cached prompt reads are not counted.
  */
 export interface FreeAgentModelProxyOptions {
@@ -150,7 +150,7 @@ export function promptTokenBound(body: Record<string, unknown>): number {
 /**
  * Reserve a call's worst case against the owner's allowance before it runs.
  * Serialized per owner across server instances, so concurrent calls can never
- * together spend past the daily or lifetime cap; the reply's output is
+ * together spend past the daily cap (or a configured lifetime cap); the reply's output is
  * bounded by what remains. Returns the reservation, or the cap reached.
  */
 export async function reserveAllowance(
@@ -165,7 +165,8 @@ export async function reserveAllowance(
     await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`free-agent-usage:${ownerId}`]);
     const used = await freeAgentAllowance(db, ownerId, now);
     const daily = config.dailyTokenCap - used.today;
-    const lifetime = config.lifetimeTokenCap - used.lifetime;
+    const lifetime =
+      config.lifetimeTokenCap > 0 ? config.lifetimeTokenCap - used.lifetime : Number.POSITIVE_INFINITY;
     const room = Math.min(daily, lifetime) - promptTokens;
     if (room < MINIMUM_CALL_TOKENS) return { limit: lifetime <= daily ? 'lifetime' : 'daily' };
     const maxOutput = Math.min(room, requestedOutput ?? DEFAULT_OUTPUT_RESERVATION);

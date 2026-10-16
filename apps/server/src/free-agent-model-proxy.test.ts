@@ -94,6 +94,30 @@ describe('free agent model proxy', () => {
     expect(await freeAgentAllowance(db, OWNER, new Date())).toEqual({ today: 240, lifetime: 240 });
   });
 
+  it('forwards only the approved model: fallback models, provider routing and extra replies are dropped', async () => {
+    const response = await call({
+      model: 'anthropic/claude-opus-4.1',
+      models: ['anthropic/claude-opus-4.1', 'openai/gpt-6'],
+      provider: { order: ['anthropic'], allow_fallbacks: true },
+      route: 'fallback',
+      plugins: [{ id: 'web' }],
+      transforms: ['middle-out'],
+      n: 8,
+      max_completion_tokens: 100_000,
+      temperature: 0.2,
+      tools: [{ type: 'function', function: { name: 'read' } }],
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+    expect(response.status).toBe(200);
+    expect(upstream).toHaveLength(1);
+    const sent = upstream[0]!.body;
+    expect(sent.model).toBe('deepseek/deepseek-v4-flash');
+    for (const key of ['models', 'provider', 'route', 'plugins', 'transforms', 'n', 'max_completion_tokens']) {
+      expect(sent, key).not.toHaveProperty(key);
+    }
+    expect(Object.keys(sent).sort()).toEqual(['max_tokens', 'messages', 'model', 'temperature', 'tools', 'usage']);
+  });
+
   it('charges a streamed reply from its final usage chunk', async () => {
     reply = () =>
       new Response(

@@ -27,6 +27,33 @@ interface Usage {
 
 const MAX_REQUEST_BYTES = 8 * 1024 * 1024;
 
+/**
+ * Request fields a Machine may set. Everything else is dropped, so it cannot
+ * name fallback models (`models`), pick providers or plugins, or ask for
+ * several replies (`n`) on the server's key.
+ */
+const FORWARDED_FIELDS = [
+  'messages',
+  'tools',
+  'tool_choice',
+  'parallel_tool_calls',
+  'stream',
+  'temperature',
+  'top_p',
+  'stop',
+  'seed',
+  'frequency_penalty',
+  'presence_penalty',
+  'response_format',
+  'reasoning',
+  'reasoning_effort',
+] as const;
+
+/** The caller's request reduced to the fields a Machine may set. */
+export function forwardedFields(body: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(FORWARDED_FIELDS.filter((key) => key in body).map((key) => [key, body[key]]));
+}
+
 /** Tokens one response charges against the allowance. */
 export function chargedTokens(usage: Usage | undefined): number {
   if (!usage) return 0;
@@ -269,7 +296,7 @@ export async function handleFreeAgentModelRequest(
   const upstreamBase = (options.upstreamBaseUrl ?? 'https://openrouter.ai/api/v1').replace(/\/$/, '');
   const openRouter = new URL(upstreamBase).hostname.endsWith('openrouter.ai');
   const upstreamBody = {
-    ...body,
+    ...forwardedFields(body),
     // Strict OpenAI-compatible hosts refuse the reasoning a harness replays.
     ...(openRouter
       ? {}
@@ -283,7 +310,6 @@ export async function handleFreeAgentModelRequest(
     model: options.config.model,
     // The reservation bounds the reply; a larger client bound is dropped.
     max_tokens: reservation.maxOutput,
-    max_completion_tokens: undefined,
     // OpenRouter's own usage flag; other OpenAI-compatible hosts refuse it.
     ...(openRouter ? { usage: { include: true } } : {}),
     ...(stream ? { stream_options: { include_usage: true } } : {}),

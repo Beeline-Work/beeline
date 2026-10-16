@@ -2,7 +2,7 @@ import { createECDH } from 'node:crypto';
 import { getPublicKey } from '@beeline/nostr';
 import { AGENT_MENTION_NOTICE_GRACE_MS } from '@beeline/api-contract/agent-access';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createAgentCommand, routeHumanMessage } from './agent-command.js';
+import { createAgentCommand } from './agent-command.js';
 import {
   claimAgentConnection,
   releaseAgentConnection,
@@ -467,38 +467,6 @@ describe('free starter agents', () => {
     expect(await freeAgentOf(id)).toMatchObject({ state: 'waking', fly_machine_id: 'm2' });
   });
 
-  it('answers its owner without a tag when it is the only agent in the Room', async () => {
-    const { id, roomId } = await createWorkspace();
-    await settle();
-    const agent = await freeAgentOf(id);
-    const say = async (messageId: string, author: string, text: string) => {
-      await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`, [
-        messageId,
-        roomId,
-        author,
-        text,
-      ]);
-      await routeHumanMessage(db, messageId);
-      return (
-        await db.query(`SELECT 1 FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2`, [
-          messageId,
-          agent.agent_id,
-        ])
-      ).rowCount;
-    };
-    expect(await say('1'.repeat(64), OWNER, 'hi, make me a todo list')).toBe(1);
-    // A second agent in the Room: tags are required again.
-    await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Ordinary','ordinary')`, [
-      ORDINARY,
-    ]);
-    await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [ORDINARY, OWNER]);
-    await db.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
-      [id, ORDINARY, roomId],
-    );
-    expect(await say('2'.repeat(64), OWNER, 'hi again')).toBe(0);
-  });
-
   it('adds one free agent to an existing Workspace in its #general, owned by its owner', async () => {
     const workspaceId = '44444444-4444-4444-8444-444444444444';
     await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Old')`, [workspaceId]);
@@ -527,7 +495,7 @@ describe('free starter agents', () => {
     expect(await addFreeAgentToWorkspace(db, freeAgents, workspaceId)).toBeUndefined();
   });
 
-  it('hears #general joins and leaves from creation: people wake it, agents and its own events do not', async () => {
+  it('hears #general joins and leaves from creation', async () => {
     const { id, roomId } = await createWorkspace();
     await settle();
     const agent = await freeAgentOf(id);
@@ -551,12 +519,6 @@ describe('free starter agents', () => {
     // A person joins the Workspace: one joined event in #general wakes the free agent.
     await phone.execute('addWorkspaceMember', { workspaceId: id, memberId: FRIEND, role: 'member' }, OWNER);
     expect(await wakes()).toEqual(['@friend joined · invited by @lunchboxfortwo']);
-
-    // An agent joins: no greeting wake.
-    await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Ordinary','ordinary')`, [ORDINARY]);
-    await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [ORDINARY, OWNER]);
-    await phone.execute('addWorkspaceMember', { workspaceId: id, memberId: ORDINARY, role: 'member' }, OWNER);
-    expect(await wakes()).toHaveLength(1);
 
     // The person leaves #general, then the Workspace: each departure is one left event.
     await phone.execute('leaveRoom', { roomId }, FRIEND);

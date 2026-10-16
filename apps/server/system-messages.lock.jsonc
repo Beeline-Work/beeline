@@ -5853,6 +5853,26 @@
     "occurrences": 1
   },
   {
+    "id": "src/free-agent-warning.ts:warnFreeAgentOwner:message-write:e12cb4c30806015f",
+    "file": "apps/server/src/free-agent-warning.ts",
+    "kind": "message-write",
+    "template": "db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING id`, [id, roomId, agentId, text])",
+    "literals": [
+      "':'",
+      "'hex'",
+      "'sha256'",
+      "`${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`",
+      "`I've used 80% of today's free allowance. It resets at midnight UTC. Want help running and connecting your own agent on your computer or an always-on machine? Open [Members -> Add agent](${link}) to get started.`",
+      "`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING id`",
+      "`SELECT free.workspace_id FROM free_agents free\n       WHERE free.agent_id=$1 AND free.owner_id=$2\n       AND EXISTS(SELECT 1 FROM memberships m WHERE m.workspace_id=free.workspace_id\n         AND m.room_id IS NULL AND m.identity_id=$2 AND m.removed_at IS NULL)`",
+      "`SELECT id FROM rooms WHERE workspace_id=$1 AND direct_participants=$2::jsonb`",
+      "`buzz-dm:v1:${workspaceId}:${participants.join(':')}`",
+      "`free-agent-warning:${ownerId}:${day}`",
+      "`https://web.usebeeline.app/beeline/members?communityId=${encodeURIComponent(agent.workspace_id)}&action=add-agent`"
+    ],
+    "occurrences": 1
+  },
+  {
     "id": "src/github-operations.ts:GitHubOperations.mergeCorner:systemLine:a3631ff7edcd4615",
     "file": "apps/server/src/github-operations.ts",
     "kind": "systemLine",
@@ -8794,5 +8814,39 @@
       "`workflow_output_scope AS (\n    SELECT command.id command_id,command.room_id,original.action,original.parent_command_id,\n      command.agent_id,original.source_message_id,\n      COALESCE(${runIdSql},source.card->>'runId',choice_message.card->>'runId') run_id\n    FROM ${commandRelation} command\n    JOIN agent_commands original ON original.room_id=command.room_id AND original.agent_id=command.agent_id\n      AND (original.id=command.id OR original.cancellation_reason='coalesced_into:'||command.id)\n    JOIN messages source ON source.id=original.source_message_id AND source.room_id=command.room_id\n    LEFT JOIN room_choices choice ON choice.id::text=source.card->>'choiceId'\n      AND choice.room_id=command.room_id\n    LEFT JOIN messages choice_message ON choice_message.id=choice.message_id\n    WHERE original.action IN ('input','resume')\n  ), workflow_output_pins AS (\n    SELECT scope.command_id,scope.room_id,COALESCE(parent_visit.id,latest.id) visit_id\n    FROM workflow_output_scope scope\n    LEFT JOIN LATERAL (\n      SELECT message.id FROM messages message\n      JOIN agent_commands parent ON parent.id=scope.parent_command_id AND parent.agent_id=scope.agent_id\n      WHERE scope.action='resume' AND message.room_id=scope.room_id\n        AND message.card_type='workflow-handoff'\n        AND message.card->'outputCommandIds' ? scope.parent_command_id\n        AND (scope.run_id IS NULL OR message.card->>'runId'=scope.run_id)\n      ORDER BY message.created_at DESC,message.id DESC LIMIT 1\n    ) parent_visit ON true\n    LEFT JOIN LATERAL (\n      SELECT message.id\n      FROM messages message\n      WHERE parent_visit.id IS NULL AND message.room_id=scope.room_id\n        AND message.card->>'runId'=scope.run_id\n        AND message.card_type='workflow-handoff'\n        AND message.card->>'toState' IS NOT NULL\n        AND NOT COALESCE((message.card->>'reassigned')::boolean,false)\n      ORDER BY (message.id=scope.source_message_id) DESC,\n        (message.card->>'seq')::int DESC NULLS LAST,message.created_at DESC,message.id DESC\n      LIMIT 1\n    ) latest ON true\n    WHERE parent_visit.id IS NOT NULL OR latest.id IS NOT NULL\n  ), workflow_output_bound AS (\n    UPDATE messages message SET card=jsonb_set(message.card,'{outputCommandIds}',\n      COALESCE(message.card->'outputCommandIds','[]'::jsonb)||to_jsonb(pinned.command_id))\n    FROM workflow_output_pins pinned WHERE message.id=pinned.visit_id\n      AND NOT EXISTS (\n        SELECT 1 FROM messages bound WHERE bound.room_id=pinned.room_id\n          AND bound.card_type=message.card_type AND bound.card->>'runId'=message.card->>'runId'\n          AND bound.card->'outputCommandIds' ? pinned.command_id\n      )\n    RETURNING message.id\n  )`"
     ],
     "occurrences": 1
-  }
+  },
+{
+  "id": "src/free-agents.ts:FreeAgentService.createInWorkspace:wrapper:8627c24c4fb3aba4",
+  "file": "apps/server/src/free-agents.ts",
+  "kind": "wrapper",
+  "template": "createFreeAgentInWorkspace(database, this.config, input)",
+  "literals": [],
+  "occurrences": 1
+},
+{
+  "id": "src/free-agents.ts:createFreeAgentInWorkspace:message-write:8d98fd9b256b1102",
+  "file": "apps/server/src/free-agents.ts",
+  "kind": "message-write",
+  "template": "database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`, [createHash('sha256').update(`free-agent-hello:${agent.publicKey}`).digest('hex'),\n    input.roomId, agent.publicKey, hello])",
+  "literals": [
+    "'<handle>'",
+    "'<owner>'",
+    "'Beebee'",
+    "'compressed'",
+    "'hex'",
+    "'secp256k1'",
+    "'sha256'",
+    "'workspace-handle-allocation'",
+    "`@<owner> Hi, I'm Beebee, your free agent in Beeline. I run on my own small cloud computer, so I can write files, run commands, research and draft things for you. Try \"@<handle> draft a welcome note for this Workspace\" to start. If you don't want me here, open Members and remove me from the Workspace.`",
+    "`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`",
+    "`SELECT COALESCE(handle,id) handle FROM identities WHERE id=$1`",
+    "`SELECT i.id,i.name,i.face_id,i.handle FROM memberships m JOIN identities i ON i.id=m.identity_id\n     WHERE m.workspace_id=ANY($1::uuid[]) AND m.room_id IS NULL AND m.removed_at IS NULL\n       AND i.hidden_from_roster=false`",
+    "`SELECT id FROM workspaces WHERE id=ANY($1::uuid[]) ORDER BY id FOR UPDATE`",
+    "`SELECT pg_advisory_xact_lock(hashtext($1))`",
+    "`SELECT workspace_id FROM memberships\n     WHERE identity_id=$1 AND room_id IS NULL AND removed_at IS NULL`",
+    "`free-agent-hello:${agent.publicKey}`",
+    "`identity-handle:${identityId}`"
+  ],
+  "occurrences": 1
+}
 ]

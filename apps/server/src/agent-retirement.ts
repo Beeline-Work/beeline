@@ -76,6 +76,15 @@ export async function retireAgentFromWorkspace(
   },
 ) {
   const { workspaceId, agentId, remover, removed } = input;
+  // Keep the row as a tombstone: operator add and every wake must see the removal.
+  await database.query(
+    `WITH removed AS (
+       UPDATE free_agents SET removed_at=clock_timestamp(),bootstrap_hash=NULL,model_token_hash=NULL,
+         wake_requested_at=NULL,updated_at=now()
+       WHERE agent_id=$1 AND removed_at IS NULL RETURNING agent_id
+     ) INSERT INTO free_agent_events(agent_id,kind) SELECT agent_id,'removed' FROM removed`,
+    [agentId],
+  );
   await revokeDaemonCredentials(database, agentId);
   await database.query(
     `UPDATE memberships SET removed_at=now() WHERE workspace_id=$1 AND identity_id=$2`,

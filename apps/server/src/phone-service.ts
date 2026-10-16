@@ -1,4 +1,5 @@
 import { notifyAgentConfigChange } from './postgres-live.js';
+import { recordAgentConnectedAfterNudge, recordFreeAgentGuideStarted } from './free-agent-warning.js';
 import { SQUIRE_MCP_TARGET } from '@beeline/api-contract/phone';
 import { FIRST_PARTY_INTEGRATIONS } from './first-party-integrations.js';
 import { machineSquireReport, queueSquireWork, queueOwnerSquireWork, squireMachineAddress, squireMachineId, squireWorkStatus } from './squire-machine.js';
@@ -1004,10 +1005,10 @@ export class PhoneService {
   /** Only with a live hub: the cache is unsound without its message invalidations. */
   private readonly outlineCache?: HistoryOutlineCache;
 
-  private freeAgents?: Pick<FreeAgentService, 'createInWorkspace' | 'kick'>;
+  private freeAgents?: Pick<FreeAgentService, 'createInWorkspace' | 'kick' | 'remove'>;
 
   /** Give every newly created Workspace a free starter agent. */
-  setFreeAgents(freeAgents: Pick<FreeAgentService, 'createInWorkspace' | 'kick'>): void {
+  setFreeAgents(freeAgents: Pick<FreeAgentService, 'createInWorkspace' | 'kick' | 'remove'>): void {
     this.freeAgents = freeAgents;
   }
 
@@ -3970,6 +3971,7 @@ export class PhoneService {
           machineId, agentId: input.agentPubkey,
         });
       }
+      await recordAgentConnectedAfterNudge(database, pairing.created_by, pairing.workspace_id, input.agentPubkey);
       const exchange = createDaemonExchange
         ? await createDaemonExchange(input.agentPubkey, database)
         : undefined;
@@ -6184,7 +6186,6 @@ export class PhoneService {
    */
   private async createWorkspace(input: Input<'createWorkspace'>, viewerId: string) {
     const id = input.workspaceId ?? randomUUID();
-    let freeAgentId: string | undefined;
     const roomId = await this.database.transaction(async (db) => {
       const inserted = await db.query(
         `INSERT INTO workspaces(id,name) VALUES($1,$2) ON CONFLICT DO NOTHING`,
@@ -6207,14 +6208,13 @@ export class PhoneService {
       // Only a newly created Workspace gets a free starter agent, in the same
       // transaction as its #general, so the creator lands next to it.
       if (inserted.rowCount && this.freeAgents)
-        freeAgentId = await this.freeAgents.createInWorkspace(db, {
+        await this.freeAgents.createInWorkspace(db, {
           workspaceId: id,
           creatorId: viewerId,
           roomId: generalId,
         });
       return generalId;
     });
-    if (freeAgentId) this.freeAgents?.kick(freeAgentId, 'provisioned');
     return { id, roomId };
   }
   private async updateWorkspace(input: Input<'updateWorkspace'>, viewerId: string) {
@@ -7121,6 +7121,7 @@ export class PhoneService {
       `INSERT INTO agent_pairing_codes(code_hash,workspace_id,created_by,expires_at) VALUES($1,$2,$3,$4)`,
       [hash(code), input.workspaceId, viewerId, new Date(expiresAt)],
     );
+    await recordFreeAgentGuideStarted(this.database, viewerId, input.workspaceId);
     return { code, expiresAt: Math.floor(expiresAt / 1000) };
   }
   private async updateAgentSoul(input: Input<'updateAgentSoul'>, viewerId: string) {
@@ -7897,6 +7898,8 @@ export class PhoneService {
         removed,
       }),
     );
+    // Network cleanup is fire-and-forget after the removal commits; the leader retries it.
+    this.freeAgents?.remove(input.agentId);
   }
   /**
    * Deletes the signed-in person's account and personal data — a real

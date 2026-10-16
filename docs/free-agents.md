@@ -7,14 +7,21 @@ none. Code: `apps/server/src/free-agents.ts`, `free-agent-model-proxy.ts`,
 `fly-machines.ts`; helper `apps/body/src/free-agent-vm.ts`, `free-agent-idle.ts`;
 image `infra/free-agent/`.
 
+New free agents are named **Beebee** and use `@beebee`, with the existing numeric
+suffix rule when that handle is already taken. They keep their seeded face and
+soul. Existing free agents keep their names.
+
 ## Lifecycle
 
 - **Creation.** `PhoneService.createWorkspace` calls `createFreeAgentInWorkspace` in
   the same transaction as `ensureFirstRoom`. That call writes the identity, the agent
   row (harness `opencode`, model `beeline/<model>`), the Workspace and `#general`
   memberships, the identity keys sealed with `BEELINE_FREE_AGENT_SEAL_KEY`, a reachable
-  presence row and a public `free_agent_hello` wake on the agent's own joined line.
-  After commit, `FreeAgentService.kick` creates the Machine. A creator owns at most
+  presence row and the exact server-authored `FREE_AGENT_HELLO` message in #general.
+  The hello tags the owner through the normal mention/push path and uses the
+  agent's actual handle. It creates no model turn or Machine. The first real
+  queued work provisions the Machine through `FreeAgentService.kick` or the sweep.
+  A creator owns at most
   `BEELINE_FREE_AGENT_MAX_PER_OWNER` (default 3) free agents.
 - **First boot.** `entrypoint.sh` installs the published helper bundle
   (`BEELINE_LAB=1 install.sh`), then runs `beeline free-agent`. The Machine trades its
@@ -34,11 +41,20 @@ image `infra/free-agent/`.
   monotonic clock. It then replaces its socket at once (`LiveLink.reconnectNow`).
 - **Reaper (leader).** A running Machine with no work for 5 minutes is stopped. A
   Machine with no activity for 30 days is deleted. A later wake recreates it from the
-  sealed keys (its files are gone). Retiring the agent itself is not implemented and
-  needs a human decision.
+  sealed keys (its files are gone).
+- **Removal.** The existing Members remove action admits the agent owner or a
+  Workspace owner/admin. Removal from any Workspace retires the free-agent runtime,
+  matching the existing global daemon retirement. Its transaction keeps a permanent `removed_at` tombstone,
+  revokes model/bootstrap and daemon access, and records `removed`. After commit,
+  cleanup deletes the Fly Machine without delaying the removal. The leader retries
+  failed deletion, including a Machine created by provisioning already in flight.
+  Removed agents cannot bootstrap, wake, reap back into service, or be replaced by
+  `--add-free-agent` in that Workspace. Beebee's server-posted first hello ends by explaining how
+  to remove it from Members.
 - **Existing Workspaces.** An operator gives one its free agent with
   `node apps/server/dist/index.js --add-free-agent <workspaceId>` on a server Machine.
-  The agent goes to the oldest owner and to `#general`, or to the oldest public
+  The agent posts the same hello once and boots only for real work. It goes to
+  the oldest owner and to `#general`, or to the oldest public
   top-level Room when there is no `#general`.
 - **Membership events.** From creation, each free agent's `#general` membership
   carries `event_subscriptions` `joined` and `left`. A join is the existing `joined`
@@ -61,7 +77,7 @@ reaped_idle, deleted_idle and allowance_reached.
 
 The Machine never holds a provider key. OpenCode's `beeline` provider points at
 `POST /v1/free-agents/model/chat/completions` with the agent's model token. The
-proxy pins `BEELINE_FREE_AGENT_MODEL` (default `deepseek/deepseek-v4-flash`). It
+proxy pins `BEELINE_FREE_AGENT_MODEL` (default `deepseek/deepseek-v4.1-flash`). It
 forwards to `BEELINE_FREE_AGENT_MODEL_UPSTREAM` (default OpenRouter) with
 `BEELINE_FREE_AGENT_MODEL_KEY`, which may be a Squire egress grant. Before each call it
 reserves the call's worst case (prompt bound plus a capped reply) against the
@@ -105,6 +121,19 @@ helper cancels the prompt, publishes a short note inviting another message, and
 discards the session. The leader reaper cancels overdue claimed commands after
 the cap plus 60 seconds of grace and stops their Machine even if it is still
 reporting activity. The existing idle, reaper and deletion intervals are unchanged.
+
+At 80% of the daily allowance, settlement writes one private owner/free-agent
+DM warning per owner per UTC day, with the midnight UTC reset and a Members ->
+Add agent link. Delivery does not call a model. The warning records
+`allowance_warning` and `nudge_shown`; pairing a non-free agent in the same
+Workspace within 24 hours records `agent_connected_after_nudge` once per agent.
+Reaching the Add agent command within 24 hours of a warning records `guide_started`
+once per warning. This measures that concrete setup step, not conversational acceptance.
+Model-authored nudges are not reliably observable server-side and are not counted.
+Instructions limit unsolicited
+offers to inaccessible work or the warning, once per UTC day, and guide people
+through running their own CLI without requesting or posting pairing codes.
+Existing free-agent souls receive the guide during data migration.
 
 ## Server configuration
 

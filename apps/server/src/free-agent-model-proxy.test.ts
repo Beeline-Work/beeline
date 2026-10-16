@@ -14,6 +14,7 @@ import {
 import { freeAgentConfigFromEnv, tokenHash } from './free-agents.js';
 import { DEFAULT_FREE_AGENT_LIMITS, FREE_AGENT_BUDGET_MESSAGE, freeAgentLimitsFromEnv } from './free-agent-limits.js';
 import { PgliteDatabase } from './test-support.js';
+import { PhoneService } from './phone-service.js';
 
 const OWNER = 'a'.repeat(64);
 const AGENT = 'b'.repeat(64);
@@ -95,6 +96,15 @@ describe('free agent model proxy', () => {
     expect((await call({ messages: [] })).status).toBe(200);
     expect(upstream).toHaveLength(1);
     console.log('Demonstrated FREE-ABUSE-1: outside turn HTTP 403, zero upstream calls and charge; live turn HTTP 200.');
+  });
+
+  it('refuses the former model token after the owner removes the free agent through Members', async () => {
+    await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [AGENT, OWNER]);
+    await db.query(`INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'owner'),($1,$3,'member')`, [WORKSPACE, OWNER, AGENT]);
+    const phone = new PhoneService(db, origin);
+    await phone.execute('removeAgent', { workspaceId: WORKSPACE, agentId: AGENT }, OWNER);
+    expect((await call({ messages: [] })).status).toBe(401);
+    expect(upstream).toEqual([]);
   });
 
   it('atomically limits parallel owner calls per minute and allows the next minute', async () => {
@@ -208,6 +218,21 @@ describe('free agent model proxy', () => {
     await db.query(`UPDATE free_agents SET state='failed'`);
     expect((await call({ messages: [] })).status).toBe(401);
     expect(upstream).toEqual([]);
+  });
+
+  it('settles a real model request and exposes the 80% warning only in the owner DM', async () => {
+    await db.query(`INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'owner'),($1,$3,'member')`, [WORKSPACE, OWNER, AGENT]);
+    reply = () => Response.json({ choices: [{ message: { role: 'assistant', content: 'done' } }], usage: { prompt_tokens: 500, completion_tokens: 300 } });
+    expect((await call({ messages: [{ role: 'user', content: 'hi' }] })).status).toBe(200);
+    const warning = (await db.query<{ room_id: string }>(`SELECT room_id FROM messages WHERE author_id=$1`, [AGENT])).rows;
+    expect(warning).toHaveLength(1);
+    expect(warning[0]!.room_id).not.toBe(ROOM);
+    const phone = new PhoneService(db, 'https://server.test');
+    const view = await phone.readRoom(warning[0]!.room_id, OWNER);
+    expect(view?.messages.map(message => message.text).join(' ')).toContain("I've used 80%");
+    expect(upstream).toHaveLength(1);
+    await call({ messages: [{ role: 'user', content: 'more' }] });
+    expect((await db.query(`SELECT * FROM free_agent_events WHERE kind='allowance_warning'`)).rowCount).toBe(1);
   });
 
   it('pins the model, adds the server key and charges uncached prompt plus completion tokens', async () => {

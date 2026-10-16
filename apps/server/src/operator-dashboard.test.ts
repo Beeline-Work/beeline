@@ -4,6 +4,7 @@ import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { createBeelineServer } from './server.js';
 import { dashboardHealth, dashboardOps } from './operator-dashboard.js';
+import { dashboardOverview } from './operator-dashboard-overview.js';
 import { REVIEW_IDENTITY_ID } from './review-access.js';
 import { QueryWindow } from './query-profile.js';
 import type { SqlDatabase } from './database.js';
@@ -94,6 +95,59 @@ async function seed() {
 }
 
 describe('private operator dashboard', () => {
+  it('serves bounded UTC series, deduplicated cohorts, retention and live helper evidence without content', async () => {
+    await seed();
+    const today = new Date().toISOString().slice(0, 10);
+    const human = `a${(1).toString(16).padStart(63, '0')}`;
+    const other = `a${(2).toString(16).padStart(63, '0')}`;
+    const agent = `b${(1).toString(16).padStart(63, '0')}`;
+    const stale = `b${(2).toString(16).padStart(63, '0')}`;
+    await db.query(`UPDATE identities SET created_at=$2::timestamptz-interval '15 days' WHERE id=$1`, [human, today]);
+    await db.query(`INSERT INTO push_devices(token,identity_id,platform,environment) VALUES('multi',$1,'android','physical')`, [human]);
+    await db.query(`UPDATE memberships SET invited_by=$1,joined_at=$3::timestamptz WHERE identity_id=$2 AND room_id IS NULL`, [human, other, today]);
+    for (const [id, interval] of [['recent', 0], ['return', 8], ['old', 100]] as const) {
+      await db.query(`INSERT INTO messages(id,room_id,author_id,text,created_at)
+        VALUES($1,$2,$3,$4,$5::timestamptz-($6::int*interval '1 day'))`, [id, room, human, secret, today, interval]);
+    }
+    await db.query(`INSERT INTO live_server_instances(instance_id,renewed_at) VALUES('live',now()),('stale',now()-interval '5 minutes')`);
+    await db.query(`INSERT INTO agent_connections(agent_id,epoch,connection_id,instance_id)
+      VALUES($1,1,'connection-live','live'),($2,1,'connection-stale','stale')`, [agent, stale]);
+    const query = vi.spyOn(db, 'query');
+    const value = await dashboardOverview(db, ['ios','android'], new Date().toISOString());
+    expect(value.series.signups).toMatchObject({ state: 'measured' });
+    if (value.series.signups?.state !== 'measured' || value.series.dau?.state !== 'measured') throw new Error('Series unavailable');
+    expect(value.series.signups.data.daily).toHaveLength(90);
+    expect(value.series.signups.data.daily.reduce((sum, p) => sum+p.value, 0)).toBe(12);
+    expect(value.series.dau.data.daily.at(-1)?.value).toBe(1);
+    expect(value.series.dau.data.daily.reduce((sum, p) => sum+p.value, 0)).toBe(2); // older than 90d excluded
+    expect(value.retention).toMatchObject({ state: 'measured', data: { cohort: 1, retained: 1, rate: 1 } });
+    expect(value.helpers).toMatchObject({ state: 'measured', data: { paired: 12, online: 1, share: 1/12 } });
+    expect(value.spend).toMatchObject({ state: 'measured', data: { usd: null } }); // absent ledger is not a measured zero
+    expect(value.sources.downloadsAndroid).toMatchObject({ state: 'not_connected' });
+    expect(JSON.stringify(value)).not.toContain(secret);
+    expect(JSON.stringify(value)).not.toContain(human);
+    expect(query.mock.calls.every(([sql]) => /^(WITH|SELECT)\s/.test(sql))).toBe(true);
+    const empty = await dashboardOverview(db, ['linux'], new Date().toISOString());
+    expect(empty.retention).toMatchObject({ state: 'measured', data: { cohort: 0, retained: 0, rate: null } });
+    if (empty.series.signups?.state !== 'measured') throw new Error('Empty read unavailable');
+    expect(empty.series.signups.data.daily.every(p => p.value === 0)).toBe(true);
+  });
+
+  it('isolates a failed history read without manufacturing zeroes or leaking database errors', async () => {
+    const original = db.query.bind(db);
+    vi.spyOn(db, 'query').mockImplementation((sql, values) => {
+      if (sql.includes('FROM eligible WHERE created_at') || sql.includes('FROM agent_turns')) return Promise.reject(new Error(secret));
+      return original(sql, values);
+    });
+    const result = await dashboardOverview(db, ['ios'], new Date().toISOString());
+    expect(result.series.signups).toEqual({ state: 'unavailable', measuredAt: null });
+    expect(result.series.workspaces?.state).toBe('measured');
+    expect(JSON.stringify(result)).not.toContain(secret);
+    const health = await dashboardHealth(db, new Date().toISOString());
+    expect(health.failing.failed).toBeNull();
+    expect(health.failing.total).toBeNull();
+  });
+
   it('counts small web and desktop cohorts exactly and excludes review, proof and hidden identities', async () => {
     await seed();
     const proof = 'c2e54c45-cf58-4cc1-a620-89b196096e7b';

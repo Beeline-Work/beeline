@@ -2986,6 +2986,22 @@ export async function migrate(
       room_webhook_deliveries, room_webhook_requests, room_webhooks;
   `);
   await ddlScript('github star prompt schema', GITHUB_STAR_PROMPT_SCHEMA);
+  // Bounded operator history reads use date-leading indexes rather than
+  // scanning the message/turn ledgers once for every plotted day.
+  await retryMigrationStep('operator message history index', () => createIndexConcurrently(
+    database, 'messages_operator_history_idx',
+    `CREATE INDEX CONCURRENTLY messages_operator_history_idx
+     ON messages(created_at,author_id) WHERE presentation='message' AND deleted_at IS NULL`,
+  ));
+  await retryMigrationStep('operator turn history index', () => createIndexConcurrently(
+    database, 'agent_turns_operator_history_idx',
+    `CREATE INDEX CONCURRENTLY agent_turns_operator_history_idx ON agent_turns(created_at) INCLUDE(status)`,
+  ));
+  await retryMigrationStep('operator invited join history index', () => createIndexConcurrently(
+    database, 'memberships_operator_invited_history_idx',
+    `CREATE INDEX CONCURRENTLY memberships_operator_invited_history_idx
+     ON memberships(joined_at,invited_by) WHERE room_id IS NULL AND invited_by IS NOT NULL`,
+  ));
   await retryMigrationStep('message cursor index', () => createIndexConcurrently(
     database, 'messages_room_cursor_idx',
     `CREATE INDEX CONCURRENTLY messages_room_cursor_idx ON messages (room_id,

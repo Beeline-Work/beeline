@@ -48,3 +48,26 @@ intervals are plumbing checks, not DeepSeek results or Fly boot medians.
 The model comparison and the Workspace/#general user-path proof remain required
 before a merge recommendation. This standalone runner does not prove Room
 transport, command-claim authority, or model allowance enforcement.
+
+## Fly cold-boot results, 2026-10-16
+
+Raw samples: `comparison-3976d8a70-boot.json`.
+
+| Metric | OpenCode 1.18.31 | Pi 0.84.3 / pi-acp 0.0.34 |
+| --- | ---: | ---: |
+| Median start request to ACP initialize | 11,393 ms | 3,679 ms |
+| Median harness spawn to ACP initialize | 8,420 ms | 684 ms |
+| Successful cold boots | 5/5 | 5/5 |
+| Built image size | 258,517,483 bytes | 157,624,723 bytes |
+
+The cold-boot median is 67.7% lower for Pi. The run alternated order as specified
+above, used fresh Machines, and made no model requests. Authentication used the
+vaulted Machines API route via a local fetch bridge; end-to-end timings include
+bridge, vault and API latency. Image provisioning is excluded. HTTP 412 during
+rootfs preparation is retried before the accepted start request's timestamp.
+Two start/cleanup timeouts were resolved by authoritative Machine state reads;
+one create needed a retry and was adopted by its unique sample name. These
+recoveries and the excluded incomplete preflight are recorded with the samples.
+All ten measured Machines and both preflight Machines were destroyed. The final
+Machines API list returned zero Machines. DeepSeek turn success, tokens per
+turn and the Workspace/#general path remain unmeasured pending the model route.

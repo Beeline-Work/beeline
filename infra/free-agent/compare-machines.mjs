@@ -40,8 +40,18 @@ try {
             guest: { cpu_kind: 'shared', cpus: 1, memory_mb: 2048 }, restart: { policy: 'no' },
             metadata: { purpose: 'd14835c5-harness-comparison' } } });
         id = machine.id;
-        const startRequestedAt = Date.now();
-        await api(`/${id}/start`, 'POST', {});
+        let startRequestedAt;
+        const startDeadline = Date.now() + 120_000;
+        for (;;) {
+          startRequestedAt = Date.now();
+          try { await api(`/${id}/start`, 'POST', {}); break; }
+          catch (error) {
+            // A newly created Machine can still be preparing its rootfs.
+            // Start timing at the accepted request, not failed preconditions.
+            if (!/HTTP 412/.test(error.message) || Date.now() >= startDeadline) throw error;
+            await pause();
+          }
+        }
         const deadline = Date.now() + (task ? 420_000 : 120_000);
         let result;
         while (Date.now() < deadline) {

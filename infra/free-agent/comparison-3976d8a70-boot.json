@@ -1,0 +1,251 @@
+{
+  "definition": "Fly start request dispatched to ACP initialize response; excludes image provisioning; includes API latency",
+  "task": false,
+  "results": [
+    {
+      "sample": 1,
+      "image": "registry.fly.io/beeline-free-agents:cmp-opencode-3976d8a70",
+      "machineId": "873261b043e078",
+      "startRequestedAt": 1792161044539,
+      "harness": "opencode",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "bootOnly": true,
+      "processStartedAt": 1792161047508,
+      "requests": [],
+      "usage": [],
+      "harnessSpawnedAt": 1792161047512,
+      "initializeAnsweredAt": 1792161055932,
+      "initializeMs": 8420,
+      "agentInfo": {
+        "name": "OpenCode",
+        "version": "1.18.31"
+      },
+      "machineStartToInitializeMs": 11393
+    },
+    {
+      "sample": 1,
+      "image": "registry.fly.io/beeline-free-agents:cmp-pi-3976d8a70",
+      "machineId": "87de00b0291548",
+      "startRequestedAt": 1792161073338,
+      "harness": "pi",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "bootOnly": true,
+      "processStartedAt": 1792161076331,
+      "requests": [],
+      "usage": [],
+      "harnessSpawnedAt": 1792161076334,
+      "initializeAnsweredAt": 1792161077017,
+      "initializeMs": 683,
+      "agentInfo": {
+        "name": "pi-acp",
+        "title": "pi ACP adapter",
+        "version": "0.0.34"
+      },
+      "machineStartToInitializeMs": 3679
+    },
+    {
+      "sample": 2,
+      "image": "registry.fly.io/beeline-free-agents:cmp-pi-3976d8a70",
+      "machineId": "871533f0379108",
+      "startRequestedAt": 1792161095034,
+      "harness": "pi",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "bootOnly": true,
+      "processStartedAt": 1792161097796,
+      "requests": [],
+      "usage": [],
+      "harnessSpawnedAt": 1792161097799,
+      "initializeAnsweredAt": 1792161098483,
+      "initializeMs": 684,
+      "agentInfo": {
+        "name": "pi-acp",
+        "title": "pi ACP adapter",
+        "version": "0.0.34"
+      },
+      "machineStartToInitializeMs": 3449
+    },
+    {
+      "sample": 2,
+      "image": "registry.fly.io/beeline-free-agents:cmp-opencode-3976d8a70",
+      "machineId": "812d65b9431e78",
+      "startRequestedAt": 1792161108702,
+      "harness": "opencode",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "bootOnly": true,
+      "processStartedAt": 1792161111425,
+      "requests": [],
+      "usage": [],
+      "harnessSpawnedAt": 1792161111428,
+      "initializeAnsweredAt": 1792161119235,
+      "initializeMs": 7807,
+      "agentInfo": {
+        "name": "OpenCode",
+        "version": "1.18.31"
+      },
+      "machineStartToInitializeMs": 10533
+    },
+    {
+      "sample": 3,
+      "image": "registry.fly.io/beeline-free-agents:cmp-opencode-3976d8a70",
+      "machineId": "80ee115b639778",
+      "startRequestedAt": 1792161155281,
+      "harness": "opencode",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "bootOnly": true,
+      "processStartedAt": 1792161168221,
+      "requests": [],
+      "usage": [],
+      "harnessSpawnedAt": 1792161168224,
+      "initializeAnsweredAt": 1792161177317,
+      "initializeMs": 9093,
+      "agentInfo": {
+        "name": "OpenCode",
+        "version": "1.18.31"
+      },
+      "machineStartToInitializeMs": 22036
+    },
+    {
+      "sample": 3,
+      "image": "registry.fly.io/beeline-free-agents:cmp-pi-3976d8a70",
+      "machineId": "84ed925b1eed98",
+      "startRequestedAt": 1792161238722,
+      "harness": "pi",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "bootOnly": true,
+      "processStartedAt": 1792161241443,
+      "requests": [],
+      "usage": [],
+      "harnessSpawnedAt": 1792161241444,
+      "initializeAnsweredAt": 1792161242114,
+      "initializeMs": 670,
+      "agentInfo": {
+        "name": "pi-acp",
+        "title": "pi ACP adapter",
+        "version": "0.0.34"
+      },
+      "machineStartToInitializeMs": 3392
+    },
+    {
+      "sample": 4,
+      "image": "registry.fly.io/beeline-free-agents:cmp-pi-3976d8a70",
+      "machineId": "8de100bed50728",
+      "startRequestedAt": 1792161252500,
+      "harness": "pi",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "bootOnly": true,
+      "processStartedAt": 1792161255545,
+      "requests": [],
+      "usage": [],
+      "harnessSpawnedAt": 1792161255548,
+      "initializeAnsweredAt": 1792161256246,
+      "initializeMs": 698,
+      "agentInfo": {
+        "name": "pi-acp",
+        "title": "pi ACP adapter",
+        "version": "0.0.34"
+      },
+      "machineStartToInitializeMs": 3746
+    },
+    {
+      "sample": 4,
+      "image": "registry.fly.io/beeline-free-agents:cmp-opencode-3976d8a70",
+      "machineId": "8911155b496958",
+      "startRequestedAt": 1792161311963,
+      "harness": "opencode",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "bootOnly": true,
+      "processStartedAt": 1792161325261,
+      "requests": [],
+      "usage": [],
+      "harnessSpawnedAt": 1792161325266,
+      "initializeAnsweredAt": 1792161333709,
+      "initializeMs": 8443,
+      "agentInfo": {
+        "name": "OpenCode",
+        "version": "1.18.31"
+      },
+      "machineStartToInitializeMs": 21746
+    },
+    {
+      "sample": 5,
+      "image": "registry.fly.io/beeline-free-agents:cmp-opencode-3976d8a70",
+      "machineId": "8d96509c966448",
+      "startRequestedAt": 1792161349434,
+      "harness": "opencode",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "bootOnly": true,
+      "processStartedAt": 1792161352223,
+      "requests": [],
+      "usage": [],
+      "harnessSpawnedAt": 1792161352232,
+      "initializeAnsweredAt": 1792161360240,
+      "initializeMs": 8008,
+      "agentInfo": {
+        "name": "OpenCode",
+        "version": "1.18.31"
+      },
+      "machineStartToInitializeMs": 10806
+    },
+    {
+      "sample": 5,
+      "image": "registry.fly.io/beeline-free-agents:cmp-pi-3976d8a70",
+      "machineId": "81091dc9754418",
+      "startRequestedAt": 1792161377855,
+      "harness": "pi",
+      "model": "deepseek/deepseek-v4.1-flash",
+      "bootOnly": true,
+      "processStartedAt": 1792161381225,
+      "requests": [],
+      "usage": [],
+      "harnessSpawnedAt": 1792161381228,
+      "initializeAnsweredAt": 1792161381953,
+      "initializeMs": 725,
+      "agentInfo": {
+        "name": "pi-acp",
+        "title": "pi ACP adapter",
+        "version": "0.0.34"
+      },
+      "machineStartToInitializeMs": 4098
+    }
+  ],
+  "cleanupFailed": [],
+  "mediansMs": {
+    "opencode": 11393,
+    "pi": 3679
+  },
+  "environment": {
+    "region": "iad",
+    "cpuKind": "shared",
+    "cpus": 1,
+    "memoryMb": 2048,
+    "freshMachinePerSample": true,
+    "order": "opencode,pi; pi,opencode; opencode,pi; pi,opencode; opencode,pi"
+  },
+  "authenticationTransport": "Machines API via vaulted use_credential; local fetch bridge; no raw credential fetched. Start-request timings include bridge/vault/API latency.",
+  "transportRecoveries": [
+    {
+      "machineId": "80ee115b639778",
+      "operation": "start",
+      "recovery": "GET Machines confirmed started after vault returned 504"
+    },
+    {
+      "machineId": "80ee115b639778",
+      "operation": "delete",
+      "recovery": "GET Machines confirmed absent after vault returned 504"
+    },
+    {
+      "machineId": "8911155b496958",
+      "operation": "create",
+      "recovery": "Create timed out twice; GET list found exactly one matching name"
+    }
+  ],
+  "excludedPreflight": "Incomplete initial run: one successful OpenCode boot, then Pi start returned 412 during provisioning. Both Machines destroyed; full ten-sample run restarted after adding bounded 412 retry.",
+  "cleanupVerified": {
+    "machinesListedAfterRun": 0,
+    "allComparisonMachinesDestroyed": true
+  },
+  "harnessProcessMediansMs": {
+    "opencode": 8420,
+    "pi": 684
+  }
+}

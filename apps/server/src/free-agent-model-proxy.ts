@@ -1,5 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
+import { DEFAULT_FREE_AGENT_LIMITS, FREE_AGENT_BUDGET_MESSAGE, type FreeAgentLimits } from './free-agent-limits.js';
 import type { SqlDatabase } from './database.js';
 import { recordFreeAgentEvent, tokenHash, type FreeAgentConfig } from './free-agents.js';
 
@@ -7,12 +8,12 @@ import { recordFreeAgentEvent, tokenHash, type FreeAgentConfig } from './free-ag
  * The only model access a free agent's Machine has: an OpenAI-compatible
  * `chat/completions` endpoint authenticated by the agent's revocable model
  * token. The server pins the model, adds the OpenRouter key and charges the
- * owner's daily allowance (and a lifetime one, when configured). The allowance counts uncached
- * prompt tokens plus completion tokens; cached prompt reads are not counted.
+ * owner's daily allowance (and a lifetime one, when configured), including
+ * weighted cached reads. A live turn and shared dollar budget are required.
  */
 export interface FreeAgentModelProxyOptions {
   database: SqlDatabase;
-  config: Pick<FreeAgentConfig, 'model' | 'dailyTokenCap' | 'lifetimeTokenCap'>;
+  config: Pick<FreeAgentConfig, 'model' | 'dailyTokenCap' | 'lifetimeTokenCap' | 'limits'>;
   upstreamKey: string;
   upstreamBaseUrl?: string;
   fetchImpl?: typeof fetch;
@@ -20,6 +21,7 @@ export interface FreeAgentModelProxyOptions {
 }
 
 interface Usage {
+  cost?: number;
   prompt_tokens?: number;
   completion_tokens?: number;
   prompt_tokens_details?: { cached_tokens?: number };
@@ -55,12 +57,12 @@ export function forwardedFields(body: Record<string, unknown>): Record<string, u
 }
 
 /** Tokens one response charges against the allowance. */
-export function chargedTokens(usage: Usage | undefined): number {
+export function chargedTokens(usage: Usage | undefined, weight = 0.25): number {
   if (!usage) return 0;
   const prompt = Math.max(0, Number(usage.prompt_tokens) || 0);
   const cached = Math.min(prompt, Math.max(0, Number(usage.prompt_tokens_details?.cached_tokens) || 0));
   const completion = Math.max(0, Number(usage.completion_tokens) || 0);
-  return prompt - cached + completion;
+  return prompt - cached + completion + Math.ceil(cached * weight);
 }
 
 export function allowanceMessage(
@@ -166,12 +168,12 @@ const DEFAULT_OUTPUT_RESERVATION = 8_192;
 const MINIMUM_CALL_TOKENS = 256;
 
 /**
- * An upper bound on a request's prompt tokens: no tokenizer this proxy serves
- * packs fewer than two characters into a token.
+ * Bound text prompts by UTF-8 bytes, including per-message framing. The pinned
+ * free-agent model accepts text; opaque remote media cannot be bounded here.
  */
 export function promptTokenBound(body: Record<string, unknown>): number {
-  return Math.ceil(JSON.stringify(body.messages ?? []).length / 2) +
-    Math.ceil(JSON.stringify(body.tools ?? []).length / 2);
+  return Buffer.byteLength(JSON.stringify(body.messages ?? []), 'utf8') +
+    Buffer.byteLength(JSON.stringify(body.tools ?? []), 'utf8') + 256;
 }
 
 /**
@@ -187,19 +189,41 @@ export async function reserveAllowance(
   config: Pick<FreeAgentConfig, 'dailyTokenCap' | 'lifetimeTokenCap'>,
   promptTokens: number,
   requestedOutput: number | undefined,
-): Promise<{ reserved: number; maxOutput: number } | { limit: 'daily' | 'lifetime' }> {
+  limits: FreeAgentLimits = DEFAULT_FREE_AGENT_LIMITS,
+): Promise<{ reserved: number; maxOutput: number; reservedUsd: number } | { limit: 'daily' | 'lifetime' | 'budget' | 'rate' }> {
   return database.transaction(async (db) => {
+    // Every reservation takes locks in the same order across server instances.
+    await db.query(`SELECT pg_advisory_xact_lock(hashtext('free-agent-global-budget'))`);
     await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`free-agent-usage:${ownerId}`]);
+    const day = now.toISOString().slice(0, 10);
+    const budget = Number((await db.query<{ usd: string }>(
+      `SELECT usd FROM free_agent_budget WHERE day=$1::date`, [day],
+    )).rows[0]?.usd ?? 0);
+    if (budget >= limits.dailyBudgetUsd) return { limit: 'budget' };
+    const minute = Math.floor(now.getTime() / 60_000);
+    const rate = (await db.query<{ minute: string; calls: number }>(
+      `SELECT minute,calls FROM free_agent_call_rate WHERE owner_id=$1`, [ownerId],
+    )).rows[0];
+    if (rate && Number(rate.minute) === minute && rate.calls >= limits.callsPerMinute) return { limit: 'rate' };
     const used = await freeAgentAllowance(db, ownerId, now);
     const daily = config.dailyTokenCap - used.today;
     const lifetime =
       config.lifetimeTokenCap > 0 ? config.lifetimeTokenCap - used.lifetime : Number.POSITIVE_INFINITY;
     const room = Math.min(daily, lifetime) - promptTokens;
     if (room < MINIMUM_CALL_TOKENS) return { limit: lifetime <= daily ? 'lifetime' : 'daily' };
-    const maxOutput = Math.min(room, requestedOutput ?? DEFAULT_OUTPUT_RESERVATION);
+    const dollarRoom = limits.dailyBudgetUsd - budget - promptTokens * limits.inputUsdPerMillion / 1_000_000;
+    const affordableOutput = Math.floor(dollarRoom * 1_000_000 / limits.outputUsdPerMillion);
+    if (affordableOutput < MINIMUM_CALL_TOKENS) return { limit: 'budget' };
+    const maxOutput = Math.floor(Math.min(room, affordableOutput, requestedOutput ?? DEFAULT_OUTPUT_RESERVATION));
     const reserved = promptTokens + maxOutput;
     await adjustUsage(db, ownerId, now.toISOString().slice(0, 10), reserved);
-    return { reserved, maxOutput };
+    const reservedUsd = (promptTokens * limits.inputUsdPerMillion + maxOutput * limits.outputUsdPerMillion) / 1_000_000;
+    await db.query(`INSERT INTO free_agent_budget(day,usd) VALUES($1::date,$2)
+      ON CONFLICT(day) DO UPDATE SET usd=free_agent_budget.usd+$2`, [day, reservedUsd]);
+    await db.query(`INSERT INTO free_agent_call_rate(owner_id,minute,calls) VALUES($1,$2,1)
+      ON CONFLICT(owner_id) DO UPDATE SET minute=$2,calls=CASE WHEN free_agent_call_rate.minute=$2
+        THEN free_agent_call_rate.calls+1 ELSE 1 END`, [ownerId, minute]);
+    return { reserved, maxOutput, reservedUsd };
   });
 }
 
@@ -264,11 +288,30 @@ export async function handleFreeAgentModelRequest(
   try {
     body = JSON.parse((await readBody(request)).toString('utf8')) as Record<string, unknown>;
     if (!body || typeof body !== 'object' || !Array.isArray(body.messages)) throw new Error('messages required');
+    for (const message of body.messages) {
+      if (!message || typeof message !== 'object') throw new Error('invalid message');
+      if (Array.isArray(message.content) && message.content.some((part: { type?: string }) => part?.type !== 'text'))
+        throw new Error('free agent model requests support text content only');
+    }
   } catch (error) {
     sendJson(response, 400, { error: { message: error instanceof Error ? error.message : 'invalid request' } });
     return true;
   }
   const now = options.now?.() ?? new Date();
+  const limits = options.config.limits ?? DEFAULT_FREE_AGENT_LIMITS;
+  const active = (await options.database.query(
+    `SELECT 1 FROM agent_commands command LEFT JOIN agent_turns turn
+       ON turn.agent_id=command.agent_id AND turn.room_id=command.room_id
+         AND turn.request_id=command.turn_request_id
+       WHERE command.agent_id=$1 AND command.state='claimed'
+         AND command.action IN ('input','resume') AND command.lease_expires_at>$2
+         AND COALESCE(turn.started_at,command.claimed_at)>$2::timestamptz-make_interval(secs => $3::double precision / 1000) LIMIT 1`,
+    [agent.agent_id, now, limits.maxTurnMs],
+  )).rows.length > 0;
+  if (!active) {
+    sendJson(response, 403, { error: { message: 'free agent model access requires a live turn' } });
+    return true;
+  }
   const stream = body.stream === true;
   const requested = [body.max_tokens, body.max_completion_tokens]
     .map(Number)
@@ -280,8 +323,18 @@ export async function handleFreeAgentModelRequest(
     options.config,
     promptTokenBound(body),
     requested.length ? Math.min(...requested) : undefined,
+    limits,
   );
   if ('limit' in reservation) {
+    if (reservation.limit === 'rate') {
+      sendJson(response, 429, { error: { message: 'Free agent call limit reached. Try again next minute.' } });
+      return true;
+    }
+    if (reservation.limit === 'budget') {
+      await recordFreeAgentEvent(options.database, agent.agent_id, 'budget_reached');
+      sendAssistantText(response, stream, options.config.model, FREE_AGENT_BUDGET_MESSAGE);
+      return true;
+    }
     await recordFreeAgentEvent(options.database, agent.agent_id, 'allowance_reached', { limit: reservation.limit });
     sendAssistantText(response, stream, options.config.model, allowanceMessage(reservation.limit, options.config));
     return true;
@@ -289,10 +342,14 @@ export async function handleFreeAgentModelRequest(
   const day = now.toISOString().slice(0, 10);
   // Settle the reservation once: the reported usage when known, nothing for a
   // call the upstream refused, and the whole reservation when a reply broke off.
-  const settle = (spent: number) =>
-    adjustUsage(options.database, agent.owner_id, day, spent - reservation.reserved).catch((error) =>
-      console.error('[free-agents] usage charge failed', error),
-    );
+  const settle = (spent: number, usd = reservation.reservedUsd) =>
+    options.database.transaction(async db => {
+      await db.query(`SELECT pg_advisory_xact_lock(hashtext('free-agent-global-budget'))`);
+      await adjustUsage(db, agent.owner_id, day, spent - reservation.reserved);
+      await db.query(`UPDATE free_agent_budget SET usd=GREATEST(0,usd+$2) WHERE day=$1::date`,
+        [day, usd - reservation.reservedUsd]);
+      await recordFreeAgentEvent(db, agent.agent_id, 'model_usage', { day, tokens: spent, usd });
+    }).catch(error => console.error('[free-agents] usage charge failed', error));
   const upstreamBase = (options.upstreamBaseUrl ?? 'https://openrouter.ai/api/v1').replace(/\/$/, '');
   const openRouter = new URL(upstreamBase).hostname.endsWith('openrouter.ai');
   const upstreamBody = {
@@ -333,7 +390,7 @@ export async function handleFreeAgentModelRequest(
       },
     );
   } catch (error) {
-    await settle(0);
+    await settle(0, 0);
     if (!response.headersSent)
       sendJson(response, 502, { error: { message: `model upstream unavailable: ${String(error)}` } });
     return true;
@@ -341,7 +398,7 @@ export async function handleFreeAgentModelRequest(
   const contentType = upstream.headers.get('content-type') ?? 'application/json';
   response.writeHead(upstream.status, { 'content-type': contentType, 'cache-control': 'no-store' });
   if (!upstream.body) {
-    await settle(upstream.ok ? reservation.reserved : 0);
+    await settle(upstream.ok ? reservation.reserved : 0, upstream.ok ? reservation.reservedUsd : 0);
     response.end();
     return true;
   }
@@ -371,8 +428,14 @@ export async function handleFreeAgentModelRequest(
   }
   // Settle before the reply completes, so the next request sees this one.
   await settle(
-    reported ? Math.min(chargedTokens(reported), reservation.reserved)
+    reported ? chargedTokens(reported, limits.cachedTokenWeight)
       : upstream.ok ? reservation.reserved : 0,
+    !upstream.ok ? 0 : reported
+      ? (typeof reported.cost === 'number' && Number.isFinite(reported.cost) && reported.cost >= 0
+        ? reported.cost
+        : (Math.max(0, Number(reported.prompt_tokens) || 0) * limits.inputUsdPerMillion +
+           Math.max(0, Number(reported.completion_tokens) || 0) * limits.outputUsdPerMillion) / 1_000_000)
+      : reservation.reservedUsd,
   );
   response.end();
   return true;

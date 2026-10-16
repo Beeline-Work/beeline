@@ -485,6 +485,7 @@ export const AGENT_ENV_PASSTHROUGH_PREFIXES = [
 ] as const;
 
 function isPassthroughName(name: string, extra: Set<string>): boolean {
+  if (name === 'BEELINE_FREE_AGENT_ID' || name === 'BEELINE_FREE_AGENT_MAX_TURN_SECONDS') return true;
   if (extra.has(name)) return true;
   if ((AGENT_ENV_PASSTHROUGH_NAMES as readonly string[]).includes(name)) return true;
   return AGENT_ENV_PASSTHROUGH_PREFIXES.some((prefix) => name.startsWith(prefix));

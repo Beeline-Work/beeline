@@ -37,6 +37,7 @@ export interface FreeAgentGrant {
   modelToken: string;
   modelBaseUrl: string;
   upstreamModel: string;
+  maxTurnSeconds?: number;
   idleSeconds: number;
 }
 
@@ -81,11 +82,13 @@ export function freeAgentOpenCodeConfig(grant: Pick<FreeAgentGrant, 'modelBaseUr
 export function freeAgentModelEnv(grant: FreeAgentGrant): string {
   const lines = {
     BEELINE_FREE_AGENT_MODEL_TOKEN: grant.modelToken,
+    BEELINE_FREE_AGENT_MAX_TURN_SECONDS: String(grant.maxTurnSeconds ?? 900),
     OPENCODE_CONFIG_CONTENT: freeAgentOpenCodeConfig(grant),
     OPENCODE_DISABLE_AUTOUPDATE: '1',
     OPENCODE_DISABLE_MODELS_FETCH: '1',
     BUZZY_BODY_AGENT_ENV_PASSTHROUGH: [
       'BEELINE_FREE_AGENT_MODEL_TOKEN',
+      'BEELINE_FREE_AGENT_MAX_TURN_SECONDS',
       'OPENCODE_CONFIG_CONTENT',
       'OPENCODE_DISABLE_AUTOUPDATE',
       'OPENCODE_DISABLE_MODELS_FETCH',

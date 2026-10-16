@@ -51,11 +51,12 @@ describe('free agent Machine entry', () => {
       expect(env.OPENROUTER_API_KEY).toBeUndefined();
       expect(JSON.parse(env.OPENCODE_CONFIG_CONTENT!)).toEqual(config);
       expect(env.BUZZY_BODY_AGENT_ENV_PASSTHROUGH).toBe(
-        'BEELINE_FREE_AGENT_MODEL_TOKEN,OPENCODE_CONFIG_CONTENT,OPENCODE_DISABLE_AUTOUPDATE,OPENCODE_DISABLE_MODELS_FETCH',
+        'BEELINE_FREE_AGENT_MODEL_TOKEN,BEELINE_FREE_AGENT_MAX_TURN_SECONDS,OPENCODE_CONFIG_CONTENT,OPENCODE_DISABLE_AUTOUPDATE,OPENCODE_DISABLE_MODELS_FETCH',
       );
       // The helper's agent env carries the token and config to OpenCode.
       const agentEnv = buildAgentEnv({ PATH: '/usr/bin', HOME: '/root' }, path);
       expect(agentEnv.BEELINE_FREE_AGENT_MODEL_TOKEN).toBe(GRANT.modelToken);
+      expect(agentEnv.BEELINE_FREE_AGENT_MAX_TURN_SECONDS).toBe('900');
       expect(agentEnv.OPENCODE_CONFIG_CONTENT).toBe(env.OPENCODE_CONFIG_CONTENT);
       expect(Object.values(env).join('\n')).not.toContain('sk-or-');
     } finally {

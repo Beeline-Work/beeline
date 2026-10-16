@@ -1,8 +1,10 @@
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { LEGACY_ACCESS_POLICY } from './access-policy.js';
 import { resolveAgentCommand } from './agent-command.js';
-import { loadBodyConfig } from './config.js';
+import { loadBodyConfig, parseEnvFile } from './config.js';
 import { activateDaemonTransport } from './daemon-api-client.js';
 import { runMachineHelper } from './machine-helper.js';
 import {
@@ -12,6 +14,7 @@ import {
   runtimeConfigPath,
   runtimeDirectory,
   stageMonolithAgentRuntime,
+  writeRuntimeRecord,
 } from './runtime.js';
 
 /**
@@ -26,7 +29,7 @@ export interface FreeAgentGrant {
   agentSecretKey: string;
   bodySecretKey: string;
   agentName: string;
-  harness: 'opencode';
+  harness: 'pi' | 'opencode';
   model: string;
   soul: string;
   workspaceId: string;
@@ -45,53 +48,36 @@ interface FreeAgentSettings {
   idleSeconds: number;
 }
 
-/**
- * OpenCode's own config: one OpenAI-compatible `beeline` provider pointed at
- * the server's model proxy. A provider of our own (not `openrouter`) keeps the
- * helper's OpenRouter routing probes away from this token.
- */
-export function freeAgentOpenCodeConfig(grant: Pick<FreeAgentGrant, 'modelBaseUrl' | 'upstreamModel' | 'model'>): string {
+/** Pi's private provider uses only the scoped proxy token, resolved from env. */
+export function freeAgentPiConfig(grant: Pick<FreeAgentGrant, 'modelBaseUrl' | 'upstreamModel'>): string {
   return JSON.stringify({
-    $schema: 'https://opencode.ai/config.json',
-    autoupdate: false,
-    share: 'disabled',
-    model: grant.model,
-    provider: {
+    providers: {
       beeline: {
-        npm: '@ai-sdk/openai-compatible',
-        name: 'Beeline',
-        options: { baseURL: grant.modelBaseUrl, apiKey: '{env:BEELINE_FREE_AGENT_MODEL_TOKEN}' },
-        models: {
-          [grant.upstreamModel]: {
-            name: grant.upstreamModel,
-            tool_call: true,
-            reasoning: true,
-            limit: { context: 1_000_000, output: 65_536 },
-          },
-        },
+        baseUrl: grant.modelBaseUrl,
+        api: 'openai-completions',
+        apiKey: '$BEELINE_FREE_AGENT_MODEL_TOKEN',
+        models: [{
+          id: grant.upstreamModel,
+          name: grant.upstreamModel,
+          reasoning: true,
+          input: ['text'],
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          contextWindow: 1_000_000,
+          maxTokens: 65_536,
+        }],
       },
     },
   });
 }
 
-/**
- * The env file every OpenCode session reads: the model token and its config.
- * Values are written unquoted: `parseEnvFile` strips quotes but does not
- * unescape, and every value here is a single line.
- */
-export function freeAgentModelEnv(grant: FreeAgentGrant): string {
+/** Values are single lines; parseEnvFile does not unescape quoted values. */
+export function freeAgentModelEnv(grant: Pick<FreeAgentGrant, 'modelToken' | 'maxTurnSeconds'>): string {
   const lines = {
     BEELINE_FREE_AGENT_MODEL_TOKEN: grant.modelToken,
     BEELINE_FREE_AGENT_MAX_TURN_SECONDS: String(grant.maxTurnSeconds ?? 900),
-    OPENCODE_CONFIG_CONTENT: freeAgentOpenCodeConfig(grant),
-    OPENCODE_DISABLE_AUTOUPDATE: '1',
-    OPENCODE_DISABLE_MODELS_FETCH: '1',
     BUZZY_BODY_AGENT_ENV_PASSTHROUGH: [
       'BEELINE_FREE_AGENT_MODEL_TOKEN',
       'BEELINE_FREE_AGENT_MAX_TURN_SECONDS',
-      'OPENCODE_CONFIG_CONTENT',
-      'OPENCODE_DISABLE_AUTOUPDATE',
-      'OPENCODE_DISABLE_MODELS_FETCH',
     ].join(','),
   };
   return `${Object.entries(lines)
@@ -154,7 +140,8 @@ export async function stageFreeAgent(
     resolve(directory, 'settings.json'),
     `${JSON.stringify({ idleSeconds: grant.idleSeconds } satisfies FreeAgentSettings)}\n`,
   );
-  const agent = resolveAgentCommand({ kind: grant.harness, env });
+  await writePrivate(resolve(env.HOME ?? '/root', '.pi/agent/models.json'), freeAgentPiConfig(grant));
+  const agent = await freeAgentPiCommand(env);
   const localConfig = loadBodyConfig({ workspaceRoot: process.cwd(), llmEnvFile, agent, env });
   const staged = await stageMonolithAgentRuntime({
     workspaceId: grant.workspaceId,
@@ -176,6 +163,47 @@ export async function stageFreeAgent(
   if (!(await activateDaemonTransport(staged.configPath)))
     throw new Error('free agent daemon transport activation failed');
   return { configPath: staged.configPath };
+}
+
+// Cold boots of existing Machines keep their original image and root filesystem.
+// Install the same pinned tools there before replacing the persisted command.
+async function freeAgentPiCommand(env: NodeJS.ProcessEnv) {
+  try {
+    return resolveAgentCommand({ kind: 'pi', env });
+  } catch {
+    await promisify(execFile)('npm', ['install', '-g',
+      '@earendil-works/pi-coding-agent@0.84.3', 'pi-acp@0.0.34'],
+      { env, timeout: 300_000, maxBuffer: 1024 * 1024 });
+    return resolveAgentCommand({ kind: 'pi', env });
+  }
+}
+
+/** Upgrade persisted OpenCode installations before starting any Room sessions. */
+async function upgradeFreeAgentHarness(configPath: string, env: NodeJS.ProcessEnv): Promise<void> {
+  const runtime = await readRuntimeRecord(configPath);
+  if (runtime.agentKind === 'pi') return;
+  if (runtime.agentKind !== 'opencode' || !runtime.llmEnvFile)
+    throw new Error('unsupported persisted free agent harness');
+  const previous = parseEnvFile(runtime.llmEnvFile);
+  const provider = JSON.parse(previous.OPENCODE_CONFIG_CONTENT ?? '{}').provider?.beeline;
+  if (!provider?.options?.baseURL || !previous.BEELINE_FREE_AGENT_MODEL_TOKEN)
+    throw new Error('free agent proxy configuration is missing');
+  const model = runtime.modelSelection?.model;
+  if (!model?.startsWith('beeline/')) throw new Error('free agent proxy model is missing');
+  const agent = await freeAgentPiCommand(env);
+  await writePrivate(resolve(env.HOME ?? '/root', '.pi/agent/models.json'), freeAgentPiConfig({
+    modelBaseUrl: provider.options.baseURL,
+    upstreamModel: model.slice('beeline/'.length),
+  }));
+  runtime.agentKind = agent.kind;
+  runtime.agentCommand = agent.command;
+  runtime.agentBinary = agent.command;
+  runtime.agentArgs = agent.args;
+  await writeRuntimeRecord(runtime);
+  await writePrivate(runtime.llmEnvFile, freeAgentModelEnv({
+    modelToken: previous.BEELINE_FREE_AGENT_MODEL_TOKEN,
+    maxTurnSeconds: Number(previous.BEELINE_FREE_AGENT_MAX_TURN_SECONDS ?? 900),
+  }));
 }
 
 /**
@@ -218,6 +246,7 @@ export async function runFreeAgentCommand(env: NodeJS.ProcessEnv = process.env) 
     await stageFreeAgent(env, grant);
     console.log(`[free-agent] staged agent ${agentId.slice(0, 12)} for ${grant.workspaceName}`);
   }
+  await upgradeFreeAgentHarness(configPath, env);
   const settings = JSON.parse(
     await readFile(resolve(supervisorRoot, 'beeline', 'free-agent', 'settings.json'), 'utf8'),
   ) as FreeAgentSettings;

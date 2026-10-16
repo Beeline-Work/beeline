@@ -15,7 +15,7 @@ soul. Existing free agents keep their names.
 
 - **Creation.** `PhoneService.createWorkspace` calls `createFreeAgentInWorkspace` in
   the same transaction as `ensureFirstRoom`. That call writes the identity, the agent
-  row (harness `opencode`, model `beeline/<model>`), the Workspace and `#general`
+  row (harness `pi`, model `beeline/<model>`), the Workspace and `#general`
   memberships, the identity keys sealed with `BEELINE_FREE_AGENT_SEAL_KEY`, a reachable
   presence row and the exact server-authored `FREE_AGENT_HELLO` message in #general.
   The hello tags the owner through the normal mention/push path and uses the
@@ -73,9 +73,17 @@ rewake latency numbers from `scripts/prove-free-agent.mjs`: created, provisioned
 bootstrapped, connected, sleep_requested, slept, wake_requested, machine_started,
 reaped_idle, deleted_idle and allowance_reached.
 
+Existing free agents switch to Pi on their next cold boot. The helper upgrades
+the persisted runtime and writes a private Pi provider configuration before
+starting sessions. An older image installs the same pinned Pi and pi-acp versions
+when those tools are missing. Prior OpenCode harness session history does not carry over;
+Workspace messages remain available. Pi and pi-acp state directories are covered
+by the existing sandbox binds. The provider pins a 1,000,000-token context window
+and a 65,536-token output ceiling.
+
 ## Model access and allowances
 
-The Machine never holds a provider key. OpenCode's `beeline` provider points at
+The Machine never holds a provider key. Pi's `beeline` provider points at
 `POST /v1/free-agents/model/chat/completions` with the agent's model token. The
 proxy pins `BEELINE_FREE_AGENT_MODEL` (default `deepseek/deepseek-v4.1-flash`). It
 forwards to `BEELINE_FREE_AGENT_MODEL_UPSTREAM` (default OpenRouter) with

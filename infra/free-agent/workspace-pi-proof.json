@@ -1,0 +1,97 @@
+{
+  "proof": "PI-WORKSPACE-1",
+  "upstream": "deterministic local stand-in",
+  "workspaceId": "c580e95b-7115-4f23-8310-a3a84ac6877e",
+  "roomId": "54a8d653-40fc-4da6-b153-906ef40f5440",
+  "harness": "pi",
+  "sentMessageId": "1667132ddee41c9dd0625a8a3934639f051606394e72c252f8a4ae5d6330fd50",
+  "visibleReplyId": "20a74797bd696dbc08edcad82169a8d173364bc9db5dcf3313f1e999382abcd4",
+  "visibleReply": "PI_GENERAL_PROOF_OK",
+  "commands": [
+    {
+      "state": "complete"
+    }
+  ],
+  "followups": [
+    {
+      "turn": 1,
+      "messageId": "5b13b4f48372ec2c6674ad6a19397a0ab4eecb55a25e52d7fb215069a8b51181",
+      "visibleReplyId": "27c56c9bb24c914adf4309f0acb13adec49076a53fc2d44eef8ad55655cbf25c"
+    },
+    {
+      "turn": 2,
+      "messageId": "318d715ffb92ed163053d322efc20dec1262eb20ce4d4faf43b1be9b1408c9b5",
+      "visibleReplyId": "91401cbef6c43212d9a5b467b6c7cbe9c34cfc21b6a934352b30fa7b3a025ecb"
+    },
+    {
+      "turn": 3,
+      "messageId": "f262bac73c334274a12bb60617db21d36f20e730d79ed4db2f46dbcd7049d85e",
+      "visibleReplyId": "92e10f948536be997aef4c4b2054e1aefbb16586e164674fce93d0e155f7c30d"
+    },
+    {
+      "turn": 4,
+      "messageId": "f0d8858580650085de632f868e9cd3629bedfd54280eb6ad7c81d6a8213a2059",
+      "visibleReplyId": "320e47f7112825f0afffb04ea991c45a50fb9c3bea405b05b3077b80e06a0758"
+    },
+    {
+      "turn": 5,
+      "messageId": "6bb953ef580c6152a3f678f4ea93b5a1ecc0c4fe8f4e6df5b6233c1607c0c330",
+      "visibleReplyId": "ecc8cc80bfb882e21db882020d0b18ebf481718be609b0d5a0b9a64fdd636413"
+    },
+    {
+      "turn": 6,
+      "messageId": "03ba76226277f84c0039baa1e0a93e84153e7ac3db4f8aa5f6b8344da7fe43d9",
+      "visibleReplyId": "1eceaec40e0757cc1c377f6a33fa9daf0d4ca0bd6b0cf42dbaa2d6caaded92a6"
+    }
+  ],
+  "modelCalls": [
+    {
+      "model": "deepseek/deepseek-v4.1-flash",
+      "maxTokens": 65536,
+      "messages": 2,
+      "requestBytes": 32798
+    },
+    {
+      "model": "deepseek/deepseek-v4.1-flash",
+      "maxTokens": 65536,
+      "messages": 4,
+      "requestBytes": 48763
+    },
+    {
+      "model": "deepseek/deepseek-v4.1-flash",
+      "maxTokens": 65536,
+      "messages": 6,
+      "requestBytes": 64728
+    },
+    {
+      "model": "deepseek/deepseek-v4.1-flash",
+      "maxTokens": 65536,
+      "messages": 8,
+      "requestBytes": 80693
+    },
+    {
+      "model": "deepseek/deepseek-v4.1-flash",
+      "maxTokens": 65536,
+      "messages": 10,
+      "requestBytes": 96658
+    },
+    {
+      "model": "deepseek/deepseek-v4.1-flash",
+      "maxTokens": 65536,
+      "messages": 12,
+      "requestBytes": 112623
+    },
+    {
+      "model": "deepseek/deepseek-v4.1-flash",
+      "maxTokens": 65536,
+      "messages": 14,
+      "requestBytes": 128588
+    }
+  ],
+  "isolatedDatabase": true,
+  "isolatedHelperHome": true,
+  "realPiAndAcp": true,
+  "cleanupVerified": {
+    "disposableLocalContainersRemoved": true
+  }
+}

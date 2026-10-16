@@ -80,6 +80,9 @@ async function withOneBrowser<T>(run: () => T): Promise<T> {
  */
 export function webProofShims(mobile: string): Record<string, string> {
   return {
+    // External telemetry is outside UI proofs. Its SDK eagerly imports Expo
+    // Router integrations, which must not bypass these proofs' navigation shims.
+    '@sentry/react-native': 'export const init = () => {}; export const captureException = () => {};',
     './draft-identity':
       'export const useDraftIdentity = explicit => explicit === undefined ? "proof-viewer" : explicit;',
     'react-native-unistyles': `import { beelineThemes } from '${path.join(mobile, 'sources/buzz/groknight')}';

@@ -76,8 +76,16 @@ export async function applyRuntimeModelPreflight(
   selection: Selection,
   validate: LiveValidator = validateAgentModelSelection,
   refreshAdapter?: () => Promise<unknown>,
+  validation: 'startup' | 'session' = 'startup',
 ): Promise<void> {
   config.modelSelection = selection;
+  // The managed Pi provider is pinned by the server. Its actual Room session
+  // applies the live model setter before prompting; a throwaway ACP session
+  // here duplicates that work while delaying registration and command intake.
+  if (validation === 'session') {
+    config.modelUnavailable = undefined;
+    return;
+  }
   config.modelUnavailable = await revalidateRuntimeModelSelection(
     agent,
     config.agentEnv,

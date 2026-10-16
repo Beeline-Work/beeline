@@ -23,6 +23,15 @@ describe('resolvePreflightModelSelection', () => {
 });
 
 describe('revalidateRuntimeModelSelection', () => {
+  it('lets the managed provider use the real session setter without spawning a throwaway preflight', async () => {
+    const validate = vi.fn().mockResolvedValue({});
+    const config = { agentEnv: {}, modelSelection: { model: 'old' }, modelUnavailable: undefined };
+    await applyRuntimeModelPreflight(config, agent, { model: 'beeline/deepseek/deepseek-v4.1-flash' },
+      validate, undefined, 'session');
+    expect(validate).not.toHaveBeenCalled();
+    expect(config.modelSelection.model).toBe('beeline/deepseek/deepseek-v4.1-flash');
+    expect(config.modelUnavailable).toBeUndefined();
+  });
   it('wires a persisted selection and its startup block onto the daemon Body config', async () => {
     const config: {
       agentEnv: Record<string, string>;

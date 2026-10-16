@@ -82,7 +82,18 @@ export class FlyMachines implements FreeAgentMachines {
   }
 
   async start(id: string): Promise<void> {
-    await this.#request('start', `/${id}/start`, 'POST', {});
+    // Fly can report suspended before its snapshot transition accepts a start.
+    // Retry that short transition here, rather than leaving a live connection
+    // to suppress the next wake until its heartbeat expires.
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await this.#request('start', `/${id}/start`, 'POST', {});
+        return;
+      } catch (error) {
+        if (!(error instanceof FlyApiError) || error.status !== 412 || attempt >= 5) throw error;
+        await new Promise(resolve => setTimeout(resolve, Math.min(250 * 2 ** attempt, 2_000)));
+      }
+    }
   }
 
   async suspend(id: string): Promise<void> {

@@ -9,6 +9,7 @@ import type { DaemonApiClient } from './daemon-api-client.js';
 import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
 import { SessionScheduler } from './session-scheduler.js';
+import { ModelSelectionUnavailableError } from './model-config.js';
 
 const roots: string[] = [];
 afterEach(async () => {
@@ -146,11 +147,14 @@ async function activateWith(
     await options.setConfigOptionImpl?.(configId, value);
   });
   vi.spyOn(acp, 'stop').mockResolvedValue(undefined);
-  vi.spyOn(acp, 'sessionPrompt').mockResolvedValue({
+  vi.spyOn(acp, 'sessionPrompt').mockImplementation(async () => {
+    options.recordCalls?.push({ name: 'sessionPrompt', input: {} });
+    return {
     stopReason: 'end_turn',
     updates: [],
     agentText: 'hi',
     toolCalls: [],
+    };
   });
 
   const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
@@ -494,7 +498,22 @@ async function activateAcrossSelectionChange(
   return { sessionNewCalls: sessionNew.mock.calls.length, configCalls };
 }
 
-describe('Room session activation model/effort selection', () => {  it('falls back to the persisted effort when only the model is overridden', async () => {
+describe('Room session activation model/effort selection', () => {
+  it('never prompts when the real session rejects the managed model', async () => {
+    const recordCalls: Array<{ name: string; input: Record<string, unknown> }> = [];
+    const model = 'beeline/deepseek/deepseek-v4.1-flash';
+    await activateWith({}, { model }, {
+      recordCalls,
+      sessionRaw: { configOptions: [{ id: 'model-axis', category: 'model', options: [{ id: model }] }] },
+      setConfigOptionImpl: () => {
+        throw new ModelSelectionUnavailableError({ label: 'model', value: model, reason: 'provider-refused' });
+      },
+    });
+    expect(recordCalls.some(call => call.name === 'sessionPrompt')).toBe(false);
+    expect(recordCalls.some(call => call.name === 'postAgentTurnReceipt' && call.input.status === 'failed')).toBe(true);
+  });
+
+  it('falls back to the persisted effort when only the model is overridden', async () => {
     const calls = await activateWith(
       { model: 'override-model' },
       { model: 'default-model', effort: 'high' },

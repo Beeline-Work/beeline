@@ -1,0 +1,214 @@
+{
+  "date": "2026-10-16",
+  "source": "1aed7b4235d4a61bca85975c1d08cab13edfaa02 + this PR",
+  "machine": "2862135fd37978",
+  "image": "fc5e3236992b1ff2a362801042f1ed8a56bf50cd7c68d001748ffe38d97654bb",
+  "region": "iad",
+  "cpu": "1 shared",
+  "memoryMiB": 2048,
+  "node": "22.23.3",
+  "pi": "0.84.3",
+  "piAcp": "0.0.34",
+  "paired": {
+    "batch": "paired",
+    "results": [
+      {
+        "i": 0,
+        "variant": "base",
+        "initializeMs": 366.929485,
+        "sessionMs": 2657.638657,
+        "totalMs": 3024.5690019999997,
+        "sessionId": "01a146f0-f04b-74c6-a4af-93c3aefe0f0e",
+        "startupInfo": "pi v0.84.3\n---\n\n## Extensions\n- /tmp/pi-cut-paired-0/.pi/agent/extensions/bridge.js\n\n---\nNew version available: v1.3.0 (installed v0.84.3). Run: `npm i -g @earendil-works/pi-coding-agent`\n",
+        "discovery": [
+          {
+            "server": "beeline-agent",
+            "at": "2026-10-16T22:59:18.273Z",
+            "elapsedMs": 115
+          }
+        ]
+      },
+      {
+        "i": 1,
+        "variant": "cut",
+        "initializeMs": 327.9086360000001,
+        "sessionMs": 891.3954750000003,
+        "totalMs": 1219.3046410000002,
+        "sessionId": "01a146f0-fb7e-72f3-9ccd-5f6945da44a9",
+        "startupInfo": "pi v0.84.3\n---\n\n## Extensions\n- /tmp/pi-cut-paired-1/.pi/agent/extensions/bridge.js\n",
+        "discovery": [
+          {
+            "server": "beeline-agent",
+            "at": "2026-10-16T22:59:21.061Z",
+            "elapsedMs": 97
+          }
+        ]
+      },
+      {
+        "i": 2,
+        "variant": "base",
+        "initializeMs": 248.34149799999977,
+        "sessionMs": 2056.2547699999996,
+        "totalMs": 2304.5970479999996,
+        "sessionId": "01a146f1-0010-7ac9-881f-505dfdadbcb0",
+        "startupInfo": "pi v0.84.3\n---\n\n## Extensions\n- /tmp/pi-cut-paired-2/.pi/agent/extensions/bridge.js\n\n---\nNew version available: v1.3.0 (installed v0.84.3). Run: `npm i -g @earendil-works/pi-coding-agent`\n",
+        "discovery": [
+          {
+            "server": "beeline-agent",
+            "at": "2026-10-16T22:59:22.241Z",
+            "elapsedMs": 94
+          }
+        ]
+      },
+      {
+        "i": 3,
+        "variant": "cut",
+        "initializeMs": 350.17141699999956,
+        "sessionMs": 891.862846,
+        "totalMs": 1242.0350229999995,
+        "sessionId": "01a146f1-0978-7fc8-bb46-9fe7d1a33c6c",
+        "startupInfo": "pi v0.84.3\n---\n\n## Extensions\n- /tmp/pi-cut-paired-3/.pi/agent/extensions/bridge.js\n",
+        "discovery": [
+          {
+            "server": "beeline-agent",
+            "at": "2026-10-16T22:59:24.641Z",
+            "elapsedMs": 90
+          }
+        ]
+      },
+      {
+        "i": 4,
+        "variant": "base",
+        "initializeMs": 235.63685199999964,
+        "sessionMs": 2108.6019960000003,
+        "totalMs": 2344.239418,
+        "sessionId": "01a146f1-0e02-7a11-bec0-eb277afd6561",
+        "startupInfo": "pi v0.84.3\n---\n\n## Extensions\n- /tmp/pi-cut-paired-4/.pi/agent/extensions/bridge.js\n\n---\nNew version available: v1.3.0 (installed v0.84.3). Run: `npm i -g @earendil-works/pi-coding-agent`\n",
+        "discovery": [
+          {
+            "server": "beeline-agent",
+            "at": "2026-10-16T22:59:25.800Z",
+            "elapsedMs": 94
+          }
+        ]
+      },
+      {
+        "i": 5,
+        "variant": "cut",
+        "initializeMs": 353.80722799999967,
+        "sessionMs": 936.3230669999994,
+        "totalMs": 1290.1310049999993,
+        "sessionId": "01a146f1-17ac-799c-9308-16a693e5af68",
+        "startupInfo": "pi v0.84.3\n---\n\n## Extensions\n- /tmp/pi-cut-paired-5/.pi/agent/extensions/bridge.js\n",
+        "discovery": [
+          {
+            "server": "beeline-agent",
+            "at": "2026-10-16T22:59:28.305Z",
+            "elapsedMs": 97
+          }
+        ]
+      }
+    ]
+  },
+  "sameWake": [
+    {
+      "i": 0,
+      "order": [
+        "base",
+        "cut"
+      ],
+      "results": [
+        {
+          "variant": "base",
+          "promptMs": 191.6699410000001,
+          "text": "WAKE_OK",
+          "stopReason": "end_turn"
+        },
+        {
+          "variant": "cut",
+          "promptMs": 384.9822729999996,
+          "text": "WAKE_OK",
+          "stopReason": "end_turn"
+        }
+      ]
+    },
+    {
+      "i": 1,
+      "order": [
+        "cut",
+        "base"
+      ],
+      "results": [
+        {
+          "variant": "cut",
+          "promptMs": 189.7693500000005,
+          "text": "WAKE_OK",
+          "stopReason": "end_turn"
+        },
+        {
+          "variant": "base",
+          "promptMs": 201.58561700000064,
+          "text": "WAKE_OK",
+          "stopReason": "end_turn"
+        }
+      ]
+    },
+    {
+      "i": 2,
+      "order": [
+        "base",
+        "cut"
+      ],
+      "results": [
+        {
+          "variant": "base",
+          "promptMs": 214.39976299999944,
+          "text": "WAKE_OK",
+          "stopReason": "end_turn"
+        },
+        {
+          "variant": "cut",
+          "promptMs": 147.39891100000023,
+          "text": "WAKE_OK",
+          "stopReason": "end_turn"
+        }
+      ]
+    },
+    {
+      "i": 3,
+      "order": [
+        "cut",
+        "base"
+      ],
+      "results": [
+        {
+          "variant": "cut",
+          "promptMs": 197.20689400000083,
+          "text": "WAKE_OK",
+          "stopReason": "end_turn"
+        },
+        {
+          "variant": "base",
+          "promptMs": 149.00414100000125,
+          "text": "WAKE_OK",
+          "stopReason": "end_turn"
+        }
+      ]
+    }
+  ],
+  "cleanup": {
+    "deletedMachines": [
+      "80ee655c130258",
+      "2862135fd37978"
+    ],
+    "finalInventory": [
+      {
+        "id": "857614db620078",
+        "state": "suspended",
+        "region": "iad"
+      }
+    ],
+    "workspacesCreated": 0,
+    "grantsCreated": 0
+  }
+}

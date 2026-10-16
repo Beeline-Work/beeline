@@ -376,10 +376,10 @@ const AGENT_TOOLS: ToolDefinition[] = [
   {
     name: 'download_attachment',
     description:
-      'Download one file attached to a Room message (a 📎 marker in your transcript, or an attachment id from get_room_message) into your writable session home and return {path, mimeType, size}; read the local path. Same access as get_room_message. Capped at 25 MB; a file already downloaded with the same sha256 is not fetched again. A failure is a JSON error whose `error` is not_found, forbidden, too_large, or download_failed: report blocked: to your commander with the missing file, and never fetch its media URL yourself.',
+      'Download one file into your writable session home and return {path, mimeType, size}; read the local path. Pass messageId plus attachmentId for a 📎 marker in your transcript (an attachment id from get_room_message), or only attachmentId for a file in the corner brief manifest. Same access as get_room_message or the brief. Capped at 25 MB; a file already downloaded with the same sha256 is not fetched again. A failure is a JSON error whose `error` is not_found, forbidden, too_large, or download_failed: report blocked: to your commander with the missing file, and never fetch its media URL yourself.',
     inputSchema: {
       type: 'object',
-      required: ['messageId', 'attachmentId'],
+      required: ['attachmentId'],
       properties: {
         messageId: { type: 'string', minLength: 1, maxLength: 128 },
         attachmentId: { type: 'string', minLength: 1, maxLength: 64 },
@@ -3046,18 +3046,54 @@ interface DownloadAttachmentDeps {
   /** The daemon's authenticated server; media bytes are read from here, never a stored URL's host. */
   serverBaseUrl: string;
   readMessage: (messageId: string) => Promise<JsonObject>;
+  /**
+   * The active corner's brief attachment with this object id, or null when the
+   * id is not pinned to a brief this agent may read. The server's reach check
+   * is the one authority; no Room message is read for this path.
+   */
+  readBriefAttachment?: (objectId: string) => Promise<DaemonAttachment | null>;
   fetchImpl?: typeof fetch;
 }
 
 function downloadAttachmentDepsFromEnv(): DownloadAttachmentDeps {
+  const serverBaseUrl = requiredEnv('BEELINE_DAEMON_BASE_URL');
   return {
     root: process.env.BEELINE_ATTACH_SCRATCH_ROOT?.trim() || undefined,
-    serverBaseUrl: requiredEnv('BEELINE_DAEMON_BASE_URL'),
+    serverBaseUrl,
     readMessage: (messageId) =>
       daemonExecute('getRoomMessage', {
         roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
         messageId,
       }),
+    readBriefAttachment: async (objectId) => {
+      const cornerId = process.env.BEELINE_DAEMON_CORNER_ID?.trim();
+      if (!cornerId) return null;
+      const { revisions } = (await daemonExecute('listCornerBriefRevisions', {
+        cornerId,
+        limit: 1,
+      })) as {
+        revisions?: readonly {
+          attachments?: readonly {
+            objectId: string;
+            title: string;
+            mime: string;
+            size: number;
+            sha256: string;
+          }[];
+        }[];
+      };
+      const file = revisions?.[0]?.attachments?.find(
+        (attachment) => attachment.objectId.toLowerCase() === objectId,
+      );
+      if (!file) return null;
+      return {
+        url: `${serverBaseUrl}/v1/media/${file.objectId}`,
+        name: file.title,
+        mimeType: file.mime,
+        size: file.size,
+        sha256: file.sha256,
+      };
+    },
   };
 }
 
@@ -3072,39 +3108,118 @@ function messageReadFailure(error: unknown): AttachmentDownloadError {
   return new AttachmentDownloadError('download_failed', `could not read the message (${text})`);
 }
 
+/** One file to download: the media id its bytes live under, plus the metadata
+ *  the caller is allowed to see (a Room message attachment or a corner brief
+ *  attachment). */
+interface DownloadCandidate {
+  /** Scratch directory segment: the message id, or the brief object id. */
+  readonly key: string;
+  readonly mediaId: string;
+  /** Sanitized, collision-free file name safe to join under `key`. */
+  readonly safeName: string;
+  readonly mimeType?: string;
+  readonly size?: number;
+  readonly sha256?: string;
+  readonly expired?: boolean;
+}
+
+/**
+ * The download candidate for the attachment at `index` of a full message
+ * attachment list. The name comes from the whole list so two attachments whose
+ * names sanitize identically keep distinct filenames, exactly as delivery does.
+ */
+function candidateFromMessage(
+  messageId: string,
+  attachments: readonly DaemonAttachment[],
+  index: number,
+): DownloadCandidate | null {
+  const attachment = attachments[index];
+  if (!attachment) return null;
+  const mediaId = attachmentId(attachment);
+  if (!mediaId) return null;
+  return {
+    key: messageId,
+    mediaId,
+    safeName: safeAttachmentNames(attachments)[index]!,
+    ...(attachment.mimeType ? { mimeType: attachment.mimeType } : {}),
+    ...(attachment.size !== undefined ? { size: attachment.size } : {}),
+    ...(attachment.sha256 ? { sha256: attachment.sha256 } : {}),
+    ...(attachment.expired ? { expired: true } : {}),
+  };
+}
+
+/**
+ * Resolve the file to download. A `messageId` authorizes through the same
+ * getRoomMessage read as before. A brief manifest exposes only the attachment
+ * object id, so when the id is not on that message the active corner's brief
+ * is consulted; the server's reach check decides who may read it, and no
+ * parent Room message is read for this path.
+ */
+async function resolveDownloadAttachment(
+  args: JsonObject,
+  deps: DownloadAttachmentDeps,
+): Promise<DownloadCandidate> {
+  const wanted = stringArg(args, 'attachmentId')?.trim().toLowerCase();
+  if (!wanted) throw new AttachmentDownloadError('not_found', 'attachmentId is required');
+  const messageId = stringArg(args, 'messageId')?.trim();
+  let messageError: unknown;
+  if (messageId) {
+    try {
+      const message = await deps.readMessage(messageId);
+      const attachments = (
+        Array.isArray(message.attachments) ? message.attachments : []
+      ) as DaemonAttachment[];
+      const index = attachments.findIndex((item) => attachmentId(item) === wanted);
+      if (index >= 0) {
+        const candidate = candidateFromMessage(messageId, attachments, index);
+        if (candidate) return candidate;
+      }
+    } catch (error) {
+      messageError = error;
+    }
+  }
+  let brief: DaemonAttachment | null = null;
+  if (deps.readBriefAttachment) {
+    try {
+      brief = await deps.readBriefAttachment(wanted);
+    } catch {
+      // No reach to the corner (or its brief is gone): the id stays unknown.
+      brief = null;
+    }
+  }
+  if (brief) {
+    return {
+      key: wanted,
+      mediaId: attachmentId(brief) ?? wanted,
+      safeName: safeAttachmentNames([brief])[0]!,
+      ...(brief.mimeType ? { mimeType: brief.mimeType } : {}),
+      ...(brief.size !== undefined ? { size: brief.size } : {}),
+      ...(brief.sha256 ? { sha256: brief.sha256 } : {}),
+      ...(brief.expired ? { expired: true } : {}),
+    };
+  }
+  if (messageError) throw messageReadFailure(messageError);
+  throw new AttachmentDownloadError('not_found', 'no attachment with this id');
+}
+
 /**
  * download_attachment: authorize through the same getRoomMessage read the
- * agent already has, then copy one attachment's bytes from the server into
- * `<scratch>/attachments/<messageId>/<safe-name>`. Nothing is downloaded
- * while a prompt is built; this is the only on-demand path for a transcript file.
+ * agent already has, or through the active corner's brief when the manifest's
+ * object id names a brief attachment, then copy the bytes from the server into
+ * `<scratch>/attachments/<key>/<safe-name>`. Nothing is downloaded while a
+ * prompt is built; this is the only on-demand path for a transcript file.
  */
 async function downloadAttachment(
   args: JsonObject,
   deps: DownloadAttachmentDeps = downloadAttachmentDepsFromEnv(),
 ): Promise<string> {
-  const messageId = stringArg(args, 'messageId')?.trim();
-  const wanted = stringArg(args, 'attachmentId')?.trim().toLowerCase();
-  if (!messageId || !wanted)
-    throw new AttachmentDownloadError('not_found', 'messageId and attachmentId are required');
-  let message: JsonObject;
-  try {
-    message = await deps.readMessage(messageId);
-  } catch (error) {
-    throw messageReadFailure(error);
-  }
-  const attachments = (
-    Array.isArray(message.attachments) ? message.attachments : []
-  ) as DaemonAttachment[];
-  const index = attachments.findIndex((attachment) => attachmentId(attachment) === wanted);
-  const attachment = attachments[index];
-  if (!attachment)
-    throw new AttachmentDownloadError('not_found', 'that message has no attachment with this id');
-  if (attachment.expired) throw new AttachmentDownloadError('not_found', EXPIRED_REASON);
+  const attachment = await resolveDownloadAttachment(args, deps);
   const tooLarge = (bytes: number) =>
     new AttachmentDownloadError(
       'too_large',
       `${bytes} bytes exceeds the ${MAX_ATTACHMENT_BYTES}-byte limit`,
     );
+  if (attachment.expired) throw new AttachmentDownloadError('not_found', EXPIRED_REASON);
   if (attachment.size && attachment.size > MAX_ATTACHMENT_BYTES) throw tooLarge(attachment.size);
   if (!deps.root)
     throw new AttachmentDownloadError(
@@ -3117,8 +3232,8 @@ async function downloadAttachment(
       deps.root,
       join(
         'attachments',
-        messageId.replace(/[^\w-]/g, '_'),
-        safeAttachmentNames(attachments)[index]!,
+        attachment.key.replace(/[^\w-]/g, '_'),
+        attachment.safeName,
       ),
     );
   } catch (error) {
@@ -3141,7 +3256,7 @@ async function downloadAttachment(
   let fetched;
   try {
     fetched = await fetchBoundedBytes(
-      new URL(`/v1/media/${wanted}`, `${deps.serverBaseUrl}/`).toString(),
+      new URL(`/v1/media/${attachment.mediaId}`, `${deps.serverBaseUrl}/`).toString(),
       deps.fetchImpl ?? fetch,
     );
   } catch (error) {

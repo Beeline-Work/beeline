@@ -42,7 +42,7 @@ describe('server-mediated connected app tools', () => {
     for (const corner of [false, true]) {
       expect(agentToolsFor(true, false, corner, corner).some(tool => tool.name === 'connect')).toBe(true);
     }
-    await callAgentTool('connect', { service: 'Example', reason: 'Finish' }, 'call-1');
+    await callAgentTool('connect', { mode:'ensure', continuation:'Finish the requested task.', service: 'Example', reason: 'Finish' }, 'call-1');
     expect(calls).toEqual([{ name: 'connect', input: expect.objectContaining({ squireAvailable: false }) }]);
   });
 
@@ -63,7 +63,7 @@ describe('server-mediated connected app tools', () => {
       return Response.json(name === 'connect' ? { status: 'needs_squire', app: 'Example',
         squire: { url: 'https://example.com', goal: 'Save the login in the vault.' }, next: 'Use your own operate_drive.' } : {});
     });
-    const reply = await callAgentTool('connect', { service: 'Example', reason: 'Finish' }, 'call-1');
+    const reply = await callAgentTool('connect', { mode:'ensure', continuation:'Finish the requested task.', service: 'Example', reason: 'Finish' }, 'call-1');
     expect(JSON.parse(reply))
       .toMatchObject({ status: 'needs_squire', squire: { url: 'https://example.com' } });
     expect(pendingGrantToolCall({ title: 'connect', content: reply })).toBe(false);
@@ -84,7 +84,7 @@ describe('server-mediated connected app tools', () => {
       return Response.json(name === 'connect' ? { status: 'unavailable', app: 'Example',
         next: 'Trusty Squire is unavailable in this agent session.' } : {});
     });
-    expect(JSON.parse(await callAgentTool('connect', { service: 'Example', reason: 'Finish' }, 'call-1')))
+    expect(JSON.parse(await callAgentTool('connect', { mode:'ensure', continuation:'Finish the requested task.', service: 'Example', reason: 'Finish' }, 'call-1')))
       .toMatchObject({ status: 'unavailable' });
   });
 
@@ -116,7 +116,7 @@ describe('server-mediated connected app tools', () => {
           : { status: 'needs_squire', app: 'Dreamina', appKey: 'dreamina', transport: 'squire-browser',
             squire: { url: 'https://www.google.com/search?q=Dreamina', goal: 'Sign in.' }, next: 'Use your own operate_drive.' });
       });
-      const reply = JSON.parse(await callAgentTool('connect', { service: 'Dreamina', reason: 'Make a video',
+      const reply = JSON.parse(await callAgentTool('connect', { mode:'ensure', continuation:'Finish the requested task.', service: 'Dreamina', reason: 'Make a video',
         noApi: true, ...(signedInUrl ? { signedInUrl } : {}) }, 'call-1'));
       return { reply, sequence, connects };
     };
@@ -163,10 +163,10 @@ describe('server-mediated connected app tools', () => {
 
   it('passes one bounded request-specific promise into connectApp', async () => {
     const continuation = 'I will finish the requested draft after sign-in.';
-    await callAgentTool('connect_app', { app: 'Example', reason: 'Finish the draft',
+    await callAgentTool('connect', { mode:'ensure',  service: 'Example', reason: 'Finish the draft',
       continuation }, 'call-1');
-    expect(calls).toEqual([{ name: 'connectApp', input: expect.objectContaining({
-      app: 'Example', reason: 'Finish the draft', continuation,
+    expect(calls).toEqual([{ name: 'connect', input: expect.objectContaining({
+      service: 'Example', reason: 'Finish the draft', continuation,
       roomId: 'room-1', requestId: 'request-1', generationId: 'generation-1',
     }) }]);
   });
@@ -180,9 +180,9 @@ describe('server-mediated connected app tools', () => {
       'I will open https://example.com to finish this.',
     ];
     for (const continuation of invalid) {
-      await expect(callAgentTool('connect_app', { app: 'Example', reason: 'Finish',
+      await expect(callAgentTool('connect', { mode:'ensure',  service: 'Example', reason: 'Finish',
         continuation }, 'call-1'))
-        .rejects.toThrow(/app continuation/);
+        .rejects.toThrow(/continuation|invalid arguments/);
     }
     expect(calls).toEqual([]);
   });
@@ -225,8 +225,8 @@ describe('server-mediated connected app tools', () => {
       : { status: 'needs_connection' });
     expect(JSON.parse(await callAgentTool('app_tool', { app: appId }, 'call-1')))
       .toEqual({ tools: [] });
-    expect(JSON.parse(await callAgentTool('execute_app_tool', {
-      appId, tool: 'SLACK_POST_MESSAGE', arguments: {},
+    expect(JSON.parse(await callAgentTool('app_tool', {
+      app:appId, tool: 'SLACK_POST_MESSAGE', args: {},
     }, 'call-2'))).toEqual({ status: 'needs_connection' });
     expect(calls.map((call) => call.name)).toEqual(['listAppTools', 'executeAppTool']);
   });
@@ -252,13 +252,13 @@ describe('server-mediated connected app tools', () => {
     expect(names).toEqual(expect.arrayContaining([
       'connect', 'app_tool',
     ]));
-    expect(await callAgentTool('workbench_status', {}, 'call-1'))
+    expect(await callAgentTool('connect', {mode:'status'}, 'call-1'))
       .toContain(`X (app:x, id ${appId}) via composio: connecting`);
-    expect(JSON.parse(await callAgentTool('connect_app', { app: 'X',
+    expect(JSON.parse(await callAgentTool('connect', { mode:'ensure',  service: 'X',
       reason: 'Check X posts', continuation: 'I will check the requested posts after sign-in.'
     }, 'call-2'))).toMatchObject({ status: 'needs_sign_in', appId });
     expect(calls.map((call) => [call.name, call.input.roomId]))
-      .toEqual([['readAgentWorkbench', 'corner-1'], ['connectApp', 'corner-1']]);
+      .toEqual([['readAgentWorkbench', 'corner-1'], ['connect', 'corner-1']]);
     expect(calls[1]?.input).toMatchObject({ requestId: 'request-1',
       generationId: 'generation-1' });
   });

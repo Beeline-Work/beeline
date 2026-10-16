@@ -36,15 +36,15 @@ describe('using-beeline Room guidance', () => {
     expect(markdown).toContain('beeline-agent');
     expect(markdown).toContain('beeline-agent scratch_io(action:image)');
     expect(markdown).toContain('put them in the HTML as a data: URL');
-    expect(markdown).toContain('close_corner(mode:pr_only)');
+    expect(markdown).toContain('close_corner_pr(address)');
     expect(markdown).not.toContain('upgrade_corner_to_code');
     expect(markdown).not.toContain('no action or corner tools');
 
     // Tagging, the corner action, and read-only inspection are always-on rules.
     const room = roomPrompt();
-    expect(room).toContain('An @handle wakes that member; tag agents only to get a reply, otherwise write their name.');
+    expect(room).toContain('Tag to talk. Order to assign work.');
     expect(room).toContain(
-      'Use order(address, text) privately across member Rooms; report(status, text) one step up to your commander',
+      'order(address, agent, text) assigns privately',
     );
     expect(room).toContain('If nothing is actionable for you, do not reply.');
     // The Room asks for the corner's NAME as well as its objective (C89).
@@ -69,8 +69,8 @@ describe('using-beeline Room guidance', () => {
       'app_tool(app:beeline:workflow, tool:start)',
       'search(scope:history)',
       'remember(kind:fact, action:used)',
-      'search(scope:memory)',
-      'list_credentials',
+      'search(scope:memory, query)',
+      'inspect vault metadata',
       'connect(mode:status)',
       'remember(kind:procedure, action:delete)',
     ]) {
@@ -85,7 +85,7 @@ describe('using-beeline Room guidance', () => {
     expect(memory).toContain('Never save "X is impossible".');
     expect(memory).toContain('at most 2,200 characters');
     // The upkeep and search-first rules stay in their tool descriptions.
-    expect(memory).not.toContain('Before saving, call search(scope:memory)');
+    expect(memory).not.toContain('Before saving, call search(scope:memory, query)');
     expect(memory).not.toContain('Meaning-based matching');
     expect(markdown.match(/X is impossible/g)).toHaveLength(1);
   });
@@ -94,7 +94,7 @@ describe('using-beeline Room guidance', () => {
     const markdown = usingBeelineSkillMarkdown('test-release');
     expect(markdown).toContain('wake manages only your own wake sources');
     expect(markdown).toContain('events discovers the catalog');
-    expect(markdown).toContain('replace_events replaces your legacy kind list');
+    expect(markdown).toContain('replace_events replaces your own room-kind subscription list');
     expect(markdown).toContain('wake never posts, orders or reports');
     for (const kind of PER_ITEM_EVENT_KINDS) expect(markdown).not.toContain(`${kind} `);
     expect(markdown).toContain('no item-specific subscriptions');
@@ -199,7 +199,7 @@ describe('using-beeline Room guidance', () => {
   it('delivers the same Room capabilities through compatibility-only harnesses', () => {
     const context = sessionPrompt({ agentCommand: 'codex-acp' });
     expect(context.systemPrompt).toContain('read-only');
-    expect(context.systemPrompt).toContain('An @handle wakes that member; tag agents only to get a reply, otherwise write their name.');
+    expect(context.systemPrompt).toContain('Tag to talk. Order to assign work.');
     expect(context.systemPrompt).toContain('call open_corner');
     expect(context.systemPrompt).toContain(
       'When open_corner succeeds the server posts the corner card: do not restate it.',
@@ -218,7 +218,7 @@ describe('using-beeline Room guidance', () => {
     for (const surface of ['room', 'dm'] as const) {
       const context = sessionPrompt({ surface, agentCommand: 'codex-acp' });
       expect(context.systemPrompt).toContain(
-        'For any service or capability request, use connect(mode:discover) if unclear, then connect(mode:ensure).',
+        'For any service or capability request, use connect(mode:discover) if unclear, then connect(mode:ensure, service, reason, continuation).',
       );
       expect(context.systemPrompt).not.toContain('For every user request');
       expect(context.systemPrompt).not.toContain('sign up for an account');
@@ -437,7 +437,7 @@ describe('using-beeline "Tools and the Connectors" section', () => {
     expect(markdown).toContain('beeline-agent connect(mode:status)');
     expect(markdown).toContain('Trusty Squire signs up and signs in to any website hands-off');
     expect(markdown).toContain(
-      'operate_drive drives a whole flow, and flat steps (operate_click, operate_type, operate_select,',
+      'Use operate_drive for a browser goal.',
     );
     expect(markdown).toContain('Connected apps are listed once per app with a stable ID');
     expect(markdown).toContain('Tailscale installs its CLI on the selected helper');
@@ -448,8 +448,8 @@ describe('using-beeline "Tools and the Connectors" section', () => {
   });
 
   it('teaches one server-owned connection path in every surface', () => {
-    expect(markdown).toContain('For any service or capability request, use connect(mode:discover) if unclear, then connect(mode:ensure).');
-    expect(markdown).toContain('including in corners');
+    expect(markdown).toContain('For any service or capability request, use connect(mode:discover) if unclear, then connect(mode:ensure, service, reason, continuation).');
+    expect(markdown).toContain('drive the supplied goal locally and recheck connect');
     expect(markdown).toContain('switchGoogleAccount');
     expect(markdown).toContain('end the turn and wait for its connection wake');
     expect(markdown).not.toContain('call offer_connector');
@@ -462,7 +462,7 @@ describe('using-beeline "Tools and the Connectors" section', () => {
 
   it('keeps service search silent and setup on the server', () => {
     expect(markdown).toContain('Search shows the user nothing');
-    expect(markdown).toContain('the server chooses how to connect and finishes setup');
+    expect(markdown).toContain('the server chooses the route; follow its actual readiness or needs_squire response');
     expect(markdown).toContain('Do not provision or pair a route yourself');
   });
 
@@ -493,7 +493,7 @@ describe('using-beeline "Showing a mock" section', () => {
   it('carries the Showing a mock section with the post_artifact flow', () => {
     expect(markdown).toContain('## Showing a mock');
     expect(markdown).toContain('beeline-agent post_artifact');
-    expect(markdown).toContain('mime "text/html"');
+    expect(markdown).toContain('mime:"text/html"');
     expect(markdown).toContain('self-contained');
     expect(markdown).toContain('data: URLs');
     expect(markdown).toContain('no script, no external dependencies, no network references');

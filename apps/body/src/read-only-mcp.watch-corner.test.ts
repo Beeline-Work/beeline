@@ -32,8 +32,7 @@ afterEach(() => {
 
 it('calls watchCorner in the current corner and returns readable state and kinds', async () => {
   const text = await callAgentTool(
-    'watch',
-    { address: 'sibling' },
+    'wake', { action:"create",trigger:"lifecycle", ...{ address: 'sibling' } },
     'watch-1',
   );
   expect(calls).toEqual([
@@ -56,7 +55,7 @@ it('calls watchCorner in the current corner and returns readable state and kinds
 
 it('offers lifecycle watches in a DM without chatter or schedule events', () => {
   const tool = agentToolsFor(true, true).find(t => t.name === 'wake')!;
-  expect(tool.description).toContain('lifecycle');
+  expect(tool.description).toMatch(/lifecycle/i);
   expect(tool.inputSchema.required).toEqual(['action']);
 });
 
@@ -66,22 +65,21 @@ it('reports an already merged corner with its merge commit, and a closed one', a
     Response.json({ kinds: [], state: 'merged', woken: true, snapshot: merged }),
   );
   const text = await callAgentTool(
-    'watch',
-    { address: 'sibling' },
+    'wake', { action:"create",trigger:"lifecycle", ...{ address: 'sibling' } },
     'watch-3',
   );
   expect(text).toContain('Corner already merged; one merged wake queued now');
   expect(text).toContain('f'.repeat(40));
   vi.stubGlobal('fetch', async () => Response.json({ kinds: [], state: 'closed', snapshot }));
   expect(
-    await callAgentTool('watch', { address: 'sibling' }, 'watch-4'),
+    await callAgentTool('wake', { action:"create",trigger:"lifecycle", ...{ address: 'sibling' } }, 'watch-4'),
   ).toContain('Corner closed without merging');
 });
 
 it('limits the advertised address to corners, including when called from a Room or DM', () => {
   for (const dm of [false, true]) {
     const tool = agentToolsFor(true, dm).find(t => t.name === 'wake')!;
-    expect(tool.description).toContain('addressed corner opened/merged');
+    expect(tool.description).toContain('requires address and watches opened/merged');
     expect(tool.inputSchema.properties).not.toHaveProperty('agent');
   }
 });

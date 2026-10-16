@@ -448,7 +448,16 @@ export type DaemonOperationMap = {
   /** A plain message into a reachable corner, from the caller's active turn. */
   postCornerMessage: Operation<
     CornerInput & RoomInput & TurnOutputAuthority & { readonly text: string },
-    { readonly id: string; readonly createdAt: number }
+    {
+      readonly id: string;
+      readonly createdAt: number;
+      readonly effect: 'conversation';
+      readonly address: string;
+      readonly visibility: 'public';
+      readonly reportsAssignment: false;
+      readonly woken: readonly string[];
+      readonly notWoken: readonly { readonly handle: string; readonly reason: string }[];
+    }
   >;
   getCornerCloseRequests: Operation<CornerCursorInput, RoomInboxResult>;
   /** Long-poll: resolves as soon as the corner has something new, or on a bounded timeout. */

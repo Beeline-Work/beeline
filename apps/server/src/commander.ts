@@ -3,6 +3,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import type { SqlDatabase } from './database.js';
 import {
   createAgentCommand,
+  repairReviewerCornerMembership,
   type CommandRow,
   type PrivateCommandPayload,
 } from './agent-command.js';
@@ -115,9 +116,21 @@ export async function sendOrder(
   let worker: string | undefined;
   if (target.parent_id) {
     if (!target.worker) throw new CommandRefusalError('address has no working agent', 409);
-    if (named && named !== target.worker && named.toLowerCase() !== (await agentHandle(db, target.worker)))
-      throw new CommandRefusalError('order agent is not this corner\'s worker; omit agent or use the Room address', 400);
     worker = target.worker;
+    if (named && named !== target.worker && named.toLowerCase() !== (await agentHandle(db, target.worker))) {
+      const reviewer = (await db.query<{ id: string; handle: string | null }>(
+        `SELECT reviewer.id,lower(reviewer.handle) handle FROM rooms corner
+         JOIN rooms parent ON parent.id=corner.parent_id
+         JOIN identities reviewer ON reviewer.id=parent.reviewer_agent_id OR reviewer.id=ANY(parent.reviewer_fallback_ids)
+         WHERE corner.id=$1 AND (reviewer.id=$2 OR lower(reviewer.handle)=$3)`, [address, named, named.toLowerCase()],
+      )).rows[0];
+      const commander = await commanderReportAddress(db, address);
+      if (!reviewer || (named !== reviewer.id && named.toLowerCase() !== reviewer.handle) || commander.recipient !== agentId)
+        throw new CommandRefusalError("agent must be this corner's implementer, or its configured reviewer ordered by the commander; use report(status:needs_decision,text) to ask your commander", 400);
+      if (!await repairReviewerCornerMembership(db, address, reviewer.id))
+        throw new CommandRefusalError('configured reviewer is no longer a member; report blocked to your commander', 403);
+      worker = reviewer.id;
+    }
   } else {
     const direct = (
       await db.query<{ direct: boolean }>(`SELECT direct_participants IS NOT NULL direct FROM rooms WHERE id=$1`, [address])
@@ -158,7 +171,7 @@ export async function sendOrder(
     retainDepth: true,
   });
   if (!queued) throw new CommandRefusalError('order recipient is no longer a member', 403);
-  return { id: queued.id, createdAt: Math.floor(Date.now() / 1000) };
+  return { id: queued.id, createdAt: Math.floor(Date.now() / 1000), effect: 'order', address, agent: worker, visibility: 'private', reportsAssignment: false, accepted: true };
 }
 
 async function agentHandle(db: SqlDatabase, id: string) {

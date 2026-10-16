@@ -79,8 +79,8 @@ The following are ACTUAL shipped reference constructions from apps/mobile/source
 ${references}
 ~~~
 
-Create a drawing array, back to front, and call set_avatar with it. Each shape has type path, polygon, circle, ellipse, rect, or line; geometry uses the corresponding SVG attributes (d, points, cx/cy/r, rx/ry, x/y/width/height, x1/y1/x2/y2). Use numeric coordinates, fill/stroke names bone|ink|brass|none, and optional numeric strokeWidth. No SVG/XML strings, transforms, external resources, or attributes beyond this vocabulary. Example shape: {"type":"circle","cx":38,"cy":44,"r":8,"fill":"ink"}.
+Create a drawing array, back to front, and call app_tool(app:beeline:avatar, tool:set, args:{drawing}) with it. Each shape has type path, polygon, circle, ellipse, rect, or line; geometry uses the corresponding SVG attributes (d, points, cx/cy/r, rx/ry, x/y/width/height, x1/y1/x2/y2). Use numeric coordinates, fill/stroke names bone|ink|brass|none, and optional numeric strokeWidth. No SVG/XML strings, transforms, external resources, or attributes beyond this vocabulary. Example shape: {"type":"circle","cx":38,"cy":44,"r":8,"fill":"ink"}.
 
-set_avatar renders bounded geometry to durable image bytes and replaces your current avatar atomically. Its successful result is the save receipt; there is no Apply step. Only claim success after it succeeds. On failure, the old face remains. Fix a malformed drawing once and retry; if still failing, report the failure and invite /draw-avatar retry. Do not offer a history library or restoration controls.
+app_tool(app:beeline:avatar, tool:set, args:{drawing}) renders bounded geometry to durable image bytes and replaces your current avatar atomically. Its successful result is the save receipt; there is no Apply step. Only claim success after it succeeds. On failure, the old face remains. Fix a malformed drawing once and retry; if still failing, report the failure and invite /draw-avatar retry. Do not offer a history library or restoration controls.
 `;
 }

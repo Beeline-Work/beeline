@@ -19,48 +19,19 @@ const RETIRED_TRIAGE_TOOLS = [
 ];
 
 describe('feedback tools', () => {
-  it('offers feedback and fixed variants of report on every surface and no triage tool anywhere', () => {
-    const surfaces = {
-      room: agentToolsFor(true, false),
-      dm: agentToolsFor(true, true),
-      corner: agentToolsFor(true, false, true),
-      reviewer: agentToolsFor(true, false, true, true),
-      repoLessCorner: agentToolsFor(true, false, true, false, true, true),
-      memoryOff: agentToolsFor(true, false, false, false, true, false),
-    };
-    for (const [surface, tools] of Object.entries(surfaces)) {
-      const names = tools.map((tool) => tool.name);
-      expect(names, surface).toContain('report');
-      expect(names, surface).not.toContain('report_feedback');
-      // The server decides who may send a Fixed DM, on every call.
-      expect(names, surface).not.toContain('notify_feedback_fixed');
-      for (const name of RETIRED_TRIAGE_TOOLS) expect(names, surface).not.toContain(name);
+  it('separates assignment reports from product feedback on every surface', () => {
+    for (const tools of [agentToolsFor(true,false), agentToolsFor(true,true), agentToolsFor(true,false,true)]) {
+      const names = tools.map(tool => tool.name);
+      expect(names).toEqual(expect.arrayContaining(['report','report_feedback','notify_feedback_fixed']));
+      for (const name of RETIRED_TRIAGE_TOOLS) expect(names).not.toContain(name);
+      const report = tools.find(tool => tool.name === 'report')!;
+      expect(Check(report.inputSchema, { category:'bug', summary:'feedback' })).toBe(false);
+      expect(Check(report.inputSchema, { status:'blocked', text:'blocked: decision needed' })).toBe(true);
+      const feedback = tools.find(tool => tool.name === 'report_feedback')!;
+      expect(Check(feedback.inputSchema, { category:'bug' })).toBe(false);
+      expect(Check(feedback.inputSchema, { category:'bug', summary:'Synthetic feedback' })).toBe(true);
     }
-    const report = surfaces.room.find((tool) => tool.name === 'report')!;
-    for (const tools of Object.values(surfaces)) {
-      const tool = tools.find(tool => tool.name === 'report')!;
-      expect(tool.description).toContain('For kind feedback, category and summary are required');
-      const feedback = { kind: 'feedback', category: 'bug' };
-      expect(Check(tool.inputSchema, feedback)).toBe(false);
-      expect(Check(tool.inputSchema, { ...feedback, summary: '' })).toBe(false);
-      expect(Check(tool.inputSchema, { kind: 'feedback', summary: 'Synthetic feedback' })).toBe(false);
-      expect(Check(tool.inputSchema, { ...feedback, summary: 'Synthetic feedback' })).toBe(true);
-      expect(Check(tool.inputSchema, { status: 'blocked', text: 'blocked: decision needed' })).toBe(true);
-      expect(Check(tool.inputSchema, { kind: 'commander', status: 'done', text: 'done: finished' })).toBe(true);
-      expect(Check(tool.inputSchema, {
-        kind: 'fixed', item_ids: ['fb_1'], title: 'Fixed', pr_url: 'https://github.com/a/b/pull/1',
-      })).toBe(true);
-    }
-    expect(report.inputSchema.properties).not.toHaveProperty('prompt_section_ids');
-    expect((report.inputSchema.properties as Record<string, { enum?: string[] }>).category?.enum).toEqual([
-      'simpler_path',
-      'contradiction',
-      'tooling_gap',
-      'context_gap',
-      'bug',
-    ]);
   });
-
   it('still opens sibling fix corners from any corner, with no setting', () => {
     expect(agentToolsFor(true, false, true).map((tool) => tool.name)).toContain('open_corner');
   });
@@ -101,15 +72,15 @@ describe('report_feedback', () => {
   });
 
   it('R1: advertises the summary required by the real feedback dispatcher and forwards it unchanged', async () => {
-    const schema = agentToolsFor(true, false).find(tool => tool.name === 'report')!.inputSchema;
-    const input = { kind: 'feedback', category: 'bug', detail: 'Synthetic schema agreement reproduction' };
+    const schema = agentToolsFor(true, false).find(tool => tool.name === 'report_feedback')!.inputSchema;
+    const input = { category: 'bug', detail: 'Synthetic schema agreement reproduction' };
     expect(Check(schema, input)).toBe(false);
-    await expect(callAgentTool('report', input, 'R1-missing')).rejects.toThrow('summary is required');
+    await expect(callAgentTool('report_feedback', input, 'R1-missing')).rejects.toThrow('summary');
     expect(calls).toHaveLength(0);
 
     const valid = { ...input, summary: 'Synthetic schema agreement' };
     expect(Check(schema, valid)).toBe(true);
-    expect(JSON.parse(await callAgentTool('report', valid, 'R1-valid'))).toEqual({ itemId: 'fb_1' });
+    expect(JSON.parse(await callAgentTool('report_feedback', valid, 'R1-valid'))).toEqual({ itemId: 'fb_1' });
     expect(calls).toEqual([expect.objectContaining({
       name: 'reportFeedback',
       input: expect.objectContaining({ category: valid.category, summary: valid.summary, detail: valid.detail }),

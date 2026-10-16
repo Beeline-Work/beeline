@@ -89,3 +89,22 @@ No raw login URL was fetched and no message was sent from the owner session.
 Next step: provide a supported sealed reviewer-login navigation route, then open
 a Room and verify an agent's answer in that reviewer session. Free agents are
 not yet released: this production browser check is a regression check only.
+
+## Review follow-up: structured-output schemas
+
+Reproduction `FREE-ABUSE-SCHEMA`: on b94dd0477, POST a live-turn request with a
+100 KB `response_format.json_schema.schema.description`. The schema reached the
+upstream despite the fixture's 1,000-token cap. Simulated provider usage settled
+50,001 tokens. The equivalent request also bypassed a $0.002 shared budget when
+the owner token cap was large enough. All four HTTP regressions failed before
+the fix (one request and eight concurrent requests, for each limit).
+
+Reservations now measure the entire forwarded allowlist, including JSON schemas,
+tool selectors and other model-input fields. The same HTTP requests return the
+appropriate allowance/budget pause with zero upstream calls and zero token/dollar
+charges, including parallel requests. A small structured-output schema still
+forwards normally. This keeps the request-field forwarding and reservation bound
+on one allowlist so new forwarded fields cannot silently escape accounting.
+
+Follow-up validation: all 23 proxy and 13 lifecycle tests passed (36 total),
+including the original concurrent token-cap test. Root `npm run typecheck` passed.

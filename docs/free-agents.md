@@ -95,7 +95,8 @@ message and provisioning/waking cannot start Machines. Queued wakes remain for
 the next UTC day. Operators must keep fallback prices at or above their pinned
 model's worst-case prices; changing models requires checking these prices.
 
-Text prompt reservations use UTF-8 bytes plus framing overhead. Remote media
+Prompt reservations count UTF-8 bytes for every allowlisted forwarded field,
+including response-format schemas and tool selectors, plus framing overhead. Remote media
 cannot be bounded this way and is refused by the free-agent proxy.
 
 Free-agent ACP turns have a hard wall clock cap of **15 minutes**, measured from

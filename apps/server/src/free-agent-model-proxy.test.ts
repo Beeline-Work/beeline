@@ -9,6 +9,7 @@ import {
   handleFreeAgentModelRequest,
   StreamUsageReader,
   reserveAllowance,
+  type FreeAgentModelProxyOptions,
 } from './free-agent-model-proxy.js';
 import { freeAgentConfigFromEnv, tokenHash } from './free-agents.js';
 import { DEFAULT_FREE_AGENT_LIMITS, FREE_AGENT_BUDGET_MESSAGE, freeAgentLimitsFromEnv } from './free-agent-limits.js';
@@ -28,8 +29,10 @@ describe('free agent model proxy', () => {
   let origin: string;
   let upstream: Array<{ url: string; authorization: string | null; body: Record<string, unknown> }>;
   let reply: () => Response;
+  let config: FreeAgentModelProxyOptions['config'];
 
   beforeEach(async () => {
+    config = { ...CONFIG };
     db = new PgliteDatabase();
     await migrate(db);
     await db.query(
@@ -63,7 +66,7 @@ describe('free agent model proxy', () => {
     server = createServer((request, response) => {
       void handleFreeAgentModelRequest(request, response, new URL(request.url!, 'http://x').pathname, {
         database: db,
-        config: CONFIG,
+        config,
         upstreamKey: 'sk-or-server-only',
         fetchImpl,
       });
@@ -160,6 +163,44 @@ describe('free agent model proxy', () => {
       cachedTokenWeight: 0.1, callsPerMinute: 5, dailyBudgetUsd: 12, maxTurnMs: 60_000,
     });
     expect(chargedTokens({ prompt_tokens: 100, completion_tokens: 5, prompt_tokens_details: { cached_tokens: 91 } }, 0.1)).toBe(24);
+  });
+
+  it.each([
+    { limit: 'daily', parallel: 1 },
+    { limit: 'daily', parallel: 8 },
+    { limit: 'budget', parallel: 1 },
+    { limit: 'budget', parallel: 8 },
+  ] as const)('FREE-ABUSE-SCHEMA: refuses large response_format schemas before upstream ($limit, $parallel calls)', async ({ limit, parallel }) => {
+    if (limit === 'budget') config = {
+      ...CONFIG, dailyTokenCap: 200_000, lifetimeTokenCap: 0,
+      limits: { ...DEFAULT_FREE_AGENT_LIMITS, dailyBudgetUsd: 0.002 },
+    };
+    reply = () => Response.json({
+      choices: [{ message: { role: 'assistant', content: 'done' } }],
+      usage: { prompt_tokens: 50_000, completion_tokens: 1, cost: 0.05 },
+    });
+    const request = {
+      messages: [{ role: 'user', content: 'Return JSON.' }], max_tokens: 256,
+      response_format: { type: 'json_schema', json_schema: { name: 'result', schema: {
+        type: 'object', description: 'x'.repeat(100_000),
+      } } },
+    };
+    const bodies = await Promise.all(Array.from({ length: parallel }, async () => (await call(request)).json()));
+    const expected = limit === 'daily' ? allowanceMessage('daily', config) : FREE_AGENT_BUDGET_MESSAGE;
+    expect(bodies.map(body => body.choices[0].message.content)).toEqual(Array(parallel).fill(expected));
+    expect(upstream).toEqual([]);
+    expect(await freeAgentAllowance(db, OWNER, new Date())).toEqual({ today: 0, lifetime: 0 });
+    expect((await db.query(`SELECT usd FROM free_agent_budget`)).rows).toEqual([]);
+    console.log(`Demonstrated FREE-ABUSE-SCHEMA: ${parallel} large-schema calls refused by ${limit}; zero upstream, token and dollar charges.`);
+  });
+
+  it('forwards a small response_format schema within the allowance', async () => {
+    const response_format = { type: 'json_schema', json_schema: { name: 'result', schema: {
+      type: 'object', properties: { answer: { type: 'string' } },
+    } } };
+    expect((await call({ messages: [], response_format, max_tokens: 256 })).status).toBe(200);
+    expect(upstream).toHaveLength(1);
+    expect(upstream[0]!.body.response_format).toEqual(response_format);
   });
 
   it('refuses a missing or revoked model token', async () => {

@@ -168,12 +168,12 @@ const DEFAULT_OUTPUT_RESERVATION = 8_192;
 const MINIMUM_CALL_TOKENS = 256;
 
 /**
- * Bound text prompts by UTF-8 bytes, including per-message framing. The pinned
- * free-agent model accepts text; opaque remote media cannot be bounded here.
+ * Bound every forwarded field by UTF-8 bytes plus framing overhead. Schemas
+ * and tool selectors can also contribute model input, so use the forwarding
+ * allowlist itself to keep reservations conservative when fields are added.
  */
 export function promptTokenBound(body: Record<string, unknown>): number {
-  return Buffer.byteLength(JSON.stringify(body.messages ?? []), 'utf8') +
-    Buffer.byteLength(JSON.stringify(body.tools ?? []), 'utf8') + 256;
+  return Buffer.byteLength(JSON.stringify(forwardedFields(body)), 'utf8') + 256;
 }
 
 /**

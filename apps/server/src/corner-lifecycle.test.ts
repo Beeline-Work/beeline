@@ -1803,6 +1803,156 @@ describe('Reproduction CI-1: a red head wakes the implementer before checks fini
   });
 });
 
+describe('Reproduction R1: checks wakes act on stale CI state', () => {
+  async function cornerAtHead(): Promise<string> {
+    const cornerId = await open('owner/widgets');
+    await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
+      cornerId,
+      JSON.stringify({
+        checks: 'unknown',
+        lifecycle: 'in-review',
+        pr: { number: 7, url: 'https://github.com/owner/widgets/pull/7', headSha: SHA },
+      }),
+    ]);
+    await pushToCorner(cornerId, SHA);
+    return cornerId;
+  }
+  async function checkRunWebhook(cornerId: string, name: string, conclusion: string) {
+    await github.processWebhook('check_run', {
+      installation: { id: 77 },
+      repository: { id: 101, full_name: 'owner/widgets' },
+      action: 'completed',
+      check_run: {
+        id: 9,
+        name,
+        status: 'completed',
+        conclusion,
+        check_suite: { head_branch: branchOf(cornerId), head_sha: SHA },
+      },
+    });
+  }
+  const cornerCheckWakes = async (cornerId: string) =>
+    (await daemon.execute('getAgentCommands', { roomId: cornerId }, A)).commands.filter(
+      (command) => command.reason === 'corner_check',
+    );
+
+  it('R1cancelled: a job cancelled before a runner started is not a code failure', async () => {
+    const cornerId = await cornerAtHead();
+    // A recorded GitHub check_run: GitHub cancelled the job before any runner
+    // picked it up, so it completed as `cancelled` with no steps and the job
+    // log read answers 404. GitHub's own rollup still reads FAILURE.
+    githubApp.readCommitCheckRollup.mockResolvedValueOnce({
+      state: 'failed',
+      total: 1,
+      failing: ['Deploy'],
+      checks: [
+        {
+          name: 'Deploy',
+          status: 'failed',
+          conclusion: 'CANCELLED',
+          url: 'https://github.com/owner/widgets/actions/runs/10/job/4040',
+        },
+      ],
+    });
+    await checkRunWebhook(cornerId, 'Deploy', 'cancelled');
+    expect(await cornerCheckWakes(cornerId)).toHaveLength(0);
+    expect(
+      (
+        await db.query<{ checks: string }>(
+          `SELECT lifecycle->>'checks' checks FROM corner_facts WHERE corner_id=$1`,
+          [cornerId],
+        )
+      ).rows[0]!.checks,
+    ).not.toBe('failing');
+  });
+
+  it('R1running: a failed job while the run is still going names the still-running run', async () => {
+    const cornerId = await cornerAtHead();
+    githubApp.readCommitCheckRollup.mockResolvedValueOnce({
+      state: 'failed',
+      total: 2,
+      failing: ['Body suite'],
+      checks: [
+        { name: 'Body suite', status: 'failed' },
+        { name: 'Server suite', status: 'pending' },
+      ],
+    });
+    await checkRunWebhook(cornerId, 'Body suite', 'failure');
+    const [wake] = await cornerCheckWakes(cornerId);
+    expect(wake).toBeTruthy();
+    expect(wake!.source.body).toContain('still running');
+  });
+
+  it('R1head: a checks wake names the head SHA it reports on', async () => {
+    const cornerId = await cornerAtHead();
+    githubApp.readCommitCheckRollup.mockResolvedValueOnce({
+      state: 'failed',
+      total: 1,
+      failing: ['Body suite'],
+      checks: [{ name: 'Body suite', status: 'failed' }],
+    });
+    await checkRunWebhook(cornerId, 'Body suite', 'failure');
+    const [wake] = await cornerCheckWakes(cornerId);
+    expect(wake).toBeTruthy();
+    expect(wake!.source.body).toContain(SHA);
+  });
+
+  it('R1conflict: a conflict superseded by a mergeable newer head sends no wake', async () => {
+    const cornerId = await open('owner/widgets');
+    await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
+      cornerId,
+      JSON.stringify({
+        checks: 'unknown',
+        lifecycle: 'in-review',
+        pr: {
+          number: 7,
+          url: 'https://github.com/owner/widgets/pull/7',
+          headSha: SHA,
+          mergeability: 'dirty',
+        },
+      }),
+    ]);
+    // GitHub already reports a newer head that is mergeable.
+    githubApp.readPullRequest.mockResolvedValueOnce({
+      number: 7,
+      url: 'https://github.com/owner/widgets/pull/7',
+      headSha: '9'.repeat(40),
+      mergeability: 'clean' as const,
+    });
+    await github.refreshStaleMergeability(cornerId);
+    expect((await reasons(cornerId, A)).filter((reason) => reason === 'corner_merge_conflict')).toHaveLength(0);
+  });
+
+  it('R1conflictHead: a conflict wake names the head SHA it reports on', async () => {
+    const cornerId = await open('owner/widgets');
+    await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
+      cornerId,
+      JSON.stringify({
+        checks: 'unknown',
+        lifecycle: 'in-review',
+        pr: {
+          number: 7,
+          url: 'https://github.com/owner/widgets/pull/7',
+          headSha: SHA,
+          mergeability: 'dirty',
+        },
+      }),
+    ]);
+    githubApp.readPullRequest.mockResolvedValueOnce({
+      number: 7,
+      url: 'https://github.com/owner/widgets/pull/7',
+      headSha: SHA,
+      mergeability: 'dirty' as const,
+    });
+    await github.refreshStaleMergeability(cornerId);
+    const [wake] = await daemon
+      .execute('getAgentCommands', { roomId: cornerId }, A)
+      .then((r) => r.commands.filter((command) => command.reason === 'corner_merge_conflict'));
+    expect(wake).toBeTruthy();
+    expect(wake!.source.body).toContain(SHA);
+  });
+});
+
 describe('a person hands the corner to another agent (the implementer follows the tag)', () => {
   // A third agent, a member of the corner only: the reviewer stays B, so the
   // tagged implementer is never the reviewer. `beforeEach` drops the corner

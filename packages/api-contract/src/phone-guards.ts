@@ -1317,7 +1317,10 @@ function readCheck(
   if (
     !item ||
     !nonempty(item.name) ||
-    (item.status !== 'pending' && item.status !== 'passed' && item.status !== 'failed')
+    (item.status !== 'pending' &&
+      item.status !== 'passed' &&
+      item.status !== 'failed' &&
+      item.status !== 'cancelled')
   ) {
     return null;
   }

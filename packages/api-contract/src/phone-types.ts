@@ -71,7 +71,7 @@ export type CornerLifecycleView = {
     readonly failing: readonly string[];
     readonly checks: readonly {
       readonly name: string;
-      readonly status: 'pending' | 'passed' | 'failed';
+      readonly status: 'pending' | 'passed' | 'failed' | 'cancelled';
       readonly conclusion?: string;
       readonly url?: string;
     }[];

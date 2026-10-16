@@ -134,6 +134,29 @@ describe('GitHub PR check reads', () => {
     });
   });
 
+  it('classifies a job GitHub cancelled as cancelled, not failed', async () => {
+    // A job cancelled before a runner picked it up has no code verdict. The
+    // combined rollup GitHub returns is still FAILURE, but the run itself is
+    // reported as cancelled and must not read as a repair-waking failure.
+    vi.stubGlobal('fetch', async () =>
+      Response.json(
+        response('FAILURE', [
+          {
+            __typename: 'CheckRun',
+            name: 'Deploy',
+            status: 'COMPLETED',
+            conclusion: 'CANCELLED',
+          },
+        ]),
+      ),
+    );
+    await expect(app().readCommitCheckRollup('token', 'owner/widgets', sha)).resolves.toMatchObject({
+      state: 'failed',
+      checks: [{ name: 'Deploy', status: 'cancelled', conclusion: 'CANCELLED' }],
+      failing: [],
+    });
+  });
+
   it('treats a head with no rollup as pending rather than passing', async () => {
     vi.stubGlobal('fetch', async () =>
       Response.json({ data: { repository: { object: { oid: sha, statusCheckRollup: null } } } }),

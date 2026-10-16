@@ -72,7 +72,7 @@ CREATE INDEX IF NOT EXISTS free_agent_events_agent ON free_agent_events(agent_id
 /** How often the background leader sweeps free agents at most. */
 export const FREE_AGENT_SWEEP_MS = 15_000;
 
-export const FREE_AGENT_HARNESS = 'opencode';
+export const FREE_AGENT_HARNESS = 'pi';
 
 export interface FreeAgentConfig {
   limits?: FreeAgentLimits;
@@ -275,8 +275,8 @@ export async function createFreeAgentInWorkspace(
     [agent.publicKey, 'Beebee', handle, seeded.face],
   );
   await database.query(
-    `INSERT INTO agents(agent_id,owner_id,soul,selected_model,machine_id,machine_name)
-     VALUES($1,$2,$3::jsonb,$4,$5,'Beeline cloud')`,
+    `INSERT INTO agents(agent_id,owner_id,soul,selected_model,machine_id,machine_name,harness)
+     VALUES($1,$2,$3::jsonb,$4,$5,'Beeline cloud',$6)`,
     [
       agent.publicKey,
       input.creatorId,
@@ -287,6 +287,7 @@ export async function createFreeAgentInWorkspace(
       }),
       freeAgentHarnessModel(config),
       `free-agent:${agent.publicKey}`,
+      FREE_AGENT_HARNESS,
     ],
   );
   await database.query(

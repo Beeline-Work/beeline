@@ -168,7 +168,7 @@ describe('free starter agents', () => {
 
     const identity = (
       await db.query<{ kind: string; name: string; handle: string | null; owner_id: string; selected_model: string; soul: { name: string; instructions: string } }>(
-        `SELECT i.kind,i.name,i.handle,a.owner_id,a.selected_model,a.soul FROM identities i
+        `SELECT i.kind,i.name,i.handle,a.owner_id,a.selected_model,a.harness,a.soul FROM identities i
          JOIN agents a ON a.agent_id=i.id WHERE i.id=$1`,
         [agent.agent_id],
       )
@@ -179,6 +179,7 @@ describe('free starter agents', () => {
       handle: 'beebee',
       owner_id: OWNER,
       selected_model: 'beeline/deepseek/deepseek-v4-flash',
+      harness: 'pi',
     });
     expect(identity.soul.name).toBe('Beebee');
     expect(identity.soul.instructions).toContain('You are Beebee');
@@ -286,7 +287,7 @@ describe('free starter agents', () => {
     expect(grant).toMatchObject({
       agentId: agent.agent_id,
       agentSecretKey: keys.agent,
-      harness: 'opencode',
+      harness: 'pi',
       model: 'beeline/deepseek/deepseek-v4-flash',
       upstreamModel: 'deepseek/deepseek-v4-flash',
       workspaceId: id,

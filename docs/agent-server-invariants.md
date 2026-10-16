@@ -19,6 +19,8 @@ Paths and commands below are relative to the repository root. Read these invaria
 
 ## Feature contracts
 
+- Private operator dashboard cohorts, fixture exclusions and metric provenance: [dashboard API](operator-dashboard-api.md); aggregate queries and regressions live in `operator-dashboard.ts` and `operator-dashboard.test.ts`.
+
 - Wallet settlement and push authority: [wallet tools](wallet-tools.md), `wallet-notices.ts`, `wallet-webhooks.ts`. Indexed incoming receipts stay in `wallet_transactions` without a System DM. Outgoing transactions, failures, refusals, pending notices and webhook receipts without a history row retain their notices.
 - Feedback resolves silently through `notify_feedback_fixed` with a merged PR in `BEELINE_FEEDBACK_REPOSITORY`; `notify: true` sends Fixed notices only for an explicitly ordered notice in a configured System sender’s human-rooted turn; storage and policy: `apps/server/src/feedback.ts`, [triage workflow](workflows/feedback-triage.json).
 - The GitHub star card acts only on the person's own tap and never gates anything (`github-star-prompt.ts`, `StarPromptCard.tsx`).

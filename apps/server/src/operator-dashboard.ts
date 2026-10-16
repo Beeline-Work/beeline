@@ -1,6 +1,7 @@
 import type { SqlDatabase } from './database.js';
+import { REVIEW_IDENTITY_ID } from './review-access.js';
 
-export const DASHBOARD_PLATFORMS = ['ios', 'android', 'macos', 'windows', 'linux'] as const;
+export const DASHBOARD_PLATFORMS = ['ios', 'android', 'web', 'macos', 'windows', 'linux'] as const;
 export type DashboardPlatform = (typeof DASHBOARD_PLATFORMS)[number];
 export const DASHBOARD_STAGES = [
   'signup',
@@ -47,16 +48,38 @@ export async function recordOperatorFunctionEvent(
   // Event-triggered retention keeps the operational ledger bounded without a
   // periodic collector. The read path remains read-only.
   if (++functionEventsWritten % 100 === 0) {
-    void database.query(`DELETE FROM operator_function_events
+    void database
+      .query(
+        `DELETE FROM operator_function_events
       WHERE id IN (SELECT id FROM operator_function_events
-        WHERE created_at < now()-interval '1 day' LIMIT 1000)`).catch(() => undefined);
+        WHERE created_at < now()-interval '1 day' LIMIT 1000)`,
+      )
+      .catch(() => undefined);
   }
 }
-/** Round released counts to 5-person buckets and suppress small cells. */
-function privateCount(value: unknown): number | null {
+/** Exact aggregates for the private operator endpoint, including measured zeros. */
+function measuredCount(value: unknown): number | null {
+  if (value === null || value === undefined) return null;
   const n = Number(value);
-  return Number.isFinite(n) && n >= MIN_COHORT ? Math.floor(n / MIN_COHORT) * MIN_COHORT : null;
+  return Number.isSafeInteger(n) && n >= 0 ? n : null;
 }
+// Confirmed operator fixtures. Use immutable IDs rather than guessing from a
+// customer's Workspace name. Mixed memberships retain the real person.
+const FIXTURE_WORKSPACE_IDS = [
+  'bee11e00-0000-4000-8000-000000000105', // Play Review
+  'c2e54c45-cf58-4cc1-a620-89b196096e7b', // Firstmate Proof
+  'b81a2815-924c-4bd9-bc04-d38bdee177bc', // Empty screen test
+];
+const FIXTURE_IDS_SQL = FIXTURE_WORKSPACE_IDS.map((id) => `'${id}'`).join(',');
+const COHORT_SQL = `production_workspaces AS (
+  SELECT id FROM workspaces WHERE id NOT IN (${FIXTURE_IDS_SQL})
+), production_identities AS (
+  SELECT i.id FROM identities i WHERE NOT i.hidden_from_roster
+    AND i.id <> '${REVIEW_IDENTITY_ID}'
+    AND (NOT EXISTS (SELECT 1 FROM memberships m WHERE m.identity_id=i.id AND m.room_id IS NULL)
+      OR EXISTS (SELECT 1 FROM memberships m JOIN production_workspaces w ON w.id=m.workspace_id
+        WHERE m.identity_id=i.id AND m.room_id IS NULL))
+)`;
 function number(value: unknown): number {
   return Number(value ?? 0);
 }
@@ -76,11 +99,12 @@ export function parseDashboardPlatforms(raw: string | null): DashboardPlatform[]
   return DASHBOARD_PLATFORMS.filter((value) => values.includes(value));
 }
 
-const FUNNEL_SQL = `WITH agent_replies AS MATERIALIZED (
-  SELECT DISTINCT author_id FROM messages
+const FUNNEL_SQL = `WITH ${COHORT_SQL}, agent_replies AS MATERIALIZED (
+  SELECT DISTINCT author_id FROM messages msg JOIN rooms r ON r.id=msg.room_id
+  JOIN production_workspaces w ON w.id=r.workspace_id
   WHERE presentation='message' AND deleted_at IS NULL
 ), eligible AS (
-  SELECT i.id FROM identities i
+  SELECT i.id FROM identities i JOIN production_identities pi ON pi.id=i.id
   WHERE i.kind='human' AND (
     $1::boolean OR EXISTS (
       SELECT 1 FROM push_devices d WHERE d.identity_id=i.id AND d.platform=ANY($2::text[])
@@ -91,20 +115,20 @@ const FUNNEL_SQL = `WITH agent_replies AS MATERIALIZED (
   )
 ), people AS (
   SELECT e.id,
-    EXISTS(SELECT 1 FROM memberships m WHERE m.identity_id=e.id AND m.room_id IS NULL AND m.removed_at IS NULL) workspace,
-    EXISTS(SELECT 1 FROM agents a JOIN daemon_tokens t ON t.agent_id=a.agent_id WHERE a.owner_id=e.id AND t.revoked_at IS NULL) paired,
-    EXISTS(SELECT 1 FROM agents a JOIN agent_replies m ON m.author_id=a.agent_id WHERE a.owner_id=e.id) reply,
-    EXISTS(SELECT 1 FROM corner_facts f WHERE f.commissioned_by=e.id) corner,
-    EXISTS(SELECT 1 FROM corner_facts f WHERE f.commissioned_by=e.id AND f.lifecycle->'pr'->>'mergedAt' IS NOT NULL) merged
+    EXISTS(SELECT 1 FROM memberships m WHERE m.identity_id=e.id AND m.room_id IS NULL AND m.removed_at IS NULL AND m.workspace_id IN (SELECT id FROM production_workspaces)) workspace,
+    EXISTS(SELECT 1 FROM agents a JOIN production_identities ai ON ai.id=a.agent_id JOIN daemon_tokens t ON t.agent_id=a.agent_id WHERE a.owner_id=e.id AND t.revoked_at IS NULL) paired,
+    EXISTS(SELECT 1 FROM agents a JOIN production_identities ai ON ai.id=a.agent_id JOIN agent_replies m ON m.author_id=a.agent_id WHERE a.owner_id=e.id) reply,
+    EXISTS(SELECT 1 FROM corner_facts f JOIN rooms cr ON cr.id=f.corner_id JOIN production_workspaces cw ON cw.id=cr.workspace_id WHERE f.commissioned_by=e.id) corner,
+    EXISTS(SELECT 1 FROM corner_facts f JOIN rooms cr ON cr.id=f.corner_id JOIN production_workspaces cw ON cw.id=cr.workspace_id WHERE f.commissioned_by=e.id AND f.lifecycle->'pr'->>'mergedAt' IS NOT NULL) merged
   FROM eligible e
 ), agent_steps AS (
   SELECT a.agent_id,
-    EXISTS(SELECT 1 FROM memberships m WHERE m.identity_id=a.agent_id AND m.room_id IS NULL AND m.removed_at IS NULL) workspace,
+    EXISTS(SELECT 1 FROM memberships m WHERE m.identity_id=a.agent_id AND m.room_id IS NULL AND m.removed_at IS NULL AND m.workspace_id IN (SELECT id FROM production_workspaces)) workspace,
     EXISTS(SELECT 1 FROM daemon_tokens t WHERE t.agent_id=a.agent_id AND t.revoked_at IS NULL) paired,
     EXISTS(SELECT 1 FROM agent_replies m WHERE m.author_id=a.agent_id) reply,
-    EXISTS(SELECT 1 FROM corner_facts f WHERE f.owner_agent_id=a.agent_id) corner,
-    EXISTS(SELECT 1 FROM corner_facts f WHERE f.owner_agent_id=a.agent_id AND f.lifecycle->'pr'->>'mergedAt' IS NOT NULL) merged
-  FROM agents a JOIN eligible e ON e.id=a.owner_id JOIN identities i ON i.id=a.agent_id AND NOT i.hidden_from_roster
+    EXISTS(SELECT 1 FROM corner_facts f JOIN rooms cr ON cr.id=f.corner_id JOIN production_workspaces cw ON cw.id=cr.workspace_id WHERE f.owner_agent_id=a.agent_id) corner,
+    EXISTS(SELECT 1 FROM corner_facts f JOIN rooms cr ON cr.id=f.corner_id JOIN production_workspaces cw ON cw.id=cr.workspace_id WHERE f.owner_agent_id=a.agent_id AND f.lifecycle->'pr'->>'mergedAt' IS NOT NULL) merged
+  FROM agents a JOIN eligible e ON e.id=a.owner_id JOIN identities i ON i.id=a.agent_id JOIN production_identities ai ON ai.id=i.id
 )
 SELECT 'people' kind, count(*) signup, count(*) FILTER(WHERE workspace) workspace,
   count(*) FILTER(WHERE workspace AND paired) paired,
@@ -119,32 +143,33 @@ SELECT 'agents' kind, count(*) signup, count(*) FILTER(WHERE workspace) workspac
   count(*) FILTER(WHERE workspace AND paired AND reply AND corner AND merged) merged
 FROM agent_steps`;
 
-const FUNNEL_TIME_SQL = `WITH eligible AS (
-  SELECT i.id, i.created_at FROM identities i WHERE i.kind='human' AND (
+const FUNNEL_TIME_SQL = `WITH ${COHORT_SQL}, eligible AS (
+  SELECT i.id, i.created_at FROM identities i JOIN production_identities pi ON pi.id=i.id WHERE i.kind='human' AND (
     $1::boolean OR EXISTS(SELECT 1 FROM push_devices d WHERE d.identity_id=i.id AND d.platform=ANY($2::text[]))
     OR EXISTS(SELECT 1 FROM device_update_receipts d WHERE d.identity_id=i.id
       AND d.receipt->>'platform'=ANY($2::text[]))
   )
 ), workspace_times AS (
   SELECT identity_id, min(joined_at) at FROM memberships
-  WHERE room_id IS NULL AND removed_at IS NULL GROUP BY identity_id
+  WHERE room_id IS NULL AND removed_at IS NULL AND workspace_id IN (SELECT id FROM production_workspaces) GROUP BY identity_id
 ), paired_times AS (
   SELECT agent_id, min(created_at) at FROM daemon_tokens
   WHERE revoked_at IS NULL GROUP BY agent_id
 ), reply_times AS (
-  SELECT author_id, min(created_at) at FROM messages
+  SELECT author_id, min(msg.created_at) at FROM messages msg JOIN rooms r ON r.id=msg.room_id
+  JOIN production_workspaces w ON w.id=r.workspace_id
   WHERE presentation='message' AND deleted_at IS NULL GROUP BY author_id
 ), corner_times AS (
   SELECT f.commissioned_by human_id, f.owner_agent_id agent_id,
     r.created_at opened_at,
     CASE WHEN f.lifecycle->'pr'->>'mergedAt' ~ '^20[0-9]{2}-[0-9]{2}-[0-9]{2}T'
       THEN (f.lifecycle->'pr'->>'mergedAt')::timestamptz ELSE NULL END merged_at
-  FROM corner_facts f JOIN rooms r ON r.id=f.corner_id
+  FROM corner_facts f JOIN rooms r ON r.id=f.corner_id JOIN production_workspaces cw ON cw.id=r.workspace_id
 ), timelines AS (
   SELECT 'people' kind, e.id actor_id, e.created_at signup_at,
     w.at workspace_at,
-    (SELECT min(p.at) FROM agents a JOIN paired_times p ON p.agent_id=a.agent_id WHERE a.owner_id=e.id) paired_at,
-    (SELECT min(m.at) FROM agents a JOIN reply_times m ON m.author_id=a.agent_id WHERE a.owner_id=e.id) reply_at,
+    (SELECT min(p.at) FROM agents a JOIN production_identities ai ON ai.id=a.agent_id JOIN paired_times p ON p.agent_id=a.agent_id WHERE a.owner_id=e.id) paired_at,
+    (SELECT min(m.at) FROM agents a JOIN production_identities ai ON ai.id=a.agent_id JOIN reply_times m ON m.author_id=a.agent_id WHERE a.owner_id=e.id) reply_at,
     (SELECT min(c.opened_at) FROM corner_times c WHERE c.human_id=e.id) corner_at,
     (SELECT min(c.merged_at) FROM corner_times c WHERE c.human_id=e.id) merged_at
   FROM eligible e LEFT JOIN workspace_times w ON w.identity_id=e.id
@@ -154,7 +179,7 @@ const FUNNEL_TIME_SQL = `WITH eligible AS (
     (SELECT min(c.opened_at) FROM corner_times c WHERE c.agent_id=a.agent_id) corner_at,
     (SELECT min(c.merged_at) FROM corner_times c WHERE c.agent_id=a.agent_id) merged_at
   FROM agents a JOIN eligible e ON e.id=a.owner_id
-    JOIN identities i ON i.id=a.agent_id AND NOT i.hidden_from_roster
+    JOIN identities i ON i.id=a.agent_id JOIN production_identities ai ON ai.id=i.id
     LEFT JOIN workspace_times w ON w.identity_id=a.agent_id
     LEFT JOIN paired_times p ON p.agent_id=a.agent_id
     LEFT JOIN reply_times m ON m.author_id=a.agent_id
@@ -179,38 +204,29 @@ export async function dashboardUsage(
   measuredAt: string,
 ) {
   const all = platforms.length === ALL.length;
-  // Publishing the presence of a single desktop installation would itself be
-  // a small-cell disclosure. Mobile labels are a static supported vocabulary;
-  // desktop labels enter coverage only with five distinct observed people.
-  const coverage = [
-    'ios',
-    'android',
-    ...(
-      await database.query<{ platform: string }>(
-        `SELECT receipt->>'platform' platform FROM device_update_receipts
-     WHERE receipt->>'platform'=ANY($1::text[])
-     GROUP BY receipt->>'platform' HAVING count(DISTINCT identity_id)>=5`,
-        [['macos', 'windows', 'linux']],
-      )
-    ).rows.map((row) => row.platform),
-  ];
-  const unobserved =
-    !all && platforms.some((p) => !['ios', 'android'].includes(p) && !coverage.includes(p));
-  if (unobserved)
-    return {
-      state: 'unmeasured' as const,
-      measuredAt,
-      reason: 'desktop_platform_not_recorded',
-      platformCoverage: coverage,
-      people: null,
-      agents: null,
-    };
+  const coverage = (
+    await database.query<{ platform: DashboardPlatform }>(
+      `WITH ${COHORT_SQL}, observed AS (
+      SELECT d.platform FROM push_devices d JOIN production_identities i ON i.id=d.identity_id
+      UNION SELECT d.receipt->>'platform' FROM device_update_receipts d
+        JOIN production_identities i ON i.id=d.identity_id
+    ) SELECT DISTINCT platform FROM observed WHERE platform=ANY($1::text[])`,
+      [ALL],
+    )
+  ).rows.map((row) => row.platform);
   const rows = (
     await database.query<CountRow & { kind: 'people' | 'agents' }>(FUNNEL_SQL, [all, platforms])
   ).rows;
-  const timeRows = (await database.query<{
-    kind: 'people' | 'agents'; stage: string; total: string; median_ms: string;
-  }>(FUNNEL_TIME_SQL, [all, platforms]).catch(() => ({ rows: [] }))).rows;
+  const timeRows = (
+    await database
+      .query<{
+        kind: 'people' | 'agents';
+        stage: string;
+        total: string;
+        median_ms: string;
+      }>(FUNNEL_TIME_SQL, [all, platforms])
+      .catch(() => ({ rows: [] }))
+  ).rows;
   const stages = (kind: 'people' | 'agents') => {
     const row = rows.find((entry) => entry.kind === kind);
     return DASHBOARD_STAGES.map((stage, index) => {
@@ -218,18 +234,31 @@ export async function dashboardUsage(
       const measured = number(timing?.total) >= MIN_COHORT;
       return {
         stage,
-        count: privateCount(row?.[stage]),
+        count: measuredCount(row?.[stage]),
         previousStage: index ? DASHBOARD_STAGES[index - 1] : null,
-        denominator: index ? privateCount(row?.[DASHBOARD_STAGES[index - 1]!]) : null,
+        denominator: index ? measuredCount(row?.[DASHBOARD_STAGES[index - 1]!]) : null,
         medianTimeToStepMs: measured ? number(timing?.median_ms) : null,
-        timeToStepState: measured ? 'measured' as const : 'unmeasured' as const,
+        timeToStepState: measured ? ('measured' as const) : ('unmeasured' as const),
       };
     });
   };
   return {
     state: 'measured' as const,
     measuredAt,
-    platformCoverage: coverage,
+    platformCoverage: ALL.filter((platform) => coverage.includes(platform)),
+    workspaces: measuredCount(
+      (
+        await database.query<{ total: string }>(
+          `WITH ${COHORT_SQL} SELECT count(DISTINCT w.id) total FROM production_workspaces w
+       JOIN memberships m ON m.workspace_id=w.id AND m.room_id IS NULL AND m.removed_at IS NULL
+       JOIN identities i ON i.id=m.identity_id AND i.kind='human'
+       JOIN production_identities pi ON pi.id=i.id
+       WHERE $1::boolean OR EXISTS (SELECT 1 FROM push_devices d WHERE d.identity_id=i.id AND d.platform=ANY($2::text[]))
+         OR EXISTS (SELECT 1 FROM device_update_receipts d WHERE d.identity_id=i.id AND d.receipt->>'platform'=ANY($2::text[]))`,
+          [all, platforms],
+        )
+      ).rows[0]?.total,
+    ),
     people: stages('people'),
     agents: stages('agents'),
   };
@@ -237,19 +266,23 @@ export async function dashboardUsage(
 
 export async function dashboardHealth(database: SqlDatabase, measuredAt: string) {
   const serverRead = database.query('SELECT 1');
-  const pool = database.poolCounts?.() ?? { total: 0, idle: 0, waiting: 0 };
+  const pool = database.poolCounts?.();
   const oldest = await database.oldestActiveQueryAgeMs?.().catch(() => null);
   const queryWindow = database.queryWindow?.();
-  const queryMeasured = (queryWindow?.queryCount ?? 0) >= 20 &&
-    (queryWindow?.checkoutCount ?? 0) >= 20;
-  const querySlow = queryMeasured &&
-    ((queryWindow?.queryP95Ms ?? 0) > 5000 || (queryWindow?.waitP95Ms ?? 0) > 100);
+  const queryMeasured =
+    (queryWindow?.queryCount ?? 0) >= 20 && (queryWindow?.checkoutCount ?? 0) >= 20;
+  const querySlow =
+    queryMeasured && ((queryWindow?.queryP95Ms ?? 0) > 5000 || (queryWindow?.waitP95Ms ?? 0) > 100);
   const failuresRead = database.query<{ total: string; failed: string }>(
     `SELECT count(*) total, count(*) FILTER (WHERE status='failed') failed
      FROM agent_turns WHERE created_at>=now()-interval '24 hours'`,
   );
   const functionsRead = database.query<{
-    function_name: string; total: string; failed: string; p95_ms: string; p99_ms: string;
+    function_name: string;
+    total: string;
+    failed: string;
+    p95_ms: string;
+    p99_ms: string;
   }>(`WITH events AS (
       SELECT function_name, duration_ms::numeric duration_ms, failed
       FROM operator_function_events
@@ -267,7 +300,9 @@ export async function dashboardHealth(database: SqlDatabase, measuredAt: string)
       percentile_cont(0.99) WITHIN GROUP (ORDER BY duration_ms) p99_ms
     FROM events GROUP BY function_name`);
   const [serverResult, failuresResult, functionResult] = await Promise.allSettled([
-    serverRead, failuresRead, functionsRead,
+    serverRead,
+    failuresRead,
+    functionsRead,
   ]);
   const failures = failuresResult.status === 'fulfilled' ? failuresResult.value.rows[0] : undefined;
   const total = number(failures?.total),
@@ -275,30 +310,44 @@ export async function dashboardHealth(database: SqlDatabase, measuredAt: string)
   const functionRows = functionResult.status === 'fulfilled' ? functionResult.value.rows : [];
   const functions = OBSERVED_FUNCTIONS.map((name) => {
     const row = functionRows.find((candidate) => candidate.function_name === name);
-    const count = number(row?.total), failures = number(row?.failed);
+    const count = number(row?.total),
+      failures = number(row?.failed);
     return {
       function: name,
-      state: functionResult.status !== 'fulfilled' ? 'unavailable' as const :
-        count >= MIN_COHORT ? 'measured' as const : 'unmeasured' as const,
+      state:
+        functionResult.status !== 'fulfilled'
+          ? ('unavailable' as const)
+          : count >= MIN_COHORT
+            ? ('measured' as const)
+            : ('unmeasured' as const),
       windowMinutes: FUNCTION_WINDOW_MINUTES,
-      total: privateCount(count), failed: privateCount(failures),
+      total: measuredCount(count),
+      failed: measuredCount(failures),
       p95Ms: count >= MIN_COHORT ? number(row?.p95_ms) : null,
       p99Ms: count >= MIN_COHORT ? number(row?.p99_ms) : null,
       failureRate: count >= 20 ? failures / count : null,
-      verdictSampleState: count >= 20 ? 'sufficient' as const : 'insufficient' as const,
+      verdictSampleState: count >= 20 ? ('sufficient' as const) : ('insufficient' as const),
     };
   });
-  const unmeasuredFunctions = functions.filter((entry) => entry.failureRate === null).map((entry) => entry.function);
-  const slowUnmeasuredFunctions = [...(queryMeasured ? [] : ['database.query']), ...unmeasuredFunctions];
+  const unmeasuredFunctions = functions
+    .filter((entry) => entry.failureRate === null)
+    .map((entry) => entry.function);
+  const slowUnmeasuredFunctions = [
+    ...(queryMeasured ? [] : ['database.query']),
+    ...unmeasuredFunctions,
+  ];
   const failingUnmeasuredFunctions = [
     ...(failuresResult.status === 'fulfilled' && total >= 20 ? [] : ['agent_turn']),
     ...unmeasuredFunctions,
   ];
-  const slowFunction = functions.find((entry) => entry.failureRate !== null &&
-    entry.p95Ms !== null && entry.p95Ms > 5000)?.function;
-  const failingFunction = functions.find((entry) => entry.failureRate !== null &&
-    entry.failureRate >= 0.05)?.function;
-  const agentTurnRed = failuresResult.status === 'fulfilled' && total >= 20 && failed / total >= 0.05;
+  const slowFunction = functions.find(
+    (entry) => entry.failureRate !== null && entry.p95Ms !== null && entry.p95Ms > 5000,
+  )?.function;
+  const failingFunction = functions.find(
+    (entry) => entry.failureRate !== null && entry.failureRate >= 0.05,
+  )?.function;
+  const agentTurnRed =
+    failuresResult.status === 'fulfilled' && total >= 20 && failed / total >= 0.05;
   return {
     state: serverResult.status === 'fulfilled' ? ('measured' as const) : ('unavailable' as const),
     measuredAt,
@@ -307,11 +356,17 @@ export async function dashboardHealth(database: SqlDatabase, measuredAt: string)
       function: 'database.query',
     },
     slow: {
-      verdict: querySlow || slowFunction ? ('red' as const) :
-        slowUnmeasuredFunctions.length === 0 ? ('green' as const) : ('unmeasured' as const),
-      function: querySlow ? 'database.query' : slowFunction ?? null,
-      measuredFunctions: [...(queryMeasured ? ['database.query'] : []),
-        ...functions.filter((entry) => entry.failureRate !== null).map((entry) => entry.function)],
+      verdict:
+        querySlow || slowFunction
+          ? ('red' as const)
+          : slowUnmeasuredFunctions.length === 0
+            ? ('green' as const)
+            : ('unmeasured' as const),
+      function: querySlow ? 'database.query' : (slowFunction ?? null),
+      measuredFunctions: [
+        ...(queryMeasured ? ['database.query'] : []),
+        ...functions.filter((entry) => entry.failureRate !== null).map((entry) => entry.function),
+      ],
       unmeasuredFunctions: slowUnmeasuredFunctions,
       windowMinutes: FUNCTION_WINDOW_MINUTES,
       thresholdMs: 5000,
@@ -323,21 +378,30 @@ export async function dashboardHealth(database: SqlDatabase, measuredAt: string)
       waitP99Ms: queryWindow?.waitP99Ms ?? null,
       waiterP95: queryWindow?.waiterP95 ?? null,
       waiterP99: queryWindow?.waiterP99 ?? null,
-      currentWaiters: pool.waiting,
+      currentWaiters: pool?.waiting ?? null,
       oldestActiveQueryAgeMs: oldest ?? null,
     },
     failing: {
-      verdict: agentTurnRed || failingFunction ? ('red' as const) :
-        failingUnmeasuredFunctions.length === 0
-          ? ('green' as const) : ('unmeasured' as const),
-      function: agentTurnRed ? 'agent_turn' : failingFunction ?? null,
-      measuredFunctions: failuresResult.status === 'fulfilled' && total >= 20
-        ? ['agent_turn', ...functions.filter((entry) => entry.failureRate !== null).map((entry) => entry.function)]
-        : functions.filter((entry) => entry.failureRate !== null).map((entry) => entry.function),
+      verdict:
+        agentTurnRed || failingFunction
+          ? ('red' as const)
+          : failingUnmeasuredFunctions.length === 0
+            ? ('green' as const)
+            : ('unmeasured' as const),
+      function: agentTurnRed ? 'agent_turn' : (failingFunction ?? null),
+      measuredFunctions:
+        failuresResult.status === 'fulfilled' && total >= 20
+          ? [
+              'agent_turn',
+              ...functions
+                .filter((entry) => entry.failureRate !== null)
+                .map((entry) => entry.function),
+            ]
+          : functions.filter((entry) => entry.failureRate !== null).map((entry) => entry.function),
       unmeasuredFunctions: failingUnmeasuredFunctions,
       windowHours: 24,
-      failed: privateCount(failed),
-      total: privateCount(total),
+      failed: measuredCount(failed),
+      total: measuredCount(total),
     },
     functions,
   };
@@ -356,7 +420,7 @@ export async function dashboardOps(
     store_only: string;
     unknown_runtime: string;
   }>(
-    `SELECT count(*) active,
+    `WITH ${COHORT_SQL} SELECT count(*) active,
        count(*) FILTER(WHERE receipt->>'releaseVersion'=$1) latest,
        count(*) FILTER(WHERE NULLIF(receipt->>'releaseVersion','') IS NULL) unknown,
        count(*) FILTER(WHERE
@@ -368,15 +432,16 @@ export async function dashboardOps(
        count(*) FILTER(WHERE receipt->>'platform' NOT IN ('ios','android')
          OR receipt->>'platform' IS NULL OR receipt->>'runtimeVersion' !~ '^[0-9]{1,9}$'
          OR receipt->>'runtimeVersion' IS NULL) unknown_runtime
-     FROM device_update_receipts
+     FROM device_update_receipts d JOIN production_identities pi ON pi.id=d.identity_id
      WHERE reported_at>=now()-interval '30 days'
-       AND (receipt->>'platform' IN ('ios','android') OR receipt->>'platform' IS NULL)`,
+       AND receipt->>'platform' IN ('ios','android')`,
     [releaseVersion, minRuntimes.ios ?? null, minRuntimes.android ?? null],
   );
   const repeatsRead = database.query<{ current_count: string; prior_count: string }>(
-    `WITH repeat_events AS (
+    `WITH ${COHORT_SQL}, repeat_events AS (
        SELECT event.created_at FROM institutional_memory_correction_events event
        WHERE event.created_at>=now()-interval '60 days'
+         AND event.workspace_id IN (SELECT id FROM production_workspaces)
          AND EXISTS (SELECT 1 FROM institutional_memory_correction_events prior
            WHERE prior.workspace_id=event.workspace_id AND prior.memory_kind=event.memory_kind
              AND prior.canonical_key=event.canonical_key
@@ -386,27 +451,9 @@ export async function dashboardOps(
      ) SELECT count(*) FILTER(WHERE created_at>=now()-interval '30 days') current_count,
               count(*) FILTER(WHERE created_at<now()-interval '30 days') prior_count FROM repeat_events`,
   );
-  const tokensRead = database.query<{
-    sampled: string;
-    missing: string;
-    memory_tokens: string;
-    total_tokens: string;
-  }>(
-    `SELECT count(*) FILTER(WHERE actual_input_tokens IS NOT NULL AND prompt_bytes IS NOT NULL) sampled,
-       count(*) FILTER(WHERE actual_input_tokens IS NULL OR prompt_bytes IS NULL) missing,
-       COALESCE(sum(LEAST(actual_input_tokens,ceil(actual_input_tokens::numeric*total_bytes/NULLIF(prompt_bytes,0))::int))
-         FILTER(WHERE actual_input_tokens IS NOT NULL AND prompt_bytes IS NOT NULL),0) memory_tokens,
-       COALESCE(sum(actual_input_tokens) FILTER(WHERE actual_input_tokens IS NOT NULL AND prompt_bytes IS NOT NULL),0) total_tokens
-     FROM institutional_context_serves WHERE mode='live' AND served AND created_at>=now()-interval '30 days'`,
-  );
-  const [receiptResult, repeatResult, tokenResult] = await Promise.allSettled([
-    receiptsRead,
-    repeatsRead,
-    tokensRead,
-  ]);
+  const [receiptResult, repeatResult] = await Promise.allSettled([receiptsRead, repeatsRead]);
   const receipts = receiptResult.status === 'fulfilled' ? receiptResult.value.rows[0] : undefined;
   const repeats = repeatResult.status === 'fulfilled' ? repeatResult.value.rows[0] : undefined;
-  const tokens = tokenResult.status === 'fulfilled' ? tokenResult.value.rows[0] : undefined;
   const active = number(receipts?.active),
     latest = number(receipts?.latest),
     unknown = number(receipts?.unknown),
@@ -418,13 +465,8 @@ export async function dashboardOps(
     number(receipts?.unknown_runtime) === 0;
   const current = number(repeats?.current_count),
     prior = number(repeats?.prior_count);
-  const sampled = number(tokens?.sampled),
-    missing = number(tokens?.missing),
-    totalTokens = number(tokens?.total_tokens);
   return {
-    state: [receiptResult, repeatResult, tokenResult].some(
-      (result) => result.status === 'fulfilled',
-    )
+    state: [receiptResult, repeatResult].some((result) => result.status === 'fulfilled')
       ? ('measured' as const)
       : ('unavailable' as const),
     measuredAt,
@@ -433,19 +475,16 @@ export async function dashboardOps(
         receiptResult.status === 'fulfilled' ? ('measured' as const) : ('unavailable' as const),
       latestVersion: releaseVersion === 'development' ? null : releaseVersion,
       activeWindowDays: 30,
-      activePhones: privateCount(active),
-      latestPhones: privateCount(latest),
-      unknownBuildPhones: privateCount(unknown),
+      activePhones: receiptResult.status === 'fulfilled' ? measuredCount(active) : null,
+      latestPhones: receiptResult.status === 'fulfilled' ? measuredCount(latest) : null,
+      unknownBuildPhones: receiptResult.status === 'fulfilled' ? measuredCount(unknown) : null,
       // Receipts without a build version are reported as unknownBuildPhones
       // and left out of the share instead of blanking it.
       latestShare:
-        receiptResult.status !== 'fulfilled' ||
-        releaseVersion === 'development' ||
-        latest < MIN_COHORT ||
-        known - latest < MIN_COHORT
+        receiptResult.status !== 'fulfilled' || releaseVersion === 'development' || known === 0
           ? null
-          : privateCount(latest)! / privateCount(known)!,
-      storeUpdateOnlyPhones: storeMeasurable ? privateCount(receipts?.store_only) : null,
+          : latest / known,
+      storeUpdateOnlyPhones: storeMeasurable ? measuredCount(receipts?.store_only) : null,
       storeUpdateState: storeMeasurable ? ('measured' as const) : ('unmeasured' as const),
     },
     memory: {
@@ -453,31 +492,12 @@ export async function dashboardOps(
         state:
           repeatResult.status === 'fulfilled' ? ('measured' as const) : ('unavailable' as const),
         windowDays: 30,
-        current: repeatResult.status === 'fulfilled' ? privateCount(current) : null,
-        prior: repeatResult.status === 'fulfilled' ? privateCount(prior) : null,
+        current: repeatResult.status === 'fulfilled' ? measuredCount(current) : null,
+        prior: repeatResult.status === 'fulfilled' ? measuredCount(prior) : null,
         trend:
-          repeatResult.status === 'fulfilled' && prior >= MIN_COHORT && current >= MIN_COHORT
-            ? (privateCount(current)! - privateCount(prior)!) / privateCount(prior)!
+          repeatResult.status === 'fulfilled' && prior > 0
+            ? (measuredCount(current)! - measuredCount(prior)!) / measuredCount(prior)!
             : null,
-      },
-      // Serves without a token count (Codex turns) are reported as
-      // missingServes and left out of the share instead of blanking it.
-      tokenShare: {
-        windowDays: 30,
-        share:
-          tokenResult.status === 'fulfilled' &&
-          sampled >= MIN_COHORT &&
-          totalTokens > 0
-            ? number(tokens?.memory_tokens) / totalTokens
-            : null,
-        state:
-          tokenResult.status !== 'fulfilled'
-            ? ('unavailable' as const)
-            : sampled >= MIN_COHORT && totalTokens > 0
-              ? ('measured' as const)
-              : ('unmeasured' as const),
-        sampledServes: tokenResult.status === 'fulfilled' ? privateCount(sampled) : null,
-        missingServes: tokenResult.status === 'fulfilled' ? privateCount(missing) : null,
       },
     },
   };

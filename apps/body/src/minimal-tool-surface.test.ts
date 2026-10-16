@@ -2,6 +2,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { Check } from 'typebox/value';
 import { agentToolsFor, callAgentTool } from './read-only-mcp.js';
 import { harnessNeedsSilentReceipt } from './harness-capabilities.js';
 import {
@@ -133,6 +134,51 @@ describe('minimal agent surface', () => {
     expect(calls[0]!.input).not.toHaveProperty('address');
     expect(calls[0]!.input.roomId).toBe('corner');
   });
+  it('R1 accepts the nested brief its schema advertises for revise_corner(action:brief)', async () => {
+    const tool = agentToolsFor(true, false, true).find((value) => value.name === 'revise_corner')!;
+    const input = {
+      action: 'brief',
+      expectedRevision: 3,
+      change: 'Synthetic correction',
+      brief: { spec: 'Synthetic spec', approval: { sourceMessageId: 'synthetic-message' } },
+    };
+    expect(Check(tool.inputSchema, input)).toBe(true);
+    expect(JSON.parse(await callAgentTool('revise_corner', input, 'R1'))).toEqual({
+      ok: true,
+      name: 'renamed',
+    });
+    expect(calls.at(-1)).toEqual({
+      operation: 'reviseCornerBrief',
+      input: expect.objectContaining({
+        cornerId: 'corner',
+        expectedRevision: 3,
+        brief: expect.objectContaining({
+          spec: 'Synthetic spec',
+          approval: { sourceMessageId: 'synthetic-message' },
+          change: 'Synthetic correction',
+        }),
+      }),
+    });
+  });
+
+  it('R1 keeps top-level spec and approval for revise_corner(action:brief) working', async () => {
+    await callAgentTool(
+      'revise_corner',
+      {
+        action: 'brief',
+        expectedRevision: 2,
+        change: 'Synthetic edit',
+        spec: 'Top-level spec',
+        approval: { sourceMessageId: 'top-level-message' },
+      },
+      'R1-control',
+    );
+    expect(calls.at(-1)!.input.brief).toMatchObject({
+      spec: 'Top-level spec',
+      approval: { sourceMessageId: 'top-level-message' },
+    });
+  });
+
   it('posts a public note without dispatching any wake/order/report', async () => {
     await callAgentTool('post_to_corner', { address: 'target', text: 'Public note' }, 'note');
     expect(calls.map((call) => call.operation)).toEqual(['postCornerMessage']);

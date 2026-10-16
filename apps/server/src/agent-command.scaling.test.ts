@@ -173,6 +173,8 @@ describe('addressed-message routing and claim scaling', () => {
       expect(result.notifications.rows.map(({ table_name }) => table_name)).toEqual([
         'agent_commands',
         'agent_commands',
+        // Dispatch publishes optimistic activity; claim publishes its real generation.
+        'agent_turns',
         'agent_turns',
       ]);
     }
@@ -209,7 +211,7 @@ describe('addressed-message routing and claim scaling', () => {
     );
     expect(counted.queries).toBe(20 * 6);
     expect(counted.transactions).toBe(20);
-    expect(notifications.rows[0]?.count).toBe(20 * 3);
+    expect(notifications.rows[0]?.count).toBe(20 * 4);
   }, 20_000);
 
   it('keeps sustained atomic claims to one statement with bounded query overhead', async () => {

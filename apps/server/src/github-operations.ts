@@ -18,6 +18,7 @@ import {
 import { recordPersonMergeYes } from './corner-merge-approval.js';
 import { assertCornerBriefAllowsMerge } from './corner-brief.js';
 import { cancelCornerAgentCommands } from './corner-close.js';
+import { deleteCornerWakeSources } from './corner-wake-cleanup.js';
 import { abandonCornerWorkflowRuns } from './workflow-runs.js';
 import {
   advanceCorner,
@@ -2271,6 +2272,7 @@ export class GitHubOperations {
       archived = true;
       await cancelCornerAgentCommands(database, target.corner_id);
       await abandonCornerWorkflowRuns(database, target.corner_id);
+      await deleteCornerWakeSources(database, [target.corner_id]);
       await database.query(
         `UPDATE corner_facts SET close_requested=true,merge_attempt_head=NULL,
            lifecycle=(lifecycle-'mergeRecovery')||$2::jsonb,

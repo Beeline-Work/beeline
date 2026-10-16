@@ -2,6 +2,7 @@ import type { SqlDatabase } from './database.js';
 import { createAgentCommand, type CommandRow } from './agent-command.js';
 import { advanceCorner } from './corner-lifecycle.js';
 import { abandonCornerWorkflowRuns } from './workflow-runs.js';
+import { deleteCornerWakeSources } from './corner-wake-cleanup.js';
 
 /**
  * Cancels every pending or claimed input/resume/restart command for a corner, and any
@@ -93,6 +94,7 @@ export async function closeCornerState(database: SqlDatabase, cornerId: string) 
     [cornerId, corner.parent_id],
   );
   await abandonCornerWorkflowRuns(database, cornerId);
+  await deleteCornerWakeSources(database, [cornerId]);
   await advanceCorner(database, cornerId, { kind: 'closed' });
   return { parentId: corner.parent_id };
 }

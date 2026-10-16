@@ -213,13 +213,11 @@ describe('beeline-agent post_artifact', () => {
     const names = tools.map((tool) => tool.name);
     expect(names.indexOf('post_artifact')).toBeGreaterThan(names.indexOf('open_corner') - 1);
     const tool = tools.find((entry) => entry.name === 'post_artifact');
-    expect(tool?.inputSchema).toMatchObject({ required: [] });
+    expect(tool?.inputSchema).toMatchObject({ required: ['path'] });
     expect(Object.keys((tool?.inputSchema as { properties: object }).properties)).toEqual([
       'path',
       'title',
       'mime',
-      'html',
-      'bytes',
     ]);
     // The read-only surface never carries it, and the drift check between
     // TOOLS and READ_ONLY_TOOL_NAMES already throws at import time.

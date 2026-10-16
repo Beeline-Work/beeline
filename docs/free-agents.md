@@ -110,7 +110,9 @@ OpenRouter holds each running call's prompt plus `max_tokens` cost against an
 account in-flight budget. A call that does not fit gets HTTP 402 with
 `error.metadata.reason` `in_flight_budget_exhausted` and a `Retry-After`. The
 proxy waits for `Retry-After` (5 s when absent) and tries again, for up to 3
-minutes from the first such refusal and never past the turn cap. The call's
+minutes from the first such refusal and never past the turn cap. When the
+wait would not end inside that time, the proxy does not wait: the 402 passes
+through and the reservation is refunded. The call's
 reservation stays in place and settles once, whatever the number of attempts.
 Retries happen before any byte reaches the Machine. Other 402 reasons and other
 errors pass through and are refunded.

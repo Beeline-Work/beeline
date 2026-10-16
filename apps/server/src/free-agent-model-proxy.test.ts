@@ -464,6 +464,23 @@ describe('free agent model proxy', () => {
     expect(await freeAgentAllowance(db, OWNER, new Date())).toEqual({ today: 0, lifetime: 0 });
   });
 
+  it.each([
+    { name: 'a 1 s turn cap', limits: { maxTurnMs: 1_000 }, retryAfter: '120' },
+    { name: 'the 3-minute retry window', limits: {}, retryAfter: '181' },
+  ])('FREE-INFLIGHT-DEADLINE: does not retry when Retry-After outlasts $name', async ({ limits, retryAfter }) => {
+    config = { ...CONFIG, limits: { ...DEFAULT_FREE_AGENT_LIMITS, ...limits } };
+    reply = () => new Response(JSON.stringify({ error: { code: 402, message: 'in-flight budget exhausted',
+      metadata: { reason: 'in_flight_budget_exhausted' } } }),
+      { status: 402, headers: { 'content-type': 'application/json', 'retry-after': retryAfter } });
+    const started = Date.now();
+    const response = await call({ messages: [{ role: 'user', content: 'hi' }] });
+    expect(response.status).toBe(402);
+    expect((await response.json()).error.metadata.reason).toBe('in_flight_budget_exhausted');
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(upstream).toHaveLength(1);
+    expect(await freeAgentAllowance(db, OWNER, new Date())).toEqual({ today: 0, lifetime: 0 });
+  });
+
   it('reads Retry-After as seconds or an HTTP date', () => {
     expect(retryAfterMs('120')).toBe(120_000);
     expect(retryAfterMs(new Date(10_000).toUTCString(), 4_000)).toBe(6_000);

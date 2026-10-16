@@ -501,19 +501,27 @@ export async function handleFreeAgentModelRequest(
       } catch {
         reason = undefined;
       }
-      retryUntil ??= Math.min(Date.now() + IN_FLIGHT_RETRY_WINDOW_MS, turnDeadline);
-      const left = retryUntil - Date.now();
-      if (reason !== 'in_flight_budget_exhausted' || left <= 0) {
+      const passThrough = async () => {
         await settle(0, 0);
         response.writeHead(402, {
           'content-type': upstream.headers.get('content-type') ?? 'application/json',
           'cache-control': 'no-store',
         });
         response.end(refusal);
+      };
+      retryUntil ??= Math.min(Date.now() + IN_FLIGHT_RETRY_WINDOW_MS, turnDeadline);
+      const wait = retryAfterMs(upstream.headers.get('retry-after'));
+      // Retry only when the wait ends inside the window and the turn.
+      if (reason !== 'in_flight_budget_exhausted' || wait >= retryUntil - Date.now()) {
+        await passThrough();
         return;
       }
-      if (!await pause(Math.min(retryAfterMs(upstream.headers.get('retry-after')), left), abort.signal)) {
+      if (!await pause(wait, abort.signal)) {
         await settle(0, 0);
+        return;
+      }
+      if (Date.now() >= retryUntil) {
+        await passThrough();
         return;
       }
     }

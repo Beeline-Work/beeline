@@ -69,11 +69,26 @@ The hand-build script subsequently completed the canonical build, its executable
 verification and the image build in **88.473 seconds**, with existing native
 Buzz tools and cached base OS/Pi layers.
 
-## Remaining real-target proof
+## First isolated real-Fly proof (failing)
 
-The Fly credential available to this session read Machine events successfully,
-but the app log request returned HTTP 401. The original Machine's internal
-37-second interval has not yet been attributed from its own trace. Ruby has
-been asked for that trace and the fresh test Workspace/Fly timing proof required
-by criterion 4. Do not treat these local measurements as satisfying that final
-real-target criterion.
+Ruby ran head `785cadd6` with an isolated server and database, fresh Fly app and
+Workspace, and real DeepSeek V4.1 Flash. Mention at 18:34:10.511Z: live activity
+and authenticated phone read at +83 ms (passes), first model request at +39.9 s,
+reply at +44.2 s (fails the 30 s target). No helper download occurred.
+
+Machine creation/start took 16.787 s, including a 14.8 s uncached image pull.
+Agent staging finished at +20.5 s; Room serving at +24.5 s. Startup durations:
+configuration 335 ms, home 25 ms, toolchain 6,344 ms, MCP bridge 1,373 ms,
+ACP initialize 648 ms, session-new 5,023 ms, model selection 53 ms.
+
+Production and Tubing Crew were untouched. Ruby destroyed the disposable app,
+revoked the temporary model grant, stopped the tunnel and removed the database.
+The PR remains draft until the repeated real-Fly reproduction passes.
+
+The image now prepares a version-keyed view of its installed Pi/ACP packages
+and the normal 128 MiB recovery reserve during construction. Runtime toolchain
+selection reuses a complete matching generation and falls back to ordinary
+Workspace preparation for another package version. MCP discovery reports each
+server's elapsed time and runs independent servers concurrently. Separate
+asset-layout and session-prompt timestamps distinguish filesystem and prompt
+work from actual adapter/session creation on the next run.

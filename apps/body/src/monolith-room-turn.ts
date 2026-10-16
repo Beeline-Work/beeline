@@ -1034,6 +1034,7 @@ export class MonolithRoomTurnLoop {
       await admitSharedAssets(this.options.runtime.supervisorRoot, 1024 ** 3)
       ? await prepareWorkspaceAssets(this.options.config.agentSharedAssetRoot)
       : undefined;
+    startupStep('asset-layout');
     let toolchain;
     if (isolatedCategories.length)
       await preparePrivateAssets(privateAssetRoot, isolatedCategories);
@@ -1302,6 +1303,7 @@ export class MonolithRoomTurnLoop {
     this.sessionPromptSectionIds = session.report.map((section) => section.id);
     const conversationFingerprint = JSON.stringify([fingerprint, command,
       this.options.config.agentArgs, this.options.cwd, this.turnCheckout?.commit]);
+    startupStep('session-prompt');
     const opened = await openAcpConversation({
       client: this.client,
       agentCommand: harnessLabel,

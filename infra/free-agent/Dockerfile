@@ -19,6 +19,9 @@ ARG PI_ACP_VERSION=0.0.34
 RUN test "$PI_VERSION" != latest && test "$PI_ACP_VERSION" != latest \
   && npm install -g "@earendil-works/pi-coding-agent@${PI_VERSION}" "pi-acp@${PI_ACP_VERSION}" \
   && npm cache clean --force
+COPY infra/free-agent/prepare-image.mjs /opt/beeline/
+RUN node /opt/beeline/prepare-image.mjs
+ENV BEELINE_PREPARED_ADAPTER_ROOT=/opt/beeline/toolchains
 COPY relay-stack/web/install.sh infra/free-agent/entrypoint.sh /opt/beeline/
 COPY --from=helper-build /root/.local/ /root/.local/
 ARG BEELINE_RELEASE_VERSION

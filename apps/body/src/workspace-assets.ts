@@ -275,7 +275,20 @@ export async function prepareWorkspaceAdapter(
   const key = createHash('sha256').update(
     `${adapter.name}@${selectedAdapter.version}:${selectedCli.name}@${selectedCli.version}:${process.version}`,
   ).digest('hex').slice(0, 16);
-  const published = resolve(paths.tools, `${adapter.binary}-${selectedAdapter.version}-${key}`);
+  const generation = `${adapter.binary}-${selectedAdapter.version}-${key}`;
+  // Release images can prepare this exact version pair once. Use only a
+  // complete generation with the same content identity as Workspace pins.
+  const imageRoot = env.BEELINE_PREPARED_ADAPTER_ROOT ?? process.env.BEELINE_PREPARED_ADAPTER_ROOT;
+  if (imageRoot) {
+    const image = resolve(imageRoot, generation);
+    const command = resolve(image, 'node_modules/.bin', adapter.binary);
+    const cliCommand = resolve(image, 'node_modules/.bin', kind);
+    if ((await stat(command).catch(() => undefined))?.isFile() &&
+        (await stat(cliCommand).catch(() => undefined))?.isFile() &&
+        (await stat(resolve(image, 'bin/node')).catch(() => undefined))?.isFile())
+      return { command, cliCommand, binDir: resolve(image, 'node_modules/.bin') };
+  }
+  const published = resolve(paths.tools, generation);
   const publishedBinary = resolve(published, 'node_modules/.bin', adapter.binary);
   const publishedCli = resolve(published, 'node_modules/.bin', kind);
   const publishedNode = resolve(published, 'bin/node');

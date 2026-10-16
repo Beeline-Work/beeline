@@ -350,6 +350,7 @@ export default async function (pi) {
   const mounted = new Map();
   async function refreshServer(server) {
     let tools = [];
+    const startedAt = performance.now();
     try {
       const listed = await callServer(
         server,
@@ -358,6 +359,7 @@ export default async function (pi) {
         LIST_TIMEOUT_MS,
       );
       tools = Array.isArray(listed?.tools) ? listed.tools : [];
+      console.error('[beeline] session-tools ' + new Date().toISOString() + ' server=' + server.name + ' elapsedMs=' + Math.round(performance.now() - startedAt));
     } catch (error) {
       // A server that will not list is a server whose tools this session does
       // not have. Say so once; never fail the session over it.
@@ -416,7 +418,7 @@ export default async function (pi) {
     mounted.set(server.name, current);
   }
   async function refreshTools() {
-    for (const server of SERVERS) await refreshServer(server);
+    await Promise.all(SERVERS.map(refreshServer));
   }
   await refreshTools();
   // Registering descriptors during a prompt can break an in-flight call.

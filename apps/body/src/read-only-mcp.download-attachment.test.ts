@@ -9,6 +9,8 @@ import { callAgentTool } from './read-only-mcp.js';
 const MESSAGE_ID = '81431c68109a0d5f8d726dcfddb9bed215392897ded9bb2ec3aadbc9b1babe0f';
 const IMAGE_ID = '0b1c2d3e-4f50-4617-8293-a4b5c6d7e8f9';
 const REPORT_ID = '1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d';
+const BRIEF_ID = '2b2c3d4e-5f60-4718-8394-a5b6c7d8e9fa';
+const CORNER_ID = '8c7d6e5f-4a3b-4291-8077-1e2d3c4b5a69';
 const IMAGE = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46]);
 const REPORT = '# Findings\n\nThe stall is a missed heartbeat.\n';
 const sha256 = (bytes: Buffer | string) => createHash('sha256').update(bytes).digest('hex');
@@ -25,6 +27,8 @@ describe('download_attachment', () => {
   let messageError: string;
   let imageMetadata: Record<string, unknown>;
   let mediaStatus: number;
+  let briefStatus: number;
+  let briefAttachments: Record<string, unknown>[];
   const downloads: string[] = [];
 
   beforeEach(async () => {
@@ -38,6 +42,8 @@ describe('download_attachment', () => {
     messageError = '';
     imageMetadata = {};
     mediaStatus = 200;
+    briefStatus = 200;
+    briefAttachments = [];
     downloads.length = 0;
     server = createServer(async (req, res) => {
       if (req.url === '/v1/daemon/operations/getRoomMessage') {
@@ -76,7 +82,24 @@ describe('download_attachment', () => {
                 },
           ),
         );
-      } else if (req.url === `/v1/media/${IMAGE_ID}` || req.url === `/v1/media/${REPORT_ID}`) {
+      } else if (req.url === '/v1/daemon/operations/listCornerBriefRevisions') {
+        const chunks: Buffer[] = [];
+        for await (const chunk of req) chunks.push(Buffer.from(chunk));
+        const input = JSON.parse(Buffer.concat(chunks).toString());
+        expect(input).toMatchObject({ cornerId: CORNER_ID, limit: 1 });
+        res.writeHead(briefStatus, { 'content-type': 'application/json' });
+        res.end(
+          JSON.stringify(
+            briefStatus !== 200
+              ? { error: 'corner not reachable' }
+              : { revisions: [{ revision: 1, attachments: briefAttachments }] },
+          ),
+        );
+      } else if (
+        req.url === `/v1/media/${IMAGE_ID}` ||
+        req.url === `/v1/media/${REPORT_ID}` ||
+        req.url === `/v1/media/${BRIEF_ID}`
+      ) {
         downloads.push(req.url);
         if (mediaStatus !== 200) {
           res.writeHead(mediaStatus).end();
@@ -97,6 +120,7 @@ describe('download_attachment', () => {
     vi.stubEnv('BEELINE_DAEMON_BASE_URL', base);
     vi.stubEnv('BEELINE_DAEMON_TOKEN', 'fixture-token');
     vi.stubEnv('BEELINE_DAEMON_ROOM_ID', 'parent-room');
+    vi.stubEnv('BEELINE_DAEMON_CORNER_ID', CORNER_ID);
     vi.stubEnv('BEELINE_ATTACH_SCRATCH_ROOT', root);
   });
 
@@ -190,6 +214,95 @@ describe('download_attachment', () => {
     expect(failure(await download(IMAGE_ID).catch((caught) => caught)).error).toBe(
       'download_failed',
     );
+  });
+
+  const downloadBrief = (attachmentId: string, messageId?: string) =>
+    callAgentTool(
+      'download_attachment',
+      messageId ? { messageId, attachmentId } : { attachmentId },
+      'call',
+    ).then(JSON.parse);
+
+  it('downloads a brief attachment from only the manifest object id', async () => {
+    briefAttachments = [
+      {
+        objectId: BRIEF_ID,
+        title: '../brief notes.md',
+        mime: 'text/markdown',
+        sha256: sha256(REPORT),
+        size: REPORT.length,
+      },
+    ];
+    const report = await downloadBrief(BRIEF_ID);
+    // The traversal in the brief title is sanitized away.
+    expect(report.path).toBe(join(root, 'attachments', BRIEF_ID, 'brief_notes.md'));
+    expect(report.mimeType).toBe('text/markdown');
+    expect(await readFile(report.path, 'utf8')).toBe(REPORT);
+    expect(downloads).toEqual([`/v1/media/${BRIEF_ID}`]);
+  });
+
+  it('read facet attachment downloads a brief file from only its object id', async () => {
+    briefAttachments = [
+      {
+        objectId: BRIEF_ID,
+        title: 'brief-notes.md',
+        mime: 'text/markdown',
+        sha256: sha256(REPORT),
+        size: REPORT.length,
+      },
+    ];
+    const report = JSON.parse(
+      await callAgentTool('read', { facet: 'attachment', attachmentId: BRIEF_ID }, 'read'),
+    );
+    expect(report.path).toBe(join(root, 'attachments', BRIEF_ID, 'brief-notes.md'));
+    expect(await readFile(report.path, 'utf8')).toBe(REPORT);
+  });
+
+  it('falls back to the brief when the approving parent message is forbidden', async () => {
+    messageStatus = 403;
+    messageError = 'message access denied from this Room';
+    briefAttachments = [
+      {
+        objectId: BRIEF_ID,
+        title: 'brief-notes.md',
+        mime: 'text/markdown',
+        sha256: sha256(REPORT),
+        size: REPORT.length,
+      },
+    ];
+    const report = await downloadBrief(BRIEF_ID, MESSAGE_ID);
+    expect(report.path).toBe(join(root, 'attachments', BRIEF_ID, 'brief-notes.md'));
+    expect(await readFile(report.path, 'utf8')).toBe(REPORT);
+  });
+
+  it('refuses a brief attachment the corner brief does not carry', async () => {
+    const unknown = await downloadBrief(BRIEF_ID).catch((caught) => caught);
+    expect(failure(unknown).error).toBe('not_found');
+    expect(downloads).toHaveLength(0);
+  });
+
+  it('refuses a brief attachment when the corner is not reachable', async () => {
+    briefStatus = 403;
+    briefAttachments = [
+      {
+        objectId: BRIEF_ID,
+        title: 'brief-notes.md',
+        mime: 'text/markdown',
+        sha256: sha256(REPORT),
+        size: REPORT.length,
+      },
+    ];
+    const refused = await downloadBrief(BRIEF_ID).catch((caught) => caught);
+    expect(failure(refused).error).toBe('not_found');
+    expect(downloads).toHaveLength(0);
+  });
+
+  it('keeps the forbidden verdict when a forbidden message is not a brief attachment', async () => {
+    messageStatus = 403;
+    messageError = 'message access denied from this Room';
+    const refused = await downloadBrief(REPORT_ID, MESSAGE_ID).catch((caught) => caught);
+    expect(failure(refused).error).toBe('forbidden');
+    expect(downloads).toHaveLength(0);
   });
 
   it('get_room_message names each attachment id for download_attachment', async () => {

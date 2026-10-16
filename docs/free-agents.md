@@ -211,6 +211,9 @@ Docker for a local end-to-end run (suspend = `docker pause`). `npm run
 prove:free-agent` runs the end-to-end proof and the rewake latency measurement
 against any server whose database it can read.
 
+For three real-Fly first boots and three suspend resumes with a ten-step
+mention-to-reply timeline, use the [timeline proof](beebee-first-reply-timeline.md).
+
 The image's helper build takes `BEELINE_RELEASE_SHA` and
 `BEELINE_RELEASE_VERSION`; the hand-build script supplies the checkout SHA.
 `scripts/stage-free-agent-helper.sh` builds the canonical helper bundle from

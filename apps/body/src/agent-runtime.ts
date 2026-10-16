@@ -54,6 +54,8 @@ export interface AgentRuntimeHost {
   readonly layout: BeelineInstallLayout | undefined;
   readonly loadedRelease: string | undefined;
   readonly loadedReleaseIdentity: InstalledBundleIdentity | undefined;
+  /** Managed free agents validate their pinned model in the real Room session. */
+  readonly freeAgent?: boolean;
   /** Join the machine's update drain and forced-update handoff; returns leave. */
   attach(agent: HostedAgent): () => void;
   /** A status line for the watchdog and `beeline update --status`. */
@@ -157,8 +159,12 @@ export async function runAgentRuntime(
     serverModelSelection,
   );
   if (preflightModelSelection) {
-    await applyRuntimeModelPreflight(config, agent, preflightModelSelection, undefined);
-    if (!config.modelUnavailable) {
+    const validation = host.freeAgent && runtime.agentKind === 'pi' &&
+      preflightModelSelection.model?.startsWith('beeline/') ? 'session' : 'startup';
+    await applyRuntimeModelPreflight(config, agent, preflightModelSelection, undefined, undefined, validation);
+    if (validation === 'session') {
+      console.log('[body] pinned free-agent model will be validated in its live Room session');
+    } else if (!config.modelUnavailable) {
       console.log('[body] persisted model/effort selection passed live startup validation');
     } else {
       console.error(`[body] ${config.modelUnavailable.detail}`);

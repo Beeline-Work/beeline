@@ -383,6 +383,7 @@ async function serveMachineHelper(
     layout,
     loadedRelease,
     loadedReleaseIdentity,
+    freeAgent: Boolean(options.freeAgentIdle),
     attach: (agent) => {
       hosted.set(agent.agentId, agent);
       return () => {

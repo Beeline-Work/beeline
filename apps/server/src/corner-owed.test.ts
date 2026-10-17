@@ -358,6 +358,28 @@ describe('corner_owed', () => {
     await step(idle);
   });
 
+  it('retains a forwarded question when membership refreshes its source corner', async () => {
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
+       VALUES('forwarded-question',$1,$2,'Choose a value','card','choice',$3::jsonb)`,
+      [
+        ROOM, AGENT,
+        JSON.stringify({
+          sourceRoomId: CORNER, mode: 'question', status: 'open', mentionIds: [OWNER],
+        }),
+      ],
+    );
+    const question = () =>
+      database.query(
+        `SELECT message_id FROM corner_owed WHERE corner_id=$1 AND person_id=$2`,
+        [CORNER, OWNER],
+      );
+    expect((await question()).rows).toEqual([{ message_id: 'forwarded-question' }]);
+    await database.query('SELECT corner_owed_refresh($1,$2)', [CORNER, OWNER]);
+    expect((await question()).rows).toEqual([{ message_id: 'forwarded-question' }]);
+    await expectTableMatchesMessages();
+  });
+
   it('owes a later joiner what was already addressed to them, and nothing once they leave', async () => {
     await post('tag-late', AGENT, '@late can you check?');
     await step(idle);

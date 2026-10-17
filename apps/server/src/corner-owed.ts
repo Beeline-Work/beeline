@@ -126,7 +126,7 @@ export function addressedToPersonSql(
  * each person's latest post once instead of once per item, and skips items
  * that can no longer be owed.
  */
-function cornerOwedRowsSql(where: string, bulk: boolean): string {
+function cornerOwedRowsSql(where: string, bulk: boolean, corner?: string): string {
   const answered = bulk
     ? `(answered.at IS NULL OR answered.at<=item.created_at)`
     : `NOT EXISTS (
@@ -135,7 +135,20 @@ function cornerOwedRowsSql(where: string, bulk: boolean): string {
             AND answer.presentation='message' AND answer.deleted_at IS NULL
             AND answer.created_at>item.created_at
         )`;
-  return `SELECT owed_corner.id,person.id,item.id,item.created_at,
+  // The computed owed-corner CASE below cannot use messages.room_id's index.
+  // Bound a one-corner refresh before evaluating it, including both kinds of
+  // cross-Room item. Keep the final rules authoritative about attribution.
+  const candidates = corner ? `WITH candidate_items AS MATERIALIZED (
+      SELECT id FROM messages WHERE room_id=${corner}
+      UNION
+      SELECT id FROM messages WHERE card->>'sourceRoomId'=${corner}::text
+      UNION
+      SELECT item.id FROM agent_commands report
+      JOIN messages item ON item.request_id=report.id
+      WHERE (CASE WHEN report.private_payload->>'originCornerId' ~ '${CANONICAL_UUID}'
+        THEN (report.private_payload->>'originCornerId')::uuid ELSE report.room_id END)=${corner}
+    ) ` : '';
+  return `${candidates}SELECT owed_corner.id,person.id,item.id,item.created_at,
       CASE
         WHEN ${BLOCKING_ITEM} THEN CASE
           WHEN item.card->>'expiresAt' ~ '^[0-9]{1,15}$'
@@ -149,6 +162,7 @@ function cornerOwedRowsSql(where: string, bulk: boolean): string {
         'permission','connector-offer','app-sign-in','agent-sign-in','squire-approval'),
       ${BLOCKING_ITEM}
     FROM messages item
+    ${corner ? 'JOIN candidate_items candidate ON candidate.id=item.id' : ''}
     LEFT JOIN agent_commands report ON report.id=item.request_id AND report.agent_id=item.author_id
     LEFT JOIN rooms origin ON origin.id=CASE
       WHEN report.private_payload->>'originCornerId' ~ '${CANONICAL_UUID}'
@@ -266,7 +280,7 @@ LANGUAGE plpgsql AS $corner_owed$
 BEGIN
   DELETE FROM corner_owed WHERE corner_id=p_corner AND person_id=p_person;
   ${CORNER_OWED_INSERT}
-  ${cornerOwedRowsSql('owed_corner.id=p_corner AND person.id=p_person', true)}
+  ${cornerOwedRowsSql('owed_corner.id=p_corner AND person.id=p_person', true, 'p_corner')}
   ON CONFLICT DO NOTHING;
 END
 $corner_owed$;

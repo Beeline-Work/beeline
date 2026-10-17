@@ -3165,6 +3165,22 @@ export async function migrate(
      ON messages(room_id,(card->>'approvalId')) WHERE card_type='squire-approval-decision'`,
   ));
   await ddlScript('corner merge holds', CORNER_MERGE_HOLDS_SCHEMA);
+  await retryMigrationStep('corner forwarded item index', () => createIndexConcurrently(
+    database, 'messages_source_room_idx',
+    `CREATE INDEX CONCURRENTLY messages_source_room_idx
+     ON messages ((card->>'sourceRoomId')) WHERE card->>'sourceRoomId' IS NOT NULL`,
+  ));
+  await retryMigrationStep('corner report message index', () => createIndexConcurrently(
+    database, 'messages_report_request_idx',
+    `CREATE INDEX CONCURRENTLY messages_report_request_idx
+     ON messages (request_id) WHERE request_id IS NOT NULL`,
+  ));
+  await retryMigrationStep('corner report origin index', () => createIndexConcurrently(
+    database, 'agent_commands_report_origin_idx',
+    `CREATE INDEX CONCURRENTLY agent_commands_report_origin_idx ON agent_commands
+     ((CASE WHEN private_payload->>'originCornerId' ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+       THEN (private_payload->>'originCornerId')::uuid ELSE room_id END))`,
+  ));
   await ddlScript('corner owed schema', cornerOwedSchemaSql());
   await ddlScript('corner attention schema', CORNER_ATTENTION_SCHEMA);
   await ddlScript('corner follows schema', cornerFollowsSchemaSql());

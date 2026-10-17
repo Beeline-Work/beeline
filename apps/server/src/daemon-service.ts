@@ -5826,6 +5826,30 @@ export class DaemonService {
       revision: app.revision,
     };
   }
+  /** Closed-corner evidence follows the same audience checks as message reads.
+   * Keep approval-message scope separate from attachment reuse. */
+  private async briefAttachmentRooms(
+    db: SqlDatabase,
+    sourceRoomIds: readonly string[],
+    cornerId: string,
+    agentId: string,
+    command: CommandRow,
+  ): Promise<string[]> {
+    const authority = (await db.query<{ workspace_id: string; requester_identity_id: string }>(
+      `SELECT output.workspace_id,root.author_id requester_identity_id
+       FROM rooms output JOIN messages root ON root.id=$2 AND root.deleted_at IS NULL
+       JOIN rooms root_room ON root_room.id=root.room_id AND root_room.workspace_id=output.workspace_id
+       WHERE output.id=$1`, [cornerId, command.root_source_message_id],
+    )).rows[0];
+    if (!authority) return [...sourceRoomIds];
+    const archived = await db.query<{ id: string }>(
+      `WITH ${AUTHORIZED_ROOMS_CTE}
+       SELECT source.id FROM rooms source JOIN authorized_rooms authorized ON authorized.id=source.id
+       WHERE source.parent_id IS NOT NULL AND source.archived_at IS NOT NULL`,
+      [cornerId, authority.requester_identity_id, authority.workspace_id, agentId],
+    );
+    return [...new Set([...sourceRoomIds, ...archived.rows.map((room) => room.id)])];
+  }
   /** Retitles the corner this agent is working in, through the same write a person's rename uses. */
   private async renameCorner(input: Input<'renameCorner'>, agentId: string) {
     const refusal = cornerTextRefusal('name', input.name);
@@ -5872,7 +5896,11 @@ export class DaemonService {
         } else {
           const sourceRoomIds = [corner.parent_id, input.cornerId, input.roomId ?? input.cornerId];
           const brief = input.brief!;
-          const explicitAttachments = await resolveCornerBriefAttachments(db, sourceRoomIds, brief);
+          const explicitAttachments = await resolveCornerBriefAttachments(
+            db, brief.attachments?.length
+              ? await this.briefAttachmentRooms(db, sourceRoomIds, input.cornerId, agentId, command)
+              : sourceRoomIds, brief,
+          );
           const attachments = [
             ...explicitAttachments,
             ...(await resolvePendingCornerBriefAttachments(db, {
@@ -7698,7 +7726,9 @@ export class DaemonService {
         const sourceRoomIds = [...new Set([roomId, commandRoomId])];
         const explicitAttachments = await resolveCornerBriefAttachments(
           db,
-          sourceRoomIds,
+          input.brief.attachments?.length
+            ? await this.briefAttachmentRooms(db, sourceRoomIds, cornerId, agentId, parentCommand)
+            : sourceRoomIds,
           input.brief,
           { roomId: commandRoomId, agentId, requestId: input.requestId, generationId: input.generationId },
         );
@@ -7838,7 +7868,9 @@ export class DaemonService {
         sourceRoomIds.push(opening.source_room_id);
       const explicitAttachments = await resolveCornerBriefAttachments(
         db,
-        sourceRoomIds,
+        draft.attachments?.length
+          ? await this.briefAttachmentRooms(db, sourceRoomIds, input.cornerId, agentId, command)
+          : sourceRoomIds,
         draft,
         { roomId: commandRoomId, agentId, requestId: input.requestId, generationId: input.generationId },
       );

@@ -3,7 +3,13 @@ import { advanceCorner } from './corner-lifecycle.js';
 import { randomUUID, randomBytes } from 'node:crypto';
 import { beforeAll, beforeEach, afterAll, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
-import { PgliteDatabase } from './test-support.js';
+import { MemoryObjectStorage, PgliteDatabase } from './test-support.js';
+import { ObjectService } from './object-service.js';
+import { callAgentTool, postArtifact } from '../../body/src/read-only-mcp.js';
+import { createServer } from 'node:http';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { DaemonService } from './daemon-service.js';
 import { PhoneService } from './phone-service.js';
 import { LiveHub } from './live.js';
@@ -918,4 +924,112 @@ it('keeps DM-returned decisions indexed until answered or source membership ends
     HUMAN,
   ]);
   expect((await phone.readRoom(opened.cornerId, HUMAN))?.cornerOwed).toBe(true);
+});
+
+it('R1 carries a closed corner artifact into a successor brief and refuses private archived sources', async () => {
+  const source = (await phone.execute('createHumanCorner', { roomId: ROOM, title: 'Source-evidence' }, HUMAN)) as { id: string };
+  await phone.execute('sendRoomMessage', { roomId: source.id, messageId: randomBytes(32).toString('hex'), text: '@worker record evidence' }, HUMAN);
+  const turn = await worker(source.id);
+  const bytes = Buffer.from('R1 evidence');
+  const objects = new ObjectService(db, new MemoryObjectStorage(), 'http://test');
+  await postArtifact({ bytes: bytes.toString('base64'), title: 'evidence.txt', mime: 'text/plain' }, {
+    roomId: source.id, roots: [],
+    upload: (content, mime, title) => objects.uploadArtifact(WORKER, content, mime, title),
+    queue: async (attachment) => { await daemon.execute('postAgentAttachment', { ...authority(turn), attachment }, WORKER); },
+  });
+  const media = (await db.query<{ id: string }>(`SELECT id FROM objects WHERE title='evidence.txt' AND owner_id=$1`, [WORKER])).rows[0]!.id;
+  await daemon.execute('postRoomMessage', { ...authority(turn), text: 'Evidence recorded' }, WORKER);
+  const message = (await db.query<{ id: string }>(`SELECT id FROM messages WHERE room_id=$1 AND text='Evidence recorded'`, [source.id])).rows[0]!;
+  expect((await daemon.execute('getRoomMessage', { roomId: source.id, messageId: message.id }, WORKER)).attachments)
+    .toEqual([expect.objectContaining({ name: 'evidence.txt' })]);
+  await daemon.execute('archiveCorner', { ...authority(order), cornerId: source.id }, RUBY);
+  expect((await daemon.execute('getRoomMessage', { ...authority(order), messageId: message.id }, RUBY)).attachments)
+    .toEqual([expect.objectContaining({ name: 'evidence.txt' })]);
+  // An archived corner in another Room remains unavailable even when its
+  // object id is known to the caller.
+  const privateRoom = randomUUID(), privateCorner = randomUUID(), privateMedia = randomUUID();
+  await db.query(`INSERT INTO rooms(id,workspace_id,name,parent_id,created_by,archived_at)
+    VALUES($1,$3,'Private-room',NULL,$4,NULL),($2,$3,'Private-source',$1,$4,now())`,
+    [privateRoom, privateCorner, WS, HUMAN]);
+  await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+    VALUES($1,$2,$4,'member'),($1,$2,$5,'member'),($1,$3,$4,'member'),($1,$3,$5,'member')`,
+    [WS, privateRoom, privateCorner, HUMAN, WORKER]);
+  await db.query(`INSERT INTO objects(id,owner_id,kind,key,mime,title,size,sha256,state,expires_at)
+    VALUES($1,$2,'artifact',$3,'text/plain','private.txt',2,$4,'ready',now()+interval '24 hours')`,
+    [privateMedia, WORKER, 'artifact/' + privateMedia, randomBytes(32).toString('hex')]);
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text,attachments)
+    VALUES($1,$2,$3,'Private evidence',$4::jsonb)`, [randomBytes(32).toString('hex'), privateCorner, WORKER,
+    JSON.stringify([{ url: 'http://test/v1/media/' + privateMedia, name: 'private.txt' }])]);
+  const tryPrivate = () => daemon.execute('createCorner', {
+    ...authority(order), idempotencyKey: 'private-source-proof', targetRoomId: ROOM, name: 'Refused-successor', objective: 'Continue from evidence', implementer: 'worker',
+    brief: { spec: 'Read private evidence', repositoryWork: false,
+      approval: { sourceMessageId: order.sourceMessageId },
+      attachments: [{ objectId: privateMedia, purpose: 'Private evidence', required: true }] },
+  }, RUBY);
+  await expect(tryPrivate()).rejects.toThrow('missing or unavailable in this Room');
+  // Even if the commander is a member, a successor audience without access
+  // cannot receive the file. The human requester is also checked.
+  await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+    VALUES($1,$2,$4,'member'),($1,$3,$4,'member')`, [WS, privateRoom, privateCorner, RUBY]);
+  await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [privateCorner, HUMAN]);
+  await expect(tryPrivate()).rejects.toThrow('missing or unavailable in this Room');
+  await db.query(`UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2`, [privateCorner, HUMAN]);
+  const outsider = 'f'.repeat(64);
+  await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Reader','reader')`, [outsider]);
+  await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [WS, ROOM, outsider]);
+  await expect(tryPrivate()).rejects.toThrow('missing or unavailable in this Room');
+  await db.query(`DELETE FROM memberships WHERE identity_id=$1`, [outsider]);
+  const remoteSuccessor = await tryPrivate();
+  const remoteBrief = await daemon.execute('listCornerBriefRevisions', { ...authority(order), cornerId: remoteSuccessor.cornerId, limit: 1 }, RUBY);
+  expect(remoteBrief.revisions[0]!.attachments).toEqual([expect.objectContaining({ objectId: privateMedia })]);
+  const successor = await daemon.execute('createCorner', {
+    ...authority(order), targetRoomId: ROOM, name: 'Successor-evidence', objective: 'Continue from evidence', implementer: 'worker',
+    brief: { spec: 'Read the source evidence', repositoryWork: false,
+      approval: { sourceMessageId: order.sourceMessageId },
+      attachments: [{ objectId: media, purpose: 'Source evidence', required: true }] },
+  }, RUBY);
+  const next = await worker(successor.cornerId);
+  const brief = await daemon.execute('listCornerBriefRevisions', { ...authority(next), cornerId: successor.cornerId, limit: 1 }, WORKER);
+  expect(brief.revisions[0]!.attachments).toEqual([expect.objectContaining({ objectId: media, title: 'evidence.txt' })]);
+  // Drive the actual read tool through a loopback transport to the service,
+  // then verify the downloaded file, rather than just manifest metadata.
+  const scratch = await mkdtemp(join(tmpdir(), 'beeline-r1-'));
+  const bridge = createServer(async (request, response) => {
+    try {
+      if (request.url === '/v1/daemon/operations/listCornerBriefRevisions' || request.url === '/v1/daemon/operations/getRoomMessage') {
+        const chunks: Buffer[] = [];
+        for await (const chunk of request) chunks.push(Buffer.from(chunk));
+        const input = JSON.parse(Buffer.concat(chunks).toString());
+        const result = await daemon.execute(request.url.endsWith('getRoomMessage') ? 'getRoomMessage' : 'listCornerBriefRevisions', input, WORKER);
+        response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(result));
+      } else if (request.url === '/v1/media/' + media) {
+        response.writeHead(200, { 'content-type': 'text/plain' }).end(await objects.readOwnedBytes(WORKER, media));
+      } else response.writeHead(404).end();
+    } catch (error) {
+      response.writeHead(403, { 'content-type': 'application/json' }).end(JSON.stringify({ error: String(error) }));
+    }
+  });
+  try {
+    await new Promise<void>((resolve) => bridge.listen(0, '127.0.0.1', resolve));
+    const address = bridge.address();
+    if (!address || typeof address === 'string') throw new Error('missing proof port');
+    vi.stubEnv('BEELINE_DAEMON_BASE_URL', `http://127.0.0.1:${address.port}`);
+    vi.stubEnv('BEELINE_DAEMON_TOKEN', 'isolated-fixture-token');
+    vi.stubEnv('BEELINE_DAEMON_ROOM_ID', successor.cornerId);
+    vi.stubEnv('BEELINE_DAEMON_CORNER_ID', successor.cornerId);
+    vi.stubEnv('BEELINE_ATTACH_SCRATCH_ROOT', scratch);
+    vi.stubEnv('BEELINE_TURN_CONTEXT_FILE', '');
+    const downloaded = JSON.parse(await callAgentTool('read', { facet: 'attachment', attachmentId: media }, 'r1'));
+    expect(await readFile(downloaded.path)).toEqual(bytes);
+    await expect(callAgentTool('read', { facet: 'attachment', attachmentId: privateMedia }, 'unattached')).rejects.toThrow('not_found');
+    vi.stubEnv('BEELINE_DAEMON_ROOM_ID', source.id);
+    vi.stubEnv('BEELINE_DAEMON_CORNER_ID', source.id);
+    const ownMessage = JSON.parse(await callAgentTool('read', { facet: 'attachment', messageId: message.id, attachmentId: media }, 'own-message'));
+    expect(await readFile(ownMessage.path)).toEqual(bytes);
+  } finally {
+    vi.unstubAllEnvs();
+    bridge.closeAllConnections();
+    await new Promise<void>((resolve, reject) => bridge.close((error) => error ? reject(error) : resolve()));
+    await rm(scratch, { recursive: true, force: true });
+  }
 });

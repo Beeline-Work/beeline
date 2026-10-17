@@ -1,3 +1,4 @@
+import { useUntaggedMessageHints } from '@/buzz/use-untagged-message-hints';
 import { focusComposerSelection } from '@/buzz/composer-selection';
 import { HullDialogActions } from '@/components/buzz/HullDialog';
 import { useTextDraft } from '@/buzz/use-text-draft';
@@ -1196,6 +1197,14 @@ export function BuzzChatSurface({
     [workspaceChatList],
   );
   const viewerIsAgent = roomSurface?.viewer.identity.kind === 'agent';
+  const { captureSend: captureUntaggedSend, hintMessageIds } = useUntaggedMessageHints({
+    roomId: decodedId,
+    viewerPubkey: userPubkey,
+    active: isFocused,
+    viewerKind: roomSurface?.viewer.identity.kind,
+    isDirectMessage,
+    hasAgentMembers: Boolean(roomSurface?.members.some(member => member.identity.kind === 'agent')),
+  });
   const roomVoiceAgents = useMemo(() => roomSurface?.members
     .filter(member => member.identity.kind === 'agent').map(member => member.identity) ?? [], [roomSurface?.members]);
   const voice = useVoiceCall(decodedId, Boolean(roomSurface?.viewer.permissions.send && !viewerIsAgent && !isArchived), roomVoiceAgents);
@@ -3933,6 +3942,7 @@ export function BuzzChatSurface({
         roomParticipants,
         sendShortcut ? NO_SELECTED_MENTIONS : selectedMentionsRef.current,
       ).pubkeys;
+      const recordUntaggedSend = captureUntaggedSend(mentionedPubkeys.length > 0);
       const selectedMentionedAgent = sendShortcut
         ? undefined
         : selectedMentionAgentPubkey(text, selectedAgentMentionsRef.current);
@@ -4108,6 +4118,7 @@ export function BuzzChatSurface({
         }
         await activeOutbox.attempted(preparedEvent.id);
         const writeResult = await sendTransport.publishPreparedMessage(preparedEvent);
+        recordUntaggedSend(preparedEvent.id);
         if (writeResult.message) applyRoomMessageResult(writeResult.message);
         if (writeResult.pendingAgentCommands) applyPendingAgentCommands(writeResult.pendingAgentCommands);
         if (
@@ -4172,6 +4183,7 @@ export function BuzzChatSurface({
       }
     },
     [
+      captureUntaggedSend,
       activeCommunityId,
       attachmentUploader,
       replacePendingAttachments,
@@ -5892,6 +5904,7 @@ export function BuzzChatSurface({
           {...(referencedTarget ? { referencedTarget } : {})}
           participantHandles={roomParticipants}
           channelIndex={channelReferenceIndex}
+          untaggedHint={hintMessageIds.has(item.id)}
           deliveryFailed={failedOutboxIds.has(item.id)}
           onChannelReference={handleOpenChannelReference}
           codeRoomId={decodedId}
@@ -5936,6 +5949,7 @@ export function BuzzChatSurface({
     },
     [
       renderCornerMarker,
+      hintMessageIds,
       voice.call,
       voice.connecting,
       voice.error,
@@ -6773,6 +6787,8 @@ export function BuzzChatSurface({
                       </View>
                     ) : null}
                     <ConversationComposer
+                      isDirectMessage={isDirectMessage}
+                      hasAgentMembers={Boolean(roomSurface?.members.some(member => member.identity.kind === 'agent'))}
                       voice={roomSurface?.members.some(member => member.identity.kind === 'agent') ? voice : undefined}
                       onStop={
                         composerAck?.stop ? () => handleStopTurn(composerAck.stop!) : undefined

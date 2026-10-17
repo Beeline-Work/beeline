@@ -1,3 +1,4 @@
+import { LedgerUntaggedHint } from '@/components/buzz/Ledger';
 import { HullDialogActions } from '@/components/buzz/HullDialog';
 import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Image, Platform, Pressable, Text, View } from 'react-native';
@@ -1228,6 +1229,7 @@ export interface OrdinaryLedgerMessageProps {
   participantHandles: readonly { pubkey: string; handle: string }[];
   channelIndex: ChannelReferenceIndex;
   deliveryFailed: boolean;
+  untaggedHint?: boolean;
   onChannelReference(target: ChannelReferenceTarget): void;
   codeRoomId?: string;
   onOpenCode?(messageId: string): void;
@@ -1368,6 +1370,7 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
   participantHandles,
   channelIndex,
   deliveryFailed,
+  untaggedHint = false,
   onChannelReference,
   codeRoomId,
   onOpenCode,
@@ -1815,6 +1818,10 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
               {forwarded.caption}
             </Text>
           )
+        ) : null}
+        {untaggedHint && isSelfSteer && !deliveryFailed &&
+          (message.pubkey ?? indexedAuthor?.pubkey) === viewerPubkey ? (
+          <LedgerUntaggedHint messageId={message.id} />
         ) : null}
         {message.isUser && deliveryFailed ? (
           <View style={styles.outboxFailure} testID={`outbox-delivery-failed-${message.id}`}>

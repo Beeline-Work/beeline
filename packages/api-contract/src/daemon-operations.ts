@@ -1788,6 +1788,11 @@ export type VaultConnectionMeta = {
   readonly label: string;
   readonly fieldNames: readonly string[];
   readonly allowedHosts: readonly string[];
+  readonly loginHosts?: readonly string[];
+  readonly faviconDomain?: string;
+  readonly keyName?: string;
+  readonly credentialKind?: string;
+  readonly expiresAt?: number;
   readonly createdAt: number;
   readonly stale: boolean;
   readonly state: 'active' | 'error';

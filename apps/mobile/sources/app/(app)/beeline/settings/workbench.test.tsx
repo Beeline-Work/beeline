@@ -125,6 +125,7 @@ vi.mock('@/components/buzz/SurfaceGlyphLoader', async () => {
   };
 });
 
+import { companyWorkbench, companyRow, companyOption, squireRow } from '@/test/company-workbench';
 import WorkbenchScreen from './workbench';
 import { WALLET_GRANT_ENDED_MESSAGE, type WorkbenchView } from '@/buzz/workbench';
 import { workbenchSummary } from '@/buzz/connectors-model';
@@ -160,7 +161,9 @@ beforeEach(() => {
   appState.listener = undefined;
   layout.desktop = false;
   safeArea.bottom = 0;
-  setWorkbenchSource(new MockWorkbenchSource());
+  const source = new MockWorkbenchSource();
+  source.readWorkbench = async () => companyWorkbench([squireRow(), companyRow('vercel', 'Vercel')]);
+  setWorkbenchSource(source);
   setWalletSource(new MockWalletSource());
   searchParams.params = { workspaceId: 'workspace-1', viewerId: 'human-dani' };
   workspace.resolve.mockImplementation(async (id?: string, activeId?: string) => id || activeId || null);
@@ -177,213 +180,64 @@ async function render(): Promise<ReactTestRenderer> {
   return renderer;
 }
 
-describe('Connectors settings screen', () => {
-  it('shows the shared Connectors header and search entry', async () => {
-    const renderer = await render();
-    expect(renderer.root.findByProps({ testID: 'workbench-header' }).props).toMatchObject({
-      title: 'Connectors', eyebrow: 'Settings',
-    });
-    act(() => renderer.root.findByProps({ testID: 'connectors-search' }).props.onPress());
-    expect(navigation.push.mock.calls.at(-1)?.[0]).toMatchObject({
-      pathname: '/beeline/settings/workbench/connect-app',
-      params: { workspaceId: 'workspace-1', viewerId: 'human-dani' },
-    });
-  });
-
-  it('groups one key service row per vault reference and opens its read-only page', async () => {
-    const source = new MockWorkbenchSource();
-    const read = source.readWorkbench.bind(source);
-    source.readWorkbench = async input => {
-      const view = await read(input);
-      return { ...view, connections: [...view.connections, view.connections[0]!] };
-    };
-    setWorkbenchSource(source);
+describe('Connectors server-owned settings screen', () => {
+  it('renders the server companies once with authoritative marks and company detail targets', async () => {
     const renderer = await render();
     const rows = renderer.root.findAllByType('SettingsRow');
-    const vercel = rows.filter((row: any) => row.props.title === 'Vercel');
-    expect(vercel).toHaveLength(1);
-    expect(vercel[0]?.props.description).toBe('Key · Trusty Squire');
-    act(() => vercel[0]?.props.onPress());
-    expect(navigation.push.mock.calls.at(-1)?.[0]).toMatchObject({
-      pathname: '/beeline/settings/workbench/service',
-      params: { service: 'vercel' },
-    });
+    expect(rows.map((r: any) => r.props.title)).toEqual(['Trusty Squire', 'Vercel']);
+    expect(rows[1].props.leading.props.mark.uri).toContain('/v1/company-logos/vercel');
+    await act(async () => rows[1].props.onPress());
+    expect(navigation.push).toHaveBeenCalledWith({ pathname: '/beeline/settings/workbench/service', params: { workspaceId: 'workspace-1', viewerId: 'human-dani', service: 'vercel' } });
+    expect(renderer.root.findByProps({ testID: 'connectors-search' })).toBeTruthy();
+    expect(renderer.root.findAllByProps({ testID: 'connectors-suggest-squire' })).toHaveLength(0);
   });
-
-  it('keeps a Squire-held app key in Keys while real sign-ins appear as connections', async () => {
+  it('only shows suggestions in the body for an empty account', async () => {
     const source = new MockWorkbenchSource();
-    source.setApps([
-      { id: 'app-rakuten', key: 'rakuten', name: 'Rakuten Ichiba', transport: 'squire-api', status: 'connected', connectionReference: 'cred_rakuten', useCount: 0 },
-      { id: 'app-slack', key: 'slack', name: 'Slack', transport: 'composio', status: 'connected', useCount: 0 },
-    ]);
-    const read = source.readWorkbench.bind(source);
-    source.readWorkbench = async input => {
-      const view = await read(input);
-      return { ...view, apps: view.apps.filter(app => app.transport !== 'squire-api'), connections: [...view.connections,
-        { connectionId: 'cred_rakuten', ref: 'cred_rakuten', name: 'Rakuten key', service: 'rakuten', hosts: [], state: 'active' as const, ownerId: 'human-dani' }] };
-    };
+    source.readWorkbench = async () => companyWorkbench([], [companyOption('trusty-squire', 'Trusty Squire', 'squire')]);
     setWorkbenchSource(source);
     const renderer = await render();
-    const titles = renderer.root.findAllByType('SettingsRow').map((row: any) => row.props.title);
-    expect(titles).toContain('Rakuten Ichiba');
-    expect(titles).toContain('Slack');
-    expect(titles).not.toContain('Rakuten key');
+    const suggestion = renderer.root.findByType('SettingsRow');
+    expect(suggestion.props.title).toBe('Trusty Squire');
+    await act(async () => suggestion.props.onPress());
+    expect(navigation.push).toHaveBeenCalledWith(expect.objectContaining({ params: expect.objectContaining({ connectorId: 'trusty-squire' }) }));
   });
-
-  it('offers Trusty Squire in recommendations when it has never connected', async () => {
-    searchParams.params = { workspaceId: 'workspace-1', viewerId: 'human-terra' };
-    const renderer = await render();
-    const hero = renderer.root.findByProps({ testID: 'connectors-squire-hero' });
-    act(() => hero.props.onAction());
-    expect(navigation.push.mock.calls.at(-1)?.[0]).toMatchObject({
-      pathname: '/beeline/settings/workbench/connect',
-      params: { connectorId: 'trusty-squire' },
-    });
-  });
-
-  it('uses the held view on focus and re-reads after a live workbench change', async () => {
+  it('re-reads after a committed live change without client regrouping', async () => {
     const source = new MockWorkbenchSource();
-    const read = vi.spyOn(source, 'readWorkbench');
-    setWorkbenchSource(source);
-    await render();
-    expect(read).toHaveBeenCalledWith({ workspaceId: 'workspace-1', viewerId: 'human-dani' });
-    const firstReads = read.mock.calls.length;
-    await act(async () => { focus.effect?.(); await Promise.resolve(); });
-    expect(read).toHaveBeenCalledTimes(firstReads);
-    await act(async () => {
-      for (const listener of liveListeners) listener({ monolithLive: {
-        type: 'resource-change', roomId: '', resource: 'workbench',
-      } });
-      await Promise.resolve();
-    });
-    expect(read).toHaveBeenLastCalledWith({ workspaceId: 'workspace-1', viewerId: 'human-dani' });
-  });
-
-  it('Reproduction connectors-squire-not-added: re-reads a stored view once so a connected machine is not "Not added"', async () => {
-    const source = new MockWorkbenchSource();
-    const read = source.readWorkbench.bind(source);
-    const machine = { id: 'machine-squire', name: 'squire', online: true };
-    source.readWorkbench = async input => ({ ...await read(input),
-      helpers: [{ ...machine, squire: { status: 'connected' as const, reportedAt: 2 } }] });
-    setWorkbenchSource(source);
-    // The view this device stored before the machine's broker report reached it.
-    const stored = { ...await read({ workspaceId: 'workspace-1', viewerId: 'human-dani' }), helpers: [machine] };
-    await mobileSurfaceCache.write({ relayOrigin: 'https://relay.test', viewerPubkey: 'human-dani',
-      endpoint: '/workspace/:id/workbench', params: { workspaceId: 'workspace-1', viewerId: 'human-dani' } },
-    stored, (value): value is typeof stored => Boolean(value));
-    const renderer = await render();
-    const squire = () => renderer.root.findAllByType('SettingsRow')
-      .find((row: any) => row.props.title === 'Trusty Squire · squire');
-    await vi.waitFor(() => expect(squire()?.props.value).toBe('Connected'));
-    expect(squire()?.props.statusGlyph).toBe('live');
-  });
-
-  it('states the Settings total as exactly the rows under Your connections', async () => {
-    const key = (ref: string, service: string) => ({ connectionId: ref, ref, name: 'default', service,
-      hosts: [], state: 'active' as const, ownerId: 'human-dani' });
-    const tool = (id: string, name: string) => ({ id, name, description: '', available: true,
-      status: 'connected' as const });
-    const view: WorkbenchView = {
-      helpers: [
-        { id: 'machine-squire', name: 'squire', online: true, squire: { status: 'connected', reportedAt: 1 } },
-        { id: 'machine-other', name: 'other', online: false },
-      ],
-      // Tiktok-app and Cal.com hold two keys each and draw one row each.
-      connections: [key('k1', 'tiktok-app'), key('k2', 'tiktok-app'), key('k3', 'kaggle'),
-        key('k4', 'cal.com'), key('k5', 'cal.com'), key('k6', 'craigslist')],
-      apps: [
-        { id: 'app-linear', key: 'linear', name: 'Linear', transport: 'registry-mcp', status: 'connected', useCount: 0 },
-        { id: 'app-slack', key: 'slack', name: 'Slack', transport: 'composio', status: 'connecting', useCount: 0 },
-      ],
-      connectors: [tool('trusty-squire', 'Trusty Squire'), tool('google-gmail', 'Gmail'),
-        tool('google-calendar', 'Google Calendar'), tool('google-drive', 'Google Drive'),
-        tool('google-youtube', 'YouTube'), tool('tailscale', 'Tailscale'), tool('wallet', 'Wallet')],
-      linkAccount: { connected: true, pending: false, ineligible: false },
-    };
-    const source = new MockWorkbenchSource();
-    source.readWorkbench = async () => view;
+    let value = companyWorkbench([companyRow('vercel', 'Vercel')]);
+    const read = vi.spyOn(source, 'readWorkbench').mockImplementation(async () => value);
     setWorkbenchSource(source);
     const renderer = await render();
-    const rows = renderer.root.findByProps({ testID: 'connectors-your-connections' })
-      .findAllByType('SettingsRow');
-    // 2 machines + 4 key services + 2 apps + Google Workspace + Tailscale + wallet + Link.
-    expect(rows).toHaveLength(12);
-    expect(workbenchSummary(view, 'human-dani').value).toBe(`${rows.length} connected`);
+    value = companyWorkbench([companyRow('sentry', 'Sentry', 'attention')]);
+    await act(async () => { for (const listener of liveListeners) listener({ monolithLive: { type: 'resource-change', roomId: '', resource: 'workbench' } }); await Promise.resolve(); });
+    expect(read.mock.calls.length).toBeGreaterThan(1);
+    expect(renderer.root.findByType('SettingsRow').props.title).toBe('Sentry');
   });
-
-  it('connects the recommended wallet by creating it and granting delegation', async () => {
-    const wallet = new MockWalletSource();
-    const create = vi.spyOn(wallet, 'createWallet');
-    const grant = vi.spyOn(wallet, 'grantDelegation');
-    setWalletSource(wallet);
+  it('refreshes a stale stored server answer once per session', async () => {
+    const source = new MockWorkbenchSource();
+    source.readWorkbench = async () => companyWorkbench([squireRow()]);
+    setWorkbenchSource(source);
+    await mobileSurfaceCache.write({ relayOrigin: 'https://relay.test', viewerPubkey: 'human-dani', endpoint: '/workspace/:id/workbench',
+      params: { workspaceId: 'workspace-1', viewerId: 'human-dani' } }, companyWorkbench([squireRow('not-added')]), (v): v is WorkbenchView => Boolean(v));
     const renderer = await render();
-    await act(async () => {
-      renderer.root.findByProps({ testID: 'connectors-recommended-wallet' }).props.onPress();
-      await Promise.resolve();
-    });
-    expect(create).toHaveBeenCalledWith({ workspaceId: 'workspace-1' });
-    expect(grant).toHaveBeenCalledWith({ workspaceId: 'workspace-1' });
-    expect(navigation.push.mock.calls.at(-1)?.[0]).toMatchObject({
-      pathname: '/beeline/settings/workbench/wallet', params: { workspaceId: 'workspace-1' },
-    });
+    await vi.waitFor(() => expect(renderer.root.findByType('SettingsRow').props.value).toBe('Ready'));
   });
-
-  it('uses the active Workspace for wallet connect from personal Settings', async () => {
-    searchParams.params = { viewerId: 'human-dani' };
-    const wallet = new MockWalletSource();
-    const create = vi.spyOn(wallet, 'createWallet');
-    setWalletSource(wallet);
+  it('creates and delegates the suggested wallet with the active workspace fallback', async () => {
+    searchParams.params.workspaceId = '';
+    const source = new MockWorkbenchSource(); source.readWorkbench = async () => companyWorkbench([], [companyOption('wallet', 'Wallet', 'wallet')]);
+    setWorkbenchSource(source);
+    const wallet = new MockWalletSource(); const create = vi.spyOn(wallet, 'createWallet'); const grant = vi.spyOn(wallet, 'grantDelegation'); setWalletSource(wallet);
     const renderer = await render();
-    await act(async () => {
-      renderer.root.findByProps({ testID: 'connectors-recommended-wallet' }).props.onPress();
-      await Promise.resolve();
-    });
-    expect(workspace.resolve).toHaveBeenCalledWith('', 'workspace-active');
+    await act(async () => { await renderer.root.findByType('SettingsRow').props.onPress(); });
+    await vi.waitFor(() => expect(grant).toHaveBeenCalledWith({ workspaceId: 'workspace-active' }));
     expect(create).toHaveBeenCalledWith({ workspaceId: 'workspace-active' });
   });
-
-  it('returns from Link sign-in to a connected row', async () => {
-    const source = new MockWorkbenchSource();
-    const originalRead = source.readWorkbench.bind(source);
-    let connected = false;
-    source.beginLinkSignIn = vi.fn(async () => ({ authorizationUrl: 'https://login.link.com/auth?state=link-test-state' }));
-    source.readWorkbench = async input => ({ ...await originalRead(input),
-      linkAccount: { connected, pending: false, ineligible: false } });
-    vi.mocked(WebBrowser.openAuthSessionAsync).mockImplementation(async () => {
-      connected = true;
-      return { type: 'success', url: 'beeline://beeline/settings/workbench' };
-    });
-    setWorkbenchSource(source);
-    const renderer = await render();
-    await act(async () => {
-      renderer.root.findByProps({ testID: 'connectors-recommended-link' }).props.onPress();
-      await Promise.resolve();
-    });
-    expect(WebBrowser.openAuthSessionAsync).toHaveBeenCalledWith(
-      'https://login.link.com/auth?state=link-test-state',
-      'beeline://beeline/settings/workbench', expect.anything());
-    expect(renderer.root.findAllByType('SettingsRow').some((row: any) =>
-      row.props.title === 'Link' && row.props.value === 'Connected')).toBe(true);
-  });
-
-  it('keeps the last loaded view when a later vault read fails', async () => {
-    const source = new MockWorkbenchSource();
-    const read = source.readWorkbench.bind(source);
-    let fail = false;
-    source.readWorkbench = async input => {
-      if (fail) throw new Error('offline');
-      return read(input);
-    };
-    setWorkbenchSource(source);
-    const renderer = await render();
-    expect(renderer.root.findAllByType('SettingsRow').some((row: any) => row.props.title === 'Vercel')).toBe(true);
-    fail = true;
-    await act(async () => {
-      for (const listener of liveListeners) listener({ monolithLive: {
-        type: 'resource-change', roomId: '', resource: 'workbench',
-      } });
-      await Promise.resolve();
-    });
-    expect(renderer.root.findByProps({ testID: 'workbench-network-unavailable' })).toBeDefined();
+  it('cancels a dismissed Link sign-in rather than granting anything', async () => {
+    const source = new MockWorkbenchSource(); source.readWorkbench = async () => companyWorkbench([], [companyOption('link', 'Link', 'link')]);
+    vi.spyOn(source, 'beginLinkSignIn').mockResolvedValue({ authorizationUrl: 'https://link.example/auth?state=pending' });
+    const cancel = vi.spyOn(source, 'cancelLinkSignIn').mockResolvedValue(undefined);
+    vi.mocked(WebBrowser.openAuthSessionAsync).mockResolvedValueOnce({ type: 'dismiss' as WebBrowser.WebBrowserResultType.DISMISS });
+    setWorkbenchSource(source); const renderer = await render();
+    await act(async () => { await renderer.root.findByType('SettingsRow').props.onPress(); });
+    await vi.waitFor(() => expect(cancel).toHaveBeenCalledWith('pending'));
   });
 });

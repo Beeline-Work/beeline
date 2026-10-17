@@ -856,12 +856,18 @@ function epochSeconds(value: unknown): number | null {
 export function vaultConnectionMeta(raw: unknown): VaultConnectionMeta {
   const record = asRecord(raw);
   const reference = String(record.reference ?? record.id ?? '');
+  const expiresAt = epochSeconds(record.expires_at ?? record.expiresAt);
   return {
     reference,
     service: typeof record.service === 'string' ? record.service : null,
     label: String(record.label ?? record.service ?? reference),
     fieldNames: stringList(record.field_names ?? record.fieldNames),
-    allowedHosts: stringList(record.allowed_hosts ?? record.allowedHosts ?? record.login_hosts),
+    allowedHosts: stringList(record.allowed_hosts ?? record.allowedHosts),
+    loginHosts: stringList(record.login_hosts ?? record.loginHosts),
+    ...(typeof record.favicon_domain === 'string' ? { faviconDomain: record.favicon_domain } : {}),
+    ...(typeof record.key_name === 'string' ? { keyName: record.key_name } : {}),
+    ...(typeof record.kind === 'string' ? { credentialKind: record.kind } : {}),
+    ...(expiresAt !== null ? { expiresAt } : {}),
     createdAt: epochSeconds(record.created_at ?? record.createdAt) ?? 0,
     stale: record.stale === true,
     state: record.state === 'error' ? 'error' : 'active',

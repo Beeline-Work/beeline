@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Tailscale connector">
+  <circle cx="32" cy="18" r="7" fill="#d7af5f"/>
+  <circle cx="18" cy="40" r="7" fill="#3a3a3d"/>
+  <circle cx="32" cy="40" r="7" fill="#d7af5f"/>
+  <circle cx="46" cy="40" r="7" fill="#3a3a3d"/>
+  <circle cx="32" cy="54" r="0" fill="none"/>
+</svg>

@@ -30,12 +30,9 @@ describe.skipIf(!existsSync(CHROME))('Settings Your connections row', () => {
         import { View } from 'react-native';
         import { SettingsRow } from '@/components/buzz/SettingsRow';
         import { workbenchSummary } from '@/buzz/connectors-model';
-        // The owner's view: one Squire machine, nine key services holding 101 keys.
-        const services = ['tiktok', 'dsers', 'shopify', 'kaggle', 'kagi', 'cal', 'craigslist', 'askul', 'stripe'];
-        const view = { connectors: [], apps: [],
-          helpers: [{ id: 'machine', name: 'squire', online: true, squire: { status: 'connected', reportedAt: 1 } }],
-          connections: Array.from({ length: 101 }, (_, index) => ({ ref: 'key-' + index, name: 'default',
-            service: services[index % services.length], hosts: [], state: 'active', ownerId: 'owner' })) };
+        // This is the indexed server summary, shared with the company list.
+        const view = { connectors: [], helpers: [], apps: [], connections: [], companies: { version: 1,
+          rows: [], suggestions: [], hasConnections: true, summary: { value: '10 connections' } } };
         const summary = workbenchSummary(view, 'owner');
         const row = (testID, props) => React.createElement(View, { testID, style: { width: ${width} - 32, marginLeft: 16 } },
           React.createElement(SettingsRow, { title: 'Your connections', chevron: 'right', onPress() {}, ...props }));
@@ -72,7 +69,7 @@ describe.skipIf(!existsSync(CHROME))('Settings Your connections row', () => {
         } });
       expect(result.status, result.stderr).toBe(0);
       const proof = JSON.parse(result.result);
-      expect(proof.value).toBe('10 connected');
+      expect(proof.value).toBe('10 connections');
       expect(proof.after).toBe(false);
       expect(proof.long).toBe(false);
       // At Medium text the count shows in full too; at Large on 360px it may yield.

@@ -284,7 +284,8 @@ vi.mock('react-native', async () => {
 // The theme has to be live before the screen evaluates, because the mocked
 // StyleSheet.create calls the screen's theme-taking factory as it imports.
 import { beelineThemes } from '@/buzz/groknight';
-import type { WorkbenchConnection, WorkbenchConnector, WorkbenchView } from '@/buzz/workbench';
+import { companyWorkbench } from '@/test/company-workbench';
+import type { WorkbenchView } from '@/buzz/workbench';
 import IdentitySettingsScreen from './identity';
 import { mobileSurfaceCache } from '@/buzz/surface-storage';
 
@@ -323,31 +324,10 @@ function headings(renderer: ReactTestRenderer): string[] {
 
 const VIEWER = 'a'.repeat(64);
 
-function key(ref: string): WorkbenchConnection {
-  return { ref, name: ref, service: 'stripe', hosts: [], state: 'active', ownerId: VIEWER };
+function view(value: string, attention = '1 company needs attention'): WorkbenchView {
+  const answer = companyWorkbench();
+  return { ...answer, companies: { ...answer.companies!, summary: { value, attention } } };
 }
-
-function view(keys: number, connectors: WorkbenchConnector[] = [],
-  helpers: WorkbenchView['helpers'] = []): WorkbenchView {
-  return {
-    connectors,
-    connections: Array.from({ length: keys }, (_, index) => key(`key-${index}`)),
-    apps: [],
-    helpers,
-  };
-}
-
-function tool(id: string, name: string, status: WorkbenchConnector['status']): WorkbenchConnector {
-  return { id, name, description: '', available: true, status };
-}
-
-const googleError: WorkbenchConnector[] = [
-  tool('trusty-squire', 'Trusty Squire', 'connected'),
-  tool('google-gmail', 'Gmail', 'error'),
-  tool('google-calendar', 'Google Calendar', 'error'),
-  tool('google-drive', 'Google Drive', 'error'),
-  tool('google-youtube', 'YouTube', 'error'),
-];
 
 function workbenchRow(renderer: ReactTestRenderer) {
   return renderer.root.findByProps({ testID: 'settings-workbench-row' });
@@ -380,55 +360,54 @@ beforeEach(() => {
 });
 
 describe('Settings Workbench row shares the held Workbench projection', () => {
-  it('shows 57 keys when the owner changes and does not re-read on focus', async () => {
+  it('shows the updated server summary when the owner changes and does not re-read on focus', async () => {
     workbench.readWorkbench
-      .mockResolvedValueOnce(view(0, googleError))
-      .mockResolvedValue(view(57, googleError));
+      .mockResolvedValueOnce(view('0 connections', ''))
+      .mockResolvedValue(view('2 connections'));
     const renderer = await renderScreen();
-    await vi.waitFor(() => expect(workbenchRow(renderer).props.value).toBe('0 connected'));
+    await vi.waitFor(() => expect(workbenchRow(renderer).props.value).toBe('0 connections'));
 
     await act(async () => { await mobileSurfaceCache.write({ relayOrigin: 'https://relay.test',
       viewerPubkey: VIEWER, endpoint: '/workspace/:id/workbench',
-      params: { workspaceId: 'workspace-1', viewerId: VIEWER } }, view(57, googleError),
+      params: { workspaceId: 'workspace-1', viewerId: VIEWER } }, view('2 connections'),
       (value): value is WorkbenchView => Boolean(value)); });
     await refocus();
 
-    await vi.waitFor(() => expect(workbenchRow(renderer).props.value).toBe('1 connected'));
+    await vi.waitFor(() => expect(workbenchRow(renderer).props.value).toBe('2 connections'));
     expect(workbench.readWorkbench).toHaveBeenCalledTimes(1);
   });
 
   it('states one total of the Your connections rows, not keys apart', async () => {
-    workbench.readWorkbench.mockResolvedValue(view(57, googleError, [{ id: 'machine-squire',
-      name: 'squire', online: true, squire: { status: 'connected', reportedAt: 1 } }]));
+    workbench.readWorkbench.mockResolvedValue(view('3 connections'));
     const renderer = await renderScreen();
-    await vi.waitFor(() => expect(workbenchRow(renderer).props.value).toBe('2 connected'));
+    await vi.waitFor(() => expect(workbenchRow(renderer).props.value).toBe('3 connections'));
     expect(workbenchRow(renderer).props.wholeTitle).toBe(true);
   });
 
-  it('names the one broken tool in a danger subtitle', async () => {
-    workbench.readWorkbench.mockResolvedValue(view(57, googleError));
+  it('uses the server attention line in a danger subtitle', async () => {
+    workbench.readWorkbench.mockResolvedValue(view('2 connections'));
     const renderer = await renderScreen();
-    await vi.waitFor(() => expect(workbenchRow(renderer).props.value).toBe('1 connected'));
+    await vi.waitFor(() => expect(workbenchRow(renderer).props.value).toBe('2 connections'));
     expect(workbenchRow(renderer).props).toMatchObject({
       title: 'Your connections',
       chevron: 'right',
-      description: 'Google Workspace needs attention',
+      description: '1 company needs attention',
       descriptionTone: 'danger',
     });
   });
 
   it('keeps the last value and shows no error on refocus', async () => {
     workbench.readWorkbench
-      .mockResolvedValueOnce(view(57, googleError))
+      .mockResolvedValueOnce(view('2 connections'))
       .mockRejectedValue(new Error('offline'));
     const renderer = await renderScreen();
-    await vi.waitFor(() => expect(workbenchRow(renderer).props.value).toBe('1 connected'));
+    await vi.waitFor(() => expect(workbenchRow(renderer).props.value).toBe('2 connections'));
 
     await refocus();
 
     expect(workbench.readWorkbench).toHaveBeenCalledTimes(1);
-    expect(workbenchRow(renderer).props.value).toBe('1 connected');
-    expect(workbenchRow(renderer).props.description).toBe('Google Workspace needs attention');
+    expect(workbenchRow(renderer).props.value).toBe('2 connections');
+    expect(workbenchRow(renderer).props.description).toBe('1 company needs attention');
     expect(headings(renderer).some((text) => text.startsWith('Could not load'))).toBe(false);
   });
 

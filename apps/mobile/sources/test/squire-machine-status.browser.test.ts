@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 import { runBrowserProof, webProofShims } from './browserProof';
 
 describe('Reproduction squire-machine-status-2 in Connectors', () => {
-  it.each([390, 900])('renders each machine broker report without connector rows at %spx', async (width) => {
+  it.each([390, 900])('renders one sign-in service and its machine broker reports at %spx', async (width) => {
     const mobile = process.cwd();
     const directory = await mkdtemp(path.join(mobile, 'sources/test/squire-status-proof-'));
     try {
@@ -17,7 +17,7 @@ describe('Reproduction squire-machine-status-2 in Connectors', () => {
         root.render(<Workbench />);
         const output = {};
         setTimeout(() => {
-          output.page = document.querySelector('[data-testid="connectors-your-connections"]')?.textContent;
+          output.page = document.querySelector('[data-testid="connectors-attention"]')?.textContent;
           globalThis.__params = { workspaceId: 'workspace', viewerId: 'owner',
             service: 'trusty-squire', helperId: 'failed' };
           root.render(<Service />);
@@ -27,7 +27,6 @@ describe('Reproduction squire-machine-status-2 in Connectors', () => {
           document.getElementById('result').textContent = JSON.stringify(output);
         }, 2600);`);
       const result = await runBrowserProof({ entry, mobile, width, budgetMs: 4000,
-        screenshotPath: `/tmp/jellybean-squire-status-${width}.png`,
         shims: {
           ...webProofShims(mobile),
           '@expo/vector-icons': 'export const Ionicons = () => null;',
@@ -41,10 +40,16 @@ describe('Reproduction squire-machine-status-2 in Connectors', () => {
           '@/auth/buzz-identity-storage': `export const loadBuzzIdentity = async () => ({ publicKey: 'owner' });
             export const getEffectiveRelayUrl = async () => 'https://monolith.test';`,
           '@/sync/transport/live-connection': 'export const sharedLiveConnection = () => ({ register: async () => () => {} });',
-          '@/sync/transport/monolith-operation': `export class MonolithPhoneOperationError extends Error {}
+          '@/sync/transport/monolith-operation': `import { companyWorkbench, squireRow } from '@/test/company-workbench';
+            const companies = companyWorkbench([{ ...squireRow(), section: 'attention', subtitle: '3 computers', status: 'Offline', attention: '1 computer needs attention', machines: [
+              { id: 'working', name: 'Machine A', online: true, status: 'connected' },
+              { id: 'failed', name: 'Machine B', online: true, status: 'error', error: 'Squire broker unavailable' },
+              { id: 'absent', name: 'Machine C', online: true, status: 'not-added' }
+            ] }]).companies;
+            export class MonolithPhoneOperationError extends Error {}
             export const phoneOperationFailureReason = error => String(error.message);
             export const monolithPhoneOperation = async operation => operation === 'readWorkbench'
-              ? { workspaceId: 'workspace', connectors: [], connections: [], apps: [],
+              ? { workspaceId: 'workspace', companies, connectors: [], connections: [], apps: [],
                   catalog: [{ connectorType: 'trusty-squire', name: 'Trusty Squire', available: true }],
                   helpers: [
                     { id: 'working', name: 'Machine A', online: true, squire: { status: 'connected', reportedAt: 1 } },
@@ -55,17 +60,18 @@ describe('Reproduction squire-machine-status-2 in Connectors', () => {
         } });
       expect(result.status, result.stderr).toBe(0);
       const proof = JSON.parse(result.result);
-      expect(proof.page).toContain('Trusty Squire · Machine A');
-      expect(proof.page).toContain('Connected');
-      expect(proof.page).toContain('Trusty Squire · Machine B');
-      expect(proof.page).toContain('Squire broker unavailable');
-      expect(proof.page).toContain('Error');
-      expect(proof.page).toContain('Trusty Squire · Machine C');
-      expect(proof.page).toContain('Not added');
-      expect(proof.service).toContain('Trusty Squire · Machine B');
+      expect(proof.page).toContain('Trusty Squire');
+      expect(proof.page.match(/Trusty Squire/g)).toHaveLength(1);
+      expect(proof.page).toContain('3 computers');
+      expect(proof.page).toContain('Offline');
+      expect(proof.page).not.toContain('Machine A');
+      for (const name of ['Machine A', 'Machine B', 'Machine C']) expect(proof.service).toContain(name);
+      expect(proof.service).toContain('Ready');
       expect(proof.service).toContain('Squire broker unavailable');
-      expect(proof.service).not.toContain('Connected');
-      console.log(`Reproduction squire-machine-status-2 at ${width}px: three machine reports → Connected, Error with broker cause, Not added; selected failed machine stays Error`);
+      expect(proof.service).toContain('Error');
+      expect(proof.service).toContain('Not added');
+      expect(proof.service).not.toContain('Production API');
+      console.log(`Squire at ${width}px: one service; detail retains all three machine reports and broker errors`);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

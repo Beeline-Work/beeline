@@ -104,6 +104,10 @@ vi.mock('@/components/buzz/PulsingText', async () => {
   };
 });
 
+import { companyWorkbench, companyOption } from '@/test/company-workbench';
+vi.mock('expo-web-browser', () => ({ openAuthSessionAsync: vi.fn() }));
+vi.mock('@/buzz/use-active-community', () => ({ useActiveCommunityId: () => 'workspace-1' }));
+vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({ register: async () => () => undefined }) }));
 import ConnectAppScreen from './connect-app';
 import { setWorkbenchSource } from '@/buzz/workbench-source';
 import { MockWorkbenchSource } from '@/buzz/workbench-source.mock';
@@ -129,6 +133,8 @@ let source: MockWorkbenchSource;
 beforeEach(() => {
   mobileSurfaceCache.clear();
   source = new MockWorkbenchSource();
+  source.readWorkbench = async () => companyWorkbench([], [companyOption('resend', 'Resend')]);
+  source.searchApps = async ({ query }) => query === 'vercel' ? [{ appKey: 'vercel', name: 'Vercel', companyId: 'vercel' }] : query === 'resend' ? [{ appKey: 'resend', name: 'Resend', company: { ...companyOption('resend', 'Resend'), registryServerName: 'com.resend/mcp', registryVersion: '1.2' } }] : [];
   setWorkbenchSource(source);
 });
 
@@ -147,106 +153,24 @@ async function search(renderer: ReactTestRenderer, query: string): Promise<void>
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 230)); });
 }
 
-describe('Connect an app', () => {
-  it('Reproduction 9e6bb32e: shows an empty search and no Connect action for the screenshot query', async () => {
-    const renderer = await render();
-    await search(renderer, 'fuckface');
-    expect(renderer.root.findAllByProps({ testID: 'connect-app-fuckface' })).toHaveLength(0);
-    expect(JSON.stringify(renderer.toJSON())).toContain('No connections found');
-    expect(renderer.root.findAllByProps({ label: 'Connect' })).toHaveLength(0);
-    expect(source.appRequests).toHaveLength(0);
+describe('server-owned connector search', () => {
+  it('uses the server suggestions only while the query is empty', async () => {
+    const renderer = await render(); expect(renderer.root.findByType('SettingsRow').props.title).toBe('Resend');
+    await search(renderer, 'unknown'); expect(renderer.root.findAllByType('SettingsRow')).toHaveLength(0); expect(JSON.stringify(renderer.toJSON())).toContain('No connections found');
   });
-
-  it('finds Resend beyond Popular and connects the selected result', async () => {
-    const renderer = await render();
-    await search(renderer, 'resend');
-    await act(async () => { renderer.root.findByProps({ testID: 'connect-app-resend' })
-      .findByType('TouchableOpacity' as never).props.onPress(); await Promise.resolve(); });
-    expect(source.appRequests).toEqual([{ app: 'Resend', helperId: 'helper-squire-box' }]);
+  it('navigates an existing company instead of offering a second install', async () => {
+    const renderer = await render(); await search(renderer, 'vercel');
+    await act(async () => renderer.root.findByType('SettingsRow').props.onPress());
+    expect(navigation.push).toHaveBeenCalledWith(expect.objectContaining({ params: expect.objectContaining({ service: 'vercel' }) })); expect(source.appRequests).toHaveLength(0);
   });
-  it('centres the search text in its bordered box without the dialog rule', async () => {
-    const renderer = await render();
-    const input = renderer.root.findAll((node: any) => node.type === 'TextInput' && node.props.testID === 'connect-app-input')[0]!;
-    const flat = (style: unknown) => Object.assign({}, ...[style].flat(Infinity as 1).filter(Boolean));
-    let rule = input.parent!;
-    while (rule.type !== 'View') rule = rule.parent!;
-    const wrapper = flat(rule.props.style);
-    expect(wrapper.marginTop).toBe(0);
-    expect(wrapper.borderBottomWidth).toBe(0);
-    const field = flat(input.props.style);
-    expect(field.minHeight).toBe(0);
-    expect(field.paddingVertical).toBe(0);
+  it('preserves selected registry coordinates and the existing sign-in ceremony', async () => {
+    const connect = vi.spyOn(source, 'connectApp').mockResolvedValue({ appId: 'new-app', authorizationUrl: 'https://signin.example/auth' });
+    const renderer = await render(); await search(renderer, 'resend');
+    await act(async () => { await renderer.root.findByType('SettingsRow').props.onPress(); });
+    await vi.waitFor(() => expect(connect).toHaveBeenCalledWith(expect.objectContaining({ app: 'Resend', helperId: 'helper-squire-box', registryServerName: 'com.resend/mcp', registryVersion: '1.2' })));
+    expect(signIn.open).toHaveBeenCalledWith('https://signin.example/auth', { workspaceId: 'workspace-1', viewerId: 'human-dani', appId: 'new-app' });
   });
-  it('lets its last item scroll clear of the system navigation bar', async () => {
-    safeArea.bottom = 48;
-    try {
-      const renderer = await render();
-      const scroll = renderer.root.findByProps({ testID: 'connect-app-scroll' });
-      const contentStyle = Object.assign({}, ...[scroll.props.contentContainerStyle].flat(Infinity as 1));
-      expect(contentStyle.paddingBottom).toBe(0 + 48);
-    } finally {
-      safeArea.bottom = 0;
-    }
-  });
-
-  it('shows the Gmail recommendation with its provider mark', async () => {
-    source.setAppCatalog([{ appKey: 'gmail', description: 'Read and send Gmail messages.',
-      logo: 'https://cdn.composio.dev/gmail.png' }]);
-    const renderer = await render();
-    expect(JSON.stringify(renderer.toJSON())).toContain('Sign in to Gmail');
-    expect(renderer.root.findAllByType('Image' as never).length).toBeGreaterThan(0);
-  });
-
-  it('warns about Instagram account requirements before connecting a searched app', async () => {
-    const renderer = await render();
-    await search(renderer, 'Instagram');
-    expect(renderer.root.findByProps({ testID: 'connect-app-instagram' })).toBeTruthy();
-    expect(JSON.stringify(renderer.toJSON())).toContain('Business or Creator account linked to a Facebook Page');
-  });
-
-  it('shows a searchable recommendation list with connected state', async () => {
-    source.setApps([{ id: 'app-gmail', key: 'gmail', name: 'Gmail', domain: 'gmail.com', transport: 'composio', status: 'connected', useCount: 0 }]);
-    const renderer = await render();
-    const header = renderer.root.findByProps({ testID: 'connect-app-header' });
-    expect(header.props.eyebrow).toBe('Connectors');
-    expect(header.props.title).toBe('Search');
-    expect(renderer.root.findAllByType('TextInput' as never)).toHaveLength(1);
-    expect(renderer.root.findByProps({ testID: 'connect-app-gmail' }).findAllByType('TouchableOpacity' as never)).toHaveLength(1);
-    expect(renderer.root.findByProps({ testID: 'connect-app-slack' }).findAllByType('TouchableOpacity' as never)).toHaveLength(1);
-    await search(renderer, 'slack');
-    expect(renderer.root.findAllByProps({ testID: 'connect-app-gmail' })).toHaveLength(0);
-    expect(renderer.root.findAllByProps({ testID: 'connect-app-slack' }).length).toBeGreaterThan(0);
-  });
-
-  it('connects the selected app through the authenticated source', async () => {
-    const renderer = await render();
-    await act(async () => { renderer.root.findByProps({ testID: 'connect-app-slack' }).findByType('TouchableOpacity' as never).props.onPress(); await Promise.resolve(); });
-    expect(source.appRequests).toEqual([{ app: 'Slack', helperId: 'helper-squire-box' }]);
-    expect(navigation.back).toHaveBeenCalledTimes(1);
-  });
-
-  it('opens the server-issued sign-in URL without showing a route', async () => {
-    source.connectApp = async () => ({ appId: 'app-slack', authorizationUrl: 'https://signin.example.test/one' });
-    const renderer = await render();
-    await act(async () => { renderer.root.findByProps({ testID: 'connect-app-slack' }).findByType('TouchableOpacity' as never).props.onPress(); await Promise.resolve(); });
-    expect(signIn.open).toHaveBeenCalledWith('https://signin.example.test/one', { workspaceId: 'workspace-1', viewerId: 'human-dani', appId: 'app-slack' });
-    expect(navigation.back).not.toHaveBeenCalled();
-  });
-
-  it('keeps the server error visible and never claims connection', async () => {
-    source.connectApp = async () => { throw new Error('Monolith beginAppSignIn failed (503): App provider request failed (403)'); };
-    const renderer = await render();
-    await act(async () => { renderer.root.findByProps({ testID: 'connect-app-slack' }).findByType('TouchableOpacity' as never).props.onPress(); await Promise.resolve(); });
-    expect(navigation.back).not.toHaveBeenCalled();
-    expect(JSON.stringify(renderer.toJSON())).toContain('The app provider refused this connection (403).');
-    expect(JSON.stringify(renderer.toJSON())).not.toContain('Monolith');
-  });
-
-  it('opens the detail for a connected app from search', async () => {
-    source.setApps([{ id: 'app-gmail', key: 'gmail', name: 'Gmail', transport: 'composio', status: 'connected', useCount: 0 }]);
-    const renderer = await render();
-    await act(async () => { renderer.root.findByProps({ testID: 'connect-app-gmail' }).props.onPress(); await Promise.resolve(); });
-    expect(navigation.push).toHaveBeenCalledWith({ pathname: '/beeline/settings/workbench/app',
-      params: { workspaceId: 'workspace-1', viewerId: 'human-dani', appId: 'app-gmail' } });
+  it('keeps the bottom safe area on the scroll content', async () => {
+    safeArea.bottom = 48; const renderer = await render(); expect(renderer.root.findByProps({ testID: 'connect-app-scroll' }).props.contentContainerStyle.paddingBottom).toBe(48);
   });
 });

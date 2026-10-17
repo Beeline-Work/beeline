@@ -17,10 +17,10 @@ describe('workbench tool tap in the desktop web renderer', () => {
       await writeFile(
         entry,
         `import React from 'react'; import { createRoot } from 'react-dom/client';
-        Promise.all([import('@/app/(app)/beeline/settings/workbench'), import('@/app/(app)/beeline/settings/workbench/wallet-service')])
-          .then(([{ default: Workbench }, { default: Wallet }]) => run(Workbench, Wallet))
+        Promise.all([import('@/app/(app)/beeline/settings/workbench'), import('@/app/(app)/beeline/settings/workbench/wallet-service'), import('@/app/(app)/beeline/settings/workbench/service')])
+          .then(([{ default: Workbench }, { default: Wallet }, { default: Company }]) => run(Workbench, Wallet, Company))
           .catch(error => { document.getElementById('result').textContent = 'load error: ' + (error?.stack ?? error); });
-        function run(Workbench, Wallet) {
+        function run(Workbench, Wallet, Company) {
         globalThis.__server = { wallet: true, active: true, ops: [] };
         globalThis.__pushes = [];
         const has = id => !!document.querySelector('[data-testid="' + id + '"]');
@@ -29,12 +29,13 @@ describe('workbench tool tap in the desktop web renderer', () => {
         const root = createRoot(document.getElementById('root'));
         root.render(<Workbench />);
         setTimeout(() => {
-          output.row = text('connectors-wallet');
-          document.querySelector('[data-testid="connectors-wallet"]').click();
-          setTimeout(() => { output.detailsAfterTap = has('connectors-wallet-details'); }, 0);
+          output.row = text('connectors-company-coinbase');
+          document.querySelector('[data-testid="connectors-company-coinbase"]').click();
+          setTimeout(() => { output.detailsAfterTap = has('connectors-wallet-details'); root.render(<Company />); }, 0);
         }, 1200);
         setTimeout(() => {
           output.detailsLater = has('connectors-wallet-details');
+          document.querySelector('[data-testid="company-item-wallet"]').click();
           output.pushes = globalThis.__pushes;
           root.render(<Wallet />);
         }, 1800);
@@ -55,7 +56,7 @@ describe('workbench tool tap in the desktop web renderer', () => {
           '@expo/vector-icons': 'export const Ionicons = () => null;',
           'expo-web-browser': 'export const openAuthSessionAsync = async () => ({ type: "cancel" });',
           'expo-router': `import { useEffect } from 'react';
-            export const useLocalSearchParams = () => ({ workspaceId: 'workspace-1', viewerId: 'viewer' });
+            export const useLocalSearchParams = () => ({ workspaceId: 'workspace-1', viewerId: 'viewer', service: 'coinbase' });
             export const useFocusEffect = effect => useEffect(() => effect(), [effect]);
             export const router = { back() {}, replace() {}, push(href) { globalThis.__pushes.push(href.pathname); } };`,
           '@/buzz/runtime-config': 'export const getBuzzRuntimeConfig = () => ({ monolithUrl: "https://monolith.test" });',
@@ -66,13 +67,16 @@ describe('workbench tool tap in the desktop web renderer', () => {
           '@/sync/transport/live-connection': `export const sharedLiveConnection = () => ({
             register: async () => () => undefined,
           });`,
-          '@/sync/transport/monolith-operation': `const wallet = () => ({ address: '0xabc', solanaAddress: null, totalUsd: '$0.00', coins: [], chains: [], sponsorship: null,
+          '@/sync/transport/monolith-operation': `import { companyWorkbench, companyRow, companyOption } from '@/test/company-workbench';
+            const companies = active => active ? companyWorkbench([{ ...companyRow('coinbase', 'Coinbase', 'apps'), subtitle: '1 app', items: [{ id: 'wallet', title: 'Wallet', subtitle: 'built in', kind: 'connection', target: { kind: 'wallet' } }] }]).companies
+              : companyWorkbench([], [{ ...companyOption('wallet', 'Coinbase wallet', 'wallet'), providerId: 'coinbase' }]).companies;
+            const wallet = () => ({ address: '0xabc', solanaAddress: null, totalUsd: '$0.00', coins: [], chains: [], sponsorship: null,
               delegation: { active: globalThis.__server.active, expiresAt: null } });
             export class MonolithPhoneOperationError extends Error {}
             export const phoneOperationFailureReason = error => String(error?.message ?? error);
             export const monolithPhoneOperation = async (operation) => {
               const server = globalThis.__server;
-              if (operation === 'readWorkbench') return { workspaceId: 'workspace-1', helpers: [], connectors: [], connections: [], apps: [],
+              if (operation === 'readWorkbench') return { workspaceId: 'workspace-1', companies: companies(server.active), helpers: [], connectors: [], connections: [], apps: [],
                 catalog: [{ connectorType: 'wallet', name: 'Wallet', available: true }],
                 ...(server.wallet ? { wallet: { createdAt: 1, delegationActive: server.active, delegationExpiresAt: null } } : {}) };
               if (operation === 'createWallet') { server.ops.push(operation); server.wallet = true; return wallet(); }
@@ -86,8 +90,8 @@ describe('workbench tool tap in the desktop web renderer', () => {
       expect(result.status, result.stderr).toBe(0);
       console.log('Workbench tool tap desktop web:', result.result);
       const proof = JSON.parse(result.result);
-      expect(proof.row).toContain('Connected');
-      expect(proof.pushes).toEqual(['/beeline/settings/workbench/wallet-service']);
+      expect(proof.row).toContain('Coinbase');
+      expect(proof.pushes).toEqual(['/beeline/settings/workbench/service', '/beeline/settings/workbench/wallet-service']);
       expect(proof.detailsAfterTap).toBe(false);
       expect(proof.detailsLater).toBe(false);
       expect(proof.explainer).toContain('Your agents can prepare wallet actions');

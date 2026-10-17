@@ -38,8 +38,8 @@ describe('App-board sub-pages share the ordinary PageHeader scale', () => {
 
   it('Connect an app reads its row text sizes from the shared type roles', () => {
     expect(connectApp).toContain('<PageHeader');
-    expect(connectApp).toContain('hull.type.body');
-    expect(connectApp).toContain('hull.type.meta');
+    expect(connectApp).toContain('<SettingsRow appBoard');
+    expect(connectApp).toContain('theme.buzz.type.meta');
     expect(connectApp).not.toContain('appBoardType');
   });
 });

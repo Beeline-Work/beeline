@@ -1,0 +1,1 @@
+Company marks use the official Simple Icons silhouettes (CC0), plus the existing Beeline and Trusty Squire marks. Marks use a dark plate so their contrast survives either app theme. Unknown providers use their own public website icon, normalized and cached by company-logos.ts.

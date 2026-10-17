@@ -3023,9 +3023,10 @@ describe('Room message variant components', () => {
         node.props.source?.uri?.includes(`${name.toLowerCase()}.com`));
       expect(favicon).toBeDefined();
       act(() => favicon!.props.onError());
-      expect(JSON.stringify(card.toJSON())).toContain(`"${name[0]}"`);
+      expect(card.root.findAllByType('Svg').length).toBeGreaterThan(0);
+      expect(card.root.findAllByType('Text').some((node: ReactTestInstance) => node.props.children === name[0])).toBe(false);
       if (process.env.BEELINE_SIGN_IN_PROOF === '1')
-        console.log(`CARD-1 ${name}: card renders provider logo; failed logo uses favicon, then letter`);
+        console.log(`CARD-1 ${name}: card renders provider logo; failed logo uses favicon, then website glyph`);
     });
 
     it('asks the question once, states consequence + boundary in one server-owned line, and offers ONE affirmative action to the addressee', () => {

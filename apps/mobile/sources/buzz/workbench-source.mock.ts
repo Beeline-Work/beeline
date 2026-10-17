@@ -1,3 +1,4 @@
+import type { WorkbenchAppSearchResult } from '@beeline/api-contract/workbench';
 import {
   CONNECTOR_DESCRIPTIONS,
   GOOGLE_CONNECTOR_ORDER,
@@ -11,7 +12,6 @@ import {
   type WorkbenchView,
 } from './workbench';
 import type { WorkbenchSource } from './workbench-source';
-import { POPULAR_APPS } from './app-catalog';
 
 /**
  * Test-support mock of the Workbench data source. The screens and tests
@@ -158,9 +158,9 @@ export class MockWorkbenchSource implements WorkbenchSource {
     ]);
     return { view, suggestions };
   }
-  async searchApps(input: { query: string }) {
+  async searchApps(input: { query: string }): Promise<WorkbenchAppSearchResult> {
     const query = input.query.trim().toLowerCase();
-    return [...POPULAR_APPS, { name: 'Resend', domain: 'resend.com' },
+    return [{ name: 'Linear', domain: 'linear.app' }, { name: 'Resend', domain: 'resend.com' },
       { name: 'Instagram', domain: 'instagram.com' }]
       .filter((app) => !query || app.name.toLowerCase().includes(query))
       .map((app) => ({
@@ -396,7 +396,7 @@ export class MockWorkbenchSource implements WorkbenchSource {
     app: string;
     helperId: string;
     reconnect?: boolean;
-  }): Promise<{ appId: string }> {
+  }): Promise<{ appId: string; authorizationUrl?: string }> {
     this.appRequests.push({
       app: input.app,
       helperId: input.helperId,

@@ -202,6 +202,7 @@ export class MonolithWorkbenchSource implements WorkbenchSource {
       ...(input.refreshVault ? { refreshVault: true } : {}),
     });
     return {
+      companies: dto.companies,
       ...(dto.linkAccount ? { linkAccount: dto.linkAccount } : {}),
       helpers: dto.helpers.map((helper): WorkbenchHelper => ({
         id: helper.id,

@@ -1016,6 +1016,15 @@ describe('vault reads through the Squire MCP', () => {
     expect(revokeCalls.map((call) => call.args?.grant_id).sort()).toEqual(['g1', 'g2']);
   });
 
+  it('preserves provider evidence and expiry without accepting secret fields', () => {
+    const metadata = vaultConnectionMeta({ reference: 'cred', service: 'arbitrary', label: 'My login',
+      allowed_hosts: ['api.example.co.uk'], login_hosts: ['login.example.co.uk'], favicon_domain: 'example.co.uk',
+      key_name: 'EXAMPLE_API_KEY', kind: 'login', expires_at: '2026-10-20T00:00:00Z', value: 'must-never-leave' });
+    expect(metadata).toMatchObject({ allowedHosts: ['api.example.co.uk'], loginHosts: ['login.example.co.uk'],
+      faviconDomain: 'example.co.uk', keyName: 'EXAMPLE_API_KEY', credentialKind: 'login', expiresAt: 1792454400 });
+    expect(JSON.stringify(metadata)).not.toContain('must-never-leave');
+  });
+
   it('reads Squire\u2019s ISO-8601 vault created_at as epoch seconds', () => {
     expect(
       vaultConnectionMeta({ reference: 'cred_1', created_at: '2026-09-18T10:00:00.000Z' }).createdAt,

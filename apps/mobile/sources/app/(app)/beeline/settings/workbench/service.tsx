@@ -1,98 +1,83 @@
-import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import React, { useState } from 'react';
 import { ScrollView, Text, View } from 'react-native';
-import * as WebBrowser from 'expo-web-browser';
-import { StyleSheet } from 'react-native-unistyles';
-import { router, useLocalSearchParams } from 'expo-router';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { router, useLocalSearchParams, type Href } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Typography } from '@/constants/Typography';
+import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { PageHeader } from '@/components/buzz/PageHeader';
 import { ServiceMark } from '@/components/buzz/ServiceMark';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
+import { NetworkUnavailableState } from '@/components/buzz/NetworkUnavailableState';
+import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { HullActionSheetModal, HullActionSheetRow, HullActionSheetCancel } from '@/components/buzz/HullActionSheet';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
 import { useSharedWorkbench } from '@/buzz/workbench-surface';
-import { keyServiceGroups, squireConnectionState, type KeyServiceGroup } from '@/buzz/connectors-model';
+import { openCompanyItem, useConnectCompanyApp } from '@/buzz/company-connection-actions';
+import type { WorkbenchCompany } from '@beeline/api-contract/workbench';
 
-function param(value: string | string[] | undefined) { return Array.isArray(value) ? value[0] : value; }
-const SQUIRE_VAULT_URL = 'https://trustysquire.ai/vault';
-
+function param(v: string | string[] | undefined) { return Array.isArray(v) ? v[0] : v; }
 export default function ConnectorServiceScreen() {
   const params = useLocalSearchParams<{ workspaceId?: string | string[]; viewerId?: string | string[]; helperId?: string | string[]; service?: string | string[] }>();
-  const workspaceId = param(params.workspaceId) ?? '';
-  const viewerId = param(params.viewerId) ?? '';
+  const scope = { workspaceId: param(params.workspaceId) ?? '', viewerId: param(params.viewerId) ?? '' };
   const service = param(params.service) ?? '';
+  const { value: view, error: loadError, refresh } = useSharedWorkbench(scope);
+  const row = view?.companies?.rows.find(item => item.id === service || (service === 'trusty-squire' && item.kind === 'sign-in-service'));
   const insets = useSafeAreaInsets();
-  const { value: view, error: loadError, refresh } = useSharedWorkbench({ workspaceId, viewerId });
+  const { theme } = useUnistyles();
+  const actions = useConnectCompanyApp(scope);
+  const [machine, setMachine] = useState<WorkbenchCompany['machines'][number] | null>(null);
+  const [linkOpen, setLinkOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [statusOpen, setStatusOpen] = useState(false);
-
-  const groups = view ? keyServiceGroups(view, viewerId) : [];
-  const group: KeyServiceGroup | undefined = groups.find(item => item.key === service);
-  const isSquire = service === 'trusty-squire';
-  const helperId = param(params.helperId);
-  const helper = view?.helpers.find(item => item.id === helperId);
-  const title = isSquire ? `Trusty Squire${helper ? ` · ${helper.name}` : ''}` : (group?.name ?? 'Keys');
-  const offline = isSquire && helper ? helper.squire?.status !== 'connected'
-    : view ? squireConnectionState(view) !== 'connected' : true;
-  const openVault = () => { void WebBrowser.openBrowserAsync(SQUIRE_VAULT_URL).catch(() => setError('Could not open Trusty Squire vault')); };
-
-  return (
-    <View style={[styles.screen, { paddingTop: insets.top }]} testID="connector-service-screen">
-    <PageHeader eyebrow="Connectors" prominent title={title} backAccessibilityLabel="Back to Connectors" onBack={() => router.back()} />
-    <ScrollView contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + 32 }]}>
-      {error || loadError ? (
-          <Text accessibilityRole="alert" style={styles.error}>{error ?? 'Connections are unavailable right now'}</Text> ) : null}
-      {isSquire ? (
-          <>
-        <Text style={styles.explainer}>Trusty Squire signs up and signs in to websites for your agents, so you never do the manual login. It keeps keys it obtains in its vault.</Text>
-        <SettingsRow title="Status" value={helper?.squire?.status === 'error' ? 'Error' : offline ? 'Not added' : 'Connected'} valueTone={offline ? 'danger' : undefined}
-          trailingPress={{ accessibilityLabel: 'Change Trusty Squire connection', onPress: () => setStatusOpen(true) }} />
-        {helper?.squire?.errorMessage ? (
-              <Text accessibilityRole="alert" style={styles.error}>{helper.squire.errorMessage}</Text> ) : null}
-        <View style={styles.section}><RoomListSectionHeader title="WHAT YOUR AGENTS CAN DO" inset="content" spacing="flush" />
-          <Text style={styles.explainer}>Ask your agent to use a site and Squire handles the login steps.</Text>
-          <Text style={styles.example}>“Sign me up for this service”</Text><Text style={styles.example}>“Sign in and finish this task”</Text>
-        </View>
-      </> ) : group ? (
-          <>
-        <View style={styles.identity}><ServiceMark company={group.name} domain={group.domain} /><Text style={styles.provenance}>{group.keys.length} {group.keys.length === 1 ? 'key' : 'keys'} · Trusty Squire</Text></View>
-        {offline ? (
-              <><SettingsRow title="Status" value="Offline" valueTone="danger"
-          trailingPress={{ accessibilityLabel: 'Reconnect Trusty Squire', onPress: () => setStatusOpen(true) }} />
-          <Text style={styles.explainer}>Trusty Squire is offline. Reconnect it to use these keys.</Text></> ) :
-          (
-              <View style={styles.section}><RoomListSectionHeader title="WHAT YOUR AGENTS CAN DO" inset="content" spacing="flush" />
-            <Text style={styles.explainer}>Let agents use the {group.name} account you choose, within the access you allow.</Text>
-            <Text style={styles.example}>“Use {group.name} for this task”</Text>
-          </View>)}
-        <View style={styles.section}><RoomListSectionHeader title="YOUR KEYS" inset="content" spacing="flush" />
-          {group.keys.map((key ) => (
-                <SettingsRow key={key.ref} title={key.name} />))}
-        </View>
-        <SettingsRow chevron="right" title="Manage in Trusty Squire" onPress={openVault} />
-      </> ) : null}
-    </ScrollView>
-    <HullActionSheetModal visible={statusOpen} title="Trusty Squire" onClose={() => setStatusOpen(false)}>
-      {offline ? <HullActionSheetRow label="Reconnect" onPress={() => { setStatusOpen(false); router.push({ pathname: '/beeline/settings/workbench/connect', params: { workspaceId, viewerId, connectorId: 'trusty-squire', ...(helperId ? { helperId } : {}) } }); }} /> :
-        <HullActionSheetRow label="Disconnect" destructive onPress={() => {
-          setStatusOpen(false);
-          const machineId = helperId ?? view?.helpers.find(item => item.squire?.status === 'connected')?.id;
-          void getWorkbenchSource().disconnectConnector({ workspaceId, connectorId: `squire:${machineId}` })
-            .then(() => refresh()).catch(() => setError('Could not disconnect Trusty Squire'));
-        }} />}
-      <HullActionSheetCancel onPress={() => setStatusOpen(false)} />
+  const manageMachine = machine;
+  const disconnect = async () => {
+    try {
+      if (manageMachine) await getWorkbenchSource().disconnectConnector({ workspaceId: scope.workspaceId, connectorId: `squire:${manageMachine.id}` });
+      else await getWorkbenchSource().disconnectLinkSignIn();
+      setMachine(null); setLinkOpen(false); await refresh();
+    } catch { setError('Could not disconnect. Try again.'); }
+  };
+  return <View style={[styles.screen, { paddingTop: insets.top }]} testID="connector-service-screen">
+    <PageHeader eyebrow="Connectors" prominent title={row?.name ?? 'Connectors'} backAccessibilityLabel="Back to Connectors" onBack={() => router.back()} />
+    {loadError && !row ? <NetworkUnavailableState onRetry={() => void refresh()} /> : !view ? <SurfaceGlyphLoader /> : !row ?
+      <Text style={styles.note}>This company is no longer connected.</Text> :
+      <ScrollView contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + theme.buzz.space.xl }]}>
+        <SettingsRow appBoard title={row.name} description={[row.domain, row.subtitle].filter(Boolean).join(' · ')} leading={<ServiceMark company={row.name} domain={row.domain} mark={row.logo} />} />
+        {row.attention ? <Text accessibilityRole="alert" style={styles.error}>{row.attention}</Text> : null}
+        {row.kind === 'sign-in-service' ? <View>
+          <Text style={styles.note}>Trusty Squire signs up and signs in to websites for your agents. Your computers keep the sign-in sessions.</Text>
+          <RoomListSectionHeader title="Your computers" inset="content" />
+          {row.machines.map(item => <SettingsRow appBoard key={item.id} title={item.name}
+            description={item.error ?? (item.status === 'not-added' ? 'Sign-in is not set up' : item.online ? 'Ready for hands-off sign-in' : 'Reconnect this computer')}
+            value={item.status === 'error' ? 'Error' : item.status === 'not-added' ? 'Not added' : item.online ? 'Ready' : 'Offline'}
+            valueTone={item.status === 'error' || (item.status === 'connected' && !item.online) ? 'danger' : undefined}
+            chevron="right" onPress={() => setMachine(item)} testID={`squire-computer-${item.id}`} />)}
+        </View> : (['connection', 'login', 'key'] as const).map(kind => {
+          const items = row.items.filter(item => item.kind === kind);
+          return items.length ? <View key={kind}>
+            <RoomListSectionHeader title={kind === 'connection' ? 'Connections' : kind === 'login' ? 'Logins' : 'Keys'} inset="content" spacing="flush" />
+            {items.map(item => <SettingsRow appBoard key={item.id} title={item.title} description={item.subtitle}
+              value={item.status} valueTone={item.attention ? 'danger' : undefined} chevron="right"
+              onPress={() => item.target.kind === 'link' ? setLinkOpen(true) : openCompanyItem(item.target, scope)} testID={`company-item-${item.id}`} />)}
+          </View> : null;
+        })}
+        {row.alsoAvailable.length ? <View><RoomListSectionHeader title="Also available" inset="content" spacing="flush" />
+          {row.alsoAvailable.map(app => <SettingsRow appBoard key={app.appKey} title={app.name} description={app.purpose}
+            leading={<ServiceMark company={app.providerName} domain={app.domain} mark={app.logo} />} chevron="right"
+            disabled={Boolean(actions.busy)} onPress={() => void actions.connect(app)} testID={`company-available-${app.appKey}`} />)}
+        </View> : null}
+        {loadError ? <Text accessibilityRole="alert" style={styles.error}>Could not refresh connections. Try again.</Text> : null}
+        {error || actions.error ? <Text accessibilityRole="alert" style={styles.error}>{error ?? actions.error}</Text> : null}
+      </ScrollView>}
+    <HullActionSheetModal visible={Boolean(machine) || linkOpen} title={machine?.name ?? 'Link'} onClose={() => { setMachine(null); setLinkOpen(false); }}>
+      {machine && (machine.status !== 'connected' || !machine.online) ? <HullActionSheetRow label={machine.status === 'not-added' ? 'Set up' : 'Reconnect'} onPress={() => {
+        const helperId = machine.id; setMachine(null); router.push({ pathname: '/beeline/settings/workbench/connect', params: { ...scope, connectorId: 'trusty-squire', helperId } } as Href);
+      }} /> : <HullActionSheetRow label="Disconnect" destructive onPress={() => void disconnect()} />}
+      <HullActionSheetCancel onPress={() => { setMachine(null); setLinkOpen(false); }} />
     </HullActionSheetModal>
-  </View>);
+  </View>;
 }
-
-const styles = StyleSheet.create(theme => { const hull = theme.buzz; return {
-  screen: { flex: 1, backgroundColor: hull.appCanvas },
-  content: { paddingHorizontal: hull.space.lg, paddingTop: hull.layout.screenTop, gap: hull.layout.sectionGap },
-  section: { gap: hull.space.xs },
-  identity: { flexDirection: 'row', alignItems: 'center', gap: hull.space.sm },
-  provenance: { ...Typography.ledger(), ...hull.type.body, color: hull.appQuiet },
-  explainer: { ...Typography.ledger(), ...hull.type.body, color: hull.appSecondary },
-  example: { ...Typography.ledger(), ...hull.type.body, color: hull.appInk, borderLeftWidth: 2, borderLeftColor: hull.accent, paddingLeft: hull.space.md, paddingVertical: hull.space.sm },
-  error: { ...Typography.ledger(), ...hull.type.body, color: hull.dialogDanger },
-}; });
+const styles = StyleSheet.create(theme => ({
+  screen: { flex: 1, backgroundColor: theme.buzz.appCanvas },
+  content: { paddingHorizontal: theme.buzz.space.lg, paddingTop: theme.buzz.layout.screenTop, gap: theme.buzz.layout.sectionGap },
+  note: { ...theme.buzz.type.meta, color: theme.buzz.appQuiet }, error: { ...theme.buzz.type.meta, color: theme.buzz.dialogDanger },
+}));

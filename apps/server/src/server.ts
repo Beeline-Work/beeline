@@ -1,3 +1,4 @@
+import { readCompanyLogo } from './company-logos.js';
 import { captureServerError } from './sentry.js';
 import { authenticSentryAlert, sendSentryTelegram, sentryTelegramMessage, type SentryTelegramConfig } from './sentry-telegram.js';
 import { verifyNip98Header } from '@beeline/nostr';
@@ -2085,6 +2086,17 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     return;
   }
 
+  if (method === 'GET' && url.pathname.startsWith('/v1/company-logos/')) {
+    let id: string;
+    try { id = decodeURIComponent(url.pathname.slice('/v1/company-logos/'.length)); }
+    catch { json(response, 400, { error: 'invalid_company' }); return; }
+    const image = await readCompanyLogo(id);
+    if (!image) { json(response, 404, { error: 'company_icon_unavailable' }); return; }
+    response.writeHead(200, { 'content-type': image.mime, 'content-length': String(image.bytes.length),
+      'cache-control': 'public, max-age=86400', 'x-content-type-options': 'nosniff',
+      'content-security-policy': "default-src 'none'; sandbox" });
+    response.end(image.bytes); return;
+  }
   if (method === 'GET' && url.pathname.startsWith('/v1/connectors/logo/')) {
     const type = url.pathname.slice('/v1/connectors/logo/'.length).replace(/\.svg$/, '');
     const logo = connectorLogo(type);

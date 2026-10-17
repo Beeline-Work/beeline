@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { TokenAuth } from './auth.js';
+import { companyPopularity } from './workbench-companies.js';
 import { PhoneService } from './phone-service.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
@@ -318,6 +319,38 @@ describe('workbench connectors', () => {
     )) as { connectors: unknown[]; connections: unknown[] };
     expect(otherView.connectors).toEqual([]);
     expect(otherView.connections).toEqual([]);
+  });
+
+  it('ranks discovery using distinct eligible active owners across apps and built-ins', async () => {
+    await database.query('UPDATE identities SET hidden_from_roster=true WHERE id=$1', [RECIPIENT]);
+    for (const [key, owner, state] of [['gmail', HUMAN, 'active'], ['googledrive', HUMAN, 'active'], ['stripe', RECIPIENT, 'active'], ['linear', HUMAN, 'disconnected']]) {
+      await database.query(`INSERT INTO workspace_apps(id,workspace_id,owner_identity_id,app_key,display_name,transport,route,state)
+        VALUES($1,$2,$3,$4,$4,'composio','composio',$5)`, [randomUUID(), WORKSPACE, owner, key, state]);
+    }
+    await database.query(`INSERT INTO workspace_connectors(id,workspace_id,owner_identity_id,helper_agent_id,connector_type,status)
+      VALUES($1,$2,$3,$4,'google-calendar','connected')`, [randomUUID(), WORKSPACE, HUMAN, HELPER]);
+    const popularity = await companyPopularity(database);
+    expect([...popularity]).toEqual([['google', 1]]);
+  });
+
+  it('projects companies from persisted metadata, isolates owners and excludes free-agent servers', async () => {
+    const freeAgent = 'e'.repeat(64);
+    await database.query("INSERT INTO identities(id,kind,name) VALUES($1,'agent','Free server')", [freeAgent]);
+    await database.query('INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)', [freeAgent, HUMAN]);
+    await database.query("INSERT INTO free_agents(agent_id,workspace_id,owner_id,sealed_keys,state) VALUES($1,$2,$3,'sealed','running')", [freeAgent, WORKSPACE, HUMAN]);
+    await daemonOperation('postConnectorVault', { connections: [{ reference: 'synthetic-login', service: 'x-y-z', label: 'production-login',
+      allowedHosts: [], loginHosts: ['login.example.co.uk'], faviconDomain: 'example.co.uk', keyName: 'EXAMPLE_LOGIN', credentialKind: 'login', expiresAt: 1,
+      fieldNames: ['session'], createdAt: 1, state: 'active', stale: false }] });
+    const view = await phoneOperation('readWorkbench', { workspaceId: WORKSPACE }) as import('@beeline/api-contract/workbench').WorkbenchView;
+    expect(view.helpers.map(h => h.id)).toEqual([HELPER]);
+    expect(view.helpers[0]?.squireEligible).toBe(true);
+    expect(view.connections[0]).toMatchObject({ loginHosts: ['login.example.co.uk'], keyName: 'EXAMPLE_LOGIN', credentialKind: 'login', expiresAt: 1 });
+    expect(view.companies?.rows.find(r => r.id === 'example.co.uk')).toMatchObject({ section: 'attention', items: [{ kind: 'login', title: 'Production login', status: 'Expired' }] });
+    expect(view.companies?.rows.find(r => r.kind === 'sign-in-service')).toMatchObject({ items: [], machines: [{ id: HELPER }] });
+    const other = await phoneOperation('readWorkbench', { workspaceId: WORKSPACE }, recipientToken) as typeof view;
+    expect(other.companies?.rows.some(r => r.id === 'example.co.uk')).toBe(false);
+    const response = await fetch(`${origin}/v1/company-logos/sentry`);
+    expect(response.status).toBe(200); expect(response.headers.get('content-type')).toBe('image/png'); expect((await response.arrayBuffer()).byteLength).toBeGreaterThan(0);
   });
 
   it('Reproduction squire-machine-status-2: reads broker reports with no Squire connection row', async () => {

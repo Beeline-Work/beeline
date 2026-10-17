@@ -1,3 +1,4 @@
+export * from './workbench-companies.js';
 /**
  * Workbench: per-human connector provisioning and connection sovereignty.
  *
@@ -96,6 +97,10 @@ export type WorkbenchConnectionView = {
   readonly allowedHosts: readonly string[];
   /** Vault field names only. Secret values never cross this boundary. */
   readonly fieldNames: readonly string[];
+  readonly loginHosts?: readonly string[];
+  readonly keyName?: string;
+  readonly credentialKind?: string;
+  readonly expiresAt?: number;
   /** The brand domain for the row's icon, or `null` to draw the lettermark. */
   readonly faviconDomain: string | null;
   readonly state: 'active' | 'error';
@@ -168,6 +173,8 @@ export type WorkbenchHelperView = {
   readonly name: string;
   /** Live durable presence evidence (the same 90-second window readers use). */
   readonly online: boolean;
+  /** Server capability: personal helper, never a managed free-agent server. */
+  readonly squireEligible?: boolean;
   /** This machine's report from its own broker, never a connector row. */
   readonly squire?: SquireMachineReport;
 };
@@ -179,6 +186,8 @@ export type SquireMachineReport = {
 };
 
 export type WorkbenchView = {
+  /** Absent only on older servers. The client must not reconstruct this projection. */
+  readonly companies?: import('./workbench-companies.js').WorkbenchCompanyIndex;
   readonly workspaceId: string;
   readonly catalog: readonly WorkbenchCatalogEntry[];
   /** Server-owned Google sign-in, independent of helper selection. */
@@ -214,6 +223,10 @@ export type ReadWorkbenchInput = {
 };
 export type SearchWorkbenchAppsInput = { readonly query: string };
 export type WorkbenchAppSearchResult = readonly {
+  /** Existing company navigation, or a fully server-owned connection option. */
+  readonly companyId?: string;
+  readonly company?: import('./workbench-companies.js').CompanySuggestion;
+  readonly mark?: import('./workbench-companies.js').CompanyLogo;
   readonly appKey: string;
   readonly name: string;
   readonly domain?: string;

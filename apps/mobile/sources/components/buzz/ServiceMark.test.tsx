@@ -63,13 +63,14 @@ describe('ServiceMark', () => {
     expect(renderer.root.findAllByType('Text')).toHaveLength(0);
   });
 
-  it('drops the image on error, leaving the lettermark to read', () => {
+  it('uses a website glyph after a domain icon fails', () => {
     const renderer = render(<ServiceMark company="sentry" domain="sentry.io" testID="mark" />);
     act(() => {
       renderer.root.findByType('Image').props.onError();
     });
     expect(renderer.root.findAllByType('Image')).toHaveLength(0);
-    expect(renderer.root.findByType('Text').props.children).toBe('S');
+    expect(renderer.root.findAllByType('Text')).toHaveLength(0);
+    expect(renderer.root.findAllByType('Svg')).toHaveLength(1);
   });
 });
 
@@ -81,7 +82,8 @@ describe('AppMark', () => {
     expect(renderer.root.findByType('Image').props.source).toEqual({ uri: serviceFaviconUrl('example.com') });
     act(() => renderer.root.findByType('Image').props.onError());
     expect(renderer.root.findAllByType('Image')).toHaveLength(0);
-    expect(renderer.root.findByType('Text').props.children).toBe('E');
+    expect(renderer.root.findAllByType('Text')).toHaveLength(0);
+    expect(renderer.root.findAllByType('Svg')).toHaveLength(1);
   });
 
   it('shows a bundled product logo without a network request', () => {
@@ -108,4 +110,13 @@ describe('AppMark', () => {
     expect(renderer.root.findAllByType('Image')).toHaveLength(0);
     expect(renderer.root.findByType('Text').props.children).toBe('E');
   });
+});
+
+it('uses only the server descriptor, even for a familiar app name, and never falls back to a monogram for a website', () => {
+  const renderer = render(<AppMark name="Gmail" domain="google.com" mark={{ kind: 'image', uri: 'https://api.example/v1/company-logos/google', plate: 'dark' }} />);
+  expect(renderer.root.findByType('Image').props.source).toEqual({ uri: 'https://api.example/v1/company-logos/google' });
+  act(() => renderer.root.findByType('Image').props.onError());
+  expect(renderer.root.findAllByType('Image')).toHaveLength(0);
+  expect(renderer.root.findAllByType('Text')).toHaveLength(0);
+  expect(renderer.root.findAllByType('Svg')).toHaveLength(1);
 });

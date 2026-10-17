@@ -331,3 +331,9 @@ it('disconnects a machine-addressed Squire without a legacy connector lookup', a
   await new MonolithWorkbenchSource().disconnectConnector({ workspaceId: 'ws', connectorId: 'squire:machine-one' });
   expect(state.calls).toEqual([{ op: 'unpairConnector', input: { workspaceId: 'ws', connectorId: 'squire:machine-one' } }]);
 });
+
+it('passes the server company projection through without changing order or logo choice', async () => {
+  const companies = { version: 1, rows: [], suggestions: [], hasConnections: false, summary: { value: '0 connections' } };
+  state.readWorkbenchOutput = { ...workbenchDto([]), companies };
+  expect((await new MonolithWorkbenchSource().readWorkbench({ workspaceId: 'ws', viewerId: 'owner' })).companies).toBe(companies);
+});

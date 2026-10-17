@@ -254,8 +254,60 @@ function scan(files: Map<string, string>): Entry[] {
     });
     return pieces.join('');
   };
+  const sqlTokens = (text: string) =>
+    (
+      text.match(
+        /--[^\n]*|\/\*[\s\S]*?\*\/|(\$(?:[A-Za-z_]\w*)?\$)[\s\S]*?\1|'(?:''|[^'])*'|"(?:""|[^"])*"|\$\d+|__expression_\d+__|[a-zA-Z_][\w]*|::|[^\s]/g,
+      ) ?? []
+    ).filter((token) => !token.startsWith('--') && !token.startsWith('/*'));
+  const wordingTokens = (tokens: string[], initially = false): string[] => {
+    const projections = new Map<number, boolean>(initially ? [[0, true]] : []);
+    const predicates = new Set<number>();
+    const exists = new Set<number>();
+    const conditions: boolean[] = [];
+    const selected: string[] = [];
+    let depth = 0;
+    let startsExists = false;
+    for (const token of tokens) {
+      if (token.startsWith('--') || token.startsWith('/*')) continue;
+      if (token === '(') {
+        depth++;
+        if (startsExists) exists.add(depth);
+        startsExists = false;
+      }
+      if (token === ')') {
+        projections.delete(depth);
+        predicates.delete(depth);
+        exists.delete(depth--);
+      }
+      if (/^exists$/i.test(token)) startsExists = true;
+      if (/^(select|values|set|returning)$/i.test(token)) {
+        projections.set(depth, true);
+        predicates.delete(depth);
+      }
+      if (/^(where|on|having|for)$/i.test(token)) predicates.add(depth);
+      if (
+        projections.has(depth) &&
+        /^(from|where|join|on|group|having|order|limit|offset|union|intersect|except|for)$/i.test(
+          token,
+        )
+      )
+        projections.set(depth, false);
+      const active = [...projections]
+        .filter(([level]) => level <= depth)
+        .sort(([a], [b]) => b - a)[0]?.[1];
+      if (/^case$/i.test(token)) conditions.push(true);
+      if (/^when$/i.test(token) && conditions.length) conditions[conditions.length - 1] = true;
+      if (/^(then|else)$/i.test(token) && conditions.length)
+        conditions[conditions.length - 1] = false;
+      if (/^end$/i.test(token)) conditions.pop();
+      if (!active || predicates.size || exists.size || conditions.some(Boolean)) continue;
+      selected.push(token);
+    }
+    return selected;
+  };
   // A query reached through returned phrase data can supply wording. Track
-  // SELECT/RETURNING expressions, never FROM, JOIN, WHERE or lock clauses.
+  // SELECT, VALUES, SET and RETURNING expressions, excluding access predicates.
   const queryWording = (node: ts.Node): { literals: string[]; parts: ts.Node[] } => {
     const expressions: ts.Node[] = [];
     const render = (part: ts.Node, seen = new Set<ts.Node>()): string => {
@@ -297,37 +349,11 @@ function scan(files: Map<string, string>): Entry[] {
         : undefined;
     if (!query) return { literals: [], parts: [] };
     const parameters = ts.isCallExpression(node) ? array(node.arguments[1]) : [];
-    const tokens =
-      render(query).match(
-        /--[^\n]*|\/\*[\s\S]*?\*\/|'(?:''|[^'])*'|"(?:""|[^"])*"|\$\d+|__expression_\d+__|[a-zA-Z_][\w]*|[^\s]/g,
-      ) ?? [];
-    const projections = new Map<number, boolean>();
-    const conditions: boolean[] = [];
+    const tokens = sqlTokens(render(query));
     const literals: string[] = [];
     const parts: ts.Node[] = [];
-    let depth = 0;
-    for (const token of tokens) {
-      if (token.startsWith('--') || token.startsWith('/*')) continue;
-      if (token === '(') depth++;
-      if (token === ')') projections.delete(depth--);
-      if (/^(select|returning)$/i.test(token)) projections.set(depth, true);
-      if (
-        projections.has(depth) &&
-        /^(from|where|join|group|having|order|limit|offset|union|intersect|except|for)$/i.test(
-          token,
-        )
-      )
-        projections.set(depth, false);
-      const active = [...projections]
-        .filter(([level]) => level <= depth)
-        .sort(([a], [b]) => b - a)[0]?.[1];
-      if (/^case$/i.test(token)) conditions.push(false);
-      if (/^when$/i.test(token) && conditions.length) conditions[conditions.length - 1] = true;
-      if (/^(then|else)$/i.test(token) && conditions.length)
-        conditions[conditions.length - 1] = false;
-      if (/^end$/i.test(token)) conditions.pop();
-      if (!active || conditions.some(Boolean)) continue;
-      if (token.startsWith("'")) literals.push(token);
+    for (const token of wordingTokens(tokens)) {
+      if (token.startsWith("'") || /^\$(?:[A-Za-z_]\w*)?\$/.test(token)) literals.push(token);
       const parameter = /^\$(\d+)$/.exec(token);
       const expression = /^__expression_(\d+)__$/.exec(token);
       const value = parameter
@@ -397,10 +423,7 @@ function scan(files: Map<string, string>): Entry[] {
       return [];
     };
     const parameters = array(values);
-    const tokens =
-      text.match(
-        /'(?:''|[^'])*'|"(?:""|[^"])*"|\$\d+|__expression_\d+__|[a-zA-Z_][\w]*|::|[^\s]/g,
-      ) ?? [];
+    const tokens = sqlTokens(text);
     const lower = (token: string | undefined) => {
       const expression = token && /^__expression_(\d+)__$/.exec(token);
       return (expression ? sqlText(expressions[Number(expression[1])]!) : token)
@@ -426,23 +449,8 @@ function scan(files: Map<string, string>): Entry[] {
           return token;
         })
         .join(' ');
-    // Assigned expressions supply words and formatting. A nested SELECT's
-    // FROM/WHERE clauses select rows, rather than supplying phrase text.
-    const wording = (tokens: string[]) => {
-      let depth = 0;
-      let skip: number | undefined;
-      const selects = new Set<number>();
-      return tokens.filter((token) => {
-        if (token === '(') depth++;
-        if (token === ')') {
-          if (skip !== undefined && depth === skip) skip = undefined;
-          selects.delete(depth--);
-        }
-        if (lower(token) === 'select') selects.add(depth);
-        if (selects.has(depth) && /^(from|where)$/.test(lower(token) ?? '')) skip ??= depth;
-        return skip === undefined;
-      });
-    };
+    // Use the same output/predicate distinction for direct message writes.
+    const wording = (tokens: string[]) => wordingTokens(tokens, true);
     const group = (start: number, stops: Set<string>, closing = false) => {
       const groups: string[][] = [[]];
       let depth = 0;
@@ -493,6 +501,23 @@ function scan(files: Map<string, string>): Entry[] {
             ),
           );
           end = next.end;
+        }
+        for (let position = end; position < tokens.length - 3; position++) {
+          if (
+            lower(tokens[position]) !== 'do' ||
+            lower(tokens[position + 1]) !== 'update' ||
+            lower(tokens[position + 2]) !== 'set'
+          )
+            continue;
+          const conflict = new Map(fields);
+          for (const assignment of group(position + 3, new Set(['where', 'returning']), true)
+            .groups) {
+            const equals = assignment.indexOf('=');
+            if (equals > 0)
+              conflict.set(lower(assignment[equals - 1])!, assignment.slice(equals + 1));
+          }
+          rows.push(conflict);
+          break;
         }
       } else {
         let set = table + 1;
@@ -1143,4 +1168,58 @@ it('freezes SQL CASE output words without freezing its predicate', () => {
     new Map([...base].map(([path, text]) => [path, text.replace(before, after)]));
   expect(() => enforce(scan(mutate('hello', 'goodbye')), scan(base))).toThrow(failure);
   expect(() => enforce(scan(mutate("role='member'", "role='owner'")), scan(base))).not.toThrow();
+});
+
+it.each([
+  "SELECT json_build_object('body','hello') AS card FROM memberships WHERE role='member'",
+  "SELECT 'hello' || name AS phrase FROM memberships WHERE role='member'",
+  "VALUES ('hello')",
+  'SELECT $$hello$$ AS phrase',
+  'SELECT $word$hello$word$ AS phrase',
+  "INSERT INTO scratch(text) VALUES ('hello') RETURNING text",
+  "UPDATE scratch SET text='hello' WHERE role='member' RETURNING text",
+  "INSERT INTO scratch DEFAULT VALUES RETURNING 'hello' AS phrase",
+])('freezes returned SQL output wording: %s', (query) => {
+  const base = fixture(
+    `async function words(db: any) { const result=await db.query(${JSON.stringify(query)}); return result.rows[0]; } line(db,{verb:'said',cardType:'notice',card:await words(db)});`,
+  );
+  const changed = new Map(
+    [...base].map(([path, text]) => [path, text.replace('hello', 'goodbye')]),
+  );
+  expect(() => enforce(scan(changed), scan(base))).toThrow(failure);
+});
+
+it.each([
+  "SELECT EXISTS(SELECT 'member' FROM memberships WHERE role='member') AS allowed, 'hello' AS phrase",
+  "SELECT 'hello' AS phrase FROM memberships WHERE role=(SELECT 'member')",
+  "SELECT 'hello' AS phrase FROM memberships m JOIN rooms r ON r.kind=(SELECT 'member')",
+  "SELECT 'hello' AS phrase, count(*) FILTER (WHERE role='member') AS count FROM memberships",
+])('excludes SQL literals used only as access predicates: %s', (query) => {
+  const base = fixture(
+    `async function words(db: any) { const result=await db.query(${JSON.stringify(query)}); return result.rows[0].phrase; } line(db,{verb:await words(db)});`,
+  );
+  const changed = new Map(
+    [...base].map(([path, text]) => [path, text.replaceAll("member'", "owner'")]),
+  );
+  expect(() => enforce(scan(changed), scan(base))).not.toThrow();
+});
+
+it('freezes direct SQL CASE output while excluding its access predicate', () => {
+  const base = fixture(
+    `db.query("INSERT INTO messages(author_id,text) SELECT $1,CASE WHEN role='member' THEN 'hello' ELSE name END FROM memberships",[SYSTEM_IDENTITY_ID]);`,
+  );
+  const mutate = (before: string, after: string) =>
+    new Map([...base].map(([path, text]) => [path, text.replace(before, after)]));
+  expect(() => enforce(scan(mutate('hello', 'goodbye')), scan(base))).toThrow(failure);
+  expect(() => enforce(scan(mutate("role='member'", "role='owner'")), scan(base))).not.toThrow();
+});
+
+it('freezes direct System wording in an upsert SET outcome', () => {
+  const base = fixture(
+    `db.query("INSERT INTO messages(author_id,text) VALUES($1,'old') ON CONFLICT(id) DO UPDATE SET text='hello' WHERE messages.text='member'",[SYSTEM_IDENTITY_ID]);`,
+  );
+  const mutate = (before: string, after: string) =>
+    new Map([...base].map(([path, text]) => [path, text.replace(before, after)]));
+  expect(() => enforce(scan(mutate('hello', 'goodbye')), scan(base))).toThrow(failure);
+  expect(() => enforce(scan(mutate("text='member'", "text='owner'")), scan(base))).not.toThrow();
 });

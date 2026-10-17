@@ -200,8 +200,10 @@
     "kind": "wrapper",
     "template": "line('stopped its running turn', dropped ? `${dropped} queued ${dropped === 1 ? 'order' : 'orders'} dropped` : undefined)",
     "literals": [
+      "'cancelled'",
       "'order'",
       "'orders'",
+      "'stop'",
       "'stopped its running turn'",
       "`${dropped} queued ${dropped === 1 ? 'order' : 'orders'} dropped`"
     ],
@@ -533,10 +535,10 @@
     "occurrences": 1
   },
   {
-    "id": "src/agent-sign-in.ts:settleCard:message-write:83891c13eff21bcc",
+    "id": "src/agent-sign-in.ts:settleCard:message-write:59a6faa9135b6f71",
     "file": "apps/server/src/agent-sign-in.ts",
     "kind": "message-write",
-    "template": "UPDATE messages card=( CASE WHEN clearError THEN card - 'errorMessage' ELSE card END ) | | JSON.stringify(patch) :: jsonb",
+    "template": "UPDATE messages card=( THEN card - 'errorMessage' ELSE card END ) | | JSON.stringify(patch) :: jsonb",
     "literals": [],
     "occurrences": 1
   },
@@ -693,6 +695,7 @@
       "'connecting'",
       "'content-type'",
       "'error'",
+      "'errorMessage'",
       "'failed'",
       "'googlecalendar'",
       "'googledocs'",
@@ -720,6 +723,7 @@
       "'workbench'",
       "'x-api-key'",
       "'youtube'",
+      "'{\"status\":\"pending\"}'",
       "`${API}/${version}${path}`",
       "`/auth_configs?${query}`",
       "`/connected_accounts/${encodeURIComponent(accountId)}`",
@@ -1430,7 +1434,6 @@
       "'out-of-credit'",
       "'passing'",
       "'recent-failure'",
-      "'silenceKind'",
       "'status'"
     ],
     "occurrences": 1
@@ -1758,7 +1761,9 @@
     "file": "apps/server/src/daemon-service.ts",
     "kind": "wrapper",
     "template": "this.notifyTailscaleSignIn(row.id, input.signIn.url, agentId)",
-    "literals": [],
+    "literals": [
+      "'error'"
+    ],
     "occurrences": 1
   },
   {
@@ -1766,7 +1771,9 @@
     "file": "apps/server/src/daemon-service.ts",
     "kind": "wrapper",
     "template": "this.resumeRegistrySignIn(row, input.signIn)",
-    "literals": [],
+    "literals": [
+      "'error'"
+    ],
     "occurrences": 1
   },
   {
@@ -2067,10 +2074,12 @@
     "template": "systemLine(this.database, {\n    id: createHash('sha256').update(`link-approval:${requestId}`).digest('hex'),\n    roomId, authorId: SYSTEM_IDENTITY_ID,\n    subject: { kind: 'system', name: 'Link' },\n    verb: 'needs your approval for', object: title, consequence: detail,\n    presentation: 'card', cardType: 'squire-approval',\n    card: {\n        agent: { pubkey: agentId, kind: 'agent', name: context.agent_name,\n            ...(context.agent_handle ? { handle: context.agent_handle } : {}),\n            ...(context.agent_avatar ? { avatar: context.agent_avatar } : {}) },\n        tool: 'Link', title, detail, approvalUrl, approvalId: requestId,\n        linkKind: 'approval', sourceRoomId: input.roomId,\n        expiresAt: Date.now() + 24 * 60 * 60000,\n        ...(sourceMessageId ? { sourceMessageId } : {}),\n    },\n})",
     "literals": [
       "':'",
+      "'Direct message'",
       "'Link'",
       "'agent'",
       "'approval'",
       "'hex'",
+      "'invite-only'",
       "'needs your approval for'",
       "'sha256'",
       "'squire-approval'",
@@ -2089,9 +2098,11 @@
     "template": "systemLine(database, {\n    roomId,\n    authorId: SYSTEM_IDENTITY_ID,\n    id: createHash('sha256')\n        .update(`agent-model-unavailable:v1:${agentId}:${input.unavailable}:${prior.updated_at.toISOString()}`)\n        .digest('hex'),\n    subject: { kind: 'agent', id: agentId, name: prior.name },\n    verb: 'needs a different model',\n    consequence: 'Open this agent’s settings and choose an available model or effort.',\n})",
     "literals": [
       "':'",
+      "'Direct message'",
       "'Open this agent’s settings and choose an available model or effort.'",
       "'agent'",
       "'hex'",
+      "'invite-only'",
       "'needs a different model'",
       "'sha256'",
       "`${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`",
@@ -2106,8 +2117,10 @@
     "template": "systemLine(database, {\n    roomId,\n    authorId: SYSTEM_IDENTITY_ID,\n    id: createHash('sha256')\n        .update(`agent-model-fallback:v1:${agentId}:${prior.selected_model}:${input.selection.model}:${prior.updated_at.toISOString()}`)\n        .digest('hex'),\n    subject: { kind: 'agent', id: agentId, name: prior.name },\n    verb: 'switched models',\n    consequence: `${oldModelName} is no longer offered; now using ${newModelName}.`,\n})",
     "literals": [
       "':'",
+      "'Direct message'",
       "'agent'",
       "'hex'",
+      "'invite-only'",
       "'model'",
       "'sha256'",
       "'switched models'",
@@ -2124,10 +2137,12 @@
     "template": "systemLine(this.database, {\n    roomId,\n    authorId: SYSTEM_IDENTITY_ID,\n    id: createHash('sha256').update(`tailscale-signin:${connectorId}:${url}`).digest('hex'),\n    subject: { kind: 'agent', id: agentId, name: row.helper_name },\n    verb: 'needs',\n    object: { text: 'Tailscale sign-in', url },\n    consequence: 'click the link to join this machine to the tailnet',\n})",
     "literals": [
       "':'",
+      "'Direct message'",
       "'Tailscale sign-in'",
       "'agent'",
       "'click the link to join this machine to the tailnet'",
       "'hex'",
+      "'invite-only'",
       "'needs'",
       "'sha256'",
       "`${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`",
@@ -2150,6 +2165,7 @@
       "'Trusty Squire'",
       "'Wallet'",
       "'_'",
+      "'add'",
       "'agent'",
       "'connector-offer'",
       "'google'",
@@ -2385,6 +2401,7 @@
     "template": "systemLine(database, {\n    id: messageId,\n    roomId,\n    authorId: SYSTEM_IDENTITY_ID,\n    subject: {\n        kind: 'system',\n        name: connectorDisplayName('trusty-squire'),\n    },\n    verb: 'needs your approval for',\n    object: input.title.trim(),\n    consequence: input.detail.trim(),\n    presentation: 'card',\n    cardType: 'squire-approval',\n    card: {\n        agent,\n        tool: input.tool.trim(),\n        title: input.title.trim(),\n        detail: input.detail.trim(),\n        approvalUrl: approvalUrl.toString(),\n        ...(input.approvalId ? { approvalId: input.approvalId.trim() } : {}),\n        expiresAt: input.expiresAt ?? Date.now() + 24 * 60 * 60000,\n        linkKind: input.linkKind,\n        sourceRoomId: input.roomId,\n        ...(this.authorizedCommand ? { commandId: this.authorizedCommand.id, generationId: this.authorizedCommand.generation_id } : {}),\n        ...(sourceMessageId ? { sourceMessageId } : {}),\n    },\n})",
     "literals": [
       "':'",
+      "'Direct message'",
       "'Link'",
       "'MCP Connector'",
       "'Tailscale'",
@@ -2392,6 +2409,7 @@
       "'Wallet'",
       "'agent'",
       "'hex'",
+      "'invite-only'",
       "'needs your approval for'",
       "'sha256'",
       "'squire-approval'",
@@ -2488,10 +2506,10 @@
     "occurrences": 1
   },
   {
-    "id": "src/database.ts:backfillSquireApprovalExpiry:message-write:459b6a2e58e5745f",
+    "id": "src/database.ts:backfillSquireApprovalExpiry:message-write:80670923877aabd3",
     "file": "apps/server/src/database.ts",
     "kind": "message-write",
-    "template": "UPDATE messages card=approval . card | | jsonb_build_object ( 'expiresAt' , floor ( extract ( epoch FROM approval . created_at + interval '24 hours' ) * 1 0 0 0 ) :: bigint , 'status' , CASE WHEN approval . created_at < = now ( ) - interval '24 hours' THEN 'expired' ELSE COALESCE ( approval . card - > > 'status' , 'pending' ) END )",
+    "template": "UPDATE messages card=approval . card | | jsonb_build_object ( 'expiresAt' , floor ( extract ( epoch FROM approval . created_at + interval '24 hours' ) * 1 0 0 0 ) :: bigint , 'status' , THEN 'expired' ELSE COALESCE ( approval . card - > > 'status' , 'pending' ) END )",
     "literals": [],
     "occurrences": 1
   },
@@ -2743,10 +2761,10 @@
     "occurrences": 1
   },
   {
-    "id": "src/grant-policy-upgrade.ts:upgradeGrantPolicy:message-write:477ffe69df0efeb5",
+    "id": "src/grant-policy-upgrade.ts:upgradeGrantPolicy:message-write:10142e3faf167076",
     "file": "apps/server/src/grant-policy-upgrade.ts",
     "kind": "message-write",
-    "template": "UPDATE messages card=jsonb_set ( m . card , '{grants}' , ( SELECT jsonb_agg ( CASE WHEN g . status = 'revoked' THEN jsonb_set ( e , '{status}' , '\"revoked\"' :: jsonb ) ELSE e END ORDER BY ordinal ) ) )",
+    "template": "UPDATE messages card=jsonb_set ( m . card , '{grants}' , ( SELECT jsonb_agg ( THEN jsonb_set ( e , '{status}' , '\"revoked\"' :: jsonb ) ELSE e END ORDER BY ordinal ) ) )",
     "literals": [],
     "occurrences": 1
   },
@@ -2775,13 +2793,11 @@
     "occurrences": 1
   },
   {
-    "id": "src/grant-policy-upgrade.ts:withdrawSupersededGrantAsks:message-write:8202c847ced02de6",
+    "id": "src/grant-policy-upgrade.ts:withdrawSupersededGrantAsks:message-write:10142e3faf167076",
     "file": "apps/server/src/grant-policy-upgrade.ts",
     "kind": "message-write",
-    "template": "UPDATE messages card=jsonb_set ( m . card , '{grants}' , ( SELECT jsonb_agg ( CASE WHEN e - > > 'grantId' = ANY ( superseded :: text [ ] ) THEN jsonb_set ( e , '{status}' , '\"revoked\"' :: jsonb ) ELSE e END ORDER BY ordinal ) ) )",
-    "literals": [
-      "'command'"
-    ],
+    "template": "UPDATE messages card=jsonb_set ( m . card , '{grants}' , ( SELECT jsonb_agg ( THEN jsonb_set ( e , '{status}' , '\"revoked\"' :: jsonb ) ELSE e END ORDER BY ordinal ) ) )",
+    "literals": [],
     "occurrences": 1
   },
   {
@@ -2906,6 +2922,7 @@
       "'Connect provider account'",
       "'Install on helper'",
       "'connected'",
+      "'connecting'",
       "'disconnected'",
       "'error'",
       "'installing'",
@@ -2930,6 +2947,7 @@
     "template": "this.markConnectorOfferConnecting(database, {\n    roomId: offer.room_id,\n    offerId: offer.id,\n    acceptedBy: acceptor,\n    acceptedAt,\n})",
     "literals": [
       "'/'",
+      "'connecting'",
       "`${publicOrigin}${value}`"
     ],
     "occurrences": 1
@@ -2983,9 +3001,11 @@
       "''",
       "'/'",
       "'agent'",
+      "'cancelled'",
       "'order'",
       "'orders'",
       "'person'",
+      "'stop'",
       "'stopped'",
       "` · ${dropped} queued ${dropped === 1 ? 'order' : 'orders'} dropped`",
       "`${publicOrigin}${value}`",
@@ -3022,7 +3042,10 @@
     "literals": [
       "''",
       "':'",
+      "'Direct message'",
       "'hex'",
+      "'invite-only'",
+      "'member'",
       "'sha256'",
       "'string'",
       "`${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`",
@@ -3139,6 +3162,7 @@
       "' '",
       "''",
       "'NFKD'",
+      "'[]'",
       "'_'",
       "'a message'",
       "'agent'",
@@ -3150,6 +3174,7 @@
       "'sent by'",
       "'string'",
       "'subscription-fired'",
+      "'{}'",
       "`@${agentHandle(phrase.subject.name)}`",
       "`@${clause(phrase.subject.name).replace(/^@/, '')}`",
       "`@${row.handle ?? agentHandle(row.name)}`",
@@ -3995,7 +4020,9 @@
     "file": "apps/server/src/voice-service.ts",
     "kind": "wrapper",
     "template": "this.updateCard(call, db)",
-    "literals": [],
+    "literals": [
+      "'hex'"
+    ],
     "occurrences": 1
   },
   {
@@ -4065,6 +4092,7 @@
       "''",
       "':'",
       "'; '",
+      "'Direct message'",
       "'Wallet'",
       "'confirmation pending'",
       "'confirmed'",
@@ -4072,6 +4100,7 @@
       "'failed'",
       "'hex'",
       "'initiator not known to Beeline'",
+      "'invite-only'",
       "'pending'",
       "'refused'",
       "'sha256'",
@@ -4095,9 +4124,11 @@
     "literals": [
       "':'",
       "'An agent'",
+      "'Direct message'",
       "'EIP-712 typed data'",
       "'Wallet'",
       "'hex'",
+      "'invite-only'",
       "'sha256'",
       "'signed'",
       "'system'",
@@ -4115,10 +4146,12 @@
     "template": "systemLine(database, {\n    roomId,\n    authorId: SYSTEM_IDENTITY_ID,\n    subject: { kind: 'system', name: 'Wallet' },\n    verb: 'granted',\n    object: { text: 'agents permission to sign' },\n    consequence: 'until revoked',\n    presentation: 'card',\n    cardType: 'wallet-delegation',\n    card: { standing: true },\n})",
     "literals": [
       "':'",
+      "'Direct message'",
       "'Wallet'",
       "'agents permission to sign'",
       "'granted'",
       "'hex'",
+      "'invite-only'",
       "'sha256'",
       "'system'",
       "'until revoked'",
@@ -4162,9 +4195,11 @@
     "literals": [
       "' · '",
       "':'",
+      "'Direct message'",
       "'agent'",
       "'connection-receipt'",
       "'hex'",
+      "'invite-only'",
       "'sha256'",
       "'used'",
       "`${(bytes / (1024 * 1024)).toFixed(1)} MB`",
@@ -4297,7 +4332,6 @@
       "'online'",
       "'out-of-credit'",
       "'recent-failure'",
-      "'silenceKind'",
       "'status'",
       "'terminal'",
       "'workflow-handoff'"
@@ -4324,7 +4358,6 @@
       "'online'",
       "'out-of-credit'",
       "'recent-failure'",
-      "'silenceKind'",
       "'status'",
       "'terminal'"
     ],
@@ -4372,7 +4405,6 @@
       "'online'",
       "'out-of-credit'",
       "'recent-failure'",
-      "'silenceKind'",
       "'status'"
     ],
     "occurrences": 1
@@ -4398,7 +4430,6 @@
       "'out-of-credit'",
       "'recent failure'",
       "'recent-failure'",
-      "'silenceKind'",
       "'status'",
       "'system'",
       "'the workflow'",
@@ -4570,7 +4601,6 @@
       "'recent failure'",
       "'recent-failure'",
       "'sha256'",
-      "'silenceKind'",
       "'status'",
       "'system'",
       "'workflow-handoff'",
@@ -4723,7 +4753,6 @@
       "'person'",
       "'recent-failure'",
       "'schedule'",
-      "'silenceKind'",
       "'started workflow'",
       "'status'",
       "'string'",
@@ -4746,7 +4775,6 @@
       "'online'",
       "'out-of-credit'",
       "'recent-failure'",
-      "'silenceKind'",
       "'status'",
       "'string'"
     ],

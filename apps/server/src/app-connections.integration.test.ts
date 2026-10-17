@@ -17,6 +17,12 @@ import { readRoomViewMessage } from '@beeline/api-contract/phone';
 import type { AddressInfo } from 'node:net';
 import type { TokenAuth } from './auth.js';
 import { createBeelineServer } from './server.js';
+import { captureServerError } from './sentry.js';
+
+vi.mock('./sentry.js', async (importOriginal) => ({
+  ...await importOriginal<typeof import('./sentry.js')>(),
+  captureServerError: vi.fn(),
+}));
 
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
@@ -674,6 +680,56 @@ describe('connect_app', () => {
     await database.query(`UPDATE workspace_apps SET owner_identity_id=$1 WHERE id=$2`, [other, neon]);
     await expect(daemon.execute('listAppTools', { ...turn, appId: neon }, HELPER))
       .rejects.toThrow("Neon is another person's squire-api app; only their own agents can use it.");
+  });
+
+  it('Reproduction APP-ROUTE-1: daemon HTTP refuses Squire app tools without error capture', async () => {
+    const appId = 'edd5e6c5-fc4c-4170-93c0-8efef63010c9';
+    await database.query(
+      `INSERT INTO workspace_apps(id,workspace_id,owner_identity_id,app_key,display_name,transport,route)
+       VALUES($1,$2,$3,'github','GitHub','squire-api','squire-api')`,
+      [appId, WORKSPACE, OWNER],
+    );
+    const provider = fakeComposio();
+    const daemon = daemonWith(fakeRegistry([]).client, provider);
+    const phone = new PhoneService(database, 'http://placeholder');
+    const server = createBeelineServer({ database, phone, daemon, live: new LiveHub(),
+      mediaMaximumBytes: 1,
+      auth: { authenticateDaemon: async () => HELPER, authenticatePhone: async () => null } as unknown as TokenAuth });
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+    const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    vi.mocked(captureServerError).mockClear();
+    try {
+      for (const otherOwner of [false, true]) {
+        if (otherOwner) {
+          const other = 'c'.repeat(64);
+          await database.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Other','other')`, [other]);
+          await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+            VALUES($1,NULL,$2,'member')`, [WORKSPACE, other]);
+          await database.query(`UPDATE workspace_apps SET owner_identity_id=$1 WHERE id=$2`, [other, appId]);
+        }
+        const message = otherOwner
+          ? "GitHub is another person's squire-api app; only their own agents can use it."
+          : 'GitHub is connected through squire-api, not app tools. ' +
+            'Call GitHub\'s API with Trusty Squire use_credential (service "github").';
+        for (const operation of ['listAppTools', 'executeAppTool']) {
+          const response = await fetch(`${origin}/v1/daemon/operations/${operation}`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', authorization: 'Bearer bdt_fixture-token-0001' },
+            body: JSON.stringify({ ...turn, appId,
+              ...(operation === 'executeAppTool' ? { tool: 'GITHUB_LIST_REPOSITORIES', arguments: {} } : {}) }),
+          });
+          const result = await response.json();
+          console.log(`Reproduction APP-ROUTE-1: ${operation}, other owner=${otherOwner} → HTTP ${response.status} ${JSON.stringify(result)}`);
+          expect(response.status).toBe(otherOwner ? 403 : 400);
+          expect(result).toEqual({ error: message });
+          expect(captureServerError).not.toHaveBeenCalled();
+        }
+      }
+      expect(provider.listTools).not.toHaveBeenCalled();
+      expect(provider.execute).not.toHaveBeenCalled();
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
   });
 
   it('returns an empty tool list over the daemon API when a query matches nothing', async () => {

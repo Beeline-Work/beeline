@@ -7117,10 +7117,10 @@ export class DaemonService {
     if (row.transport !== 'composio') {
       // Only managed-OAuth apps run through app tools; name the route that serves this one.
       if (row.owner_identity_id !== row.agent_owner_id)
-        throw new Error(`${row.display_name} is another person's ${row.transport} app; only their own agents can use it.`);
-      throw new Error(`${row.display_name} is connected through ${row.transport}, not app tools. ${
+        throw new CommandRefusalError(`${row.display_name} is another person's ${row.transport} app; only their own agents can use it.`, 403);
+      throw new CommandRefusalError(`${row.display_name} is connected through ${row.transport}, not app tools. ${
         connectedAppUse({ transport: row.transport, name: row.display_name,
-          appKey: row.app_key, domain: row.domain ?? row.display_name })}`);
+          appKey: row.app_key, domain: row.domain ?? row.display_name })}`, 400);
     }
     return row;
   }

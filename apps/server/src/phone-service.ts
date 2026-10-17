@@ -1,3 +1,4 @@
+import { prepareCornerCompatibility } from './corner-person-state.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
 import { companyHost } from './company-registry.js';
 import { companyPopularity, companySearchResults, projectWorkbenchCompanies } from './workbench-companies.js';
@@ -4889,6 +4890,7 @@ export class PhoneService {
     if (!/^[0-9a-f]{64}$/.test(id)) throw new Error('messageId is invalid');
     const attachments = JSON.stringify(input.attachments ?? []);
     return this.database.transaction(async (database) => {
+      database = await prepareCornerCompatibility(database, input.roomId, author);
       const write = (await database.query<{
         inserted: boolean;
         retry: boolean;
@@ -4937,6 +4939,7 @@ export class PhoneService {
         [id, input.roomId, author, input.text, attachments, SYSTEM_IDENTITY_ID],
       )).rows[0];
       if (!write) throw new Error('room access denied');
+      database = new CornerAccessDatabase(database);
       if (!write.writable) throw new Error('spectator access is read-only (access denied)');
       if (author !== SYSTEM_IDENTITY_ID && write.system_dm)
         throw new Error('this is a read-only system thread; only @system may post here (access denied)');
@@ -5175,6 +5178,7 @@ export class PhoneService {
   ): Promise<RoomViewMessage | null> {
     if (!/^[0-9a-f]{64}$/.test(input.messageId)) throw new Error('messageId is invalid');
     await this.database.transaction(async (database) => {
+      database = await prepareCornerCompatibility(database, input.roomId, viewerId);
       const deleted = await database.query<{ author_id: string; deleted_by: string }>(
         `UPDATE messages message SET deleted_at=COALESCE(message.deleted_at,now()),
            deleted_by=COALESCE(message.deleted_by,$3),text='',attachments='[]'::jsonb,reactions='{}'::jsonb
@@ -5193,6 +5197,7 @@ export class PhoneService {
          RETURNING message.author_id,message.deleted_by`,
         [input.messageId, input.roomId, viewerId],
       );
+      database = new CornerAccessDatabase(database);
       const row = deleted.rows[0];
       if (!row) throw new Error('message is not available for deletion');
       // The deleted row keeps its place and time and reads as a system line

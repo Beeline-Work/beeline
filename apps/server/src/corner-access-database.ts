@@ -7,6 +7,10 @@ export class CornerAccessDatabase implements SqlDatabase {
     if (database instanceof CornerAccessDatabase) this.database = database.database;
   }
 
+  static physical(database: SqlDatabase): SqlDatabase {
+    return database instanceof CornerAccessDatabase ? database.database : database;
+  }
+
   query<Row extends QueryResultRow = QueryResultRow>(sql: string, values?: unknown[]): Promise<QueryResult<Row>> {
     return this.database.query<Row>(new CornerAccessStatement(sql).sql, values);
   }

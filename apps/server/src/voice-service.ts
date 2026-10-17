@@ -1,3 +1,4 @@
+import { prepareCornerCompatibility } from './corner-person-state.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
 import { AgentVoiceService } from './agent-voice.js';
 import { createHmac, timingSafeEqual, randomBytes, randomUUID } from 'node:crypto';
@@ -377,10 +378,15 @@ export class VoiceService {
       if (first && rendition(first) === rendition(second)) { text = first; break; }
     }
     if (!text.trim()) return;
+    await this.db.transaction(async database => {
+      const physical = await prepareCornerCompatibility(database, roomId, agentId);
+      await (async function(this: { db: SqlDatabase }) {
     await this.db.query(`INSERT INTO messages(id,room_id,author_id,text,agent_model)
       SELECT $1,$2,$3,$4,$5 FROM memberships m JOIN rooms r ON r.id=m.room_id
       WHERE m.room_id=$2 AND m.identity_id=$3 AND m.removed_at IS NULL AND r.archived_at IS NULL`,
       [randomBytes(32).toString('hex'), roomId, agentId, text, VOICE_MODEL]);
+      }).call({ db: physical });
+    });
   }
 
   async close() {

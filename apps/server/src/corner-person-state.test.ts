@@ -1,3 +1,4 @@
+import { VoiceService } from './voice-service.js';
 import { systemLine } from './system-line.js';
 import { randomUUID } from 'node:crypto';
 import { expect, it } from 'vitest';
@@ -143,7 +144,22 @@ it('copies sparse state twice, preserves owed items and read marks, and derives 
       kinds: [],
     });
     await setRoomEventSubscriptions(db, corner, agent, ['schedule-ran']);
+    // Exercise all three frozen statements through their public service paths.
+    const retainedMessage = 'd'.repeat(64);
+    await phone.execute('sendRoomMessage', { roomId: corner, messageId: retainedMessage, text: 'Keep this message' }, person);
+    await phone.execute('sendRoomMessage', { roomId: corner, messageId: 'e'.repeat(64), text: 'Delete this message' }, person);
+    await phone.execute('deleteRoomMessage', { roomId: corner, messageId: 'e'.repeat(64) }, person);
+    // This agent has parent membership but no legacy corner row before acting.
+    const voice = { db } as VoiceService;
+    await VoiceService.prototype.recordAnswer.call(voice, corner, outsider, 'Allowed voice answer');
+    expect((await db.query('SELECT 1 FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL', [corner, outsider])).rowCount).toBe(1);
     await db.query('UPDATE memberships SET removed_at=now() WHERE room_id=$1', [room]);
+    expect((await db.query('SELECT 1 FROM memberships WHERE room_id=$1 AND removed_at IS NULL', [corner])).rowCount).toBe(0);
+    await expect(phone.execute('sendRoomMessage', { roomId: corner, text: 'Denied after removal' }, person)).rejects.toThrow();
+    await expect(phone.execute('deleteRoomMessage', { roomId: corner, messageId: retainedMessage }, person)).rejects.toThrow();
+    await VoiceService.prototype.recordAnswer.call(voice, corner, outsider, 'Denied voice answer');
+    expect((await db.query('SELECT 1 FROM messages WHERE room_id=$1 AND text=$2', [corner, 'Denied voice answer'])).rowCount).toBe(0);
+
     expect(await phone.canReadRoom(corner, person)).toBe(false);
     await expect(
       daemon.execute('listEventSubscriptions', { roomId: corner }, agent),

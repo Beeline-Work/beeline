@@ -76,3 +76,20 @@ The inventory below records every changed query location, including authorizatio
 - `workflow-admin.ts`: lines 30, 91.
 - `workflow-run-views.ts`: lines 26, 30.
 - `workflow-runs.ts`: lines 498, 505, 1785, 1924, 2059, 2109.
+
+### Frozen message statements during step A
+
+Ruby approved lazy compatibility rows instead of renaming `memberships`.
+Before send, delete, or voice-answer writes, `prepareCornerCompatibility` locks
+that actor's parent Room membership in the same transaction. It creates or
+reopens only that actor's corner row when the parent membership is active;
+otherwise it removes any existing compatibility row. Room removal also marks
+existing child rows removed. The three statements then execute unchanged
+against the physical table, preserving old-image `INSERT ... ON CONFLICT`.
+Join, member add, and corner creation still create no corner rows.
+
+Step B deletes these step-A compatibility rows and removes the helper and
+compatibility triggers. Changing the three frozen statements then requires an
+owner decision on `PhoneService.sendMessage` (`2195186d3b479a45`),
+`PhoneService.deleteRoomMessage` (`aed1152ccf0e0e6c`), and
+`VoiceService.recordAnswer` (`c42d9c83e37b72a9`). Do not update their lock now.

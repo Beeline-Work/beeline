@@ -1,3 +1,4 @@
+import { CornerAccessDatabase } from './corner-access-database.js';
 import { SUBSCRIBABLE_EVENT_KINDS } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 
@@ -46,7 +47,14 @@ const CORNER_STATE_COMPATIBILITY_SCHEMA = `
 CREATE OR REPLACE FUNCTION sync_legacy_corner_state() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE inherited jsonb;
 BEGIN
-  IF pg_trigger_depth()>1 OR NOT EXISTS(SELECT 1 FROM rooms WHERE id=NEW.room_id AND parent_id IS NOT NULL) THEN
+  IF pg_trigger_depth()>1 THEN RETURN NEW; END IF;
+  -- Step-A compatibility rows lose access with their parent Room membership.
+  IF NEW.removed_at IS NOT NULL THEN
+    UPDATE memberships child SET removed_at=NEW.removed_at FROM rooms corner
+      WHERE corner.parent_id=NEW.room_id AND child.room_id=corner.id
+        AND child.identity_id=NEW.identity_id AND child.removed_at IS NULL;
+  END IF;
+  IF NOT EXISTS(SELECT 1 FROM rooms WHERE id=NEW.room_id AND parent_id IS NOT NULL) THEN
     RETURN NEW;
   END IF;
   SELECT COALESCE(parent.event_subscriptions,'[]'::jsonb) INTO inherited
@@ -62,7 +70,7 @@ BEGIN
   RETURN NEW;
 END $$;
 DROP TRIGGER IF EXISTS sync_legacy_corner_state ON memberships;
-CREATE TRIGGER sync_legacy_corner_state AFTER INSERT OR UPDATE OF event_subscriptions,identity_profile,generation,push_muted
+CREATE TRIGGER sync_legacy_corner_state AFTER INSERT OR UPDATE OF removed_at,event_subscriptions,identity_profile,generation,push_muted
   ON memberships FOR EACH ROW EXECUTE FUNCTION sync_legacy_corner_state();
 
 CREATE OR REPLACE FUNCTION sync_current_corner_state() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -148,4 +156,26 @@ export async function setRoomEventSubscriptions(
   );
   if (!result.rowCount) throw new Error('daemon room access denied');
   return result.rows[0]!.event_subscriptions;
+}
+
+/** Step-A compatibility for the three frozen message statements; removed in step B. */
+export async function prepareCornerCompatibility(database: SqlDatabase, roomId: string, identityId: string): Promise<SqlDatabase> {
+  const physical = CornerAccessDatabase.physical(database);
+  const corner = await physical.query<{ parent_id: string }>(
+    `SELECT parent_id FROM rooms WHERE id=$1 AND parent_id IS NOT NULL`, [roomId]);
+  if (!corner.rowCount) return physical;
+  // Hold the parent row until the unchanged message statement has completed.
+  const parent = await physical.query<{ removed_at: string | null }>(
+    `SELECT removed_at FROM memberships WHERE room_id=$1 AND identity_id=$2 FOR SHARE`,
+    [corner.rows[0]!.parent_id, identityId]);
+  if (!parent.rowCount || parent.rows[0]!.removed_at !== null) {
+    await physical.query(`UPDATE memberships SET removed_at=COALESCE(removed_at,now()) WHERE room_id=$1 AND identity_id=$2`, [roomId, identityId]);
+    return physical;
+  }
+  await physical.query(
+    `INSERT INTO memberships(workspace_id,room_id,identity_id,role,event_subscriptions,identity_profile,generation,push_muted)
+     SELECT workspace_id,room_id,identity_id,role,event_subscriptions,identity_profile,generation,push_muted
+     FROM effective_memberships WHERE room_id=$1 AND identity_id=$2
+     ON CONFLICT(room_id,identity_id) WHERE room_id IS NOT NULL DO UPDATE SET removed_at=NULL,role=EXCLUDED.role`, [roomId, identityId]);
+  return physical;
 }

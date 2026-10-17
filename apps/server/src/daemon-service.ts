@@ -636,10 +636,12 @@ export class DaemonService {
         // this generation. Never replace its stored failed outcome with success.
         if (name === 'postAgentTurnReceipt' && candidate.status === 'complete' && command.state === 'complete')
           return this.writeResult() as Output<Name>;
+        // Helpers cannot impose an order outcome on an informational wake.
+        // The stored command and its delivered receipt own that obligation.
         if (name === 'postAgentTurnReceipt' && candidate.status === 'failed' &&
           String(candidate.reason ?? '').startsWith('unreported_order:') &&
-          command.private_payload?.kind === 'order' &&
-          (command.private_payload.reportedGenerationId === command.generation_id ||
+          (command.private_payload?.kind !== 'order' ||
+            command.private_payload.reportedGenerationId === command.generation_id ||
             await hasOrderContinuation(db, command))) {
           candidate.status = 'complete';
           delete candidate.reason;

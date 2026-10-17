@@ -82,7 +82,7 @@ it('retains an absent RTC participant through a short radio handoff and resets t
 it('Reproduction MD-TTS-1: conversational streamed replies and delayed reports send natural text to synthesis', async () => {
   const agent = { id: 'agent', name: 'Jellybean', handle: 'jellybean', voice: 'warm' };
   const spoken: string[] = [];
-  const answer = '**Hello, friend.**\n\n[Visit](https://example.com/a_(b)/details).\n\n```ts\nignore me\n```\n\nHi @jellybean, population 12345678, total 1,234,567 at 20:37, year 2026, PR 2547.';
+  const answer = '**Hello, friend.**\n\n[Visit](https://example.com/a_(b)/details).\n\n```ts\nignore me\n```\n\nHi @jellybean, population 12345678, total 1,234,567 at 20:37, year 2026, PR 2547. Machine xkcd12345678 ready.';
   let reports: any[] = [];
   const service = { owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret',
     brain: { answer: async (_agent: unknown, _history: unknown, delta: (text: string) => void) => {
@@ -96,7 +96,7 @@ it('Reproduction MD-TTS-1: conversational streamed replies and delayed reports s
   const runtime = await VoiceRoomRuntime.connect(service, 'call', 'room');
   try {
     await runtime.utterance('human', 'Jellybean, hello');
-    expect(spoken.join(' ')).toBe('Hello, friend. Visit. Hi Jellybean, population 12345678, total 1,234,567 at 20:37, year 2026, PR 2547.');
+    expect(spoken.join(' ')).toBe('Hello, friend. Visit. Hi Jellybean, population 12345678, total 1,234,567 at 20:37, year 2026, PR 2547. Machine ready.');
     expect(service.recordAnswer).toHaveBeenCalledWith('room', 'agent', answer);
     reports = [{ source_message_id: 'source', id: 'report', text: '**Done**: [result](https://example.com/a_(b)/details)', agent_id: 'agent', human_id: 'human' }];
     await runtime.refresh();

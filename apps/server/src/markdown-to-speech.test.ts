@@ -94,6 +94,24 @@ it('Reproduction VOICE-IDS-3: keeps digits-only and number-punctuation tokens ou
   }
 });
 
+it('Reproduction VOICE-IDS-4: drops consonant-only machine IDs before the bare-handle fallback', () => {
+  // xkcd12345678 is 8+ mixed letters/digits with no vowel-pattern word, so it is an ID.
+  expect(markdownToSpeech('Machine xkcd12345678 ready.')).toBe('Machine ready.');
+  expect(markdownToSpeech('Node qwrtp12345678 and zxcv98765432 are up.')).toBe('Node and are up.');
+  // Explicit mentions and matched Room members still win over the ID filter.
+  expect(markdownToSpeech('Ping @xkcd12345678 now.')).toBe('Ping xkcd now.');
+  expect(markdownToSpeech('Ping xkcd12345678 now.', [{ handle: 'xkcd12345678', name: 'Xkcd' }])).toBe('Ping Xkcd now.');
+  // A pronounceable bare handle keeps its letters.
+  expect(markdownToSpeech('Hi bananaman614305.')).toBe('Hi bananaman.');
+  for (let at = 0; at <= 'Machine xkcd12345678 ready.'.length; at++) {
+    const stream = new MarkdownSpeechStream();
+    const input = 'Machine xkcd12345678 ready.';
+    const spoken = [...stream.push(input.slice(0, at)), ...stream.push(input.slice(at)), stream.finish()]
+      .filter(Boolean).join(' ');
+    expect(spoken, `split at ${at}`).toBe('Machine ready.');
+  }
+});
+
 it('speaks identifiers the same way when streamed in any chunk size', () => {
   const input = 'I filed this as a bug (fb_409eec12d3be6644d9eba2bf). Hi @bananaman614305, PR 2546 at 20:37, version 1.2.3.\n\n'
     + 'Commit 0123456789abcdef0123456789abcdef01234567 and 123e4567-e89b-12d3-a456-426614174000.';

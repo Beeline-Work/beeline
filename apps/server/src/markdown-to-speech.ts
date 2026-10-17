@@ -69,6 +69,11 @@ function readsAsWord(token: string): boolean {
   return runs.some(run => /[aeiouy]/i.test(run));
 }
 
+/** A machine identifier mixes letters and digits with no pronounceable word. */
+function isMachineId(token: string): boolean {
+  return token.length >= 8 && /[A-Za-z]/.test(token) && /\d/.test(token) && !readsAsWord(token);
+}
+
 /** Deterministic speech cleanup; the written transcript is never changed. */
 function speakIdentifiers(text: string, members?: SpeechMembers): string {
   const index = memberIndex(members);
@@ -85,16 +90,15 @@ function speakIdentifiers(text: string, members?: SpeechMembers): string {
     .replace(/\b(?=[0-9a-f]*[a-f])[0-9a-f]{16,}\b/gi, '')
     .replace(/(?<![\p{L}\p{N}_])(?:fb|msg|evt|req|obj|att|sha|uuid|id)_[A-Za-z0-9][A-Za-z0-9_-]{5,}(?![\p{L}\p{N}_-])/giu, '')
     .replace(HANDLE_TOKEN, (token: string) => {
+      // A consonant-only machine ID drops before the bare-handle digit fallback.
+      if (isMachineId(token)) return '';
       // A handle-like word keeps its letters: bananaman614305 -> bananaman.
       const match = /^([\p{L}][\p{L}_-]*?)(\d{4,})$/u.exec(token);
       if (!match || token.length < 10) return token;
       const letters = match[1]!.replace(/[_\-]+$/g, '');
       return letters.length >= 3 ? letters : token;
     })
-    .replace(TOKEN, (token: string) => {
-      if (token.length < 8 || !/[A-Za-z]/.test(token) || !/\d/.test(token)) return token;
-      return readsAsWord(token) ? token : '';
-    });
+    .replace(TOKEN, (token: string) => (isMachineId(token) ? '' : token));
 
   let previous: string;
   do {

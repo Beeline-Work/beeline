@@ -1,4 +1,4 @@
-import { CornerAccessDatabase, CornerAccessStatement } from './corner-access-database.js';
+import { CornerAccessDatabase } from './corner-access-database.js';
 import { SYSTEM_IDENTITY_HANDLE } from '@beeline/api-contract/system-identity';
 import type { SqlDatabase } from './database.js';
 
@@ -249,12 +249,12 @@ function channelTaggedMembersSql(message: string): string {
  * `message` is the SQL alias of the `messages` row being read.
  */
 export function taggedIdentityIdsSql(message: string): string {
-  return new CornerAccessStatement(`ARRAY(
+  return `ARRAY(
     SELECT tagged_member.identity_id
     FROM memberships tagged_member
     JOIN identities tagged ON tagged.id=tagged_member.identity_id
     WHERE ${message}.presentation NOT IN ('system','card')
-      AND tagged_member.room_id=${message}.room_id AND tagged_member.removed_at IS NULL
+      AND tagged_member.room_id=(SELECT COALESCE(parent_id,id) FROM rooms WHERE id=${message}.room_id) AND tagged_member.removed_at IS NULL
       AND tagged_member.identity_id<>${message}.author_id
       AND tagged.handle IS NOT NULL AND btrim(tagged.handle)<>''
       AND ${handleWrittenIn(`${message}.text`, 'tagged.handle')}
@@ -267,7 +267,7 @@ export function taggedIdentityIdsSql(message: string): string {
       )
     UNION
     ${channelTaggedMembersSql(message)}
-  )`).sql;
+  )`;
 }
 
 /**

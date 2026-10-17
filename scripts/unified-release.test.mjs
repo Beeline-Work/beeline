@@ -1850,6 +1850,31 @@ test('native workflow builds Android locally on the Linux runner and iOS locally
   }
 });
 
+test('ios-review-node: App Review establishes the runner Node PATH before submission', () => {
+  const workflow = parse(readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'));
+  const ios = workflow.jobs.mobile_native_ios;
+  const review = ios.steps.find((step) => step.name === 'Send production iOS version to App Review');
+  const nodePath = '/usr/local/opt/node@20/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin';
+  assert.equal(review.if, "inputs.store_track == 'production'");
+  assert.equal(review['working-directory'], undefined);
+  assert.equal(ios.defaults?.run?.['working-directory'], undefined);
+  assert.match(review.run, new RegExp(`export PATH=${nodePath.replaceAll('/', '\\/')}\\n[\\s\\S]*node scripts/ios-store-build\\.mjs submit`));
+
+  // Stand in for the Mac's Node binary without calling Apple or changing the host.
+  const result = spawnSync('/bin/bash', ['--noprofile', '--norc', '-euc', `
+    node() {
+      if [[ "$PATH" != '${nodePath}' ]]; then
+        echo 'node: command not found' >&2
+        return 127
+      fi
+      printf '%s\\n' "$@"
+    }
+    ${review.run}
+  `], { env: { PATH: '/missing-runner-node', RUNNER_TEMP: '/tmp/ios-review-node' }, encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, 'scripts/ios-store-build.mjs\nsubmit\n/tmp/ios-review-node/ios-build.json\n');
+});
+
 test('helper job accommodates the npm visibility deadline plus publication overhead', () => {
   const workflow = parse(readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'));
   const budgetMs = workflow.jobs.helper['timeout-minutes'] * 60_000;

@@ -1224,7 +1224,10 @@ jobs:
           node ../../scripts/ios-store-build.mjs verify "$RUNNER_TEMP/ios-build.json" "$RUNNER_TEMP/ios-upload.json"
       - name: Send production iOS version to App Review
         if: inputs.store_track == 'production'
-        run: node scripts/ios-store-build.mjs submit "$RUNNER_TEMP/ios-build.json"
+        run: |
+          set -euo pipefail
+          export PATH=/usr/local/opt/node@20/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
+          node scripts/ios-store-build.mjs submit "$RUNNER_TEMP/ios-build.json"
       - name: Preserve iOS build evidence
         uses: actions/upload-artifact@v4
         with:

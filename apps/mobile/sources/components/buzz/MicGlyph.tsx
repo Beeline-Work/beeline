@@ -34,8 +34,8 @@ export function ArrowUpGlyph({ color, testID }: { color: string; testID?: string
 }
 
 /** Stop a take: an outlined rounded square. */
-export function StopGlyph({ color, testID }: { color: string; testID?: string }) {
-  return <StrokeGlyph color={color} testID={testID}><Rect x="6" y="6" width="8" height="8" rx="2" /></StrokeGlyph>;
+export function StopGlyph({ color, testID, filled = false }: { color: string; testID?: string; filled?: boolean }) {
+  return <StrokeGlyph color={color} testID={testID}><Rect x={filled ? 4 : 6} y={filled ? 4 : 6} width={filled ? 12 : 8} height={filled ? 12 : 8} rx="2" fill={filled ? color : 'none'} stroke={filled ? 'none' : color} /></StrokeGlyph>;
 }
 
 /**

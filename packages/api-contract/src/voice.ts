@@ -10,6 +10,7 @@ export type VoiceCall = {
   /** High-resolution creation order for live-card updates in the deck. */
   startedAtMs?: number;
   endedAt?: number;
+  endReason?: 'silence';
   participants: readonly RoomViewIdentity[];
 };
 
@@ -23,10 +24,11 @@ export type VoiceJoin = {
   agents: readonly RoomViewIdentity[];
 };
 
-export type VoiceIdleState = { state: 'ended' | 'parked' | 'ready'; agentName?: string; endReason?: 'silence' };
+export type VoiceIdleState = { state: 'ended' | 'parked' | 'ready'; agentName?: string };
 
 export type VoiceSignal =
-  | { type: 'stop'; reason?: 'silence' }
+  | { type: 'stop' }
+  | { type: 'ending'; deadline: number | null; serverNow: number }
   | { type: 'resume' | 'park'; sessionId: string }
   | { type: 'speech' }
   /** A tap also sends the next turn to this agent when several humans are in the call. */
@@ -58,7 +60,8 @@ export function readVoiceCall(value: unknown): VoiceCall | undefined {
     !Number.isFinite(call.startedAt) ||
     !Array.isArray(call.participants) ||
     (call.startedAtMs !== undefined && !Number.isFinite(call.startedAtMs)) ||
-    (call.endedAt !== undefined && !Number.isFinite(call.endedAt))
+    (call.endedAt !== undefined && !Number.isFinite(call.endedAt)) ||
+    (call.endReason !== undefined && call.endReason !== 'silence')
   )
     return undefined;
   if (

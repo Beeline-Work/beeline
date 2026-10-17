@@ -1,3 +1,5 @@
+Current owner review: [revision 6 real-Room Android captures](owner-review-r6/README.md). Earlier UI and solo-silence evidence below is historical where superseded by the current brief.
+
 # Voice call proof, revision 3
 
 Reproductions **multi-human-silence-1**, **multi-human-mode-2** and

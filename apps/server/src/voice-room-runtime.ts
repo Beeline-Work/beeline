@@ -64,6 +64,8 @@ export class VoiceRoomRuntime {
   private speechIdle = Promise.resolve();
   private lastActivity = performance.now();
   private lastWorkFinishedAt = 0;
+  private endingDeadline: number | null = null;
+  private quietCheck?: ReturnType<typeof setInterval>;
   private checkingInactivity = false;
   private lastTouch = 0;
   private touching = false;
@@ -133,17 +135,20 @@ export class VoiceRoomRuntime {
     // Committed events still drive report reads.
     this.leaseRenewal = setInterval(() => {
       return this.renewLease().then(async kept => {
-        if (kept) { await this.sweepMissingParticipants(); await this.checkInactivity(); }
+        if (kept) { await this.sweepMissingParticipants(); }
       }).catch(() => this.close());
     }, 5000);
     this.leaseRenewal.unref();
+    this.quietCheck = setInterval(() => this.checkInactivity().catch(() => {}), 1000);
+    this.quietCheck.unref();
     this.touch();
     await this.countHumans(true).catch(() => {});
     await this.refresh();
   }
 
   private async signal(signal: VoiceSignal, human?: string) {
-    if (signal.type !== 'stop') this.touch();
+    // A visual countdown must not start heartbeat work or count as activity.
+    if (signal.type !== 'stop' && signal.type !== 'ending') this.touch();
     if (!this.closed) await this.room.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify(signal)),
       { reliable: true, topic: VOICE_DATA_TOPIC, ...(human ? { destination_identities: [human] } : {}) });
   }
@@ -198,7 +203,7 @@ export class VoiceRoomRuntime {
         if (event.event === 'EndOfTurn') this.turnIndices.set(human, event.turn_index);
         return;
       }
-      this.lastActivity = performance.now();
+      this.markCallActivity();
       void this.signal({ type: 'speech' }, human);
       // Partial recognized names can aim the strip immediately; only EndOfTurn dispatches.
       if (event.event !== 'EndOfTurn') void this.aimSpokenName(human, event.transcript, version);
@@ -299,17 +304,34 @@ export class VoiceRoomRuntime {
     this.checkingInactivity = true;
     try {
       const { pending: work, finishedAt } = await this.service.callWorkState(this.callId);
-      if (work) this.lastActivity = performance.now();
+      if (work) this.markCallActivity();
       if (finishedAt > this.lastWorkFinishedAt) {
         this.lastWorkFinishedAt = finishedAt;
         this.lastActivity = Math.max(this.lastActivity, performance.now() - Math.max(0, Date.now() - finishedAt));
+      }
+      const quietFor = performance.now() - this.lastActivity;
+      const warning = !work && quietFor >= 45_000;
+      if (warning && this.endingDeadline === null) {
+        this.endingDeadline = Date.now() + Math.max(0, 60_000 - quietFor);
+        await this.signal({ type: 'ending', deadline: this.endingDeadline, serverNow: Date.now() });
+      } else if (!warning && this.endingDeadline !== null) {
+        this.endingDeadline = null;
+        await this.signal({ type: 'ending', deadline: null, serverNow: Date.now() });
       }
       const inactive = () => !this.closed && !work && performance.now() - this.lastActivity >= 60_000;
       if (inactive()) await this.service.endInactive(this.callId, this.leaseOwner, inactive);
     } finally { this.checkingInactivity = false; }
   }
 
-  async stopCall() { await this.signal({ type: 'stop', reason: 'silence' }); }
+  private markCallActivity() {
+    this.lastActivity = performance.now();
+    if (this.endingDeadline !== null) {
+      this.endingDeadline = null;
+      void this.signal({ type: 'ending', deadline: null, serverNow: Date.now() }).catch(() => {});
+    }
+  }
+
+  async stopCall() { await this.signal({ type: 'stop' }); }
 
   private async aimSpokenName(human: string, text: string, version: number) {
     const agent = namedVoiceTarget(text, await this.service.agents(this.roomId, human), undefined, 2);
@@ -323,7 +345,10 @@ export class VoiceRoomRuntime {
     const refresh = this.humanCountRefresh.catch(() => {}).then(async () => {
       const count = await this.service.humanCount(this.callId);
       const changed = count !== this.lastAnnouncedHumanCount;
-      if (changed || announce) await this.signal({ type: 'humans', count });
+      if (changed || announce) {
+        await this.signal({ type: 'humans', count });
+        if (this.endingDeadline !== null) await this.signal({ type: 'ending', deadline: this.endingDeadline, serverNow: Date.now() });
+      }
       this.lastAnnouncedHumanCount = count;
     });
     this.humanCountRefresh = refresh;
@@ -331,7 +356,7 @@ export class VoiceRoomRuntime {
   }
 
   async utterance(human: string, text: string, startedAt = performance.now(), interrupts = true) {
-    this.lastActivity = performance.now();
+    this.markCallActivity();
     if (!interrupts && this.speaking && await this.service.humanCount(this.callId) > 1) return;
     const traceId = randomUUID();
     const stages = new Set<string>();
@@ -581,7 +606,7 @@ export class VoiceRoomRuntime {
           const samples = new Int16Array(frameBytes / 2);
           for (let i = 0; i < samples.length; i++) samples[i] = pending.readInt16LE(i * 2);
           pending = pending.subarray(frameBytes);
-          this.lastActivity = performance.now();
+          this.markCallActivity();
           this.touch();
           const voiced = first && samples.some(sample => Math.abs(sample) > 150);
           if (voiced) { first = false; onFirstVoicedFrame?.(); }
@@ -593,7 +618,7 @@ export class VoiceRoomRuntime {
       if (pending.length > 1) {
         const samples = new Int16Array(Math.floor(pending.length / 2));
         for (let i = 0; i < samples.length; i++) samples[i] = pending.readInt16LE(i * 2);
-        this.lastActivity = performance.now();
+        this.markCallActivity();
         this.touch();
         const voiced = first && samples.some(sample => Math.abs(sample) > 150);
         if (voiced) { first = false; onFirstVoicedFrame?.(); }
@@ -627,6 +652,7 @@ export class VoiceRoomRuntime {
     if (this.closed) return;
     this.closed = true;
     clearInterval(this.leaseRenewal);
+    clearInterval(this.quietCheck);
     this.speaking?.abort(); this.audio.clearQueue();
     this.missingSince.clear();
     this.shutdown.abort();

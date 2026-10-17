@@ -1,15 +1,17 @@
 import * as React from 'react';
 import { AccessibilityInfo, Pressable, ScrollView, Text, View } from 'react-native';
 import { HullModal } from './HullDialog';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { IdentityMark } from './IdentityMark';
 import { DictationWaveform } from './DictationWaveform';
+import { StopGlyph } from './MicGlyph';
 import { Button } from './Button';
 import type { VoiceCallState } from '@/buzz/use-voice-call';
 
 export function VoiceBar({ voice, fullScreen = false, onAttach, attachDisabled = false, testIDPrefix = 'chat' }: {
   voice: VoiceCallState; fullScreen?: boolean; onAttach?: () => void; attachDisabled?: boolean; testIDPrefix?: string;
 }) {
+  const { theme } = useUnistyles();
   const [expanded, setExpanded] = React.useState(fullScreen);
   const [reduceMotion, setReduceMotion] = React.useState(false);
   React.useEffect(() => {
@@ -30,8 +32,8 @@ export function VoiceBar({ voice, fullScreen = false, onAttach, attachDisabled =
           <IdentityMark kind="agent" seed={agent.pubkey} face={agent.face} name={agent.name} size={32} />
         </Pressable>)}
       </ScrollView>
-      {voice.humans > 1 ? <Text style={[styles.modeLabel, styles.tip, tip.flash && styles.tipFlash]} numberOfLines={2}
-        accessibilityLiveRegion={tip.flash ? 'polite' : 'none'} testID="conversation-tip">{tip.text}</Text>
+      {voice.humans > 1 || voice.endingWarning ? <Text style={[styles.modeLabel, styles.tip, (tip.flash || voice.endingWarning) && styles.tipFlash]} numberOfLines={2}
+        accessibilityLiveRegion={tip.flash || voice.endingWarning ? 'polite' : 'none'} testID="conversation-tip">{voice.endingWarning ?? tip.text}</Text>
         : <Text style={styles.modeLabel} testID="conversation-mode-label">Conversation mode</Text>}
     </View>
     <View style={styles.controls}>
@@ -45,8 +47,9 @@ export function VoiceBar({ voice, fullScreen = false, onAttach, attachDisabled =
         {voice.error ? <Text accessibilityRole="alert" style={styles.error} testID={voice.quotaExhausted ? 'voice-quota-error' : 'voice-connection-error'}>{voice.error}</Text>
           : <DictationWaveform level={voice.level} live={!voice.connecting} />}
       </Pressable>
-      <Button label={voice.humans > 1 ? 'Leave call' : 'End call'} variant="secondary" onPress={() => void voice.end()}
-        accessibilityLabel={voice.humans > 1 ? 'Leave call' : 'End call'} testID="voice-leave" />
+      <Button label="" variant="quiet" onPress={() => void voice.end()} style={styles.stop}
+        accessibilityLabel={voice.humans > 1 ? 'Leave call' : 'End call'} testID="voice-mic"
+        icon={<StopGlyph color={theme.buzz.accent} filled testID="voice-stop-glyph" />} />
     </View>
   </View>;
   return <>
@@ -63,14 +66,6 @@ export function VoiceBar({ voice, fullScreen = false, onAttach, attachDisabled =
       </View>
     </HullModal>
   </>;
-}
-
-/** Private, ephemeral feedback for humans connected when the quiet window ended. */
-export function VoiceCallEndNotice({ onDismiss }: { onDismiss(): void }) {
-  return <View style={styles.notice} testID="voice-call-end-notice">
-    <Text style={styles.noticeText} accessibilityLiveRegion="polite">Call ended: no one spoke for 60 seconds</Text>
-    <Button label="Dismiss" variant="secondary" onPress={onDismiss} testID="voice-call-end-dismiss" />
-  </View>;
 }
 
 const TIP_MS = 4_000;
@@ -99,8 +94,7 @@ function useVoiceTip(voice: VoiceCallState) {
 }
 
 const styles = StyleSheet.create(theme => ({
-  notice: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 8 },
-  noticeText: { ...theme.buzz.type.meta, color: theme.buzz.textPrimary, flex: 1 },
+  stop: { width: 44 },
   bar: { width: '100%' },
   targetStrip: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, gap: 8 },
   agents: { flex: 1, minWidth: 0 }, agentContent: { alignItems: 'center' },

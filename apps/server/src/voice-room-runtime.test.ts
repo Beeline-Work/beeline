@@ -1583,6 +1583,7 @@ it.each(['quiet','pending','outside'])('call-wide-end-3: %s work uses one 60-sec
     await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [room, workspace]);
     await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
       ($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,$4,$2,'owner'),($1,$4,$3,'member')`, [workspace, human, agent, room]);
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
     const timer = vi.spyOn(globalThis, 'setInterval');
     const joined = await owner.join(room, human);
     const call = (await db.query<any>(`SELECT * FROM voice_calls WHERE id=$1`, [joined.call.id])).rows[0];
@@ -1591,7 +1592,7 @@ it.each(['quiet','pending','outside'])('call-wide-end-3: %s work uses one 60-sec
     state.room.remoteParticipants.set(human, { identity: human, trackPublications: new Map() });
     const retainedRoom = state.room;
     const phone = new PhoneService(db, 'http://proof');
-    const tick = timer.mock.calls.find(([, delay]) => delay === 5000)![0] as () => Promise<void>;
+    const tick = timer.mock.calls.find(([callback, delay]) => delay === 1000 && String(callback).includes('checkInactivity'))![0] as () => Promise<void>;
     timer.mockRestore();
     let source: string | undefined;
     if (scenario !== 'quiet') {
@@ -1602,7 +1603,7 @@ it.each(['quiet','pending','outside'])('call-wide-end-3: %s work uses one 60-sec
     retainedRoom.localParticipant.publishData.mockClear();
     for (clock = 5000; clock < 60_000; clock += 5000) await tick();
     expect((await db.query(`SELECT ended_at FROM voice_calls WHERE id=$1`, [call.id])).rows[0]?.ended_at).toBeNull();
-    expect(retainedRoom.localParticipant.publishData).not.toHaveBeenCalled();
+    expect(retainedRoom.localParticipant.publishData.mock.calls.map(([bytes]: any) => JSON.parse(new TextDecoder().decode(bytes))).some((event: any) => event.type === 'ending' && event.deadline !== null)).toBe(scenario !== 'pending');
     await tick();
     if (scenario === 'pending') {
       for (clock=65_000;clock<=120_000;clock+=5000) await tick();
@@ -1621,7 +1622,7 @@ it.each(['quiet','pending','outside'])('call-wide-end-3: %s work uses one 60-sec
     expect(runtime.isClosed).toBe(true);
     console.log('call-wide-end-3:',scenario,'-> ended once after a full quiet window; phone card ended');
   } finally {
-    vi.restoreAllMocks(); await owner.close(); await db.close();
+    vi.restoreAllMocks(); await owner.close(); vi.useRealTimers(); await db.close();
   }
 }, 30_000);
 
@@ -1631,7 +1632,7 @@ it('call-wide-end-3: completion between quiet checks restarts the full window', 
   const intervals=vi.spyOn(globalThis,'setInterval');
   const {service}=conversationService(1);
   const runtime=await VoiceRoomRuntime.connect(service as unknown as VoiceService,'call','room');
-  const tick=intervals.mock.calls.find(([,delay])=>delay===5000)![0] as ()=>Promise<void>;
+  const tick=intervals.mock.calls.find(([callback,delay])=>delay===1000 && String(callback).includes('checkInactivity'))![0] as ()=>Promise<void>;
   intervals.mockRestore();
   try {
     clock=60_000;
@@ -1650,11 +1651,32 @@ it('call-wide-end-3: stalled TTS without new playback cannot hold the call open'
   const held=new Promise<void>(resolve=>{release=resolve;});
   speech.synthesize.mockImplementation(async function*(){yield new Uint8Array(960).fill(5);await held;});
   const runtime=await VoiceRoomRuntime.connect(service as unknown as VoiceService,'call','room');
-  const tick=intervals.mock.calls.find(([,delay])=>delay===5000)![0] as ()=>Promise<void>;
+  const tick=intervals.mock.calls.find(([callback,delay])=>delay===1000 && String(callback).includes('checkInactivity'))![0] as ()=>Promise<void>;
   intervals.mockRestore();
   const reply=runtime.utterance('human','Ruby, explain this');
   try {
     await vi.waitFor(()=>expect(state.audio.captureFrame).toHaveBeenCalled());
     clock=60_001;await tick();expect(service.endInactive).toHaveBeenCalledOnce();
   } finally {release();await reply;await runtime.close();now.mockRestore();}
+});
+
+it('warns after 45 seconds and cancels the deadline on human speech or call work', async () => {
+  let clock=0;
+  const now=vi.spyOn(performance,'now').mockImplementation(()=>clock);
+  const intervals=vi.spyOn(globalThis,'setInterval');
+  const {service}=conversationService(2);
+  const runtime=await VoiceRoomRuntime.connect(service as unknown as VoiceService,'call','room');
+  const tick=intervals.mock.calls.find(([callback,delay])=>delay===1000 && String(callback).includes('checkInactivity'))![0] as ()=>Promise<void>;
+  intervals.mockRestore();
+  const events=()=>state.room.localParticipant.publishData.mock.calls.map(([bytes]: any)=>JSON.parse(new TextDecoder().decode(bytes))).filter((event: any)=>event.type==='ending');
+  state.room.localParticipant.publishData.mockClear();
+  try {
+    clock=44_000;await tick();expect(events()).toHaveLength(0);
+    clock=45_000;await tick();expect(events().at(-1).deadline-events().at(-1).serverNow).toBeCloseTo(15_000,-1);
+    await runtime.utterance('human','Sam, how did it go?');expect(events().at(-1).deadline).toBeNull();
+    clock=90_000;await tick();expect(events().at(-1).deadline).not.toBeNull();
+    service.callWorkState.mockResolvedValue({pending:true,finishedAt:0});
+    await tick();expect(events().at(-1).deadline).toBeNull();
+    clock=160_000;await tick();expect(service.endInactive).not.toHaveBeenCalled();
+  } finally {await runtime.close();now.mockRestore();}
 });

@@ -9,7 +9,7 @@ function Proof() {
   const [active, setActive] = useState(false);
   const [value, setValue] = useState('');
   const voice = { call: active ? { id: 'fixture-call' } : null, agents: [], target: null,
-    speaker: null, level: 0, connecting: false, error: null, endNotice: false, dismissEndNotice: () => {}, quotaExhausted: false, firstAudioMs: null, humans: 1, unaddressed: 0,
+    speaker: null, level: 0, connecting: false, error: null, endingWarning: undefined, quotaExhausted: false, firstAudioMs: null, humans: 1, unaddressed: 0,
     join: async () => { joins++; setActive(true); }, end: async () => setActive(false), aim() {} } as VoiceCallState;
   return <View style={{ margin: 16 }}><ConversationComposer voice={voice} value={value} height={26}
     focused={false} disabled={false} onAttach={() => {}} onBlur={() => {}}
@@ -38,7 +38,7 @@ async function run() {
   node('chat-conversation')!.click();
   await pause(100);
   check('waveform tap enters Conversation once', joins === 1 && Boolean(node('voice-bar')));
-  node('voice-leave')!.click();
+  node('voice-mic')!.click();
   await pause(100);
   check('desktop hover title survives ending Conversation', node('chat-conversation')?.title === 'Conversation mode');
   const mic = node('chat-mic')!;
@@ -50,7 +50,7 @@ async function run() {
   document.dispatchEvent(new MouseEvent('mouseup', { ...pointer, buttons: 0 }));
   await pause(100);
   check('long press still enters Conversation without another dictation', joins === 2 && Boolean(node('voice-bar')) && (globalThis as any).__dictationStarts === 1);
-  node('voice-leave')!.click();
+  node('voice-mic')!.click();
   await pause(100);
   await type('Ruby, what merged today?');
   check('typing replaces waveform with Send and keeps mic', Boolean(node('chat-send') && node('chat-mic')) && !node('chat-conversation'));

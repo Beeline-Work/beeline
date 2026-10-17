@@ -1,3 +1,5 @@
+> Superseded and rejected UI: revision 6 removes this notice and Start new call action. Current captures are in `../owner-review-r6/`.
+
 # Revision 5 owner review
 
 Full-size Android captures from the normal Expo Router Room route (`BuzzChatSurface`), its server-indexed transcript, `ConversationComposer`, `VoiceBar` and `VoiceCallCard`. Bone is the app's selected theme. These are unedited screenshots, not HTML or a component harness. The debug menu button and development log overlays were disabled for capture.

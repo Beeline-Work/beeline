@@ -9,21 +9,21 @@ vi.mock('react-native', () => {
     AccessibilityInfo: { isReduceMotionEnabled: async () => false, addEventListener: () => ({ remove() {} }) } };
 });
 vi.mock('./IdentityMark', () => ({ IdentityMark: () => null }));
-vi.mock('./MicGlyph', () => ({ MicGlyph: () => null }));
+vi.mock('./MicGlyph', () => ({ StopGlyph: (props: any) => React.createElement('StopGlyph', props) }));
 vi.mock('./BeelineMarkSpinner', () => ({ BeelineMarkSpinner: () => null }));
 vi.mock('./DictationWaveform', () => ({ DictationWaveform: () => React.createElement('Waveform') }));
 vi.mock('./HullDialog', () => ({ HullModal: () => null }));
 import { VoiceBar } from './VoiceBar';
 
-it('gives a multi-human call a separate labeled Leave call control', async () => {
+it('gives a group call one filled stop glyph with the Leave call accessibility label', async () => {
   const end = vi.fn(); let renderer: any;
   await act(async () => { renderer = create(<VoiceBar voice={{ call: null, agents: [], target: null,
-    speaker: null, level: 0, connecting: false, error: null, endNotice: false, dismissEndNotice: () => {}, quotaExhausted: false,
+    speaker: null, level: 0, connecting: false, error: null, endingWarning: undefined, quotaExhausted: false,
     firstAudioMs: null, humans: 2, unaddressed: 0, join: vi.fn(), end, aim: vi.fn() }} />); });
   try {
-    expect(renderer.root.findAllByProps({ testID: 'voice-mic' })).toHaveLength(0);
-    const leave = renderer.root.findByProps({ testID: 'voice-leave' });
-    expect(leave.props.label).toBe('Leave call');
+    expect(renderer.root.findAllByType('StopGlyph')[0].props.filled).toBe(true);
+    const leave = renderer.root.findByProps({ testID: 'voice-mic' });
+    expect(leave.props.accessibilityLabel).toBe('Leave call');
     await act(async () => leave.props.onPress()); expect(end).toHaveBeenCalledOnce();
   } finally { await act(async () => renderer.unmount()); }
 });
@@ -31,12 +31,12 @@ it('gives a multi-human call a separate labeled Leave call control', async () =>
 it('shows the exhausted daily quota inside the voice bar with an operable end mic', async () => {
   const end = vi.fn(); let renderer: any;
   await act(async () => { renderer = create(<VoiceBar voice={{ call: null, agents: [], target: null,
-    speaker: null, level: 0, connecting: false, error: VOICE_QUOTA_MESSAGE, endNotice: false, dismissEndNotice: () => {}, quotaExhausted: true,
+    speaker: null, level: 0, connecting: false, error: VOICE_QUOTA_MESSAGE, endingWarning: undefined, quotaExhausted: true,
     firstAudioMs: null, humans: 1, unaddressed: 0, join: vi.fn(), end, aim: vi.fn() }} />); });
   expect(renderer.root.findByProps({ testID: 'voice-quota-error' }).props.children).toBe(VOICE_QUOTA_MESSAGE);
   expect(renderer.root.findAllByType('Waveform')).toHaveLength(0);
-  await act(async () => renderer.root.findByProps({ testID: 'voice-leave' }).props.onPress());
-  expect(renderer.root.findByProps({ testID: 'voice-leave' }).props.label).toBe('End call');
+  await act(async () => renderer.root.findByProps({ testID: 'voice-mic' }).props.onPress());
+  expect(renderer.root.findByProps({ testID: 'voice-mic' }).props.accessibilityLabel).toBe('End call');
   expect(end).toHaveBeenCalledOnce();
   await act(async () => renderer.unmount());
 });
@@ -46,26 +46,40 @@ it('keeps a readable join error and agent avatars visible with an operable end c
   const error = 'Conversation mode could not connect.';
   await act(async () => { renderer = create(<VoiceBar voice={{ call: null,
     agents: [{ pubkey: 'ruby', kind: 'agent', name: 'Ruby' }, { pubkey: 'goose', kind: 'agent', name: 'Goosey' }],
-    target: null, speaker: null, level: 0, connecting: false, error, endNotice: false, dismissEndNotice: () => {}, quotaExhausted: false,
+    target: null, speaker: null, level: 0, connecting: false, error, endingWarning: undefined, quotaExhausted: false,
     firstAudioMs: null, humans: 1, unaddressed: 0, join: vi.fn(), end, aim }} />); });
   try {
     expect(renderer.root.findByProps({ testID: 'voice-connection-error' }).props.children).toBe(error);
     await act(async () => renderer.root.findByProps({ accessibilityLabel: 'Speak to Goosey' }).props.onPress());
     expect(aim).toHaveBeenCalledWith('goose');
-    await act(async () => renderer.root.findByProps({ testID: 'voice-leave' }).props.onPress());
+    await act(async () => renderer.root.findByProps({ testID: 'voice-mic' }).props.onPress());
     expect(end).toHaveBeenCalledOnce();
   } finally { await act(async () => renderer.unmount()); }
 });
 
-it('ended call offers a fresh-call action and no Join control', async () => {
+it('ended card shows the cause, has no actions, and omits the cause for explicit leave', async () => {
   const { VoiceCallCard } = await import('./VoiceCallCard');
-  const start = vi.fn(), join = vi.fn(); let renderer: any;
-  await act(async () => { renderer = create(<VoiceCallCard call={{id:'old',roomId:'room',startedAt:10,endedAt:75,participants:[]}}
-    joined={false} onJoin={join} onStartNew={start} />); });
+  let renderer: any;
+  const props = {call:{id:'old',roomId:'room',startedAt:10,endedAt:75,participants:[]},joined:false,onJoin:vi.fn()};
+  await act(async () => { renderer = create(<VoiceCallCard {...props} call={{...props.call,endReason:'silence'}} />); });
   try {
-    expect(renderer.root.findAllByProps({testID:'voice-call-join'})).toHaveLength(0);
-    expect(renderer.root.findAllByType('Text').some((node: any) => React.Children.toArray(node.props.children).join('') === 'Call ended · 1:05')).toBe(true);
-    await act(async () => renderer.root.findByProps({testID:'voice-call-start-new'}).props.onPress());
-    expect(start).toHaveBeenCalledOnce(); expect(join).not.toHaveBeenCalled();
+    const text = () => React.Children.toArray(renderer.root.findByProps({testID:'voice-call-ended'}).props.children).join('');
+    expect(text()).toBe('Voice call ended · 1:05 · No one spoke for 60s');
+    expect(renderer.root.findAllByType('Pressable')).toHaveLength(0);
+    await act(async () => renderer.update(<VoiceCallCard {...props} />));
+    expect(text()).toBe('Voice call ended · 1:05');
   } finally { await act(async () => renderer.unmount()); }
+});
+
+it('puts the server countdown in the existing tip slot in solo mode', async () => {
+  let renderer: any;
+  await act(async () => { renderer=create(<VoiceBar voice={{call:null,agents:[],target:null,speaker:null,
+    level:0,connecting:false,error:null,quotaExhausted:false,firstAudioMs:null,humans:1,unaddressed:0,
+    endingWarning:'Ending in 10s',join:vi.fn(),end:vi.fn(),aim:vi.fn()}} />); });
+  try {
+    const tip=renderer.root.findByProps({testID:'conversation-tip'});
+    expect(tip.props.children).toBe('Ending in 10s');
+    expect(tip.props.accessibilityLiveRegion).toBe('polite');
+    expect(renderer.root.findAllByProps({testID:'conversation-mode-label'})).toHaveLength(0);
+  } finally {await act(async()=>renderer.unmount());}
 });

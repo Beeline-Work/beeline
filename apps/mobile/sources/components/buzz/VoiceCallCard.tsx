@@ -1,10 +1,9 @@
 import * as React from 'react';
 import { Pressable, Text, View } from 'react-native';
-import { Button } from './Button';
 import { StyleSheet } from 'react-native-unistyles';
 import { type VoiceCall, type RoomViewIdentity, voiceDuration } from '@beeline/api-contract/phone';
 
-export function VoiceCallCard({ call, joined, onJoin, onStartNew, connecting = false, error, agents = [] }: { call: VoiceCall; joined: boolean; onJoin(): void; onStartNew?: () => void;
+export function VoiceCallCard({ call, joined, onJoin, connecting = false, error, agents = [] }: { call: VoiceCall; joined: boolean; onJoin(): void;
   agents?: readonly RoomViewIdentity[]; connecting?: boolean; error?: string | null }) {
   const [now, setNow] = React.useState(() => Date.now() / 1000);
   React.useEffect(() => {
@@ -12,11 +11,7 @@ export function VoiceCallCard({ call, joined, onJoin, onStartNew, connecting = f
     const timer = setInterval(() => setNow(Date.now() / 1000), 1000); return () => clearInterval(timer);
   }, [call.endedAt]);
   const duration = voiceDuration((call.endedAt ?? now) - call.startedAt);
-  if (call.endedAt) return <View style={styles.card} testID="voice-call-ended">
-    <Text style={[styles.ended, styles.copy]}>Call ended · {duration}</Text>
-    {onStartNew && <Button label="Start new call" variant="secondary" onPress={onStartNew}
-      disabled={joined || connecting} testID="voice-call-start-new" />}
-  </View>;
+  if (call.endedAt) return <Text style={styles.ended} testID="voice-call-ended">Voice call ended · {duration}{call.endReason === 'silence' ? ' · No one spoke for 60s' : ''}</Text>;
   return <View style={styles.card} testID="voice-call-card">
     <View style={styles.copy}><Text style={styles.title}>Conversation mode · {duration}</Text>
       <Text style={styles.people} numberOfLines={1}>{[...call.participants, ...agents].map(p => p.name).join(', ')}</Text>

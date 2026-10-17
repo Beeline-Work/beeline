@@ -11,7 +11,7 @@ function Proof() {
   const voice = {
     call: active ? { id: 'fixture-call' } : null, agents: [], target: null,
     speaker: null, level: 0, connecting: false, error: null,
-    endNotice: false, dismissEndNotice: () => {}, quotaExhausted: false, firstAudioMs: null, humans: 1, unaddressed: 0,
+    endingWarning: undefined, quotaExhausted: false, firstAudioMs: null, humans: 1, unaddressed: 0,
     join: async () => { joins++; setActive(true); },
     end: async () => { leaves++; setActive(false); }, aim: () => {},
   } as VoiceCallState;
@@ -38,7 +38,7 @@ async function run() {
   await pause(150);
   check('Reproduction desktop-voice-gate-1: holding enters Conversation once', joins === 1 && Boolean(node('voice-bar')));
   check('release does not start dictation', !(globalThis as any).__dictationStarts);
-  node('voice-leave')?.click();
+  node('voice-mic')?.click();
   await pause(150);
   check('existing End control returns to composer', leaves === 1 && Boolean(node('chat-mic')) && !node('voice-bar'));
 }

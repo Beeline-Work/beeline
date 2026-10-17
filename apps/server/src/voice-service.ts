@@ -169,13 +169,7 @@ export class VoiceService {
     const participant = (await db.query<{ room_id: string }>(`SELECT c.room_id FROM voice_calls c
       JOIN voice_participants p ON p.call_id=c.id AND p.identity_id=$2 AND p.left_at IS NULL
       WHERE c.id=$1 AND c.ended_at IS NULL AND ($3::text IS NULL OR p.session_id=$3)`, [callId, humanId, sessionId ?? null])).rows[0];
-    if (!participant) {
-      const ended = (await db.query<{ end_reason: string; room_id: string }>(`SELECT p.end_reason,c.room_id FROM voice_calls c
-        JOIN voice_participants p ON p.call_id=c.id AND p.identity_id=$2 AND p.left_at IS NOT NULL
-        WHERE c.id=$1 AND c.ended_at IS NOT NULL AND ($3::text IS NULL OR p.session_id=$3)`, [callId, humanId, sessionId ?? null])).rows[0];
-      if (ended) await this.access(ended.room_id, humanId, db);
-      return { state: 'ended', ...(ended?.end_reason === 'silence' ? { endReason: 'silence' as const } : {}) };
-    }
+    if (!participant) return { state: 'ended' };
     await this.access(participant.room_id, humanId, db);
     return { state: 'ready' };
   }
@@ -256,7 +250,7 @@ export class VoiceService {
       if (inactivity) {
         const owned = await db.query(`SELECT 1 FROM voice_calls WHERE id=$1 AND runtime_owner=$2 AND runtime_until>now()`, [callId, inactivity.owner]);
         if (!owned.rowCount || await this.hasCallWork(callId, db) || !inactivity.stillInactive()) return null;
-        await db.query(`UPDATE voice_participants SET left_at=now(),parked_at=NULL,end_reason='silence' WHERE call_id=$1 AND left_at IS NULL`, [callId]);
+        await db.query(`UPDATE voice_participants SET left_at=now(),parked_at=NULL WHERE call_id=$1 AND left_at IS NULL`, [callId]);
       } else {
         if (!disconnected) await this.access(call.room_id, humanId, db);
         const left = await db.query(`UPDATE voice_participants SET left_at=now() WHERE call_id=$1 AND identity_id=$2
@@ -265,7 +259,7 @@ export class VoiceService {
         await this.rooms.removeParticipant(`beeline-voice-${callId}`, humanId).catch(() => {});
       }
       if (!(await db.query(`SELECT 1 FROM voice_participants WHERE call_id=$1 AND left_at IS NULL`, [callId])).rowCount) {
-        call.ended_at = (await db.query<{ ended_at: Date }>(`UPDATE voice_calls SET ended_at=now() WHERE id=$1 RETURNING ended_at`, [callId])).rows[0]!.ended_at;
+        call.ended_at = (await db.query<{ ended_at: Date }>(`UPDATE voice_calls SET ended_at=now(),end_reason=$2 WHERE id=$1 RETURNING ended_at`, [callId, inactivity ? 'silence' : null])).rows[0]!.ended_at;
       }
       await this.updateCard(call, db);
       if (inactivity && !inactivity.stillInactive()) throw resumed;

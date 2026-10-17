@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS voice_calls (
   runtime_owner text,
   runtime_until timestamptz
 );
+ALTER TABLE voice_calls ADD COLUMN IF NOT EXISTS end_reason text;
 CREATE UNIQUE INDEX IF NOT EXISTS voice_calls_room_live_idx ON voice_calls(room_id) WHERE ended_at IS NULL;
 CREATE INDEX IF NOT EXISTS voice_calls_message_idx ON voice_calls(message_id);
 CREATE TABLE IF NOT EXISTS voice_participants (
@@ -23,7 +24,6 @@ CREATE TABLE IF NOT EXISTS voice_participants (
   left_at timestamptz,
   PRIMARY KEY(call_id,identity_id)
 );
-ALTER TABLE voice_participants ADD COLUMN IF NOT EXISTS end_reason text;
 ALTER TABLE voice_participants ADD COLUMN IF NOT EXISTS parked_at timestamptz;
 ALTER TABLE voice_participants ADD COLUMN IF NOT EXISTS session_id text NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS voice_participants_identity_idx ON voice_participants(identity_id);

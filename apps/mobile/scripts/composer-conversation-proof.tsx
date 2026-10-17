@@ -46,13 +46,13 @@ async function run() {
     const strip = byID('conversation-target-strip')!.getBoundingClientRect();
     const label = byID('conversation-mode-label')!.getBoundingClientRect();
     check(`${phase}: label right-aligned on avatar row`, Math.abs(label.right - strip.right + 8) < 2 && label.top >= strip.top && label.bottom <= strip.bottom);
-    check(`${phase}: attachment, waveform and end control visible`, Boolean(byID('chat-attach-button')) && Boolean(byID('voice-waveform')) && Boolean(byID('voice-leave')));
+    check(`${phase}: attachment, waveform and end control visible`, Boolean(byID('chat-attach-button')) && Boolean(byID('voice-waveform')) && Boolean(byID('voice-mic')));
   }
   byID('chat-attach-button')!.click(); await pause();
   check('attach opens existing picker during agent speech', Boolean(byID('attachment-picker-document')));
   byID('attachment-picker-document')!.click(); await pause();
   check('picked document pending during call', Boolean(byID('pending-chat-attachment-0')));
-  byID('voice-leave')!.click(); await pause();
+  byID('voice-mic')!.click(); await pause();
   check('call end restores composer and retains attachment', !byID('conversation-mode-label') && Boolean(document.querySelector('textarea')) && Boolean(byID('pending-chat-attachment-0')));
   byID('chat-send')!.click(); await pause();
   check('next message sends attachment and reuses upload', sent?.[0]?.name === 'document.txt' && uploads === 1 && !byID('pending-chat-attachment-0'));

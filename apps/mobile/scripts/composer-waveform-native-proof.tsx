@@ -16,7 +16,7 @@ function Proof() {
   const [active, setActive] = useState(false);
   const [joins, setJoins] = useState(0);
   const voice = { call: active ? { id: 'fixture' } : null, agents: [], target: null, speaker: null, level: 0,
-    connecting: false, error: null, endNotice: false, dismissEndNotice: () => {}, quotaExhausted: false, firstAudioMs: null, humans: 1, unaddressed: 0,
+    connecting: false, error: null, endingWarning: undefined, quotaExhausted: false, firstAudioMs: null, humans: 1, unaddressed: 0,
     join: async () => { setJoins(n => n + 1); setActive(true); }, end: async () => setActive(false), aim() {} } as VoiceCallState;
   if (!loaded) return null;
   const colors = beelineThemes[theme];

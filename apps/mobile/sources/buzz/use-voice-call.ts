@@ -28,7 +28,14 @@ async function closeVoiceTransport(transport: { room: Room; closeAudio(): Promis
 const NO_AGENTS: readonly RoomViewIdentity[] = [];
 
 export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: readonly RoomViewIdentity[] = NO_AGENTS) {
-  const [endNoticeRoom, setEndNoticeRoom] = React.useState<string | null>(null);
+  const [endingDeadline, setEndingDeadline] = React.useState<number | null>(null);
+  const [endingSeconds, setEndingSeconds] = React.useState<number | null>(null);
+  React.useEffect(() => {
+    if (endingDeadline === null) { setEndingSeconds(null); return; }
+    const update = () => setEndingSeconds(Math.max(0, Math.ceil((endingDeadline - Date.now()) / 1000)));
+    update(); const timer = setInterval(update, 1000);
+    return () => clearInterval(timer);
+  }, [endingDeadline]);
   const [call, setCall] = React.useState<VoiceCall | null>(null);
   const [joinedAgents, setJoinedAgents] = React.useState<{ roomId: string; agents: readonly RoomViewIdentity[] } | null>(null);
   const agents = joinedAgents?.roomId === roomId ? joinedAgents.agents : roomAgents;
@@ -61,7 +68,7 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
     liveCleanup.current?.(); liveCleanup.current = null;
     const current = session.current; session.current = null;
     const cancelJoin = joiningCleanup.current; joiningCleanup.current = null;
-    setCall(null); setSpeaker(null); setLevel(0); setConnecting(false); setError(null);
+    setEndingDeadline(null); setCall(null); setSpeaker(null); setLevel(0); setConnecting(false); setError(null);
     setJoinedAgents(null); setTarget(null); targetRef.current = null; setHumans(1);
     speakerRef.current = null;
     if (cancelJoin) await cancelJoin();
@@ -76,7 +83,7 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
     if (session.current || pending.current) return;
     if (!enabled) { setError('You cannot join Conversation mode in this Room.'); return; }
     pending.current = true; const version = ++revision.current;
-    setEndNoticeRoom(null); setConnecting(true); setError(null); setQuotaExhausted(false); quotaRef.current = false;
+    setConnecting(true); setError(null); setQuotaExhausted(false); quotaRef.current = false;
     let transport: Awaited<ReturnType<typeof createVoiceRoom>> | undefined;
     let joined: VoiceJoin | undefined;
     let closing: Promise<void> | undefined;
@@ -117,7 +124,12 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
         if (version !== revision.current || topic !== VOICE_DATA_TOPIC || participant?.identity !== `beeline-voice-${joined!.call.id}`) return;
         try {
           const data = JSON.parse(new TextDecoder().decode(bytes)) as VoiceSignal;
-          if (data.type === 'stop') { if (data.reason === 'silence') setEndNoticeRoom(roomId); void end(); return; }
+          if (data.type === 'stop') { void end(); return; }
+          if (data.type === 'ending') {
+            if (data.deadline === null) setEndingDeadline(null);
+            else if (Number.isFinite(data.deadline) && Number.isFinite(data.serverNow))
+              setEndingDeadline(Date.now() + Math.max(0, data.deadline - data.serverNow));
+          }
           if (data.type === 'speaker') {
             speakerRef.current = data.agentId; setSpeaker(data.agentId);
           }
@@ -200,9 +212,8 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
       const live = sharedLiveConnection();
       const reconcile = () => {
         const active = joined!;
-        void request<{ state: string; endReason?: 'silence' }>(active.call.id, 'state', active.sessionId).then(state => {
+        void request<{ state: string }>(active.call.id, 'state', active.sessionId).then(state => {
           if (current() && joined === active && state.state === 'ended') {
-            if (state.endReason === 'silence') setEndNoticeRoom(roomId);
             void end();
           }
         }).catch(() => {});
@@ -232,7 +243,7 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
     void session.current?.room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ type: 'target', agentId, tap: true })),
       { reliable: true, topic: VOICE_DATA_TOPIC });
   }, [agents]);
-  return { endNotice: endNoticeRoom === roomId, dismissEndNotice: () => setEndNoticeRoom(null), call, agents, target, speaker, level, connecting, error, quotaExhausted, firstAudioMs, humans, unaddressed, join, end, aim };
+  return { endingWarning: endingSeconds === null ? undefined : `Ending in ${endingSeconds}s`, call, agents, target, speaker, level, connecting, error, quotaExhausted, firstAudioMs, humans, unaddressed, join, end, aim };
 }
 
 export type VoiceCallState = ReturnType<typeof useVoiceCall>;

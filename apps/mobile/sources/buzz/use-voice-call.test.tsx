@@ -356,23 +356,25 @@ it('call-wide-end-3: a terminal disconnect cannot restart an ended call', async 
   } finally { await act(async () => renderer.unmount()); }
 });
 
-it('shows a dismissible private notice only for a trusted silence termination', async () => {
+it('renders only a trusted server deadline, counts down without ending locally, and clears on cancellation', async () => {
+  vi.useFakeTimers();
   fixture.room = Object.assign(new EventEmitter(), { connect: async () => {}, disconnect: vi.fn(async () => {}),
     remoteParticipants: new Map(), localParticipant: { publishData: vi.fn(async () => {}), setMicrophoneEnabled: vi.fn(async () => {}) } });
-  fixture.fetch.mockImplementation(async () => new Response(JSON.stringify({ sessionId: 'notice-session',
+  fixture.fetch.mockImplementation(async () => new Response(JSON.stringify({ sessionId: 'countdown-session',
     call: { id: fixture.callId, roomId: fixture.callId, startedAt: 1, participants: [] }, url: 'ws://proof', token: 'test', agents: [] })));
   let voice!: ReturnType<typeof useVoiceCall>; let renderer: any;
   function Probe() { voice = useVoiceCall(fixture.callId, true); return null; }
   await act(async () => { renderer = create(<Probe />); });
-  const stop = new TextEncoder().encode(JSON.stringify({ type: 'stop', reason: 'silence' }));
+  const signal = (deadline: number | null, trusted = true) => fixture.room.emit('data',
+    new TextEncoder().encode(JSON.stringify({ type: 'ending', deadline, serverNow: 1000 })),
+    { identity: trusted ? `beeline-voice-${fixture.callId}` : 'peer' }, undefined, VOICE_DATA_TOPIC);
   try {
     await act(async () => voice.join());
-    await act(async () => fixture.room.emit('data', stop, { identity: 'peer' }, undefined, VOICE_DATA_TOPIC));
-    expect(voice.endNotice).toBe(false);
-    await act(async () => fixture.room.emit('data', stop, { identity: `beeline-voice-${fixture.callId}` }, undefined, VOICE_DATA_TOPIC));
-    expect(voice.call).toBeNull(); expect(voice.endNotice).toBe(true);
-    await act(async () => voice.dismissEndNotice()); expect(voice.endNotice).toBe(false);
-    await act(async () => voice.join()); await act(async () => voice.end());
-    expect(voice.endNotice).toBe(false);
-  } finally { await act(async () => renderer.unmount()); }
+    await act(async () => signal(16_000, false)); expect(voice.endingWarning).toBeUndefined();
+    await act(async () => signal(16_000)); expect(voice.endingWarning).toBe('Ending in 15s');
+    await act(async () => vi.advanceTimersByTimeAsync(5000)); expect(voice.endingWarning).toBe('Ending in 10s');
+    await act(async () => vi.advanceTimersByTimeAsync(10_000));
+    expect(voice.call).not.toBeNull();
+    await act(async () => signal(null)); expect(voice.endingWarning).toBeUndefined();
+  } finally { await act(async () => renderer.unmount()); vi.useRealTimers(); }
 });

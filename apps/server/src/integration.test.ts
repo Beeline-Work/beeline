@@ -11315,11 +11315,8 @@ describe('monolith integration', () => {
        AND text LIKE '%had a legacy grant revoked%' ORDER BY text`,
       [SYSTEM_IDENTITY_ID],
     );
-    expect(ownerNotices.rows.map((row) => row.text)).toEqual([
-      expect.stringContaining('retired-budget'),
-      expect.stringContaining('mismatched-root'),
-      expect.stringContaining('missing-provenance'),
-    ]);
+    // The ledger records each revocation; the owner is not notified.
+    expect(ownerNotices.rows).toEqual([]);
     expect(
       (await operation('decideAgentGrant', { grantId: grants[1]!.grantId, decision: 'always' }))
         .status,

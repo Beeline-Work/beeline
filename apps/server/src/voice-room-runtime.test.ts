@@ -84,7 +84,7 @@ it('Reproduction MD-TTS-1: conversational streamed replies and delayed reports s
   const spoken: string[] = [];
   const answer = '**Hello, friend.**\n\n[Visit](https://example.com/a_(b)/details).\n\n```ts\nignore me\n```\n\nHi @jellybean.';
   let reports: any[] = [];
-  const service = { budget: { read: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), record: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), limitMs: 3600000 },
+  const service = { budget: { read: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), checkpoint: vi.fn(async (_call: string, _owner: string, _human: string, _meter: string, through: number) => ({ budget: { remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' }, floor: through, until: through + 1000, ttl: 20000 })), limitMs: 3600000 },
     owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret',
     brain: { answer: async (_agent: unknown, _history: unknown, delta: (text: string) => void) => {
       for (const character of answer) delta(character);
@@ -109,7 +109,7 @@ it('Reproduction MD-TTS-1: conversational streamed replies and delayed reports s
 it('cancels microphone input and sends a targeted quota signal when Flux rejects the handshake', async () => {
   const cancel = vi.fn();
   state.streams = [new ReadableStream({ cancel })];
-  const service = { budget: { read: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), record: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), limitMs: 3600000 },
+  const service = { budget: { read: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), checkpoint: vi.fn(async (_call: string, _owner: string, _human: string, _meter: string, through: number) => ({ budget: { remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' }, floor: through, until: through + 1000, ttl: 20000 })), limitMs: 3600000 },
     owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret',
     stt: vi.fn(async () => { throw new VoiceQuotaError(); }) }, access: vi.fn(async () => {}),
     humanCount: vi.fn(async () => 1), agents: vi.fn(async () => []), db: { query: vi.fn(async () => ({ rowCount: 1, rows: [] })) },
@@ -133,7 +133,7 @@ it('buffers first microphone frames during authorization and ignores stale STT f
   const callbacks: Array<() => void> = [];
   const inputs: Array<{ send: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> }> = [];
   const service = {
-    budget: { read: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), record: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), limitMs: 3600000 },
+    budget: { read: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), checkpoint: vi.fn(async (_call: string, _owner: string, _human: string, _meter: string, through: number) => ({ budget: { remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' }, floor: through, until: through + 1000, ttl: 20000 })), limitMs: 3600000 },
     owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret',
       stt: vi.fn(async (_event, failure) => {
         callbacks.push(failure); const input = { send: vi.fn(), close: vi.fn() }; inputs.push(input); return input;
@@ -167,7 +167,7 @@ const roster = [
 function conversationService(humans = 2) {
   const speech = { synthesize: vi.fn(async function* () { yield new Uint8Array([200, 1, 200, 1]); }) };
   const service = {
-    budget: { read: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), record: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), limitMs: 3600000 },
+    budget: { read: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), checkpoint: vi.fn(async (_call: string, _owner: string, _human: string, _meter: string, through: number) => ({ budget: { remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' }, floor: through, until: through + 1000, ttl: 20000 })), limitMs: 3600000 },
     owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret', stt: vi.fn(),
       brain: { answer: vi.fn(async (_agent, _history, onText) => {
         onText('First sentence. Second sentence! Third sentence.');
@@ -479,7 +479,7 @@ function phantomHarness(answer = 'Hey there is the answer.') {
     } finally { removeListener(); note(`TTS stop: ${text}`); }
   }) };
   const service = {
-    budget: { read: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), record: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), limitMs: 3600000 },
+    budget: { read: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), checkpoint: vi.fn(async (_call: string, _owner: string, _human: string, _meter: string, through: number) => ({ budget: { remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' }, floor: through, until: through + 1000, ttl: 20000 })), limitMs: 3600000 },
     owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret',
       stt: vi.fn(async (onEvent: typeof receive) => { receive = onEvent; return { send() {}, close() {} }; }),
       brain: { answer: vi.fn(async (_agent: unknown, history: readonly { content: string }[], onText: (text: string) => void, _signal: AbortSignal) => {
@@ -653,7 +653,7 @@ it('Reproduction voice-name-1: switches transcript, reply and voice together and
   ];
   const recordHuman = vi.fn(async () => 'source');
   const answer = vi.fn(async () => ({ text: '' }));
-  const service = { budget: { read: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), record: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), limitMs: 3600000 },
+  const service = { budget: { read: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), checkpoint: vi.fn(async (_call: string, _owner: string, _human: string, _meter: string, through: number) => ({ budget: { remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' }, floor: through, until: through + 1000, ttl: 20000 })), limitMs: 3600000 },
     owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret', brain: { answer } },
     access: vi.fn(async () => {}),
     lastActiveAgent: vi.fn(async () => undefined),
@@ -1546,10 +1546,12 @@ it('Reproduction call-end-1: ends a silent abandoned call through the lease time
 it('keeps first-audio delivery independent of an in-flight accounting checkpoint', async () => {
   const { service } = conversationService(2);
   let release!: () => void;
-  service.budget.record.mockImplementation(() => new Promise(resolve => { release = () => resolve({
-    remainingMs: 3599000, resetAt: Date.now() + 86400000, timeZone: 'UTC',
-  }); }));
-  service.config.stt.mockResolvedValue({ send: vi.fn(), close: vi.fn() });
+  const checkpoint = service.budget.checkpoint.getMockImplementation()!;
+  service.budget.checkpoint.mockImplementation(checkpoint).mockImplementationOnce(checkpoint).mockImplementationOnce((...args) => new Promise(resolve => {
+    release = async () => resolve(await checkpoint(...args));
+  }));
+  const input = vi.fn();
+  service.config.stt.mockResolvedValue({ send: input, close: vi.fn() });
   const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
   let frames!: ReadableStreamDefaultController<any>;
   state.streams = [new ReadableStream({ start(controller) { frames = controller; } })];
@@ -1563,10 +1565,68 @@ it('keeps first-audio delivery independent of an in-flight accounting checkpoint
     await vi.waitFor(() => expect(service.config.stt).toHaveBeenCalled());
     frames.enqueue({ data: new Int16Array(320) });
     await vi.waitFor(() => expect(release).toBeDefined());
+    const sent = input.mock.calls.length;
+    frames.enqueue({ data: new Int16Array(320) });
+    await vi.waitFor(() => expect(input.mock.calls.length).toBeGreaterThan(sent));
     await runtime.utterance('human', 'Ruby, timing during blocked checkpoint');
     const after = timings().at(-1)!;
     expect(state.audio.captureFrame).toHaveBeenCalled();
     expect(after).toBeLessThan(100);
     console.log(`VOICE-BUDGET-LATENCY before=${before.toFixed(3)}ms after=${after.toFixed(3)}ms; checkpoint still unresolved at first audio; controlled providers and RTC.`);
   } finally { release?.(); await runtime.close(); }
+});
+
+it('Reproduction VOICE-BOUND-2: two call audio pumps forward at most one shared second during checkpoint failure', async () => {
+  const db = new PgliteDatabase();
+  const { VoiceBudgetStore } = await import('./voice-budget.js');
+  await db.query(`CREATE TABLE voice_calls(id text PRIMARY KEY,runtime_owner text,runtime_until timestamptz);
+    CREATE TABLE voice_participants(call_id text,identity_id text);
+    CREATE TABLE voice_daily_usage(identity_id text,day_start bigint,audio int8multirange DEFAULT '{}',PRIMARY KEY(identity_id,day_start));
+    CREATE TABLE voice_audio_windows(identity_id text PRIMARY KEY,through_ms bigint);
+    CREATE TABLE voice_audio_checkpoints(meter_id uuid PRIMARY KEY,identity_id text,through_ms bigint,expires_at timestamptz);
+    INSERT INTO voice_calls VALUES('a','owner','2099-01-01'),('b','owner','2099-01-01');
+    INSERT INTO voice_participants VALUES('a','human'),('b','human');`);
+  let now = Date.now();
+  const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+  const stores = [new VoiceBudgetStore(db), new VoiceBudgetStore(db)];
+  const runtimes: VoiceRoomRuntime[] = [];
+  const frames: ReadableStreamDefaultController<any>[] = [];
+  const sends = [vi.fn(), vi.fn()];
+  const failures: ReturnType<typeof vi.spyOn>[] = [];
+  // Keep intervals frozen while exercising actual SDK-reader -> STT.send pumps.
+  const until = async (condition: () => boolean) => {
+    for (let i = 0; !condition(); i++) {
+      if (i === 2000) throw new Error('Audio pump did not become ready');
+      await new Promise(resolve => setTimeout(resolve, 1));
+    }
+  };
+  try {
+    for (let i = 0; i < 2; i++) {
+      const { service } = conversationService(2);
+      service.config.stt.mockResolvedValue({ send: sends[i]!, close() {} });
+      const runtime = await VoiceRoomRuntime.connect({ ...service, budget: stores[i] } as unknown as VoiceService, i ? 'b' : 'a', 'room');
+      runtimes.push(runtime);
+      state.streams = [new ReadableStream({ start(controller) { frames.push(controller); } })];
+      state.room.emit('track', { kind: 1 }, {}, { identity: 'human' });
+      await until(() => !!(runtime as any).inputs.get('human')?.stt);
+      failures.push(vi.spyOn(stores[i]!, 'checkpoint').mockRejectedValue(new Error('database outage')));
+    }
+    for (let i = 0; i < 2; i++) {
+      now += 500; frames[i]!.enqueue({ data: new Int16Array(8000) });
+      await until(() => sends[i]!.mock.calls.length === 1);
+      await expect((runtimes[i] as any).meters.get('human').flush()).rejects.toThrow('outage');
+    }
+    now += 1000;
+    for (const stream of frames) stream.enqueue({ data: new Int16Array(16000) });
+    await new Promise(resolve => setTimeout(resolve, 20));
+    const forwardedMs = sends.flatMap(send => send.mock.calls).reduce((sum, [pcm]) => sum + pcm.length / 16, 0);
+    expect(forwardedMs).toBe(1000);
+    expect((await stores[0]!.read('human')).remainingMs).toBe(3600000);
+    console.log(`VOICE-BOUND-2 service path: two RTC readers -> two independent runtimes/stores -> STT.send=${forwardedMs}ms total, durable usage=0 during outage; later PCM dropped without waiting.`);
+  } finally {
+    failures.forEach(spy => spy.mockRestore());
+    for (const runtime of runtimes) await runtime.close();
+    vi.useRealTimers(); clock.mockRestore(); await db.close();
+  }
 });

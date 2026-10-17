@@ -3,6 +3,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import ConnectAppScreen from '../sources/app/(app)/beeline/settings/workbench/connect-app';
 import { setWorkbenchSource } from '../sources/buzz/workbench-source';
+import { companyWorkbench, companyOption } from '../sources/test/company-workbench';
 import { MockWorkbenchSource } from '../sources/buzz/workbench-source.mock';
 
 /**
@@ -22,6 +23,7 @@ const report = (text: string) => {
 
 async function read() {
   const source = new MockWorkbenchSource();
+  source.readWorkbench = async () => companyWorkbench([], ['Airtable', 'Asana', 'Cloudflare', 'GitHub', 'Google', 'Jira', 'Linear', 'Slack', 'Stripe', 'Vercel'].map(name => companyOption(name.toLowerCase(), name)));
   setWorkbenchSource(source);
 
   const root = document.getElementById('root')!;

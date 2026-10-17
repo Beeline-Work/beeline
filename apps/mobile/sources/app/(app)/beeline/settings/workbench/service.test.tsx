@@ -14,11 +14,15 @@ vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () =>
 import { mobileSurfaceCache } from '@/buzz/surface-storage';
 import { MockWorkbenchSource } from '@/buzz/workbench-source.mock';
 import { setWorkbenchSource } from '@/buzz/workbench-source';
+import { companyWorkbench, companyRow, squireRow } from '@/test/company-workbench';
 import ConnectorServiceScreen from './service';
 
+const navigation = vi.hoisted(() => ({ back: vi.fn(), push: vi.fn() }));
+vi.mock('@/buzz/use-active-community', () => ({ useActiveCommunityId: () => 'ws' }));
+vi.mock('@/components/buzz/SurfaceGlyphLoader', () => ({ SurfaceGlyphLoader: () => null }));
 const params = vi.hoisted(() => ({ service: 'vercel', helperId: '' }));
 const browser = vi.hoisted(() => ({ open: vi.fn().mockResolvedValue({ type: 'dismiss' }) }));
-vi.mock('expo-router', () => ({ router: { back: vi.fn(), push: vi.fn() },
+vi.mock('expo-router', () => ({ router: navigation,
   useLocalSearchParams: () => ({ workspaceId: 'ws', viewerId: 'human-dani', service: params.service, helperId: params.helperId }),
   useFocusEffect: (effect: () => void) => React.useEffect(effect, [effect]) }));
 vi.mock('expo-web-browser', () => ({ openBrowserAsync: browser.open }));
@@ -40,7 +44,7 @@ beforeEach(() => {
   mobileSurfaceCache.clear();
   (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   params.service = 'vercel'; params.helperId = ''; browser.open.mockClear();
-  setWorkbenchSource(new MockWorkbenchSource());
+  const source = new MockWorkbenchSource(); source.readWorkbench = async () => companyWorkbench([companyRow('vercel', 'Vercel'), squireRow()]); setWorkbenchSource(source);
 });
 
 async function render(): Promise<ReactTestRenderer> {
@@ -49,53 +53,24 @@ async function render(): Promise<ReactTestRenderer> {
   return renderer;
 }
 
-describe('key service', () => {
-  it('lists key metadata without controls or values and opens the Squire vault from one Manage row', async () => {
-    const renderer = await render();
-    const rows = renderer.root.findAllByType('SettingsRow' as never);
-    const key = rows.find((row: { props: { title: string } }) => row.props.title === 'Vercel');
-    expect(key).toBeTruthy();
-    expect(key.props.onPress).toBeUndefined();
-    expect(key.props.chevron).toBeUndefined();
-    const manage = rows.find((row: { props: { title: string } }) => row.props.title === 'Manage in Trusty Squire');
-    expect(manage).toBeTruthy();
-    expect(rows.filter((row: { props: { onPress?: () => void } }) => row.props.onPress)).toHaveLength(1);
-    expect(JSON.stringify(renderer.toJSON())).not.toMatch(/Add key|Edit|Delete|secret value/);
-    await act(async () => { manage.props.onPress(); await Promise.resolve(); });
-    expect(browser.open).toHaveBeenCalledWith('https://trustysquire.ai/vault');
+describe('company detail', () => {
+  it('opens each credential through its existing authorized detail action', async () => {
+    const renderer = await render(); const key = renderer.root.findByProps({ testID: 'company-item-vercel-key' });
+    expect(key.props.title).toBe('Production API');
+    await act(async () => key.props.onPress());
+    expect(navigation.push).toHaveBeenCalledWith({ pathname: '/beeline/settings/workbench/connection', params: { workspaceId: 'ws', viewerId: 'human-dani', connectionId: 'vercel-key' } });
   });
-
-  it('shows only Squire purpose and status on the Squire page', async () => {
-    params.service = 'trusty-squire';
-    const renderer = await render();
-    const tree = JSON.stringify(renderer.toJSON());
-    expect(tree).toContain('Trusty Squire signs up and signs in');
-    expect(renderer.root.findAllByType('SettingsRow' as never).map((row: { props: { title: string } }) => row.props.title))
-      .toEqual(['Status']);
-    expect(tree).not.toContain('KEYS IT HOLDS');
-    expect(tree).not.toContain('Open vault');
+  it('shows only eligible computers in the sign-in service, with no key controls', async () => {
+    params.service = 'trusty-squire'; const renderer = await render();
+    expect(renderer.root.findAllByProps({ testID: 'company-item-vercel-key' })).toHaveLength(0);
+    expect(renderer.root.findAllByType('SettingsRow').map((r: any) => r.props.title)).toEqual(['Trusty Squire', 'Laptop']);
   });
-});
-
-it('offers Disconnect on a connected machine and sends its address, then refreshes', async () => {
-  params.service = 'trusty-squire'; params.helperId = 'machine-one';
-  const source = new MockWorkbenchSource();
-  const originalRead = source.readWorkbench.bind(source);
-  let connected = true;
-  vi.spyOn(source, 'readWorkbench').mockImplementation(async (scope) => ({
-    ...await originalRead(scope), helpers: [{ id: 'machine-one', name: 'Laptop', online: true,
-      squire: { status: connected ? 'connected' : 'not-added', reportedAt: 1 } }],
-  }));
-  const disconnect = vi.spyOn(source, 'disconnectConnector').mockImplementation(async () => { connected = false; });
-  setWorkbenchSource(source);
-  const renderer = await render();
-  const status = renderer.root.findByType('SettingsRow' as never);
-  expect(status.props.value).toBe('Connected');
-  await act(async () => status.props.trailingPress.onPress());
-  const rows = renderer.root.findAllByType('HullActionSheetRow' as never);
-  expect(rows.map((row: any) => row.props.label)).toEqual(['Disconnect']);
-  await act(async () => rows[0].props.onPress());
-  expect(disconnect).toHaveBeenCalledWith({ workspaceId: 'ws', connectorId: 'squire:machine-one' });
-  expect(renderer.root.findByType('SettingsRow' as never).props.value).toBe('Not added');
-  await act(async () => renderer.unmount());
+  it('disconnects the selected computer and refreshes the server answer', async () => {
+    params.service = 'trusty-squire'; const source = new MockWorkbenchSource();
+    const read = vi.spyOn(source, 'readWorkbench').mockResolvedValue(companyWorkbench([squireRow()]));
+    const disconnect = vi.spyOn(source, 'disconnectConnector').mockResolvedValue(undefined); setWorkbenchSource(source);
+    const renderer = await render(); await act(async () => renderer.root.findByProps({ testID: 'squire-computer-machine-one' }).props.onPress());
+    await act(async () => renderer.root.findByType('HullActionSheetRow').props.onPress());
+    expect(disconnect).toHaveBeenCalledWith({ workspaceId: 'ws', connectorId: 'squire:machine-one' }); expect(read.mock.calls.length).toBeGreaterThan(1);
+  });
 });

@@ -1,3 +1,5 @@
+import { companyHost } from './company-registry.js';
+import { companyPopularity, companySearchResults, projectWorkbenchCompanies } from './workbench-companies.js';
 import { notifyAgentConfigChange } from './postgres-live.js';
 import { recordAgentConnectedAfterNudge, recordFreeAgentGuideStarted } from './free-agent-warning.js';
 import { SQUIRE_MCP_TARGET } from '@beeline/api-contract/phone';
@@ -4554,17 +4556,11 @@ export class PhoneService {
           viewerId,
         )) as Output<Name>;
       case 'readConnectApp': {
-        const [workbench, suggestions] = await Promise.all([
-          this.readWorkbench(input as Input<'readConnectApp'>, viewerId)
-            .then((value) => ({ value }), (error) => ({ error: String(error) })),
-          this.searchWorkbenchApps({ query: '' }, viewerId)
-            .then((value) => ({ value }), (error) => ({ error: String(error) })),
-        ]);
-        if ('error' in workbench && 'error' in suggestions) throw new Error(workbench.error);
-        return {
-          ...('value' in workbench ? { workbench: workbench.value } : { workbenchError: workbench.error }),
-          ...('value' in suggestions ? { suggestions: suggestions.value } : { suggestionsError: suggestions.error }),
-        } as Output<Name>;
+        const workbench = await this.readWorkbench(input as Input<'readConnectApp'>, viewerId);
+        return { workbench, suggestions: workbench.companies!.suggestions.map(item => ({
+          appKey: item.appKey, name: item.name, domain: item.domain, description: item.purpose,
+          logo: item.logo.kind === 'image' ? item.logo.uri : undefined,
+        })) } as Output<Name>;
       }
       case 'searchWorkbenchApps':
         return (await this.searchWorkbenchApps(
@@ -8639,9 +8635,12 @@ export class PhoneService {
     input: Input<'searchWorkbenchApps'>,
     viewerId: string,
   ): Promise<Output<'searchWorkbenchApps'>> {
-    await this.viewerWorkbenchWorkspace(viewerId);
+    const view = await this.readWorkbench({ workspaceId: '' }, viewerId);
     const query = typeof input.query === 'string' ? input.query.trim() : '';
     if (query.length > 80) throw new Error('App search is too long');
+    if (!query) {
+      return view.companies!.suggestions.map(item => ({ appKey: item.appKey, name: item.name, domain: item.domain, description: item.purpose, company: item, mark: item.logo, logo: item.logo.kind === 'image' ? item.logo.uri : undefined }));
+    }
     const key = appIdentity(query)?.key;
     const officialName = key ? OFFICIAL_REGISTRY_APPS[key] : undefined;
     const official = officialName
@@ -8664,14 +8663,14 @@ export class PhoneService {
         },
       ];
     });
-    if (official && key) return [{
+    if (official && key) return companySearchResults(view, [{
       appKey: key,
       name: key === 'stripe' ? 'Stripe' : 'Linear',
       domain: key === 'stripe' ? 'stripe.com' : 'linear.app',
       registryServerName: official.name,
       registryVersion: official.version,
-    }, ...composioResults];
-    return composioResults;
+    }, ...composioResults], query, this.publicOrigin);
+    return companySearchResults(view, composioResults, query, this.publicOrigin);
   }
 
   /** Resolve navigation labels from current corner state without rewriting historical System cards. */
@@ -8887,6 +8886,7 @@ export class PhoneService {
            ) online
          ) p ON true
          WHERE a.owner_id=$1
+           AND NOT EXISTS (SELECT 1 FROM free_agents f WHERE f.agent_id=a.agent_id)
          GROUP BY COALESCE(a.machine_id,a.agent_id)
          ORDER BY name`,
         [viewerId],
@@ -8927,7 +8927,7 @@ export class PhoneService {
         [viewerId],
       )
     ).rows[0];
-    return {
+    const view: Output<'readWorkbench'> = {
       workspaceId: input.workspaceId,
       ...(linkAccount ? { linkAccount } : {}),
       catalog: connectorCatalog(),
@@ -8949,6 +8949,7 @@ export class PhoneService {
         id: row.id,
         name: row.name,
         online: row.online,
+        squireEligible: true,
         ...(row.squire_report ? { squire: row.squire_report } : {}),
       })),
       apps: apps.map((app) => {
@@ -8999,7 +9000,11 @@ export class PhoneService {
               (field): field is string => typeof field === 'string',
             )
           : [],
-        faviconDomain: faviconDomain(row.hosts ?? []),
+        loginHosts: Array.isArray(row.connection_metadata.loginHosts) ? row.connection_metadata.loginHosts.filter((h): h is string => typeof h === 'string') : [],
+        keyName: typeof row.connection_metadata.keyName === 'string' ? row.connection_metadata.keyName : undefined,
+        credentialKind: typeof row.connection_metadata.credentialKind === 'string' ? row.connection_metadata.credentialKind : undefined,
+        expiresAt: typeof row.connection_metadata.expiresAt === 'number' ? row.connection_metadata.expiresAt : undefined,
+        faviconDomain: companyHost(typeof row.connection_metadata.faviconDomain === 'string' ? row.connection_metadata.faviconDomain : undefined) ?? faviconDomain(row.hosts ?? []),
         state: row.state,
         ...(row.last_synced_at
           ? {
@@ -9015,6 +9020,7 @@ export class PhoneService {
             : seconds(row.created_at),
       })),
     };
+    return { ...view, companies: projectWorkbenchCompanies(view, this.publicOrigin, await companyPopularity(this.database)) };
   }
 
   /**

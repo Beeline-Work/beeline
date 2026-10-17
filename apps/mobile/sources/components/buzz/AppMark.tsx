@@ -1,6 +1,10 @@
 import React, { useState } from 'react';
 import { Image, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
+import Svg, { Circle, Ellipse, Path } from 'react-native-svg';
+import type { CompanyLogo } from '@beeline/api-contract/workbench';
+import { beelineThemes } from '@/buzz/groknight';
+import { DECORATIVE_GLYPH_PROPS } from './decorative-glyph';
 import { Typography } from '@/constants/Typography';
 import { appBoardColors } from '@/buzz/app-board-style';
 import linearMark from '../../../assets/app-logos/linear.png';
@@ -47,6 +51,7 @@ export function serviceFaviconUrl(domain: string): string {
 /** A consistent tile for apps, with the official public favicon when available. */
 export function AppMark({
   name,
+  mark,
   domain,
   logo,
   size = 36,
@@ -54,6 +59,8 @@ export function AppMark({
   testID,
 }: {
   name: string;
+  /** Authoritative server logo; disables every legacy name/domain lookup. */
+  mark?: CompanyLogo;
   domain?: string;
   logo?: string;
   size?: number;
@@ -62,8 +69,8 @@ export function AppMark({
 }) {
   const [failedUris, setFailedUris] = useState<string[]>([]);
   const imageSize = Math.round(size * 0.56);
-  const bundled = BUNDLED_MARKS[name.toLowerCase()];
-  const uri = bundled
+  const bundled = mark ? undefined : BUNDLED_MARKS[name.toLowerCase()];
+  const uri = mark ? (mark.kind === 'image' ? mark.uri : undefined) : bundled
     ? undefined
     : logo && !failedUris.includes(logo)
       ? logo
@@ -80,12 +87,17 @@ export function AppMark({
           width: size,
           height: size,
           borderRadius: Math.round(size * 0.22),
-          ...(white ? { backgroundColor: '#FFFFFF' } : {}),
+          ...(showImage && mark?.kind === 'image' && mark.plate === 'dark' ? styles.darkPlate : {}),
+          ...(white || (showImage && mark?.kind === 'image' && mark.plate === 'light') ? { backgroundColor: '#FFFFFF' } : {}),
         },
       ]}
     >
       {!showImage && !bundled ? (
-        <Text style={styles.fallback}>{name.slice(0, 1).toUpperCase()}</Text>
+        domain || (mark && mark.kind !== 'monogram') ? (
+          <Svg width={imageSize} height={imageSize} viewBox="0 0 24 24" fill="none" stroke={styles.fallback.color} strokeWidth={1.4} {...DECORATIVE_GLYPH_PROPS}>
+            <Circle cx={12} cy={12} r={9} /><Ellipse cx={12} cy={12} rx={4} ry={9} /><Path d="M3 12h18M5 7h14M5 17h14" />
+          </Svg>
+        ) : <Text style={styles.fallback}>{name.slice(0, 1).toUpperCase()}</Text>
       ) : null}
       {bundled ? (
         <Image
@@ -110,6 +122,7 @@ export function AppMark({
 const styles = StyleSheet.create((theme) => {
   const board = appBoardColors(theme.buzz);
   return {
+    darkPlate: { backgroundColor: beelineThemes.obsidian.appTile },
     tile: {
       alignItems: 'center',
       justifyContent: 'center',

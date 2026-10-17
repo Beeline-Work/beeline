@@ -39,7 +39,6 @@ import {
   CONNECTOR_OFFER_SWITCH_ACTION,
 } from '@/buzz/connector-offer-copy';
 import { AppMark } from '@/components/buzz/AppMark';
-import { appDomain } from '@/buzz/app-catalog';
 import { INSTAGRAM_SIGN_IN_REQUIREMENT } from '@/buzz/app-sign-in-copy';
 import { appBoardColors } from '@/buzz/app-board-style';
 import { shouldShowReplyReference } from '@/buzz/reply-reference';
@@ -493,7 +492,7 @@ export function AppSignInCard({ message, agentName, canConnect, onConnect, busy 
         <View style={appSignInStyles.heading}>
           <AppMark
             name={app.name}
-            domain={app.domain ?? appDomain(app.name)}
+            domain={app.domain}
             logo={app.logo}
             size={36}
           />

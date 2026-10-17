@@ -1406,7 +1406,7 @@ describe('connect_app', () => {
     await expect(phone.execute('searchWorkbenchApps', { query: 'fuckface' }, OWNER))
       .resolves.toEqual([]);
     await expect(phone.execute('searchWorkbenchApps', { query: 'resend' }, OWNER))
-      .resolves.toEqual([{ appKey: 'resend', name: 'Resend', domain: 'resend.com' }]);
+      .resolves.toMatchObject([{ appKey: 'resend', name: 'Resend', domain: 'resend.com', company: { providerId: 'resend', appName: 'Resend' } }]);
     await expect(phone.execute('connectWorkbenchApp', {
       app: 'fuckface', helperAgentId: 'machine-one' }, OWNER))
       .rejects.toThrow('Select an app from search results');
@@ -1423,8 +1423,9 @@ describe('connect_app', () => {
       undefined, false, database, undefined, undefined, registry.client, provider);
     const results = await phone.execute('searchWorkbenchApps', { query: 'Stripe' }, OWNER);
     expect(results).toEqual([
-      expect.objectContaining({ appKey: 'stripe', registryServerName: 'com.stripe/mcp' }),
-      expect.objectContaining({ appKey: 'stripe', name: 'Stripe' }),
+      expect.objectContaining({ appKey: 'stripe', registryServerName: 'com.stripe/mcp', company: expect.objectContaining({
+        registryServerName: 'com.stripe/mcp', alternativeRoutes: ['squire-api', 'composio'],
+      }) }),
     ]);
   });
 

@@ -3,6 +3,7 @@ import React from 'react';
 import { createRoot } from 'react-dom/client';
 import WorkbenchScreen from '../sources/app/(app)/beeline/settings/workbench';
 import { setWorkbenchSource } from '../sources/buzz/workbench-source';
+import { companyWorkbench, companyRow } from '../sources/test/company-workbench';
 import { MockWorkbenchSource } from '../sources/buzz/workbench-source.mock';
 
 /**
@@ -22,16 +23,8 @@ const report = (text: string) => {
 
 async function read() {
   const source = new MockWorkbenchSource();
-  source.setApps(
-    ['Link', 'Linear', 'Instagram', 'Slack', 'Calendar', 'Drive', 'Jira', 'TikTok', 'Tailscale', 'Wallet'].map((name) => ({
-      id: `app-${name.toLowerCase()}`,
-      key: name.toLowerCase(),
-      name,
-      transport: 'composio' as const,
-      status: 'connected' as const,
-      useCount: 0,
-    })),
-  );
+  source.readWorkbench = async () => companyWorkbench(
+    ['Airtable', 'Asana', 'Cloudflare', 'GitHub', 'Google', 'Jira', 'Linear', 'Slack', 'Stripe', 'Vercel'].map(name => companyRow(name.toLowerCase(), name, 'apps')));
   setWorkbenchSource(source);
 
   const root = document.getElementById('root')!;
@@ -50,7 +43,7 @@ async function read() {
   scroll.scrollTop = scroll.scrollHeight;
   await pause();
 
-  const apps = Array.from(scroll.querySelectorAll<HTMLElement>('[data-testid^="connectors-app-"]'))
+  const apps = Array.from(scroll.querySelectorAll<HTMLElement>('[data-testid^="connectors-company-"]'))
     .filter(row => !row.dataset.testid?.includes('-glyph-') && !row.dataset.testid?.endsWith('-mark'));
   const last = apps.at(-1);
   if (!last) return report('FAIL the Workbench painted no app rows');

@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useState } from 'react';
+import { isWorkbenchCompanyIndex } from './workbench-company-validation';
+import { useCallback, useEffect } from 'react';
 import type { SurfaceCacheAddress } from '@beeline/buzz-client';
-import type { WorkbenchAppSearchResult } from '@beeline/api-contract/workbench';
 import { getEffectiveRelayUrl, loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { getWorkbenchSource } from './workbench-source';
 import { mobileSurfaceCache, surfaceAddress } from './surface-storage';
-import { useFreshWorkbenchSurface, useSharedSurface, useSurfaceSnapshot } from './use-shared-surface';
+import { useFreshWorkbenchSurface, useSharedSurface } from './use-shared-surface';
 import type { ConnectionDetailView, WorkbenchView } from './workbench';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { clientResetGeneration, subscribeClientReset } from '@/sync/client-reset';
@@ -14,10 +14,9 @@ export const isWorkbenchView = (value: unknown): value is WorkbenchView => {
   if (!value || typeof value !== 'object') return false;
   const view = value as Partial<WorkbenchView>;
   return Array.isArray(view.apps) && Array.isArray(view.helpers) &&
-    Array.isArray(view.connectors) && Array.isArray(view.connections);
+    Array.isArray(view.connectors) && Array.isArray(view.connections) &&
+    (view.companies === undefined || isWorkbenchCompanyIndex(view.companies));
 };
-const isSuggestions = (value: unknown): value is WorkbenchAppSearchResult => Array.isArray(value);
-const connectReads = new Map<string, Promise<string | null>>();
 const heldWorkbench = new Map<string, { address: SurfaceCacheAddress; scope: WorkbenchScope }>();
 /** Workbench views the server answered this session; a stored view outside it may be stale. */
 const answeredWorkbench = new Set<string>();
@@ -64,57 +63,6 @@ export function holdSharedWorkbench(address: SurfaceCacheAddress, scope: Workben
   }).then((stop) => { if (generation !== clientResetGeneration()) stop();
     else { workbenchStarting = false; workbenchStop = stop; } },
     () => { if (generation === clientResetGeneration()) workbenchStarting = false; });
-}
-
-/** The Connect App envelope writes the Workbench and catalog to their own keyed entries. */
-export function useSharedConnectApp(scope: WorkbenchScope) {
-  const [addresses, setAddresses] = useState<{
-    workbench: SurfaceCacheAddress; suggestions: SurfaceCacheAddress;
-  } | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    void Promise.all([loadBuzzIdentity(), getEffectiveRelayUrl()]).then(async ([identity, relay]) => {
-      if (!identity || cancelled) return;
-      const workbench = surfaceAddress(relay, identity.publicKey, '/workspace/:id/workbench', scope);
-      const suggestions = surfaceAddress(relay, identity.publicKey,
-        '/workspace/:id/workbench-suggestions', scope);
-      holdSharedWorkbench(workbench, scope);
-      setAddresses({ workbench, suggestions });
-      const [heldView, heldSuggestions] = await Promise.all([
-        mobileSurfaceCache.read(workbench, isWorkbenchView),
-        mobileSurfaceCache.read(suggestions, isSuggestions),
-      ]);
-      if (cancelled || (heldView && heldSuggestions)) return;
-      try {
-        if (!heldView && !heldSuggestions) {
-          const key = `${relay}\u0000${identity.publicKey}\u0000${scope.workspaceId}`;
-          let reading = connectReads.get(key);
-          if (!reading) {
-            reading = getWorkbenchSource().readConnectApp(scope).then(async (response) => {
-              await Promise.all([
-                response.view ? mobileSurfaceCache.write(workbench, response.view, isWorkbenchView) : undefined,
-                response.suggestions ? mobileSurfaceCache.write(suggestions, response.suggestions, isSuggestions) : undefined,
-              ]);
-              return response.workbenchError ?? response.suggestionsError ?? null;
-            }).finally(() => { connectReads.delete(key); });
-            connectReads.set(key, reading);
-          }
-          const partialError = await reading;
-          if (partialError && !cancelled) setError(partialError);
-        } else if (!heldView) {
-          await readSharedWorkbench(scope);
-        } else {
-          await mobileSurfaceCache.fetch(suggestions, isSuggestions,
-            () => getWorkbenchSource().searchApps({ query: '' }));
-        }
-      } catch (cause) { if (!cancelled) setError(String(cause)); }
-    }).catch((cause) => { if (!cancelled) setError(String(cause)); });
-    return () => { cancelled = true; };
-  }, [scope.workspaceId, scope.viewerId]);
-  const view = useSurfaceSnapshot(addresses?.workbench ?? null, isWorkbenchView);
-  const suggestions = useSurfaceSnapshot(addresses?.suggestions ?? null, isSuggestions);
-  return { view, suggestions, error };
 }
 
 export function useSharedWorkbench(scope: WorkbenchScope | null) {

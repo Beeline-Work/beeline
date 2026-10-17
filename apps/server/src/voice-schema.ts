@@ -32,18 +32,6 @@ CREATE TABLE IF NOT EXISTS voice_daily_usage (
   audio int8multirange NOT NULL DEFAULT '{}',
   PRIMARY KEY(identity_id,day_start)
 );
--- A durable barrier shared by all of a human's call runtimes.
-CREATE TABLE IF NOT EXISTS voice_audio_windows (
-  identity_id text PRIMARY KEY REFERENCES identities(id) ON DELETE CASCADE,
-  through_ms bigint NOT NULL
-);
-CREATE TABLE IF NOT EXISTS voice_audio_checkpoints (
-  meter_id uuid PRIMARY KEY,
-  identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
-  through_ms bigint NOT NULL,
-  expires_at timestamptz NOT NULL
-);
-CREATE INDEX IF NOT EXISTS voice_audio_checkpoints_identity_idx ON voice_audio_checkpoints(identity_id);
 CREATE TABLE IF NOT EXISTS voice_orders (
   source_message_id text PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
   call_id uuid NOT NULL REFERENCES voice_calls(id) ON DELETE CASCADE,

@@ -64,10 +64,20 @@ no-input gaps, idempotent retries, UTC midnight, checkpoint failure and recovery
 final-checkpoint retry, persisted database restoration, and successor leases.
 The restart/handoff and next-day cases use a persisted database snapshot and
 controlled clock rather than a production multi-server deployment or waiting
-until midnight. The accepted abrupt-death loss window remains at most one second.
+until midnight. Revision 5 accepts at most one second of uncounted usage per
+live input stream, including two seconds for two simultaneous devices. Each
+stream checkpoints independently; the durable daily budget remains shared.
+
+`VOICE-BOUND-2` in `voice-room-runtime.test.ts` drives two RTC-reader pumps
+through separate runtime/store instances for the same human. Both continue
+forwarding during failed checkpoints, clip at 1,000 ms each, and drop subsequent
+frames. A snapshot taken before recovery retains no usage: the accepted loss is
+2,000 ms across the two streams. Recovering one store resumes only its stream;
+recovering both commits 2,000 ms to the same daily budget. RTC and STT are local
+doubles; accounting and database snapshots are real.
 
 The controlled runtime probe returned first audio while a checkpoint was still
 unresolved: 2.572 ms before the blocked write and 0.527 ms during it. This proves
 no awaited accounting dependency on the response path, not provider latency.
-Root typecheck, 69 runtime tests, 51 affected mobile tests, the additional tip
+Root typecheck, 70 runtime tests, 51 affected mobile tests, the additional tip
 precedence tests, denied-join test, and dead-code check pass. No release.

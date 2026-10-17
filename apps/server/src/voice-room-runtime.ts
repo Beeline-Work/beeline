@@ -195,15 +195,12 @@ export class VoiceRoomRuntime {
           if (this.meters.get(human) !== meter) return;
           if (!remaining) { this.stopInput(human); return; }
           void this.enforceBudget(human, remaining).catch(() => {});
-        }, message => console.warn('[voice-budget]', message), Date.now,
-        buffered.length ? buffered[0]!.at - buffered[0]!.data.length / 16 : Date.now());
+        }, message => console.warn('[voice-budget]', message));
       this.meters.set(human, meter);
       void this.enforceBudget(human, budget).catch(() => {});
       if (budget.remainingMs <= 0) { this.stopInput(human); return; }
       const hints = agents.flatMap(agent => [agent.name, agent.handle]);
-      const opening = meter.flush();
-      void opening.catch(() => {});
-      const openedStt = await this.service.config.stt(event => {
+      stt = await this.service.config.stt(event => {
       if (this.inputVersions.get(human) !== version ||
           event.turn_index <= (this.turnIndices.get(human) ?? -1)) return;
       const recent = this.recentSpeech.filter(spoken => spoken.until > performance.now());
@@ -248,8 +245,6 @@ export class VoiceRoomRuntime {
         void this.signal({ type: 'error', message: error instanceof VoiceQuotaError ? error.message : 'Speech input disconnected; please rejoin',
           ...(error instanceof VoiceQuotaError ? { code: error.code } : {}) }, human); this.stopInput(human);
       }, hints);
-      try { await opening; } catch (error) { openedStt.close(); throw error; }
-      stt = openedStt;
     } catch (error) {
       if (this.inputVersions.get(human) !== version) { await reader.cancel().catch(() => {}); return; }
       this.stopInput(human); throw error;
@@ -259,7 +254,6 @@ export class VoiceRoomRuntime {
     try {
       for (const frame of buffered) send(frame.data, frame.at);
       buffered.length = 0;
-      meter!.activate();
       await pump;
     } finally { if (this.inputs.get(human)?.stt === stt) this.stopInput(human); }
   }

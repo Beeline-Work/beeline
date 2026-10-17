@@ -254,6 +254,91 @@ function scan(files: Map<string, string>): Entry[] {
     });
     return pieces.join('');
   };
+  // A query reached through returned phrase data can supply wording. Track
+  // SELECT/RETURNING expressions, never FROM, JOIN, WHERE or lock clauses.
+  const queryWording = (node: ts.Node): { literals: string[]; parts: ts.Node[] } => {
+    const expressions: ts.Node[] = [];
+    const render = (part: ts.Node, seen = new Set<ts.Node>()): string => {
+      if (seen.has(part)) return '';
+      seen.add(part);
+      if (ts.isStringLiteralLike(part)) return part.text;
+      if (ts.isTemplateExpression(part))
+        return (
+          part.head.text +
+          part.templateSpans
+            .map((span) => {
+              // Query strings interpolate SQL syntax; tagged queries bind values.
+              const fragment = ts.isCallExpression(node) ? sqlText(span.expression) : '';
+              return (
+                (fragment || `__expression_${expressions.push(span.expression) - 1}__`) +
+                span.literal.text
+              );
+            })
+            .join('')
+        );
+      for (const declaration of declarations(part))
+        if (ts.isVariableDeclaration(declaration) && declaration.initializer)
+          return render(declaration.initializer, seen);
+      return sqlText(part);
+    };
+    const array = (part: ts.Node | undefined, seen = new Set<ts.Node>()): readonly ts.Node[] => {
+      if (!part || seen.has(part)) return [];
+      seen.add(part);
+      if (ts.isArrayLiteralExpression(part)) return part.elements;
+      for (const declaration of declarations(part))
+        if (ts.isVariableDeclaration(declaration) && declaration.initializer)
+          return array(declaration.initializer, seen);
+      return [];
+    };
+    const query = ts.isCallExpression(node)
+      ? node.arguments[0]
+      : ts.isTaggedTemplateExpression(node)
+        ? node.template
+        : undefined;
+    if (!query) return { literals: [], parts: [] };
+    const parameters = ts.isCallExpression(node) ? array(node.arguments[1]) : [];
+    const tokens =
+      render(query).match(
+        /--[^\n]*|\/\*[\s\S]*?\*\/|'(?:''|[^'])*'|"(?:""|[^"])*"|\$\d+|__expression_\d+__|[a-zA-Z_][\w]*|[^\s]/g,
+      ) ?? [];
+    const projections = new Map<number, boolean>();
+    const conditions: boolean[] = [];
+    const literals: string[] = [];
+    const parts: ts.Node[] = [];
+    let depth = 0;
+    for (const token of tokens) {
+      if (token.startsWith('--') || token.startsWith('/*')) continue;
+      if (token === '(') depth++;
+      if (token === ')') projections.delete(depth--);
+      if (/^(select|returning)$/i.test(token)) projections.set(depth, true);
+      if (
+        projections.has(depth) &&
+        /^(from|where|join|group|having|order|limit|offset|union|intersect|except|for)$/i.test(
+          token,
+        )
+      )
+        projections.set(depth, false);
+      const active = [...projections]
+        .filter(([level]) => level <= depth)
+        .sort(([a], [b]) => b - a)[0]?.[1];
+      if (/^case$/i.test(token)) conditions.push(false);
+      if (/^when$/i.test(token) && conditions.length) conditions[conditions.length - 1] = true;
+      if (/^(then|else)$/i.test(token) && conditions.length)
+        conditions[conditions.length - 1] = false;
+      if (/^end$/i.test(token)) conditions.pop();
+      if (!active || conditions.some(Boolean)) continue;
+      if (token.startsWith("'")) literals.push(token);
+      const parameter = /^\$(\d+)$/.exec(token);
+      const expression = /^__expression_(\d+)__$/.exec(token);
+      const value = parameter
+        ? parameters[Number(parameter[1]) - 1]
+        : expression
+          ? expressions[Number(expression[1])]
+          : undefined;
+      if (value) parts.push(value);
+    }
+    return { literals, parts };
+  };
   const systemPresentation = (node: ts.Node, seen = new Set<ts.Node>()): boolean => {
     if (seen.has(node)) return false;
     seen.add(node);
@@ -624,9 +709,13 @@ function scan(files: Map<string, string>): Entry[] {
     const collect = (part: ts.Node) => {
       if (seen.has(part)) return;
       seen.add(part);
-      // Database calls return data, never their SQL text. Do not fingerprint
-      // access predicates reached through helpers used to build a subject.
-      if (queryResult(part)) return;
+      // Returned SQL expressions may supply words; access clauses do not.
+      if (queryResult(part)) {
+        const selected = queryWording(part);
+        selected.literals.forEach((literal) => literals.add(literal));
+        selected.parts.forEach(collect);
+        return;
+      }
       if (ts.isStringLiteralLike(part) || ts.isTemplateExpression(part)) literals.add(print(part));
       if (
         (ts.isIdentifier(part) || ts.isPropertyAccessExpression(part)) &&
@@ -1021,4 +1110,37 @@ it('follows an aliased System presentation in a direct card', () => {
       scan(fixture()),
     ),
   ).toThrow(failure);
+});
+
+it.each([
+  `async function words(db: any) { const result = await db.query("SELECT 'hello' AS phrase"); return result.rows[0].phrase; }`,
+  `async function words(db: any) { const result = await db.query("SELECT 'hello' AS phrase FROM memberships WHERE role='member'"); return result.rows[0].phrase; }`,
+  `async function words(db: any) { const result = await db.query('SELECT $1 AS phrase FROM memberships WHERE role=$2', ['hello','member']); return result.rows[0].phrase; }`,
+  "async function words(db: any) { const result = await db.sql`SELECT ${'hello'} AS phrase FROM memberships WHERE role=${'member'}`; return result[0].phrase; }",
+])('freezes SQL wording returned through a helper: %s', (helper) => {
+  const base = fixture(helper + 'line(db, {verb: await words(db)});');
+  const mutate = (before: string, after: string) =>
+    new Map([...base].map(([path, text]) => [path, text.replace(before, after)]));
+  expect(() => enforce(scan(mutate('hello', 'goodbye')), scan(base))).toThrow(failure);
+  expect(() => enforce(scan(mutate("member'", "owner'")), scan(base))).not.toThrow();
+});
+
+it('keeps SQL fragment helpers inside query expression analysis', () => {
+  const base = fixture(
+    "function members() { return `ARRAY(SELECT name FROM memberships WHERE role='member')`; } async function words(db: any) { const result=await db.query(`SELECT ${members()} AS phrase`); return result.rows[0].phrase; } line(db,{verb:await words(db)});",
+  );
+  const changed = new Map(
+    [...base].map(([path, text]) => [path, text.replace("role='member'", "role='owner'")]),
+  );
+  expect(() => enforce(scan(changed), scan(base))).not.toThrow();
+});
+
+it('freezes SQL CASE output words without freezing its predicate', () => {
+  const base = fixture(
+    `async function words(db: any) { const result=await db.query("SELECT CASE WHEN role='member' THEN 'hello' ELSE name END AS phrase FROM memberships"); return result.rows[0].phrase; } line(db,{verb:await words(db)});`,
+  );
+  const mutate = (before: string, after: string) =>
+    new Map([...base].map(([path, text]) => [path, text.replace(before, after)]));
+  expect(() => enforce(scan(mutate('hello', 'goodbye')), scan(base))).toThrow(failure);
+  expect(() => enforce(scan(mutate("role='member'", "role='owner'")), scan(base))).not.toThrow();
 });

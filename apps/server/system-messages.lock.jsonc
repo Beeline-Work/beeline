@@ -130,6 +130,12 @@
     "template": "systemLine(db, {\n    id: createHash('sha256')\n        .update(`agent-lifecycle:${sourceId}:${target.agent_id}:${action}`)\n        .digest('hex'),\n    roomId: source.room_id,\n    authorId: target.agent_id,\n    subject: lifecycleSubject(target),\n    verb,\n    ...(consequence ? { consequence } : {}),\n    afterMessageId: sourceId,\n})",
     "literals": [
       "'agent'",
+      "'held'",
+      "'lifecycleId'",
+      "'releaseVersion'",
+      "'sourceSha'",
+      "'status'",
+      "'true'",
       "`@${target.handle}`"
     ],
     "occurrences": 1
@@ -143,7 +149,13 @@
       "'agent'",
       "'did not sign in'",
       "'did not take a new key'",
+      "'held'",
+      "'lifecycleId'",
       "'login'",
+      "'releaseVersion'",
+      "'sourceSha'",
+      "'status'",
+      "'true'",
       "`@${target.handle}`",
       "`did not ${action}`",
       "`did not sign in to ${AGENT_SIGN_IN_SERVICE_LABELS[loginHarness]}`"
@@ -159,8 +171,14 @@
       "'agent'",
       "'agent-sign-in'",
       "'asked for a new key'",
+      "'held'",
       "'its owner finishes it in this card'",
+      "'lifecycleId'",
+      "'releaseVersion'",
+      "'sourceSha'",
       "'starting'",
+      "'status'",
+      "'true'",
       "`@${target.handle}`",
       "`started a ${AGENT_SIGN_IN_SERVICE_LABELS[harness]} sign-in`"
     ],
@@ -247,11 +265,17 @@
     "kind": "wrapper",
     "template": "line(online ? 'is online' : 'is offline', active ? 'one turn is running' : 'no turn is running')",
     "literals": [
+      "'held'",
       "'is offline'",
       "'is online'",
+      "'lifecycleId'",
       "'no turn is running'",
       "'one turn is running'",
-      "'online'"
+      "'online'",
+      "'releaseVersion'",
+      "'sourceSha'",
+      "'status'",
+      "'true'"
     ],
     "occurrences": 1
   },
@@ -323,8 +347,14 @@
     "template": "line('reported diagnostics', details.join(' · '))",
     "literals": [
       "' · '",
+      "'held'",
+      "'lifecycleId'",
       "'no active turn'",
+      "'releaseVersion'",
       "'reported diagnostics'",
+      "'sourceSha'",
+      "'status'",
+      "'true'",
       "'unknown'",
       "`lifecycle ${target.lifecycle_id ?? 'unknown'}`",
       "`release ${target.release_version ?? 'unknown'}`",
@@ -695,6 +725,7 @@
       "`/connected_accounts/${encodeURIComponent(accountId)}`",
       "`already connected in Connectors through ${backing.serverName}`",
       "`already connected in Connectors through vault key ${backing.reference}`",
+      "`app:${params.ownerId}:${key}`",
       "`connectApp: workspace=${params.workspaceId} owner=${params.ownerId} app=${key} route=${decision.route} transport=${decision.transport} reason=\"${decision.reason}\"`"
     ],
     "occurrences": 1
@@ -1395,9 +1426,12 @@
       "'failing'",
       "'no_reviewer'",
       "'offline'",
+      "'online'",
       "'out-of-credit'",
       "'passing'",
-      "'recent-failure'"
+      "'recent-failure'",
+      "'silenceKind'",
+      "'status'"
     ],
     "occurrences": 1
   },
@@ -2311,6 +2345,7 @@
       "'agent'",
       "'corner-app'",
       "'opened an app'",
+      "'title'",
       "`Agent ${agentId.slice(0, 8)}`"
     ],
     "occurrences": 1
@@ -3334,7 +3369,16 @@
     "file": "apps/server/src/phone-service.ts",
     "kind": "wrapper",
     "template": "projectedMessage(row, this.publicOrigin, viewer)",
-    "literals": [],
+    "literals": [
+      "'[]'",
+      "'avatar'",
+      "'face_id'",
+      "'handle'",
+      "'id'",
+      "'kind'",
+      "'name'",
+      "'{}'"
+    ],
     "occurrences": 1
   },
   {
@@ -3342,7 +3386,16 @@
     "file": "apps/server/src/phone-service.ts",
     "kind": "wrapper",
     "template": "projectedMessage(row, this.publicOrigin)",
-    "literals": [],
+    "literals": [
+      "'[]'",
+      "'avatar'",
+      "'face_id'",
+      "'handle'",
+      "'id'",
+      "'kind'",
+      "'name'",
+      "'{}'"
+    ],
     "occurrences": 1
   },
   {
@@ -3894,7 +3947,10 @@
     "file": "apps/server/src/turn-silence-notice.ts",
     "kind": "wrapper",
     "template": "inscribeSilence(db, live, input, trigger.agent_name, trigger.login_handle && isAgentSignInHarness(trigger.harness)\n    ? { handle: trigger.login_handle, harness: trigger.harness }\n    : undefined)",
-    "literals": [],
+    "literals": [
+      "''",
+      "'The agent'"
+    ],
     "occurrences": 1
   },
   {
@@ -4238,8 +4294,11 @@
       "'failed'",
       "'gate'",
       "'offline'",
+      "'online'",
       "'out-of-credit'",
       "'recent-failure'",
+      "'silenceKind'",
+      "'status'",
       "'terminal'",
       "'workflow-handoff'"
     ],
@@ -4262,8 +4321,11 @@
       "'exhausted'",
       "'hex'",
       "'offline'",
+      "'online'",
       "'out-of-credit'",
       "'recent-failure'",
+      "'silenceKind'",
+      "'status'",
       "'terminal'"
     ],
     "occurrences": 1
@@ -4307,8 +4369,11 @@
     "template": "moveRole(db, scope, { role, picked, tried, why: input.why })",
     "literals": [
       "'offline'",
+      "'online'",
       "'out-of-credit'",
-      "'recent-failure'"
+      "'recent-failure'",
+      "'silenceKind'",
+      "'status'"
     ],
     "occurrences": 1
   },
@@ -4328,10 +4393,13 @@
       "'eligible'",
       "'not in this Room'",
       "'offline'",
+      "'online'",
       "'out of credit'",
       "'out-of-credit'",
       "'recent failure'",
       "'recent-failure'",
+      "'silenceKind'",
+      "'status'",
       "'system'",
       "'the workflow'",
       "'timeout'",
@@ -4359,6 +4427,7 @@
     "literals": [
       "'its turn ended with no handoff'",
       "'live'",
+      "'runId'",
       "'timeout'"
     ],
     "occurrences": 1
@@ -4495,11 +4564,14 @@
       "'is healthy'",
       "'not in this Room'",
       "'offline'",
+      "'online'",
       "'out of credit'",
       "'out-of-credit'",
       "'recent failure'",
       "'recent-failure'",
       "'sha256'",
+      "'silenceKind'",
+      "'status'",
       "'system'",
       "'workflow-handoff'",
       "`${names.get(id)} ${why}`",
@@ -4555,6 +4627,7 @@
       "''",
       "'its turn failed'",
       "'live'",
+      "'runId'",
       "'wait'",
       "`its turn failed (${reason})`"
     ],
@@ -4578,7 +4651,9 @@
       "'NFKD'",
       "'_'",
       "'agent'",
+      "'attempt'",
       "'live'",
+      "'runId'",
       "'system'",
       "'took its default'",
       "`${systemIdentityMention({ ...viewer, handle: viewer.handle ?? null }) || viewer.name} skipped it in run ${shortRunId(scope.runId)}`",
@@ -4613,9 +4688,11 @@
       "' '",
       "'agent'",
       "'answered'",
+      "'attempt'",
       "'live'",
       "'person'",
       "'picked'",
+      "'runId'",
       "'skipped'",
       "'string'",
       "`at ${scope.stateName} so run ${shortRunId(scope.runId)} went to ${toState}`",
@@ -4640,12 +4717,17 @@
       "'human_admin'",
       "'live'",
       "'offline'",
+      "'online'",
       "'out-of-credit'",
+      "'ownerId'",
       "'person'",
       "'recent-failure'",
       "'schedule'",
+      "'silenceKind'",
       "'started workflow'",
+      "'status'",
       "'string'",
+      "'trigger'",
       "'workflow-handoff'",
       "`run ${shortRunId(runId)}`"
     ],
@@ -4661,8 +4743,11 @@
       "'exhausted'",
       "'hex'",
       "'offline'",
+      "'online'",
       "'out-of-credit'",
       "'recent-failure'",
+      "'silenceKind'",
+      "'status'",
       "'string'"
     ],
     "occurrences": 1

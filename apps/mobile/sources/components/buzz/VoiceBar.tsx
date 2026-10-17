@@ -65,6 +65,14 @@ export function VoiceBar({ voice, fullScreen = false, onAttach, attachDisabled =
   </>;
 }
 
+/** Private, ephemeral feedback for humans connected when the quiet window ended. */
+export function VoiceCallEndNotice({ onDismiss }: { onDismiss(): void }) {
+  return <View style={styles.notice} testID="voice-call-end-notice">
+    <Text style={styles.noticeText} accessibilityLiveRegion="polite">Call ended: no one spoke for 60 seconds</Text>
+    <Button label="Dismiss" variant="secondary" onPress={onDismiss} testID="voice-call-end-dismiss" />
+  </View>;
+}
+
 const TIP_MS = 4_000;
 const FLASH_MS = 1_500;
 
@@ -91,6 +99,8 @@ function useVoiceTip(voice: VoiceCallState) {
 }
 
 const styles = StyleSheet.create(theme => ({
+  notice: { flexDirection: 'row', alignItems: 'center', gap: 8, padding: 8 },
+  noticeText: { ...theme.buzz.type.meta, color: theme.buzz.textPrimary, flex: 1 },
   bar: { width: '100%' },
   targetStrip: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 8, gap: 8 },
   agents: { flex: 1, minWidth: 0 }, agentContent: { alignItems: 'center' },

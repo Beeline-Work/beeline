@@ -5667,10 +5667,11 @@ export function BuzzChatSurface({
       if (item.voiceCall) {
         if (isDirectMessage && !item.voiceCall.endedAt) return null;
         return (
-          <VoiceCallCard call={item.voiceCall} joined={voice.call?.id === item.voiceCall.id}
+          <VoiceCallCard call={item.voiceCall} joined={voice.call?.id === item.voiceCall.id || (voice.endNotice && !item.voiceCall.endedAt)}
           connecting={voice.connecting} error={voice.error}
           agents={roomSurface?.members.filter(member => member.identity.kind === 'agent').map(member => member.identity)}
-          onJoin={() => void voice.join()} />
+          onJoin={() => void voice.join()}
+          onStartNew={roomSurface?.viewer.permissions.send && !viewerIsAgent && !isArchived && !voice.call ? () => void voice.join() : undefined} />
         );
       }
       if (item.choice) {

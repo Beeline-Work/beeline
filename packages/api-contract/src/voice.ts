@@ -23,10 +23,10 @@ export type VoiceJoin = {
   agents: readonly RoomViewIdentity[];
 };
 
-export type VoiceIdleState = { state: 'ended' | 'parked' | 'ready'; agentName?: string };
+export type VoiceIdleState = { state: 'ended' | 'parked' | 'ready'; agentName?: string; endReason?: 'silence' };
 
 export type VoiceSignal =
-  | { type: 'stop' }
+  | { type: 'stop'; reason?: 'silence' }
   | { type: 'resume' | 'park'; sessionId: string }
   | { type: 'speech' }
   /** A tap also sends the next turn to this agent when several humans are in the call. */

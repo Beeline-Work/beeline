@@ -335,3 +335,19 @@ it('call-wide-end-3: a stale owner or speech during the end transaction cannot c
     expect(await service.humanCount(joined.call.id)).toBe(1);
   } finally { card.mockRestore();await service.leave(joined.call.id,H); }
 });
+
+it('quiet termination returns a private reason only to the participant session present at the end', async () => {
+  const first = await service.join(R, H);
+  const second = await service.join(R, SECOND);
+  await service.leave(first.call.id, SECOND, false, second.sessionId);
+  await db.query(`UPDATE voice_calls SET runtime_owner=$2,runtime_until=now()+interval '1 minute' WHERE id=$1`, [first.call.id, service.owner]);
+  await db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE state IN ('pending','claimed')`);
+  expect(await service.endInactive(first.call.id, service.owner, () => true)).toBe(true);
+  expect(await service.idleState(first.call.id, H, db, first.sessionId)).toEqual({state:'ended',endReason:'silence'});
+  expect(await service.idleState(first.call.id, SECOND, db, second.sessionId)).toEqual({state:'ended'});
+  expect(await service.idleState(first.call.id, H, db, 'old-session')).toEqual({state:'ended'});
+  const fresh = await service.join(R, H);
+  expect(fresh.call.id).not.toBe(first.call.id);
+  await service.leave(fresh.call.id, H, false, fresh.sessionId);
+  expect(await service.idleState(fresh.call.id, H, db, fresh.sessionId)).toEqual({state:'ended'});
+});

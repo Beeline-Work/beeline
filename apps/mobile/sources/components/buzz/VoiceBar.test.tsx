@@ -18,7 +18,7 @@ import { VoiceBar } from './VoiceBar';
 it('gives a multi-human call a separate labeled Leave call control', async () => {
   const end = vi.fn(); let renderer: any;
   await act(async () => { renderer = create(<VoiceBar voice={{ call: null, agents: [], target: null,
-    speaker: null, level: 0, connecting: false, error: null, quotaExhausted: false,
+    speaker: null, level: 0, connecting: false, error: null, endNotice: false, dismissEndNotice: () => {}, quotaExhausted: false,
     firstAudioMs: null, humans: 2, unaddressed: 0, join: vi.fn(), end, aim: vi.fn() }} />); });
   try {
     expect(renderer.root.findAllByProps({ testID: 'voice-mic' })).toHaveLength(0);
@@ -31,7 +31,7 @@ it('gives a multi-human call a separate labeled Leave call control', async () =>
 it('shows the exhausted daily quota inside the voice bar with an operable end mic', async () => {
   const end = vi.fn(); let renderer: any;
   await act(async () => { renderer = create(<VoiceBar voice={{ call: null, agents: [], target: null,
-    speaker: null, level: 0, connecting: false, error: VOICE_QUOTA_MESSAGE, quotaExhausted: true,
+    speaker: null, level: 0, connecting: false, error: VOICE_QUOTA_MESSAGE, endNotice: false, dismissEndNotice: () => {}, quotaExhausted: true,
     firstAudioMs: null, humans: 1, unaddressed: 0, join: vi.fn(), end, aim: vi.fn() }} />); });
   expect(renderer.root.findByProps({ testID: 'voice-quota-error' }).props.children).toBe(VOICE_QUOTA_MESSAGE);
   expect(renderer.root.findAllByType('Waveform')).toHaveLength(0);
@@ -46,7 +46,7 @@ it('keeps a readable join error and agent avatars visible with an operable end c
   const error = 'Conversation mode could not connect.';
   await act(async () => { renderer = create(<VoiceBar voice={{ call: null,
     agents: [{ pubkey: 'ruby', kind: 'agent', name: 'Ruby' }, { pubkey: 'goose', kind: 'agent', name: 'Goosey' }],
-    target: null, speaker: null, level: 0, connecting: false, error, quotaExhausted: false,
+    target: null, speaker: null, level: 0, connecting: false, error, endNotice: false, dismissEndNotice: () => {}, quotaExhausted: false,
     firstAudioMs: null, humans: 1, unaddressed: 0, join: vi.fn(), end, aim }} />); });
   try {
     expect(renderer.root.findByProps({ testID: 'voice-connection-error' }).props.children).toBe(error);
@@ -54,5 +54,18 @@ it('keeps a readable join error and agent avatars visible with an operable end c
     expect(aim).toHaveBeenCalledWith('goose');
     await act(async () => renderer.root.findByProps({ testID: 'voice-leave' }).props.onPress());
     expect(end).toHaveBeenCalledOnce();
+  } finally { await act(async () => renderer.unmount()); }
+});
+
+it('ended call offers a fresh-call action and no Join control', async () => {
+  const { VoiceCallCard } = await import('./VoiceCallCard');
+  const start = vi.fn(), join = vi.fn(); let renderer: any;
+  await act(async () => { renderer = create(<VoiceCallCard call={{id:'old',roomId:'room',startedAt:10,endedAt:75,participants:[]}}
+    joined={false} onJoin={join} onStartNew={start} />); });
+  try {
+    expect(renderer.root.findAllByProps({testID:'voice-call-join'})).toHaveLength(0);
+    expect(renderer.root.findAllByType('Text').some((node: any) => React.Children.toArray(node.props.children).join('') === 'Call ended · 1:05')).toBe(true);
+    await act(async () => renderer.root.findByProps({testID:'voice-call-start-new'}).props.onPress());
+    expect(start).toHaveBeenCalledOnce(); expect(join).not.toHaveBeenCalled();
   } finally { await act(async () => renderer.unmount()); }
 });

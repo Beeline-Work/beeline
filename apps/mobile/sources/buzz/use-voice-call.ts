@@ -28,6 +28,7 @@ async function closeVoiceTransport(transport: { room: Room; closeAudio(): Promis
 const NO_AGENTS: readonly RoomViewIdentity[] = [];
 
 export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: readonly RoomViewIdentity[] = NO_AGENTS) {
+  const [endNoticeRoom, setEndNoticeRoom] = React.useState<string | null>(null);
   const [call, setCall] = React.useState<VoiceCall | null>(null);
   const [joinedAgents, setJoinedAgents] = React.useState<{ roomId: string; agents: readonly RoomViewIdentity[] } | null>(null);
   const agents = joinedAgents?.roomId === roomId ? joinedAgents.agents : roomAgents;
@@ -75,7 +76,7 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
     if (session.current || pending.current) return;
     if (!enabled) { setError('You cannot join Conversation mode in this Room.'); return; }
     pending.current = true; const version = ++revision.current;
-    setConnecting(true); setError(null); setQuotaExhausted(false); quotaRef.current = false;
+    setEndNoticeRoom(null); setConnecting(true); setError(null); setQuotaExhausted(false); quotaRef.current = false;
     let transport: Awaited<ReturnType<typeof createVoiceRoom>> | undefined;
     let joined: VoiceJoin | undefined;
     let closing: Promise<void> | undefined;
@@ -116,7 +117,7 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
         if (version !== revision.current || topic !== VOICE_DATA_TOPIC || participant?.identity !== `beeline-voice-${joined!.call.id}`) return;
         try {
           const data = JSON.parse(new TextDecoder().decode(bytes)) as VoiceSignal;
-          if (data.type === 'stop') { void end(); return; }
+          if (data.type === 'stop') { if (data.reason === 'silence') setEndNoticeRoom(roomId); void end(); return; }
           if (data.type === 'speaker') {
             speakerRef.current = data.agentId; setSpeaker(data.agentId);
           }
@@ -199,8 +200,11 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
       const live = sharedLiveConnection();
       const reconcile = () => {
         const active = joined!;
-        void request<{ state: string }>(active.call.id, 'state', active.sessionId).then(state => {
-          if (current() && joined === active && state.state === 'ended') void end();
+        void request<{ state: string; endReason?: 'silence' }>(active.call.id, 'state', active.sessionId).then(state => {
+          if (current() && joined === active && state.state === 'ended') {
+            if (state.endReason === 'silence') setEndNoticeRoom(roomId);
+            void end();
+          }
         }).catch(() => {});
       };
       const dispose = await live.register([{ '#h': [roomId] }], reconcile);
@@ -228,7 +232,7 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
     void session.current?.room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ type: 'target', agentId, tap: true })),
       { reliable: true, topic: VOICE_DATA_TOPIC });
   }, [agents]);
-  return { call, agents, target, speaker, level, connecting, error, quotaExhausted, firstAudioMs, humans, unaddressed, join, end, aim };
+  return { endNotice: endNoticeRoom === roomId, dismissEndNotice: () => setEndNoticeRoom(null), call, agents, target, speaker, level, connecting, error, quotaExhausted, firstAudioMs, humans, unaddressed, join, end, aim };
 }
 
 export type VoiceCallState = ReturnType<typeof useVoiceCall>;

@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS voice_participants (
   left_at timestamptz,
   PRIMARY KEY(call_id,identity_id)
 );
+ALTER TABLE voice_participants ADD COLUMN IF NOT EXISTS end_reason text;
 ALTER TABLE voice_participants ADD COLUMN IF NOT EXISTS parked_at timestamptz;
 ALTER TABLE voice_participants ADD COLUMN IF NOT EXISTS session_id text NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS voice_participants_identity_idx ON voice_participants(identity_id);

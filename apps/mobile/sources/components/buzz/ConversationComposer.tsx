@@ -18,7 +18,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { groknight } from '@/buzz/groknight';
 import { HullDialog } from './HullDialog';
 import { ArrowUpGlyph, COMPOSER_GLYPH_SIZE, MicGlyph, PlusGlyph, StopGlyph, WaveformGlyph } from './MicGlyph';
-import { VoiceBar } from './VoiceBar';
+import { VoiceBar, VoiceCallEndNotice } from './VoiceBar';
 import { RuntimeErrorBoundary } from './RuntimeErrorBoundary';
 import type { VoiceCallState } from '@/buzz/use-voice-call';
 import { VOICE_LONG_PRESS_MS } from '@beeline/api-contract/phone';
@@ -485,6 +485,7 @@ function ConversationComposerContent({
           )}
         </View>
       )}
+      {voice?.endNotice && !conversationActive && <VoiceCallEndNotice onDismiss={voice.dismissEndNotice} />}
       {conversationActive && voice ? (
         <VoiceBar voice={voice} onAttach={onAttach} attachDisabled={attachDisabled} testIDPrefix={testIDPrefix} />
       ) : (

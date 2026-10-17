@@ -309,7 +309,7 @@ export class VoiceRoomRuntime {
     } finally { this.checkingInactivity = false; }
   }
 
-  async stopCall() { await this.signal({ type: 'stop' }); }
+  async stopCall() { await this.signal({ type: 'stop', reason: 'silence' }); }
 
   private async aimSpokenName(human: string, text: string, version: number) {
     const agent = namedVoiceTarget(text, await this.service.agents(this.roomId, human), undefined, 2);

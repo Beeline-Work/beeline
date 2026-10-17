@@ -355,3 +355,24 @@ it('call-wide-end-3: a terminal disconnect cannot restart an ended call', async 
     expect(voice.call).toBeNull(); expect(fixture.room.connect).toHaveBeenCalledOnce();
   } finally { await act(async () => renderer.unmount()); }
 });
+
+it('shows a dismissible private notice only for a trusted silence termination', async () => {
+  fixture.room = Object.assign(new EventEmitter(), { connect: async () => {}, disconnect: vi.fn(async () => {}),
+    remoteParticipants: new Map(), localParticipant: { publishData: vi.fn(async () => {}), setMicrophoneEnabled: vi.fn(async () => {}) } });
+  fixture.fetch.mockImplementation(async () => new Response(JSON.stringify({ sessionId: 'notice-session',
+    call: { id: fixture.callId, roomId: fixture.callId, startedAt: 1, participants: [] }, url: 'ws://proof', token: 'test', agents: [] })));
+  let voice!: ReturnType<typeof useVoiceCall>; let renderer: any;
+  function Probe() { voice = useVoiceCall(fixture.callId, true); return null; }
+  await act(async () => { renderer = create(<Probe />); });
+  const stop = new TextEncoder().encode(JSON.stringify({ type: 'stop', reason: 'silence' }));
+  try {
+    await act(async () => voice.join());
+    await act(async () => fixture.room.emit('data', stop, { identity: 'peer' }, undefined, VOICE_DATA_TOPIC));
+    expect(voice.endNotice).toBe(false);
+    await act(async () => fixture.room.emit('data', stop, { identity: `beeline-voice-${fixture.callId}` }, undefined, VOICE_DATA_TOPIC));
+    expect(voice.call).toBeNull(); expect(voice.endNotice).toBe(true);
+    await act(async () => voice.dismissEndNotice()); expect(voice.endNotice).toBe(false);
+    await act(async () => voice.join()); await act(async () => voice.end());
+    expect(voice.endNotice).toBe(false);
+  } finally { await act(async () => renderer.unmount()); }
+});

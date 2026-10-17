@@ -9,7 +9,7 @@ import { piStartupEnvironment } from './pi-startup.js';
 const roots: string[] = [];
 afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
 
-async function fixture(options: { version?: string; custom?: boolean; fail?: boolean; gated?: boolean; originalOptions?: string; relative?: boolean } = {}) {
+async function fixture(options: { version?: string; custom?: boolean; fail?: boolean; gated?: boolean; originalOptions?: string; relative?: boolean; mutate?: (source: string) => string } = {}) {
   const root = await mkdtemp(join(tmpdir(), 'pi-startup-'));
   roots.push(root);
   await mkdir(join(root, 'adapter/dist'), { recursive: true });
@@ -17,7 +17,7 @@ async function fixture(options: { version?: string; custom?: boolean; fail?: boo
   await writeFile(join(root, 'adapter/package.json'), JSON.stringify({ name: 'pi-acp', type: 'module' }));
   const entry = join(root, 'adapter/dist/index.js');
   // Exercise the actual load hook and the same session/new notice call sites.
-  await writeFile(entry, `
+  let source = `
 import { spawnSync } from 'node:child_process';
 import { createInterface } from 'node:readline';
 function buildUpdateNotice() { spawnSync('npm', ['view']); return 'unexpected update'; }
@@ -35,8 +35,9 @@ function buildStartupInfo(opts) {
 function getQuietStartup() { return false; }
 const server = {
  conn: { sessionUpdate: async event => console.log(JSON.stringify({ event })) },
- async newSession(params) {
+  async newSession(params) {
     if (params.environment) return { nodeOptions: process.env.NODE_OPTIONS ?? null };
+    void this.conn;
     const session = { sessionId: 'private-room' };
     const quietStartup = getQuietStartup(params.cwd);
     const updateNotice = buildUpdateNotice();
@@ -47,7 +48,9 @@ const server = {
 createInterface({ input: process.stdin }).on('line', async line => {
  console.log(JSON.stringify({ result: await server.newSession(JSON.parse(line)) }));
 });
-`);
+`;
+  source = options.mutate?.(source) ?? source;
+  await writeFile(entry, source);
   const selected = join(root, 'bin', options.custom ? 'custom-pi' : 'pi');
   const finish = options.fail ? 'process.exit(1)' : `console.log('9.8.7'); process.exit(0);`;
   const versionBody = options.gated
@@ -86,7 +89,7 @@ createInterface({ input: process.stdin }).on('line', async line => {
     }
     return messages.shift();
   }
-  return { root, child, next, selected };
+  return { root, child, next, selected, source };
 }
 
 it('leaves other harness environments untouched', () => {
@@ -152,5 +155,43 @@ it('skips a non-executable PATH entry when identifying the Pi that runs', async 
     await writeFile(join(f.root, 'shadow/bin/pi'), 'not executable', { mode: 0o644 });
     f.child.stdin.write('{}\n');
     expect((await f.next()).result.banner).toBe('pi v7.6.5\n---\n');
+  } finally { f.child.kill(); }
+});
+
+const changedStartup = [
+  ['updateNotice', (source: string) => source.replace('const updateNotice = buildUpdateNotice();', 'const updateNotice = (buildUpdateNotice());')],
+  ['quietStartup', (source: string) => source.replace('const quietStartup = getQuietStartup(params.cwd);', 'const quietStartup = (getQuietStartup(params.cwd));')],
+  ['version block', (source: string) => source.replace('spawnSync("pi", ["--version"]', 'spawnSync("pi", ["--version", "--plain"]')],
+  ['md', (source: string) => source.replace(/\bmd\b/g, 'markdown')],
+  ['this.conn', (source: string) => source.replace(/\bconn\b/g, 'connection')],
+  ['session', (source: string) => source.replace(/\bsession\b/g, 'activeSession')],
+] as const;
+
+async function loadSource(source: string) {
+  const env = piStartupEnvironment('pi-acp', {});
+  const preload = decodeURIComponent(env.NODE_OPTIONS!.split('data:text/javascript,')[1]);
+  const loaderUrl = JSON.parse(preload.match(/register\(("(?:\\.|[^"\\])*")/)![1]);
+  const loader = await import(/* @vite-ignore */ loaderUrl);
+  loader.initialize({ entry: 'file:///adapter.js' });
+  const result = { format: 'module', source };
+  return { result, loaded: await loader.load('file:///adapter.js', {}, async () => result) };
+}
+
+it.each(changedStartup)('falls back byte for byte when %s changes', async (_name, mutate) => {
+  const f = await fixture({ mutate });
+  try {
+    const { result, loaded } = await loadSource(f.source);
+    expect(loaded).toBe(result);
+    expect(loaded.source).toBe(f.source);
+  } finally { f.child.kill(); }
+});
+
+it.each(changedStartup)('Reproduction pi-startup-fallback: session/new succeeds when %s changes', async (_name, mutate) => {
+  const f = await fixture({ mutate });
+  try {
+    f.child.stdin.write('{}\n');
+    const response = await f.next();
+    expect(response.result.updateNotice).toBe('unexpected update');
+    expect(response.result.banner).toContain('9.8.7');
   } finally { f.child.kill(); }
 });

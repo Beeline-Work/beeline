@@ -8,33 +8,48 @@ export function initialize(data) { entry = data.entry; }
 export async function load(url, context, nextLoad) {
   const result = await nextLoad(url, context);
   if (url !== entry) return result;
-  let source = String(result.source);
-  function replace(from, to) {
-    if (source.split(from).length !== 2) throw new Error('Unsupported pi-acp startup source: ' + from.slice(0, 70));
-    source = source.replace(from, to);
+  try {
+    let source = String(result.source);
+    function replace(from, to) {
+      if (source.split(from).length !== 2) throw new Error('Unsupported pi-acp startup source: ' + from.slice(0, 70));
+      source = source.replace(from, to);
+    }
+    replace('    const updateNotice = buildUpdateNotice();', '    const updateNotice = null;');
+    const startupStart = source.indexOf('function buildStartupInfo(opts) {');
+    const versionStart = source.indexOf('  try {', startupStart);
+    const versionEnd = source.indexOf('  const addSection =', versionStart);
+    if (startupStart < 0 || versionStart < 0 || versionEnd < 0 || !source.slice(versionStart, versionEnd).includes('spawnSync("pi", ["--version"]')) {
+      throw new Error('Unsupported pi-acp startup version');
+    }
+    const quietStart = source.indexOf('    const quietStartup = getQuietStartup(params.cwd);');
+    const sessionStart = source.lastIndexOf('  async newSession(params) {', quietStart);
+    const sessionSetup = source.slice(sessionStart, quietStart);
+    // Check the original scopes before adding references to adapter-owned names.
+    if (!/\bconst md = \[\];/.test(source.slice(startupStart, versionStart)) ||
+        sessionStart < 0 || !/\bconst session =/.test(sessionSetup) ||
+        !/\bthis\.conn\b/.test(sessionSetup)) {
+      throw new Error('Unsupported pi-acp startup bindings');
+    }
+    source = source.slice(0, versionStart) +
+      '  const version = __beelineInstalledPiVersion(opts.cwd);\n  if (version) md.push("pi v" + version, "---", "");\n' + source.slice(versionEnd);
+    replace('    const quietStartup = getQuietStartup(params.cwd);',
+      '    const quietStartup = getQuietStartup(params.cwd);\n' +
+      '    const __beelinePiVersion = __beelineInstalledPiVersion(params.cwd);\n' +
+      '    if (!__beelinePiVersion) setTimeout(() => {\n' +
+      '      void __beelineReadPiVersion(params.cwd).then(version => {\n' +
+      '        if (version) return this.conn.sessionUpdate({ sessionId: session.sessionId, update: {\n' +
+      '          sessionUpdate: "session_info_update", _meta: { piAcp: { version } }\n' +
+      '        } });\n' +
+      '      }).catch(() => {});\n' +
+      '    }, 0);');
+    const preamble = __BEELINE_PREAMBLE__;
+    const shebangEnd = source.startsWith('#!') ? source.indexOf('\n') + 1 : 0;
+    source = source.slice(0, shebangEnd) + preamble + source.slice(shebangEnd);
+    return { ...result, source };
+  } catch {
+    // An upstream layout change must never prevent the adapter from starting.
+    return result;
   }
-  replace('    const updateNotice = buildUpdateNotice();', '    const updateNotice = null;');
-  const versionStart = source.indexOf('  try {', source.indexOf('function buildStartupInfo(opts) {'));
-  const versionEnd = source.indexOf('  const addSection =', versionStart);
-  if (versionStart < 0 || versionEnd < 0 || !source.slice(versionStart, versionEnd).includes('spawnSync("pi", ["--version"]')) {
-    throw new Error('Unsupported pi-acp startup version');
-  }
-  source = source.slice(0, versionStart) +
-    '  const version = __beelineInstalledPiVersion(opts.cwd);\n  if (version) md.push("pi v" + version, "---", "");\n' + source.slice(versionEnd);
-  replace('    const quietStartup = getQuietStartup(params.cwd);',
-    '    const quietStartup = getQuietStartup(params.cwd);\n' +
-    '    const __beelinePiVersion = __beelineInstalledPiVersion(params.cwd);\n' +
-    '    if (!__beelinePiVersion) setTimeout(() => {\n' +
-    '      void __beelineReadPiVersion(params.cwd).then(version => {\n' +
-    '        if (version) return this.conn.sessionUpdate({ sessionId: session.sessionId, update: {\n' +
-    '          sessionUpdate: "session_info_update", _meta: { piAcp: { version } }\n' +
-    '        } });\n' +
-    '      }).catch(() => {});\n' +
-    '    }, 0);');
-  const preamble = __BEELINE_PREAMBLE__;
-  const shebangEnd = source.startsWith('#!') ? source.indexOf('\n') + 1 : 0;
-  source = source.slice(0, shebangEnd) + preamble + source.slice(shebangEnd);
-  return { ...result, source };
 }
 `;
 

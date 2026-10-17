@@ -1,14 +1,14 @@
 import * as React from 'react';
 import { Platform } from 'react-native';
 import { RoomEvent, Track, type Room } from 'livekit-client';
-import { VOICE_DATA_TOPIC, type VoiceJoin, type VoiceIdleState, type VoiceSignal, type VoiceCall, type RoomViewIdentity } from '@beeline/api-contract/phone';
+import { VOICE_DATA_TOPIC, VOICE_BUDGET_WARNING, readAgentVoicePreview, type VoiceBudget, type VoiceJoin, type VoiceIdleState, type VoiceSignal, type VoiceCall, type RoomViewIdentity } from '@beeline/api-contract/phone';
 import { getBuzzRuntimeConfig } from './runtime-config';
 import { createVoiceRoom, subscribeVoiceResume, voiceFetch } from './voice-transport';
 import { errorDiagnostic, reportClientError } from './client-error-report';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { voiceWaveformLevel } from './waveform-level';
 
-async function voiceRequest<T>(id: string, action: 'join' | 'leave' | 'current' | 'idle' | 'state' | 'resume', sessionId?: string): Promise<T> {
+async function voiceRequest<T>(id: string, action: 'join' | 'leave' | 'current' | 'idle' | 'state' | 'resume' | 'warning', sessionId?: string): Promise<T> {
   const response = await voiceFetch(`${getBuzzRuntimeConfig().monolithUrl}/v1/phone/voice/${id}/${action}${action === 'state' && sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ''}`,
     { method: action === 'current' || action === 'state' ? 'GET' : 'POST',
       ...(sessionId && action !== 'state' ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId }) } : {}) });
@@ -38,6 +38,8 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
   const [error, setError] = React.useState<string | null>(null);
   const [quotaExhausted, setQuotaExhausted] = React.useState(false);
   const quotaRef = React.useRef(false);
+  const [budgetWarning, setBudgetWarning] = React.useState<string | null>(null);
+  const [warningAudio, setWarningAudio] = React.useState<string | null>(null);
   const [firstAudioMs, setFirstAudioMs] = React.useState<number | null>(null);
   const [humans, setHumans] = React.useState(1);
   /** Counts turns dropped because no agent was named, so the tip line can flash. */
@@ -60,6 +62,7 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
     const cancelDeadline = cancelSilence.current; cancelSilence.current = undefined;
     if (cancelDeadline) void cancelDeadline().catch(() => {});
     mode.current = 'ended';
+    setBudgetWarning(null); setWarningAudio(null);
     liveCleanup.current?.(); liveCleanup.current = null;
     const current = session.current; session.current = null;
     const cancelJoin = joiningCleanup.current; joiningCleanup.current = null;
@@ -180,6 +183,24 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
         if (version !== revision.current || topic !== VOICE_DATA_TOPIC || participant?.identity !== `beeline-voice-${joined!.call.id}`) return;
         try {
           const data = JSON.parse(new TextDecoder().decode(bytes)) as VoiceSignal;
+          if (data.type === 'budget') {
+            const budget: VoiceBudget = data.budget;
+            if (!budget || !Number.isFinite(budget.remainingMs) || budget.remainingMs < 0 ||
+              !Number.isFinite(budget.resetAt) || budget.timeZone !== 'UTC') return;
+            if (budget.remainingMs === 0) {
+              // Fence reconnection before the server removes this RTC participant.
+              const message = `0 minutes of call time remaining today. Resets at ${new Date(budget.resetAt).toISOString().replace('T', ' ').replace('.000Z', ' UTC')}.`;
+              const endedVersion = revision.current + 1;
+              void end().then(() => { if (revision.current === endedVersion) setError(message); });
+              return;
+            }
+            setBudgetWarning(VOICE_BUDGET_WARNING);
+            void voiceRequest<unknown>(joined!.call.id, 'warning').then(value => {
+              const audio = readAgentVoicePreview(value);
+              if (current() && audio) setWarningAudio(`data:audio/wav;base64,${audio.wavBase64}`);
+            }).catch(cause => { if (current()) void reportClientError('conversation', cause); });
+            return;
+          }
           if (data.type === 'stop') { void end(); return; }
           if (data.type === 'speech') armSilence();
           if (data.type === 'speaker') {
@@ -292,7 +313,7 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
     void session.current?.room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ type: 'target', agentId, tap: true })),
       { reliable: true, topic: VOICE_DATA_TOPIC });
   }, [agents]);
-  return { call, agents, target, speaker, level, connecting, error, quotaExhausted, firstAudioMs, humans, unaddressed, join, end, aim };
+  return { budgetWarning, warningAudio, clearWarningAudio: () => setWarningAudio(null), call, agents, target, speaker, level, connecting, error, quotaExhausted, firstAudioMs, humans, unaddressed, join, end, aim };
 }
 
 export type VoiceCallState = ReturnType<typeof useVoiceCall>;

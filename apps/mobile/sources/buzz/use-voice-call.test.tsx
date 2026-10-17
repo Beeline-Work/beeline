@@ -434,3 +434,29 @@ it.each(['Network request failed', 'fetch failed'] as const)('retries join trans
     expect(voice.error).toBeNull();
   } finally { await act(async () => renderer.unmount()); vi.clearAllTimers(); vi.useRealTimers(); }
 });
+
+it('shows and plays a private budget warning, then ends only its session and retains the reset message', async () => {
+  fixture.room = Object.assign(new EventEmitter(), { connect: async () => {}, disconnect: vi.fn(async () => {}),
+    remoteParticipants: new Map(), localParticipant: { publishData: vi.fn(async () => {}), setMicrophoneEnabled: vi.fn(async () => {}) } });
+  let voice!: ReturnType<typeof useVoiceCall>; let renderer: any;
+  function Probe() { voice = useVoiceCall(fixture.callId, true); return null; }
+  await act(async () => { renderer = create(<Probe />); });
+  try {
+    await act(async () => voice.join());
+    const resetAt = Date.UTC(2026, 9, 18);
+    const packet = (remainingMs: number) => new TextEncoder().encode(JSON.stringify({ type: 'budget',
+      budget: { remainingMs, resetAt, timeZone: 'UTC' } }));
+    await act(async () => fixture.room.emit('data', packet(120000), { identity: 'peer' }, undefined, VOICE_DATA_TOPIC));
+    expect(voice.budgetWarning).toBeNull();
+    fixture.fetch.mockImplementationOnce(async () => new Response(JSON.stringify({ wavBase64: 'YWJj' })));
+    await act(async () => fixture.room.emit('data', packet(120000), { identity: `beeline-voice-${fixture.callId}` }, undefined, VOICE_DATA_TOPIC));
+    expect(voice.budgetWarning).toContain('2 minutes');
+    expect(voice.warningAudio).toBe('data:audio/wav;base64,YWJj');
+    await act(async () => fixture.room.emit('data', packet(0), { identity: `beeline-voice-${fixture.callId}` }, undefined, VOICE_DATA_TOPIC));
+    expect(voice.call).toBeNull();
+    expect(voice.warningAudio).toBeNull();
+    expect(voice.error).toContain('0 minutes');
+    expect(voice.error).toContain('2026-10-18 00:00:00 UTC');
+    expect(fixture.room.disconnect).toHaveBeenCalledOnce();
+  } finally { await act(async () => renderer.unmount()); }
+});

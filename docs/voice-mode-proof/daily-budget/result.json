@@ -1,0 +1,77 @@
+{
+  "observations": [
+    {
+      "at": 1792274634295,
+      "joined": false,
+      "warning": null,
+      "audioReady": false,
+      "error": null
+    },
+    {
+      "at": 1792274666364,
+      "joined": true,
+      "warning": null,
+      "audioReady": false,
+      "error": null
+    },
+    {
+      "at": 1792274726456,
+      "joined": true,
+      "warning": "You have 2 minutes of call time left today.",
+      "audioReady": false,
+      "error": null
+    },
+    {
+      "at": 1792274726575,
+      "joined": true,
+      "warning": "You have 2 minutes of call time left today.",
+      "audioReady": true,
+      "error": null
+    },
+    {
+      "at": 1792274847066,
+      "joined": false,
+      "warning": null,
+      "audioReady": false,
+      "error": null
+    },
+    {
+      "at": 1792274847585,
+      "joined": false,
+      "warning": null,
+      "audioReady": false,
+      "error": "0 minutes of call time remaining today. Resets at 2026-10-18 00:00:00 UTC."
+    },
+    {
+      "at": 1792274856596,
+      "joined": false,
+      "warning": null,
+      "audioReady": false,
+      "error": null
+    },
+    {
+      "at": 1792274857186,
+      "joined": false,
+      "warning": null,
+      "audioReady": false,
+      "error": "0 minutes of call time remaining today. Resets at 2026-10-18 00:00:00 UTC."
+    }
+  ],
+  "inputMs": 180000,
+  "budget": {
+    "remainingMs": 0,
+    "resetAt": 1792281600000,
+    "timeZone": "UTC"
+  },
+  "peerBudget": {
+    "remainingMs": 180000,
+    "resetAt": 1792281600000,
+    "timeZone": "UTC"
+  },
+  "peerSignals": [],
+  "peerVoicedFrames": 0,
+  "survivors": [
+    "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  ],
+  "callStillActive": true
+}

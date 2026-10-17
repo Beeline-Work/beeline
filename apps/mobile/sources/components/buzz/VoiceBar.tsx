@@ -3,6 +3,7 @@ import { AccessibilityInfo, Pressable, ScrollView, Text, View } from 'react-nati
 import { HullModal } from './HullDialog';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { IdentityMark } from './IdentityMark';
+import { VoicePreviewPlayer } from './VoicePreviewPlayer';
 import { MicGlyph } from './MicGlyph';
 import { DictationWaveform } from './DictationWaveform';
 import { BeelineMarkSpinner } from './BeelineMarkSpinner';
@@ -36,6 +37,8 @@ export function VoiceBar({ voice, fullScreen = false, onAttach, attachDisabled =
         accessibilityLiveRegion={tip.flash ? 'polite' : 'none'} testID="conversation-tip">{tip.text}</Text>
         : <Text style={styles.modeLabel} testID="conversation-mode-label">Conversation mode</Text>}
     </View>
+    {voice.budgetWarning && <Text accessibilityRole="alert" accessibilityLiveRegion="polite"
+      style={styles.error} testID="voice-budget-warning">{voice.budgetWarning}</Text>}
     <View style={styles.controls}>
       <Pressable onPress={onAttach} disabled={attachDisabled || !onAttach} accessibilityRole="button"
         accessibilityLabel="Attach photo or document" style={styles.attach} testID={`${testIDPrefix}-attach-button`}>
@@ -54,6 +57,8 @@ export function VoiceBar({ voice, fullScreen = false, onAttach, attachDisabled =
     </View>
   </View>;
   return <>
+    {voice.warningAudio && <VoicePreviewPlayer source={voice.warningAudio}
+      onEnd={voice.clearWarningAudio} onError={voice.clearWarningAudio} />}
     {bar}
     <HullModal visible={expanded} onRequestClose={() => setExpanded(false)} placement="fill" animationType="fade">
       <View style={styles.fullScreen}>

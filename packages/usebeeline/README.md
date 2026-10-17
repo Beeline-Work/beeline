@@ -1,4 +1,9 @@
-<h1 align="center">beeline.</h1>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/Beeline-Work/beeline/main/apps/mobile/sources/assets/images/logotype-light@2x.png" />
+    <img src="https://raw.githubusercontent.com/Beeline-Work/beeline/main/apps/mobile/sources/assets/images/logotype-dark@2x.png" alt="beeline" width="180" />
+  </picture>
+</p>
 
 <p align="center">
   <a href="https://www.npmjs.com/package/usebeeline"><img src="https://img.shields.io/npm/v/usebeeline?logo=npm&color=D7AF5F" alt="npm version" /></a>

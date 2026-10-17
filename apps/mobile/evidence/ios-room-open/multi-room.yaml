@@ -1,0 +1,29 @@
+appId: app.usebeeline.mobile
+name: ios-runtime-31-repeated-room-open
+---
+- assertVisible:
+    id: chat-messages
+- tapOn:
+    id: chat-back
+- assertVisible:
+    id: room-list
+- tapOn: "#general"
+- extendedWaitUntil:
+    visible:
+      id: chat-messages
+    timeout: 30000
+- assertVisible:
+    id: chat-composer-input-row
+- takeScreenshot: general-open
+- tapOn:
+    id: chat-back
+- tapOn:
+    id: room-bee11e00-0000-4000-8000-000000000103
+- assertVisible:
+    id: chat-composer-input-row
+- takeScreenshot: proof-reopened
+- tapOn:
+    id: chat-back
+- assertVisible:
+    id: room-list
+- takeScreenshot: rooms-list

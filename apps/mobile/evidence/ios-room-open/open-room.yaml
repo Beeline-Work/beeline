@@ -1,0 +1,18 @@
+appId: app.usebeeline.mobile
+name: ios-runtime-31-room-open
+---
+- launchApp:
+    clearState: false
+- extendedWaitUntil:
+    visible:
+      id: room-list
+    timeout: 60000
+- tapOn:
+    id: room-bee11e00-0000-4000-8000-000000000103
+- extendedWaitUntil:
+    visible:
+      id: chat-messages
+    timeout: 30000
+- assertVisible:
+    id: chat-composer-input-row
+- takeScreenshot: room-open

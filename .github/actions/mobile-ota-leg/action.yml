@@ -168,6 +168,8 @@ runs:
           npm run typecheck && npx vitest run \
             sources/config/appBranding.test.ts \
             sources/config/mobileOtaRelease.test.ts \
+            sources/config/nativeRuntimeImports.test.ts \
+            sources/buzz/voice-transport.ios-compat.test.ts \
             sources/push/update-receipt.test.ts \
             && node scripts/ota-release.mjs publish --dry-run \
               --sha "$RELEASE_SHA" --release-version "$RELEASE_VERSION" --ref main \

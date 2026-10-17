@@ -102,6 +102,10 @@ export function cornerBlockerSql(sourcePredicate = 'true'): string {
       FROM corner_owed owed WHERE owed.corner_id=c.id AND owed.blocking
         AND (owed.expires_at IS NULL OR owed.expires_at>now())
       UNION ALL
+      SELECT report.report_id,report.person_id,report.created_at FROM corner_report_blockers report
+      JOIN memberships member ON member.room_id=c.id AND member.identity_id=report.person_id AND member.removed_at IS NULL
+      WHERE report.corner_id=c.id
+      UNION ALL
       SELECT hold.id::text,hold.actor_id,hold.set_at FROM corner_merge_holds hold
       JOIN identities holder ON holder.id=hold.actor_id AND holder.kind='human'
       JOIN memberships holder_member ON holder_member.room_id=c.id

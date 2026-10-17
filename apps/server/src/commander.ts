@@ -7,6 +7,7 @@ import {
   type CommandRow,
   type PrivateCommandPayload,
 } from './agent-command.js';
+import { tagsKnownIdentitySql } from './message-mentions.js';
 import { cornerImplementerSql } from './corner-worker.js';
 
 export class CommandRefusalError extends Error {
@@ -189,7 +190,7 @@ export async function reportToCommander(
   text: string,
   command?: CommandRow,
   reportId = randomBytes(32).toString('hex'),
-  options: { automatic?: boolean; agentOnly?: boolean; ask?: string; attachments?: PrivateCommandPayload['attachments']; digestSource?: boolean } = {},
+  options: { automatic?: boolean; agentOnly?: boolean; ask?: string; attachments?: PrivateCommandPayload['attachments']; digestSource?: boolean; returnRoom?: string } = {},
 ): Promise<{ id: string; createdAt: number; delivered?: boolean; receipt?: string; skipped?: boolean }> {
   if ((!options.automatic && !/^(done|blocked|needs-decision|failed):\s*\S/.test(text)) || !text.trim() || text.length > 16_000)
     throw new CommandRefusalError(
@@ -226,7 +227,9 @@ export async function reportToCommander(
     }
   }
   const strict = Boolean(command) && !options.automatic;
-  const { recipient, returnRoom, parent, origin, incoming } = await commanderReportAddress(db, roomId, command);
+  const route = await commanderReportAddress(db, roomId, command);
+  const { recipient, parent, origin, incoming } = route;
+  const returnRoom = options.returnRoom ?? route.returnRoom;
   if (!recipient || !returnRoom) {
     if (strict) throw new CommandRefusalError('this order has no commander return address', 409);
     console.error(`[commander] ${roomId}: cannot route report without recorded opening provenance`);
@@ -270,6 +273,21 @@ export async function reportToCommander(
       reason: 'report',
     });
     if (!queued) throw new CommandRefusalError('commander could not receive report', 409);
+    if (!options.automatic && origin && (await db.query(
+      'SELECT 1 FROM corner_facts WHERE corner_id=$1 AND COALESCE(worker_agent_id,owner_agent_id)=$2', [origin,agentId])).rowCount) {
+      await db.query('DELETE FROM corner_report_blockers WHERE corner_id=$1', [origin]);
+      if (/^(needs-decision|blocked):/.test(text)) await db.query(
+        `INSERT INTO corner_report_blockers(corner_id,person_id,report_id,return_room_id)
+         SELECT $1,person.id,$2,$3 FROM identities person
+         JOIN memberships member ON member.identity_id=person.id AND member.room_id=$1 AND member.removed_at IS NULL
+         CROSS JOIN (SELECT $4::text text,'message'::text presentation,$1::uuid room_id,$5::text author_id) item
+         WHERE person.kind='human' AND ${tagsKnownIdentitySql('item', 'person.id', 'person.handle', 'person.kind')}
+         AND EXISTS(SELECT 1 FROM corner_facts fact WHERE fact.corner_id=$1
+           AND COALESCE(fact.worker_agent_id,fact.owner_agent_id)=$5)
+         ON CONFLICT(corner_id,person_id) DO UPDATE SET report_id=EXCLUDED.report_id,
+           return_room_id=EXCLUDED.return_room_id,created_at=EXCLUDED.created_at`,
+        [origin, reportId, returnRoom, text, agentId]);
+    }
   } else {
     // The existing attention index follows this transport provenance; no public relay is created.
     if (origin && incoming?.private_payload)
@@ -288,8 +306,8 @@ export async function reportToCommander(
         text,
         JSON.stringify(options.attachments ?? []),
         incoming?.id ?? null,
-        ask || /^needs-decision:/.test(text)
-          ? JSON.stringify({ ...(ask ? { ask } : {}), ...(/^needs-decision:/.test(text) ? { reportToId: recipient } : {}) })
+        ask || /^(needs-decision|blocked):/.test(text)
+          ? JSON.stringify({ ...(ask ? { ask } : {}), ...(/^(needs-decision|blocked):/.test(text) ? { reportToId: recipient } : {}) })
           : null,
       ],
     );

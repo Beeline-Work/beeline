@@ -10,7 +10,7 @@ import { grantDecidedBySql } from './needs-you.js';
 
 /** A tag, a reply, or a deliverable stops keeping its corner waiting this long after it was posted. */
 const CORNER_OWED_EXPIRY_HOURS = 24;
-const BLOCKING_ITEM = `COALESCE((item.text ~ '^needs-decision:[[:space:]]*[^[:space:]]'
+const BLOCKING_ITEM = `COALESCE((item.text ~ '^(needs-decision|blocked):[[:space:]]*[^[:space:]]'
   OR (item.card_type='${CHOICE_CARD_TYPE}' AND item.card->>'mode'='question')
   OR item.card_type IN ('grant-request','permission','connector-offer',
     'agent-sign-in','app-sign-in','squire-approval')),false)`;
@@ -57,7 +57,7 @@ export function addressedToPersonSql(
         AND addressed.author_id=${personIdExpr}
     )
     OR ${tagsKnownIdentitySql(m, personIdExpr, personHandleExpr, personKindExpr)}
-    OR (${m}.text ~ '^needs-decision:' AND COALESCE(${m}.card->>'reportToId',(
+    OR (${m}.text ~ '^(needs-decision|blocked):' AND COALESCE(${m}.card->>'reportToId',(
       SELECT source.author_id FROM agent_commands command JOIN messages source
         ON source.id=command.root_source_message_id AND source.room_id=${m}.room_id
       WHERE command.id=${m}.request_id AND command.agent_id=${m}.author_id
@@ -256,6 +256,59 @@ const CORNER_OWED_INSERT = `INSERT INTO corner_owed(corner_id,person_id,message_
  */
 export function cornerOwedSchemaSql(): string {
   return `
+CREATE TABLE IF NOT EXISTS corner_report_blockers (
+  corner_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  person_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+  report_id text NOT NULL REFERENCES agent_commands(id) ON DELETE CASCADE,
+  return_room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY(corner_id,person_id)
+);
+CREATE INDEX IF NOT EXISTS corner_report_blockers_return ON corner_report_blockers(person_id,return_room_id);
+CREATE INDEX IF NOT EXISTS corner_private_reports_origin ON agent_commands
+  ((private_payload->>'fromRoomId'),(private_payload->>'authorId'),created_at DESC,id DESC)
+  WHERE private_payload->>'kind'='report';
+-- Recover unresolved reports already sent before this index existed.
+INSERT INTO corner_report_blockers(corner_id,person_id,report_id,return_room_id,created_at)
+SELECT corner.id,person.id,report.id,report.room_id,report.created_at
+FROM rooms corner JOIN corner_facts fact ON fact.corner_id=corner.id
+JOIN LATERAL (SELECT command.* FROM agent_commands command
+  WHERE command.private_payload->>'kind'='report'
+    AND command.private_payload->>'fromRoomId'=corner.id::text
+    AND command.private_payload->>'authorId'=COALESCE(fact.worker_agent_id,fact.owner_agent_id)
+  ORDER BY command.created_at DESC,command.id DESC LIMIT 1) report ON true
+JOIN memberships member ON member.room_id=corner.id AND member.removed_at IS NULL
+JOIN identities person ON person.id=member.identity_id AND person.kind='human'
+CROSS JOIN LATERAL (SELECT report.private_payload->>'text' text,'message'::text presentation,
+  corner.id room_id,COALESCE(fact.worker_agent_id,fact.owner_agent_id) author_id) item
+WHERE corner.archived_at IS NULL AND item.text ~ '^(needs-decision|blocked):'
+  AND ${tagsKnownIdentitySql('item', 'person.id', 'person.handle', 'person.kind')}
+  AND NOT EXISTS(SELECT 1 FROM messages answer WHERE answer.room_id IN (corner.id,report.room_id)
+    AND answer.author_id=person.id AND answer.presentation='message' AND answer.deleted_at IS NULL
+    AND answer.created_at>report.created_at)
+  AND NOT EXISTS(SELECT 1 FROM agent_turns resumed WHERE resumed.room_id=corner.id
+    AND resumed.agent_id=item.author_id AND resumed.started_at>report.created_at)
+ON CONFLICT DO NOTHING;
+CREATE OR REPLACE FUNCTION clear_corner_report_blockers() RETURNS trigger LANGUAGE plpgsql AS $report$
+BEGIN
+  IF TG_TABLE_NAME='messages' THEN
+    DELETE FROM corner_report_blockers WHERE person_id=NEW.author_id
+      AND NEW.presentation='message' AND NEW.deleted_at IS NULL
+      AND (corner_id=NEW.room_id OR return_room_id=NEW.room_id) AND created_at<NEW.created_at;
+  ELSE
+    DELETE FROM corner_report_blockers blocker USING corner_facts fact
+      WHERE blocker.corner_id=NEW.room_id AND fact.corner_id=blocker.corner_id
+        AND NEW.agent_id=COALESCE(fact.worker_agent_id,fact.owner_agent_id);
+  END IF;
+  RETURN NULL;
+END $report$;
+DROP TRIGGER IF EXISTS corner_report_answer ON messages;
+CREATE TRIGGER corner_report_answer AFTER INSERT ON messages FOR EACH ROW EXECUTE FUNCTION clear_corner_report_blockers();
+DROP TRIGGER IF EXISTS corner_report_resume ON agent_turns;
+CREATE TRIGGER corner_report_resume AFTER INSERT ON agent_turns FOR EACH ROW WHEN (NEW.status='working') EXECUTE FUNCTION clear_corner_report_blockers();
+DROP TRIGGER IF EXISTS corner_report_restart ON agent_turns;
+CREATE TRIGGER corner_report_restart AFTER UPDATE OF started_at ON agent_turns FOR EACH ROW
+  WHEN (NEW.status='working' AND NEW.started_at IS DISTINCT FROM OLD.started_at) EXECUTE FUNCTION clear_corner_report_blockers();
 CREATE TABLE IF NOT EXISTS corner_owed (
   corner_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
   person_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,

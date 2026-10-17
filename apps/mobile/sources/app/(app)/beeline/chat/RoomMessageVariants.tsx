@@ -571,7 +571,7 @@ export const ConnectorOfferCard = React.memo(function ConnectorOfferCard({
             testID: `connector-offer-${offer.offerId}-accept`,
           },
         ]
-      : connecting && offer.connectorId && onContinue
+      : connecting && canAccept && (offer.intent !== 'reconnect' || viewerPubkey === offer.addressee.pubkey) && offer.connectorId && onContinue
         ? [
             {
               label: 'Continue sign-in ›',

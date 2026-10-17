@@ -6,18 +6,23 @@ export type ConnectorOfferCeremonyRouteInput = {
   readonly offerId: string;
   readonly connectorType: string;
   readonly pairedConnectorId: string;
+  readonly directSignIn?: boolean;
 };
 
 /** Route an accepted in-chat offer through the existing Workbench ceremony. */
 export function connectorOfferCeremonyRoute(input: ConnectorOfferCeremonyRouteInput) {
+  const direct = input.directSignIn && input.connectorType === 'trusty-squire';
   return {
-    pathname: '/beeline/settings/workbench/connect' as const,
+    pathname: direct
+      ? '/beeline/settings/workbench/connect-signin' as const
+      : '/beeline/settings/workbench/connect' as const,
     params: {
       workspaceId: input.workspaceId,
       viewerId: input.viewerId,
       roomId: input.roomId,
       offerId: input.offerId,
-      connectorId: input.connectorType,
+      connectorId: direct ? input.pairedConnectorId : input.connectorType,
+      ...(direct ? { connectorName: 'Trusty Squire' } : {}),
       pairedConnectorId: input.pairedConnectorId,
     },
   };

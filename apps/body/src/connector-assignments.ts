@@ -471,6 +471,7 @@ export class ConnectorAssignmentLoop {
         agentId: this.agentId,
         connectorId,
         ...(result.squireVersion ? { squireVersion: result.squireVersion } : {}),
+        ...(result.signedInAs ? { signedInAs: result.signedInAs } : {}),
         ...generation,
       });
       await this.reportLocalBroker(true);
@@ -485,6 +486,7 @@ export class ConnectorAssignmentLoop {
       steps: result.steps,
       signIn: result.signIn ?? null,
       ...(result.squireVersion ? { squireVersion: result.squireVersion } : {}),
+        ...(result.signedInAs ? { signedInAs: result.signedInAs } : {}),
       ...generation,
     });
     this.watchConnectSignIn();

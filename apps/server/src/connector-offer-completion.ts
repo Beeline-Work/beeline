@@ -1,7 +1,8 @@
 import type { ConnectorOfferCardView } from '@beeline/api-contract/connector-offers';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { SqlDatabase } from './database.js';
 import { connectorDisplayName } from './workbench.js';
-import { identitySubject, systemLine } from './system-line.js';
+import { ensureSystemIdentity, identitySubject, systemLine } from './system-line.js';
 
 type ConnectingOffer = {
   id: string;
@@ -9,7 +10,8 @@ type ConnectingOffer = {
   agent_id: string;
   command_id: string | null;
   connector_type: ConnectorOfferCardView['connectorType'];
-  accepted_by: string;
+  intent: ConnectorOfferCardView['intent'];
+  accepted_by: string | null;
   accepted_at: Date;
   accepted_name: string;
   accepted_kind: 'human' | 'agent';
@@ -52,7 +54,7 @@ export async function completeSquireMachineOffers(
 ): Promise<CompletedConnectorOffer[]> {
   const offers = (await database.query<{ id: string }>(
     `SELECT id FROM connector_offers WHERE connector_type='trusty-squire'
-       AND accepted_by=$1 AND machine_id=$2 AND status='connecting'
+       AND (accepted_by=$1 OR (accepted_by IS NULL AND addressee_id=$1)) AND machine_id=$2 AND status='connecting'
        AND NOT EXISTS (SELECT 1 FROM agents pending WHERE pending.owner_id=$1
          AND COALESCE(pending.machine_id,pending.agent_id)=$2
          AND pending.squire_work->>'install'='true')`, [ownerId, machineId],
@@ -71,11 +73,11 @@ async function settleConnectingOffers(
 ): Promise<CompletedConnectorOffer[]> {
   const offers = (
     await database.query<ConnectingOffer>(
-      `SELECT offer.id,offer.room_id,offer.agent_id,offer.command_id,offer.connector_type,
+      `SELECT offer.id,offer.room_id,offer.agent_id,offer.command_id,offer.connector_type,offer.intent,
               offer.accepted_by,offer.accepted_at,
               acceptor.name accepted_name,acceptor.kind accepted_kind
          FROM connector_offers offer
-         JOIN identities acceptor ON acceptor.id=offer.accepted_by
+         LEFT JOIN identities acceptor ON acceptor.id=offer.accepted_by
         WHERE ${key}=$1::uuid AND offer.status='connecting'
         ORDER BY offer.created_at,offer.id
         FOR UPDATE OF offer`,
@@ -108,16 +110,17 @@ async function settleConnectingOffers(
     }
 
     const connectorName = connectorDisplayName(offer.connector_type);
+    if (!offer.accepted_by) await ensureSystemIdentity(database);
     await systemLine(database, {
       roomId: offer.room_id,
-      authorId: offer.accepted_by,
-      subject: identitySubject({
+      authorId: offer.accepted_by ?? SYSTEM_IDENTITY_ID,
+      subject: offer.accepted_by ? identitySubject({
         id: offer.accepted_by,
         kind: offer.accepted_kind,
         name: offer.accepted_name,
-      }),
-      verb: 'added',
-      object: connectorName,
+      }) : { kind: 'system', name: connectorName },
+      verb: offer.accepted_by ? (offer.intent === 'reconnect' ? 'reconnected' : 'added') : 'reconnected automatically',
+      ...(offer.accepted_by ? { object: connectorName } : {}),
       kind: 'connector-offer-decided',
       ...(offer.command_id ? { commandId: offer.command_id } : {}),
       wakes: [offer.agent_id],

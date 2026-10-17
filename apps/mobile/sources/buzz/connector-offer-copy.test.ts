@@ -75,3 +75,7 @@ describe('connector-offer copy (R5)', () => {
     expect(connectorOfferWaitingLine({ addressee: zeke })).toBe('waiting for @zeke');
   });
 });
+
+it('Reproduction squire-false-card: automatic reconnect credits no person', () => {
+  expect(connectorOfferOutcomeLine({ status: 'accepted', intent: 'reconnect' })).toBe('Reconnected automatically');
+});

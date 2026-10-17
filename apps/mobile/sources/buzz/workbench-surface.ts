@@ -10,6 +10,13 @@ import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { clientResetGeneration, subscribeClientReset } from '@/sync/client-reset';
 
 export type WorkbenchScope = { workspaceId: string; viewerId: string };
+/** Bound every foreground and live read, including the cache's shared flight. */
+async function readWorkbenchWithTimeout(scope: WorkbenchScope & { refreshVault?: boolean }) {
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  return Promise.race([getWorkbenchSource().readWorkbench(scope), new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => reject(new Error('Connections did not answer. Try again.')), 15_000);
+  })]).finally(() => clearTimeout(timeout));
+}
 export const isWorkbenchView = (value: unknown): value is WorkbenchView => {
   if (!value || typeof value !== 'object') return false;
   const view = value as Partial<WorkbenchView>;
@@ -41,7 +48,7 @@ export function holdSharedWorkbench(address: SurfaceCacheAddress, scope: Workben
   if (!answeredWorkbench.has(key)) {
     answeredWorkbench.add(key);
     void mobileSurfaceCache.read(address, isWorkbenchView).then((stored) => stored &&
-      mobileSurfaceCache.fetch(address, isWorkbenchView, () => getWorkbenchSource().readWorkbench(scope))
+      mobileSurfaceCache.fetch(address, isWorkbenchView, () => readWorkbenchWithTimeout(scope))
         .then(() => reportOwnerError(key, null), (cause) => reportOwnerError(key, String(cause))));
   }
   heldWorkbench.set(key, { address, scope });
@@ -57,7 +64,7 @@ export function holdSharedWorkbench(address: SurfaceCacheAddress, scope: Workben
         (live.type === 'invalidate' && live.roomId === '' && live.reason === 'reconnect')) {
       for (const [key, owner] of heldWorkbench)
         void mobileSurfaceCache.fetch(owner.address, isWorkbenchView,
-          () => getWorkbenchSource().readWorkbench(owner.scope))
+          () => readWorkbenchWithTimeout(owner.scope))
           .then(() => reportOwnerError(key, null), (cause) => reportOwnerError(key, String(cause)));
     }
   }).then((stop) => { if (generation !== clientResetGeneration()) stop();
@@ -66,7 +73,7 @@ export function holdSharedWorkbench(address: SurfaceCacheAddress, scope: Workben
 }
 
 export function useSharedWorkbench(scope: WorkbenchScope | null) {
-  const request = useCallback(() => getWorkbenchSource().readWorkbench(scope!),
+  const request = useCallback(() => readWorkbenchWithTimeout(scope!),
     [scope?.workspaceId, scope?.viewerId]);
   const resource = useSharedSurface('/workspace/:id/workbench', scope ?? undefined,
     isWorkbenchView, request, Boolean(scope?.viewerId));
@@ -115,7 +122,7 @@ export async function readSharedWorkbench(scope: WorkbenchScope, options?: {
     if (held) return held;
   }
   const next = await mobileSurfaceCache.fetch(address, isWorkbenchView, () =>
-    getWorkbenchSource().readWorkbench({ ...scope,
+    readWorkbenchWithTimeout({ ...scope,
       ...(options?.refreshVault ? { refreshVault: true } : {}) }));
   if (!next) {
     const held = mobileSurfaceCache.peek(address, isWorkbenchView);

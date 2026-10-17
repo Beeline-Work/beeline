@@ -13,6 +13,7 @@ import { useSandboxWebView } from '@/components/buzz/sandbox-webview';
 import { useInstallObserver } from '@/buzz/use-observed-resource';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
 import { connectorOfferCompletionRoute } from '@/buzz/connector-offer-ceremony';
+import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { takeAppSignInReturn } from '@/buzz/app-sign-in';
 
 function first(value: string | string[] | undefined): string | undefined { return Array.isArray(value) ? value[0] : value; }
@@ -54,7 +55,7 @@ function ConnectorSignInOverlay() {
   const params = useLocalSearchParams<{
     workspaceId?: string | string[]; viewerId?: string | string[];
     connectorId?: string | string[]; connectorName?: string | string[];
-    roomId?: string | string[]; url?: string | string[]; method?: string | string[];
+    roomId?: string | string[]; offerId?: string | string[]; url?: string | string[]; method?: string | string[];
   }>();
   const workspaceId = first(params.workspaceId) ?? '';
   const viewerId = first(params.viewerId) ?? '';
@@ -62,6 +63,9 @@ function ConnectorSignInOverlay() {
   const connectorName = first(params.connectorName) ?? 'App';
   const roomId = first(params.roomId);
   const [signIn, setSignIn] = useState({ url: first(params.url) ?? '', method: first(params.method) ?? 'streamed' });
+  const [pageError, setPageError] = useState<string | null>(null);
+  const [pageLoaded, setPageLoaded] = useState(false);
+  const [attempt, setAttempt] = useState(0);
   const [fallback, setFallback] = useState(false);
   const insets = useSafeAreaInsets();
   const WebView = useSandboxWebView();
@@ -71,12 +75,33 @@ function ConnectorSignInOverlay() {
       ), [roomId, viewerId, workspaceId],
   );
   const observed = useInstallObserver(workspaceId, connectorId);
+  const squire = connectorId.startsWith('squire:') || connectorName === 'Trusty Squire';
+  useEffect(() => {
+    const timer = setTimeout(() => setPageError(pageLoaded
+      ? 'Sign-in is still waiting. Retry or open it in your browser.'
+      : 'The sign-in page did not load. Retry or open it in your browser.'), pageLoaded ? 120_000 : 15_000);
+    return () => clearTimeout(timer);
+  }, [signIn.url, attempt, pageLoaded]);
+  const retry = useCallback(async () => {
+    setPageLoaded(false);
+    setAttempt(value => value + 1);
+    setPageError(null);
+    try {
+      if (observed.data?.steps.some(step => step.status === 'failed')) {
+        const offerId = first(params.offerId);
+        if (offerId) await monolithPhoneOperation('acceptConnectorOffer', { offerId });
+        else if (connectorId.startsWith('squire:')) await getWorkbenchSource().pairConnector({
+          workspaceId, connectorId: 'trusty-squire', helperId: connectorId.slice(7) });
+      }
+      await observed.retry();
+    } catch { setPageError('Google sign-in could not restart. Try again.'); }
+  }, [observed.retry, observed.data, params.offerId, connectorId, workspaceId]);
   useEffect(() => {
     const state = observed.data;
     if (!state) return;
     if (state.connected) { finish(); return; }
     if (state.signIn) setSignIn(current => current.url === state.signIn!.url ? current : { url: state.signIn!.url, method: state.signIn!.method });
-    else if (state.steps?.some(step => step.status === 'failed')) router.back();
+    else if (state.steps?.some(step => step.status === 'failed')) setPageError('Google sign-in could not start. Go back and reconnect this computer.');
   }, [observed.data, finish]);
 
   const openBrowser = useCallback(async () => {
@@ -89,32 +114,33 @@ function ConnectorSignInOverlay() {
     <View style={styles.scrim} testID="signin-overlay">
     <AnimatedBlurBackdrop interactive={false} blurIntensity={48} />
     <View style={[styles.card, { marginTop: insets.top + 24, marginBottom: insets.bottom + 24 }]} testID="signin-card">
-      <PageHeader backAccessibilityLabel="Close sign-in" eyebrow="Connectors" prominent onBack={() => router.back()} testID="signin-header" title={`Sign in to ${connectorName}`} />
-        {observed.error ? (
+      <PageHeader backAccessibilityLabel="Close sign-in" eyebrow="Connectors" prominent onBack={() => router.back()} testID="signin-header" title={squire ? 'Sign in to Google' : `Sign in to ${connectorName}`} />
+        {squire ? <Text style={styles.note}>Sign in to Google once, so Trusty Squire can sign in to websites and APIs for you hands-free.</Text> : null}
+        {observed.error || pageError ? (
           <View>
             <Text accessibilityRole="alert" style={styles.error}>
-              {observed.error}
+              {observed.error ?? pageError}
             </Text>
             <Button
               label="Retry"
               variant="secondary"
               style={{ alignSelf: 'flex-end' }}
-              onPress={observed.installMissing ? () => router.back() : observed.retry}
+              onPress={observed.installMissing ? () => router.back() : retry}
               testID="signin-retry"
             />
           </View>
         ) : null}
-        {signIn.method === 'oauth' ? (
+        {!pageError && signIn.method === 'oauth' ? (
           <View style={styles.centered} testID="signin-oauth-browser">
         <Text style={styles.note}>{connectorName} sign-in opens in your browser. Return here after granting access.</Text>
         <Button label={`Continue with ${connectorName}`} onPress={() => void openBrowser()} testID="signin-open-external" />
       </View>
-        ) : WebView && signIn.url ? (
-          React.createElement(WebView, { source: { uri: signIn.url }, style: styles.webView, javaScriptEnabled: true, domStorageEnabled: true, testID: 'signin-webview' })
+        ) : !pageError && WebView && signIn.url ? (
+          React.createElement(WebView, { key: `${signIn.url}:${attempt}`, onLoadEnd: () => setPageLoaded(true), onError: () => setPageError('The sign-in page could not load. Retry or open it in your browser.'), onHttpError: () => setPageError('The sign-in page could not load. Retry or open it in your browser.'), source: { uri: signIn.url }, style: styles.webView, javaScriptEnabled: true, domStorageEnabled: true, testID: 'signin-webview' })
         ) : fallback ? (
           <View style={styles.centered}><Text style={styles.note}>Finish sign-in in the browser, then return here.</Text></View>
         ) : (
-          <ScrollView contentContainerStyle={styles.centered}><ActivityIndicator testID="signin-webview-loading" /><Button label="Open in browser" onPress={() => void openBrowser()} testID="signin-open-external" /></ScrollView>
+          <ScrollView contentContainerStyle={styles.centered}>{!pageError && !observed.error ? <ActivityIndicator testID="signin-webview-loading" /> : null}<Button label="Open in browser" disabled={!signIn.url} onPress={() => void openBrowser()} testID="signin-open-external" /></ScrollView>
         )}
       </View>
     </View>

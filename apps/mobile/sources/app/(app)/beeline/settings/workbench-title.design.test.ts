@@ -34,7 +34,7 @@ describe('Workbench title hierarchy', () => {
     expect(walletReceive).toContain('eyebrow="Wallet"');
     expect(walletReceive).toContain('title="Receive"');
     expect(signIn).toContain('eyebrow="Connectors"');
-    expect(signIn).toContain('title={`Sign in to ${connectorName}`}');
+    expect(signIn).toContain("title={squire ? 'Sign in to Google' : `Sign in to ${connectorName}`}");
     expect(signIn).not.toContain('width: 40, height: 40');
   });
 

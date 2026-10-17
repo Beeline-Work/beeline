@@ -574,13 +574,14 @@ describe('installSquire', () => {
           state: 'connected',
           terminal: true,
           reason: 'cached_cookie_evidence',
-          account: { id: 'account-1', providers: ['google', 'github'] },
+          account: { id: 'account-1', email: 'owner@example.com', providers: ['google', 'github'] },
         }),
       }),
       mcp: mockSquire({ list_credentials: () => ({ credentials: [] }) }).client,
     });
     expect(result.status).toBe('connected');
     expect(result.signIn).toBeUndefined();
+    expect(result.signedInAs).toBe('owner@example.com');
     expect(result.steps.map((step) => step.status)).toEqual(['done', 'done', 'done', 'done']);
     expect(result.steps.map((step) => step.reason ?? '').join(' ')).not.toContain('force-relogin');
   });

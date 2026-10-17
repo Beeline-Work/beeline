@@ -74,3 +74,40 @@ describe('company detail', () => {
     expect(disconnect).toHaveBeenCalledWith({ workspaceId: 'ws', connectorId: 'squire:machine-one' }); expect(read.mock.calls.length).toBeGreaterThan(1);
   });
 });
+
+it('Reproduction squire-false-card: account replaces Ready and reconnect hides Disconnect', async () => {
+  params.service = 'trusty-squire';
+  const source = new MockWorkbenchSource();
+  const row = squireRow();
+  source.readWorkbench = async () => companyWorkbench([{ ...row, machines: row.machines.map(m => ({ ...m, signedInAs: 'owner@example.com', statusText: 'owner@example.com' })) }]);
+  setWorkbenchSource(source);
+  const renderer = await render();
+  expect(renderer.root.findByProps({ testID: 'squire-computer-machine-one' }).props.value).toBe('owner@example.com');
+  await act(async () => renderer.root.findByProps({ testID: 'squire-computer-machine-one' }).props.onPress());
+  source.readWorkbench = async () => companyWorkbench([{ ...row, machines: row.machines.map(m => ({ ...m, reconnecting: true, statusText: 'Reconnecting…' })) }]);
+  await act(async () => mobileSurfaceCache.clear());
+  await act(async () => renderer.unmount());
+  const reconnecting = await render();
+  const computer = reconnecting.root.findByProps({ testID: 'squire-computer-machine-one' });
+  expect(computer.props.value).toBe('Reconnecting…');
+  expect(computer.props.disabled).toBe(true);
+  await act(async () => computer.props.onPress());
+  expect(reconnecting.root.findAllByType('HullActionSheetRow').filter((r: any) => r.props.label === 'Disconnect')).toHaveLength(0);
+  await act(async () => reconnecting.unmount());
+});
+
+it('Reproduction squire-spinner: an expired online computer offers Reconnect after failure', async () => {
+  params.service = 'trusty-squire'; navigation.push.mockClear();
+  const source = new MockWorkbenchSource(); const row = squireRow();
+  source.readWorkbench = async () => companyWorkbench([{ ...row, machines: row.machines.map(m => ({
+    ...m, reconnecting: false, error: 'Google reconnect failed', statusText: 'Google sign-in expired',
+  })) }]);
+  setWorkbenchSource(source);
+  const renderer = await render();
+  await act(async () => renderer.root.findByProps({ testID: 'squire-computer-machine-one' }).props.onPress());
+  expect(renderer.root.findAllByType('HullActionSheetRow').map((r: any) => r.props.label)).toEqual(['Reconnect']);
+  await act(async () => renderer.root.findByType('HullActionSheetRow').props.onPress());
+  expect(navigation.push).toHaveBeenCalledWith({ pathname: '/beeline/settings/workbench/connect',
+    params: { workspaceId: 'ws', viewerId: 'human-dani', connectorId: 'trusty-squire', helperId: 'machine-one' } });
+  await act(async () => renderer.unmount());
+});

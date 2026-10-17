@@ -854,6 +854,7 @@ describe('landing and closing from any state (finding 3, implicit edges)', () =>
     const cornerId = await inReview();
     const [review] = await commands(B, cornerId);
     expect(review).toBeDefined();
+    await github.closeCornerPullRequest(cornerId);
     await daemon.execute('archiveCorner', { cornerId }, A);
     expect(
       (await db.query<{ state: string }>(`SELECT state FROM agent_commands WHERE id=$1`, [review!.id])).rows[0]!
@@ -1306,7 +1307,7 @@ describe('Reproduction S-07: every reviewer waits for a quiet corner', () => {
 });
 
 describe('Reproduction R5a: entry paths lock the run before corner rows', () => {
-  it.each(['check webhook', 'merged webhook', 'approval', 'hold', 'brief', 'create', 'zero-check', 'blocker reconciliation'])('%s', async path => {
+  it.each(['check webhook', 'merged webhook', 'approval', 'hold', 'brief', 'create', 'zero-check', 'blocker reconciliation', 'agent close', 'phone close'])('%s', async path => {
     const cornerId = await inReview();
     const recording = new RecordingDatabase(db);
     const recordedDaemon = new DaemonService(recording, new LiveHub());
@@ -1327,6 +1328,10 @@ describe('Reproduction R5a: entry paths lock the run before corner rows', () => 
       await recordedDaemon.execute('approveCornerMerge', { cornerId, headSha: SHA }, B);
     } else if (path === 'hold') {
       await new PhoneService(recording, 'http://test').execute('setCornerHold', { cornerId }, H);
+    } else if (path === 'agent close') {
+      await expect(recordedDaemon.execute('archiveCorner', { cornerId }, A)).rejects.toThrow(/close_corner_pr/);
+    } else if (path === 'phone close') {
+      await expect(new PhoneService(recording, 'http://test').execute('requestCornerClose', { roomId: cornerId }, H)).rejects.toThrow(/close_corner_pr/);
     } else if (path === 'brief') {
       await revise(cornerId, recordedDaemon);
     } else if (path === 'create') {
@@ -2318,6 +2323,69 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
       AND status='working'`, [cornerId])).rowCount).toBe(0);
   });
 
+  it('R1 refuses close_corner until close_corner_pr succeeds, then archives', async () => {
+    const cornerId = await inReview();
+    const wiredDaemon = new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
+      (input, confirmZeroChecks) => github.prChecksStatus(input, confirmZeroChecks), undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, (id: string) => github.landCorner(id),
+      (id: string) => github.closeCornerPullRequest(id));
+    await expect(wiredDaemon.execute('archiveCorner', { cornerId }, A)).rejects.toThrow(/close_corner_pr/);
+    expect((await db.query(`SELECT archived_at FROM rooms WHERE id=$1`, [cornerId])).rows[0]!.archived_at).toBeNull();
+    expect(await currentState(cornerId)).toBe('review');
+    expect(githubApp.closePullRequest).not.toHaveBeenCalled();
+    githubApp.closePullRequest.mockRejectedValueOnce(new Error('GitHub unavailable'));
+    await expect(wiredDaemon.execute('closeCornerPullRequest', { cornerId }, A)).rejects.toThrow('GitHub unavailable');
+    await expect(wiredDaemon.execute('archiveCorner', { cornerId }, A)).rejects.toThrow(/close_corner_pr/);
+    await expect(wiredDaemon.execute('closeCornerPullRequest', { cornerId }, A)).resolves.toMatchObject({
+      status: 'closed', pullRequestNumber: 7,
+    });
+    expect(githubApp.closePullRequest).toHaveBeenLastCalledWith(77, 101, 'owner/widgets', 7);
+    await wiredDaemon.execute('archiveCorner', { cornerId }, A);
+    expect((await db.query(`SELECT archived_at IS NOT NULL archived FROM rooms WHERE id=$1`, [cornerId])).rows[0]!.archived).toBe(true);
+    expect(await currentState(cornerId)).toBe('closed');
+    console.log('R1 Demonstrated: close_corner refuses with close_corner_pr guidance; failed GitHub close preserves PR; successful close_corner_pr permits archive.');
+  });
+
+  it('R1 closes a legacy archived corner PR without reopening the corner or waking work', async () => {
+    const cornerId = await inReview();
+    const pr = (await db.query(`SELECT lifecycle->'pr' pr FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0]!.pr;
+    // Recreate a corner archived by the old close path, with its PR still recorded.
+    await db.query(`UPDATE corner_facts SET lifecycle=lifecycle-'pr' WHERE corner_id=$1`, [cornerId]);
+    await daemon.execute('archiveCorner', { cornerId }, A);
+    await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr}',$2::jsonb) WHERE corner_id=$1`, [cornerId, JSON.stringify(pr)]);
+    await db.query(`INSERT INTO corner_merge_approvals(corner_id,approved_by,pull_request_number,head_sha) VALUES($1,$2,7,$3)`, [cornerId, B, SHA]);
+    const before = (await db.query(`SELECT lifecycle-'pr' lifecycle FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0]!.lifecycle;
+    const wiredDaemon = new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
+      undefined, undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, undefined, (id: string) => github.closeCornerPullRequest(id));
+    await expect(wiredDaemon.execute('closeCornerPullRequest', { cornerId }, A)).resolves.toMatchObject({ status: 'closed', pullRequestNumber: 7 });
+    expect(githubApp.closePullRequest).toHaveBeenCalledWith(77, 101, 'owner/widgets', 7);
+    expect((await db.query(`SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0]!.lifecycle).toEqual(before);
+    expect(await currentState(cornerId)).toBe('closed');
+    expect((await db.query(`SELECT archived_at IS NOT NULL archived FROM rooms WHERE id=$1`, [cornerId])).rows[0]!.archived).toBe(true);
+    expect((await db.query(`SELECT 1 FROM corner_merge_approvals WHERE corner_id=$1`, [cornerId])).rowCount).toBe(0);
+    expect((await db.query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND action IN ('input','resume') AND state IN ('pending','claimed')`, [cornerId])).rowCount).toBe(0);
+    await expect(wiredDaemon.execute('closeCornerPullRequest', { cornerId }, A)).resolves.toMatchObject({ status: 'blocked', blocker: 'the corner has no pull request' });
+    expect(githubApp.closePullRequest).toHaveBeenCalledTimes(1);
+    console.log('R1 Demonstrated: legacy archived PR closed through daemon service; PR and approval cleared; corner stays closed with no pending work.');
+  });
+
+  it('does not close or alter a merged corner PR', async () => {
+    const cornerId = await inReview();
+    await mergedWebhook(cornerId, 7, SHA);
+    const before = (await db.query(`SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0]!.lifecycle;
+    await expect(github.closeCornerPullRequest(cornerId)).resolves.toMatchObject({ status: 'blocked' });
+    expect(githubApp.closePullRequest).not.toHaveBeenCalled();
+    expect((await db.query(`SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [cornerId])).rows[0]!.lifecycle).toEqual(before);
+    expect(await currentState(cornerId)).toBe('landed');
+  });
+
+  it('refuses phone close while a corner has a PR', async () => {
+    const cornerId = await inReview();
+    await expect(phone.execute('requestCornerClose', { roomId: cornerId }, H)).rejects.toThrow(/close_corner_pr/);
+    expect((await db.query(`SELECT archived_at FROM rooms WHERE id=$1`, [cornerId])).rows[0]!.archived_at).toBeNull();
+  });
+
   it('lets any corner member close its pull request without merging; the corner stays open with no PR', async () => {
     const cornerId = await inReview();
     const wiredDaemon = new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
@@ -2882,7 +2950,7 @@ describe('unfinished merge claim recovery (R6a–R6f)', () => {
         if (change === 'head') await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}',to_jsonb($2::text)) WHERE corner_id=$1`, [cornerId, '9'.repeat(40)]);
         if (change === 'number') await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,number}','8') WHERE corner_id=$1`, [cornerId]);
         if (change === 'refusal') await advanceCorner(db, cornerId, { kind: 'merge-refused', headSha: SHA, reason: 'HTTP 405' });
-        if (change === 'archived') await daemon.execute('archiveCorner', { cornerId }, A);
+        if (change === 'archived') await db.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`, [cornerId]);
         if (change === 'state') {
           await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checks}','"pending"') WHERE corner_id=$1`, [cornerId]);
           await advanceCorner(db, cornerId, { kind: 'checks-pending' });

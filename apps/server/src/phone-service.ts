@@ -141,7 +141,7 @@ import type { CommittedMessageLiveRow, LiveEvent, LiveHub } from './live.js';
 import { HistoryOutlineCache } from './history-outline-cache.js';
 import type { GitHubOperations } from './github-operations.js';
 import { collapsePermissionCards } from '@beeline/push-gateway/projection';
-import { advanceCorner } from './corner-lifecycle.js';
+import { advanceCorner, lockCornerLifecycle } from './corner-lifecycle.js';
 import {
   chatCornerCounts,
   cornerFactsSql,
@@ -6052,6 +6052,7 @@ export class PhoneService {
    */
   private async requestCornerClose(roomId: string, viewerId: string) {
     await this.database.transaction(async (database) => {
+      await lockCornerLifecycle(database, roomId);
       const access = await database.query<{ workspace_role: string }>(
         `SELECT workspace_member.role workspace_role FROM memberships room_member
          JOIN rooms room ON room.id=room_member.room_id

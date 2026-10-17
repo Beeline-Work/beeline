@@ -1,6 +1,6 @@
 import type { SqlDatabase } from './database.js';
 import { createAgentCommand, type CommandRow } from './agent-command.js';
-import { advanceCorner } from './corner-lifecycle.js';
+import { advanceCorner, lockCornerLifecycle } from './corner-lifecycle.js';
 import { abandonCornerWorkflowRuns } from './workflow-runs.js';
 import { deleteCornerWakeSources } from './corner-wake-cleanup.js';
 
@@ -63,6 +63,7 @@ export async function cancelArchivedCornerAssignments(database: SqlDatabase): Pr
 
 /** The terminal corner state shared by helper completion and a human close request. */
 export async function closeCornerState(database: SqlDatabase, cornerId: string) {
+  await lockCornerLifecycle(database, cornerId);
   const corner = (
     await database.query<{ parent_id: string; name: string }>(
       `SELECT parent_id,name FROM rooms
@@ -72,6 +73,12 @@ export async function closeCornerState(database: SqlDatabase, cornerId: string) 
     )
   ).rows[0];
   if (!corner) throw new Error('corner not found');
+  const pullRequest = await database.query(
+    `SELECT 1 FROM corner_facts WHERE corner_id=$1 AND lifecycle->'pr'->>'number' IS NOT NULL`,
+    [cornerId],
+  );
+  if (pullRequest.rowCount)
+    throw new Error('close the corner pull request with close_corner_pr before closing the corner');
   await cancelCornerAgentCommands(database, cornerId);
   await database.query(
     `UPDATE rooms SET archived_at=COALESCE(archived_at,now()),updated_at=now() WHERE id=$1`,

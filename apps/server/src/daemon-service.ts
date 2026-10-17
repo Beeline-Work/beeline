@@ -7906,6 +7906,7 @@ export class DaemonService {
     // The generic gate checks the turn's roomId; the target corner needs its own check.
     await this.reach(cornerId, agentId);
     await this.database.transaction(async (database) => {
+      await lockCornerLifecycle(database, cornerId);
       if (input.requestId) {
         const command = await authorizeCommandOutput(database, input.roomId ?? cornerId,
           agentId, input.requestId, input.generationId);

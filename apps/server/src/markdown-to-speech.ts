@@ -81,8 +81,8 @@ function speakIdentifiers(text: string, members?: SpeechMembers): string {
     })
     .replace(HANDLE_TOKEN, (token: string) => index.get(token.toLowerCase()) ?? token)
     .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '')
-    .replace(/\b(?=[0-9a-f]*\d)[0-9a-f]{7,}\b/gi, '')
-    .replace(/\b[0-9a-f]{16,}\b/gi, '')
+    .replace(/\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,}\b/gi, '')
+    .replace(/\b(?=[0-9a-f]*[a-f])[0-9a-f]{16,}\b/gi, '')
     .replace(/(?<![\p{L}\p{N}_])(?:fb|msg|evt|req|obj|att|sha|uuid|id)_[A-Za-z0-9][A-Za-z0-9_-]{5,}(?![\p{L}\p{N}_-])/giu, '')
     .replace(HANDLE_TOKEN, (token: string) => {
       // A handle-like word keeps its letters: bananaman614305 -> bananaman.

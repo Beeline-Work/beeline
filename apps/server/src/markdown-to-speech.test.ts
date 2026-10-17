@@ -67,6 +67,15 @@ it('keeps ordinary numbers, times, versions and digit-bearing words', () => {
   expect(markdownToSpeech(input)).toBe(input);
 });
 
+it('Reproduction VOICE-IDS-2: keeps long ordinary numbers while dropping lettered hex', () => {
+  expect(markdownToSpeech('Population 12345678 people.')).toBe('Population 12345678 people.');
+  expect(markdownToSpeech('Call 1234567890 and 12345678901234567890 now.')).toBe('Call 1234567890 and 12345678901234567890 now.');
+  expect(markdownToSpeech('Order 00000000000000000001 shipped.')).toBe('Order 00000000000000000001 shipped.');
+  expect(markdownToSpeech('Hash 0123456789abcdef0123456789abcdef01234567.')).toBe('Hash.');
+  expect(markdownToSpeech('Hex deadbeef12345678 and abcdefabcdefabcdef.')).toBe('Hex and.');
+  expect(markdownToSpeech('The defaced facade stays.')).toBe('The defaced facade stays.');
+});
+
 it('speaks identifiers the same way when streamed in any chunk size', () => {
   const input = 'I filed this as a bug (fb_409eec12d3be6644d9eba2bf). Hi @bananaman614305, PR 2546 at 20:37, version 1.2.3.\n\n'
     + 'Commit 0123456789abcdef0123456789abcdef01234567 and 123e4567-e89b-12d3-a456-426614174000.';

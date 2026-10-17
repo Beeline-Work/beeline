@@ -14,6 +14,13 @@
   is a runtime-pin change: a new runtime needs a new store binary as its
   anchor, so planning refuses until a store track is named - and naming it is
   still an explicit operator decision.
+- **iOS production includes App Review.** After Apple confirms the exact uploaded
+  build is VALID, `store_track=production` attaches it to the matching App Store
+  version, sets release notes from the committed store metadata, and submits it
+  for review with automatic release after approval. `internal` and `beta` stop
+  at TestFlight. Apple API or submission-state errors fail the native job;
+  successful evidence includes the review submission ID. See the
+  [store runbook](../apps/mobile/docs/store-submission.md) for retry constraints.
 - **The device proof is opt-in.** `run_release_proof=true` runs the emulator
   release proof before OTA promotion; the default is `false`. An OTA promoted
   without a proof is recorded as UNPROVEN in the release record. Request the

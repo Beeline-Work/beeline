@@ -1,10 +1,10 @@
-# Store beta submission
+# Store submission
 
 Operator runbook for the Google Play private beta and TestFlight. Store uploads
 are the `store_track` input of the one release workflow
 (`.github/workflows/unified-release.yml`), so a store binary always comes from a
-released SHA. Nothing here publishes a public listing or a production release on
-its own: the AAB lands as a *draft* release on the track you named, and the
+released SHA. For iOS, `production` submits for App Review with automatic release after approval;
+`beta` and `internal` only upload to TestFlight. For Android: the AAB lands as a *draft* release on the track you named, and the
 final press stays in Play Console / App Store Connect.
 
 The Google Play developer account is Moon Rice Limited. Keep that account, its
@@ -167,8 +167,15 @@ appear under app `6803948500` within 20 minutes. Apple processing errors,
 including missing purpose strings (90683), fail the job even when altool
 reported transport success. `ios-build.json` records the IPA identity,
 delivery UUID and App Store build ID for the native checkpoint.
-TestFlight groups, external-tester review and production App Store review
-submission remain separate operations in App Store Connect. A missing distribution
+For `store_track=production`, the next step uses `reviewSubmissions` to create
+or reuse an editable App Store version, attach the verified build, set What's
+New from `store/listing/en-US/release-notes.txt` on its existing localizations,
+and submit for review with `releaseType=AFTER_APPROVAL`. Evidence includes the
+version and submission IDs and confirmed review state. Existing in-review or
+released versions, active submissions, missing localizations, unresolved export
+compliance, and Apple API failures stop the job with an error. Resolve the
+reported state in App Store Connect before retrying. TestFlight groups and
+external-tester review remain separate operations. A missing distribution
 certificate fails the build with one printed command, because eas-cli 22.2.0
 never creates one non-interactively.
 

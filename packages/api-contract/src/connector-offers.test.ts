@@ -11,6 +11,7 @@ import {
   isOfferableConnectorKind,
   parseConnectorOfferDecisionLine,
   squireAccountSwitchConsequence,
+  squireLoginWallConsequence,
 } from './connector-offers.js';
 import { isConnectorOfferCardView, readConnectorOfferCardView } from './phone-guards.js';
 import { CONNECTABLE_CONNECTOR_KINDS } from './workbench.js';
@@ -125,4 +126,8 @@ describe('connector offers (R5)', () => {
       "You'll sign in to Google again, with the account Trusty Squire should use. The account signed in now is replaced for every task on this machine. Then I can sign up for Vercel",
     );
   });
+});
+
+it('uses fixed Google sign-in purpose for session reconnects', () => {
+  expect(squireLoginWallConsequence('google')).toBe('Sign in to Google once, so Trusty Squire can sign in to websites and APIs for you hands-free.');
 });

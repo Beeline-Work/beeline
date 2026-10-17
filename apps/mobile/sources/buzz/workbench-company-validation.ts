@@ -26,5 +26,5 @@ export function isWorkbenchCompanyIndex(v: unknown): v is WorkbenchCompanyIndex 
       && list(r.items, i => record(i) && string(i.id) && string(i.title) && string(i.subtitle) && ['key', 'login', 'connection'].includes(String(i.kind))
         && target(i.target) && optionalString(i.status) && optionalBoolean(i.attention))
       && list(r.machines, m => record(m) && string(m.id) && string(m.name) && typeof m.online === 'boolean'
-        && ['connected', 'error', 'not-added'].includes(String(m.status)) && optionalString(m.error)));
+        && ['connected', 'error', 'not-added'].includes(String(m.status)) && optionalString(m.error) && optionalString(m.signedInAs) && optionalBoolean(m.reconnecting) && optionalString(m.statusText)));
 }

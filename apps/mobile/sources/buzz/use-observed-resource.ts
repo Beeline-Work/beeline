@@ -61,7 +61,10 @@ class Resource<T> {
     this.dirty = false;
     this.publish({ ...this.snapshot, loading: this.snapshot.data === undefined });
     try {
-      const data = await this.options.load();
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      const data = await Promise.race([this.options.load(), new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error('The connection did not answer. Try again.')), 15_000);
+      })]).finally(() => clearTimeout(timeout));
       if (this.listeners.size && version === this.version) {
         this.misses = 0;
         this.publish({ data, loading: false, error: null, successVersion: this.snapshot.successVersion + 1 });

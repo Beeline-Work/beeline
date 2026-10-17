@@ -7590,7 +7590,7 @@ export class PhoneService {
     }
     // The addressee decides only while they are still in the Workspace.
     await this.requireWorkspaceMember(offer.workspace_id, viewerId);
-    if (offer.status === 'connecting' && offer.accepted_by !== viewerId)
+    if (offer.status === 'connecting' && offer.accepted_by !== viewerId && offer.intent !== 'reconnect')
       throw new Error('connector offer conflict: sign-in is already in progress');
     // The helper is the offering agent's machine; it must still be here to install.
     const helper = await this.database.query(
@@ -7603,6 +7603,22 @@ export class PhoneService {
     if (!helper.rowCount)
       throw new Error('connector offer conflict: the offering agent has left this Workspace');
     const acceptor = await this.requireIdentity(viewerId);
+    if (offer.intent === 'reconnect' && offer.status === 'connecting' && connectorType === 'trusty-squire') {
+      if (offer.addressee_id !== viewerId) throw new Error(CONNECTOR_OFFER_AUTHORITY_MESSAGE);
+      await this.database.transaction(async database => {
+        const claimed = await database.query(`UPDATE connector_offers SET accepted_by=$2,accepted_at=COALESCE(accepted_at,now())
+          WHERE id::text=$1 AND status='connecting' RETURNING id`, [input.offerId, viewerId]);
+        if (!claimed.rowCount) throw new Error('connector offer conflict: already completed');
+        const work = await squireWorkStatus(database, offer.agent_id);
+        if (work.status === 'error') await queueSquireWork(database, offer.agent_id,
+          { install: true, forceReloginProvider: 'google' });
+        await this.markConnectorOfferConnecting(database, { roomId: offer.room_id,
+          offerId: input.offerId, acceptedBy: acceptor, acceptedAt: offer.accepted_at ?? new Date(),
+          connectorId: squireMachineAddress(offer.machine_id) });
+      });
+      return { offerId: input.offerId, status: 'connecting', roomId: offer.room_id,
+        connectorId: squireMachineAddress(offer.machine_id) };
+    }
     const paired = await this.database.transaction(async (database) => {
       const updated = await database.query<{ accepted_at: Date }>(
         `UPDATE connector_offers SET status='connecting',accepted_by=$2,
@@ -8884,6 +8900,10 @@ export class PhoneService {
         name: string;
         online: boolean;
         squire_report: import('@beeline/api-contract/workbench').SquireMachineReport | null;
+        reconnecting: boolean;
+        google_session_expired: boolean;
+        squire_error: string | null;
+        signed_in_as: string | null;
       }>(
         // A helper is a MACHINE, not an individual agent: agents sharing a
         // machine_id are grouped into one row. An agent without a machine_id
@@ -8894,6 +8914,10 @@ export class PhoneService {
         `SELECT COALESCE(a.machine_id,a.agent_id) id,
                 COALESCE(MAX(a.machine_name),MIN(i.name)) name,
                 bool_or(p.online) online,
+                bool_or(COALESCE(a.squire_work->>'install','false')='true' AND NOT a.squire_work ? 'errorMessage') reconnecting,
+                MAX(a.squire_work->>'signedInAs') signed_in_as,
+                MAX(a.squire_work->>'errorMessage') squire_error,
+                bool_or(a.squire_work->>'forceReloginProvider'='google') google_session_expired,
                 (array_agg(a.squire_report ORDER BY (a.squire_report->>'reportedAt')::double precision DESC NULLS LAST)
                   FILTER (WHERE a.squire_report IS NOT NULL))[1] squire_report
          FROM agents a
@@ -8973,7 +8997,12 @@ export class PhoneService {
         name: row.name,
         online: row.online,
         squireEligible: true,
-        ...(row.squire_report ? { squire: row.squire_report } : {}),
+        ...(row.squire_report || row.reconnecting || row.google_session_expired || row.squire_error ? {
+          squire: { ...(row.squire_report ?? { status: 'not-added' as const, reportedAt: 0 }),
+            ...(row.squire_error ? { status: 'error' as const, errorMessage: row.squire_error } : {}),
+            reconnecting: row.reconnecting, googleSessionExpired: row.google_session_expired ?? false,
+            ...(row.signed_in_as ? { signedInAs: row.signed_in_as } : {}) },
+        } : {}),
       })),
       apps: apps.map((app) => {
         const metadata = appMetadata.get(composioToolkitForApp(app.appKey));

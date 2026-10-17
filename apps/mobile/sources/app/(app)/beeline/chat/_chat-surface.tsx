@@ -4510,7 +4510,7 @@ export function BuzzChatSurface({
   );
 
   const openConnectorOfferCeremony = useCallback(
-    (offerId: string, connectorType: string, pairedConnectorId: string, roomId = decodedId) => {
+    (offerId: string, connectorType: string, pairedConnectorId: string, roomId = decodedId, directSignIn = false) => {
       router.push(
         connectorOfferCeremonyRoute({
           workspaceId: activeCommunityId ?? '',
@@ -4519,6 +4519,7 @@ export function BuzzChatSurface({
           offerId,
           connectorType,
           pairedConnectorId,
+          directSignIn,
         }) as Href,
       );
     },
@@ -4526,10 +4527,15 @@ export function BuzzChatSurface({
   );
 
   const continueConnectorOffer = useCallback(
-    async (offerId: string, connectorType: string, pairedConnectorId: string) => {
-      openConnectorOfferCeremony(offerId, connectorType, pairedConnectorId);
+    async (offerId: string, connectorType: string, pairedConnectorId: string, reconnect: boolean) => {
+      try {
+        if (reconnect) await monolithPhoneOperation('acceptConnectorOffer', { offerId });
+        openConnectorOfferCeremony(offerId, connectorType, pairedConnectorId, decodedId, reconnect);
+      } catch (err) {
+        Modal.alert('Could not open sign-in', phoneOperationFailureReason(err));
+      }
     },
-    [openConnectorOfferCeremony],
+    [openConnectorOfferCeremony, decodedId],
   );
 
   /**
@@ -5750,7 +5756,7 @@ export function BuzzChatSurface({
             actionId={connectorOfferActionId}
             onAccept={handleAcceptConnectorOffer}
             onContinue={(offerId, connectorType, pairedConnectorId) =>
-              void continueConnectorOffer(offerId, connectorType, pairedConnectorId)
+              void continueConnectorOffer(offerId, connectorType, pairedConnectorId, item.connectorOffer!.intent === 'reconnect')
             }
             onOpenWorkbench={openWorkbench}
           />

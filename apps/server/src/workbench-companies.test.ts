@@ -141,3 +141,12 @@ describe('server-owned Connectors company projection', () => {
     expect(companySearchResults(view, [], 'Google', origin).filter(r => r.companyId === 'google')).toHaveLength(1);
   });
 });
+
+it('Reproduction squire-false-card: projects the signed-in account and active reconnect', () => {
+  const view = base();
+  const project = (reconnecting: boolean) => projectWorkbenchCompanies({ ...view, helpers: [{
+    ...view.helpers[0]!, squire: { status: 'connected', reportedAt: 1, signedInAs: 'owner@example.com', reconnecting },
+  }] }, origin).rows.find(r => r.kind === 'sign-in-service')!;
+  expect(project(false).machines[0]).toMatchObject({ statusText: 'owner@example.com', signedInAs: 'owner@example.com' });
+  expect(project(true)).toMatchObject({ status: 'Reconnecting…', machines: [{ reconnecting: true, statusText: 'Reconnecting…' }] });
+});

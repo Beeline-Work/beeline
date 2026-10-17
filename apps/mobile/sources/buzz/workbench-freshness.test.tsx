@@ -7,7 +7,7 @@ const state = vi.hoisted(() => ({
   wallet: { address: 'owner-wallet', coins: [], totalUsd: '$100' },
   history: { entries: [] as any[] },
   detail: { connection: { ref: 'key', name: 'Old key' }, grants: [] as any[] },
-  reads: { wallet: vi.fn(), history: vi.fn(), detail: vi.fn() },
+  reads: { workbench: vi.fn(), wallet: vi.fn(), history: vi.fn(), detail: vi.fn() },
 }));
 vi.mock('expo-router', () => ({ useFocusEffect: (effect: () => void) => {
   React.useEffect(() => { state.focus.add(effect); effect(); return () => { state.focus.delete(effect); }; }, [effect]);
@@ -25,10 +25,10 @@ vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () =>
 vi.mock('./wallet-source', () => ({ getWalletSource: () => ({
   readWallet: state.reads.wallet, readHistory: state.reads.history,
 }) }));
-vi.mock('./workbench-source', () => ({ getWorkbenchSource: () => ({ readConnectionDetail: state.reads.detail }) }));
+vi.mock('./workbench-source', () => ({ getWorkbenchSource: () => ({ readConnectionDetail: state.reads.detail, readWorkbench: state.reads.workbench }) }));
 import { mobileSurfaceCache } from './surface-storage';
 import { useSharedWallet, useSharedWalletHistory } from './wallet-surface';
-import { useSharedConnectionDetail } from './workbench-surface';
+import { useSharedConnectionDetail, useSharedWorkbench } from './workbench-surface';
 
 beforeEach(() => {
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -36,6 +36,7 @@ beforeEach(() => {
   state.wallet = { address: 'owner-wallet', coins: [], totalUsd: '$100' };
   state.history = { entries: [] };
   state.detail = { connection: { ref: 'key', name: 'Old key' }, grants: [] };
+  state.reads.workbench.mockReset().mockResolvedValue({ workspaceId: 'ws-spin', catalog: [], connectors: [], connections: [], apps: [], helpers: [] });
   state.reads.wallet.mockReset().mockImplementation(async () => state.wallet);
   state.reads.history.mockReset().mockImplementation(async () => state.history);
   state.reads.detail.mockReset().mockImplementation(async () => state.detail);
@@ -85,4 +86,27 @@ it('switches Wallet Workspace without writing the new answer into the old cache 
   expect(renderer.root.findByType('Text').props.children).toBe('other');
   expect(mobileSurfaceCache.peek({ endpoint: '/workspace/:id/wallet', params: { workspaceId: 'ws' } } as any, ((value: unknown) => Boolean(value)) as any)).toMatchObject({ totalUsd: 'ws' });
   await act(async () => renderer.unmount());
+});
+
+it('Reproduction squire-spinner: reopening Connectors with a hung read reaches an error and retry', async () => {
+  vi.useFakeTimers();
+  const releases: Array<(value: any) => void> = [];
+  state.reads.workbench.mockImplementation(() => new Promise(resolve => releases.push(resolve)));
+  let resource!: ReturnType<typeof useSharedWorkbench>;
+  function Screen() {
+    resource = useSharedWorkbench({ workspaceId: 'ws-spin', viewerId: 'owner' });
+    return React.createElement('Text', {}, resource.error ?? 'Loading connections');
+  }
+  let renderer!: ReactTestRenderer;
+  try {
+    await act(async () => { renderer = create(React.createElement(Screen)); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(15_001); });
+    expect(renderer.root.findByType('Text').props.children).toContain('Connections did not answer');
+    const calls = state.reads.workbench.mock.calls.length;
+    await act(async () => { void resource.refresh(); });
+    expect(state.reads.workbench.mock.calls.length).toBeGreaterThan(calls);
+  } finally {
+    await act(async () => { renderer.unmount(); releases.forEach(resolve => resolve({ workspaceId: 'ws-spin', catalog: [], connectors: [], connections: [], apps: [], helpers: [] })); });
+    vi.useRealTimers();
+  }
 });

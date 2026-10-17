@@ -90,13 +90,11 @@ export function connectorOfferConsequence(kind: ConnectorKind, reason?: string):
 /**
  * The card's one line for a `'reconnect'` offer: what stalled, in words a
  * person reads, with no agent "I can …" clause (nothing new is being
- * added — a session already in use just needs a fresh sign-in). `provider`
- * is omitted for an `oauth_sign_in` wall, where Squire names no provider.
+ * added — the shared Google session needs a fresh sign-in). OAuth pauses
+ * do not create reconnect offers.
  */
-export function squireLoginWallConsequence(provider?: string): string {
-  return provider
-    ? `A task hit a signed-out ${provider} session in Trusty Squire's shared browser. Sign in again to let it continue.`
-    : `A task hit a stuck sign-in in Trusty Squire's shared browser. Sign in again to let it continue.`;
+export function squireLoginWallConsequence(_provider?: string): string {
+  return 'Sign in to Google once, so Trusty Squire can sign in to websites and APIs for you hands-free.';
 }
 
 /** The one connector whose bound account an agent may offer to switch. */

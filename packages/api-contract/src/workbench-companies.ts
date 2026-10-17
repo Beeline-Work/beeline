@@ -28,7 +28,7 @@ export type WorkbenchCompany = {
   readonly subtitle: string; readonly status?: string; readonly attention?: string;
   readonly items: readonly CompanyItem[];
   readonly machines: readonly { readonly id: string; readonly name: string;
-    readonly online: boolean; readonly status: 'connected' | 'error' | 'not-added'; readonly error?: string }[];
+    readonly online: boolean; readonly status: 'connected' | 'error' | 'not-added'; readonly error?: string; readonly signedInAs?: string; readonly reconnecting?: boolean; readonly statusText?: string }[];
   readonly alsoAvailable: readonly CompanySuggestion[];
 };
 export type WorkbenchCompanyIndex = {

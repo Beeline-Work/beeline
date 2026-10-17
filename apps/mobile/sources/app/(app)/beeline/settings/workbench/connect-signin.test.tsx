@@ -140,6 +140,38 @@ afterEach(() => {
 });
 
 describe('ConnectorSignInScreen', () => {
+  it('Reproduction squire-spinner: a hung sign-in read ends with retry within 15 seconds', async () => {
+    vi.useFakeTimers();
+    searchParams.connectorName = 'Trusty Squire';
+    searchParams.url = '';
+    const releases: Array<(value: null) => void> = [];
+    readInstallState.mockImplementation(() => new Promise(resolve => releases.push(resolve)));
+    let renderer!: ReactTestRenderer;
+    try {
+      await act(async () => { renderer = create(<ConnectorSignInScreen />); });
+      await act(async () => { await vi.advanceTimersByTimeAsync(15_001); });
+      expect(renderer.root.findAllByProps({ testID: 'signin-retry' }).length).toBeGreaterThan(0);
+      expect(renderer.root.findByType('PageHeader').props.title).toBe('Sign in to Google');
+      expect(renderer.root.findAllByProps({ accessibilityRole: 'alert' }).length).toBeGreaterThan(0);
+      await act(async () => { void renderer.root.findByProps({ testID: 'signin-retry' }).props.onPress(); });
+      expect(readInstallState).toHaveBeenCalledTimes(2);
+    } finally { await act(async () => { renderer.unmount(); releases.forEach(resolve => resolve(null)); }); vi.useRealTimers(); }
+  });
+
+  it('Reproduction squire-spinner: a loaded tunnel that never completes also offers retry', async () => {
+    vi.useFakeTimers();
+    searchParams.connectorName = 'Trusty Squire';
+    searchParams.method = 'streamed-page';
+    readInstallState.mockResolvedValue({ connected: false, steps: [], signIn: { method: 'streamed', url: searchParams.url } });
+    let renderer!: ReactTestRenderer;
+    try {
+      await act(async () => { renderer = create(<ConnectorSignInScreen />); });
+      await act(async () => renderer.root.findByProps({ testID: 'signin-webview' }).props.onLoadEnd());
+      await act(async () => { await vi.advanceTimersByTimeAsync(120_001); });
+      expect(renderer.root.findAllByProps({ testID: 'signin-retry' }).length).toBeGreaterThan(0);
+    } finally { await act(async () => renderer.unmount()); searchParams.method = 'oauth'; vi.useRealTimers(); }
+  });
+
   it('Reproduction R9b: pending reads never overlap', async () => {
     vi.useFakeTimers();
     let release!: (state: null) => void;

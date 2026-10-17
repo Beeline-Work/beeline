@@ -12290,13 +12290,16 @@ describe('monolith integration', () => {
         intent: 'reconnect',
         provider: 'google',
         connectorId: connector.id,
-        reason: 'no live Google session on this profile',
+        reason: 'Sign in to Google once, so Trusty Squire can sign in to websites and APIs for you hands-free.',
       }),
     );
     expect(cards.rows[0]!.card.addressee).toEqual(
       expect.objectContaining({ pubkey: HUMAN, kind: 'human' }),
     );
-    expect(cards.rows[0]!.card.consequence).toMatch(/google/i);
+    expect(cards.rows[0]!.card.consequence).toContain('Sign in to Google once');
+    expect(cards.rows[0]!.card.acceptedBy).toBeUndefined();
+    const visible = (await database.query<{ text: string }>(`SELECT text FROM messages WHERE card_type='connector-offer'`)).rows[0]!.text;
+    expect(visible).not.toContain('no live Google session on this profile');
 
     // The connector is re-armed to force the shared browser's stale Google
     // session through Squire's own connect ceremony — never the ordinary
@@ -12344,6 +12347,9 @@ describe('monolith integration', () => {
       [connector.id],
     );
     expect(clearedFlag.rows[0]!.force_relogin_provider).toBeNull();
+    const decision = (await database.query<{ text: string }>(`SELECT text FROM messages WHERE card_type='connector-offer-decision'`)).rows;
+    expect(decision.map(row => row.text).join(' ')).toContain('reconnected automatically');
+    expect(settled.rows[0]!.card.acceptedBy).toBeUndefined();
     const resume = await database.query<{ action: string; state: string }>(
       `SELECT action,state FROM agent_commands WHERE room_id=$1 AND agent_id=$2 AND action='resume'`,
       [ROOM, AGENT],
@@ -12388,38 +12394,47 @@ describe('monolith integration', () => {
     expect(armed.rows[0]).toEqual({ force_relogin_provider: 'google' });
   });
 
-  it('posts a reconnect card with no forced provider from a Squire oauth_sign_in wall', async () => {
-    // `oauth_sign_in` (Drive's hand-back for a mid-task OAuth pause) names no
-    // provider, and Squire's own remedy for it is a plain `connect` — never
-    // `--force-relogin` — unlike the `google_session` gate.
+  it('records a real reconnect tap without restarting the active Google ceremony', async () => {
+    await daemonOperation('postAgentMachineReport', { machineId: 'tap-machine', machineName: 'squire' });
+    await daemonOperation('postConnectorVault', { connections: [] });
+    const posted = await daemonOperation('postSquireLoginWall', { roomId: ROOM, wall: 'google_session', message: 'expired' });
+    const { offerId } = await posted.json() as { offerId: string };
+    const readWork = async () => (await database.query<{ work: Record<string, unknown> }>(`SELECT squire_work work FROM agents WHERE agent_id=$1`, [AGENT])).rows[0]!.work;
+    const before = await readWork();
+    const accepted = await operation('acceptConnectorOffer', { offerId });
+    expect(accepted.status).toBe(200);
+    expect(await accepted.json()).toMatchObject({ status: 'connecting', connectorId: 'squire:tap-machine' });
+    expect(await readWork()).toEqual(before);
+    await daemonOperation('installConnector', { connectorId: 'squire:tap-machine', pairingGeneration: Number(before.generation), signedInAs: 'owner@example.com' });
+    await daemonOperation('postConnectorVault', { connections: [] });
+    const card = (await database.query<{ card: Record<string, any> }>(`SELECT card FROM messages WHERE card_type='connector-offer'`)).rows[0]!.card;
+    expect(card.status).toBe('accepted');
+    expect(card.acceptedBy.pubkey).toBe(HUMAN);
+  });
+
+  it('Reproduction squire-false-card: automatic completion never credits an owner tap', async () => {
+    await daemonOperation('postAgentMachineReport', { machineId: 'auto-machine', machineName: 'squire' });
+    await daemonOperation('postConnectorVault', { connections: [] });
+    await daemonOperation('postSquireLoginWall', { roomId: ROOM, wall: 'google_session', message: 'Run raw tool instructions' });
+    const work = (await database.query<{ generation: string }>(`SELECT squire_work->>'generation' generation FROM agents WHERE agent_id=$1`, [AGENT])).rows[0]!;
+    await daemonOperation('installConnector', { connectorId: 'squire:auto-machine', pairingGeneration: Number(work.generation) });
+    await daemonOperation('postConnectorVault', { connections: [] });
+    const card = (await database.query<{ card: Record<string, any> }>(`SELECT card FROM messages WHERE card_type='connector-offer'`)).rows[0]!.card;
+    expect(card.status).toBe('accepted');
+    expect(card.acceptedBy).toBeUndefined();
+    const decision = (await database.query<{ text: string }>(`SELECT text FROM messages WHERE card_type='connector-offer-decision'`)).rows[0]!.text;
+    expect(decision).toContain('reconnected automatically');
+  });
+
+  it.each(['oauth_sign_in', 'awaiting_human'])('Reproduction squire-false-card: %s posts no card and queues no reconnect', async wall => {
     await daemonOperation('postAgentMachineReport', { machineId: 'machine-otter-oauth', machineName: 'otter-laptop' });
     await daemonOperation('postConnectorVault', { connections: [] });
-    const connector = { id: 'squire:machine-otter-oauth' };
-
-    const posted = await daemonOperation('postSquireLoginWall', {
-      roomId: ROOM,
-      wall: 'oauth_sign_in',
-      message:
-        'Awaiting a 2FA confirmation. Run `npx @trusty-squire/mcp connect --json` to get the ' +
-        'shared-browser sign_in_url for the person, then resume observing this session.',
-    });
+    const posted = await daemonOperation('postSquireLoginWall', { roomId: ROOM, wall,
+      message: 'Call operate_observe and run npx connect' });
     expect(posted.status).toBe(200);
-    const result = (await posted.json()) as { cardPosted: boolean; offerId: string };
-    expect(result.cardPosted).toBe(true);
-
-    const cards = await database.query<{ card: Record<string, any> }>(
-      `SELECT card FROM messages WHERE card_type='connector-offer'`,
-    );
-    expect(cards.rows).toHaveLength(1);
-    expect(cards.rows[0]!.card).toEqual(
-      expect.objectContaining({ status: 'connecting', intent: 'reconnect' }),
-    );
-    expect(cards.rows[0]!.card.provider).toBeUndefined();
-    const armed = await database.query<{ status: string; force_relogin_provider: string | null }>(
-      `SELECT CASE WHEN (squire_work->>'install')::boolean THEN 'installing' ELSE squire_report->>'status' END status,squire_work->>'forceReloginProvider' force_relogin_provider FROM agents WHERE 'squire:' || COALESCE(machine_id,agent_id)=$1`,
-      [connector.id],
-    );
-    expect(armed.rows[0]).toEqual({ status: 'installing', force_relogin_provider: null });
+    expect(await posted.json()).toMatchObject({ cardPosted: false });
+    expect((await database.query(`SELECT 1 FROM messages WHERE card_type='connector-offer'`)).rows).toHaveLength(0);
+    expect((await database.query(`SELECT 1 FROM agents WHERE squire_work->>'install'='true'`)).rows).toHaveLength(0);
   });
 
   it('workbench_status reports the helper owner Workbench, not the addressee Workbench', async () => {

@@ -70,7 +70,7 @@ beforeEach(async () => {
   );
   await database.query(
     `INSERT INTO memberships(workspace_id,room_id,identity_id,role,removed_at) VALUES
-       ($1,NULL,$2,'member',NULL),($1,$3,$2,'member',NULL),($1,$4,$2,'member',NULL),(),($1,$5,$2,'member',NULL),($1,$6,$7,'member',NULL),($8,NULL,$2,'member',NULL),($8,$9,$2,'member',NULL) `,
+       ($1,NULL,$2,'member',NULL),($1,$3,$2,'member',NULL),($1,$4,$2,'member',NULL),($1,$5,$2,'member',NULL),($1,$6,$7,'member',NULL),($8,NULL,$2,'member',NULL),($8,$9,$2,'member',NULL) `,
     [WORKSPACE, VIEWER, ROOM, DIRECT, ARCHIVED, NEVER_JOINED, STRANGER, OTHER_WORKSPACE, ELSEWHERE],
   );
   phone = new PhoneService(database, 'http://local.test');

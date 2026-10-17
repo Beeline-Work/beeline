@@ -375,6 +375,19 @@ describe('workbench connectors', () => {
     expect(machine).toMatchObject({ reconnecting: true, signedInAs: 'owner@example.com', statusText: 'Reconnecting…' });
   });
 
+  it('Reproduction squire-spinner: failed Google reconnect overrides a healthy broker report', async () => {
+    await daemonOperation('postConnectorVault', { connections: [] });
+    const roomId = await ensureSystemDirectMessageRoom(database, WORKSPACE, HUMAN);
+    await database.query(`INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body) VALUES($1,$2,'presence','presence','{"status":"online"}')`, [roomId, HELPER]);
+    await database.query(`UPDATE agents SET squire_work=$2::jsonb WHERE agent_id=$1`, [HELPER,
+      JSON.stringify({ install: true, generation: 1, forceReloginProvider: 'google', errorMessage: 'Google reconnect failed' })]);
+    const view = await phoneOperation('readWorkbench', { workspaceId: WORKSPACE }) as any;
+    const service = view.companies.rows.find((row: any) => row.kind === 'sign-in-service');
+    expect(service.section).toBe('attention');
+    expect(service.machines[0]).toMatchObject({ online: true, status: 'error', reconnecting: false,
+      statusText: 'Google sign-in expired', error: 'Google reconnect failed' });
+  });
+
   it('keeps one generation of Squire sign-in work across sibling agents on a machine', async () => {
     const sibling = 'd'.repeat(64);
     await database.query("UPDATE agents SET machine_id='shared-machine' WHERE agent_id=$1", [HELPER]);

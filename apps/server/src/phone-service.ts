@@ -8880,6 +8880,7 @@ export class PhoneService {
         squire_report: import('@beeline/api-contract/workbench').SquireMachineReport | null;
         reconnecting: boolean;
         google_session_expired: boolean;
+        squire_error: string | null;
         signed_in_as: string | null;
       }>(
         // A helper is a MACHINE, not an individual agent: agents sharing a
@@ -8893,6 +8894,7 @@ export class PhoneService {
                 bool_or(p.online) online,
                 bool_or(COALESCE(a.squire_work->>'install','false')='true' AND NOT a.squire_work ? 'errorMessage') reconnecting,
                 MAX(a.squire_work->>'signedInAs') signed_in_as,
+                MAX(a.squire_work->>'errorMessage') squire_error,
                 bool_or(a.squire_work->>'forceReloginProvider'='google') google_session_expired,
                 (array_agg(a.squire_report ORDER BY (a.squire_report->>'reportedAt')::double precision DESC NULLS LAST)
                   FILTER (WHERE a.squire_report IS NOT NULL))[1] squire_report
@@ -8973,8 +8975,9 @@ export class PhoneService {
         name: row.name,
         online: row.online,
         squireEligible: true,
-        ...(row.squire_report || row.reconnecting || row.google_session_expired ? {
+        ...(row.squire_report || row.reconnecting || row.google_session_expired || row.squire_error ? {
           squire: { ...(row.squire_report ?? { status: 'not-added' as const, reportedAt: 0 }),
+            ...(row.squire_error ? { status: 'error' as const, errorMessage: row.squire_error } : {}),
             reconnecting: row.reconnecting, googleSessionExpired: row.google_session_expired ?? false,
             ...(row.signed_in_as ? { signedInAs: row.signed_in_as } : {}) },
         } : {}),

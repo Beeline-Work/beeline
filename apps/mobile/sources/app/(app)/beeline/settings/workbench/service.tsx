@@ -69,7 +69,7 @@ export default function ConnectorServiceScreen() {
         {error || actions.error ? <Text accessibilityRole="alert" style={styles.error}>{error ?? actions.error}</Text> : null}
       </ScrollView>}
     <HullActionSheetModal visible={Boolean(machine) || linkOpen} title={machine?.name ?? 'Link'} onClose={() => { setMachine(null); setLinkOpen(false); }}>
-      {manageMachine?.reconnecting ? <Text style={styles.note}>Reconnecting…</Text> : machine && (manageMachine?.status !== 'connected' || !manageMachine?.online) ? <HullActionSheetRow label={machine.status === 'not-added' ? 'Set up' : 'Reconnect'} onPress={() => {
+      {manageMachine?.reconnecting ? <Text style={styles.note}>Reconnecting…</Text> : machine && (manageMachine?.status !== 'connected' || !manageMachine?.online || Boolean(manageMachine?.error)) ? <HullActionSheetRow label={manageMachine?.status === 'not-added' ? 'Set up' : 'Reconnect'} onPress={() => {
         const helperId = machine.id; setMachine(null); router.push({ pathname: '/beeline/settings/workbench/connect', params: { ...scope, connectorId: 'trusty-squire', helperId } } as Href);
       }} /> : <HullActionSheetRow label="Disconnect" destructive onPress={() => void disconnect()} />}
       <HullActionSheetCancel onPress={() => { setMachine(null); setLinkOpen(false); }} />

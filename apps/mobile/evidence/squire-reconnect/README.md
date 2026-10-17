@@ -32,3 +32,9 @@ The browser scenario runs at 390 px in both Obsidian and Bone:
 The computer row renders the server's account/status. Reconnecting disables its action and removes Disconnect from an already-open sheet. Healthy connected machines retain Disconnect. The helper preserves an email supplied by Squire's connect report; opaque account ids are not presented as Google email addresses. Older reports without an email show `Google signed in` rather than inventing an account.
 
 The regression tests were run against the unchanged `origin/main` implementation, then against the fix. Main failed the OAuth suppression, fixed copy, direct route, account/state rendering, attribution, and bounded-wait regressions. `awaiting_human` suppression already passed on main and remains covered.
+
+## Failed reconnect recovery (review follow-up)
+
+Under `squire-spinner`, preserve a connected broker report and online presence, then set work to `install: true`, `forceReloginProvider: 'google'`, and an error. Before the follow-up, the HTTP machine projection still returned `status: connected` with no work error. The service rendered an expired sign-in but offered only Disconnect. The new server and service regressions failed on that reviewed implementation.
+
+The work error now overrides the older broker verdict in the server projection, producing `status: error`, `reconnecting: false`, the failure reason, and `Google sign-in expired` in the attention section. The service also offers Reconnect for an errored cached row whose prior status is connected. The browser proof at both 390 px and 900 px opens Connectors → Trusty Squire → the failed computer, verifies Reconnect without Disconnect, taps it, and verifies the selected computer's reconnect destination. The existing healthy-machine test still disconnects successfully.

@@ -1,5 +1,6 @@
 /** Server-only Composio v3 boundary. Credentials and provider tokens never leave Composio. */
 import { createHash } from 'node:crypto';
+import { CommandRefusalError } from './commander.js';
 
 type Json = Record<string, unknown>;
 const API = 'https://backend.composio.dev/api';
@@ -626,6 +627,7 @@ export class ComposioApps {
 
   async execute(input: { accountId: string; userId: string; toolkit: string;
     tool: string; arguments: Json; files?: AppFiles }): Promise<unknown> {
+    if (!safeToolSlug(input.tool)) throw new CommandRefusalError('Invalid app tool', 400);
     const hidden: string[] = [];
     const conceal = (value: unknown) =>
       redact(redact(value, [this.apiKey], '[redacted]'), hidden, '[staged file]');
@@ -645,7 +647,6 @@ export class ComposioApps {
 
   private async executeStaged(input: { accountId: string; userId: string; toolkit: string;
     tool: string; arguments: Json; files?: AppFiles }, hidden: string[]): Promise<unknown> {
-    if (!safeToolSlug(input.tool)) throw new Error('Invalid app tool');
     if (input.toolkit === 'youtube' && input.tool === YOUTUBE_BROKEN_UPLOAD_TOOL)
       throw new Error(`${YOUTUBE_BROKEN_UPLOAD_TOOL} does not deliver the video file; ` +
         `use ${YOUTUBE_UPLOAD_TOOL} instead`);

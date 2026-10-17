@@ -5,7 +5,9 @@ const state = vi.hoisted(() => ({
   background: null as null | Record<string, unknown>,
   rejectLiveKit: true,
   loadLiveKit: vi.fn(),
+  captureException: vi.fn(),
 }));
+vi.mock('@sentry/react-native', () => ({ captureException: state.captureException }));
 vi.mock('react-native', () => ({
   Platform: { OS: 'ios' }, NativeModules: state.modules, PermissionsAndroid: {}, Linking: {},
 }));
@@ -22,12 +24,14 @@ vi.mock('livekit-client', () => ({ Room: class {} }));
 vi.mock('./runtime-config', () => ({ getBuzzRuntimeConfig: () => ({}) }));
 vi.mock('@/auth/monolith-session', () => ({ monolithSession: {} }));
 import { createVoiceRoom } from './voice-transport.native';
+import { captureMobileError } from './sentry';
 
 beforeEach(() => {
   for (const key of Object.keys(state.modules)) delete state.modules[key];
   state.background = null;
   state.rejectLiveKit = true;
   state.loadLiveKit.mockClear();
+  state.captureException.mockClear();
 });
 
 it('does not evaluate WebRTC on an App Store iOS runtime without its native modules', async () => {
@@ -56,5 +60,13 @@ it('requires the background audio methods before loading voice on an intermediat
   state.modules.LivekitReactNativeModule = {};
   state.background = { start() {}, stop() {} };
   await expect(createVoiceRoom()).rejects.toThrow('Conversation mode is not available in this iPhone version yet. It arrives in the next App Store update.');
+  expect(state.loadLiveKit).not.toHaveBeenCalled();
+});
+
+it('Reproduction SENTRY-6: the old iPhone capability refusal stays visible without capture', async () => {
+  const failure = await createVoiceRoom().catch(error => error);
+  expect(failure.message).toBe('Conversation mode is not available in this iPhone version yet. It arrives in the next App Store update.');
+  captureMobileError('voice-join', failure);
+  expect(state.captureException).not.toHaveBeenCalled();
   expect(state.loadLiveKit).not.toHaveBeenCalled();
 });

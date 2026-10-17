@@ -26,3 +26,19 @@ it('keeps SDK initialization and reporting failures out of the recovery path', a
   sdk.captureException.mockImplementationOnce(() => { throw new Error('offline'); });
   expect(() => captureMobileError('app', new Error('render failed'))).not.toThrow();
 });
+
+it('Reproduction SENTRY-6: old iPhone update messages remain intact without Sentry capture', async () => {
+  const { captureMobileError } = await import('./sentry');
+  for (const message of [
+    'Update Beeline from the App Store to use Conversation mode.',
+    'Conversation mode is not available in this iPhone version yet. It arrives in the next App Store update.',
+  ]) {
+    const cause = new Error(message);
+    captureMobileError('voice-join', cause);
+    expect(cause.message).toBe(message);
+  }
+  expect(sdk.captureException).not.toHaveBeenCalled();
+  const unexpected = new Error('Voice connection failed');
+  captureMobileError('voice-join', unexpected);
+  expect(sdk.captureException).toHaveBeenCalledWith(unexpected, expect.anything());
+});

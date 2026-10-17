@@ -247,6 +247,7 @@ export async function assertSchemaCurrent(database: SqlDatabase, wait: Pause = p
 
 export class PostgresDatabase implements ClosableDatabase {
   readonly #pool: Pool;
+  #closePromise?: Promise<void>;
   readonly #profiler = new QueryProfiler();
   readonly #pause: Pause;
   readonly #transactionDeadlineMs: number;
@@ -544,7 +545,7 @@ export class PostgresDatabase implements ClosableDatabase {
   }
 
   close(): Promise<void> {
-    return this.#pool.end();
+    return this.#closePromise ??= this.#pool.end();
   }
 
   async #beginTransaction(): Promise<{

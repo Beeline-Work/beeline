@@ -1345,7 +1345,7 @@ export class DaemonService {
               subject: { kind: 'system', name: 'Install or grant the Beeline GitHub App' },
               verb: 'to access this repository.',
             });
-            throw new Error('Room repository access needs the Beeline GitHub App');
+            throw new CommandRefusalError('Room repository access needs the Beeline GitHub App', 409);
           }
           throw error;
         }

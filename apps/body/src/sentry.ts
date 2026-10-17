@@ -26,6 +26,7 @@ if (dsn) {
 }
 
 export function captureHelperError(error: unknown): void {
+  if (error instanceof Error && error.message === 'emulator requires -avd <name>') return;
   try { Sentry.captureException(error, { tags: { surface: 'helper' } }); }
   catch { /* Existing logging/retry/exit behavior remains authoritative. */ }
 }

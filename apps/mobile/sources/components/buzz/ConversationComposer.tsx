@@ -332,7 +332,8 @@ function ConversationComposerContent({
   // tap queues the next instruction.
   const showConversation = Boolean(voice) && !hasSomethingToSend && !dictationBusy;
   const sendDisabled = disabled || sendingSpeech || (!hasSomethingToSend && !isListening);
-  const conversationActive = Boolean(voice?.call || voice?.connecting || voice?.error);
+  const dailyLimitError = voice?.error?.startsWith('Daily voice limit reached.') ? voice.error : null;
+  const conversationActive = Boolean(voice?.call || voice?.connecting || (voice?.error && !dailyLimitError));
   React.useEffect(() => {
     if (Platform.OS !== 'web' || !showConversation || conversationActive) return;
     containerRef.current?.querySelector(`[data-testid="${testIDPrefix}-conversation"]`)
@@ -795,6 +796,9 @@ function ConversationComposerContent({
         )}
       </View>
       )}
+      {dailyLimitError && <View style={styles.statusLine}>
+        <Text style={styles.statusText} accessibilityRole="alert" testID="voice-connection-error">{dailyLimitError}</Text>
+      </View>}
       {statusLine ? (
         <TouchableOpacity
           accessibilityLabel={statusLine}

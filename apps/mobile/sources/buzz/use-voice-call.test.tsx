@@ -450,13 +450,20 @@ it('shows and plays a private budget warning, then ends only its session and ret
     expect(voice.budgetWarning).toBeNull();
     fixture.fetch.mockImplementationOnce(async () => new Response(JSON.stringify({ wavBase64: 'YWJj' })));
     await act(async () => fixture.room.emit('data', packet(120000), { identity: `beeline-voice-${fixture.callId}` }, undefined, VOICE_DATA_TOPIC));
-    expect(voice.budgetWarning).toContain('2 minutes');
+    expect(voice.budgetWarning).toBe('2 min left today');
+    await act(async () => fixture.room.emit('data', packet(59000), { identity: `beeline-voice-${fixture.callId}` }, undefined, VOICE_DATA_TOPIC));
+    expect(voice.budgetWarning).toBe('59s left today');
+    expect(fixture.fetch.mock.calls.filter(([url]) => String(url).endsWith('/warning'))).toHaveLength(1);
     expect(voice.warningAudio).toBe('data:audio/wav;base64,YWJj');
     await act(async () => fixture.room.emit('data', packet(0), { identity: `beeline-voice-${fixture.callId}` }, undefined, VOICE_DATA_TOPIC));
     expect(voice.call).toBeNull();
     expect(voice.warningAudio).toBeNull();
-    expect(voice.error).toContain('0 minutes');
-    expect(voice.error).toContain('2026-10-18 00:00:00 UTC');
+    expect(voice.error).toBe(`Daily voice limit reached. Resets at ${new Date(resetAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`);
     expect(fixture.room.disconnect).toHaveBeenCalledOnce();
+    fixture.fetch.mockImplementationOnce(async () => new Response(JSON.stringify({ code: 'voice-daily-limit',
+      budget: { remainingMs: 0, resetAt, timeZone: 'UTC' } }), { status: 429 }));
+    await act(async () => voice.join());
+    expect(voice.call).toBeNull();
+    expect(voice.error).toBe(`Daily voice limit reached. Resets at ${new Date(resetAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`);
   } finally { await act(async () => renderer.unmount()); }
 });

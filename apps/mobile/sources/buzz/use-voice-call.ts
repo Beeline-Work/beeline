@@ -1,19 +1,24 @@
 import * as React from 'react';
 import { Platform } from 'react-native';
 import { RoomEvent, Track, type Room } from 'livekit-client';
-import { VOICE_DATA_TOPIC, VOICE_BUDGET_WARNING, readAgentVoicePreview, type VoiceBudget, type VoiceJoin, type VoiceIdleState, type VoiceSignal, type VoiceCall, type RoomViewIdentity } from '@beeline/api-contract/phone';
+import { VOICE_DATA_TOPIC, readAgentVoicePreview, type VoiceBudget, type VoiceJoin, type VoiceIdleState, type VoiceSignal, type VoiceCall, type RoomViewIdentity } from '@beeline/api-contract/phone';
 import { getBuzzRuntimeConfig } from './runtime-config';
 import { createVoiceRoom, subscribeVoiceResume, voiceFetch } from './voice-transport';
 import { errorDiagnostic, reportClientError } from './client-error-report';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { voiceWaveformLevel } from './waveform-level';
 
+function dailyLimitMessage(resetAt: number): string {
+  return `Daily voice limit reached. Resets at ${new Date(resetAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
+}
+
 async function voiceRequest<T>(id: string, action: 'join' | 'leave' | 'current' | 'idle' | 'state' | 'resume' | 'warning', sessionId?: string): Promise<T> {
   const response = await voiceFetch(`${getBuzzRuntimeConfig().monolithUrl}/v1/phone/voice/${id}/${action}${action === 'state' && sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ''}`,
     { method: action === 'current' || action === 'state' ? 'GET' : 'POST',
       ...(sessionId && action !== 'state' ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId }) } : {}) });
-  const value = await response.json() as T & { error?: string };
-  if (!response.ok) throw new Error(value.error ?? 'Conversation mode could not connect');
+  const value = await response.json() as T & { error?: string; code?: string; budget?: VoiceBudget };
+  if (!response.ok) throw new Error(value.code === 'voice-daily-limit' && value.budget
+    ? dailyLimitMessage(value.budget.resetAt) : value.error ?? 'Conversation mode could not connect');
   return value;
 }
 
@@ -88,6 +93,7 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
     let expireDeadline: () => Promise<void> = async () => {};
     const release = () => closing ??= closeVoiceTransport(transport);
     const current = () => version === revision.current;
+    let budgetSpoken = false;
     const request = async <T,>(id: string, action: Parameters<typeof voiceRequest>[1], sessionId?: string): Promise<T> => {
       // Android can resume before DNS is ready. Retry only transport failures,
       // within this call's lifetime, for at most fifteen seconds of backoff.
@@ -189,12 +195,16 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
               !Number.isFinite(budget.resetAt) || budget.timeZone !== 'UTC') return;
             if (budget.remainingMs === 0) {
               // Fence reconnection before the server removes this RTC participant.
-              const message = `0 minutes of call time remaining today. Resets at ${new Date(budget.resetAt).toISOString().replace('T', ' ').replace('.000Z', ' UTC')}.`;
+              const message = dailyLimitMessage(budget.resetAt);
               const endedVersion = revision.current + 1;
               void end().then(() => { if (revision.current === endedVersion) setError(message); });
               return;
             }
-            setBudgetWarning(VOICE_BUDGET_WARNING);
+            setBudgetWarning(budget.remainingMs >= 60_000
+              ? `${Math.ceil(budget.remainingMs / 60_000)} min left today`
+              : `${Math.ceil(budget.remainingMs / 1000)}s left today`);
+            if (budgetSpoken) return;
+            budgetSpoken = true;
             void voiceRequest<unknown>(joined!.call.id, 'warning').then(value => {
               const audio = readAgentVoicePreview(value);
               if (current() && audio) setWarningAudio(`data:audio/wav;base64,${audio.wavBase64}`);

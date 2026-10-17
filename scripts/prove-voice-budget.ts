@@ -1,11 +1,12 @@
 /** Disposable Android call-limit proof. RTC/HTTP/runtime/ledger are real;
  * STT and synthesis are deterministic local doubles, with spoken PCM from flite.
- * Run alongside voice-budget-native-proof.tsx; no production identity or provider. */
+ * Run with the normal Android index.ts entry; no production identity or provider. */
 import { randomUUID } from 'node:crypto';
 import { readFile, writeFile } from 'node:fs/promises';
 import { Room, RoomEvent, AudioStream, TrackKind, dispose } from '@livekit/rtc-node';
 import { PgliteDatabase } from '../apps/server/src/test-support.js';
 import { migrate } from '../apps/server/src/database.js';
+import { ReviewAccess } from '../apps/server/src/review-access.js';
 import { TokenAuth } from '../apps/server/src/auth.js';
 import { PhoneService } from '../apps/server/src/phone-service.js';
 import { DaemonService } from '../apps/server/src/daemon-service.js';
@@ -19,7 +20,7 @@ const H = 'a'.repeat(64), SECOND = 'd'.repeat(64), A = 'b'.repeat(64);
 const W = randomUUID(), R = randomUUID();
 const db = new PgliteDatabase(), live = new LiveHub();
 const pcm = await readFile('.voice-proof/budget/warning.pcm');
-const observations: unknown[] = [], peerSignals: unknown[] = [];
+const peerSignals: unknown[] = [];
 let peerVoicedFrames = 0, inputMs = 0;
 const service = new VoiceService(db, live, { url: 'ws://127.0.0.1:17884', apiKey: 'devkey', apiSecret: 'secret',
   budgetLimitMs: 180_000,
@@ -69,24 +70,17 @@ await peer.connect(second.url, second.token);
 const join = service.join.bind(service);
 service.join = async (...args) => ({ ...await join(...args), url: 'ws://10.0.2.2:17884' });
 const server = createBeelineServer({ database: db, auth, phone: new PhoneService(db, 'http://proof'),
-  daemon: new DaemonService(db, live), live, voice: service, mediaMaximumBytes: 1024 });
+  daemon: new DaemonService(db, live), live, voice: service, mediaMaximumBytes: 1024,
+  review: new ReviewAccess({ secret: 'isolated-voice-budget-proof-only', mint: async () => session }) });
 const ordinary = server.listeners('request')[0]!;
 server.removeAllListeners('request');
 server.on('request', (request, response) => {
   const json = (value: unknown) => { response.setHeader('content-type', 'application/json'); response.end(JSON.stringify(value)); };
-  if (request.url === '/__config') {
-    json({ roomId: R, token: session.accessToken, call: second.call,
-      agents: [{ pubkey: A, kind: 'agent', name: 'Ruby' }] }); return;
-  }
-  if (request.url === '/__observe') {
-    let body = ''; request.on('data', chunk => { if (body.length < 4096) body += chunk; });
-    request.on('end', () => { observations.push({ at: Date.now(), ...JSON.parse(body) }); json({ ok: true }); }); return;
-  }
   if (request.url === '/__result') {
     void (async () => {
       const budget = await service.budget.read(H), peerBudget = await service.budget.read(SECOND);
       const call = await service.current(R, SECOND);
-      const result = { observations, inputMs, budget, peerBudget, peerSignals, peerVoicedFrames,
+      const result = { inputMs, budget, peerBudget, peerSignals, peerVoicedFrames,
         survivors: call?.participants.map(p => p.pubkey), callStillActive: !!call };
       await writeFile('.voice-proof/budget/result.json', JSON.stringify(result, null, 2)); json(result);
     })(); return;

@@ -13,7 +13,7 @@ export type VoiceCall = {
   participants: readonly RoomViewIdentity[];
 };
 
-export const VOICE_BUDGET_WARNING = 'You have 2 minutes of call time left today.';
+export const VOICE_BUDGET_WARNING = 'Two minutes left today';
 export type VoiceBudget = { remainingMs: number; resetAt: number; timeZone: string };
 
 export type VoiceJoin = {

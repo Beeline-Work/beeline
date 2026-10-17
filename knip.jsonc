@@ -134,7 +134,6 @@
         // The browser regression bundles this entry by path through esbuild.
         "scripts/call-feedback-proof.tsx",
         "scripts/voice-resume-proof.tsx",
-        "scripts/voice-budget-native-proof.tsx",
         "scripts/composer-waveform-native-proof.tsx",
         "scripts/composer-v4-native-proof.tsx",
         "scripts/composer-v4-web-proof.tsx",

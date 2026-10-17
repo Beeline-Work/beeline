@@ -42,3 +42,18 @@ it('keeps a readable join error and agent avatars visible with an operable end c
     expect(end).toHaveBeenCalledOnce();
   } finally { await act(async () => renderer.unmount()); }
 });
+
+it.each([1, 2])('uses the existing warning slot for %s humans and prioritizes call ending', async humans => {
+  const voice = { call: null, agents: [], target: null, speaker: null, level: 0, connecting: false,
+    error: null, quotaExhausted: false, budgetWarning: '2 min left today', warningAudio: null,
+    clearWarningAudio() {}, firstAudioMs: null, humans, unaddressed: 0, join: vi.fn(), end: vi.fn(), aim: vi.fn() };
+  let renderer: any;
+  await act(async () => { renderer = create(<VoiceBar voice={voice} />); });
+  const id = humans > 1 ? 'conversation-tip' : 'conversation-mode-label';
+  expect(renderer.root.findByProps({ testID: id }).props.children).toBe('2 min left today');
+  expect(renderer.root.findByProps({ testID: id }).props.accessibilityLiveRegion).toBe('polite');
+  expect(renderer.root.findAllByProps({ testID: 'voice-budget-warning' })).toHaveLength(0);
+  await act(async () => renderer.update(<VoiceBar voice={{ ...voice, endingWarning: 'Ending in 15s' }} />));
+  expect(renderer.root.findByProps({ testID: id }).props.children).toBe('Ending in 15s');
+  await act(async () => renderer.unmount());
+});

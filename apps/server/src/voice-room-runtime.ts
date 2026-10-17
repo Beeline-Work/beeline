@@ -51,7 +51,7 @@ export class VoiceRoomRuntime {
     track: RemoteTrack; participant: RemoteParticipant }>();
   private readonly meters = new Map<string, VoiceAudioMeter>();
   private readonly meterClosures = new Set<Promise<void>>();
-  private readonly budgetWarnings = new Map<string, number>();
+  private readonly budgetWarnings = new Map<string, string>();
   private readonly budgetEnding = new Set<string>();
   private readonly recentSpeech: { text: string; until: number }[] = [];
   private readonly targets = new Map<string, string>();
@@ -152,6 +152,8 @@ export class VoiceRoomRuntime {
     const human = participant.identity;
     if (this.inputs.get(human)?.track === track) return;
     this.stopInput(human);
+    // A new device/track needs its current countdown even within the same unit.
+    this.budgetWarnings.delete(human);
     const version = (this.inputVersions.get(human) ?? 0) + 1;
     this.inputVersions.set(human, version);
     this.turnIndices.delete(human);
@@ -273,9 +275,11 @@ export class VoiceRoomRuntime {
     if (this.closed || this.budgetEnding.has(human)) return;
     if (budget.remainingMs > VOICE_WARNING_MS) return;
     if (budget.remainingMs > 0) {
-      if (this.budgetWarnings.get(human) === budget.resetAt) return;
+      const unit = budget.remainingMs >= 60_000 ? 60_000 : 1000;
+      const display = `${budget.resetAt}:${unit}:${Math.ceil(budget.remainingMs / unit)}`;
+      if (this.budgetWarnings.get(human) === display) return;
       await this.signal({ type: 'budget', budget }, human);
-      this.budgetWarnings.set(human, budget.resetAt);
+      this.budgetWarnings.set(human, display);
       return;
     }
     this.budgetEnding.add(human);

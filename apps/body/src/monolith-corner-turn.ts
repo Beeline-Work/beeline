@@ -598,7 +598,8 @@ export class MonolithCornerTurnLoop {
       (decision) => {
         options.api
           .execute('postSquireApprovalDecision', { roomId: options.cornerId, ...decision })
-          .catch(() => {});
+          .catch((error: unknown) =>
+            console.error('[thin-core] Squire approval decision publication failed:', redactTurnError(error)));
       },
       (sessionId) => {
         options.api.execute('endComputerSession', { roomId: options.cornerId, sessionId }).catch(() => {});

@@ -197,7 +197,9 @@ export async function runSquireBrokerLink(options: SquireBrokerLinkOptions): Pro
     peer.on('data', (chunk: Buffer) => {
       outBuffer = frameLines(chunk, outBuffer, (line) => {
         const frame = JSON.parse(line) as JsonRpcFrame;
-        if (frame.id === replayId) {
+        // A server notification has no id; without the replay check it would
+        // match an unset replayId and be dropped (approval_decided included).
+        if (replayId !== undefined && frame.id === replayId) {
           replayId = undefined;
           if (frame.error) {
             peer.destroy(new Error('broker rejected relay initialization'));

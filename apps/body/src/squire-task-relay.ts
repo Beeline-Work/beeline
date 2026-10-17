@@ -637,7 +637,11 @@ export class SquireTaskRelay {
       (status !== 'approved' && status !== 'denied')) return;
     const approvalKey = createHash('sha256').update(approvalId).digest('hex');
     const pending = task.pendingApprovals.get(approvalKey);
-    if (!pending) return;
+    if (!pending) {
+      this.log('approval-decided-ignored', task, { status, reason: 'not-pending' });
+      return;
+    }
+    this.log('approval-decided', task, { status, tool: pending.tool });
     clearTimeout(pending.expiry);
     task.pendingApprovals.delete(approvalKey);
     this.rememberDecision(task, approvalKey);

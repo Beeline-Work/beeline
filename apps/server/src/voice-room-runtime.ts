@@ -125,9 +125,12 @@ export class VoiceRoomRuntime {
     const options = new TrackPublishOptions(); options.source = TrackSource.SOURCE_MICROPHONE;
     await this.room.localParticipant!.publishTrack(LocalAudioTrack.createAudioTrack('beeline-agent-speech', this.audio), options);
     // RTC ownership outlives audio activity, including a parked pending order.
-    // Renew only the lease here; committed events still drive report reads.
+    // Sweep missing humans even when no audio or signals arrive.
+    // Committed events still drive report reads.
     this.leaseRenewal = setInterval(() => {
-      void this.renewLease().catch(() => this.close());
+      return this.renewLease().then(kept => {
+        if (kept) return this.sweepMissingParticipants();
+      }).catch(() => this.close());
     }, 5000);
     this.leaseRenewal.unref();
     this.touch();
@@ -256,6 +259,13 @@ export class VoiceRoomRuntime {
       try { await this.service.access(this.roomId, participant.identity); }
       catch { await this.service.leave(this.callId, participant.identity, true); }
     }
+    await this.sweepMissingParticipants();
+    await this.countHumans();
+    await this.refresh();
+  }
+
+  private async sweepMissingParticipants() {
+    if (this.closed) return;
     const missing = await this.service.db.query<{ identity_id: string }>(
       `SELECT identity_id FROM voice_participants WHERE call_id=$1 AND left_at IS NULL AND parked_at IS NULL
         AND NOT identity_id=ANY($2::text[])`,
@@ -271,8 +281,6 @@ export class VoiceRoomRuntime {
         this.missingSince.delete(participant.identity_id);
       }
     }
-    await this.countHumans();
-    await this.refresh();
   }
   private async aimSpokenName(human: string, text: string, version: number) {
     const agent = namedVoiceTarget(text, await this.service.agents(this.roomId, human), undefined, 2);

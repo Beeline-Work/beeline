@@ -1489,3 +1489,50 @@ it('Reproduction PARK-LEASE-1: a nonowner resume after 25 seconds keeps the park
     connect.mockRestore(); await other.close(); await owner.close(); await db.close();
   }
 }, 40_000);
+
+it('Reproduction call-end-1: ends a silent abandoned call through the lease timer and phone read', async () => {
+  const db = new PgliteDatabase(), live = new LiveHub();
+  const human = 'a'.repeat(64), agent = 'b'.repeat(64);
+  const workspace = '11111111-1111-4111-8111-111111111111', room = '22222222-2222-4222-8222-222222222222';
+  const fixture = conversationService(1);
+  const config = { ...fixture.service.config, speech: fixture.speech };
+  const owner = new RealVoiceService(db, live, config);
+
+  let clock = 0;
+  vi.spyOn(performance, 'now').mockImplementation(() => clock);
+  try {
+    await migrate(db);
+    await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Human','human'),($2,'agent','Ruby','ruby')`, [human, agent]);
+    await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [agent, human]);
+    await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Call end proof')`, [workspace]);
+    await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [room, workspace]);
+    await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+      ($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,$4,$2,'owner'),($1,$4,$3,'member')`, [workspace, human, agent, room]);
+    const timer = vi.spyOn(globalThis, 'setInterval');
+    const joined = await owner.join(room, human);
+    const call = (await db.query<any>(`SELECT * FROM voice_calls WHERE id=$1`, [joined.call.id])).rows[0];
+    const runtime = (await owner.ensureRuntime(call))!;
+    state.room.remoteParticipants.clear();
+    state.room.remoteParticipants.set(human, { identity: human, trackPublications: new Map() });
+    const retainedRoom = state.room;
+    const phone = new PhoneService(db, 'http://proof');
+    const tick = timer.mock.calls.find(([, delay]) => delay === 5000)![0] as () => Promise<void>;
+    timer.mockRestore();
+    retainedRoom.remoteParticipants.delete(human);
+    retainedRoom.emit('left', { identity: human });
+    retainedRoom.localParticipant.publishData.mockClear();
+    for (clock = 5000; clock < 120_000; clock += 5000) await tick();
+    expect((await db.query(`SELECT ended_at FROM voice_calls WHERE id=$1`, [call.id])).rows[0]?.ended_at).toBeNull();
+    expect(retainedRoom.localParticipant.publishData).not.toHaveBeenCalled();
+    await tick();
+    expect((await db.query(`SELECT ended_at FROM voice_calls WHERE id=$1`, [call.id])).rows[0]?.ended_at).not.toBeNull();
+    expect(await owner.current(room, human)).toBeNull();
+    const card = (await phone.readRoom(room, human))?.messages.find(m => m.voiceCall);
+    expect(card?.text).toMatch(/^Voice call ended ·/);
+    expect(card?.presentation).toBe('system');
+    expect(runtime.isClosed).toBe(true);
+    console.log('call-end-1: no leave POST, audio or signals; active at 115s; ended_at and phone ended card at 120s.');
+  } finally {
+    vi.restoreAllMocks(); await owner.close(); await db.close();
+  }
+}, 30_000);

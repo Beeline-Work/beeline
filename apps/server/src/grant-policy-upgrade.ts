@@ -8,7 +8,7 @@ import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { SqlDatabase } from './database.js';
 import { ensureSystemDirectMessageRoom, systemLine } from './system-line.js';
 
-function policyLineId(kind: 'resume' | 'notice', grantId: string): string {
+function policyLineId(kind: 'resume', grantId: string): string {
   return createHash('sha256').update(`grant-policy-upgrade:${kind}:${grantId}`).digest('hex');
 }
 
@@ -136,24 +136,6 @@ export async function upgradeGrantPolicy(database: SqlDatabase): Promise<void> {
           `UPDATE agent_grant_policy_revocations SET turn_disposition=$2 WHERE grant_id=$1`,
           [grant.grant_id, turnDisposition],
         );
-      }
-
-      const ownerPresent = await db.query(
-        `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL
-         AND identity_id=$2 AND removed_at IS NULL`,
-        [grant.workspace_id, grant.owner_id],
-      );
-      if (ownerPresent.rowCount) {
-        const roomId = await ensureSystemDirectMessageRoom(db, grant.workspace_id, grant.owner_id);
-        await systemLine(db, {
-          id: policyLineId('notice', grant.grant_id),
-          roomId,
-          authorId: SYSTEM_IDENTITY_ID,
-          subject: { kind: 'agent', id: grant.agent_id, name: grant.agent_id },
-          verb: 'had a legacy grant revoked',
-          object: `${grant.kind} ${grant.target}`,
-          consequence: 'permission policy upgraded; request it again if still needed',
-        });
       }
     }
 

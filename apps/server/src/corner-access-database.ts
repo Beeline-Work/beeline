@@ -34,10 +34,22 @@ export class CornerAccessStatement {
       this.sql = sql;
       return;
     }
+    // Mention projections need only the parent roster, not per-person corner preferences.
+    sql = sql.replace(/\btagged_member\.room_id=([\w]+\.room_id)\b/g,
+      (_match, roomId: string) => `tagged_member.room_id=(SELECT COALESCE(parent_id,id) FROM rooms WHERE id=${roomId})`);
+    const parentAliases = new Set(aliases.filter(alias =>
+      new RegExp('\\b' + alias + '\\.room_id\\s*=\\s*(?:COALESCE\\([^)]*parent_id|\\(SELECT COALESCE\\(parent_id,id\\))', 'i').test(sql)));
+    for (const alias of aliases) {
+      if ([...parentAliases].some(parent =>
+        new RegExp('\\b' + alias + '\\.room_id\\s*=\\s*' + parent + '\\.room_id\\b').test(sql)))
+        parentAliases.add(alias);
+    }
     // Quoted values and comments are opaque. Values supplied by callers remain bound parameters.
     const tokens = /'(?:''|\\.|[^'\\])*'|"(?:""|[^"])*"|\$([A-Za-z_][A-Za-z_0-9]*|)\$[\s\S]*?\$\1\$|--[^\n]*|\/\*[\s\S]*?\*\/|\bDELETE\s+FROM\s+memberships\b|\b(?:FROM|JOIN)\s+memberships\b/gi;
-    this.sql = sql.replace(tokens, token =>
-      /^(?:FROM|JOIN)\s+memberships$/i.test(token)
-        ? token.replace(/memberships$/i, 'effective_memberships') : token);
+    this.sql = sql.replace(tokens, (token, _dollarTag, offset: number) => {
+      if (!/^(?:FROM|JOIN)\s+memberships$/i.test(token)) return token;
+      const alias = /^\s+(\w+)/.exec(sql.slice(offset + token.length))?.[1];
+      return alias && parentAliases.has(alias) ? token : token.replace(/memberships$/i, 'effective_memberships');
+    });
   }
 }

@@ -30,3 +30,12 @@ it('keeps row locks physical and resolves their inherited parent key', () => {
   expect(sql).toContain('member.room_id=(SELECT COALESCE(parent_id,id) FROM rooms WHERE id=$1)');
   expect(sql).toContain('FOR SHARE OF member');
 });
+
+it('keeps parent-only mention projections on the physical roster', () => {
+  const sql = new CornerAccessStatement(`SELECT tagged_member.identity_id FROM memberships tagged_member
+    WHERE tagged_member.room_id=message.room_id AND NOT EXISTS(
+      SELECT 1 FROM memberships rival_member WHERE rival_member.room_id=tagged_member.room_id)`).sql;
+  expect(sql).toContain('FROM memberships tagged_member');
+  expect(sql).toContain('FROM memberships rival_member');
+  expect(sql).toContain('WHERE id=message.room_id');
+});

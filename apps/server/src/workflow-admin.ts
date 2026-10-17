@@ -1,3 +1,4 @@
+import { CornerAccessDatabase } from './corner-access-database.js';
 import { workflowRunIsLiveSql } from './workflow-run-saved-status.js';
 import type { SqlDatabase } from './database.js';
 
@@ -20,12 +21,13 @@ export async function humanRoomAdmin(
   roomId: string,
   actorId: string,
 ): Promise<boolean> {
+    db = new CornerAccessDatabase(db);
   return Boolean(
     (
       await db.query(
         `SELECT 1 FROM rooms room
     JOIN identities actor ON actor.id=$2 AND actor.kind='human'
-    JOIN effective_memberships member ON member.identity_id=actor.id AND member.workspace_id=room.workspace_id
+    JOIN memberships member ON member.identity_id=actor.id AND member.workspace_id=room.workspace_id
       AND (member.room_id=room.id OR member.room_id IS NULL)
       AND member.removed_at IS NULL AND member.role IN ('owner','admin') WHERE room.id=$1`,
         [roomId, actorId],
@@ -73,6 +75,7 @@ export async function activeWorkflowRunIds(
   name: string,
   viewerId: string,
 ): Promise<string[]> {
+    db = new CornerAccessDatabase(db);
   const skill = (
     await db.query<{ id: string }>(
       `SELECT skill.id FROM workspace_skills skill JOIN rooms room ON room.workspace_id=skill.workspace_id

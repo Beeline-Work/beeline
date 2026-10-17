@@ -61,7 +61,7 @@ it.skipIf(!postgresUrl)(
       await db.query('ALTER TABLE messages ENABLE TRIGGER USER');
       await db.query('ANALYZE');
       const started = performance.now();
-      expect(await migrateCornerPersonState(db)).toBe(51_650);
+      expect(await migrateCornerPersonState(db)).toBe(1033);
       const elapsed = performance.now() - started;
       const retryStarted = performance.now();
       expect(await migrateCornerPersonState(db)).toBe(0);
@@ -71,7 +71,7 @@ it.skipIf(!postgresUrl)(
           await db.query(`SELECT count(*)::int count FROM memberships member JOIN rooms corner
       ON corner.id=member.room_id WHERE corner.parent_id IS NOT NULL`)
         ).rows[0]!.count,
-      ).toBe(0);
+      ).toBe(51_650);
       expect(
         (await db.query('SELECT count(*)::int count FROM corner_person_state')).rows[0]!.count,
       ).toBe(1033);
@@ -83,7 +83,7 @@ it.skipIf(!postgresUrl)(
         ).rows[0]!.count,
       ).toBe(1033);
       console.log(
-        `Migration proof: 333000 messages, 1033 corners, 51650 legacy memberships: ${elapsed.toFixed(0)} ms; retry ${retryElapsed.toFixed(0)} ms; 1033 sparse state rows`,
+        `Migration proof: 333000 messages, 1033 corners, 51650 retained legacy memberships: ${elapsed.toFixed(0)} ms; retry ${retryElapsed.toFixed(0)} ms; 1033 sparse state rows`,
       );
       expect(elapsed).toBeLessThan(30_000);
     } finally {

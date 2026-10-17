@@ -1,3 +1,4 @@
+import { CornerAccessDatabase } from './corner-access-database.js';
 /**
  * Agent health for the ordered agent lists a Room reviewer and a workflow
  * role can name: which listed agent should take the work now, and whether an
@@ -50,6 +51,7 @@ export async function roomAgentHealth(
   roomId: string,
   agentIds: readonly string[],
 ): Promise<Map<string, AgentHealth>> {
+    db = new CornerAccessDatabase(db);
   if (!agentIds.length) return new Map();
   const rows = await db.query<CandidateRow>(
     `SELECT agent.agent_id,
@@ -61,7 +63,7 @@ export async function roomAgentHealth(
             ),false) online,
             latest.status turn_status,latest.created_at turn_created_at,
             failure.silence_kind
-     FROM effective_memberships member
+     FROM memberships member
      JOIN identities identity ON identity.id=member.identity_id AND identity.kind='agent'
      JOIN agents agent ON agent.agent_id=identity.id
      LEFT JOIN LATERAL (
@@ -132,6 +134,7 @@ export async function isConfiguredReviewer(
   parentRoomId: string,
   agentId: string,
 ): Promise<boolean> {
+    db = new CornerAccessDatabase(db);
   const room = (
     await db.query<{ reviewer_agent_id: string | null; reviewer_fallback_ids: string[] | null }>(
       `SELECT reviewer_agent_id,reviewer_fallback_ids FROM rooms WHERE id=$1`,
@@ -161,6 +164,7 @@ export async function isCornerReviewer(
   cornerId: string,
   agentId: string,
 ): Promise<boolean> {
+    db = new CornerAccessDatabase(db);
   const row = (
     await db.query<{ parent_room_id: string }>(
       `SELECT parent.id parent_room_id FROM rooms corner

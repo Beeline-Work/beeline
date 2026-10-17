@@ -1,3 +1,4 @@
+import { CornerAccessDatabase } from './corner-access-database.js';
 import { workflowTimerId } from './workflow-timer-id.js';
 import { workflowRunIsLiveSql } from './workflow-run-saved-status.js';
 import { humanRoomAdmin, WorkflowAuthorizationError } from './workflow-admin.js';
@@ -491,16 +492,17 @@ async function resolveRunOwner(
 
 /** The run owner while they are still in the Room, otherwise the Room's human admins. */
 async function runNoticeRecipients(db: SqlDatabase, roomId: string, ownerId: string | null): Promise<string[]> {
+    db = new CornerAccessDatabase(db);
   if (ownerId) {
     const member = await db.query(
-      `SELECT 1 FROM effective_memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
+      `SELECT 1 FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
       [roomId, ownerId],
     );
     if (member.rowCount) return [ownerId];
   }
   const admins = await db.query<{ id: string }>(
     `SELECT DISTINCT identity.id FROM rooms room
-     JOIN effective_memberships member ON member.workspace_id=room.workspace_id
+     JOIN memberships member ON member.workspace_id=room.workspace_id
        AND (member.room_id=room.id OR member.room_id IS NULL)
        AND member.removed_at IS NULL AND member.role IN ('owner','admin')
      JOIN identities identity ON identity.id=member.identity_id AND identity.kind='human'
@@ -1766,6 +1768,7 @@ export async function saveWorkflow(
   input: { contract: unknown },
   afterCommit?: AfterCommit,
 ): Promise<{ slug: string; version: number }> {
+    database = new CornerAccessDatabase(database);
   const reason = validateSavedWorkflow(input.contract);
   if (reason !== null) throw new Error(`workflow contract is invalid: ${reason}`);
   const contract = input.contract as WorkflowContract;
@@ -1779,7 +1782,7 @@ export async function saveWorkflow(
   assertSkillTextSafe(contract.description, markdown);
   return database.transaction(async (db) => {
     const member = await db.query(
-      `SELECT 1 FROM identities identity JOIN effective_memberships member ON member.identity_id=identity.id
+      `SELECT 1 FROM identities identity JOIN memberships member ON member.identity_id=identity.id
     WHERE identity.id=$1 AND identity.kind='agent' AND member.room_id=$2 AND member.removed_at IS NULL`,
       [command.agent_id, command.room_id],
     );
@@ -1850,6 +1853,7 @@ export async function startWorkflow(
   command: Pick<CommandRow, 'room_id' | 'agent_id'> & { reason?: string; source_message_id?: string | null; root_source_message_id?: string },
   input: { name: string; roleBindings: Readonly<Record<string, WorkflowRoleBinding>> },
 ): Promise<{ runId: string; state: string }> {
+    database = new CornerAccessDatabase(database);
   if (typeof input.name !== 'string' || !input.name) throw new Error('workflow name is required');
   if (!input.roleBindings || typeof input.roleBindings !== 'object') {
     throw new Error('roleBindings is required');
@@ -1917,7 +1921,7 @@ export async function startWorkflow(
     ];
     if (boundIds.length) {
       const agents = await db.query<{ identity_id: string }>(
-        `SELECT member.identity_id FROM effective_memberships member
+        `SELECT member.identity_id FROM memberships member
          JOIN identities identity ON identity.id=member.identity_id AND identity.kind='agent'
          WHERE member.room_id=$1 AND member.identity_id=ANY($2::text[]) AND member.removed_at IS NULL`,
         [command.room_id, boundIds],
@@ -2049,9 +2053,10 @@ async function roomMemberIdForHandle(
   roomId: string,
   handle: string,
 ): Promise<string | undefined> {
+    db = new CornerAccessDatabase(db);
   const row = (
     await db.query<{ identity_id: string }>(
-      `SELECT m.identity_id FROM effective_memberships m JOIN identities i ON i.id=m.identity_id
+      `SELECT m.identity_id FROM memberships m JOIN identities i ON i.id=m.identity_id
        WHERE m.room_id=$1 AND m.removed_at IS NULL AND lower(i.handle)=lower($2)`,
       [roomId, handle],
     )
@@ -2082,6 +2087,7 @@ export async function assignWorkflowRole(
   command: CommandRow,
   input: { runId: string; role: string; targetAgentId: string },
 ): Promise<{ runId: string; state: string }> {
+    database = new CornerAccessDatabase(database);
   if (typeof input.runId !== 'string' || !input.runId) throw new Error('runId is required');
   if (typeof input.role !== 'string' || !input.role) throw new Error('role is required');
   if (typeof input.targetAgentId !== 'string' || !input.targetAgentId) {
@@ -2100,7 +2106,7 @@ export async function assignWorkflowRole(
       throw new Error(`this run is currently at the ${currentRole} role, not ${input.role}`);
     }
     const member = await db.query(
-      `SELECT 1 FROM effective_memberships member
+      `SELECT 1 FROM memberships member
        JOIN identities identity ON identity.id=member.identity_id AND identity.kind='agent'
        WHERE member.room_id=$1 AND member.identity_id=$2 AND member.removed_at IS NULL`,
       [command.room_id, targetAgentId],

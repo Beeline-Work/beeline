@@ -1,3 +1,4 @@
+import { CornerAccessDatabase } from './corner-access-database.js';
 import { companyHost } from './company-registry.js';
 import { companyPopularity, companySearchResults, projectWorkbenchCompanies } from './workbench-companies.js';
 import { notifyAgentConfigChange } from './postgres-live.js';
@@ -1027,6 +1028,8 @@ export class PhoneService {
     private readonly composio?: ComposioApps,
     private readonly linkWallet?: LinkAgentWallet,
   ) {
+    this.database = new CornerAccessDatabase(database);
+    this.enrichmentDatabase = new CornerAccessDatabase(enrichmentDatabase);
     if (live) this.outlineCache = new HistoryOutlineCache(live);
   }
 
@@ -1070,7 +1073,7 @@ export class PhoneService {
     const unique = [...new Set(roomIds.filter((id) => typeof id === 'string' && id.length > 0))];
     if (unique.length === 0) return new Set();
     const result = await this.database.query<{ room_id: string }>(
-      `SELECT room_member.room_id::text AS room_id FROM effective_memberships room_member
+      `SELECT room_member.room_id::text AS room_id FROM memberships room_member
        JOIN rooms room ON room.id=room_member.room_id
        WHERE room_member.room_id = ANY($1::uuid[]) AND room_member.identity_id=$2
          AND room_member.removed_at IS NULL
@@ -1136,6 +1139,7 @@ export class PhoneService {
       { type: 'message'; messageId: string } | { type: 'turn'; agentId: string; requestId: string },
     database: SqlDatabase = this.database,
   ): Promise<ReadonlyMap<string, RoomLiveDelta>> {
+    database = new CornerAccessDatabase(database);
     const viewers = [...new Set(viewerIds)];
     const deltas = new Map<string, RoomLiveDelta>();
     if (!viewers.length) return deltas;
@@ -1149,7 +1153,7 @@ export class PhoneService {
         }>(
           `WITH authorized AS (
              SELECT member.identity_id FROM rooms room
-             JOIN effective_memberships member ON member.room_id=room.id
+             JOIN memberships member ON member.room_id=room.id
                AND member.identity_id=ANY($2::text[]) AND member.removed_at IS NULL
              JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
                AND workspace_member.room_id IS NULL
@@ -1200,7 +1204,7 @@ export class PhoneService {
       }>(
         `WITH authorized AS (
            SELECT member.identity_id FROM rooms room
-           JOIN effective_memberships member ON member.room_id=room.id
+           JOIN memberships member ON member.room_id=room.id
              AND member.identity_id=ANY($3::text[]) AND member.removed_at IS NULL
            JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
              AND workspace_member.room_id IS NULL
@@ -1328,7 +1332,7 @@ export class PhoneService {
          AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
          AND workspace_member.removed_at IS NULL
        LEFT JOIN rooms room ON room.id=bookmark.room_id AND room.workspace_id=bookmark.workspace_id
-       LEFT JOIN effective_memberships room_member ON room_member.room_id=room.id
+       LEFT JOIN memberships room_member ON room_member.room_id=room.id
          AND room_member.identity_id=$2 AND room_member.removed_at IS NULL
        LEFT JOIN messages message ON message.id=bookmark.message_id AND message.room_id=room.id
        LEFT JOIN identities author ON author.id=message.author_id
@@ -1387,13 +1391,13 @@ export class PhoneService {
     )).rows[0];
     if (!row) return null;
     const viewers = await this.database.query<{ id: string }>(
-      `SELECT other.identity_id id FROM effective_memberships mine
-       JOIN effective_memberships other ON other.workspace_id=mine.workspace_id
+      `SELECT other.identity_id id FROM memberships mine
+       JOIN memberships other ON other.workspace_id=mine.workspace_id
          AND other.room_id IS NULL AND other.removed_at IS NULL
        WHERE mine.identity_id=$1 AND mine.room_id IS NULL AND mine.removed_at IS NULL
        UNION
-       SELECT other.identity_id FROM effective_memberships mine
-       JOIN effective_memberships other ON other.room_id=mine.room_id AND other.removed_at IS NULL
+       SELECT other.identity_id FROM memberships mine
+       JOIN memberships other ON other.room_id=mine.room_id AND other.removed_at IS NULL
        WHERE mine.identity_id=$1 AND mine.room_id IS NOT NULL AND mine.removed_at IS NULL`,
       [personId],
     );
@@ -1414,7 +1418,7 @@ export class PhoneService {
        JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
          AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
          AND workspace_member.removed_at IS NULL
-       JOIN effective_memberships room_member ON room_member.room_id=room.id
+       JOIN memberships room_member ON room_member.room_id=room.id
          AND room_member.identity_id=$2 AND room_member.removed_at IS NULL
        WHERE room.id=$1`, [roomId, viewerId],
     )).rows[0];
@@ -1627,7 +1631,7 @@ export class PhoneService {
       owned_rows: RosterAgentRow[];
       owned_total: string;
     }>(`WITH authorized AS (
-        SELECT role FROM effective_memberships WHERE workspace_id=$1 AND room_id IS NULL
+        SELECT role FROM memberships WHERE workspace_id=$1 AND room_id IS NULL
           AND identity_id=$2 AND removed_at IS NULL
       ), member_row AS (
         SELECT i.id,i.kind,i.name,i.handle,i.avatar,i.face_id,m.role,
@@ -1655,7 +1659,7 @@ export class PhoneService {
         COALESCE((SELECT jsonb_agg(to_jsonb(grant_row) ORDER BY created_at DESC,id) FROM (
           SELECT g.id,g.kind,g.target,g.reason,g.status,g.room_id,g.auto,g.created_at,
             g.decided_at,g.expires_at,
-            CASE WHEN EXISTS(SELECT 1 FROM effective_memberships rm
+            CASE WHEN EXISTS(SELECT 1 FROM memberships rm
               WHERE rm.room_id=g.room_id AND rm.identity_id=$2 AND rm.removed_at IS NULL)
               OR (room.parent_id IS NULL AND room.direct_participants IS NULL
                 AND room.archived_at IS NULL AND authorized.role IN ('owner','admin'))
@@ -1782,9 +1786,9 @@ export class PhoneService {
       SELECT r.*,
         (SELECT message.card FROM voice_calls call JOIN messages message ON message.id=call.message_id
           WHERE call.room_id=r.id AND call.ended_at IS NULL) voice_call,
-        (SELECT count(*)::text FROM effective_memberships rm WHERE rm.room_id=r.id AND rm.removed_at IS NULL) member_count,
+        (SELECT count(*)::text FROM memberships rm WHERE rm.room_id=r.id AND rm.removed_at IS NULL) member_count,
         NOT EXISTS (
-          SELECT 1 FROM effective_memberships other_room
+          SELECT 1 FROM memberships other_room
           JOIN memberships other_workspace ON other_workspace.workspace_id=r.workspace_id
             AND other_workspace.room_id IS NULL
             AND other_workspace.identity_id=other_room.identity_id
@@ -1815,7 +1819,7 @@ export class PhoneService {
             )
         )) closed
       FROM rooms r
-      JOIN effective_memberships member ON member.room_id=r.id AND member.identity_id=$2 AND member.removed_at IS NULL
+      JOIN memberships member ON member.room_id=r.id AND member.identity_id=$2 AND member.removed_at IS NULL
       LEFT JOIN LATERAL (
         SELECT * FROM messages message
         WHERE message.room_id=r.id AND ${visibleChatMessageSql('message')}
@@ -1878,7 +1882,7 @@ export class PhoneService {
                 WHERE agent_status.body->>'status'='online'
                   AND (agent_status.updated_at>$3 OR agent_status.body->>'held'='true')
               )::int online_agent_count
-            FROM effective_memberships member
+            FROM memberships member
             JOIN identities agent ON agent.id=member.identity_id
               AND agent.kind='agent' AND agent.hidden_from_roster=false
             LEFT JOIN LATERAL(
@@ -2370,7 +2374,7 @@ export class PhoneService {
              SELECT to_tsquery('simple',$3) query
            ), readable AS (
              SELECT room.id FROM rooms room
-             JOIN effective_memberships member ON member.room_id=room.id AND member.identity_id=$2
+             JOIN memberships member ON member.room_id=room.id AND member.identity_id=$2
                AND member.removed_at IS NULL
              WHERE room.workspace_id=$1 AND room.parent_id IS NULL AND room.archived_at IS NULL
            ), cursor AS (
@@ -2432,7 +2436,7 @@ export class PhoneService {
   ): Promise<RoomHistoryView | null> {
     const result = await this.database.query<{ rows: MessageRow[] }>(
       `WITH authorized AS (
-        SELECT 1 FROM effective_memberships room_member JOIN rooms room ON room.id=room_member.room_id
+        SELECT 1 FROM memberships room_member JOIN rooms room ON room.id=room_member.room_id
         WHERE room.id=$1 AND room_member.identity_id=$2
           AND room_member.removed_at IS NULL
           AND ($2=$4 OR EXISTS(SELECT 1 FROM memberships workspace_member
@@ -2482,7 +2486,7 @@ export class PhoneService {
   ): Promise<RoomHistoryView | null> {
     const result = await this.database.query<{ rows: MessageRow[]; cursor_exists: boolean }>(
       `WITH authorized AS (
-        SELECT 1 FROM effective_memberships room_member JOIN rooms room ON room.id=room_member.room_id
+        SELECT 1 FROM memberships room_member JOIN rooms room ON room.id=room_member.room_id
         WHERE room.id=$1 AND room_member.identity_id=$2
           AND room_member.removed_at IS NULL
           AND ($2=$4 OR EXISTS(SELECT 1 FROM memberships workspace_member
@@ -2526,7 +2530,7 @@ export class PhoneService {
   ): Promise<RoomHistoryView | null> {
     const result = await this.database.query<{ rows: MessageRow[] }>(
       `WITH authorized AS (
-        SELECT 1 FROM effective_memberships room_member
+        SELECT 1 FROM memberships room_member
         JOIN rooms room ON room.id=room_member.room_id
         WHERE room.id=$1 AND room_member.identity_id=$2
           AND room_member.removed_at IS NULL
@@ -2588,7 +2592,7 @@ export class PhoneService {
          WHERE m.room_id=room.id AND (m.presentation<>'activity' OR m.durable_fact IS NOT NULL)
            AND ${hiddenWakeCardSql('m')}
          ORDER BY m.created_at DESC,m.id DESC LIMIT 1) id
-       FROM rooms room JOIN effective_memberships member ON member.room_id=room.id
+       FROM rooms room JOIN memberships member ON member.room_id=room.id
          AND member.identity_id=$2 AND member.removed_at IS NULL
        WHERE room.id=$1 AND ($2=$3 OR EXISTS(
          SELECT 1 FROM memberships workspace_member
@@ -2710,7 +2714,7 @@ export class PhoneService {
       deck: DeckCornerFacts | null;
     }>(`WITH authorized AS (
         SELECT r.*,m.role viewer_role,workspace_member.role workspace_role
-        FROM rooms r JOIN effective_memberships m ON m.room_id=r.id
+        FROM rooms r JOIN memberships m ON m.room_id=r.id
         JOIN memberships workspace_member ON workspace_member.workspace_id=r.workspace_id
           AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
           AND workspace_member.removed_at IS NULL
@@ -2792,7 +2796,7 @@ export class PhoneService {
            SELECT room.*,membership.role viewer_role,membership.push_muted viewer_push_muted,
              workspace_member.role workspace_role,
              (workspace_member.role IN ('owner','admin') AND NOT EXISTS (
-               SELECT 1 FROM effective_memberships other_room
+               SELECT 1 FROM memberships other_room
                JOIN memberships other_workspace ON other_workspace.workspace_id=room.workspace_id
                  AND other_workspace.room_id IS NULL
                  AND other_workspace.identity_id=other_room.identity_id
@@ -2803,7 +2807,7 @@ export class PhoneService {
              )) leave_deletes_room,
              NULL::jsonb read_cursor
            FROM rooms room
-           JOIN effective_memberships membership ON membership.room_id=room.id
+           JOIN memberships membership ON membership.room_id=room.id
              AND membership.identity_id=$2 AND membership.removed_at IS NULL
            JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
              AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
@@ -2814,7 +2818,7 @@ export class PhoneService {
              membership.role,NULL::jsonb presence_body,
              NULL::timestamptz presence_updated_at
            FROM authorized_room room
-           JOIN effective_memberships membership ON membership.workspace_id=room.workspace_id
+           JOIN memberships membership ON membership.workspace_id=room.workspace_id
              AND membership.room_id=room.id
            JOIN identities i ON i.id=membership.identity_id
            WHERE membership.removed_at IS NULL AND i.hidden_from_roster=false
@@ -3006,7 +3010,7 @@ export class PhoneService {
         }>(
           `SELECT member.identity_id id,presence.body presence_body,
              presence.updated_at presence_updated_at
-           FROM effective_memberships member
+           FROM memberships member
            LEFT JOIN LATERAL(
              SELECT body,updated_at FROM live_outputs
              WHERE agent_id=member.identity_id AND kind='presence'
@@ -3114,7 +3118,7 @@ export class PhoneService {
         `SELECT
            COALESCE((SELECT jsonb_agg(jsonb_build_object('id',member.identity_id,
              'presence_body',presence.body,'presence_updated_at',presence.updated_at))
-             FROM effective_memberships member LEFT JOIN LATERAL(
+             FROM memberships member LEFT JOIN LATERAL(
                SELECT body,updated_at FROM live_outputs
                WHERE agent_id=member.identity_id AND kind='presence'
                ORDER BY updated_at DESC LIMIT 1) presence ON true
@@ -3212,7 +3216,7 @@ export class PhoneService {
         SELECT i.id identity_id,
           i.name,i.handle,i.avatar
         FROM identities i
-        LEFT JOIN effective_memberships member ON member.room_id=c.id AND member.identity_id=i.id
+        LEFT JOIN memberships member ON member.room_id=c.id AND member.identity_id=i.id
           AND member.removed_at IS NULL
         WHERE i.id=f.owner_agent_id
           AND i.kind='agent' LIMIT 1
@@ -3363,7 +3367,7 @@ export class PhoneService {
             AND NULLIF(f.lifecycle->'pr'->>'mergedAt','') IS NOT NULL
             AND NULLIF(f.lifecycle->'pr'->>'title','') IS NOT NULL
             AND f.lifecycle->'pr'->>'url' ~ '^https://github[.]com/[^/]+/[^/]+/pull/[0-9]+$'
-            AND EXISTS (SELECT 1 FROM effective_memberships m WHERE m.room_id=r.id
+            AND EXISTS (SELECT 1 FROM memberships m WHERE m.room_id=r.id
               AND m.identity_id=$3 AND m.removed_at IS NULL)
           GROUP BY f.lifecycle->'pr'->>'url'
           HAVING $4::text IS NULL OR (max(f.lifecycle->'pr'->>'mergedAt'),
@@ -3601,6 +3605,7 @@ export class PhoneService {
   }
 
   private async lockPairingIssuer(database: SqlDatabase, workspaceId: string, issuerId: string) {
+    database = new CornerAccessDatabase(database);
     await database.query(`SELECT id FROM workspaces WHERE id=$1 FOR UPDATE`, [workspaceId]);
     const issuer = await database.query(
       `SELECT id FROM memberships WHERE workspace_id=$1 AND room_id IS NULL
@@ -3699,6 +3704,7 @@ export class PhoneService {
     workspaceId: string,
     exceptIdentityId: string,
   ): Promise<{ faces: string[]; names: string[] }> {
+    database = new CornerAccessDatabase(database);
     const rows = await database.query<{
       id: string;
       name: string;
@@ -3726,6 +3732,7 @@ export class PhoneService {
     name: string,
     lockedWorkspaces = lockIdentityHandleWorkspaces(database, exceptIdentityId, [workspaceId]),
   ): Promise<string> {
+    database = new CornerAccessDatabase(database);
     const workspaceIds = await lockedWorkspaces;
     const rows = await database.query<{ handle: string }>(
       `SELECT identity.handle
@@ -4759,7 +4766,7 @@ export class PhoneService {
       `WITH eligible AS (
          SELECT message.id,message.created_at FROM messages message
          JOIN rooms room ON room.id=message.room_id
-         JOIN effective_memberships room_member ON room_member.room_id=room.id
+         JOIN memberships room_member ON room_member.room_id=room.id
            AND room_member.identity_id=$2 AND room_member.removed_at IS NULL
          JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
            AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
@@ -4803,7 +4810,7 @@ export class PhoneService {
       `WITH accessible AS (
          SELECT message.* FROM messages message
          JOIN rooms room ON room.id=message.room_id
-         JOIN effective_memberships room_member ON room_member.room_id=room.id
+         JOIN memberships room_member ON room_member.room_id=room.id
            AND room_member.identity_id=$2 AND room_member.removed_at IS NULL
          JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
            AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
@@ -4896,7 +4903,7 @@ export class PhoneService {
              COALESCE(room.direct_participants ? $6,false) system_dm,
              COALESCE(workspace_member.role<>'spectator',$3=$6) writable
            FROM rooms room
-           JOIN effective_memberships room_member ON room_member.room_id=room.id
+           JOIN memberships room_member ON room_member.room_id=room.id
              AND room_member.identity_id=$3 AND room_member.removed_at IS NULL
            LEFT JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
              AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$3
@@ -4991,7 +4998,7 @@ export class PhoneService {
       this.database.query<{ name: string | null; agent_id: string; agent_name: string }>(
         `SELECT room.name, agent.id agent_id, agent.name agent_name
          FROM rooms room
-         LEFT JOIN effective_memberships member ON member.room_id=room.id AND member.removed_at IS NULL
+         LEFT JOIN memberships member ON member.room_id=room.id AND member.removed_at IS NULL
          LEFT JOIN identities agent ON agent.id=member.identity_id AND agent.kind='agent'
          WHERE room.id=$1`, [roomId]),
       this.listRoomSchedules(roomId, viewerId),
@@ -5129,7 +5136,7 @@ export class PhoneService {
              EXISTS(SELECT 1 FROM identities author
                WHERE author.id=message.author_id AND author.kind='agent') agent_author
            FROM messages message
-           JOIN memberships membership ON membership.room_id=(SELECT COALESCE(parent_id,id) FROM rooms WHERE id=message.room_id)
+           JOIN memberships membership ON membership.room_id=message.room_id
              AND membership.identity_id=$3 AND membership.removed_at IS NULL
            JOIN memberships workspace_member ON workspace_member.workspace_id=membership.workspace_id
              AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$3
@@ -5174,7 +5181,7 @@ export class PhoneService {
          FROM rooms room
          WHERE message.id=$1 AND message.room_id=$2 AND message.room_id=room.id
            AND message.presentation='message' AND EXISTS(
-               SELECT 1 FROM effective_memberships member
+               SELECT 1 FROM memberships member
                WHERE member.room_id=message.room_id AND member.identity_id=$3
                  AND member.removed_at IS NULL
              ) AND (message.author_id=$3 OR EXISTS(
@@ -5235,7 +5242,7 @@ export class PhoneService {
              message.created_at message_created_at
            FROM messages message
            JOIN rooms room ON room.id=message.room_id
-           JOIN effective_memberships membership ON membership.room_id=room.id
+           JOIN memberships membership ON membership.room_id=room.id
              AND membership.identity_id=$3 AND membership.removed_at IS NULL
            JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
              AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$3
@@ -5326,7 +5333,7 @@ export class PhoneService {
        SELECT $1,message.id,room.workspace_id,now(),CASE WHEN $4::boolean THEN now() END
        FROM messages message
        JOIN rooms room ON room.id=message.room_id AND room.workspace_id=$3
-       JOIN effective_memberships member ON member.room_id=room.id AND member.identity_id=$1
+       JOIN memberships member ON member.room_id=room.id AND member.identity_id=$1
          AND member.removed_at IS NULL
        WHERE message.id=$2
        ON CONFLICT(identity_id,message_id)
@@ -5404,7 +5411,7 @@ export class PhoneService {
          CASE WHEN room_member.identity_id IS NOT NULL AND message.deleted_at IS NULL THEN author.face_id END author_face
        FROM message_bookmarks bookmark
        LEFT JOIN rooms room ON room.id=bookmark.room_id AND room.workspace_id=bookmark.workspace_id
-       LEFT JOIN effective_memberships room_member ON room_member.room_id=room.id
+       LEFT JOIN memberships room_member ON room_member.room_id=room.id
          AND room_member.identity_id=$2 AND room_member.removed_at IS NULL
        LEFT JOIN messages message ON message.id=bookmark.message_id AND message.room_id=room.id
        LEFT JOIN identities author ON author.id=message.author_id
@@ -5566,7 +5573,7 @@ export class PhoneService {
                 a.access_policy,a.owner_id,owner.handle owner_handle,
                 EXISTS(SELECT 1 FROM rooms room WHERE room.id=$2 AND room.parent_id IS NOT NULL) corner,
                 EXISTS(
-                  SELECT 1 FROM effective_memberships membership
+                  SELECT 1 FROM memberships membership
                   WHERE membership.room_id=$2 AND membership.identity_id=identity.id
                     AND membership.removed_at IS NULL
                 ) member,
@@ -5711,7 +5718,7 @@ export class PhoneService {
                 a.access_policy,a.owner_id,owner.handle owner_handle,
                 EXISTS(SELECT 1 FROM rooms room
                   WHERE room.id=d.room_id AND room.parent_id IS NOT NULL) corner,
-                EXISTS(SELECT 1 FROM effective_memberships membership
+                EXISTS(SELECT 1 FROM memberships membership
                   WHERE membership.room_id=d.room_id AND membership.identity_id=d.agent_id
                     AND membership.removed_at IS NULL) member,
                 COALESCE((SELECT lo.body->>'status'='online'
@@ -5900,7 +5907,7 @@ export class PhoneService {
            THEN room.direct_participants ELSE '[]'::jsonb END
        ) participant(id) ON true
        JOIN identities identity ON identity.id=participant.id AND identity.kind='agent'
-       JOIN effective_memberships membership ON membership.room_id=room.id
+       JOIN memberships membership ON membership.room_id=room.id
          AND membership.identity_id=identity.id AND membership.removed_at IS NULL
        WHERE room.id=$1 AND jsonb_array_length(
          CASE WHEN jsonb_typeof(room.direct_participants)='array'
@@ -5923,7 +5930,7 @@ export class PhoneService {
          AND workspace_membership.room_id IS NULL AND workspace_membership.removed_at IS NULL
        JOIN identities identity ON identity.id=workspace_membership.identity_id
          AND identity.kind='agent' AND identity.handle IS NOT NULL
-       LEFT JOIN effective_memberships room_membership ON room_membership.room_id=room.id
+       LEFT JOIN memberships room_membership ON room_membership.room_id=room.id
          AND room_membership.identity_id=identity.id AND room_membership.removed_at IS NULL
        WHERE room.id=$1 AND room.parent_id IS NOT NULL AND room_membership.identity_id IS NULL`,
       [roomId],
@@ -6314,7 +6321,7 @@ export class PhoneService {
       const retiring = await database.query<{ identity_id: string }>(
         `SELECT m.identity_id FROM memberships m JOIN identities i ON i.id=m.identity_id
          WHERE m.workspace_id=$1 AND m.room_id IS NULL AND m.removed_at IS NULL AND i.kind='agent'
-           AND NOT EXISTS(SELECT 1 FROM effective_memberships other WHERE other.identity_id=m.identity_id
+           AND NOT EXISTS(SELECT 1 FROM memberships other WHERE other.identity_id=m.identity_id
              AND other.removed_at IS NULL AND other.workspace_id<>$1)
          ORDER BY m.identity_id`,
         [input.workspaceId],
@@ -6419,7 +6426,7 @@ export class PhoneService {
       const parent = (
         await database.query<{ workspace_id: string; viewer_name: string }>(
           `SELECT room.workspace_id,viewer.name viewer_name FROM rooms room
-           JOIN memberships room_member ON room_member.room_id=COALESCE(room.parent_id,room.id)
+           JOIN memberships room_member ON room_member.room_id=room.id
              AND room_member.identity_id=$2 AND room_member.removed_at IS NULL
            JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
              AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
@@ -6701,7 +6708,7 @@ export class PhoneService {
       if (!membership) throw new Error('room membership required');
       if (membership.workspace_role === 'owner' || membership.workspace_role === 'admin') {
         const others = await database.query(
-          `SELECT 1 FROM effective_memberships room_member
+          `SELECT 1 FROM memberships room_member
            JOIN memberships workspace_member ON workspace_member.workspace_id=$2
              AND workspace_member.room_id IS NULL
              AND workspace_member.identity_id=room_member.identity_id
@@ -6791,7 +6798,7 @@ export class PhoneService {
     const room = await this.requireTopLevelRoom(input.roomId);
     await this.requireWorkspaceManager(room.workspace_id, viewerId);
     const target = await this.database.query(
-      `SELECT 1 FROM effective_memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
+      `SELECT 1 FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
       [input.roomId, input.memberId],
     );
     if (!target.rowCount) throw new Error('room membership required');
@@ -7232,7 +7239,7 @@ export class PhoneService {
         changes.push({ axis: 'fast mode', value: nextFastMode ? 'on' : 'off' });
       if (!changes.length) return;
       const rooms = await database.query<{ room_id: string }>(
-        `SELECT membership.room_id FROM effective_memberships membership
+        `SELECT membership.room_id FROM memberships membership
          JOIN rooms room ON room.id=membership.room_id
          WHERE membership.identity_id=$1 AND membership.workspace_id=$2
            AND membership.removed_at IS NULL AND room.archived_at IS NULL`,
@@ -7293,7 +7300,7 @@ export class PhoneService {
         [input.agentId],
       );
       const rooms = await database.query<{ room_id: string }>(
-        `SELECT membership.room_id FROM effective_memberships membership
+        `SELECT membership.room_id FROM memberships membership
          JOIN rooms room ON room.id=membership.room_id
          WHERE membership.identity_id=$1 AND membership.workspace_id=$2
            AND membership.removed_at IS NULL AND room.archived_at IS NULL`,
@@ -7761,7 +7768,7 @@ export class PhoneService {
       );
       if (!changed.rowCount) return;
       const rooms = await database.query<{ room_id: string }>(
-        `SELECT m.room_id FROM effective_memberships m
+        `SELECT m.room_id FROM memberships m
          JOIN rooms r ON r.id=m.room_id
          WHERE m.identity_id=$1 AND m.room_id IS NOT NULL AND m.removed_at IS NULL
            AND r.workspace_id=$2 AND r.archived_at IS NULL`,
@@ -8086,7 +8093,7 @@ export class PhoneService {
       );
       await database.query(
         `DELETE FROM rooms WHERE direct_participants IS NOT NULL AND NOT EXISTS (
-           SELECT 1 FROM effective_memberships m JOIN identities i ON i.id=m.identity_id
+           SELECT 1 FROM memberships m JOIN identities i ON i.id=m.identity_id
            WHERE m.room_id=rooms.id AND m.removed_at IS NULL
              AND i.kind='human' AND i.id <> ALL($1))`,
         [gone],
@@ -8218,7 +8225,7 @@ export class PhoneService {
       const updated = await database.query<{ push_muted: boolean }>(
         `WITH surface AS (
            SELECT room.id,room.parent_id,member.push_muted FROM rooms room
-           JOIN effective_memberships member ON member.room_id=room.id
+           JOIN memberships member ON member.room_id=room.id
              AND member.identity_id=$2 AND member.removed_at IS NULL
            JOIN identities person ON person.id=$2 AND person.kind='human' WHERE room.id=$1
          ), room_update AS (
@@ -8553,7 +8560,7 @@ export class PhoneService {
     return (
       (
         await this.database.query(
-          `SELECT 1 FROM effective_memberships room_member
+          `SELECT 1 FROM memberships room_member
            JOIN rooms room ON room.id=room_member.room_id
            WHERE room.id=$1 AND room_member.identity_id=$2
              AND room_member.removed_at IS NULL

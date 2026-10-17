@@ -830,7 +830,7 @@ describe('release-owned schema readiness', () => {
   it('rejects the previous schema marker until inherited corner membership is released', async () => {
     const query = vi.fn().mockResolvedValue(result([{ version: REQUIRED_SCHEMA_VERSION - 1 }]));
     await expect(assertSchemaCurrent({ query, transaction: vi.fn() })).rejects.toThrow(
-      /expected schema version 30, found 29/,
+      /expected schema version 29, found 28/,
     );
   });
 

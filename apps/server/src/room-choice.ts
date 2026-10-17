@@ -1,3 +1,4 @@
+import { CornerAccessDatabase } from './corner-access-database.js';
 import { workflowRunIsLiveSql } from './workflow-run-saved-status.js';
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { ChoiceCardView, RoomViewIdentity } from '@beeline/api-contract/phone';
@@ -84,9 +85,10 @@ export async function loadHumanElectorate(
   database: SqlDatabase,
   roomId: string,
 ): Promise<string[]> {
+    database = new CornerAccessDatabase(database);
   const rows = await database.query<{ id: string }>(
     `SELECT identity.id
-     FROM effective_memberships member
+     FROM memberships member
      JOIN identities identity ON identity.id=member.identity_id
      WHERE member.room_id=$1 AND member.removed_at IS NULL
        AND identity.kind='human' AND COALESCE(identity.hidden_from_roster,false)=false
@@ -113,13 +115,14 @@ async function loadMentionIds(
   prompt: string,
   constraint: string | undefined,
 ): Promise<string[]> {
+    database = new CornerAccessDatabase(database);
   const handles = [...typedMentionHandles(`${prompt} ${constraint ?? ''}`)].map((handle) =>
     handle.toLowerCase(),
   );
   if (!handles.length) return [];
   const rows = await database.query<{ id: string }>(
     `SELECT identity.id
-     FROM effective_memberships member
+     FROM memberships member
      JOIN identities identity ON identity.id=member.identity_id
      WHERE member.room_id=$1 AND member.removed_at IS NULL
        AND identity.kind='human' AND COALESCE(identity.hidden_from_roster,false)=false
@@ -599,6 +602,7 @@ export async function answerRoomChoice(
   input: { choiceId: string; optionId: string; viewerId: string; note?: unknown },
   { wake = true }: { wake?: boolean } = {},
 ): Promise<{ choiceId: string; status: ChoiceStatus; roomId: string }> {
+    database = new CornerAccessDatabase(database);
   const note = normalizeChoiceNote(input.note);
   const choice = await loadChoice(database, input.choiceId);
   if (!choice) throw new Error('choice not found');
@@ -610,7 +614,7 @@ export async function answerRoomChoice(
   if (viewer.kind !== 'human') throw new Error('choice access denied');
   const member = (
     await database.query<{ id: string }>(
-      `SELECT identity_id id FROM effective_memberships
+      `SELECT identity_id id FROM memberships
        WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
       [choice.room_id, input.viewerId],
     )
@@ -716,6 +720,7 @@ export async function skipRoomChoice(
   input: { choiceId: string; viewerId: string },
   { wake = true }: { wake?: boolean } = {},
 ): Promise<{ choiceId: string; status: ChoiceStatus; roomId: string }> {
+    database = new CornerAccessDatabase(database);
   const choice = await loadChoice(database, input.choiceId);
   if (!choice) throw new Error('choice not found');
   if (choice.mode !== 'question') throw new Error('skip is invalid on a poll');
@@ -724,7 +729,7 @@ export async function skipRoomChoice(
   if (viewer.kind !== 'human') throw new Error('choice access denied');
   const member = (
     await database.query<{ id: string }>(
-      `SELECT identity_id id FROM effective_memberships
+      `SELECT identity_id id FROM memberships
        WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
       [choice.room_id, input.viewerId],
     )

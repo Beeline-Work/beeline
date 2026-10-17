@@ -1,3 +1,4 @@
+import { CornerAccessDatabase } from './corner-access-database.js';
 import { lockCommanderWakes, refreshWakeDigests } from './commander-wakes.js';
 import { agentMachineOfflineSql } from './machine-offline.js';
 import { commandOrder, reportToCommander } from './commander.js';
@@ -352,8 +353,9 @@ export function nextAgentDepth(parentDepth: number): number | undefined {
 export async function repairReviewerCornerMembership(
   db: SqlDatabase, cornerId: string, reviewerAgentId: string,
 ): Promise<boolean> {
+    db = new CornerAccessDatabase(db);
   const member = await db.query(
-    `SELECT 1 FROM rooms corner JOIN effective_memberships member ON member.room_id=corner.parent_id
+    `SELECT 1 FROM rooms corner JOIN memberships member ON member.room_id=corner.parent_id
      JOIN identities identity ON identity.id=member.identity_id AND identity.kind='agent'
      WHERE corner.id=$1 AND member.identity_id=$2 AND member.removed_at IS NULL`,
     [cornerId, reviewerAgentId],
@@ -382,6 +384,7 @@ export async function createAgentCommand(
     wakeNote?: string;
   },
 ): Promise<CommandRow | undefined> {
+    db = new CornerAccessDatabase(db);
   return db.transaction(async (db) => {
   await lockCommanderWakes(db, input.roomId, input.agentId);
   // Membership removal serializes with dispatch; lifecycle wakes retain their opening order.
@@ -394,9 +397,9 @@ export async function createAgentCommand(
        COALESCE((SELECT author.kind='human' AND source.presentation='message' AND source.system_event IS NULL
          FROM messages source JOIN identities author ON author.id=source.author_id WHERE source.id=$3),false)
          AND $4::boolean OR COALESCE((SELECT kind='human' FROM identities WHERE id=$5),false) AND $6::boolean human_input
-     FROM memberships m JOIN rooms r ON m.room_id=COALESCE(r.parent_id,r.id)
+     FROM memberships m JOIN rooms r ON r.id=m.room_id
      JOIN identities i ON i.id=m.identity_id AND i.kind='agent'
-     WHERE r.id=$1 AND m.identity_id=$2 AND m.removed_at IS NULL AND r.archived_at IS NULL
+     WHERE m.room_id=$1 AND m.identity_id=$2 AND m.removed_at IS NULL AND r.archived_at IS NULL
      FOR SHARE OF m,r`, [input.roomId, input.agentId, input.sourceMessageId,
        input.reason !== 'schedule' && !input.privatePayload && !input.reason.startsWith('corner_'),
        input.privatePayload?.authorId ?? null, input.privatePayload?.kind === 'order'],
@@ -527,6 +530,7 @@ async function routeTaggedLifecycleCommand(
   source: { room_id: string; author_id: string; text: string; tagged_ids: string[] },
   sourceId: string,
 ): Promise<boolean> {
+    db = new CornerAccessDatabase(db);
   if (
     source.tagged_ids.length !== 1 ||
     !/^@[^\s]+\s+(?:\/(?:restart|login)|restart|status|stop|retry|debug|help|login)$/i.test(
@@ -545,9 +549,9 @@ async function routeTaggedLifecycleCommand(
          presence.body->>'held'='true' presence_held
        FROM agents agent
        JOIN identities identity ON identity.id=agent.agent_id
-       JOIN memberships target_member ON target_member.room_id=(SELECT COALESCE(parent_id,id) FROM rooms WHERE id=$2)
+       JOIN memberships target_member ON target_member.room_id=$2
          AND target_member.identity_id=agent.agent_id AND target_member.removed_at IS NULL
-       JOIN memberships sender ON sender.room_id=(SELECT COALESCE(parent_id,id) FROM rooms WHERE id=$2)
+       JOIN memberships sender ON sender.room_id=$2
          AND sender.identity_id=$3 AND sender.removed_at IS NULL
        LEFT JOIN LATERAL (
          SELECT body,updated_at FROM live_outputs
@@ -812,6 +816,7 @@ async function routeTaggedLifecycleCommand(
 }
 
 export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Promise<boolean> {
+    db = new CornerAccessDatabase(db);
   // Who this message tags is read in the SAME statement that reads the message.
   // Routing is on the write path of every human message in every Room, so the
   // tags cost no round trip of their own.
@@ -1885,6 +1890,7 @@ export async function reconcileConfiguredCornerReviewers(
   db: SqlDatabase,
   parentRoomId?: string,
 ): Promise<{ subscriptions: number; commands: number }> {
+    db = new CornerAccessDatabase(db);
   const subscriptions = await db.query(
     `UPDATE memberships reviewer_membership
      SET event_subscriptions=reviewer_membership.event_subscriptions||'["check-passed"]'::jsonb
@@ -1910,7 +1916,7 @@ export async function reconcileConfiguredCornerReviewers(
      FROM rooms corner
      JOIN rooms parent ON parent.id=corner.parent_id
      JOIN corner_facts fact ON fact.corner_id=corner.id
-     JOIN effective_memberships reviewer ON reviewer.room_id=parent.id
+     JOIN memberships reviewer ON reviewer.room_id=parent.id
        AND reviewer.identity_id=parent.reviewer_agent_id AND reviewer.removed_at IS NULL
      WHERE corner.archived_at IS NULL AND fact.lifecycle->>'checks'='passing'
        AND fact.lifecycle->'pr'->>'number' IS NOT NULL

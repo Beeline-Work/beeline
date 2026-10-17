@@ -9,7 +9,7 @@ import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { resolveCurrentMemberMentions } from './message-mentions.js';
 
-it('migrates sparse state twice, preserves owed items and read marks, and derives every corner access from its Room', async () => {
+it('copies sparse state twice, preserves owed items and read marks, and derives every corner access from its Room', async () => {
   const db = new PgliteDatabase();
   try {
     // Expand only, to seed the shape written by the preceding server image.
@@ -67,7 +67,7 @@ it('migrates sparse state twice, preserves owed items and read marks, and derive
     const owed = (await db.query('SELECT * FROM corner_owed')).rows;
     const readMarks = (await db.query('SELECT * FROM room_read_marks')).rows;
     expect(owed).toHaveLength(1);
-    expect(await migrateCornerPersonState(db)).toBe(2);
+    expect(await migrateCornerPersonState(db)).toBe(1);
     expect(await migrateCornerPersonState(db)).toBe(0);
     expect((await db.query('SELECT * FROM corner_person_state')).rows).toEqual([
       {
@@ -82,28 +82,16 @@ it('migrates sparse state twice, preserves owed items and read marks, and derive
     ]);
     expect((await db.query('SELECT * FROM corner_owed')).rows).toEqual(owed);
     expect((await db.query('SELECT * FROM room_read_marks')).rows).toEqual(readMarks);
-    expect((await db.query('SELECT * FROM memberships WHERE room_id=$1', [corner])).rowCount).toBe(
-      0,
-    );
-    await expect(
-      db.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-      VALUES($1,$2,$3,'member')`,
-        [workspace, corner, outsider],
-      ),
-    ).rejects.toThrow('corner access is inherited');
-    const otherRoom = randomUUID();
-    await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Other Room')`, [
-      otherRoom,
-      workspace,
-    ]);
-    await db.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
-      [workspace, otherRoom, person],
-    );
-    await expect(
-      db.query('UPDATE rooms SET parent_id=$1 WHERE id=$2', [room, otherRoom]),
-    ).rejects.toThrow('a corner cannot have membership rows');
+    // The old image still authorizes existing members against the physical roster during rollout.
+    expect((await db.query('SELECT * FROM memberships WHERE room_id=$1', [corner])).rowCount).toBe(2);
+    expect((await db.query(
+      `SELECT 1 FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
+      [corner, person],
+    )).rowCount).toBe(1);
+    await db.query(`UPDATE memberships SET event_subscriptions='["schedule-ran"]' WHERE room_id=$1 AND identity_id=$2`, [corner, agent]);
+    expect((await db.query('SELECT event_subscriptions FROM corner_person_state WHERE corner_id=$1 AND identity_id=$2', [corner, agent])).rows[0]!.event_subscriptions).toEqual(['schedule-ran']);
+    await setRoomEventSubscriptions(db, corner, agent, ['joined']);
+    expect((await db.query('SELECT event_subscriptions FROM memberships WHERE room_id=$1 AND identity_id=$2', [corner, agent])).rows[0]!.event_subscriptions).toEqual(['joined']);
     const phone = new PhoneService(db, 'https://server.example');
     const daemon = new DaemonService(db, new LiveHub());
     expect(await phone.canReadRoom(corner, person)).toBe(true);

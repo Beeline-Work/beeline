@@ -1,3 +1,4 @@
+import { CornerAccessDatabase } from './corner-access-database.js';
 import { isZeroCheckCommander } from './corner-merge-approval.js';
 import { reportToCommander } from './commander.js';
 import type { activeCornerHolds } from './corner-holds.js';
@@ -242,6 +243,7 @@ async function loadCornerLifecycleState(
 }
 
 async function loadCorner(db: SqlDatabase, cornerId: string): Promise<CornerRow | undefined> {
+    db = new CornerAccessDatabase(db);
   return (
     await db.query<CornerRow>(
       `SELECT corner.parent_id,parent.workspace_id,
@@ -252,7 +254,7 @@ async function loadCorner(db: SqlDatabase, cornerId: string): Promise<CornerRow 
               configured.kind configured_reviewer_kind,
               configured.name configured_reviewer_name,
               EXISTS (
-                SELECT 1 FROM effective_memberships reviewer_membership
+                SELECT 1 FROM memberships reviewer_membership
                 JOIN identities reviewer ON reviewer.id=reviewer_membership.identity_id
                   AND reviewer.kind='agent'
                 WHERE reviewer_membership.room_id=parent.id
@@ -365,7 +367,8 @@ class Transition {
     public run: RunState,
     /** The corner's current PR head; every card records the head it was written for. */
     private readonly headSha: string | undefined,
-  ) {}
+  ) {
+    this.db = new CornerAccessDatabase(db);}
 
   /** The handoff card the last `take` wrote. */
   lastCardId: string | undefined;
@@ -1283,6 +1286,7 @@ export async function cornerMergeGate(
   cornerId: string,
   head: { number: number; headSha: string },
 ): Promise<CornerMergeGate> {
+    db = new CornerAccessDatabase(db);
   const rows = await db.query<{
     configured_reviewer_id: string | null;
     approved: boolean;
@@ -1296,7 +1300,7 @@ export async function cornerMergeGate(
                   AND (
                     -- A configured reviewer agent, still a parent member.
                     EXISTS (
-                      SELECT 1 FROM effective_memberships member
+                      SELECT 1 FROM memberships member
                       JOIN identities reviewer ON reviewer.id=member.identity_id AND reviewer.kind='agent'
                       WHERE member.room_id=parent.id AND member.identity_id=approval.approved_by
                         AND member.removed_at IS NULL

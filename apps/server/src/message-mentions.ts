@@ -1,3 +1,4 @@
+import { CornerAccessDatabase, CornerAccessStatement } from './corner-access-database.js';
 import { SYSTEM_IDENTITY_HANDLE } from '@beeline/api-contract/system-identity';
 import type { SqlDatabase } from './database.js';
 
@@ -109,6 +110,7 @@ export async function resolveCurrentMemberMentions(
   text: string,
   authorId?: string,
 ): Promise<ResolvedMessageMention[]> {
+    database = new CornerAccessDatabase(database);
   const typedHandles = typedMentionHandles(text);
   if (!typedHandles.size) return [];
   const members = await database.query<{
@@ -119,7 +121,7 @@ export async function resolveCurrentMemberMentions(
     `SELECT identity.id,identity.kind,identity.handle
      FROM memberships membership
      JOIN identities identity ON identity.id=membership.identity_id
-     WHERE membership.room_id=(SELECT COALESCE(parent_id,id) FROM rooms WHERE id=$1) AND membership.removed_at IS NULL
+     WHERE membership.room_id=$1 AND membership.removed_at IS NULL
        AND identity.handle IS NOT NULL AND btrim(identity.handle)<>''`,
     [roomId],
   );
@@ -155,6 +157,7 @@ async function resolveChannelMentionMembers(
   roomId: string,
   authorId?: string,
 ): Promise<ResolvedMessageMention[]> {
+    database = new CornerAccessDatabase(database);
   const members = await database.query<{ id: string; handle: string }>(
     `SELECT identity.id,identity.handle
      FROM rooms room
@@ -246,12 +249,12 @@ function channelTaggedMembersSql(message: string): string {
  * `message` is the SQL alias of the `messages` row being read.
  */
 export function taggedIdentityIdsSql(message: string): string {
-  return `ARRAY(
+  return new CornerAccessStatement(`ARRAY(
     SELECT tagged_member.identity_id
     FROM memberships tagged_member
     JOIN identities tagged ON tagged.id=tagged_member.identity_id
     WHERE ${message}.presentation NOT IN ('system','card')
-      AND tagged_member.room_id=(SELECT COALESCE(parent_id,id) FROM rooms WHERE id=${message}.room_id) AND tagged_member.removed_at IS NULL
+      AND tagged_member.room_id=${message}.room_id AND tagged_member.removed_at IS NULL
       AND tagged_member.identity_id<>${message}.author_id
       AND tagged.handle IS NOT NULL AND btrim(tagged.handle)<>''
       AND ${handleWrittenIn(`${message}.text`, 'tagged.handle')}
@@ -264,7 +267,7 @@ export function taggedIdentityIdsSql(message: string): string {
       )
     UNION
     ${channelTaggedMembersSql(message)}
-  )`;
+  )`).sql;
 }
 
 /**

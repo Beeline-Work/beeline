@@ -38,46 +38,61 @@ FROM rooms corner
 JOIN memberships parent ON parent.room_id=corner.parent_id AND parent.removed_at IS NULL
 LEFT JOIN corner_person_state state ON state.corner_id=corner.id AND state.identity_id=parent.identity_id
 WHERE corner.parent_id IS NOT NULL;
+
 `;
 
-/** Each batch copies and removes the same locked rows atomically; retries resume safely. */
+const CORNER_STATE_COMPATIBILITY_SCHEMA = `
+-- During step A, old and new images can update the same saved preferences.
+CREATE OR REPLACE FUNCTION sync_legacy_corner_state() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE inherited jsonb;
+BEGIN
+  IF pg_trigger_depth()>1 OR NOT EXISTS(SELECT 1 FROM rooms WHERE id=NEW.room_id AND parent_id IS NOT NULL) THEN
+    RETURN NEW;
+  END IF;
+  SELECT COALESCE(parent.event_subscriptions,'[]'::jsonb) INTO inherited
+    FROM rooms corner LEFT JOIN memberships parent ON parent.room_id=corner.parent_id
+      AND parent.identity_id=NEW.identity_id WHERE corner.id=NEW.room_id;
+  IF NEW.event_subscriptions<>inherited OR NEW.identity_profile IS NOT NULL OR NEW.generation<>1 OR NEW.push_muted
+    OR EXISTS(SELECT 1 FROM corner_person_state WHERE corner_id=NEW.room_id AND identity_id=NEW.identity_id) THEN
+    INSERT INTO corner_person_state(corner_id,identity_id,event_subscriptions,identity_profile,generation,push_muted,created_at)
+      VALUES(NEW.room_id,NEW.identity_id,NEW.event_subscriptions,NEW.identity_profile,NEW.generation,NEW.push_muted,NEW.joined_at)
+      ON CONFLICT(corner_id,identity_id) DO UPDATE SET event_subscriptions=EXCLUDED.event_subscriptions,
+        identity_profile=EXCLUDED.identity_profile,generation=EXCLUDED.generation,push_muted=EXCLUDED.push_muted;
+  END IF;
+  RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS sync_legacy_corner_state ON memberships;
+CREATE TRIGGER sync_legacy_corner_state AFTER INSERT OR UPDATE OF event_subscriptions,identity_profile,generation,push_muted
+  ON memberships FOR EACH ROW EXECUTE FUNCTION sync_legacy_corner_state();
+
+CREATE OR REPLACE FUNCTION sync_current_corner_state() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF pg_trigger_depth()>1 THEN RETURN NEW; END IF;
+  UPDATE memberships SET event_subscriptions=COALESCE(NEW.event_subscriptions,event_subscriptions),
+    identity_profile=NEW.identity_profile,generation=NEW.generation,push_muted=NEW.push_muted
+    WHERE room_id=NEW.corner_id AND identity_id=NEW.identity_id;
+  RETURN NEW;
+END $$;
+DROP TRIGGER IF EXISTS sync_current_corner_state ON corner_person_state;
+CREATE TRIGGER sync_current_corner_state AFTER INSERT OR UPDATE ON corner_person_state
+  FOR EACH ROW EXECUTE FUNCTION sync_current_corner_state();
+`;
+
+/** Additive compatibility migration: copy state, retaining every legacy row for the old image. */
 export async function migrateCornerPersonState(database: SqlDatabase): Promise<number> {
-  await database.query(`
-    CREATE OR REPLACE FUNCTION forbid_corner_membership() RETURNS trigger LANGUAGE plpgsql AS $$
-    DECLARE parent uuid;
-    BEGIN
-      SELECT parent_id INTO parent FROM rooms WHERE id=NEW.room_id FOR SHARE;
-      IF parent IS NOT NULL THEN
-        RAISE EXCEPTION 'corner access is inherited from its parent Room' USING ERRCODE='23514';
-      END IF;
-      RETURN NEW;
-    END $$;
-    DROP TRIGGER IF EXISTS forbid_corner_membership ON memberships;
-    CREATE TRIGGER forbid_corner_membership BEFORE INSERT OR UPDATE OF room_id ON memberships
-      FOR EACH ROW EXECUTE FUNCTION forbid_corner_membership();
-  `);
-  await database.query(`
-    CREATE OR REPLACE FUNCTION forbid_corner_roster() RETURNS trigger LANGUAGE plpgsql AS $$
-    BEGIN
-      IF NEW.parent_id IS NOT NULL AND EXISTS(SELECT 1 FROM memberships WHERE room_id=NEW.id) THEN
-        RAISE EXCEPTION 'a corner cannot have membership rows' USING ERRCODE='23514';
-      END IF;
-      RETURN NEW;
-    END $$;
-    DROP TRIGGER IF EXISTS forbid_corner_roster ON rooms;
-    CREATE TRIGGER forbid_corner_roster BEFORE UPDATE OF parent_id ON rooms
-      FOR EACH ROW EXECUTE FUNCTION forbid_corner_roster();
-  `);
+  await database.query(CORNER_STATE_COMPATIBILITY_SCHEMA);
   let total = 0;
+  let after = '0';
   while (true) {
-    const count = await database.transaction(async (db) => {
+    const batch = await database.transaction(async (db) => {
       const batch = await db.query<{ id: string }>(
         `SELECT member.id FROM memberships member JOIN rooms corner ON corner.id=member.room_id
-         WHERE corner.parent_id IS NOT NULL ORDER BY member.id LIMIT 250 FOR UPDATE OF member`,
+         WHERE corner.parent_id IS NOT NULL AND member.id>$1::bigint
+         ORDER BY member.id LIMIT 250 FOR UPDATE OF member`, [after],
       );
-      if (!batch.rowCount) return 0;
+      if (!batch.rowCount) return undefined;
       const ids = batch.rows.map((row) => row.id);
-      await db.query(
+      const copied = await db.query(
         `WITH legacy AS (
            SELECT member.*,
              (SELECT COALESCE(jsonb_agg(kind),'[]'::jsonb)
@@ -92,14 +107,14 @@ export async function migrateCornerPersonState(database: SqlDatabase): Promise<n
          SELECT room_id,identity_id,CASE WHEN subscriptions<>inherited_subscriptions THEN subscriptions END,
            identity_profile,generation,joined_at,push_muted FROM legacy
          WHERE subscriptions<>inherited_subscriptions OR identity_profile IS NOT NULL OR generation<>1 OR push_muted
-         ON CONFLICT(corner_id,identity_id) DO NOTHING`,
+         ON CONFLICT(corner_id,identity_id) DO NOTHING RETURNING corner_id`,
         [ids, SUBSCRIBABLE_EVENT_KINDS],
       );
-      await db.query('DELETE FROM memberships WHERE id=ANY($1::bigint[])', [ids]);
-      return batch.rowCount;
+      return { after: String(ids[ids.length - 1]), copied: copied.rowCount };
     });
-    total += count;
-    if (!count) break;
+    if (!batch) break;
+    after = batch.after;
+    total += batch.copied;
   }
   return total;
 }

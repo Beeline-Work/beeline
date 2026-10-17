@@ -232,7 +232,9 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
       const updateLevel = () => {
         if (!current() || mode.current !== 'active') return;
         const bridge = `beeline-voice-${joined!.call.id}`;
-        const levels = speakerRef.current ? [room.remoteParticipants.get(bridge)?.audioLevel ?? 0]
+        const bridgeLevel = room.remoteParticipants.get(bridge)?.audioLevel ?? 0;
+        // A speaker signal can outlive playback; silent bridge audio must not hide the mic.
+        const levels = speakerRef.current && bridgeLevel > 0 ? [bridgeLevel]
           : [room.localParticipant.audioLevel, ...[...room.remoteParticipants.values()].filter(p => p.identity !== bridge).map(p => p.audioLevel)];
         setLevel(quotaRef.current ? 0 : voiceWaveformLevel(Math.max(0, ...levels)));
       };

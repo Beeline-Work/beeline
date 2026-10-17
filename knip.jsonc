@@ -146,6 +146,7 @@
         "scripts/voice-call-proof.tsx",
         "scripts/composer-tags-proof.tsx",
         "scripts/composer-hint-center-native.tsx",
+        "scripts/composer-agent-placeholder-native.tsx",
         "scripts/composer-hint-center-web.tsx",
         "scripts/build-composer-hint-center-web.ts",
         "scripts/composer-dictation-correction-proof.tsx",

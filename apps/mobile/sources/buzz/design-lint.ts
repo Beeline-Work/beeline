@@ -29,7 +29,6 @@ export const DESIGN_ALLOWLIST: Readonly<Record<DesignRule, Readonly<Record<strin
     'buzz/faces/animals.tsx': 'Identity faces: per-identity colours are the identity, not chrome.',
     'buzz/faces/face-tile.tsx': 'Identity faces: per-identity colours are the identity, not chrome.',
     'components/buzz/AppMark.tsx': 'Third-party app marks carry their own brand colours.',
-    'buzz/tool-brand-marks.ts': 'Workbench tool marks carry their own brand colours.',
     'components/buzz/WalletQr.tsx': 'A QR code must be black on white to scan in either theme.',
     'components/buzz/ArtifactPdfView.tsx': 'The PDF page is paper: it renders white in both themes.',
     'components/buzz/DesktopArtifactPane.tsx': 'The PDF page is paper: it renders white in both themes.',

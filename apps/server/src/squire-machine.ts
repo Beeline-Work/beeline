@@ -13,6 +13,7 @@ type Work = {
   generation: number;
   install?: boolean;
   disconnected?: boolean;
+  signedInAs?: string;
   forceReloginProvider?: string;
   steps?: ConnectorStatus['steps'];
   signIn?: ConnectorStatus['signIn'] | null;
@@ -53,7 +54,7 @@ export async function queueSquireWork(database: SqlDatabase, agentId: string,
       [machine.owner_id, machine.machine_id],
     )).rows[0]!.generation) + 1;
     await database.query(`UPDATE agents SET squire_work=squire_work
-      - 'disconnected' - 'install' - 'steps' - 'signIn' - 'errorMessage' - 'forceReloginProvider'
+      - 'disconnected' - 'install' - 'steps' - 'signIn' - 'errorMessage' - 'forceReloginProvider' - 'signedInAs'
       WHERE owner_id=$1 AND COALESCE(machine_id,agent_id)=$2 AND agent_id<>$3`,
       [machine.owner_id, machine.machine_id, agentId]);
   }
@@ -62,7 +63,7 @@ export async function queueSquireWork(database: SqlDatabase, agentId: string,
         steps: [{ label: 'Install on helper', status: 'pending' },
           { label: 'Connect provider account', status: 'pending' }],
         ...(input.forceReloginProvider ? { forceReloginProvider: input.forceReloginProvider } : {}),
-        ops: previous.ops ?? [] }
+        ops: previous.ops ?? [], ...(previous.signedInAs ? { signedInAs: previous.signedInAs } : {}) }
     : { ...previous, generation: previous.generation ?? 0,
         ops: [...new Set([...(previous.ops ?? []), ...(input.op ? [input.op] : [])])] };
   await database.query('UPDATE agents SET squire_work=$2::jsonb WHERE agent_id=$1',
@@ -135,7 +136,7 @@ export async function squireWorkStatus(database: SqlDatabase, agentId: string): 
 }
 
 export async function reportSquireWork(database: SqlDatabase, agentId: string,
-  input: Pick<PostConnectorStatusInput, 'connectorId' | 'pairingGeneration' | 'steps' | 'signIn' | 'errorMessage'>,
+  input: Pick<PostConnectorStatusInput, 'connectorId' | 'pairingGeneration' | 'steps' | 'signIn' | 'errorMessage'> & { signedInAs?: string },
   complete = false) {
   const row = (await database.query<{ machine_id: string; squire_work: Work }>(
     `SELECT COALESCE(machine_id,agent_id) machine_id,squire_work FROM agents WHERE agent_id=$1 FOR UPDATE`,
@@ -145,11 +146,13 @@ export async function reportSquireWork(database: SqlDatabase, agentId: string,
       !row.squire_work.install || row.squire_work.generation !== (input.pairingGeneration ?? 1))
     throw new Error('Squire work not found for this helper');
   const work: Work = { ...row.squire_work, steps: input.steps,
+    ...(input.signedInAs ? { signedInAs: input.signedInAs } : {}),
     ...(input.signIn !== undefined ? { signIn: input.signIn } : {}),
     ...(input.errorMessage ? { errorMessage: input.errorMessage } : {}) };
   if (complete) {
     delete work.install; delete work.signIn; delete work.steps;
     delete work.errorMessage; delete work.forceReloginProvider;
+    if (!input.signedInAs) delete work.signedInAs;
   }
   await database.query('UPDATE agents SET squire_work=$2::jsonb WHERE agent_id=$1',
     [agentId, JSON.stringify(work)]);

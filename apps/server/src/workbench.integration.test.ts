@@ -367,6 +367,14 @@ describe('workbench connectors', () => {
     }
   });
 
+  it('Reproduction squire-false-card: reconnect work overrides a connected broker report in the phone view', async () => {
+    await daemonOperation('postConnectorVault', { connections: [] });
+    await database.query(`UPDATE agents SET squire_work='{"install":true,"generation":1,"signedInAs":"owner@example.com"}'::jsonb WHERE agent_id=$1`, [HELPER]);
+    const view = await phoneOperation('readWorkbench', { workspaceId: WORKSPACE }) as any;
+    const machine = view.companies.rows.find((row: any) => row.kind === 'sign-in-service').machines[0];
+    expect(machine).toMatchObject({ reconnecting: true, signedInAs: 'owner@example.com', statusText: 'Reconnecting…' });
+  });
+
   it('keeps one generation of Squire sign-in work across sibling agents on a machine', async () => {
     const sibling = 'd'.repeat(64);
     await database.query("UPDATE agents SET machine_id='shared-machine' WHERE agent_id=$1", [HELPER]);

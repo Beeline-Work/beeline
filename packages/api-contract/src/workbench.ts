@@ -180,6 +180,9 @@ export type WorkbenchHelperView = {
 };
 
 export type SquireMachineReport = {
+  readonly signedInAs?: string;
+  readonly reconnecting?: boolean;
+  readonly googleSessionExpired?: boolean;
   readonly status: 'connected' | 'error' | 'not-added';
   readonly errorMessage?: string;
   readonly reportedAt: number;

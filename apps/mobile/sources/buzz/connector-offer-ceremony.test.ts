@@ -5,7 +5,7 @@ import {
 } from './connector-offer-ceremony';
 
 describe('in-chat connector offer ceremony routing', () => {
-  it('opens the existing Workbench connect flow with the accepted offer row', () => {
+  it('routes Continue sign-in directly to the sign-in screen for the offered machine', () => {
     expect(
       connectorOfferCeremonyRoute({
         workspaceId: 'workspace-1',
@@ -14,15 +14,17 @@ describe('in-chat connector offer ceremony routing', () => {
         offerId: 'offer-1',
         connectorType: 'trusty-squire',
         pairedConnectorId: 'connector-row-1',
+        directSignIn: true,
       }),
     ).toEqual({
-      pathname: '/beeline/settings/workbench/connect',
+      pathname: '/beeline/settings/workbench/connect-signin',
       params: {
         workspaceId: 'workspace-1',
         viewerId: 'human-1',
         roomId: 'room-1',
         offerId: 'offer-1',
-        connectorId: 'trusty-squire',
+        connectorId: 'connector-row-1',
+        connectorName: 'Trusty Squire',
         pairedConnectorId: 'connector-row-1',
       },
     });

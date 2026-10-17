@@ -48,11 +48,12 @@ export function connectorOfferOutcomeLine(
   offer: Pick<ConnectorOfferCardView, 'status' | 'acceptedBy' | 'acceptedAt' | 'intent'>,
 ): string | null {
   if (offer.status !== 'accepted') return null;
+  if (offer.intent === 'reconnect' && !offer.acceptedBy) return 'Reconnected automatically';
   const who = offer.acceptedBy?.handle
     ? `@${offer.acceptedBy.handle.replace(/^@/, '')}`
     : (offer.acceptedBy?.name ?? 'someone');
   const stamp = offer.acceptedAt !== undefined ? ` · ${clock(offer.acceptedAt)}` : '';
-  return `${offer.intent === 'switch' ? 'switched' : 'added'} by ${who}${stamp}`;
+  return `${offer.intent === 'switch' ? 'switched' : offer.intent === 'reconnect' ? 'signed in' : 'added'} by ${who}${stamp}`;
 }
 
 /** `connecting for @zeke` (`switching for` for a `'switch'` offer) — the
@@ -61,6 +62,7 @@ export function connectorOfferConnectingLine(
   offer: Pick<ConnectorOfferCardView, 'status' | 'acceptedBy' | 'intent'>,
 ): string | null {
   if (offer.status !== 'connecting') return null;
+  if (offer.intent === 'reconnect' && !offer.acceptedBy) return 'Reconnecting…';
   const who = offer.acceptedBy?.handle
     ? `@${offer.acceptedBy.handle.replace(/^@/, '')}`
     : (offer.acceptedBy?.name ?? 'someone');

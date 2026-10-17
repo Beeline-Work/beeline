@@ -74,3 +74,24 @@ describe('company detail', () => {
     expect(disconnect).toHaveBeenCalledWith({ workspaceId: 'ws', connectorId: 'squire:machine-one' }); expect(read.mock.calls.length).toBeGreaterThan(1);
   });
 });
+
+it('Reproduction squire-false-card: account replaces Ready and reconnect hides Disconnect', async () => {
+  params.service = 'trusty-squire';
+  const source = new MockWorkbenchSource();
+  const row = squireRow();
+  source.readWorkbench = async () => companyWorkbench([{ ...row, machines: row.machines.map(m => ({ ...m, signedInAs: 'owner@example.com', statusText: 'owner@example.com' })) }]);
+  setWorkbenchSource(source);
+  const renderer = await render();
+  expect(renderer.root.findByProps({ testID: 'squire-computer-machine-one' }).props.value).toBe('owner@example.com');
+  await act(async () => renderer.root.findByProps({ testID: 'squire-computer-machine-one' }).props.onPress());
+  source.readWorkbench = async () => companyWorkbench([{ ...row, machines: row.machines.map(m => ({ ...m, reconnecting: true, statusText: 'Reconnecting…' })) }]);
+  await act(async () => mobileSurfaceCache.clear());
+  await act(async () => renderer.unmount());
+  const reconnecting = await render();
+  const computer = reconnecting.root.findByProps({ testID: 'squire-computer-machine-one' });
+  expect(computer.props.value).toBe('Reconnecting…');
+  expect(computer.props.disabled).toBe(true);
+  await act(async () => computer.props.onPress());
+  expect(reconnecting.root.findAllByType('HullActionSheetRow').filter((r: any) => r.props.label === 'Disconnect')).toHaveLength(0);
+  await act(async () => reconnecting.unmount());
+});

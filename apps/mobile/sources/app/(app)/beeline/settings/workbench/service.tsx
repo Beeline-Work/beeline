@@ -28,7 +28,7 @@ export default function ConnectorServiceScreen() {
   const [machine, setMachine] = useState<WorkbenchCompany['machines'][number] | null>(null);
   const [linkOpen, setLinkOpen] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const manageMachine = machine;
+  const manageMachine = row?.machines.find(item => item.id === machine?.id) ?? machine;
   const disconnect = async () => {
     try {
       if (manageMachine) await getWorkbenchSource().disconnectConnector({ workspaceId: scope.workspaceId, connectorId: `squire:${manageMachine.id}` });
@@ -47,10 +47,10 @@ export default function ConnectorServiceScreen() {
           <Text style={styles.note}>Trusty Squire signs up and signs in to websites for your agents. Your computers keep the sign-in sessions.</Text>
           <RoomListSectionHeader title="Your computers" inset="content" />
           {row.machines.map(item => <SettingsRow appBoard key={item.id} title={item.name}
-            description={item.error ?? (item.status === 'not-added' ? 'Sign-in is not set up' : item.online ? 'Ready for hands-off sign-in' : 'Reconnect this computer')}
-            value={item.status === 'error' ? 'Error' : item.status === 'not-added' ? 'Not added' : item.online ? 'Ready' : 'Offline'}
+            description={item.error}
+            value={item.statusText ?? (item.reconnecting ? 'Reconnecting…' : item.signedInAs ?? (item.status === 'error' ? 'Google sign-in expired' : item.status === 'connected' ? 'Google signed in' : 'Google sign-in needed'))}
             valueTone={item.status === 'error' || (item.status === 'connected' && !item.online) ? 'danger' : undefined}
-            chevron="right" onPress={() => setMachine(item)} testID={`squire-computer-${item.id}`} />)}
+            chevron="right" disabled={item.reconnecting} onPress={() => setMachine(item)} testID={`squire-computer-${item.id}`} />)}
         </View> : (['connection', 'login', 'key'] as const).map(kind => {
           const items = row.items.filter(item => item.kind === kind);
           return items.length ? <View key={kind}>
@@ -69,7 +69,7 @@ export default function ConnectorServiceScreen() {
         {error || actions.error ? <Text accessibilityRole="alert" style={styles.error}>{error ?? actions.error}</Text> : null}
       </ScrollView>}
     <HullActionSheetModal visible={Boolean(machine) || linkOpen} title={machine?.name ?? 'Link'} onClose={() => { setMachine(null); setLinkOpen(false); }}>
-      {machine && (machine.status !== 'connected' || !machine.online) ? <HullActionSheetRow label={machine.status === 'not-added' ? 'Set up' : 'Reconnect'} onPress={() => {
+      {manageMachine?.reconnecting ? <Text style={styles.note}>Reconnecting…</Text> : machine && (manageMachine?.status !== 'connected' || !manageMachine?.online) ? <HullActionSheetRow label={machine.status === 'not-added' ? 'Set up' : 'Reconnect'} onPress={() => {
         const helperId = machine.id; setMachine(null); router.push({ pathname: '/beeline/settings/workbench/connect', params: { ...scope, connectorId: 'trusty-squire', helperId } } as Href);
       }} /> : <HullActionSheetRow label="Disconnect" destructive onPress={() => void disconnect()} />}
       <HullActionSheetCancel onPress={() => { setMachine(null); setLinkOpen(false); }} />

@@ -374,6 +374,7 @@ const step = (label: string, status: ConnectorStep['status'], reason?: string): 
  * `browser_location` are kept as read and rendered by kind.
  */
 export interface SquireConnectAccount {
+  readonly email?: string;
   readonly id: string;
   /** What Squire's probe actually saw: `[]` = looked and found nothing;
    *  `null` = could not read the profile at all. These are different
@@ -399,6 +400,7 @@ function connectAccount(raw: unknown): SquireConnectAccount | null {
   if (!isRecord(raw) || typeof raw.id !== 'string') return null;
   return {
     id: raw.id,
+    ...(typeof raw.email === 'string' ? { email: raw.email } : {}),
     // An absent or unreadable `providers` is `null` (could not look), never
     // `[]` (looked and found nothing).
     providers: Array.isArray(raw.providers)
@@ -572,6 +574,7 @@ export type InstallSquireOptions = {
 };
 
 export type InstallSquireResult = {
+  readonly signedInAs?: string;
   readonly status: 'connected' | 'error' | 'installing';
   readonly steps: readonly ConnectorStep[];
   readonly signIn?: ConnectorSignIn;
@@ -804,6 +807,8 @@ export async function installSquire(options: InstallSquireOptions): Promise<Inst
   }
   return {
     status: 'connected',
+    ...(report.account?.email || report.account?.id.includes('@')
+      ? { signedInAs: report.account.email ?? report.account.id } : {}),
     steps,
     ...(version ? { squireVersion: version } : {}),
   };

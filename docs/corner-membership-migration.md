@@ -93,3 +93,32 @@ compatibility triggers. Changing the three frozen statements then requires an
 owner decision on `PhoneService.sendMessage` (`2195186d3b479a45`),
 `PhoneService.deleteRoomMessage` (`aed1152ccf0e0e6c`), and
 `VoiceService.recordAnswer` (`c42d9c83e37b72a9`). Do not update their lock now.
+
+## Rollback to the predecessor
+
+Ruby accepted the five-minute canary limitation; no traffic steering is added.
+After rolling both Machines back, run the following from the predecessor's
+repository root, using its existing migration database environment:
+
+```sh
+node --input-type=module <<'JS'
+import { PostgresDatabase } from './apps/server/dist/database.js';
+import { backfillInheritedCornerMemberships } from './apps/server/dist/membership-join.js';
+if (!process.env.MIGRATION_DATABASE_URL) throw new Error('MIGRATION_DATABASE_URL is required');
+const db = new PostgresDatabase(process.env.MIGRATION_DATABASE_URL, 1, { mode: 'migration' });
+try {
+  await backfillInheritedCornerMemberships(db);
+} finally {
+  await db.close();
+}
+JS
+```
+
+Use the predecessor image: step A removes that exported backfill. This is the
+unchanged `backfillInheritedCornerMemberships` implementation from `574b24bd3`.
+It inserts missing corner rows for active parent Room members, including joins
+and corners created after A, with the predecessor's filtered subscriptions.
+Its `ON CONFLICT DO NOTHING` makes it safe to run twice: the second invocation
+inserts zero rows if membership has not changed, and existing preferences and
+removed rows are never overwritten. Run the backfill before declaring rollback
+recovery complete. This documents recovery; it does not execute production SQL.

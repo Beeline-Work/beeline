@@ -29,10 +29,10 @@ describe('wallet connect in the desktop web renderer', () => {
         const first = createRoot(document.getElementById('root'));
         first.render(<><Workbench /><Wallet /></>);
         setTimeout(() => {
-          output.rowBefore = text('connectors-recommended-wallet');
+          output.rowBefore = text('connectors-suggest-coinbase');
           output.pageBefore = text('wallet-screen');
           output.addressBefore = !!document.querySelector('[data-testid="wallet-address"]');
-          document.querySelector('[data-testid="connectors-recommended-wallet"]').click();
+          document.querySelector('[data-testid="connectors-suggest-coinbase"]').click();
         }, 1200);
         setTimeout(() => {
           output.ops = globalThis.__server.ops;
@@ -40,7 +40,7 @@ describe('wallet connect in the desktop web renderer', () => {
           createRoot(document.getElementById('root')).render(<><Workbench /><Wallet /></>);
         }, 2400);
         setTimeout(() => {
-          output.rowAfter = text('connectors-wallet');
+          output.rowAfter = text('connectors-company-coinbase');
           output.addressAfter = !!document.querySelector('[data-testid="wallet-address"]');
           output.connectRowAfter = !!document.querySelector('[data-testid="wallet-connect-row"]');
           document.getElementById('result').textContent = JSON.stringify(output);
@@ -63,6 +63,7 @@ describe('wallet connect in the desktop web renderer', () => {
             export const router = { back() {}, replace() {}, push() {} };`,
           '@/buzz/runtime-config': 'export const getBuzzRuntimeConfig = () => ({ monolithUrl: "https://monolith.test" });',
           '@/auth/auth-session': 'export const authSessionOptions = () => ({});',
+          './wallet-workspace': 'export const resolveWalletWorkspaceId = async id => id || "workspace-1";',
           '@/buzz/wallet-workspace': 'export const resolveWalletWorkspaceId = async id => id || "workspace-1";',
           '@/buzz/use-active-community': 'export const useActiveCommunityId = () => "workspace-1";',
           '@/auth/buzz-identity-storage': `export const loadBuzzIdentity = async () => ({ publicKey: 'viewer' });
@@ -70,13 +71,16 @@ describe('wallet connect in the desktop web renderer', () => {
           '@/sync/transport/live-connection': `export const sharedLiveConnection = () => ({
             register: async () => () => undefined,
           });`,
-          '@/sync/transport/monolith-operation': `const wallet = () => ({ address: '0xabc', solanaAddress: null, totalUsd: '$0.00', coins: [], chains: [], sponsorship: null,
+          '@/sync/transport/monolith-operation': `import { companyWorkbench, companyRow, companyOption } from '@/test/company-workbench';
+            const companies = active => active ? companyWorkbench([{ ...companyRow('coinbase', 'Coinbase', 'apps'), subtitle: '1 app', items: [{ id: 'wallet', title: 'Wallet', subtitle: 'built in', kind: 'connection', target: { kind: 'wallet' } }] }]).companies
+              : companyWorkbench([], [{ ...companyOption('wallet', 'Coinbase wallet', 'wallet'), providerId: 'coinbase' }]).companies;
+            const wallet = () => ({ address: '0xabc', solanaAddress: null, totalUsd: '$0.00', coins: [], chains: [], sponsorship: null,
               delegation: { active: globalThis.__server.active, expiresAt: null } });
             export class MonolithPhoneOperationError extends Error {}
             export const phoneOperationFailureReason = error => String(error?.message ?? error);
             export const monolithPhoneOperation = async (operation) => {
               const server = globalThis.__server;
-              if (operation === 'readWorkbench') return { workspaceId: 'workspace-1', helpers: [], connectors: [], connections: [], apps: [],
+              if (operation === 'readWorkbench') return { workspaceId: 'workspace-1', companies: companies(server.active), helpers: [], connectors: [], connections: [], apps: [],
                 catalog: [{ connectorType: 'wallet', name: 'Wallet', available: true }],
                 ...(server.wallet ? { wallet: { createdAt: 1, delegationActive: server.active, delegationExpiresAt: null } } : {}) };
               if (operation === 'createWallet') { server.ops.push(operation); server.wallet = true; return wallet(); }
@@ -95,7 +99,8 @@ describe('wallet connect in the desktop web renderer', () => {
       expect(proof.pageBefore).toContain('Wallet not connected');
       expect(proof.addressBefore).toBe(false);
       expect(proof.ops).toEqual(['createWallet', 'grantWalletDelegation']);
-      expect(proof.rowAfter).toContain('Connected');
+      expect(proof.rowAfter).toContain('Coinbase');
+      expect(proof.rowAfter).toContain('1 app');
       expect(proof.addressAfter).toBe(true);
       expect(proof.connectRowAfter).toBe(false);
     } finally {

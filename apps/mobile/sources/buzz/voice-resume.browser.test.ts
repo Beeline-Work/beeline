@@ -24,7 +24,7 @@ it.skipIf(!existsSync(CHROME))('R1: parked call resumes after DNS returns withou
           if (url.includes('/state') && fixture.offline) throw new Error('fetch failed: java.net.UnknownHostException: Unable to resolve host "server.usebeeline.app": No address associated with hostname');
           return new Response(JSON.stringify(url.includes('/state') || url.endsWith('/idle')
             ? { state: fixture.ready ? 'ready' : 'parked', agentName: 'Ruby' }
-            : { sessionId: 'proof-session', call: { id: 'proof-call', roomId: 'proof-room' }, url: 'wss://proof', token: 'proof', agents: [] }));
+            : { sessionId: 'proof-session', call: { id: 'proof-call', roomId: 'proof-room', participants: [{ kind: 'human', identity: 'proof-viewer' }] }, url: 'wss://proof', token: 'proof', agents: [] }));
         };
         export const createVoiceRoom = async (_stop, _roomId, idle) => {
           fixture.idle = idle;

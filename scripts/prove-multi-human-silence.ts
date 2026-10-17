@@ -27,16 +27,22 @@ const service = new Service(db,new LiveHub(),{url:'ws://127.0.0.1:17890',apiKey:
   speech:{voices:['luna'], async *synthesize(){ const pcm = Buffer.alloc(4800); for(let i=0;i<2400;i++) pcm.writeInt16LE(Math.round(2000*Math.sin(i/8)),i*2); yield pcm; }},
   stt:async onEvent => { inputs.push(onEvent); const index=microphoneFrames.push(0)-1; return {send(){microphoneFrames[index]!++;},close(){}}; },
 });
-const first = await service.join(R,H);
-const client = new Room();
-client.on(RoomEvent.DataReceived, bytes => { try { signals.push(JSON.parse(new TextDecoder().decode(bytes))); } catch {} });
-await client.connect(first.url,first.token);
-const source = new AudioSource(16000,1);
-const options = new TrackPublishOptions(); options.source=TrackSource.SOURCE_MICROPHONE;
-await client.localParticipant!.publishTrack(LocalAudioTrack.createAudioTrack('Alex',source),options);
+const nativeHuman = process.env.SILENCE_PROOF_ANDROID_FIRST === '1' ? H : SECOND;
+const partner = nativeHuman === H ? SECOND : H;
+const first = await service.join(R,partner);
+let client = new Room();
+const connectPartner = async (joined: Awaited<ReturnType<VoiceService['join']>>) => {
+  client = new Room();
+  client.on(RoomEvent.DataReceived, bytes => { try { signals.push(JSON.parse(new TextDecoder().decode(bytes))); } catch {} });
+  await client.connect(joined.url,joined.token);
+  const source = new AudioSource(16000,1);
+  const options = new TrackPublishOptions(); options.source=TrackSource.SOURCE_MICROPHONE;
+  await client.localParticipant!.publishTrack(LocalAudioTrack.createAudioTrack('Partner',source),options);
+};
+await connectPartner(first);
 const callRow = (await db.query<any>(`SELECT * FROM voice_calls WHERE id=$1`,[first.call.id])).rows[0];
 const runtime = (await service.ensureRuntime(callRow))!;
-await runtime.utterance(H,'Ruby, ready?');
+await runtime.utterance(partner,'Ruby, ready?');
 let turn=0;
 const server = createServer((req,res)=> { void (async()=>{
   let raw=''; for await (const chunk of req) raw+=String(chunk);
@@ -49,13 +55,17 @@ const server = createServer((req,res)=> { void (async()=>{
     secondMicrophone:[...(client.remoteParticipants.get(SECOND)?.trackPublications.values() ?? [])].map(p=>({muted:p.muted,kind:p.kind})),
     participants:(await db.query(`SELECT identity_id,parked_at,left_at FROM voice_participants WHERE call_id=$1`,[first.call.id])).rows};
   else if(req.url==='/say') { await runtime.utterance(H,body.text??'How are you doing today?'); }
+  else if(req.url==='/partner-leave') { await service.leave(first.call.id,partner); }
+  else if(req.url==='/partner-rejoin') { await connectPartner(await service.join(R,partner)); }
+  else if(req.url==='/partner-drop') { await client.disconnect(); }
+  else if(req.url==='/partner-return') { await connectPartner(first); }
   else if(req.url==='/stop') { inputs.at(-1)?.({event:'EndOfTurn',turn_index:++turn,sequence_id:turn,transcript:'stop',words:[{word:'stop',start:0,end:.3,confidence:.99}]}); }
   else if(req.url==='/first-leave') await service.leave(first.call.id,H);
-  else if(req.url?.endsWith('/join')) { const joined=await service.join(R,SECOND); value={...joined,url:'ws://10.0.2.2:17890'}; }
-  else if(req.url?.endsWith('/idle')) value=await service.idle(first.call.id,SECOND,body.sessionId);
-  else if(req.url?.includes('/state')) value=await service.idleState(first.call.id,SECOND,db,body.sessionId);
-  else if(req.url?.endsWith('/resume')) await service.resume(first.call.id,SECOND,body.sessionId);
-  else if(req.url?.endsWith('/leave')) await service.leave(first.call.id,SECOND,false,body.sessionId);
+  else if(req.url?.endsWith('/join')) { const joined=await service.join(R,nativeHuman); value={...joined,url:'ws://10.0.2.2:17890'}; }
+  else if(req.url?.endsWith('/idle')) value=await service.idle(first.call.id,nativeHuman,body.sessionId);
+  else if(req.url?.includes('/state')) value=await service.idleState(first.call.id,nativeHuman,db,body.sessionId);
+  else if(req.url?.endsWith('/resume')) await service.resume(first.call.id,nativeHuman,body.sessionId);
+  else if(req.url?.endsWith('/leave')) await service.leave(first.call.id,nativeHuman,false,body.sessionId);
   else throw new Error('Unknown proof endpoint');
   res.setHeader('content-type','application/json'); res.end(JSON.stringify(value));
 })().catch(error=>{res.statusCode=500;res.end(JSON.stringify({error:String(error)}));}); });

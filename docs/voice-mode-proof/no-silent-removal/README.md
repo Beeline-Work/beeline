@@ -45,6 +45,39 @@ transition, idle/leave requests and the reply count changing from one to nine.
 ![Bone call control](android-bone.png)
 ![Obsidian call control](android-obsidian.png)
 
+## Live call mode (revision 2)
+
+Reproduction **multi-human-mode-2** uses the same Android APK and real RTC,
+with Android as Alex and the controlled Node RTC client as Sam. Sam's Leave
+endpoint invokes the real service leave method; rejoin uses its join method.
+Android observes count one immediately after Leave, and unnamed speech gets
+one Ruby reply under solo rules. On rejoin, Android's next count is two and the
+partner's first count signal is two. Unnamed speech becomes `unaddressed` again.
+
+The partner's RTC transport is then disconnected without a leave request for
+30 seconds. Android and the database stay at two humans throughout; no idle
+request occurs even after the former solo deadline would have expired.
+The partner reconnects using its still-valid call token. This is a controlled
+RTC-loss stand-in, not a physical handset radio outage.
+
+[Mode transitions, 30-second checkpoints and repeat timings](mode-switch.json)
+record the run. The additional five warm first-audio samples have a median of
+14.43 ms, compared with the original 13.25 ms baseline and 12.28 ms first fixed
+run. These small local samples include ordinary run-to-run variation; they do
+not establish live provider or speaker latency. Normal final input shares
+routing's existing live-count read for interruption, adding no serial lookup.
+
+The server no longer uses its last announced count for decisions. Announcement
+reads are serialized, and joins, leaves and sweeps notify after their database
+commit. Existing committed-message invalidations reach an RTC owner on another
+server. Parked participants and participants inside reconnect grace still count.
+Client regressions cover cancelling an almost-expired solo deadline on rejoin;
+server regressions cover membership changing while agent access resolves and
+interrupting with a count different from the last announcement.
+
+Repeat with `SILENCE_PROOF_ANDROID_FIRST=1` on the proof service, join from
+Android, then run `python3 scripts/prove-voice-call-mode.py --device <serial>`.
+
 ## Routing investigation
 
 Read-only production inspection confirmed the recorded 20:36:44 Emberus route.

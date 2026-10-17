@@ -32,7 +32,7 @@ export class VoiceService {
     this.unsubscribe = live.subscribeAll(event => {
       if (event.type === 'invalidate') {
         for (const runtime of this.runtimes.values()) void runtime.then(r => {
-          if (r?.roomId === event.roomId) return r.refresh();
+          if (r?.roomId === event.roomId) return Promise.all([r.countHumans(), r.refresh()]);
         }).catch(() => {});
       }
     });
@@ -152,6 +152,8 @@ export class VoiceService {
     // Own runtime lease is cross-instance: a second phone never starts a second speaker.
     try { await this.ensureRuntime(row); }
     catch (error) { await this.leave(row.id, humanId, true, sessionId); throw error; }
+    await (await this.runtimes.get(row.id))?.countHumans().catch(() => {});
+    this.live.publish({ type: 'invalidate', roomId, reason: 'voice-participants' });
     const token = new AccessToken(this.config.apiKey, this.config.apiSecret, { identity: humanId,
       ttl: '10m', metadata: JSON.stringify({ callId: row.id, kind: 'human' }) });
     token.addGrant({ roomJoin: true, room: `beeline-voice-${row.id}`, canPublish: true,
@@ -270,6 +272,8 @@ export class VoiceService {
       return call;
     });
     if (!row) return;
+    await (await this.runtimes.get(callId))?.countHumans().catch(() => {});
+    this.live.publish({ type: 'invalidate', roomId: row.room_id, reason: 'voice-participants' });
     if (row.ended_at) {
       await this.rooms.deleteRoom(`beeline-voice-${callId}`).catch(() => {});
       const runtime = this.runtimes.get(callId);

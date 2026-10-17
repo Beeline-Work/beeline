@@ -30,6 +30,11 @@ recently posted a message in that Room or corner. An opening agent name or an
 explicit avatar tap takes priority. If no eligible agent has posted there, the
 current selection (initially the first listed agent) remains the fallback.
 
+Call mode follows the live database human count, including parked humans and
+humans inside reconnect grace. Joins, leaves and sweeps immediately announce
+the committed count; a rejoin cancels the remaining person’s solo deadline.
+Routing and interruption decisions never use a cached mode.
+
 Multi-human calls have no silence deadline. The server also refuses to park
 or remove a listener through `idle`, including when another person joins
 between the idle decision and removal. Old clients can still mute briefly

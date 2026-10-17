@@ -13,7 +13,7 @@ import { PhoneService } from './phone-service.js';
 import { readChatListView, readRoomViewMessage } from '@beeline/api-contract/phone';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 
-vi.mock('./voice-room-runtime.js', () => ({ VoiceRoomRuntime: { connect: vi.fn(async () => ({ close: vi.fn(), park: vi.fn(), resume: vi.fn(), refresh: vi.fn() })) } }));
+vi.mock('./voice-room-runtime.js', () => ({ VoiceRoomRuntime: { connect: vi.fn(async (_service: unknown, _call: string, roomId: string) => ({ roomId, close: vi.fn(), park: vi.fn(), resume: vi.fn(), refresh: vi.fn(), countHumans: vi.fn(async () => {}) })) } }));
 vi.mock('livekit-server-sdk', async original => {
   const actual = await original<typeof import('livekit-server-sdk')>();
   return { ...actual, RoomServiceClient: class { async removeParticipant() {} async deleteRoom() {} } };
@@ -233,6 +233,24 @@ it('multi-human-silence-1: a join between idle decision and leave is protected b
     expect(await service.idle(joined.call.id,H,joined.sessionId)).toEqual({ state: 'ready' });
     expect(await service.humanCount(joined.call.id)).toBe(2);
   } finally { delayed.mockRestore(); await leave(joined.call.id,H); await leave(joined.call.id,SECOND); }
+});
+
+it('multi-human-mode-2: join, leave and rejoin notify the RTC owner immediately after commit', async () => {
+  const joined = await service.join(R,H);
+  const runtime = await vi.mocked(VoiceRoomRuntime.connect).mock.results.at(-1)!.value;
+  const counts: number[] = [];
+  vi.spyOn(runtime,'countHumans').mockImplementation(async () => { counts.push(await service.humanCount(joined.call.id)); });
+  const other = new VoiceService(db,live,service.config);
+  try {
+    await other.join(R,SECOND);
+    await vi.waitFor(() => expect(counts.at(-1)).toBe(2));
+    await other.leave(joined.call.id,SECOND);
+    await vi.waitFor(() => expect(counts.at(-1)).toBe(1));
+    await other.join(R,SECOND);
+    await vi.waitFor(() => expect(counts.at(-1)).toBe(2));
+    await db.query(`UPDATE voice_participants SET parked_at=now() WHERE call_id=$1 AND identity_id=$2`,[joined.call.id,SECOND]);
+    expect(await service.humanCount(joined.call.id)).toBe(2);
+  } finally { await other.close(); await service.leave(joined.call.id,H); await service.leave(joined.call.id,SECOND); }
 });
 
 it('idle with no session command ends participation while unrelated Room work cannot park it', async () => {

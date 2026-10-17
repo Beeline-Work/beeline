@@ -1,0 +1,511 @@
+{
+  "reproduction": "multi-human-mode-2",
+  "standIn": "Android A; actual Node RTC partner B; injected final text/brain/TTS; partner transport disconnected without leave for 30 seconds",
+  "solo": {
+    "humans": 1,
+    "replies": [
+      "Ruby"
+    ],
+    "observations": [
+      {
+        "at": 1792271700636,
+        "joined": false,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792271703086,
+        "joined": false,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792271704117,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792271704395,
+        "joined": true,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      }
+    ],
+    "operations": [],
+    "participants": [
+      {
+        "identity_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "parked_at": null,
+        "left_at": "2026-10-17T21:15:04.077Z"
+      },
+      {
+        "identity_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "parked_at": null,
+        "left_at": null
+      }
+    ],
+    "signalCounts": {
+      "target": 2,
+      "speaker": 2,
+      "humans": 3,
+      "latency": 1
+    }
+  },
+  "soloReply": {
+    "humans": 1,
+    "replies": [
+      "Ruby",
+      "Ruby"
+    ],
+    "observations": [
+      {
+        "at": 1792271700636,
+        "joined": false,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792271703086,
+        "joined": false,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792271704117,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792271704395,
+        "joined": true,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792271704747,
+        "joined": true,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 20.90183999999863
+      }
+    ],
+    "operations": [],
+    "participants": [
+      {
+        "identity_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "parked_at": null,
+        "left_at": "2026-10-17T21:15:04.077Z"
+      },
+      {
+        "identity_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "parked_at": null,
+        "left_at": null
+      }
+    ],
+    "signalCounts": {
+      "target": 2,
+      "speaker": 2,
+      "humans": 3,
+      "latency": 1
+    }
+  },
+  "rejoined": {
+    "humans": 2,
+    "replies": [
+      "Ruby",
+      "Ruby"
+    ],
+    "observations": [
+      {
+        "at": 1792271700636,
+        "joined": false,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792271703086,
+        "joined": false,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792271704117,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792271704395,
+        "joined": true,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792271704747,
+        "joined": true,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 20.90183999999863
+      },
+      {
+        "at": 1792271704857,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 20.90183999999863
+      }
+    ],
+    "operations": [],
+    "participants": [
+      {
+        "identity_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "parked_at": null,
+        "left_at": null
+      },
+      {
+        "identity_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "parked_at": null,
+        "left_at": null
+      }
+    ],
+    "signalCounts": {
+      "target": 2,
+      "speaker": 2,
+      "humans": 3,
+      "latency": 1
+    }
+  },
+  "dropCheckpoints": [
+    {
+      "seconds": 0.01,
+      "humans": 2,
+      "nativeHumans": 2
+    },
+    {
+      "seconds": 5.04,
+      "humans": 2,
+      "nativeHumans": 2
+    },
+    {
+      "seconds": 10.04,
+      "humans": 2,
+      "nativeHumans": 2
+    },
+    {
+      "seconds": 15.05,
+      "humans": 2,
+      "nativeHumans": 2
+    },
+    {
+      "seconds": 20.06,
+      "humans": 2,
+      "nativeHumans": 2
+    },
+    {
+      "seconds": 25.08,
+      "humans": 2,
+      "nativeHumans": 2
+    }
+  ],
+  "afterDrop": {
+    "humans": 2,
+    "replies": [
+      "Ruby",
+      "Ruby"
+    ],
+    "observations": [
+      {
+        "at": 1792271700636,
+        "joined": false,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792271703086,
+        "joined": false,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792271704117,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792271704395,
+        "joined": true,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792271704747,
+        "joined": true,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 20.90183999999863
+      },
+      {
+        "at": 1792271704857,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 20.90183999999863
+      },
+      {
+        "at": 1792271704942,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 1,
+        "firstAudioMs": 20.90183999999863
+      },
+      {
+        "at": 1792271704959,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 2,
+        "firstAudioMs": 20.90183999999863
+      },
+      {
+        "at": 1792271710008,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 3,
+        "firstAudioMs": 20.90183999999863
+      },
+      {
+        "at": 1792271715012,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 4,
+        "firstAudioMs": 20.90183999999863
+      },
+      {
+        "at": 1792271720035,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 5,
+        "firstAudioMs": 20.90183999999863
+      },
+      {
+        "at": 1792271725026,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 6,
+        "firstAudioMs": 20.90183999999863
+      },
+      {
+        "at": 1792271730071,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 7,
+        "firstAudioMs": 20.90183999999863
+      }
+    ],
+    "operations": [],
+    "participants": [
+      {
+        "identity_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "parked_at": null,
+        "left_at": null
+      },
+      {
+        "identity_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "parked_at": null,
+        "left_at": null
+      }
+    ],
+    "signalCounts": {
+      "target": 2,
+      "speaker": 2,
+      "humans": 4,
+      "latency": 1
+    }
+  },
+  "returned": {
+    "humans": 2,
+    "replies": [
+      "Ruby",
+      "Ruby"
+    ],
+    "observations": [
+      {
+        "at": 1792271700636,
+        "joined": false,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792271703086,
+        "joined": false,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792271704117,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792271704395,
+        "joined": true,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792271704747,
+        "joined": true,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 20.90183999999863
+      },
+      {
+        "at": 1792271704857,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 20.90183999999863
+      },
+      {
+        "at": 1792271704942,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 1,
+        "firstAudioMs": 20.90183999999863
+      },
+      {
+        "at": 1792271704959,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 2,
+        "firstAudioMs": 20.90183999999863
+      },
+      {
+        "at": 1792271710008,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 3,
+        "firstAudioMs": 20.90183999999863
+      },
+      {
+        "at": 1792271715012,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 4,
+        "firstAudioMs": 20.90183999999863
+      },
+      {
+        "at": 1792271720035,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 5,
+        "firstAudioMs": 20.90183999999863
+      },
+      {
+        "at": 1792271725026,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 6,
+        "firstAudioMs": 20.90183999999863
+      },
+      {
+        "at": 1792271730071,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 7,
+        "firstAudioMs": 20.90183999999863
+      }
+    ],
+    "operations": [],
+    "participants": [
+      {
+        "identity_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "parked_at": null,
+        "left_at": null
+      },
+      {
+        "identity_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "parked_at": null,
+        "left_at": null
+      }
+    ],
+    "signalCounts": {
+      "target": 2,
+      "speaker": 2,
+      "humans": 4,
+      "latency": 1
+    }
+  },
+  "firstAudioMs": [
+    18.081247000001895,
+    14.171414000004006,
+    14.797874000003503,
+    14.432734000001801,
+    14.354439000002458
+  ],
+  "firstAudioMedianMs": 14.432734000001801
+}

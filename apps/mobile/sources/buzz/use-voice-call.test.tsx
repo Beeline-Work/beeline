@@ -49,7 +49,12 @@ it('multi-human-silence-1: listens for 60 seconds, then rearms the solo deadline
     await act(async () => signal({ type: 'humans', count: 1 }));
     await act(async () => vi.advanceTimersByTimeAsync(19_999));
     expect(voice.call).not.toBeNull();
-    await act(async () => vi.advanceTimersByTimeAsync(1));
+    await act(async () => signal({ type: 'humans', count: 2 }));
+    await act(async () => vi.advanceTimersByTimeAsync(60_000));
+    expect(voice.call).not.toBeNull();
+    expect(fixture.fetch.mock.calls.some(([url]) => String(url).endsWith('/idle'))).toBe(false);
+    await act(async () => signal({ type: 'humans', count: 1 }));
+    await act(async () => vi.advanceTimersByTimeAsync(20_000));
     expect(voice.call).toBeNull();
   } finally { await act(async () => renderer.unmount()); vi.useRealTimers(); }
 });

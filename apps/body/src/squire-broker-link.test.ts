@@ -73,6 +73,33 @@ describe('runSquireBrokerLink', () => {
     }
   });
 
+  it('forwards an unsolicited broker notification such as approval_decided', async () => {
+    const home = await scratch('beeline-squire-link-notify-');
+    const path = join(home, 'mcp.sock');
+    const broker = await startFakeMcpBroker(path);
+    try {
+      const input = new PassThrough();
+      const output = new PassThrough();
+      const linkPromise = runSquireBrokerLink({ agentId: 'agent-a', socketPath: path, input, output });
+      writeLine(input, { jsonrpc: '2.0', id: 1, method: 'initialize', params: {} });
+      await readLine(output);
+      writeLine(input, { jsonrpc: '2.0', method: 'notifications/initialized' });
+
+      const notification = {
+        jsonrpc: '2.0',
+        method: 'notifications/approval_decided',
+        params: { approval_id: 'fetch-1', status: 'approved' },
+      };
+      for (const socket of broker.sockets) socket.write(`${JSON.stringify(notification)}\n`);
+      expect(await readLine(output)).toEqual(notification);
+
+      input.end();
+      expect((await linkPromise).ok).toBe(true);
+    } finally {
+      await stopFakeMcpBroker(broker);
+    }
+  });
+
   it('reconnects across a mid-session broker restart, replaying initialize, and never spawns a process', async () => {
     const home = await scratch('beeline-squire-link-reconnect-');
     const path = join(home, 'mcp.sock');

@@ -6,7 +6,7 @@ import {
 } from '@beeline/api-contract/agent-grants';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { SqlDatabase } from './database.js';
-import { ensureSystemDirectMessageRoom, systemLine } from './system-line.js';
+import { ensureSystemIdentity, ensureSystemDirectMessageRoom, systemLine } from './system-line.js';
 
 function policyLineId(kind: 'resume', grantId: string): string {
   return createHash('sha256').update(`grant-policy-upgrade:${kind}:${grantId}`).digest('hex');
@@ -181,7 +181,8 @@ export async function upgradeGrantPolicy(database: SqlDatabase): Promise<void> {
  * Asks still pending from before an agent could use its own owner's resources
  * without a card. The current server never raises them: owner-machine access
  * is recorded as approved on the spot, and budget and repository asks are
- * retired. Nothing waits on these rows, yet their cards kept offering
+ * retired. Built-in Beeline app installation asks are also superseded.
+ * Cancellation uses the existing revoked status and clears card actions. Nothing waits on these rows, yet their cards kept offering
  * No/Once/Always. Each is withdrawn by @system without waking the turn that
  * raised it, so an answer can no longer resume stale work. Asks the current
  * rule still raises — the wallet, a credential file, an unread script — stay.
@@ -194,7 +195,8 @@ export async function withdrawSupersededGrantAsks(database: SqlDatabase): Promis
       target: string;
       script: CommandGrantScript | null;
     }>(`SELECT id::text,kind,target,script FROM agent_grants
-      WHERE status='pending' AND NOT (kind='mcp' AND (target='wallet' OR target LIKE 'connection-install:%'))
+      WHERE status='pending' AND NOT (kind='mcp' AND (target='wallet' OR
+        (target LIKE 'connection-install:%' AND target NOT LIKE 'connection-install:beeline%')))
       FOR UPDATE`);
     const superseded = pending.rows
       .filter((grant) => {
@@ -208,6 +210,7 @@ export async function withdrawSupersededGrantAsks(database: SqlDatabase): Promis
       })
       .map((grant) => grant.id);
     if (!superseded.length) return 0;
+    await ensureSystemIdentity(db);
     await db.query(
       `UPDATE agent_grants SET status='revoked',decided_by=$2,decided_at=now()
        WHERE id::text=ANY($1::text[]) AND status='pending'`,

@@ -1,17 +1,17 @@
 import * as React from 'react';
 import { Platform } from 'react-native';
 import { RoomEvent, Track, type Room } from 'livekit-client';
-import { VOICE_DATA_TOPIC, type VoiceJoin, type VoiceIdleState, type VoiceSignal, type VoiceCall, type RoomViewIdentity } from '@beeline/api-contract/phone';
+import { VOICE_DATA_TOPIC, type VoiceJoin, type VoiceSignal, type VoiceCall, type RoomViewIdentity } from '@beeline/api-contract/phone';
 import { getBuzzRuntimeConfig } from './runtime-config';
 import { createVoiceRoom, subscribeVoiceResume, voiceFetch } from './voice-transport';
 import { errorDiagnostic, reportClientError } from './client-error-report';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { voiceWaveformLevel } from './waveform-level';
 
-async function voiceRequest<T>(id: string, action: 'join' | 'leave' | 'current' | 'idle' | 'state' | 'resume', sessionId?: string): Promise<T> {
+async function voiceRequest<T>(id: string, action: 'join' | 'leave' | 'current' | 'state', sessionId?: string, expectedCallId?: string): Promise<T> {
   const response = await voiceFetch(`${getBuzzRuntimeConfig().monolithUrl}/v1/phone/voice/${id}/${action}${action === 'state' && sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ''}`,
     { method: action === 'current' || action === 'state' ? 'GET' : 'POST',
-      ...(sessionId && action !== 'state' ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId }) } : {}) });
+      ...((sessionId || expectedCallId) && action !== 'state' ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId, expectedCallId }) } : {}) });
   const value = await response.json() as T & { error?: string };
   if (!response.ok) throw new Error(value.error ?? 'Conversation mode could not connect');
   return value;
@@ -47,8 +47,7 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
   const pending = React.useRef(false);
   const speakerRef = React.useRef<string | null>(null);
   const targetRef = React.useRef<string | null>(null);
-  const cancelSilence = React.useRef<(() => Promise<void>) | undefined>(undefined);
-  const mode = React.useRef<'active' | 'parking' | 'parked' | 'resuming' | 'ended'>('ended');
+  const mode = React.useRef<'active' | 'ended'>('ended');
   const liveCleanup = React.useRef<(() => void) | null>(null);
   const joiningCleanup = React.useRef<(() => Promise<void>) | null>(null);
 
@@ -57,8 +56,6 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
   const end = React.useCallback(async () => {
     revision.current++;
     for (const cancel of retryWaiters.current) cancel();
-    const cancelDeadline = cancelSilence.current; cancelSilence.current = undefined;
-    if (cancelDeadline) void cancelDeadline().catch(() => {});
     mode.current = 'ended';
     liveCleanup.current?.(); liveCleanup.current = null;
     const current = session.current; session.current = null;
@@ -82,15 +79,14 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
     let transport: Awaited<ReturnType<typeof createVoiceRoom>> | undefined;
     let joined: VoiceJoin | undefined;
     let closing: Promise<void> | undefined;
-    let expireDeadline: () => Promise<void> = async () => {};
     const release = () => closing ??= closeVoiceTransport(transport);
     const current = () => version === revision.current;
-    const request = async <T,>(id: string, action: Parameters<typeof voiceRequest>[1], sessionId?: string): Promise<T> => {
+    const request = async <T,>(id: string, action: Parameters<typeof voiceRequest>[1], sessionId?: string, expectedCallId?: string): Promise<T> => {
       // Android can resume before DNS is ready. Retry only transport failures,
       // within this call's lifetime, for at most fifteen seconds of backoff.
       for (let attempt = 0; ; attempt++) {
         if (!current()) throw new Error('Conversation mode ended');
-        try { return await voiceRequest<T>(id, action, sessionId); }
+        try { return await voiceRequest<T>(id, action, sessionId, expectedCallId); }
         catch (cause) {
           if (!current()) throw cause;
           if (!/UnknownHostException|fetch failed|Network request failed|Failed to fetch/i.test(errorDiagnostic(cause).message)) throw cause;
@@ -104,7 +100,7 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
       }
     };
     try {
-      transport = await createVoiceRoom(() => { void end(); }, roomId, () => { void expireDeadline(); });
+      transport = await createVoiceRoom(() => { void end(); }, roomId);
       joiningCleanup.current = release;
       if (version !== revision.current) { await release(); return; }
       joined = await request<VoiceJoin>(roomId, 'join');
@@ -116,86 +112,13 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
       let humanCount = joined.call.participants.filter(p => p.kind === 'human').length;
       setHumans(humanCount);
       mode.current = 'active';
-      cancelSilence.current = transport.cancelSilence;
-      const armSilence = () => {
-        if (!current() || humanCount > 1 || mode.current !== 'active' || speakerRef.current) return;
-        void transport!.armSilence().catch(cause => { if (current()) { void end(); setError(errorDiagnostic(cause).message); } });
-      };
-      const finishIdle = async () => {
-        if (!current()) return;
-        await transport!.idleEnd();
-        if (current()) await end();
-      };
-      let checking = false; let checkAgain = false;
-      const checkReply = async (): Promise<void> => {
-        if (!current() || mode.current !== 'parked') return;
-        if (checking) { checkAgain = true; return; }
-        checking = true;
-        try {
-          do {
-            checkAgain = false;
-            const state = await request<VoiceIdleState>(joined!.call.id, 'state', joined!.sessionId);
-            if (!current() || mode.current !== 'parked') return;
-            setError(null);
-            if (state.state === 'ended') { await finishIdle(); return; }
-            if (state.state === 'ready') {
-              mode.current = 'resuming';
-              await transport!.resumeAudio();
-              await request(joined!.call.id, 'resume', joined!.sessionId);
-              if (!current()) return;
-              await room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ type: 'resume', sessionId: joined!.sessionId })),
-                { reliable: true, topic: VOICE_DATA_TOPIC });
-              return;
-            }
-          } while (checkAgain && current() && mode.current === 'parked');
-        } catch (cause) {
-          if (current()) {
-            if (mode.current === 'resuming') {
-              if (current()) await transport!.parkAudio('agent').catch(() => {});
-              if (current()) mode.current = 'parked';
-            }
-            if (current()) setError(errorDiagnostic(cause).message);
-          }
-        } finally { checking = false; }
-      };
-      const expireSilence = async () => {
-        if (!current() || humanCount > 1 || mode.current !== 'active' || speakerRef.current) return;
-        mode.current = 'parking'; setLevel(0);
-        try {
-          await transport!.cancelSilence();
-          await room.localParticipant.setMicrophoneEnabled(false);
-          const state = await request<VoiceIdleState>(joined!.call.id, 'idle', joined!.sessionId);
-          if (!current()) return;
-          if (state.state === 'ended') { await finishIdle(); return; }
-          if (state.state === 'ready' && !state.agentName) {
-            await room.localParticipant.setMicrophoneEnabled(!quotaRef.current);
-            if (current()) { mode.current = 'active'; armSilence(); }
-            return;
-          }
-          await room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ type: 'park', sessionId: joined!.sessionId })),
-            { reliable: true, topic: VOICE_DATA_TOPIC });
-          await transport!.parkAudio(state.agentName ?? 'agent');
-          if (!current()) return;
-          mode.current = 'parked';
-          await checkReply();
-        } catch (cause) {
-          if (current()) { await end(); setError(errorDiagnostic(cause).message); }
-        }
-      };
-      expireDeadline = expireSilence;
       room.on(RoomEvent.DataReceived, (bytes, participant, _kind, topic) => {
         if (version !== revision.current || topic !== VOICE_DATA_TOPIC || participant?.identity !== `beeline-voice-${joined!.call.id}`) return;
         try {
           const data = JSON.parse(new TextDecoder().decode(bytes)) as VoiceSignal;
           if (data.type === 'stop') { void end(); return; }
-          if (data.type === 'speech') armSilence();
           if (data.type === 'speaker') {
             speakerRef.current = data.agentId; setSpeaker(data.agentId);
-            void transport!.cancelSilence().catch(() => { if (current()) void end(); });
-            if (!data.agentId && mode.current === 'resuming') {
-              void room.localParticipant.setMicrophoneEnabled(!quotaRef.current, { echoCancellation: true, noiseSuppression: true, autoGainControl: false })
-                .then(() => { if (current()) { mode.current = 'active'; armSilence(); } }).catch(() => { void end(); });
-            } else if (!data.agentId) armSilence();
           }
           if (data.type === 'target' && joined!.agents.some(agent => agent.pubkey === data.agentId)) {
             targetRef.current = data.agentId; setTarget(data.agentId);
@@ -210,8 +133,6 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
           if (data.type === 'latency') setFirstAudioMs(data.firstAudioMs);
           if (data.type === 'humans') {
             humanCount = data.count; setHumans(data.count);
-            if (humanCount > 1) void transport!.cancelSilence().catch(() => { if (current()) void end(); });
-            else armSilence();
           }
           if (data.type === 'unaddressed') setUnaddressed(count => count + 1);
         } catch {}
@@ -230,9 +151,11 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
         recovering = true;
         void (async () => {
           // A full reconnect after token expiry needs a freshly authorized token.
-          const fresh = await request<VoiceJoin>(roomId, 'join');
+          const fresh = await request<VoiceJoin>(roomId, 'join', undefined, joined!.call.id);
           if (version !== revision.current) { await voiceRequest(fresh.call.id, 'leave', fresh.sessionId).catch(() => {}); return; }
+          if (fresh.call.id !== joined!.call.id) { await voiceRequest(fresh.call.id, 'leave', fresh.sessionId); await end(); return; }
           joined = fresh;
+          humanCount = fresh.call.participants.filter(p => p.kind === 'human').length; setHumans(humanCount);
           await transport!.configureStop(fresh.call.id, fresh.stopToken);
           if (version !== revision.current) { await voiceRequest(fresh.call.id, 'leave', fresh.sessionId).catch(() => {}); return; }
           if (session.current?.room === room) { session.current.callId = fresh.call.id; session.current.sessionId = fresh.sessionId; }
@@ -275,13 +198,15 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
       room.on(RoomEvent.ActiveSpeakersChanged, updateLevel);
       const live = sharedLiveConnection();
       const reconcile = () => {
-        if (mode.current === 'parked') void checkReply();
+        const active = joined!;
+        void request<{ state: string }>(active.call.id, 'state', active.sessionId).then(state => {
+          if (current() && joined === active && state.state === 'ended') void end();
+        }).catch(() => {});
       };
       const dispose = await live.register([{ '#h': [roomId] }], reconcile);
       if (!current()) { dispose(); return; }
       const disconnectListener = live.subscribeConnected(reconcile);
       liveCleanup.current = () => { dispose(); disconnectListener(); };
-      armSilence();
     } catch (cause) {
       void reportClientError('voice-join', cause);
       await release();

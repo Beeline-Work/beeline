@@ -45,4 +45,4 @@ for _ in range(5):
  previous=get()['observations'][-1]['firstAudioMs']; post('/say',{'text':'Ruby, ready?'})
  r=until(lambda r:r['observations'][-1]['firstAudioMs'] not in [None,previous]);measurements.append(r['observations'][-1]['firstAudioMs'])
 (args.output_dir/'mode-switch.json').write_text(json.dumps({'reproduction':'multi-human-mode-2','standIn':'Android A; actual Node RTC partner B; injected final text/brain/TTS; partner transport disconnected without leave for 30 seconds','solo':view(solo),'soloReply':view(soloReply),'rejoined':view(group),'dropCheckpoints':checks,'afterDrop':view(drop),'returned':view(returned),'firstAudioMs':measurements,'firstAudioMedianMs':statistics.median(measurements)},indent=2)+'\n')
-print('PASS: Android A switches 2 -> 1 -> 2, unnamed speech follows mode, deadline cancels, 30-second partner RTC drop stays group')
+print('PASS: Android A switches 2 -> 1 -> 2, unnamed speech follows mode, no per-person deadline, 30-second partner RTC drop stays group')

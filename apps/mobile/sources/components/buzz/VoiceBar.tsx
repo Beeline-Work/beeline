@@ -1,18 +1,15 @@
 import * as React from 'react';
 import { AccessibilityInfo, Pressable, ScrollView, Text, View } from 'react-native';
 import { HullModal } from './HullDialog';
-import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { StyleSheet } from 'react-native-unistyles';
 import { IdentityMark } from './IdentityMark';
-import { MicGlyph } from './MicGlyph';
 import { DictationWaveform } from './DictationWaveform';
-import { BeelineMarkSpinner } from './BeelineMarkSpinner';
 import { Button } from './Button';
 import type { VoiceCallState } from '@/buzz/use-voice-call';
 
 export function VoiceBar({ voice, fullScreen = false, onAttach, attachDisabled = false, testIDPrefix = 'chat' }: {
   voice: VoiceCallState; fullScreen?: boolean; onAttach?: () => void; attachDisabled?: boolean; testIDPrefix?: string;
 }) {
-  const { theme } = useUnistyles();
   const [expanded, setExpanded] = React.useState(fullScreen);
   const [reduceMotion, setReduceMotion] = React.useState(false);
   React.useEffect(() => {
@@ -48,11 +45,8 @@ export function VoiceBar({ voice, fullScreen = false, onAttach, attachDisabled =
         {voice.error ? <Text accessibilityRole="alert" style={styles.error} testID={voice.quotaExhausted ? 'voice-quota-error' : 'voice-connection-error'}>{voice.error}</Text>
           : <DictationWaveform level={voice.level} live={!voice.connecting} />}
       </Pressable>
-      {voice.humans > 1 ? <Button label="Leave call" variant="secondary" onPress={() => void voice.end()}
-        accessibilityLabel="Leave call" testID="voice-leave" /> : <Pressable onPress={() => void voice.end()} accessibilityRole="button" accessibilityLabel="End Conversation mode"
-        accessibilityState={{ selected: true, busy: voice.connecting }} style={styles.mic} testID="voice-mic">
-        {voice.connecting ? <BeelineMarkSpinner ink={theme.buzz.accent} live /> : <MicGlyph color={theme.buzz.accent} />}
-      </Pressable>}
+      <Button label={voice.humans > 1 ? 'Leave call' : 'End call'} variant="secondary" onPress={() => void voice.end()}
+        accessibilityLabel={voice.humans > 1 ? 'Leave call' : 'End call'} testID="voice-leave" />
     </View>
   </View>;
   return <>
@@ -110,7 +104,6 @@ const styles = StyleSheet.create(theme => ({
   halo: { position: 'absolute', width: 38, height: 38, borderRadius: 3, borderWidth: 2,
     borderColor: theme.buzz.accent },
   waveform: { flex: 1, minWidth: 32, height: 44, justifyContent: 'center', overflow: 'hidden' },
-  mic: { width: 44, height: 44, borderRadius: 3, alignItems: 'center', justifyContent: 'center', backgroundColor: theme.buzz.bgPressed },
   fullScreen: { flex: 1, backgroundColor: theme.buzz.bgBase, padding: 16 },
   fullScreenBody: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 24 },
   fullScreenAgent: { alignItems: 'center', gap: 16 }, back: { minHeight: 44, justifyContent: 'center' },

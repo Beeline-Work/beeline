@@ -62,6 +62,9 @@ export class VoiceRoomRuntime {
   private humanCountRefresh = Promise.resolve();
   private speaking?: AbortController;
   private speechIdle = Promise.resolve();
+  private lastActivity = performance.now();
+  private lastWorkFinishedAt = 0;
+  private checkingInactivity = false;
   private lastTouch = 0;
   private touching = false;
   private leaseRenewal?: ReturnType<typeof setInterval>;
@@ -116,7 +119,7 @@ export class VoiceRoomRuntime {
         if (typeof data.sessionId !== 'string' || !(await this.service.db.query(`SELECT 1 FROM voice_participants
           WHERE call_id=$1 AND identity_id=$2 AND session_id=$3 AND left_at IS NULL
           AND (parked_at IS NOT NULL)=$4`, [this.callId, participant.identity, data.sessionId, data.type === 'park'])).rowCount) return;
-        if (data.type === 'park') await this.park(participant.identity, data.sessionId);
+        if (data.type === 'park') return;
         else await this.resume(participant.identity);
       })().catch(() => {});
     });
@@ -129,8 +132,8 @@ export class VoiceRoomRuntime {
     // Sweep missing humans even when no audio or signals arrive.
     // Committed events still drive report reads.
     this.leaseRenewal = setInterval(() => {
-      return this.renewLease().then(kept => {
-        if (kept) return this.sweepMissingParticipants();
+      return this.renewLease().then(async kept => {
+        if (kept) { await this.sweepMissingParticipants(); await this.checkInactivity(); }
       }).catch(() => this.close());
     }, 5000);
     this.leaseRenewal.unref();
@@ -140,7 +143,7 @@ export class VoiceRoomRuntime {
   }
 
   private async signal(signal: VoiceSignal, human?: string) {
-    this.touch();
+    if (signal.type !== 'stop') this.touch();
     if (!this.closed) await this.room.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify(signal)),
       { reliable: true, topic: VOICE_DATA_TOPIC, ...(human ? { destination_identities: [human] } : {}) });
   }
@@ -173,7 +176,7 @@ export class VoiceRoomRuntime {
     void pump.catch(() => {});
     try {
       await this.service.access(this.roomId, human);
-      if (!(await this.service.db.query(`SELECT 1 FROM voice_participants WHERE call_id=$1 AND identity_id=$2 AND left_at IS NULL AND parked_at IS NULL`,
+      if (!(await this.service.db.query(`SELECT 1 FROM voice_participants WHERE call_id=$1 AND identity_id=$2 AND left_at IS NULL`,
         [this.callId, human])).rowCount) { this.stopInput(human); return; }
       const hints = (await this.service.agents(this.roomId, human)).flatMap(agent => [agent.name, agent.handle]);
       stt = await this.service.config.stt(event => { void (async () => {
@@ -195,6 +198,7 @@ export class VoiceRoomRuntime {
         if (event.event === 'EndOfTurn') this.turnIndices.set(human, event.turn_index);
         return;
       }
+      this.lastActivity = performance.now();
       void this.signal({ type: 'speech' }, human);
       // Partial recognized names can aim the strip immediately; only EndOfTurn dispatches.
       if (event.event !== 'EndOfTurn') void this.aimSpokenName(human, event.transcript, version);
@@ -220,11 +224,6 @@ export class VoiceRoomRuntime {
       if (stop) {
         this.pendingTurns.get(human)?.controller.abort();
         this.speaking?.abort(); this.audio.clearQueue();
-        if (humans > 1) return;
-        this.inputVersions.set(human, version + 1);
-        this.stopInput(human);
-        await this.signal({ type: 'stop' }, human)
-          .finally(() => this.service.leave(this.callId, human, true));
         return;
       }
       })().catch(() => this.signal({ type: 'error', message: 'Speech input unavailable; please try again' }, human)); }, error => {
@@ -279,7 +278,7 @@ export class VoiceRoomRuntime {
   private async sweepMissingParticipants() {
     if (this.closed) return;
     const missing = await this.service.db.query<{ identity_id: string }>(
-      `SELECT identity_id FROM voice_participants WHERE call_id=$1 AND left_at IS NULL AND parked_at IS NULL
+      `SELECT identity_id FROM voice_participants WHERE call_id=$1 AND left_at IS NULL
         AND NOT identity_id=ANY($2::text[])`,
       [this.callId, [...this.room.remoteParticipants.keys()]]);
     const absent = new Set(missing.rows.map(participant => participant.identity_id));
@@ -294,6 +293,24 @@ export class VoiceRoomRuntime {
       }
     }
   }
+  /** Audio frames and lease traffic are not speech. Only real activity resets this window. */
+  private async checkInactivity() {
+    if (this.closed || this.checkingInactivity) return;
+    this.checkingInactivity = true;
+    try {
+      const { pending: work, finishedAt } = await this.service.callWorkState(this.callId);
+      if (work) this.lastActivity = performance.now();
+      if (finishedAt > this.lastWorkFinishedAt) {
+        this.lastWorkFinishedAt = finishedAt;
+        this.lastActivity = Math.max(this.lastActivity, performance.now() - Math.max(0, Date.now() - finishedAt));
+      }
+      const inactive = () => !this.closed && !work && performance.now() - this.lastActivity >= 60_000;
+      if (inactive()) await this.service.endInactive(this.callId, this.leaseOwner, inactive);
+    } finally { this.checkingInactivity = false; }
+  }
+
+  async stopCall() { await this.signal({ type: 'stop' }); }
+
   private async aimSpokenName(human: string, text: string, version: number) {
     const agent = namedVoiceTarget(text, await this.service.agents(this.roomId, human), undefined, 2);
     if (!agent || this.closed || this.inputVersions.get(human) !== version) return;
@@ -314,6 +331,7 @@ export class VoiceRoomRuntime {
   }
 
   async utterance(human: string, text: string, startedAt = performance.now(), interrupts = true) {
+    this.lastActivity = performance.now();
     if (!interrupts && this.speaking && await this.service.humanCount(this.callId) > 1) return;
     const traceId = randomUUID();
     const stages = new Set<string>();
@@ -534,7 +552,7 @@ export class VoiceRoomRuntime {
           ...(error instanceof VoiceQuotaError ? { code: error.code } : {}) });
         });
       }
-    } finally { this.refreshPending = false; }
+    } finally { this.refreshPending = false; await this.checkInactivity(); }
   }
 
   private async play(text: string, agent: VoiceAgent, signal: AbortSignal, onFirstAudio?: () => void,
@@ -563,6 +581,7 @@ export class VoiceRoomRuntime {
           const samples = new Int16Array(frameBytes / 2);
           for (let i = 0; i < samples.length; i++) samples[i] = pending.readInt16LE(i * 2);
           pending = pending.subarray(frameBytes);
+          this.lastActivity = performance.now();
           this.touch();
           const voiced = first && samples.some(sample => Math.abs(sample) > 150);
           if (voiced) { first = false; onFirstVoicedFrame?.(); }
@@ -574,6 +593,7 @@ export class VoiceRoomRuntime {
       if (pending.length > 1) {
         const samples = new Int16Array(Math.floor(pending.length / 2));
         for (let i = 0; i < samples.length; i++) samples[i] = pending.readInt16LE(i * 2);
+        this.lastActivity = performance.now();
         this.touch();
         const voiced = first && samples.some(sample => Math.abs(sample) > 150);
         if (voiced) { first = false; onFirstVoicedFrame?.(); }
@@ -582,17 +602,12 @@ export class VoiceRoomRuntime {
         if (!signal.aborted && !this.closed && voiced) onFirstAudio?.();
       }
       await this.audio.waitForPlayout();
-    } finally { spoken.until = performance.now() + 1500; }
+    } finally {
+      spoken.until = performance.now() + 1500;
+    }
   }
 
   get isClosed() { return this.closed; }
-
-  async park(human: string, sessionId?: string) {
-    if (!(await this.service.db.query(`SELECT 1 FROM voice_participants WHERE call_id=$1 AND identity_id=$2
-      AND left_at IS NULL AND parked_at IS NOT NULL AND ($3::text IS NULL OR session_id=$3)`,
-      [this.callId, human, sessionId ?? null])).rowCount) return;
-    this.stopInput(human);
-  }
 
   async resume(human: string) {
     const participant = this.room.remoteParticipants.get(human);

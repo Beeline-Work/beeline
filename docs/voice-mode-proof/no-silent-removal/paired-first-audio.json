@@ -1,0 +1,26 @@
+{
+  "reproduction": "call-wide-end-3",
+  "measurement": "Final recognized text to first voiced frame accepted by the real local LiveKit audio source; one warmup and five samples per revision; deterministic brain and tone TTS; Node RTC subscriber; same paused validation load, Android emulator remains running; not live provider or physical-speaker latency",
+  "original": {
+    "warmupMs": 308.2944690000004,
+    "samplesMs": [
+      49.090369000001374,
+      40.882847000000766,
+      33.38911499999995,
+      40.98406900000009,
+      42.65823099999943
+    ],
+    "medianMs": 40.98406900000009
+  },
+  "fixed": {
+    "warmupMs": 400.12767299999996,
+    "samplesMs": [
+      41.316758999999365,
+      42.28476899999987,
+      61.842507999999725,
+      43.404231000000436,
+      42.80905100000018
+    ],
+    "medianMs": 42.80905100000018
+  }
+}

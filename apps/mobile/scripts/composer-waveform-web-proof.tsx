@@ -38,7 +38,7 @@ async function run() {
   node('chat-conversation')!.click();
   await pause(100);
   check('waveform tap enters Conversation once', joins === 1 && Boolean(node('voice-bar')));
-  node('voice-mic')!.click();
+  node('voice-leave')!.click();
   await pause(100);
   check('desktop hover title survives ending Conversation', node('chat-conversation')?.title === 'Conversation mode');
   const mic = node('chat-mic')!;
@@ -50,7 +50,7 @@ async function run() {
   document.dispatchEvent(new MouseEvent('mouseup', { ...pointer, buttons: 0 }));
   await pause(100);
   check('long press still enters Conversation without another dictation', joins === 2 && Boolean(node('voice-bar')) && (globalThis as any).__dictationStarts === 1);
-  node('voice-mic')!.click();
+  node('voice-leave')!.click();
   await pause(100);
   await type('Ruby, what merged today?');
   check('typing replaces waveform with Send and keeps mic', Boolean(node('chat-send') && node('chat-mic')) && !node('chat-conversation'));

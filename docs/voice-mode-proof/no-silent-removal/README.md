@@ -1,4 +1,73 @@
-# Multi-human silence proof
+# Voice call proof, revision 3
+
+Reproductions **multi-human-silence-1**, **multi-human-mode-2** and
+**call-wide-end-3**. All phone proof uses Android API 36; no release was made.
+
+The revised app has no per-person silence deadline, parked microphone state or
+native timer. Solo and group calls share the runtime owner's 60-second quiet
+window. Pending/claimed commands count only through this call's `voice_orders`;
+completed command timestamps restart the window even between server checks.
+Raw mic frames, old `idle` requests and outside agent work do not reset it.
+The end transaction rechecks activity and owner authority before committing.
+
+The rebuilt debug APK exercises production `useVoiceCall`, `VoiceBar`, native
+capture and `VoiceCallCard`. Both humans use real LiveKit transport. Final text,
+brain decisions and tone TTS are injected in a disposable database. This tests
+membership, STT input frames, rendered controls and accepted audio; it does not
+measure production provider or physical speaker latency.
+
+## Current demonstrated paths
+
+- [Call-wide result](call-wide-end.json): both humans stay while one talks unnamed
+  for 60 seconds, no extra agent replies, and confirmed stop retains membership.
+  After the final call work finishes, both humans leave together after **61.83 s**
+  of quiet. The ended native card has no Join control: [Android](call-wide-ended.png).
+- [Mode result](mode-switch.json): Leave switches the remaining person to solo;
+  unnamed speech answers through the last agent. Rejoin broadcasts 2 to both
+  transports and unnamed speech becomes `unaddressed`. An actual 30-second RTC
+  disconnect without Leave retains group rules throughout. This is a controlled
+  RTC disconnect, not a physical radio outage.
+- [Pending-work result](call-wide-pending.json): both humans remain after 65
+  seconds of complete silence while the call's command is pending. Native mic
+  frame counts continue increasing. Completing that command starts a fresh quiet
+  window; everyone exits **61.86 s** later and the card removes Join.
+- [Outside-work result](call-wide-outside.json): a command without a call
+  `voice_orders` row remains pending while both humans leave together after
+  **61.16 s**. The [ended Android card](call-wide-outside.png) has no Join control.
+- The baseline [old result](old.json) still records the original defect on
+  `4049229b6`: the native per-person deadline removes the listener and subsequent
+  unnamed speech goes to Ruby.
+
+The new controls read **End call** in solo and **Leave call** in group. Native
+changes require the new Android 39 / iOS 36 runtime fingerprints; older binaries
+remain protected by server-side no-op `idle` and the existing ready/resume mic
+acknowledgement. The server's automatic end uses the existing ended-card producer;
+no new visible System message was introduced.
+
+`prove-multi-human-silence.ts` starts the isolated service and real RTC partner;
+`prove-voice-call-mode.py` drives mode changes; `prove-voice-call-end.py` verifies
+quiet work and outside-work cases with the native view. The local HTTP adapter
+uses service methods directly, without production sign-in. No production call,
+helper daemon or release is changed.
+
+## First-audio timing
+
+The [matched local comparison](paired-first-audio.json) uses one warmup and five
+turns per revision, actual local LiveKit capture, the same deterministic brain
+and tone TTS, and the same paused validation load. Median first voiced audio is
+**40.98 ms original / 42.81 ms final**. These small samples overlap and do not
+establish a provider-latency change. The end rule adds no awaited read, buffering
+stage or delay to ordinary final speech; its work queries run on the owner’s
+quiet checks and committed refreshes. Live-mode routing still uses its required
+current membership read. The Android outside-work run records its separate
+samples under concurrent validation load; neither run measures physical speaker
+latency. Historical 13.25 / 14.43 ms results below came from earlier runs.
+
+## Historical revision 1 / 2 evidence
+
+The material below records the previous brief and its now-replaced solo parking
+policy. The revision 3 implementation and current evidence above supersede it.
+
 
 Reproduction **multi-human-silence-1**, Android API 36, 17 October 2026.
 The native debug APK runs the production `useVoiceCall`, `VoiceBar`, Android

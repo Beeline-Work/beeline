@@ -8,7 +8,7 @@
     ],
     "observations": [
       {
-        "at": 1792271700636,
+        "at": 1792273510518,
         "joined": false,
         "humans": 1,
         "error": null,
@@ -16,7 +16,15 @@
         "firstAudioMs": null
       },
       {
-        "at": 1792271703086,
+        "at": 1792273538879,
+        "joined": false,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273541527,
         "joined": false,
         "humans": 2,
         "error": null,
@@ -24,7 +32,7 @@
         "firstAudioMs": null
       },
       {
-        "at": 1792271704117,
+        "at": 1792273543024,
         "joined": true,
         "humans": 2,
         "error": null,
@@ -32,11 +40,115 @@
         "firstAudioMs": null
       },
       {
-        "at": 1792271704395,
+        "at": 1792273543085,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 1,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273548120,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 2,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273553191,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 3,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273558193,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 4,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273563225,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 5,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273568253,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 6,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273573281,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 7,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273578318,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 8,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273583350,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 9,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273588391,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 10,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273593410,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 11,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273598438,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 12,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273603467,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 13,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273608870,
         "joined": true,
         "humans": 1,
         "error": null,
-        "unaddressed": 0,
+        "unaddressed": 13,
         "firstAudioMs": null
       }
     ],
@@ -45,7 +157,7 @@
       {
         "identity_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
         "parked_at": null,
-        "left_at": "2026-10-17T21:15:04.077Z"
+        "left_at": "2026-10-17T21:46:48.474Z"
       },
       {
         "identity_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -68,7 +180,7 @@
     ],
     "observations": [
       {
-        "at": 1792271700636,
+        "at": 1792273510518,
         "joined": false,
         "humans": 1,
         "error": null,
@@ -76,7 +188,15 @@
         "firstAudioMs": null
       },
       {
-        "at": 1792271703086,
+        "at": 1792273538879,
+        "joined": false,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273541527,
         "joined": false,
         "humans": 2,
         "error": null,
@@ -84,7 +204,7 @@
         "firstAudioMs": null
       },
       {
-        "at": 1792271704117,
+        "at": 1792273543024,
         "joined": true,
         "humans": 2,
         "error": null,
@@ -92,20 +212,124 @@
         "firstAudioMs": null
       },
       {
-        "at": 1792271704395,
+        "at": 1792273543085,
         "joined": true,
-        "humans": 1,
+        "humans": 2,
         "error": null,
-        "unaddressed": 0,
+        "unaddressed": 1,
         "firstAudioMs": null
       },
       {
-        "at": 1792271704747,
+        "at": 1792273548120,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 2,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273553191,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 3,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273558193,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 4,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273563225,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 5,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273568253,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 6,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273573281,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 7,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273578318,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 8,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273583350,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 9,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273588391,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 10,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273593410,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 11,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273598438,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 12,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273603467,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 13,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273608870,
         "joined": true,
         "humans": 1,
         "error": null,
-        "unaddressed": 0,
-        "firstAudioMs": 20.90183999999863
+        "unaddressed": 13,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273609433,
+        "joined": true,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 13,
+        "firstAudioMs": 47.16615000000456
       }
     ],
     "operations": [],
@@ -113,7 +337,7 @@
       {
         "identity_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
         "parked_at": null,
-        "left_at": "2026-10-17T21:15:04.077Z"
+        "left_at": "2026-10-17T21:46:48.474Z"
       },
       {
         "identity_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
@@ -136,7 +360,7 @@
     ],
     "observations": [
       {
-        "at": 1792271700636,
+        "at": 1792273510518,
         "joined": false,
         "humans": 1,
         "error": null,
@@ -144,7 +368,15 @@
         "firstAudioMs": null
       },
       {
-        "at": 1792271703086,
+        "at": 1792273538879,
+        "joined": false,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273541527,
         "joined": false,
         "humans": 2,
         "error": null,
@@ -152,7 +384,7 @@
         "firstAudioMs": null
       },
       {
-        "at": 1792271704117,
+        "at": 1792273543024,
         "joined": true,
         "humans": 2,
         "error": null,
@@ -160,28 +392,132 @@
         "firstAudioMs": null
       },
       {
-        "at": 1792271704395,
-        "joined": true,
-        "humans": 1,
-        "error": null,
-        "unaddressed": 0,
-        "firstAudioMs": null
-      },
-      {
-        "at": 1792271704747,
-        "joined": true,
-        "humans": 1,
-        "error": null,
-        "unaddressed": 0,
-        "firstAudioMs": 20.90183999999863
-      },
-      {
-        "at": 1792271704857,
+        "at": 1792273543085,
         "joined": true,
         "humans": 2,
         "error": null,
-        "unaddressed": 0,
-        "firstAudioMs": 20.90183999999863
+        "unaddressed": 1,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273548120,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 2,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273553191,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 3,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273558193,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 4,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273563225,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 5,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273568253,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 6,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273573281,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 7,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273578318,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 8,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273583350,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 9,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273588391,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 10,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273593410,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 11,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273598438,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 12,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273603467,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 13,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273608870,
+        "joined": true,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 13,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273609433,
+        "joined": true,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 13,
+        "firstAudioMs": 47.16615000000456
+      },
+      {
+        "at": 1792273609560,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 13,
+        "firstAudioMs": 47.16615000000456
       }
     ],
     "operations": [],
@@ -206,32 +542,32 @@
   },
   "dropCheckpoints": [
     {
-      "seconds": 0.01,
+      "seconds": 0.03,
       "humans": 2,
       "nativeHumans": 2
     },
     {
-      "seconds": 5.04,
+      "seconds": 5.06,
       "humans": 2,
       "nativeHumans": 2
     },
     {
-      "seconds": 10.04,
+      "seconds": 10.09,
       "humans": 2,
       "nativeHumans": 2
     },
     {
-      "seconds": 15.05,
+      "seconds": 15.13,
       "humans": 2,
       "nativeHumans": 2
     },
     {
-      "seconds": 20.06,
+      "seconds": 20.16,
       "humans": 2,
       "nativeHumans": 2
     },
     {
-      "seconds": 25.08,
+      "seconds": 25.19,
       "humans": 2,
       "nativeHumans": 2
     }
@@ -244,7 +580,7 @@
     ],
     "observations": [
       {
-        "at": 1792271700636,
+        "at": 1792273510518,
         "joined": false,
         "humans": 1,
         "error": null,
@@ -252,7 +588,15 @@
         "firstAudioMs": null
       },
       {
-        "at": 1792271703086,
+        "at": 1792273538879,
+        "joined": false,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273541527,
         "joined": false,
         "humans": 2,
         "error": null,
@@ -260,7 +604,7 @@
         "firstAudioMs": null
       },
       {
-        "at": 1792271704117,
+        "at": 1792273543024,
         "joined": true,
         "humans": 2,
         "error": null,
@@ -268,84 +612,188 @@
         "firstAudioMs": null
       },
       {
-        "at": 1792271704395,
-        "joined": true,
-        "humans": 1,
-        "error": null,
-        "unaddressed": 0,
-        "firstAudioMs": null
-      },
-      {
-        "at": 1792271704747,
-        "joined": true,
-        "humans": 1,
-        "error": null,
-        "unaddressed": 0,
-        "firstAudioMs": 20.90183999999863
-      },
-      {
-        "at": 1792271704857,
-        "joined": true,
-        "humans": 2,
-        "error": null,
-        "unaddressed": 0,
-        "firstAudioMs": 20.90183999999863
-      },
-      {
-        "at": 1792271704942,
+        "at": 1792273543085,
         "joined": true,
         "humans": 2,
         "error": null,
         "unaddressed": 1,
-        "firstAudioMs": 20.90183999999863
+        "firstAudioMs": null
       },
       {
-        "at": 1792271704959,
+        "at": 1792273548120,
         "joined": true,
         "humans": 2,
         "error": null,
         "unaddressed": 2,
-        "firstAudioMs": 20.90183999999863
+        "firstAudioMs": null
       },
       {
-        "at": 1792271710008,
+        "at": 1792273553191,
         "joined": true,
         "humans": 2,
         "error": null,
         "unaddressed": 3,
-        "firstAudioMs": 20.90183999999863
+        "firstAudioMs": null
       },
       {
-        "at": 1792271715012,
+        "at": 1792273558193,
         "joined": true,
         "humans": 2,
         "error": null,
         "unaddressed": 4,
-        "firstAudioMs": 20.90183999999863
+        "firstAudioMs": null
       },
       {
-        "at": 1792271720035,
+        "at": 1792273563225,
         "joined": true,
         "humans": 2,
         "error": null,
         "unaddressed": 5,
-        "firstAudioMs": 20.90183999999863
+        "firstAudioMs": null
       },
       {
-        "at": 1792271725026,
+        "at": 1792273568253,
         "joined": true,
         "humans": 2,
         "error": null,
         "unaddressed": 6,
-        "firstAudioMs": 20.90183999999863
+        "firstAudioMs": null
       },
       {
-        "at": 1792271730071,
+        "at": 1792273573281,
         "joined": true,
         "humans": 2,
         "error": null,
         "unaddressed": 7,
-        "firstAudioMs": 20.90183999999863
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273578318,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 8,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273583350,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 9,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273588391,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 10,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273593410,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 11,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273598438,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 12,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273603467,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 13,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273608870,
+        "joined": true,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 13,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273609433,
+        "joined": true,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 13,
+        "firstAudioMs": 47.16615000000456
+      },
+      {
+        "at": 1792273609560,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 13,
+        "firstAudioMs": 47.16615000000456
+      },
+      {
+        "at": 1792273609653,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 14,
+        "firstAudioMs": 47.16615000000456
+      },
+      {
+        "at": 1792273609703,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 15,
+        "firstAudioMs": 47.16615000000456
+      },
+      {
+        "at": 1792273614726,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 16,
+        "firstAudioMs": 47.16615000000456
+      },
+      {
+        "at": 1792273619760,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 17,
+        "firstAudioMs": 47.16615000000456
+      },
+      {
+        "at": 1792273624797,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 18,
+        "firstAudioMs": 47.16615000000456
+      },
+      {
+        "at": 1792273629828,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 19,
+        "firstAudioMs": 47.16615000000456
+      },
+      {
+        "at": 1792273634854,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 20,
+        "firstAudioMs": 47.16615000000456
       }
     ],
     "operations": [],
@@ -376,7 +824,7 @@
     ],
     "observations": [
       {
-        "at": 1792271700636,
+        "at": 1792273510518,
         "joined": false,
         "humans": 1,
         "error": null,
@@ -384,7 +832,15 @@
         "firstAudioMs": null
       },
       {
-        "at": 1792271703086,
+        "at": 1792273538879,
+        "joined": false,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273541527,
         "joined": false,
         "humans": 2,
         "error": null,
@@ -392,7 +848,7 @@
         "firstAudioMs": null
       },
       {
-        "at": 1792271704117,
+        "at": 1792273543024,
         "joined": true,
         "humans": 2,
         "error": null,
@@ -400,84 +856,188 @@
         "firstAudioMs": null
       },
       {
-        "at": 1792271704395,
-        "joined": true,
-        "humans": 1,
-        "error": null,
-        "unaddressed": 0,
-        "firstAudioMs": null
-      },
-      {
-        "at": 1792271704747,
-        "joined": true,
-        "humans": 1,
-        "error": null,
-        "unaddressed": 0,
-        "firstAudioMs": 20.90183999999863
-      },
-      {
-        "at": 1792271704857,
-        "joined": true,
-        "humans": 2,
-        "error": null,
-        "unaddressed": 0,
-        "firstAudioMs": 20.90183999999863
-      },
-      {
-        "at": 1792271704942,
+        "at": 1792273543085,
         "joined": true,
         "humans": 2,
         "error": null,
         "unaddressed": 1,
-        "firstAudioMs": 20.90183999999863
+        "firstAudioMs": null
       },
       {
-        "at": 1792271704959,
+        "at": 1792273548120,
         "joined": true,
         "humans": 2,
         "error": null,
         "unaddressed": 2,
-        "firstAudioMs": 20.90183999999863
+        "firstAudioMs": null
       },
       {
-        "at": 1792271710008,
+        "at": 1792273553191,
         "joined": true,
         "humans": 2,
         "error": null,
         "unaddressed": 3,
-        "firstAudioMs": 20.90183999999863
+        "firstAudioMs": null
       },
       {
-        "at": 1792271715012,
+        "at": 1792273558193,
         "joined": true,
         "humans": 2,
         "error": null,
         "unaddressed": 4,
-        "firstAudioMs": 20.90183999999863
+        "firstAudioMs": null
       },
       {
-        "at": 1792271720035,
+        "at": 1792273563225,
         "joined": true,
         "humans": 2,
         "error": null,
         "unaddressed": 5,
-        "firstAudioMs": 20.90183999999863
+        "firstAudioMs": null
       },
       {
-        "at": 1792271725026,
+        "at": 1792273568253,
         "joined": true,
         "humans": 2,
         "error": null,
         "unaddressed": 6,
-        "firstAudioMs": 20.90183999999863
+        "firstAudioMs": null
       },
       {
-        "at": 1792271730071,
+        "at": 1792273573281,
         "joined": true,
         "humans": 2,
         "error": null,
         "unaddressed": 7,
-        "firstAudioMs": 20.90183999999863
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273578318,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 8,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273583350,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 9,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273588391,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 10,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273593410,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 11,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273598438,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 12,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273603467,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 13,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273608870,
+        "joined": true,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 13,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273609433,
+        "joined": true,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 13,
+        "firstAudioMs": 47.16615000000456
+      },
+      {
+        "at": 1792273609560,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 13,
+        "firstAudioMs": 47.16615000000456
+      },
+      {
+        "at": 1792273609653,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 14,
+        "firstAudioMs": 47.16615000000456
+      },
+      {
+        "at": 1792273609703,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 15,
+        "firstAudioMs": 47.16615000000456
+      },
+      {
+        "at": 1792273614726,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 16,
+        "firstAudioMs": 47.16615000000456
+      },
+      {
+        "at": 1792273619760,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 17,
+        "firstAudioMs": 47.16615000000456
+      },
+      {
+        "at": 1792273624797,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 18,
+        "firstAudioMs": 47.16615000000456
+      },
+      {
+        "at": 1792273629828,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 19,
+        "firstAudioMs": 47.16615000000456
+      },
+      {
+        "at": 1792273634854,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 20,
+        "firstAudioMs": 47.16615000000456
       }
     ],
     "operations": [],
@@ -501,11 +1061,11 @@
     }
   },
   "firstAudioMs": [
-    18.081247000001895,
-    14.171414000004006,
-    14.797874000003503,
-    14.432734000001801,
-    14.354439000002458
+    18.820013000018662,
+    18.021073999989312,
+    20.368891000020085,
+    19.944486000022152,
+    22.251393999991706
   ],
-  "firstAudioMedianMs": 14.432734000001801
+  "firstAudioMedianMs": 19.944486000022152
 }

@@ -38,7 +38,7 @@ async function run() {
   await pause(150);
   check('Reproduction desktop-voice-gate-1: holding enters Conversation once', joins === 1 && Boolean(node('voice-bar')));
   check('release does not start dictation', !(globalThis as any).__dictationStarts);
-  node('voice-mic')?.click();
+  node('voice-leave')?.click();
   await pause(150);
   check('existing End control returns to composer', leaves === 1 && Boolean(node('chat-mic')) && !node('voice-bar'));
 }

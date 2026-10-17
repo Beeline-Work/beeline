@@ -126,7 +126,7 @@ export class VoiceService {
     return row ? this.view(row) : null;
   }
 
-  async join(roomId: string, humanId: string): Promise<VoiceJoin> {
+  async join(roomId: string, humanId: string, expectedCallId?: string): Promise<VoiceJoin> {
     await this.access(roomId, humanId);
     const agents = await this.agents(roomId, humanId);
     if (!agents.length) throw new Error('This conversation has no agent you can address');
@@ -135,6 +135,7 @@ export class VoiceService {
       await this.access(roomId, humanId, db);
       await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`voice:${roomId}`]);
       let call = (await db.query<CallRow>(`SELECT * FROM voice_calls WHERE room_id=$1 AND ended_at IS NULL FOR UPDATE`, [roomId])).rows[0];
+      if (expectedCallId && call?.id !== expectedCallId) throw new Error('voice session ended');
       if (!call) {
         await ensureSystemIdentity(db);
         const id = randomUUID(); const messageId = randomBytes(32).toString('hex');
@@ -163,50 +164,37 @@ export class VoiceService {
         ...(a.face ? { face: a.face } : {}) })) };
   }
 
-  /** Called on an idle deadline or committed live event, never on a polling timer. */
+  /** Compatibility for older phones: idle never parks or removes a human. */
   async idleState(callId: string, humanId: string, db = this.db, sessionId?: string): Promise<VoiceIdleState> {
     const participant = (await db.query<{ room_id: string }>(`SELECT c.room_id FROM voice_calls c
       JOIN voice_participants p ON p.call_id=c.id AND p.identity_id=$2 AND p.left_at IS NULL
       WHERE c.id=$1 AND c.ended_at IS NULL AND ($3::text IS NULL OR p.session_id=$3)`, [callId, humanId, sessionId ?? null])).rows[0];
     if (!participant) return { state: 'ended' };
     await this.access(participant.room_id, humanId, db);
-    // Legacy clients park before reading state; ready restores their mic through resume.
-    if ((await db.query(`SELECT 1 FROM voice_participants WHERE call_id=$1 AND identity_id<>$2 AND left_at IS NULL LIMIT 1`, [callId, humanId])).rowCount) return { state: 'ready' };
-    const rows = await db.query<{ name: string; pending: boolean; ready: boolean }>(`SELECT i.name,
-      c.state IN ('pending','claimed') pending,
-      EXISTS(SELECT 1 FROM messages m WHERE m.author_id=o.agent_id AND m.room_id=source.room_id
-        AND (m.id=c.result_message_id OR m.request_id=c.id OR m.request_id=c.turn_request_id)
-        AND m.presentation='message' AND m.deleted_at IS NULL) ready
-      FROM voice_orders o JOIN messages source ON source.id=o.source_message_id
-      JOIN identities i ON i.id=o.agent_id JOIN agent_commands c
-        ON c.source_message_id=o.source_message_id AND c.agent_id=o.agent_id
-      WHERE o.call_id=$1 AND source.author_id=$2 AND o.spoken_message_id IS NULL
-      ORDER BY source.created_at DESC`, [callId, humanId]);
-    const ready = rows.rows.find(row => row.ready);
-    if (ready) return { state: 'ready', agentName: ready.name };
-    const pending = rows.rows.find(row => row.pending);
-    return pending ? { state: 'parked', agentName: pending.name } : { state: 'ended' };
+    return { state: 'ready' };
   }
 
   async idle(callId: string, humanId: string, sessionId?: string): Promise<VoiceIdleState> {
-    const participant = await this.db.query(`SELECT 1 FROM voice_participants WHERE call_id=$1 AND identity_id=$2 AND left_at IS NULL AND ($3::text IS NULL OR session_id=$3)`, [callId, humanId, sessionId ?? null]);
-    if (!participant.rowCount) return { state: 'ended' };
-    const state = await this.db.transaction(async db => {
-      await db.query(`SELECT id FROM voice_calls WHERE id=$1 FOR UPDATE`, [callId]);
-      const state = await this.idleState(callId, humanId, db, sessionId);
-      if (state.state !== 'ended' && !(state.state === 'ready' && !state.agentName)) {
-        await db.query(`UPDATE voice_participants SET parked_at=now()
-          WHERE call_id=$1 AND identity_id=$2 AND left_at IS NULL AND ($3::text IS NULL OR session_id=$3)`, [callId, humanId, sessionId ?? null]);
-      }
-      return state;
-    });
-    if (state.state === 'ready' && !state.agentName) return state;
-    if (state.state === 'ended') {
-      await this.leave(callId, humanId, true, sessionId, true);
-      return this.idleState(callId, humanId, this.db, sessionId);
-    }
-    await (await this.runtimes.get(callId))?.park(humanId, sessionId);
-    return state;
+    return this.idleState(callId, humanId, this.db, sessionId);
+  }
+
+  async callWorkState(callId: string, db = this.db): Promise<{ pending: boolean; finishedAt: number }> {
+    const row = (await db.query<{ pending: boolean; finished_at: Date | null }>(`SELECT
+      coalesce(bool_or(c.state IN ('pending','claimed')),false) pending, max(c.completed_at) finished_at
+      FROM voice_orders o JOIN agent_commands c
+      ON c.source_message_id=o.source_message_id AND c.agent_id=o.agent_id WHERE o.call_id=$1`, [callId])).rows[0];
+    return { pending: row?.pending ?? false, finishedAt: row?.finished_at?.getTime() ?? 0 };
+  }
+
+  async hasCallWork(callId: string, db = this.db): Promise<boolean> {
+    return (await this.callWorkState(callId, db)).pending;
+  }
+
+  /** Only the current runtime owner may end the whole inactive call. */
+  async endInactive(callId: string, owner: string, stillInactive: () => boolean): Promise<boolean> {
+    const inactivity = { owner, stillInactive, ended: false };
+    await this.leave(callId, '', true, undefined, inactivity);
+    return inactivity.ended;
   }
 
   async resume(callId: string, humanId: string, sessionId: string): Promise<void> {
@@ -254,24 +242,31 @@ export class VoiceService {
     if (row.ended_at) await db.query(`UPDATE messages SET presentation=$2 WHERE id=$1`, [row.message_id, 'system']);
   }
 
-  async leave(callId: string, humanId: string, disconnected = false, sessionId?: string, idleDeadline = false): Promise<void> {
+  async leave(callId: string, humanId: string, disconnected = false, sessionId?: string, inactivity?: { owner: string; stillInactive(): boolean; ended: boolean }): Promise<void> {
+    const resumed = new Error('Voice activity resumed');
     const row = await this.db.transaction(async db => {
       const call = (await db.query<CallRow>(`SELECT * FROM voice_calls WHERE id=$1 FOR UPDATE`, [callId])).rows[0];
       if (!call || call.ended_at) return null;
-      // A human may have joined after idleState released the call lock.
-      if (idleDeadline && (await db.query(`SELECT 1 FROM voice_participants WHERE call_id=$1 AND identity_id<>$2 AND left_at IS NULL LIMIT 1`, [callId, humanId])).rowCount) return null;
-      if (!disconnected) await this.access(call.room_id, humanId, db);
-      const left = await db.query(`UPDATE voice_participants SET left_at=now() WHERE call_id=$1 AND identity_id=$2
-        AND ($3::text IS NULL OR session_id=$3) RETURNING identity_id`, [callId, humanId, sessionId ?? null]);
-      if (!left.rowCount) return null;
-      await this.rooms.removeParticipant(`beeline-voice-${callId}`, humanId).catch(() => {});
+      if (inactivity) {
+        const owned = await db.query(`SELECT 1 FROM voice_calls WHERE id=$1 AND runtime_owner=$2 AND runtime_until>now()`, [callId, inactivity.owner]);
+        if (!owned.rowCount || await this.hasCallWork(callId, db) || !inactivity.stillInactive()) return null;
+        await db.query(`UPDATE voice_participants SET left_at=now(),parked_at=NULL WHERE call_id=$1 AND left_at IS NULL`, [callId]);
+      } else {
+        if (!disconnected) await this.access(call.room_id, humanId, db);
+        const left = await db.query(`UPDATE voice_participants SET left_at=now() WHERE call_id=$1 AND identity_id=$2
+          AND ($3::text IS NULL OR session_id=$3) RETURNING identity_id`, [callId, humanId, sessionId ?? null]);
+        if (!left.rowCount) return null;
+        await this.rooms.removeParticipant(`beeline-voice-${callId}`, humanId).catch(() => {});
+      }
       if (!(await db.query(`SELECT 1 FROM voice_participants WHERE call_id=$1 AND left_at IS NULL`, [callId])).rowCount) {
         call.ended_at = (await db.query<{ ended_at: Date }>(`UPDATE voice_calls SET ended_at=now() WHERE id=$1 RETURNING ended_at`, [callId])).rows[0]!.ended_at;
       }
       await this.updateCard(call, db);
+      if (inactivity && !inactivity.stillInactive()) throw resumed;
       return call;
-    });
+    }).catch(error => { if (error === resumed) return null; throw error; });
     if (!row) return;
+    if (row.ended_at && inactivity) { inactivity.ended = true; await (await this.runtimes.get(callId))?.stopCall(); }
     await (await this.runtimes.get(callId))?.countHumans().catch(() => {});
     this.live.publish({ type: 'invalidate', roomId: row.room_id, reason: 'voice-participants' });
     if (row.ended_at) {
@@ -295,7 +290,7 @@ export class VoiceService {
     const pending = (async () => {
       const claimed = await this.db.query(`UPDATE voice_calls SET runtime_owner=$2,runtime_until=now()+interval '20 seconds'
         WHERE id=$1 AND ended_at IS NULL AND (runtime_until IS NULL OR runtime_until<now())
-        AND EXISTS(SELECT 1 FROM voice_participants p WHERE p.call_id=voice_calls.id AND p.left_at IS NULL AND p.parked_at IS NULL)`, [row.id, leaseOwner]);
+        AND EXISTS(SELECT 1 FROM voice_participants p WHERE p.call_id=voice_calls.id AND p.left_at IS NULL)`, [row.id, leaseOwner]);
       if (!claimed.rowCount) return undefined;
       return VoiceRoomRuntime.connect(this, row.id, row.room_id, leaseOwner);
     })().catch(async error => {
@@ -362,7 +357,7 @@ export class VoiceService {
   async dispatch(callId: string, sourceId: string, agentId: string) {
     await this.db.transaction(async db => {
       const row = (await db.query<{ room_id: string; author_id: string; text: string }>(`SELECT m.room_id,m.author_id,m.text FROM messages m
-        JOIN voice_calls c ON c.room_id=m.room_id AND c.id=$2 AND c.ended_at IS NULL WHERE m.id=$1`, [sourceId, callId])).rows[0];
+        JOIN voice_calls c ON c.room_id=m.room_id AND c.id=$2 AND c.ended_at IS NULL WHERE m.id=$1 FOR SHARE OF c`, [sourceId, callId])).rows[0];
       if (!row) return;
       await this.access(row.room_id, row.author_id, db);
       const target = (await db.query<{ handle: string }>(`SELECT handle FROM identities WHERE id=$1 FOR SHARE`, [agentId])).rows[0];

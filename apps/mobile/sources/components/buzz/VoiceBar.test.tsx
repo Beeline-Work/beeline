@@ -35,7 +35,8 @@ it('shows the exhausted daily quota inside the voice bar with an operable end mi
     firstAudioMs: null, humans: 1, unaddressed: 0, join: vi.fn(), end, aim: vi.fn() }} />); });
   expect(renderer.root.findByProps({ testID: 'voice-quota-error' }).props.children).toBe(VOICE_QUOTA_MESSAGE);
   expect(renderer.root.findAllByType('Waveform')).toHaveLength(0);
-  await act(async () => renderer.root.findByProps({ testID: 'voice-mic' }).props.onPress());
+  await act(async () => renderer.root.findByProps({ testID: 'voice-leave' }).props.onPress());
+  expect(renderer.root.findByProps({ testID: 'voice-leave' }).props.label).toBe('End call');
   expect(end).toHaveBeenCalledOnce();
   await act(async () => renderer.unmount());
 });
@@ -51,7 +52,7 @@ it('keeps a readable join error and agent avatars visible with an operable end c
     expect(renderer.root.findByProps({ testID: 'voice-connection-error' }).props.children).toBe(error);
     await act(async () => renderer.root.findByProps({ accessibilityLabel: 'Speak to Goosey' }).props.onPress());
     expect(aim).toHaveBeenCalledWith('goose');
-    await act(async () => renderer.root.findByProps({ testID: 'voice-mic' }).props.onPress());
+    await act(async () => renderer.root.findByProps({ testID: 'voice-leave' }).props.onPress());
     expect(end).toHaveBeenCalledOnce();
   } finally { await act(async () => renderer.unmount()); }
 });

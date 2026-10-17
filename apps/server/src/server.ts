@@ -2310,7 +2310,7 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     if (voiceMatch[2] === 'current' && method === 'GET') {
       json(response, 200, await options.voice.current(voiceMatch[1]!, identityId!));
     } else if (voiceMatch[2] === 'join' && method === 'POST') {
-      json(response, 200, await options.voice.join(voiceMatch[1]!, identityId!));
+      json(response, 200, await options.voice.join(voiceMatch[1]!, identityId!, (await body(request)).expectedCallId as string | undefined));
     } else if (voiceMatch[2] === 'state' && method === 'GET') {
       json(response, 200, await options.voice.idleState(voiceMatch[1]!, identityId!, undefined, url.searchParams.get('sessionId') ?? undefined));
     } else if (voiceMatch[2] === 'idle' && method === 'POST') {

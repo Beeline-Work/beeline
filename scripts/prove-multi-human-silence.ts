@@ -1,8 +1,10 @@
-/** Isolated Android proof: real RTC, database and native deadlines; injected STT/brain/TTS. */
+/** Isolated Android proof: real RTC, database and native audio; injected STT/brain/TTS. */
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { Room, AudioSource, LocalAudioTrack, TrackPublishOptions, TrackSource, RoomEvent } from '@livekit/rtc-node';
 import { PgliteDatabase } from '../apps/server/src/test-support.js';
+import { PhoneService } from '../apps/server/src/phone-service.js';
+import { routeHumanMessage } from '../apps/server/src/agent-command.js';
 import { migrate } from '../apps/server/src/database.js';
 import { LiveHub } from '../apps/server/src/live.js';
 import { VoiceService } from '../apps/server/src/voice-service.js';
@@ -43,7 +45,15 @@ await connectPartner(first);
 const callRow = (await db.query<any>(`SELECT * FROM voice_calls WHERE id=$1`,[first.call.id])).rows[0];
 const runtime = (await service.ensureRuntime(callRow))!;
 await runtime.utterance(partner,'Ruby, ready?');
-let turn=0;
+if(process.env.SILENCE_PROOF_TIMING === '1') {
+  for(let index=0;index<5;index++) await runtime.utterance(partner,'Ruby, ready?');
+  await client.disconnect(); await service.close(); await db.close(); process.exit(0);
+}
+let turn=0; let workSource: string | undefined;
+if(process.env.SILENCE_PROOF_HOLD === '1') {
+  workSource=await service.recordHuman(first.call.id,R,partner,(await service.agents(R,partner))[0]!,'Initial work');
+  await service.dispatch(first.call.id,workSource,A); await runtime.refresh();
+}
 const server = createServer((req,res)=> { void (async()=>{
   let raw=''; for await (const chunk of req) raw+=String(chunk);
   const body = raw ? JSON.parse(raw) : {};
@@ -51,9 +61,17 @@ const server = createServer((req,res)=> { void (async()=>{
   let value: unknown = {};
   if(req.url==='/fixture') value={roomId:R};
   else if(req.url==='/observe') { observations.push(body); value={}; }
-  else if(req.url==='/result') value={humans:await service.humanCount(first.call.id),operations,microphoneFrames,replies,signals,observations,
+  else if(req.url==='/result') value={activeCallWork:await service.hasCallWork(first.call.id),pendingCommands:(await db.query<{count:number}>(`SELECT count(*)::int count FROM agent_commands WHERE state IN ('pending','claimed')`)).rows[0]!.count,call:(await db.query(`SELECT ended_at FROM voice_calls WHERE id=$1`,[first.call.id])).rows[0],card:(await new PhoneService(db,'http://proof').readRoom(R,H))?.messages.find(m=>m.voiceCall),humans:await service.humanCount(first.call.id),operations,microphoneFrames,replies,signals,observations,
     secondMicrophone:[...(client.remoteParticipants.get(SECOND)?.trackPublications.values() ?? [])].map(p=>({muted:p.muted,kind:p.kind})),
     participants:(await db.query(`SELECT identity_id,parked_at,left_at FROM voice_participants WHERE call_id=$1`,[first.call.id])).rows};
+  else if(req.url==='/work-start' || req.url==='/outside-start') {
+    const agent=(await service.agents(R,H))[0]!;
+    workSource=await service.recordHuman(first.call.id,R,H,agent,'Work until finished');
+    if(req.url==='/outside-start') await db.transaction(tx=>routeHumanMessage(tx,workSource!));
+    else await service.dispatch(first.call.id,workSource,A);
+    await runtime.refresh();
+  }
+  else if(req.url==='/work-finish') { await db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE source_message_id=$1`,[workSource]); await runtime.refresh(); }
   else if(req.url==='/say') { await runtime.utterance(H,body.text??'How are you doing today?'); }
   else if(req.url==='/partner-leave') { await service.leave(first.call.id,partner); }
   else if(req.url==='/partner-rejoin') { await connectPartner(await service.join(R,partner)); }
@@ -61,7 +79,7 @@ const server = createServer((req,res)=> { void (async()=>{
   else if(req.url==='/partner-return') { await connectPartner(first); }
   else if(req.url==='/stop') { inputs.at(-1)?.({event:'EndOfTurn',turn_index:++turn,sequence_id:turn,transcript:'stop',words:[{word:'stop',start:0,end:.3,confidence:.99}]}); }
   else if(req.url==='/first-leave') await service.leave(first.call.id,H);
-  else if(req.url?.endsWith('/join')) { const joined=await service.join(R,nativeHuman); value={...joined,url:'ws://10.0.2.2:17890'}; }
+  else if(req.url?.endsWith('/join')) { const joined=await service.join(R,nativeHuman,body.expectedCallId); value={...joined,url:'ws://10.0.2.2:17890'}; }
   else if(req.url?.endsWith('/idle')) value=await service.idle(first.call.id,nativeHuman,body.sessionId);
   else if(req.url?.includes('/state')) value=await service.idleState(first.call.id,nativeHuman,db,body.sessionId);
   else if(req.url?.endsWith('/resume')) await service.resume(first.call.id,nativeHuman,body.sessionId);

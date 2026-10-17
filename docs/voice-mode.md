@@ -2,10 +2,10 @@
 
 Hold the existing composer mic to start voice mode. A short press still starts
 text dictation. Voice stays in the conversation: tap an agent's square avatar,
-or say its name, to aim your words. The pressed mic ends your participation;
+or say its name, to aim your words. The labeled end control ends your participation;
 hold the waveform to open the optional full-screen view. Room members join
 through the live call card. With several humans, a separate **Leave call**
-button ends only your participation; solo calls keep **End Conversation mode**.
+button ends only your participation; solo calls show **End call**.
 After the last person leaves, that card becomes
 `Voice call ended · duration`.
 
@@ -30,19 +30,25 @@ recently posted a message in that Room or corner. An opening agent name or an
 explicit avatar tap takes priority. If no eligible agent has posted there, the
 current selection (initially the first listed agent) remains the fallback.
 
-Call mode follows the live database human count, including parked humans and
-humans inside reconnect grace. Joins, leaves and sweeps immediately announce
-the committed count; a rejoin cancels the remaining person’s solo deadline.
-Routing and interruption decisions never use a cached mode.
+Call mode follows the live database human count, including parked legacy humans
+and humans inside reconnect grace. Joins, leaves and sweeps immediately announce
+the committed count. Routing and interruption decisions never use a cached mode.
 
-Multi-human calls have no silence deadline. The server also refuses to park
-or remove a listener through `idle`, including when another person joins
-between the idle decision and removal. Old clients can still mute briefly
-at their native deadline: the existing `ready` response sends them through
-their park/state/resume flow and restores the mic. Solo silence still uses
-the existing 20-second deadline and pending-order parking behavior. Spoken
-stop phrases interrupt playback in multi-human calls without leaving; the
-120-second RTC transport-loss grace remains unchanged.
+There are no per-person silence deadlines or parked microphone states. The runtime
+owner ends the whole call after 60 consecutive seconds without confirmed human
+speech, agent playback or pending/claimed commands linked through this call’s
+`voice_orders`. Work finishing starts a fresh 60-second window. Unrelated agent
+wakes do not hold a call open. A five-second server tick checks the window; raw
+microphone frames, lease renewal and client state/idle requests never reset it.
+An owner restart conservatively starts a fresh quiet window.
+
+Older clients may mute briefly at their native deadline. Both `idle` and `state`
+return `ready` while participation remains active, and their retained resume flow
+restores the mic even without report playback. Spoken stop phrases interrupt
+playback in either mode and never remove a human. Explicit Leave, lost Room access
+and the existing 120-second RTC transport-loss grace still remove participation.
+An ended card has no Join control. Terminal reconnects are fenced to the same call;
+ending cannot silently start another call.
 
 Playback speaks the full reply, streaming each clause and the remaining tail.
 Noise-only Flux starts cannot interrupt it: barge-in waits for recognized speech

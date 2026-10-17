@@ -86,7 +86,7 @@ export async function loadHumanElectorate(
 ): Promise<string[]> {
   const rows = await database.query<{ id: string }>(
     `SELECT identity.id
-     FROM memberships member
+     FROM effective_memberships member
      JOIN identities identity ON identity.id=member.identity_id
      WHERE member.room_id=$1 AND member.removed_at IS NULL
        AND identity.kind='human' AND COALESCE(identity.hidden_from_roster,false)=false
@@ -119,7 +119,7 @@ async function loadMentionIds(
   if (!handles.length) return [];
   const rows = await database.query<{ id: string }>(
     `SELECT identity.id
-     FROM memberships member
+     FROM effective_memberships member
      JOIN identities identity ON identity.id=member.identity_id
      WHERE member.room_id=$1 AND member.removed_at IS NULL
        AND identity.kind='human' AND COALESCE(identity.hidden_from_roster,false)=false
@@ -610,7 +610,7 @@ export async function answerRoomChoice(
   if (viewer.kind !== 'human') throw new Error('choice access denied');
   const member = (
     await database.query<{ id: string }>(
-      `SELECT identity_id id FROM memberships
+      `SELECT identity_id id FROM effective_memberships
        WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
       [choice.room_id, input.viewerId],
     )
@@ -724,7 +724,7 @@ export async function skipRoomChoice(
   if (viewer.kind !== 'human') throw new Error('choice access denied');
   const member = (
     await database.query<{ id: string }>(
-      `SELECT identity_id id FROM memberships
+      `SELECT identity_id id FROM effective_memberships
        WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
       [choice.room_id, input.viewerId],
     )

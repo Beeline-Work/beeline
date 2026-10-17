@@ -119,7 +119,7 @@ export async function resolveCurrentMemberMentions(
     `SELECT identity.id,identity.kind,identity.handle
      FROM memberships membership
      JOIN identities identity ON identity.id=membership.identity_id
-     WHERE membership.room_id=$1 AND membership.removed_at IS NULL
+     WHERE membership.room_id=(SELECT COALESCE(parent_id,id) FROM rooms WHERE id=$1) AND membership.removed_at IS NULL
        AND identity.handle IS NOT NULL AND btrim(identity.handle)<>''`,
     [roomId],
   );
@@ -251,7 +251,7 @@ export function taggedIdentityIdsSql(message: string): string {
     FROM memberships tagged_member
     JOIN identities tagged ON tagged.id=tagged_member.identity_id
     WHERE ${message}.presentation NOT IN ('system','card')
-      AND tagged_member.room_id=${message}.room_id AND tagged_member.removed_at IS NULL
+      AND tagged_member.room_id=(SELECT COALESCE(parent_id,id) FROM rooms WHERE id=${message}.room_id) AND tagged_member.removed_at IS NULL
       AND tagged_member.identity_id<>${message}.author_id
       AND tagged.handle IS NOT NULL AND btrim(tagged.handle)<>''
       AND ${handleWrittenIn(`${message}.text`, 'tagged.handle')}
@@ -294,7 +294,7 @@ export function tagsKnownIdentitySql(
         AND NOT EXISTS (
           SELECT 1 FROM memberships rival_member
           JOIN identities rival ON rival.id=rival_member.identity_id
-          WHERE rival_member.room_id=${message}.room_id AND rival_member.removed_at IS NULL
+          WHERE rival_member.room_id=(SELECT COALESCE(parent_id,id) FROM rooms WHERE id=${message}.room_id) AND rival_member.removed_at IS NULL
             AND rival_member.identity_id<>${identityIdExpr}
             AND btrim(ltrim(rival.handle,'@'))=btrim(ltrim(${identityHandleExpr},'@'))
         )

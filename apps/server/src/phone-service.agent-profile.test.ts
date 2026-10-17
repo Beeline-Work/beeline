@@ -29,12 +29,18 @@ describe('agent profile recent work', () => {
       `INSERT INTO memberships(workspace_id,identity_id,role) VALUES ($1,$2,'member'),($1,$3,'member')`,
       [workspace, agent, viewer],
     );
+    const privateParent = '22222222-2222-4222-8222-000000000002';
+    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Private Room')`, [privateParent, workspace]);
+    await database.query(
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
+      [workspace, parent, viewer],
+    );
     const corners = ['Readable', 'Private', 'Unmerged', 'Other author', 'Unsafe URL'];
     for (const [index, title] of corners.entries()) {
       const id = `33333333-3333-4333-8333-${String(index).padStart(12, '0')}`;
       await database.query(
         `INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES ($1,$2,$3,$4)`,
-        [id, workspace, parent, title],
+        [id, workspace, index === 1 ? privateParent : parent, title],
       );
       await database.query(
         `INSERT INTO corner_facts(corner_id,owner_agent_id,lifecycle) VALUES ($1,$2,$3::jsonb)`,
@@ -55,11 +61,7 @@ describe('agent profile recent work', () => {
           }),
         ],
       );
-      if (index !== 1)
-        await database.query(
-          `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES ($1,$2,$3,'member')`,
-          [workspace, id, viewer],
-        );
+
     }
     const phone = new PhoneService(database, 'https://server.example');
     expect((await phone.readAgent(workspace, agent, viewer))?.recentWork).toEqual([
@@ -77,11 +79,6 @@ describe('agent profile recent work', () => {
         'url','https://github.com/acme/repo/pull/'||right(id::text,12),
         'mergedAt','2026-09-23T00:00:00Z')) FROM rooms WHERE workspace_id=$1 AND name LIKE 'Older %'`,
       [workspace, agent],
-    );
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-      SELECT workspace_id,id,$2,'member' FROM rooms WHERE workspace_id=$1 AND name LIKE 'Older %'`,
-      [workspace, viewer],
     );
     const first = await phone.readAgent(workspace, agent, viewer);
     expect(first?.recentWork).toHaveLength(5);
@@ -229,10 +226,9 @@ it('Reproduction R12-1: exposes grant Room names only to authorized viewers', as
   await database.query(`INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Corner')`, [corner, workspace, parent]);
   await database.query(`UPDATE agent_grants SET room_id=$1`, [corner]);
   expect(await grant(viewer)).not.toHaveProperty('roomName');
-  await database.query(
-    `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
-    [workspace, corner, plain],
-  );
+
+  expect(await grant(plain)).not.toHaveProperty('roomName');
+  await database.query(`UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2`, [parent, plain]);
   expect((await grant(plain)).roomName).toBe('Corner');
   await database.query(`UPDATE agent_grants SET room_id=$1`, [parent]);
   await database.query(`UPDATE memberships SET role='admin' WHERE room_id IS NULL AND identity_id=$1`, [viewer]);

@@ -83,11 +83,7 @@ beforeEach(async () => {
        ($8,NULL,$2,'owner'),($8,$9,$2,'owner'),($8,$9,$4,'member')`,
     [WORKSPACE, REQUESTER, OTHER_HUMAN, AGENT, OUTPUT, SHARED, PRIVATE, OTHER_WORKSPACE, OTHER],
   );
-  await database.query(
-    `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-       ($1,$2,$3,'owner'),($1,$2,$4,'member')`,
-    [WORKSPACE, CORNER, REQUESTER, AGENT],
-  );
+
   await database.query(
     `INSERT INTO messages(id,room_id,author_id,text,created_at) VALUES
        ($1,$2,$3,'Please find our release notes.',now()-interval '4 minutes'),
@@ -190,10 +186,9 @@ describe('authorized institutional history search', () => {
       query: 'release marker',
       limit: 10,
     });
-    // The corner's own human audience is the requester, so both readable
-    // sources qualify; what the corner proves is that authority resolves at all.
+    // The inherited audience includes the other human, excluding requester-private sources.
     expect(corner.results.map((result) => result.messageId).sort()).toEqual(
-      ['private-result', 'shared-result', ROOT].sort(),
+      ['shared-result', ROOT].sort(),
     );
   });
 

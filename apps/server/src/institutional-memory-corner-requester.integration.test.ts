@@ -72,7 +72,7 @@ describe('save_memory requester authority on corner wakes', () => {
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
        SELECT $1,room_id,identity_id,'member'
        FROM unnest($2::uuid[]) room_id CROSS JOIN unnest($3::text[]) identity_id`,
-      [WORKSPACE, [ROOM, CORNER, WATCHED, UNLINKED], [CAPTAIN, AGENT, REPORTER]],
+      [WORKSPACE, [ROOM], [CAPTAIN, AGENT, REPORTER]],
     );
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role)

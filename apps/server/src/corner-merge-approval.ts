@@ -47,7 +47,7 @@ export async function recordPersonMergeYes(
     await lockCornerLifecycle(db, cornerId);
     const authorized = await db.query<{ ok: boolean }>(
       `SELECT true ok FROM rooms corner
-       JOIN memberships room_member ON room_member.room_id=corner.id AND room_member.identity_id=$2
+       JOIN effective_memberships room_member ON room_member.room_id=corner.id AND room_member.identity_id=$2
          AND room_member.removed_at IS NULL
        JOIN memberships workspace_member ON workspace_member.workspace_id=corner.workspace_id
          AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
@@ -106,13 +106,13 @@ export async function isZeroCheckCommander(db: SqlDatabase, cornerId: string, ac
        AND fact.lifecycle->>'checks'='passing'
        AND fact.lifecycle->'checksSummary'->>'total'='0'
        AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
-       AND EXISTS (SELECT 1 FROM memberships reachable WHERE reachable.room_id IN (corner.id,parent.id)
+       AND EXISTS (SELECT 1 FROM effective_memberships reachable WHERE reachable.room_id IN (corner.id,parent.id)
          AND reachable.identity_id=$2 AND reachable.removed_at IS NULL)`, [cornerId, actorId]);
   if (!eligible.rowCount) return false;
   const { recipient, returnRoom } = await commanderReportAddress(db, cornerId);
   if (recipient !== actorId || !returnRoom) return false;
   const member = await db.query(
-    `SELECT 1 FROM memberships member JOIN identities identity ON identity.id=member.identity_id
+    `SELECT 1 FROM effective_memberships member JOIN identities identity ON identity.id=member.identity_id
      JOIN rooms address ON address.id=member.room_id AND address.archived_at IS NULL
      WHERE member.room_id=$1 AND member.identity_id=$2 AND member.removed_at IS NULL
        AND identity.kind='agent'`, [returnRoom, actorId]);

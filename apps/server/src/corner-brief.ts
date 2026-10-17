@@ -262,7 +262,7 @@ async function laterCornerApproval(
       `SELECT message.text,message.author_id,identity.kind,message.room_id
        FROM messages message JOIN identities identity ON identity.id=message.author_id
        JOIN rooms dm ON dm.id=message.room_id AND dm.direct_participants IS NOT NULL
-       JOIN memberships member ON member.room_id=dm.id AND member.identity_id=$2
+       JOIN effective_memberships member ON member.room_id=dm.id AND member.identity_id=$2
          AND member.removed_at IS NULL
        WHERE message.id=$1 AND identity.kind='human' AND message.author_id=ANY($3::text[])`,
       [sourceMessageId, revision.agentId, authority],

@@ -44,7 +44,7 @@ beforeEach(async () => {
     `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,NULL,$4,'member')`,
     [workspace, person, teammate, agent],
   );
-  for (const channel of [room, corner]) {
+  for (const channel of [room]) {
     await db.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner'),($1,$2,$4,'member'),($1,$2,$5,'member')`,
       [workspace, channel, person, teammate, agent],
@@ -113,10 +113,6 @@ describe('sensitivity boundaries and replacement slots', () => {
       await db.query(
         `INSERT INTO rooms(id,workspace_id,name,parent_id,created_by) VALUES($1,$2,'Other work',$3,$4)`,
         [outside, workspace, room, teammate],
-      );
-      await db.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member'),($1,$2,$4,'owner')`,
-        [workspace, outside, person, teammate],
       );
       const ids: string[] = [];
       for (const channel of [room, corner, outside]) {

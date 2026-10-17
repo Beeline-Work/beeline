@@ -39,10 +39,9 @@ beforeAll(async () => {
     [A, B, W],
   );
   await db.query(
-    `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
-    [WS, A, W],
+    `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member') ON CONFLICT DO NOTHING`,
+    [WS, P, W],
   );
-  await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [WS, B, W]);
   daemon = new DaemonService(db, new LiveHub());
 }, 30_000);
 afterAll(async () => db?.close());
@@ -156,7 +155,7 @@ it('returns all merged PR snapshot fields from corner facts', async () => {
 
 it('lets a parent Room watch its child', async () => {
   await db.query(
-    `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
+    `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member') ON CONFLICT DO NOTHING`,
     [WS, P, W],
   );
   expect((await watch(['merged'], P)).snapshot.id).toBe(B);
@@ -213,7 +212,7 @@ it('a duplicate line wakes once', async () => {
 it.each(['removed membership', 'archived watcher'])('%s stops wakes', async (reason) => {
   await watch();
   if (reason === 'removed membership')
-    await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1`, [A]);
+    await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1`, [P]);
   else await db.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`, [A]);
   await emit();
   expect(await wakes()).toEqual([]);

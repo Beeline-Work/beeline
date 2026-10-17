@@ -333,11 +333,6 @@ describe('monolith integration', () => {
        VALUES($1,$2,'Steer target','{}')`,
       [steerCorner, AGENT],
     );
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-       VALUES($1,$2,$3,'member'),($1,$2,$4,'member')`,
-      [WORKSPACE, steerCorner, HUMAN, AGENT],
-    );
     const messageId = createHash('sha256').update('steer-outage').digest('hex');
     await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`, [
       messageId,
@@ -563,20 +558,10 @@ describe('monolith integration', () => {
       });
     }
 
-    // RO3b iii: departing the opening room removes reuse of its messages.
-    // The approval already stored on the current revision still carries it.
-    await database.query(
-      `UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,
-      [corner, AGENT],
-    );
-    const afterDeparture = { messageId: createHash('sha256').update('after-departure').digest('hex') };
-    await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)`, [
-      afterDeparture.messageId,
-      corner,
-      HUMAN,
-      'Keep the approved label.',
-    ]);
-    await expectRefusal(afterDeparture.messageId);
+    // A corner cannot be left independently. Parent departure revokes the entire surface.
+    await database.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,[ROOM,AGENT]);
+    expect((await daemonCall('listCornerBriefRevisions',{ cornerId })).status).toBe(403);
+    await database.query(`UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2`,[ROOM,AGENT]);
     const stored = await revise(fix.messageId);
     expect(stored.status).toBe(200);
     expectedRevision += 1;
@@ -585,14 +570,11 @@ describe('monolith integration', () => {
       approval: { sourceMessageId: fix.messageId, text: '@bee sweep the feedback', approvedBy: HUMAN },
     });
     const parentApproval = await turnIn(ROOM);
-    await expectRefusal(parentApproval.messageId, [attachments.get(corner)!]);
-    // A later parent approval must not replace an inaccessible opening source.
     const parentRevision = await revise(parentApproval.messageId, [attachments.get(ROOM)!]);
     expect(parentRevision.status).toBe(200);
     expectedRevision += 1;
-    await expectRefusal(afterDeparture.messageId);
     console.info(
-      'RO3a: authenticated sibling revision 2 quotes opening approval; parent/self/opening attachments accepted. RO3b: unrelated, agent-authored and departed-room approvals/files refused without a revision.',
+      'RO3a: authenticated sibling revision 2 quotes opening approval; parent/self/opening attachments accepted. RO3b: unrelated and agent-authored approvals/files refused; parent departure revokes corner reads.',
     );
   });
   it.each(['parent', 'self'])(
@@ -879,10 +861,6 @@ describe('monolith integration', () => {
     await database.query(
       `INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Cursor corner')`,
       [corner, WORKSPACE, ROOM],
-    );
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member'),($1,$2,$4,'member')`,
-      [WORKSPACE, corner, HUMAN, AGENT],
     );
     for (const [index, id] of [ROOM, corner].entries()) {
       const read = `${index}f`.padEnd(64, 'f');
@@ -1500,11 +1478,6 @@ describe('monolith integration', () => {
       `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Corner')`,
       [cornerId, WORKSPACE, ROOM, AGENT],
     );
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-       VALUES($1,$2,$3,'member'),($1,$2,$4,'member')`,
-      [WORKSPACE, cornerId, AGENT, reviewerId],
-    );
 
     expect(
       (await operation('updateRoom', { roomId: ROOM, reviewerAgentId: reviewerId })).status,
@@ -1520,7 +1493,7 @@ describe('monolith integration', () => {
     expect(
       (
         await database.query<{ room_id: string; event_subscriptions: string[] }>(
-          `SELECT room_id,event_subscriptions FROM memberships
+          `SELECT room_id,event_subscriptions FROM effective_memberships
            WHERE identity_id=$1 AND room_id=ANY($2::uuid[]) ORDER BY room_id`,
           [reviewerId, [ROOM, cornerId]],
         )
@@ -1552,7 +1525,7 @@ describe('monolith integration', () => {
     expect(
       (
         await database.query<{ event_subscriptions: string[] }>(
-          `SELECT event_subscriptions FROM memberships WHERE identity_id=$1 AND room_id=$2`,
+          `SELECT event_subscriptions FROM effective_memberships WHERE identity_id=$1 AND room_id=$2`,
           [reviewerId, ROOM],
         )
       ).rows,
@@ -1577,7 +1550,7 @@ describe('monolith integration', () => {
     expect(
       (
         await database.query<{ event_subscriptions: string[] }>(
-          `SELECT event_subscriptions FROM memberships
+          `SELECT event_subscriptions FROM effective_memberships
            WHERE identity_id=$1 AND room_id=ANY($2::uuid[]) ORDER BY room_id`,
           [AGENT, [ROOM, cornerId]],
         )
@@ -3442,10 +3415,6 @@ describe('monolith integration', () => {
       [cornerId, WORKSPACE, ROOM],
     );
     await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
-      [WORKSPACE, cornerId, AGENT],
-    );
-    await database.query(
       `INSERT INTO messages(id,room_id,author_id,text,presentation) VALUES
        ($1,$2,$3,'Corner trigger','message'),
        ($4,$2,$3,'Corner transcript row the turn must read','message')`,
@@ -3493,10 +3462,8 @@ describe('monolith integration', () => {
     );
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-       ($1,$2,$5,'owner'),($1,$2,$6,'member'),
-       ($1,$3,$5,'owner'),($1,$3,$6,'member'),
-       ($1,$4,$6,'member')`,
-      [WORKSPACE, corner, shared, privateRoom, HUMAN, AGENT],
+       ($1,$2,$4,'owner'),($1,$2,$5,'member'),($1,$3,$5,'member') `,
+      [WORKSPACE, shared, privateRoom, HUMAN, AGENT],
     );
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text,presentation) VALUES
@@ -3763,11 +3730,6 @@ describe('monolith integration', () => {
         ('44444444-4444-4444-8444-444444444444',$1,$2,'Open corner',NULL)`,
       [WORKSPACE, ROOM],
     );
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-       SELECT workspace_id,id,$2,'member' FROM rooms WHERE parent_id=$1`,
-      [ROOM, HUMAN],
-    );
     const chat = (
       (await (await request(`/v1/phone/workspaces/${WORKSPACE}/chats`)).json()) as {
         chats: Array<{
@@ -3797,11 +3759,6 @@ describe('monolith integration', () => {
        FROM generate_series(1,23) i`,
       [WORKSPACE, ROOM],
     );
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-       SELECT workspace_id,id,$2,'member' FROM rooms WHERE parent_id=$1`,
-      [ROOM, HUMAN],
-    );
     const expected = (
       await database.query<{ id: string }>(
         `SELECT id::text FROM rooms WHERE parent_id=$1 AND archived_at IS NOT NULL
@@ -3825,11 +3782,6 @@ describe('monolith integration', () => {
       `INSERT INTO rooms(id,workspace_id,parent_id,name,archived_at)
        VALUES('00000000-0000-4000-8000-000000000099',$1,$2,'Closed later',now())`,
       [WORKSPACE, ROOM],
-    );
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-       VALUES($1,'00000000-0000-4000-8000-000000000099',$2,'member')`,
-      [WORKSPACE, HUMAN],
     );
     const second = await page(first.nextArchived);
     const third = await page(second.nextArchived);
@@ -6431,7 +6383,7 @@ describe('monolith integration', () => {
     expect(created.status).toBe(200);
     const { id: cornerId } = (await created.json()) as { id: string };
     const inherited = await database.query<{ event_subscriptions: string[] }>(
-      `SELECT event_subscriptions FROM memberships WHERE room_id=$1 AND identity_id=$2`,
+      `SELECT event_subscriptions FROM effective_memberships WHERE room_id=$1 AND identity_id=$2`,
       [cornerId, AGENT],
     );
     expect(inherited.rows[0]!.event_subscriptions).toEqual(['joined']);
@@ -6505,9 +6457,9 @@ describe('monolith integration', () => {
     const otherId = createHash('sha256').update(`github:${otherLogin}`).digest('hex');
     const otherToken = await phoneToken(otherLogin);
     await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-       VALUES($1,NULL,$2,'member'),($1,$3,$2,'member'),($1,$4,$2,'member')`,
-      [WORKSPACE, otherId, ROOM, cornerId],
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+       ($1,NULL,$2,'member'),($1,$3,$2,'member') `,
+      [WORKSPACE, otherId, ROOM],
     );
     const refused = await operation('requestCornerClose', { roomId: cornerId }, otherToken);
     expect(refused.status).toBe(403);
@@ -6522,9 +6474,9 @@ describe('monolith integration', () => {
     const adminId = createHash('sha256').update(`github:${adminLogin}`).digest('hex');
     const adminToken = await phoneToken(adminLogin);
     await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-       VALUES($1,NULL,$2,'admin'),($1,$3,$2,'member'),($1,$4,$2,'member')`,
-      [WORKSPACE, adminId, ROOM, cornerId],
+      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+       ($1,NULL,$2,'admin'),($1,$3,$2,'member') `,
+      [WORKSPACE, adminId, ROOM],
     );
     expect((await operation('requestCornerClose', { roomId: cornerId }, adminToken)).status).toBe(
       204,
@@ -6743,7 +6695,7 @@ describe('monolith integration', () => {
     expect(
       (
         await database.query(
-          `SELECT 1 FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
+          `SELECT 1 FROM effective_memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
           [cornerId, AGENT],
         )
       ).rowCount,
@@ -7907,11 +7859,10 @@ describe('monolith integration', () => {
     });
     expect(created.status).toBe(200);
     const { cornerId } = (await created.json()) as { cornerId: string };
-    // `createCorner` copies the parent Room's roster in; this one leaves again,
-    // which is the only way to be addressed in a corner you are not in.
+    // Leaving the parent Room immediately removes access to every corner.
     await database.query(
       `UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,
-      [cornerId, stranger],
+      [ROOM, stranger],
     );
 
     // Both member agents list it, and both are told who opened it.
@@ -7927,9 +7878,7 @@ describe('monolith integration', () => {
     expect(
       await (await daemonOperation('listRoomCorners', { roomId: ROOM }, peerToken)).json(),
     ).toEqual({ corners: [listed] });
-    expect(
-      await (await daemonOperation('listRoomCorners', { roomId: ROOM }, strangerToken)).json(),
-    ).toEqual({ corners: [] });
+    expect((await daemonOperation('listRoomCorners',{ roomId: ROOM },strangerToken)).status).toBe(403);
 
     // A human hands the work to the member that did not open it. The mention
     // reaches that agent's corner inbox and its turn is accepted.
@@ -8085,11 +8034,6 @@ describe('monolith integration', () => {
     await database.query(
       `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Legacy corner')`,
       [legacyCornerId, WORKSPACE, ROOM, HUMAN],
-    );
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-       VALUES($1,$2,$3,'member'),($1,$2,$4,'member')`,
-      [WORKSPACE, legacyCornerId, HUMAN, AGENT],
     );
     await database.query(
       `INSERT INTO corner_facts(corner_id,objective) VALUES($1,'Legacy objective')`,
@@ -8498,11 +8442,6 @@ describe('monolith integration', () => {
     await database.query(
       `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Stop corner')`,
       [cornerId, WORKSPACE, ROOM, AGENT],
-    );
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-       VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`,
-      [WORKSPACE, cornerId, HUMAN, AGENT],
     );
 
     await operation('sendRoomMessage', {
@@ -10170,7 +10109,7 @@ describe('monolith integration', () => {
       if (health === 'offline')
         await database.query(`DELETE FROM live_outputs WHERE agent_id=$1`, [worker]);
       if (health === 'removed')
-        await database.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [cornerId, worker]);
+        await database.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [ROOM, worker]);
       if (health === 'recent-failure' || health === 'out-of-credit') {
         await database.query(`INSERT INTO agent_turns(room_id,request_id,agent_id,status,created_at)
           VALUES($1,'worker-failed',$2,'failed',now()-$3::interval)`, [ROOM, worker, health === 'out-of-credit' ? '1 day' : '0 seconds']);
@@ -10222,7 +10161,7 @@ describe('monolith integration', () => {
       reviewerId,
       HUMAN,
     ]);
-    for (const memberRoom of [null, ROOM, cornerId])
+    for (const memberRoom of [null, ROOM])
       await database.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
         [WORKSPACE, memberRoom, reviewerId],
@@ -10869,7 +10808,7 @@ describe('monolith integration', () => {
       expect(
         (
           await database.query(
-            `SELECT 1 FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
+            `SELECT 1 FROM effective_memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
             [cornerId, member],
           )
         ).rowCount,
@@ -12424,11 +12363,6 @@ describe('monolith integration', () => {
       `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Corner')`,
       [cornerId, WORKSPACE, ROOM, HUMAN],
     );
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-       VALUES($1,$2,$3,'member'),($1,$2,$4,'member')`,
-      [WORKSPACE, cornerId, HUMAN, AGENT],
-    );
     await daemonOperation('postAgentMachineReport', { machineId: 'machine-otter-corner', machineName: 'otter-laptop' });
     await daemonOperation('postConnectorVault', { connections: [] });
     const connector = { id: 'squire:machine-otter-corner' };
@@ -13011,10 +12945,6 @@ describe('monolith integration', () => {
       `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Corner')`,
       [cornerId, WORKSPACE, ROOM, AGENT],
     );
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
-      [WORKSPACE, cornerId, AGENT],
-    );
     await daemonOperation('requestAgentGrant', {
       roomId: cornerId,
       kind: 'command',
@@ -13438,7 +13368,7 @@ describe('monolith integration', () => {
     expect(created.status).toBe(200);
     const { cornerId } = (await created.json()) as { cornerId: string };
     const inherited = await database.query<{ event_subscriptions: string[] }>(
-      `SELECT event_subscriptions FROM memberships WHERE room_id=$1 AND identity_id=$2`,
+      `SELECT event_subscriptions FROM effective_memberships WHERE room_id=$1 AND identity_id=$2`,
       [cornerId, AGENT],
     );
     expect(inherited.rows[0]!.event_subscriptions).toEqual(['joined']);
@@ -13655,7 +13585,7 @@ describe('monolith integration', () => {
       room_id: string | null;
       event_subscriptions: string[];
     }>(
-      `SELECT room_id,event_subscriptions FROM memberships WHERE identity_id=$1
+      `SELECT room_id,event_subscriptions FROM effective_memberships WHERE identity_id=$1
        ORDER BY room_id NULLS FIRST`,
       [agentPubkey],
     );

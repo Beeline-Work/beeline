@@ -23,7 +23,7 @@ import { WORKFLOW_HANDOFF_CARD_TYPE, workflowGatePrompt } from './workflow-runs.
 
 /** The same membership rule as `PhoneService.hasRoomAccess`, inlined over `room`. */
 const VIEWER_CAN_READ_ROOM_SQL = `EXISTS (
-  SELECT 1 FROM memberships room_member
+  SELECT 1 FROM effective_memberships room_member
   WHERE room_member.room_id=room.id AND room_member.identity_id=$2
     AND room_member.removed_at IS NULL
     AND EXISTS (

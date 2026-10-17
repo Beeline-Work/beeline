@@ -55,7 +55,7 @@ beforeEach(async () => {
     `INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Issues triage')`,
     [TRIAGE_CORNER, WORKSPACE, ROOM],
   );
-  for (const roomId of [ROOM, TRIAGE_CORNER])
+  for (const roomId of [ROOM])
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`,
       [WORKSPACE, roomId, CREATOR, TRIAGER],

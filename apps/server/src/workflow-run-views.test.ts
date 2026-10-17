@@ -110,7 +110,7 @@ beforeEach(async () => {
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member')`,
       [WORKSPACE, who],
     );
-  for (const roomId of [ROOM, CORNER])
+  for (const roomId of [ROOM])
     for (const who of [OWNER, TRIAGER, REVIEWER])
       await database.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
@@ -243,7 +243,7 @@ describe('listRoomWorkflowRuns', () => {
     await end(await start());
     const live = await start();
     // While it is live, a person cannot start another run of it either.
-    await database.query(`UPDATE memberships SET role='admin' WHERE room_id=$1 AND identity_id=$2`, [CORNER, OWNER]);
+    await database.query(`UPDATE memberships SET role='admin' WHERE room_id=$1 AND identity_id=$2`, [ROOM, OWNER]);
     await expect(phone.execute('startOwnedWorkflow', {
       roomId: CORNER, name: 'feedback-triage', roleBindings: { triager: TRIAGER },
     }, OWNER)).rejects.toThrow(`feedback-triage already has a live run ${live}`);
@@ -482,26 +482,15 @@ describe('readWorkflowRun', () => {
       choiceId: choice.id,
       optionId: choice.options.find((option) => option.label === 'dispatch')!.optionId,
     }, OWNER);
-    // The triager opens two fix corners in the top Room; the owner is only in
-    // one. It also opens an unrelated corner the handoff does not list.
+    // Both listed corners inherit the Room audience; an unlisted corner stays absent.
     await database.query(
       `INSERT INTO rooms(id,workspace_id,created_by,name,parent_id) VALUES
-         ($1,$4,$5,'Corner dropdown fix',$6),($2,$4,$5,'Private fix',$6),($3,$4,$5,'Unrelated corner',$6)`,
-      [FIX_CORNER, HIDDEN_CORNER, UNLISTED_CORNER, WORKSPACE, TRIAGER, ROOM],
-    );
-    for (const roomId of [FIX_CORNER, UNLISTED_CORNER])
-      for (const who of [OWNER, TRIAGER])
-        await database.query(
-          `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
-          [WORKSPACE, roomId, who],
-        );
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')`,
-      [WORKSPACE, HIDDEN_CORNER, TRIAGER],
+         ($1,$4,$5,'Corner dropdown fix',$6),($2,$4,$5,'Second fix',$6),($3,$4,$5,'Unrelated corner',$6)`,
+      [FIX_CORNER,HIDDEN_CORNER,UNLISTED_CORNER,WORKSPACE,TRIAGER,ROOM],
     );
     const corners = [
       { cornerId: FIX_CORNER, name: 'Corner dropdown fix', items: ['f1'] },
-      { cornerId: HIDDEN_CORNER, name: 'Private fix', items: ['f2'] },
+      { cornerId: HIDDEN_CORNER, name: 'Second fix', items: ['f2'] },
     ];
     await handoff(database, await command(CORNER, TRIAGER), {
       runId,
@@ -521,6 +510,7 @@ describe('readWorkflowRun', () => {
     // Only a listed corner the viewer can read, on the step that opened it.
     expect(detail.history[2]!.openedCorners).toEqual([
       { id: FIX_CORNER, name: 'Corner dropdown fix', parentRoomId: ROOM },
+      { id: HIDDEN_CORNER, name: 'Second fix', parentRoomId: ROOM },
     ]);
     expect(detail.history[3]).toMatchObject({
       fromState: 'dispatch',

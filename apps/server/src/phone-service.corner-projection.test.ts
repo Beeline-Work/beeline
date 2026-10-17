@@ -55,12 +55,12 @@ async function fixture() {
   await database.query(
     `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
      SELECT $1::uuid,NULL::uuid,$2::text,'owner' UNION ALL
-     SELECT $1::uuid,id,$2::text,'owner' FROM rooms WHERE workspace_id=$1::uuid`,
+     SELECT $1::uuid,id,$2::text,'owner' FROM rooms WHERE workspace_id=$1::uuid AND parent_id IS NULL`,
     [WORKSPACE, VIEWER],
   );
   await database.query(
     `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-     SELECT $1::uuid,id,$2::text,'member' FROM rooms WHERE workspace_id=$1::uuid`,
+     SELECT $1::uuid,id,$2::text,'member' FROM rooms WHERE workspace_id=$1::uuid AND parent_id IS NULL`,
     [WORKSPACE, AGENT],
   );
   return { database, phone: new PhoneService(database, 'http://local.test') };

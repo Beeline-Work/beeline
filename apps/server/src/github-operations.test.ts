@@ -71,11 +71,6 @@ describe('GitHub phone operations', () => {
     const { corners, headSha: oldHead, app, payload } = await checksFixture();
     const corner = corners[0]!;
     const newHead = '2'.repeat(40);
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-       SELECT workspace_id,$1,$2,'member' FROM rooms WHERE id=$1`,
-      [corner, REVIEWER],
-    );
     // GitHub has accepted the push, but its push/synchronize webhooks are still queued.
     app.readPullRequest.mockResolvedValue({
       number: 1, headSha: newHead, url: 'https://github.com/owner/widgets/pull/1',
@@ -194,7 +189,6 @@ describe('GitHub phone operations', () => {
   it('Reproduction F1-6: live verdict and dispatch remain separate, with no self-review special case', async () => {
     const { corners, app } = await checksFixture();
     const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
-    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES('11111111-1111-4111-8111-111111111111',$1,$2,'member')`, [corners[0], REVIEWER]);
     const self = await operations.prChecksStatus({ cornerId: corners[0]! });
     // The server no longer treats a reviewer that is also this corner's
     // opener as a special case: it waits for dispatch exactly like any
@@ -413,14 +407,8 @@ describe('GitHub phone operations', () => {
         [corner, workspace, room, opener],
       );
       await tx.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role,event_subscriptions)
-         SELECT workspace_id,$2,identity_id,role,event_subscriptions FROM memberships
-         WHERE room_id=$1 AND removed_at IS NULL ON CONFLICT DO NOTHING`,
-        [room, corner],
-      );
-      await tx.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')`,
-        [workspace, corner, opener],
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
+        [workspace,room,opener],
       );
       await tx.query(
         `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,feature_branch,lifecycle)
@@ -498,11 +486,6 @@ describe('GitHub phone operations', () => {
     await database.query(
       `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Hidden river')`,
       [corner, workspace, room, HUMAN],
-    );
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-       SELECT workspace_id,$2,identity_id,role FROM memberships WHERE room_id=$1`,
-      [room, corner],
     );
     await database.query(
       `INSERT INTO corner_facts(corner_id,objective,kind,feature_branch,lifecycle)
@@ -969,8 +952,8 @@ describe('GitHub phone operations', () => {
     );
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-       ($1,NULL,$2,'owner'),($1,$3,$2,'owner'),($1,$4,$2,'owner')`,
-      [workspace, HUMAN, room, corner],
+       ($1,NULL,$2,'owner'),($1,$3,$2,'owner')`,
+      [workspace, HUMAN, room],
     );
     await database.query(
       `INSERT INTO corner_facts(corner_id,commissioned_by,objective,feature_branch,lifecycle)
@@ -1484,7 +1467,7 @@ describe('GitHub phone operations', () => {
       REVIEWER,
     ]);
     await database.query(`UPDATE rooms SET reviewer_agent_id=$2 WHERE id=$1`, [room, REVIEWER]);
-    for (const roomId of [room, corner])
+    for (const roomId of [room])
       await database.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
          VALUES($1,$2,$3,'member')`,
@@ -2051,11 +2034,6 @@ describe('GitHub phone operations', () => {
     // The agent must be a corner member (not just a parent-Room member) for
     // the conflict wake's agent_commands row to be dispatchable.
     await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-       SELECT workspace_id,$1,$2,'member' FROM rooms WHERE id=$1`,
-      [corner, REVIEWER],
-    );
-    await database.query(
       `UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,mergeability}','"dirty"') WHERE corner_id=$1`,
       [corner],
     );
@@ -2100,11 +2078,6 @@ describe('GitHub phone operations', () => {
   it('Reproduction C1-1: a clean PR is never woken from a webhook payload alone', async () => {
     const { corners, headSha, app } = await checksFixture();
     const corner = corners[0]!;
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-       SELECT workspace_id,$1,$2,'member' FROM rooms WHERE id=$1`,
-      [corner, REVIEWER],
-    );
     const readPullRequest = app.readPullRequest as unknown as ReturnType<typeof vi.fn>;
     readPullRequest.mockResolvedValue({
       number: 1,
@@ -2143,11 +2116,6 @@ describe('GitHub phone operations', () => {
   it('Reproduction C1-2: a new base does not wake the same head a second time', async () => {
     const { corners, headSha, app } = await checksFixture();
     const corner = corners[0]!;
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-       SELECT workspace_id,$1,$2,'member' FROM rooms WHERE id=$1`,
-      [corner, REVIEWER],
-    );
     await database.query(
       `UPDATE corner_facts
        SET lifecycle=jsonb_set(
@@ -2201,11 +2169,6 @@ describe('GitHub phone operations', () => {
   it('Reproduction C2-1: a failing check wake names the failing check, not the passing trigger', async () => {
     const { corners, headSha, app } = await checksFixture();
     const corner = corners[0]!;
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-       SELECT workspace_id,$1,$2,'member' FROM rooms WHERE id=$1`,
-      [corner, REVIEWER],
-    );
     await database.query(`DELETE FROM agent_commands WHERE room_id=$1`, [corner]);
     app.readCommitCheckRollup.mockResolvedValue({
       state: 'failed',
@@ -2245,10 +2208,6 @@ describe('GitHub phone operations', () => {
   it('wakes on the first failed job with its log and batches later failures once', async () => {
     const { corners, headSha, app, payload } = await checksFixture();
     const corner = corners[0]!;
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-       SELECT workspace_id,$1,$2,'member' FROM rooms WHERE id=$1`, [corner, REVIEWER],
-    );
     const checks = [
       { name: 'TYPECHECK', status: 'failed' as const, url: 'https://github.com/owner/widgets/actions/runs/10/job/101', jobId: 101 },
       { name: 'desktop', status: 'pending' as const },

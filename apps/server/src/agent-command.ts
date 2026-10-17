@@ -348,59 +348,14 @@ export function turnRootMessageSql(turn: 'turn' | 'written'): string {
 export function nextAgentDepth(parentDepth: number): number | undefined {
   return parentDepth < COMMAND_MAX_DEPTH ? parentDepth + 1 : undefined;
 }
-/**
- * A corner's configured reviewer must hold CORNER membership to read its
- * review commands (`DaemonService.access`), but nothing else maintains that
- * projection: a reviewer configured after a corner was opened (or one whose
- * corner membership was never written) leaves every green check in that
- * corner without a reachable reviewer. Left alone, the green dispatch once
- * rerouted the REVIEW to the corner owner, whose daemon then ran the review
- * and posted its text under the OWNER's name — the producing agent's
- * authorship was lost. This repairs the reviewer's corner membership in the
- * caller's transaction — restoring a removed projection row too, because
- * `rooms.reviewer_agent_id` is the sole authority and a configured reviewer
- * still holding parent membership is a live review actor, not a removal
- * intent (a retired agent fails the parent-membership guard and is never
- * restored). The repair is silent: no join note, push, or wake belongs to it.
- * Returns whether the reviewer can now read the corner.
- */
+/** A reviewer reaches a corner through current parent Room membership. */
 export async function repairReviewerCornerMembership(
-  db: SqlDatabase,
-  cornerId: string,
-  reviewerAgentId: string,
+  db: SqlDatabase, cornerId: string, reviewerAgentId: string,
 ): Promise<boolean> {
-  await db.query(
-    `UPDATE memberships m SET removed_at=NULL,joined_at=now()
-     FROM rooms corner
-     WHERE corner.id=$1 AND corner.parent_id IS NOT NULL
-       AND m.room_id=corner.id AND m.identity_id=$2 AND m.removed_at IS NOT NULL
-       AND EXISTS (
-         SELECT 1 FROM memberships parent_member
-         WHERE parent_member.room_id=corner.parent_id
-           AND parent_member.identity_id=$2 AND parent_member.removed_at IS NULL
-       )`,
-    [cornerId, reviewerAgentId],
-  );
-  await db.query(
-    `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-     SELECT parent.workspace_id,corner.id,$2,'member'
-     FROM rooms corner
-     JOIN rooms parent ON parent.id=corner.parent_id
-     WHERE corner.id=$1 AND corner.parent_id IS NOT NULL
-       AND EXISTS (
-         SELECT 1 FROM memberships parent_member
-         WHERE parent_member.room_id=corner.parent_id
-           AND parent_member.identity_id=$2 AND parent_member.removed_at IS NULL
-       )
-       AND NOT EXISTS (
-         SELECT 1 FROM memberships corner_member
-         WHERE corner_member.room_id=corner.id AND corner_member.identity_id=$2
-       )`,
-    [cornerId, reviewerAgentId],
-  );
   const member = await db.query(
-    `SELECT 1 FROM memberships m JOIN identities i ON i.id=m.identity_id AND i.kind='agent'
-     WHERE m.room_id=$1 AND m.identity_id=$2 AND m.removed_at IS NULL`,
+    `SELECT 1 FROM rooms corner JOIN effective_memberships member ON member.room_id=corner.parent_id
+     JOIN identities identity ON identity.id=member.identity_id AND identity.kind='agent'
+     WHERE corner.id=$1 AND member.identity_id=$2 AND member.removed_at IS NULL`,
     [cornerId, reviewerAgentId],
   );
   return member.rowCount > 0;
@@ -439,9 +394,9 @@ export async function createAgentCommand(
        COALESCE((SELECT author.kind='human' AND source.presentation='message' AND source.system_event IS NULL
          FROM messages source JOIN identities author ON author.id=source.author_id WHERE source.id=$3),false)
          AND $4::boolean OR COALESCE((SELECT kind='human' FROM identities WHERE id=$5),false) AND $6::boolean human_input
-     FROM memberships m JOIN rooms r ON r.id=m.room_id
+     FROM memberships m JOIN rooms r ON m.room_id=COALESCE(r.parent_id,r.id)
      JOIN identities i ON i.id=m.identity_id AND i.kind='agent'
-     WHERE m.room_id=$1 AND m.identity_id=$2 AND m.removed_at IS NULL AND r.archived_at IS NULL
+     WHERE r.id=$1 AND m.identity_id=$2 AND m.removed_at IS NULL AND r.archived_at IS NULL
      FOR SHARE OF m,r`, [input.roomId, input.agentId, input.sourceMessageId,
        input.reason !== 'schedule' && !input.privatePayload && !input.reason.startsWith('corner_'),
        input.privatePayload?.authorId ?? null, input.privatePayload?.kind === 'order'],
@@ -590,9 +545,9 @@ async function routeTaggedLifecycleCommand(
          presence.body->>'held'='true' presence_held
        FROM agents agent
        JOIN identities identity ON identity.id=agent.agent_id
-       JOIN memberships target_member ON target_member.room_id=$2
+       JOIN memberships target_member ON target_member.room_id=(SELECT COALESCE(parent_id,id) FROM rooms WHERE id=$2)
          AND target_member.identity_id=agent.agent_id AND target_member.removed_at IS NULL
-       JOIN memberships sender ON sender.room_id=$2
+       JOIN memberships sender ON sender.room_id=(SELECT COALESCE(parent_id,id) FROM rooms WHERE id=$2)
          AND sender.identity_id=$3 AND sender.removed_at IS NULL
        LEFT JOIN LATERAL (
          SELECT body,updated_at FROM live_outputs
@@ -894,7 +849,7 @@ export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Prom
     const agent = (
       await db.query<{ owner_id: string; access_policy: unknown }>(
         `SELECT a.owner_id,a.access_policy FROM agents a
-   JOIN memberships m ON m.identity_id=$2 AND m.room_id=$3 AND m.removed_at IS NULL
+   JOIN memberships m ON m.identity_id=$2 AND m.room_id=(SELECT COALESCE(parent_id,id) FROM rooms WHERE id=$3) AND m.removed_at IS NULL
    WHERE a.agent_id=$1 FOR ${avatarJob ? 'UPDATE' : 'SHARE'} OF a,m`,
         [target, source.author_id, source.room_id],
       )
@@ -1935,45 +1890,10 @@ export async function reconcileConfiguredCornerReviewers(
      SET event_subscriptions=reviewer_membership.event_subscriptions||'["check-passed"]'::jsonb
      FROM rooms surface
      JOIN rooms parent ON parent.id=COALESCE(surface.parent_id,surface.id)
-     WHERE reviewer_membership.room_id=surface.id
+     WHERE surface.parent_id IS NULL AND reviewer_membership.room_id=surface.id
        AND reviewer_membership.identity_id=parent.reviewer_agent_id
        AND reviewer_membership.removed_at IS NULL
        AND NOT reviewer_membership.event_subscriptions @> '["check-passed"]'::jsonb
-       AND ($1::uuid IS NULL OR parent.id=$1)`,
-    [parentRoomId ?? null],
-  );
-  // Repair the reviewer corner-membership projection first: the candidates
-  // join below requires the reviewer to already read every corner, and
-  // nothing else ever wrote that row for corners opened before the reviewer
-  // was configured (or after the row was removed some other way). A retired
-  // reviewer has no current parent membership and is never restored.
-  await db.query(
-    `UPDATE memberships m SET removed_at=NULL,joined_at=now()
-     FROM rooms corner
-     JOIN rooms parent ON parent.id=corner.parent_id
-     JOIN memberships parent_reviewer ON parent_reviewer.room_id=parent.id
-       AND parent_reviewer.identity_id=parent.reviewer_agent_id
-       AND parent_reviewer.removed_at IS NULL
-     WHERE corner.parent_id IS NOT NULL AND corner.archived_at IS NULL
-       AND m.room_id=corner.id AND m.identity_id=parent.reviewer_agent_id
-       AND m.removed_at IS NOT NULL
-       AND ($1::uuid IS NULL OR parent.id=$1)`,
-    [parentRoomId ?? null],
-  );
-  await db.query(
-    `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-     SELECT parent.workspace_id,corner.id,parent.reviewer_agent_id,'member'
-     FROM rooms corner
-     JOIN rooms parent ON parent.id=corner.parent_id
-     JOIN memberships parent_reviewer ON parent_reviewer.room_id=parent.id
-       AND parent_reviewer.identity_id=parent.reviewer_agent_id
-       AND parent_reviewer.removed_at IS NULL
-     WHERE corner.parent_id IS NOT NULL AND corner.archived_at IS NULL
-       AND NOT EXISTS (
-         SELECT 1 FROM memberships corner_member
-         WHERE corner_member.room_id=corner.id
-           AND corner_member.identity_id=parent.reviewer_agent_id
-       )
        AND ($1::uuid IS NULL OR parent.id=$1)`,
     [parentRoomId ?? null],
   );
@@ -1990,7 +1910,7 @@ export async function reconcileConfiguredCornerReviewers(
      FROM rooms corner
      JOIN rooms parent ON parent.id=corner.parent_id
      JOIN corner_facts fact ON fact.corner_id=corner.id
-     JOIN memberships reviewer ON reviewer.room_id=parent.id
+     JOIN effective_memberships reviewer ON reviewer.room_id=parent.id
        AND reviewer.identity_id=parent.reviewer_agent_id AND reviewer.removed_at IS NULL
      WHERE corner.archived_at IS NULL AND fact.lifecycle->>'checks'='passing'
        AND fact.lifecycle->'pr'->>'number' IS NOT NULL

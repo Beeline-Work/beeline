@@ -126,7 +126,7 @@ export function addressedToPersonSql(
  * each person's latest post once instead of once per item, and skips items
  * that can no longer be owed.
  */
-function cornerOwedRowsSql(where: string, bulk: boolean, corner?: string): string {
+function cornerOwedRowsSql(where: string, bulk: boolean, corner?: string, parent?: string): string {
   const answered = bulk
     ? `(answered.at IS NULL OR answered.at<=item.created_at)`
     : `NOT EXISTS (
@@ -138,7 +138,18 @@ function cornerOwedRowsSql(where: string, bulk: boolean, corner?: string): strin
   // The computed owed-corner CASE below cannot use messages.room_id's index.
   // Bound a one-corner refresh before evaluating it, including both kinds of
   // cross-Room item. Keep the final rules authoritative about attribution.
-  const candidates = corner ? `WITH candidate_items AS MATERIALIZED (
+  const candidates = parent ? `WITH candidate_items AS MATERIALIZED (
+      SELECT item.id FROM rooms child JOIN messages item ON item.room_id=child.id
+        WHERE child.parent_id=${parent}
+      UNION
+      SELECT item.id FROM rooms child JOIN messages item ON item.card->>'sourceRoomId'=child.id::text
+        WHERE child.parent_id=${parent}
+      UNION
+      SELECT item.id FROM rooms child JOIN agent_commands report ON
+        (CASE WHEN report.private_payload->>'originCornerId' ~ '${CANONICAL_UUID}'
+          THEN (report.private_payload->>'originCornerId')::uuid ELSE report.room_id END)=child.id
+        JOIN messages item ON item.request_id=report.id WHERE child.parent_id=${parent}
+    ) ` : corner ? `WITH candidate_items AS MATERIALIZED (
       SELECT id FROM messages WHERE room_id=${corner}
       UNION
       SELECT id FROM messages WHERE card->>'sourceRoomId'=${corner}::text
@@ -162,7 +173,7 @@ function cornerOwedRowsSql(where: string, bulk: boolean, corner?: string): strin
         'permission','connector-offer','app-sign-in','agent-sign-in','squire-approval'),
       ${BLOCKING_ITEM}
     FROM messages item
-    ${corner ? 'JOIN candidate_items candidate ON candidate.id=item.id' : ''}
+    ${corner || parent ? 'JOIN candidate_items candidate ON candidate.id=item.id' : ''}
     LEFT JOIN agent_commands report ON report.id=item.request_id AND report.agent_id=item.author_id
     LEFT JOIN rooms origin ON origin.id=CASE
       WHEN report.private_payload->>'originCornerId' ~ '${CANONICAL_UUID}'
@@ -174,7 +185,7 @@ function cornerOwedRowsSql(where: string, bulk: boolean, corner?: string): strin
       WHEN item.presentation='message' AND item.text ~ '^(blocked|needs-decision|failed):[[:space:]]*[^[:space:]]'
         THEN COALESCE(origin.id,item.room_id) ELSE item.room_id END
       AND owed_corner.parent_id IS NOT NULL
-    JOIN memberships person_member ON person_member.room_id=owed_corner.id
+    JOIN memberships person_member ON person_member.room_id=owed_corner.parent_id
       AND person_member.removed_at IS NULL
       AND person_member.identity_id IS DISTINCT FROM item.author_id
     JOIN identities person ON person.id=person_member.identity_id AND person.kind='human'
@@ -189,7 +200,7 @@ function cornerOwedRowsSql(where: string, bulk: boolean, corner?: string): strin
     }
     WHERE item.deleted_at IS NULL AND (${where})
       AND (item.room_id=owed_corner.id OR EXISTS (
-        SELECT 1 FROM memberships source_member WHERE source_member.room_id=item.room_id
+        SELECT 1 FROM memberships source_member WHERE source_member.room_id=(SELECT COALESCE(parent_id,id) FROM rooms WHERE id=item.room_id)
           AND source_member.identity_id=person.id AND source_member.removed_at IS NULL))
       ${
         bulk
@@ -370,8 +381,10 @@ CREATE TRIGGER corner_owed_message_update
 
 -- Joining or leaving a corner, or its Room (whose membership an @channel
 -- tag reads), changes what that person is owed there.
+-- Membership changes are short OLTP writes. Planner estimates over inherited
+-- audiences must not trigger seconds of LLVM compilation on a large Room.
 CREATE OR REPLACE FUNCTION corner_owed_member_changed() RETURNS trigger
-LANGUAGE plpgsql AS $corner_owed$
+LANGUAGE plpgsql SET jit=off AS $corner_owed$
 DECLARE
   member memberships%ROWTYPE;
 BEGIN
@@ -380,15 +393,15 @@ BEGIN
     OR NOT EXISTS (SELECT 1 FROM identities WHERE id=member.identity_id AND kind='human') THEN
     RETURN NULL;
   END IF;
+  -- Legacy corner-row deletion during migration cannot change inherited access.
   IF EXISTS (SELECT 1 FROM rooms WHERE id=member.room_id AND parent_id IS NOT NULL) THEN
-    PERFORM corner_owed_refresh(member.room_id, member.identity_id);
-  ELSE
-    PERFORM corner_owed_refresh(corner.id, member.identity_id)
-    FROM rooms corner
-    JOIN memberships corner_member ON corner_member.room_id=corner.id
-      AND corner_member.identity_id=member.identity_id AND corner_member.removed_at IS NULL
-    WHERE corner.parent_id=member.room_id;
+    RETURN NULL;
   END IF;
+  DELETE FROM corner_owed owed USING rooms corner
+    WHERE owed.corner_id=corner.id AND corner.parent_id=member.room_id AND owed.person_id=member.identity_id;
+  ${CORNER_OWED_INSERT}
+  ${cornerOwedRowsSql('owed_corner.parent_id=member.room_id AND person.id=member.identity_id', true, undefined, 'member.room_id')}
+  ON CONFLICT DO NOTHING;
   ${refreshReportedCornersSql('member.room_id', 'member.identity_id')}
   RETURN NULL;
 END
@@ -409,7 +422,7 @@ LANGUAGE plpgsql AS $corner_owed$
 BEGIN
   PERFORM corner_owed_refresh(corner.id, NEW.id)
   FROM rooms corner
-  JOIN memberships corner_member ON corner_member.room_id=corner.id
+  JOIN memberships corner_member ON corner_member.room_id=corner.parent_id
     AND corner_member.identity_id=NEW.id AND corner_member.removed_at IS NULL
   WHERE corner.parent_id IS NOT NULL;
   RETURN NULL;
@@ -426,7 +439,7 @@ CREATE OR REPLACE FUNCTION corner_owed_facts_changed() RETURNS trigger
 LANGUAGE plpgsql AS $corner_owed$
 BEGIN
   PERFORM corner_owed_refresh(NEW.corner_id, member.identity_id)
-  FROM memberships member
+  FROM effective_memberships member
   JOIN identities person ON person.id=member.identity_id AND person.kind='human'
   WHERE member.room_id=NEW.corner_id AND member.removed_at IS NULL;
   IF TG_OP='UPDATE' AND OLD.commissioned_by IS DISTINCT FROM NEW.commissioned_by
@@ -515,6 +528,8 @@ export function cornerOwedLookupSql(corner: string, viewerExpr: string): string 
           AND (seen.message_created_at,seen.message_id)>=(owed_item.created_at,owed_item.message_id)
       )),false) attention
     FROM corner_owed owed_item
+    JOIN memberships current_member ON current_member.room_id=${corner}.parent_id
+      AND current_member.identity_id=owed_item.person_id AND current_member.removed_at IS NULL
     WHERE owed_item.corner_id=${corner}.id
       AND (owed_item.expires_at IS NULL OR owed_item.expires_at>now())
   ) owed ON true`;

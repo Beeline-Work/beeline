@@ -74,6 +74,17 @@ function isMachineId(token: string): boolean {
   return token.length >= 8 && /[A-Za-z]/.test(token) && /\d/.test(token) && !readsAsWord(token);
 }
 
+/** True when no bracket opened before the cut is still unclosed. */
+function bracketsClosed(text: string): boolean {
+  const closing: Record<string, string> = { ')': '(', ']': '[', '}': '{' };
+  const stack: string[] = [];
+  for (const character of text) {
+    if (character === '(' || character === '[' || character === '{') stack.push(character);
+    else if (character in closing && stack[stack.length - 1] === closing[character]) stack.pop();
+  }
+  return stack.length === 0;
+}
+
 /** Deterministic speech cleanup; the written transcript is never changed. */
 function speakIdentifiers(text: string, members?: SpeechMembers): string {
   const index = memberIndex(members);
@@ -156,10 +167,15 @@ export class MarkdownSpeechStream {
       boundary = this.pending.indexOf('\n\n');
     }
     if (!/[*_`~\[\]#>|@\n]/.test(this.pending) && !/^\s*(?:[-+]\s|\d+[.)]\s)/.test(this.pending)) {
+      const sentence = /[.!?,;:]\s/g;
       let match: RegExpExecArray | null;
-      while ((match = /[.!?,;:]\s/.exec(this.pending))) {
-        phrases.push(markdownToSpeech(this.pending.slice(0, match.index + 1), this.members));
-        this.pending = this.pending.slice(match.index + 2);
+      while ((match = sentence.exec(this.pending))) {
+        const cut = match.index + 1;
+        // Never split inside an open bracket: a parenthesized ID clause must stay whole.
+        if (!bracketsClosed(this.pending.slice(0, cut))) continue;
+        phrases.push(markdownToSpeech(this.pending.slice(0, cut), this.members));
+        this.pending = this.pending.slice(cut + 1);
+        sentence.lastIndex = 0;
       }
     }
     return phrases.filter(Boolean);

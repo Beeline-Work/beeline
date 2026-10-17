@@ -112,6 +112,31 @@ it('Reproduction VOICE-IDS-4: drops consonant-only machine IDs before the bare-h
   }
 });
 
+it('Reproduction VOICE-IDS-5: streams a parenthesized ID clause without empty brackets', () => {
+  const input = 'Bug (ID: fb_409eec12d3be6644d9eba2bf). Done.';
+  expect(markdownToSpeech(input)).toBe('Bug. Done.');
+  for (let at = 0; at <= input.length; at++) {
+    const stream = new MarkdownSpeechStream();
+    const spoken = [...stream.push(input.slice(0, at)), ...stream.push(input.slice(at)), stream.finish()]
+      .filter(Boolean).join(' ');
+    expect(spoken, `split at ${at}`).toBe('Bug. Done.');
+  }
+  for (let seed = 1; seed <= 20; seed++) {
+    let cursor = 0; let random = seed; const stream = new MarkdownSpeechStream(); const phrases: string[] = [];
+    while (cursor < input.length) {
+      random = (random * 48271) % 2147483647;
+      const next = Math.min(input.length, cursor + (random % 7) + 1);
+      phrases.push(...stream.push(input.slice(cursor, next))); cursor = next;
+    }
+    phrases.push(stream.finish());
+    expect(phrases.filter(Boolean).join(' '), `seed ${seed}`).toBe('Bug. Done.');
+  }
+  // An open bracket only holds its own clause; the clause before it still starts playback.
+  const stream = new MarkdownSpeechStream();
+  expect(stream.push('Hello, friend (ID: 409eec12d3be6644d9eba2bf).')).toEqual(['Hello,']);
+  expect(stream.finish()).toBe('friend.');
+});
+
 it('speaks identifiers the same way when streamed in any chunk size', () => {
   const input = 'I filed this as a bug (fb_409eec12d3be6644d9eba2bf). Hi @bananaman614305, PR 2546 at 20:37, version 1.2.3.\n\n'
     + 'Commit 0123456789abcdef0123456789abcdef01234567 and 123e4567-e89b-12d3-a456-426614174000.';

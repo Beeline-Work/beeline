@@ -31,7 +31,7 @@ beforeEach(() => {
 });
 
 it('does not evaluate WebRTC on an App Store iOS runtime without its native modules', async () => {
-  await expect(createVoiceRoom()).rejects.toThrow('Update Beeline from the App Store');
+  await expect(createVoiceRoom()).rejects.toThrow('Conversation mode is not available in this iPhone version yet. It arrives in the next App Store update.');
   expect(state.loadLiveKit).not.toHaveBeenCalled();
 });
 
@@ -55,6 +55,6 @@ it('requires the background audio methods before loading voice on an intermediat
   state.modules.WebRTCModule = {};
   state.modules.LivekitReactNativeModule = {};
   state.background = { start() {}, stop() {} };
-  await expect(createVoiceRoom()).rejects.toThrow('Update Beeline from the App Store');
+  await expect(createVoiceRoom()).rejects.toThrow('Conversation mode is not available in this iPhone version yet. It arrives in the next App Store update.');
   expect(state.loadLiveKit).not.toHaveBeenCalled();
 });

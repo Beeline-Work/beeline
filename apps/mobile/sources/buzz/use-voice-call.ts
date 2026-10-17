@@ -52,8 +52,11 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
   const liveCleanup = React.useRef<(() => void) | null>(null);
   const joiningCleanup = React.useRef<(() => Promise<void>) | null>(null);
 
+  const retryWaiters = React.useRef(new Set<() => void>());
+
   const end = React.useCallback(async () => {
     revision.current++;
+    for (const cancel of retryWaiters.current) cancel();
     const cancelDeadline = cancelSilence.current; cancelSilence.current = undefined;
     if (cancelDeadline) void cancelDeadline().catch(() => {});
     mode.current = 'ended';
@@ -81,18 +84,36 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
     let closing: Promise<void> | undefined;
     let expireDeadline: () => Promise<void> = async () => {};
     const release = () => closing ??= closeVoiceTransport(transport);
+    const current = () => version === revision.current;
+    const request = async <T,>(id: string, action: Parameters<typeof voiceRequest>[1], sessionId?: string): Promise<T> => {
+      // Android can resume before DNS is ready. Retry only transport failures,
+      // within this call's lifetime, for at most fifteen seconds of backoff.
+      for (let attempt = 0; ; attempt++) {
+        if (!current()) throw new Error('Conversation mode ended');
+        try { return await voiceRequest<T>(id, action, sessionId); }
+        catch (cause) {
+          if (!current()) throw cause;
+          if (!/UnknownHostException|fetch failed|Network request failed|Failed to fetch/i.test(errorDiagnostic(cause).message)) throw cause;
+          if (attempt === 4) throw new Error('Lost connection to Beeline. Check your network.');
+          await new Promise<void>(resolve => {
+            const finish = () => { clearTimeout(timer); retryWaiters.current.delete(finish); resolve(); };
+            const timer = setTimeout(finish, 1_000 * 2 ** attempt);
+            retryWaiters.current.add(finish);
+          });
+        }
+      }
+    };
     try {
       transport = await createVoiceRoom(() => { void end(); }, roomId, () => { void expireDeadline(); });
       joiningCleanup.current = release;
       if (version !== revision.current) { await release(); return; }
-      joined = await voiceRequest<VoiceJoin>(roomId, 'join');
+      joined = await request<VoiceJoin>(roomId, 'join');
       if (version !== revision.current) { await release(); await voiceRequest(joined.call.id, 'leave', joined.sessionId); return; }
       await transport.configureStop(joined.call.id, joined.stopToken);
       if (version !== revision.current) { await release(); await voiceRequest(joined.call.id, 'leave', joined.sessionId); return; }
       setJoinedAgents({ roomId, agents: joined.agents });
       const { room } = transport;
       mode.current = 'active';
-      const current = () => version === revision.current;
       cancelSilence.current = transport.cancelSilence;
       const armSilence = () => {
         if (!current() || mode.current !== 'active' || speakerRef.current) return;
@@ -111,13 +132,14 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
         try {
           do {
             checkAgain = false;
-            const state = await voiceRequest<VoiceIdleState>(joined!.call.id, 'state', joined!.sessionId);
+            const state = await request<VoiceIdleState>(joined!.call.id, 'state', joined!.sessionId);
             if (!current() || mode.current !== 'parked') return;
+            setError(null);
             if (state.state === 'ended') { await finishIdle(); return; }
             if (state.state === 'ready') {
               mode.current = 'resuming';
               await transport!.resumeAudio();
-              await voiceRequest(joined!.call.id, 'resume', joined!.sessionId);
+              await request(joined!.call.id, 'resume', joined!.sessionId);
               if (!current()) return;
               await room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ type: 'resume', sessionId: joined!.sessionId })),
                 { reliable: true, topic: VOICE_DATA_TOPIC });
@@ -140,7 +162,7 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
         try {
           await transport!.cancelSilence();
           await room.localParticipant.setMicrophoneEnabled(false);
-          const state = await voiceRequest<VoiceIdleState>(joined!.call.id, 'idle', joined!.sessionId);
+          const state = await request<VoiceIdleState>(joined!.call.id, 'idle', joined!.sessionId);
           if (!current()) return;
           if (state.state === 'ended') { await finishIdle(); return; }
           await room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ type: 'park', sessionId: joined!.sessionId })),
@@ -197,7 +219,7 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
         recovering = true;
         void (async () => {
           // A full reconnect after token expiry needs a freshly authorized token.
-          const fresh = await voiceRequest<VoiceJoin>(roomId, 'join');
+          const fresh = await request<VoiceJoin>(roomId, 'join');
           if (version !== revision.current) { await voiceRequest(fresh.call.id, 'leave', fresh.sessionId).catch(() => {}); return; }
           joined = fresh;
           await transport!.configureStop(fresh.call.id, fresh.stopToken);
@@ -215,6 +237,7 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
           if (version !== revision.current) return;
           void reportClientError('voice-join', cause);
           void end();
+          setError(errorDiagnostic(cause).message);
         }).finally(() => { recovering = false; });
       });
       await room.connect(joined.url, joined.token);

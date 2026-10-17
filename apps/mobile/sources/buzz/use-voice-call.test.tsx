@@ -366,3 +366,71 @@ it('call-feedback-1: follows the mic when a stale speaker signal outlives bridge
     expect(voice.call).not.toBeNull();
   } finally { await act(async () => renderer.unmount()); vi.clearAllTimers(); vi.useRealTimers(); }
 });
+
+it.each(['recover', 'lasting', 'stop', 'other'] as const)('R1: parked resume network failure: %s', async outcome => {
+  vi.useFakeTimers(); fixture.fetch.mockClear(); fixture.resumeAudio.mockClear();
+  let failure: string | null = null;
+  let ready = false;
+  fixture.room = Object.assign(new EventEmitter(), { connect: vi.fn(async () => {}), disconnect: vi.fn(async () => {}),
+    remoteParticipants: new Map(), localParticipant: { publishData: vi.fn(async () => {}), setMicrophoneEnabled: vi.fn(async () => {}) } });
+  fixture.fetch.mockImplementation(async (url: string) => {
+    if (url.includes('/state') && failure) throw new Error(failure);
+    return new Response(JSON.stringify(url.endsWith('/idle') || url.includes('/state')
+      ? { state: ready ? 'ready' : 'parked', agentName: 'Ruby' }
+      : { sessionId: 'proof-session', call: { id: fixture.callId, roomId: fixture.callId, startedAt: 1, participants: [] }, url: 'ws://proof', token: 'test', agents: [] }));
+  });
+  let voice!: ReturnType<typeof useVoiceCall>; let renderer: any;
+  function Probe() { voice = useVoiceCall(fixture.callId, true); return null; }
+  await act(async () => { renderer = create(<Probe />); });
+  try {
+    await act(async () => voice.join());
+    await act(async () => vi.advanceTimersByTimeAsync(20_000));
+    failure = outcome === 'other' ? 'Permission denied' : 'fetch failed: java.net.UnknownHostException: Unable to resolve host "server.usebeeline.app": No address associated with hostname';
+    ready = true;
+    await act(async () => fixture.connected!());
+    if (outcome === 'other') { expect(voice.error).toBe('Permission denied'); return; }
+    expect(voice.error).toBeNull();
+    expect(voice.call).not.toBeNull();
+    if (outcome === 'recover') {
+      failure = null;
+      await act(async () => vi.advanceTimersByTimeAsync(1_000));
+      expect(fixture.resumeAudio).toHaveBeenCalledOnce();
+      expect(voice.error).toBeNull();
+      expect(voice.call).not.toBeNull();
+      expect(fixture.fetch.mock.calls.filter(([url]) => String(url).endsWith('/join'))).toHaveLength(1);
+    } else if (outcome === 'lasting') {
+      await act(async () => vi.advanceTimersByTimeAsync(15_000));
+      expect(voice.error).toBe('Lost connection to Beeline. Check your network.');
+      expect(vi.getTimerCount()).toBe(0);
+    } else {
+      await act(async () => voice.end());
+      const requests = fixture.fetch.mock.calls.length;
+      expect(vi.getTimerCount()).toBe(0);
+      await act(async () => vi.advanceTimersByTimeAsync(30_000));
+      expect(fixture.fetch).toHaveBeenCalledTimes(requests);
+      expect(voice.error).toBeNull();
+      expect(voice.call).toBeNull();
+    }
+  } finally { await act(async () => renderer.unmount()); vi.clearAllTimers(); vi.useRealTimers(); }
+});
+
+it.each(['Network request failed', 'fetch failed'] as const)('retries join transport failure: %s', async message => {
+  vi.useFakeTimers();
+  fixture.room = Object.assign(new EventEmitter(), { connect: vi.fn(async () => {}), disconnect: vi.fn(async () => {}),
+    remoteParticipants: new Map(), localParticipant: { publishData: vi.fn(async () => {}), setMicrophoneEnabled: vi.fn(async () => {}) } });
+  fixture.fetch.mockImplementation(async () => new Response(JSON.stringify({ sessionId: 'proof-session',
+    call: { id: fixture.callId, roomId: fixture.callId, startedAt: 1, participants: [] }, url: 'ws://proof', token: 'test', agents: [] })));
+  fixture.fetch.mockRejectedValueOnce(new TypeError(message));
+  let voice!: ReturnType<typeof useVoiceCall>; let renderer: any;
+  function Probe() { voice = useVoiceCall(fixture.callId, true); return null; }
+  await act(async () => { renderer = create(<Probe />); });
+  try {
+    let joining!: Promise<void>;
+    await act(async () => { joining = voice.join(); });
+    expect(voice.error).toBeNull();
+    expect(voice.connecting).toBe(true);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_000); await joining; });
+    expect(voice.call?.id).toBe(fixture.callId);
+    expect(voice.error).toBeNull();
+  } finally { await act(async () => renderer.unmount()); vi.clearAllTimers(); vi.useRealTimers(); }
+});

@@ -5,6 +5,7 @@ import { dirname, resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { expect, it } from 'vitest';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 
 const server = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const lockPath = resolve(server, 'system-messages.lock.jsonc');
@@ -72,6 +73,13 @@ function scan(files: Map<string, string>): Entry[] {
   const calls: ts.CallExpression[] = [];
   const cards: ts.ObjectLiteralExpression[] = [];
   const owners = new Map<ts.Node, ts.Node | undefined>();
+  const mutations = new Map<ts.Symbol, ts.Node[]>();
+  const rememberMutation = (target: ts.Node, values: readonly ts.Node[]) => {
+    while (ts.isPropertyAccessExpression(target) || ts.isElementAccessExpression(target))
+      target = target.expression;
+    const key = symbol(target);
+    if (key) mutations.set(key, [...(mutations.get(key) ?? []), ...values]);
+  };
   const visit = (node: ts.Node, owner?: ts.Node) => {
     if (
       ts.isFunctionDeclaration(node) ||
@@ -83,7 +91,18 @@ function scan(files: Map<string, string>): Entry[] {
       functions.set(node, node);
       if (ts.isVariableDeclaration(node.parent)) functions.set(node.parent, node);
     }
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
+    )
+      rememberMutation(node.left, [node.right]);
     if (ts.isCallExpression(node)) {
+      if (
+        ts.isPropertyAccessExpression(node.expression) &&
+        /^(push|unshift|splice|set|add)$/.test(node.expression.name.text)
+      )
+        rememberMutation(node.expression.expression, node.arguments);
       calls.push(node);
       owners.set(node, owner);
     }
@@ -91,10 +110,9 @@ function scan(files: Map<string, string>): Entry[] {
       ts.isObjectLiteralExpression(node) &&
       node.properties.some(
         (property) =>
-          ts.isPropertyAssignment(property) &&
+          (ts.isPropertyAssignment(property) || ts.isShorthandPropertyAssignment(property)) &&
           (/^(cardType|card_type)$/.test(property.name.getText()) ||
-            (property.name.getText() === 'presentation' &&
-              /^(?:'|\")(system|card)(?:'|\")$/.test(print(property.initializer)))),
+            property.name.getText() === 'presentation'),
       )
     ) {
       cards.push(node);
@@ -103,16 +121,6 @@ function scan(files: Map<string, string>): Entry[] {
     ts.forEachChild(node, (child) => visit(child, owner));
   };
   for (const file of program.getSourceFiles()) visit(file);
-  const privateReport = (call: ts.CallExpression) => {
-    const options = call.arguments[6];
-    if (!options || !ts.isObjectLiteralExpression(options)) return false;
-    for (const property of [...options.properties].reverse()) {
-      if (ts.isSpreadAssignment(property)) return false;
-      if (ts.isPropertyAssignment(property) && property.name.getText() === 'agentOnly')
-        return property.initializer.kind === ts.SyntaxKind.TrueKeyword;
-    }
-    return false;
-  };
   const targets = (node: ts.Node, name: string, seen = new Set<ts.Node>()): boolean => {
     if (seen.has(node)) return false;
     seen.add(node);
@@ -131,6 +139,15 @@ function scan(files: Map<string, string>): Entry[] {
     )
       return true;
     if (symbol(node)?.name === name || node.getText().split('.').at(-1) === name) return true;
+    const local = checker.getSymbolAtLocation(node);
+    if (
+      local?.declarations?.some(
+        (declaration) =>
+          ts.isImportSpecifier(declaration) &&
+          (declaration.propertyName ?? declaration.name).text === name,
+      )
+    )
+      return true;
     return declarations(node).some(
       (declaration) =>
         ((ts.isVariableDeclaration(declaration) || ts.isPropertyAssignment(declaration)) &&
@@ -138,6 +155,55 @@ function scan(files: Map<string, string>): Entry[] {
           targets(declaration.initializer, name, seen)) ||
         (ts.isBindingElement(declaration) && declaration.propertyName?.getText() === name),
     );
+  };
+  const queryResult = (node: ts.Node) => {
+    const target = ts.isCallExpression(node)
+      ? node.expression
+      : ts.isTaggedTemplateExpression(node)
+        ? node.tag
+        : undefined;
+    return !!target && ['query', 'sql', 'execute'].some((name) => targets(target, name));
+  };
+  const templatePrint = (node: ts.Node) => {
+    const transformed = ts.transform(node, [
+      (context) => (root) => {
+        const visit = (part: ts.Node): ts.Node =>
+          queryResult(part)
+            ? ts.factory.createIdentifier('$databaseResult')
+            : ts.visitEachChild(part, visit, context);
+        return ts.visitNode(root, visit) as typeof root;
+      },
+    ]);
+    const text = printer.printNode(
+      ts.EmitHint.Unspecified,
+      transformed.transformed[0]!,
+      node.getSourceFile(),
+    );
+    transformed.dispose();
+    return text;
+  };
+  const callableDeclarations = (node: ts.Node, seen = new Set<ts.Node>()): ts.Node[] => {
+    if (seen.has(node)) return [];
+    seen.add(node);
+    if (
+      (ts.isCallExpression(node) || ts.isPropertyAccessExpression(node)) &&
+      ts.isPropertyAccessExpression(ts.isCallExpression(node) ? node.expression : node) &&
+      /^(bind|call|apply)$/.test(
+        (ts.isCallExpression(node) ? node.expression : node).getText().split('.').at(-1)!,
+      )
+    ) {
+      const access = (
+        ts.isCallExpression(node) ? node.expression : node
+      ) as ts.PropertyAccessExpression;
+      return callableDeclarations(access.expression, seen);
+    }
+    return declarations(node).flatMap((declaration) => [
+      declaration,
+      ...((ts.isVariableDeclaration(declaration) || ts.isPropertyAssignment(declaration)) &&
+      declaration.initializer
+        ? callableDeclarations(declaration.initializer, seen)
+        : []),
+    ]);
   };
   const named = (call: ts.CallExpression, name: string) => targets(call.expression, name);
   const sqlText = (node: ts.Node, seen = new Set<ts.Node>()): string => {
@@ -188,16 +254,247 @@ function scan(files: Map<string, string>): Entry[] {
     });
     return pieces.join('');
   };
+  const systemPresentation = (node: ts.Node, seen = new Set<ts.Node>()): boolean => {
+    if (seen.has(node)) return false;
+    seen.add(node);
+    if (ts.isStringLiteralLike(node)) return node.text === 'system' || node.text === 'card';
+    if (
+      declarations(node).some(
+        (declaration) =>
+          ts.isVariableDeclaration(declaration) &&
+          !!declaration.initializer &&
+          systemPresentation(declaration.initializer, seen),
+      )
+    )
+      return true;
+    return node.getChildren().some((child) => systemPresentation(child, seen));
+  };
+  // SQL is transport. Keep only assigned message values, resolving parameters
+  // back to their expressions; predicates and other CTEs never supply wording.
+  const writes = new Map<ts.Node, { template: string; parts: ts.Node[] }>();
+  const sqlWrite = (node: ts.Node, query: ts.Node, values?: ts.Node) => {
+    const expressions: ts.Node[] = [];
+    const render = (part: ts.Node, seen = new Set<ts.Node>()): string => {
+      if (seen.has(part)) return '';
+      seen.add(part);
+      if (ts.isStringLiteralLike(part)) return part.text;
+      if (ts.isTemplateExpression(part))
+        return (
+          part.head.text +
+          part.templateSpans
+            .map((span) => {
+              const index = expressions.push(span.expression) - 1;
+              return `__expression_${index}__` + span.literal.text;
+            })
+            .join('')
+        );
+      for (const declaration of declarations(part)) {
+        if (ts.isVariableDeclaration(declaration) && declaration.initializer)
+          return render(declaration.initializer, seen);
+      }
+      return sqlText(part);
+    };
+    const text = render(query);
+    if (
+      !/\b(?:INSERT\s+INTO|UPDATE)\s+(?:"?public"?\s*\.\s*)?["`]?messages\b/i.test(sqlText(query))
+    )
+      return;
+    const array = (
+      part: ts.Node | undefined,
+      seen = new Set<ts.Node>(),
+    ): readonly ts.Expression[] => {
+      if (!part || seen.has(part)) return [];
+      seen.add(part);
+      if (ts.isArrayLiteralExpression(part)) return part.elements;
+      for (const declaration of declarations(part))
+        if (ts.isVariableDeclaration(declaration) && declaration.initializer)
+          return array(declaration.initializer, seen);
+      return [];
+    };
+    const parameters = array(values);
+    const tokens =
+      text.match(
+        /'(?:''|[^'])*'|"(?:""|[^"])*"|\$\d+|__expression_\d+__|[a-zA-Z_][\w]*|::|[^\s]/g,
+      ) ?? [];
+    const lower = (token: string | undefined) => {
+      const expression = token && /^__expression_(\d+)__$/.exec(token);
+      return (expression ? sqlText(expressions[Number(expression[1])]!) : token)
+        ?.replaceAll('"', '')
+        .toLowerCase();
+    };
+    const parts: ts.Node[] = [];
+    const outputs: string[] = [];
+    const project = (tokens: string[], capture = false): string =>
+      tokens
+        .map((token) => {
+          const parameter = /^\$(\d+)$/.exec(token);
+          const expression = /^__expression_(\d+)__$/.exec(token);
+          const value = parameter
+            ? parameters[Number(parameter[1]) - 1]
+            : expression
+              ? expressions[Number(expression[1])]
+              : undefined;
+          if (value) {
+            if (capture) parts.push(value);
+            return templatePrint(value);
+          }
+          return token;
+        })
+        .join(' ');
+    // Assigned expressions supply words and formatting. A nested SELECT's
+    // FROM/WHERE clauses select rows, rather than supplying phrase text.
+    const wording = (tokens: string[]) => {
+      let depth = 0;
+      let skip: number | undefined;
+      const selects = new Set<number>();
+      return tokens.filter((token) => {
+        if (token === '(') depth++;
+        if (token === ')') {
+          if (skip !== undefined && depth === skip) skip = undefined;
+          selects.delete(depth--);
+        }
+        if (lower(token) === 'select') selects.add(depth);
+        if (selects.has(depth) && /^(from|where)$/.test(lower(token) ?? '')) skip ??= depth;
+        return skip === undefined;
+      });
+    };
+    const group = (start: number, stops: Set<string>, closing = false) => {
+      const groups: string[][] = [[]];
+      let depth = 0;
+      let index = start;
+      for (; index < tokens.length; index++) {
+        const token = tokens[index]!;
+        if (!depth && ((closing && token === ')') || stops.has(lower(token)!))) break;
+        if (!depth && token === ',') groups.push([]);
+        else {
+          groups.at(-1)!.push(token);
+          if (token === '(') depth++;
+          if (token === ')') depth--;
+        }
+      }
+      return { groups, end: index };
+    };
+    for (let index = 0; index < tokens.length; index++) {
+      const insert = lower(tokens[index]) === 'insert' && lower(tokens[index + 1]) === 'into';
+      const update = lower(tokens[index]) === 'update';
+      if (!insert && !update) continue;
+      let table = index + (insert ? 2 : 1);
+      if (lower(tokens[table]) === 'public' && tokens[table + 1] === '.') table += 2;
+      if (lower(tokens[table]) !== 'messages') continue;
+      const rows = [new Map<string, string[]>()];
+      const fields = rows[0]!;
+      if (insert) {
+        if (tokens[table + 1] !== '(') continue;
+        const columns = group(table + 2, new Set(), true);
+        const mode = lower(tokens[columns.end + 1]);
+        if (mode !== 'values' && mode !== 'select') continue;
+        const row = group(
+          columns.end + (mode === 'values' ? 3 : 2),
+          new Set(['from', 'where', 'returning', 'on']),
+          mode === 'values',
+        );
+        columns.groups.forEach((column, position) => {
+          fields.set(lower(column[0])!, row.groups[position] ?? []);
+        });
+        let end = row.end;
+        while (mode === 'values' && tokens[end + 1] === ',' && tokens[end + 2] === '(') {
+          const next = group(end + 3, new Set(), true);
+          rows.push(
+            new Map(
+              columns.groups.map((column, position) => [
+                lower(column[0])!,
+                next.groups[position] ?? [],
+              ]),
+            ),
+          );
+          end = next.end;
+        }
+      } else {
+        let set = table + 1;
+        while (set < tokens.length && lower(tokens[set]) !== 'set') set++;
+        const assignments = group(set + 1, new Set(['where', 'from', 'returning']), true);
+        for (const assignment of assignments.groups) {
+          const equals = assignment.indexOf('=');
+          if (equals > 0) fields.set(lower(assignment[equals - 1])!, assignment.slice(equals + 1));
+        }
+      }
+      for (const fields of rows) {
+        for (const [name, tokens] of fields) {
+          if (tokens.join('') === name || tokens.join('').match(new RegExp(`^\\w+\\.${name}$`)))
+            fields.delete(name);
+        }
+        const assigned = (name: string, capture = false) =>
+          project(capture ? wording(fields.get(name) ?? []) : (fields.get(name) ?? []), capture);
+        // Resolve aliases/constants through the same symbol graph used by phrase collection.
+        const systemAuthor = (part: ts.Node, seen = new Set<ts.Node>()): boolean => {
+          if (seen.has(part)) return false;
+          seen.add(part);
+          if (
+            targets(part, 'SYSTEM_IDENTITY_ID') ||
+            (ts.isStringLiteralLike(part) && part.text === SYSTEM_IDENTITY_ID)
+          )
+            return true;
+          if (part.getChildren().some((child) => systemAuthor(child, seen))) return true;
+          return declarations(part).some(
+            (declaration) =>
+              ts.isVariableDeclaration(declaration) &&
+              !!declaration.initializer &&
+              systemAuthor(declaration.initializer, seen),
+          );
+        };
+        const authorTokens = fields.get('author_id') ?? [];
+        const authorParts = authorTokens.flatMap((token) => {
+          const parameter = /^\$(\d+)$/.exec(token);
+          const expression = /^__expression_(\d+)__$/.exec(token);
+          const part = parameter
+            ? parameters[Number(parameter[1]) - 1]
+            : expression
+              ? expressions[Number(expression[1])]
+              : undefined;
+          return part ? [part] : [];
+        });
+        const presentation = assigned('presentation');
+        const isSystem =
+          authorParts.some((part) => systemAuthor(part)) ||
+          authorTokens.some((token) => token === `'${SYSTEM_IDENTITY_ID}'`) ||
+          /['"](?:system|card)['"]/.test(presentation) ||
+          (fields.get('presentation') ?? []).some((token) => {
+            const parameter = /^\$(\d+)$/.exec(token);
+            const expression = /^__expression_(\d+)__$/.exec(token);
+            const value = parameter
+              ? parameters[Number(parameter[1]) - 1]
+              : expression
+                ? expressions[Number(expression[1])]
+                : undefined;
+            return !!value && systemPresentation(value);
+          }) ||
+          (fields.has('card_type') && !/^null$/i.test(assigned('card_type')));
+        const visible = [...fields.keys()].filter((name) =>
+          /^(text|card|system_event)$/.test(name),
+        );
+        // Existing card/event updates also supply visible System wording. Human
+        // edits explicitly constrained to ordinary messages stay outside the lock.
+        const humanOnly = /\b(?:\w+\.)?presentation\s*=\s*'message'/i.test(text);
+        if (!isSystem && (insert || !visible.length || humanOnly)) continue;
+        outputs.push(
+          `${insert ? 'INSERT' : 'UPDATE'} messages ` +
+            [
+              ...new Set([
+                ...visible,
+                ...['author_id', 'presentation', 'card_type'].filter((name) => fields.has(name)),
+              ]),
+            ]
+              .map((name) => `${name}=${assigned(name, true)}`)
+              .join(', '),
+        );
+      }
+    }
+    if (outputs.length) writes.set(node, { template: outputs.join('\n'), parts });
+  };
   const direct = new Map<ts.Node, string>();
   for (const file of program.getSourceFiles()) {
     const tagged = (node: ts.Node) => {
-      if (
-        ts.isTaggedTemplateExpression(node) &&
-        /\b(?:INSERT\s+INTO|UPDATE)\s+(?:"?public"?\s*\.\s*)?messages\b/i.test(
-          sqlText(node.template),
-        )
-      )
-        direct.set(node, 'message-write');
+      if (ts.isTaggedTemplateExpression(node)) sqlWrite(node, node.template);
       ts.forEachChild(node, tagged);
     };
     tagged(file);
@@ -205,17 +502,23 @@ function scan(files: Map<string, string>): Entry[] {
   for (const call of calls) {
     if (named(call, 'systemLine')) direct.set(call, 'systemLine');
     else if (named(call, 'restateSystemLine')) direct.set(call, 'restateSystemLine');
-    else if (named(call, 'reportToCommander') && !privateReport(call))
-      direct.set(call, 'reportToCommander');
-    else if (
-      call.arguments[0] &&
-      /\b(?:INSERT\s+INTO|UPDATE)\s+(?:"?public"?\s*\.\s*)?["`]?messages\b/i.test(
-        sqlText(call.arguments[0]),
+    else if (call.arguments[0]) sqlWrite(call, call.arguments[0], call.arguments[1]);
+  }
+  for (const node of writes.keys()) direct.set(node, 'message-write');
+  for (const card of cards)
+    if (
+      !direct.has(card.parent) &&
+      card.properties.some(
+        (property) =>
+          (ts.isPropertyAssignment(property) || ts.isShorthandPropertyAssignment(property)) &&
+          (/^(cardType|card_type)$/.test(property.name.getText()) ||
+            (property.name.getText() === 'presentation' &&
+              systemPresentation(
+                ts.isPropertyAssignment(property) ? property.initializer : property.name,
+              ))),
       )
     )
-      direct.set(call, 'message-write');
-  }
-  for (const card of cards) if (!direct.has(card.parent)) direct.set(card, 'system-card');
+      direct.set(card, 'system-card');
   // Track the parameters that feed phrase input, rather than every caller of a
   // function that happens to emit a notice. This follows forwarding helpers
   // without freezing unrelated control flow such as a voice heartbeat.
@@ -228,7 +531,7 @@ function scan(files: Map<string, string>): Entry[] {
             : ts.isShorthandPropertyAssignment(property)
               ? [property.name]
               : ts.isPropertyAssignment(property) &&
-                  /^(subject|verb|object|consequence|text|card|cardType|card_type)$/.test(
+                  /^(subject|verb|object|consequence|attribution|text|body|title|description|label|name|ask|card|cardType|card_type)$/.test(
                     property.name.getText(),
                   )
                 ? [property.initializer]
@@ -251,6 +554,11 @@ function scan(files: Map<string, string>): Entry[] {
           if (index >= 0) indices.add(index);
           if (ts.isVariableDeclaration(declaration) && declaration.initializer)
             inspect(declaration.initializer);
+          if (ts.isVariableDeclaration(declaration))
+            (symbol(declaration.name)
+              ? (mutations.get(symbol(declaration.name)!) ?? [])
+              : []
+            ).forEach(inspect);
         }
       ts.forEachChild(part, inspect);
     };
@@ -260,7 +568,7 @@ function scan(files: Map<string, string>): Entry[] {
   };
   for (const [node, kind] of direct) {
     if (!ts.isCallExpression(node)) {
-      forward(node, phraseParts(node));
+      forward(node, writes.get(node)?.parts ?? phraseParts(node));
       continue;
     }
     const call = node;
@@ -273,20 +581,15 @@ function scan(files: Map<string, string>): Entry[] {
           ? call.arguments[1]
             ? phraseParts(call.arguments[1])
             : []
-          : kind === 'reportToCommander'
-            ? call.arguments.slice(3, 4)
-            : /INSERT\s+INTO/i.test(sqlText(call.arguments[0]!))
-              ? call.arguments.slice(1)
-              : [];
+          : (writes.get(node)?.parts ?? []);
     forward(node, parts);
   }
   let changed = true;
   while (changed) {
     changed = false;
     for (const call of calls) {
-      if (named(call, 'reportToCommander') && privateReport(call)) continue;
       const indices = new Set(
-        declarations(call.expression).flatMap((declaration) => [
+        callableDeclarations(call.expression).flatMap((declaration) => [
           ...(wrappers.get(functions.get(declaration) ?? declaration) ?? []),
         ]),
       );
@@ -305,7 +608,7 @@ function scan(files: Map<string, string>): Entry[] {
   const entries = new Map<string, Entry>();
   for (const [node, kind] of direct) {
     const file = relative(server, node.getSourceFile().fileName).replaceAll('\\', '/');
-    const template = print(node);
+    const template = writes.get(node)?.template ?? templatePrint(node);
     const scope: string[] = [];
     for (let parent: ts.Node | undefined = node.parent; parent; parent = parent.parent)
       if (
@@ -321,6 +624,9 @@ function scan(files: Map<string, string>): Entry[] {
     const collect = (part: ts.Node) => {
       if (seen.has(part)) return;
       seen.add(part);
+      // Database calls return data, never their SQL text. Do not fingerprint
+      // access predicates reached through helpers used to build a subject.
+      if (queryResult(part)) return;
       if (ts.isStringLiteralLike(part) || ts.isTemplateExpression(part)) literals.add(print(part));
       if (
         (ts.isIdentifier(part) || ts.isPropertyAccessExpression(part)) &&
@@ -331,6 +637,11 @@ function scan(files: Map<string, string>): Entry[] {
           if (!files.has(declaration.getSourceFile().fileName)) continue;
           if (ts.isVariableDeclaration(declaration) && declaration.initializer)
             collect(declaration.initializer);
+          if (ts.isVariableDeclaration(declaration))
+            (symbol(declaration.name)
+              ? (mutations.get(symbol(declaration.name)!) ?? [])
+              : []
+            ).forEach(collect);
           if (ts.isBindingElement(declaration)) {
             let parent: ts.Node = declaration;
             while (parent.parent && !ts.isVariableDeclaration(parent)) parent = parent.parent;
@@ -342,20 +653,32 @@ function scan(files: Map<string, string>): Entry[] {
             (ts.isFunctionDeclaration(declaration) || ts.isMethodDeclaration(declaration)) &&
             declaration.body &&
             !wrappers.has(declaration)
-          )
-            collect(declaration.body);
+          ) {
+            const returned = (statement: ts.Node) => {
+              if (ts.isReturnStatement(statement) && statement.expression)
+                collect(statement.expression);
+              else if (!ts.isFunctionLike(statement)) ts.forEachChild(statement, returned);
+            };
+            ts.forEachChild(declaration.body, returned);
+          }
         }
       }
       ts.forEachChild(part, collect);
     };
     // The database argument is transport, not a phrase dependency.
-    if (ts.isCallExpression(node) && kind === 'systemLine')
-      node.arguments.slice(1).forEach(collect);
-    else if (ts.isCallExpression(node) && kind === 'restateSystemLine')
-      node.arguments.slice(2).forEach(collect);
-    else if (ts.isCallExpression(node) && kind === 'reportToCommander')
-      node.arguments.slice(3, 4).forEach(collect);
-    else collect(node);
+    if (ts.isCallExpression(node) && kind === 'systemLine') {
+      if (node.arguments[1]) phraseParts(node.arguments[1]).forEach(collect);
+    } else if (ts.isCallExpression(node) && kind === 'restateSystemLine') {
+      if (node.arguments[2]) phraseParts(node.arguments[2]).forEach(collect);
+    } else if (writes.has(node)) writes.get(node)!.parts.forEach(collect);
+    else if (kind === 'wrapper' && ts.isCallExpression(node)) {
+      const indices = callableDeclarations(node.expression).flatMap((declaration) => [
+        ...(wrappers.get(functions.get(declaration) ?? declaration) ?? []),
+      ]);
+      indices.forEach((index) => {
+        if (node.arguments[index]) collect(node.arguments[index]!);
+      });
+    } else collect(node);
     const prior = entries.get(id);
     if (prior) prior.occurrences++;
     else
@@ -380,7 +703,7 @@ function compare(current: Entry[], locked: Entry[]): { violations: string[]; rem
         !prior ||
         entry.template !== prior.template ||
         JSON.stringify(entry.literals) !== JSON.stringify(prior.literals) ||
-        entry.occurrences > prior.occurrences
+        entry.occurrences !== prior.occurrences
       );
     })
     .map((entry) => `${entry.file}: ${entry.id}`);
@@ -393,12 +716,8 @@ function compare(current: Entry[], locked: Entry[]): { violations: string[]; rem
 
 function enforce(current: Entry[], locked: Entry[]): void {
   const result = compare(current, locked);
-  if (result.removed.length)
-    console.info(
-      'Removed System message producers; delete their snapshot entries:\n' +
-        result.removed.join('\n'),
-    );
-  if (result.violations.length) throw new Error(failure + '\n' + result.violations.join('\n'));
+  if (result.violations.length || result.removed.length)
+    throw new Error(failure + '\n' + [...result.violations, ...result.removed].join('\n'));
 }
 
 it('freezes System message producers and literal templates against the owner-reviewed lock', () => {
@@ -453,12 +772,13 @@ it('rejects a changed existing template, including a referenced constant', () =>
   console.info('Demonstrated System message freeze: changed template fixture rejected');
 });
 
-it('allows removal and asks for the obsolete snapshot entry to be deleted', () => {
+it('rejects removal of a System producer', () => {
   const files = fixture();
   files.set('/fixtures/producer.ts', '');
   const result = compare(scan(files), scan(fixture()));
   expect(result.violations).toEqual([]);
   expect(result.removed).toHaveLength(1);
+  expect(() => enforce(scan(files), scan(fixture()))).toThrow(failure);
 });
 
 it('rejects templates added through a forwarding wrapper', () => {
@@ -478,20 +798,19 @@ it.each([
   "const write = line; const alias = write; alias(db, { verb: 'new aliased message' });",
   "restateSystemLine(db, 'id', {verb: 'new restatement'});",
   "db.send({ presentation: 'card', text: 'new card' });",
-  "db.sql`INSERT INTO messages(text) VALUES('new tagged post')`;",
-  "const table='messages'; db.query(`INSERT INTO public.${table}(text) VALUES($1)`, ['new interpolated post']);",
-  "reportToCommander(db, room, SYSTEM_IDENTITY_ID, 'new report');",
+  "db.sql`INSERT INTO messages(author_id,text) VALUES(${SYSTEM_IDENTITY_ID},'new tagged post')`;",
+  "db.query(`INSERT INTO public.messages(author_id,text) VALUES($1,$2)`, [SYSTEM_IDENTITY_ID,'new interpolated post']);",
 ])('rejects another producer syntax: %s', (statement) => {
   const baseline = fixture();
   const changed = fixture(`export function added(db: any) { ${statement} }`);
   expect(compare(scan(changed), scan(baseline)).violations.length).toBeGreaterThan(0);
 });
 
-it('does not treat an overridable agentOnly flag as a private report', () => {
+it('keeps ordinary agent reports outside the System lock', () => {
   const changed = fixture(
     "export function added(db: any, options: any) { reportToCommander(db, room, SYSTEM_IDENTITY_ID, 'new public report', undefined, 'id', {agentOnly: true, ...options}); }",
   );
-  expect(compare(scan(changed), scan(fixture())).violations.length).toBeGreaterThan(0);
+  expect(compare(scan(changed), scan(fixture())).violations).toEqual([]);
 });
 
 it('keeps a statically private report outside the visible-message lock', () => {
@@ -521,4 +840,185 @@ it('rejects a new phrase passed through a System card helper', () => {
     "function card(text: string) { return {presentation:'card',text}; } card('new card');",
   );
   expect(() => enforce(scan(changed), scan(base))).toThrow(failure);
+});
+
+it.each([
+  "db.query('INSERT INTO messages(author_id,text) VALUES($1,$2)', [humanId, 'hello']);",
+  "db.query(\"UPDATE messages SET text=$2 WHERE id=$1 AND presentation='message'\", [id, 'hello']);",
+  "db.query('UPDATE messages SET reactions=$2 WHERE id=$1', [id, '{}']);",
+])('ignores ordinary message writes: %s', (statement) => {
+  expect(() => enforce(scan(fixture(statement)), scan(fixture()))).not.toThrow();
+});
+
+it('ignores SQL predicates in a System write while freezing its assigned wording', () => {
+  const base = fixture(
+    "db.query(`INSERT INTO messages(author_id,text) SELECT $1,$2 FROM memberships WHERE removed_at IS NULL`, [SYSTEM_IDENTITY_ID, 'hello']);",
+  );
+  const mutate = (before: string, after: string) =>
+    new Map([...base].map(([path, text]) => [path, text.replace(before, after)]));
+  expect(() =>
+    enforce(scan(mutate('removed_at IS NULL', 'identity_id=$3')), scan(base)),
+  ).not.toThrow();
+  expect(() => enforce(scan(mutate("'hello'", "'goodbye'")), scan(base))).toThrow(failure);
+});
+
+it('ignores membership SQL reached through a phrase helper but freezes its returned wording', () => {
+  const base = fixture(`async function member(db: any) {
+    const row = await db.query('SELECT name FROM memberships WHERE removed_at IS NULL');
+    return { name: row.name, verb: 'joined' };
+  }
+  line(db, { subject: await member(db), verb: 'arrived' });`);
+  const mutate = (before: string, after: string) =>
+    new Map([...base].map(([path, text]) => [path, text.replace(before, after)]));
+  expect(() =>
+    enforce(scan(mutate('removed_at IS NULL', 'identity_id=$1')), scan(base)),
+  ).not.toThrow();
+  expect(() => enforce(scan(mutate("verb: 'joined'", "verb: 'left'")), scan(base))).toThrow(
+    failure,
+  );
+});
+
+it('rejects a decreased producer count', () => {
+  const once = fixture("line(db, { verb: 'hello' });");
+  const twice = fixture("line(db, { verb: 'hello' }); line(db, { verb: 'hello' });");
+  expect(() => enforce(scan(once), scan(twice))).toThrow(failure);
+});
+
+it.each([
+  "db.query(\"INSERT INTO messages(text,presentation) VALUES('hello','system')\");",
+  "db.query('INSERT INTO messages(text,presentation) VALUES($1,$2)', ['hello','system']);",
+  "db.query('INSERT INTO messages(text,card_type) VALUES($1,$2)', ['hello','grant-request']);",
+  "db.query('UPDATE messages SET presentation=$2 WHERE id=$1', [id,'system']);",
+  "const author=SYSTEM_IDENTITY_ID; db.query('INSERT INTO messages(author_id,text) VALUES($1,$2)', [author,'hello']);",
+])('rejects a direct System producer: %s', (statement) => {
+  expect(() => enforce(scan(fixture(statement)), scan(fixture()))).toThrow(failure);
+});
+
+it('follows aliases of forwarding wrappers', () => {
+  const base = fixture(
+    'function note(db: unknown, phrase: unknown) { return line(db, phrase); } const alias = note;',
+  );
+  const changed = new Map(base);
+  changed.set(
+    '/fixtures/producer.ts',
+    base.get('/fixtures/producer.ts')! + "alias(db, { verb: 'hello' });",
+  );
+  expect(() => enforce(scan(changed), scan(base))).toThrow(failure);
+});
+
+it('follows an external System identity import alias', () => {
+  const base = fixture();
+  const changed = new Map(base);
+  changed.set(
+    '/fixtures/producer.ts',
+    base.get('/fixtures/producer.ts')! +
+      `
+    import { SYSTEM_IDENTITY_ID as author } from '@beeline/api-contract/system-identity';
+    db.query('INSERT INTO messages(author_id,text) VALUES($1,$2)', [author,'hello']);`,
+  );
+  expect(() => enforce(scan(changed), scan(base))).toThrow(failure);
+});
+
+it('finds a System write to an interpolated table', () => {
+  expect(() =>
+    enforce(
+      scan(
+        fixture(
+          "const table='messages'; db.query(`INSERT INTO public.${table}(author_id,text) VALUES($1,$2)`, [SYSTEM_IDENTITY_ID,'hello']);",
+        ),
+      ),
+      scan(fixture()),
+    ),
+  ).toThrow(failure);
+});
+
+it('allows access predicate changes in sendMessage, deleteRoomMessage and recordAnswer', () => {
+  const base = sources(resolve(server, 'src'));
+  const changed = new Map(base);
+  for (const [filename, methods] of [
+    ['phone-service.ts', ['sendMessage', 'deleteRoomMessage']],
+    ['voice-service.ts', ['recordAnswer']],
+  ] as const) {
+    const path = resolve(server, 'src', filename);
+    let text = changed.get(path)!;
+    for (const method of methods) {
+      const ast = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true);
+      let found = false;
+      const visit = (node: ts.Node) => {
+        if (ts.isMethodDeclaration(node) && node.name.getText(ast) === method) {
+          const before = node.getText(ast);
+          const after = before.replaceAll(
+            'removed_at IS NULL',
+            'removed_at IS NOT DISTINCT FROM NULL',
+          );
+          expect(after).not.toBe(before);
+          text = text.slice(0, node.getStart(ast)) + after + text.slice(node.end);
+          found = true;
+        } else ts.forEachChild(node, visit);
+      };
+      visit(ast);
+      expect(found).toBe(true);
+    }
+    changed.set(path, text);
+  }
+  expect(() => enforce(scan(changed), scan(base))).not.toThrow();
+}, 30_000);
+
+it('freezes every row of a multi-row System insert', () => {
+  const base = fixture(
+    "db.query(\"INSERT INTO messages(text,presentation) VALUES('one','system'),('two','system')\");",
+  );
+  const changed = new Map(
+    [...base].map(([path, text]) => [path, text.replace("'two'", "'three'")]),
+  );
+  expect(() => enforce(scan(changed), scan(base))).toThrow(failure);
+});
+
+it('ignores no-op locks on message cards', () => {
+  expect(() =>
+    enforce(
+      scan(fixture("db.query('UPDATE messages SET card=card WHERE id=$1', [id]);")),
+      scan(fixture()),
+    ),
+  ).not.toThrow();
+});
+
+it('ignores a nested query predicate in a System card update', () => {
+  const base = fixture(
+    "db.query(`UPDATE messages SET card=jsonb_build_object('name',(SELECT name FROM memberships WHERE removed_at IS NULL)) WHERE id=$1`, [id]);",
+  );
+  const changed = new Map(
+    [...base].map(([path, text]) => [path, text.replace('removed_at IS NULL', 'identity_id=$2')]),
+  );
+  expect(() => enforce(scan(changed), scan(base))).not.toThrow();
+});
+
+it.each([
+  "function words() { let text='hello'; text += ' world'; return text; }",
+  "function words() { const text=['hello']; text.push(' world'); return text.join(''); }",
+])('freezes wording assembled by a formatting helper: %s', (helper) => {
+  const base = fixture(helper + 'line(db, {verb: words()});');
+  const changed = new Map(
+    [...base].map(([path, text]) => [path, text.replace(' world', ' everyone')]),
+  );
+  expect(() => enforce(scan(changed), scan(base))).toThrow(failure);
+});
+
+it('ignores an access query embedded in a System phrase input', () => {
+  const base = fixture(
+    "line(db, {subject: await db.query('SELECT name FROM memberships WHERE removed_at IS NULL'), verb: 'joined'});",
+  );
+  const changed = new Map(
+    [...base].map(([path, text]) => [path, text.replace('removed_at IS NULL', 'identity_id=$1')]),
+  );
+  expect(() => enforce(scan(changed), scan(base))).not.toThrow();
+});
+
+it('follows an aliased System presentation in a direct card', () => {
+  expect(() =>
+    enforce(
+      scan(fixture("const presentation='system'; db.send({presentation, text:'hello'});")),
+      scan(fixture()),
+    ),
+  ).toThrow(failure);
 });

@@ -14,9 +14,10 @@ The helper no longer sends Pi's registry update notice.
 The preload restores the original `NODE_OPTIONS` before Pi or MCP children
 start. It does not change extension imports, module contents outside the adapter's
 notice code, Room state, process isolation, or when sessions start. The adapter
-source replacements are checked: a changed upstream layout raises an explicit
-unsupported-source error rather than silently restoring synchronous checks.
-This is an upgrade maintenance obligation.
+source replacements were originally checked with a fatal unsupported-source
+error. The later startup fallback fix returns the original source unchanged
+when anchors or required bindings change, restoring synchronous checks instead
+of preventing startup.
 
 ## Reproduced
 

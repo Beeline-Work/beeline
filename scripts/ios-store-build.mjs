@@ -7,10 +7,12 @@ const API = 'https://api.appstoreconnect.apple.com';
 const TIMEOUT_MS = 20 * 60 * 1000;
 
 export function appStoreClient(env = process.env, fetchImpl = fetch) {
-  for (const key of ['EXPO_ASC_KEY_ID', 'EXPO_ASC_ISSUER_ID', 'EXPO_ASC_API_KEY_PATH']) {
+  for (const key of ['EXPO_ASC_KEY_ID', 'EXPO_ASC_ISSUER_ID']) {
     if (!env[key]) throw new Error(`${key} is required to verify the iOS store upload`);
   }
-  const privateKey = readFileSync(env.EXPO_ASC_API_KEY_PATH);
+  const privateKey = env.EXPO_ASC_API_KEY_P8
+    ? Buffer.from(env.EXPO_ASC_API_KEY_P8, 'base64')
+    : readFileSync(env.EXPO_ASC_API_KEY_PATH);
   return async (path, { allowMissing = false, method = 'GET', data } = {}) => {
     const now = Math.floor(Date.now() / 1000);
     const encode = (value) => Buffer.from(JSON.stringify(value)).toString('base64url');
@@ -31,6 +33,38 @@ export function appStoreClient(env = process.env, fetchImpl = fetch) {
     if (!response.ok) throw new Error(`App Store Connect HTTP ${response.status}: ${JSON.stringify(body.errors)}`);
     return body;
   };
+}
+
+const EDITABLE_STATES = new Set(['PREPARE_FOR_SUBMISSION', 'REJECTED', 'METADATA_REJECTED', 'DEVELOPER_REJECTED']);
+const versionState = (version) => version.attributes?.appVersionState ?? version.attributes?.appStoreState;
+const editable = (version) => EDITABLE_STATES.has(versionState(version));
+const parts = (version) => version.split('.').map(Number).concat([0, 0]).slice(0, 3);
+const compareVersions = (a, b) => {
+  const left = parts(a), right = parts(b);
+  for (let i = 0; i < 3; i += 1) if (left[i] !== right[i]) return left[i] - right[i];
+  return 0;
+};
+
+// Resolve once before either native build; the display version is baked into both binaries.
+export async function resolveStoreVersion({ api, appId, appVersion }) {
+  const versions = [];
+  let path = `/v1/apps/${appId}/appStoreVersions?filter[platform]=IOS&limit=200`;
+  while (path) {
+    const page = await api(path);
+    if (!Array.isArray(page?.data)) throw new Error('App Store Connect returned no version collection');
+    versions.push(...page.data);
+    const next = page.links?.next;
+    path = next ? new URL(next, API).pathname + new URL(next, API).search : null;
+  }
+  let resolved = appVersion;
+  for (const version of versions) {
+    const value = version.attributes?.versionString;
+    if (/^\d+(\.\d+){0,2}$/.test(value ?? '') && !editable(version) && compareVersions(value, resolved) >= 0) {
+      const [major, minor, patch] = parts(value);
+      resolved = `${major}.${minor}.${patch + 1}`;
+    }
+  }
+  return resolved;
 }
 
 function buildQuery(evidence, appId) {
@@ -152,13 +186,16 @@ export async function submitForReview({ api, evidence, whatsNew }) {
   const versions = await collection(`/v1/apps/${appId}/appStoreVersions?${query}`);
   if (versions.length > 1) throw new Error('Apple returned multiple matching App Store versions');
   let version = versions[0];
-  if (version && !['PREPARE_FOR_SUBMISSION', 'REJECTED', 'METADATA_REJECTED', 'DEVELOPER_REJECTED'].includes(version.attributes?.appStoreState)) {
-    throw new Error(`App Store version ${evidence.appVersion} is ${version.attributes?.appStoreState}; cannot edit or submit it`);
+  if (version && !editable(version)) {
+    return { ...evidence, appStore: { ...evidence.appStore, versionId: version.id,
+      versionState: versionState(version), submissionOutcome: 'version-already-submitted' } };
   }
-  // Refuse to modify another pending submission, including one containing unrelated items.
+  // Preserve an existing review and record it without holding up the release.
   const submissions = await collection(`/v1/apps/${appId}/reviewSubmissions?filter[platform]=IOS&limit=200`);
-  if (submissions.some((s) => s.attributes?.state !== 'COMPLETE')) {
-    throw new Error('An iOS review submission is already active; resolve it in App Store Connect before retrying');
+  const active = submissions.filter((s) => s.attributes?.state !== 'COMPLETE');
+  if (active.length) {
+    return { ...evidence, appStore: { ...evidence.appStore, submissionOutcome: 'existing-review-active',
+      activeSubmissions: active.map((s) => ({ id: s.id, state: s.attributes?.state })) } };
   }
   if (!version) {
     version = (await write('/v1/appStoreVersions', 'POST', 'appStoreVersions', {
@@ -193,6 +230,11 @@ async function main() {
   const [command, evidencePath, receiptPath] = process.argv.slice(2);
   const evidence = JSON.parse(readFileSync(evidencePath, 'utf8'));
   const api = appStoreClient();
+  if (command === 'resolve-version') {
+    const eas = JSON.parse(readFileSync(new URL('../apps/mobile/eas.json', import.meta.url), 'utf8'));
+    console.log(await resolveStoreVersion({ api, appId: eas.submit.production.ios.ascAppId, appVersion: evidence.version }));
+    return;
+  }
   let verified;
   if (command === 'prepare') {
     const eas = JSON.parse(readFileSync(new URL('../apps/mobile/eas.json', import.meta.url), 'utf8'));
@@ -201,8 +243,9 @@ async function main() {
     verified = await verifyUpload({ api, evidence, receipt: JSON.parse(readFileSync(receiptPath, 'utf8')) });
   } else if (command === 'submit') {
     verified = await submitForReview({ api, evidence, whatsNew: readFileSync(new URL('../apps/mobile/store/listing/en-US/release-notes.txt', import.meta.url), 'utf8') });
-  } else throw new Error('Usage: ios-store-build.mjs prepare|verify|submit <ios-build.json> [ios-upload.json]');
+  } else throw new Error('Usage: ios-store-build.mjs resolve-version|prepare|verify|submit <identity.json> [ios-upload.json]');
   writeFileSync(evidencePath, `${JSON.stringify(verified)}\n`);
+  if (verified.appStore.submissionOutcome) console.log(JSON.stringify(verified.appStore));
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

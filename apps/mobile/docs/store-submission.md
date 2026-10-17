@@ -5,7 +5,7 @@ are the `store_track` input of the one release workflow
 (`.github/workflows/unified-release.yml`), so a store binary always comes from a
 released SHA. For iOS, `production` submits for App Review with automatic release after approval;
 `beta` and `internal` only upload to TestFlight. For Android: the AAB lands as a *draft* release on the track you named, and the
-final press stays in Play Console / App Store Connect.
+final press stays in Play Console.
 
 The Google Play developer account is Moon Rice Limited. Keep that account, its
 service account key and the App Store Connect API key outside this repository.
@@ -167,15 +167,36 @@ appear under app `6803948500` within 20 minutes. Apple processing errors,
 including missing purpose strings (90683), fail the job even when altool
 reported transport success. `ios-build.json` records the IPA identity,
 delivery UUID and App Store build ID for the native checkpoint.
-For `store_track=production`, the next step uses `reviewSubmissions` to create
-or reuse an editable App Store version, attach the verified build, set What's
-New from `store/listing/en-US/release-notes.txt` on its existing localizations,
-and submit for review with `releaseType=AFTER_APPROVAL`. Evidence includes the
-version and submission IDs and confirmed review state. Existing in-review or
-released versions, active submissions, missing localizations, unresolved export
-compliance, and Apple API failures stop the job with an error. Resolve the
-reported state in App Store Connect before retrying. TestFlight groups and
-external-tester review remain separate operations. A missing distribution
+For `store_track=production`, initialization queries App Store Connect using the
+existing ASC key before either native build starts. It starts from the mobile
+package version at the release SHA. If that version is approved, in review,
+waiting, live, or otherwise not editable, it selects the next patch above the
+non-editable store versions (for example, `0.2.22` in
+`PENDING_DEVELOPER_RELEASE` becomes `0.2.23`). An editable next patch can be
+reused. The resolved version is applied automatically in both temporary build
+checkouts: iOS `CFBundleShortVersionString` and Android `versionName` match,
+without a human package edit or another workflow input. The committed package
+version and runtime pins stay unchanged; beta/internal builds use the package
+version.
+
+After the verified upload, production uses `reviewSubmissions` to create or
+reuse an editable App Store version, attach the verified build, set What's New
+from `store/listing/en-US/release-notes.txt` on its existing localizations, and
+submit for review with `releaseType=AFTER_APPROVAL`. Evidence includes the
+version and submission IDs and confirmed review state. If the exact version
+has already advanced beyond editing, the job records `version-already-submitted`
+and its Apple state and succeeds. If an older review is still active, it
+preserves that review, records `existing-review-active` with the active IDs and
+states in `ios-build.json`, and succeeds after the upload; this outcome does
+not claim the new build was submitted for review. Missing localizations,
+unresolved export compliance, and Apple API failures still fail the job.
+
+A manual unified release dispatch can resume the same identity after a cancelled
+or terminated attempt, including migration failures and touched Fly Machines.
+Those states suppress automatic self-redispatch only; no human cleanup is needed
+to dispatch the identity again.
+
+TestFlight groups and external-tester review remain separate operations. A missing distribution
 certificate fails the build with one printed command, because eas-cli 22.2.0
 never creates one non-interactively.
 

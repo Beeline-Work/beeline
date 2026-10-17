@@ -105,6 +105,7 @@ jobs:
       stage_mobile_native: ${{ steps.plan.outputs.stage_mobile_native }}
       native_android: ${{ steps.plan.outputs.native_android }}
       native_ios: ${{ steps.plan.outputs.native_ios }}
+      native_app_version: ${{ steps.native_version.outputs.version }}
       runtime_pin_changed: ${{ steps.plan.outputs.runtime_pin_changed }}
       previous_runtime_version: ${{ steps.plan.outputs.previous_runtime_version }}
       next_runtime_version: ${{ steps.plan.outputs.next_runtime_version }}
@@ -222,17 +223,7 @@ jobs:
             fi
           fi
           release_id="${release_version}-${release_sha}"
-          # A terminated identity (machines touched, failed release migration,
-          # or a cancelled attempt) never resumes — not even via a manual run
-          # of the same release identity. The release_result job stamps the
-          # attempt state with `terminated: true` before publishing it.
-          if [ -f "$retry" ]; then
-            terminated=$(node -e 'const s=require(process.argv[1]);process.stdout.write(String(s.terminated===true))' "$retry")
-            if [ "$terminated" = "true" ]; then
-              echo "release identity $release_id was terminated; a terminated identity never retries" >&2
-              exit 1
-            fi
-          fi
+          # Manual dispatch may resume any identity; termination only suppresses automatic retries.
           if [ -f "$previous" ]; then
             node scripts/unified-release.mjs component-paths \
               --previous "$previous" --sha "$release_sha" \
@@ -272,6 +263,24 @@ jobs:
               echo "stage_${component//-/_}=$stage"
             done
           } >> "$GITHUB_OUTPUT"
+      - name: Resolve the shared native store version before building
+        id: native_version
+        if: inputs.plan_only != true && steps.plan.outputs.run_mobile_native == 'true'
+        env:
+          STORE_TRACK: ${{ inputs.store_track }}
+          RELEASE_SHA: ${{ steps.plan.outputs.release_sha }}
+          EXPO_ASC_KEY_ID: ${{ secrets.EXPO_ASC_KEY_ID }}
+          EXPO_ASC_ISSUER_ID: ${{ secrets.EXPO_ASC_ISSUER_ID }}
+          EXPO_ASC_API_KEY_P8: ${{ secrets.EXPO_ASC_API_KEY_P8 }}
+        run: |
+          set -euo pipefail
+          git show "$RELEASE_SHA:apps/mobile/package.json" > "$RUNNER_TEMP/mobile-package.json"
+          if [ "$STORE_TRACK" = production ]; then
+            version=$(node scripts/ios-store-build.mjs resolve-version "$RUNNER_TEMP/mobile-package.json")
+          else
+            version=$(node -p 'require(process.argv[1]).version' "$RUNNER_TEMP/mobile-package.json")
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Preflight the release record before any component ships
         if: inputs.plan_only != true
         env:
@@ -1060,6 +1069,13 @@ jobs:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
         run: |
           test -n "$EXPO_TOKEN" || { echo 'EXPO_TOKEN is required for a native release' >&2; exit 1; }
+      - name: Apply the resolved native store version
+        working-directory: apps/mobile
+        env:
+          NATIVE_APP_VERSION: ${{ needs.initialize.outputs.native_app_version }}
+        run: |
+          node scripts/check-release-version.cjs
+          node -e 'const fs=require("node:fs");const p=require("./package.json");p.version=process.env.NATIVE_APP_VERSION;fs.writeFileSync("package.json",JSON.stringify(p,null,2)+"\n")'
       - name: Build immutable Android store binary locally
         working-directory: apps/mobile
         env:
@@ -1091,7 +1107,9 @@ jobs:
       - name: Resolve the store-facing app version
         id: native_version
         working-directory: apps/mobile
-        run: echo "version=$(node scripts/check-release-version.cjs)" >> "$GITHUB_OUTPUT"
+        env:
+          NATIVE_APP_VERSION: ${{ needs.initialize.outputs.native_app_version }}
+        run: echo "version=$NATIVE_APP_VERSION" >> "$GITHUB_OUTPUT"
       - name: Authenticate to Google Play
         if: inputs.store_track != 'none'
         id: play-auth
@@ -1173,6 +1191,13 @@ jobs:
             echo "EAS_SKIP_AUTO_FINGERPRINT=1"
             echo "EXPO_TOKEN=$EXPO_TOKEN"
           } >> "$GITHUB_ENV"
+      - name: Apply the resolved native store version
+        working-directory: apps/mobile
+        env:
+          NATIVE_APP_VERSION: ${{ needs.initialize.outputs.native_app_version }}
+        run: |
+          export PATH=/usr/local/opt/node@20/bin:/usr/bin:/bin:/usr/sbin:/sbin:/usr/local/bin
+          node -e 'const fs=require("node:fs");const p=require("./package.json");p.version=process.env.NATIVE_APP_VERSION;fs.writeFileSync("package.json",JSON.stringify(p,null,2)+"\n")'
       - name: Build immutable iOS store binary locally
         working-directory: apps/mobile
         run: |
@@ -1452,9 +1477,8 @@ jobs:
           } >> "$GITHUB_OUTPUT"
           cp "$state" "$RUNNER_TEMP/release-attempt.json"
       - name: Stamp the terminated identity into the published attempt state
-        # A terminated identity must be recorded as terminated (never merely
-        # out-of-attempts): the initialize plan step refuses any later run
-        # whose retry state carries `terminated: true`.
+        # Retain the reason for suppressing automatic redispatch. An explicit
+        # manual dispatch can still resume this identity.
         if: steps.result.outputs.terminated == 'true' && steps.result.outputs.no_op != 'true'
         env:
           TERMINATED_REASON: ${{ steps.result.outputs.terminated_reason }}

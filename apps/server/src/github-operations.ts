@@ -1009,9 +1009,9 @@ export class GitHubOperations {
 
   /**
    * Close a corner's own pull request without merging (`close_pull_request`).
-   * The branch and its commits stay on GitHub, and the corner stays open: its
-   * lifecycle drops the PR, so the merge gate reads "no pull request" until
-   * a new one opens.
+   * The branch and its commits stay on GitHub. Clearing the recorded PR keeps
+   * active corners open and repairs legacy archived corners without reopening
+   * them. The merge gate reads "no pull request" until a new one opens.
    */
   async closeCornerPullRequest(
     cornerId: string,
@@ -1038,11 +1038,11 @@ export class GitHubOperations {
            AND repository.active AND lower(repository.full_name)=lower(regexp_replace(regexp_replace(
              COALESCE(parent.repository_remote,parent.repository_key,''),
              '^(git://|https://)github.com/','','i'), '\\.git$','','i'))
-         WHERE corner.id=$1 AND corner.archived_at IS NULL`,
+         WHERE corner.id=$1 AND fact.workflow_state IS DISTINCT FROM 'landed'`,
         [cornerId],
       )
     ).rows[0];
-    if (!target) return { status: 'blocked', blocker: 'no open corner found' };
+    if (!target) return { status: 'blocked', blocker: 'no corner found' };
     if (!target.number || !target.url)
       return { status: 'blocked', blocker: 'the corner has no pull request' };
     if (!target.repository_id || !target.installation_id || !target.full_name)
@@ -1071,18 +1071,23 @@ export class GitHubOperations {
     let changed = false;
     await database.transaction(async db => {
       await lockCornerLifecycle(db, cornerId);
-      const removed = await db.query(
+      const removed = await db.query<{ archived: boolean }>(
         `UPDATE corner_facts fact SET merge_attempt_head=NULL,
-           lifecycle=(lifecycle-'pr'-'mergeRecovery'-'checksSummary')||'{"lifecycle":"working","checks":"unknown"}'::jsonb,
+           lifecycle=(lifecycle-'pr'-'mergeRecovery'-'checksSummary')||
+             CASE WHEN corner.archived_at IS NULL THEN '{"lifecycle":"working","checks":"unknown"}'::jsonb
+               ELSE '{}'::jsonb END,
            updated_at=now()
          FROM rooms corner WHERE fact.corner_id=$1 AND corner.id=fact.corner_id
-           AND corner.archived_at IS NULL AND (fact.lifecycle->'pr'->>'number')::int=$2`,
+           AND fact.workflow_state IS DISTINCT FROM 'landed'
+           AND (fact.lifecycle->'pr'->>'number')::int=$2
+         RETURNING corner.archived_at IS NOT NULL archived`,
         [cornerId, number],
       );
       if (!removed.rowCount) return;
       changed = true;
       await db.query(`DELETE FROM corner_merge_approvals WHERE corner_id=$1 AND pull_request_number=$2`, [cornerId, number]);
-      await advanceCorner(db, cornerId, { kind: 'pull-request-closed', number });
+      if (!removed.rows[0]!.archived)
+        await advanceCorner(db, cornerId, { kind: 'pull-request-closed', number });
     });
     if (changed) this.onRoomChanged?.(cornerId);
   }

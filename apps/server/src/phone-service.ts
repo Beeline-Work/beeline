@@ -2794,7 +2794,10 @@ export class PhoneService {
     const row = (
       await this.database.query<RoomReadRow>(
         `WITH authorized_room AS (
-           SELECT room.*,membership.role viewer_role,membership.push_muted viewer_push_muted,
+           SELECT room.*,membership.role viewer_role,
+             CASE WHEN room.parent_id IS NULL THEN membership.push_muted ELSE COALESCE(
+               (SELECT state.push_muted FROM corner_person_state state
+                WHERE state.corner_id=room.id AND state.identity_id=$2),false) END viewer_push_muted,
              workspace_member.role workspace_role,
              (workspace_member.role IN ('owner','admin') AND NOT EXISTS (
                SELECT 1 FROM memberships other_room
@@ -2803,12 +2806,12 @@ export class PhoneService {
                  AND other_workspace.identity_id=other_room.identity_id
                  AND other_workspace.removed_at IS NULL
                  AND other_workspace.role IN ('owner','admin')
-               WHERE other_room.room_id=room.id AND other_room.removed_at IS NULL
+               WHERE other_room.room_id=COALESCE(room.parent_id,room.id) AND other_room.removed_at IS NULL
                  AND other_room.identity_id<>$2
              )) leave_deletes_room,
              NULL::jsonb read_cursor
            FROM rooms room
-           JOIN memberships membership ON membership.room_id=room.id
+           JOIN memberships membership ON membership.room_id=COALESCE(room.parent_id,room.id)
              AND membership.identity_id=$2 AND membership.removed_at IS NULL
            JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
              AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
@@ -2816,13 +2819,13 @@ export class PhoneService {
            WHERE room.id=$1
          ), member_rows AS (
            SELECT i.id,i.kind,i.name,i.handle,i.avatar,i.face_id,
-             membership.role,NULL::jsonb presence_body,
+             roster_member.role,NULL::jsonb presence_body,
              NULL::timestamptz presence_updated_at
            FROM authorized_room room
-           JOIN memberships membership ON membership.workspace_id=room.workspace_id
-             AND membership.room_id=room.id
-           JOIN identities i ON i.id=membership.identity_id
-           WHERE membership.removed_at IS NULL AND i.hidden_from_roster=false
+           JOIN memberships roster_member ON roster_member.workspace_id=room.workspace_id
+             AND roster_member.room_id=COALESCE(room.parent_id,room.id)
+           JOIN identities i ON i.id=roster_member.identity_id
+           WHERE roster_member.removed_at IS NULL AND i.hidden_from_roster=false
            ORDER BY (i.id<>$2),i.id LIMIT (SELECT CASE WHEN parent_id IS NULL THEN 2147483647
              ELSE ${ROOM_VIEW_MEMBER_LIMIT} END FROM authorized_room)
          ), turn_rows AS (
@@ -3123,7 +3126,8 @@ export class PhoneService {
                SELECT body,updated_at FROM live_outputs
                WHERE agent_id=member.identity_id AND kind='presence'
                ORDER BY updated_at DESC LIMIT 1) presence ON true
-             WHERE member.room_id=$1 AND member.removed_at IS NULL
+             WHERE member.room_id=(SELECT COALESCE(parent_id,id) FROM rooms WHERE id=$1)
+               AND member.removed_at IS NULL
                AND member.identity_id=ANY($3::text[])),'[]'::jsonb) presence,
            COALESCE((SELECT jsonb_agg(jsonb_build_object('id',m.id,
              'tagged_ids',${taggedIdentityIdsSql('m')}))

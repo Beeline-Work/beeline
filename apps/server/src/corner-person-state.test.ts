@@ -95,6 +95,11 @@ it('copies sparse state twice, preserves owed items and read marks, and derives 
     expect((await db.query('SELECT event_subscriptions FROM memberships WHERE room_id=$1 AND identity_id=$2', [corner, agent])).rows[0]!.event_subscriptions).toEqual(['joined']);
     const phone = new PhoneService(db, 'https://server.example');
     const daemon = new DaemonService(db, new LiveHub());
+    expect((await phone.readRoom(corner, agent))?.viewer.pushMuted).toBe(true);
+    expect((await phone.readRoom(room, agent))?.viewer.pushMuted).toBeUndefined();
+    await db.query('UPDATE memberships SET push_muted=true WHERE room_id=$1 AND identity_id=$2', [room, person]);
+    expect((await phone.readRoom(room, person))?.viewer.pushMuted).toBe(true);
+    expect((await phone.readRoom(corner, person))?.viewer.pushMuted).toBeUndefined();
     expect(await phone.canReadRoom(corner, person)).toBe(true);
     expect(await phone.canReadRoom(corner, outsider)).toBe(false);
     expect(await daemon.execute('listEventSubscriptions', { roomId: corner }, agent)).toEqual({
@@ -161,6 +166,7 @@ it('copies sparse state twice, preserves owed items and read marks, and derives 
     expect((await db.query('SELECT 1 FROM messages WHERE room_id=$1 AND text=$2', [corner, 'Denied voice answer'])).rowCount).toBe(0);
 
     expect(await phone.canReadRoom(corner, person)).toBe(false);
+    expect(await phone.readRoom(corner, person)).toBeNull();
     await expect(
       daemon.execute('listEventSubscriptions', { roomId: corner }, agent),
     ).rejects.toThrow();

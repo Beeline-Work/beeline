@@ -44,3 +44,48 @@ it('starts plain prose before generation completes', () => {
   expect(stream.push('Hello, friend')).toEqual(['Hello,']);
   expect(stream.finish()).toBe('friend');
 });
+
+const members = [{ handle: 'bananaman614305', name: 'Bananaman' }];
+
+it('Reproduction VOICE-IDS-1: speaks handles and drops machine identifiers', () => {
+  // Old code kept every token verbatim: "Hi bananaman614305, a bug (fb_...)."
+  expect(markdownToSpeech('Hi @bananaman614305, a bug (fb_409eec12d3be6644d9eba2bf).', members))
+    .toBe('Hi Bananaman, a bug.');
+  expect(markdownToSpeech('Hi @bananaman614305, a bug (fb_409eec12d3be6644d9eba2bf).'))
+    .toBe('Hi bananaman, a bug.');
+  expect(markdownToSpeech('Hi bananaman614305.', members)).toBe('Hi Bananaman.');
+  expect(markdownToSpeech('Commit 0123456789abcdef0123456789abcdef01234567 is live.'))
+    .toBe('Commit is live.');
+  expect(markdownToSpeech('Join 123e4567-e89b-12d3-a456-426614174000 now.'))
+    .toBe('Join now.');
+  expect(markdownToSpeech('Message ID: msg_abc123xyz done.')).toBe('Message done.');
+  expect(markdownToSpeech('Machine 857614db620078 ready.')).toBe('Machine ready.');
+});
+
+it('keeps ordinary numbers, times, versions and digit-bearing words', () => {
+  const input = 'Wait 60 minutes, PR 2546 at 20:37, version 1.2.3, B2B, MP3, H264, COVID-19, March2026, defaced.';
+  expect(markdownToSpeech(input)).toBe(input);
+});
+
+it('speaks identifiers the same way when streamed in any chunk size', () => {
+  const input = 'I filed this as a bug (fb_409eec12d3be6644d9eba2bf). Hi @bananaman614305, PR 2546 at 20:37, version 1.2.3.\n\n'
+    + 'Commit 0123456789abcdef0123456789abcdef01234567 and 123e4567-e89b-12d3-a456-426614174000.';
+  const full = markdownToSpeech(input, members);
+  expect(full).toBe('I filed this as a bug. Hi Bananaman, PR 2546 at 20:37, version 1.2.3. Commit and.');
+  for (let at = 0; at <= input.length; at++) {
+    const stream = new MarkdownSpeechStream(members);
+    const spoken = [...stream.push(input.slice(0, at)), ...stream.push(input.slice(at)), stream.finish()]
+      .filter(Boolean).join(' ');
+    expect(spoken, `split at ${at}`).toBe(full);
+  }
+  for (let seed = 1; seed <= 20; seed++) {
+    let cursor = 0; let random = seed; const stream = new MarkdownSpeechStream(members); const phrases: string[] = [];
+    while (cursor < input.length) {
+      random = (random * 48271) % 2147483647;
+      const next = Math.min(input.length, cursor + (random % 17) + 1);
+      phrases.push(...stream.push(input.slice(cursor, next))); cursor = next;
+    }
+    phrases.push(stream.finish());
+    expect(phrases.filter(Boolean).join(' '), `seed ${seed}`).toBe(full);
+  }
+});

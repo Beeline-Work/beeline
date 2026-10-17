@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { markdownToSpeech, MarkdownSpeechStream } from './markdown-to-speech.js';
+import { markdownToSpeech, MarkdownSpeechStream, type SpeechMember } from './markdown-to-speech.js';
 import { AccessToken } from 'livekit-server-sdk';
 import { Room, RoomEvent, AudioStream, AudioSource, AudioFrame, LocalAudioTrack,
   TrackPublishOptions, TrackSource, TrackKind, type RemoteParticipant, type RemoteTrack } from '@livekit/rtc-node';
@@ -332,8 +332,14 @@ export class VoiceRoomRuntime {
     // initial insert and wait for this revision before editing the same row.
     this.pendingTurns.set(human, turn);
     try {
+      const roomMembers = this.service.memberNames
+        ? this.service.memberNames(this.roomId).catch(() => []) : Promise.resolve([]);
       const agents = await this.service.agents(this.roomId, human);
       const humans = await this.service.humanCount(this.callId);
+      const members: SpeechMember[] = [
+        ...agents.map(agent => ({ handle: agent.handle, name: agent.name })),
+        ...await roomMembers,
+      ];
       void this.countHumans(humans).catch(() => {});
       let sourceId = continuation ? await continuation.source : '';
       let selected = this.targets.get(human);
@@ -376,7 +382,7 @@ export class VoiceRoomRuntime {
       this.speechIdle = new Promise<void>(resolve => { finishSpeech = resolve; });
       const key = `${human}:${agent.id}`;
       let history = this.history.get(key)?.map(message => ({ ...message }));
-      const speechText = new MarkdownSpeechStream();
+      const speechText = new MarkdownSpeechStream(members);
       let receivedText = ''; let handedOff = false; let firstAudio = false; let speechQueue = Promise.resolve();
       let answer: string | undefined;
       let completion: Promise<void> | undefined;
@@ -410,7 +416,7 @@ export class VoiceRoomRuntime {
                 firstAudio = true; turn.audible = true; commitAudibleReply();
                 void this.signal({ type: 'latency', firstAudioMs: performance.now() - startedAt });
               }
-            }, () => { turn.playbackStarted = true; }, timing);
+            }, () => { turn.playbackStarted = true; }, timing, members);
           });
           void speechQueue.catch(() => {});
         };
@@ -484,6 +490,8 @@ export class VoiceRoomRuntime {
             while (this.speaking && !this.closed) await this.speechIdle;
             const agent = (await this.service.agents(this.roomId, report.human_id)).find(a => a.id === report.agent_id);
             if (!agent || this.closed) return;
+            const members: SpeechMember[] = this.service.memberNames
+              ? await this.service.memberNames(this.roomId).catch(() => []) : [];
             for (const [key, history] of this.history) if (key.endsWith(`:${agent.id}`)) {
               this.history.set(key, [...history, { role: 'assistant' as const, content: report.text }].slice(-16));
             }
@@ -500,7 +508,7 @@ export class VoiceRoomRuntime {
             let finishSpeech!: () => void;
             this.speechIdle = new Promise<void>(resolve => { finishSpeech = resolve; });
             try {
-              await this.signal({ type: 'speaker', agentId: agent.id }); await this.play(report.text, agent, controller.signal);
+              await this.signal({ type: 'speaker', agentId: agent.id }); await this.play(report.text, agent, controller.signal, undefined, undefined, undefined, members);
             } finally { finishSpeech(); if (this.speaking === controller) { this.speaking = undefined; await this.signal({ type: 'speaker', agentId: null }); } }
           } finally { this.queuedReports.delete(report.source_message_id); }
         });
@@ -515,8 +523,8 @@ export class VoiceRoomRuntime {
   }
 
   private async play(text: string, agent: VoiceAgent, signal: AbortSignal, onFirstAudio?: () => void,
-    onFirstVoicedFrame?: () => void, timing?: (stage: string) => void) {
-    text = markdownToSpeech(text);
+    onFirstVoicedFrame?: () => void, timing?: (stage: string) => void, members?: SpeechMember[]) {
+    text = markdownToSpeech(text, members);
     if (!text) return;
     let pending = Buffer.alloc(0); let first = true; let firstByte = true; let firstPublished = true;
     // 20ms mono frames. Carry odd byte boundaries between provider chunks.

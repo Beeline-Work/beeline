@@ -11,6 +11,7 @@ import { routeHumanMessage } from './agent-command.js';
 import { assignVoiceAgents, type VoiceAgent, type VoiceBrain, type VoiceSpeech, type VoiceSttFactory,
   OpenRouterVoiceBrain, AuraSpeech, fluxFactory, VOICE_MODEL, savedAuraVoice } from './voice-providers.js';
 import { VoiceRoomRuntime } from './voice-room-runtime.js';
+import type { SpeechMember } from './markdown-to-speech.js';
 
 export type VoiceConfig = { url: string; apiKey: string; apiSecret: string; brain: VoiceBrain;
   speech: VoiceSpeech; stt: VoiceSttFactory };
@@ -85,6 +86,16 @@ export class VoiceService {
       })),
       speech.voices,
     ).filter((a) => allowed.has(a.id));
+  }
+
+  /** Handle-to-display-name pairs for every current Room member, for spoken names. */
+  async memberNames(roomId: string): Promise<SpeechMember[]> {
+    const rows = await this.db.query<IdentityRow>(
+      `SELECT i.id,i.kind,i.name,i.handle,i.face_id FROM memberships m
+       JOIN identities i ON i.id=m.identity_id WHERE m.room_id=$1 AND m.removed_at IS NULL`,
+      [roomId],
+    );
+    return rows.rows.map(row => ({ handle: row.handle ?? row.name, name: row.name }));
   }
 
   /** Only current, addressable agents' committed messages in this exact Room/corner count. */

@@ -96,7 +96,7 @@ it('Reproduction MD-TTS-1: conversational streamed replies and delayed reports s
   const runtime = await VoiceRoomRuntime.connect(service, 'call', 'room');
   try {
     await runtime.utterance('human', 'Jellybean, hello');
-    expect(spoken.join(' ')).toBe('Hello, friend. Visit. Hi jellybean.');
+    expect(spoken.join(' ')).toBe('Hello, friend. Visit. Hi Jellybean.');
     expect(service.recordAnswer).toHaveBeenCalledWith('room', 'agent', answer);
     reports = [{ source_message_id: 'source', id: 'report', text: '**Done**: [result](https://example.com/a_(b)/details)', agent_id: 'agent', human_id: 'human' }];
     await runtime.refresh();

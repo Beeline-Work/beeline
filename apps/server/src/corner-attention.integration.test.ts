@@ -463,36 +463,19 @@ it.each(['needs-decision','blocked'])('Reproduction idle-alert-churn: private %s
   console.info('Demonstrated Reproduction idle-alert-churn: private human decision + three check updates -> WAITING in list/inspect; waiting=1 idle=0; answer and resume -> WORKING');
 });
 
-it('Reproduction idle-alert-churn: idle revision churn sends once to the latest commander session', async () => {
-  const DM='66666666-6666-4666-8666-666666666666';
-  await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Commander session')`,[DM,WS]);
-  await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,[WS,DM,COMMANDER]);
-  await createAgentCommand(db,{id:'latest-order',roomId:C,agentId:WORKER,sourceMessageId:null,reason:'order',privatePayload:{kind:'order',text:'Continue here',authorId:COMMANDER,fromRoomId:DM}});
-  await db.query(`UPDATE agent_commands SET state='complete' WHERE id='latest-order'`);
+it('Reproduction idle-alert-churn: idle revision churn sends once to the unchanged call site', async () => {
   for(let i=0;i<3;i++) {
     await db.query(`UPDATE corner_attention_spans SET revision=revision+3 WHERE corner_id=$1`,[C]);
     await runCornerAttention(db);
   }
-  expect(await commanderFlags()).toHaveLength(0);
-  expect((await readAgentCommands(db,DM,COMMANDER)).commands).toHaveLength(1);
+  expect(await commanderFlags()).toHaveLength(1);
   expect((await db.query("SELECT kind FROM corner_attention_flags WHERE kind='idle'")).rows).toHaveLength(1);
   await wake();
   await runCornerAttention(db);
   await db.query(`UPDATE agent_commands SET state='complete' WHERE id='new-work'`);
   await runCornerAttention(db);
   expect((await db.query("SELECT kind FROM corner_attention_flags WHERE kind='idle'")).rows).toHaveLength(2);
-  console.info('Demonstrated Reproduction idle-alert-churn: three revisions -> one private idle alert in latest commander session; real work and return to idle -> second episode');
-});
-
-it('Reproduction idle-alert-churn: a newer brief routes attention to its commander session', async () => {
-  const DM='77777777-7777-4777-8777-777777777777';
-  await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Brief session')`,[DM,WS]);
-  await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,[WS,DM,COMMANDER]);
-  await db.query(`INSERT INTO corner_brief_revisions(corner_id,revision,content,author_id,source_room_id)
-    VALUES($1,1,'Approved work',$2,$3)`,[C,COMMANDER,DM]);
-  await runCornerAttention(db);
-  expect(await commanderFlags()).toHaveLength(0);
-  expect((await readAgentCommands(db,DM,COMMANDER)).commands).toHaveLength(1);
+  console.info('Demonstrated Reproduction idle-alert-churn: three revisions -> one private idle alert at the call site; real work and return to idle -> second episode');
 });
 
 it('does not deliver an old idle flag after worker activity between ticks', async () => {
@@ -503,4 +486,15 @@ it('does not deliver an old idle flag after worker activity between ticks', asyn
   expect(await commanderFlags()).toHaveLength(0);
   await runCornerAttention(db);
   expect(await commanderFlags()).toHaveLength(1);
+});
+
+it('Reproduction idle-alert-churn: a newer brief preserves the call-site recipient', async () => {
+  const DM='77777777-7777-4777-8777-777777777777';
+  await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Brief session')`,[DM,WS]);
+  await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,[WS,DM,COMMANDER]);
+  await db.query(`INSERT INTO corner_brief_revisions(corner_id,revision,content,author_id,source_room_id)
+    VALUES($1,1,'Approved work',$2,$3)`,[C,COMMANDER,DM]);
+  await runCornerAttention(db);
+  expect(await commanderFlags()).toHaveLength(1);
+  expect((await readAgentCommands(db,DM,COMMANDER)).commands).toHaveLength(0);
 });

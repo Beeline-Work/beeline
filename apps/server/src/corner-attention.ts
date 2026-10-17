@@ -222,15 +222,6 @@ export async function deliverCornerAttention(db: SqlDatabase): Promise<void> {
         }
         const address = await commanderReportAddress(tx, row.id);
         if (!address.recipient || !address.returnRoom) return;
-        const latestAddress = (await tx.query<{ room_id: string }>(
-          `SELECT room_id FROM (
-             SELECT ordered.private_payload->>'fromRoomId' room_id,ordered.created_at
-             FROM agent_commands ordered WHERE ordered.room_id=$1
-               AND ordered.private_payload->>'kind'='order' AND ordered.private_payload->>'authorId'=$2
-             UNION ALL
-             SELECT source_room_id::text,created_at FROM corner_brief_revisions
-             WHERE corner_id=$1 AND author_id=$2
-           ) addresses ORDER BY created_at DESC LIMIT 1`, [row.id,address.recipient])).rows[0]?.room_id;
         const delivered = await reportToCommander(
           tx,
           row.id,
@@ -238,7 +229,7 @@ export async function deliverCornerAttention(db: SqlDatabase): Promise<void> {
           `blocked: Corner ${row.name} is idle with no worker schedule or event subscription. Resume, schedule or close it.`,
           undefined,
           flag.id,
-          { automatic: true, agentOnly: true, returnRoom: latestAddress },
+          { automatic: true, agentOnly: true },
         );
         // Human commanders intentionally receive no automatic idle report.
         // Consume this informational flag without claiming a sent effect or

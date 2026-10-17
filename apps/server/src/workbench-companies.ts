@@ -173,8 +173,9 @@ export function projectWorkbenchCompanies(view: WorkbenchView, origin: string,
     || (a.id === 'other' ? 1 : b.id === 'other' ? -1 : 0) || collator.compare(a.name, b.name) || a.id.localeCompare(b.id));
   const hasConnections = rows.some(r => r.items.length || r.machines.some(m => m.status !== 'not-added'));
   const broken = rows.filter(r => r.attention).length;
+  const count = hasConnections ? rows.length : 0;
   return { version: 1, rows, hasConnections, suggestions: companySuggestions(rows, origin, popularity),
-    summary: { value: `${rows.length} connections`, attention: broken ? `${broken} ${broken === 1 ? 'company needs' : 'companies need'} attention` : undefined } };
+    summary: { value: `${count} ${count === 1 ? 'connection' : 'connections'}`, attention: broken ? `${broken} ${broken === 1 ? 'company needs' : 'companies need'} attention` : undefined } };
 }
 
 /** Typed search still navigates existing companies; default discovery never repeats them. */

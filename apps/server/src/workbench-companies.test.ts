@@ -116,6 +116,16 @@ describe('server-owned Connectors company projection', () => {
     expect(result.suggestions.find(s => s.providerId === 'google')?.purpose).toBe('Gmail, Calendar, Drive and more');
     expect(result.suggestions.every(s => s.logo.kind === 'image' && Boolean(s.purpose))).toBe(true);
   });
+  it('does not count an unconfigured computer as a connection on the empty-account page', () => {
+    const view = { ...base(), helpers: [{ id: 'personal', name: 'Laptop', online: true, squireEligible: true,
+      squire: { status: 'not-added' as const, reportedAt: 1 } }] };
+    const index = projectWorkbenchCompanies(view, origin);
+    expect(index.hasConnections).toBe(false);
+    expect(index.summary.value).toBe('0 connections');
+    expect(index.suggestions[0]?.flow).toBe('squire');
+    expect(projectWorkbenchCompanies({ ...base(), helpers: [] }, origin).summary.value).toBe('0 connections');
+    expect(projectWorkbenchCompanies({ ...base(), helpers: [], connections: [key('a', 'sentry', ['sentry.io'])] }, origin).summary.value).toBe('1 connection');
+  });
   it('keeps missing apps inside the existing company, never a self-suggestion', () => {
     const view = messy[0]!; const result = projectWorkbenchCompanies(view, origin);
     const google = result.rows.find(r => r.id === 'google')!;

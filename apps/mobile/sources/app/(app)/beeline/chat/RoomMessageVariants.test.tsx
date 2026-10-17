@@ -176,6 +176,7 @@ vi.mock('@/components/buzz/Ledger', async () => {
       return ReactModule.createElement('LedgerEntry', props);
     },
     LedgerGhostLine: (props: any) => ReactModule.createElement('LedgerGhostLine', props),
+    LedgerUntaggedHint: (props: any) => ReactModule.createElement('LedgerUntaggedHint', props),
     LedgerSystemLine: (props: any) => ReactModule.createElement('LedgerSystemLine', props),
     LedgerSteer: (props: any) => ReactModule.createElement('LedgerSteer', props),
   };
@@ -3936,5 +3937,26 @@ describe('Connector receipt cards', () => {
     const renderer = renderReceipt('Just a normal ledger entry.');
     expect(renderer.root.findAllByProps({ testID: 'connector-receipt-card' })).toHaveLength(0);
     expect(ledgerEntryRender.mock.lastCall?.[0].bodyText).toBe('Just a normal ledger entry.');
+  });
+});
+
+
+describe('private untagged message hint', () => {
+  it.each([
+    ['sender', 'viewer', true, false, undefined, 1],
+    ['second account', 'observer', true, false, undefined, 0],
+    ['history without local send', 'viewer', false, false, undefined, 0],
+    ['failed send', 'viewer', true, true, undefined, 0],
+    ['agent author', 'viewer', true, false, 'agent', 0],
+  ] as const)('%s', (_, viewerPubkey, untaggedHint, deliveryFailed, kind, count) => {
+    const renderer = render(<OrdinaryLedgerMessage
+      message={message({ id: 'local-send', text: 'Hello Room', isUser: true, pubkey: 'viewer',
+        ...(kind ? { authorIdentity: { pubkey: 'viewer', kind, name: 'Agent' } } : {}) })}
+      participantsHydrated viewerPubkey={viewerPubkey} speakerWorking={false} continued={false}
+      participantHandles={[]} channelIndex={{ rooms: [], corners: [] }}
+      untaggedHint={untaggedHint} deliveryFailed={deliveryFailed}
+      onChannelReference={vi.fn()} onReply={vi.fn()} onCopy={vi.fn()} onRetry={vi.fn()} onDismiss={vi.fn()}
+    />);
+    expect(renderer.root.findAllByType('LedgerUntaggedHint' as any)).toHaveLength(count);
   });
 });

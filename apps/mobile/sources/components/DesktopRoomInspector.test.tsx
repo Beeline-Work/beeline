@@ -834,3 +834,22 @@ describe('DesktopRoomInspector work pane', () => {
     act(() => tree.unmount());
   });
 });
+
+
+describe('corner sender teaching hint', () => {
+  it.each([
+    ['Hello Room', true], ['@avery hello', false], ['@codex hello', false],
+  ])('uses the successful local send and current roster for %s', async (draft, expected) => {
+    vi.mocked(loadBuzzIdentity).mockResolvedValue({ pubkey: person.pubkey } as any);
+    const detail = { ...room(), room: corners[0].corner, parent: room().room,
+      messages: [{ id: 'sent-1', text: draft, createdAt: 9, author: person, presentation: 'message' }] };
+    const tree = await render(props({ client: { room: vi.fn(async () => detail) } as any,
+      selectedCornerId: 'working' }));
+    const row = () => tree.root.findByType('OrdinaryLedgerMessage' as any);
+    expect(row().props.untaggedHint).toBe(false);
+    await act(async () => tree.root.findByType('ConversationComposer' as any).props.onChangeText(draft));
+    await act(async () => { await tree.root.findByType('ConversationComposer' as any).props.onSend(); });
+    expect(publishMessage).toHaveBeenCalled();
+    expect(row().props.untaggedHint).toBe(expected);
+  });
+});

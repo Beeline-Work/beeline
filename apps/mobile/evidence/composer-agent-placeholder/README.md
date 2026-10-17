@@ -1,19 +1,25 @@
-# Composer agent placeholder
+# Teach agent tagging
 
-This is a requested UX hint, not a defect report. Previously every empty composer showed `Message`.
+This is an approved UX addition, not a defect report. Previously every empty composer showed `Message`, and an untagged send gave no private feedback.
 
-The shared composer now shows `Tag an agent with @` when its server member roster contains an agent and the conversation is not a DM. Rooms without agents, DMs, and the viewer dock retain `Message`. The main chat surface supplies both conversation kind and membership; the desktop corner inspector supplies its own server roster.
+Rooms and corners with agents show `Tag an agent with @`. DMs and Rooms without agents retain `Message`. A successful untagged human send adds `No agent was tagged` under that message on the sending device. Tagging either a person or an agent clears the local hints. Leaving the conversation, changing Rooms or changing viewers also clears them. Nothing is persisted or sent to other devices.
 
 ## Android proof
 
-The standalone `scripts/composer-agent-placeholder-native.tsx` fixture renders the production `ConversationComposer` with real native Android TextInputs and bundled fonts for four cases: Room with agents, agent DM, Room without agents, and corner with agents. It makes no network requests. These are fixture screenshots, not authenticated Room screenshots: the isolated emulator has no signed-in identity. This is the closest native stand-in for the requested live #general/DM/empty-Room proof and does not prove live roster delivery.
+The standalone `scripts/composer-agent-placeholder-native.tsx` fixture renders the production `ConversationComposer` and `OrdinaryLedgerMessage`, including the shared hint primitive and local-send hook. Two independently mounted hook instances represent the sender device and a second account device, displaying the same messages. Buttons simulate successful receipts; mention detection uses the existing composer mention resolver.
 
-To reproduce, generate the ignored Android project with `npx expo prebuild --platform android --no-install`, set its `react.entryFile` to `file("../../scripts/composer-agent-placeholder-native.tsx")`, and disable Expo Updates in the generated manifest. Build with `android/gradlew -p android assembleRelease -PreactNativeArchitectures=x86_64 --no-daemon --max-workers=2`. Install the resulting APK only in a task-owned emulator launched with `beeline emulator`. Open the app and use Toggle theme for the second frame. No generated native configuration or APK is committed.
+These are isolated fixture screenshots, not authenticated #general or two-account server screenshots. The task-owned emulator has no signed-in identity. The stand-in exercises the actual native message row and private hint lifecycle, but does not prove live account authentication, server roster delivery, or message fanout.
 
-Screenshots: [Bone](android-bone.png), [Obsidian](android-obsidian.png). Android UI Automator reported the expected four placeholders in both themes; values are recorded in [android-results.json](android-results.json). The fixture APK built successfully for x86_64 and ran on Android API 36.
+The [Bone untagged frame](hint/bone-untagged.png) and [Obsidian untagged frame](hint/obsidian-untagged.png) show the hint only in the sender's pane. The [tagged person](hint/bone-tagged-person.png), [tagged agent](hint/bone-tagged-agent.png), [DM](hint/bone-dm.png), [agent-free Room](hint/bone-no-agents.png), and [return after leaving](hint/bone-returned.png) frames have no hint. The [corner](hint/bone-corner.png) also shows the hint for an untagged send. Each state was asserted in both themes by Android UI Automator, including that any hint is above the second account's pane. Results: [hint-results.json](hint/hint-results.json).
 
-## Regression coverage
+The earlier revision's [Bone placeholder matrix](android-bone.png), [Obsidian placeholder matrix](android-obsidian.png), and [results](android-results.json) show the four placeholder choices together. The current interactive fixture replaces that static matrix.
 
-`ConversationComposer.test.tsx` asserts rendered native input placeholder props for a Room and corner with agents, a Room without agents, an agent DM, and a human DM. The DM case explicitly has an agent member, ensuring agent membership alone does not switch the hint.
+## Reproduce
 
-Validation passed: root `npm run typecheck`, `npm run lint:ui-components`, 37 composer/design tests and 18 desktop inspector tests.
+From `apps/mobile`, generate the ignored Android project with `npx expo prebuild --platform android --no-install`. Set its `react.entryFile` to `file("../../scripts/composer-agent-placeholder-native.tsx")` and disable Expo Updates in the generated manifest. Build with `android/gradlew -p android assembleRelease -PreactNativeArchitectures=x86_64 --no-daemon --max-workers=2`. Install the resulting APK only in a task-owned emulator launched with `beeline emulator`, and open `app.usebeeline/.MainActivity`.
+
+Run `python3 scripts/composer-agent-placeholder-proof.py --device emulator-<leased-port> --out evidence/composer-agent-placeholder/hint` from `apps/mobile`. The fixture starts in Bone with no messages. No generated native configuration or APK is committed.
+
+## Validation
+
+Root `npm run typecheck` and `npm run lint:ui-components` pass. There are 224 passing tests across the composer, message variants, local hint hook, desktop inspector, composer design, calm lint and design lint suites. Coverage includes failed sends, second-account rendering, another device for the same sender, human and agent tags, and delayed receipts after leaving. Desktop integration tests exercise its real send handler with the current roster.

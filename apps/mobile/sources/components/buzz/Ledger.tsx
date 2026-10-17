@@ -960,7 +960,20 @@ export function LedgerGhostLine({
 
 const BYLINE_DOT_SIZE = 5;
 
+/** Private teaching feedback beneath a locally sent message. */
+export function LedgerUntaggedHint({ messageId }: { messageId: string }) {
+  return <Text style={styles.untaggedHint} testID={`untagged-message-hint-${messageId}`}>
+    No agent was tagged
+  </Text>;
+}
+
 const styles = StyleSheet.create((theme) => ({
+  untaggedHint: {
+    ...theme.buzz.type.meta,
+    color: theme.buzz.ledgerQuiet,
+    marginTop: theme.buzz.space.xs,
+    marginLeft: theme.buzz.space.sm,
+  },
   entry: {
     width: '100%',
     minWidth: 0,

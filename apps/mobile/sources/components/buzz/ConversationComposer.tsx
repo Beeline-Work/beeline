@@ -36,6 +36,9 @@ export type DictatedSend = { cancelled: boolean; committed: boolean };
 type Props = {
   voice?: VoiceCallState;
   value: string;
+  /** Whether the server member roster contains an agent. */
+  hasAgentMembers?: boolean;
+  isDirectMessage?: boolean;
   height: number;
   maxHeight?: number;
   focused: boolean;
@@ -136,6 +139,8 @@ export function ConversationComposer(props: Props) {
 /** The one text-entry row used by both desktop Room and embedded Corner conversations. */
 function ConversationComposerContent({
   voice,
+  hasAgentMembers = false,
+  isDirectMessage = false,
   value,
   height,
   maxHeight = 120,
@@ -603,7 +608,7 @@ function ConversationComposerContent({
                 },
               });
             }}
-            placeholder="Message"
+            placeholder={!isDirectMessage && hasAgentMembers ? 'Tag an agent with @' : 'Message'}
             placeholderTextColor={theme.buzz.dim}
             multiline
             // Android keyboards otherwise take the whole screen in landscape and

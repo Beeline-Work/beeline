@@ -632,6 +632,7 @@ function CornerCockpit({
             )}
           </View>
           <ConversationComposer
+            hasAgentMembers={detail.members.some(member => member.identity.kind === 'agent')}
             onStop={ack?.stop ? stop : undefined}
             value={input}
             height={height}

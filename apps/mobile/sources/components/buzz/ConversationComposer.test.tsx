@@ -109,7 +109,7 @@ afterEach(() => {
 });
 
 describe('one composer', () => {
-  it('uses the same empty placeholder on every surface', () => {
+  it('defaults to the Message placeholder', () => {
     const f = render('');
     expect(f.renderer.root.findByType('TextInput').props.placeholder).toBe('Message');
   });
@@ -523,5 +523,22 @@ describe('Conversation mode inside the composer', () => {
       act(() => { vi.advanceTimersByTime(1_500); });
       expect(tip().props.style.flat().filter(Boolean).at(-1).color).toBe(plain);
     } finally { vi.useRealTimers(); }
+  });
+});
+
+
+describe('conversation placeholder', () => {
+  it.each([
+    ['Room with agents', false, true, 'Tag an agent with @'],
+    ['corner with agents', false, true, 'Tag an agent with @'],
+    ['Room without agents', false, false, 'Message'],
+    ['agent DM', true, true, 'Message'],
+    ['human DM', true, false, 'Message'],
+  ])('%s', (_, isDirectMessage, hasAgentMembers, placeholder) => {
+    const f = render('');
+    const props = f.renderer.root.findByType(ConversationComposer).props;
+    act(() => f.renderer.update(<ConversationComposer {...props}
+      isDirectMessage={isDirectMessage} hasAgentMembers={hasAgentMembers} />));
+    expect(f.renderer.root.findAllByType('TextInput')[0].props.placeholder).toBe(placeholder);
   });
 });

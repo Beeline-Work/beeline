@@ -987,3 +987,52 @@ it('failure visibility: lease expiry does not report a failure after a delivered
   expect((await commands(DM, RUBY)).filter(c => c.reason === 'report')).toHaveLength(1);
 
 });
+
+// These drive the public daemon receipt and report operations with durable provenance.
+it.each([true, false])('Reproduction R1/R2: lifecycle receipt preserves delivered outcome=%s', async delivered => {
+  const opened = await open();
+  const initial = await worker(opened.cornerId);
+  const parent = (await db.query<CommandRow>('SELECT * FROM agent_commands WHERE id=$1', [initial.id])).rows[0]!;
+  await createAgentCommand(db, { roomId: opened.cornerId, agentId: WORKER,
+    sourceMessageId: null, reason: 'watched_corner', parent,
+    privatePayload: { kind: 'lifecycle', text: 'Watched corner merged',
+      authorId: RUBY, fromRoomId: opened.cornerId } });
+  const wake = (await commands(opened.cornerId, WORKER)).find(c => c.reason === 'watched_corner')!;
+  await claim(wake);
+  await daemon.execute('postAgentTurnReceipt', { ...authority(wake), agentId: WORKER, status: 'working' }, WORKER);
+  if (delivered) {
+    const receipt = await daemon.execute('report', { ...authority(wake), status: 'needs_decision',
+      text: 'needs-decision: choose the next step' }, WORKER);
+    expect(receipt).toMatchObject({ delivered: true });
+  }
+  await daemon.execute('postAgentTurnReceipt', { ...authority(wake), agentId: WORKER,
+    status: 'failed', reason: 'unreported_order: requested work is unconfirmed' }, WORKER);
+  const reports = (await commands(DM, RUBY)).filter(c => c.reason === 'report');
+  expect(reports).toHaveLength(delivered ? 1 : 0);
+  expect((await db.query('SELECT status FROM agent_turns WHERE request_id=$1', [wake.turnRequestId])).rows[0]?.status).toBe('complete');
+});
+
+it.each(['no-reply', 'legacy-failure'])('Reproduction R2: real merge watch completes quietly (%s)', async mode => {
+  const opened = await open();
+  await systemLine(db, { roomId: opened.cornerId, authorId: HUMAN,
+    subject: { kind: 'system', name: 'GitHub' }, verb: 'merged', kind: 'merged' });
+  const wake = (await commands(DM, RUBY)).find(c => c.reason === 'watched_corner')!;
+  expect(wake).toBeDefined();
+  await claim(wake);
+  await daemon.execute('postAgentTurnReceipt', { ...authority(wake), agentId: RUBY, status: 'working' }, RUBY);
+  await daemon.execute('postAgentTurnReceipt', { ...authority(wake), agentId: RUBY,
+    ...(mode === 'no-reply' ? { status: 'complete' as const, completionKind: 'no-reply' as const }
+      : { status: 'failed' as const, reason: 'unreported_order: requested work is unconfirmed' }) }, RUBY);
+  expect((await phone.readRoom(DM, HUMAN))?.messages.filter(m => m.text.startsWith('failed:'))).toHaveLength(0);
+  expect((await db.query('SELECT status FROM agent_turns WHERE request_id=$1', [wake.turnRequestId])).rows[0]?.status).toBe('complete');
+});
+
+it.each(['complete', 'failed'] as const)('Reproduction R1: delivered needs-decision on an order survives %s receipt', async status => {
+  const { turn } = await privateAssignment();
+  expect(await daemon.execute('report', { ...authority(turn), status: 'needs_decision',
+    text: 'needs-decision: choose the next step' }, WORKER)).toMatchObject({ delivered: true });
+  await daemon.execute('postAgentTurnReceipt', { ...authority(turn), agentId: WORKER, status,
+    ...(status === 'failed' ? { reason: 'unreported_order: requested work is unconfirmed' } : {}) }, WORKER);
+  expect((await commands(DM, RUBY)).filter(c => c.reason === 'report')).toHaveLength(1);
+  expect((await db.query('SELECT status FROM agent_turns WHERE request_id=$1', [turn.turnRequestId])).rows[0]?.status).toBe('complete');
+});

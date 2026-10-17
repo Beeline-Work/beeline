@@ -6,6 +6,7 @@ import { IdentityMark } from './IdentityMark';
 import { MicGlyph } from './MicGlyph';
 import { DictationWaveform } from './DictationWaveform';
 import { BeelineMarkSpinner } from './BeelineMarkSpinner';
+import { Button } from './Button';
 import type { VoiceCallState } from '@/buzz/use-voice-call';
 
 export function VoiceBar({ voice, fullScreen = false, onAttach, attachDisabled = false, testIDPrefix = 'chat' }: {
@@ -47,10 +48,11 @@ export function VoiceBar({ voice, fullScreen = false, onAttach, attachDisabled =
         {voice.error ? <Text accessibilityRole="alert" style={styles.error} testID={voice.quotaExhausted ? 'voice-quota-error' : 'voice-connection-error'}>{voice.error}</Text>
           : <DictationWaveform level={voice.level} live={!voice.connecting} />}
       </Pressable>
-      <Pressable onPress={() => void voice.end()} accessibilityRole="button" accessibilityLabel="End Conversation mode"
+      {voice.humans > 1 ? <Button label="Leave call" variant="secondary" onPress={() => void voice.end()}
+        accessibilityLabel="Leave call" testID="voice-leave" /> : <Pressable onPress={() => void voice.end()} accessibilityRole="button" accessibilityLabel="End Conversation mode"
         accessibilityState={{ selected: true, busy: voice.connecting }} style={styles.mic} testID="voice-mic">
         {voice.connecting ? <BeelineMarkSpinner ink={theme.buzz.accent} live /> : <MicGlyph color={theme.buzz.accent} />}
-      </Pressable>
+      </Pressable>}
     </View>
   </View>;
   return <>

@@ -15,6 +15,19 @@ vi.mock('./DictationWaveform', () => ({ DictationWaveform: () => React.createEle
 vi.mock('./HullDialog', () => ({ HullModal: () => null }));
 import { VoiceBar } from './VoiceBar';
 
+it('gives a multi-human call a separate labeled Leave call control', async () => {
+  const end = vi.fn(); let renderer: any;
+  await act(async () => { renderer = create(<VoiceBar voice={{ call: null, agents: [], target: null,
+    speaker: null, level: 0, connecting: false, error: null, quotaExhausted: false,
+    firstAudioMs: null, humans: 2, unaddressed: 0, join: vi.fn(), end, aim: vi.fn() }} />); });
+  try {
+    expect(renderer.root.findAllByProps({ testID: 'voice-mic' })).toHaveLength(0);
+    const leave = renderer.root.findByProps({ testID: 'voice-leave' });
+    expect(leave.props.label).toBe('Leave call');
+    await act(async () => leave.props.onPress()); expect(end).toHaveBeenCalledOnce();
+  } finally { await act(async () => renderer.unmount()); }
+});
+
 it('shows the exhausted daily quota inside the voice bar with an operable end mic', async () => {
   const end = vi.fn(); let renderer: any;
   await act(async () => { renderer = create(<VoiceBar voice={{ call: null, agents: [], target: null,

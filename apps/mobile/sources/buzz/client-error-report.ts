@@ -1,3 +1,5 @@
+import { Platform } from 'react-native';
+
 export type ClientErrorScope = 'conversation' | 'voice-join' | 'voice-cleanup' | 'app' | 'native-crash';
 
 export type NativeCrashReport = {
@@ -44,8 +46,8 @@ export async function reportNativeCrash(report: NativeCrashReport): Promise<bool
 
 async function sendClientError(scope: ClientErrorScope, cause: unknown, native?: NativeCrashReport): Promise<boolean> {
   try {
-    const [{ monolithSession }, { getBuzzRuntimeConfig }, { Platform }, { loadAppConfig }, updates] = await Promise.all([
-      import('@/auth/monolith-session'), import('./runtime-config'), import('react-native'), import('@/sync/appConfig'), import('expo-updates'),
+    const [{ monolithSession }, { getBuzzRuntimeConfig }, { loadAppConfig }, updates] = await Promise.all([
+      import('@/auth/monolith-session'), import('./runtime-config'), import('@/sync/appConfig'), import('expo-updates'),
     ]);
     const config = loadAppConfig();
     const response = await monolithSession.fetch(`${getBuzzRuntimeConfig().monolithUrl}/v1/phone/observations/client-error`, {

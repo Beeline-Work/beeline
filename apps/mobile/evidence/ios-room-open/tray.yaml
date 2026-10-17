@@ -1,0 +1,19 @@
+appId: app.usebeeline.mobile
+name: ios-runtime-31-tray-and-room
+---
+- assertVisible:
+    id: room-list
+- tapOn:
+    id: workspace-tray
+- extendedWaitUntil:
+    visible:
+      id: tray-list
+    timeout: 30000
+- takeScreenshot: tray-open
+- tapOn: "Back to Rooms"
+- assertVisible:
+    id: room-list
+- tapOn:
+    id: room-bee11e00-0000-4000-8000-000000000103
+- assertVisible:
+    id: chat-composer-input-row

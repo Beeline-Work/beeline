@@ -1,9 +1,20 @@
 import { getBuzzRuntimeConfig } from './runtime-config';
 import { monolithSession } from '@/auth/monolith-session';
 import { Room } from 'livekit-client';
-import { PermissionsAndroid, Platform } from 'react-native';
+import { Linking, NativeModules, PermissionsAndroid, Platform } from 'react-native';
 
 export async function createVoiceRoom(onStop: () => void = () => {}, roomId?: string, onIdle: () => void = () => {}): Promise<{ room: Room; closeAudio(): Promise<void>; configureStop(callId: string, token: string): Promise<void>; parkAudio(agentName: string): Promise<void>; resumeAudio(): Promise<void>; idleEnd(): Promise<void>; armSilence(): Promise<void>; cancelSilence(): Promise<void> }> {
+  if (Platform.OS === 'ios') {
+    // Check before evaluating LiveKit/WebRTC: their emitters throw during import
+    // on store binaries without the native half, before our join recovery runs.
+    const { requireOptionalNativeModule } = await import('expo-modules-core');
+    const background = requireOptionalNativeModule<Record<string, unknown>>('VoiceBackgroundAudio');
+    const methods = ['configureStop', 'start', 'stop', 'setActivity', 'endForIdle', 'armSilence', 'cancelSilence', 'addListener'];
+    if (!NativeModules.WebRTCModule || !NativeModules.LivekitReactNativeModule ||
+      !background || methods.some(method => typeof background[method] !== 'function')) {
+      throw new Error('Update Beeline from the App Store to use Conversation mode.');
+    }
+  }
   // Lazy: installed binaries without WebRTC can still dictate/use the Room.
   const { registerGlobals, AudioSession } = await import('@livekit/react-native');
   const { requireNativeModule } = await import('expo-modules-core');
@@ -74,7 +85,6 @@ export async function routeVoiceResumeNotification(url: unknown, ready: () => Pr
   pendingResumeUrl = url;
   routedResumeUrl = url;
   try {
-    const { Linking } = await import('react-native');
     await Linking.openURL(url);
   } catch (error) {
     if (routedResumeUrl === url) routedResumeUrl = null;
@@ -88,7 +98,9 @@ export async function routeVoiceResumeNotification(url: unknown, ready: () => Pr
 export function subscribeVoiceResume(roomId: string, resume: () => void): () => void {
   let disposed = false;
   let remove = () => {};
-  void import('react-native').then(({ Linking }) => {
+  // import('react-native') makes Metro enumerate every lazy native export,
+  // including PushNotificationIOS whose manager is absent in Expo iOS builds.
+  void Promise.resolve().then(() => {
     if (disposed) return;
     const accept = (url: string | null) => {
       if (disposed || !url || url === consumedResumeUrl) return;

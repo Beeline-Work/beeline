@@ -1,3 +1,4 @@
+import { focusComposerSelection } from '@/buzz/composer-selection';
 import { HullDialogActions } from '@/components/buzz/HullDialog';
 import { useTextDraft } from '@/buzz/use-text-draft';
 import { HumanProfile } from '../human-profile';
@@ -1093,18 +1094,7 @@ export function BuzzChatSurface({
         composerTagHandlesRef.current,
         fullSelection,
       );
-      // React Native Web hands back the DOM textarea, which has no
-      // setNativeProps; focusing after the selection scrolls the cursor into view.
-      if (Platform.OS === 'web') {
-        (composer as unknown as HTMLTextAreaElement | null)?.setSelectionRange(
-          selection.start,
-          selection.end,
-        );
-        composer?.focus();
-      } else {
-        composer?.focus();
-        composer?.setNativeProps({ selection });
-      }
+      focusComposerSelection(composer, selection, Platform.OS);
     });
   }, [composerMounted, decodedId]);
 
@@ -4350,16 +4340,11 @@ export function BuzzChatSurface({
       );
       setHighlightedMentionIndex(0);
       scheduleAnimationFrame(() => {
-        composerRef.current?.focus();
-        // Normal Android typing owns its cursor. Set selection only for this
-        // explicit replacement, after React has applied the new text.
-        composerRef.current?.setNativeProps({
-          selection: composerFieldSelection(
-            inserted.text,
-            composerTagHandlesRef.current,
-            nextSelection,
-          ),
-        });
+        focusComposerSelection(
+          composerRef.current,
+          composerFieldSelection(inserted.text, composerTagHandlesRef.current, nextSelection),
+          Platform.OS,
+        );
       });
       void Haptics.selectionAsync();
     },
@@ -4393,14 +4378,11 @@ export function BuzzChatSurface({
       setInputSelection(nextSelection);
       setHighlightedMentionIndex(0);
       scheduleAnimationFrame(() => {
-        composerRef.current?.focus();
-        composerRef.current?.setNativeProps({
-          selection: composerFieldSelection(
-            inserted.text,
-            composerTagHandlesRef.current,
-            nextSelection,
-          ),
-        });
+        focusComposerSelection(
+          composerRef.current,
+          composerFieldSelection(inserted.text, composerTagHandlesRef.current, nextSelection),
+          Platform.OS,
+        );
       });
       void Haptics.selectionAsync();
     },

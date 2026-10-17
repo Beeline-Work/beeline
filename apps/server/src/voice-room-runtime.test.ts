@@ -1428,7 +1428,7 @@ it('multi-human-mode-2: a join while agent access resolves applies group routing
   const agents=deferred<typeof roster>();
   service.agents.mockImplementationOnce(() => agents.promise);
   try {
-    const final=runtime.utterance('human','What do you think?',performance.now(),true,true);
+    const final=runtime.utterance('human','What do you think?',performance.now(),true);
     service.humanCount.mockResolvedValue(2);
     agents.resolve(roster); await final;
     expect(service.recordHuman).not.toHaveBeenCalled();

@@ -176,7 +176,7 @@ export class VoiceRoomRuntime {
       if (!(await this.service.db.query(`SELECT 1 FROM voice_participants WHERE call_id=$1 AND identity_id=$2 AND left_at IS NULL AND parked_at IS NULL`,
         [this.callId, human])).rowCount) { this.stopInput(human); return; }
       const hints = (await this.service.agents(this.roomId, human)).flatMap(agent => [agent.name, agent.handle]);
-      stt = await this.service.config.stt(event => { const startedAt = performance.now(); void (async () => {
+      stt = await this.service.config.stt(event => { void (async () => {
       if (this.inputVersions.get(human) !== version ||
           event.turn_index <= (this.turnIndices.get(human) ?? -1)) return;
       const recent = this.recentSpeech.filter(spoken => spoken.until > performance.now());
@@ -201,7 +201,8 @@ export class VoiceRoomRuntime {
       const stop = /^(stop|stop conversation|end conversation|leave conversation|stop conversation mode)$/.test(speechWords(event.transcript).join(' '));
       if (event.event === 'EndOfTurn' && event.transcript.trim() && !stop) {
         this.turnIndices.set(human, event.turn_index);
-        void this.utterance(human, event.transcript, startedAt, voiceInterrupt(event), true).catch(error => {
+        const interrupts = voiceInterrupt(event);
+        void this.utterance(human, event.transcript, performance.now(), interrupts).catch(error => {
           if (error instanceof Error && error.name === 'AbortError') return;
           void this.signal({ type: 'error', message: error instanceof VoiceQuotaError ? error.message : 'Voice reply unavailable; your message is in the transcript',
             ...(error instanceof VoiceQuotaError ? { code: error.code } : {}) }, human);
@@ -312,7 +313,7 @@ export class VoiceRoomRuntime {
     return refresh;
   }
 
-  async utterance(human: string, text: string, startedAt = performance.now(), interrupts = true, fromSpeech = false) {
+  async utterance(human: string, text: string, startedAt = performance.now(), interrupts = true) {
     if (!interrupts && this.speaking && await this.service.humanCount(this.callId) > 1) return;
     const traceId = randomUUID();
     const stages = new Set<string>();
@@ -350,15 +351,13 @@ export class VoiceRoomRuntime {
       const agents = await this.service.agents(this.roomId, human);
       const humans = await this.service.humanCount(this.callId);
       // Final input shares routing's live count rather than adding a serial lookup.
-      if (fromSpeech) {
-        if (humans > 1 && this.speaking && !interrupts) {
-          resolveSource('');
-          if (this.pendingTurns.get(human) === turn) this.pendingTurns.delete(human);
-          return;
-        }
-        if (humans === 1 || interrupts) {
-          previous?.controller.abort(); this.speaking?.abort(); this.audio.clearQueue();
-        }
+      if (humans > 1 && this.speaking && !interrupts) {
+        resolveSource('');
+        if (this.pendingTurns.get(human) === turn) this.pendingTurns.delete(human);
+        return;
+      }
+      if (humans === 1 || interrupts) {
+        previous?.controller.abort(); this.speaking?.abort(); this.audio.clearQueue();
       }
       let sourceId = continuation ? await continuation.source : '';
       let selected = this.targets.get(human);

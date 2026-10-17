@@ -32,6 +32,11 @@ export class CornerAccessStatement {
     if (locksMember || (locked && !/\b(?:UPDATE|SHARE)\s+OF\b/i.test(sql))) {
       // These statements must lock stored rows, so resolve the parent key instead of a UNION view.
       for (const alias of aliases) {
+        // Keep the addressed Room for lifecycle provenance when its membership lives on the parent.
+        const addressedRoom = new RegExp('\\b' + alias + '\\.room_id\\s*=\\s*(\\$\\d+)').exec(sql)?.[1];
+        if (addressedRoom) sql = sql.replace(
+          new RegExp('\\bJOIN rooms (\\w+) ON \\1\\.id=' + alias + '\\.room_id\\b', 'g'),
+          (_match, roomAlias: string) => `JOIN rooms ${roomAlias} ON ${roomAlias}.id=${addressedRoom}`);
         sql = sql.replace(new RegExp('\\b' + alias + '\\.room_id\\s*=\\s*([\\w.$]+)(?=\\s|$|[,\\)])', 'g'),
           (_match, roomId: string) => `${alias}.room_id=(SELECT COALESCE(parent_id,id) FROM rooms WHERE id=${roomId})`);
       }

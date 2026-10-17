@@ -29,6 +29,48 @@ fixture.fetch.mockImplementation(async () => new Response(JSON.stringify({
 })));
 import { useVoiceCall } from './use-voice-call';
 
+it('multi-human-silence-1: listens for 60 seconds, then rearms the solo deadline', async () => {
+  vi.useFakeTimers(); fixture.fetch.mockClear(); fixture.parkAudio.mockClear();
+  fixture.room = Object.assign(new EventEmitter(), { connect: async () => {}, disconnect: vi.fn(async () => {}),
+    remoteParticipants: new Map(), localParticipant: { publishData: vi.fn(async () => {}), setMicrophoneEnabled: vi.fn(async () => {}) } });
+  let voice!: ReturnType<typeof useVoiceCall>; let renderer: any;
+  function Probe() { voice = useVoiceCall(fixture.callId, true); return null; }
+  const signal = (data: object) => fixture.room.emit('data', new TextEncoder().encode(JSON.stringify(data)),
+    { identity: `beeline-voice-${fixture.callId}` }, undefined, VOICE_DATA_TOPIC);
+  await act(async () => { renderer = create(<Probe />); });
+  try {
+    await act(async () => voice.join());
+    await act(async () => { signal({ type: 'humans', count: 2 }); signal({ type: 'speaker', agentId: null }); });
+    await act(async () => vi.advanceTimersByTimeAsync(60_000));
+    expect(voice.call).not.toBeNull();
+    expect(fixture.fetch.mock.calls.some(([url]) => String(url).endsWith('/idle'))).toBe(false);
+    expect(fixture.parkAudio).not.toHaveBeenCalled();
+    fixture.fetch.mockImplementationOnce(async () => new Response(JSON.stringify({ state: 'ended' })));
+    await act(async () => signal({ type: 'humans', count: 1 }));
+    await act(async () => vi.advanceTimersByTimeAsync(19_999));
+    expect(voice.call).not.toBeNull();
+    await act(async () => vi.advanceTimersByTimeAsync(1));
+    expect(voice.call).toBeNull();
+  } finally { await act(async () => renderer.unmount()); vi.useRealTimers(); }
+});
+
+it('restores the mic when the server protects a listener before its count signal arrives', async () => {
+  vi.useFakeTimers(); fixture.parkAudio.mockClear();
+  fixture.room = Object.assign(new EventEmitter(), { connect: async () => {}, disconnect: vi.fn(async () => {}),
+    remoteParticipants: new Map(), localParticipant: { publishData: vi.fn(async () => {}), setMicrophoneEnabled: vi.fn(async () => {}) } });
+  let voice!: ReturnType<typeof useVoiceCall>; let renderer: any;
+  function Probe() { voice = useVoiceCall(fixture.callId, true); return null; }
+  await act(async () => { renderer = create(<Probe />); });
+  try {
+    await act(async () => voice.join());
+    fixture.fetch.mockImplementationOnce(async () => new Response(JSON.stringify({ state: 'ready' })));
+    await act(async () => vi.advanceTimersByTimeAsync(20_000));
+    expect(voice.call).not.toBeNull();
+    expect(fixture.parkAudio).not.toHaveBeenCalled();
+    expect(fixture.room.localParticipant.setMicrophoneEnabled.mock.calls.map(([enabled]: boolean[]) => enabled)).toEqual([true,false,true]);
+  } finally { await act(async () => renderer.unmount()); vi.useRealTimers(); }
+});
+
 it('notification Stop during RTC connect fences the late join and releases audio', async () => {
   let resolveConnect!: () => void;
   fixture.closeAudio.mockClear(); fixture.fetch.mockClear();

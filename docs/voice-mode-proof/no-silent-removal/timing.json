@@ -1,0 +1,19 @@
+{
+  "measurement": "Injected final text to first voiced audio publication; actual local RTC; injected brain and tone TTS; five warm samples",
+  "oldMs": [
+    12.48854899998696,
+    11.808267000000342,
+    90.96938500000397,
+    19.161605999994208,
+    13.250168999991729
+  ],
+  "fixedMs": [
+    16.5689339999999,
+    17.34607800000049,
+    12.276866000000155,
+    10.953271000000314,
+    12.1674550000007
+  ],
+  "oldMedianMs": 13.250168999991729,
+  "fixedMedianMs": 12.276866000000155
+}

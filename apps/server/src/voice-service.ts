@@ -168,6 +168,8 @@ export class VoiceService {
       WHERE c.id=$1 AND c.ended_at IS NULL AND ($3::text IS NULL OR p.session_id=$3)`, [callId, humanId, sessionId ?? null])).rows[0];
     if (!participant) return { state: 'ended' };
     await this.access(participant.room_id, humanId, db);
+    // Legacy clients park before reading state; ready restores their mic through resume.
+    if ((await db.query(`SELECT 1 FROM voice_participants WHERE call_id=$1 AND identity_id<>$2 AND left_at IS NULL LIMIT 1`, [callId, humanId])).rowCount) return { state: 'ready' };
     const rows = await db.query<{ name: string; pending: boolean; ready: boolean }>(`SELECT i.name,
       c.state IN ('pending','claimed') pending,
       EXISTS(SELECT 1 FROM messages m WHERE m.author_id=o.agent_id AND m.room_id=source.room_id
@@ -190,13 +192,17 @@ export class VoiceService {
     const state = await this.db.transaction(async db => {
       await db.query(`SELECT id FROM voice_calls WHERE id=$1 FOR UPDATE`, [callId]);
       const state = await this.idleState(callId, humanId, db, sessionId);
-      if (state.state !== 'ended') {
+      if (state.state !== 'ended' && !(state.state === 'ready' && !state.agentName)) {
         await db.query(`UPDATE voice_participants SET parked_at=now()
           WHERE call_id=$1 AND identity_id=$2 AND left_at IS NULL AND ($3::text IS NULL OR session_id=$3)`, [callId, humanId, sessionId ?? null]);
       }
       return state;
     });
-    if (state.state === 'ended') { await this.leave(callId, humanId, true, sessionId); return state; }
+    if (state.state === 'ready' && !state.agentName) return state;
+    if (state.state === 'ended') {
+      await this.leave(callId, humanId, true, sessionId, true);
+      return this.idleState(callId, humanId, this.db, sessionId);
+    }
     await (await this.runtimes.get(callId))?.park(humanId, sessionId);
     return state;
   }
@@ -246,10 +252,12 @@ export class VoiceService {
     if (row.ended_at) await db.query(`UPDATE messages SET presentation=$2 WHERE id=$1`, [row.message_id, 'system']);
   }
 
-  async leave(callId: string, humanId: string, disconnected = false, sessionId?: string): Promise<void> {
+  async leave(callId: string, humanId: string, disconnected = false, sessionId?: string, idleDeadline = false): Promise<void> {
     const row = await this.db.transaction(async db => {
       const call = (await db.query<CallRow>(`SELECT * FROM voice_calls WHERE id=$1 FOR UPDATE`, [callId])).rows[0];
       if (!call || call.ended_at) return null;
+      // A human may have joined after idleState released the call lock.
+      if (idleDeadline && (await db.query(`SELECT 1 FROM voice_participants WHERE call_id=$1 AND identity_id<>$2 AND left_at IS NULL LIMIT 1`, [callId, humanId])).rowCount) return null;
       if (!disconnected) await this.access(call.room_id, humanId, db);
       const left = await db.query(`UPDATE voice_participants SET left_at=now() WHERE call_id=$1 AND identity_id=$2
         AND ($3::text IS NULL OR session_id=$3) RETURNING identity_id`, [callId, humanId, sessionId ?? null]);

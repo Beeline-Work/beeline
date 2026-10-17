@@ -209,6 +209,32 @@ it('parks only this session’s pending command and prevents recovery from start
   } finally { await service.leave(joined.call.id, H); }
 });
 
+it('multi-human-silence-1: an old client idle deadline keeps both participants active', async () => {
+  const joined = await service.join(R, H);
+  // Earlier access tests deliberately leave SECOND a spectator.
+  await db.query(`UPDATE memberships SET role='owner' WHERE room_id IS NULL AND identity_id=$1`, [SECOND]);
+  await service.join(R, SECOND);
+  try {
+    expect(await service.idle(joined.call.id, H, joined.sessionId)).toEqual({ state: 'ready' });
+    expect(await service.humanCount(joined.call.id)).toBe(2);
+    expect(await service.idleState(joined.call.id, H, db, joined.sessionId)).toEqual({ state: 'ready' });
+    expect((await db.query(`SELECT parked_at,left_at FROM voice_participants WHERE call_id=$1 AND identity_id=$2`, [joined.call.id,H])).rows[0]).toEqual({ parked_at: null, left_at: null });
+  } finally { await service.leave(joined.call.id,H); await service.leave(joined.call.id,SECOND); }
+});
+
+it('multi-human-silence-1: a join between idle decision and leave is protected by the call lock', async () => {
+  const joined = await service.join(R, H);
+  const leave = service.leave.bind(service);
+  const delayed = vi.spyOn(service, 'leave').mockImplementationOnce(async (...args) => {
+    await service.join(R, SECOND);
+    await leave(...args);
+  });
+  try {
+    expect(await service.idle(joined.call.id,H,joined.sessionId)).toEqual({ state: 'ready' });
+    expect(await service.humanCount(joined.call.id)).toBe(2);
+  } finally { delayed.mockRestore(); await leave(joined.call.id,H); await leave(joined.call.id,SECOND); }
+});
+
 it('idle with no session command ends participation while unrelated Room work cannot park it', async () => {
   const joined = await service.join(R, H);
   expect(await service.idle(joined.call.id, H)).toEqual({ state: 'ended' });

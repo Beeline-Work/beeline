@@ -1,0 +1,140 @@
+{
+  "elapsedSeconds": 61.1255780661013,
+  "before": {
+    "humans": 2,
+    "operations": [],
+    "microphoneFrames": [
+      5441,
+      37
+    ],
+    "replies": [
+      "Ruby"
+    ],
+    "signalCounts": {
+      "target": 2,
+      "speaker": 2,
+      "humans": 2,
+      "latency": 1
+    },
+    "observations": [
+      {
+        "at": 1792270706380,
+        "joined": false,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792270710216,
+        "joined": false,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792270710405,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      }
+    ],
+    "secondMicrophone": [
+      {
+        "muted": false,
+        "kind": 1
+      }
+    ],
+    "participants": [
+      {
+        "identity_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "parked_at": null,
+        "left_at": null
+      },
+      {
+        "identity_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "parked_at": null,
+        "left_at": null
+      }
+    ]
+  },
+  "after": {
+    "humans": 1,
+    "operations": [
+      "/v1/phone/voice/a630e062-4923-4bca-b073-84c67177b5e3/idle",
+      "/v1/phone/voice/a630e062-4923-4bca-b073-84c67177b5e3/leave"
+    ],
+    "microphoneFrames": [
+      11553,
+      2020
+    ],
+    "replies": [
+      "Ruby",
+      "Ruby",
+      "Ruby",
+      "Ruby",
+      "Ruby",
+      "Ruby",
+      "Ruby",
+      "Ruby",
+      "Ruby"
+    ],
+    "signalCounts": {
+      "target": 10,
+      "speaker": 18,
+      "humans": 3,
+      "latency": 9,
+      "unaddressed": 4
+    },
+    "observations": [
+      {
+        "at": 1792270706380,
+        "joined": false,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792270710216,
+        "joined": false,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792270710405,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792270730624,
+        "joined": false,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      }
+    ],
+    "secondMicrophone": [],
+    "participants": [
+      {
+        "identity_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "parked_at": null,
+        "left_at": null
+      },
+      {
+        "identity_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "parked_at": null,
+        "left_at": "2026-10-17T20:58:50.203Z"
+      }
+    ]
+  }
+}

@@ -204,10 +204,15 @@ export class VoiceRoomRuntime {
           event.turn_index <= (this.turnIndices.get(human) ?? -1)) return;
       this.turnIndices.set(human, event.turn_index);
       if (/^(stop|stop conversation|end conversation|leave conversation|stop conversation mode)$/.test(speechWords(event.transcript).join(' '))) {
-        this.inputVersions.set(human, version + 1);
-        this.stopInput(human);
-        void this.signal({ type: 'stop' }, human)
-          .finally(() => this.service.leave(this.callId, human, true)).catch(() => {});
+        this.pendingTurns.get(human)?.controller.abort();
+        this.speaking?.abort(); this.audio.clearQueue();
+        void this.service.humanCount(this.callId).then(async humans => {
+          if (humans > 1 || this.inputVersions.get(human) !== version) return;
+          this.inputVersions.set(human, version + 1);
+          this.stopInput(human);
+          await this.signal({ type: 'stop' }, human)
+            .finally(() => this.service.leave(this.callId, human, true));
+        }).catch(() => {});
         return;
       }
       void this.utterance(human, event.transcript, performance.now(), interrupts).catch(error => {
@@ -345,10 +350,9 @@ export class VoiceRoomRuntime {
       if (humans === 1 && !continuation && !named && !tapped) {
         selected = await this.service.lastActiveAgent(this.roomId, agents) ?? selected;
       }
-      const agent = continuation
+      const agent = humans > 1 ? named ?? tapped : continuation
         ? namedVoiceTarget(fragment, agents, inherited, 1)
-        : humans > 1 ? named ?? tapped
-          : named ?? tapped ?? namedVoiceTarget(text, agents, selected, humans);
+        : named ?? tapped ?? namedVoiceTarget(text, agents, selected, humans);
       if (!agent || this.closed) {
         resolveSource('');
         if (!agent && !this.closed) await this.signal({ type: 'unaddressed' }, human);
@@ -580,6 +584,9 @@ export class VoiceRoomRuntime {
         .catch(() => this.signal({ type: 'error', message: 'Speech input unavailable; please try again' }, human));
     }
     await this.refresh();
+    // Older clients wait for playback to finish before restoring their mic.
+    // A protected multi-human idle can resume with no report to produce that signal.
+    if (!this.speaking) await this.signal({ type: 'speaker', agentId: null }, human);
   }
 
   async close() {

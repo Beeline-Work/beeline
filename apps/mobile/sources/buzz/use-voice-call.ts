@@ -113,10 +113,12 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
       if (version !== revision.current) { await release(); await voiceRequest(joined.call.id, 'leave', joined.sessionId); return; }
       setJoinedAgents({ roomId, agents: joined.agents });
       const { room } = transport;
+      let humanCount = joined.call.participants.filter(p => p.kind === 'human').length;
+      setHumans(humanCount);
       mode.current = 'active';
       cancelSilence.current = transport.cancelSilence;
       const armSilence = () => {
-        if (!current() || mode.current !== 'active' || speakerRef.current) return;
+        if (!current() || humanCount > 1 || mode.current !== 'active' || speakerRef.current) return;
         void transport!.armSilence().catch(cause => { if (current()) { void end(); setError(errorDiagnostic(cause).message); } });
       };
       const finishIdle = async () => {
@@ -157,7 +159,7 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
         } finally { checking = false; }
       };
       const expireSilence = async () => {
-        if (!current() || mode.current !== 'active' || speakerRef.current) return;
+        if (!current() || humanCount > 1 || mode.current !== 'active' || speakerRef.current) return;
         mode.current = 'parking'; setLevel(0);
         try {
           await transport!.cancelSilence();
@@ -165,6 +167,11 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
           const state = await request<VoiceIdleState>(joined!.call.id, 'idle', joined!.sessionId);
           if (!current()) return;
           if (state.state === 'ended') { await finishIdle(); return; }
+          if (state.state === 'ready' && !state.agentName) {
+            await room.localParticipant.setMicrophoneEnabled(!quotaRef.current);
+            if (current()) { mode.current = 'active'; armSilence(); }
+            return;
+          }
           await room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ type: 'park', sessionId: joined!.sessionId })),
             { reliable: true, topic: VOICE_DATA_TOPIC });
           await transport!.parkAudio(state.agentName ?? 'agent');
@@ -201,7 +208,11 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
             }
           }
           if (data.type === 'latency') setFirstAudioMs(data.firstAudioMs);
-          if (data.type === 'humans') setHumans(data.count);
+          if (data.type === 'humans') {
+            humanCount = data.count; setHumans(data.count);
+            if (humanCount > 1) void transport!.cancelSilence().catch(() => { if (current()) void end(); });
+            else armSilence();
+          }
           if (data.type === 'unaddressed') setUnaddressed(count => count + 1);
         } catch {}
       });

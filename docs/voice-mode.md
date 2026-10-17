@@ -4,7 +4,9 @@ Hold the existing composer mic to start voice mode. A short press still starts
 text dictation. Voice stays in the conversation: tap an agent's square avatar,
 or say its name, to aim your words. The pressed mic ends your participation;
 hold the waveform to open the optional full-screen view. Room members join
-through the live call card. After the last person leaves, that card becomes
+through the live call card. With several humans, a separate **Leave call**
+button ends only your participation; solo calls keep **End Conversation mode**.
+After the last person leaves, that card becomes
 `Voice call ended · duration`.
 
 **Aura 2 is the only speech provider.** Workspace Settings has no provider
@@ -21,11 +23,21 @@ assignment. There are no cloning or upload controls.
 Say an agent's handle or display name anywhere in the utterance to address it;
 matching ignores case and respects word boundaries. Tapping its avatar still
 sets the current target. With two or more humans in the call, every utterance
-must explicitly name an agent to get a reply, including after an avatar tap.
+must open with an agent's name or use an explicit one-turn avatar tap to get a reply.
+An unnamed continuation cannot inherit a pending agent target.
 With exactly one human, unnamed speech addresses the eligible agent who most
 recently posted a message in that Room or corner. An opening agent name or an
 explicit avatar tap takes priority. If no eligible agent has posted there, the
 current selection (initially the first listed agent) remains the fallback.
+
+Multi-human calls have no silence deadline. The server also refuses to park
+or remove a listener through `idle`, including when another person joins
+between the idle decision and removal. Old clients can still mute briefly
+at their native deadline: the existing `ready` response sends them through
+their park/state/resume flow and restores the mic. Solo silence still uses
+the existing 20-second deadline and pending-order parking behavior. Spoken
+stop phrases interrupt playback in multi-human calls without leaving; the
+120-second RTC transport-loss grace remains unchanged.
 
 Playback speaks the full reply, streaming each clause and the remaining tail.
 Noise-only Flux starts cannot interrupt it: barge-in waits for recognized speech

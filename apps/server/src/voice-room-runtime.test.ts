@@ -56,6 +56,42 @@ it.each(['stop', 'End conversation.', 'leave conversation'])('ends the participa
   } finally { await runtime.close(); }
 });
 
+it.each(['stop', 'End conversation.', 'leave conversation'])('multi-human-silence-1: %s interrupts without leaving or closing input', async phrase => {
+  let onSpeech!: (event: any) => void;
+  state.streams = [new ReadableStream()];
+  const { service } = conversationService(2);
+  const leave = vi.fn(async () => {}), close = vi.fn();
+  service.config.stt.mockImplementation(async (callback: any) => {
+    onSpeech = callback; return { send: vi.fn(), close };
+  });
+  const runtime = await VoiceRoomRuntime.connect({ ...service, leave } as unknown as VoiceService, 'call', 'room');
+  try {
+    state.room.emit('track', { kind: 1 }, {}, { identity: 'human' });
+    await vi.waitFor(() => expect(onSpeech).toBeDefined());
+    const cleared = state.audio.clearQueue.mock.calls.length;
+    onSpeech({ event: 'EndOfTurn', turn_index: 0, transcript: phrase,
+      words: phrase.split(' ').map((word, index) => ({ word, confidence: 0.99, start: index * 0.3, end: index * 0.3 + 0.25 })) });
+    await vi.waitFor(() => expect(service.humanCount).toHaveBeenCalledTimes(2));
+    expect(state.audio.clearQueue.mock.calls.length).toBeGreaterThan(cleared);
+    expect(leave).not.toHaveBeenCalled(); expect(close).not.toHaveBeenCalled();
+    expect(state.room.localParticipant.publishData.mock.calls.some(([bytes]: any[]) => JSON.parse(new TextDecoder().decode(bytes)).type === 'stop')).toBe(false);
+    expect(service.config.brain.answer).not.toHaveBeenCalled();
+  } finally { await runtime.close(); }
+});
+
+it('multi-human-silence-1: resume without a report acknowledges idle playback to restore legacy microphones', async () => {
+  const { service } = conversationService(2);
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  state.room.remoteParticipants.set('human', { identity: 'human', trackPublications: new Map() });
+  try {
+    await runtime.resume('human');
+    const [bytes, options] = state.room.localParticipant.publishData.mock.calls.at(-1)!;
+    expect(JSON.parse(new TextDecoder().decode(bytes))).toEqual({ type: 'speaker', agentId: null });
+    expect(options.destination_identities).toEqual(['human']);
+    expect(service.recordAnswer).not.toHaveBeenCalled();
+  } finally { await runtime.close(); }
+});
+
 it('retains an absent RTC participant through a short radio handoff and resets the reconnect grace on return', async () => {
   let clock = 0;
   const now = vi.spyOn(performance, 'now').mockImplementation(() => clock);
@@ -816,6 +852,26 @@ it('shares an insert in flight and serializes later edits before restarting the 
     expect(service.recordHuman).toHaveBeenCalledOnce();
     expect(service.config.brain.answer).toHaveBeenCalledOnce();
     expect(service.config.brain.answer.mock.calls[0]?.[1].filter(message => message.role === 'user').at(-1)?.content).toBe('Ruby first second third');
+  } finally { await runtime.close(); }
+});
+
+it('multi-human-silence-1: unnamed speech cannot inherit a pending pre-audio target', async () => {
+  const { service, speech } = conversationService(2);
+  speech.synthesize.mockImplementationOnce(async function* (_text, _voice, signal) {
+    yield Buffer.alloc(960);
+    await new Promise<void>((_resolve, reject) => {
+      const abort = () => reject(new DOMException('Interrupted', 'AbortError'));
+      if (signal.aborted) abort(); else signal.addEventListener('abort', abort, { once: true });
+    });
+  });
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  try {
+    const first = runtime.utterance('human', 'Ruby, help').catch(error => { if (error.name !== 'AbortError') throw error; });
+    await vi.waitFor(() => expect(state.audio.captureFrame).toHaveBeenCalledOnce());
+    await runtime.utterance('human', 'So so I think... yeah. No. You go.'); await first;
+    expect(service.reviseHuman).not.toHaveBeenCalled();
+    expect(service.config.brain.answer).toHaveBeenCalledOnce();
+    expect(state.room.localParticipant.publishData.mock.calls.some(([bytes]: any[]) => JSON.parse(new TextDecoder().decode(bytes)).type === 'unaddressed')).toBe(true);
   } finally { await runtime.close(); }
 });
 

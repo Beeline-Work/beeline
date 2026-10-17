@@ -48,9 +48,8 @@ async function fixture(seed?: (database: PgliteDatabase) => Promise<unknown>) {
   );
   await database.query(
     `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-      ($1,NULL,$2,'owner'),($1,$3,$2,'owner'),($1,$4,$2,'owner'),
-      ($1,$5,$2,'owner'),($1,$6,$2,'owner')`,
-    [WORKSPACE, VIEWER, ROOM, LIVE, OPENED_FIRST, OPENED_SECOND],
+      ($1,NULL,$2,'owner'),($1,$3,$2,'owner')`,
+    [WORKSPACE, VIEWER, ROOM],
   );
   await seed?.(database);
   return new PhoneService(database, 'http://local.test');
@@ -81,11 +80,6 @@ describe('readCorners', () => {
            $1,$2,$3,'Open ' || series,'2026-01-04T00:00:00Z'::timestamptz
          FROM generate_series(1,31) series`,
         [WORKSPACE, ROOM, VIEWER],
-      );
-      await database.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-         SELECT $1,id,$2,'owner' FROM rooms WHERE parent_id=$3 AND name LIKE 'Open %'`,
-        [WORKSPACE, VIEWER, ROOM],
       );
     });
     const first = (await phone.readCorners(ROOM, VIEWER))!;

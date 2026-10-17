@@ -92,7 +92,7 @@ async function surface(roomId: string, parentId: string | null, members = [SCANN
     `INSERT INTO rooms(id,workspace_id,created_by,name,parent_id) VALUES($1,$2,$3,'Run surface',$4)`,
     [roomId, WORKSPACE, HUMAN, parentId],
   );
-  for (const member of members)
+  for (const member of parentId ? [] : members)
     await db.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
       [WORKSPACE, roomId, member],
@@ -143,7 +143,9 @@ describe('activeWorkflowRunIds', () => {
     const unrelatedRoom = '20000000-0000-4000-8000-000000000005';
     await surface(CORNER, ROOM);
     await surface(sibling, ROOM);
-    await surface(privateCorner, ROOM, [SCANNER]);
+    const privateParent = '20000000-0000-4000-8000-000000000006';
+    await surface(privateParent, null, [SCANNER]);
+    await surface(privateCorner, privateParent);
     await surface(unrelatedRoom, null);
     const parentRun = await start();
     const startHere = (roomId: string) =>
@@ -154,13 +156,13 @@ describe('activeWorkflowRunIds', () => {
       );
     const cornerRun = await startHere(CORNER);
     const siblingRun = await startHere(sibling);
-    const privateRun = await startHere(privateCorner);
+    await startHere(privateCorner);
     await startHere(unrelatedRoom);
     const visible = [parentRun.runId, cornerRun.runId, siblingRun.runId].sort();
     expect(await activeWorkflowRunIds(db, CORNER, 'daily', OTHER)).toEqual(visible);
     expect(await activeWorkflowRunIds(db, ROOM, 'daily', OTHER)).toEqual(visible);
     expect(await activeWorkflowRunIds(db, CORNER, 'daily', SCANNER)).toEqual(
-      [...visible, privateRun.runId].sort(),
+      visible,
     );
     await handoff(db, await command(SCANNER, sibling), {
       runId: siblingRun.runId,
@@ -174,7 +176,7 @@ describe('activeWorkflowRunIds', () => {
       ROOM,
       OTHER,
     ]);
-    expect(await activeWorkflowRunIds(db, CORNER, 'daily', OTHER)).toEqual([cornerRun.runId]);
+    expect(await activeWorkflowRunIds(db, CORNER, 'daily', OTHER)).toEqual([]);
   });
 
   it('is unavailable (empty) for a slug with no saved workflow', async () => {

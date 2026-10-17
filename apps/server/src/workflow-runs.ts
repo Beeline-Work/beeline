@@ -493,14 +493,14 @@ async function resolveRunOwner(
 async function runNoticeRecipients(db: SqlDatabase, roomId: string, ownerId: string | null): Promise<string[]> {
   if (ownerId) {
     const member = await db.query(
-      `SELECT 1 FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
+      `SELECT 1 FROM effective_memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
       [roomId, ownerId],
     );
     if (member.rowCount) return [ownerId];
   }
   const admins = await db.query<{ id: string }>(
     `SELECT DISTINCT identity.id FROM rooms room
-     JOIN memberships member ON member.workspace_id=room.workspace_id
+     JOIN effective_memberships member ON member.workspace_id=room.workspace_id
        AND (member.room_id=room.id OR member.room_id IS NULL)
        AND member.removed_at IS NULL AND member.role IN ('owner','admin')
      JOIN identities identity ON identity.id=member.identity_id AND identity.kind='human'
@@ -1779,7 +1779,7 @@ export async function saveWorkflow(
   assertSkillTextSafe(contract.description, markdown);
   return database.transaction(async (db) => {
     const member = await db.query(
-      `SELECT 1 FROM identities identity JOIN memberships member ON member.identity_id=identity.id
+      `SELECT 1 FROM identities identity JOIN effective_memberships member ON member.identity_id=identity.id
     WHERE identity.id=$1 AND identity.kind='agent' AND member.room_id=$2 AND member.removed_at IS NULL`,
       [command.agent_id, command.room_id],
     );
@@ -1917,7 +1917,7 @@ export async function startWorkflow(
     ];
     if (boundIds.length) {
       const agents = await db.query<{ identity_id: string }>(
-        `SELECT member.identity_id FROM memberships member
+        `SELECT member.identity_id FROM effective_memberships member
          JOIN identities identity ON identity.id=member.identity_id AND identity.kind='agent'
          WHERE member.room_id=$1 AND member.identity_id=ANY($2::text[]) AND member.removed_at IS NULL`,
         [command.room_id, boundIds],
@@ -2051,7 +2051,7 @@ async function roomMemberIdForHandle(
 ): Promise<string | undefined> {
   const row = (
     await db.query<{ identity_id: string }>(
-      `SELECT m.identity_id FROM memberships m JOIN identities i ON i.id=m.identity_id
+      `SELECT m.identity_id FROM effective_memberships m JOIN identities i ON i.id=m.identity_id
        WHERE m.room_id=$1 AND m.removed_at IS NULL AND lower(i.handle)=lower($2)`,
       [roomId, handle],
     )
@@ -2100,7 +2100,7 @@ export async function assignWorkflowRole(
       throw new Error(`this run is currently at the ${currentRole} role, not ${input.role}`);
     }
     const member = await db.query(
-      `SELECT 1 FROM memberships member
+      `SELECT 1 FROM effective_memberships member
        JOIN identities identity ON identity.id=member.identity_id AND identity.kind='agent'
        WHERE member.room_id=$1 AND member.identity_id=$2 AND member.removed_at IS NULL`,
       [command.room_id, targetAgentId],

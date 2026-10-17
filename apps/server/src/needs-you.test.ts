@@ -152,11 +152,8 @@ describe('PhoneService Needs-you tray', () => {
     );
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-         ($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,NULL,$4,'member'),
-         ($1,$5,$2,'owner'),($1,$5,$3,'member'),($1,$5,$4,'member'),
-         ($1,$6,$2,'owner'),($1,$6,$4,'member'),
-         ($1,$7,$3,'member')`,
-      [WORKSPACE, VIEWER, PEER, AGENT, ROOM, CORNER, OTHER_ROOM],
+       ($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,NULL,$4,'member'),($1,$5,$2,'owner'),($1,$5,$3,'member'),($1,$5,$4,'member'),($1,$6,$3,'member') `,
+      [WORKSPACE, VIEWER, PEER, AGENT, ROOM, OTHER_ROOM],
     );
     phone = new PhoneService(database, 'https://server.example');
   });

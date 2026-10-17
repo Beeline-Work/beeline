@@ -114,9 +114,9 @@ export class AgentScheduleLoop {
        JOIN identities creator ON creator.id=schedule.creator_id
          AND (creator.kind='human' OR creator.id=schedule.agent_id)
        JOIN identities agent ON agent.id=schedule.agent_id AND agent.kind='agent'
-       JOIN memberships creator_membership ON creator_membership.room_id=schedule.room_id
+       JOIN effective_memberships creator_membership ON creator_membership.room_id=schedule.room_id
          AND creator_membership.identity_id=schedule.creator_id AND creator_membership.removed_at IS NULL
-       JOIN memberships agent_membership ON agent_membership.room_id=schedule.room_id
+       JOIN effective_memberships agent_membership ON agent_membership.room_id=schedule.room_id
          AND agent_membership.identity_id=schedule.agent_id AND agent_membership.removed_at IS NULL
        WHERE schedule.next_run_at <= $1 AND schedule.workflow_run IS NULL
        ORDER BY schedule.next_run_at,schedule.id LIMIT 100`,
@@ -137,10 +137,10 @@ export class AgentScheduleLoop {
                JOIN identities creator ON creator.id=schedule.creator_id
                  AND (creator.kind='human' OR creator.id=schedule.agent_id)
                JOIN identities agent ON agent.id=schedule.agent_id AND agent.kind='agent'
-               JOIN memberships creator_membership ON creator_membership.room_id=schedule.room_id
+               JOIN effective_memberships creator_membership ON creator_membership.room_id=schedule.room_id
                  AND creator_membership.identity_id=schedule.creator_id
                  AND creator_membership.removed_at IS NULL
-               JOIN memberships agent_membership ON agent_membership.room_id=schedule.room_id
+               JOIN effective_memberships agent_membership ON agent_membership.room_id=schedule.room_id
                  AND agent_membership.identity_id=schedule.agent_id
                  AND agent_membership.removed_at IS NULL
                WHERE schedule.id=$1 AND schedule.next_run_at <= $2 AND schedule.workflow_run IS NULL

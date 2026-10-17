@@ -57,7 +57,7 @@ beforeEach(async () => {
     `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by,objective) VALUES($1,$2,$3,'Work')`,
     [CORNER, AGENT, TEAMMATE],
   );
-  for (const channel of [null, ROOM, CORNER])
+  for (const channel of [null, ROOM])
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member'),($1,$2,$4,'owner'),($1,$2,$5,'member')`,
       [WORKSPACE, channel, PERSON, TEAMMATE, AGENT],
@@ -74,11 +74,7 @@ describe('Mine corners use the push Followed rule', () => {
          VALUES($1,$2,$3,$4,$5)`,
         [cornerId, WORKSPACE, `Corner ${index}`, ROOM, TEAMMATE],
       );
-      await database.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-         VALUES($1,$2,$3,'member')`,
-        [WORKSPACE, cornerId, PERSON],
-      );
+
     }
     const room = (await phone.readChats(WORKSPACE, PERSON))?.chats.find(
       (chat) => chat.room.id === ROOM,

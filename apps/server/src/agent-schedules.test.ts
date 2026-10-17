@@ -115,11 +115,7 @@ describe('manager schedule phone operations', () => {
          VALUES($1,$2,$3,$4,'Launch review')`,
         [CORNER, WORKSPACE, ROOM, OWNER],
       );
-      await database.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-         VALUES($1,$2,$3,'member')`,
-        [WORKSPACE, CORNER, AGENT],
-      );
+
       const daemon = new DaemonService(database, new LiveHub());
       const created = await daemon.execute(
         'createAgentSchedule',

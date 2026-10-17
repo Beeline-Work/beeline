@@ -22,8 +22,8 @@ beforeAll(async () => {
   await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$3,'Room'),($2,$3,'Corner')`, [ROOM, CORNER, WORKSPACE]);
   await database.query(`UPDATE rooms SET parent_id=$1 WHERE id=$2`, [ROOM, CORNER]);
   for (const id of [OWNER, JELLYBEAN, RUBY, NEW]) {
-    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-      VALUES($1,NULL,$2,'member'),($1,$3,$2,'member'),($1,$4,$2,'member')`, [WORKSPACE, id, ROOM, CORNER]);
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+       ($1,NULL,$2,'member'),($1,$3,$2,'member') `, [WORKSPACE, id, ROOM]);
   }
   await database.query(`INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body)
     VALUES($1,$2,'presence','presence','{"status":"online","held":true}')`, [ROOM, JELLYBEAN]);

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { SUBSCRIBABLE_EVENT_KINDS, type SystemEventKind } from '@beeline/api-contract/phone';
+import type { SystemEventKind } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
 import { systemIdentityMention, systemLine } from './system-line.js';
 
@@ -22,7 +22,7 @@ export interface JoinRoomsResult {
 
 /**
  * Top-level shared Room roles are projections of the active Workspace role.
- * Corners and DMs keep their own authority and are deliberately excluded.
+ * DM roles stay independent; corners derive their roles from these Room rows.
  */
 export async function syncTopLevelSharedRoomRoles(
   database: SqlDatabase,
@@ -45,43 +45,6 @@ export async function syncTopLevelSharedRoomRoles(
     [workspaceId ?? null, identityId ?? null],
   );
   return result.rowCount;
-}
-
-/**
- * The subset of a parent member's `event_subscriptions` a corner membership
- * row may inherit: Room-level kinds only. A per-item kind answers one ask by
- * waking its owner directly, never through a subscription, so copying one
- * into a corner would only resurrect the exact standing-hook subscription
- * this file is kept from creating.
- */
-function inheritableEventSubscriptionsSql(subscribableKindsParam: number): string {
-  return `(
-    SELECT COALESCE(jsonb_agg(elem),'[]'::jsonb)
-    FROM jsonb_array_elements_text(parent_member.event_subscriptions) elem
-    WHERE elem=ANY($${subscribableKindsParam}::text[])
-  )`;
-}
-
-async function inheritCornerMemberships(
-  database: SqlDatabase,
-  workspaceId: string,
-  identityId: string,
-  parentRoomIds: readonly string[],
-): Promise<void> {
-  if (!parentRoomIds.length) return;
-  await database.query(
-    `INSERT INTO memberships(workspace_id,room_id,identity_id,role,event_subscriptions)
-     SELECT corner.workspace_id,corner.id,$2,'member',${inheritableEventSubscriptionsSql(4)}
-     FROM rooms corner
-     JOIN memberships parent_member ON parent_member.room_id=corner.parent_id
-       AND parent_member.identity_id=$2 AND parent_member.removed_at IS NULL
-     WHERE corner.workspace_id=$1 AND corner.parent_id=ANY($3::uuid[])
-     ON CONFLICT (room_id,identity_id) WHERE room_id IS NOT NULL
-     DO UPDATE SET role='member',removed_at=NULL,
-       event_subscriptions=EXCLUDED.event_subscriptions
-       WHERE memberships.removed_at IS NOT NULL`,
-    [workspaceId, identityId, parentRoomIds, SUBSCRIBABLE_EVENT_KINDS],
-  );
 }
 
 /**
@@ -113,32 +76,7 @@ export async function joinWorkspaceMembersToPublicRoom(
      RETURNING identity_id`,
     [workspaceId, roomId, scope],
   );
-  for (const member of joined.rows)
-    await inheritCornerMemberships(database, workspaceId, member.identity_id, [roomId]);
   return joined.rowCount;
-}
-
-/**
- * Repairs the roster snapshot older corners took when they were created.
- * Missing rows mean the person joined the parent later; an existing removed
- * row is intentional corner-level authority and must stay removed.
- */
-export async function backfillInheritedCornerMemberships(database: SqlDatabase): Promise<number> {
-  const result = await database.query(
-    `INSERT INTO memberships(workspace_id,room_id,identity_id,role,event_subscriptions)
-     SELECT corner.workspace_id,corner.id,parent_member.identity_id,parent_member.role,
-            ${inheritableEventSubscriptionsSql(1)}
-     FROM rooms corner
-     JOIN memberships parent_member ON parent_member.room_id=corner.parent_id
-       AND parent_member.removed_at IS NULL
-     WHERE corner.parent_id IS NOT NULL
-     ON CONFLICT DO NOTHING`,
-    [SUBSCRIBABLE_EVENT_KINDS],
-  );
-  console.log(
-    `backfillInheritedCornerMemberships: added ${result.rowCount} missing corner membership row(s)`,
-  );
-  return result.rowCount;
 }
 
 /**
@@ -221,7 +159,6 @@ export async function joinRooms(
              WHERE identity_id=$1 AND room_id=ANY($2::uuid[])`,
             [input.identityId, roomIds, input.invitedById],
           );
-        await inheritCornerMemberships(transaction, input.workspaceId, input.identityId, roomIds);
       }
     }
 

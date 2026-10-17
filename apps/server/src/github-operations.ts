@@ -707,9 +707,9 @@ export class GitHubOperations {
          JOIN rooms parent ON parent.id=r.parent_id
          LEFT JOIN identities reviewer_identity ON reviewer_identity.id=parent.reviewer_agent_id
            AND reviewer_identity.kind='agent'
-         LEFT JOIN memberships parent_member ON parent_member.room_id=parent.id
+         LEFT JOIN effective_memberships parent_member ON parent_member.room_id=parent.id
            AND parent_member.identity_id=parent.reviewer_agent_id AND parent_member.removed_at IS NULL
-         LEFT JOIN memberships corner_member ON corner_member.room_id=r.id
+         LEFT JOIN effective_memberships corner_member ON corner_member.room_id=r.id
            AND corner_member.identity_id=parent.reviewer_agent_id AND corner_member.removed_at IS NULL
          WHERE r.id=$1`,
         [input.cornerId],
@@ -1679,7 +1679,7 @@ export class GitHubOperations {
       `SELECT room.id room_id,COALESCE(room.created_by,author.identity_id) author_id
        FROM rooms room
        LEFT JOIN LATERAL(
-         SELECT membership.identity_id FROM memberships membership
+         SELECT membership.identity_id FROM effective_memberships membership
          WHERE membership.room_id=room.id AND membership.removed_at IS NULL
          ORDER BY membership.joined_at LIMIT 1
        )author ON true

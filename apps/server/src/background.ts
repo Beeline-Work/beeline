@@ -323,7 +323,7 @@ export class PushDeliveryLoop {
         SELECT m.*,d.token push_token,d.identity_id push_identity_id
         FROM messages m
         JOIN push_delivery_floors floor ON floor.id='message-delivery'
-        JOIN memberships member ON member.room_id=m.room_id AND member.removed_at IS NULL
+        JOIN effective_memberships member ON member.room_id=m.room_id AND member.removed_at IS NULL
           AND member.identity_id<>m.author_id
         JOIN push_devices d ON d.identity_id=member.identity_id AND m.created_at>=d.registered_at
         WHERE m.created_at>=floor.started_at
@@ -521,7 +521,7 @@ export class PushDeliveryLoop {
              WHERE EXISTS (SELECT 1 FROM push_devices WHERE token=$2 AND identity_id=$3)
                AND EXISTS (SELECT 1 FROM identities WHERE id=$3 AND push_level<>'off')
                AND ($6<>'message' OR EXISTS (
-                 SELECT 1 FROM messages m JOIN memberships member ON member.room_id=m.room_id
+                 SELECT 1 FROM messages m JOIN effective_memberships member ON member.room_id=m.room_id
                  WHERE m.id=$1 AND member.identity_id=$3 AND member.removed_at IS NULL))
                AND NOT EXISTS (
                  SELECT 1 FROM messages m WHERE m.id=$1 AND ${earlierTurnPushSql('m', '$2')}
@@ -570,10 +570,10 @@ export class PushDeliveryLoop {
         candidate.channel_id &&
         (
           await this.database.query(
-            `SELECT 1 FROM memberships member
+            `SELECT 1 FROM effective_memberships member
          WHERE member.room_id=$1 AND member.identity_id=$2 AND member.removed_at IS NOT NULL
          UNION ALL
-         SELECT 1 FROM memberships member WHERE member.room_id=$4 AND member.identity_id=$2
+         SELECT 1 FROM effective_memberships member WHERE member.room_id=$4 AND member.identity_id=$2
            AND member.push_muted AND (NOT $5::boolean OR EXISTS (
              SELECT 1 FROM rooms dm WHERE dm.id=$1 AND dm.direct_participants IS NOT NULL))
          UNION ALL

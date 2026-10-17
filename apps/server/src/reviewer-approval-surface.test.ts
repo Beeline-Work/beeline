@@ -82,7 +82,7 @@ beforeAll(async () => {
     ],
   );
   for (const who of [H, REVIEWER, IMPLEMENTER])
-    for (const room of [null, R, C])
+    for (const room of [null, R])
       await db.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')`,
         [W, room, who],
@@ -167,17 +167,16 @@ describe('the turn a reconciled reviewer is woken into', () => {
       `UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,
       [R, REVIEWER],
     );
-    // `approve_merge` refuses this caller, so the instruction must never reach
-    // the reviewer's session: the two answers are one predicate.
+    // Parent departure revokes both configuration and merge access immediately.
     await expect(
       daemon.execute('getAgentConfiguration', { agentId: REVIEWER, roomId: C }, REVIEWER),
-    ).resolves.toMatchObject({ isReviewer: false });
+    ).rejects.toThrow('daemon room access denied');
     await expect(
       daemon.execute(
         'approveCornerMerge',
         { cornerId: C, headSha: HEAD, briefRevision: 1 },
         REVIEWER,
       ),
-    ).rejects.toThrow('configured reviewer');
+    ).rejects.toThrow('daemon room access denied');
   });
 });

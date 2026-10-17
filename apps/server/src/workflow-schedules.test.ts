@@ -98,10 +98,7 @@ describe('Reproduction workflow-timer-mutations-1', () => {
         `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'Corner')`,
         [CORNER, WORKSPACE, ROOM, OWNER],
       );
-      await db.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
-        [WORKSPACE, CORNER, AGENT],
-      );
+
       await db.query(`UPDATE agent_schedules SET room_id=$2 WHERE workflow_run->>'runId'=$1`, [
         runId,
         CORNER,

@@ -14,8 +14,7 @@ const CORNER = '33333333-3333-4333-8333-333333333333';
 
 /**
  * A top-level Room (AUTHOR, BEE, CARL, AGENT) plus one corner under it whose
- * OWN membership deliberately omits BEE — `@channel` in the corner must still
- * reach BEE through the parent Room, not the corner's narrower roster.
+ * membership is inherited without any corner membership rows.
  */
 async function fixture(): Promise<PgliteDatabase> {
   const database = new PgliteDatabase();
@@ -38,9 +37,8 @@ async function fixture(): Promise<PgliteDatabase> {
   await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [AGENT, AUTHOR]);
   await database.query(
     `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-      ($1,$2,$3,'owner'),($1,$2,$4,'member'),($1,$2,$5,'member'),($1,$2,$6,'member'),
-      ($1,$7,$3,'owner'),($1,$7,$6,'member')`,
-    [WORKSPACE, ROOM, AUTHOR, BEE, CARL, AGENT, CORNER],
+      ($1,$2,$3,'owner'),($1,$2,$4,'member'),($1,$2,$5,'member'),($1,$2,$6,'member')`,
+    [WORKSPACE, ROOM, AUTHOR, BEE, CARL, AGENT],
   );
   return database;
 }

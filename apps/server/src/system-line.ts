@@ -343,7 +343,7 @@ async function subscribers(
   if (!kind || !isSubscribableEventKind(kind)) return [];
   try {
     const rows = await database.query<{ identity_id: string }>(
-      `SELECT DISTINCT member.identity_id FROM memberships member
+      `SELECT DISTINCT member.identity_id FROM effective_memberships member
        JOIN identities identity ON identity.id=member.identity_id AND identity.kind='agent'
        WHERE member.room_id=$1 AND member.removed_at IS NULL
          AND member.event_subscriptions @> $2::jsonb`,
@@ -517,7 +517,7 @@ export async function systemLine(
         const subscriptions = await db.query<{
           id: string; agent_id: string; prompt: string; workflow_slug: string | null;
         }>(`SELECT subscription.id,subscription.agent_id,subscription.prompt,subscription.workflow_slug
-          FROM agent_subscriptions subscription JOIN memberships member
+          FROM agent_subscriptions subscription JOIN effective_memberships member
             ON member.room_id=subscription.room_id AND member.identity_id=subscription.agent_id
             AND member.removed_at IS NULL
           WHERE subscription.room_id=$1 AND subscription.source='room' AND subscription.event=$2
@@ -552,11 +552,11 @@ export async function systemLine(
            LEFT JOIN agent_commands incoming ON incoming.id=w.incoming_command_id
            JOIN rooms corner ON corner.id=w.corner_id AND corner.parent_id IS NOT NULL
            JOIN rooms watcher ON watcher.id=w.watcher_room_id AND watcher.archived_at IS NULL
-           JOIN memberships m ON m.room_id=w.watcher_room_id AND m.identity_id=w.agent_id
+           JOIN memberships m ON m.room_id=COALESCE(watcher.parent_id,watcher.id) AND m.identity_id=w.agent_id
              AND m.removed_at IS NULL
            WHERE w.corner_id=$1 AND w.kinds @> $2::jsonb
              AND ($3::text IS NULL OR w.agent_id<>$3)
-             AND EXISTS(SELECT 1 FROM memberships target WHERE target.room_id IN (corner.id,corner.parent_id)
+             AND EXISTS(SELECT 1 FROM memberships target WHERE target.room_id=corner.parent_id
                AND target.identity_id=w.agent_id AND target.removed_at IS NULL)
            FOR SHARE OF w,m,watcher`,
               [input.kind === 'corner-opened' ? input.card?.cornerId ?? input.roomId : input.roomId, JSON.stringify([input.kind === 'corner-opened' ? 'opened' : input.kind]), input.kind === 'corner-opened' ? input.subject.id ?? null : null],

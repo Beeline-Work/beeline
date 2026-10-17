@@ -149,8 +149,8 @@ beforeEach(async () => {
   for (const who of [HUMAN, SCOUT, VERIFIER, TRADER, AUDITOR]) {
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-         ($1,NULL,$2,$3),($1,$4,$2,$3),($1,$5,$2,$3)`,
-      [WORKSPACE, who, who === HUMAN ? 'owner' : 'member', PARENT_ROOM, CORNER],
+         ($1,NULL,$2,$3),($1,$4,$2,$3)`,
+      [WORKSPACE, who, who === HUMAN ? 'owner' : 'member', PARENT_ROOM],
     );
   }
 

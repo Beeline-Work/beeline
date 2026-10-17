@@ -72,7 +72,7 @@ export function cornerFactsSql(viewerExpr: string): {
     LEFT JOIN LATERAL (SELECT status,created_at FROM agent_turns WHERE room_id=c.id
       ORDER BY created_at DESC LIMIT 1) turn ON true
     ${cornerOwedLookupSql('c', viewerExpr)}`,
-    member: `EXISTS (SELECT 1 FROM memberships corner_member WHERE corner_member.room_id=c.id
+    member: `EXISTS (SELECT 1 FROM effective_memberships corner_member WHERE corner_member.room_id=c.id
       AND corner_member.identity_id=${viewerExpr} AND corner_member.removed_at IS NULL)`,
   };
 }
@@ -99,12 +99,15 @@ export function cornerBlockerSql(sourcePredicate = 'true'): string {
   return `LEFT JOIN LATERAL (
     SELECT item_id,person_id,created_at FROM (
       SELECT owed.message_id item_id,owed.person_id,owed.created_at
-      FROM corner_owed owed WHERE owed.corner_id=c.id AND owed.blocking
+      FROM corner_owed owed
+      JOIN memberships current_member ON current_member.room_id=c.parent_id
+        AND current_member.identity_id=owed.person_id AND current_member.removed_at IS NULL
+      WHERE owed.corner_id=c.id AND owed.blocking
         AND (owed.expires_at IS NULL OR owed.expires_at>now())
       UNION ALL
       SELECT hold.id::text,hold.actor_id,hold.set_at FROM corner_merge_holds hold
       JOIN identities holder ON holder.id=hold.actor_id AND holder.kind='human'
-      JOIN memberships holder_member ON holder_member.room_id=c.id
+      JOIN effective_memberships holder_member ON holder_member.room_id=c.id
         AND holder_member.identity_id=hold.actor_id AND holder_member.removed_at IS NULL
       WHERE hold.corner_id=c.id AND hold.released_at IS NULL
     ) blockers WHERE ${sourcePredicate} ORDER BY created_at DESC,item_id DESC,person_id LIMIT 1

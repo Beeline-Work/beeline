@@ -120,11 +120,7 @@ describe('PhoneService.readRoom latency', () => {
         `INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,$4)`,
         [corner, WORKSPACE, ROOM, `Corner ${index}`],
       );
-      await database.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-         VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`,
-        [WORKSPACE, corner, VIEWER, agent],
-      );
+
     }
 
     for (let index = 0; index < 180; index += 1) {
@@ -328,7 +324,7 @@ describe('PhoneService.readRoom latency', () => {
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
          SELECT $1,$2,lpad(to_hex(series+1000),64,'0'),'member'
          FROM generate_series(1,210) series`,
-        [WORKSPACE, crowded],
+        [WORKSPACE, ROOM],
       );
       const core = new RepresentativeDatabase(database, POOL_MAX, 0);
       const optional = new RepresentativeDatabase(database, POOL_MAX, 0);
@@ -346,6 +342,11 @@ describe('PhoneService.readRoom latency', () => {
       expect(view?.viewer.identity.pubkey).toBe(VIEWER);
       expect(core.spans).toHaveLength(1);
       expect(optional.spans).toHaveLength(1);
+      await database.query(
+        `DELETE FROM memberships WHERE room_id=$1 AND identity_id IN
+         (SELECT lpad(to_hex(series+1000),64,'0') FROM generate_series(1,210) series)`,
+        [ROOM],
+      );
     });
 
     it('holds two statements per corner at concurrency four', async () => {

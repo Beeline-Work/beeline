@@ -51,7 +51,7 @@ export async function commandAddress(
     await db.query<{ id: string; worker: string | null; parent_id: string | null }>(
       `SELECT room.id,room.parent_id,${cornerImplementerSql('fact', 'room')} worker
      FROM rooms room LEFT JOIN corner_facts fact ON fact.corner_id=room.id
-     JOIN memberships member ON member.room_id IN (room.id,room.parent_id)
+     JOIN memberships member ON member.room_id=COALESCE(room.parent_id,room.id)
        AND member.identity_id=$2 AND member.removed_at IS NULL
      WHERE room.id=$1 AND ($3::boolean OR room.archived_at IS NULL)
      LIMIT 1 FOR SHARE OF room,member`,
@@ -137,7 +137,7 @@ export async function sendOrder(
     ).rows[0]?.direct;
     const agents = (
       await db.query<{ id: string; handle: string | null }>(
-        `SELECT identity.id,lower(identity.handle) handle FROM memberships member JOIN identities identity
+        `SELECT identity.id,lower(identity.handle) handle FROM effective_memberships member JOIN identities identity
          ON identity.id=member.identity_id AND identity.kind='agent'
        WHERE member.room_id=$1 AND member.removed_at IS NULL AND identity.id<>$2`,
         [address, agentId],
@@ -235,8 +235,8 @@ export async function reportToCommander(
   const member = (
     await db.query<{ kind: string }>(
       `SELECT identity.kind FROM memberships member JOIN identities identity ON identity.id=member.identity_id
-     JOIN rooms room ON room.id=member.room_id AND room.archived_at IS NULL
-     WHERE member.room_id=$1 AND member.identity_id=$2 AND member.removed_at IS NULL
+     JOIN rooms room ON member.room_id=COALESCE(room.parent_id,room.id) AND room.archived_at IS NULL
+     WHERE room.id=$1 AND member.identity_id=$2 AND member.removed_at IS NULL
      FOR SHARE OF member,room`,
       [returnRoom, recipient],
     )

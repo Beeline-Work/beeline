@@ -116,10 +116,5 @@ export async function ensureReviewProofFixture(
      ON CONFLICT(corner_id) DO UPDATE SET commissioned_by=EXCLUDED.commissioned_by`,
     [REVIEW_PROOF_CORNER_ID, reviewerId, REVIEW_PROOF_OBJECTIVE],
   );
-  await database.query(
-    `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-     SELECT workspace_id,id,$2,'member' FROM rooms WHERE id=$1
-     ON CONFLICT (room_id,identity_id) WHERE room_id IS NOT NULL DO NOTHING`,
-    [REVIEW_PROOF_CORNER_ID, reviewerId],
-  );
+
 }

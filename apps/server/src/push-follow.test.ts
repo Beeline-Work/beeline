@@ -50,7 +50,7 @@ beforeEach(async () => {
     `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,NULL,$4,'member')`,
     [workspace, person, teammate, agent],
   );
-  for (const channel of [room, corner]) {
+  for (const channel of [room]) {
     await db.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member'),($1,$2,$4,'owner'),($1,$2,$5,'member')`,
       [workspace, channel, person, teammate, agent],
@@ -127,7 +127,7 @@ describe('Room mute', () => {
     expect(await delivered()).toEqual([update]);
     await migrate(db);
     const muted = await db.query<{ push_muted: boolean }>(
-      `SELECT push_muted FROM memberships WHERE room_id=$1 AND identity_id=$2`,
+      `SELECT push_muted FROM effective_memberships WHERE room_id=$1 AND identity_id=$2`,
       [corner, person],
     );
     expect(muted.rows[0]?.push_muted).toBe(false);

@@ -951,9 +951,9 @@ it('R1 carries a closed corner artifact into a successor brief and refuses priva
   await db.query(`INSERT INTO rooms(id,workspace_id,name,parent_id,created_by,archived_at)
     VALUES($1,$3,'Private-room',NULL,$4,NULL),($2,$3,'Private-source',$1,$4,now())`,
     [privateRoom, privateCorner, WS, HUMAN]);
-  await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-    VALUES($1,$2,$4,'member'),($1,$2,$5,'member'),($1,$3,$4,'member'),($1,$3,$5,'member')`,
-    [WS, privateRoom, privateCorner, HUMAN, WORKER]);
+  await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+       ($1,$2,$3,'member'),($1,$2,$4,'member') `,
+    [WS, privateRoom, HUMAN, WORKER]);
   await db.query(`INSERT INTO objects(id,owner_id,kind,key,mime,title,size,sha256,state,expires_at)
     VALUES($1,$2,'artifact',$3,'text/plain','private.txt',2,$4,'ready',now()+interval '24 hours')`,
     [privateMedia, WORKER, 'artifact/' + privateMedia, randomBytes(32).toString('hex')]);
@@ -969,11 +969,11 @@ it('R1 carries a closed corner artifact into a successor brief and refuses priva
   await expect(tryPrivate()).rejects.toThrow('missing or unavailable in this Room');
   // Even if the commander is a member, a successor audience without access
   // cannot receive the file. The human requester is also checked.
-  await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-    VALUES($1,$2,$4,'member'),($1,$3,$4,'member')`, [WS, privateRoom, privateCorner, RUBY]);
-  await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [privateCorner, HUMAN]);
+  await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+       ($1,$2,$3,'member') `, [WS, privateRoom, RUBY]);
+  await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [privateRoom, HUMAN]);
   await expect(tryPrivate()).rejects.toThrow('missing or unavailable in this Room');
-  await db.query(`UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2`, [privateCorner, HUMAN]);
+  await db.query(`UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2`, [privateRoom, HUMAN]);
   const outsider = 'f'.repeat(64);
   await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Reader','reader')`, [outsider]);
   await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [WS, ROOM, outsider]);

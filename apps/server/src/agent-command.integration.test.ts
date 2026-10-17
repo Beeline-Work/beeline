@@ -14,6 +14,7 @@ import {
   reconcileCornerMergeBlockers,
   reconcileConfiguredCornerReviewers,
   routeSystemCommand,
+  readAgentCommands,
 } from './agent-command.js';
 import { systemLine } from './system-line.js';
 import { advanceCorner } from './corner-lifecycle.js';
@@ -344,8 +345,8 @@ it('bootstrap identifies only pending member surfaces, including the corner pare
   expect(bootstrap.pendingRooms).toEqual(expect.arrayContaining([
     { roomId: R }, { roomId: C, parentRoomId: R, openedBy: B },
   ]));
-  await db.query(`UPDATE memberships SET removed_at=now() WHERE identity_id=$1 AND room_id=$2`, [A, C]);
-  expect((await daemon.execute('getDaemonBootstrap', { agentId: A }, A)).pendingRooms).toEqual([{ roomId: R }]);
+  await db.query(`UPDATE memberships SET removed_at=now() WHERE identity_id=$1 AND room_id=$2`, [A, R]);
+  expect((await daemon.execute('getDaemonBootstrap', { agentId: A }, A)).pendingRooms).toEqual([]);
 });
 
 it('shows an accepted tagged command until claim and re-nudges a connected idle helper once', async () => {
@@ -472,7 +473,7 @@ beforeAll(async () => {
     [C, B],
   );
   for (const who of [H, A, B, P])
-    for (const room of [null, R, C])
+    for (const room of [null, R])
       await db.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')`,
         [W, room, who],
@@ -1059,7 +1060,7 @@ it('wakes the opener for failed checks even after a reviewer turn and retries a 
   expect(await commands(B, C)).toEqual([
     expect.objectContaining({ reason: 'corner_check', sourceMessageId: note.id }),
   ]);
-  expect(await commands(A, C)).toHaveLength(0);
+  expect((await readAgentCommands(db,C,A)).commands).toHaveLength(0);
   // The wake and the workflow transition commit together, so a command can
   // only be lost in a corner with no run record: one opened before the
   // workflow run existed. Its run is rebuilt from the lifecycle and the
@@ -1123,7 +1124,7 @@ it('keeps a failed-check wake retryable while its opener is unreachable', async 
     ],
   );
   await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [
-    C,
+    R,
     B,
   ]);
   await systemLine(db, {
@@ -1143,7 +1144,7 @@ it('keeps a failed-check wake retryable while its opener is unreachable', async 
     ).rows[0]?.command_check_state,
   ).toBeNull();
   await db.query(`UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2`, [
-    C,
+    R,
     B,
   ]);
   await expect(reconcileCornerMergeBlockers(db)).resolves.toBe(1);
@@ -1211,7 +1212,7 @@ it('routes subscribed events, grants and changed corner checks through actions',
     verb: 'failed a check',
     kind: 'check-failed',
   });
-  expect(await commands(A, C)).toHaveLength(0);
+  expect((await readAgentCommands(db,C,A)).commands).toHaveLength(0);
   expect(await commands(B, C)).toHaveLength(1);
 
   await db.query(`DELETE FROM agent_commands`);
@@ -1264,7 +1265,7 @@ it('holds the green review wake while the corner worker still holds a live turn'
       .query(`SELECT 1 FROM agent_commands WHERE room_id=$1 AND agent_id=$2`, [C, A])
       .then((r) => r.rowCount),
   ).resolves.toBe(1);
-  expect(await commands(A, C)).toHaveLength(0);
+  expect((await readAgentCommands(db,C,A)).commands).toHaveLength(0);
 
   // The worker's lease lapses; the same durable row is now deliverable.
   await db.query(
@@ -1297,7 +1298,7 @@ it('wakes the implementer without consuming a green transition when the configur
     verb: 'passed a check',
     kind: 'check-passed',
   });
-  expect(await commands(A, C)).toHaveLength(0);
+  expect((await readAgentCommands(db,C,A)).commands).toHaveLength(0);
   const handback = await commands(B, C);
   expect(handback.map(command => command.reason)).toEqual(['corner_review_needed']);
   expect(handback[0]?.source.body).toContain('the configured reviewer is unreachable');
@@ -1348,7 +1349,7 @@ it('keeps reviewer subscriptions mandatory and reconciles an unreviewed green he
   ]);
 
   await expect(reconcileConfiguredCornerReviewers(db, R)).resolves.toEqual({
-    subscriptions: 2,
+    subscriptions: 1,
     commands: 1,
   });
   expect(await commands(A, C)).toEqual([
@@ -1387,7 +1388,7 @@ it('recovers a green head whose earlier GitHub note never dispatched its reviewe
   });
 
   await expect(reconcileConfiguredCornerReviewers(db, R)).resolves.toEqual({
-    subscriptions: 2,
+    subscriptions: 1,
     commands: 1,
   });
   expect(await commands(A, C)).toEqual([expect.objectContaining({ reason: 'subscribed_event' })]);
@@ -1592,7 +1593,7 @@ it('transfers a corner objective to the opener only, without resetting the autho
   expect(
     (
       await db.query<{ event_subscriptions: string[] }>(
-        `SELECT event_subscriptions FROM memberships WHERE room_id=$1 AND identity_id=$2`,
+        `SELECT event_subscriptions FROM effective_memberships WHERE room_id=$1 AND identity_id=$2`,
         [opened.cornerId, B],
       )
     ).rows,

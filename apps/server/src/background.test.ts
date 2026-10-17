@@ -1578,11 +1578,7 @@ describe('background advisory-lock ownership', () => {
         `INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Corner')`,
         [corner, workspace, room],
       );
-      await db.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-         VALUES($1,$2,$3,'member')`,
-        [workspace, corner, human],
-      );
+
       await db.query(
         `INSERT INTO messages(id,room_id,author_id,text)
          VALUES($1,$2,$3,'@owner Review this corner')`,
@@ -1607,11 +1603,7 @@ describe('background advisory-lock ownership', () => {
         `INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'fix-auth')`,
         [dmCorner, workspace, directRoom],
       );
-      await db.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-         VALUES($1,$2,$3,'member')`,
-        [workspace, dmCorner, human],
-      );
+
       await db.query(
         `INSERT INTO messages(id,room_id,author_id,text)
          VALUES($1,$2,$3,'@owner Review this DM corner')`,
@@ -1918,9 +1910,8 @@ describe('background advisory-lock ownership', () => {
       );
       await db.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-         ($1,$2,$4,'owner'),($1,$2,$5,'member'),($1,$2,$6,'member'),
-         ($1,$3,$4,'owner'),($1,$3,$5,'member'),($1,$3,$6,'member')`,
-        [workspace, room, corner, commissioner, other, agent],
+       ($1,$2,$3,'owner'),($1,$2,$4,'member'),($1,$2,$5,'member') `,
+        [workspace, room, commissioner, other, agent],
       );
       await db.query(
         `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by,objective)
@@ -1996,9 +1987,8 @@ describe('background advisory-lock ownership', () => {
       );
       await db.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-         ($1,$2,$5,'owner'),($1,$2,$6,'member'),($1,$3,$5,'owner'),($1,$3,$6,'member'),
-         ($1,$4,$5,'owner'),($1,$4,$6,'member')`,
-        [workspace, room, open, closed, owner, agent],
+         ($1,$2,$3,'owner'),($1,$2,$4,'member')`,
+        [workspace, room, owner, agent],
       );
       await db.query(
         `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by,objective) VALUES
@@ -2059,12 +2049,12 @@ describe('background advisory-lock ownership', () => {
          ($1,$3,'Widgets',NULL,'owner/widgets','repository'),($2,$3,'Code',$1,NULL,'none')`,
         [repoRoom, code, workspace],
       );
-      for (const corner of [room, repoRoom, noCode, code])
-        await db.query(
-          `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-           ($1,$2,$3,'owner'),($1,$2,$4,'member'),($1,$2,$5,'member'),($1,$2,$6,'member')`,
-          [workspace, corner, commissioner, other, agent, helper],
-        );
+
+      for (const parent of [room,repoRoom]) await db.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+         ($1,$2,$3,'owner'),($1,$2,$4,'member'),($1,$2,$5,'member'),($1,$2,$6,'member')`,
+        [workspace,parent,commissioner,other,agent,helper],
+      );
       await db.query(
         `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by,objective) VALUES
          ($1,$3,$4,'Write the report'),($2,$3,$4,'Ship code')`,

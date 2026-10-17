@@ -36,7 +36,7 @@ export class DeadlineExpiry {
            AND mark.first_seen_at<=$2::timestamptz-interval '${NEEDS_YOU_EXPIRY_HOURS} hours'
          UNION
          SELECT m.id,member.identity_id FROM messages m
-         JOIN memberships member ON member.room_id=m.room_id AND member.removed_at IS NULL
+         JOIN effective_memberships member ON member.room_id=m.room_id AND member.removed_at IS NULL
          WHERE ${askingMessageSql('m')}
            AND m.created_at>$1::timestamptz-${NEEDS_YOU_LOOKBACK}
            AND m.created_at<=$2::timestamptz-${NEEDS_YOU_LOOKBACK}
@@ -45,7 +45,7 @@ export class DeadlineExpiry {
        FROM candidates due
        JOIN messages m ON m.id=due.message_id
        JOIN rooms room ON room.id=m.room_id AND room.archived_at IS NULL
-       JOIN memberships room_member ON room_member.room_id=room.id
+       JOIN effective_memberships room_member ON room_member.room_id=room.id
          AND room_member.identity_id=due.identity_id AND room_member.removed_at IS NULL
        JOIN identities viewer ON viewer.id=due.identity_id
        LEFT JOIN needs_you_marks mark ON mark.identity_id=viewer.id AND mark.message_id=m.id
@@ -56,7 +56,7 @@ export class DeadlineExpiry {
        SELECT DISTINCT viewer.identity_id,room.workspace_id::text workspace_id,room.id::text room_id
        FROM messages m
        JOIN rooms room ON room.id=m.room_id AND room.archived_at IS NULL
-       JOIN memberships viewer ON viewer.room_id=room.id AND viewer.removed_at IS NULL
+       JOIN effective_memberships viewer ON viewer.room_id=room.id AND viewer.removed_at IS NULL
        JOIN identities person ON person.id=viewer.identity_id AND person.kind='human'
        WHERE ${expiringCardForSql('m', 'viewer.identity_id')}
          AND ${cardExpiresAtSql('m.card')}>$3 AND ${cardExpiresAtSql('m.card')}<=$4

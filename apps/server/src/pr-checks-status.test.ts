@@ -84,7 +84,7 @@ beforeEach(async () => {
       [corner, `corner/${corner}`, A],
     );
   }
-  for (const room of [R, C, AUTHOR]) {
+  for (const room of [R]) {
     await db.query(
       `INSERT INTO memberships(room_id,identity_id,role,workspace_id)
        VALUES($1,$2,'member',$5),($1,$3,'member',$5),($1,$4,'owner',$5)`,

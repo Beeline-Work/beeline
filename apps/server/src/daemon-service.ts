@@ -1,3 +1,4 @@
+import { setRoomEventSubscriptions } from './corner-person-state.js';
 import { agentMemberMetadata } from './agent-member-metadata.js';
 import { normalizeTrayAsk } from '@beeline/api-contract/phone';
 import { assertCornerCommandTarget, commandAddress, sendOrder, reportToCommander, hasOrderContinuation, CommandRefusalError } from './commander.js';
@@ -1242,7 +1243,7 @@ export class DaemonService {
       case 'listRooms': {
         const rooms = await this.database.query<{ roomId: string; name: string; parentRoomId: string | null; directMessage: boolean }>(
           `SELECT room.id "roomId",room.name,room.parent_id "parentRoomId",room.direct_participants IS NOT NULL "directMessage"
-           FROM rooms room JOIN memberships member ON member.room_id=room.id
+           FROM rooms room JOIN effective_memberships member ON member.room_id=room.id
            WHERE member.identity_id=$1 AND member.removed_at IS NULL AND room.archived_at IS NULL
            ORDER BY room.name,room.id`, [authenticatedAgentId]);
         return { rooms: rooms.rows.map(({ parentRoomId, ...room }) => ({ ...room, ...(parentRoomId ? { parentRoomId } : {}) })) } as Output<Name>;
@@ -2807,7 +2808,7 @@ export class DaemonService {
                 COALESCE(r.repository_updated_at::text,''),
                 COALESCE(i.status,''),COALESCE(i.updated_at::text,''),
                 COALESCE(g.active::text,''),COALESCE(g.updated_at::text,'')) repository_revision
-       FROM memberships m
+       FROM effective_memberships m
        JOIN rooms r ON r.id=m.room_id
        LEFT JOIN corner_facts f ON f.corner_id=r.id
        LEFT JOIN github_installations i ON i.installation_id=r.github_installation_id
@@ -2819,7 +2820,7 @@ export class DaemonService {
       `SELECT DISTINCT command.room_id,r.parent_id,f.owner_agent_id
        FROM agent_commands command
        JOIN rooms r ON r.id=command.room_id AND r.archived_at IS NULL
-       JOIN memberships m ON m.room_id=r.id AND m.identity_id=command.agent_id AND m.removed_at IS NULL
+       JOIN effective_memberships m ON m.room_id=r.id AND m.identity_id=command.agent_id AND m.removed_at IS NULL
        LEFT JOIN corner_facts f ON f.corner_id=r.id
        WHERE command.agent_id=$1 AND (command.state='pending'
          OR (command.state='claimed' AND command.lease_expires_at<=now()))`,
@@ -3224,7 +3225,7 @@ export class DaemonService {
       }>(
         `SELECT r.workspace_id,m.role,i.kind,r.archived_at IS NOT NULL archived,a.access_policy,a.owner_id
          FROM rooms r
-         LEFT JOIN memberships m ON m.room_id=r.id AND m.identity_id=$2 AND m.removed_at IS NULL
+         LEFT JOIN effective_memberships m ON m.room_id=r.id AND m.identity_id=$2 AND m.removed_at IS NULL
          LEFT JOIN identities i ON i.id=$2
          LEFT JOIN agents a ON a.agent_id=$3
          WHERE r.id=$1`,
@@ -3335,7 +3336,7 @@ export class DaemonService {
   private async targetAuthority(input: Input<'getTargetAgentAuthority'>, agentId: string) {
     if (input.controllerAgentId !== agentId) return { status: 'denied' as const };
     const controller = await this.database.query(
-      `SELECT 1 FROM memberships c JOIN memberships t ON t.room_id=c.room_id WHERE c.room_id=$1 AND c.identity_id=$2 AND t.identity_id=$3 AND c.removed_at IS NULL AND t.removed_at IS NULL`,
+      `SELECT 1 FROM effective_memberships c JOIN effective_memberships t ON t.room_id=c.room_id WHERE c.room_id=$1 AND c.identity_id=$2 AND t.identity_id=$3 AND c.removed_at IS NULL AND t.removed_at IS NULL`,
       [input.roomId, agentId, input.targetAgentId],
     );
     return { status: controller.rowCount ? ('authorized' as const) : ('denied' as const) };
@@ -3380,8 +3381,8 @@ export class DaemonService {
               r.archived_at IS NOT NULL archived
        FROM rooms r JOIN corner_facts f ON f.corner_id=r.id
        WHERE (r.parent_id=$1 OR (EXISTS(SELECT 1 FROM rooms dm WHERE dm.id=$1 AND dm.direct_participants IS NOT NULL)
-         AND EXISTS(SELECT 1 FROM memberships target WHERE target.room_id=r.parent_id AND target.identity_id=$2 AND target.removed_at IS NULL))) ${activeOnly ? 'AND r.archived_at IS NULL' : ''} AND ($3 OR EXISTS(
-         SELECT 1 FROM memberships m
+         AND EXISTS(SELECT 1 FROM effective_memberships target WHERE target.room_id=r.parent_id AND target.identity_id=$2 AND target.removed_at IS NULL))) ${activeOnly ? 'AND r.archived_at IS NULL' : ''} AND ($3 OR EXISTS(
+         SELECT 1 FROM effective_memberships m
          WHERE m.room_id=r.id AND m.identity_id=$2 AND m.removed_at IS NULL))`,
       [roomId, agentId, reachable],
     );
@@ -5085,8 +5086,8 @@ export class DaemonService {
    * newcomers can start greeting newcomers without a person editing a database
    * row for it. The write is scoped by construction: the daemon token names the
    * agent, `roomId` names the Room, `execute` has already refused a Room this
-   * agent is not a member of, and the UPDATE touches exactly that one
-   * membership. Only server kinds may be subscribed to — an `agent:` kind is a
+   * agent is not a member of, and the write touches exactly that Room
+   * membership or sparse corner preference. Only server kinds may be subscribed to — an `agent:` kind is a
    * sentence some agent chose to say, and reacting to it is a mention, not a
    * subscription. A per-item kind (`PER_ITEM_EVENT_KINDS`) is refused outright:
    * its item's owner already wakes directly, with no subscription involved,
@@ -5106,24 +5107,11 @@ export class DaemonService {
       );
     }
     const kinds = [...new Set(requested)] as EventSubscriptionsResult['kinds'];
-    const updated = await this.database.query<{ event_subscriptions: EventSubscriptionsResult['kinds'] }>(
-      `UPDATE memberships member
-       SET event_subscriptions=CASE WHEN parent.reviewer_agent_id=$2
-         AND NOT $3::jsonb @> '["check-passed"]'::jsonb
-         THEN $3::jsonb||'["check-passed"]'::jsonb ELSE $3::jsonb END
-       FROM rooms surface
-       JOIN rooms parent ON parent.id=COALESCE(surface.parent_id,surface.id)
-       WHERE member.room_id=$1 AND member.identity_id=$2 AND member.removed_at IS NULL
-         AND surface.id=member.room_id
-       RETURNING member.event_subscriptions`,
-      [input.roomId, agentId, JSON.stringify(kinds)],
-    );
-    if (!updated.rowCount) throw new Error('daemon room access denied');
-    return { kinds: [...new Set(updated.rows[0]!.event_subscriptions)] };
+    return { kinds: await setRoomEventSubscriptions(this.database, input.roomId, agentId, kinds) };
   }
   private async listEventSubscriptions(input: Input<'listEventSubscriptions'>, agentId: string) {
     const rows = await this.database.query<{ event_subscriptions: unknown }>(
-      `SELECT event_subscriptions FROM memberships
+      `SELECT event_subscriptions FROM effective_memberships
        WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
       [input.roomId, agentId],
     );
@@ -5167,7 +5155,7 @@ export class DaemonService {
       throw new Error(`an event may wake at most ${MAX_MENTIONS_PER_EVENT} agents`);
     if (wakes.length) {
       const members = await this.database.query<{ identity_id: string; handle: string | null }>(
-        `SELECT member.identity_id, identity.handle FROM memberships member
+        `SELECT member.identity_id, identity.handle FROM effective_memberships member
          JOIN identities identity ON identity.id=member.identity_id AND identity.kind='agent'
          WHERE member.room_id=$1 AND member.removed_at IS NULL`,
         [input.roomId],
@@ -5632,8 +5620,8 @@ export class DaemonService {
           AND ($3::text IS NULL OR turn_request_id=$3)
         ORDER BY created_at DESC,id DESC LIMIT 1`, [input.roomId, agentId, input.requestId ?? null])).rows[0];
       const member = await db.query<{ parent_id: string | null }>(
-        `SELECT r.parent_id FROM memberships m JOIN rooms r ON r.id=m.room_id
-         WHERE m.room_id=$1 AND m.identity_id=$2 AND m.removed_at IS NULL
+        `SELECT r.parent_id FROM memberships m JOIN rooms r ON m.room_id=COALESCE(r.parent_id,r.id)
+         WHERE r.id=$1 AND m.identity_id=$2 AND m.removed_at IS NULL
            AND r.archived_at IS NULL FOR SHARE OF m,r`,
         [input.roomId, agentId],
       );
@@ -6154,7 +6142,7 @@ export class DaemonService {
            WHERE member.workspace_id=$1 AND member.room_id IS NULL
              AND member.removed_at IS NULL
              AND (member.role IN ('owner','admin') OR member.identity_id=$2)
-             AND NOT EXISTS (SELECT 1 FROM memberships room_member
+             AND NOT EXISTS (SELECT 1 FROM effective_memberships room_member
                WHERE room_member.room_id=$3 AND room_member.identity_id=member.identity_id
                  AND room_member.removed_at IS NULL)`,
           [context.workspace_id, context.owner_id, input.roomId],
@@ -7648,22 +7636,6 @@ export class DaemonService {
         ],
       );
       await db.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role,event_subscriptions)
-         SELECT workspace_id,$2,identity_id,role,
-           (SELECT COALESCE(jsonb_agg(elem),'[]'::jsonb)
-            FROM jsonb_array_elements_text(event_subscriptions) elem
-            WHERE elem=ANY($3::text[]))
-         FROM memberships
-         WHERE room_id=$1 AND removed_at IS NULL ON CONFLICT DO NOTHING`,
-        [roomId, cornerId, SUBSCRIBABLE_EVENT_KINDS],
-      );
-      await db.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')
-         ON CONFLICT(room_id,identity_id) WHERE room_id IS NOT NULL
-         DO UPDATE SET role='owner',removed_at=NULL`,
-        [parent.workspace_id, cornerId, implementerAgentId],
-      );
-      await db.query(
         `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by,objective,request_id,open_idempotency_key,opened_from_corner_id,lifecycle)
          VALUES($1,$2,$3,$4,$5,$6,$7,'{"lifecycle":"working","checks":"unknown"}')`,
         [
@@ -7816,7 +7788,7 @@ export class DaemonService {
           `SELECT first.source_room_id FROM (
              SELECT source_room_id FROM corner_brief_revisions
              WHERE corner_id=$1 ORDER BY revision ASC LIMIT 1
-           ) first JOIN memberships member ON member.room_id=first.source_room_id
+           ) first JOIN effective_memberships member ON member.room_id=first.source_room_id
            WHERE member.identity_id=$2 AND member.removed_at IS NULL`,
           [input.cornerId, agentId],
         )
@@ -7910,12 +7882,16 @@ export class DaemonService {
   }
   private async ensureMembership(input: Input<'ensureAgentMembership'>, agentId: string) {
     const room = (
-      await this.database.query<{ workspace_id: string }>(
-        `SELECT workspace_id FROM rooms WHERE id=$1`,
+      await this.database.query<{ workspace_id: string; parent_id: string | null }>(
+        `SELECT workspace_id,parent_id FROM rooms WHERE id=$1`,
         [input.roomId],
       )
     ).rows[0];
     if (!room) throw new Error('room not found');
+    if (room.parent_id) {
+      await this.access(input.roomId, agentId);
+      return this.writeResult();
+    }
     const workspaceMember = await this.database.query(
       `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND removed_at IS NULL`,
       [room.workspace_id, agentId],
@@ -7993,14 +7969,14 @@ export class DaemonService {
          WHERE corner.id=$1 AND (
            parent.reviewer_agent_id=$2 OR (
              parent.reviewer_agent_id IS NOT NULL AND $2=ANY(parent.reviewer_fallback_ids)
-             AND EXISTS(SELECT 1 FROM memberships parent_member
+             AND EXISTS(SELECT 1 FROM effective_memberships parent_member
                         WHERE parent_member.room_id=parent.id AND parent_member.identity_id=$2
                           AND parent_member.removed_at IS NULL)))
        ) corner_reviewer,
        EXISTS(SELECT 1 FROM rooms corner WHERE corner.id=$1 AND corner.parent_id IS NOT NULL) is_corner,
        EXISTS(SELECT 1 FROM agent_commands command WHERE command.room_id=$1 AND command.agent_id=$2
          AND command.turn_request_id=$3 AND command.private_payload IS NOT NULL) private_command
-       FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
+       FROM effective_memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
       [roomId, agentId, typeof requestId === 'string' ? requestId : null],
     );
     if (!result.rowCount) throw new AccessDeniedError();
@@ -8017,7 +7993,7 @@ export class DaemonService {
       role: string;
     }>(
       `SELECT identity.id,identity.kind,identity.name,identity.handle,member.role
-       FROM memberships member JOIN identities identity ON identity.id=member.identity_id
+       FROM effective_memberships member JOIN identities identity ON identity.id=member.identity_id
        WHERE member.room_id=$1 AND member.removed_at IS NULL
        ORDER BY identity.kind,identity.name`,
       [roomId],
@@ -8061,7 +8037,7 @@ export class DaemonService {
       await database.query<{ parent_id: string }>(
         `SELECT corner.parent_id FROM rooms corner
          WHERE corner.id=$1 AND corner.parent_id IS NOT NULL
-           AND EXISTS(SELECT 1 FROM memberships member
+           AND EXISTS(SELECT 1 FROM effective_memberships member
                       WHERE member.room_id IN (corner.id,corner.parent_id)
                         AND member.identity_id=$2 AND member.removed_at IS NULL)`,
         [cornerId, agentId],

@@ -1,3 +1,4 @@
+import { setRoomEventSubscriptions } from './corner-person-state.js';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QueryResultRow } from 'pg';
@@ -887,14 +888,14 @@ describe('landing and closing from any state (finding 3, implicit edges)', () =>
       VALUES($1,$2,$3,$4,'room','message','wake')`, [randomUUID(), W, roomId, A]);
     await db.query(`INSERT INTO work_schedules(schedule_id,agent_id,room_id,revision,schedule)
       VALUES($1,$2,$3,1,'{}')`, [id, A, roomId]);
-    await db.query(`UPDATE memberships SET event_subscriptions='["message"]' WHERE room_id=$1`, [roomId]);
+    for (const member of [A,B,H]) await setRoomEventSubscriptions(db,roomId,member,['message']);
     return id;
   }
 
   async function expectWakeSources(roomId: string, count: number) {
     for (const table of ['agent_schedules', 'agent_subscriptions', 'work_schedules'])
       expect((await db.query(`SELECT 1 FROM ${table} WHERE room_id=$1`, [roomId])).rowCount).toBe(count);
-    expect((await db.query(`SELECT 1 FROM memberships WHERE room_id=$1 AND event_subscriptions<>'[]'::jsonb`,
+    expect((await db.query(`SELECT 1 FROM effective_memberships WHERE room_id=$1 AND event_subscriptions<>'[]'::jsonb`,
       [roomId])).rowCount).toBe(count ? 3 : 0);
   }
 
@@ -1150,7 +1151,7 @@ it('Reproduction F1-7: opener revises a delegated sibling from its own command',
   // Reach, not role, decides: an agent outside both the corner and its parent Room is refused.
   await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id IN ($1,$2) AND identity_id=$3`, [cornerId, R, F]);
   await expect(daemon.execute('reviseCornerBrief', { roomId: cornerId, cornerId, requestId: outsider!.turn_request_id, generationId: 'g1', expectedRevision: 2, brief: { ...input.brief, change: 'Unauthorized' } }, F)).rejects.toThrow(/denied/);
-  await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [cornerId, B]);
+  await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [R, B]);
   const unwoken = await daemon.execute('reviseCornerBrief', { roomId: source, cornerId, requestId: command.turnRequestId, generationId: 'g1', expectedRevision: 2, brief: { ...input.brief, spec: 'Saved without a worker', change: 'Keep the revision' } }, A);
   expect(unwoken).toMatchObject({ revision: 3, wake: { queued: false, reason: expect.any(String) } });
   expect((await daemon.execute('listCornerBriefRevisions', { cornerId }, A)).revisions[0]!.revision).toBe(3);
@@ -1162,7 +1163,7 @@ it('a corner member revises from its own corner and the Room', async () => {
   const G = '8'.repeat(64);
   await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Heir','heir') ON CONFLICT DO NOTHING`, [G]);
   await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, [G, H]);
-  for (const roomId of [null, R, cornerId])
+  for (const roomId of [null, R])
     await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member') ON CONFLICT DO NOTHING`, [W, roomId, G]);
   const turn = await createAgentCommand(db, { roomId: cornerId, agentId: G, sourceMessageId: command.sourceMessageId, reason: 'human_tag' });
   await daemon.execute('claimAgentCommand', { roomId: cornerId, commandId: turn!.id, generationId: 'g1' }, G);
@@ -1565,7 +1566,7 @@ describe('each transition wakes the next role exactly once (AC-2)', () => {
     }
     expect(await reasons(cornerId, A)).toContain('corner_review_needed');
     expect(await currentState(cornerId)).toBe(state);
-    expect(await commands(B, cornerId)).toEqual([]);
+    expect((await db.query(`SELECT 1 FROM agent_commands WHERE agent_id=$1 AND room_id=$2 AND state='pending'`,[B,cornerId])).rowCount).toBe(0);
   });
 
   it('does not return unresolved review while the tagged implementer is still answering it', async () => {
@@ -1783,8 +1784,10 @@ describe('Reproduction CI-1: a red head wakes the implementer before checks fini
 
   it('addresses the requester when the implementing agent cannot receive the checks wake', async () => {
     const cornerId = await open('owner/widgets');
+    await fallback(cornerId);
+    await db.query(`UPDATE corner_facts SET worker_agent_id=$2 WHERE corner_id=$1`,[cornerId,F]);
     await redHead(cornerId, 3, SHA);
-    await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [cornerId, A]);
+    await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [R, F]);
     await systemLine(db, {
       roomId: cornerId, authorId: H, subject: { kind: 'github', name: 'GitHub' },
       verb: 'finished checks on', kind: 'check-failed', payload: { followup: true },
@@ -1982,7 +1985,7 @@ describe('a person hands the corner to another agent (the implementer follows th
     );
     await db.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member') ON CONFLICT DO NOTHING`,
-      [W, cornerId, D],
+      [W, R, D],
     );
   }
   const workerOf = async (cornerId: string): Promise<string | null> =>
@@ -2484,8 +2487,7 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
       (input, confirmZeroChecks) => github.prChecksStatus(input, confirmZeroChecks), undefined, undefined, undefined, undefined, undefined, undefined,
       undefined, undefined, undefined, (id: string) => github.landCorner(id),
       (id: string) => github.closeCornerPullRequest(id), (id: string) => github.readCornerPullRequest(id));
-    // B stays in the parent Room but is not a member of the corner.
-    await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [cornerId, B]);
+    // B reaches every corner through the parent Room, with no copied row.
     const outsider = '3'.repeat(64);
     await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Outsider','outsider') ON CONFLICT DO NOTHING`, [outsider]);
     await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, [outsider, H]);
@@ -2500,8 +2502,8 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
     await expect(wiredDaemon.execute('getRoomConversation', { roomId: cornerId, limit: 5 }, B)).resolves.toBeDefined();
     const members = await wiredDaemon.execute('listRoomMembers', { roomId: cornerId }, B);
     expect(members.members.map((member) => member.id)).toEqual(expect.arrayContaining([A, H]));
-    expect(members.members.map((member) => member.id)).not.toContain(B);
-    expect((await wiredDaemon.execute('listRoomCorners', { roomId: R }, B)).corners).toEqual([]);
+    expect(members.members.map((member) => member.id)).toContain(B);
+    expect((await wiredDaemon.execute('listRoomCorners', { roomId: R }, B)).corners).toHaveLength(1);
     expect((await wiredDaemon.execute('listReachableCorners', { roomId: R }, B)).corners)
       .toEqual([expect.objectContaining({ cornerId, pullRequestNumber: 7, archived: false })]);
     await expect(wiredDaemon.execute('readCornerPullRequest', { cornerId, roomId: R }, B)).resolves.toMatchObject({
@@ -2544,19 +2546,19 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
       .toEqual({ archived: true });
   });
 
-  it('Reproduction R1: a corner member outside the parent Room inspects the corner; an outsider cannot', async () => {
+  it('Reproduction R1: leaving the parent Room removes access to its corners', async () => {
     const cornerId = await inReview();
     const wiredDaemon = new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
       (input, confirmZeroChecks) => github.prChecksStatus(input, confirmZeroChecks));
-    // A stays in the corner but leaves the parent Room.
+    // A loses corner access as soon as the parent membership ends.
     await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [R, A]);
     try {
       await expect(wiredDaemon.execute('listReachableCorners', { roomId: R }, A)).rejects.toThrow(/access denied/);
       await expect(wiredDaemon.execute('getCornerRestoreState', { cornerId }, A))
-        .resolves.toMatchObject({ lifecycle: expect.objectContaining({ pr: expect.objectContaining({ number: 7 }) }) });
-      await expect(wiredDaemon.execute('getPrChecksStatus', { cornerId, pullRequest: 7 }, A)).resolves.toBeDefined();
+        .rejects.toThrow(/access denied/);
+      await expect(wiredDaemon.execute('getPrChecksStatus', { cornerId, pullRequest: 7 }, A)).rejects.toThrow(/access denied/);
       await expect(wiredDaemon.execute('getRoomConversation', { roomId: cornerId, limit: 9, window: 'earliest' }, A))
-        .resolves.toMatchObject({ items: expect.any(Array) });
+        .rejects.toThrow(/access denied/);
 
       const outsider = '3'.repeat(64);
       await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Outsider','outsider') ON CONFLICT DO NOTHING`, [outsider]);
@@ -2602,7 +2604,7 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
     }
   });
 
-  it('Reproduction REACH-2: a Room and its corner read each other even when their human members differ', async () => {
+  it('Reproduction REACH-2: a Room and all its corners read each other with inherited membership', async () => {
     const cornerId = await open();
     const cornerOnly = '5'.repeat(64);
     const roomOnly = '6'.repeat(64);
@@ -2613,7 +2615,7 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
     await db.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
        VALUES($1,$2,$3,'member'),($1,$4,$5,'member') ON CONFLICT DO NOTHING`,
-      [W, cornerId, cornerOnly, R, roomOnly],
+      [W, R, cornerOnly, R, roomOnly],
     );
     try {
       await say(R, 'Room fact: the widget ships blue');
@@ -2627,13 +2629,13 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
       await expect(daemon.execute('getRoomMessage', {
         roomId: cornerId, requestId: inCorner.turnRequestId, generationId: 'g1', messageId: roomMessage,
       }, A)).resolves.toMatchObject({ body: expect.stringContaining('ships blue') });
-      // The pair rule opens only the parent: a sibling corner whose people differ stays closed.
+      // Sibling corners share the same current Room audience.
       const sibling = await open();
       await say(sibling, 'Sibling fact: the widget is heavy');
       const siblingMessage = (await db.query<{ id: string }>(`SELECT id FROM messages WHERE room_id=$1 AND text LIKE 'Sibling fact%'`, [sibling])).rows[0]!.id;
       await expect(daemon.execute('getRoomMessage', {
         roomId: cornerId, requestId: inCorner.turnRequestId, generationId: 'g1', messageId: siblingMessage,
-      }, A)).rejects.toThrow(/access denied/);
+      }, A)).resolves.toMatchObject({ body: expect.stringContaining('heavy') });
 
       await say(R, '@hoots when does the widget ship?');
       const inRoom = (await commands(A, R)).at(-1)!;
@@ -3077,7 +3079,7 @@ describe('the gate stays shut (AC-8)', () => {
     for (const [id, role] of [[peer, 'member'], [admin, 'admin']]) {
       await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human',$1) ON CONFLICT DO NOTHING`, [id]);
       await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,$3),($1,$4,$2,'member')
-        ON CONFLICT DO NOTHING`, [W, id, role, cornerId]);
+        ON CONFLICT DO NOTHING`, [W, id, role, R]);
     }
     await db.query(`UPDATE memberships SET role='member' WHERE room_id IS NULL AND identity_id=$1`, [H]);
     try {
@@ -3169,8 +3171,8 @@ describe('the gate stays shut (AC-8)', () => {
     const holdId = (await db.query<{ id: string }>(`SELECT id FROM corner_merge_holds WHERE corner_id=$1`, [cornerId])).rows[0]!.id;
     const peer = 'f'.repeat(64);
     await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human',$1) ON CONFLICT DO NOTHING`, [peer]);
-    await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member'),($1,$3,$2,'member'),($1,$4,$2,'member')
-      ON CONFLICT DO NOTHING`, [W, peer, R, cornerId]);
+    await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')
+      ON CONFLICT DO NOTHING`, [W, peer, R]);
     await phone.execute('sendRoomMessage', { roomId: R, messageId: randomBytes(32).toString('hex'),
       text: '@hoots release the hold' }, peer);
     const order = (await commands(A, R)).at(-1)!;
@@ -3518,7 +3520,7 @@ describe("a Workspace owner or admin's yes (order_corner_merge) merges only thro
     );
     await db.query(
       `INSERT INTO memberships(room_id,identity_id,role,workspace_id) VALUES($1,$2,'member',$3) ON CONFLICT DO NOTHING`,
-      [cornerId, peer, W],
+      [R, peer, W],
     );
     await phone.execute('sendRoomMessage', { roomId: cornerId, messageId: randomBytes(32).toString('hex'),
       text: '@hoots merge this now' }, peer);

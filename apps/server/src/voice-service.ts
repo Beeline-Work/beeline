@@ -40,7 +40,7 @@ export class VoiceService {
 
   async access(roomId: string, humanId: string, db = this.db) {
     const row = (await db.query<{ id: string }>(
-      `SELECT r.id FROM rooms r JOIN memberships rm ON rm.room_id=r.id AND rm.identity_id=$2 AND rm.removed_at IS NULL
+      `SELECT r.id FROM rooms r JOIN memberships rm ON rm.room_id=COALESCE(r.parent_id,r.id) AND rm.identity_id=$2 AND rm.removed_at IS NULL
        JOIN memberships wm ON wm.workspace_id=r.workspace_id AND wm.room_id IS NULL AND wm.identity_id=$2 AND wm.removed_at IS NULL
        JOIN identities i ON i.id=$2 AND i.kind='human'
        WHERE r.id=$1 AND r.archived_at IS NULL AND wm.role<>'spectator'
@@ -59,7 +59,7 @@ export class VoiceService {
         chosen_voices: Record<string, string>;
       }
     >(
-      `SELECT i.id,i.kind,i.name,i.handle,i.face_id,a.soul,a.owner_id,a.access_policy,a.chosen_voices FROM memberships m
+      `SELECT i.id,i.kind,i.name,i.handle,i.face_id,a.soul,a.owner_id,a.access_policy,a.chosen_voices FROM effective_memberships m
        JOIN identities i ON i.id=m.identity_id AND i.kind='agent' JOIN agents a ON a.agent_id=i.id
        JOIN rooms r ON r.id=m.room_id JOIN workspaces w ON w.id=r.workspace_id
        WHERE m.room_id=$1 AND m.removed_at IS NULL ORDER BY i.id`,
@@ -376,7 +376,7 @@ export class VoiceService {
     }
     if (!text.trim()) return;
     await this.db.query(`INSERT INTO messages(id,room_id,author_id,text,agent_model)
-      SELECT $1,$2,$3,$4,$5 FROM memberships m JOIN rooms r ON r.id=m.room_id
+      SELECT $1,$2,$3,$4,$5 FROM effective_memberships m JOIN rooms r ON r.id=m.room_id
       WHERE m.room_id=$2 AND m.identity_id=$3 AND m.removed_at IS NULL AND r.archived_at IS NULL`,
       [randomBytes(32).toString('hex'), roomId, agentId, text, VOICE_MODEL]);
   }

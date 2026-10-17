@@ -670,7 +670,7 @@ describe('Postgres live fanout', () => {
       event.reason === 'connector-assignment' && event.targetAgentId === helper));
   });
 
-  it('names the parent Room and the corner opener on a corner membership invalidate', async () => {
+  it('names the parent Room and corner opener on a sparse corner preference invalidate', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);
     const listener = new PostgresLiveListener(database, live, () => client, 1);
@@ -686,11 +686,9 @@ describe('Postgres live fanout', () => {
       `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'fix')`,
       [corner, WORKSPACE, ROOM, AUTHOR],
     );
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
-      [WORKSPACE, corner, AUTHOR],
-    );
 
+
+    await database.query(`INSERT INTO corner_person_state(corner_id,identity_id,event_subscriptions) VALUES($1,$2,'["joined"]')`,[corner,AUTHOR]);
     await eventually(() =>
       received.some(
         (event) =>
@@ -704,9 +702,7 @@ describe('Postgres live fanout', () => {
       ),
     );
 
-    // `openCorner` writes the corner's memberships before `corner_facts`, so
-    // the opener is read the way the corner list reads it: the recorded owner
-    // once it exists, and the room's creator until then.
+    // Preference invalidations retain the current corner metadata.
     const opener = 'b'.repeat(64);
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Bee')`, [opener]);
     await database.query(
@@ -714,11 +710,7 @@ describe('Postgres live fanout', () => {
       [corner, opener],
     );
     received.length = 0;
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')`,
-      [WORKSPACE, corner, opener],
-    );
-
+    await database.query(`INSERT INTO corner_person_state(corner_id,identity_id,event_subscriptions) VALUES($1,$2,'["joined"]')`,[corner,opener]);
     await eventually(() =>
       received.some(
         (event) =>
@@ -730,19 +722,16 @@ describe('Postgres live fanout', () => {
       ),
     );
 
-    // Inheriting a Room membership writes one row per corner under it, archived
-    // ones included; the helper must be able to drop those without a read.
+    // An existing archived corner still identifies itself on a preference change.
     await database.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`, [corner]);
     const latecomer = 'c'.repeat(64);
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Cee')`, [
       latecomer,
     ]);
     received.length = 0;
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
-      [WORKSPACE, corner, latecomer],
-    );
 
+
+    await database.query(`INSERT INTO corner_person_state(corner_id,identity_id,event_subscriptions) VALUES($1,$2,'[]')`,[corner,latecomer]);
     await eventually(() =>
       received.some(
         (event) =>
@@ -935,6 +924,8 @@ describe('Postgres live fanout', () => {
     const reader = 'f'.repeat(64);
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Bee')`, [agent]);
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Reader')`, [reader]);
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+      VALUES($1,$2,$3,'member'),($1,$2,$4,'member')`,[WORKSPACE,ROOM,agent,reader]);
     // A new corner is a new row in its parent's list.
     await database.query(
       `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'fix')`,
@@ -952,8 +943,7 @@ describe('Postgres live fanout', () => {
       await write();
       await eventually(() => nudges().length >= 1);
     };
-    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-      VALUES($1,$2,$3,'member')`, [WORKSPACE,corner,agent]);
+
     await expectNudge(() => createAgentCommand(database, {
       id: 'queued-state-proof', roomId: corner, agentId: agent, sourceMessageId: null,
       reason: 'order', privatePayload: { text: 'Continue', kind: 'order', authorId: AUTHOR, fromRoomId: ROOM },
@@ -974,8 +964,8 @@ describe('Postgres live fanout', () => {
     await expectNudge(() => database.query(
       `DELETE FROM corner_follows WHERE corner_id=$1 AND identity_id=$2`, [corner, reader]));
     await expectNudge(() => database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
-      [WORKSPACE, corner, reader]));
+      `INSERT INTO corner_person_state(corner_id,identity_id,event_subscriptions) VALUES($1,$2,'[]')`,
+      [corner,reader]));
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text) VALUES('owed-1',$1,$2,'question')`,
       [corner, agent]);
@@ -990,7 +980,7 @@ describe('Postgres live fanout', () => {
     await eventually(() => textNudges().length > priorTitleNudges);
     await expectNudge(() => database.query(
       `UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,
-      [corner, reader]));
+      [ROOM, reader]));
     await expectNudge(() => database.query(
       `UPDATE rooms SET archived_at=now() WHERE id=$1`, [corner]));
 

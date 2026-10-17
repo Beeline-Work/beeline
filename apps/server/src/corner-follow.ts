@@ -64,7 +64,7 @@ BEGIN
     ON CONFLICT DO NOTHING;
   END IF;
   INSERT INTO corner_follows(corner_id,identity_id)
-  SELECT NEW.room_id,person.id FROM memberships member
+  SELECT NEW.room_id,person.id FROM effective_memberships member
   JOIN identities person ON person.id=member.identity_id
   WHERE member.room_id=NEW.room_id AND member.removed_at IS NULL
     AND ${tagsKnownIdentitySql('NEW', 'person.id', 'person.handle', 'person.kind')}
@@ -123,7 +123,7 @@ export async function backfillCornerFollows(database: SqlDatabase): Promise<void
     UNION
     SELECT tagged.room_id,person.id FROM messages tagged
     JOIN rooms corner ON corner.id=tagged.room_id AND corner.parent_id IS NOT NULL
-    JOIN memberships member ON member.room_id=tagged.room_id AND member.removed_at IS NULL
+    JOIN effective_memberships member ON member.room_id=tagged.room_id AND member.removed_at IS NULL
     JOIN identities person ON person.id=member.identity_id
     WHERE tagged.deleted_at IS NULL
       AND ${tagsKnownIdentitySql('tagged', 'person.id', 'person.handle', 'person.kind')}

@@ -76,14 +76,10 @@ beforeEach(async () => {
   for (const id of [PERSON, OTHER, AGENT, TRIAGE, OUTSIDER, CREATOR])
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-        ($1,NULL,$2,'member'),($1,$3,$2,'member'),($1,$4,$2,'member')`,
-      [WORKSPACE, id, ROOM, CORNER],
+       ($1,NULL,$2,'member'),($1,$3,$2,'member') `,
+      [WORKSPACE, id, ROOM],
     );
-  for (const id of [PERSON, TRIAGE, CREATOR])
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
-      [WORKSPACE, TRIAGE_CORNER, id],
-    );
+
 });
 
 afterEach(async () => {

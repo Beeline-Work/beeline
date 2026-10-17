@@ -546,11 +546,7 @@ describe('connect_app', () => {
       `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name)
        VALUES($1,$2,$3,$4,'MM desk corner')`, [CORNER, WORKSPACE, ROOM, OWNER],
     );
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-       VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`,
-      [WORKSPACE, CORNER, OWNER, HELPER],
-    );
+
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text)
        VALUES('corner-app-source',$1,$2,'Check access to X posts')`, [CORNER, OWNER],
@@ -628,10 +624,9 @@ describe('connect_app', () => {
       VALUES($1,$3,$4,'Other room'),($2,$3,$4,'Other corner')`,
       [otherRoom, otherCorner, otherWorkspace, host]);
     await database.query(`UPDATE rooms SET parent_id=$1 WHERE id=$2`, [otherRoom, otherCorner]);
-    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-      VALUES($1,NULL,$2,'owner'),($1,NULL,$3,'member'),
-        ($1,$4,$3,'member'),($1,$5,$3,'member')`,
-      [otherWorkspace, host, HELPER, otherRoom, otherCorner]);
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
+       ($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,$4,$3,'member') `,
+      [otherWorkspace, host, HELPER, otherRoom]);
     for (const [roomId, requestId, generationId] of [
       [otherRoom, 'other-room-request', 'other-room-generation'],
       [otherCorner, 'other-corner-request', 'other-corner-generation'],

@@ -41,10 +41,10 @@ describe('Reproduction squire-machine-status-2 in Connectors', () => {
             export const getEffectiveRelayUrl = async () => 'https://monolith.test';`,
           '@/sync/transport/live-connection': 'export const sharedLiveConnection = () => ({ register: async () => () => {} });',
           '@/sync/transport/monolith-operation': `import { companyWorkbench, squireRow } from '@/test/company-workbench';
-            const companies = companyWorkbench([{ ...squireRow(), section: 'attention', subtitle: '3 computers', status: 'Offline', attention: '1 computer needs attention', machines: [
-              { id: 'working', name: 'Machine A', online: true, status: 'connected' },
-              { id: 'failed', name: 'Machine B', online: true, status: 'error', error: 'Squire broker unavailable' },
-              { id: 'absent', name: 'Machine C', online: true, status: 'not-added' }
+            const companies = companyWorkbench([{ ...squireRow(), section: 'attention', subtitle: '3 computers', status: 'Sign-in unavailable', attention: '1 computer needs attention', machines: [
+              { id: 'working', name: 'Machine A', online: true, status: 'connected', signedInAs: 'owner@example.com', statusText: 'owner@example.com' },
+              { id: 'failed', name: 'Machine B', online: true, status: 'error', error: 'Squire broker unavailable', statusText: 'Sign-in unavailable' },
+              { id: 'absent', name: 'Machine C', online: true, status: 'not-added', statusText: 'Google sign-in needed' }
             ] }]).companies;
             export class MonolithPhoneOperationError extends Error {}
             export const phoneOperationFailureReason = error => String(error.message);
@@ -63,13 +63,14 @@ describe('Reproduction squire-machine-status-2 in Connectors', () => {
       expect(proof.page).toContain('Trusty Squire');
       expect(proof.page.match(/Trusty Squire/g)).toHaveLength(1);
       expect(proof.page).toContain('3 computers');
-      expect(proof.page).toContain('Offline');
+      expect(proof.page).toContain('Sign-in unavailable');
       expect(proof.page).not.toContain('Machine A');
       for (const name of ['Machine A', 'Machine B', 'Machine C']) expect(proof.service).toContain(name);
-      expect(proof.service).toContain('Ready');
+      expect(proof.service).toContain('owner@example.com');
+      expect(proof.service).not.toContain('Ready');
       expect(proof.service).toContain('Squire broker unavailable');
-      expect(proof.service).toContain('Error');
-      expect(proof.service).toContain('Not added');
+      expect(proof.service).toContain('Sign-in unavailable');
+      expect(proof.service).toContain('Google sign-in needed');
       expect(proof.service).not.toContain('Production API');
       console.log(`Squire at ${width}px: one service; detail retains all three machine reports and broker errors`);
     } finally {

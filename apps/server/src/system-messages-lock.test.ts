@@ -206,6 +206,49 @@ function scan(files: Map<string, string>): Entry[] {
     ]);
   };
   const named = (call: ts.CallExpression, name: string) => targets(call.expression, name);
+  // Resolve invocation adapters before selecting phrase-bearing parameters.
+  const invocationArguments = (call: ts.CallExpression): readonly ts.Node[] => {
+    const array = (node: ts.Node | undefined, seen = new Set<ts.Node>()): readonly ts.Node[] => {
+      if (!node || seen.has(node)) return [];
+      seen.add(node);
+      if (ts.isArrayLiteralExpression(node))
+        return node.elements.flatMap((element) =>
+          ts.isSpreadElement(element) ? array(element.expression, seen) : [element],
+        );
+      for (const declaration of declarations(node))
+        if (ts.isVariableDeclaration(declaration) && declaration.initializer)
+          return array(declaration.initializer, seen);
+      return [];
+    };
+    const resolve = (
+      target: ts.Node,
+      args: readonly ts.Node[],
+      seen = new Set<ts.Node>(),
+    ): readonly ts.Node[] => {
+      if (seen.has(target)) return args;
+      seen.add(target);
+      if (ts.isPropertyAccessExpression(target) && /^(bind|call|apply)$/.test(target.name.text))
+        return resolve(
+          target.expression,
+          target.name.text === 'apply' ? array(args[1]) : args.slice(1),
+          seen,
+        );
+      if (
+        ts.isCallExpression(target) &&
+        ts.isPropertyAccessExpression(target.expression) &&
+        target.expression.name.text === 'bind'
+      )
+        return resolve(target.expression.expression, [...target.arguments.slice(1), ...args], seen);
+      for (const declaration of declarations(target))
+        if (
+          (ts.isVariableDeclaration(declaration) || ts.isPropertyAssignment(declaration)) &&
+          declaration.initializer
+        )
+          return resolve(declaration.initializer, args, seen);
+      return args;
+    };
+    return resolve(call.expression, call.arguments);
+  };
   const sqlText = (node: ts.Node, seen = new Set<ts.Node>()): string => {
     if (seen.has(node)) return '';
     seen.add(node);
@@ -682,14 +725,15 @@ function scan(files: Map<string, string>): Entry[] {
       continue;
     }
     const call = node;
+    const args = invocationArguments(call);
     const parts =
       kind === 'restateSystemLine'
-        ? call.arguments[2]
-          ? phraseParts(call.arguments[2])
+        ? args[2]
+          ? phraseParts(args[2])
           : []
         : kind === 'systemLine'
-          ? call.arguments[1]
-            ? phraseParts(call.arguments[1])
+          ? args[1]
+            ? phraseParts(args[1])
             : []
           : (writes.get(node)?.parts ?? []);
     forward(node, parts);
@@ -704,11 +748,12 @@ function scan(files: Map<string, string>): Entry[] {
         ]),
       );
       if (!indices.size) continue;
+      const args = invocationArguments(call);
       if (!direct.has(call)) direct.set(call, 'wrapper');
       if (
         forward(
           call,
-          [...indices].flatMap((index) => (call.arguments[index] ? [call.arguments[index]!] : [])),
+          [...indices].flatMap((index) => (args[index] ? [args[index]!] : [])),
         )
       )
         changed = true;
@@ -779,18 +824,19 @@ function scan(files: Map<string, string>): Entry[] {
       }
       ts.forEachChild(part, collect);
     };
+    const args = ts.isCallExpression(node) ? invocationArguments(node) : [];
     // The database argument is transport, not a phrase dependency.
     if (ts.isCallExpression(node) && kind === 'systemLine') {
-      if (node.arguments[1]) phraseParts(node.arguments[1]).forEach(collect);
+      if (args[1]) phraseParts(args[1]).forEach(collect);
     } else if (ts.isCallExpression(node) && kind === 'restateSystemLine') {
-      if (node.arguments[2]) phraseParts(node.arguments[2]).forEach(collect);
+      if (args[2]) phraseParts(args[2]).forEach(collect);
     } else if (writes.has(node)) writes.get(node)!.parts.forEach(collect);
     else if (kind === 'wrapper' && ts.isCallExpression(node)) {
       const indices = callableDeclarations(node.expression).flatMap((declaration) => [
         ...(wrappers.get(functions.get(declaration) ?? declaration) ?? []),
       ]);
       indices.forEach((index) => {
-        if (node.arguments[index]) collect(node.arguments[index]!);
+        if (args[index]) collect(args[index]!);
       });
     } else collect(node);
     const prior = entries.get(id);
@@ -1006,6 +1052,52 @@ it.each([
   "const author=SYSTEM_IDENTITY_ID; db.query('INSERT INTO messages(author_id,text) VALUES($1,$2)', [author,'hello']);",
 ])('rejects a direct System producer: %s', (statement) => {
   expect(() => enforce(scan(fixture(statement)), scan(fixture()))).toThrow(failure);
+});
+
+it.each([
+  'const emit=line.bind(null,db); emit({verb:wording});',
+  'const emit=line.bind(null); emit(db,{verb:wording});',
+  'const emit=line.bind(null,db,{verb:wording}); emit();',
+  'const emit=line.bind(null,db); const alias=emit; alias({verb:wording});',
+  'const emit=line.bind(null).bind(null,db); emit({verb:wording});',
+  'line.call(null,db,{verb:wording});',
+  'line.apply(null,[db,{verb:wording}]);',
+  'const args=[db,{verb:wording}]; line.apply(null,args);',
+  'const emit=line.bind(null,db); emit.call(null,{verb:wording});',
+  'const emit=line.bind(null,db); emit.apply(null,[{verb:wording}]);',
+  'function note(db: unknown, phrase: unknown) { return line(db,phrase); } const emit=note.bind(null,db); emit({verb:wording});',
+  'function note(db: unknown, phrase: unknown) { return line(db,phrase); } note.call(null,db,{verb:wording});',
+  'function note(db: unknown, phrase: unknown) { return line(db,phrase); } note.apply(null,[db,{verb:wording}]);',
+])('freezes wording dependencies through invocation adapters: %s', (statement) => {
+  const base = fixture("const wording='hello';" + statement);
+  const changed = new Map(base);
+  changed.set(
+    '/fixtures/producer.ts',
+    base.get('/fixtures/producer.ts')!.replace("wording='hello'", "wording='goodbye'"),
+  );
+  expect(() => enforce(scan(changed), scan(base))).toThrow(failure);
+});
+
+it.each([
+  'const emit=line.bind(null,db,id); emit({verb:wording});',
+  'line.call(null,db,id,{verb:wording});',
+  'const args=[db,id,{verb:wording}]; line.apply(null,args);',
+])('freezes restated wording through invocation adapters: %s', (statement) => {
+  const base = fixture("const wording='hello';" + statement);
+  base.set(
+    '/fixtures/system-line.ts',
+    'export function restateSystemLine(db: unknown, id: unknown, input: unknown) {}',
+  );
+  base.set(
+    '/fixtures/producer.ts',
+    base.get('/fixtures/producer.ts')!.replace('systemLine as line', 'restateSystemLine as line'),
+  );
+  const changed = new Map(base);
+  changed.set(
+    '/fixtures/producer.ts',
+    base.get('/fixtures/producer.ts')!.replace("wording='hello'", "wording='goodbye'"),
+  );
+  expect(() => enforce(scan(changed), scan(base))).toThrow(failure);
 });
 
 it('follows aliases of forwarding wrappers', () => {

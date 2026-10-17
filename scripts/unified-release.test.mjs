@@ -1094,8 +1094,7 @@ test('production endpoint, stable downloads, rollback evidence, green gates, and
   assert.match(release, /this run was cancelled; cancellation is terminal for the release identity/);
   // Termination gates: machines touched / failed release migration /
   // cancelled attempt are recorded by release_result and stamped into the
-  // published attempt state; the initialize plan step refuses a terminated
-  // identity, and the retry job refuses to fire on it.
+  // published attempt state; only automatic retry refuses to fire on it.
   assert.match(release, /needs\.release_result\.outputs\.terminated != 'true'/);
   const resultStep = workflow.jobs.release_result.steps.find((step) => step.name === 'Merge checkpoints and classify the final attempt');
   const otaCheckpoint = workflow.jobs.mobile_ota.steps.find((step) => step.name === 'Require rollback evidence and write checkpoint');
@@ -1120,7 +1119,7 @@ test('production endpoint, stable downloads, rollback evidence, green gates, and
   assert.ok(workflow.jobs.release_result.steps.indexOf(stampStep) < workflow.jobs.release_result.steps.indexOf(attemptUpload),
     'Reproduction release-termination-order: termination must be stamped before immutable upload');
   const planStep = workflow.jobs.initialize.steps.find((step) => step.name?.includes('release plan'));
-  assert.match(planStep.run, /was terminated; a terminated identity never retries/);
+  assert.doesNotMatch(planStep.run, /s\.terminated|terminated identity never retries/);
   assert.equal(workflow.jobs.release_result.outputs.terminated, "${{ steps.result.outputs.terminated }}");
   const gatesStep = workflow.jobs.server.steps.find((step) => step.name === 'Collect the server retry gates');
   assert.match(gatesStep.if, /steps\.promote\.conclusion != 'skipped'/);
@@ -1879,4 +1878,68 @@ test('helper job accommodates the npm visibility deadline plus publication overh
   const workflow = parse(readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'));
   const budgetMs = workflow.jobs.helper['timeout-minutes'] * 60_000;
   assert.ok(budgetMs >= NPM_VISIBILITY_TIMEOUT_MS + 5 * 60_000, 'helper job must allow the default npm visibility deadline plus five minutes for setup and publication');
+});
+
+
+test('release-terminal-manual: the dispatch initializer plans terminated identities for every terminal reason', () => {
+  const workflow = parse(readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'));
+  const plan = workflow.jobs.initialize.steps.find((step) => step.id === 'plan');
+  const dir = mkdtempSync(join(tmpdir(), 'manual-release-retry-'));
+  try {
+    mkdirSync(join(dir, 'retry'));
+    const sourceSha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
+    // Keep git reads and the release planner real. Only remote operations are mocked.
+    const shell = `git() {
+      if [ "$1" = fetch ] || [ "$1" = merge-base ]; then return 0; fi
+      command git "$@"
+    }
+    ghr_requested_version_guard() { return 0; }
+    `;
+    // The sourced helper defines the guard, so install its stub after sourcing.
+    const run = plan.run.replace('. scripts/gh-release-retry.sh', '. scripts/gh-release-retry.sh\n' + shell);
+    for (const reason of ['cancelled', 'migration-failed', 'machines-touched']) {
+      const retry = initializeRelease({ version: 'v0.0.9', sourceSha });
+      retry.terminated = true;
+      retry.delivery = { state: 'failure', terminated: true, terminatedReason: reason };
+      writeFileSync(join(dir, 'retry/release-attempt.json'), JSON.stringify(retry));
+      const result = spawnSync('bash', ['-euc', run], { encoding: 'utf8', env: {
+        ...process.env, RUNNER_TEMP: dir, PLAN_ONLY: 'false', REQUESTED_SHA: sourceSha,
+        REQUESTED_VERSION: 'v0.0.9', SELECTION: 'all', STORE_TRACK: 'none',
+        GITHUB_OUTPUT: join(dir, 'outputs'), GITHUB_STEP_SUMMARY: join(dir, 'summary'),
+      } });
+      assert.equal(result.status, 0, result.stderr);
+      const summary = JSON.parse(readFileSync(join(dir, 'release-plan.json'), 'utf8'));
+      assert.equal(summary.identity, `v0.0.9@${sourceSha}`);
+      assert.ok(Object.values(summary.retry).every(Boolean));
+      assert.match(readFileSync(join(dir, 'outputs'), 'utf8'), /run_server=true/);
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('both native builds apply the one resolved store version before EAS, with no extra jobs or inputs', () => {
+  const workflow = parse(readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'));
+  const resolve = workflow.jobs.initialize.steps.find((step) => step.id === 'native_version');
+  assert.match(resolve.if, /plan_only != true.*run_mobile_native == 'true'/);
+  assert.match(resolve.run, /git show "\$RELEASE_SHA:apps\/mobile\/package.json"/);
+  assert.match(resolve.run, /STORE_TRACK.*production/);
+  assert.match(resolve.run, /ios-store-build.mjs resolve-version/);
+  assert.equal(resolve.env.EXPO_ASC_API_KEY_P8, '${{ secrets.EXPO_ASC_API_KEY_P8 }}');
+  assert.equal(workflow.jobs.initialize.outputs.native_app_version, '${{ steps.native_version.outputs.version }}');
+  const dir = mkdtempSync(join(tmpdir(), 'native-resolved-version-'));
+  try {
+    mkdirSync(join(dir, 'scripts'));
+    writeFileSync(join(dir, 'scripts/check-release-version.cjs'), 'console.log("0.2.22")');
+    for (const name of ['mobile_native_android', 'mobile_native_ios']) {
+      const job = workflow.jobs[name];
+      const apply = job.steps.find((step) => step.name === 'Apply the resolved native store version');
+      const build = job.steps.find((step) => step.name?.startsWith('Build immutable'));
+      assert.equal(job.needs, 'initialize');
+      assert.ok(job.steps.indexOf(apply) < job.steps.indexOf(build));
+      assert.equal(apply.env.NATIVE_APP_VERSION, '${{ needs.initialize.outputs.native_app_version }}');
+      writeFileSync(join(dir, 'package.json'), JSON.stringify({ version: '0.2.22' }));
+      execFileSync('bash', ['-euc', 'node() { "$TEST_NODE_BINARY" "$@"; }\n' + apply.run], { cwd: dir,
+        env: { ...process.env, TEST_NODE_BINARY: process.execPath, NATIVE_APP_VERSION: '0.2.23' } });
+      assert.equal(JSON.parse(readFileSync(join(dir, 'package.json'))).version, '0.2.23');
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { generateKeyPairSync, verify } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { appStoreClient, prepareUpload, verifyUpload } from './ios-store-build.mjs';
+import { appStoreClient, prepareUpload, verifyUpload, resolveStoreVersion } from './ios-store-build.mjs';
 
 const started = Date.parse('2026-10-13T16:05:36Z');
 const deliveryId = '919f9a1e-4397-43f9-8336-a20eac85d6bd';
@@ -200,7 +200,7 @@ test('R1: VALID upload becomes a production App Review submission with automatic
   assert.equal(result.appStore.releaseType, 'AFTER_APPROVAL');
 });
 
-test('editable and rejected versions are reused; in-review and released versions fail before writes', async () => {
+test('editable versions are reused; already submitted versions record their state and succeed', async () => {
   for (const state of ['PREPARE_FOR_SUBMISSION', 'REJECTED', 'METADATA_REJECTED', 'DEVELOPER_REJECTED']) {
     const fixture = await reviewFixture({ state });
     await fixture.run();
@@ -208,7 +208,9 @@ test('editable and rejected versions are reused; in-review and released versions
   }
   for (const state of ['WAITING_FOR_REVIEW', 'IN_REVIEW', 'READY_FOR_SALE', 'PENDING_DEVELOPER_RELEASE']) {
     const fixture = await reviewFixture({ state });
-    await assert.rejects(fixture.run(), new RegExp(state));
+    const result = await fixture.run();
+    assert.equal(result.appStore.versionState, state);
+    assert.equal(result.appStore.submissionOutcome, 'version-already-submitted');
     assert.ok(!fixture.calls.some((c) => c.method));
   }
 });
@@ -228,12 +230,15 @@ test('export compliance, missing metadata, and each Apple mutation failure stop 
 });
 
 
-test('mismatched build and active submissions fail before mutation; unconfirmed submission fails', async () => {
-  for (const [options, error] of [[{ wrongBuild: true }, /does not match/], [{ active: true }, /already active/]]) {
-    const fixture = await reviewFixture(options);
-    await assert.rejects(fixture.run(), error);
-    assert.ok(!fixture.calls.some((c) => c.method));
-  }
+test('mismatched builds fail; an active older review is recorded without mutation or failure', async () => {
+  const wrong = await reviewFixture({ wrongBuild: true });
+  await assert.rejects(wrong.run(), /does not match/);
+  assert.ok(!wrong.calls.some((c) => c.method));
+  const active = await reviewFixture({ active: true });
+  const result = await active.run();
+  assert.equal(result.appStore.submissionOutcome, 'existing-review-active');
+  assert.deepEqual(result.appStore.activeSubmissions, [{ id: 'existing', state: 'READY_FOR_REVIEW' }]);
+  assert.ok(!active.calls.some((c) => c.method));
   const fixture = await reviewFixture({ submittedState: 'READY_FOR_REVIEW' });
   await assert.rejects(fixture.run(), /did not confirm/);
 });
@@ -278,5 +283,123 @@ process.on('exit', () => assert.equal(replay.length, 0, 'all Apple calls must ru
     assert.equal(result.appStore.submissionState, 'WAITING_FOR_REVIEW');
     assert.equal(result.appStore.buildId, 'build-87');
     assert.equal(result.appStore.releaseType, 'AFTER_APPROVAL');
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+
+test('release-store-version: locked store versions resolve to the next usable patch before builds', async () => {
+  const version = (value, state) => ({ attributes: { versionString: value, appStoreState: state } });
+  for (const state of ['PENDING_DEVELOPER_RELEASE', 'READY_FOR_SALE', 'WAITING_FOR_REVIEW', 'IN_REVIEW',
+    'PENDING_APPLE_RELEASE', 'PROCESSING_FOR_APP_STORE', 'WAITING_FOR_EXPORT_COMPLIANCE', 'READY_FOR_REVIEW']) {
+    assert.equal(await resolveStoreVersion({ appId: '6803948500', appVersion: '0.2.22',
+      api: async () => ({ data: [version('0.2.22', state)] }) }), '0.2.23');
+  }
+  for (const state of ['PREPARE_FOR_SUBMISSION', 'REJECTED', 'METADATA_REJECTED', 'DEVELOPER_REJECTED']) {
+    assert.equal(await resolveStoreVersion({ appId: '6803948500', appVersion: '0.2.22',
+      api: async () => ({ data: [version('0.2.22', state)] }) }), '0.2.22');
+  }
+  for (const data of [[], [version('0.2.21', 'READY_FOR_SALE')]]) {
+    assert.equal(await resolveStoreVersion({ appId: '6803948500', appVersion: '0.2.22', api: async () => ({ data }) }), '0.2.22');
+  }
+  const pages = [
+    { data: [version('0.2.22', 'PENDING_DEVELOPER_RELEASE')], links: { next: 'https://api.appstoreconnect.apple.com/v1/versions?page=2' } },
+    { data: [version('0.2.24', 'READY_FOR_SALE'), version('0.2.23', 'IN_REVIEW'), version('0.2.25', 'PREPARE_FOR_SUBMISSION')] },
+  ];
+  assert.equal(await resolveStoreVersion({ appId: '6803948500', appVersion: '0.2.22', api: async (path) => {
+    if (pages.length === 1) assert.equal(path, '/v1/versions?page=2');
+    return pages.shift();
+  } }), '0.2.25');
+  assert.equal(await resolveStoreVersion({ appId: '6803948500', appVersion: '0.2.22',
+    api: async () => ({ data: [{ attributes: { versionString: '0.2.22', appVersionState: 'READY_FOR_SALE' } }] }) }), '0.2.23');
+});
+
+
+test('release-store-version: operator CLI builds evidence for 0.2.23 and submits AFTER_APPROVAL when 0.2.22 is approved', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'resolved-store-cli-'));
+  try {
+    const packagePath = join(dir, 'apps/mobile/package.json');
+    const ipaPath = join(dir, 'resolved.ipa');
+    const evidencePath = join(dir, 'ios-build.json');
+    const receiptPath = join(dir, 'ios-upload.json');
+    const transport = join(dir, 'transport.mjs');
+    mkdirSync(join(dir, 'apps/mobile'), { recursive: true });
+    mkdirSync(join(dir, 'scripts'));
+    writeFileSync(packagePath, JSON.stringify({ version: '0.2.22' }));
+    writeFileSync(join(dir, 'apps/mobile/native-fingerprint.json'), JSON.stringify({ ios: { runtimeVersion: '35' } }));
+    writeFileSync(join(dir, 'scripts/ios-build-evidence.py'), readFileSync(new URL('./ios-build-evidence.py', import.meta.url)));
+    writeFileSync(receiptPath, JSON.stringify(receipt));
+    // Real JWT client and CLI, with generated test credentials and a transport that cannot reach Apple.
+    const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
+    const env = { ...process.env, EXPO_ASC_KEY_ID: 'fixture', EXPO_ASC_ISSUER_ID: 'fixture',
+      EXPO_ASC_API_KEY_P8: Buffer.from(privateKey.export({ type: 'pkcs8', format: 'pem' })).toString('base64'),
+      ASC_CALLS: join(dir, 'calls.jsonl') };
+    writeFileSync(transport, `import assert from 'node:assert/strict';
+import { appendFileSync } from 'node:fs';
+globalThis.fetch = async (url, options) => {
+  const path = new URL(url).pathname;
+  const query = new URL(url).searchParams;
+  const data = options.body ? JSON.parse(options.body).data : undefined;
+  appendFileSync(process.env.ASC_CALLS, JSON.stringify({ path, method: options.method, data }) + '\\n');
+  const train = { type: 'preReleaseVersions', id: 'train', attributes: { version: '0.2.23', platform: 'IOS' } };
+  const build = { id: 'build-88', attributes: { version: '88', processingState: 'VALID',
+    expired: false, usesNonExemptEncryption: false, uploadedDate: new Date().toISOString() },
+    relationships: { preReleaseVersion: { data: { id: 'train' } } } };
+  let response;
+  if (path.endsWith('/appStoreVersions') && options.method === 'GET') {
+    if (query.has('filter[versionString]')) {
+      assert.equal(query.get('filter[versionString]'), '0.2.23');
+      response = { data: [] };
+    } else response = { data: [{ id: 'old', attributes: { versionString: '0.2.22', appStoreState: 'PENDING_DEVELOPER_RELEASE' } }] };
+  } else if (path === '/v1/apps/6803948500') response = { data: { attributes: { bundleId: 'app.usebeeline.mobile' } } };
+  else if (path === '/v1/builds') response = { data: process.env.ASC_STAGE === 'prepare' ? [] : [build], included: [train] };
+  else if (path.startsWith('/v1/buildUploads/')) response = { data: { attributes: {
+    cfBundleShortVersionString: '0.2.23', cfBundleVersion: '88', platform: 'IOS', state: { state: 'COMPLETE' } } } };
+  else if (path === '/v1/builds/build-88') response = { data: build, included: [train] };
+  else if (path.endsWith('/reviewSubmissions') && options.method === 'GET') response = { data: [] };
+  else if (path === '/v1/appStoreVersions' && options.method === 'POST') {
+    assert.equal(data.attributes.versionString, '0.2.23');
+    assert.equal(data.attributes.releaseType, 'AFTER_APPROVAL');
+    response = { data: { id: 'new-version' } };
+  } else if (path === '/v1/appStoreVersions/new-version') {
+    assert.equal(data.attributes.releaseType, 'AFTER_APPROVAL');
+    assert.equal(data.relationships.build.data.id, 'build-88');
+    response = null;
+  } else if (path.endsWith('/appStoreVersionLocalizations')) response = { data: [{ id: 'en' }] };
+  else if (path === '/v1/appStoreVersionLocalizations/en') response = null;
+  else if (path === '/v1/reviewSubmissions') response = { data: { id: 'review-new' } };
+  else if (path === '/v1/reviewSubmissionItems') {
+    assert.equal(data.relationships.appStoreVersion.data.id, 'new-version');
+    response = null;
+  } else if (path === '/v1/reviewSubmissions/review-new') {
+    assert.equal(data.attributes.submitted, true);
+    response = { data: { id: 'review-new', attributes: { state: 'WAITING_FOR_REVIEW' } } };
+  } else assert.fail('Unexpected Apple call ' + url);
+  return { ok: true, status: response === null ? 204 : 200, json: async () => response };
+};
+`);
+    const cli = (command, path, extra = []) => execFileSync(process.execPath,
+      ['--import', transport, 'scripts/ios-store-build.mjs', command, path, ...extra],
+      { env: { ...env, ASC_STAGE: command }, encoding: 'utf8' });
+    const resolved = cli('resolve-version', packagePath).trim();
+    assert.equal(resolved, '0.2.23');
+    // EAS/Xcode stand-in: bake the resolved package version into an IPA, then inspect the actual bytes.
+    writeFileSync(packagePath, JSON.stringify({ version: resolved }));
+    execFileSync('python3', ['-c', `import sys, plistlib, zipfile
+with zipfile.ZipFile(sys.argv[1], 'w') as z:
+ z.writestr('Payload/Beeline.app/Info.plist', plistlib.dumps(dict(CFBundleIdentifier='app.usebeeline.mobile', CFBundleShortVersionString=sys.argv[2], CFBundleVersion='88', NSPhotoLibraryUsageDescription='Attach photos')))
+ z.writestr('Payload/Beeline.app/Expo.plist', plistlib.dumps(dict(EXUpdatesRuntimeVersion='35')))
+`, ipaPath, resolved]);
+    execFileSync('python3', [join(dir, 'scripts/ios-build-evidence.py'), ipaPath, evidencePath]);
+    cli('prepare', evidencePath);
+    cli('verify', evidencePath, [receiptPath]);
+    cli('submit', evidencePath);
+    const result = JSON.parse(readFileSync(evidencePath));
+    assert.equal(result.appVersion, '0.2.23');
+    assert.equal(result.appStore.buildId, 'build-88');
+    assert.equal(result.appStore.submissionId, 'review-new');
+    assert.equal(result.appStore.submissionState, 'WAITING_FOR_REVIEW');
+    assert.equal(result.appStore.releaseType, 'AFTER_APPROVAL');
+    const calls = readFileSync(env.ASC_CALLS, 'utf8').trim().split('\n').map(JSON.parse);
+    assert.equal(calls.filter((c) => c.path === '/v1/reviewSubmissions/review-new').length, 1);
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });

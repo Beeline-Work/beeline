@@ -150,7 +150,8 @@ Routine version allocation skips every version already held by a GitHub release
 record, including unpublished drafts from terminated or partially shipped
 attempts. Those records and assets remain intact; the next routine dispatch
 gets a fresh version without deleting a draft or retrying a terminated identity.
-Explicit recovery keeps the existing identity and termination guards. A release
+Explicit recovery keeps the existing identity and can resume a terminated
+attempt; termination suppresses automatic self-redispatch only. A release
 listing failure stops initialization before anything ships.
 
 A repeat routine dispatch at an already-delivered HEAD succeeds as a no-op. It

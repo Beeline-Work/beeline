@@ -485,7 +485,7 @@ function phantomHarness(answer = 'Hey there is the answer.') {
     lastActiveAgent: vi.fn(async () => undefined),
     speech: vi.fn(async () => speech), humanCount: vi.fn(async () => 1),
     recordHuman: vi.fn(async (call: string, room: string, human: string, target: typeof agent, text: string, leaseOwner?: string): Promise<string> => {
-      const writer = { access: service.access, db: {
+      const writer = { access: service.access, live: new LiveHub(), db: {
         transaction: async (write: (db: { query(sql: string, args: unknown[]): Promise<unknown> }) => Promise<void>) => write({
           async query(sql, args) {
             if (sql.includes('INSERT INTO messages')) {

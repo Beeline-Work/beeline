@@ -1,4 +1,5 @@
 import type { AddressInfo } from 'node:net';
+import WebSocket from 'ws';
 import { TokenAuth } from './auth.js';
 import { DaemonService } from './daemon-service.js';
 import { createBeelineServer } from './server.js';
@@ -254,4 +255,38 @@ it('native Stop ends a parked call and rejects tampering, expiry and successor s
   expect(await service.current(R, H)).toBeNull();
   expect((await db.query(`SELECT left_at FROM voice_participants WHERE call_id=$1 AND identity_id=$2`, [joined.call.id, H])).rows[0]?.left_at).not.toBeNull();
   console.log('parked native Stop => left_at set, call ended; stale capability cannot end successor');
+});
+
+
+it('call-feedback-1: delivers a recorded utterance before leave while PostgreSQL LISTEN is unavailable', async () => {
+  const joined = await service.join(R, H);
+  const phone = new PhoneService(db, 'http://proof');
+  const app = createBeelineServer({ database: db, live, voice: service,
+    auth: { authenticatePhone: async () => H } as unknown as TokenAuth,
+    daemon: new DaemonService(db, live), phone, mediaMaximumBytes: 1000 });
+  await new Promise<void>(resolve => app.listen(0, '127.0.0.1', resolve));
+  const socket = new WebSocket(`ws://127.0.0.1:${(app.address() as AddressInfo).port}/v1/phone/live`, ['bearer.proof']);
+  const frames: any[] = [];
+  socket.on('message', bytes => frames.push(JSON.parse(bytes.toString())));
+  const until = async (check: () => boolean) => {
+    const deadline = Date.now() + 2000;
+    while (!check() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+    expect(check()).toBe(true);
+  };
+  try {
+    await new Promise<void>((resolve, reject) => { socket.once('open', resolve); socket.once('error', reject); });
+    socket.send(JSON.stringify({ type: 'subscribe', roomIds: [R] }));
+    await until(() => frames.some(frame => frame.type === 'subscribed'));
+    const agent = (await service.agents(R, H))[0]!;
+    const source = await service.recordHuman(joined.call.id, R, H, agent, 'Show this while I am still speaking');
+    await until(() => frames.some(frame => frame.type === 'message-delta' && frame.message.id === source));
+    const delta = frames.find(frame => frame.type === 'message-delta' && frame.message.id === source);
+    expect(delta.message.text).toContain('Show this while I am still speaking');
+    expect(readRoomViewMessage(delta.message)?.author.pubkey).toBe(H);
+    expect((await service.current(R, H))?.id).toBe(joined.call.id);
+  } finally {
+    socket.close();
+    await new Promise<void>(resolve => app.close(() => resolve()));
+    await service.leave(joined.call.id, H);
+  }
 });

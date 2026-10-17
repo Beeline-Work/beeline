@@ -340,3 +340,29 @@ it('notification Stop fences a successor join while native Stop configuration is
     expect(voice.call).toBeNull();
   } finally { await act(async () => renderer.unmount()); }
 });
+
+it('call-feedback-1: follows the mic when a stale speaker signal outlives bridge audio', async () => {
+  vi.useFakeTimers();
+  const bridge = `beeline-voice-${fixture.callId}`;
+  fixture.room = Object.assign(new EventEmitter(), { connect: async () => {}, disconnect: async () => {},
+    remoteParticipants: new Map([[bridge, { identity: bridge, audioLevel: 0 }]]),
+    localParticipant: { audioLevel: 0.1, publishData: vi.fn(async () => {}), setMicrophoneEnabled: vi.fn(async () => {}) } });
+  let voice!: ReturnType<typeof useVoiceCall>; let renderer: any;
+  function Probe() { voice = useVoiceCall(fixture.callId, true); return null; }
+  await act(async () => { renderer = create(<Probe />); });
+  try {
+    await act(async () => voice.join());
+    await act(async () => fixture.room.emit('data', new TextEncoder().encode(JSON.stringify({ type: 'speaker', agentId: 'ruby' })),
+      { identity: bridge }, undefined, VOICE_DATA_TOPIC));
+    await act(async () => fixture.room.emit('levels'));
+    const quietMic = voice.level;
+    expect(quietMic).toBeGreaterThan(0);
+    fixture.room.localParticipant.audioLevel = 0.5;
+    await act(async () => fixture.room.emit('levels'));
+    expect(voice.level).toBeGreaterThan(quietMic);
+    fixture.room.remoteParticipants.get(bridge).audioLevel = 0.01;
+    await act(async () => fixture.room.emit('levels'));
+    expect(voice.level).toBeLessThan(quietMic);
+    expect(voice.call).not.toBeNull();
+  } finally { await act(async () => renderer.unmount()); vi.clearAllTimers(); vi.useRealTimers(); }
+});

@@ -323,6 +323,7 @@ export class VoiceService {
         INSERT INTO voice_messages(message_id,call_id) SELECT id,$5 FROM message`,
         [id, roomId, humanId, `@${agent.handle} ${text.replace(/@/g, '')}`, callId]);
     });
+    this.live.publish({ type: 'invalidate', roomId, reason: 'message', messageId: id, operation: 'INSERT' });
     return id;
   }
 

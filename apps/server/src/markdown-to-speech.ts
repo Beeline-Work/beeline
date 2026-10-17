@@ -74,16 +74,25 @@ function isMachineId(token: string): boolean {
   return token.length >= 8 && /[A-Za-z]/.test(token) && /\d/.test(token) && !readsAsWord(token);
 }
 
-/** True when no bracket opened before the cut is still unclosed. */
-function bracketsClosed(text: string): boolean {
-  const closing: Record<string, string> = { ')': '(', ']': '[', '}': '{' };
-  const stack: string[] = [];
+const CLOSING_BRACKET: Record<string, string> = { ')': '(', ']': '[', '}': '{' };
+
+/** Apply every bracket in `text` to the stack of still-open brackets. */
+function updateBrackets(stack: string[], text: string): void {
   for (const character of text) {
     if (character === '(' || character === '[' || character === '{') stack.push(character);
-    else if (character in closing && stack[stack.length - 1] === closing[character]) stack.pop();
+    else if (character in CLOSING_BRACKET && stack[stack.length - 1] === CLOSING_BRACKET[character]) stack.pop();
   }
+}
+
+/** True when no bracket opened before the cut is still unclosed. */
+function bracketsClosed(text: string): boolean {
+  const stack: string[] = [];
+  updateBrackets(stack, text);
   return stack.length === 0;
 }
+
+/** Longest text held back while an opening bracket is still unclosed. */
+const HELD_BRACKET_LIMIT = 200;
 
 /** Deterministic speech cleanup; the written transcript is never changed. */
 function speakIdentifiers(text: string, members?: SpeechMembers): string {
@@ -153,9 +162,11 @@ export function markdownToSpeech(text: string, members?: SpeechMembers): string 
  */
 export class MarkdownSpeechStream {
   private pending = '';
+  private brackets: string[] = [];
   constructor(private readonly members?: SpeechMembers) {}
   push(delta: string): string[] {
     this.pending += delta;
+    updateBrackets(this.brackets, delta);
     const phrases: string[] = [];
     // A blank line is safe only outside a fenced block.
     let boundary = this.pending.indexOf('\n\n');
@@ -164,6 +175,8 @@ export class MarkdownSpeechStream {
       if (withoutFencedCode(prefix).open) break;
       phrases.push(markdownToSpeech(prefix, this.members));
       this.pending = this.pending.slice(boundary + 2);
+      this.brackets = [];
+      updateBrackets(this.brackets, this.pending);
       boundary = this.pending.indexOf('\n\n');
     }
     if (!/[*_`~\[\]#>|@\n]/.test(this.pending) && !/^\s*(?:[-+]\s|\d+[.)]\s)/.test(this.pending)) {
@@ -175,14 +188,22 @@ export class MarkdownSpeechStream {
         if (!bracketsClosed(this.pending.slice(0, cut))) continue;
         phrases.push(markdownToSpeech(this.pending.slice(0, cut), this.members));
         this.pending = this.pending.slice(cut + 1);
+        // The flushed prefix is balanced, so it left the open-bracket stack unchanged.
         sentence.lastIndex = 0;
       }
+    }
+    // A stray open bracket must not hold speech forever: release it once it is long enough.
+    if (this.pending.length > HELD_BRACKET_LIMIT && this.brackets.length > 0) {
+      phrases.push(markdownToSpeech(this.pending, this.members));
+      this.pending = '';
+      this.brackets = [];
     }
     return phrases.filter(Boolean);
   }
   finish(): string {
     const text = markdownToSpeech(this.pending, this.members);
     this.pending = '';
+    this.brackets = [];
     return text;
   }
 }

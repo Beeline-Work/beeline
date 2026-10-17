@@ -137,6 +137,21 @@ it('Reproduction VOICE-IDS-5: streams a parenthesized ID clause without empty br
   expect(stream.finish()).toBe('friend.');
 });
 
+it('Reproduction VOICE-IDS-6: a stray open bracket flushes past the hold cap instead of stalling', () => {
+  const stream = new MarkdownSpeechStream();
+  const text = `Start (${'word '.repeat(80)}end`;
+  const duringPush: string[] = [];
+  for (const character of text) duringPush.push(...stream.push(character));
+  // Speech starts before generation ends even though the parenthesis never closes.
+  expect(duringPush.length).toBeGreaterThan(0);
+  expect(duringPush.join(' ')).toContain('Start');
+  expect(stream.finish()).not.toBe('');
+  // Ordinary prose without brackets still flushes on the first clause.
+  const plain = new MarkdownSpeechStream();
+  expect(plain.push('Hello, friend and welcome')).toEqual(['Hello,']);
+  expect(plain.finish()).toBe('friend and welcome');
+});
+
 it('speaks identifiers the same way when streamed in any chunk size', () => {
   const input = 'I filed this as a bug (fb_409eec12d3be6644d9eba2bf). Hi @bananaman614305, PR 2546 at 20:37, version 1.2.3.\n\n'
     + 'Commit 0123456789abcdef0123456789abcdef01234567 and 123e4567-e89b-12d3-a456-426614174000.';

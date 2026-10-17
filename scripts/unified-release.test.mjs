@@ -1812,6 +1812,11 @@ test('native workflow builds Android locally on the Linux runner and iOS locally
     );
     assert.doesNotMatch(iosSubmit.run, /npx .*eas submit/);
     assert.match(cleanup.run, /rm -rf "\$RUNNER_TEMP\/private_keys"/);
+    const appReview = ios.steps.find((step) => step.name === 'Send production iOS version to App Review');
+    assert.equal(appReview.if, "inputs.store_track == 'production'");
+    assert.match(appReview.run, /ios-store-build\.mjs submit/);
+    assert.ok(ios.steps.indexOf(appReview) > ios.steps.indexOf(iosSubmit));
+    assert.ok(ios.steps.indexOf(appReview) < ios.steps.findIndex((step) => step.name === 'Preserve iOS build evidence'));
     const androidEvidence = androidSteps.find((step) => step.name === 'Preserve Android build evidence');
     const iosEvidence = ios.steps.find((step) => step.name === 'Preserve iOS build evidence');
     assert.equal(androidEvidence.with.name, 'mobile-native-android-build-${{ needs.initialize.outputs.release_id }}');

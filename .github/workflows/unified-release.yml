@@ -1222,6 +1222,9 @@ jobs:
           # (90683 rejected build 87 after a successful upload). Require the
           # exact delivery to finish and a new VALID build in our App Store app.
           node ../../scripts/ios-store-build.mjs verify "$RUNNER_TEMP/ios-build.json" "$RUNNER_TEMP/ios-upload.json"
+      - name: Send production iOS version to App Review
+        if: inputs.store_track == 'production'
+        run: node scripts/ios-store-build.mjs submit "$RUNNER_TEMP/ios-build.json"
       - name: Preserve iOS build evidence
         uses: actions/upload-artifact@v4
         with:

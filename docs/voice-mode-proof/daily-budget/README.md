@@ -30,7 +30,9 @@ publishing its mic.
    `EXPO_PUBLIC_BUZZY_MONOLITH_URL=http://10.0.2.2:38497`.
 5. Install on Android API 36, grant microphone permission, and open
    `beeline://review/isolated-voice-budget-proof-only`. Finish welcome, open
-   Budget proof from the Room list, and tap Join on the real call card.
+   Budget proof from the Room list, and tap Join on the real call card. For
+   Obsidian, first select Settings → Appearance → Dark from the Workspace
+   switcher; Light selects Bone.
 6. Watch the existing tip slot at one minute of input, the seconds countdown
    below one minute remaining, and the restored composer at zero. Try the
    composer conversation control again and check the same local reset message.
@@ -43,7 +45,7 @@ The reset boundary is UTC because no user timezone is stored. The message uses
 precedence over the budget warning in the same tip slot; tests cover both one
 and multiple humans. No separate banner or toast is rendered.
 
-`warning-real-room-android.png` captures the warning in the existing tip slot
+The Bone screenshot `warning-real-room-android.png` captures the warning in the existing tip slot
 of the real Room. The server received one authenticated warning request, and
 Sam received no budget signals or voiced audio. The local speech line uses the
 already-existing native audio player; no call-wide audio track carries it.
@@ -56,6 +58,29 @@ connected with all 180,000 ms, no budget signals and no voiced audio frames.
 composer conversation control again. No alert or duplicate call-card error
 appeared. `countdown-real-room-android.png` captures the seconds countdown.
 `result.json` records the durable final budget and surviving participant.
+
+## Obsidian proof
+
+The same real Android Room demonstration was repeated in Obsidian on
+2026-10-18 UTC, using Settings → Appearance → Dark. The existing normal-entry
+APK was reused; mobile source is unchanged since the Bone proof. Its SHA-256 is
+`45deab40ea2c81b4170080a43a756ec8a7e6d60b983f0fe2d2d7d0704343afb4`.
+The disposable server ran revision `ca49f563d`.
+
+- `warning-obsidian-real-room-android.png`: `2 min left today` appears in the
+  voice bar's existing tip slot in the real Room.
+- `cutoff-obsidian-real-room-android.png`: Alex's composer has returned and its
+  error slot shows the daily limit and the 8:00 PM local reset. Sam's call
+  remains active, with Join available on the call card.
+- `result-obsidian.json`: Alex has zero remaining; Sam retains all 180,000 ms,
+  receives no budget signals or voiced audio, and is the sole surviving human.
+
+This run crossed actual UTC midnight while the mic was live. The budget reset
+without ending the call; the saved warning and cutoff are both from the new day.
+The cumulative input counter is 278,215 ms across both days, while the new day's
+budget is 180,000 ms. The call-card timer includes Sam's time before Alex joined
+and both days; it is not the charged microphone duration. No clock or usage
+injection was used. The Bone screenshots above remain as the other theme proof.
 
 ## Accounting and timing checks
 

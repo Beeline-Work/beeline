@@ -837,6 +837,20 @@ describe('DesktopRoomInspector work pane', () => {
 
 
 describe('corner sender teaching hint', () => {
+  it('Reproduction UH-LEARN: tagged composer send retires hints after remount', async () => {
+    vi.mocked(loadBuzzIdentity).mockResolvedValue({ pubkey: person.pubkey } as any);
+    for (const draft of ['@codex hello', 'Hello humans']) {
+      const detail = { ...room(), room: corners[0].corner, parent: room().room,
+        messages: [{ id: 'sent-1', text: draft, createdAt: 9, author: person, presentation: 'message' }] };
+      const tree = await render(props({ client: { room: vi.fn(async () => detail) } as any,
+        selectedCornerId: 'working' }));
+      await act(async () => tree.root.findByType('ConversationComposer' as any).props.onChangeText(draft));
+      await act(async () => { await tree.root.findByType('ConversationComposer' as any).props.onSend(); });
+      expect(tree.root.findByType('OrdinaryLedgerMessage' as any).props.untaggedHint).toBe(false);
+      await act(async () => tree.unmount());
+    }
+  });
+
   it('Reproduction UH-2: caps successful composer sends after two across remounts', async () => {
     vi.mocked(loadBuzzIdentity).mockResolvedValue({ pubkey: person.pubkey } as any);
     for (const expected of [true, true, false, false]) {

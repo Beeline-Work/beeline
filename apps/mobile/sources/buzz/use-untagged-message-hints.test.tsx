@@ -164,4 +164,52 @@ describe('private untagged send feedback', () => {
     expect(first.hints().length + second.hints().length).toBe(2);
   });
 
+  it.each([0, 1])('retires after tagging with %i previous hints, across Rooms and remounts', async count => {
+    const sender = mount();
+    const otherRoom = mount({ roomId: 'other' });
+    await flush();
+    if (count) { sender.send('first'); await flush(); }
+    sender.send('tagged-agent', true);
+    sender.send('after-tag');
+    otherRoom.send('other-room');
+    await flush();
+    expect(sender.hints()).toEqual([]);
+    expect(otherRoom.hints()).toEqual([]);
+    expect(storage.values.get('@beeline/untagged-hint-shown/sender')).toBe('2');
+    sender.unmount();
+    const restarted = mount();
+    await flush();
+    restarted.send('after-restart');
+    await flush();
+    expect(restarted.hints()).toEqual([]);
+  });
+
+  it('retires tagged sends before the initial storage read finishes', async () => {
+    let finish!: (value: string | null) => void;
+    storage.getItem.mockImplementationOnce(() => new Promise<string | null>(resolve => { finish = resolve; }));
+    const sender = mount();
+    sender.send('tagged', true);
+    await flush();
+    await act(async () => finish(null));
+    sender.send('untagged');
+    await flush();
+    expect(sender.hints()).toEqual([]);
+    expect(storage.values.get('@beeline/untagged-hint-shown/sender')).toBe('2');
+  });
+
+  it('keeps tagged-send retirement gated and tolerates storage failure', async () => {
+    const dm = mount({ isDirectMessage: true });
+    await flush();
+    dm.send('tagged', true);
+    await flush();
+    expect(storage.setItem).not.toHaveBeenCalled();
+    const sender = mount();
+    await flush();
+    storage.setItem.mockRejectedValue(new Error('unavailable'));
+    sender.send('tagged', true);
+    sender.send('untagged');
+    await flush();
+    expect(sender.hints()).toEqual([]);
+  });
+
 });

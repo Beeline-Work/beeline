@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { loadUntaggedHintCount, reserveUntaggedHint } from './untagged-hint-storage';
+import { loadUntaggedHintCount, reserveUntaggedHint, retireUntaggedHints } from './untagged-hint-storage';
 
 const NO_HINTS: ReadonlySet<string> = new Set();
 
@@ -31,8 +31,9 @@ export function useUntaggedMessageHints({
   useEffect(() => {
     ready.current = null;
     let cancelled = false;
+    const generation = hintGeneration.current;
     void loadUntaggedHintCount(viewerPubkey).then(count => {
-      if (!cancelled && count < 2) ready.current = session;
+      if (!cancelled && count < 2 && hintGeneration.current === generation) ready.current = session;
     }).catch(() => {});
     return () => { cancelled = true; ready.current = null; };
   }, [session, viewerPubkey]);
@@ -43,6 +44,8 @@ export function useUntaggedMessageHints({
     if (!enabled || !active || currentSession.current !== session) return;
     if (hasMentions) {
       hintGeneration.current += 1;
+      ready.current = null;
+      void retireUntaggedHints(viewerPubkey);
       setHints({ session, ids: NO_HINTS });
       return;
     }

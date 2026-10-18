@@ -189,7 +189,15 @@ and its Apple state and succeeds. If an older review is still active, it
 preserves that review, records `existing-review-active` with the active IDs and
 states in `ios-build.json`, and succeeds after the upload; this outcome does
 not claim the new build was submitted for review. Missing localizations,
-unresolved export compliance, and Apple API failures still fail the job.
+unresolved export compliance, and Apple API failures are recorded as
+`store step failed` with the error, without failing the native job or release.
+The release record and summary distinguish submitted and already approved/live
+versions. An existing active review is recorded as a failed store step because
+the new build has not been submitted.
+
+To retry only a failed review, manually dispatch the existing unified workflow
+with the same `release_version` and `release_sha`. The saved verified build is
+reused; successful components are skipped. No new inputs or approvals are needed.
 
 A manual unified release dispatch can resume the same identity after a cancelled
 or terminated attempt, including migration failures and touched Fly Machines.

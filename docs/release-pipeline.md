@@ -18,7 +18,9 @@
   build is VALID, `store_track=production` attaches it to the matching App Store
   version, sets release notes from the committed store metadata, and submits it
   for review with automatic release after approval. `internal` and `beta` stop
-  at TestFlight. Apple API or submission-state errors fail the native job;
+  at TestFlight. App Review is best-effort: Apple API or submission-state errors never fail
+  the native job, release record, or GitHub release publication. The record and
+  summary report the iOS store outcome separately, including Apple errors;
   successful evidence includes the review submission ID. See the
   [store runbook](../apps/mobile/docs/store-submission.md) for retry constraints.
 - **The device proof is opt-in.** `run_release_proof=true` runs the emulator
@@ -133,6 +135,11 @@ all release jobs are skipped. The same local proof is covered by:
 ```sh
 node --test scripts/unified-release.test.mjs
 ```
+
+A failed iOS App Review step retains its verified build evidence in `iosStore`
+on the release record. Manually dispatching the existing `release_version` and
+`release_sha` retries that submission alone when all components are checked;
+no store track, new flags, rebuilds, or uploads are needed.
 
 A failed attempt stores its release state. Up to two automatic retries use the
 same version and SHA, skip checked components, reuse successful immutable build

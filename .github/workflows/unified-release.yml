@@ -106,6 +106,7 @@ jobs:
       native_android: ${{ steps.plan.outputs.native_android }}
       native_ios: ${{ steps.plan.outputs.native_ios }}
       native_app_version: ${{ steps.native_version.outputs.version }}
+      retry_ios_review: ${{ steps.plan.outputs.retry_ios_review }}
       runtime_pin_changed: ${{ steps.plan.outputs.runtime_pin_changed }}
       previous_runtime_version: ${{ steps.plan.outputs.previous_runtime_version }}
       next_runtime_version: ${{ steps.plan.outputs.next_runtime_version }}
@@ -249,6 +250,7 @@ jobs:
           node scripts/unified-release.mjs "${args[@]}"
           tee -a "$GITHUB_STEP_SUMMARY" < "$RUNNER_TEMP/release-plan.json"
           {
+            node -e 'const s=require(process.argv[1]);console.log("retry_ios_review="+(s.iosStore?.status === "store step failed" && !!s.iosStore?.evidence && s.components["mobile-native"].state === "checked"))' "$RUNNER_TEMP/unified-release.json"
             echo "release_sha=$release_sha"
             echo "release_version=$release_version"
             echo "release_id=$release_id"
@@ -1248,6 +1250,7 @@ jobs:
           # exact delivery to finish and a new VALID build in our App Store app.
           node ../../scripts/ios-store-build.mjs verify "$RUNNER_TEMP/ios-build.json" "$RUNNER_TEMP/ios-upload.json"
       - name: Send production iOS version to App Review
+        continue-on-error: true
         if: inputs.store_track == 'production'
         run: |
           set -euo pipefail
@@ -1275,12 +1278,39 @@ jobs:
           xargs security list-keychains -d user -s < "$RUNNER_TEMP/user-keychains.txt"
           xargs security default-keychain -d user -s < "$RUNNER_TEMP/user-default-keychain.txt"
 
+  ios_review_retry:
+    timeout-minutes: 5
+    needs: initialize
+    if: inputs.plan_only != true && needs.initialize.outputs.retry_ios_review == 'true'
+    runs-on: [self-hosted, beeline-prod-host]
+    continue-on-error: true
+    outputs:
+      evidence: ${{ steps.review.outputs.evidence }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.initialize.outputs.release_sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: unified-release-plan-${{ needs.initialize.outputs.release_id }}
+          path: ${{ runner.temp }}/review-retry
+      - name: Retry only the saved iOS App Review submission
+        id: review
+        env:
+          EXPO_ASC_KEY_ID: ${{ secrets.EXPO_ASC_KEY_ID }}
+          EXPO_ASC_ISSUER_ID: ${{ secrets.EXPO_ASC_ISSUER_ID }}
+          EXPO_ASC_API_KEY_P8: ${{ secrets.EXPO_ASC_API_KEY_P8 }}
+        run: |
+          node -e 'const fs=require("node:fs");const s=require(process.argv[1]);fs.writeFileSync(process.argv[2],JSON.stringify(s.iosStore.evidence))' "$RUNNER_TEMP/review-retry/unified-release.json" "$RUNNER_TEMP/ios-review.json"
+          node scripts/ios-store-build.mjs submit "$RUNNER_TEMP/ios-review.json"
+          node -e 'console.log("evidence="+JSON.stringify(require(process.argv[1])))' "$RUNNER_TEMP/ios-review.json" >> "$GITHUB_OUTPUT"
+
   release_result:
     # !cancelled(), not always(): a run superseded by cancel-in-progress must not
     # classify itself as a failed attempt, and (below) must never redispatch its
     # pinned identity — that redispatch cancelled the fresh cut that replaced it.
     if: "!cancelled() && inputs.plan_only != true && needs.initialize.result == 'success'"
-    needs: [initialize, server, helper_macos, helper, mobile_ota, mobile_native_android, mobile_native_ios, desktop_installers, desktop_checkpoint, website, release_proof]
+    needs: [initialize, server, helper_macos, helper, mobile_ota, mobile_native_android, mobile_native_ios, ios_review_retry, desktop_installers, desktop_checkpoint, website, release_proof]
     runs-on: [self-hosted, beeline-prod-host]
     timeout-minutes: 2
     permissions:
@@ -1357,6 +1387,9 @@ jobs:
       - name: Merge checkpoints and classify the final attempt
         id: result
         env:
+          IOS_REVIEW_EVIDENCE: ${{ needs.ios_review_retry.outputs.evidence }}
+          IOS_STORE_TRACK: ${{ inputs.store_track }}
+          RETRY_IOS_REVIEW: ${{ needs.initialize.outputs.retry_ios_review }}
           TRIGGER_EPOCH: ${{ needs.initialize.outputs.trigger_epoch }}
           SERVER_RESULT: ${{ needs.server.result }}
           HELPER_RESULT: ${{ needs.helper.result }}
@@ -1380,8 +1413,27 @@ jobs:
           fs.writeFileSync(output, JSON.stringify(checkpoints));
           NODE
           node scripts/unified-release.mjs apply-checkpoints --state "$state" --checkpoints "$RUNNER_TEMP/checkpoints.json" --summary "$RUNNER_TEMP/retry-plan.json"
+          node - "$state" "$RUNNER_TEMP/native-evidence/ios-build.json" <<'NODE'
+          const fs = require('node:fs');
+          const [path, evidencePath] = process.argv.slice(2);
+          const state = JSON.parse(fs.readFileSync(path));
+          const evidence = process.env.IOS_REVIEW_EVIDENCE ? JSON.parse(process.env.IOS_REVIEW_EVIDENCE)
+            : fs.existsSync(evidencePath) ? JSON.parse(fs.readFileSync(evidencePath)) : null;
+          if (evidence && (evidence.iosStore || process.env.IOS_STORE_TRACK === 'production')) {
+            state.iosStore = { ...(evidence.iosStore ?? { status: 'store step failed', error: 'App Review step did not produce a result' }), evidence };
+            if (process.env.IOS_REVIEW_EVIDENCE) state.state = 'planned';
+            fs.writeFileSync(path, JSON.stringify(state));
+          }
+          NODE
           incomplete=$(node -e 'const p=require(process.argv[1]);process.stdout.write(Object.entries(p.retry).filter(([,v])=>v).map(([k])=>k).join(","))' "$RUNNER_TEMP/retry-plan.json")
           no_op=$(node -e 'const p=require(process.argv[1]);process.stdout.write(String(p.state === "delivered"))' "$state")
+          review_only=false
+          if [ "${RETRY_IOS_REVIEW:-}" = true ] && [ -z "$incomplete" ]; then
+            review_only=true
+            node scripts/unified-release.mjs finalize --state "$state" --outcome success
+            no_op=true
+          fi
+          echo "review_only=$review_only" >> "$GITHUB_OUTPUT"
           now=$(date +%s)
           # The 20-minute budget is the fix-to-phone promise (server + OTA). A store
           # binary built in this attempt (local iOS archive+export ~30 min on the Mac
@@ -1498,7 +1550,7 @@ jobs:
           console.log('- No retry of this identity may run: not the retry job, and not a manual run of the same identity.');
           NODE
       - name: Publish immutable attempt state for component-local retry
-        if: steps.result.outputs.no_op != 'true'
+        if: steps.result.outputs.no_op != 'true' || steps.result.outputs.review_only == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: unified-release-state-${{ needs.initialize.outputs.release_id }}
@@ -1574,7 +1626,7 @@ jobs:
           fi
       - name: Build the signed desktop update manifest
         if: >-
-          steps.result.outputs.outcome == 'success' &&
+          steps.result.outputs.outcome == 'success' && steps.result.outputs.review_only != 'true' &&
           (needs.initialize.outputs.run_desktop == 'true' || needs.initialize.outputs.stage_desktop == 'checked')
         env:
           DESKTOP_VERSION: ${{ needs.initialize.outputs.desktop_version }}
@@ -1694,7 +1746,7 @@ jobs:
           fi
           node scripts/unified-release.mjs finalize "${args[@]}"
       - name: Publish the one successful release index
-        if: steps.result.outputs.outcome == 'success' && steps.result.outputs.no_op != 'true'
+        if: steps.result.outputs.outcome == 'success' && (steps.result.outputs.no_op != 'true' || steps.result.outputs.review_only == 'true')
         uses: actions/upload-artifact@v4
         with:
           name: unified-release-index
@@ -1721,6 +1773,7 @@ jobs:
         env:
           OUTCOME: ${{ steps.result.outputs.outcome }}
           NO_OP: ${{ steps.result.outputs.no_op }}
+          REVIEW_ONLY: ${{ steps.result.outputs.review_only }}
           FAILURE_CLASS: ${{ steps.result.outputs.failure_class }}
           SLOW: ${{ steps.result.outputs.slow }}
           OTA_ELAPSED_SECONDS: ${{ steps.result.outputs.ota_elapsed_seconds }}
@@ -1744,6 +1797,7 @@ jobs:
           const fs = require('node:fs');
           const release = JSON.parse(fs.readFileSync(process.argv[2]));
           console.log(`## Release ${release.delivery.state}: ${release.version}`);
+          if (release.iosStore) console.log(`- iOS store: ${release.iosStore.status}${release.iosStore.error ? ': ' + release.iosStore.error : ''}`);
           console.log(`- Duration: ${release.delivery.durationSeconds}s`);
           console.log(`- Fix to phone: ${process.env.OTA_ELAPSED_SECONDS}s / ${process.env.FIX_TO_PHONE_BUDGET_SECONDS}s budget`);
           if (process.env.SLOW === 'true') console.log(`- Slow: whole run reached ${process.env.WHOLE_RUN_ELAPSED_SECONDS}s (soft limit ${process.env.SOFT_LIMIT_SECONDS}s); release record still published.`);
@@ -1760,7 +1814,8 @@ jobs:
           if (process.env.RUN_DESKTOP === 'true' && signingSecrets.some((name) => !process.env[name]?.trim())) {
             console.log('- macOS artifact UNSIGNED: signing secrets absent');
           }
-          if (process.env.NO_OP === 'true') console.log('- No-op: this exact release was already delivered; nothing was republished.');
+          if (process.env.REVIEW_ONLY === 'true') console.log('- Retried only iOS App Review; component delivery was preserved.');
+          else if (process.env.NO_OP === 'true') console.log('- No-op: this exact release was already delivered; nothing was republished.');
           console.log(`- Notification: ${process.env.NOTIFICATION_STATE} (${process.env.NOTIFICATION_DETAIL})`);
           if (release.delivery.failureClass) console.log(`- Failure class: ${release.delivery.failureClass}`);
           console.log('- Reliability target: fewer than 10% failed attempts over the rolling 20 release attempts.');

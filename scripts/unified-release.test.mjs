@@ -980,7 +980,7 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
   // cold cargo build the macOS helper bundles pay for.
   assert.deepEqual(workflow.jobs.release_result.needs, [
     'initialize', 'server', 'helper_macos', 'helper', 'mobile_ota', 'mobile_native_android',
-    'mobile_native_ios', 'desktop_installers', 'desktop_checkpoint', 'website', 'release_proof',
+    'mobile_native_ios', 'ios_review_retry', 'desktop_installers', 'desktop_checkpoint', 'website', 'release_proof',
   ]);
   assert.doesNotMatch(source, /needs\.mobile_native\.result/);
   assert.match(source, /needs\.initialize\.outputs\.run_desktop == 'true'/);
@@ -1942,4 +1942,97 @@ test('both native builds apply the one resolved store version before EAS, with n
       assert.equal(JSON.parse(readFileSync(join(dir, 'package.json'))).version, '0.2.23');
     }
   } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('ios-review-blocks-release: Apple failure preserves a completed release and retry evidence', async () => {
+  const { reviewBestEffort } = await import('./ios-store-build.mjs');
+  const workflow = parse(readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'));
+  const review = workflow.jobs.mobile_native_ios.steps.find((step) => step.name === 'Send production iOS version to App Review');
+  assert.equal(review['continue-on-error'], true);
+  const evidence = { appStore: { buildId: 'verified-build', processingState: 'VALID' } };
+  const result = await reviewBestEffort({ evidence, submit: async () => { throw new Error('Apple HTTP 409: PENDING_DEVELOPER_RELEASE'); } });
+  assert.equal(result.iosStore.status, 'store step failed');
+  assert.match(result.iosStore.error, /Apple HTTP 409/);
+  const state = initializeRelease({ version: 'v0.1.78', sourceSha: 'a'.repeat(40) });
+  applyComponentCheckpoints(state, RELEASE_COMPONENTS.map((component) => ({ component, version: state.version, sourceSha: state.sourceSha, state: 'checked', artifactRef: component })));
+  state.iosStore = { ...result.iosStore, evidence: result };
+  finalizeRelease(state);
+  assert.equal(state.state, 'delivered');
+  assert.equal(state.iosStore.status, 'store step failed');
+  assert.ok(Object.values(retryPlan(state)).every((retry) => !retry));
+  assert.match(workflow.jobs.ios_review_retry.if, /retry_ios_review == 'true'/);
+  const retry = workflow.jobs.ios_review_retry.steps.find((step) => step.id === 'review');
+  assert.match(retry.run, /s.iosStore.evidence/);
+  assert.doesNotMatch(retry.run, /eas build|altool|play-publish/);
+  const recovered = await reviewBestEffort({ evidence: result, submit: async () => ({ ...evidence, appStore: { ...evidence.appStore, submissionId: 'review-123' } }) });
+  assert.equal(recovered.iosStore.status, 'submitted');
+  const approved = await reviewBestEffort({ evidence, submit: async () => ({ ...evidence, appStore: { ...evidence.appStore, versionState: 'PENDING_DEVELOPER_RELEASE' } }) });
+  assert.equal(approved.iosStore.status, 'already approved/live');
+});
+
+test('ios-review-blocks-release: execute the workflow aggregation before and after Apple failure', () => {
+  const current = parse(readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'));
+  // Replay the original fatal-step behavior against the same aggregation.
+  const original = structuredClone(current);
+  delete original.jobs.mobile_native_ios.steps.find((step) => step.name === 'Send production iOS version to App Review')['continue-on-error'];
+  const directory = mkdtempSync(join(tmpdir(), 'ios-review-aggregation-'));
+  try {
+    for (const [label, workflow, expected] of [['before', original, 'failure'], ['after', current, 'success'], ['retry', current, 'success'], ['beta', current, 'success']]) {
+      const root = join(directory, label);
+      mkdirSync(join(root, 'release'), { recursive: true });
+      mkdirSync(join(root, 'checkpoints'));
+      mkdirSync(join(root, 'native-evidence'));
+      const state = initializeRelease({ version: 'v0.1.78', sourceSha: 'a'.repeat(40) });
+      writeFileSync(join(root, 'release/unified-release.json'), JSON.stringify(state));
+      const step = workflow.jobs.mobile_native_ios.steps.find((step) => step.name === 'Send production iOS version to App Review');
+      const iosResult = step['continue-on-error'] ? 'success' : 'failure';
+      for (const component of RELEASE_COMPONENTS) {
+        if (component === 'mobile-native' && iosResult === 'failure') continue;
+        writeFileSync(join(root, 'checkpoints', `${component}.json`), JSON.stringify({ component, version: state.version, sourceSha: state.sourceSha, state: 'checked', artifactRef: component }));
+      }
+      writeFileSync(join(root, 'native-evidence/ios-build.json'), JSON.stringify(label === 'beta' ? { appStore: { processingState: 'VALID' } } : { iosStore: { status: 'store step failed', error: 'Apple HTTP 409: PENDING_DEVELOPER_RELEASE' } }));
+      const aggregate = workflow.jobs.release_result.steps.find((step) => step.id === 'result');
+      const output = join(root, 'output');
+      const result = spawnSync('bash', ['-euc', aggregate.run], { encoding: 'utf8', env: {
+        ...process.env, RUNNER_TEMP: root, GITHUB_OUTPUT: output,
+        TRIGGER_EPOCH: String(Math.floor(Date.now() / 1000)),
+        SERVER_RESULT: 'success', HELPER_RESULT: 'success', HELPER_MACOS_RESULT: 'skipped', HELPER_REUSE_RUN_ID: '',
+        MOBILE_OTA_RESULT: 'success', RELEASE_PROOF_RESULT: 'skipped', MOBILE_NATIVE_ANDROID_RESULT: 'success',
+        MOBILE_NATIVE_IOS_RESULT: iosResult, DESKTOP_RESULT: 'success', WEBSITE_RESULT: 'success', IOS_REVIEW_EVIDENCE: label === 'retry' ? JSON.stringify({ iosStore: { status: 'submitted', submissionId: 'retry-review' } }) : '',
+        IOS_STORE_TRACK: label === 'beta' ? 'beta' : 'production', RETRY_IOS_REVIEW: label === 'retry' ? 'true' : '',
+      } });
+      assert.equal(result.status, 0, result.stderr);
+      assert.match(readFileSync(output, 'utf8'), new RegExp(`outcome=${expected}`));
+      const record = JSON.parse(readFileSync(join(root, 'release-attempt.json')));
+      if (label === 'before') assert.equal(record.state, 'failed');
+      else if (label === 'retry') {
+        assert.equal(record.state, 'delivered');
+        assert.equal(record.iosStore.status, 'submitted');
+        assert.match(readFileSync(output, 'utf8'), /review_only=true/);
+        assert.match(readFileSync(output, 'utf8'), /no_op=true/);
+      } else if (label === 'beta') {
+        assert.equal(record.iosStore, undefined);
+      } else {
+        finalizeRelease(record);
+        assert.equal(record.state, 'delivered');
+        assert.equal(record.iosStore.status, 'store step failed');
+        assert.match(record.iosStore.error, /Apple HTTP 409/);
+        assert.ok(Object.values(retryPlan(record)).every((retry) => !retry));
+      }
+    }
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('ios-review-blocks-release: submission CLI persists errors and exits successfully', () => {
+  const directory = mkdtempSync(join(tmpdir(), 'ios-review-best-effort-cli-'));
+  try {
+    const path = join(directory, 'ios-build.json');
+    writeFileSync(path, JSON.stringify({ appStore: { buildId: 'verified', processingState: 'VALID' } }));
+    const result = spawnSync(process.execPath, ['scripts/ios-store-build.mjs', 'submit', path], { env: {}, encoding: 'utf8' });
+    assert.equal(result.status, 0, result.stderr);
+    const record = JSON.parse(readFileSync(path));
+    assert.equal(record.iosStore.status, 'store step failed');
+    assert.match(record.iosStore.error, /EXPO_ASC_KEY_ID/);
+    assert.equal(record.appStore.buildId, 'verified');
+  } finally { rmSync(directory, { recursive: true, force: true }); }
 });

@@ -226,9 +226,32 @@ export async function submitForReview({ api, evidence, whatsNew }) {
     submissionId: submission.id, submissionState: submitted.attributes.state, releaseType: 'AFTER_APPROVAL' } };
 }
 
+export async function reviewBestEffort({ evidence, submit }) {
+  try {
+    const result = await submit();
+    const store = result.appStore;
+    if (store.submissionOutcome === 'existing-review-active') {
+      return { ...result, iosStore: { status: 'store step failed', error: 'Apple has an existing active review; the new build was not submitted', ...store } };
+    }
+    const approved = ['PENDING_DEVELOPER_RELEASE', 'PENDING_APPLE_RELEASE', 'READY_FOR_SALE', 'READY_FOR_DISTRIBUTION'].includes(store.versionState);
+    return { ...result, iosStore: { status: approved ? 'already approved/live' : 'submitted', ...store } };
+  } catch (error) {
+    return { ...evidence, iosStore: { status: 'store step failed', error: error.message } };
+  }
+}
+
 async function main() {
   const [command, evidencePath, receiptPath] = process.argv.slice(2);
   const evidence = JSON.parse(readFileSync(evidencePath, 'utf8'));
+  if (command === 'submit') {
+    const result = await reviewBestEffort({ evidence, submit: () => submitForReview({
+      api: appStoreClient(), evidence,
+      whatsNew: readFileSync(new URL('../apps/mobile/store/listing/en-US/release-notes.txt', import.meta.url), 'utf8'),
+    }) });
+    writeFileSync(evidencePath, `${JSON.stringify(result)}\n`);
+    console.log(JSON.stringify(result.iosStore));
+    return;
+  }
   const api = appStoreClient();
   if (command === 'resolve-version') {
     const eas = JSON.parse(readFileSync(new URL('../apps/mobile/eas.json', import.meta.url), 'utf8'));
@@ -241,8 +264,7 @@ async function main() {
     verified = await prepareUpload({ api, evidence, appId: eas.submit.production.ios.ascAppId });
   } else if (command === 'verify') {
     verified = await verifyUpload({ api, evidence, receipt: JSON.parse(readFileSync(receiptPath, 'utf8')) });
-  } else if (command === 'submit') {
-    verified = await submitForReview({ api, evidence, whatsNew: readFileSync(new URL('../apps/mobile/store/listing/en-US/release-notes.txt', import.meta.url), 'utf8') });
+
   } else throw new Error('Usage: ios-store-build.mjs resolve-version|prepare|verify|submit <identity.json> [ios-upload.json]');
   writeFileSync(evidencePath, `${JSON.stringify(verified)}\n`);
   if (verified.appStore.submissionOutcome) console.log(JSON.stringify(verified.appStore));

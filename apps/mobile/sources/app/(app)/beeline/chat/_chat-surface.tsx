@@ -6787,7 +6787,7 @@ export function BuzzChatSurface({
                     <ConversationComposer
                       isDirectMessage={isDirectMessage}
                       hasAgentMembers={Boolean(roomSurface?.members.some(member => member.identity.kind === 'agent'))}
-                      voice={!isCorner && !isDirectMessage && roomSurface?.members.some(member => member.identity.kind === 'agent') ? voice : undefined}
+                      voice={!isCorner && roomSurface?.members.some(member => member.identity.kind === 'agent') ? voice : undefined}
                       onStop={
                         composerAck?.stop ? () => handleStopTurn(composerAck.stop!) : undefined
                       }

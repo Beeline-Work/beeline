@@ -1870,3 +1870,63 @@ it('Reproduction VOICE-BOUND-2: two call audio pumps retain independent one-seco
     vi.useRealTimers(); clock.mockRestore(); await db.close();
   }
 });
+
+it('CALL-ERROR-1: a database access outage retains the caller; confirmed denial removes them', async () => {
+  const { service } = conversationService(1);
+  const leave = vi.fn(async () => {});
+  const runtime = await VoiceRoomRuntime.connect({ ...service, leave } as unknown as VoiceService, 'call', 'room');
+  try {
+    await vi.waitFor(() => expect((runtime as any).touching).toBe(false));
+    service.access.mockClear();
+    service.access.mockRejectedValueOnce(Object.assign(new Error('network interrupted'), { code: 'ECONNRESET' }));
+    await (runtime as any).heartbeat();
+    expect(leave).not.toHaveBeenCalled(); expect(runtime.isClosed).toBe(false);
+    expect(service.access).toHaveBeenCalledTimes(2);
+    await runtime.utterance('human', 'Ruby hello');
+    expect(service.recordAnswer).toHaveBeenCalledOnce();
+    service.access.mockRejectedValueOnce(new Error('voice call access denied'));
+    await (runtime as any).heartbeat(); expect(leave).toHaveBeenCalledOnce();
+  } finally { await runtime.close(); }
+});
+
+it('CALL-ERROR-1: failed error publication cannot escape the supervisor; the next turn speaks', async () => {
+  const { service, speech } = conversationService(1);
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  try {
+    state.room.localParticipant.publishData.mockRejectedValueOnce(new Error('signal outage'));
+    (runtime as any).task(async () => { throw new Error('provider failure'); });
+    await new Promise(resolve => setImmediate(resolve));
+    await runtime.utterance('human', 'Ruby hello');
+    expect(runtime.isClosed).toBe(false); expect(speech.synthesize).toHaveBeenCalled();
+    expect((runtime as any).speaking).toBeUndefined();
+  } finally { await runtime.close(); }
+});
+
+it('CALL-ERROR-1: cleanup continues after a failing meter and disconnect', async () => {
+  const { service } = conversationService(1);
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  const audioClose = vi.spyOn(state.audio, 'close');
+  vi.spyOn((runtime as any).meter, 'close').mockRejectedValue(new Error('database unavailable'));
+  vi.spyOn(state.room, 'disconnect').mockRejectedValue(new Error('transport unavailable'));
+  await runtime.close();
+  expect(audioClose).toHaveBeenCalledOnce(); expect(service.runtimeClosed).toHaveBeenCalledOnce();
+});
+
+it('CALL-ERROR-1: exhausted lease retries retain valid ownership, then expiry closes only the worker', async () => {
+  const { service } = conversationService(1);
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  await vi.waitFor(() => expect((runtime as any).touching).toBe(false));
+  vi.useFakeTimers();
+  try {
+    service.db.query.mockRejectedValue(Object.assign(new Error('database outage'), { code: '08006' }));
+    const failed = expect((runtime as any).renewLease()).rejects.toThrow('database outage');
+    await vi.advanceTimersByTimeAsync(2000); await failed;
+    expect(runtime.isClosed).toBe(false);
+    (runtime as any).leaseValidUntil = performance.now();
+    (runtime as any).armLeaseExpiry();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(runtime.isClosed).toBe(true);
+    expect(service.runtimeClosed).toHaveBeenCalledOnce();
+    expect(service.endInactive).not.toHaveBeenCalled();
+  } finally { vi.useRealTimers(); await runtime.close(); }
+});

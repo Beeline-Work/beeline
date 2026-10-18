@@ -1,0 +1,1526 @@
+{
+  "reproduction": "CALL-ERROR-1",
+  "mode": "fixed",
+  "standIn": "Real Android production hook/VoiceBar and native RTC; PGlite database; injected STT final text, SSE and PCM provider responses. No live provider service is called.",
+  "firstAudioMs": [
+    71.82856600000014,
+    21.65284800000154,
+    20.235584999998537,
+    22.629177000002528,
+    23.34219799999846
+  ],
+  "medianFirstAudioMs": 22.629177000002528,
+  "steps": [
+    {
+      "kind": "access",
+      "elapsedMs": 305.9714380000005,
+      "pid": 19536,
+      "callId": "2d4ac2e4-032f-46c5-a702-6f04f1098542",
+      "closed": false,
+      "aborted": [],
+      "receivedFrames": 70
+    },
+    {
+      "kind": "heartbeat",
+      "elapsedMs": 223.5354899999984,
+      "pid": 19536,
+      "callId": "2d4ac2e4-032f-46c5-a702-6f04f1098542",
+      "closed": false,
+      "aborted": [],
+      "receivedFrames": 82
+    },
+    {
+      "kind": "error-signal",
+      "elapsedMs": 0.8022280000004685,
+      "pid": 19536,
+      "callId": "2d4ac2e4-032f-46c5-a702-6f04f1098542",
+      "closed": false,
+      "aborted": [],
+      "receivedFrames": 91
+    },
+    {
+      "kind": "dispatch",
+      "elapsedMs": 322.17022599999837,
+      "pid": 19536,
+      "callId": "2d4ac2e4-032f-46c5-a702-6f04f1098542",
+      "closed": false,
+      "aborted": [],
+      "receivedFrames": 115
+    },
+    {
+      "kind": "brain",
+      "elapsedMs": 8011.460353000002,
+      "pid": 19536,
+      "callId": "2d4ac2e4-032f-46c5-a702-6f04f1098542",
+      "closed": false,
+      "aborted": [
+        true
+      ],
+      "receivedFrames": 126
+    },
+    {
+      "kind": "tts",
+      "elapsedMs": 5016.0924589999995,
+      "pid": 19536,
+      "callId": "2d4ac2e4-032f-46c5-a702-6f04f1098542",
+      "closed": false,
+      "aborted": [
+        true,
+        true
+      ],
+      "receivedFrames": 137
+    },
+    {
+      "kind": "expired-worker",
+      "pid": 19536,
+      "callId": "2d4ac2e4-032f-46c5-a702-6f04f1098542",
+      "previousClosed": true,
+      "replaced": true,
+      "endedAt": null
+    }
+  ],
+  "before": {
+    "pid": 19536,
+    "callId": "2d4ac2e4-032f-46c5-a702-6f04f1098542",
+    "humans": 2,
+    "participants": [
+      {
+        "identity_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "parked_at": null,
+        "left_at": null
+      },
+      {
+        "identity_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "parked_at": null,
+        "left_at": null
+      }
+    ],
+    "commands": {
+      "count": 0
+    },
+    "faultEvents": [],
+    "accessFailures": 0,
+    "dispatchAttempts": 0,
+    "frameCounts": {
+      "received": 16
+    },
+    "signals": [
+      {
+        "type": "humans",
+        "count": 1
+      },
+      {
+        "type": "target",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 3173.4450529999995
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "humans",
+        "count": 2
+      },
+      {
+        "type": "target",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "humans",
+        "count": 2
+      }
+    ],
+    "observations": [
+      {
+        "at": 1792360665039,
+        "joined": false,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792360666416,
+        "joined": false,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792360666949,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      }
+    ]
+  },
+  "after": {
+    "pid": 19536,
+    "callId": "2d4ac2e4-032f-46c5-a702-6f04f1098542",
+    "humans": 2,
+    "participants": [
+      {
+        "identity_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "parked_at": null,
+        "left_at": null
+      },
+      {
+        "identity_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "parked_at": null,
+        "left_at": null
+      }
+    ],
+    "commands": {
+      "count": 1
+    },
+    "faultEvents": [
+      {
+        "kind": "access",
+        "elapsedMs": 305.9714380000005,
+        "pid": 19536,
+        "callId": "2d4ac2e4-032f-46c5-a702-6f04f1098542",
+        "closed": false,
+        "aborted": [],
+        "receivedFrames": 70
+      },
+      {
+        "kind": "heartbeat",
+        "elapsedMs": 223.5354899999984,
+        "pid": 19536,
+        "callId": "2d4ac2e4-032f-46c5-a702-6f04f1098542",
+        "closed": false,
+        "aborted": [],
+        "receivedFrames": 82
+      },
+      {
+        "kind": "error-signal",
+        "elapsedMs": 0.8022280000004685,
+        "pid": 19536,
+        "callId": "2d4ac2e4-032f-46c5-a702-6f04f1098542",
+        "closed": false,
+        "aborted": [],
+        "receivedFrames": 91
+      },
+      {
+        "kind": "dispatch",
+        "elapsedMs": 322.17022599999837,
+        "pid": 19536,
+        "callId": "2d4ac2e4-032f-46c5-a702-6f04f1098542",
+        "closed": false,
+        "aborted": [],
+        "receivedFrames": 115
+      },
+      {
+        "kind": "brain",
+        "elapsedMs": 8011.460353000002,
+        "pid": 19536,
+        "callId": "2d4ac2e4-032f-46c5-a702-6f04f1098542",
+        "closed": false,
+        "aborted": [
+          true
+        ],
+        "receivedFrames": 126
+      },
+      {
+        "kind": "tts",
+        "elapsedMs": 5016.0924589999995,
+        "pid": 19536,
+        "callId": "2d4ac2e4-032f-46c5-a702-6f04f1098542",
+        "closed": false,
+        "aborted": [
+          true,
+          true
+        ],
+        "receivedFrames": 137
+      }
+    ],
+    "accessFailures": 1,
+    "dispatchAttempts": 2,
+    "frameCounts": {
+      "received": 170
+    },
+    "signals": [
+      {
+        "type": "humans",
+        "count": 1
+      },
+      {
+        "type": "target",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 3173.4450529999995
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "humans",
+        "count": 2
+      },
+      {
+        "type": "target",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "humans",
+        "count": 2
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 71.82856600000014
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 21.65284800000154
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 20.235584999998537
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 22.629177000002528
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 23.34219799999846
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 18.108266000002914
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 19.60709599999973
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 19.825097000000824
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 17.897401999998692
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 17.637579999998707
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 15.160034999997151
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 15.000417000002926
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "humans",
+        "count": 2
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 17.691982000003918
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      }
+    ],
+    "observations": [
+      {
+        "at": 1792360665039,
+        "joined": false,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792360666416,
+        "joined": false,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792360666949,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792360667236,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 71.82856600000014
+      },
+      {
+        "at": 1792360667319,
+        "nativeAudio": [
+          {
+            "bytesReceived": 116,
+            "packetsReceived": 4,
+            "totalAudioEnergy": 2.0490347254003665e-10
+          }
+        ]
+      },
+      {
+        "at": 1792360667319,
+        "nativeAudio": [
+          {
+            "bytesReceived": 794,
+            "packetsReceived": 6,
+            "totalAudioEnergy": 2.0490347254003665e-10
+          }
+        ]
+      },
+      {
+        "at": 1792360667831,
+        "nativeAudio": [
+          {
+            "bytesReceived": 174,
+            "packetsReceived": 6,
+            "totalAudioEnergy": 4.0049315087370844e-10
+          }
+        ]
+      },
+      {
+        "at": 1792360667831,
+        "nativeAudio": [
+          {
+            "bytesReceived": 2486,
+            "packetsReceived": 19,
+            "totalAudioEnergy": 0.0005720750996299588
+          }
+        ]
+      },
+      {
+        "at": 1792360668042,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 21.65284800000154
+      },
+      {
+        "at": 1792360668351,
+        "nativeAudio": [
+          {
+            "bytesReceived": 4931,
+            "packetsReceived": 37,
+            "totalAudioEnergy": 0.0012098793866537547
+          }
+        ]
+      },
+      {
+        "at": 1792360668350,
+        "nativeAudio": [
+          {
+            "bytesReceived": 232,
+            "packetsReceived": 8,
+            "totalAudioEnergy": 8.382414785728767e-10
+          }
+        ]
+      },
+      {
+        "at": 1792360668471,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 20.235584999998537
+      },
+      {
+        "at": 1792360668863,
+        "nativeAudio": [
+          {
+            "bytesReceived": 7579,
+            "packetsReceived": 55,
+            "totalAudioEnergy": 0.0019727365516963545
+          }
+        ]
+      },
+      {
+        "at": 1792360668864,
+        "nativeAudio": [
+          {
+            "bytesReceived": 290,
+            "packetsReceived": 10,
+            "totalAudioEnergy": 1.3505001599229716e-09
+          }
+        ]
+      },
+      {
+        "at": 1792360669025,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 22.629177000002528
+      },
+      {
+        "at": 1792360669392,
+        "nativeAudio": [
+          {
+            "bytesReceived": 10178,
+            "packetsReceived": 72,
+            "totalAudioEnergy": 0.0026493227047505383
+          }
+        ]
+      },
+      {
+        "at": 1792360669403,
+        "nativeAudio": [
+          {
+            "bytesReceived": 406,
+            "packetsReceived": 14,
+            "totalAudioEnergy": 1.7975622818285098e-09
+          }
+        ]
+      },
+      {
+        "at": 1792360669672,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 23.34219799999846
+      },
+      {
+        "at": 1792360669904,
+        "nativeAudio": [
+          {
+            "bytesReceived": 464,
+            "packetsReceived": 16,
+            "totalAudioEnergy": 2.3005071689722305e-09
+          }
+        ]
+      },
+      {
+        "at": 1792360669904,
+        "nativeAudio": [
+          {
+            "bytesReceived": 11964,
+            "packetsReceived": 83,
+            "totalAudioEnergy": 0.003019536487128295
+          }
+        ]
+      },
+      {
+        "at": 1792360670420,
+        "nativeAudio": [
+          {
+            "bytesReceived": 12656,
+            "packetsReceived": 90,
+            "totalAudioEnergy": 0.003237115092889983
+          }
+        ]
+      },
+      {
+        "at": 1792360670420,
+        "nativeAudio": [
+          {
+            "bytesReceived": 522,
+            "packetsReceived": 18,
+            "totalAudioEnergy": 2.80345205611595e-09
+          }
+        ]
+      },
+      {
+        "at": 1792360670434,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 18.108266000002914
+      },
+      {
+        "at": 1792360670871,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 19.60709599999973
+      },
+      {
+        "at": 1792360670935,
+        "nativeAudio": [
+          {
+            "bytesReceived": 580,
+            "packetsReceived": 20,
+            "totalAudioEnergy": 3.250514178021478e-09
+          }
+        ]
+      },
+      {
+        "at": 1792360670935,
+        "nativeAudio": [
+          {
+            "bytesReceived": 15844,
+            "packetsReceived": 112,
+            "totalAudioEnergy": 0.003798357001809513
+          }
+        ]
+      },
+      {
+        "at": 1792360671079,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 19.825097000000824
+      },
+      {
+        "at": 1792360671452,
+        "nativeAudio": [
+          {
+            "bytesReceived": 19434,
+            "packetsReceived": 136,
+            "totalAudioEnergy": 0.005573917233073976
+          }
+        ]
+      },
+      {
+        "at": 1792360671452,
+        "nativeAudio": [
+          {
+            "bytesReceived": 694,
+            "packetsReceived": 23,
+            "totalAudioEnergy": 4.0608142739752554e-09
+          }
+        ]
+      },
+      {
+        "at": 1792360671599,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 17.897401999998692
+      },
+      {
+        "at": 1792360671967,
+        "nativeAudio": [
+          {
+            "bytesReceived": 21905,
+            "packetsReceived": 153,
+            "totalAudioEnergy": 0.00626404627624222
+          }
+        ]
+      },
+      {
+        "at": 1792360671967,
+        "nativeAudio": [
+          {
+            "bytesReceived": 754,
+            "packetsReceived": 26,
+            "totalAudioEnergy": 4.507876395880784e-09
+          }
+        ]
+      },
+      {
+        "at": 1792360671977,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 17.637579999998707
+      },
+      {
+        "at": 1792360672483,
+        "nativeAudio": [
+          {
+            "bytesReceived": 812,
+            "packetsReceived": 28,
+            "totalAudioEnergy": 5.318176491834563e-09
+          }
+        ]
+      },
+      {
+        "at": 1792360672483,
+        "nativeAudio": [
+          {
+            "bytesReceived": 24374,
+            "packetsReceived": 170,
+            "totalAudioEnergy": 0.006908617891626018
+          }
+        ]
+      },
+      {
+        "at": 1792360673000,
+        "nativeAudio": [
+          {
+            "bytesReceived": 24432,
+            "packetsReceived": 172,
+            "totalAudioEnergy": 0.006908851770312346
+          }
+        ]
+      },
+      {
+        "at": 1792360673000,
+        "nativeAudio": [
+          {
+            "bytesReceived": 870,
+            "packetsReceived": 30,
+            "totalAudioEnergy": 5.821121378978282e-09
+          }
+        ]
+      },
+      {
+        "at": 1792360673516,
+        "nativeAudio": [
+          {
+            "bytesReceived": 24490,
+            "packetsReceived": 174,
+            "totalAudioEnergy": 0.006908852580612458
+          }
+        ]
+      },
+      {
+        "at": 1792360673516,
+        "nativeAudio": [
+          {
+            "bytesReceived": 928,
+            "packetsReceived": 32,
+            "totalAudioEnergy": 6.26818350088381e-09
+          }
+        ]
+      },
+      {
+        "at": 1792360674036,
+        "nativeAudio": [
+          {
+            "bytesReceived": 24606,
+            "packetsReceived": 178,
+            "totalAudioEnergy": 0.00690885336297119
+          }
+        ]
+      },
+      {
+        "at": 1792360674035,
+        "nativeAudio": [
+          {
+            "bytesReceived": 1044,
+            "packetsReceived": 36,
+            "totalAudioEnergy": 7.106424979456686e-09
+          }
+        ]
+      },
+      {
+        "at": 1792360674549,
+        "nativeAudio": [
+          {
+            "bytesReceived": 1102,
+            "packetsReceived": 38,
+            "totalAudioEnergy": 7.832900927553177e-09
+          }
+        ]
+      },
+      {
+        "at": 1792360674550,
+        "nativeAudio": [
+          {
+            "bytesReceived": 24664,
+            "packetsReceived": 180,
+            "totalAudioEnergy": 0.006908854396802364
+          }
+        ]
+      },
+      {
+        "at": 1792360675081,
+        "nativeAudio": [
+          {
+            "bytesReceived": 24722,
+            "packetsReceived": 182,
+            "totalAudioEnergy": 0.006908854899747269
+          }
+        ]
+      },
+      {
+        "at": 1792360675080,
+        "nativeAudio": [
+          {
+            "bytesReceived": 1160,
+            "packetsReceived": 40,
+            "totalAudioEnergy": 8.335845814696897e-09
+          }
+        ]
+      },
+      {
+        "at": 1792360675585,
+        "nativeAudio": [
+          {
+            "bytesReceived": 1218,
+            "packetsReceived": 42,
+            "totalAudioEnergy": 9.155459704857032e-09
+          }
+        ]
+      },
+      {
+        "at": 1792360675585,
+        "nativeAudio": [
+          {
+            "bytesReceived": 24780,
+            "packetsReceived": 184,
+            "totalAudioEnergy": 0.006908855719361178
+          }
+        ]
+      },
+      {
+        "at": 1792360676101,
+        "nativeAudio": [
+          {
+            "bytesReceived": 24896,
+            "packetsReceived": 188,
+            "totalAudioEnergy": 0.00690885646446473
+          }
+        ]
+      },
+      {
+        "at": 1792360676100,
+        "nativeAudio": [
+          {
+            "bytesReceived": 1334,
+            "packetsReceived": 46,
+            "totalAudioEnergy": 9.900563241366245e-09
+          }
+        ]
+      },
+      {
+        "at": 1792360676616,
+        "nativeAudio": [
+          {
+            "bytesReceived": 1392,
+            "packetsReceived": 48,
+            "totalAudioEnergy": 1.041282192271633e-08
+          }
+        ]
+      },
+      {
+        "at": 1792360676617,
+        "nativeAudio": [
+          {
+            "bytesReceived": 24954,
+            "packetsReceived": 190,
+            "totalAudioEnergy": 0.006908856976723429
+          }
+        ]
+      },
+      {
+        "at": 1792360677136,
+        "nativeAudio": [
+          {
+            "bytesReceived": 25012,
+            "packetsReceived": 192,
+            "totalAudioEnergy": 0.006908857721826982
+          }
+        ]
+      },
+      {
+        "at": 1792360677137,
+        "nativeAudio": [
+          {
+            "bytesReceived": 1450,
+            "packetsReceived": 50,
+            "totalAudioEnergy": 1.0850570250415493e-08
+          }
+        ]
+      },
+      {
+        "at": 1792360677650,
+        "nativeAudio": [
+          {
+            "bytesReceived": 25070,
+            "packetsReceived": 194,
+            "totalAudioEnergy": 0.006908858234085681
+          }
+        ]
+      },
+      {
+        "at": 1792360677649,
+        "nativeAudio": [
+          {
+            "bytesReceived": 1508,
+            "packetsReceived": 52,
+            "totalAudioEnergy": 1.1642242757956533e-08
+          }
+        ]
+      },
+      {
+        "at": 1792360678171,
+        "nativeAudio": [
+          {
+            "bytesReceived": 1622,
+            "packetsReceived": 55,
+            "totalAudioEnergy": 1.2173129027719347e-08
+          }
+        ]
+      },
+      {
+        "at": 1792360678171,
+        "nativeAudio": [
+          {
+            "bytesReceived": 25128,
+            "packetsReceived": 196,
+            "totalAudioEnergy": 0.006908858737030585
+          }
+        ]
+      },
+      {
+        "at": 1792360678704,
+        "nativeAudio": [
+          {
+            "bytesReceived": 1682,
+            "packetsReceived": 58,
+            "totalAudioEnergy": 1.3234901567244977e-08
+          }
+        ]
+      },
+      {
+        "at": 1792360678696,
+        "nativeAudio": [
+          {
+            "bytesReceived": 25244,
+            "packetsReceived": 200,
+            "totalAudioEnergy": 0.0069088594914479325
+          }
+        ]
+      },
+      {
+        "at": 1792360679228,
+        "nativeAudio": [
+          {
+            "bytesReceived": 25302,
+            "packetsReceived": 202,
+            "totalAudioEnergy": 0.006908860301748047
+          }
+        ]
+      },
+      {
+        "at": 1792360679241,
+        "nativeAudio": [
+          {
+            "bytesReceived": 1740,
+            "packetsReceived": 60,
+            "totalAudioEnergy": 1.4045201663198747e-08
+          }
+        ]
+      },
+      {
+        "at": 1792360679717,
+        "nativeAudio": [
+          {
+            "bytesReceived": 1798,
+            "packetsReceived": 62,
+            "totalAudioEnergy": 1.4492263785104275e-08
+          }
+        ]
+      },
+      {
+        "at": 1792360679717,
+        "nativeAudio": [
+          {
+            "bytesReceived": 25360,
+            "packetsReceived": 204,
+            "totalAudioEnergy": 0.006908860748810184
+          }
+        ]
+      },
+      {
+        "at": 1792360680116,
+        "joined": true,
+        "humans": 2,
+        "error": "Voice reply unavailable; please try again",
+        "unaddressed": 0,
+        "firstAudioMs": 17.637579999998707
+      },
+      {
+        "at": 1792360680230,
+        "nativeAudio": [
+          {
+            "bytesReceived": 25418,
+            "packetsReceived": 206,
+            "totalAudioEnergy": 0.0069088615591102985
+          }
+        ]
+      },
+      {
+        "at": 1792360680230,
+        "nativeAudio": [
+          {
+            "bytesReceived": 1856,
+            "packetsReceived": 64,
+            "totalAudioEnergy": 1.5302563881058047e-08
+          }
+        ]
+      },
+      {
+        "at": 1792360680563,
+        "joined": true,
+        "humans": 2,
+        "error": "Voice reply unavailable; please try again",
+        "unaddressed": 0,
+        "firstAudioMs": 15.160034999997151
+      },
+      {
+        "at": 1792360680747,
+        "nativeAudio": [
+          {
+            "bytesReceived": 27192,
+            "packetsReceived": 218,
+            "totalAudioEnergy": 0.007359037841246689
+          }
+        ]
+      },
+      {
+        "at": 1792360680748,
+        "nativeAudio": [
+          {
+            "bytesReceived": 1972,
+            "packetsReceived": 68,
+            "totalAudioEnergy": 1.581482256240813e-08
+          }
+        ]
+      },
+      {
+        "at": 1792360681263,
+        "nativeAudio": [
+          {
+            "bytesReceived": 2030,
+            "packetsReceived": 70,
+            "totalAudioEnergy": 1.6252570890107294e-08
+          }
+        ]
+      },
+      {
+        "at": 1792360681264,
+        "nativeAudio": [
+          {
+            "bytesReceived": 27944,
+            "packetsReceived": 225,
+            "totalAudioEnergy": 0.007662311028273363
+          }
+        ]
+      },
+      {
+        "at": 1792360681780,
+        "nativeAudio": [
+          {
+            "bytesReceived": 28060,
+            "packetsReceived": 229,
+            "totalAudioEnergy": 0.007662314809673829
+          }
+        ]
+      },
+      {
+        "at": 1792360681780,
+        "nativeAudio": [
+          {
+            "bytesReceived": 2088,
+            "packetsReceived": 72,
+            "totalAudioEnergy": 1.707218478026743e-08
+          }
+        ]
+      },
+      {
+        "at": 1792360682297,
+        "nativeAudio": [
+          {
+            "bytesReceived": 28118,
+            "packetsReceived": 231,
+            "totalAudioEnergy": 0.007662315554777381
+          }
+        ]
+      },
+      {
+        "at": 1792360682297,
+        "nativeAudio": [
+          {
+            "bytesReceived": 2146,
+            "packetsReceived": 74,
+            "totalAudioEnergy": 1.7509933107966593e-08
+          }
+        ]
+      },
+      {
+        "at": 1792360682813,
+        "nativeAudio": [
+          {
+            "bytesReceived": 28176,
+            "packetsReceived": 233,
+            "totalAudioEnergy": 0.00766231637439129
+          }
+        ]
+      },
+      {
+        "at": 1792360682813,
+        "nativeAudio": [
+          {
+            "bytesReceived": 2262,
+            "packetsReceived": 78,
+            "totalAudioEnergy": 1.8022191789316677e-08
+          }
+        ]
+      },
+      {
+        "at": 1792360683330,
+        "nativeAudio": [
+          {
+            "bytesReceived": 28234,
+            "packetsReceived": 235,
+            "totalAudioEnergy": 0.007662317184691405
+          }
+        ]
+      },
+      {
+        "at": 1792360683330,
+        "nativeAudio": [
+          {
+            "bytesReceived": 2320,
+            "packetsReceived": 80,
+            "totalAudioEnergy": 1.8525136676460396e-08
+          }
+        ]
+      },
+      {
+        "at": 1792360683847,
+        "nativeAudio": [
+          {
+            "bytesReceived": 28350,
+            "packetsReceived": 239,
+            "totalAudioEnergy": 0.007662317994991517
+          }
+        ]
+      },
+      {
+        "at": 1792360683847,
+        "nativeAudio": [
+          {
+            "bytesReceived": 2378,
+            "packetsReceived": 82,
+            "totalAudioEnergy": 1.8972198798365924e-08
+          }
+        ]
+      },
+      {
+        "at": 1792360684364,
+        "nativeAudio": [
+          {
+            "bytesReceived": 2436,
+            "packetsReceived": 84,
+            "totalAudioEnergy": 1.9475143685509644e-08
+          }
+        ]
+      },
+      {
+        "at": 1792360684363,
+        "nativeAudio": [
+          {
+            "bytesReceived": 28408,
+            "packetsReceived": 241,
+            "totalAudioEnergy": 0.007662318749408866
+          }
+        ]
+      },
+      {
+        "at": 1792360684880,
+        "nativeAudio": [
+          {
+            "bytesReceived": 28466,
+            "packetsReceived": 243,
+            "totalAudioEnergy": 0.007662319503826213
+          }
+        ]
+      },
+      {
+        "at": 1792360684880,
+        "nativeAudio": [
+          {
+            "bytesReceived": 2550,
+            "packetsReceived": 87,
+            "totalAudioEnergy": 1.9922205807415172e-08
+          }
+        ]
+      },
+      {
+        "at": 1792360685397,
+        "nativeAudio": [
+          {
+            "bytesReceived": 28524,
+            "packetsReceived": 245,
+            "totalAudioEnergy": 0.007662320006771118
+          }
+        ]
+      },
+      {
+        "at": 1792360685397,
+        "nativeAudio": [
+          {
+            "bytesReceived": 2610,
+            "packetsReceived": 90,
+            "totalAudioEnergy": 2.042515069455889e-08
+          }
+        ]
+      },
+      {
+        "at": 1792360685917,
+        "nativeAudio": [
+          {
+            "bytesReceived": 28638,
+            "packetsReceived": 248,
+            "totalAudioEnergy": 0.007662320817071232
+          }
+        ]
+      },
+      {
+        "at": 1792360685913,
+        "nativeAudio": [
+          {
+            "bytesReceived": 2668,
+            "packetsReceived": 92,
+            "totalAudioEnergy": 2.092809558170261e-08
+          }
+        ]
+      },
+      {
+        "at": 1792360686176,
+        "joined": true,
+        "humans": 2,
+        "error": "Voice reply unavailable; please try again",
+        "unaddressed": 0,
+        "firstAudioMs": 15.000417000002926
+      },
+      {
+        "at": 1792360686431,
+        "nativeAudio": [
+          {
+            "bytesReceived": 30754,
+            "packetsReceived": 262,
+            "totalAudioEnergy": 0.00817107927210685
+          }
+        ]
+      },
+      {
+        "at": 1792360686431,
+        "nativeAudio": [
+          {
+            "bytesReceived": 2726,
+            "packetsReceived": 94,
+            "totalAudioEnergy": 2.168251291241819e-08
+          }
+        ]
+      },
+      {
+        "at": 1792360686946,
+        "nativeAudio": [
+          {
+            "bytesReceived": 33739,
+            "packetsReceived": 283,
+            "totalAudioEnergy": 0.009171576964945456
+          }
+        ]
+      },
+      {
+        "at": 1792360686947,
+        "nativeAudio": [
+          {
+            "bytesReceived": 2784,
+            "packetsReceived": 96,
+            "totalAudioEnergy": 2.218545779956191e-08
+          }
+        ]
+      },
+      {
+        "at": 1792360687464,
+        "nativeAudio": [
+          {
+            "bytesReceived": 34630,
+            "packetsReceived": 294,
+            "totalAudioEnergy": 0.009187064351758745
+          }
+        ]
+      },
+      {
+        "at": 1792360687463,
+        "nativeAudio": [
+          {
+            "bytesReceived": 2900,
+            "packetsReceived": 100,
+            "totalAudioEnergy": 2.2632519921467437e-08
+          }
+        ]
+      },
+      {
+        "at": 1792360687978,
+        "nativeAudio": []
+      },
+      {
+        "at": 1792360687981,
+        "nativeAudio": [
+          {
+            "bytesReceived": 2958,
+            "packetsReceived": 102,
+            "totalAudioEnergy": 2.3442820017421207e-08
+          }
+        ]
+      },
+      {
+        "at": 1792360688297,
+        "nativeAudio": [
+          {
+            "bytesReceived": 866,
+            "packetsReceived": 8,
+            "totalAudioEnergy": 4.0980694508007376e-10
+          }
+        ]
+      },
+      {
+        "at": 1792360688495,
+        "nativeAudio": []
+      },
+      {
+        "at": 1792360688497,
+        "nativeAudio": [
+          {
+            "bytesReceived": 3016,
+            "packetsReceived": 104,
+            "totalAudioEnergy": 2.395507869877129e-08
+          }
+        ]
+      },
+      {
+        "at": 1792360688813,
+        "nativeAudio": [
+          {
+            "bytesReceived": 982,
+            "packetsReceived": 12,
+            "totalAudioEnergy": 8.568690669856073e-10
+          }
+        ]
+      },
+      {
+        "at": 1792360689012,
+        "nativeAudio": []
+      },
+      {
+        "at": 1792360689014,
+        "nativeAudio": [
+          {
+            "bytesReceived": 3074,
+            "packetsReceived": 106,
+            "totalAudioEnergy": 2.4392827026470454e-08
+          }
+        ]
+      },
+      {
+        "at": 1792360689330,
+        "nativeAudio": [
+          {
+            "bytesReceived": 1040,
+            "packetsReceived": 14,
+            "totalAudioEnergy": 1.359813954129337e-09
+          }
+        ]
+      },
+      {
+        "at": 1792360689528,
+        "nativeAudio": []
+      },
+      {
+        "at": 1792360689530,
+        "nativeAudio": [
+          {
+            "bytesReceived": 3190,
+            "packetsReceived": 110,
+            "totalAudioEnergy": 2.490508570782054e-08
+          }
+        ]
+      },
+      {
+        "at": 1792360689736,
+        "joined": true,
+        "humans": 2,
+        "error": "Voice reply unavailable; please try again",
+        "unaddressed": 0,
+        "firstAudioMs": 17.691982000003918
+      },
+      {
+        "at": 1792360689846,
+        "nativeAudio": [
+          {
+            "bytesReceived": 2251,
+            "packetsReceived": 22,
+            "totalAudioEnergy": 1.8068760760348752e-09
+          }
+        ]
+      },
+      {
+        "at": 1792360690045,
+        "nativeAudio": []
+      },
+      {
+        "at": 1792360690047,
+        "nativeAudio": [
+          {
+            "bytesReceived": 3248,
+            "packetsReceived": 112,
+            "totalAudioEnergy": 2.5342834035519702e-08
+          }
+        ]
+      },
+      {
+        "at": 1792360690363,
+        "nativeAudio": [
+          {
+            "bytesReceived": 2814,
+            "packetsReceived": 33,
+            "totalAudioEnergy": 0.0006013190256826097
+          }
+        ]
+      }
+    ]
+  }
+}

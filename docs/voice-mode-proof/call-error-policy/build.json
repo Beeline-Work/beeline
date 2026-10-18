@@ -1,0 +1,18 @@
+{
+  "baseCommit": "0ac88fc72894b02882e5d0017f4e776c9c5e6857",
+  "androidApi": 36,
+  "architecture": "x86_64",
+  "variant": "release fixture, generated debug signing",
+  "updatesEnabled": false,
+  "loopbackCleartext": true,
+  "apkSha256": "7fabaad90e459dac90226ed6f31d58998e43c450b8dc03638e4f54317ed99a4d",
+  "hermesHeaderHex": "c61fbc03c103191f",
+  "sourceSha256": {
+    "apps/server/src/voice-room-runtime.ts": "c886b24b6c6ec9a549ea15db1e9adde738e8fb5963702333f5c508a6b1307811",
+    "apps/server/src/voice-providers.ts": "e36f34bc7cc865760bd16f438b9a9c3496eb0c071befe1f149a527ec41ad2b6e",
+    "apps/server/src/index.ts": "68d1921b6b4f1089162273b99807e20480ac6d871f8c355a490ff36bbeb0cfcc",
+    "apps/mobile/scripts/call-error-android-proof.tsx": "e149636723b63016154e8ce2539211f7a1573636e80e50048e397c93c5f29fa6",
+    "scripts/prove-voice-call-errors.ts": "d7b196605fe51e04c2b3967026724e1be6c5274890ad0c155aca2b42fa908dea",
+    "scripts/prove-voice-call-errors.py": "37d72193ddb4d6900b69e62ad8a8e90511fe0cf9188fb745313bccce9c7a6c69"
+  }
+}

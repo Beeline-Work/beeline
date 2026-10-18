@@ -36,6 +36,46 @@ beforeAll(async () => {
 }, 30_000);
 afterAll(async () => { await service.close(); await db.close(); });
 
+it('accepts Android NUL-only bodies on authenticated Room call joins', async () => {
+  const roomId = '66666666-6666-4666-8666-666666666666';
+  await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Android join proof')`, [roomId, W]);
+  for (const id of [H, A]) await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+    VALUES($1,$2,$3,'member')`, [W, roomId, id]);
+  const auth = new TokenAuth(db, async token => ({ subject: token, login: token, name: token }));
+  await db.query(`INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience,provider_login)
+    VALUES('github','android-join-proof',$1,'https://github.com','beeline','android-join-proof')`, [H]);
+  const { accessToken } = await auth.exchangeGitHubOidc('android-join-proof');
+  const server = createBeelineServer({ database: db, auth, phone: new PhoneService(db, 'http://proof'),
+    daemon: new DaemonService(db, live), live, voice: service, mediaMaximumBytes: 1024 });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/phone/voice/${roomId}/join`;
+  try {
+    for (const payload of ['\u0000', ' \t\u0000\r\n', '', '{}']) {
+      const response = await fetch(url, {
+        method: 'POST', headers: { authorization: `Bearer ${accessToken}` }, body: payload,
+      });
+      const result = await response.json();
+      expect({ status: response.status, error: result.error }).toEqual({ status: 200, error: undefined });
+      expect(result.call.roomId).toBe(roomId);
+      expect(result.sessionId).toEqual(expect.any(String));
+      expect((await service.current(roomId, H))?.id).toBe(result.call.id);
+      await service.leave(result.call.id, H, false, result.sessionId);
+    }
+    for (const payload of ['{', '\u0000{}', '[]', 'null']) {
+      const response = await fetch(url, {
+        method: 'POST', headers: { authorization: `Bearer ${accessToken}` }, body: payload,
+      });
+      expect(response.ok).toBe(false);
+      expect(await service.current(roomId, H)).toBeNull();
+    }
+  } finally {
+    const active = await service.current(roomId, H);
+    if (active) await service.leave(active.id, H);
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    await db.query('DELETE FROM rooms WHERE id=$1', [roomId]);
+  }
+});
+
 it('finds the last eligible agent message within the exact Room or corner', async () => {
   const corner = '44444444-4444-4444-8444-444444444444';
   await db.query(`INSERT INTO rooms(id,workspace_id,name,parent_id) VALUES($1,$2,'Corner',$3)`, [corner, W, R]);

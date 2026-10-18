@@ -2330,7 +2330,7 @@ describe('backfillWorkflowSkillDescriptions', () => {
     );
     const command = await commandFor(WORKER_A);
     const { runId } = await startWorkflow(database, command, {
-      name: 'feedback-triage', roleBindings: { triager: WORKER_A },
+      name: 'feedback-triage', roleBindings: { triager: WORKER_A, browser: WORKER_B },
     });
     const served = await readWorkflowRun(database, { roomId: ROOM, runId }, OWNER);
     expect(served?.contract.handoffs.pull?.does).toBe(FEEDBACK_TRIAGE_CONTRACT.handoffs.pull.does);

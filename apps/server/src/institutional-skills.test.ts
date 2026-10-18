@@ -255,7 +255,7 @@ describe('merge-derived restricted Workspace procedures', () => {
     );
     const started = await startWorkflow(database, cornerTurn, {
       name: 'feedback-triage',
-      roleBindings: { triager: OTHER_AGENT },
+      roleBindings: { triager: OTHER_AGENT, browser: WORKER },
     });
     expect(started.state).toBe('notify');
   });

@@ -318,7 +318,7 @@ const styles = StyleSheet.create((theme) => {
     boardRow: { minHeight: 64, gap: 16, paddingHorizontal: 0,
       borderBottomWidth: 1, borderBottomColor: board.border },
     toggleOff: { backgroundColor: hull.borderStrong },
-    toggleOn: { backgroundColor: hull.accent },
+    toggleOn: { backgroundColor: hull.textSecondary },
     disabled: { opacity: 0.42 },
     copy: { flex: 1, minWidth: 0 },
     // A whole title sizes the copy column to itself; the trailing value yields.

@@ -1,10 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { chmod, mkdir, mkdtemp, rm, utimes, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { delimiter, join } from 'node:path';
+import { join } from 'node:path';
 import { AcpClient } from './acp.js';
 import {
-  installLatestAgentAdapter,
   latestAdapterInstallCommand,
   type AgentCommand,
   type AgentKind,
@@ -27,13 +26,11 @@ async function lockEnv(): Promise<NodeJS.ProcessEnv> {
 
 describe('harness adapter freshness', () => {
   it.each([
-    ['codex', '@agentclientprotocol/codex-acp@latest'],
-    ['claude', '@agentclientprotocol/claude-agent-acp@latest'],
-    ['pi', 'pi-acp@latest'],
-  ] as const)('pins the %s adapter install to latest', (kind, packageSpec) => {
+    ['codex'], ['claude'], ['pi'],
+  ] as const)('routes the %s install through the helper', (kind) => {
     expect(latestAdapterInstallCommand(kind)).toEqual({
-      command: 'npm',
-      args: ['install', '-g', packageSpec],
+      command: 'beeline',
+      args: ['toolchain', 'install', kind],
     });
   });
 
@@ -86,49 +83,23 @@ describe('harness adapter freshness', () => {
       configPaths: [...runtimes.keys()],
       readRuntime: async (path) => runtimes.get(path) ?? {},
       install,
-      readInstalledVersion: async () => '1.0.0',
-      readLatestVersion: async () => '2.0.0',
-      log: () => undefined,
+              log: () => undefined,
     });
 
     expect(install.mock.calls).toEqual([
       [
         {
-          command: 'npm',
-          args: ['install', '-g', '@agentclientprotocol/codex-acp@latest'],
+          command: 'beeline',
+          args: ['toolchain', 'install', 'codex'],
         },
       ],
       [
         {
-          command: 'npm',
-          args: ['install', '-g', '@agentclientprotocol/claude-agent-acp@latest'],
+          command: 'beeline',
+          args: ['toolchain', 'install', 'claude'],
         },
       ],
     ]);
-  });
-
-  it('serializes concurrent adapter refresh callers across the same install', async () => {
-    const env = await lockEnv();
-    let active = 0;
-    let maxActive = 0;
-    const install = vi.fn(async () => {
-      active += 1;
-      maxActive = Math.max(maxActive, active);
-      await new Promise((done) => setTimeout(done, 150));
-      active -= 1;
-    });
-    const options = {
-      env,
-      readInstalledVersion: async () => undefined,
-      readLatestVersion: async () => '2.0.0',
-      install,
-    };
-    await Promise.all([
-      installLatestAgentAdapter('codex', options),
-      installLatestAgentAdapter('pi', options),
-    ]);
-    expect(maxActive).toBe(1);
-    expect(install).toHaveBeenCalledTimes(2);
   });
 
   it('ignores an abandoned legacy lock file; the kernel owns exclusion', async () => {
@@ -141,53 +112,6 @@ describe('harness adapter freshness', () => {
     await expect(withAdapterInstallLock(async () => 'recovered', env, 500)).resolves.toBe(
       'recovered',
     );
-  });
-
-  it('skips an installed current adapter and skips when the registry lookup fails', async () => {
-    const env = await lockEnv();
-    const install = vi.fn(async () => undefined);
-    await expect(
-      installLatestAgentAdapter('codex', {
-        env,
-        install,
-        readInstalledVersion: async () => '2.0.0',
-        readLatestVersion: async () => '2.0.0',
-      }),
-    ).resolves.toBe(false);
-    await expect(
-      installLatestAgentAdapter('codex', {
-        env,
-        install,
-        readInstalledVersion: async () => '1.0.0',
-        readLatestVersion: async () => {
-          throw new Error('registry unavailable');
-        },
-      }),
-    ).resolves.toBe(false);
-    expect(install).not.toHaveBeenCalled();
-  });
-
-  it('reads the installed package version and published npm version before installing', async () => {
-    const env = await lockEnv();
-    const root = roots.at(-1)!;
-    const bin = join(root, 'bin');
-    const modules = join(root, 'global-modules');
-    await mkdir(join(modules, '@agentclientprotocol', 'codex-acp'), { recursive: true });
-    await mkdir(bin);
-    await writeFile(
-      join(modules, '@agentclientprotocol', 'codex-acp', 'package.json'),
-      JSON.stringify({ version: '2.0.0' }),
-    );
-    const npm = join(bin, 'npm');
-    await writeFile(
-      npm,
-      `#!/bin/sh\nif [ "$1" = root ]; then echo '${modules}'; elif [ "$1" = view ]; then echo 2.0.0; else exit 1; fi\n`,
-    );
-    await chmod(npm, 0o755);
-    env.PATH = `${bin}${delimiter}${env.PATH ?? ''}`;
-    const install = vi.fn(async () => undefined);
-    await expect(installLatestAgentAdapter('codex', { env, install })).resolves.toBe(false);
-    expect(install).not.toHaveBeenCalled();
   });
 
   it('holds a probe launch until an adapter install releases the lock', async () => {

@@ -847,6 +847,7 @@ export class MonolithCornerTurnLoop {
   }
 
   private async activate(trace?: TurnTrace): Promise<string> {
+    if (this.options.config.toolchainError) throw new Error(this.options.config.toolchainError);
     if (this.client?.isAlive && this.sessionId) {
       if (this.options.config.agentHomeRoot) {
         await repairRoomAgentCredentialLinks({

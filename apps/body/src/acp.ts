@@ -878,8 +878,8 @@ export class AcpClient extends EventEmitter {
     this.resourceScope = this.useResourceScope && !this.resourceScopeUnavailable
       ? new AcpResourceScope(this.resourceScopeMemoryMaxBytes) : undefined;
     const launch = this.resourceScope?.launch(this.agentCommand, this.agentArgs, childEnv);
-    this.child = await withAdapterInstallLock(() =>
-      spawn(launch?.command ?? this.agentCommand, launch?.args ?? this.agentArgs, {
+    this.child = await withAdapterInstallLock(() => new Promise<ChildProcessWithoutNullStreams>((ready, failed) => {
+      const child = spawn(launch?.command ?? this.agentCommand, launch?.args ?? this.agentArgs, {
         // agentEnv is the child's whole environment: buildAgentEnv's allowlist is
         // a real boundary, not a decorative one layered over a full inherit.
         env: launch?.env ?? childEnv,
@@ -888,8 +888,10 @@ export class AcpClient extends EventEmitter {
         // covers helpers without a user systemd manager.
         detached: !launch && process.platform !== 'win32',
         stdio: ['pipe', 'pipe', 'pipe'],
-      }),
-    );
+      });
+      child.once('error', error => failed(new Error(`ACP agent ${this.agentLabel}: ${error.message}`)));
+      child.once('spawn', () => ready(child));
+    }));
     this.alive = true;
 
     this.stderrTail = '';

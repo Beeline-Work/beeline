@@ -59,14 +59,14 @@ describe('agent command selection', () => {
         kind: 'claude',
         status: 'missing-adapter',
         install: {
-          command: 'npm',
-          args: ['install', '-g', '@agentclientprotocol/claude-agent-acp@latest'],
+          command: 'beeline',
+          args: ['toolchain', 'install', 'claude'],
         },
       },
       {
         kind: 'pi',
         status: 'missing-adapter',
-        install: { command: 'npm', args: ['install', '-g', 'pi-acp@latest'] },
+        install: { command: 'beeline', args: ['toolchain', 'install', 'pi'] },
       },
     ]);
     expect(detected.some((candidate) => candidate.kind === 'goose')).toBe(false);
@@ -92,7 +92,7 @@ describe('agent command selection', () => {
 
     expect(() =>
       resolveAgentCommand({ kind: 'claude', env: { HOME: home, PATH: claude.directory } }),
-    ).toThrow('npm install -g @agentclientprotocol/claude-agent-acp@latest');
+    ).toThrow('beeline toolchain install claude');
   });
 
   it("uses Goose's native ACP subcommand", async () => {
@@ -130,7 +130,7 @@ describe('agent command selection', () => {
       },
     ]);
     expect(() => resolveAgentCommand({ kind: 'opencode', env: { ...env, PATH: '' } })).toThrow(
-      'npm install -g opencode-ai@latest',
+      'beeline toolchain install opencode',
     );
   });
 
@@ -247,7 +247,7 @@ describe('agent command selection', () => {
 
     expect(() =>
       resolveAgentCommand({ kind: 'pi', env: { HOME: home, PATH: pi.directory } }),
-    ).toThrow('npm install -g pi-acp@latest');
+    ).toThrow('beeline toolchain install pi');
   });
 
   it('parses and resolves a custom command without shell expansion', async () => {
@@ -331,7 +331,7 @@ describe('augmented harness lookup', () => {
     } catch (error) {
       message = (error as Error).message;
     }
-    expect(message).toContain('npm install -g @mariozechner/pi-coding-agent@latest');
+    expect(message).toContain('beeline toolchain install pi');
     expect(message).toContain('Searched:');
     expect(message).toContain('/usr/bin');
     expect(message).toContain(resolve(home, '.local', 'bin'));

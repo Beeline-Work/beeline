@@ -251,6 +251,18 @@ describe('Room turn failure receipt', () => {
     expect(receipts).toContainEqual(expect.objectContaining({ status: 'complete' }));
   });
 
+  it('reports a pinned dependency failure through the ordinary Room receipt', async () => {
+    const result = await runTurn({
+      agentCommand: '/missing/codex-acp', agentKind: 'codex',
+      configOverrides: { toolchainError: 'Could not install Node 24.13.0: SHA-256 checksum mismatch. Retry starting the agent.' },
+      prompt: async () => { throw new Error('must not launch a partial toolchain'); },
+    });
+    expect(result.sessionsOpened).toBe(0);
+    expect(result.receipts).toContainEqual(expect.objectContaining({
+      status: 'failed', reason: expect.stringContaining('Could not install Node 24.13.0: SHA-256 checksum mismatch'),
+    }));
+  });
+
   it('re-links a credential replaced by the harness and retries the turn once', async () => {
     let operatorCredential = '';
     const { receipts, posted, attempts, agentHomeRoot } = await runTurn({

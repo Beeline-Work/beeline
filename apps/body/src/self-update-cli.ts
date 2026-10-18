@@ -42,8 +42,6 @@ interface RuntimeAdapterRefreshOptions {
   configPaths?: string[];
   readRuntime?: (path: string) => Promise<{ agentKind?: AgentKind }>;
   install?: (command: AdapterInstallCommand) => Promise<void>;
-  readInstalledVersion?: (packageName: string) => Promise<string | undefined>;
-  readLatestVersion?: (packageName: string) => Promise<string>;
   log?: (line: string) => void;
 }
 
@@ -71,14 +69,8 @@ export async function refreshRuntimeHarnessAdapters(
     if (!command) continue;
     log(`[beeline] refreshing ${kind} adapter: ${formatAdapterInstallCommand(command)}`);
     try {
-      await installLatestAgentAdapter(kind, {
-        ...(options.env ? { env: options.env } : {}),
-        ...(options.install ? { install: options.install } : {}),
-        ...(options.readInstalledVersion
-          ? { readInstalledVersion: options.readInstalledVersion }
-          : {}),
-        ...(options.readLatestVersion ? { readLatestVersion: options.readLatestVersion } : {}),
-      });
+      if (options.install) await options.install(command);
+      else await installLatestAgentAdapter(kind, { env: options.env });
     } catch (error) {
       log(
         `[beeline] ${kind} adapter refresh failed; keeping the installed copy (${error instanceof Error ? error.message : String(error)})`,

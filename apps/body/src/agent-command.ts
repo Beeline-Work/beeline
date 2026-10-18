@@ -1,10 +1,7 @@
-import { execFile, spawn } from 'node:child_process';
 import { accessSync, constants, existsSync, readdirSync } from 'node:fs';
-import { readFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, isAbsolute, join, resolve } from 'node:path';
-import { promisify } from 'node:util';
-import { withAdapterInstallLock } from './adapter-install-lock.js';
+import { ensureHelperToolchain, helperToolchainBins } from './helper-toolchain.js';
 import { cursorAcpBridgeLaunch } from './cursor-acp-bridge.js';
 
 export const AGENT_KINDS = [
@@ -37,8 +34,8 @@ export interface AgentCommand {
 }
 
 export interface AdapterInstallCommand {
-  command: 'npm';
-  args: ['install', '-g', string];
+  command: 'beeline';
+  args: ['toolchain', 'install', 'codex' | 'claude' | 'pi'];
 }
 
 export type DetectedAgentCommand =
@@ -64,123 +61,28 @@ const AGENT_EXECUTABLES: Record<(typeof AUTO_DETECT_AGENT_KINDS)[number], string
 };
 
 const ADAPTER_INSTALL_COMMANDS: Record<'codex' | 'claude' | 'pi', AdapterInstallCommand> = {
-  codex: {
-    command: 'npm',
-    args: ['install', '-g', '@agentclientprotocol/codex-acp@latest'],
-  },
-  claude: {
-    command: 'npm',
-    args: ['install', '-g', '@agentclientprotocol/claude-agent-acp@latest'],
-  },
-  pi: {
-    command: 'npm',
-    args: ['install', '-g', 'pi-acp@latest'],
-  },
+  codex: { command: 'beeline', args: ['toolchain', 'install', 'codex'] },
+  claude: { command: 'beeline', args: ['toolchain', 'install', 'claude'] },
+  pi: { command: 'beeline', args: ['toolchain', 'install', 'pi'] },
 };
 
 export function latestAdapterInstallCommand(kind: AgentKind): AdapterInstallCommand | undefined {
-  return kind === 'codex' || kind === 'claude' || kind === 'pi'
-    ? ADAPTER_INSTALL_COMMANDS[kind]
-    : undefined;
+  return kind === 'codex' || kind === 'claude' || kind === 'pi' ? ADAPTER_INSTALL_COMMANDS[kind] : undefined;
 }
 
 export async function runAdapterInstall(
   install: AdapterInstallCommand,
   opts: { cwd?: string; env?: NodeJS.ProcessEnv; stdio?: 'inherit' | 'ignore' } = {},
 ): Promise<void> {
-  await new Promise<void>((resolveInstall, rejectInstall) => {
-    const child = spawn(install.command, install.args, {
-      ...(opts.cwd ? { cwd: opts.cwd } : {}),
-      env: opts.env ?? process.env,
-      stdio: opts.stdio ?? 'inherit',
-      timeout: 2 * 60_000,
-    });
-    child.once('error', rejectInstall);
-    child.once('exit', (code, signal) => {
-      if (code === 0) resolveInstall();
-      else {
-        rejectInstall(
-          new Error(
-            signal
-              ? `${install.command} was terminated by ${signal}`
-              : `${install.command} exited with status ${code ?? 'unknown'}`,
-          ),
-        );
-      }
-    });
-  });
+  await ensureHelperToolchain(install.args[2], opts.env);
 }
 
-/** Refresh a separable ACP adapter before resolving the binary that will use it. */
+/** Legacy API name retained for callers; versions come exclusively from the release manifest. */
 export async function installLatestAgentAdapter(
   kind: AgentKind,
-  opts: {
-    cwd?: string;
-    env?: NodeJS.ProcessEnv;
-    stdio?: 'inherit' | 'ignore';
-    readInstalledVersion?: (packageName: string) => Promise<string | undefined>;
-    readLatestVersion?: (packageName: string) => Promise<string>;
-    install?: (command: AdapterInstallCommand) => Promise<void>;
-  } = {},
+  opts: { cwd?: string; env?: NodeJS.ProcessEnv; stdio?: 'inherit' | 'ignore' } = {},
 ): Promise<boolean> {
-  const install = latestAdapterInstallCommand(kind);
-  if (!install) return false;
-  const packageName = install.args[2].slice(0, -'@latest'.length);
-  return withAdapterInstallLock(async () => {
-    let installed: string | undefined;
-    let latest: string;
-    try {
-      installed = await (
-        opts.readInstalledVersion ?? ((name) => installedAdapterVersion(name, opts.env))
-      )(packageName);
-      latest = await (
-        opts.readLatestVersion ?? ((name) => publishedAdapterVersion(name, opts.env))
-      )(packageName);
-      if (!latest.trim()) return false;
-    } catch {
-      // An unavailable registry or npm root must not turn every daemon start
-      // into a destructive reinstall of a working adapter.
-      return false;
-    }
-    if (installed === latest.trim()) return false;
-    await (opts.install ?? ((command) => runAdapterInstall(command, opts)))(install);
-    return true;
-  }, opts.env);
-}
-
-const execFileAsync = promisify(execFile);
-
-async function npmOutput(args: string[], env: NodeJS.ProcessEnv = process.env): Promise<string> {
-  const { stdout } = await execFileAsync('npm', args, {
-    env,
-    timeout: 3_000,
-    maxBuffer: 16_384,
-  });
-  return stdout.trim();
-}
-
-async function installedAdapterVersion(
-  packageName: string,
-  env: NodeJS.ProcessEnv = process.env,
-): Promise<string | undefined> {
-  const root = await npmOutput(['root', '-g'], env);
-  if (!root) throw new Error('npm global root is empty');
-  try {
-    const contents = await readFile(resolve(root, packageName, 'package.json'), 'utf8');
-    const version = (JSON.parse(contents) as { version?: unknown }).version;
-    if (typeof version !== 'string') throw new Error('installed adapter version is missing');
-    return version;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
-    throw error;
-  }
-}
-
-async function publishedAdapterVersion(
-  packageName: string,
-  env: NodeJS.ProcessEnv = process.env,
-): Promise<string> {
-  return npmOutput(['view', packageName, 'version'], env);
+  return ensureHelperToolchain(kind, opts.env);
 }
 
 function adapterInstallHint(kind: keyof typeof ADAPTER_INSTALL_COMMANDS): string {
@@ -254,6 +156,7 @@ export function augmentedSearchDirectories(env: NodeJS.ProcessEnv = process.env)
       if (directory && !directories.includes(directory)) directories.push(directory);
     }
   };
+  if (env.BEELINE_HARNESS_PATH_AUGMENT !== '0') pushAll(helperToolchainBins(env));
   pushAll((env.PATH ?? '').split(delimiter));
   if (env.BEELINE_HARNESS_PATH_AUGMENT === '0') return directories;
   pushAll(wellKnownExecutableDirs(env));
@@ -379,7 +282,7 @@ export function resolveAgentCommand(opts: {
       'codex',
       env,
       cwd,
-      'Codex CLI not found. Install it with `npm install -g @openai/codex@latest`, then retry with `--agent codex`.',
+      'Codex CLI not found. Run `beeline toolchain install codex`, then retry.',
     );
     const command = requireExecutable(
       'codex-acp',
@@ -422,7 +325,7 @@ export function resolveAgentCommand(opts: {
       'opencode',
       env,
       cwd,
-      'OpenCode CLI not found. Install it with `npm install -g opencode-ai@latest`, then retry with `--agent opencode`.',
+      'OpenCode CLI not found. Run `beeline toolchain install opencode`, then retry.',
     );
     return { kind: typedKind, command, args: ['acp'] };
   }
@@ -432,7 +335,7 @@ export function resolveAgentCommand(opts: {
       'pi',
       env,
       cwd,
-      'Pi coding agent not found. Install it with `npm install -g @mariozechner/pi-coding-agent@latest`, then retry with `--agent pi`.',
+      'Pi coding agent not found. Run `beeline toolchain install pi`, then retry.',
     );
     const command = requireExecutable(
       'pi-acp',

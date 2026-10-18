@@ -1,3 +1,4 @@
+import { HELPER_TOOLCHAIN_MANIFEST } from './helper-toolchain-manifest.js';
 import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,6 +14,10 @@ import {
   runFreeAgentCommand,
   type FreeAgentGrant,
 } from './free-agent-vm.js';
+
+vi.mock('./helper-toolchain.js', async importOriginal => ({
+  ...await importOriginal<typeof import('./helper-toolchain.js')>(), ensureHelperToolchain: vi.fn(async () => false),
+}));
 
 vi.mock('./machine-helper.js', () => ({ runMachineHelper: vi.fn(async () => undefined) }));
 
@@ -112,10 +117,9 @@ describe('free agent Machine entry', () => {
     expect(dockerfile).toContain('ARG PI_ACP_VERSION=0.0.34');
     expect(dockerfile).not.toMatch(/ARG \w+=latest/);
     expect(dockerfile).not.toContain('opencode-ai');
-    const installer = await readFile(new URL('./free-agent-vm.ts', import.meta.url), 'utf8');
     for (const [arg, packageName] of [['PI_VERSION', '@earendil-works/pi-coding-agent'], ['PI_ACP_VERSION', 'pi-acp']]) {
       const version = dockerfile.match(new RegExp(`ARG ${arg}=(\\S+)`))![1];
-      expect(installer).toContain(`${packageName}@${version}`);
+      expect((HELPER_TOOLCHAIN_MANIFEST.npm.pi.package.dependencies as Record<string, string>)[packageName!]).toBe(version);
     }
   });
 

@@ -968,6 +968,7 @@ export class MonolithRoomTurnLoop {
   }
 
   private async activate(trace?: TurnTrace): Promise<string> {
+    if (this.options.config.toolchainError) throw new Error(this.options.config.toolchainError);
     const startupAt = performance.now();
     let previousStep = startupAt;
     const startupStep = (step: string) => {

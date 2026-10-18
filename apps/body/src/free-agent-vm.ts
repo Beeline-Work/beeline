@@ -1,5 +1,4 @@
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
+import { ensureHelperToolchain } from './helper-toolchain.js';
 import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { LEGACY_ACCESS_POLICY } from './access-policy.js';
@@ -168,14 +167,8 @@ export async function stageFreeAgent(
 // Cold boots of existing Machines keep their original image and root filesystem.
 // Install the same pinned tools there before replacing the persisted command.
 async function freeAgentPiCommand(env: NodeJS.ProcessEnv) {
-  try {
-    return resolveAgentCommand({ kind: 'pi', env });
-  } catch {
-    await promisify(execFile)('npm', ['install', '-g',
-      '@earendil-works/pi-coding-agent@0.84.3', 'pi-acp@0.0.34'],
-      { env, timeout: 300_000, maxBuffer: 1024 * 1024 });
-    return resolveAgentCommand({ kind: 'pi', env });
-  }
+  await ensureHelperToolchain('pi', env);
+  return resolveAgentCommand({ kind: 'pi', env });
 }
 
 /** Upgrade persisted OpenCode installations before starting any Room sessions. */

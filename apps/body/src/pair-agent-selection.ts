@@ -12,22 +12,12 @@ import {
   type DetectedAgentCommand,
   type AgentKind,
 } from './agent-command.js';
-import { withAdapterInstallLock } from './adapter-install-lock.js';
+import { ensureHelperToolchain } from './helper-toolchain.js';
 import { unwrapPrompt } from './clack-support.js';
 
 type SelectionOutput = Pick<NodeJS.WritableStream, 'write'>;
 
-const NO_AGENT_MESSAGE = `No supported ACP-capable coding agent was detected.
-Install one of these supported agents:
-  codex  npm install -g @openai/codex@latest @agentclientprotocol/codex-acp@latest
-  claude Install Claude Code and npm install -g @agentclientprotocol/claude-agent-acp@latest
-  goose  https://block.github.io/goose/docs/getting-started/installation/
-  pi     npm install -g @mariozechner/pi-coding-agent@latest pi-acp@latest
-  grok   curl -fsSL https://x.ai/cli/install.sh | bash
-  cursor Install Cursor Agent CLI from https://cursor.com/docs/cli
-  opencode npm install -g opencode-ai@latest
-Then retry, or explicitly use \`--agent reference\` with an LLM key.
-For another ACP server, use \`--agent custom --agent-command "<cmd> [args...]"\`.`;
+const NO_AGENT_MESSAGE = `Choose a supported agent with --agent codex, claude, goose, pi, grok, cursor, or opencode. Beeline downloads its pinned dependencies automatically.`;
 
 /** Default interactive "install this missing adapter now?" prompt. */
 async function clackConfirmInstall(message: string): Promise<boolean> {
@@ -52,7 +42,7 @@ async function installAdapter(
   install: AdapterInstallCommand,
   opts: { cwd?: string; env?: NodeJS.ProcessEnv },
 ): Promise<void> {
-  await withAdapterInstallLock(() => runAdapterInstall(install, opts), opts.env);
+  await runAdapterInstall(install, opts);
 }
 
 function errorMessage(error: unknown): string {
@@ -114,6 +104,7 @@ export async function selectPairAgentCommand(opts: {
   };
 
   if (opts.explicitKind !== undefined) {
+    if (!opts.install) await ensureHelperToolchain(opts.explicitKind, opts.env);
     try {
       const selected = resolveAgentCommand({
         kind: opts.explicitKind,

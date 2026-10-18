@@ -1,3 +1,4 @@
+import { helperToolchainRoot } from './helper-toolchain.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { cp, lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
@@ -264,6 +265,7 @@ export async function prepareWorkspaceAdapter(
   env: NodeJS.ProcessEnv,
   options: { background?: boolean } = {},
 ): Promise<WorkspaceToolchain | undefined> {
+  if ([helperToolchainRoot(env), helperToolchainRoot()].some(root => resolve(command).startsWith(root + '/'))) return undefined;
   const adapter = kind && ADAPTER_PACKAGES[kind];
   // Unknown or native harnesses still use Workspace caches with their host
   // adapter. A selected tool generation must pin its nested CLI as well.

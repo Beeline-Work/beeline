@@ -28,3 +28,5 @@ export * from './message-search.js';
 export * from './agent-sign-in.js';
 
 export * from './tray-ask.js';
+
+export * from './agent-usage.js';

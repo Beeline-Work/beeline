@@ -1,0 +1,34 @@
+ ✓ src/openrouter-key-usage.test.ts > OpenRouter key spend > maps an unlimited key to today and this week only
+ ✓ src/openrouter-key-usage.test.ts > OpenRouter key spend > maps a key limit and marks it reached when nothing is left
+ ✓ src/openrouter-key-usage.test.ts > OpenRouter key spend > reads with the agent key, publishes only numbers, and waits a minute between reads
+ ✓ src/openrouter-key-usage.test.ts > OpenRouter key spend > publishes a 402 refusal at once: past the throttle, and with the last figures when the read fails
+ ✓ src/openrouter-key-usage.test.ts > OpenRouter key spend > answers nothing when OpenRouter refuses the read
+ ✓ src/openrouter-key-usage.test.ts > OpenRouter key spend > only reads for API-key harnesses on an OpenRouter model
+ ✓ src/read-only-mcp.usage.test.ts > read facet usage > reads only the calling agent, even when another address is named
+ ✓ src/read-only-mcp.usage.test.ts > read facet usage > returns every Claude window, context and staleness with a summary
+ ✓ src/read-only-mcp.usage.test.ts > read facet usage > gives free agents tokens and paused state, never money
+ ✓ src/read-only-mcp.usage.test.ts > read facet usage > reports OpenRouter key spend as shared
+ ✓ src/monolith-room-turn.trace.test.ts > Room turn phase trace > keeps usage out of the assembled prompt; agents read it with their usage tool
+ ✓ src/monolith-room-turn.trace.test.ts > Room turn phase trace > uses the legacy private layout on the next cold activation after rollback
+ ✓ src/monolith-room-turn.trace.test.ts > Room turn phase trace > uses the host adapter and shared cache when pinning hits capacity
+ ✓ src/monolith-room-turn.failure.test.ts > Room turn failure receipt > marks the OpenRouter key limit reached when a turn is refused with 402, even when the key read fails
+ ✓ src/monolith-room-turn.trace.test.ts > Room turn phase trace > uses the host adapter and shared cache when pinning hits registry failure
+ ✓ src/monolith-corner-turn.test.ts > a context-window overflow > marks the OpenRouter key limit reached when OpenRouter refuses the turn with 402
+ ✓ src/monolith-room-turn.trace.test.ts > Room turn phase trace > shares downloads for unpinned codex harness turns
+ ✓ src/monolith-room-turn.trace.test.ts > Room turn phase trace > shares downloads for unpinned claude harness turns
+ ✓ src/monolith-room-turn.trace.test.ts > Room turn phase trace > shares downloads for unpinned goose harness turns
+ ✓ src/monolith-room-turn.trace.test.ts > Room turn phase trace > shares downloads for unpinned pi harness turns
+ ✓ src/monolith-room-turn.trace.test.ts > Room turn phase trace > shares downloads for unpinned grok harness turns
+ ✓ src/monolith-room-turn.trace.test.ts > Room turn phase trace > shares downloads for unpinned cursor harness turns
+ ✓ src/monolith-room-turn.trace.test.ts > Room turn phase trace > shares downloads for unpinned opencode harness turns
+ ✓ src/monolith-room-turn.trace.test.ts > Room turn phase trace > shares downloads for unpinned reference harness turns
+ ✓ src/monolith-room-turn.trace.test.ts > Room turn phase trace > shares downloads for unpinned custom harness turns
+ ✓ src/monolith-room-turn.trace.test.ts > Room turn phase trace > passes inherited toolchain settings unchanged into a shared-layout harness
+ ✓ src/monolith-room-turn.trace.test.ts > Room turn phase trace > activates a real shared-layout Room mount from the turn loop
+ ✓ src/monolith-room-turn.trace.test.ts > Room turn phase trace > records the assembled Room bytes with its selected model window
+ ✓ src/monolith-room-turn.trace.test.ts > Room turn phase trace > records a cold turn and the warm turn after it as separate timelines
+ ✓ src/monolith-room-turn.trace.test.ts > Room turn phase trace > gives a provider retry its own attempt with its own activation
+ ✓ src/monolith-room-turn.trace.test.ts > Room turn phase trace > adds nothing to the Room: the same operations run with tracing on and off
+ ✓ src/monolith-room-turn.trace.test.ts > Room turn phase trace > starts a second turn without waiting for the first turn's slow trace stats
+ Test Files  5 passed (5)
+      Tests  32 passed | 124 skipped (156)

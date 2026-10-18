@@ -201,7 +201,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 31;
+export const REQUIRED_SCHEMA_VERSION = 32;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -908,6 +908,7 @@ CREATE TABLE IF NOT EXISTS agents (
   yolo_set_at timestamptz,
   updated_at timestamptz NOT NULL DEFAULT now()
 );
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS usage_snapshot jsonb;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS schedule_ids jsonb NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_mode boolean NOT NULL DEFAULT true;
 ALTER TABLE agents ADD COLUMN IF NOT EXISTS yolo_set_by text;

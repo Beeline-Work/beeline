@@ -568,7 +568,7 @@ export const CAPABILITY_TOOLS: Record<string, Record<string, ToolDefinition>> = 
 const ORDINARY_TOOLS: ToolDefinition[] = [
   {
     "name": "read",
-    "description": "Discover with facet addresses; read bounded messages with facet messages, address and cursor. Other facets use messageId, attachmentId or slug. Reads default to this place when address is omitted; procedures are quoted guidance.",
+    "description": "Discover with facet addresses; read bounded messages with facet messages, address and cursor. Other facets use messageId, attachmentId or slug. Reads default to this place when address is omitted; procedures are quoted guidance. Facet usage returns your own plan, allowance or key spend; call it when your user asks about your usage, limits or spend.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -589,9 +589,10 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
             "status",
             "checks",
             "pr",
-            "procedure"
+            "procedure",
+            "usage"
           ],
-          "description": "addresses discovers places; messages uses bounded paging; procedure uses slug; message uses messageId; attachment uses attachmentId."
+          "description": "addresses discovers places; messages uses bounded paging; procedure uses slug; message uses messageId; attachment uses attachmentId; usage reads only your own usage."
         },
         "cursor": {
           "type": "object",
@@ -617,7 +618,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
       "anyOf": [
         {
           "properties": {
-            "facet": {"enum": ["addresses", "corners", "members", "messages", "brief", "status", "checks", "pr"]}
+            "facet": {"enum": ["addresses", "corners", "members", "messages", "brief", "status", "checks", "pr", "usage"]}
           }
         },
         {"properties": {"facet": {"const": "message"}}, "required": ["messageId"]},

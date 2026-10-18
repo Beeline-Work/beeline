@@ -46,6 +46,7 @@ async function runTurns(options: {
     attempt: number;
     ask: Ask;
     agentHomeRoot: string;
+    promptText: unknown;
     onChunk?: (delta: string, full: string) => void;
     onToolCalls?: (calls: readonly { id?: string; status?: string }[]) => void;
   }) => Promise<Awaited<ReturnType<AcpClient['sessionPrompt']>>>;
@@ -208,6 +209,7 @@ async function runTurns(options: {
         attempt,
         ask: currentAsk,
         agentHomeRoot,
+        promptText: _prompt,
         ...(onChunk ? { onChunk } : {}),
         ...(onToolCalls ? { onToolCalls } : {}),
       });
@@ -258,6 +260,13 @@ const answer = (text: string) => ({
 });
 
 describe('Room turn phase trace', () => {
+  it('keeps usage out of the assembled prompt; agents read it with their usage tool', async () => {
+    const { operations } = await runTurns({ asks: [{ id: 'usage-turn', body: 'hello' }], prompt: async ({ promptText }) => {
+      expect(JSON.stringify(promptText)).not.toMatch(/Usage: /);
+      return answer('Done');
+    } });
+    expect(operations).not.toContain('getAgentUsage');
+  });
   it('uses the legacy private layout on the next cold activation after rollback', async () => {
     vi.stubEnv('BEELINE_SHARED_ASSETS_ENABLED', '0');
 

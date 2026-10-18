@@ -55,6 +55,7 @@ import {
   grantedSquireHostRoute,
 } from './host-mcp-route.js';
 import { openRouterRoutingInput } from './openrouter-routing.js';
+import { agentOpenRouterKey, readOpenRouterKeyUsage } from './openrouter-key-usage.js';
 import { agentCommandCatalogPublisher } from './agent-command-catalog.js';
 import {
   attachmentImageBlocks,
@@ -724,7 +725,31 @@ export class MonolithCornerTurnLoop {
    * institutional block's share of a real prompt instead of a byte estimate.
    * Missing numbers are omitted rather than zeroed.
    */
+  /** This agent's own OpenRouter key when its model routes there. */
+  private openRouterKey?: string;
+  private openRouterSpendPublish: Promise<unknown> = Promise.resolve();
+
+  /**
+   * After a turn, refresh the owner's view of this agent's OpenRouter key
+   * spend. `refused` marks a turn OpenRouter refused with 402.
+   */
+  private publishOpenRouterSpend(refused = false): void {
+    const key = this.openRouterKey;
+    if (!key) return;
+    // One read at a time, so a later normal read cannot land over a 402 stop.
+    this.openRouterSpendPublish = this.openRouterSpendPublish
+      .then(() => readOpenRouterKeyUsage(key, {
+        ...(this.options.fetchImpl ? { fetchImpl: this.options.fetchImpl } : {}),
+        ...(refused ? { refused } : {}),
+      }))
+      .then((usage) => usage
+        ? this.options.api.execute('postAgentUsage', { agentId: this.agent.publicKey, usage })
+        : undefined)
+      .catch((error) => console.error('[agent-usage] OpenRouter key read failed', error));
+  }
+
   private async captureTurnMetrics() {
+    this.publishOpenRouterSpend();
     const { model: _model, ...usage } = this.turnUsage.usage ?? {};
     const promptBytes = this.client?.lastPromptBytes;
     return {
@@ -904,6 +929,9 @@ export class MonolithCornerTurnLoop {
       effort: configuration.effort ?? this.options.config.modelSelection?.effort,
       fastMode: configuration.fastMode,
     };
+    this.openRouterKey = agentOpenRouterKey(
+      this.options.config.agentKind, selection.model, this.options.config.agentEnv,
+    );
     const operatorHome = this.options.config.operatorHome ?? homedir();
     const registryHostDeclarations = registryMcpHostDeclarations(
       configuration.registryMcpRoutes,
@@ -1174,6 +1202,10 @@ export class MonolithCornerTurnLoop {
       autoApprovePermissions: true,
       permissionHandler: async () => {
         return 'allow';
+      },
+      onUsage: (usage) => {
+        void this.options.api.execute('postAgentUsage', { agentId: this.agent.publicKey, usage })
+          .catch(error => console.error('[agent-usage] publish failed', error));
       },
       onCommands: agentCommandCatalogPublisher({
         api: this.options.api,
@@ -1472,6 +1504,9 @@ export class MonolithCornerTurnLoop {
       sessionId: this.sessionId!,
       result,
     });
+    // OpenRouter refuses a key past its limit with 402; show the stop now.
+    if (explanation.record?.kind === 'error' && explanation.record.status === 402)
+      this.publishOpenRouterSpend(true);
     if (isSilentCompletion(result, explanation)) return undefined;
     return explanation;
   }

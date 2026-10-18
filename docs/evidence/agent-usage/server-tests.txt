@@ -1,0 +1,7 @@
+ ✓ src/agent-usage.integration.test.ts > daemon → stored usage → owner profile and Members > merges partial windows, gives the same figures to the usage tool, and hides plans from other viewers
+ ✓ src/agent-usage.integration.test.ts > keeps a provider stop without inventing utilization and rejects another agent write
+ ✓ src/agent-usage.integration.test.ts > reports the owner-wide free allowance with its UTC reset and keeps it private
+ ✓ src/agent-usage.integration.test.ts > stores the latest OpenRouter key read for the owner and the agent only
+ ✓ src/agent-usage.integration.test.ts > shows a 402 refusal with no key figures as reached on the profile, in Members and to the agent
+ Test Files  1 passed (1)
+      Tests  5 passed (5)

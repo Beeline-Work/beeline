@@ -380,7 +380,7 @@ export default function BuzzMembers({
         if (!(
           (live.type === 'resource-change' &&
             live.resource === 'agent' &&
-            live.resourceId === agentId) ||
+            (!live.resourceId || live.resourceId === agentId)) ||
           (live.type === 'invalidate' && live.roomId === '' && live.reason === 'reconnect')
         ))
           return;
@@ -1504,6 +1504,7 @@ export default function BuzzMembers({
                     handle={member.identity.handle}
                     kind="agent"
                     model={member.model}
+                    usage={member.usage}
                     name={member.identity.name}
                     onPress={() =>
                       router.push({

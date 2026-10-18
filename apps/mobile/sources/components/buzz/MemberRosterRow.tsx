@@ -1,3 +1,5 @@
+import { type AgentUsage, usageDollars, usageTokens } from '@beeline/api-contract/phone';
+import { usageTime } from '@/buzz/agent-usage';
 import React, { type ReactNode } from 'react';
 import {
   Text,
@@ -42,6 +44,7 @@ export type MemberRosterRowProps = SharedRowProps &
         kind: 'agent';
         model?: string;
         ownerHandle?: string;
+        usage?: AgentUsage;
       }
   );
 
@@ -57,6 +60,46 @@ export function memberRosterSubtitle(
   return member.ownerHandle ? `@${member.ownerHandle}` : undefined;
 }
 
+/**
+ * Usage text appended to an owner's agent row only when it needs attention:
+ * a window, allowance or key limit at 80% or more (warning), or a stop (danger).
+ */
+export function memberRosterUsage(
+  usage: AgentUsage | undefined,
+): { text: string; tone: 'warning' | 'danger' } | undefined {
+  if (!usage) return undefined;
+  if (usage.free) {
+    const f = usage.free;
+    if (f.paused) return { text: `paused · back ${usageTime(f.resetsAt)}`, tone: 'danger' };
+    return f.used / f.limit >= 0.8
+      ? { text: `${usageTokens(f.used)} of ${usageTokens(f.limit)} today`, tone: 'warning' }
+      : undefined;
+  }
+  if (usage.spend) {
+    const s = usage.spend;
+    if (s.rejected) return { text: 'key limit reached', tone: 'danger' };
+    if (!s.limit) return undefined;
+    return 1 - (s.remaining ?? 0) / s.limit >= 0.8
+      ? { text: `${usageDollars(s.remaining ?? 0)} of ${usageDollars(s.limit)} left`, tone: 'warning' }
+      : undefined;
+  }
+  const stopped = usage.windows.find((w) => w.status === 'rejected');
+  if (stopped)
+    return {
+      text: `limit reached${stopped.resetsAt ? ` · back ${usageTime(stopped.resetsAt)}` : ''}`,
+      tone: 'danger',
+    };
+  const hot = usage.windows.filter((w) => (w.utilization ?? 0) >= 0.8);
+  if (!hot.length) return undefined;
+  const short: Record<string, string> = { five_hour: '5h', seven_day: 'week', seven_day_opus: 'Opus week' };
+  return {
+    text: hot
+      .map((w) => `${short[w.rateLimitType] ?? w.rateLimitType.replaceAll('_', ' ')} ${Math.round((w.utilization ?? 0) * 100)}%`)
+      .join(' · '),
+    tone: 'warning',
+  };
+}
+
 /** An agent's model, right-aligned on the handle line. */
 export function memberRosterModel(member: { kind: 'human' } | { kind: 'agent'; model?: string }) {
   return member.kind === 'agent' && member.model ? displayModel(member.model) : undefined;
@@ -69,6 +112,7 @@ export function memberRosterModel(member: { kind: 'human' } | { kind: 'agent'; m
  */
 export function MemberRosterRow(props: MemberRosterRowProps) {
   const Row = props.onPress ? TouchableOpacity : View;
+  const usage = props.kind === 'agent' ? memberRosterUsage(props.usage) : undefined;
   const title = props.title ?? memberRosterTitle(props);
   const subtitle = props.subtitle ?? memberRosterSubtitle(props);
   const model = memberRosterModel(props);
@@ -111,7 +155,16 @@ export function MemberRosterRow(props: MemberRosterRowProps) {
         </View>
         {subtitle !== undefined ? (
           <Text numberOfLines={1} style={styles.subtitle}>
-            {subtitle}
+            {usage ? (
+              <>
+                {subtitle}
+                <Text style={usage.tone === 'danger' ? styles.danger : styles.warning}>
+                  {` · ${usage.text}`}
+                </Text>
+              </>
+            ) : (
+              subtitle
+            )}
           </Text>
         ) : null}
       </View>
@@ -150,6 +203,8 @@ const styles = StyleSheet.create((theme) => {
       textAlign: 'right',
       color: hull.textMuted,
     },
+    warning: { color: hull.accent },
+    danger: { color: hull.dialogDanger },
     subtitle: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
   };
 });

@@ -12,6 +12,7 @@
       "row"
     ],
     "components/buzz/AgentProfileView.tsx": ["AgentProfileView"],
+    "components/buzz/AgentUsageSection.tsx": ["AgentUsageSection"],
     "components/buzz/AgentSignInCard.tsx": [
       "AgentSignInCard",
       "failureLine",

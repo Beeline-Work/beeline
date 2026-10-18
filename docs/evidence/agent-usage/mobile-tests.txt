@@ -1,0 +1,11 @@
+ ✓ sources/components/buzz/AgentUsageSection.test.tsx > Usage cell (mock r7) > puts each Claude window in one column with its reset, and context on the bottom line
+ ✓ sources/components/buzz/AgentUsageSection.test.tsx > Usage cell (mock r7) > turns brass at exactly 80% and red when the provider stops the agent
+ ✓ sources/components/buzz/AgentUsageSection.test.tsx > Usage cell (mock r7) > marks data older than 30 minutes and keeps the numbers
+ ✓ sources/components/buzz/AgentUsageSection.test.tsx > Usage cell (mock r7) > shows the free allowance in tokens only, shared, with a paused state
+ ✓ sources/components/buzz/AgentUsageSection.test.tsx > Usage cell (mock r7) > shows OpenRouter key spend, the key limit left, and the limit reached
+ ✓ sources/components/buzz/AgentUsageSection.test.tsx > Usage cell (mock r7) > says plainly when the harness reports nothing
+ ✓ sources/components/buzz/MemberRosterRow.test.tsx > MemberRosterRow > formats a human with only the role under the single handle title
+ ✓ sources/components/buzz/MemberRosterRow.test.tsx > MemberRosterRow > formats an agent as handle and right-aligned model over its owner
+ ✓ sources/components/buzz/MemberRosterRow.test.tsx > appends usage only at 80% or more, or when stopped or paused
+ Test Files  2 passed (2)
+      Tests  9 passed (9)

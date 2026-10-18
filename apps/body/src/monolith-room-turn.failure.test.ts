@@ -1,3 +1,4 @@
+import { OPENROUTER_KEY_URL, resetOpenRouterKeyThrottle } from './openrouter-key-usage.js';
 import { commandFixtureApi } from './command-fixture.test-support.js';
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { hostname, tmpdir } from 'node:os';
@@ -34,6 +35,8 @@ async function runTurn(options: {
   rejectWrite?: string;
   /** Resolves when the run is over, for a stopped turn that writes no receipt. */
   settled?: Promise<void>;
+  /** The loop's fetch, for provider reads such as the OpenRouter key's spend. */
+  fetchImpl?: typeof fetch;
   beforeRun?: (paths: { agentHomeRoot: string; operatorHome: string }) => Promise<void>;
   prompt: (input: {
     agentHomeRoot: string;
@@ -205,6 +208,7 @@ async function runTurn(options: {
     signal: abort.signal,
     pollMs: 10,
     createAcpClient: () => acp,
+    ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
   });
   const running = loop.run();
   if (options.settled) await options.settled;
@@ -222,6 +226,9 @@ async function runTurn(options: {
   return {
     receipts,
     posted,
+    usagePosts: execute.mock.calls
+      .filter(([name]) => name === 'postAgentUsage')
+      .map(([, input]) => (input as { usage: unknown }).usage),
     attempts,
     promptTimeouts,
     agentHomeRoot,
@@ -691,6 +698,50 @@ describe('Room turn failure receipt', () => {
     expect(reason).toMatch(/^provider error 402: This request requires more credits/);
     expect(reason).not.toContain('no durable Room reply');
     expect(reason.length).toBeLessThanOrEqual(200);
+  });
+
+  it('marks the OpenRouter key limit reached when a turn is refused with 402, even when the key read fails', async () => {
+    resetOpenRouterKeyThrottle();
+    const keyReads: string[] = [];
+    const fetchImpl = vi.fn(async (url: unknown) => {
+      keyReads.push(String(url));
+      return new Response('{}', { status: 503 });
+    }) as unknown as typeof fetch;
+    const { receipts, usagePosts } = await runTurn({
+      agentCommand: '/opt/harness/pi-acp',
+      agentKind: 'pi',
+      fetchImpl,
+      configOverrides: {
+        agentEnv: { OPENROUTER_API_KEY: 'sk-or-v1-test' },
+        modelSelection: { model: 'openrouter/deepseek/deepseek-v4' },
+      } as Partial<BodyConfig>,
+      prompt: async ({ agentHomeRoot }) => {
+        const dir = join(agentHomeRoot, 'pi', 'sessions', '--room--');
+        await mkdir(dir, { recursive: true });
+        await writeFile(
+          join(dir, '2026-10-18T17-55-38-000Z_room-session.jsonl'),
+          [
+            JSON.stringify({ type: 'message', message: { role: 'user', content: [] } }),
+            JSON.stringify({
+              type: 'message',
+              message: {
+                role: 'assistant',
+                content: [],
+                stopReason: 'error',
+                errorMessage: '402: {"error":{"message":"Key limit exceeded","code":402}}',
+              },
+            }),
+          ].join('\n'),
+        );
+        return { stopReason: 'end_turn', updates: [], agentText: '', toolCalls: [] };
+      },
+    });
+    expect(receipts.find((receipt) => receipt.status === 'failed')?.reason).toMatch(/^provider error 402/);
+    await vi.waitFor(() =>
+      expect(usagePosts).toContainEqual(expect.objectContaining({ spend: { rejected: true } })));
+    // The turn's own read and the refusal share one /key call inside the minute.
+    expect(keyReads).toEqual([OPENROUTER_KEY_URL]);
+    expect(JSON.stringify(usagePosts)).not.toContain('sk-or');
   });
 
   it('retries a context-window overflow once in a fresh session', async () => {

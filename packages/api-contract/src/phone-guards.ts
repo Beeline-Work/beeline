@@ -1,3 +1,4 @@
+import { readAgentUsage } from './agent-usage.js';
 import { isSystemEvent } from './system-events.js';
 import { isAgentSignInHarness, isAgentSignInKeyProvider } from './agent-sign-in.js';
 import { isAgentAccessPolicy } from './agent-access.js';
@@ -251,6 +252,7 @@ function readWorkspaceAgent(value: unknown): WorkspaceAgentView | null {
   const owner = readIdentity(item.owner);
   return {
     ...member,
+    ...field('usage', readAgentUsage(item.usage)),
     ...field('model', typeof item.model === 'string' ? item.model : undefined),
     ...field('owner', owner && owner.kind === 'human' ? owner : undefined),
   };
@@ -1953,6 +1955,8 @@ export function readAgentDetailView(value: unknown): AgentDetailView | null {
   return {
     workspaceId: item.workspaceId,
     agent,
+    ...field('usage', readAgentUsage(item.usage)),
+    ...field('harness', typeof item.harness === 'string' ? item.harness : undefined),
     ...field(
       'recentWorkCursor',
       nonempty(item.recentWorkCursor) ? item.recentWorkCursor : undefined,

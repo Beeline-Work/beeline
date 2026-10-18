@@ -1,0 +1,18 @@
+Real Claude Code turn on squire, 2026-10-18T17:31:45.618Z (claude 2.1.301 (Claude Code), model haiku).
+Isolated in-memory migrated server: captured rate_limit_event → daemon postAgentUsage → MCP read(facet usage) → daemon getAgentUsage. No running helper was changed.
+
+User question:
+How much of your Claude usage limits have you used? Check with your tool and answer in one sentence.
+
+Tool calls:
+mcp__beeline__read {"facet":"usage"}
+
+Daemon operations served: getAgentUsage
+
+Tool result:
+{"summary":"Usage: Claude 5-hour 6% (resets 14:20), weekly 16% (resets Fri 01:00), context 612K of 1M tokens, as of 13:31.","usage":{"updatedAt":1792344701.763,"windows":[{"rateLimitType":"five_hour","status":"allowed","utilization":0.06,"resetsAt":1792347600,"updatedAt":1792344701.763},{"rateLimitType":"seven_day","status":"allowed","utilization":0.16,"resetsAt":1792731600,"updatedAt":1792344701.763}],"context":{"used":612000,"size":1000000}},"old":false}
+
+Agent answer:
+You've used 6% of your 5-hour Claude limit (resets 14:20) and 16% of your weekly limit (resets Fri 01:00), as of 13:31.
+
+PASS: the agent called read with facet usage and answered from it.

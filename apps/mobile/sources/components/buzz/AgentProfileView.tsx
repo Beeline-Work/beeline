@@ -1,3 +1,4 @@
+import { AgentUsageSection } from './AgentUsageSection';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { HullDialogActions, HullDialogInput } from '@/components/buzz/HullDialog';
 import React, { useEffect, useRef, useState } from 'react';
@@ -186,7 +187,7 @@ export function AgentProfileView({
               />
             )}
             <View style={styles.section}>
-              <RoomListSectionHeader title="SOUL" inset="content" spacing="flush" />
+              <RoomListSectionHeader title="SOUL" inset="row" spacing="flush" />
               {editing ? (
                 <HullDialogInput
                   accessibilityLabel="Persona / instructions"
@@ -203,7 +204,7 @@ export function AgentProfileView({
               ) : (
                 <Text
                   numberOfLines={expanded ? undefined : 5}
-                  style={styles.copy}
+                  style={[styles.copy, styles.rowCopy]}
                   testID="agent-profile-soul"
                 >
                   {soul || 'No soul has been set.'}
@@ -258,7 +259,7 @@ export function AgentProfileView({
               </View>
             )}
             <View style={styles.section}>
-              <RoomListSectionHeader title="Model / difficulty" inset="content" spacing="flush" />
+              <RoomListSectionHeader title="Model / difficulty" inset="row" spacing="flush" />
               {editing && canEdit && modelManagement ? (
                 modelManagement
               ) : (
@@ -268,6 +269,7 @@ export function AgentProfileView({
                 </>
               )}
             </View>
+            {canEdit ? <AgentUsageSection usage={detail.usage} harness={detail.harness} /> : null}
             <AgentVoiceSection
               key={`${detail.workspaceId}:${identity.pubkey}:${voiceApi?.contextKey ?? ''}`}
               agentId={identity.pubkey}
@@ -276,19 +278,22 @@ export function AgentProfileView({
               canEdit={canEdit}
               api={voiceApi}
             />
-            <SettingsRow
-              title="Permission mode"
-              value={detail.yolo?.enabled ? 'Yolo' : 'Ask first'}
-            />
-            <SettingsRow
-              title="Answer scope"
-              value={detail.access?.policy === 'everyone' ? 'Everyone' : 'Owner only'}
-            />
+            <View style={styles.section}>
+              <RoomListSectionHeader title="Access" inset="row" spacing="flush" />
+              <SettingsRow
+                title="Permission mode"
+                value={detail.yolo?.enabled ? 'Yolo' : 'Ask first'}
+              />
+              <SettingsRow
+                title="Answer scope"
+                value={detail.access?.policy === 'everyone' ? 'Everyone' : 'Owner only'}
+              />
+            </View>
             {canManage && (editing || !canEdit) && management}
             <View style={styles.section}>
               <View style={styles.workHeading}>
                 <View style={styles.workTitle}>
-                  <RoomListSectionHeader title="Recent work" inset="content" spacing="flush" />
+                  <RoomListSectionHeader title="Recent work" inset="row" spacing="flush" />
                 </View>
                 <Text style={styles.meta}>Merged PRs</Text>
               </View>
@@ -371,9 +376,11 @@ const styles = StyleSheet.create((theme) => ({
   },
   placeholder: { color: theme.buzz.textMuted },
   copy: { ...Typography.default(), ...theme.buzz.type.body, color: theme.buzz.textSecondary },
+  // Soul text starts on the same edge as the section headers and row titles.
+  rowCopy: { paddingHorizontal: theme.buzz.space.sm },
   meta: { ...Typography.default(), ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
   accent: { ...Typography.default(), ...theme.buzz.type.meta, color: theme.buzz.accent },
-  section: { paddingTop: theme.buzz.space.md, gap: theme.buzz.space.md },
+  section: { paddingTop: theme.buzz.space.lg, gap: theme.buzz.space.xs },
   readMore: {
     minHeight: 44,
     justifyContent: 'center',
@@ -381,7 +388,10 @@ const styles = StyleSheet.create((theme) => ({
   },
   soulActions: { gap: 0 },
   confirmRow: { paddingTop: theme.buzz.space.md },
-  workHeading: { flexDirection: 'row', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 },
+  workHeading: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8,
+    paddingRight: theme.buzz.space.sm,
+  },
   workTitle: { flex: 1 },
   identity: {
     paddingVertical: theme.buzz.space.lg,

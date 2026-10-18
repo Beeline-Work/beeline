@@ -49,3 +49,15 @@ Historical board note: a follow-up regression reproduces a failed profile read f
 Settings retains its controls and order, with the current Workspace role below the handle. Both profile headers reuse Settings' 76-pixel bezel and 64-pixel picture seat. Profile identities show handles only with brass @ marks. Agent Message and owner-only Edit are adjacent; Generate remains owner-only. The human profile has one role selector (admin/member/spectator), denies equal or higher-rank edits, and lists the person's agents across the Workspace using the owner-filtered paginated roster. Existing owner/admin management authority is preserved; spectators cannot send Workspace messages or perform scoped mutations.
 
 PR #1704 is integrated through merge commit `1930c6b6`; save-error reporting is preserved. The later design-language pass removed the unrequested free-text avatar direction: generation now sends the current soul alone, disables the action while its existing single-flight job is active, and shows the promised DM status below it. Current phone-width app captures are recorded in [profile alignment evidence](evidence/profiles/alignment/README.md); the compact-actions, edit-mode, grants, and dual-viewport follow-up is recorded in [profile audit revision evidence](evidence/profiles/revision/README.md).
+
+## Owner-only usage
+
+The owner sees one USAGE cell on an agent's profile, between MODEL / DIFFICULTY and VOICE, with one column per window: name, value, thin bar and reset time. A bottom line gives context, source and update time.
+- **Claude Code:** plan windows come from the ACP `rate_limit_event`, merged per window.
+- **Free agents:** they show the owner's shared daily token allowance and its midnight UTC reset, and a paused state when Beeline's shared budget is spent. They never show money.
+- **OpenRouter:** Pi, Goose and OpenCode agents on an OpenRouter key show that key's spend today and this week, plus the key limit left. The helper reads `/api/v1/key` after turns, at most once a minute, and the key never leaves the helper.
+- **No source:** other harnesses show a plain line saying they don't report usage.
+
+Warnings start at 80%. Red means the provider stopped the agent or Beeline paused it. Data older than 30 minutes keeps its numbers and gets a brass age line. Members appends usage text only at 80% or more, or when the agent is stopped or paused. Both APIs filter usage to the owner. The profile groups Permission mode and Answer scope under ACCESS and lines up the section headers with the row titles.
+
+Agents do not get usage in their prompt. They call `read` with facet `usage`, which returns only their own snapshot and a one-sentence summary, when their user asks. Codex plan limits and the OAuth fill-in remain outside phase 1. Evidence is recorded in [agent usage proof](evidence/agent-usage/README.md).

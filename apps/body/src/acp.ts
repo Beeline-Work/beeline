@@ -1,3 +1,4 @@
+import { readUsageWindow, type AgentUsage, type UsageWindow } from '@beeline/api-contract/daemon';
 /**
  * Minimal ACP client over stdio for an ACP coding agent.
  *
@@ -756,6 +757,8 @@ export class AcpClient extends EventEmitter {
   private osSandbox: boolean;
   private permissionHandler?: AcpPermissionHandler;
   private permissionAllowlist?: AcpPermissionAllowlist;
+  private usageHandler?: (usage: AgentUsage) => void;
+  private sessionUsage = new Map<string, AgentUsage>();
   private commandsHandler?: (commands: readonly AcpAvailableCommand[]) => void;
   private oomKills: OomKillDetector;
   private readonly useResourceScope: boolean;
@@ -807,6 +810,8 @@ export class AcpClient extends EventEmitter {
     permissionHandler?: AcpPermissionHandler;
     /** Host-owned requests allowed while all other permissions are rejected. */
     permissionAllowlist?: AcpPermissionAllowlist;
+    /** Provider plan and context snapshots, merged per session. */
+    onUsage?: (usage: AgentUsage) => void;
     /** Full advertised-command snapshots, ready for the daemon's indexed read. */
     onCommands?: (commands: readonly AcpAvailableCommand[]) => void;
     /**
@@ -836,6 +841,7 @@ export class AcpClient extends EventEmitter {
     this.permissionHandler = opts.permissionHandler;
     this.permissionAllowlist = opts.permissionAllowlist;
     this.commandsHandler = opts.onCommands;
+    this.usageHandler = opts.onUsage;
     this.oomKills = opts.oomKills ?? new OomKillTracker(cgroupOomKillProbe());
     this.useResourceScope = opts.resourceScope === 'systemd' ||
       (opts.resourceScope === undefined && process.platform === 'linux' &&
@@ -1612,6 +1618,13 @@ export class AcpClient extends EventEmitter {
         // can republish them as the agent's durable command list (see
         // `agent-commands.ts` in buzz-client). Arrival is adapter-driven — all
         // shipped adapters push it at session start and on mid-session change.
+        if (params.update.sessionUpdate === 'usage_update') {
+          const usage = parseAcpUsage(params.update, this.sessionUsage.get(params.sessionId));
+          if (usage) {
+            this.sessionUsage.set(params.sessionId, usage);
+            this.usageHandler?.(usage);
+          }
+        }
         if (params.update.sessionUpdate === 'available_commands_update') {
           const commands = parseAvailableCommands(params.update.availableCommands);
           this.sessionCommands.set(params.sessionId, commands);
@@ -1865,4 +1878,32 @@ export async function openAcpConversation(
 
   const created = await options.create();
   return { ...created, kind: 'created' };
+}
+
+/** claude-agent-acp forwards SDK rate_limit_event.rate_limit_info here. */
+export function parseAcpUsage(update: Record<string, unknown>, previous?: AgentUsage): AgentUsage | undefined {
+  if (update.sessionUpdate !== 'usage_update') return;
+  const updatedAt = Date.now() / 1000;
+  const meta = update._meta as Record<string, unknown> | undefined;
+  const info = meta?.['_claude/rateLimit'] as Record<string, unknown> | undefined;
+  const window = readUsageWindow(info, updatedAt);
+  const unified: UsageWindow[] = [];
+  if (info?.unifiedWindows && typeof info.unifiedWindows === 'object') {
+    for (const [rateLimitType, value] of Object.entries(info.unifiedWindows)) {
+      if (!value || typeof value !== 'object') continue;
+      const parsed = readUsageWindow({ ...value, rateLimitType,
+        status: rateLimitType === info.rateLimitType ? info.status : 'allowed' }, updatedAt);
+      if (parsed) unified.push(parsed);
+    }
+  }
+  const used = update.used;
+  const size = update.size;
+  const context = typeof used === 'number' && Number.isFinite(used) && used >= 0 &&
+    typeof size === 'number' && Number.isFinite(size) && size > 0 ? { used, size } : undefined;
+  if (!window && !unified.length && !context) return;
+  const windows = new Map(previous?.windows.map(w => [w.rateLimitType, w]));
+  for (const w of unified) windows.set(w.rateLimitType, w);
+  if (window) windows.set(window.rateLimitType, { ...unified.find(w => w.rateLimitType === window.rateLimitType), ...window });
+  const retainedContext = context ?? previous?.context;
+  return { updatedAt, windows: [...windows.values()], ...(retainedContext ? { context: retainedContext } : {}) };
 }

@@ -107,12 +107,15 @@ it('Reproduction MD-TTS-1: conversational streamed replies and delayed reports s
 });
 
 it('Reproduction VOICE-IDS-7: the synthesis path never receives a leaked ID when the cap flushes mid-clause', async () => {
-  const answers = [
-    'Note (' + 'word '.repeat(36) + 'a' + '1'.repeat(39) + ').',
+  const longWord = 'w'.repeat(250);
+  const cases = [
+    { answer: 'Note (' + 'word '.repeat(36) + 'a' + '1'.repeat(39) + ').', leak: '111' },
     // An ID longer than the cap with no whitespace inside it.
-    'Bug (' + 'a' + '1'.repeat(250) + ').',
+    { answer: 'Bug (' + 'a' + '1'.repeat(250) + ').', leak: '111' },
+    // A plain word longer than the cap must stay whole, not be sliced.
+    { answer: 'Note (' + longWord + ').', keep: longWord },
   ];
-  for (const answer of answers) {
+  for (const { answer, leak, keep } of cases) {
     const agent = { id: 'agent', name: 'Jellybean', handle: 'jellybean', voice: 'warm' };
     const spoken: string[] = [];
     const service = { owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret',
@@ -127,9 +130,14 @@ it('Reproduction VOICE-IDS-7: the synthesis path never receives a leaked ID when
     const runtime = await VoiceRoomRuntime.connect(service, 'call', 'room');
     try {
       await runtime.utterance('human', 'Jellybean, hello');
-      // The cap splits the parenthetical, but the ID token stays whole and is dropped.
-      expect(spoken.join('')).toBe(markdownToSpeech(answer));
-      expect(spoken.join('')).not.toContain('111');
+      if (keep) {
+        // The long token reaches synthesis whole inside a single phrase.
+        expect(spoken.some((text) => text.includes(keep))).toBe(true);
+      } else {
+        // The cap splits the parenthetical, but the ID token stays whole and is dropped.
+        expect(spoken.join('')).toBe(markdownToSpeech(answer));
+        expect(spoken.join('')).not.toContain(leak!);
+      }
       console.log('VOICE-IDS-7 synthesis:', spoken);
     } finally { await runtime.close(); }
   }

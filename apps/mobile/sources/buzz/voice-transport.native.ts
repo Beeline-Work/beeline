@@ -1,17 +1,43 @@
 import { getBuzzRuntimeConfig } from './runtime-config';
 import { monolithSession } from '@/auth/monolith-session';
 import { Room } from 'livekit-client';
-import { Linking, NativeModules, PermissionsAndroid, Platform } from 'react-native';
+import { Linking, NativeModules, PermissionsAndroid, Platform, TurboModuleRegistry } from 'react-native';
+
+let reportedIOSCapabilityFailure = false;
 
 export async function createVoiceRoom(onStop: () => void = () => {}, roomId?: string): Promise<{ room: Room; closeAudio(): Promise<void>; configureStop(callId: string, token: string): Promise<void> }> {
   if (Platform.OS === 'ios') {
     // Check before evaluating LiveKit/WebRTC: their emitters throw during import
     // on store binaries without the native half, before our join recovery runs.
-    const { requireOptionalNativeModule } = await import('expo-modules-core');
+    const { requireOptionalNativeModule, EventEmitter } = await import('expo-modules-core');
     const background = requireOptionalNativeModule<Record<string, unknown>>('VoiceBackgroundAudio');
-    const methods = ['configureStop', 'start', 'stop', 'addListener'];
-    if (!NativeModules.WebRTCModule || !NativeModules.LivekitReactNativeModule ||
-      !background || methods.some(method => typeof background[method] !== 'function')) {
+    const methods = ['configureStop', 'start', 'stop'];
+    const missing_methods = methods.filter(method => typeof background?.[method] !== 'function');
+    if (typeof background?.addListener !== 'function' && typeof EventEmitter?.prototype.addListener !== 'function') {
+      missing_methods.push('addListener');
+    }
+    const failures = {
+      webrtc: !(TurboModuleRegistry.get('WebRTCModule') ?? NativeModules.WebRTCModule),
+      livekit: !(TurboModuleRegistry.get('LivekitReactNativeModule') ?? NativeModules.LivekitReactNativeModule),
+      background_module: !background,
+      missing_methods,
+    };
+    if (failures.webrtc || failures.livekit || failures.background_module || missing_methods.length) {
+      if (!reportedIOSCapabilityFailure) {
+        reportedIOSCapabilityFailure = true;
+        // A separate diagnostic bypasses expected-refusal filtering without changing the visible copy.
+        void (async () => {
+          const [application, updates, { reportClientError }] = await Promise.all([
+            import('expo-application'), import('expo-updates'), import('./client-error-report'),
+          ]);
+          const architecture = globalThis as typeof globalThis & { RN$Bridgeless?: boolean; nativeFabricUIManager?: unknown; __turboModuleProxy?: unknown };
+          await reportClientError('voice-join', new Error(`iOS voice capability check failed: ${JSON.stringify({
+            ...failures, appVersion: application.nativeApplicationVersion, build: application.nativeBuildVersion,
+            runtime: updates.runtimeVersion, bridgeless: !!architecture.RN$Bridgeless,
+            fabric: !!architecture.nativeFabricUIManager, turboModules: !!architecture.__turboModuleProxy,
+          })}`));
+        })().catch(() => {});
+      }
       throw new Error('Update Beeline in the App Store to join calls.');
     }
   }
@@ -27,7 +53,9 @@ export async function createVoiceRoom(onStop: () => void = () => {}, roomId?: st
       !== PermissionsAndroid.RESULTS.GRANTED) throw new Error('Microphone permission is required for Conversation mode.');
   registerGlobals();
   let generation: number | undefined;
-  const subscription = background.addListener('stopRequested', event => { if (event.generation === generation) onStop(); });
+  const addListener = typeof background.addListener === 'function' ? background.addListener.bind(background)
+    : (await import('expo-modules-core')).EventEmitter.prototype.addListener.bind(background) as typeof background.addListener;
+  const subscription = addListener('stopRequested', event => { if (event.generation === generation) onStop(); });
   let closed = false;
   let cleanup: Promise<void> | undefined;
   const closeAudio = () => cleanup ??= (async () => {

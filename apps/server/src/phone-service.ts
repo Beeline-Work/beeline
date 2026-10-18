@@ -7019,18 +7019,13 @@ export class PhoneService {
         [input.workspaceId],
       );
       const isPublic = workspace.rows[0]?.visibility === 'public';
-      if (input.rotate && !isPublic) throw new Error('only public Workspace links can rotate');
       if (isPublic) {
         const existing = await database.query<{ public_token: string }>(
           `SELECT public_token FROM invites WHERE workspace_id=$1 AND public_token IS NOT NULL`,
           [input.workspaceId],
         );
-        if (existing.rows[0] && !input.rotate)
+        if (existing.rows[0])
           return { token: existing.rows[0].public_token, expiresAt: 0 };
-        await database.query(
-          `DELETE FROM invites WHERE workspace_id=$1 AND public_token IS NOT NULL`,
-          [input.workspaceId],
-        );
       }
       const value = createCommunityInviteToken(randomBytes(32));
       const expiresAt = isPublic ? null : new Date(Date.now() + 7 * 86400_000);
@@ -7065,7 +7060,7 @@ export class PhoneService {
     if (!row) throw new Error('invite not found');
     return this.database.transaction(async (database) => {
       // Use the handle allocator's Workspace lock before locking the invite:
-      // creation/rotation and membership writes then share the same lock order.
+      // invite creation and membership writes then share the same lock order.
       const workspaceIds = await lockIdentityHandleWorkspaces(database, viewerId, [
         row.workspace_id,
       ]);

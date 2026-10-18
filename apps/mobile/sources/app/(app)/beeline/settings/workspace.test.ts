@@ -6,6 +6,7 @@ import * as React from 'react';
 import { act, create, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+const platform = vi.hoisted(() => ({ OS: 'android' }));
 const navigation = vi.hoisted(() => ({ back: vi.fn(), push: vi.fn(), replace: vi.fn() }));
 const auth = vi.hoisted(() => ({
   getEffectiveRelayUrl: vi.fn(async () => 'https://relay.test'),
@@ -196,7 +197,7 @@ vi.mock('react-native', async () => {
     ReactModule.createElement(name, props, props.children);
   return {
     AppState: { addEventListener: () => ({ remove: () => undefined }) },
-    Platform: { select: (choices: Record<string, unknown>) => choices.default },
+    Platform: { get OS() { return platform.OS; }, select: (choices: Record<string, unknown>) => choices[platform.OS] ?? choices.default },
     ScrollView: host('ScrollView'),
     Share: { share: vi.fn() },
     StyleSheet: { flatten: (style: any): any => Array.isArray(style) ? Object.assign({}, ...style) : style,  create: (styles: unknown) => styles },
@@ -955,25 +956,22 @@ describe('Weight tier settings', () => {
 
 
 describe('public Workspace join links', () => {
-  it('lets an admin view, copy and rotate the permanent link', async () => {
+  it.each(['android', 'web'])('lets an admin view and copy the permanent link on %s without rotation', async (os) => {
+    platform.OS = os;
     const view = workspaceView('admin');
     view.workspace.visibility = 'public';
     roomViews.workspace.mockResolvedValue(view);
     const token = `inv_${'d'.repeat(64)}`;
-    const nextToken = `inv_${'e'.repeat(64)}`;
-    phoneOperation.mockResolvedValueOnce({ token, expiresAt: 0 }).mockResolvedValueOnce({ token: nextToken, expiresAt: 0 });
+    phoneOperation.mockResolvedValueOnce({ token, expiresAt: 0 });
     const renderer = await render();
     expect(phoneOperation).toHaveBeenCalledWith('createInvite', { workspaceId: 'workspace-1' });
     const copy = renderer.root.findByProps({ testID: 'workspace-public-join-copy' });
     expect(copy.props.description).toBe(`https://usebeeline.app/join/${token}`);
     await act(async () => copy.props.onPress());
     expect(clipboard.setStringAsync).toHaveBeenCalledWith(`https://usebeeline.app/join/${token}`);
-    await act(async () => renderer.root.findByProps({ testID: 'workspace-public-join-rotate' }).props.onPress());
-    const dialog = renderer.root.findAll((node: any) => node.props.title === 'Rotate public join link?' && node.props.actions)[0];
-    expect(phoneOperation).not.toHaveBeenCalledWith('createInvite', { workspaceId: 'workspace-1', rotate: true });
-    await act(async () => dialog.props.actions[1].onPress());
-    expect(phoneOperation).toHaveBeenCalledWith('createInvite', { workspaceId: 'workspace-1', rotate: true });
-    expect(renderer.root.findByProps({ testID: 'workspace-public-join-copy' }).props.description).toBe(`https://usebeeline.app/join/${nextToken}`);
+    expect(renderer.root.findAllByProps({ testID: 'workspace-public-join-rotate' })).toHaveLength(0);
+    expect(phoneOperation).toHaveBeenCalledTimes(1);
+    console.log(`PUBLIC-LINK-1 (${os} renderer stand-in): open public Workspace Settings → Copy public join link → clipboard keeps original URL; Rotate row absent.`);
     await act(async () => renderer.unmount());
   });
   it('hides permanent links in private Workspaces and from regular members', async () => {

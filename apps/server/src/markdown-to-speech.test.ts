@@ -152,6 +152,38 @@ it('Reproduction VOICE-IDS-6: a stray open bracket flushes past the hold cap ins
   expect(plain.finish()).toBe('friend and welcome');
 });
 
+it('Reproduction VOICE-IDS-7: a capped flush keeps a token that crosses the cap whole', () => {
+  const input = 'Note (' + 'word '.repeat(36) + 'a' + '1'.repeat(39) + ').';
+  const full = markdownToSpeech(input);
+  expect(full).not.toContain('111');
+  for (let at = 0; at <= input.length; at++) {
+    const stream = new MarkdownSpeechStream();
+    const spoken = [...stream.push(input.slice(0, at)), ...stream.push(input.slice(at)), stream.finish()]
+      .filter(Boolean).join('');
+    expect(spoken, `split at ${at}`).toBe(full);
+    expect(spoken, `leak at ${at}`).not.toContain('111');
+  }
+  for (let seed = 1; seed <= 20; seed++) {
+    let cursor = 0; let random = seed; const stream = new MarkdownSpeechStream(); const phrases: string[] = [];
+    while (cursor < input.length) {
+      random = (random * 48271) % 2147483647;
+      const next = Math.min(input.length, cursor + (random % 11) + 1);
+      phrases.push(...stream.push(input.slice(cursor, next))); cursor = next;
+    }
+    phrases.push(stream.finish());
+    expect(phrases.filter(Boolean).join(''), `seed ${seed}`).toBe(full);
+  }
+  // An ordinary word crossing the cap is retained, not split.
+  const words = 'Note (' + 'word '.repeat(38) + 'wonderful).';
+  for (let at = 0; at <= words.length; at++) {
+    const stream = new MarkdownSpeechStream();
+    const phrases = [...stream.push(words.slice(0, at)), ...stream.push(words.slice(at)), stream.finish()]
+      .filter(Boolean);
+    // A split would show up as `wonder` + `ful`; the intact word survives.
+    expect(phrases.join(' '), `word split at ${at}`).toContain('wonderful');
+  }
+});
+
 it('speaks identifiers the same way when streamed in any chunk size', () => {
   const input = 'I filed this as a bug (fb_409eec12d3be6644d9eba2bf). Hi @bananaman614305, PR 2546 at 20:37, version 1.2.3.\n\n'
     + 'Commit 0123456789abcdef0123456789abcdef01234567 and 123e4567-e89b-12d3-a456-426614174000.';

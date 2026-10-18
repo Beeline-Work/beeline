@@ -21,6 +21,7 @@ vi.mock('@livekit/rtc-node', () => ({
   TrackSource: { SOURCE_MICROPHONE: 1 }, TrackKind: { KIND_AUDIO: 1 }, AudioFrame: class {},
 }));
 import { VoiceRoomRuntime, confirmedVoiceSpeech, voiceInterrupt, voicePlaybackEcho } from './voice-room-runtime.js';
+import { markdownToSpeech } from './markdown-to-speech.js';
 import { VoiceQuotaError } from './voice-providers.js';
 import { VoiceService as RealVoiceService } from './voice-service.js';
 import { migrate } from './database.js';
@@ -102,6 +103,29 @@ it('Reproduction MD-TTS-1: conversational streamed replies and delayed reports s
     await runtime.refresh();
     await vi.waitFor(() => expect(spoken.at(-1)).toBe('Done: result'));
     console.log('MD-TTS-1 synthesis:', spoken);
+  } finally { await runtime.close(); }
+});
+
+it('Reproduction VOICE-IDS-7: the synthesis path never receives a leaked ID when the cap flushes mid-clause', async () => {
+  const agent = { id: 'agent', name: 'Jellybean', handle: 'jellybean', voice: 'warm' };
+  const spoken: string[] = [];
+  const answer = 'Note (' + 'word '.repeat(36) + 'a' + '1'.repeat(39) + ').';
+  const service = { owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret',
+    brain: { answer: async (_agent: unknown, _history: unknown, delta: (text: string) => void) => {
+      for (const character of answer) delta(character);
+      return { text: answer };
+    } } }, agents: vi.fn(async () => [agent]), humanCount: vi.fn(async () => 1),
+    speech: async () => ({ async *synthesize(text: string) { spoken.push(text); } }),
+    recordHuman: vi.fn(async () => 'source'), recordAnswer: vi.fn(async () => {}),
+    db: { query: vi.fn(async () => ({ rowCount: 1, rows: [] })) },
+    access: vi.fn(async () => {}), leave: vi.fn(async () => {}), runtimeClosed: vi.fn() } as unknown as VoiceService;
+  const runtime = await VoiceRoomRuntime.connect(service, 'call', 'room');
+  try {
+    await runtime.utterance('human', 'Jellybean, hello');
+    // The cap splits the parenthetical, but the ID token stays whole and is dropped.
+    expect(spoken.join('')).toBe(markdownToSpeech(answer));
+    expect(spoken.join('')).not.toContain('111');
+    console.log('VOICE-IDS-7 synthesis:', spoken);
   } finally { await runtime.close(); }
 });
 

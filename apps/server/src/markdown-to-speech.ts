@@ -94,6 +94,15 @@ function bracketsClosed(text: string): boolean {
 /** Longest text held back while an opening bracket is still unclosed. */
 const HELD_BRACKET_LIMIT = 200;
 
+/** Flush point at or before `limit` that ends on whitespace, keeping any partial token. */
+function tokenSafeCut(text: string, limit: number): number {
+  const cap = Math.min(limit, text.length);
+  for (let index = cap; index > 0; index--) {
+    if (/\s/.test(text[index - 1]!)) return index;
+  }
+  return cap;
+}
+
 /** Deterministic speech cleanup; the written transcript is never changed. */
 function speakIdentifiers(text: string, members?: SpeechMembers): string {
   const index = memberIndex(members);
@@ -192,11 +201,13 @@ export class MarkdownSpeechStream {
         sentence.lastIndex = 0;
       }
     }
-    // A stray open bracket must not hold speech forever: release it once it is long enough.
+    // A stray open bracket must not hold speech forever: release complete tokens once long enough.
     if (this.pending.length > HELD_BRACKET_LIMIT && this.brackets.length > 0) {
-      phrases.push(markdownToSpeech(this.pending, this.members));
-      this.pending = '';
+      const cut = tokenSafeCut(this.pending, HELD_BRACKET_LIMIT);
+      phrases.push(markdownToSpeech(this.pending.slice(0, cut), this.members));
+      this.pending = this.pending.slice(cut);
       this.brackets = [];
+      updateBrackets(this.brackets, this.pending);
     }
     return phrases.filter(Boolean);
   }

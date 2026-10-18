@@ -395,6 +395,78 @@ describe('corner message attribution', () => {
     expect(review?.source.body).not.toContain('revision 1');
   });
 
+  it('Reproduction STALE-2: a review wake shows the live brief revision, not the queued one', async () => {
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    await db.query(`INSERT INTO corner_brief_revisions(corner_id,revision,content,spec,author_id,source_room_id)
+      VALUES($1,2,'Brief','Brief at two',$2,$3)`, [C, A, R]);
+    await greenHead(42, '3'.repeat(40));
+    const [queued] = await commands(B, C);
+    expect(queued?.source.body).toContain('Review against brief revision 2');
+    // The brief advances before the reviewer's turn starts.
+    await db.query(`INSERT INTO corner_brief_revisions(corner_id,revision,content,spec,author_id,source_room_id)
+      VALUES($1,3,'Brief','Brief at three',$2,$3)`, [C, A, R]);
+    const staleDelivered = (await commands(B, C)).filter((command) =>
+      command.source.body.includes('Review against brief revision 2'),
+    );
+    const queuedState = (
+      await db.query<{ state: string }>(`SELECT state FROM agent_commands WHERE id=$1`, [queued!.id])
+    ).rows[0]?.state;
+    console.info(
+      `Reproduction STALE-2: wrong=1 wake naming revision 2; right=0; observed=${staleDelivered.length}`,
+    );
+    expect(staleDelivered).toHaveLength(0);
+    expect(queuedState).toBe('cancelled');
+    // The live revision is what the reviewer is finally woken for.
+    await reconcileConfiguredCornerReviewers(db, R);
+    const current = (await commands(B, C)).filter((command) => command.reason === 'corner_review_dispatch');
+    expect(current).toHaveLength(1);
+    expect(current[0]?.source.body).toContain('Review against brief revision 3');
+    expect(current[0]?.source.body).not.toContain('Review against brief revision 2');
+    console.log(
+      'Demonstrated Reproduction STALE-2: queued revision 2 review wake cancelled; reviewer woken against live revision 3',
+    );
+  });
+
+  it('Reproduction STALE-3: drops a review wake whose head moved before the reviewer claims it', async () => {
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    const headA = '3'.repeat(40), headB = '4'.repeat(40);
+    const green = async (number: number, headSha: string) => {
+      await db.query(
+        `UPDATE corner_facts SET lifecycle=$2::jsonb,command_check_state=NULL WHERE corner_id=$1`,
+        [C, JSON.stringify({ checks: 'passing', lifecycle: 'in-review', pr: { number, url: `https://github.com/acme/repo/pull/${number}`, headSha } })],
+      );
+      await systemLine(db, { roomId: C, authorId: H, subject: { kind: 'github', name: 'GitHub' },
+        verb: 'passed a check', kind: 'check-passed', object: { text: 'ci', headSha } });
+    };
+    await green(43, headA);
+    const [queued] = await commands(B, C);
+    expect(queued?.reason).toBe('subscribed_event');
+    expect(queued?.source.body).toContain(headA);
+    // A newer head lands before the reviewer's turn starts.
+    await green(43, headB);
+    const staleDelivered = (await commands(B, C)).filter(
+      (command) => command.source.body.includes(headA),
+    );
+    const queuedState = (
+      await db.query<{ state: string }>(`SELECT state FROM agent_commands WHERE id=$1`, [queued!.id])
+    ).rows[0]?.state;
+    console.info(
+      `Reproduction STALE-3: wrong=1 review naming ${headA.slice(0, 8)}; right=0; observed=${staleDelivered.length}`,
+    );
+    expect(staleDelivered).toHaveLength(0);
+    expect(queuedState).toBe('cancelled');
+    // The current head gets its review wake, naming that head.
+    await reconcileConfiguredCornerReviewers(db, R);
+    const current = (await commands(B, C)).filter((command) =>
+      command.source.body.includes(headB),
+    );
+    expect(current).toHaveLength(1);
+    expect(current[0]?.source.body).not.toContain(headA);
+    console.log(
+      'Demonstrated Reproduction STALE-3: review wake for moved head dropped; reviewer woken for current head',
+    );
+  });
+
   it('does not wake the reviewer again for the same head and brief revision after a blocking verdict', async () => {
     const head = 'f'.repeat(40);
     /** A check verdict on `head`, as the GitHub webhook writes it. */

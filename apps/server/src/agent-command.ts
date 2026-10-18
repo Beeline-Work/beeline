@@ -246,7 +246,23 @@ function commandRecoveryCtes(roomSql: string, agentSql: string, claimSql = 'NULL
         OR (attempt IS NOT NULL AND attempt IS DISTINCT FROM latest_card->>'seq') OR expired)
   )`;
   if (checkOnly) return recovery;
-  return `${recovery}, return_queue AS MATERIALIZED (
+  // Corner wakes name the PR head or brief revision they were queued for. A
+  // wake that reaches the agent after that head or revision changed shows
+  // stale state, so it is cancelled at delivery and claim instead. The
+  // current head or revision gets its own wake from the ordinary generators.
+  return `${recovery}, superseded_corner_wakes AS MATERIALIZED (
+    SELECT command.id FROM recovery_scope command
+    JOIN corner_facts fact ON fact.corner_id=command.room_id
+    LEFT JOIN messages source ON source.id=command.source_message_id
+    WHERE (command.reason IN ('corner_merge_conflict','corner_review_dispatch','subscribed_event')
+        AND source.system_event->'object'->>'headSha' IS NOT NULL
+        AND source.system_event->'object'->>'headSha' IS DISTINCT FROM fact.lifecycle->'pr'->>'headSha')
+      OR (EXISTS (SELECT 1 FROM corner_brief_revisions brief
+          WHERE brief.corner_id=command.room_id AND brief.created_at>command.created_at)
+        AND (command.reason='corner_brief_revision'
+          OR (command.reason IN ('corner_review_dispatch','subscribed_event')
+            AND command.private_payload->>'text' LIKE '%Review against brief revision%')))
+  ), return_queue AS MATERIALIZED (
     SELECT command.*,row_number() OVER (ORDER BY command.created_at DESC,command.id DESC) position
     FROM recovery_scope command
     WHERE command.private_payload IS NULL AND command.coalesced_context IS NULL
@@ -272,12 +288,15 @@ function commandRecoveryCtes(roomSql: string, agentSql: string, claimSql = 'NULL
   ), cancelled_wakes AS (
     UPDATE agent_commands command SET state='cancelled',completed_at=now(),
       cancellation_reason=CASE WHEN stale.id IS NOT NULL THEN 'workflow_attempt_expired'
+        WHEN superseded.id IS NOT NULL THEN 'superseded_wake'
         ELSE 'superseded_on_return:' || head.id END
     FROM recovery_scope scoped
     LEFT JOIN stale_wakes stale ON stale.id=scoped.id
+    LEFT JOIN superseded_corner_wakes superseded ON superseded.id=scoped.id
     LEFT JOIN return_queue queued ON queued.id=scoped.id
     LEFT JOIN return_head head ON true
-    WHERE command.id=scoped.id AND (stale.id IS NOT NULL OR (head.id IS NOT NULL AND queued.position>1))
+    WHERE command.id=scoped.id AND (stale.id IS NOT NULL OR superseded.id IS NOT NULL
+      OR (head.id IS NOT NULL AND queued.position>1))
     RETURNING command.*
   ), cancelled_turns AS (
     UPDATE agent_turns turn SET status='cancelled',failure_reason='Wake superseded or workflow attempt expired',created_at=now()
@@ -298,6 +317,7 @@ function commandRecoveryCtes(roomSql: string, agentSql: string, claimSql = 'NULL
     JOIN cancelled_wakes cancelled ON cancelled.id<>head.id
     JOIN messages message ON message.id=cancelled.source_message_id
     WHERE NOT EXISTS(SELECT 1 FROM stale_wakes stale WHERE stale.id=head.id)
+      AND NOT EXISTS(SELECT 1 FROM superseded_corner_wakes superseded WHERE superseded.id=head.id)
     GROUP BY head.id,newest.recovery_context
   )`;
 }

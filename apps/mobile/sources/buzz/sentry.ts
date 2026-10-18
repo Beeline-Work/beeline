@@ -31,7 +31,7 @@ if (process.env.EXPO_PUBLIC_SENTRY_DSN && !__DEV__) {
 export function captureMobileError(scope: string, cause: unknown): void {
   if (cause instanceof Error && (
     cause.message === 'Update Beeline from the App Store to use Conversation mode.' ||
-    cause.message === 'Conversation mode is not available in this iPhone version yet. It arrives in the next App Store update.'
+    cause.message === 'Update Beeline in the App Store to join calls.'
   )) return;
   try { Sentry.captureException(cause, { tags: { surface: 'mobile', error_scope: scope } }); }
   catch { /* Keep the visible failure and Retry available. */ }

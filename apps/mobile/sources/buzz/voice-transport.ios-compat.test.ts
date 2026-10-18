@@ -35,7 +35,7 @@ beforeEach(() => {
 });
 
 it('does not evaluate WebRTC on an App Store iOS runtime without its native modules', async () => {
-  await expect(createVoiceRoom()).rejects.toThrow('Conversation mode is not available in this iPhone version yet. It arrives in the next App Store update.');
+  await expect(createVoiceRoom()).rejects.toThrow('Update Beeline in the App Store to join calls.');
   expect(state.loadLiveKit).not.toHaveBeenCalled();
 });
 
@@ -59,13 +59,13 @@ it('requires the background audio methods before loading voice on an intermediat
   state.modules.WebRTCModule = {};
   state.modules.LivekitReactNativeModule = {};
   state.background = { start() {}, stop() {} };
-  await expect(createVoiceRoom()).rejects.toThrow('Conversation mode is not available in this iPhone version yet. It arrives in the next App Store update.');
+  await expect(createVoiceRoom()).rejects.toThrow('Update Beeline in the App Store to join calls.');
   expect(state.loadLiveKit).not.toHaveBeenCalled();
 });
 
 it('Reproduction SENTRY-6: the old iPhone capability refusal stays visible without capture', async () => {
   const failure = await createVoiceRoom().catch(error => error);
-  expect(failure.message).toBe('Conversation mode is not available in this iPhone version yet. It arrives in the next App Store update.');
+  expect(failure.message).toBe('Update Beeline in the App Store to join calls.');
   captureMobileError('voice-join', failure);
   expect(state.captureException).not.toHaveBeenCalled();
   expect(state.loadLiveKit).not.toHaveBeenCalled();

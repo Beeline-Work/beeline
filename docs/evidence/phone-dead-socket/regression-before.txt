@@ -1,0 +1,79 @@
+
+ RUN  v3.2.7 /home/lunchbox/.local/state/beeline/corners/59d02c96-4d8f-4332-a362-2f03f138bf15/apps/mobile
+
+stdout | sources/sync/transport/live-connection.test.ts
+[loadAppConfig] Loaded from Constants.expoConfig: []
+[loadAppConfig] Final merged config: {}
+
+ ❯ sources/sync/transport/live-connection.test.ts (43 tests | 1 failed | 42 skipped) 12ms
+   × LiveConnection > Reproduction R1: replaces an open silent socket within one ping interval plus timeout 11ms
+     → expected false to be true // Object.is equality
+   ↓ LiveConnection > sends one tiny ping per interval and keeps a slow live connection without invalidating Rooms
+   ↓ LiveConnection > sends no periodic traffic or replacements in background and resumes on foreground
+   ↓ LiveConnection > backs off repeated silent replacements even when TCP opens
+   ↓ LiveConnection > dispatches identity-scoped workspace changes only to workspace registrations
+   ↓ LiveConnection > starts the first room read while live authorization is still pending
+   ↓ LiveConnection > opens one socket for two registrations and subscribes only new rooms
+   ↓ LiveConnection > marks a late join as continuous when the held Room has a cursor
+   ↓ LiveConnection > gives a late join the corner store, not a replayed corner status
+   ↓ LiveConnection > writes every corner status into the corner store and delivers no older sequence
+   ↓ LiveConnection > marks a Room's corners unproven when the server names a change without rows
+   ↓ LiveConnection > batches a large Room watch under the server frame limit
+   ↓ LiveConnection > hands a room whose subscribe is still in flight exactly one subscribed frame
+   ↓ LiveConnection > retires a room whose last holder left before the server confirmed it
+   ↓ LiveConnection > synthesises subscribed and replays cached overlays to a late room join
+   ↓ LiveConnection > rebuilds an append-only draft and replays the accumulated text to a late join
+   ↓ LiveConnection > resubscribes with a contiguous Room cursor and preserves overlays on resume
+   ↓ LiveConnection > does not replay a draft whose turn already ended
+   ↓ LiveConnection > selects workflow draft text from the socket overlay owner
+   ↓ LiveConnection > does not replay a draft older than the live window
+   ↓ LiveConnection > does not re-subscribe a room whose first subscribe is still unacknowledged
+   ↓ LiveConnection > does not replay a retracted draft to a late listener
+   ↓ LiveConnection > covers a no-room registration once per reopened socket and never on a timer
+   ↓ LiveConnection > only pings while idle, with no Room frames or reads
+   ↓ LiveConnection > unsubscribes when the last holder leaves and keeps the socket open
+   ↓ LiveConnection > fans an event only to live registrations that hold that room
+   ↓ LiveConnection > resubscribes every current room after the socket drops
+   ↓ LiveConnection > notifies subscribeConnected on first connect and every reconnect, never in between
+   ↓ LiveConnection > keeps an open socket after the foreground sync echo
+   ↓ LiveConnection > reconnects when the foreground sync receives no echo
+   ↓ LiveConnection > replaces a socket stuck opening instead of waiting on it forever
+   ↓ LiveConnection > Reproduction R1: replaces a socket that never delivered a message a push named
+   ↓ LiveConnection > keeps a socket that delivered the message a push named, before or after the push
+   ↓ LiveConnection > tells the server which Rooms are on screen, once each way, and again on a new socket
+   ↓ LiveConnection > skips the reconnect backoff on foreground
+   ↓ LiveConnection > reconnects on demand when a read proves the socket missed events
+   ↓ LiveConnection > covers a no-room registration after the foreground sync times out
+   ↓ LiveConnection > resets reconnect backoff after a successful open
+   ↓ LiveConnection > resubscribes mounted registrations on a new socket after an identity change
+   ↓ LiveConnection > keeps a held view across an identity change
+   ↓ LiveConnection > closes the socket and stops delivery on dispose
+   ↓ LiveConnection > routes trace-painted to the registration that sent trace-paint
+   ↓ LiveConnection > does not let a closed registration acknowledge paint on a later socket
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  sources/sync/transport/live-connection.test.ts > LiveConnection > Reproduction R1: replaces an open silent socket within one ping interval plus timeout
+AssertionError: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ sources/sync/transport/live-connection.test.ts:124:32
+    122|     expect(sockets).toHaveLength(1);
+    123|     await vi.advanceTimersByTimeAsync(1);
+    124|     expect(sockets[0]!.closed).toBe(true);
+       |                                ^
+    125|     expect(sockets).toHaveLength(2);
+    126|     sockets[1]!.open();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 42 skipped (43)
+   Start at  13:11:05
+   Duration  360ms (transform 160ms, setup 71ms, collect 128ms, tests 12ms, environment 0ms, prepare 46ms)

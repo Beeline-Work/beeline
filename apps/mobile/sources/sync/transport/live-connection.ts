@@ -54,6 +54,9 @@ type LiveConnectionDeps = {
 
 /** A socket stuck opening on a bad network fires no close on its own. */
 const LIVE_CONNECT_TIMEOUT_MS = 15_000;
+/** One tiny foreground frame; allow slow mobile paths ten seconds to answer. */
+const LIVE_PING_INTERVAL_MS = 20_000;
+const LIVE_PING_TIMEOUT_MS = 10_000;
 /** A push can beat the socket frame for the same message; past this, the
  *  socket missed it. */
 const PUSH_MISS_GRACE_MS = 5_000;
@@ -114,6 +117,10 @@ export class LiveConnection {
   private readonly heardMessages = new Set<string>();
   private readonly subscribeWaiters = new Set<() => void>();
   private foregroundSyncTimer: ReturnType<typeof setTimeout> | undefined;
+  private pingTimer: ReturnType<typeof setTimeout> | undefined;
+  private pingTimeout: ReturnType<typeof setTimeout> | undefined;
+  private livenessRetryMs = 0;
+  private readonly unsubscribeAppState: () => void;
   private reconnectDelayMs = 1_000;
   private nextRegistrationId = 1;
   private generation = 0;
@@ -123,6 +130,11 @@ export class LiveConnection {
   private readonly unsubscribeForeground: () => void;
 
   constructor(private readonly deps: LiveConnectionDeps) {
+    const appState = AppState.addEventListener('change', (state) => {
+      if (state === 'active') this.schedulePing();
+      else this.clearPing();
+    });
+    this.unsubscribeAppState = () => appState.remove();
     this.unsubscribeIdentity = deps.subscribeIdentityChange(() => this.handleIdentityChanged());
     this.unsubscribeForeground = deps.subscribeForeground(() => this.handleForeground());
   }
@@ -169,6 +181,7 @@ export class LiveConnection {
     this.viewing.clear();
     this.unsubscribeIdentity();
     this.unsubscribeForeground();
+    this.unsubscribeAppState();
   }
 
   /**
@@ -287,6 +300,43 @@ export class LiveConnection {
     void this.ensureSocket();
   }
 
+  private clearPing(): void {
+    if (this.pingTimer) clearTimeout(this.pingTimer);
+    if (this.pingTimeout) clearTimeout(this.pingTimeout);
+    this.pingTimer = undefined;
+    this.pingTimeout = undefined;
+  }
+
+  private schedulePing(): void {
+    if (AppState.currentState !== 'active' || this.pingTimer || this.pingTimeout ||
+        !this.socket || !isSocketOpen(this.socket)) return;
+    const current = this.socket;
+    this.pingTimer = setTimeout(() => {
+      this.pingTimer = undefined;
+      if (AppState.currentState !== 'active' || this.socket !== current) return;
+      this.pingTimeout = setTimeout(() => {
+        this.pingTimeout = undefined;
+        if (this.socket !== current || AppState.currentState !== 'active') return;
+        this.socket = undefined;
+        this.dropSocketState();
+        // A liveness failure needs one covering Room read on resubscribe.
+        this.roomCursors.clear();
+        current.close();
+        // Opening a TCP socket alone does not prove delivery. Repeated silent
+        // replacements back off until a frame answers a foreground probe.
+        const delay = this.livenessRetryMs;
+        this.livenessRetryMs = Math.min(delay ? delay * 2 : 1_000, 30_000);
+        if (delay) this.scheduleReconnect(delay);
+        else void this.ensureSocket();
+      }, LIVE_PING_TIMEOUT_MS);
+      try {
+        current.send('{"type":"ping"}');
+      } catch {
+        // The same bounded deadline replaces a socket that cannot queue data.
+      }
+    }, LIVE_PING_INTERVAL_MS);
+  }
+
   private handleForeground(): void {
     // A one-shot ordered socket echo proves the background connection still
     // carries its subscriptions. Replace it only when that path is silent.
@@ -321,6 +371,8 @@ export class LiveConnection {
   }
 
   private dropConnection(): void {
+    this.clearPing();
+    this.livenessRetryMs = 0;
     this.generation += 1;
     this.connectInFlight = undefined;
     if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
@@ -392,6 +444,7 @@ export class LiveConnection {
         clearTimeout(connectTimer);
         if (this.socket !== next) return;
         this.reconnectDelayMs = 1_000;
+        this.schedulePing();
         this.sendSubscribe([...this.refcount.keys()]);
         for (const roomId of this.viewing.keys()) this.sendViewing(roomId, true);
         this.coverRoomlessRegistrations();
@@ -399,12 +452,19 @@ export class LiveConnection {
       };
       next.onmessage = (message) => {
         if (this.socket !== next) return;
-        let live: LiveWireEvent;
+        let live: LiveWireEvent | { type: 'pong' };
         try {
-          live = JSON.parse(String(message.data)) as LiveWireEvent;
+          live = JSON.parse(String(message.data)) as LiveWireEvent | { type: 'pong' };
         } catch {
           return;
         }
+        if (this.pingTimeout) {
+          clearTimeout(this.pingTimeout);
+          this.pingTimeout = undefined;
+          this.livenessRetryMs = 0;
+          this.schedulePing();
+        }
+        if (live.type === 'pong') return;
         if (live.type === 'sync-ok') {
           if (this.foregroundSyncTimer) clearTimeout(this.foregroundSyncTimer);
           this.foregroundSyncTimer = undefined;
@@ -427,6 +487,7 @@ export class LiveConnection {
   }
 
   private dropSocketState(): void {
+    this.clearPing();
     if (this.foregroundSyncTimer) clearTimeout(this.foregroundSyncTimer);
     this.foregroundSyncTimer = undefined;
     this.seenSubscribed.clear();
@@ -437,9 +498,9 @@ export class LiveConnection {
     this.traceOwners.clear();
   }
 
-  private scheduleReconnect(): void {
+  private scheduleReconnect(livenessDelayMs?: number): void {
     if (this.reconnectTimer) return;
-    const delayMs = this.reconnectDelayMs;
+    const delayMs = livenessDelayMs ?? this.reconnectDelayMs;
     this.reconnectDelayMs = Math.min(this.reconnectDelayMs * 2, 30_000);
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = undefined;

@@ -395,35 +395,43 @@ describe('corner message attribution', () => {
     expect(review?.source.body).not.toContain('revision 1');
   });
 
-  it('Reproduction STALE-2: a review wake shows the live brief revision, not the queued one', async () => {
-    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
-    await db.query(`INSERT INTO corner_brief_revisions(corner_id,revision,content,spec,author_id,source_room_id)
-      VALUES($1,2,'Brief','Brief at two',$2,$3)`, [C, A, R]);
-    await greenHead(42, '3'.repeat(40));
-    const [queued] = await commands(B, C);
-    expect(queued?.source.body).toContain('Review against brief revision 2');
-    // The brief advances before the reviewer's turn starts.
-    await db.query(`INSERT INTO corner_brief_revisions(corner_id,revision,content,spec,author_id,source_room_id)
-      VALUES($1,3,'Brief','Brief at three',$2,$3)`, [C, A, R]);
-    const staleDelivered = (await commands(B, C)).filter((command) =>
-      command.source.body.includes('Review against brief revision 2'),
+  it('Reproduction STALE-2: an implementer assignment wake shows the live brief revision, not the queued one', async () => {
+    // Queue the implementer wake a brief revision writes: the revision row,
+    // its system line, and the corner_brief_revision assignment command.
+    const assignment = async (revision: number) => {
+      await db.query(`INSERT INTO corner_brief_revisions(corner_id,revision,content,spec,author_id,source_room_id)
+        VALUES($1,$2,'Brief',$3,$4,$5)`, [C, revision, `Brief at ${revision}`, A, R]);
+      const line = await systemLine(db, {
+        roomId: C,
+        subject: { kind: 'agent', id: A, name: 'Hoots' },
+        verb: 'revised the corner brief',
+        object: { text: `Revision ${revision}`, id: C },
+      });
+      await createAgentCommand(db, {
+        roomId: C, agentId: A, sourceMessageId: line.id, reason: 'corner_brief_revision',
+      });
+    };
+    await assignment(2);
+    const [queued] = await commands(A, C);
+    expect(queued?.reason).toBe('corner_brief_revision');
+    expect(queued?.source.body).toContain('Revision 2');
+    // The brief advances before the implementer's turn starts.
+    await assignment(3);
+    const delivered = (await commands(A, C)).filter(
+      (command) => command.reason === 'corner_brief_revision',
     );
     const queuedState = (
       await db.query<{ state: string }>(`SELECT state FROM agent_commands WHERE id=$1`, [queued!.id])
     ).rows[0]?.state;
     console.info(
-      `Reproduction STALE-2: wrong=1 wake naming revision 2; right=0; observed=${staleDelivered.length}`,
+      `Reproduction STALE-2: wrong=1 assignment naming Revision 2; right=1; observed=${delivered.filter((command) => command.source.body.includes('Revision 2')).length}`,
     );
-    expect(staleDelivered).toHaveLength(0);
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]?.source.body).toContain('Revision 3');
+    expect(delivered[0]?.source.body).not.toContain('Revision 2');
     expect(queuedState).toBe('cancelled');
-    // The live revision is what the reviewer is finally woken for.
-    await reconcileConfiguredCornerReviewers(db, R);
-    const current = (await commands(B, C)).filter((command) => command.reason === 'corner_review_dispatch');
-    expect(current).toHaveLength(1);
-    expect(current[0]?.source.body).toContain('Review against brief revision 3');
-    expect(current[0]?.source.body).not.toContain('Review against brief revision 2');
     console.log(
-      'Demonstrated Reproduction STALE-2: queued revision 2 review wake cancelled; reviewer woken against live revision 3',
+      'Demonstrated Reproduction STALE-2: implementer assignment at revision 2 cancelled; live revision 3 assignment delivered',
     );
   });
 

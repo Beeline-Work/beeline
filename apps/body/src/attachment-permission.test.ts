@@ -51,3 +51,20 @@ it('rejects escapes, mixed paths, missing paths and non-read requests', () => {
   ]) expect(roomPermissionDecision({ toolCall }, { attachmentsDir })).toBe('reject');
   expect(roomPermissionDecision({ toolCall: { kind: 'read', locations: [{ path }] } })).toBe('reject');
 });
+
+it('R1 approves sandboxed native reads and searches outside attachments only with a declared kind', () => {
+  const { attachmentsDir, outside } = fixture();
+  for (const [title, kind] of [['Read', 'read'], ['Grep', 'search'], ['Glob', 'search']]) {
+    const request = { toolCall: { title, kind, locations: [{ path: outside }] } };
+    expect(roomPermissionDecision(request, { attachmentsDir, shellSandboxed: true })).toBe('allow');
+    expect(roomPermissionDecision(request, { attachmentsDir, shellSandboxed: false })).toBe('reject');
+  }
+  for (const kind of [undefined, 'edit', 'delete', 'move', 'other']) {
+    expect(roomPermissionDecision({ toolCall: { kind, title: 'Read', locations: [{ path: outside }] } },
+      { attachmentsDir, shellSandboxed: true })).toBe('reject');
+  }
+  for (const title of ['mcp.squire.read']) {
+    expect(roomPermissionDecision({ toolCall: { kind: 'read', title } },
+      { mountedServers: ['beeline-agent'], shellSandboxed: true })).toBe('reject');
+  }
+});

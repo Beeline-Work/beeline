@@ -114,8 +114,8 @@ Credit/balance and server/database capacity alerts are a separate follow-up.
 `POST /v1/sentry/webhook` authenticates the original body using
 `Sentry-Hook-Signature` (HMAC-SHA256) and the server-only
 `BEELINE_SENTRY_CLIENT_SECRET` Fly secret. Missing configuration or an invalid
-signature returns 401. It accepts created issues, unresolved issues whose
-substatus is `regressed`, and triggered `event_alert` notifications. Other
+signature returns 401. It accepts created issues, all unresolved issues regardless
+of substatus, regressed issues, and triggered `event_alert` notifications. Other
 signed events are acknowledged without waking an agent. The Telegram receiver
 above remains independent.
 
@@ -144,7 +144,7 @@ webhooks; only Created and Unresolved were selected. The client secret is vaulte
 as **Beeline triage webhook client secret** under `sentry-triage-webhook`.
 
 **No alert rule is needed:** the internal integration's `issue.created` and
-`issue.unresolved` webhooks provide the new-issue and regression deliveries.
+`issue.unresolved` webhooks provide the new-issue and unresolved deliveries regardless of substatus.
 Skip creating an alert workflow; the earlier HTTP 403 on alert creation is not
 a blocker. No new alert id exists or is required. Existing Telegram alert
 `6181673` stays independent.

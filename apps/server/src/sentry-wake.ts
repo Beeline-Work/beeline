@@ -56,9 +56,9 @@ export async function receiveSentryWake(db: SqlDatabase, raw: Buffer,
   const data = object(payload.data);
   const resource = headers['sentry-hook-resource'];
   const action = payload.action;
-  const regression = action === 'regressed' || action === 'unresolved' && object(data.issue).substatus === 'regressed';
   const eventType = resource === 'issue' && action === 'created' ? 'issue.created'
-    : resource === 'issue' && regression ? 'issue.regression'
+    : resource === 'issue' && action === 'unresolved' ? 'issue.unresolved'
+    : resource === 'issue' && action === 'regressed' ? 'issue.regression'
     : resource === 'event_alert' && action === 'triggered' ? 'event.alert' : null;
   if (!eventType) return 202;
   const issue = object(data.issue);

@@ -1,6 +1,7 @@
 import { VoiceBudgetExceeded } from './voice-budget.js';
 import { readCompanyLogo } from './company-logos.js';
 import { captureServerError } from './sentry.js';
+import { receiveSentryWake } from './sentry-wake.js';
 import { authenticSentryAlert, sendSentryTelegram, sentryTelegramMessage, type SentryTelegramConfig } from './sentry-telegram.js';
 import { verifyNip98Header } from '@beeline/nostr';
 import { WorkflowAuthorizationError } from './workflow-admin.js';
@@ -141,6 +142,7 @@ export interface GitHubServerHooks {
 }
 
 export interface ServerOptions {
+  sentryWakeSecret?: string;
   sentryTelegram?: SentryTelegramConfig;
   database: SqlDatabase;
   /** CDP receiver id -> subscription signing secret, server-only. */
@@ -662,7 +664,7 @@ export function createBeelineServer(options: ServerOptions): Server {
         status = 502;
       }
       // A failing Telegram delivery must not create another alert to itself.
-      if (status >= 500 && url.pathname !== '/api/webhooks/sentry') captureServerError(error);
+      if (status >= 500 && !['/api/webhooks/sentry', '/v1/sentry/webhook'].includes(url.pathname)) captureServerError(error);
       console.error(
         '[req-error]',
         method,
@@ -1475,6 +1477,14 @@ async function route(
 ): Promise<void> {
   const url = exactPath(request.url);
   const method = request.method ?? 'GET';
+  if (method === 'POST' && url.pathname === '/v1/sentry/webhook') {
+    let raw: Buffer;
+    try { raw = await bytes(request, MAX_JSON_BYTES); }
+    catch { json(response, 413, { error: 'sentry_payload_too_large' }); return; }
+    const status = await receiveSentryWake(options.database, raw, request.headers, options.sentryWakeSecret);
+    json(response, status, status < 300 ? { accepted: true } : { error: 'invalid_sentry_webhook' });
+    return;
+  }
   if (method === 'POST' && url.pathname === '/api/webhooks/sentry') {
     if (!authenticSentryAlert(options.sentryTelegram, url.searchParams.get('token'))) {
       json(response, 401, { error: 'invalid_sentry_webhook' }); return;

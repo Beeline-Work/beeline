@@ -6,6 +6,7 @@ import { backfillComputerObservations } from './system-line.js';
 import { scheduleWorkflowSlugSql } from './workflow-admin.js';
 import { AGENT_SUBSCRIPTIONS_SCHEMA } from './agent-subscriptions.js';
 import { PROVIDER_WEBHOOKS_SCHEMA } from './provider-webhooks.js';
+import { SENTRY_WAKE_SCHEMA } from './sentry-wake.js';
 import { CORNER_MERGE_HOLDS_SCHEMA } from './migrations/corner-merge-holds.js';
 import { hyphenateCornerNames } from './migrations/corner-names.js';
 import {
@@ -201,7 +202,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-export const REQUIRED_SCHEMA_VERSION = 30;
+export const REQUIRED_SCHEMA_VERSION = 31;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`
@@ -2982,6 +2983,7 @@ export async function migrate(
   ));
   await ddlScript('agent subscriptions', AGENT_SUBSCRIPTIONS_SCHEMA);
   await ddlScript('provider webhooks', PROVIDER_WEBHOOKS_SCHEMA);
+  await ddlScript('sentry wakes', SENTRY_WAKE_SCHEMA);
   await ddl('retire room webhooks', `
     DROP TABLE IF EXISTS room_webhook_idempotency, room_webhook_rates,
       room_webhook_deliveries, room_webhook_requests, room_webhooks;

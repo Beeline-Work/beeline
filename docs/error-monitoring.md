@@ -108,3 +108,56 @@ helper bundle and mobile OTA are delivered:
    resolved status. The alert excludes issue-resolution notifications.
 
 Credit/balance and server/database capacity alerts are a separate follow-up.
+
+## Private issues-triage wakes
+
+`POST /v1/sentry/webhook` authenticates the original body using
+`Sentry-Hook-Signature` (HMAC-SHA256) and the server-only
+`BEELINE_SENTRY_CLIENT_SECRET` Fly secret. Missing configuration or an invalid
+signature returns 401. It accepts created issues, unresolved issues whose
+substatus is `regressed`, and triggered `event_alert` notifications. Other
+signed events are acknowledged without waking an agent. The Telegram receiver
+above remains independent.
+
+`sentry_wake_issues` stores issue metadata keyed by issue id and event type;
+retries do not re-arm an acknowledged row, and a newer occurrence updates its
+metadata. `sentry_wake_state` serializes ingestion and dispatch across server
+machines. The first issue queues a private command for Ruby in issues-triage
+immediately; later issues accumulate until five minutes after the previous
+command. The command and acknowledgement commit together. The existing
+background leader reads the durable deadline after restart and PostgreSQL
+notifications re-arm it after arrivals. An unavailable target keeps rows pending.
+No transcript or System message is created. Sentry text is quoted as untrusted
+data. Receiver failures return 503 without recursive Sentry capture.
+
+Integration created 2026-10-18 UTC:
+[Beeline triage wake](https://beeline-bt.sentry.io/settings/developer-settings/beeline-triage-wake-efb45b/),
+UUID `efa4fa03-8ba9-4433-b746-e1407ff79b9e`, installation UUID
+`9c0ec5c2-4b76-4e33-a44b-3c438ce9741f`. It is alertable and subscribes to issue
+webhooks; only Created and Unresolved were selected. The client secret is vaulted
+as **Beeline triage webhook client secret** under `sentry-triage-webhook`.
+
+**Setup blocked:** the Sentry setup credential returned HTTP 403 when creating
+the alert workflow, so there is no new alert id. The intended alert is
+**Wake Beeline issues-triage**, connected to all-project issue-stream detector
+`10667649`, with first-seen OR regression triggers, no action throttle, and a
+webhook action targeting `beeline-triage-wake-efb45b`. This covers the three
+Beeline projects. Do not alter existing Telegram alert `6181673`.
+
+**Secret staging blocked:** Fly rejected creation of the short-lived app token
+needed to transfer the vaulted signing secret without exposing it. The secret
+has not been staged in Fly. Rotate it before staging: Squire exposed the initial
+value in a tool observation (reported separately, without its value). Complete
+the secure transfer of the replacement to
+`BEELINE_SENTRY_CLIENT_SECRET` on `beeline-server` and finish alert creation with
+authorized credentials before activation. Staging must skip deployment.
+
+**Production proof remains pending the next release:** after deployment, use
+Sentry's send-test-notification action and verify Ruby receives the digest in
+issues-triage. Do not dispatch a release for this work. Local reproduction
+`sentry-no-wake` posts signed HTTP requests to the actual server and inspects
+private commands, including competing workers against isolated PostgreSQL.
+Run the PostgreSQL proof with `BEELINE_SENTRY_TEST_POSTGRES_URL` set to an isolated
+loopback database and `npm test -w @beeline/server -- src/sentry-wake.test.ts`;
+each test owns and removes a separate schema. Without that variable it uses
+PGlite.

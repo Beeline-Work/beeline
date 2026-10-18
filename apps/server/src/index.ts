@@ -1,5 +1,6 @@
 import { captureServerError, flushServerErrors } from './sentry.js';
 import { sentryTelegramFromEnv } from './sentry-telegram.js';
+import { flushSentryWakes, nextSentryWakeAt } from './sentry-wake.js';
 import { randomUUID } from 'node:crypto';
 import { assertSchemaCurrent, markSchemaCurrent, migrate, migrateData, PostgresDatabase } from './database.js';
 import { retryMigrationStep } from './migration-retry.js';
@@ -375,6 +376,7 @@ async function main() {
   const server = createBeelineServer({
     database,
     sentryTelegram: sentryTelegramFromEnv(),
+    ...(process.env.BEELINE_SENTRY_CLIENT_SECRET ? { sentryWakeSecret: process.env.BEELINE_SENTRY_CLIENT_SECRET } : {}),
     cdpWebhookSecrets: cdpWebhookSecretsFromEnv(),
     databaseBudget: budget,
     enrichmentDatabase,
@@ -447,6 +449,7 @@ async function main() {
         await backgroundJobs.run('push', () => push.runOnce());
       }
       await backgroundJobs.run('schedules', () => schedules.runOnce());
+      await backgroundJobs.run('sentry-wakes', () => flushSentryWakes(jobsDatabase));
       await backgroundJobs.run('choice-expiry', () => choiceExpiry.runOnce());
       const deadlineDue = await backgroundJobs.run('deadline-expiry', () =>
         deadlineExpiry.runOnce(newLeader));
@@ -489,8 +492,10 @@ async function main() {
       }
       if (freeAgents) await backgroundJobs.run('free-agents', () => freeAgents.sweep());
       const nextDue = await backgroundJobs.run('schedule-next-due', () => schedules.nextDueAt());
+      const sentryDue = await backgroundJobs.run('sentry-next-due', () => nextSentryWakeAt(jobsDatabase));
       return Math.min(
         reconciliationMs,
+        ...(sentryDue.ok && sentryDue.value ? [Math.max(1000, sentryDue.value.getTime() - Date.now())] : []),
         ...(freeAgents ? [FREE_AGENT_SWEEP_MS] : []),
         ...(nextDue.ok && nextDue.value ? [Math.max(0, nextDue.value.getTime() - Date.now())] : []),
         ...(deadlineDue.ok && deadlineDue.value !== null

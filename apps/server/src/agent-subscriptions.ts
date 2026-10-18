@@ -262,19 +262,11 @@ export async function deleteAgentSubscription(db: SqlDatabase, roomId: string, a
   const legacy = legacyId(id);
   if (legacy) {
     if (legacy.roomId !== roomId || legacy.agentId !== agentId) throw new Error('subscription not found');
-    const updated = await db.query(
-      `UPDATE memberships member SET event_subscriptions=member.event_subscriptions - $3
-       FROM rooms surface JOIN rooms parent ON parent.id=COALESCE(surface.parent_id,surface.id)
-       WHERE member.room_id=$1 AND member.identity_id=$2 AND member.removed_at IS NULL
-         AND surface.id=member.room_id AND member.event_subscriptions ? $3
-         AND NOT ($3='check-passed' AND parent.reviewer_agent_id=$2)`,
-      [roomId, agentId, legacy.event],
-    );
-    if (!updated.rowCount) throw new Error('subscription not found');
+    await deleteRoomSubscription(db, roomId, id, composio);
     return;
   }
   const deleted = await db.query<{ trigger_id: string | null }>(
-    `DELETE FROM agent_subscriptions subscription USING memberships member
+    `DELETE FROM agent_subscriptions subscription USING effective_memberships member
      WHERE subscription.id=$1 AND subscription.room_id=$2 AND subscription.agent_id=$3
        AND member.room_id=subscription.room_id AND member.identity_id=$3 AND member.removed_at IS NULL
      RETURNING subscription.trigger_id`,

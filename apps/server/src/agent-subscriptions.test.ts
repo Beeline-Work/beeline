@@ -1,5 +1,7 @@
-import { createHmac } from 'node:crypto';
+import { randomUUID, createHmac } from 'node:crypto';
 import { describe, expect, it, vi } from 'vitest';
+import { CornerAccessDatabase } from './corner-access-database.js';
+import { setRoomEventSubscriptions } from './corner-person-state.js';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import {
@@ -36,6 +38,35 @@ async function fixture() {
 }
 
 describe('agent subscriptions', () => {
+  it('lists and deletes both corner subscription forms using only parent membership', async () => {
+    const raw = await fixture();
+    const db = new CornerAccessDatabase(raw);
+    const corner = randomUUID();
+    try {
+      await raw.query(`INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Corner')`,
+        [corner, WORKSPACE, ROOM]);
+      await setRoomEventSubscriptions(db, corner, AGENT, ['joined']);
+      const legacy = (await listAgentSubscriptions(db, corner, AGENT)).subscriptions[0]!;
+      expect(legacy.event).toBe('joined');
+      await expect(deleteAgentSubscription(db, ROOM, AGENT, legacy.id)).rejects.toThrow('subscription not found');
+      await raw.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [ROOM, AGENT]);
+      await expect(deleteAgentSubscription(db, corner, AGENT, legacy.id)).rejects.toThrow('subscription not found');
+      await raw.query(`UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2`, [ROOM, AGENT]);
+      await deleteAgentSubscription(db, corner, AGENT, legacy.id);
+      expect((await listAgentSubscriptions(db, corner, AGENT)).subscriptions).toEqual([]);
+      const stored = await createAgentSubscription(db, AGENT, {
+        roomId: corner, source: 'room', event: 'joined', prompt: 'Watch joins.',
+      });
+      expect((await listAgentSubscriptions(db, corner, AGENT)).subscriptions.map(row => row.id)).toEqual([stored.id]);
+      await raw.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [ROOM, AGENT]);
+      await expect(deleteAgentSubscription(db, corner, AGENT, stored.id)).rejects.toThrow('subscription not found');
+      await raw.query(`UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2`, [ROOM, AGENT]);
+      await deleteAgentSubscription(db, corner, AGENT, stored.id);
+      expect((await listAgentSubscriptions(db, corner, AGENT)).subscriptions).toEqual([]);
+      expect((await raw.query(`SELECT 1 FROM memberships WHERE room_id=$1`, [corner])).rowCount).toBe(0);
+    } finally { await raw.close(); }
+  });
+
   it('registers a connected Slack webhook, ingests a signed delivery, and wakes exactly one agent once', async () => {
     const db = await fixture();
     try {

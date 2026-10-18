@@ -154,45 +154,50 @@ export class AgentVoiceService {
     const { speech, choices } = await this.library();
     const choice = choices.find((v) => v.id === voiceId);
     if (!choice) throw Error('Unknown voice in the Aura library');
-    // Existing PCM synthesis, capped at eight seconds; no key or arbitrary URL reaches the phone.
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 12000);
-    const chunks: Buffer[] = [];
-    let length = 0;
-    const cap = VOICE_SAMPLE_RATE * 2 * 8;
-    try {
-      for await (const chunk of speech.synthesize(
-        'Hello. This is my voice. I am ready to help you.',
-        voiceId,
-        controller.signal,
-      )) {
-        const part = Buffer.from(chunk).subarray(0, cap - length);
-        chunks.push(part);
-        length += part.length;
-        if (length >= cap) {
-          controller.abort();
-          break;
-        }
-      }
-    } finally {
-      clearTimeout(timer);
-      controller.abort();
-    }
-    if (!length) throw Error('Voice preview unavailable');
-    const pcm = Buffer.concat(chunks).subarray(0, length - (length % 2));
-    const header = Buffer.alloc(44);
-    header.write('RIFF');
-    header.writeUInt32LE(36 + pcm.length, 4);
-    header.write('WAVEfmt ', 8);
-    header.writeUInt32LE(16, 16);
-    header.writeUInt16LE(1, 20);
-    header.writeUInt16LE(1, 22);
-    header.writeUInt32LE(VOICE_SAMPLE_RATE, 24);
-    header.writeUInt32LE(VOICE_SAMPLE_RATE * 2, 28);
-    header.writeUInt16LE(2, 32);
-    header.writeUInt16LE(16, 34);
-    header.write('data', 36);
-    header.writeUInt32LE(pcm.length, 40);
-    return { wavBase64: Buffer.concat([header, pcm]).toString('base64') };
+    return renderVoiceAudio(speech, 'Hello. This is my voice. I am ready to help you.', voiceId);
   }
+}
+
+/** Bounded PCM rendering shared by profile previews and the private call warning. */
+export async function renderVoiceAudio(speech: VoiceSpeech, text: string, voiceId: string): Promise<AgentVoicePreview> {
+  // Existing PCM synthesis, capped at eight seconds; no key or arbitrary URL reaches the phone.
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 12000);
+  const chunks: Buffer[] = [];
+  let length = 0;
+  const cap = VOICE_SAMPLE_RATE * 2 * 8;
+  try {
+    for await (const chunk of speech.synthesize(
+      text,
+      voiceId,
+      controller.signal,
+    )) {
+      const part = Buffer.from(chunk).subarray(0, cap - length);
+      chunks.push(part);
+      length += part.length;
+      if (length >= cap) {
+        controller.abort();
+        break;
+      }
+    }
+  } finally {
+    clearTimeout(timer);
+    controller.abort();
+  }
+  if (!length) throw Error('Voice preview unavailable');
+  const pcm = Buffer.concat(chunks).subarray(0, length - (length % 2));
+  const header = Buffer.alloc(44);
+  header.write('RIFF');
+  header.writeUInt32LE(36 + pcm.length, 4);
+  header.write('WAVEfmt ', 8);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(1, 22);
+  header.writeUInt32LE(VOICE_SAMPLE_RATE, 24);
+  header.writeUInt32LE(VOICE_SAMPLE_RATE * 2, 28);
+  header.writeUInt16LE(2, 32);
+  header.writeUInt16LE(16, 34);
+  header.write('data', 36);
+  header.writeUInt32LE(pcm.length, 40);
+  return { wavBase64: Buffer.concat([header, pcm]).toString('base64') };
 }

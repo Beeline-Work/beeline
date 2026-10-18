@@ -1,9 +1,10 @@
+import { VoiceAudioMeter, VOICE_WARNING_MS } from './voice-budget.js';
 import { randomUUID } from 'node:crypto';
 import { markdownToSpeech, MarkdownSpeechStream } from './markdown-to-speech.js';
 import { AccessToken } from 'livekit-server-sdk';
 import { Room, RoomEvent, AudioStream, AudioSource, AudioFrame, LocalAudioTrack,
   TrackPublishOptions, TrackSource, TrackKind, type RemoteParticipant, type RemoteTrack } from '@livekit/rtc-node';
-import { VOICE_DATA_TOPIC, type VoiceSignal } from '@beeline/api-contract/phone';
+import { VOICE_DATA_TOPIC, type VoiceSignal, type VoiceBudget } from '@beeline/api-contract/phone';
 import type { VoiceService } from './voice-service.js';
 import { VOICE_SAMPLE_RATE, VoiceQuotaError, type VoiceAgent, type VoiceStt, type FluxEvent } from './voice-providers.js';
 
@@ -48,6 +49,10 @@ export class VoiceRoomRuntime {
   private readonly audio = new AudioSource(VOICE_SAMPLE_RATE, 1, 100);
   private readonly inputs = new Map<string, { stt?: VoiceStt; reader: ReadableStreamDefaultReader<AudioFrame>;
     track: RemoteTrack; participant: RemoteParticipant }>();
+  private readonly meters = new Map<string, VoiceAudioMeter>();
+  private readonly meterClosures = new Set<Promise<void>>();
+  private readonly budgetWarnings = new Map<string, string>();
+  private readonly budgetEnding = new Set<string>();
   private readonly recentSpeech: { text: string; until: number }[] = [];
   private readonly targets = new Map<string, string>();
   private readonly turnIndices = new Map<string, number>();
@@ -147,6 +152,8 @@ export class VoiceRoomRuntime {
     const human = participant.identity;
     if (this.inputs.get(human)?.track === track) return;
     this.stopInput(human);
+    // A new device/track needs its current countdown even within the same unit.
+    this.budgetWarnings.delete(human);
     const version = (this.inputVersions.get(human) ?? 0) + 1;
     this.inputVersions.set(human, version);
     this.turnIndices.delete(human);
@@ -155,16 +162,21 @@ export class VoiceRoomRuntime {
     const reader = new AudioStream(track, 16_000, 1).getReader();
     this.inputs.set(human, { reader, track, participant });
     let stt: VoiceStt | undefined;
+    let meter: VoiceAudioMeter | undefined;
+    const send = (data: Int16Array, capturedAt: number) => {
+      const allowed = meter?.audio(data.length / 16, capturedAt) ?? 0;
+      if (allowed > 0) stt!.send(data.subarray(0, Math.min(data.length, Math.floor(allowed * 16))));
+    };
     // Drain the SDK continuously while opening STT; retain at most two seconds.
-    const buffered: Int16Array[] = [];
+    const buffered: { data: Int16Array; at: number }[] = [];
     const pump = (async () => {
       while (!this.closed && this.inputVersions.get(human) === version) {
         const frame = await reader.read();
         if (frame.done) break;
         this.touch();
-        if (stt) stt.send(frame.value.data);
+        if (stt) send(frame.value.data, Date.now());
         else {
-          buffered.push(frame.value.data.slice());
+          buffered.push({ data: frame.value.data.slice(), at: Date.now() });
           if (buffered.length > 100) buffered.shift();
         }
       }
@@ -174,7 +186,20 @@ export class VoiceRoomRuntime {
       await this.service.access(this.roomId, human);
       if (!(await this.service.db.query(`SELECT 1 FROM voice_participants WHERE call_id=$1 AND identity_id=$2 AND left_at IS NULL AND parked_at IS NULL`,
         [this.callId, human])).rowCount) { this.stopInput(human); return; }
-      const hints = (await this.service.agents(this.roomId, human)).flatMap(agent => [agent.name, agent.handle]);
+      const [agents, budget] = await Promise.all([
+        this.service.agents(this.roomId, human), this.service.budget.read(human),
+      ]);
+      if (this.closed || this.inputVersions.get(human) !== version) return;
+      meter = new VoiceAudioMeter(this.service.budget, this.callId, this.leaseOwner, human, budget,
+        remaining => {
+          if (this.meters.get(human) !== meter) return;
+          if (!remaining) { this.stopInput(human); return; }
+          void this.enforceBudget(human, remaining).catch(() => {});
+        }, message => console.warn('[voice-budget]', message));
+      this.meters.set(human, meter);
+      void this.enforceBudget(human, budget).catch(() => {});
+      if (budget.remainingMs <= 0) { this.stopInput(human); return; }
+      const hints = agents.flatMap(agent => [agent.name, agent.handle]);
       stt = await this.service.config.stt(event => {
       if (this.inputVersions.get(human) !== version ||
           event.turn_index <= (this.turnIndices.get(human) ?? -1)) return;
@@ -227,18 +252,46 @@ export class VoiceRoomRuntime {
     if (this.closed || this.inputVersions.get(human) !== version) { stt.close(); await reader.cancel().catch(() => {}); return; }
     this.inputs.set(human, { stt, reader, track, participant });
     try {
-      for (const frame of buffered) stt.send(frame);
+      for (const frame of buffered) send(frame.data, frame.at);
       buffered.length = 0;
       await pump;
     } finally { if (this.inputs.get(human)?.stt === stt) this.stopInput(human); }
   }
   private stopInput(human: string) {
+    const meter = this.meters.get(human);
+    if (meter) {
+      this.meters.delete(human);
+      const closing = meter.close().catch(() => console.warn('[voice-budget] Final checkpoint failed'))
+        .finally(() => this.meterClosures.delete(closing));
+      this.meterClosures.add(closing);
+    }
     this.inputVersions.set(human, (this.inputVersions.get(human) ?? 0) + 1);
     this.inputSpeech.delete(human);
     const input = this.inputs.get(human);
     if (!input) return;
     this.inputs.delete(human); input.stt?.close(); void input.reader.cancel().catch(() => {});
   }
+  private async enforceBudget(human: string, budget: VoiceBudget) {
+    if (this.closed || this.budgetEnding.has(human)) return;
+    if (budget.remainingMs > VOICE_WARNING_MS) return;
+    if (budget.remainingMs > 0) {
+      const unit = budget.remainingMs >= 60_000 ? 60_000 : 1000;
+      const display = `${budget.resetAt}:${unit}:${Math.ceil(budget.remainingMs / unit)}`;
+      if (this.budgetWarnings.get(human) === display) return;
+      await this.signal({ type: 'budget', budget }, human);
+      this.budgetWarnings.set(human, display);
+      return;
+    }
+    this.budgetEnding.add(human);
+    try {
+      // Midnight can arrive while a checkpoint or delivery was in flight.
+      if ((await this.service.budget.read(human)).remainingMs > 0) return;
+      this.stopInput(human);
+      await this.signal({ type: 'budget', budget }, human).catch(() => {});
+      await this.service.leave(this.callId, human, true);
+    } finally { this.budgetEnding.delete(human); }
+  }
+
   private touch() {
     if (this.closed || this.touching || performance.now() - this.lastTouch < 5000) return;
     this.lastTouch = performance.now(); this.touching = true;
@@ -592,6 +645,7 @@ export class VoiceRoomRuntime {
     for (const turn of this.pendingTurns.values()) turn.controller.abort();
     this.pendingTurns.clear();
     for (const human of this.inputs.keys()) this.stopInput(human);
+    await Promise.allSettled([...this.meterClosures]);
     await this.room.disconnect(); await this.audio.close();
     await this.service.db.query(`UPDATE voice_calls SET runtime_until=NULL WHERE id=$1 AND runtime_owner=$2`,
       [this.callId, this.leaseOwner]);

@@ -451,6 +451,20 @@ describe('one composer', () => {
 
 
 describe('Conversation mode inside the composer', () => {
+  it('returns the composer with the daily limit message in its error slot', async () => {
+    const f = render('');
+    const props = f.renderer.root.findByType(ConversationComposer).props;
+    const error = 'Daily voice limit reached. Resets at 12:00 AM';
+    const voice = { call: null, agents: [], target: null, speaker: null, level: 0,
+      connecting: false, error, quotaExhausted: false, budgetWarning: null, warningAudio: null,
+      clearWarningAudio() {}, firstAudioMs: null, humans: 1, unaddressed: 0,
+      join: vi.fn(), end: vi.fn(), aim: vi.fn() } as VoiceCallState;
+    await act(async () => f.renderer.update(<ConversationComposer {...props} voice={voice} />));
+    expect(f.renderer.root.findAllByProps({ testID: 'voice-bar' })).toHaveLength(0);
+    expect(f.renderer.root.findByProps({ testID: 'voice-connection-error' }).props.children).toBe(error);
+    expect(f.renderer.root.findByProps({ testID: 'chat-conversation' })).toBeTruthy();
+  });
+
   it.each([
     ['connecting', true, null],
     ['connection error', false, 'TLS connection failed'],
@@ -459,7 +473,7 @@ describe('Conversation mode inside the composer', () => {
     const props = f.renderer.root.findByType(ConversationComposer).props;
     const aim = vi.fn();
     const voice = { call: null, agents: [{ pubkey: 'ruby', kind: 'agent', name: 'Ruby' }],
-      target: null, speaker: null, level: 0, connecting, error, quotaExhausted: false,
+      target: null, speaker: null, level: 0, connecting, error, quotaExhausted: false, budgetWarning: null, warningAudio: null, clearWarningAudio() {},
       firstAudioMs: null, humans: 1, unaddressed: 0, join: vi.fn(), end: vi.fn(), aim } as VoiceCallState;
     await act(async () => f.renderer.update(<ConversationComposer {...props} voice={voice} />));
     expect(f.renderer.root.findByProps({ testID: 'conversation-target-strip' })).toBeTruthy();
@@ -476,12 +490,12 @@ describe('Conversation mode inside the composer', () => {
     const props = f.renderer.root.findByType(ConversationComposer).props;
     const onAttach = vi.fn();
     const voice = { call: { id: 'call' }, agents: [], target: null, speaker, level,
-      connecting: false, error: null, quotaExhausted: false, firstAudioMs: null,
+      connecting: false, error: null, quotaExhausted: false, budgetWarning: null, warningAudio: null, clearWarningAudio() {}, firstAudioMs: null,
       join: vi.fn(), end: vi.fn(), aim: vi.fn() } as unknown as VoiceCallState;
     await act(async () => f.renderer.update(<ConversationComposer {...props} voice={voice} onAttach={onAttach} />));
     const label = f.renderer.root.findByProps({ testID: 'conversation-mode-label' });
     expect(label.props.children).toBe('Conversation mode');
-    expect(label.props.style.textAlign).toBe('right');
+    expect(Object.assign({}, ...label.props.style.filter(Boolean)).textAlign).toBe('right');
     expect(f.renderer.root.findByProps({ testID: 'conversation-target-strip' }).props.style.flexDirection).toBe('row');
     act(() => f.renderer.root.findByProps({ testID: 'chat-attach-button' }).props.onPress());
     expect(onAttach).toHaveBeenCalledOnce();
@@ -502,7 +516,7 @@ describe('Conversation mode inside the composer', () => {
       const f = render('');
       const props = f.renderer.root.findByType(ConversationComposer).props;
       const voice = { call: { id: 'call' }, agents: [{ pubkey: 'goosy', kind: 'agent', name: 'Goosy' }], target: null, speaker: null,
-        level: 0, connecting: false, error: null, quotaExhausted: false, firstAudioMs: null, humans: 1, unaddressed: 0,
+        level: 0, connecting: false, error: null, quotaExhausted: false, budgetWarning: null, warningAudio: null, clearWarningAudio() {}, firstAudioMs: null, humans: 1, unaddressed: 0,
         join: vi.fn(), end: vi.fn(), aim: vi.fn() } as unknown as VoiceCallState;
       await act(async () => f.renderer.update(<ConversationComposer {...props} voice={voice} />));
       expect(f.renderer.root.findByProps({ testID: 'conversation-mode-label' }).props.children).toBe('Conversation mode');

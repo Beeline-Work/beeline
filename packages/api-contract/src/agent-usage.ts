@@ -77,12 +77,12 @@ export function readAgentUsage(value: unknown): AgentUsage | undefined {
   };
 }
 
-export const USAGE_WINDOW_LABELS: Record<string, string> = {
+export const USAGE_WINDOW_LABELS: Record<string, string> = Object.assign(Object.create(null), {
   five_hour: '5-hour',
   seven_day: 'Weekly',
   seven_day_opus: 'Weekly Opus',
   seven_day_sonnet: 'Weekly Sonnet',
-};
+});
 export function usageTokens(n: number): string {
   return n >= 1_000_000
     ? `${Number((n / 1_000_000).toFixed(1))}M`

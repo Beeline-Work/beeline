@@ -119,7 +119,7 @@ export function freeAgentConfigFromEnv(
     model: env.BEELINE_FREE_AGENT_MODEL || 'deepseek/deepseek-v4.1-flash',
     idleSeconds: number('BEELINE_FREE_AGENT_IDLE_SECONDS', 60),
     maxPerOwner: number('BEELINE_FREE_AGENT_MAX_PER_OWNER', 3),
-    dailyTokenCap: number('BEELINE_FREE_AGENT_DAILY_TOKENS', 300_000),
+    dailyTokenCap: number('BEELINE_FREE_AGENT_DAILY_TOKENS', 1_000_000),
     lifetimeTokenCap: number('BEELINE_FREE_AGENT_LIFETIME_TOKENS', 0),
     sealSecret,
     publicOrigin: env.BEELINE_FREE_AGENT_SERVER_ORIGIN || publicOrigin,

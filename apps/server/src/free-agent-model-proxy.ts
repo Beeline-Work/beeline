@@ -169,18 +169,20 @@ const DEFAULT_OUTPUT_RESERVATION = 8_192;
 const MINIMUM_CALL_TOKENS = 256;
 
 /**
- * Bound every forwarded field by UTF-8 bytes plus framing overhead. Schemas
+ * Estimate every forwarded field from UTF-8 bytes plus framing overhead. Schemas
  * and tool selectors can also contribute model input, so use the forwarding
- * allowlist itself to keep reservations conservative when fields are added.
+ * allowlist itself to include new fields. DeepSeek v4.1 flash measurements gave
+ * 6.0 bytes/token for English and 4.9 for Arabic; dividing by 3 leaves margin.
+ * This is an estimate, not a tokenizer guarantee for arbitrary input.
  */
 export function promptTokenBound(body: Record<string, unknown>): number {
-  return Buffer.byteLength(JSON.stringify(forwardedFields(body)), 'utf8') + 256;
+  return Math.ceil(Buffer.byteLength(JSON.stringify(forwardedFields(body)), 'utf8') / 3) + 256;
 }
 
 /**
- * Reserve a call's worst case against the owner's allowance before it runs.
- * Serialized per owner across server instances, so concurrent calls can never
- * together spend past the daily cap (or a configured lifetime cap); the reply's output is
+ * Reserve estimated prompt tokens plus bounded output before a call runs.
+ * Serialized per owner across server instances, so concurrent reservations fit
+ * the daily cap (or a configured lifetime cap); the reply's output is
  * bounded by what remains. Returns the reservation, or the cap reached.
  */
 export async function reserveAllowance(
@@ -191,6 +193,7 @@ export async function reserveAllowance(
   promptTokens: number,
   requestedOutput: number | undefined,
   limits: FreeAgentLimits = DEFAULT_FREE_AGENT_LIMITS,
+  budgetPromptTokens = promptTokens,
 ): Promise<{ reserved: number; maxOutput: number; reservedUsd: number } | { limit: 'daily' | 'lifetime' | 'budget' | 'rate' }> {
   return database.transaction(async (db) => {
     // Every reservation takes locks in the same order across server instances.
@@ -212,7 +215,7 @@ export async function reserveAllowance(
       config.lifetimeTokenCap > 0 ? config.lifetimeTokenCap - used.lifetime : Number.POSITIVE_INFINITY;
     const room = Math.min(daily, lifetime) - promptTokens;
     if (room < MINIMUM_CALL_TOKENS) return { limit: lifetime <= daily ? 'lifetime' : 'daily' };
-    const dollarRoom = limits.dailyBudgetUsd - budget - promptTokens * limits.inputUsdPerMillion / 1_000_000;
+    const dollarRoom = limits.dailyBudgetUsd - budget - budgetPromptTokens * limits.inputUsdPerMillion / 1_000_000;
     const affordableOutput = Math.floor(dollarRoom * 1_000_000 / limits.outputUsdPerMillion);
     if (affordableOutput < MINIMUM_CALL_TOKENS) return { limit: 'budget' };
     const maxOutput = Math.floor(Math.min(
@@ -220,7 +223,7 @@ export async function reserveAllowance(
     ));
     const reserved = promptTokens + maxOutput;
     await adjustUsage(db, ownerId, now.toISOString().slice(0, 10), reserved);
-    const reservedUsd = (promptTokens * limits.inputUsdPerMillion + maxOutput * limits.outputUsdPerMillion) / 1_000_000;
+    const reservedUsd = (budgetPromptTokens * limits.inputUsdPerMillion + maxOutput * limits.outputUsdPerMillion) / 1_000_000;
     await db.query(`INSERT INTO free_agent_budget(day,usd) VALUES($1::date,$2)
       ON CONFLICT(day) DO UPDATE SET usd=free_agent_budget.usd+$2`, [day, reservedUsd]);
     await db.query(`INSERT INTO free_agent_call_rate(owner_id,minute,calls) VALUES($1,$2,1)
@@ -412,6 +415,8 @@ export async function handleFreeAgentModelRequest(
     promptTokenBound(body),
     requested.length ? Math.min(...requested) : undefined,
     limits,
+    // Keep the dollar budget's existing byte-based worst-case reservation.
+    Buffer.byteLength(JSON.stringify(forwardedFields(body)), 'utf8') + 256,
   );
   if ('limit' in reservation) {
     if (reservation.limit === 'rate') {
@@ -429,7 +434,7 @@ export async function handleFreeAgentModelRequest(
   }
   const day = now.toISOString().slice(0, 10);
   // Settle the reservation once: the reported usage when known, nothing for a
-  // call the upstream refused, and the whole reservation when a reply broke off.
+  // failed or interrupted call. Dollar settlement retains its existing policy.
   const settle = (spent: number, usd = reservation.reservedUsd) =>
     options.database.transaction(async db => {
       await db.query(`SELECT pg_advisory_xact_lock(hashtext('free-agent-global-budget'))`);
@@ -536,6 +541,7 @@ export async function handleFreeAgentModelRequest(
     const decoder = new TextDecoder();
     const usage = new StreamUsageReader();
     let whole = '';
+    let interrupted = false;
     try {
       for (;;) {
         const { done, value } = await reader.read();
@@ -546,7 +552,8 @@ export async function handleFreeAgentModelRequest(
         response.write(value);
       }
     } catch {
-      // The caller went away or the upstream broke; settle on what was reported.
+      // Refund token reservations when an interrupted reply has no reported usage.
+      interrupted = true;
     }
     let reported: Usage | undefined = usage.usage;
     if (!stream && upstream.ok) {
@@ -559,7 +566,7 @@ export async function handleFreeAgentModelRequest(
     // Settle before the reply completes, so the next request sees this one.
     await settle(
       reported ? chargedTokens(reported, limits.cachedTokenWeight)
-        : upstream.ok ? reservation.reserved : 0,
+        : upstream.ok && !interrupted && !abort.signal.aborted ? reservation.reserved : 0,
       !upstream.ok ? 0 : reported
         ? (typeof reported.cost === 'number' && Number.isFinite(reported.cost) && reported.cost >= 0
           ? reported.cost

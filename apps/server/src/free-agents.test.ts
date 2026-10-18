@@ -36,7 +36,7 @@ const TEST_FREE_AGENT_CONFIG: FreeAgentConfig = {
   model: 'deepseek/deepseek-v4-flash',
   idleSeconds: 60,
   maxPerOwner: 3,
-  dailyTokenCap: 300_000,
+  dailyTokenCap: 1_000_000,
   lifetimeTokenCap: 3_000_000,
   sealSecret: 'test-seal-secret',
   publicOrigin: 'https://server.test',

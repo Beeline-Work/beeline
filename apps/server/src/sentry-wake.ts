@@ -7,7 +7,11 @@ import { createAgentCommand } from './agent-command.js';
 import { ensureSystemIdentity } from './system-line.js';
 import { POSTGRES_LIVE_CHANNEL } from './postgres-live.js';
 
-const RUBY = 'c3dfbf8acbb4b6e9f11bd37119a5ce2f4f104257885d098d8e075c0b0c4c066b';
+export function sentryWakeAgentFromEnv(env: NodeJS.ProcessEnv = process.env): string {
+  const agentId = env.BEELINE_SENTRY_TRIAGE_AGENT_ID ?? '7eafb2e0cc049a9b3345f4322024b604358af04cb551d1fc71084ca3a99d7877';
+  if (!/^[0-9a-f]{64}$/.test(agentId)) throw new Error('BEELINE_SENTRY_TRIAGE_AGENT_ID must be an agent public key');
+  return agentId;
+}
 const TRIAGE = 'a914716f-cd6c-4663-b42a-6e1044dc2bb9';
 export const SENTRY_WAKE_SCHEMA = `
 CREATE TABLE IF NOT EXISTS sentry_wake_state (
@@ -42,7 +46,8 @@ function timestamp(value: unknown, fallback: Date): string {
 
 /** Authenticate the original bytes before parsing any provider data. */
 export async function receiveSentryWake(db: SqlDatabase, raw: Buffer,
-  headers: Record<string, string | string[] | undefined>, secret: string | undefined): Promise<number> {
+  headers: Record<string, string | string[] | undefined>, secret: string | undefined,
+  agentId = sentryWakeAgentFromEnv()): Promise<number> {
   const signature = headers['sentry-hook-signature'];
   if (!secret || typeof signature !== 'string' || !/^[a-f0-9]{64}$/i.test(signature) ||
       !timingSafeEqual(createHmac('sha256', secret).update(raw).digest(), Buffer.from(signature, 'hex'))) return 401;
@@ -84,12 +89,12 @@ export async function receiveSentryWake(db: SqlDatabase, raw: Buffer,
     await tx.query(`SELECT pg_notify($1,$2)`, [POSTGRES_LIVE_CHANNEL,
       JSON.stringify({ table: 'sentry_wake_state', operation: 'UPDATE', roomId: '' })]);
   });
-  await flushSentryWakes(db);
+  await flushSentryWakes(db, agentId);
   return 200;
 }
 
 /** The command and batch acknowledgement commit together under a cross-machine row lock. */
-export async function flushSentryWakes(db: SqlDatabase): Promise<void> {
+export async function flushSentryWakes(db: SqlDatabase, agentId = sentryWakeAgentFromEnv()): Promise<void> {
   await db.transaction(async tx => {
     const state = await tx.query(`SELECT singleton FROM sentry_wake_state WHERE singleton
       AND (last_wake_at IS NULL OR last_wake_at<=now()-interval '5 minutes') FOR UPDATE`);
@@ -101,9 +106,9 @@ export async function flushSentryWakes(db: SqlDatabase): Promise<void> {
     const digest = `${issues.rowCount} Sentry issue events\n` + issues.rows.map(row =>
       `${row.level}: ${row.title} ${row.permalink} (${row.event_count} events)`).join('\n');
     const command = await createAgentCommand(tx, {
-      roomId: TRIAGE, agentId: RUBY, sourceMessageId: null, reason: 'subscribed_event',
+      roomId: TRIAGE, agentId, sourceMessageId: null, reason: 'subscribed_event',
       privatePayload: { kind: 'lifecycle', authorId: SYSTEM_IDENTITY_ID, fromRoomId: TRIAGE,
-        text: `Triage these Sentry issues.\n${quoteOutsideData('Sentry digest', digest)}` },
+        text: `${quoteOutsideData('Sentry digest', digest)}\n\nTriage these. Dismiss noise silently. If one blocks Beeline service or needs a fix, report it to Ruby with the Sentry link and a proposed fix.` },
     });
     if (!command) return;
     await tx.query(`UPDATE sentry_wake_issues SET pending=false WHERE pending`);

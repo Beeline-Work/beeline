@@ -143,6 +143,7 @@ export interface GitHubServerHooks {
 
 export interface ServerOptions {
   sentryWakeSecret?: string;
+  sentryWakeAgentId?: string;
   sentryTelegram?: SentryTelegramConfig;
   database: SqlDatabase;
   /** CDP receiver id -> subscription signing secret, server-only. */
@@ -1481,7 +1482,7 @@ async function route(
     let raw: Buffer;
     try { raw = await bytes(request, MAX_JSON_BYTES); }
     catch { json(response, 413, { error: 'sentry_payload_too_large' }); return; }
-    const status = await receiveSentryWake(options.database, raw, request.headers, options.sentryWakeSecret);
+    const status = await receiveSentryWake(options.database, raw, request.headers, options.sentryWakeSecret, options.sentryWakeAgentId);
     json(response, status, status < 300 ? { accepted: true } : { error: 'invalid_sentry_webhook' });
     return;
   }

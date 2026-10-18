@@ -1,6 +1,6 @@
 import { captureServerError, flushServerErrors } from './sentry.js';
 import { sentryTelegramFromEnv } from './sentry-telegram.js';
-import { flushSentryWakes, nextSentryWakeAt } from './sentry-wake.js';
+import { flushSentryWakes, nextSentryWakeAt, sentryWakeAgentFromEnv } from './sentry-wake.js';
 import { randomUUID } from 'node:crypto';
 import { assertSchemaCurrent, markSchemaCurrent, migrate, migrateData, PostgresDatabase } from './database.js';
 import { retryMigrationStep } from './migration-retry.js';
@@ -373,7 +373,9 @@ async function main() {
       }
     : undefined;
   const backgroundJobs = new BackgroundJobRunner();
+  const sentryWakeAgentId = sentryWakeAgentFromEnv();
   const server = createBeelineServer({
+    sentryWakeAgentId,
     database,
     sentryTelegram: sentryTelegramFromEnv(),
     ...(process.env.BEELINE_SENTRY_CLIENT_SECRET ? { sentryWakeSecret: process.env.BEELINE_SENTRY_CLIENT_SECRET } : {}),
@@ -449,7 +451,7 @@ async function main() {
         await backgroundJobs.run('push', () => push.runOnce());
       }
       await backgroundJobs.run('schedules', () => schedules.runOnce());
-      await backgroundJobs.run('sentry-wakes', () => flushSentryWakes(jobsDatabase));
+      await backgroundJobs.run('sentry-wakes', () => flushSentryWakes(jobsDatabase, sentryWakeAgentId));
       await backgroundJobs.run('choice-expiry', () => choiceExpiry.runOnce());
       const deadlineDue = await backgroundJobs.run('deadline-expiry', () =>
         deadlineExpiry.runOnce(newLeader));

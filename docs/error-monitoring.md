@@ -122,13 +122,19 @@ above remains independent.
 `sentry_wake_issues` stores issue metadata keyed by issue id and event type;
 retries do not re-arm an acknowledged row, and a newer occurrence updates its
 metadata. `sentry_wake_state` serializes ingestion and dispatch across server
-machines. The first issue queues a private command for Ruby in issues-triage
+machines. The first issue queues a private command for Jellybean in issues-triage
 immediately; later issues accumulate until five minutes after the previous
 command. The command and acknowledgement commit together. The existing
 background leader reads the durable deadline after restart and PostgreSQL
 notifications re-arm it after arrivals. An unavailable target keeps rows pending.
-No transcript or System message is created. Sentry text is quoted as untrusted
-data. Receiver failures return 503 without recursive Sentry capture.
+The server setting `BEELINE_SENTRY_TRIAGE_AGENT_ID` selects the recipient and
+defaults to Jellybean (`7eafb2e0cc049a9b3345f4322024b604358af04cb551d1fc71084ca3a99d7877`).
+The receiver and background worker share that setting. Set it consistently on
+all server machines and restart through the normal release process to change
+the recipient without code. Each digest ends with: "Triage these. Dismiss noise
+silently. If one blocks Beeline service or needs a fix, report it to Ruby with
+the Sentry link and a proposed fix." No transcript or System message is created.
+Sentry text is quoted as untrusted data. Receiver failures return 503 without recursive Sentry capture.
 
 Integration created 2026-10-18 UTC:
 [Beeline triage wake](https://beeline-bt.sentry.io/settings/developer-settings/beeline-triage-wake-efb45b/),
@@ -153,7 +159,7 @@ the secure transfer of the replacement to
 authorized credentials before activation. Staging must skip deployment.
 
 **Production proof remains pending the next release:** after deployment, use
-Sentry's send-test-notification action and verify Ruby receives the digest in
+Sentry's send-test-notification action and verify Jellybean receives the digest in
 issues-triage. Do not dispatch a release for this work. Local reproduction
 `sentry-no-wake` posts signed HTTP requests to the actual server and inspects
 private commands, including competing workers against isolated PostgreSQL.

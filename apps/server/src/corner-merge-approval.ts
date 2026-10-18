@@ -1,4 +1,5 @@
-import { CommandRefusalError, commanderReportAddress } from './commander.js';
+import { commanderReportAddress } from './commander.js';
+import { CommandRefusalError } from './command-refusal.js';
 import type { SqlDatabase } from './database.js';
 import { advanceCorner, lockCornerLifecycle } from './corner-lifecycle.js';
 

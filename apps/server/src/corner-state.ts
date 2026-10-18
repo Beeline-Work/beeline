@@ -6,3 +6,6 @@ export {
   type CornerStateFacts,
   type DerivedCornerState,
 } from '@beeline/api-contract/phone';
+
+/** Existing grace period for commands a helper has not claimed. */
+export const CORNER_CHECKS_BLOCKED_AFTER = '2 minutes';

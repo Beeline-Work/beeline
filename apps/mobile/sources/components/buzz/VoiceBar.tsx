@@ -1,5 +1,4 @@
 import * as React from 'react';
-import { VoicePreviewPlayer } from './VoicePreviewPlayer';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { IdentityMark } from './IdentityMark';
@@ -27,7 +26,6 @@ export function VoiceBar({ voice, testIDPrefix = 'chat' }: {
   const { theme } = useUnistyles();
   const warning = voice.endingWarning ?? voice.budgetWarning;
   return <>
-    {voice.warningAudio && <VoicePreviewPlayer source={voice.warningAudio} onEnd={voice.clearWarningAudio} onError={voice.clearWarningAudio} />}
     <View style={styles.controls} testID="voice-bar">
       <View style={styles.waveform} accessibilityLabel={voice.muted ? 'Microphone muted' : voice.speaker
         ? `${voice.agents.find(a => a.pubkey === voice.speaker)?.name ?? 'Agent'} speaking` : 'Listening'} testID="voice-waveform">

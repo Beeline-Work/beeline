@@ -18,7 +18,7 @@ import { VoiceBar } from './VoiceBar';
 it('gives a group call one filled stop glyph with the Leave call accessibility label', async () => {
   const end = vi.fn(); let renderer: any;
   await act(async () => { renderer = create(<VoiceBar voice={{ call: null, agents: [], target: null,
-    speaker: null, level: 0, connecting: false, error: null, endingWarning: undefined, quotaExhausted: false, budgetWarning: null, warningAudio: null, clearWarningAudio() {},
+    speaker: null, level: 0, connecting: false, error: null, endingWarning: undefined, quotaExhausted: false, budgetWarning: null,
     muted: false, toggleMute: async () => {}, firstAudioMs: null, humans: 2, unaddressed: 0, join: vi.fn(), end, aim: vi.fn() }} />); });
   try {
     expect(renderer.root.findAllByType('StopGlyph')[0].props.filled).toBe(true);
@@ -31,7 +31,7 @@ it('gives a group call one filled stop glyph with the Leave call accessibility l
 it('shows the exhausted daily quota inside the voice bar with an operable end mic', async () => {
   const end = vi.fn(); let renderer: any;
   await act(async () => { renderer = create(<VoiceBar voice={{ call: null, agents: [], target: null,
-    speaker: null, level: 0, connecting: false, error: VOICE_QUOTA_MESSAGE, endingWarning: undefined, quotaExhausted: true, budgetWarning: null, warningAudio: null, clearWarningAudio() {},
+    speaker: null, level: 0, connecting: false, error: VOICE_QUOTA_MESSAGE, endingWarning: undefined, quotaExhausted: true, budgetWarning: null,
     muted: false, toggleMute: async () => {}, firstAudioMs: null, humans: 1, unaddressed: 0, join: vi.fn(), end, aim: vi.fn() }} />); });
   expect(renderer.root.findByProps({ testID: 'voice-quota-error' }).props.children).toBe(VOICE_QUOTA_MESSAGE);
   expect(renderer.root.findAllByType('Waveform')).toHaveLength(0);
@@ -46,7 +46,7 @@ it('keeps a readable join error with an operable end control', async () => {
   const error = 'Conversation mode could not connect.';
   await act(async () => { renderer = create(<VoiceBar voice={{ call: null,
     agents: [{ pubkey: 'ruby', kind: 'agent', name: 'Ruby' }, { pubkey: 'goose', kind: 'agent', name: 'Goosey' }],
-    target: null, speaker: null, level: 0, connecting: false, error, endingWarning: undefined, quotaExhausted: false, budgetWarning: null, warningAudio: null, clearWarningAudio() {},
+    target: null, speaker: null, level: 0, connecting: false, error, endingWarning: undefined, quotaExhausted: false, budgetWarning: null,
     muted: false, toggleMute: async () => {}, firstAudioMs: null, humans: 1, unaddressed: 0, join: vi.fn(), end, aim }} />); });
   try {
     expect(renderer.root.findByProps({ testID: 'voice-connection-error' }).props.children).toBe(error);
@@ -67,7 +67,7 @@ it('ended call has no header pill or Join', async () => {
 it('puts the server countdown in the waveform slot in solo mode', async () => {
   let renderer: any;
   await act(async () => { renderer=create(<VoiceBar voice={{call:null,agents:[],target:null,speaker:null,
-    level:0,connecting:false,error:null,quotaExhausted:false,budgetWarning:null,warningAudio:null,clearWarningAudio(){},muted:false,toggleMute:async()=>{},firstAudioMs:null,humans:1,unaddressed:0,
+    level:0,connecting:false,error:null,quotaExhausted:false,budgetWarning:null,muted:false,toggleMute:async()=>{},firstAudioMs:null,humans:1,unaddressed:0,
     endingWarning:'Ending in 10s',join:vi.fn(),end:vi.fn(),aim:vi.fn()}} />); });
   try {
     const tip=renderer.root.findByProps({testID:'conversation-tip'});
@@ -104,8 +104,8 @@ it('header lists only humans with the viewer first and offers Join after leaving
 
 it.each([1, 2])('uses the existing warning slot for %s humans and prioritizes call ending', async humans => {
   const voice = { call: null, agents: [], target: null, speaker: null, level: 0, connecting: false,
-    error: null, muted: false, toggleMute: async () => {}, endingWarning: undefined, quotaExhausted: false, budgetWarning: '2 min left today', warningAudio: null,
-    clearWarningAudio() {}, firstAudioMs: null, humans, unaddressed: 0, join: vi.fn(), end: vi.fn(), aim: vi.fn() };
+    error: null, muted: false, toggleMute: async () => {}, endingWarning: undefined, quotaExhausted: false, budgetWarning: '2 min left today',
+     firstAudioMs: null, humans, unaddressed: 0, join: vi.fn(), end: vi.fn(), aim: vi.fn() };
   let renderer: any;
   await act(async () => { renderer = create(<VoiceBar voice={voice} />); });
   const id = 'conversation-tip';

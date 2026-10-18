@@ -1,4 +1,5 @@
 import type { AddressInfo } from 'node:net';
+import { createHmac } from 'node:crypto';
 import { afterEach, expect, it, vi } from 'vitest';
 import { authenticSentryAlert, sendSentryTelegram, sentryTelegramMessage } from './sentry-telegram.js';
 import { createBeelineServer, type ServerOptions } from './server.js';
@@ -54,6 +55,22 @@ it('serves the webhook before phone auth, rejects invalid input and returns retr
   const failed = await post(config.token, { message: 'test' });
   expect(failed.status).toBe(503);
   expect(await failed.text()).not.toContain('bot-secret');
+  expect(capture).not.toHaveBeenCalled();
+});
+
+it('returns retryable triage webhook database failures without recursively capturing a Sentry issue', async () => {
+  capture.mockClear();
+  const secret = 'isolated-triage-signing-secret';
+  const server = createBeelineServer({ database: { transaction: async () => { throw new Error('database unavailable'); } },
+    auth: {}, phone: {}, daemon: {}, live: new LiveHub(), mediaMaximumBytes: 1, sentryWakeSecret: secret } as unknown as ServerOptions);
+  servers.push(server);
+  await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
+  const raw = JSON.stringify({ action: 'created', data: { issue: { id: '123', title: 'Fixture' } } });
+  const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/sentry/webhook`, {
+    method: 'POST', body: raw, headers: { 'sentry-hook-resource': 'issue',
+      'sentry-hook-signature': createHmac('sha256', secret).update(raw).digest('hex') },
+  });
+  expect(response.status).toBe(503);
   expect(capture).not.toHaveBeenCalled();
 });
 

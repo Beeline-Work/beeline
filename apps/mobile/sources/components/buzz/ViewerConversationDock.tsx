@@ -1,6 +1,6 @@
 import { Button } from './Button';
 import React from 'react';
-import { Animated, Platform, Pressable, Text, View } from 'react-native';
+import { Animated, Platform, ScrollView, Text, View, useWindowDimensions } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { AttachmentReference } from '@beeline/buzz-client';
@@ -11,6 +11,7 @@ import { MAX_MESSAGE_ATTACHMENTS, pickedPhotoAttachments, type PickedChatAttachm
 import { COMPOSER_SINGLE_LINE_INPUT_HEIGHT, ConversationComposer, type DictatedSend } from '@/components/buzz/ConversationComposer';
 import { TranscriptReference, ViewerConversationRing } from './TranscriptReference';
 import { AttachmentPickerSheet } from './AttachmentPickerSheet';
+import { MonoMarkdown } from './MonoMarkdown';
 
 type Entry = { id: string; speaker: string; text: string; context?: string };
 
@@ -26,6 +27,14 @@ export function ViewerConversationDock({
   captureScreen?: () => Promise<string | null>;
 }) {
   const insets = useSafeAreaInsets();
+  const { height: windowHeight } = useWindowDimensions();
+  const transcriptScroll = React.useRef<ScrollView>(null);
+  const scrollToNewest = () => {
+    const scroll = () => transcriptScroll.current?.scrollToEnd({ animated: false });
+    // Native layout commits after the content-size callback; web layout is already available.
+    if (Platform.OS === 'web') scroll();
+    else requestAnimationFrame(scroll);
+  };
   const conversation = React.useSyncExternalStore(
     subscribeViewerConversation,
     () => currentViewerConversation(roomId),
@@ -158,20 +167,39 @@ export function ViewerConversationDock({
     onLayout={(event) => setAvailableWidth(event.nativeEvent.layout.width - 24)}>
       {showTranscript ? (
         <View
-      style={[styles.transcript, { bottom: bottom + pillHeight + 9 }]}
+      style={[styles.transcript, { bottom: bottom + pillHeight + 9 }, open && { maxHeight: windowHeight * 0.4 }]}
       testID="viewer-conversation-transcript"
     >
           <Text style={styles.transcriptHeading}>Recent conversation · {currentAgent ?? 'agent'}</Text>
-          {recent.map((entry) => (
-            <View key={entry.id} style={styles.transcriptEntry}>
-              <Text style={styles.transcriptSpeaker}>{entry.speaker}</Text>
-              <Text numberOfLines={open ? undefined : 2} style={styles.transcriptText}>{entry.text}</Text>
-              {entry.context ? (
-                <TranscriptReference viewer>{viewerContextLabel(entry.context)}</TranscriptReference>
-              ) : null}
-            </View>
-          ))}
-          {error ? <Text style={styles.error}>{error}</Text> : null}
+          {open ? (
+            <ScrollView ref={transcriptScroll} style={styles.transcriptScroll}
+              testID="viewer-conversation-scroll" keyboardShouldPersistTaps="handled"
+              onLayout={scrollToNewest} onContentSizeChange={scrollToNewest}>
+              {recent.map((entry) => (
+                <View key={entry.id} style={styles.transcriptEntry}>
+                  <Text style={styles.transcriptSpeaker}>{entry.speaker}</Text>
+                  <MonoMarkdown markdown={entry.text} textStyle={styles.transcriptText} />
+                  {entry.context ? (
+                    <TranscriptReference viewer>{viewerContextLabel(entry.context)}</TranscriptReference>
+                  ) : null}
+                </View>
+              ))}
+              {error ? <Text style={styles.error}>{error}</Text> : null}
+            </ScrollView>
+          ) : (
+            <>
+              {recent.map((entry) => (
+                <View key={entry.id} style={styles.transcriptEntry}>
+                  <Text style={styles.transcriptSpeaker}>{entry.speaker}</Text>
+                  <Text numberOfLines={2} style={styles.transcriptText}>{entry.text}</Text>
+                  {entry.context ? (
+                    <TranscriptReference viewer>{viewerContextLabel(entry.context)}</TranscriptReference>
+                  ) : null}
+                </View>
+              ))}
+              {error ? <Text style={styles.error}>{error}</Text> : null}
+            </>
+          )}
         </View>
       ) : null}
       <Animated.View style={[styles.pill, { width, bottom }]} testID="viewer-conversation-pill"
@@ -245,6 +273,7 @@ const styles = StyleSheet.create((theme) => ({
   transcript: { position: 'absolute', left: 16, right: 16, padding: theme.buzz.space.md, borderRadius: 10,
     borderWidth: 1, borderColor: theme.buzz.borderStrong,
     backgroundColor: withAlpha(theme.buzz.bgRaised, 0.8) },
+  transcriptScroll: { flexShrink: 1, minHeight: 0 },
   transcriptHeading: { ...theme.buzz.type.machine, color: theme.buzz.ledgerQuiet, marginBottom: theme.buzz.space.sm },
   transcriptEntry: { marginTop: 4 },
   transcriptSpeaker: { ...theme.buzz.type.machine, color: theme.buzz.accent },

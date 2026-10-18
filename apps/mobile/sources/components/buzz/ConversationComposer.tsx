@@ -337,7 +337,7 @@ function ConversationComposerContent({
   // tap queues the next instruction.
   const showConversation = Boolean(voice) && !hasSomethingToSend && !dictationBusy;
   const sendDisabled = disabled || sendingSpeech || (!hasSomethingToSend && !isListening);
-  const dailyLimitError = voice?.error?.startsWith('Daily voice limit reached.') ? voice.error : null;
+  const dailyLimitError = voice?.error?.startsWith('Calls resume at ') ? voice.error : null;
   const conversationActive = Boolean(voice?.call || voice?.connecting || (voice?.error && !dailyLimitError));
   React.useEffect(() => {
     if (Platform.OS !== 'web' || !showConversation || conversationActive) return;

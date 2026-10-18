@@ -612,6 +612,10 @@ export class PostgresLiveListener {
     this.lastNotificationAt = Date.now();
     const payload = decodePayload(raw);
     if (!payload) return;
+    if (payload.table === 'sentry_wake_state') {
+      this.owedWake?.();
+      return;
+    }
     const pushOnly = payload.table === 'push_devices' ||
       payload.table === 'workspace_join_notifications';
     if ((payload.table === 'messages' && payload.operation !== 'DELETE') ||

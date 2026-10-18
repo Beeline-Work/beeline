@@ -1,8 +1,8 @@
-import { VoiceBudgetStore, VOICE_WARNING_MS } from './voice-budget.js';
-import { AgentVoiceService, renderVoiceAudio } from './agent-voice.js';
+import { VoiceBudgetStore } from './voice-budget.js';
+import { AgentVoiceService } from './agent-voice.js';
 import { createHmac, timingSafeEqual, randomBytes, randomUUID } from 'node:crypto';
 import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
-import { VOICE_BUDGET_WARNING, type AgentVoicePreview, type VoiceIdleState, type VoiceCall, type VoiceJoin, type RoomViewIdentity, voiceDuration } from '@beeline/api-contract/phone';
+import { type VoiceIdleState, type VoiceCall, type VoiceJoin, type RoomViewIdentity, voiceDuration } from '@beeline/api-contract/phone';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-contract/agent-access';
 import type { SqlDatabase } from './database.js';
@@ -26,7 +26,6 @@ export class VoiceService {
   readonly owner = randomUUID();
   readonly profiles: AgentVoiceService;
   readonly budget: VoiceBudgetStore;
-  private warningAudio?: Promise<AgentVoicePreview>;
   private readonly runtimes = new Map<string, Promise<VoiceRoomRuntime | undefined>>();
   private readonly rooms: RoomServiceClient;
   private readonly unsubscribe: () => void;
@@ -52,6 +51,32 @@ export class VoiceService {
          AND NOT COALESCE(r.direct_participants ? $3,false) FOR SHARE OF r,rm,wm`,
       [roomId, humanId, SYSTEM_IDENTITY_ID])).rows[0];
     if (!row) throw new Error('voice call access denied');
+  }
+
+  async workspaceId(roomId: string, db = this.db): Promise<string> {
+    const row = (await db.query<{ workspace_id: string }>('SELECT workspace_id FROM rooms WHERE id=$1', [roomId])).rows[0];
+    if (!row) throw new Error('voice room missing');
+    return row.workspace_id;
+  }
+
+  async endWorkspaceCalls(workspaceId: string) {
+    const calls = await this.db.transaction(async db => {
+      // Serialize workspace endings, and recheck the day after acquiring it.
+      await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`voice-budget:${workspaceId}`]);
+      if ((await this.budget.read(workspaceId, db)).remainingMs > 0) return [];
+      const calls = await db.query<CallRow>(`SELECT c.* FROM voice_calls c
+        JOIN rooms r ON r.id=c.room_id WHERE r.workspace_id=$1 AND c.ended_at IS NULL FOR UPDATE OF c`, [workspaceId]);
+      for (const call of calls.rows) {
+        const ended = (await db.query<CallRow>(`UPDATE voice_calls SET ended_at=now(),end_reason=$2
+          WHERE id=$1 RETURNING *`, [call.id, "Today's 60 minutes are used"])).rows[0]!;
+        await db.query('UPDATE voice_participants SET left_at=now() WHERE call_id=$1 AND left_at IS NULL', [call.id]);
+        await this.updateCard(ended, db);
+      }
+      return calls.rows;
+    });
+    // Use the same RTC/runtime cleanup as an ordinary call ending. Commit the
+    // reason first, so a client's concurrent leave cannot erase it.
+    await Promise.all(calls.map(call => this.finishEndedCall(call.id)));
   }
 
   async agents(roomId: string, humanId?: string): Promise<VoiceAgent[]> {
@@ -143,13 +168,15 @@ export class VoiceService {
 
   async join(roomId: string, humanId: string, expectedCallId?: string): Promise<VoiceJoin> {
     await this.access(roomId, humanId);
-    await this.budget.require(humanId);
+    await this.budget.require(await this.workspaceId(roomId));
     const agents = await this.agents(roomId, humanId);
     if (!agents.length) throw new Error('This conversation has no agent you can address');
     const sessionId = randomUUID();
     const row = await this.db.transaction(async db => {
       await this.access(roomId, humanId, db);
-      await this.budget.require(humanId, db);
+      const workspaceId = await this.workspaceId(roomId, db);
+      await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`voice-budget:${workspaceId}`]);
+      await this.budget.require(workspaceId, db);
       await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`voice:${roomId}`]);
       let call = (await db.query<CallRow>(`SELECT * FROM voice_calls WHERE room_id=$1 AND ended_at IS NULL FOR UPDATE`, [roomId])).rows[0];
       if (expectedCallId && call?.id !== expectedCallId) throw new Error('voice session ended');
@@ -220,27 +247,13 @@ export class VoiceService {
       AND p.session_id=$3 AND p.left_at IS NULL AND c.ended_at IS NULL`, [callId, humanId, sessionId])).rows[0];
     if (!participant) throw new Error('voice session ended');
     await this.access(participant.room_id, humanId);
-    await this.budget.require(humanId);
+    await this.budget.require(await this.workspaceId(participant.room_id));
     await this.db.query(`UPDATE voice_participants SET parked_at=NULL WHERE call_id=$1 AND identity_id=$2
       AND session_id=$3 AND left_at IS NULL`, [callId, humanId, sessionId]);
     const call = (await this.db.query<CallRow>(`SELECT * FROM voice_calls WHERE id=$1 AND ended_at IS NULL`, [callId])).rows[0];
     if (!call) throw new Error('voice session ended');
     const runtime = await this.ensureRuntime(call);
     await runtime?.resume(humanId);
-  }
-
-  async warning(callId: string, humanId: string): Promise<AgentVoicePreview> {
-    const call = (await this.db.query<{ room_id: string }>(`SELECT c.room_id FROM voice_calls c
-      JOIN voice_participants p ON p.call_id=c.id WHERE c.id=$1 AND p.identity_id=$2
-      AND p.left_at IS NULL AND c.ended_at IS NULL`, [callId, humanId])).rows[0];
-    if (!call) throw new Error('voice session ended');
-    await this.access(call.room_id, humanId);
-    if ((await this.budget.read(humanId)).remainingMs > VOICE_WARNING_MS)
-      throw new Error('Voice warning is not due');
-    // A private authenticated response, never the call's shared audio track.
-    this.warningAudio ??= this.speech().then(speech => renderVoiceAudio(speech, VOICE_BUDGET_WARNING, AURA_VOICES[0]))
-      .catch(error => { this.warningAudio = undefined; throw error; });
-    return this.warningAudio;
   }
 
   private stopToken(callId: string, humanId: string, sessionId: string): string {
@@ -267,9 +280,9 @@ export class VoiceService {
 
   async updateCard(row: CallRow, db = this.db) {
     const call = await this.view(row, db);
-    await restateSystemLine(db, row.message_id, { subject: { kind: 'system', name: 'Voice call' },
+    await restateSystemLine(db, row.message_id, { subject: { kind: 'system', name: row.end_reason && row.end_reason !== 'silence' ? 'Call' : 'Voice call' },
       verb: row.ended_at ? 'ended' : 'started',
-      ...(row.ended_at ? { consequence: voiceDuration((row.ended_at.getTime() - row.started_at.getTime()) / 1000) + (row.end_reason === 'silence' ? ' · No one spoke for 60s' : '') } : {}) },
+      ...(row.ended_at ? { consequence: voiceDuration((row.ended_at.getTime() - row.started_at.getTime()) / 1000) + (row.end_reason === 'silence' ? ' · No one spoke for 60s' : row.end_reason ? ` · ${row.end_reason}` : '') } : {}) },
       call as unknown as Record<string, unknown>);
     if (row.ended_at) await db.query(`UPDATE messages SET presentation=$2,created_at=$3 WHERE id=$1`, [row.message_id, 'system', row.ended_at]);
   }
@@ -302,12 +315,14 @@ export class VoiceService {
     if (row.ended_at && inactivity) { inactivity.ended = true; await (await this.runtimes.get(callId))?.stopCall(); }
     await (await this.runtimes.get(callId))?.countHumans().catch(() => {});
     this.live.publish({ type: 'invalidate', roomId: row.room_id, reason: 'voice-participants' });
-    if (row.ended_at) {
-      await this.rooms.deleteRoom(`beeline-voice-${callId}`).catch(() => {});
-      const runtime = this.runtimes.get(callId);
-      this.runtimes.delete(callId);
-      if (runtime) await (await runtime)?.close();
-    }
+    if (row.ended_at) await this.finishEndedCall(callId);
+  }
+
+  private async finishEndedCall(callId: string) {
+    await this.rooms.deleteRoom(`beeline-voice-${callId}`).catch(() => {});
+    const runtime = this.runtimes.get(callId);
+    this.runtimes.delete(callId);
+    if (runtime) await (await runtime)?.close();
   }
 
   ensureRuntime(row: CallRow): Promise<VoiceRoomRuntime | undefined> {

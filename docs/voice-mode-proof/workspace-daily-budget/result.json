@@ -1,0 +1,510 @@
+{
+  "inputMs": 359796,
+  "budget": {
+    "remainingMs": 0,
+    "resetAt": 1792368000000,
+    "timeZone": "UTC"
+  },
+  "peerBudget": {
+    "remainingMs": 0,
+    "resetAt": 1792368000000,
+    "timeZone": "UTC"
+  },
+  "peerSignals": [
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 119829,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 59800,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 58789,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 57790,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 56799,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 55800,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 54790,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 53790,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 52790,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 51789,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 50790,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 49789,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 48790,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 47790,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 46779,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 45779,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 44780,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 43779,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 42779,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 41780,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 40780,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 39779,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 38780,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 37778,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 36776,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 35779,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 34779,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 33779,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 32779,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 31777,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 30770,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 29769,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 28769,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 27769,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 26768,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 25769,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 24769,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 23769,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 22770,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 21770,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 20756,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 19759,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 18759,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 17760,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 16758,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 15760,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 14755,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 13759,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 12759,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 11759,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 10759,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 9999,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 8999,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 7999,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 7000,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 5989,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 4988,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 3978,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 2979,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 1977,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    },
+    {
+      "type": "budget",
+      "budget": {
+        "remainingMs": 969,
+        "resetAt": 1792368000000,
+        "timeZone": "UTC"
+      }
+    }
+  ],
+  "peerVoicedFrames": 0,
+  "peerDisconnected": true,
+  "survivors": [],
+  "callStillActive": false,
+  "ended": {
+    "text": "Call ended \u00b7 3:47 \u00b7 Today's 60 minutes are used"
+  }
+}

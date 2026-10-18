@@ -220,3 +220,10 @@ describe('provisional prose (C98)', () => {
     expect(provisional.color).toBe(groknight.ledgerQuiet);
   });
 });
+
+it('renders workspace call exhaustion through the existing System line', () => {
+  const text = "Call ended · 3:00 · Today's 60 minutes are used";
+  const renderer = render(<LedgerSystemLine id="ended-call" text={text} stamp="09:41" />);
+  expect(JSON.stringify(renderer.toJSON())).toContain(text);
+  act(() => renderer.unmount());
+});

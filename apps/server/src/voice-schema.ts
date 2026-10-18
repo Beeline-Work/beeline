@@ -27,12 +27,16 @@ CREATE TABLE IF NOT EXISTS voice_participants (
 ALTER TABLE voice_participants ADD COLUMN IF NOT EXISTS parked_at timestamptz;
 ALTER TABLE voice_participants ADD COLUMN IF NOT EXISTS session_id text NOT NULL DEFAULT '';
 CREATE INDEX IF NOT EXISTS voice_participants_identity_idx ON voice_participants(identity_id);
-CREATE TABLE IF NOT EXISTS voice_daily_usage (
-  identity_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
+DROP TABLE IF EXISTS voice_daily_usage;
+CREATE TABLE IF NOT EXISTS voice_workspace_usage (
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  -- Retain charged time even when the call or its Room is deleted.
+  call_id uuid NOT NULL,
   day_start bigint NOT NULL,
   audio int8multirange NOT NULL DEFAULT '{}',
-  PRIMARY KEY(identity_id,day_start)
+  PRIMARY KEY(workspace_id,day_start,call_id)
 );
+
 CREATE TABLE IF NOT EXISTS voice_orders (
   source_message_id text PRIMARY KEY REFERENCES messages(id) ON DELETE CASCADE,
   call_id uuid NOT NULL REFERENCES voice_calls(id) ON DELETE CASCADE,

@@ -8,17 +8,56 @@ let now = START;
 const budget = new VoiceBudgetStore(db, 180_000, () => now);
 beforeAll(async () => {
   await db.query(`CREATE TABLE voice_calls(id text PRIMARY KEY, runtime_owner text,
-    runtime_until timestamptz, ended_at timestamptz);
+    runtime_until timestamptz, ended_at timestamptz, room_id text);
     CREATE TABLE voice_participants(call_id text, identity_id text, left_at timestamptz, parked_at timestamptz);
-    CREATE TABLE voice_daily_usage(identity_id text, day_start bigint,
-      audio int8multirange NOT NULL DEFAULT '{}', PRIMARY KEY(identity_id,day_start));
-    INSERT INTO voice_calls VALUES('call','owner','2099-01-01',NULL);
+    CREATE TABLE voice_workspace_usage(workspace_id text, call_id text, day_start bigint,
+      audio int8multirange NOT NULL DEFAULT '{}', PRIMARY KEY(workspace_id,call_id,day_start));
+    CREATE TABLE rooms(id text,workspace_id text);
+    INSERT INTO rooms VALUES('room','human');
+    INSERT INTO voice_calls VALUES('call','owner','2099-01-01',NULL,'room');
     INSERT INTO voice_participants VALUES('call','human',NULL,NULL),('call','second',NULL,NULL);`);
 });
 afterAll(() => db.close());
 
+it('unions microphones within a call, adds concurrent calls, and keeps other workspaces independent', async () => {
+  await db.query('DELETE FROM voice_workspace_usage');
+  now = START + 60_000;
+  await db.query(`INSERT INTO voice_calls VALUES('other','owner','2099-01-01',NULL,'room')`);
+  try {
+    await budget.record('call', 'owner', 'human', [[START, now]]);
+    await budget.record('call', 'owner', 'human', [[START, now]]);
+    expect((await budget.read('human')).remainingMs).toBe(120_000);
+    await budget.record('other', 'owner', 'human', [[START, now]]);
+    expect((await budget.read('human')).remainingMs).toBe(60_000);
+    expect((await budget.read('another-workspace')).remainingMs).toBe(180_000);
+  } finally {
+    await db.query("DELETE FROM voice_calls WHERE id='other'");
+    await db.query('DELETE FROM voice_workspace_usage');
+  }
+});
+
+it('bounds uncommitted time to one second for the whole call with several microphones', async () => {
+  await db.query('DELETE FROM voice_workspace_usage'); now = START;
+  vi.useFakeTimers();
+  const meter = new VoiceAudioMeter(budget, 'call', 'owner', 'human', await budget.read('human'), () => {}, () => {}, () => now);
+  try {
+    for (let i = 0; i < 50; i++) {
+      now += 20;
+      expect(meter.audio(20)).toBe(20);
+      // A second live mic forwards its full PCM without charging it again.
+      if (i < 49) expect(meter.audio(20)).toBe(20);
+    }
+    now += 20;
+    expect(meter.audio(20)).toBe(0);
+    expect(meter.audio(20)).toBe(0);
+    expect((await new VoiceBudgetStore(db, 180_000, () => now).read('human')).remainingMs).toBe(180_000);
+    await meter.flush();
+    expect((await budget.read('human')).remainingMs).toBe(179_000);
+  } finally { await meter.close(); vi.useRealTimers(); }
+});
+
 it('shares one budget across overlapping devices and idempotent checkpoints, excluding the no-audio gap', async () => {
-  await db.query('DELETE FROM voice_daily_usage');
+  await db.query('DELETE FROM voice_workspace_usage');
   now = START + 70_000;
   await budget.record('call', 'owner', 'human', [[START, START + 60_000]]);
   await budget.record('call', 'owner', 'human', [[START + 30_000, START + 60_000]]);
@@ -38,7 +77,7 @@ it('retains committed usage across a new store and resets at the documented UTC 
 });
 
 it('demonstrates the abrupt-loss window and stops audio if uncommitted usage would exceed one second', async () => {
-  await db.query('DELETE FROM voice_daily_usage');
+  await db.query('DELETE FROM voice_workspace_usage');
   now = START;
   const failed = vi.fn();
   vi.useFakeTimers();
@@ -57,7 +96,7 @@ it('demonstrates the abrupt-loss window and stops audio if uncommitted usage wou
 });
 
 it('retains a failed checkpoint, pauses at the bound, retries idempotently and resumes', async () => {
-  await db.query('DELETE FROM voice_daily_usage'); now = START;
+  await db.query('DELETE FROM voice_workspace_usage'); now = START;
   vi.useFakeTimers();
   const record = vi.spyOn(budget, 'record');
   const log = vi.fn();
@@ -72,7 +111,8 @@ it('retains a failed checkpoint, pauses at the bound, retries idempotently and r
     expect((await budget.read('human')).remainingMs).toBe(179_000);
     now += 20; expect(meter.audio(20)).toBe(20);
     await meter.flush();
-    expect((await budget.read('human')).remainingMs).toBe(178_980);
+    // The mic stayed live through the 20 ms checkpoint pause.
+    expect((await budget.read('human')).remainingMs).toBe(178_960);
     expect(log.mock.calls.map(([text]) => text)).toEqual([
       'Voice accounting checkpoint failed; retrying',
       'Voice input paused at the one-second accounting checkpoint bound',
@@ -82,7 +122,7 @@ it('retains a failed checkpoint, pauses at the bound, retries idempotently and r
 });
 
 it('retries the final checkpoint after a normal leave', async () => {
-  await db.query('DELETE FROM voice_daily_usage'); now = START;
+  await db.query('DELETE FROM voice_workspace_usage'); now = START;
   const record = vi.spyOn(budget, 'record');
   const meter = new VoiceAudioMeter(budget, 'call', 'owner', 'human', await budget.read('human'), () => {}, () => {}, () => now);
   now += 200; meter.audio(200);
@@ -95,19 +135,19 @@ it('retries the final checkpoint after a normal leave', async () => {
 });
 
 it('splits audio at midnight and refuses exhausted callers until reset', async () => {
-  await db.query('DELETE FROM voice_daily_usage');
+  await db.query('DELETE FROM voice_workspace_usage');
   const midnight = voiceBudgetDay(START).resetAt;
   now = midnight + 100;
   const tiny = new VoiceBudgetStore(db, 100, () => now);
   await tiny.record('call', 'owner', 'human', [[midnight - 50, midnight + 100]]);
-  await expect(tiny.require('human')).rejects.toThrow('0 minutes');
-  expect((await db.query('SELECT day_start FROM voice_daily_usage')).rowCount).toBe(2);
+  await expect(tiny.require('human')).rejects.toThrow('Calls resume at 12:00 AM');
+  expect((await db.query('SELECT day_start FROM voice_workspace_usage')).rowCount).toBe(2);
   now += 86_400_000;
   expect((await tiny.require('human')).remainingMs).toBe(100);
 });
 
 it('restores a persisted database into a new server store and fences the previous lease owner', async () => {
-  await db.query('DELETE FROM voice_daily_usage'); now = START + 60_000;
+  await db.query('DELETE FROM voice_workspace_usage'); now = START + 60_000;
   await budget.record('call', 'owner', 'human', [[START, now]]);
   const restored = PgliteDatabase.fromSnapshot(await db.snapshot());
   try {

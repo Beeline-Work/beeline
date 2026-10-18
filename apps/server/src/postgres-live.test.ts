@@ -117,6 +117,23 @@ describe('Postgres live fanout', () => {
     vi.restoreAllMocks();
   });
 
+  it('re-arms Sentry batching on every server without publishing a Room message', async () => {
+    const live = new LiveHub();
+    const received: LiveEvent[] = [];
+    live.subscribeAll(event => received.push(event));
+    const client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    listeners.push(listener);
+    const wake = vi.fn();
+    listener.setOwedWake(wake);
+    void listener.run();
+    await eventually(() => client.listenerCount('notification') === 1);
+    await database.query(`SELECT pg_notify($1,$2)`, [POSTGRES_LIVE_CHANNEL,
+      JSON.stringify({ table: 'sentry_wake_state', operation: 'UPDATE', roomId: '' })]);
+    await eventually(() => wake.mock.calls.length === 1);
+    expect(received).toEqual([]);
+  });
+
   /** Open a corner under ROOM with one owed item that expires at `expiresAt`. */
   async function insertExpiringOwed(expiresAt: Date): Promise<void> {
     const corner = 'cccccccc-cccc-4ccc-8ccc-ccccccccccce';

@@ -100,7 +100,11 @@ function tokenSafeCut(text: string, limit: number): number {
   for (let index = cap; index > 0; index--) {
     if (/\s/.test(text[index - 1]!)) return index;
   }
-  return cap;
+  // A single token straddles the cap: wait for its end instead of slicing it.
+  for (let index = cap + 1; index <= text.length; index++) {
+    if (/\s/.test(text[index - 1]!)) return index;
+  }
+  return 0;
 }
 
 /** Deterministic speech cleanup; the written transcript is never changed. */
@@ -204,10 +208,12 @@ export class MarkdownSpeechStream {
     // A stray open bracket must not hold speech forever: release complete tokens once long enough.
     if (this.pending.length > HELD_BRACKET_LIMIT && this.brackets.length > 0) {
       const cut = tokenSafeCut(this.pending, HELD_BRACKET_LIMIT);
-      phrases.push(markdownToSpeech(this.pending.slice(0, cut), this.members));
-      this.pending = this.pending.slice(cut);
-      this.brackets = [];
-      updateBrackets(this.brackets, this.pending);
+      if (cut > 0) {
+        phrases.push(markdownToSpeech(this.pending.slice(0, cut), this.members));
+        this.pending = this.pending.slice(cut);
+        this.brackets = [];
+        updateBrackets(this.brackets, this.pending);
+      }
     }
     return phrases.filter(Boolean);
   }

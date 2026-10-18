@@ -107,26 +107,32 @@ it('Reproduction MD-TTS-1: conversational streamed replies and delayed reports s
 });
 
 it('Reproduction VOICE-IDS-7: the synthesis path never receives a leaked ID when the cap flushes mid-clause', async () => {
-  const agent = { id: 'agent', name: 'Jellybean', handle: 'jellybean', voice: 'warm' };
-  const spoken: string[] = [];
-  const answer = 'Note (' + 'word '.repeat(36) + 'a' + '1'.repeat(39) + ').';
-  const service = { owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret',
-    brain: { answer: async (_agent: unknown, _history: unknown, delta: (text: string) => void) => {
-      for (const character of answer) delta(character);
-      return { text: answer };
-    } } }, agents: vi.fn(async () => [agent]), humanCount: vi.fn(async () => 1),
-    speech: async () => ({ async *synthesize(text: string) { spoken.push(text); } }),
-    recordHuman: vi.fn(async () => 'source'), recordAnswer: vi.fn(async () => {}),
-    db: { query: vi.fn(async () => ({ rowCount: 1, rows: [] })) },
-    access: vi.fn(async () => {}), leave: vi.fn(async () => {}), runtimeClosed: vi.fn() } as unknown as VoiceService;
-  const runtime = await VoiceRoomRuntime.connect(service, 'call', 'room');
-  try {
-    await runtime.utterance('human', 'Jellybean, hello');
-    // The cap splits the parenthetical, but the ID token stays whole and is dropped.
-    expect(spoken.join('')).toBe(markdownToSpeech(answer));
-    expect(spoken.join('')).not.toContain('111');
-    console.log('VOICE-IDS-7 synthesis:', spoken);
-  } finally { await runtime.close(); }
+  const answers = [
+    'Note (' + 'word '.repeat(36) + 'a' + '1'.repeat(39) + ').',
+    // An ID longer than the cap with no whitespace inside it.
+    'Bug (' + 'a' + '1'.repeat(250) + ').',
+  ];
+  for (const answer of answers) {
+    const agent = { id: 'agent', name: 'Jellybean', handle: 'jellybean', voice: 'warm' };
+    const spoken: string[] = [];
+    const service = { owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret',
+      brain: { answer: async (_agent: unknown, _history: unknown, delta: (text: string) => void) => {
+        for (const character of answer) delta(character);
+        return { text: answer };
+      } } }, agents: vi.fn(async () => [agent]), humanCount: vi.fn(async () => 1),
+      speech: async () => ({ async *synthesize(text: string) { spoken.push(text); } }),
+      recordHuman: vi.fn(async () => 'source'), recordAnswer: vi.fn(async () => {}),
+      db: { query: vi.fn(async () => ({ rowCount: 1, rows: [] })) },
+      access: vi.fn(async () => {}), leave: vi.fn(async () => {}), runtimeClosed: vi.fn() } as unknown as VoiceService;
+    const runtime = await VoiceRoomRuntime.connect(service, 'call', 'room');
+    try {
+      await runtime.utterance('human', 'Jellybean, hello');
+      // The cap splits the parenthetical, but the ID token stays whole and is dropped.
+      expect(spoken.join('')).toBe(markdownToSpeech(answer));
+      expect(spoken.join('')).not.toContain('111');
+      console.log('VOICE-IDS-7 synthesis:', spoken);
+    } finally { await runtime.close(); }
+  }
 });
 
 it('cancels microphone input and sends a targeted quota signal when Flux rejects the handshake', async () => {

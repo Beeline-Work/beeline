@@ -158,6 +158,8 @@ it('Reproduction VOICE-IDS-7: a capped flush keeps a token that crosses the cap 
     { input: 'Note (' + 'word '.repeat(36) + 'a' + '1'.repeat(39) + ').', leak: '111' },
     // The ID starts exactly at the cap boundary (index 200), so the cap cuts at its first character.
     { input: 'Note (' + 'word '.repeat(38) + 'pad ' + 'b' + '2'.repeat(39) + ').', leak: '222' },
+    // An ID longer than the cap with no whitespace inside it: the cap must not slice it.
+    { input: 'Bug (' + 'a' + '1'.repeat(250) + ').', leak: '111' },
   ];
   for (const { input, leak } of cases) {
     const full = markdownToSpeech(input);
@@ -180,6 +182,16 @@ it('Reproduction VOICE-IDS-7: a capped flush keeps a token that crosses the cap 
       expect(phrases.filter(Boolean).join(''), `seed ${seed}`).toBe(full);
     }
   }
+  // A long ID after ordinary words is not sliced either; only the split whitespace differs.
+  const longId = 'Bug (' + 'word '.repeat(40) + 'a' + '1'.repeat(250) + ').';
+  const longFull = markdownToSpeech(longId);
+  for (let at = 0; at <= longId.length; at++) {
+    const stream = new MarkdownSpeechStream();
+    const spoken = [...stream.push(longId.slice(0, at)), ...stream.push(longId.slice(at)), stream.finish()]
+      .filter(Boolean).join('');
+    expect(spoken, `long split at ${at}`).not.toContain('111');
+    expect(spoken.replace(/\s+/g, ''), `long split at ${at}`).toBe(longFull.replace(/\s+/g, ''));
+  }
   // An ordinary word crossing the cap is retained, not split.
   const words = 'Note (' + 'word '.repeat(38) + 'wonderful).';
   for (let at = 0; at <= words.length; at++) {
@@ -188,6 +200,14 @@ it('Reproduction VOICE-IDS-7: a capped flush keeps a token that crosses the cap 
       .filter(Boolean);
     // A split would show up as `wonder` + `ful`; the intact word survives.
     expect(phrases.join(' '), `word split at ${at}`).toContain('wonderful');
+  }
+  // A word longer than the cap is retained whole too.
+  const longWord = 'Note (' + 'w'.repeat(250) + ').';
+  for (let at = 0; at <= longWord.length; at++) {
+    const stream = new MarkdownSpeechStream();
+    const phrases = [...stream.push(longWord.slice(0, at)), ...stream.push(longWord.slice(at)), stream.finish()]
+      .filter(Boolean);
+    expect(phrases.join(' '), `long word split at ${at}`).toContain('w'.repeat(250));
   }
 });
 

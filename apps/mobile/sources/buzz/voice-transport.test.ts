@@ -21,7 +21,11 @@ vi.mock('react-native', () => ({ Linking: {
 }, Platform: { OS: 'android' }, PermissionsAndroid: {
   PERMISSIONS: { RECORD_AUDIO: 'microphone' }, RESULTS: { GRANTED: 'granted' }, request: vi.fn(async () => 'granted'),
 } }));
-vi.mock('expo-modules-core', () => ({ requireNativeModule: () => native.background }));
+vi.mock('expo-modules-core', () => ({
+  EventEmitter: { prototype: { addListener: native.background.addListener } },
+  requireNativeModule: () => native.background,
+  requireOptionalNativeModule: () => native.background,
+}));
 vi.mock('livekit-client', () => ({ Room: class { constructor(options: unknown) { native.roomOptions = options; if (native.roomFailure) throw native.roomFailure; } } }));
 import { createVoiceRoom, subscribeVoiceResume, routeVoiceResumeNotification } from './voice-transport.native';
 

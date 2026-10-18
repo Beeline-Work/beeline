@@ -77,6 +77,23 @@ describe('first-silence notice', () => {
     await database.close();
   });
 
+  it('harness-node-missing-path: writes an actionable Room row from a failed daemon receipt', async () => {
+    const requestId = 'f'.repeat(64);
+    await ask(database, requestId);
+    await new DaemonService(database, new LiveHub()).execute('postAgentTurnReceipt', {
+      roomId: ROOM,
+      requestId,
+      generationId: 'g1',
+      status: 'failed',
+      reason: "runtime_exited: ACP agent /nvm/bin/codex-acp exited code=127: env: node: No such file or directory",
+      reasonKind: 'hiccup',
+    }, AGENT);
+    const row = await failureLine(database, requestId);
+    expect(row?.text).toContain("@candy could not answer · it couldn't start: the background service can't find Node");
+    expect(row?.text).toContain('`beeline connect`');
+    expect(row?.text).not.toContain('runtime_exited');
+  });
+
   it('reopens a hiccup command and phrases the restart remedy', async () => {
     const requestId = '1'.repeat(64);
     const command = await ask(database, requestId);

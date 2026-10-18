@@ -1283,6 +1283,7 @@ export class MonolithRoomTurnLoop {
     );
     const clientOptions: ConstructorParameters<typeof AcpClient>[0] = {
       agentCommand: spawnCommand.command,
+      harnessCommand: selectedCommand,
       agentArgs: spawnCommand.args,
       agentEnv,
       agentCwd: this.options.cwd,

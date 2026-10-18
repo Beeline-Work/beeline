@@ -1,4 +1,5 @@
 import { CornerAccessDatabase } from './corner-access-database.js';
+import { CORNER_CHECKS_BLOCKED_AFTER } from './corner-state.js';
 import { lockCommanderWakes, refreshWakeDigests } from './commander-wakes.js';
 import { agentMachineOfflineSql } from './machine-offline.js';
 import { commandOrder, reportToCommander } from './commander.js';
@@ -989,7 +990,7 @@ export const CORNER_MERGE_YES_CARD_TYPE = 'corner-merge-yes';
  * the server through the GitHub webhook, which can land a little after the
  * turn itself settles.
  */
-export const CORNER_CHECKS_BLOCKED_AFTER = '2 minutes';
+export { CORNER_CHECKS_BLOCKED_AFTER } from './corner-state.js';
 
 /**
  * How long a failing head may keep a check pending, with no new check result,

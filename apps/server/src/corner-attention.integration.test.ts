@@ -524,3 +524,34 @@ it.each(['pending','active'] as const)('Reproduction idle-alert-churn: a dispatc
   expect(await commanderFlags()).toHaveLength(1);
   console.info(`Demonstrated Reproduction idle-alert-churn: ${phase} review dispatch survives settings change; list/inspect REVIEW; three churn ticks produce zero idle flags; completed review permits idle`);
 });
+
+it.each(['complete', 'failed', 'cancelled', 'unreported', 'unclaimed', 'running'])(
+  'Reproduction stuck-review-silent: %s reviewer has truthful state and one idle alert',
+  async outcome => {
+    await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,
+      [C, JSON.stringify({lifecycle:'in-review', checks:'passing', pr:{headSha:'stuck-head'}})]);
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,system_event)
+      VALUES('stuck-source',$1,$2,'Checks passed','system',$3::jsonb)`,
+      [C, COMMANDER, JSON.stringify({kind:'check-passed',object:{headSha:'stuck-head'}})]);
+    const dispatch = await createAgentCommand(db, {id:'stuck-dispatch',roomId:C,agentId:REVIEWER,
+      sourceMessageId:'stuck-source',reason:'corner_review_dispatch'});
+    expect(dispatch).toBeTruthy();
+    if (outcome === 'unclaimed') {
+      await db.query(`UPDATE agent_commands SET created_at=now()-interval '3 minutes' WHERE id='stuck-dispatch'`);
+    } else {
+      await daemon.execute('claimAgentCommand', {roomId:C,commandId:dispatch!.id,generationId:'stuck-proof'},REVIEWER);
+      if (outcome !== 'running') {
+        // A terminal receipt must outweigh a command left claimed by the ended turn.
+        await db.query(`UPDATE agent_turns SET status=$3 WHERE room_id=$1 AND agent_id=$2`,[C,REVIEWER,outcome === 'unreported' ? 'complete' : outcome]);
+        if (outcome === 'unreported') await db.query(`UPDATE agent_commands SET state='complete' WHERE id='stuck-dispatch'`);
+      }
+    }
+    const expected = outcome === 'running' ? 'review' : 'idle';
+    expect(await state()).toBe(expected);
+    expect((await phone.readCorners(ROOM,HUMAN))!.corners[0]!.state).toBe(expected);
+    await runCornerAttention(db);
+    await runCornerAttention(db);
+    expect(await commanderFlags()).toHaveLength(outcome === 'running' ? 0 : 1);
+    console.info(`Demonstrated Reproduction stuck-review-silent: ${outcome} -> list/inspect ${expected}; commander alerts=${outcome === 'running' ? 0 : 1}; repeated tick adds zero`);
+  },
+);

@@ -97,12 +97,14 @@ The Machine never holds a provider key. Pi's `beeline` provider points at
 proxy pins `BEELINE_FREE_AGENT_MODEL` (default `deepseek/deepseek-v4.1-flash`). It
 forwards to `BEELINE_FREE_AGENT_MODEL_UPSTREAM` (default OpenRouter) with
 `BEELINE_FREE_AGENT_MODEL_KEY`, which may be a Squire egress grant. Before each call it
-reserves the call's worst case (prompt bound plus a capped reply) against the
-owner's daily allowance, under a per-owner lock. Concurrent calls
-therefore cannot spend past the cap, and each reply is bounded to the room
-left. On completion it settles to the reported usage. A refused call is
-refunded, and a reply that broke off keeps its reservation (default 300K tokens
-a day). There is no lifetime cap unless `BEELINE_FREE_AGENT_LIFETIME_TOKENS` is
+reserves an estimated prompt plus a capped reply against the
+owner's daily allowance, under a per-owner lock. Concurrent reservations
+fit the cap, and each reply is bounded to the estimated room left. Actual
+usage can exceed the prompt estimate; settlement corrects the balance. On completion it settles to the reported usage.
+A refused call is
+refunded. An interrupted reply without usage releases its token reservation;
+reported usage is still charged. The default allowance is 1M tokens a day. There is no lifetime cap unless
+`BEELINE_FREE_AGENT_LIFETIME_TOKENS` is
 set. A charge
 counts uncached prompt tokens plus completion tokens plus `ceil(cached × weight)`.
 The cached weight defaults to 0.25 (configurable within 0.10–0.25).
@@ -153,9 +155,28 @@ message and provisioning/waking cannot start Machines. Queued wakes remain for
 the next UTC day. Operators must keep fallback prices at or above their pinned
 model's worst-case prices; changing models requires checking these prices.
 
-Prompt reservations count UTF-8 bytes for every allowlisted forwarded field,
-including response-format schemas and tool selectors, plus framing overhead. Remote media
-cannot be bounded this way and is refused by the free-agent proxy.
+Prompt reservations estimate tokens as `ceil(UTF-8 bytes / 3) + 256` for every
+allowlisted forwarded field, including response-format schemas and tool selectors.
+On 2026-10-18, DeepSeek v4.1 flash via OpenRouter reported 1,951 prompt tokens
+for an 11,738-byte English request (6.02 bytes/token) and 3,091 for a 15,158-byte
+Arabic request (4.90 bytes/token). Both sent 60 repetitions of a project-summary
+request, with a 16-token reply limit; full request bytes include model and output
+settings. Short four-message onboarding/checklist conversations with a read-tool
+schema measured 954 bytes / 418 tokens for English (2.28 bytes/token) and
+1,208 bytes / 455 tokens for Arabic (2.65 bytes/token). The 256-token framing
+margin covers those shorter samples; division by 3 leaves margin on the long
+samples. This is not a strict
+tokenizer bound for arbitrary text. The shared dollar budget still reserves
+using the original byte bound plus framing at configured prices. Remote media
+is refused.
+
+If actual prompt tokens exceed the estimate, overspend is the sum of positive
+prompt underestimates across admitted calls (output stays capped). Reservations
+are serialized, not the calls themselves; the process concurrency gate also
+queues already-reserved calls. There is no small fixed overspend guarantee for
+arbitrary input. The 8 MiB request ceiling, owner rate limit, turn deadline and
+shared dollar budget remain the abuse controls. Interrupted replies without
+usage may have incurred provider cost; their dollar reservations remain held.
 
 Free-agent ACP turns have a hard wall clock cap of **15 minutes**, measured from
 local command intake across prompt retries. Activity does not extend it. The

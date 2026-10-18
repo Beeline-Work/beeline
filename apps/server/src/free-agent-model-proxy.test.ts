@@ -30,7 +30,7 @@ describe('free agent model proxy', () => {
   let server: Server;
   let origin: string;
   let upstream: Array<{ url: string; authorization: string | null; body: Record<string, unknown> }>;
-  let reply: () => Response;
+  let reply: (signal?: AbortSignal | null) => Response;
   let config: FreeAgentModelProxyOptions['config'];
 
   beforeEach(async () => {
@@ -63,7 +63,7 @@ describe('free agent model proxy', () => {
         authorization: new Headers(init?.headers).get('authorization'),
         body: JSON.parse(String(init?.body)),
       });
-      return reply();
+      return reply(init?.signal);
     }) as typeof fetch;
     server = createServer((request, response) => {
       void handleFreeAgentModelRequest(request, response, new URL(request.url!, 'http://x').pathname, {
@@ -87,6 +87,26 @@ describe('free agent model proxy', () => {
       headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
       body: JSON.stringify(body),
     });
+
+  it('Reproduction free-allowance-bytes-overcount: forwards 180 KB at 123478 of 300000 tokens used', async () => {
+    config = { ...CONFIG, dailyTokenCap: 300_000, lifetimeTokenCap: 0 };
+    await db.query(`INSERT INTO free_agent_usage(owner_id,day,tokens) VALUES($1,current_date,123478)`, [OWNER]);
+    const body = { messages: [{ role: 'user', content: 'Please summarize the conversation. '.repeat(5_455) }], max_tokens: 1024 };
+    expect(Buffer.byteLength(JSON.stringify(body))).toBeGreaterThan(180_000);
+    const response = await call(body);
+    expect((await response.json()).choices[0].message.content).toBe('done');
+    expect(upstream).toHaveLength(1);
+    expect((await freeAgentAllowance(db, OWNER, new Date())).today).toBe(123_478 + 315);
+  });
+
+  it('keeps the original dollar reservation while estimating allowance tokens', async () => {
+    config = { ...CONFIG, dailyTokenCap: 1_000_000, lifetimeTokenCap: 0,
+      limits: { ...DEFAULT_FREE_AGENT_LIMITS, dailyBudgetUsd: 0.1 } };
+    const body = { messages: [{ role: 'user', content: 'Please summarize the conversation. '.repeat(5_455) }], max_tokens: 1024 };
+    expect((await (await call(body)).json()).choices[0].message.content).toBe(FREE_AGENT_BUDGET_MESSAGE);
+    expect(upstream).toEqual([]);
+    expect((await freeAgentAllowance(db, OWNER, new Date())).today).toBe(0);
+  });
 
   it('Reproduction FREE-ABUSE-1: refuses an idle copied token without upstream use or charge; a live turn passes', async () => {
     await db.query(`UPDATE agent_commands SET state='complete',completed_at=now()`);
@@ -307,7 +327,7 @@ describe('free agent model proxy', () => {
 
   it('has no lifetime cap by default: an account past 3M lifetime tokens still spends within its daily cap', async () => {
     expect(freeAgentConfigFromEnv(ENABLED_ENV, 'https://beeline.example')).toMatchObject({
-      dailyTokenCap: 300_000,
+      dailyTokenCap: 1_000_000,
       lifetimeTokenCap: 0,
     });
     await db.query(
@@ -385,6 +405,51 @@ describe('free agent model proxy', () => {
     reply = () => new Response('{"error":{"message":"busy"}}', { status: 503, headers: { 'content-type': 'application/json' } });
     expect((await call({ messages: [{ role: 'user', content: 'hi' }] })).status).toBe(503);
     expect(await freeAgentAllowance(db, OWNER, new Date())).toEqual({ today: 0, lifetime: 0 });
+  });
+
+  it('renders the default daily allowance as 1M tokens', () => {
+    const defaults = freeAgentConfigFromEnv(ENABLED_ENV, 'https://beeline.example')!;
+    expect(defaults.dailyTokenCap).toBe(1_000_000);
+    expect(allowanceMessage('daily', defaults)).toContain('(1M tokens)');
+  });
+
+  it('refunds tokens and dollars when the upstream connection fails', async () => {
+    reply = () => { throw new Error('connection reset'); };
+    const response = await call({ messages: [{ role: 'user', content: 'hi' }] });
+    expect(response.status).toBe(502);
+    await response.text();
+    expect((await freeAgentAllowance(db, OWNER, new Date())).today).toBe(0);
+    expect(Number((await db.query(`SELECT usd FROM free_agent_budget`)).rows[0]!.usd)).toBe(0);
+  });
+
+  it('releases tokens after a reply stream fails without usage', async () => {
+    reply = () => new Response(new ReadableStream({
+      start(controller) { controller.error(new Error('upstream stream reset')); },
+    }), { headers: { 'content-type': 'text/event-stream' } });
+    await (await call({ stream: true, messages: [] })).text();
+    expect((await freeAgentAllowance(db, OWNER, new Date())).today).toBe(0);
+    expect((await db.query(`SELECT detail FROM free_agent_events WHERE kind='model_usage'`)).rows)
+      .toMatchObject([{ detail: { tokens: 0 } }]);
+  });
+
+  it('releases tokens when the caller aborts an active reply without usage', async () => {
+    reply = (signal) => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"hello"}}]}\n\n'));
+        // The mock upstream fails like fetch does when its caller disconnects.
+        signal!.addEventListener('abort', () => controller.error(new Error('aborted')), { once: true });
+      },
+    }), { headers: { 'content-type': 'text/event-stream' } });
+    const abort = new AbortController();
+    const response = await fetch(`${origin}/v1/free-agents/model/chat/completions`, {
+      method: 'POST', headers: { authorization: `Bearer ${TOKEN}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ stream: true, messages: [] }), signal: abort.signal,
+    });
+    const reader = response.body!.getReader();
+    await reader.read();
+    abort.abort();
+    await reader.cancel().catch(() => undefined);
+    await vi.waitFor(async () => expect((await freeAgentAllowance(db, OWNER, new Date())).today).toBe(0));
   });
 
   it('counts tokens conservatively from partial usage', () => {

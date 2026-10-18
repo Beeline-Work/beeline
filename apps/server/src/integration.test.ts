@@ -5453,6 +5453,7 @@ describe('monolith integration', () => {
     };
     expect(view.managerSettings).toEqual({
       visibility: expect.any(String),
+      allowFixSweep: true,
       rooms: expect.any(Array),
       roomsTruncated: false,
     });

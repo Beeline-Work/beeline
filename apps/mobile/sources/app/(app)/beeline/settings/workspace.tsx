@@ -620,6 +620,27 @@ export default function WorkspaceSettings() {
             ) : null}
           </View>
 
+          <View style={styles.section}>
+            <SettingsRow
+              title="Allow fix sweep"
+              description="Allow Beeline to sweep through the data in this workspace to improve the service."
+              testID="workspace-fix-sweep"
+              toggle={{
+                value: workspaceView?.managerSettings?.allowFixSweep === true,
+                disabled: workingKey !== null || typeof workspaceView?.managerSettings?.allowFixSweep !== 'boolean',
+                onValueChange: (allowFixSweep) => {
+                  if (!communityId) return;
+                  setWorkingKey('fix-sweep');
+                  setError(null);
+                  void monolithPhoneOperation('updateWorkspace', { workspaceId: communityId, allowFixSweep })
+                    .then(() => workspaceSchedulerRef.current?.force())
+                    .catch((caught) => setError(`Could not update Allow fix sweep: ${String(caught)}`))
+                    .finally(() => setWorkingKey(null));
+                },
+              }}
+            />
+          </View>
+
           <View style={styles.section} testID="workspace-members-link">
             <SettingsRow
               chevron="right"

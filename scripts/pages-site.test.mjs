@@ -62,6 +62,8 @@ test('builds every public Pages path and preserves association and helper bytes'
       'index.html',
       'desktop-download.mjs',
       'privacy/index.html',
+      'privacy/2026-10-16.html',
+      'subprocessors/index.html',
       'terms/index.html',
       'delete-account/index.html',
       'brand/index.html',

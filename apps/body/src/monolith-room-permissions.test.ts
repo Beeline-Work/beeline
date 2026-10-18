@@ -104,7 +104,7 @@ describe('top-level Room MCP permission policy', () => {
     ).toBe('allow');
   });
 
-  it('rejects anything that is neither an MCP tool call nor a shell command', () => {
+  it('rejects anything that is neither an MCP tool call, native read/search nor a shell command', () => {
     expect(
       decide({
         toolCall: {
@@ -114,7 +114,7 @@ describe('top-level Room MCP permission policy', () => {
         },
       }),
     ).toBe('reject');
-    expect(decide({ toolCall: { kind: 'read', title: 'Read /etc/passwd' } })).toBe('reject');
+    expect(decide({ toolCall: { kind: 'read', title: 'Read /etc/passwd' } })).toBe('allow');
     expect(decide({ toolCall: { kind: 'other', title: 'WebSearch' } })).toBe('reject');
     expect(
       decide({
@@ -425,9 +425,8 @@ describe('top-level Room native permission policy', () => {
     expect(decide(CLAUDE_ACP_MCP_GIT_LOG_PERMISSION)).toBe('allow');
   });
 
-  it('still rejects native reads, writes, edits, deletes, moves, and unstructured requests', () => {
+  it('still rejects native writes, edits, deletes, moves, and unstructured requests', () => {
     const refused = [
-      CLAUDE_ACP_NATIVE_READ_TOOL_CALL,
       CLAUDE_ACP_NATIVE_WRITE_PERMISSION.toolCall,
       { kind: 'delete', title: 'Delete README.md' },
       { kind: 'move', title: 'Move README.md' },
@@ -604,6 +603,22 @@ describe('a granted host route reaches the permission matcher', () => {
       expect(mounted[route]?.env.BEELINE_RESOURCE_AUTH_FILE).toEqual(expect.any(String));
     return async (request) => (await handler!(request)) === 'allow';
   }
+
+  it('R1 approves sandbox-exposed native reads through the installed Room callback', async () => {
+    const wrapped = await capturedHandler([], true, '/usr/bin/bwrap');
+    const root = roots[roots.length - 1]!;
+    const outside = join(root, 'outside.txt');
+    await writeFile(outside, 'sandbox-exposed content');
+    const request: AcpPermissionRequest = { toolCall: {
+      ...CLAUDE_ACP_NATIVE_READ_TOOL_CALL,
+      rawInput: { file_path: outside },
+      locations: [{ path: outside }],
+    } };
+    expect(await wrapped(request)).toBe(true);
+    expect(await readFile(outside, 'utf8')).toBe('sandbox-exposed content');
+    const unwrapped = await capturedHandler([]);
+    expect(await unwrapped(request)).toBe(false);
+  });
 
   it('R1 wires the agent attachment directory into the installed Room callback', async () => {
     const allow = await capturedHandler([]);

@@ -222,10 +222,10 @@ function isAttachmentRead(request: AcpPermissionRequest, attachmentsDir?: string
 
 /**
  * The Room ACP client applies this host-owned decision fail-closed: a mounted
- * MCP tool call is approved, a shell command is approved while the OS sandbox
- * wraps this session, and native reads confined to its downloaded attachments
- * are approved. Nothing else crosses (other native reads/writes,
- * unstructured requests).
+ * MCP tool call is approved; shell commands and native read/search requests
+ * are approved while the OS sandbox wraps this session. Without the sandbox,
+ * only native reads confined to downloaded attachments are approved. Native
+ * writes/edits and unstructured requests remain refused.
  *
  * Shell is conditioned on the sandbox because the sandbox IS the Room's
  * read-only filesystem: unwrapped, `wrapAgentCommand` spawns the harness bare
@@ -250,7 +250,11 @@ export function roomPermissionDecision(
   const hostServers = options.hostServers ?? CODE_OWNED_HOST_MCP_NAMES;
   const mountedServers = options.mountedServers ?? ROOM_MOUNTED_MCP_SERVERS;
   if (isRoomMcpPermissionRequest(request, mountedServers, hostServers)) return 'allow';
-  if (!isMcpShapedPermissionRequest(request, hostServers) && isAttachmentRead(request, options.attachmentsDir)) return 'allow';
+  if (!isMcpShapedPermissionRequest(request, hostServers)) {
+    if (options.shellSandboxed) {
+      if (request.toolCall?.kind === 'read' || request.toolCall?.kind === 'search') return 'allow';
+    } else if (isAttachmentRead(request, options.attachmentsDir)) return 'allow';
+  }
   if (!options.shellSandboxed) return 'reject';
   return isRoomShellPermissionRequest(request, hostServers) ? 'allow' : 'reject';
 }

@@ -7755,13 +7755,16 @@
     "occurrences": 1
   },
   {
-    "id": "src/voice-service.ts:VoiceService.updateCard:restateSystemLine:a6fb1a13c7e355af",
+    "id": "src/voice-service.ts:VoiceService.updateCard:restateSystemLine:4a5573dff9e068bb",
     "file": "apps/server/src/voice-service.ts",
     "kind": "restateSystemLine",
-    "template": "restateSystemLine(db, row.message_id, { subject: { kind: 'system', name: 'Voice call' },\n    verb: row.ended_at ? 'ended' : 'started',\n    ...(row.ended_at ? { consequence: voiceDuration((row.ended_at.getTime() - row.started_at.getTime()) / 1000) } : {}) }, call as unknown as Record<string, unknown>)",
+    "template": "restateSystemLine(db, row.message_id, { subject: { kind: 'system', name: 'Voice call' },\n    verb: row.ended_at ? 'ended' : 'started',\n    ...(row.ended_at ? { consequence: voiceDuration((row.ended_at.getTime() - row.started_at.getTime()) / 1000) + (row.end_reason === 'silence' ? ' · No one spoke for 60s' : '') } : {}) }, call as unknown as Record<string, unknown>)",
     "literals": [
+      "' · No one spoke for 60s'",
+      "''",
       "'Voice call'",
       "'ended'",
+      "'silence'",
       "'started'",
       "'system'",
       "`SELECT i.* FROM voice_participants p JOIN identities i ON i.id=p.identity_id\n      WHERE p.call_id=$1 AND p.left_at IS NULL ORDER BY p.joined_at,i.id`"

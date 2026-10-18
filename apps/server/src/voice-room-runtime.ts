@@ -65,6 +65,7 @@ export class VoiceRoomRuntime {
   private lastActivity = performance.now();
   private lastWorkFinishedAt = 0;
   private endingDeadline: number | null = null;
+  private endingTonePlayed = false;
   private quietCheck?: ReturnType<typeof setInterval>;
   private checkingInactivity = false;
   private lastTouch = 0;
@@ -307,6 +308,7 @@ export class VoiceRoomRuntime {
       if (work) this.markCallActivity();
       if (finishedAt > this.lastWorkFinishedAt) {
         this.lastWorkFinishedAt = finishedAt;
+        this.endingTonePlayed = false;
         this.lastActivity = Math.max(this.lastActivity, performance.now() - Math.max(0, Date.now() - finishedAt));
       }
       const quietFor = performance.now() - this.lastActivity;
@@ -318,6 +320,16 @@ export class VoiceRoomRuntime {
         this.endingDeadline = null;
         await this.signal({ type: 'ending', deadline: null, serverNow: Date.now() });
       }
+      if (warning && quietFor >= 50_000 && quietFor < 60_000 && !this.endingTonePlayed) {
+        this.endingTonePlayed = true;
+        // A warning tone is not speech and must not restart the quiet window.
+        const samples = new Int16Array(Math.floor(VOICE_SAMPLE_RATE * 0.12));
+        for (let i = 0; i < samples.length; i++) {
+          const envelope = Math.sin(Math.PI * i / samples.length);
+          samples[i] = Math.round(1800 * envelope * Math.sin(2 * Math.PI * 660 * i / VOICE_SAMPLE_RATE));
+        }
+        await this.audio.captureFrame(new AudioFrame(samples, VOICE_SAMPLE_RATE, 1, samples.length));
+      }
       const inactive = () => !this.closed && !work && performance.now() - this.lastActivity >= 60_000;
       if (inactive()) await this.service.endInactive(this.callId, this.leaseOwner, inactive);
     } finally { this.checkingInactivity = false; }
@@ -325,6 +337,7 @@ export class VoiceRoomRuntime {
 
   private markCallActivity() {
     this.lastActivity = performance.now();
+    this.endingTonePlayed = false;
     if (this.endingDeadline !== null) {
       this.endingDeadline = null;
       void this.signal({ type: 'ending', deadline: null, serverNow: Date.now() }).catch(() => {});

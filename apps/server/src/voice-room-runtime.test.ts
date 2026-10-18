@@ -1680,3 +1680,20 @@ it('warns after 45 seconds and cancels the deadline on human speech or call work
     clock=160_000;await tick();expect(service.endInactive).not.toHaveBeenCalled();
   } finally {await runtime.close();now.mockRestore();}
 });
+
+it('plays one short warning tone at ten seconds left without postponing the end', async () => {
+  let clock = 0;
+  const now = vi.spyOn(performance, 'now').mockImplementation(() => clock);
+  const { service } = conversationService(2);
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  const tick = () => (runtime as any).checkInactivity();
+  try {
+    clock = 49_000; await tick(); expect(state.audio.captureFrame).not.toHaveBeenCalled();
+    clock = 50_000; await tick(); expect(state.audio.captureFrame).toHaveBeenCalledOnce();
+    clock = 51_000; await tick(); expect(state.audio.captureFrame).toHaveBeenCalledOnce();
+    clock = 60_000; await tick(); expect(service.endInactive).toHaveBeenCalledOnce();
+    service.callWorkState.mockResolvedValue({pending:false,finishedAt:Date.now()});
+    clock = 61_000; await tick();
+    clock = 112_000; await tick(); expect(state.audio.captureFrame).toHaveBeenCalledTimes(2);
+  } finally { await runtime.close(); now.mockRestore(); }
+});

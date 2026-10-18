@@ -378,3 +378,23 @@ it('renders only a trusted server deadline, counts down without ending locally, 
     await act(async () => signal(null)); expect(voice.endingWarning).toBeUndefined();
   } finally { await act(async () => renderer.unmount()); vi.useRealTimers(); }
 });
+
+it('mute stays muted through RTC recovery and unmute restores the microphone', async () => {
+  fixture.room = Object.assign(new EventEmitter(), { connect: vi.fn(async () => {}), disconnect: vi.fn(async () => {}),
+    remoteParticipants: new Map(), localParticipant: { publishData: vi.fn(async () => {}), setMicrophoneEnabled: vi.fn(async () => {}) } });
+  let voice!: ReturnType<typeof useVoiceCall>; let renderer: any;
+  function Probe() { voice = useVoiceCall(fixture.callId, true); return null; }
+  await act(async () => { renderer = create(<Probe />); });
+  try {
+    await act(async () => voice.join());
+    await act(async () => voice.toggleMute());
+    expect(voice.muted).toBe(true);
+    expect(fixture.room.localParticipant.setMicrophoneEnabled).toHaveBeenLastCalledWith(false);
+    await act(async () => fixture.room.emit('left'));
+    expect(voice.muted).toBe(true);
+    expect(fixture.room.localParticipant.setMicrophoneEnabled.mock.calls.at(-1)[0]).toBe(false);
+    await act(async () => voice.toggleMute());
+    expect(voice.muted).toBe(false);
+    expect(fixture.room.localParticipant.setMicrophoneEnabled).toHaveBeenLastCalledWith(true);
+  } finally { await act(async () => renderer.unmount()); }
+});

@@ -1198,7 +1198,7 @@ export function BuzzChatSurface({
   const viewerIsAgent = roomSurface?.viewer.identity.kind === 'agent';
   const roomVoiceAgents = useMemo(() => roomSurface?.members
     .filter(member => member.identity.kind === 'agent').map(member => member.identity) ?? [], [roomSurface?.members]);
-  const voice = useVoiceCall(decodedId, Boolean(roomSurface?.viewer.permissions.send && !viewerIsAgent && !isArchived), roomVoiceAgents);
+  const voice = useVoiceCall(decodedId, Boolean(roomSurface?.viewer.permissions.send && !viewerIsAgent && !isArchived && !isCorner && !isDirectMessage), roomVoiceAgents);
   useEffect(() => { if (voice.error && !voice.quotaExhausted) Modal.alert('Conversation mode', voice.error); }, [voice.error, voice.quotaExhausted]);
   // The SERVER's statement of who is reading, so the phone's requester test and
   // the server's own are the same comparison over the same namespace.
@@ -5664,15 +5664,8 @@ export function BuzzChatSurface({
           agentHandle={item.authorIdentity?.kind === 'agent' ? item.authorIdentity.handle : undefined} />
         );
       }
-      if (item.voiceCall) {
-        if (isDirectMessage && !item.voiceCall.endedAt) return null;
-        return (
-          <VoiceCallCard call={item.voiceCall} joined={voice.call?.id === item.voiceCall.id}
-          connecting={voice.connecting} error={voice.error}
-          agents={roomSurface?.members.filter(member => member.identity.kind === 'agent').map(member => member.identity)}
-          onJoin={() => void voice.join()} />
-        );
-      }
+      // The active call lives below the Room header; ended calls use LedgerSystemLine.
+      if (item.voiceCall && !item.voiceCall.endedAt) return null;
       if (item.choice) {
         return (
           <ChoiceCard
@@ -6296,6 +6289,12 @@ export function BuzzChatSurface({
             )}
           </View>
 
+          {!isCorner && !isDirectMessage && (() => {
+            const call = workspaceChats.find(chat => chat.room.id === decodedId)?.voiceCall;
+            return call && !call.endedAt ? <VoiceCallCard call={call} viewer={viewerPubkey}
+              joined={voice.call?.id === call.id} connecting={voice.connecting} onJoin={() => void voice.join()} /> : null;
+          })()}
+
           <RoomReviewerSurfaceNotice
             allowAutoMerge={roomRepository?.allowAutoMerge}
             canManage={canManageWorkspace}
@@ -6773,7 +6772,7 @@ export function BuzzChatSurface({
                       </View>
                     ) : null}
                     <ConversationComposer
-                      voice={roomSurface?.members.some(member => member.identity.kind === 'agent') ? voice : undefined}
+                      voice={!isCorner && !isDirectMessage && roomSurface?.members.some(member => member.identity.kind === 'agent') ? voice : undefined}
                       onStop={
                         composerAck?.stop ? () => handleStopTurn(composerAck.stop!) : undefined
                       }

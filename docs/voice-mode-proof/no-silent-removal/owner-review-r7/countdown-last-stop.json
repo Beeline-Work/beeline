@@ -1,0 +1,112 @@
+{
+  "call": {
+    "id": "aef00143-a26d-45d0-94d9-73f171c999c0",
+    "roomId": "375ebf52-b493-4982-bd6d-f3b8fe814a62",
+    "startedAt": 1792287665,
+    "startedAtMs": 1792287665654,
+    "participants": [
+      {
+        "kind": "human",
+        "name": "Alex",
+        "handle": "alex",
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ]
+  },
+  "frames": [
+    {
+      "timestamp": 1792287712.654103,
+      "secondsAfterStart": 47.00010299682617,
+      "warning": "Ending in 14s",
+      "file": "1792287712.654.png"
+    },
+    {
+      "timestamp": 1792287713.1056912,
+      "secondsAfterStart": 47.45169115066528,
+      "warning": "Ending in 14s",
+      "file": "1792287713.106.png"
+    },
+    {
+      "timestamp": 1792287713.5959244,
+      "secondsAfterStart": 47.94192433357239,
+      "warning": "Ending in 13s",
+      "file": "1792287713.596.png"
+    },
+    {
+      "timestamp": 1792287714.0649648,
+      "secondsAfterStart": 48.41096472740173,
+      "warning": "Ending in 13s",
+      "file": "1792287714.065.png"
+    },
+    {
+      "timestamp": 1792287714.5176134,
+      "secondsAfterStart": 48.86361336708069,
+      "warning": "Ending in 12s",
+      "file": "1792287714.518.png"
+    },
+    {
+      "timestamp": 1792287714.9801106,
+      "secondsAfterStart": 49.32611060142517,
+      "warning": "Ending in 12s",
+      "file": "1792287714.980.png"
+    },
+    {
+      "timestamp": 1792287715.4286923,
+      "secondsAfterStart": 49.77469229698181,
+      "warning": "Ending in 1s",
+      "file": "1792287715.429.png"
+    },
+    {
+      "timestamp": 1792287715.9218085,
+      "secondsAfterStart": 50.26780843734741,
+      "warning": "Ending in 1s",
+      "file": "1792287715.922.png"
+    },
+    {
+      "timestamp": 1792287716.3868427,
+      "secondsAfterStart": 50.732842683792114,
+      "warning": "Ending in 10s",
+      "file": "1792287716.387.png"
+    },
+    {
+      "timestamp": 1792287716.8361924,
+      "secondsAfterStart": 51.18219232559204,
+      "warning": "Ending in 10s",
+      "file": "1792287716.836.png"
+    },
+    {
+      "timestamp": 1792287717.3156548,
+      "secondsAfterStart": 51.66165471076965,
+      "warning": "Ending in 9s",
+      "file": "1792287717.316.png"
+    },
+    {
+      "timestamp": 1792287717.817015,
+      "secondsAfterStart": 52.16301488876343,
+      "warning": "Ending in 9s",
+      "file": "1792287717.817.png"
+    },
+    {
+      "timestamp": 1792287718.2961965,
+      "secondsAfterStart": 52.64219641685486,
+      "warning": "Ending in 8s",
+      "file": "1792287718.296.png"
+    },
+    {
+      "timestamp": 1792287718.7907553,
+      "secondsAfterStart": 53.1367552280426,
+      "warning": "Ending in 8s",
+      "file": "1792287718.791.png"
+    },
+    {
+      "timestamp": 1792287719.2369392,
+      "secondsAfterStart": 53.58293914794922,
+      "warning": "Ending in 8s",
+      "file": "1792287719.237.png"
+    }
+  ],
+  "captured": {
+    "timestamp": 1792287716.3868427,
+    "ocr": "9:41 EL 2 |\n\n< #Experiments Le\n\n@ Call - 0:50 - You\nstand-up.\n\na 21:30\n\nSounds good. | have the Android checks ready.\n\nS Ruby AGENT 21:31\nThe call changes are ready to walk through\ntogether.\n\n@ \u00ab Alex 21:32\n\nGreat. Sam, what did you find in the latest build?\n\na PALE 33\n\nThe Room stays open while | listen. Let\u2019s check\nthe end controls next.\n\nVoice call ended - 2:56 - No one spoke for 60s\n\na 21:37\n\n@ruby Ruby, ready?\n\nS Ruby AGENT 9\nRuby\nEnding in 10s o BB\n"
+  }
+}

@@ -9,7 +9,7 @@ function Proof() {
   const [active, setActive] = useState(false);
   const [value, setValue] = useState('');
   const voice = { call: active ? { id: 'fixture-call' } : null, agents: [], target: null,
-    speaker: null, level: 0, connecting: false, error: null, endingWarning: undefined, quotaExhausted: false, firstAudioMs: null, humans: 1, unaddressed: 0,
+    speaker: null, level: 0, connecting: false, error: null, endingWarning: undefined, quotaExhausted: false, muted: false, toggleMute: async () => {}, firstAudioMs: null, humans: 1, unaddressed: 0,
     join: async () => { joins++; setActive(true); }, end: async () => setActive(false), aim() {} } as VoiceCallState;
   return <View style={{ margin: 16 }}><ConversationComposer voice={voice} value={value} height={26}
     focused={false} disabled={false} onAttach={() => {}} onBlur={() => {}}

@@ -324,7 +324,7 @@
     "components/buzz/TurnProgressLine.tsx": ["TurnBandSlot", "TurnProgressLine", "TurnSettledLine"],
     "components/buzz/UiSizeSetting.tsx": ["UiSizeSetting"],
     "components/buzz/ViewerConversationDock.tsx": ["ViewerConversationDock"],
-    "components/buzz/VoiceBar.tsx": ["VoiceBar", "bar"],
+    "components/buzz/VoiceBar.tsx": ["VoiceBar", "VoiceAgentStrip"],
     "components/buzz/VoiceCallCard.tsx": ["VoiceCallCard"],
     "components/buzz/WalletQr.tsx": ["WalletQr"],
     "components/buzz/welcome-brand-marks.ts": [],

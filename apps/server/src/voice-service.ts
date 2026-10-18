@@ -14,7 +14,7 @@ import { VoiceRoomRuntime } from './voice-room-runtime.js';
 
 export type VoiceConfig = { url: string; apiKey: string; apiSecret: string; brain: VoiceBrain;
   speech: VoiceSpeech; stt: VoiceSttFactory };
-type CallRow = { id: string; room_id: string; message_id: string; started_at: Date; ended_at: Date | null };
+type CallRow = { id: string; room_id: string; message_id: string; started_at: Date; ended_at: Date | null; end_reason?: string | null };
 type IdentityRow = { id: string; kind: 'human' | 'agent'; name: string; handle: string | null; face_id: string | null };
 const identity = (row: IdentityRow): RoomViewIdentity => ({ pubkey: row.id, kind: row.kind,
   name: row.name, ...(row.handle ? { handle: row.handle } : {}), ...(row.face_id ? { face: row.face_id } : {}) });
@@ -237,7 +237,7 @@ export class VoiceService {
     const call = await this.view(row, db);
     await restateSystemLine(db, row.message_id, { subject: { kind: 'system', name: 'Voice call' },
       verb: row.ended_at ? 'ended' : 'started',
-      ...(row.ended_at ? { consequence: voiceDuration((row.ended_at.getTime() - row.started_at.getTime()) / 1000) } : {}) },
+      ...(row.ended_at ? { consequence: voiceDuration((row.ended_at.getTime() - row.started_at.getTime()) / 1000) + (row.end_reason === 'silence' ? ' · No one spoke for 60s' : '') } : {}) },
       call as unknown as Record<string, unknown>);
     if (row.ended_at) await db.query(`UPDATE messages SET presentation=$2 WHERE id=$1`, [row.message_id, 'system']);
   }
@@ -259,6 +259,7 @@ export class VoiceService {
         await this.rooms.removeParticipant(`beeline-voice-${callId}`, humanId).catch(() => {});
       }
       if (!(await db.query(`SELECT 1 FROM voice_participants WHERE call_id=$1 AND left_at IS NULL`, [callId])).rowCount) {
+        call.end_reason = inactivity ? 'silence' : null;
         call.ended_at = (await db.query<{ ended_at: Date }>(`UPDATE voice_calls SET ended_at=now(),end_reason=$2 WHERE id=$1 RETURNING ended_at`, [callId, inactivity ? 'silence' : null])).rows[0]!.ended_at;
       }
       await this.updateCard(call, db);

@@ -42,13 +42,16 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
   const [target, setTarget] = React.useState<string | null>(null);
   const [speaker, setSpeaker] = React.useState<string | null>(null);
   const [level, setLevel] = React.useState(0);
+  const [muted, setMuted] = React.useState(false);
+  const mutedRef = React.useRef(false);
+  const mutePending = React.useRef(false);
   const [connecting, setConnecting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [quotaExhausted, setQuotaExhausted] = React.useState(false);
   const quotaRef = React.useRef(false);
   const [firstAudioMs, setFirstAudioMs] = React.useState<number | null>(null);
   const [humans, setHumans] = React.useState(1);
-  /** Counts turns dropped because no agent was named, so the tip line can flash. */
+  /** Counts group turns that did not name or tap an agent. */
   const [unaddressed, setUnaddressed] = React.useState(0);
   const session = React.useRef<{ room: Room; callId: string; sessionId: string; closeAudio(): Promise<void> } | null>(null);
   const revision = React.useRef(0);
@@ -68,6 +71,7 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
     liveCleanup.current?.(); liveCleanup.current = null;
     const current = session.current; session.current = null;
     const cancelJoin = joiningCleanup.current; joiningCleanup.current = null;
+    mutedRef.current = false; setMuted(false);
     setEndingDeadline(null); setCall(null); setSpeaker(null); setLevel(0); setConnecting(false); setError(null);
     setJoinedAgents(null); setTarget(null); targetRef.current = null; setHumans(1);
     speakerRef.current = null;
@@ -178,7 +182,7 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
           const agentId = targetRef.current;
           if (agentId) await room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ type: 'target', agentId })),
             { reliable: true, topic: VOICE_DATA_TOPIC });
-          await room.localParticipant.setMicrophoneEnabled(!quotaRef.current, { echoCancellation: true, noiseSuppression: true, autoGainControl: false });
+          await room.localParticipant.setMicrophoneEnabled(!quotaRef.current && !mutedRef.current, { echoCancellation: true, noiseSuppression: true, autoGainControl: false });
           if (version !== revision.current) await release();
         })().catch(cause => {
           if (version !== revision.current) return;
@@ -243,7 +247,18 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
     void session.current?.room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ type: 'target', agentId, tap: true })),
       { reliable: true, topic: VOICE_DATA_TOPIC });
   }, [agents]);
-  return { endingWarning: endingSeconds === null ? undefined : `Ending in ${endingSeconds}s`, call, agents, target, speaker, level, connecting, error, quotaExhausted, firstAudioMs, humans, unaddressed, join, end, aim };
+  const toggleMute = React.useCallback(async () => {
+    const current = session.current;
+    if (!current || mutePending.current || quotaRef.current) return;
+    mutePending.current = true;
+    const next = !mutedRef.current;
+    try {
+      await current.room.localParticipant.setMicrophoneEnabled(!next);
+      if (session.current === current) { mutedRef.current = next; setMuted(next); }
+    } catch (cause) { void reportClientError('voice-join', cause); }
+    finally { mutePending.current = false; }
+  }, []);
+  return { muted, toggleMute, endingWarning: endingSeconds === null ? undefined : `Ending in ${endingSeconds}s`, call, agents, target, speaker, level, connecting, error, quotaExhausted, firstAudioMs, humans, unaddressed, join, end, aim };
 }
 
 export type VoiceCallState = ReturnType<typeof useVoiceCall>;

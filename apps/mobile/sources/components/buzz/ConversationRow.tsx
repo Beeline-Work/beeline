@@ -8,6 +8,7 @@ import Animated, {
   withTiming,
 } from 'react-native-reanimated';
 import { StyleSheet } from 'react-native-unistyles';
+import { voiceDuration } from '@beeline/api-contract/phone';
 import type { ChatListItem } from '@beeline/buzz-client';
 import {
   roomRowAttentionReason,
@@ -54,6 +55,14 @@ export function ConversationRow({
 }) {
   const name = roomRowName(item);
   const preview = roomRowPreview(item, viewer);
+  const call = item.voiceCall && !item.voiceCall.endedAt ? item.voiceCall : null;
+  const [callNow, setCallNow] = React.useState(() => Date.now());
+  React.useEffect(() => {
+    if (!call) return;
+    setCallNow(Date.now());
+    const timer = setInterval(() => setCallNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [call?.id]);
   const reason = roomRowAttentionReason(item);
   const needsYou = Boolean(reason);
   const showReason = item.agentState === 'needs-you' && reason;
@@ -133,8 +142,6 @@ export function ConversationRow({
               <Text style={styles.sigil}>{name.sigil}</Text>
               {name.name}
             </Text>
-            {item.voiceCall && !item.voiceCall.endedAt && <Text accessibilityLabel="Live Conversation mode"
-              style={styles.liveVoice} testID={`${testID}-voice-live`}>live</Text>}
           </View>
           <View style={styles.previewLine}>
             <Text
@@ -142,11 +149,12 @@ export function ConversationRow({
               style={[
                 styles.preview,
                 item.unread && !showReason && styles.unreadPreview,
-                showReason && styles.reason,
+                showReason && !call && styles.reason,
               ]}
               testID={`${testID}-preview`}
             >
-              {showReason ? (
+              {call ? <><Text style={styles.liveVoice}>●</Text> Call · {call.participants.filter(p => p.kind === 'human').sort((a, b) => Number(b.pubkey === viewer) - Number(a.pubkey === viewer))
+                .map(p => p.pubkey === viewer ? 'You' : p.name).join(', ')}</> : showReason ? (
                 showReason
               ) : (
                 <>
@@ -160,8 +168,8 @@ export function ConversationRow({
                 </>
               )}
             </Text>
-            <Text style={styles.age}>
-              {compactRelativeTime(item.latestMessage?.createdAt ?? item.room.updatedAt, now)}
+            <Text style={[styles.age, call && styles.liveVoice]} testID={`${testID}-age`}>
+              {call ? voiceDuration(callNow / 1000 - call.startedAt) : compactRelativeTime(item.latestMessage?.createdAt ?? item.room.updatedAt, now)}
             </Text>
           </View>
         </View>
@@ -187,7 +195,7 @@ export function ConversationRow({
 }
 
 const styles = StyleSheet.create((theme) => ({
-  liveVoice: { ...theme.buzz.type.meta, color: theme.buzz.accent, marginLeft: 8 },
+  liveVoice: { ...theme.buzz.type.meta, color: theme.buzz.accent },
   row: {
     minHeight: 62,
     backgroundColor: 'transparent',

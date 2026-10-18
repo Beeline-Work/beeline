@@ -24,7 +24,7 @@ function Proof() {
   const voice = { call: phase === 'ended' ? null : { id: 'proof' }, connecting: phase === 'connecting',
     agents: [{ kind: 'agent', pubkey: 'ruby', name: 'Ruby', face: null }, { kind: 'agent', pubkey: 'jellybean', name: 'Jellybean', face: null }],
     speaker: phase === 'speaking' ? 'ruby' : null, target: 'ruby', level: phase === 'silence' ? 0 : 0.4,
-    error: null, quotaExhausted: false, firstAudioMs: null, join: async () => {},
+    muted: false, toggleMute: async () => {}, humans: 2, error: null, quotaExhausted: false, firstAudioMs: null, join: async () => {},
     aim: () => {}, end: async () => changePhase('ended') } as unknown as VoiceCallState;
   return <View style={{ minHeight: 800, padding: 16, backgroundColor: theme === 'bone' ? '#F3EEE4' : '#14091A' }}>
     <Text style={{ color: theme === 'bone' ? '#171310' : '#f0f0f3', marginBottom: 24 }}>Conversation mode · {phase}</Text>
@@ -44,16 +44,16 @@ async function run() {
   for (const phase of ['silence', 'connecting', 'listening', 'speaking']) {
     setPhase(phase); await pause();
     const strip = byID('conversation-target-strip')!.getBoundingClientRect();
-    const label = byID('conversation-mode-label')!.getBoundingClientRect();
-    check(`${phase}: label right-aligned on avatar row`, Math.abs(label.right - strip.right + 8) < 2 && label.top >= strip.top && label.bottom <= strip.bottom);
-    check(`${phase}: attachment, waveform and end control visible`, Boolean(byID('chat-attach-button')) && Boolean(byID('voice-waveform')) && Boolean(byID('voice-mic')));
+    const field = byID('voice-waveform')!.getBoundingClientRect();
+    check(`${phase}: avatars above waveform, no caption`, strip.bottom <= field.top && !byID('conversation-mode-label'));
+    check(`${phase}: mute, waveform and stop visible; attachment hidden`, !byID('chat-attach-button') && Boolean(byID('chat-mic')) && Boolean(byID('voice-mic')));
   }
-  byID('chat-attach-button')!.click(); await pause();
-  check('attach opens existing picker during agent speech', Boolean(byID('attachment-picker-document')));
-  byID('attachment-picker-document')!.click(); await pause();
-  check('picked document pending during call', Boolean(byID('pending-chat-attachment-0')));
   byID('voice-mic')!.click(); await pause();
-  check('call end restores composer and retains attachment', !byID('conversation-mode-label') && Boolean(document.querySelector('textarea')) && Boolean(byID('pending-chat-attachment-0')));
+  check('call end restores normal composer', Boolean(document.querySelector('textarea')) && Boolean(byID('chat-attach-button')));
+  byID('chat-attach-button')!.click(); await pause();
+  check('attach opens existing picker after leaving', Boolean(byID('attachment-picker-document')));
+  byID('attachment-picker-document')!.click(); await pause();
+  check('picked document is pending', Boolean(byID('pending-chat-attachment-0')));
   byID('chat-send')!.click(); await pause();
   check('next message sends attachment and reuses upload', sent?.[0]?.name === 'document.txt' && uploads === 1 && !byID('pending-chat-attachment-0'));
   setPhase('speaking'); await pause();

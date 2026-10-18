@@ -29,13 +29,14 @@ const phone=new PhoneService(db,'http://10.0.2.2:18097');
 const inputs: ((event: FluxEvent) => void)[] = [];
 const operations: string[] = [];
 const microphoneFrames: number[] = [];
+let speechMs = 100;
 const replies: string[] = [], signals: unknown[] = [], observations: unknown[] = [];
 const Service: typeof VoiceService = process.env.SILENCE_PROOF_OLD === '1'
   ? (await import('../apps/server/src/' + '.silence-proof-old-service.js')).VoiceService : VoiceService;
 const live=new LiveHub();
 const service = new Service(db,live,{url:'ws://127.0.0.1:17890',apiKey:'devkey',apiSecret:'secret',
   brain:{async answer(agent, _history,onText){ replies.push(agent.name); onText('Ready.'); return {text:'Ready.',order:false}; }},
-  speech:{voices:['luna'], async *synthesize(){ const pcm = Buffer.alloc(4800); for(let i=0;i<2400;i++) pcm.writeInt16LE(Math.round(2000*Math.sin(i/8)),i*2); yield pcm; }},
+  speech:{voices:['luna'], async *synthesize(){ const pcm = Buffer.alloc(speechMs * 48); for(let i=0;i<speechMs * 24;i++) pcm.writeInt16LE(Math.round(2000*Math.sin(i/8)),i*2); yield pcm; }},
   stt:async onEvent => { inputs.push(onEvent); const index=microphoneFrames.push(0)-1; return {send(){microphoneFrames[index]!++;},close(){}}; },
 });
 const nativeHuman = process.env.SILENCE_PROOF_ANDROID_FIRST === '1' ? H : SECOND;
@@ -91,7 +92,7 @@ const server = createServer((req,res)=> { void (async()=>{
     await runtime.refresh();
   }
   else if(req.url==='/work-finish') { await db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE source_message_id=$1`,[workSource]); await runtime.refresh(); }
-  else if(req.url==='/say') { await runtime.utterance(H,body.text??'How are you doing today?'); }
+  else if(req.url==='/say') { speechMs=body.speechMs??100; await runtime.utterance(H,body.text??'How are you doing today?'); speechMs=100; }
   else if(req.url==='/partner-leave') { await service.leave(first.call.id,partner); }
   else if(req.url==='/partner-rejoin') { await connectPartner(await service.join(R,partner)); }
   else if(req.url==='/partner-drop') { await client.disconnect(); }

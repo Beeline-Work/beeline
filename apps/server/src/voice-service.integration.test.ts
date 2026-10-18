@@ -344,6 +344,8 @@ it('quiet termination puts its reason on the ended card and explicit leave omits
   await db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE state IN ('pending','claimed')`);
   expect(await service.endInactive(first.call.id, service.owner, () => true)).toBe(true);
   expect((await new PhoneService(db,'http://proof').readRoom(R,H))?.messages.find(m=>m.voiceCall?.id===first.call.id)?.voiceCall?.endReason).toBe('silence');
+  expect((await new PhoneService(db,'http://proof').readRoom(R,H))?.messages.find(m=>m.voiceCall?.id===first.call.id)?.text)
+    .toMatch(/^Voice call ended · \d+:\d{2} · No one spoke for 60s$/);
   expect(await service.idleState(first.call.id, SECOND, db, second.sessionId)).toEqual({state:'ended'});
   expect(await service.idleState(first.call.id, H, db, 'old-session')).toEqual({state:'ended'});
   const fresh = await service.join(R, H);

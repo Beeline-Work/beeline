@@ -460,7 +460,7 @@ describe('Conversation mode inside the composer', () => {
     const aim = vi.fn();
     const voice = { call: null, agents: [{ pubkey: 'ruby', kind: 'agent', name: 'Ruby' }],
       target: null, speaker: null, level: 0, connecting, error, endingWarning: undefined, quotaExhausted: false,
-      firstAudioMs: null, humans: 1, unaddressed: 0, join: vi.fn(), end: vi.fn(), aim } as VoiceCallState;
+      muted: false, toggleMute: async () => {}, firstAudioMs: null, humans: 1, unaddressed: 0, join: vi.fn(), end: vi.fn(), aim } as VoiceCallState;
     await act(async () => f.renderer.update(<ConversationComposer {...props} voice={voice} />));
     expect(f.renderer.root.findByProps({ testID: 'conversation-target-strip' })).toBeTruthy();
     act(() => f.renderer.root.findByProps({ accessibilityLabel: 'Speak to Ruby' }).props.onPress());
@@ -471,20 +471,18 @@ describe('Conversation mode inside the composer', () => {
     ['connected silence', 0, null],
     ['listening', 0.4, null],
     ['agent speaking', 0.7, 'agent'],
-  ] as const)('keeps the shell, label and attachment flow during %s', async (_state, level, speaker) => {
+  ] as const)('keeps the control slots and staged attachment during %s', async (_state, level, speaker) => {
     const f = render('');
     const props = f.renderer.root.findByType(ConversationComposer).props;
     const onAttach = vi.fn();
     const voice = { call: { id: 'call' }, agents: [], target: null, speaker, level,
-      connecting: false, error: null, endingWarning: undefined, quotaExhausted: false, firstAudioMs: null,
+      connecting: false, error: null, endingWarning: undefined, quotaExhausted: false, muted: false, toggleMute: async () => {}, firstAudioMs: null,
       join: vi.fn(), end: vi.fn(), aim: vi.fn() } as unknown as VoiceCallState;
     await act(async () => f.renderer.update(<ConversationComposer {...props} voice={voice} onAttach={onAttach} />));
-    const label = f.renderer.root.findByProps({ testID: 'conversation-mode-label' });
-    expect(label.props.children).toBe('Conversation mode');
-    expect(label.props.style.textAlign).toBe('right');
-    expect(f.renderer.root.findByProps({ testID: 'conversation-target-strip' }).props.style.flexDirection).toBe('row');
-    act(() => f.renderer.root.findByProps({ testID: 'chat-attach-button' }).props.onPress());
-    expect(onAttach).toHaveBeenCalledOnce();
+    expect(f.renderer.root.findAllByProps({ testID: 'conversation-mode-label' })).toHaveLength(0);
+    expect(f.renderer.root.findAllByProps({ testID: 'chat-attach-button' })).toHaveLength(0);
+    expect(f.renderer.root.findByProps({ testID: 'chat-mic' }).props.style.width).toBe(26);
+    expect(f.renderer.root.findByProps({ testID: 'voice-mic' }).props.style.width).toBe(26);
     const attachments = [{ uri: 'file://photo', name: 'photo.png', sizeLabel: '1 KB', mimeType: 'image/png', uploadState: 'uploaded' as const }];
     act(() => f.renderer.update(<ConversationComposer {...props} voice={voice} attachments={attachments} />));
     expect(f.renderer.root.findByProps({ testID: 'pending-chat-attachment-0' })).toBeTruthy();
@@ -496,32 +494,20 @@ describe('Conversation mode inside the composer', () => {
     expect(f.onSend).toHaveBeenCalledOnce();
   });
 
-  it('replaces the label with rotating speaking tips only when several humans are in the call', async () => {
-    vi.useFakeTimers();
-    try {
-      const f = render('');
-      const props = f.renderer.root.findByType(ConversationComposer).props;
-      const voice = { call: { id: 'call' }, agents: [{ pubkey: 'goosy', kind: 'agent', name: 'Goosy' }], target: null, speaker: null,
-        level: 0, connecting: false, error: null, endingWarning: undefined, quotaExhausted: false, firstAudioMs: null, humans: 1, unaddressed: 0,
-        join: vi.fn(), end: vi.fn(), aim: vi.fn() } as unknown as VoiceCallState;
-      await act(async () => f.renderer.update(<ConversationComposer {...props} voice={voice} />));
-      expect(f.renderer.root.findByProps({ testID: 'conversation-mode-label' }).props.children).toBe('Conversation mode');
-      expect(f.renderer.root.findAllByProps({ testID: 'conversation-tip' })).toHaveLength(0);
-      await act(async () => f.renderer.update(<ConversationComposer {...props} voice={{ ...voice, humans: 2 }} />));
-      const tip = () => f.renderer.root.findByProps({ testID: 'conversation-tip' });
-      expect(f.renderer.root.findAllByProps({ testID: 'conversation-mode-label' })).toHaveLength(0);
-      expect(tip().props.children).toBe('Start with a name: “Goosy, …”');
-      act(() => { vi.advanceTimersByTime(4_000); });
-      expect(tip().props.children).toBe('Tap an avatar to talk to it once');
-      act(() => { vi.advanceTimersByTime(4_000); });
-      expect(tip().props.children).toBe('Talk over an agent to stop it');
-      const plain = tip().props.style.flat().filter(Boolean).at(-1).color;
-      // A dropped unnamed turn returns to the name tip and highlights it briefly.
-      await act(async () => f.renderer.update(<ConversationComposer {...props} voice={{ ...voice, humans: 2, unaddressed: 1 }} />));
-      expect(tip().props.children).toBe('Start with a name: “Goosy, …”');
-      expect(tip().props.style.flat().filter(Boolean).at(-1).color).not.toBe(plain);
-      act(() => { vi.advanceTimersByTime(1_500); });
-      expect(tip().props.style.flat().filter(Boolean).at(-1).color).toBe(plain);
-    } finally { vi.useRealTimers(); }
+  it('uses the waveform slot for the countdown and keeps both controls fixed', async () => {
+    const f = render('');
+    const props = f.renderer.root.findByType(ConversationComposer).props;
+    const voice = { call: { id: 'call' }, agents: [], target: null, speaker: null, level: 0,
+      connecting: false, error: null, humans: 2, muted: false, toggleMute: vi.fn(),
+      join: vi.fn(), end: vi.fn(), aim: vi.fn() } as unknown as VoiceCallState;
+    await act(async () => f.renderer.update(<ConversationComposer {...props} voice={voice} />));
+    const controls = () => ['chat-mic', 'voice-mic'].map(testID => f.renderer.root.findByProps({testID}).props.style);
+    const before = controls();
+    await act(async () => f.renderer.update(<ConversationComposer {...props} voice={{...voice, endingWarning:'Ending in 10s'}} />));
+    expect(f.renderer.root.findByProps({testID:'conversation-tip'}).props.children).toBe('Ending in 10s');
+    expect(controls()).toEqual(before);
+    await act(async () => f.renderer.update(<ConversationComposer {...props} voice={{...voice, muted:true}} />));
+    expect(controls()).toEqual(before);
+    expect(f.renderer.root.findByProps({testID:'chat-mic'}).props.accessibilityLabel).toBe('Unmute microphone');
   });
 });

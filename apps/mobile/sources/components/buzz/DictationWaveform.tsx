@@ -33,10 +33,12 @@ export function DictationWaveform({
   level,
   live,
   testID,
+  flat = false,
 }: {
   level: number;
   live: boolean;
   testID?: string;
+  flat?: boolean;
 }) {
   const levelRef = React.useRef(level);
   levelRef.current = level;
@@ -78,7 +80,8 @@ export function DictationWaveform({
       pointerEvents="none"
       style={styles.waveform}
     >
-      <Animated.View style={[styles.strip, { transform: [{ translateX: offset }] }]} testID={testID}>
+      {flat ? <View style={styles.flat}>{Array.from({ length: WAVEFORM_BAR_COUNT }, (_, index) =>
+        <View key={index} style={[styles.barLive, styles.flatDot]} />)}</View> : <Animated.View style={[styles.strip, { transform: [{ translateX: offset }] }]} testID={testID}>
         {bars.map((bar) => (
           <View
             key={bar.index}
@@ -89,7 +92,7 @@ export function DictationWaveform({
             ]}
           />
         ))}
-      </Animated.View>
+      </Animated.View>}
     </View>
   );
 }
@@ -109,6 +112,8 @@ const styles = StyleSheet.create((theme) => ({
   // The strip starts at the field's right edge; bars are placed along it.
   strip: { position: 'absolute', top: 0, bottom: 0, left: '100%', width: 0 },
   bar: { position: 'absolute', width: BAR_WIDTH, borderRadius: 999 },
+  flat: { flexDirection: 'row', alignItems: 'center', height: FIELD_HEIGHT, gap: BAR_GAP },
+  flatDot: { width: BAR_WIDTH, height: BAR_MIN_HEIGHT, borderRadius: 999 },
   barLive: { backgroundColor: theme.buzz.accent },
   barFrozen: { backgroundColor: theme.buzz.textMuted },
 }));

@@ -1,4 +1,5 @@
 // Do not delete, disable or modify this guard or its list without lunchboxfortwo's express command.
+// Workspace ended-line wording approved by lunchboxfortwo in brief revision 1, rule 4 (message 8c3fae7b28a63868a4626d32d35cd9f8963cb18be26cd9d3b306cef8c3d5f590).
 [
   {
     "id": "src/agent-class-retirement.ts:retireAgentClasses:message-write:137f066b6c9f70c2",
@@ -4003,6 +4004,16 @@
     "occurrences": 1
   },
   {
+    "id": "src/voice-service.ts:VoiceService.endWorkspaceCalls:wrapper:e57395d36fe09c9d",
+    "file": "apps/server/src/voice-service.ts",
+    "kind": "wrapper",
+    "template": "this.updateCard(ended, db)",
+    "literals": [
+      "\"Today's 60 minutes are used\""
+    ],
+    "occurrences": 1
+  },
+  {
     "id": "src/voice-service.ts:VoiceService.join:systemLine:ccdae1724b005977",
     "file": "apps/server/src/voice-service.ts",
     "kind": "systemLine",
@@ -4044,15 +4055,18 @@
     "occurrences": 1
   },
   {
-    "id": "src/voice-service.ts:VoiceService.updateCard:restateSystemLine:a6fb1a13c7e355af",
+    "id": "src/voice-service.ts:VoiceService.updateCard:restateSystemLine:e8c0c2f2a04da268",
     "file": "apps/server/src/voice-service.ts",
     "kind": "restateSystemLine",
-    "template": "restateSystemLine(db, row.message_id, { subject: { kind: 'system', name: 'Voice call' },\n    verb: row.ended_at ? 'ended' : 'started',\n    ...(row.ended_at ? { consequence: voiceDuration((row.ended_at.getTime() - row.started_at.getTime()) / 1000) } : {}) }, call as unknown as Record<string, unknown>)",
+    "template": "restateSystemLine(db, row.message_id, { subject: { kind: 'system', name: row.end_reason ? 'Call' : 'Voice call' },\n    verb: row.ended_at ? 'ended' : 'started',\n    ...(row.ended_at ? { consequence: voiceDuration((row.ended_at.getTime() - row.started_at.getTime()) / 1000) + (row.end_reason ? ` · ${row.end_reason}` : '') } : {}) }, call as unknown as Record<string, unknown>)",
     "literals": [
+      "''",
+      "'Call'",
       "'Voice call'",
       "'ended'",
       "'started'",
-      "'system'"
+      "'system'",
+      "` · ${row.end_reason}`"
     ],
     "occurrences": 1
   },

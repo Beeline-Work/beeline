@@ -59,14 +59,14 @@ describe('agent command selection', () => {
         kind: 'claude',
         status: 'missing-adapter',
         install: {
-          command: 'beeline',
-          args: ['toolchain', 'install', 'claude'],
+          command: 'npm',
+          args: ['install', '-g', '@agentclientprotocol/claude-agent-acp@latest'],
         },
       },
       {
         kind: 'pi',
         status: 'missing-adapter',
-        install: { command: 'beeline', args: ['toolchain', 'install', 'pi'] },
+        install: { command: 'npm', args: ['install', '-g', 'pi-acp@latest'] },
       },
     ]);
     expect(detected.some((candidate) => candidate.kind === 'goose')).toBe(false);
@@ -92,7 +92,7 @@ describe('agent command selection', () => {
 
     expect(() =>
       resolveAgentCommand({ kind: 'claude', env: { HOME: home, PATH: claude.directory } }),
-    ).toThrow('beeline toolchain install claude');
+    ).toThrow('npm install -g @agentclientprotocol/claude-agent-acp@latest');
   });
 
   it("uses Goose's native ACP subcommand", async () => {
@@ -130,7 +130,7 @@ describe('agent command selection', () => {
       },
     ]);
     expect(() => resolveAgentCommand({ kind: 'opencode', env: { ...env, PATH: '' } })).toThrow(
-      'beeline toolchain install opencode',
+      'npm install -g opencode-ai',
     );
   });
 
@@ -186,7 +186,7 @@ describe('agent command selection', () => {
   it('gives an actionable install error when the Cursor Agent CLI is missing', async () => {
     const home = await hermeticHome();
     expect(() => resolveAgentCommand({ kind: 'cursor', env: { HOME: home, PATH: '' } })).toThrow(
-      'Cursor Agent CLI not found',
+      'Cursor is not installed on this machine',
     );
   });
 
@@ -247,7 +247,7 @@ describe('agent command selection', () => {
 
     expect(() =>
       resolveAgentCommand({ kind: 'pi', env: { HOME: home, PATH: pi.directory } }),
-    ).toThrow('beeline toolchain install pi');
+    ).toThrow('npm install -g pi-acp@latest');
   });
 
   it('parses and resolves a custom command without shell expansion', async () => {
@@ -331,9 +331,7 @@ describe('augmented harness lookup', () => {
     } catch (error) {
       message = (error as Error).message;
     }
-    expect(message).toContain('beeline toolchain install pi');
-    expect(message).toContain('Searched:');
-    expect(message).toContain('/usr/bin');
-    expect(message).toContain(resolve(home, '.local', 'bin'));
+    expect(message).toContain('curl -fsSL https://pi.dev/install.sh | sh');
+    expect(message).toContain('Pi is not installed on this machine (pi)');
   });
 });

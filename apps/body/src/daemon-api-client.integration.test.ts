@@ -640,8 +640,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
           launchedDaemonConfig = configPath;
           const liveRuntime = await readRuntimeRecord(configPath);
           liveRuntime.sandbox = 'off';
-          // This acceptance path deliberately serves a deterministic custom ACP
-          // process. Managed harness installation has its own clean-container proof.
+          // This service acceptance fixture deliberately uses a custom ACP executable.
           liveRuntime.agentKind = 'custom';
           await writeRuntimeRecord(liveRuntime);
           // Same layout scripts/verify-beeline-install.mjs materializes:

@@ -1,4 +1,3 @@
-import { ensureHelperToolchain } from './helper-toolchain.js';
 import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { LEGACY_ACCESS_POLICY } from './access-policy.js';
@@ -164,10 +163,8 @@ export async function stageFreeAgent(
   return { configPath: staged.configPath };
 }
 
-// Cold boots of existing Machines keep their original image and root filesystem.
-// Install the same pinned tools there before replacing the persisted command.
+// Agent programs come from the Machine image or its operator, never helper downloads.
 async function freeAgentPiCommand(env: NodeJS.ProcessEnv) {
-  await ensureHelperToolchain('pi', env);
   return resolveAgentCommand({ kind: 'pi', env });
 }
 

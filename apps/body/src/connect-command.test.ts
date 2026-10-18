@@ -327,7 +327,7 @@ describe('connect wizard', () => {
         { read: async () => undefined, save: async () => {} },
         process.env,
         async () => undefined,
-        { detect: installed('codex', 'claude'), announce: () => {} },
+        { checkProgram: () => {}, detect: installed('codex', 'claude'), announce: () => {} },
       ),
     ).resolves.toEqual({ harness: 'codex', model: 'gpt-5.4' });
     // Two questions, and neither is a name or a soul.
@@ -352,7 +352,7 @@ describe('connect wizard', () => {
       { read: async () => undefined, save: async () => {} },
       process.env,
       async () => undefined,
-      { detect: installed('codex', 'claude'), announce: () => {} },
+      { checkProgram: () => {}, detect: installed('codex', 'claude'), announce: () => {} },
     );
 
     expect(spinner.start.mock.calls).toEqual([['Checking Claude…']]);
@@ -360,7 +360,7 @@ describe('connect wizard', () => {
   });
 
   it('still asks model and effort for a Goose that already holds a provider', async () => {
-    const fixture = promptFixture(['anthropic/claude-sonnet-4.5', 'high']);
+    const fixture = promptFixture(['goose', 'anthropic/claude-sonnet-4.5', 'high']);
     const announced: string[] = [];
     const seam = catalogSeam({
       configured: {
@@ -379,7 +379,7 @@ describe('connect wizard', () => {
         keyStore,
         { OPENROUTER_API_KEY: 'sk-or-v1-envenvenvenv0' },
         verifyKey as never,
-        { detect: installed('goose'), announce: (line) => announced.push(line) },
+        { checkProgram: () => {}, detect: installed('goose'), announce: (line) => announced.push(line) },
       ),
     ).resolves.toEqual({
       harness: 'goose',
@@ -389,6 +389,7 @@ describe('connect wizard', () => {
     // Provider and key stayed facts; what the agent thinks with stayed a
     // question, asked with the harness's own settings pre-selected.
     expect(fixture.calls).toEqual([
+      'select:Choose harness:goose',
       'autocomplete:Choose model:anthropic/claude-sonnet-4.5',
       'select:Choose reasoning effort:medium',
     ]);
@@ -403,7 +404,7 @@ describe('connect wizard', () => {
   });
 
   it('re-reads the effort ladder under the model actually picked', async () => {
-    const fixture = promptFixture(['x-ai/grok-code-fast-1', 'minimal']);
+    const fixture = promptFixture(['goose', 'x-ai/grok-code-fast-1', 'minimal']);
     const seam = catalogSeam({
       configured: {
         currentValue: 'anthropic/claude-sonnet-4.5',
@@ -426,7 +427,7 @@ describe('connect wizard', () => {
         { read: async () => undefined, save: async () => {} },
         {},
         async () => undefined,
-        { detect: installed('goose'), announce: () => {} },
+        { checkProgram: () => {}, detect: installed('goose'), announce: () => {} },
       ),
     ).resolves.toEqual({
       harness: 'goose',
@@ -436,7 +437,7 @@ describe('connect wizard', () => {
     // The other model's ladder would have offered medium/high, neither of
     // which this model advertises — and an unadvertised effort is refused by
     // the session that validates it at the end of connect.
-    expect(fixture.calls[1]).toBe('select:Choose reasoning effort:low');
+    expect(fixture.calls[2]).toBe('select:Choose reasoning effort:low');
     expect(seam.requests[1]).toEqual({
       harness: 'goose',
       model: 'x-ai/grok-code-fast-1',
@@ -445,7 +446,7 @@ describe('connect wizard', () => {
   });
 
   it('re-reads a chosen Codex model before deciding whether to ask for effort', async () => {
-    const fixture = promptFixture(['gpt-5.6-sol', 'high']);
+    const fixture = promptFixture(['codex', 'gpt-5.6-sol', 'high']);
     const seam = catalogSeam({
       configured: {
         currentValue: 'gpt-5.4',
@@ -467,10 +468,11 @@ describe('connect wizard', () => {
         { read: async () => undefined, save: async () => {} },
         {},
         async () => undefined,
-        { detect: installed('codex'), announce: () => {} },
+        { checkProgram: () => {}, detect: installed('codex'), announce: () => {} },
       ),
     ).resolves.toEqual({ harness: 'codex', model: 'gpt-5.6-sol', effort: 'high' });
     expect(fixture.calls).toEqual([
+      'select:Choose harness:codex',
       'autocomplete:Choose model:gpt-5.4',
       'select:Choose reasoning effort:medium',
     ]);
@@ -482,7 +484,7 @@ describe('connect wizard', () => {
   });
 
   it('keeps the ladder in hand when the re-read fails rather than dropping the question', async () => {
-    const fixture = promptFixture(['x-ai/grok-code-fast-1', 'high']);
+    const fixture = promptFixture(['goose', 'x-ai/grok-code-fast-1', 'high']);
     const seam = catalogSeam({
       configured: {
         currentValue: 'anthropic/claude-sonnet-4.5',
@@ -499,14 +501,14 @@ describe('connect wizard', () => {
         { read: async () => undefined, save: async () => {} },
         {},
         async () => undefined,
-        { detect: installed('goose'), announce: () => {} },
+        { checkProgram: () => {}, detect: installed('goose'), announce: () => {} },
       ),
     ).resolves.toEqual({ harness: 'goose', model: 'x-ai/grok-code-fast-1', effort: 'high' });
-    expect(fixture.calls[1]).toBe('select:Choose reasoning effort:medium');
+    expect(fixture.calls[2]).toBe('select:Choose reasoning effort:medium');
   });
 
   it('asks no effort question of a harness that advertises no effort axis', async () => {
-    const fixture = promptFixture(['claude-opus-4-1']);
+    const fixture = promptFixture(['claude', 'claude-opus-4-1']);
     const seam = catalogSeam({
       configured: {
         currentValue: 'claude-opus-4-1',
@@ -521,10 +523,10 @@ describe('connect wizard', () => {
         { read: async () => undefined, save: async () => {} },
         {},
         async () => undefined,
-        { detect: installed('claude'), announce: () => {} },
+        { checkProgram: () => {}, detect: installed('claude'), announce: () => {} },
       ),
     ).resolves.toEqual({ harness: 'claude', model: 'claude-opus-4-1' });
-    expect(fixture.calls.map((call) => call.split(':', 1)[0])).toEqual(['autocomplete']);
+    expect(fixture.calls.map((call) => call.split(':', 1)[0])).toEqual(['select', 'autocomplete']);
   });
 
   it('gives an unconfigured Goose the whole provider, key and model flow', async () => {
@@ -540,7 +542,7 @@ describe('connect wizard', () => {
 
     await expect(
       collectConnectWizard(fixture.prompts, seam.load, keyStore, {}, async () => undefined, {
-        detect: installed('goose'),
+        checkProgram: () => {}, detect: installed('goose'),
         announce: (line) => announced.push(line),
       }),
     ).resolves.toEqual({
@@ -580,7 +582,7 @@ describe('connect wizard', () => {
         { read: async () => undefined, save: async () => {} },
         {},
         async () => undefined,
-        { detect: installed('goose'), announce: () => {} },
+        { checkProgram: () => {}, detect: installed('goose'), announce: () => {} },
       ),
     ).resolves.toMatchObject({ harness: 'goose', model: 'z-ai/glm-5.3-flash' });
     expect(fixture.calls.map((call) => call.split(':', 1)[0])).toEqual([
@@ -608,7 +610,7 @@ describe('connect wizard', () => {
         { read: async () => undefined, save: async () => {} },
         {},
         async () => undefined,
-        { detect: installed('codex', 'claude', 'goose'), announce: (line) => announced.push(line) },
+        { checkProgram: () => {}, detect: installed('codex', 'claude', 'goose'), announce: (line) => announced.push(line) },
       ),
     ).resolves.toEqual({ harness: 'claude', model: 'claude-opus-4-1' });
     expect(fixture.calls).toHaveLength(2);
@@ -667,7 +669,7 @@ describe('connect wizard', () => {
         { read: async () => undefined, save: async () => {} },
         process.env,
         async () => undefined,
-        { detect: installed('pi', 'goose'), announce: () => {} },
+        { checkProgram: () => {}, detect: installed('pi', 'goose'), announce: () => {} },
       ),
     ).resolves.toEqual({
       harness: 'pi',
@@ -711,7 +713,7 @@ describe('connect wizard', () => {
         keyStore,
         process.env,
         async () => undefined,
-        { detect: installed('pi', 'goose'), announce: () => {} },
+        { checkProgram: () => {}, detect: installed('pi', 'goose'), announce: () => {} },
       ),
     ).resolves.toEqual({
       harness: 'pi',
@@ -755,7 +757,7 @@ describe('connect wizard', () => {
         keyStore,
         process.env,
         async () => undefined,
-        { detect: installed('pi', 'goose'), announce: () => {} },
+        { checkProgram: () => {}, detect: installed('pi', 'goose'), announce: () => {} },
       ),
     ).resolves.toMatchObject({ apiKey: 'sk-or-v1-freshfreshfresh7' });
     expect(keyStore.save).toHaveBeenCalledWith('openrouter', 'sk-or-v1-freshfreshfresh7');
@@ -782,7 +784,7 @@ describe('connect wizard', () => {
         keyStore,
         { OPENROUTER_API_KEY: 'sk-or-v1-envenvenvenv0' },
         async () => undefined,
-        { detect: installed('pi', 'goose'), announce: () => {} },
+        { checkProgram: () => {}, detect: installed('pi', 'goose'), announce: () => {} },
       ),
     ).resolves.toMatchObject({ apiKey: 'sk-or-v1-envenvenvenv0' });
     expect(keyStore.save).not.toHaveBeenCalled();
@@ -980,7 +982,7 @@ describe('connect wizard', () => {
         { read: async () => undefined, save: async () => {} },
         process.env,
         verifyKey as never,
-        { detect: installed('goose', 'pi'), announce: () => {} },
+        { checkProgram: () => {}, detect: installed('goose', 'pi'), announce: () => {} },
       ),
     ).rejects.toThrow('Google rejected the key (400).');
     expect(verifyKey).toHaveBeenCalledWith({ provider: 'google', apiKey: 'b' });
@@ -1049,7 +1051,7 @@ describe('connect wizard', () => {
         { read: async () => undefined, save: async () => {} },
         process.env,
         async () => undefined,
-        { detect: installed('cursor'), announce: (line) => announced.push(line) },
+        { checkProgram: () => {}, detect: installed('cursor'), announce: (line) => announced.push(line) },
       ),
     ).resolves.toEqual({
       harness: 'cursor',
@@ -1084,10 +1086,10 @@ describe('connect wizard', () => {
         { read: async () => undefined, save: async () => {} },
         process.env,
         async () => undefined,
-        { detect: installed('codex'), announce: () => {} },
+        { checkProgram: () => {}, detect: installed('codex'), announce: () => {} },
       ),
     ).resolves.toBeDefined();
-    expect(fixture.calls[0]).toContain('Choose model');
+    expect(fixture.calls[1]).toContain('Choose model');
   });
 
   it('handles undefined picked from prompts in askEffort without crashing', async () => {
@@ -1109,10 +1111,10 @@ describe('connect wizard', () => {
         { read: async () => undefined, save: async () => {} },
         process.env,
         async () => undefined,
-        { detect: installed('codex'), announce: () => {} },
+        { checkProgram: () => {}, detect: installed('codex'), announce: () => {} },
       ),
     ).resolves.toBeDefined();
-    expect(fixture.calls[1]).toContain('Choose reasoning effort');
+    expect(fixture.calls[2]).toContain('Choose reasoning effort');
   });
 
   it('sends the chosen effort with the claim, and omits it when nothing was chosen', async () => {

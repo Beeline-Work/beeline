@@ -1,4 +1,3 @@
-import { helperToolchainEnvironment } from './helper-toolchain.js';
 /**
  * Body runtime config.
  *
@@ -11,7 +10,7 @@ import { accessSync, constants, existsSync, readFileSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import {
   executableOnPath,
-  resolveAgentCommand,
+  resolveAgentCommand, installedAgentProgramEnvironment,
   type AgentCommand,
   type AgentKind,
 } from './agent-command.js';
@@ -40,8 +39,7 @@ export const WRITE_TOOL_NAMES = [
 ] as const;
 
 export interface BodyConfig {
-  /** Report failed managed downloads through the ordinary turn failure path. */
-  toolchainError?: string;
+  agentProgramError?: string;
   /** Installed daemon bundle identity reported with the monolith startup presence announcement. */
   daemonReleaseVersion?: string;
   daemonSourceSha?: string;
@@ -531,9 +529,7 @@ export function buildAgentEnv(
     if (isPassthroughName(name, extraPassthrough)) agentEnv[name] = value;
   }
   // Values the child always needs a defined answer for.
-  agentEnv.PATH = helperToolchainEnvironment(merged).PATH ?? '';
-  agentEnv.DISABLE_AUTOUPDATER = '1';
-  agentEnv.OPENCODE_DISABLE_AUTOUPDATE = 'true';
+  agentEnv.PATH = merged.PATH ?? process.env.PATH ?? '';
   agentEnv.HOME = merged.HOME ?? process.env.HOME ?? '';
   agentEnv.TMPDIR = merged.TMPDIR ?? process.env.TMPDIR ?? '/tmp';
   agentEnv.RUST_LOG = merged.RUST_LOG ?? 'warn';
@@ -588,7 +584,7 @@ export function loadBodyConfig(opts: {
   const agent = opts.agent ?? resolveAgentCommand({ kind: 'reference', env });
   const mcpBinary = resolveMcpBinary(env);
   const readonlyMcp = resolveReadonlyMcpCommand(env);
-  const agentEnv = buildAgentEnv(env, opts.llmEnvFile);
+  const agentEnv = { ...buildAgentEnv(env, opts.llmEnvFile), ...installedAgentProgramEnvironment(agent.kind, env) };
   return {
     agentBinary: agent.command,
     agentKind: agent.kind,

@@ -46,7 +46,7 @@ describe('pair agent auto-selection', () => {
     await expect(
       selectPairAgentCommand({ env: { ...PATH_ONLY, PATH: '' }, interactive: false }),
     ).rejects.toThrow(
-      /Choose a supported agent.*codex.*claude.*goose.*pi/s,
+      /No supported ACP-capable coding agent.*codex.*claude.*goose.*pi.*--agent reference.*LLM key.*--agent custom/s,
     );
   });
 
@@ -67,8 +67,8 @@ describe('pair agent auto-selection', () => {
     expect(selected).toMatchObject({ kind: 'codex', command: resolve(directory, 'codex-acp') });
     expect(installs).toEqual([
       {
-        command: 'beeline',
-        args: ['toolchain', 'install', 'codex'],
+        command: 'npm',
+        args: ['install', '-g', '@agentclientprotocol/codex-acp@latest'],
       },
     ]);
     expect(log.text()).toContain('[beeline] refreshing codex adapter');
@@ -162,8 +162,8 @@ describe('pair agent auto-selection', () => {
     ]);
     expect(installs).toEqual([
       {
-        command: 'beeline',
-        args: ['toolchain', 'install', 'claude'],
+        command: 'npm',
+        args: ['install', '-g', '@agentclientprotocol/claude-agent-acp@latest'],
       },
     ]);
     expect(selected).toEqual({
@@ -190,7 +190,7 @@ describe('pair agent auto-selection', () => {
     { kind: 'pi' as const, binary: 'pi', adapter: 'pi-acp', packageName: 'pi-acp' },
   ])(
     'offers the exact $kind adapter install for an explicit preset and re-resolves it',
-    async ({ kind, binary, adapter }) => {
+    async ({ kind, binary, adapter, packageName }) => {
       const directory = await executables(binary);
       const installs: Array<{ command: string; args: string[] }> = [];
       const confirmInstall = vi.fn().mockResolvedValue(true);
@@ -208,7 +208,7 @@ describe('pair agent auto-selection', () => {
 
       expect(confirmInstall).toHaveBeenCalledWith(expect.stringContaining('Install now?'));
       expect(installs).toEqual([
-        { command: 'beeline', args: ['toolchain', 'install', kind] },
+        { command: 'npm', args: ['install', '-g', `${packageName}@latest`] },
       ]);
       expect(selected).toEqual({ kind, command: resolve(directory, adapter), args: [] });
     },
@@ -251,7 +251,7 @@ describe('pair agent auto-selection', () => {
     ).rejects.toThrow(/cannot be used non-interactively/);
 
     expect(log.text()).toBe(
-      'pi adapter not installed; install it with: beeline toolchain install pi\n',
+      'pi adapter not installed; install it with: npm install -g pi-acp@latest\n',
     );
     expect(installed).toBe(false);
   });
@@ -273,7 +273,7 @@ describe('pair agent auto-selection', () => {
     ).rejects.toThrow(/need ACP adapter setup/);
 
     expect(log.text()).toBe(
-      'claude adapter not installed; install it with: beeline toolchain install claude\n',
+      'claude adapter not installed; install it with: npm install -g @agentclientprotocol/claude-agent-acp@latest\n',
     );
     expect(installed).toBe(false);
   });
@@ -298,7 +298,7 @@ describe('pair agent auto-selection', () => {
     expect(selectAgent).toHaveBeenCalledTimes(2);
     expect(log.text()).toContain('could not install the claude adapter: permission denied');
     expect(log.text()).toContain(
-      'install it with: beeline toolchain install claude',
+      'install it with: npm install -g @agentclientprotocol/claude-agent-acp@latest',
     );
     expect(log.text()).toContain('[beeline] using goose (selected)');
   });

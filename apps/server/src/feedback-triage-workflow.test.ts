@@ -143,7 +143,7 @@ describe('feedback-triage workflow', () => {
 
   it('refreshes deployed tool guidance and legacy schedule prompts despite the old completion marker', async () => {
     await backfillFeedbackTriageWorkflow(database);
-    await database.query(`DELETE FROM workflow_backfills WHERE name='feedback-triage-v6'`);
+    await database.query(`DELETE FROM workflow_backfills WHERE name='feedback-triage-adapter-check-v1'`);
     await database.query(`INSERT INTO workflow_backfills(name) VALUES('feedback-triage-v3') ON CONFLICT DO NOTHING`);
     await database.query(`UPDATE agent_schedules SET message=$2 WHERE id=$1`, [UNRELATED_SCHEDULE,
       'Start the feedback-triage workflow with start_workflow, binding triager to yourself, and follow the feedback-triage-steps procedure (load_workspace_skill) at each step.',
@@ -301,7 +301,7 @@ describe('feedback-triage workflow', () => {
     ).resolves.toEqual({ alreadyAdvanced: true, runId, state: 'pull', seq: 1 });
     await expect(
       handoff(database, turn, { runId, outcome: 'nothing_new', contents: { problems: [] }, attempt: 1 }),
-    ).resolves.toEqual({ runId, state: 'browse', attempt: 2 });
+    ).resolves.toEqual({ runId, state: 'adapters', attempt: 2 });
   });
 
   it("refreshes its own outdated seed but never a team's own workflow of the same name", async () => {

@@ -1,5 +1,4 @@
-import { ensureHelperToolchain, helperToolchainEnvironment } from './helper-toolchain.js';
-import { resolveAgentCommand } from './agent-command.js';
+import { requireInstalledAgentProgram } from './agent-command.js';
 import { homedir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { loadBodyConfig } from './config.js';
@@ -112,16 +111,15 @@ export async function runAgentRuntime(
   // Startup preflight is already a daemon request. A supported successor
   // must identify itself before it can trip the minimum-version gate.
   daemonApi.setForceUpdateListener((minVersion) => host.requestForceUpdate(minVersion));
-  // Provision the release-owned generation before resolving persisted commands.
-  // Download failures use the ordinary Room turn failure route.
-  let toolchainError: string | undefined;
-  try { await ensureHelperToolchain(runtime.agentKind ?? 'reference'); }
-  catch (error) { toolchainError = error instanceof Error ? error.message : String(error); }
-  const agent = !toolchainError && runtime.agentKind && !['reference', 'custom'].includes(runtime.agentKind)
-    ? resolveAgentCommand({ kind: runtime.agentKind }) : runtimeAgentCommand(runtime);
+  // Keep the Room connected when its program is missing so the next turn can
+  // show the install command through the ordinary failure receipt.
+  let agentProgramError: string | undefined;
+  try { requireInstalledAgentProgram(runtime.agentKind ?? 'reference'); }
+  catch (error) { agentProgramError = error instanceof Error ? error.message : String(error); }
+  const agent = runtimeAgentCommand(runtime);
   await writeDaemonPidRecord(configPath, process.pid);
   const env: NodeJS.ProcessEnv = {
-    ...helperToolchainEnvironment(),
+    ...process.env,
     BUZZ_AGENT_BIN: agent.command,
     BUZZ_DEV_MCP_BIN: runtime.mcpBinary,
   };
@@ -131,7 +129,7 @@ export async function runAgentRuntime(
     env,
     agent,
   });
-  config.toolchainError = toolchainError;
+  config.agentProgramError = agentProgramError;
   // Per-agent access policy is a property of the paired runtime, not the
   // process env, so inject it here where both are in hand. The supervisor's
   // per-Room config spread carries it to every Body. A record still carrying
@@ -165,7 +163,7 @@ export async function runAgentRuntime(
     runtime.modelSelection,
     serverModelSelection,
   );
-  if (preflightModelSelection && !toolchainError) {
+  if (preflightModelSelection && !agentProgramError) {
     const validation = host.freeAgent && runtime.agentKind === 'pi' &&
       preflightModelSelection.model?.startsWith('beeline/') ? 'session' : 'startup';
     await applyRuntimeModelPreflight(config, agent, preflightModelSelection, undefined, undefined, validation);

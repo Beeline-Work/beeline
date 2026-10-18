@@ -12,7 +12,6 @@ import type { DaemonApiClient } from './daemon-api-client.js';
 import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
 import { identityFromKey, runtimeDirectory, type AgentRuntimeRecord } from './runtime.js';
 import * as workspaceAssets from './workspace-assets.js';
-import { SharedAssetCapacityError } from './shared-asset-capacity.js';
 import { SessionScheduler } from './session-scheduler.js';
 import { turnTraceDirectory, type TurnTraceRecord } from './turn-trace.js';
 
@@ -261,38 +260,15 @@ const answer = (text: string) => ({
 describe('Room turn phase trace', () => {
   it('uses the legacy private layout on the next cold activation after rollback', async () => {
     vi.stubEnv('BEELINE_SHARED_ASSETS_ENABLED', '0');
-    const prepare = vi.spyOn(workspaceAssets, 'prepareWorkspaceAdapter');
-    try {
+
       const { acpOptions, receipts } = await runTurns({
         sharedAssets: true,
         asks: [{ id: 'rollback-room', body: 'work' }],
         prompt: async () => answer('Done'),
       });
       expect(receipts.at(-1)?.status).toBe('complete');
-      expect(prepare).not.toHaveBeenCalled();
       expect(acpOptions?.agentEnv?.npm_config_cache ?? '').not.toContain('/workspaces/');
-    } finally { prepare.mockRestore(); }
   });
-
-  it.each([
-    ['capacity', new SharedAssetCapacityError()],
-    ['registry failure', new Error('npm registry timed out')],
-  ])('uses the host adapter and shared cache when pinning hits %s', async (_reason, failure) => {
-    const prepare = vi.spyOn(workspaceAssets, 'prepareWorkspaceAdapter')
-      .mockRejectedValueOnce(failure);
-    try {
-      const { acpOptions, receipts } = await runTurns({
-        sharedAssets: true,
-        asks: [{ id: 'low-space-room', body: 'work' }],
-        prompt: async () => answer('Done'),
-      });
-      expect(prepare).toHaveBeenCalledOnce();
-      expect(receipts.at(-1)?.status).toBe('complete');
-      expect(acpOptions?.agentEnv?.npm_config_cache ?? '').toContain('/workspaces/');
-      const args = acpOptions!.agentArgs!;
-      expect(args[args.lastIndexOf('--') + 1]).toBe('codex-acp');
-    } finally { prepare.mockRestore(); }
-  }, 20_000);
 
   it.each(AGENT_KINDS)('shares downloads for unpinned %s harness turns', async (kind) => {
     const hostCommand = `host-${kind}`;
@@ -356,9 +332,6 @@ describe('Room turn phase trace', () => {
   }, 20_000);
 
   it.skipIf(!bwrapUsable)('activates a real shared-layout Room mount from the turn loop', async () => {
-    // The mount proof needs the host adapter; workspace-assets.test.ts proves
-    // pinning. Do not install this operator's large adapter from the network.
-    vi.spyOn(workspaceAssets, 'prepareWorkspaceAdapter').mockResolvedValueOnce(undefined);
     const { acpOptions } = await runTurns({
       sharedAssets: true,
       asks: [{ id: 'shared-room', body: 'work' }],

@@ -3264,7 +3264,7 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
   await dataStep('stored corner workflows', () => deleteStoredCornerWorkflows(database));
   await dataStep('corner lifecycle runs', () => backfillCornerLifecycleRuns(database));
   await dataStep('feedback triage workflow', () =>
-    workflowBackfillOnce(database, 'feedback-triage-v6', backfillFeedbackTriageWorkflow));
+    workflowBackfillOnce(database, 'feedback-triage-adapter-check-v1', backfillFeedbackTriageWorkflow));
   await dataStep('workflow skill summary/does', () =>
     workflowBackfillOnce(database, 'workflow-descriptions-v1', backfillWorkflowSkillDescriptions));
   await dataStep('repair workflow step descriptions', () =>

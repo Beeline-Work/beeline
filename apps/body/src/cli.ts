@@ -291,14 +291,6 @@ async function main(): Promise<void> {
     return;
   }
 
-  if (command === 'toolchain') {
-    if (args[1] !== 'install' || !args[2] || !['codex', 'claude', 'pi', 'goose', 'grok', 'cursor', 'opencode'].includes(args[2]))
-      throw new Error('Usage: beeline toolchain install <agent-kind>');
-    const { ensureHelperToolchain } = await import('./helper-toolchain.js');
-    await ensureHelperToolchain(args[2]);
-    return;
-  }
-
   if (command === 'free-agent') {
     // Only a free starter agent's Fly Machine runs this (`free-agent-vm.ts`).
     installUnhandledRejectionGuard();

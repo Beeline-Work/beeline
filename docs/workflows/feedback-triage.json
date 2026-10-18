@@ -30,8 +30,8 @@
         "problems"
       ],
       "on": {
-        "ranked": "browse",
-        "nothing_new": "browse",
+        "ranked": "adapters",
+        "nothing_new": "adapters",
         "timeout": "failed"
       },
       "timeoutSeconds": 1800
@@ -86,6 +86,21 @@
       "does": "The sweep stopped before it finished.",
       "kind": "terminal",
       "status": "failed"
+    },
+    "adapters": {
+      "does": "Check latest ACP adapters without credentials and add versioned failures to this sweep.",
+      "role": "triager",
+      "requires": [
+        "adapterFindings",
+        "adapterResults",
+        "skipReason"
+      ],
+      "on": {
+        "checked": "browse",
+        "failed": "browse",
+        "timeout": "browse"
+      },
+      "timeoutSeconds": 1800
     }
   }
 }

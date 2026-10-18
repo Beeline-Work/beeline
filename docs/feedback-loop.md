@@ -61,6 +61,7 @@ reads the steps. An agent starts a run with `start_workflow`, binding
 | --- | --- | --- |
 | `notify` | triager | Finds fix pull requests merged since the last `notified` run, plus any an earlier run left unnotified (their body has a `Feedback items:` line), and calls `notify_feedback_fixed` for each. Hands off `notified`, or `skipped` when it cannot send (see below). |
 | `pull` | triager | Reads new `feedback_items` and each report's `message_ids` context through the vaulted database credential, groups them by problem, and ranks the groups by report count. |
+| `adapters` | triager | Runs `scripts/check-acp-adapters.mjs`: latest adapters in temp directories, no credentials, ACP initialize/session/new only. Versioned failures join the same approval card and dispatch path. |
 | `approve` | a person | A card with **dispatch** or **skip**. Nothing is dispatched before someone answers. |
 | `dispatch` | triager | One fix corner per approved problem, opened with `open_corner` (from a corner it opens a sibling in the parent Room), with an agent tagged. The brief lists the item ids and requires the fix PR body to carry `Feedback items: <ids>`. |
 | `done` | | The run ends. |
@@ -106,6 +107,19 @@ GRANT SELECT ON feedback_items, messages, identities TO beeline_feedback_reader;
 ```
 
 A triager whose owner has no such credential stops at `pull` and says so.
+
+### Daily adapter compatibility check
+
+The `adapters` step runs even when there is no new feedback. It uses installed
+Codex, Claude Code and Pi programs and disposable adapter installs, with private
+HOME/XDG directories and no provider credentials. Optional bundled agent binaries
+are omitted. The script emits JSON with each exact adapter version and failed
+stage, exits nonzero on failure, and cleans up its temporary files/processes.
+The triager records failures as feedback findings and includes them in the usual
+approve/dispatch decision. A missing local program or authentication requirement
+is reported precisely; it does not prove an upstream regression. The check never
+runs a model prompt or login. This is part of the daily triage workflow, with no
+separate CI job. See `docs/workflows/feedback-triage-steps.md`.
 
 ### Daily schedule
 

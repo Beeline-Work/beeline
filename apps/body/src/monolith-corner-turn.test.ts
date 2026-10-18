@@ -27,7 +27,6 @@ import {
 } from './prompt-assembly.js';
 import { identityFromKey, runtimeDirectory, type AgentRuntimeRecord } from './runtime.js';
 import * as workspaceAssets from './workspace-assets.js';
-import { SharedAssetCapacityError } from './shared-asset-capacity.js';
 import { detectBwrapSandbox } from './bwrap-sandbox.js';
 import { agentToolsFor, postArtifact, writeScratchFile } from './read-only-mcp.js';
 import { SessionScheduler } from './session-scheduler.js';
@@ -1682,7 +1681,7 @@ describe('corner close-request delivery', () => {
     console.info(`Demonstrated TL-corner-terminal: ${stopReason}, two wakes completed, fresh session per wake, no message, complete receipts`);
   });
 
-  it.each(['repository', 'scratch', 'android-operator', 'goose-unpinned', 'capacity-fallback', 'registry-fallback'])('activates a shared-layout %s corner through the real turn loop', async (shape) => {
+  it.each(['repository', 'scratch', 'android-operator', 'goose-unpinned'])('activates a shared-layout %s corner through the real turn loop', async (shape) => {
     vi.stubEnv('ANDROID_HOME', '');
     vi.stubEnv('ANDROID_SDK_ROOT', '');
     const execute = vi.fn(async (name: string) => {
@@ -1742,11 +1741,6 @@ describe('corner close-request delivery', () => {
       await writeFile(join(operatorHome, '.android/avd/test.ini'), 'path=/operator/test.avd\n');
       await writeFile(join(operatorHome, '.android/avd/test.avd/config.ini'), 'image.sysdir.1=system-images/android-36/\n');
     }
-    const pinningFailure = shape.endsWith('-fallback');
-    const prepare = vi.spyOn(workspaceAssets, 'prepareWorkspaceAdapter');
-    if (pinningFailure) prepare.mockRejectedValueOnce(
-      shape === 'capacity-fallback' ? new SharedAssetCapacityError() : new Error('npm registry timed out'));
-    else prepare.mockResolvedValueOnce(undefined); // This mount fixture must not install from the host's npm registry.
     try {
       await internal.activate();
       expect(fixture.clientOptions()).toBeDefined();
@@ -1760,12 +1754,7 @@ describe('corner close-request delivery', () => {
         expect(selected.agentEnv?.BEELINE_ANDROID_BASE_AVD_HOME).toContain('/avd-base/');
         expect(selected.agentEnv?.BEELINE_ANDROID_BASE_AVD_HOME).not.toContain('/sdk/');
       }
-      if (pinningFailure) {
-        expect(prepare).toHaveBeenCalledOnce();
-        expect(selected.agentEnv?.npm_config_cache ?? '').toContain('/workspaces/');
-        const args = selected.agentArgs!;
-        expect(args[args.lastIndexOf('--') + 1]).toBe('codex-acp');
-      }
+
       if (shape === 'goose-unpinned') {
         expect(selected.agentEnv?.npm_config_cache ?? '').toContain('/workspaces/');
         const args = selected.agentArgs!;
@@ -1788,7 +1777,6 @@ describe('corner close-request delivery', () => {
         expect(child.status, child.stderr).toBe(0);
       }
     } finally {
-      prepare.mockRestore();
       fixture.abort.abort();
       await fixture.scheduler.dispose();
     }

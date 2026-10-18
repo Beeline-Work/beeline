@@ -1,14 +1,8 @@
-import { helperToolchainRoot } from './helper-toolchain.js';
 import { createHash, randomUUID } from 'node:crypto';
-import { execFile } from 'node:child_process';
 import { cp, lstat, mkdir, readFile, readdir, realpath, rename, rm, stat, writeFile } from 'node:fs/promises';
-import { basename, dirname, isAbsolute, resolve } from 'node:path';
-import { promisify } from 'node:util';
-import type { AgentKind } from './agent-command.js';
+import { dirname, resolve } from 'node:path';
 import { isSharedAssetCategory, type SharedAssetCategory } from '@beeline/api-contract/agent-grants';
-import { admitSharedAssets, releaseReserveOnEnospc, SharedAssetCapacityError } from './shared-asset-capacity.js';
 
-const execFileAsync = promisify(execFile);
 
 /** Rebuildable assets belong to a Workspace, not to an agent or Room. */
 export function workspaceAssetRoot(supervisorRoot: string, workspaceId: string): string {
@@ -84,9 +78,6 @@ export function workspaceAssetPaths(root: string): WorkspaceAssetPaths {
   };
 }
 
-function supervisorRoot(paths: WorkspaceAssetPaths): string {
-  return resolve(paths.root, '../../../..');
-}
 
 /** Create only ordinary directories; never follow an attacker-supplied asset symlink. */
 export async function prepareWorkspaceAssets(root: string): Promise<WorkspaceAssetPaths> {
@@ -225,116 +216,4 @@ export async function prepareWorkspaceAvdBase(paths: WorkspaceAssetPaths, source
       await rm(staged, { recursive: true, force: true });
     }
   });
-}
-
-const ADAPTER_PACKAGES: Partial<Record<AgentKind, { name: string; binary: string }>> = {
-  codex: { name: '@agentclientprotocol/codex-acp', binary: 'codex-acp' },
-  claude: { name: '@agentclientprotocol/claude-agent-acp', binary: 'claude-agent-acp' },
-  pi: { name: 'pi-acp', binary: 'pi-acp' },
-};
-
-const CLI_PACKAGES: Partial<Record<AgentKind, readonly string[]>> = {
-  codex: ['@openai/codex'],
-  claude: ['@anthropic-ai/claude-code'],
-  pi: ['@earendil-works/pi-coding-agent', '@mariozechner/pi-coding-agent'],
-};
-
-async function installedPackage(binary: string, env: NodeJS.ProcessEnv): Promise<{ name: string; version: string } | undefined> {
-  const executable = isAbsolute(binary) ? binary : (await execFileAsync('which', [binary], { env })).stdout.trim();
-  let parent = dirname(await realpath(executable));
-  for (let i = 0; i < 7; i++) {
-    const manifest = await readFile(resolve(parent, 'package.json'), 'utf8').catch(() => undefined);
-    if (manifest) {
-      const parsed = JSON.parse(manifest) as { name?: string; version?: string };
-      if (parsed.name && parsed.version && /^\d+\.\d+\.\d+(?:[-+][\w.-]+)?$/.test(parsed.version))
-        return { name: parsed.name, version: parsed.version };
-    }
-    parent = dirname(parent);
-  }
-  return undefined;
-}
-
-export interface WorkspaceToolchain { command: string; binDir: string; cliCommand: string }
-const adapterPreparations = new Map<string, Promise<WorkspaceToolchain>>();
-
-/** Pin the selected adapter under this Workspace; published generations are never changed. */
-export async function prepareWorkspaceAdapter(
-  paths: WorkspaceAssetPaths,
-  kind: AgentKind | undefined,
-  command: string,
-  env: NodeJS.ProcessEnv,
-  options: { background?: boolean } = {},
-): Promise<WorkspaceToolchain | undefined> {
-  if ([helperToolchainRoot(env), helperToolchainRoot()].some(root => resolve(command).startsWith(root + '/'))) return undefined;
-  const adapter = kind && ADAPTER_PACKAGES[kind];
-  // Unknown or native harnesses still use Workspace caches with their host
-  // adapter. A selected tool generation must pin its nested CLI as well.
-  if (!adapter || !kind || basename(command) !== adapter.binary) return undefined;
-  const selectedAdapter = await installedPackage(command, env).catch(() => undefined);
-  const selectedCli = await installedPackage(kind, env).catch(() => undefined);
-  if (selectedAdapter?.name !== adapter.name || !selectedCli ||
-      !CLI_PACKAGES[kind]?.includes(selectedCli.name)) return undefined;
-  const key = createHash('sha256').update(
-    `${adapter.name}@${selectedAdapter.version}:${selectedCli.name}@${selectedCli.version}:${process.version}`,
-  ).digest('hex').slice(0, 16);
-  const generation = `${adapter.binary}-${selectedAdapter.version}-${key}`;
-  // Release images can prepare this exact version pair once. Use only a
-  // complete generation with the same content identity as Workspace pins.
-  const imageRoot = env.BEELINE_PREPARED_ADAPTER_ROOT ?? process.env.BEELINE_PREPARED_ADAPTER_ROOT;
-  if (imageRoot) {
-    const image = resolve(imageRoot, generation);
-    const command = resolve(image, 'node_modules/.bin', adapter.binary);
-    const cliCommand = resolve(image, 'node_modules/.bin', kind);
-    if ((await stat(command).catch(() => undefined))?.isFile() &&
-        (await stat(cliCommand).catch(() => undefined))?.isFile() &&
-        (await stat(resolve(image, 'bin/node')).catch(() => undefined))?.isFile())
-      return { command, cliCommand, binDir: resolve(image, 'node_modules/.bin') };
-  }
-  const published = resolve(paths.tools, generation);
-  const publishedBinary = resolve(published, 'node_modules/.bin', adapter.binary);
-  const publishedCli = resolve(published, 'node_modules/.bin', kind);
-  const publishedNode = resolve(published, 'bin/node');
-  const selection = { command: publishedBinary, binDir: resolve(published, 'node_modules/.bin'), cliCommand: publishedCli };
-  if ((await stat(publishedBinary).catch(() => undefined))?.isFile() &&
-      (await stat(publishedCli).catch(() => undefined))?.isFile() &&
-      (await stat(publishedNode).catch(() => undefined))?.isFile()) return selection;
-  if (!(await admitSharedAssets(supervisorRoot(paths), 512 * 1024 ** 2)))
-    throw new SharedAssetCapacityError();
-  let preparation = adapterPreparations.get(published);
-  if (!preparation) {
-    preparation = withGenerationLock(resolve(paths.staging, `adapter-${key}.lock`), async () => {
-      if ((await stat(publishedBinary).catch(() => undefined))?.isFile() &&
-          (await stat(publishedCli).catch(() => undefined))?.isFile() &&
-          (await stat(publishedNode).catch(() => undefined))?.isFile()) return selection;
-      const staged = resolve(paths.staging, `adapter-${key}-${randomUUID()}`);
-      try {
-        await mkdir(staged, { recursive: true, mode: 0o700 });
-        await execFileAsync('npm', [
-          'install', '--prefix', staged, '--no-save', '--no-audit', '--no-fund',
-          `${adapter.name}@${selectedAdapter.version}`, `${selectedCli.name}@${selectedCli.version}`,
-        ], { env, timeout: 180_000, maxBuffer: 128 * 1024 });
-        const stagedBinary = resolve(staged, 'node_modules/.bin', adapter.binary);
-        if (!(await stat(stagedBinary).catch(() => undefined))?.isFile() ||
-            !(await stat(resolve(staged, 'node_modules/.bin', kind)).catch(() => undefined))?.isFile())
-          throw new Error(`Workspace toolchain install did not produce ${adapter.binary} and ${kind}`);
-        await mkdir(resolve(staged, 'bin'));
-        await cp(process.execPath, resolve(staged, 'bin/node'));
-        await rename(staged, published);
-        return selection;
-      } catch (error) {
-        await releaseReserveOnEnospc(supervisorRoot(paths), error);
-        throw error;
-      } finally { await rm(staged, { recursive: true, force: true }); }
-    });
-    adapterPreparations.set(published, preparation);
-    void preparation.finally(() => adapterPreparations.delete(published)).catch(() => {});
-  }
-  if (options.background) {
-    // The installed host adapter already works. Pin its immutable generation
-    // for a later activation without holding this person's first model call
-    // behind a registry download. Never switch a session underneath a turn.
-    void preparation.catch(error => console.warn('[body] Workspace adapter preparation failed; keeping host adapter:', error));
-    return undefined;
-  }
-  return preparation;
 }

@@ -16,7 +16,6 @@ import {
   prepareCodexCacheTargets,
   preparePackageCacheTargets,
   preparePrivateAssets,
-  prepareWorkspaceAdapter,
   markWorkspaceLayoutLive,
   prepareWorkspaceAssets,
   prepareWorkspaceAvdBase,
@@ -847,7 +846,7 @@ export class MonolithCornerTurnLoop {
   }
 
   private async activate(trace?: TurnTrace): Promise<string> {
-    if (this.options.config.toolchainError) throw new Error(this.options.config.toolchainError);
+    if (this.options.config.agentProgramError) throw new Error(this.options.config.agentProgramError);
     if (this.client?.isAlive && this.sessionId) {
       if (this.options.config.agentHomeRoot) {
         await repairRoomAgentCredentialLinks({
@@ -1005,22 +1004,9 @@ export class MonolithCornerTurnLoop {
       await admitSharedAssets(this.options.runtime.supervisorRoot, 1024 ** 3)
       ? await prepareWorkspaceAssets(this.options.config.agentSharedAssetRoot)
       : undefined;
-    let toolchain;
     if (isolatedCategories.length)
       await preparePrivateAssets(privateAssetRoot, isolatedCategories);
-    if (assets) {
-      try {
-        toolchain = await prepareWorkspaceAdapter(assets, this.options.config.agentKind, command, {
-          ...this.options.config.agentEnv, ...homeOverlay,
-          ...workspaceCacheEnv(assets, undefined,
-            isolatedCategories.includes('package-cache') ? privateAssetRoot : undefined),
-        }, { background: true });
-      } catch (error) {
-        // Pinning is optional: use the installed host adapter while keeping
-        // the Workspace download cache shared for this turn.
-        console.warn('[body] Workspace adapter pinning failed; using host adapter:', error);
-      }
-    }
+
     let androidAssets: { avdBase: string } | undefined;
     if (assets && homeOverlay.ANDROID_HOME && homeOverlay.ANDROID_AVD_HOME &&
       existsSync(homeOverlay.ANDROID_AVD_HOME)) {
@@ -1090,10 +1076,7 @@ export class MonolithCornerTurnLoop {
           }
         : {}),
     };
-    if (toolchain && assets) {
-      agentEnv.PATH = `${resolve(toolchain.binDir, '../../bin')}:${toolchain.binDir}:${agentEnv.PATH ?? ''}`;
-      if (this.options.config.agentKind === 'pi') agentEnv.PI_ACP_PI_COMMAND = toolchain.cliCommand;
-    }
+
     if (agentEnv.BEELINE_ANDROID_LEASE_ROOT && agentEnv.BEELINE_ANDROID_INSTANCE_ROOT)
       await Promise.all([
         mkdir(agentEnv.BEELINE_ANDROID_LEASE_ROOT, { recursive: true, mode: 0o700 }),
@@ -1102,7 +1085,7 @@ export class MonolithCornerTurnLoop {
       ]);
     await mkdir(hfHomeDir, { recursive: true, mode: 0o700 });
     this.agentEnv = agentEnv;
-    const selectedCommand = toolchain?.command ?? command;
+    const selectedCommand = command;
     if (assets && this.options.config.agentPrivateRoot)
       await mkdir(this.options.config.agentPrivateRoot, { recursive: true, mode: 0o700 });
     this.modelContextTokens = await modelContextWindowTokens(

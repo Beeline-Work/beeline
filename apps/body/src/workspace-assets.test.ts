@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { detectBwrapSandbox, sandboxMountPlan, wrapAgentCommand } from './bwrap-sandbox.js';
 import { installCornerGitHubWrappers } from './corner-github-auth.js';
 import {
-  isolatedSharedAssetCategories, prepareCodexCacheTargets, preparePackageCacheTargets, preparePrivateAssets, prepareWorkspaceAdapter, prepareWorkspaceAssets, prepareWorkspaceAvdBase,
+  isolatedSharedAssetCategories, prepareCodexCacheTargets, preparePackageCacheTargets, preparePrivateAssets, prepareWorkspaceAssets, prepareWorkspaceAvdBase,
   sharedAssetsEnabled, workspaceAssetRoot, workspaceCacheEnv,
 } from './workspace-assets.js';
 
@@ -86,73 +86,6 @@ describe('coarse Workspace assets', () => {
     expect(workspaceCacheEnv(a)).not.toHaveProperty('PIP_CACHE_DIR');
     expect(sharedAssetsEnabled({ BEELINE_SHARED_ASSETS_ENABLED: '0' })).toBe(false);
     expect(sharedAssetsEnabled({})).toBe(true);
-  });
-
-  it('pins both adapter and nested CLI in versioned, immutable Workspace generations', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'beeline-toolchain-'));
-    roots.push(root);
-    const assets = await prepareWorkspaceAssets(workspaceAssetRoot(root, 'A'));
-    const bin = resolve(root, 'bin');
-    await mkdir(bin);
-    for (const [binary, name] of [
-      ['codex-acp', '@agentclientprotocol/codex-acp'], ['codex', '@openai/codex'],
-    ]) {
-      const pkg = resolve(root, binary);
-      await mkdir(resolve(pkg, 'bin'), { recursive: true });
-      await writeFile(resolve(pkg, 'package.json'), JSON.stringify({ name, version: '1.0.0' }));
-      await writeFile(resolve(pkg, 'bin/run.js'), '#!/usr/bin/env node\n');
-      await chmod(resolve(pkg, 'bin/run.js'), 0o755);
-      await symlink(resolve(pkg, 'bin/run.js'), resolve(bin, binary));
-    }
-    const npm = resolve(bin, 'npm');
-    await writeFile(npm, '#!/bin/sh\nwhile [ "$1" != "--prefix" ]; do shift; done\nshift\nprefix="$1"\nmkdir -p "$prefix/node_modules/.bin"\nprintf "#!/bin/sh\\nexit 0\\n" > "$prefix/node_modules/.bin/codex-acp"\nprintf "#!/bin/sh\\nexit 0\\n" > "$prefix/node_modules/.bin/codex"\n');
-    await chmod(npm, 0o755);
-    const env = { ...process.env, PATH: `${bin}:${process.env.PATH}` };
-    const first = await prepareWorkspaceAdapter(assets, 'codex', 'codex-acp', env);
-    expect(first?.command).toContain(assets.tools);
-    expect(first?.cliCommand).toContain(assets.tools);
-    expect(await prepareWorkspaceAdapter(assets, 'codex', 'codex-acp', env)).toEqual(first);
-    const imageRoot = resolve(root, 'image-toolchains');
-    await mkdir(imageRoot);
-    const generationName = first!.command.split('/').slice(-4, -3)[0]!;
-    const imageGeneration = resolve(imageRoot, generationName);
-    await rename(resolve(assets.tools, generationName), imageGeneration);
-    const imageEnv = { ...env, BEELINE_PREPARED_ADAPTER_ROOT: imageRoot };
-    expect((await prepareWorkspaceAdapter(assets, 'codex', 'codex-acp', imageEnv, { background: true }))?.command)
-      .toBe(resolve(imageGeneration, 'node_modules/.bin/codex-acp'));
-    await rename(imageGeneration, resolve(assets.tools, generationName));
-    await writeFile(resolve(root, 'codex/package.json'), JSON.stringify({ name: '@openai/codex', version: '2.0.0' }));
-    const second = await prepareWorkspaceAdapter(assets, 'codex', 'codex-acp', imageEnv);
-    expect(second?.command).not.toBe(first?.command);
-    const runtime = resolve(root, 'beeline/agents/agent-a');
-    const home = resolve(runtime, 'rooms/room-a/agent-home');
-    await mkdir(home, { recursive: true });
-    await writeFile(resolve(runtime, 'runtime.json'), '{}');
-    if (bwrapUsable) {
-      const update = wrapAgentCommand({
-        bwrapPath: '/usr/bin/bwrap',
-        spec: { mode: 'readonly', cwd: resolve(runtime, 'rooms/room-a'),
-          sharedLayout: { assetRoot: assets.root, agentRuntimeDir: runtime, privateHomeRoot: home } },
-        command: '/bin/sh', args: ['-c', 'printf changed > "$1"', 'probe', first!.command],
-      });
-      expect(spawnSync(update.command, update.args, { encoding: 'utf8' }).status).not.toBe(0);
-    }
-    expect(await readFile(first!.command, 'utf8')).toContain('exit 0');
-    expect(await prepareWorkspaceAdapter(assets, 'goose', '/usr/bin/goose', env)).toBeUndefined();
-    // A new generation must not delay the first turn for its npm install.
-    await writeFile(resolve(root, 'codex/package.json'), JSON.stringify({ name: '@openai/codex', version: '3.0.0' }));
-    const gate = resolve(root, 'prepare-release');
-    const original = await readFile(npm, 'utf8');
-    await writeFile(npm, original.replace('prefix="$1"', `prefix="$1"\nwhile [ ! -f '${gate}' ]; do sleep 0.01; done`));
-    try {
-      const cold = await prepareWorkspaceAdapter(assets, 'codex', 'codex-acp', env, { background: true });
-      expect(cold).toBeUndefined();
-    } finally {
-      await writeFile(gate, 'ready');
-    }
-    const prepared = await prepareWorkspaceAdapter(assets, 'codex', 'codex-acp', env);
-    expect(prepared?.command).not.toBe(second?.command);
-    expect(await prepareWorkspaceAdapter(assets, 'codex', 'codex-acp', env, { background: true })).toEqual(prepared);
   });
 
   it('publishes AVD metadata without copying or hashing the operator SDK', async () => {

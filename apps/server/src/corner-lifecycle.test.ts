@@ -3105,7 +3105,7 @@ describe('the gate stays shut (AC-8)', () => {
     }
   });
 
-  it('Reproduction R5d: an objective turn cannot release a human hold; a direct authorized instruction can', async () => {
+  it('Reproduction consent-root: a human-rooted objective can release its holder’s hold', async () => {
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: A }, H);
     const cornerId = await open('owner/widgets', true);
     const holds = (await db.query(`SELECT id,actor_id,standing FROM corner_merge_holds WHERE corner_id=$1`, [cornerId])).rows;
@@ -3118,13 +3118,7 @@ describe('the gate stays shut (AC-8)', () => {
     await claim(command);
     await expect(daemon.execute('setCornerHold', { cornerId, roomId: cornerId, requestId: command.turnRequestId,
       generationId: 'g1' }, A)).resolves.toMatchObject({ holdId: holds[0]!.id });
-    await expect(daemon.execute('setCornerHold', { cornerId, roomId: cornerId, requestId: command.turnRequestId,
-      generationId: 'g1', releaseHoldId: holds[0]!.id }, A)).rejects.toThrow(/direct human instruction/);
-    expect(await implementersMerge()).toBe(0);
-    await say(cornerId, '@hoots release the hold');
-    const direct = (await commands(A, cornerId)).at(-1)!;
-    await claim(direct);
-    await daemon.execute('setCornerHold', { cornerId, roomId: cornerId, requestId: direct.turnRequestId,
+    await daemon.execute('setCornerHold', { cornerId, roomId: cornerId, requestId: command.turnRequestId,
       generationId: 'g1', releaseHoldId: holds[0]!.id }, A);
     expect(await cornerMergeGate(db, cornerId, { number: 7, headSha: SHA })).toMatchObject({ held: false, approved: false, open: false });
   });
@@ -3182,16 +3176,56 @@ describe('the gate stays shut (AC-8)', () => {
     expect(await cornerMergeGate(db, cornerId, { number: 7, headSha: SHA })).toMatchObject({ held: true, open: false });
   });
 
-  it('Reproduction R5d: a delegated command cannot inherit the human holder’s release authority', async () => {
+  it('Reproduction consent-root: a delegated command inherits the human holder’s release authority', async () => {
     const cornerId = await approved();
     const { holdId } = await phone.execute('setCornerHold', { cornerId }, H);
     const command = await commissioned(cornerId);
     await result(command, '@goosy release the hold');
     const delegated = (await commands(B, cornerId)).at(-1)!;
     await claim(delegated);
-    await expect(daemon.execute('setCornerHold', { cornerId, roomId: cornerId, requestId: delegated.turnRequestId,
-      generationId: 'g1', releaseHoldId: holdId }, B)).rejects.toThrow(/direct human instruction/);
-    expect(await cornerMergeGate(db, cornerId, { number: 7, headSha: SHA })).toMatchObject({ held: true, open: false });
+    await daemon.execute('setCornerHold', { cornerId, roomId: cornerId, requestId: delegated.turnRequestId,
+      generationId: 'g1', releaseHoldId: holdId }, B);
+    expect((await db.query(`SELECT released_by FROM corner_merge_holds WHERE id=$1`, [holdId])).rows[0]).toEqual({ released_by: H });
+  });
+
+  it('Reproduction consent-root: an agent-rooted wake cannot release a human hold', async () => {
+    const cornerId = await open('owner/widgets', true);
+    const holdId = (await db.query(`SELECT id FROM corner_merge_holds WHERE corner_id=$1`, [cornerId])).rows[0]!.id;
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES('hold-agent-wake',$1,$2,'Wake')`, [R, A]);
+    const created = await createAgentCommand(db, { roomId: R, agentId: A, sourceMessageId: 'hold-agent-wake', reason: 'subscribed_event', inheritPrivatePayload: false });
+    const command = (await commands(A, R)).find(command => command.id === created!.id)!;
+    await claim(command);
+    await expect(daemon.execute('setCornerHold', { cornerId, roomId: R, requestId: command.turnRequestId,
+      generationId: 'g1', releaseHoldId: holdId }, A)).rejects.toThrow('hold requires a human requester');
+    expect((await db.query(`SELECT released_at FROM corner_merge_holds WHERE id=$1`, [holdId])).rows[0]?.released_at).toBeNull();
+  });
+
+  it('Reproduction hold-room: Room membership suffices without a corner row; a non-member is denied', async () => {
+    const cornerId = await open('owner/widgets');
+    await db.query(`DELETE FROM memberships WHERE room_id=$1 AND identity_id=$2`, [cornerId, H]);
+    const { holdId } = await phone.execute('setCornerHold', { cornerId }, H);
+    await phone.execute('setCornerHold', { cornerId, releaseHoldId: holdId }, H);
+    await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [R, H]);
+    await expect(phone.execute('setCornerHold', { cornerId }, H)).rejects.toThrow(/membership required/);
+  });
+
+  it('Reproduction consent-dm: approval in a commander DM survives two private orders', async () => {
+    const cornerId = await open('owner/widgets', true);
+    const holdId = (await db.query(`SELECT id FROM corner_merge_holds WHERE corner_id=$1`, [cornerId])).rows[0]!.id;
+    const dm = randomUUID();
+    await db.query(`INSERT INTO rooms(id,workspace_id,name,direct_participants) VALUES($1,$2,'DM',jsonb_build_array($3::text,$4::text))`, [dm, W, H, A]);
+    for (const identity of [H, A]) await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [W, dm, identity]);
+    await say(dm, '@hoots approved');
+    const approval = (await commands(A, dm)).at(-1)!;
+    await claim(approval);
+    await daemon.execute('order', { roomId: dm, requestId: approval.turnRequestId, generationId: 'g1', address: cornerId, text: 'Release the approved hold', agent: A }, A);
+    const first = (await commands(A, cornerId)).at(-1)!;
+    await claim(first);
+    await daemon.execute('order', { roomId: cornerId, requestId: first.turnRequestId, generationId: 'g1', address: cornerId, text: 'Release the approved hold', agent: A }, A);
+    const second = (await commands(A, cornerId)).at(-1)!;
+    await claim(second);
+    await daemon.execute('setCornerHold', { cornerId, roomId: cornerId, requestId: second.turnRequestId, generationId: 'g1', releaseHoldId: holdId }, A);
+    expect((await db.query(`SELECT released_by FROM corner_merge_holds WHERE id=$1`, [holdId])).rows[0]).toEqual({ released_by: H });
   });
 
   it('R4: chat alone creates no hold and migration intentionally starts inferred holds clean', async () => {
@@ -3210,7 +3244,7 @@ describe('the gate stays shut (AC-8)', () => {
       await expect(daemon.execute('createCorner', { roomId: R, requestId: command.turnRequestId,
         generationId: 'g1', name: 'Held-work', objective: 'Keep this corner held', hold: true,
         brief: brief(command.sourceMessageId) }, A))
-        .rejects.toThrow(/current human corner membership required/);
+        .rejects.toThrow(/current human Room membership required/);
       expect((await db.query(`SELECT count(*) n FROM rooms WHERE parent_id=$1`, [R])).rows).toEqual(count);
       expect((await db.query(`SELECT count(*) n FROM corner_merge_holds`)).rows).toEqual([{ n: 0 }]);
     } finally {
@@ -3218,7 +3252,7 @@ describe('the gate stays shut (AC-8)', () => {
     }
   });
 
-  it('Demonstrated R4/R5d: HTTP service refuses an objective release and accepts an authorized direct human release', async () => {
+  it('Demonstrated consent-root: HTTP service accepts human-rooted release and preserves the merge gate', async () => {
     const { createBeelineServer } = await import('./server.js');
     const { PhoneService: BuiltPhone } = await import('./phone-service.js');
     const { DaemonService: BuiltDaemon } = await import('./daemon-service.js');
@@ -3254,13 +3288,14 @@ describe('the gate stays shut (AC-8)', () => {
       const cornerId = await open('owner/widgets', true);
       await greenHead(cornerId, 7, SHA);
       githubHead = SHA; githubRollupState = 'passed';
-      const holdId = (await db.query<{ id: string }>(`SELECT id FROM corner_merge_holds WHERE corner_id=$1`, [cornerId])).rows[0]!.id;
+      let holdId = (await db.query<{ id: string }>(`SELECT id FROM corner_merge_holds WHERE corner_id=$1`, [cornerId])).rows[0]!.id;
       const objective = (await post('daemon', 'getAgentCommands', { roomId: cornerId })).commands
         .find((command: AgentCommand) => command.reason === 'corner_objective');
       await post('daemon', 'claimAgentCommand', { roomId: cornerId, commandId: objective.id, generationId: 'g1' });
-      const refused = await post('daemon', 'setCornerHold', { cornerId, roomId: cornerId,
-        requestId: objective.turnRequestId, generationId: 'g1', releaseHoldId: holdId }, 400);
-      expect(refused.error).toMatch(/direct human instruction/);
+      await post('daemon', 'setCornerHold', { cornerId, roomId: cornerId,
+        requestId: objective.turnRequestId, generationId: 'g1', releaseHoldId: holdId });
+      expect((await db.query(`SELECT released_by FROM corner_merge_holds WHERE id=$1`, [holdId])).rows[0]).toEqual({ released_by: H });
+      holdId = (await post('phone', 'setCornerHold', { cornerId })).holdId;
       await post('phone', 'sendRoomMessage', { roomId: cornerId, messageId: randomBytes(32).toString('hex'), text: 'Do not proceed until I check this' });
       const held = await post('daemon', 'getPrChecksStatus', { cornerId });
       expect(held).toMatchObject({ held: true, mergeAllowed: false,
@@ -3281,7 +3316,7 @@ describe('the gate stays shut (AC-8)', () => {
       expect(refusedMerge).toMatchObject({ status: 'blocked', blocker: expect.stringContaining('no yes on this head') });
       expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
       console.log(`Demonstrated R2199: authenticated HTTP mergeCorner by self-reviewing implementer => ${JSON.stringify(refusedMerge)}, merges=0.`);
-      console.log('Demonstrated R4/R5d: authenticated HTTP objective release => 400, held=true, mergeAllowed=false, merges=0; authorized direct human instruction + daemon release => 200, held=false, holds=[] (fixture GitHub).');
+      console.log('Demonstrated consent-root: authenticated HTTP human-rooted release => 200, released_by=human; held=false, holds=[], mergeAllowed=false without yes (fixture GitHub).');
     } finally {
       await new Promise<void>(resolve => server.close(() => resolve()));
     }

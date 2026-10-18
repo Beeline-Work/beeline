@@ -103,6 +103,7 @@ import { closeCornerState } from './corner-close.js';
 import { writeCornerTitle } from './corner-title.js';
 import { advanceCorner, lockCornerLifecycle } from './corner-lifecycle.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
+import { SCHEDULE_SCHEDULER_ID } from '@beeline/api-contract/scheduled-prompts';
 import {
   LiveHub,
   type CommittedMessageLiveRow,
@@ -1801,29 +1802,12 @@ export class DaemonService {
           const command = await authorizeCommandOutput(
             db, hold.roomId, authenticatedAgentId, hold.requestId, hold.generationId,
           );
-          const releasing = hold.releaseHoldId !== undefined;
-          // A release needs a human's own order: the source of this turn, or of
-          // the parent Room turn whose order woke this corner turn.
           const actor = (await db.query<{ author_id: string }>(
-            releasing
-              ? `SELECT message.author_id FROM agent_commands command
-                 JOIN rooms corner ON corner.id=$2
-                 LEFT JOIN agent_commands steered ON command.reason='order'
-                   AND command.room_id=corner.id AND steered.id=command.parent_command_id
-                   AND steered.room_id=corner.parent_id
-                 JOIN messages message ON message.id=COALESCE(steered.source_message_id,command.source_message_id)
-                 JOIN identities person ON person.id=message.author_id AND person.kind='human'
-                 WHERE command.id=$1 AND command.reason<>'corner_objective'
-                   AND COALESCE(steered.reason,'')<>'corner_objective'
-                   AND message.room_id=COALESCE(steered.room_id,command.room_id)
-                   AND message.room_id IN (corner.id,corner.parent_id)`
-              : `SELECT message.author_id FROM messages message
-                 JOIN identities person ON person.id=message.author_id AND person.kind='human'
-                 WHERE message.id=$1`,
-            releasing ? [command.id, hold.cornerId] : [command.root_source_message_id],
+            `SELECT message.author_id FROM messages message
+             JOIN identities person ON person.id=message.author_id AND person.kind='human'
+             WHERE message.id=$1`,
+            [command.root_source_message_id],
           )).rows[0];
-          if (releasing && !actor)
-            throw new Error('a direct human instruction in this corner or its parent Room is required to release a hold');
           if (!actor) throw new Error('hold requires a human requester');
           return setCornerHold(db, hold, actor.author_id);
         })) as Output<Name>;
@@ -6353,8 +6337,9 @@ export class DaemonService {
     // card's author: a handoff card is written by the agent handing off, and a
     // lease failover card by the system. `workflowRunRequester` returns the
     // person who answered the run's latest gate, else the person it started
-    // from, and keeps an agent requester for an agent- or schedule-only run so
-    // app use stays refused. `undefined` means the turn is not a run wake.
+    // from, and keeps an agent requester for an agent- or schedule-only run.
+    // Each resource gate applies its own owner policy to that provenance.
+    // `undefined` means the turn is not a run wake.
     const workflow = await workflowRunRequester(this.database, {
       roomId: command.room_id,
       agentId: command.agent_id,
@@ -7097,7 +7082,12 @@ export class DaemonService {
       !(await this.composio.account(row.composio_account_id,
       row.owner_identity_id, composioToolkitForApp(row.app_key))))
       return { status: 'needs_connection' as const };
-    const requester = await this.grantRequester();
+    const rootRequester = await this.grantRequester();
+    const nonhumanWake = rootRequester.kind !== 'human' ||
+      rootRequester.id === SYSTEM_IDENTITY_ID || rootRequester.id === SCHEDULE_SCHEDULER_ID;
+    const requester = nonhumanWake && row.agent_owner_id === row.owner_identity_id
+      ? { id: row.agent_owner_id, kind: 'human' as const }
+      : rootRequester;
     if (requester.kind !== 'human') throw new Error('App use requires a person’s request');
     let grantId: string | undefined;
     if (row.agent_owner_id !== row.owner_identity_id) {

@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { randomBytes } from 'node:crypto';
+import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
+import { SCHEDULE_SCHEDULER_ID } from '@beeline/api-contract/scheduled-prompts';
 import { LinkAgentWallet } from './link-agent-wallet.js';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
@@ -1780,14 +1782,44 @@ describe('connect_app', () => {
       .resolves.toMatchObject({ status: 'executed' });
   });
 
-  it('still refuses app use on a handoff wake of an agent-only run', async () => {
+  it('Reproduction wake-app: runs its owner’s app on an agent-only wake', async () => {
     const provider = fakeComposio();
     const daemon = daemonWith(fakeRegistry([]).client, provider);
     const appId = await connectedSlack(daemon, provider);
     await seedWorkflowWake({ runId: 'wf-agent', startRequester: HELPER });
     await expect(daemon.execute('executeAppTool', { ...turn, appId,
       tool: 'SLACK_POST_MESSAGE', arguments: { text: 'Launch notes' } }, HELPER))
-      .rejects.toThrow('App use requires a person\u2019s request');
+      .resolves.toMatchObject({ status: 'executed' });
+    expect(provider.execute).toHaveBeenCalledTimes(1);
+    expect((await database.query(`SELECT requester_id FROM workspace_app_usage`)).rows[0]?.requester_id).toBe(OWNER);
+  });
+
+  it.each([['schedule', SCHEDULE_SCHEDULER_ID], ['subscribed_event', SYSTEM_IDENTITY_ID], ['subscribed_event', HELPER]])(
+    'Reproduction wake-app: %s uses the owner app and records the owner as requester (%s)', async (reason, author) => {
+      const provider = fakeComposio();
+      const daemon = daemonWith(fakeRegistry([]).client, provider);
+      const appId = await connectedSlack(daemon, provider);
+      await database.query(`INSERT INTO identities(id,kind,name,hidden_from_roster) VALUES($1,'human','Wake',true) ON CONFLICT DO NOTHING`, [author]);
+      await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES('app-wake',$1,$2,'Wake')`, [ROOM, author]);
+      await database.query(`UPDATE agent_commands SET root_source_message_id='app-wake',reason=$1 WHERE id=$2`, [reason, COMMAND]);
+      await expect(daemon.execute('executeAppTool', { ...turn, appId,
+        tool: 'SLACK_POST_MESSAGE', arguments: { text: 'Launch notes' } }, HELPER))
+        .resolves.toMatchObject({ status: 'executed' });
+      expect(provider.execute).toHaveBeenCalledTimes(1);
+      expect((await database.query(`SELECT requester_id FROM workspace_app_usage`)).rows[0]?.requester_id).toBe(OWNER);
+    });
+
+  it('Reproduction wake-app: an agent-only wake cannot borrow another person’s app', async () => {
+    const provider = fakeComposio();
+    const daemon = daemonWith(fakeRegistry([]).client, provider);
+    const appId = await connectedSlack(daemon, provider);
+    const other = 'c'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'human','Other')`, [other]);
+    await database.query(`UPDATE agents SET owner_id=$1 WHERE agent_id=$2`, [other, HELPER]);
+    await seedWorkflowWake({ runId: 'wf-foreign-app', startRequester: HELPER });
+    await expect(daemon.execute('executeAppTool', { ...turn, appId,
+      tool: 'SLACK_POST_MESSAGE', arguments: { text: 'Launch notes' } }, HELPER))
+      .rejects.toThrow('App use requires a person’s request');
     expect(provider.execute).not.toHaveBeenCalled();
   });
 });

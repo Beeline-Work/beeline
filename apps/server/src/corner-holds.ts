@@ -32,7 +32,7 @@ export async function setCornerHold(db: SqlDatabase, input: CornerHoldInput, act
       [input.cornerId, actorId],
     )
   ).rows[0];
-  if (!actor) throw new Error('hold access denied: current human corner membership required');
+  if (!actor) throw new Error('hold access denied: current human Room membership required');
   if (input.releaseHoldId !== undefined) {
     const hold = (
       await db.query<{ actor_id: string; standing: CornerMergeHold['standing'] }>(

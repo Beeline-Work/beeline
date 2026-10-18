@@ -498,3 +498,35 @@ it('Reproduction idle-alert-churn: a newer brief preserves the call-site recipie
   expect(await commanderFlags()).toHaveLength(1);
   expect((await readAgentCommands(db,DM,COMMANDER)).commands).toHaveLength(0);
 });
+
+it.each(['pending','active'] as const)('Reproduction idle-alert-churn: a dispatched %s reviewer remains in review after reviewer settings change', async phase => {
+  const head='review-head';
+  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,[C,JSON.stringify({lifecycle:'in-review',checks:'passing',pr:{headSha:head}})]);
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,system_event)
+    VALUES('review-source',$1,$2,'Review requested','system',$3::jsonb)`,
+    [C,COMMANDER,JSON.stringify({kind:'check-passed',object:{headSha:head}})]);
+  const dispatch=await createAgentCommand(db,{id:'review-dispatch',roomId:C,agentId:REVIEWER,sourceMessageId:'review-source',reason:'corner_review_dispatch'});
+  expect(dispatch).toBeTruthy();
+  if(phase==='active') await daemon.execute('claimAgentCommand',{roomId:C,commandId:dispatch!.id,generationId:'review-proof'},REVIEWER);
+  expect(await state()).toBe('review');
+  // The dispatched recipient still owns this review even if settings change.
+  await db.query(`UPDATE rooms SET reviewer_agent_id=NULL,reviewer_fallback_ids='{}' WHERE id=$1`,[ROOM]);
+  for(let i=0;i<3;i++) {
+    await db.query(`UPDATE corner_attention_spans SET revision=revision+3 WHERE corner_id=$1`,[C]);
+    expect(await state()).toBe('review');
+    expect((await phone.readCorners(ROOM,HUMAN))!.corners[0]!.state).toBe('review');
+    await runCornerAttention(db);
+  }
+  expect((await db.query("SELECT id FROM corner_attention_flags WHERE kind='idle'")).rows).toHaveLength(0);
+  expect(await commanderFlags()).toHaveLength(0);
+  await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}','"next-head"') WHERE corner_id=$1`,[C]);
+  expect(await state()).toBe('idle');
+  await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}',$2::jsonb) WHERE corner_id=$1`,[C,JSON.stringify(head)]);
+  expect(await state()).toBe('review');
+  await db.query(`UPDATE agent_commands SET state='complete' WHERE id='review-dispatch'`);
+  await db.query(`UPDATE agent_turns SET status='complete' WHERE room_id=$1 AND agent_id=$2`,[C,REVIEWER]);
+  expect(await state()).toBe('idle');
+  await runCornerAttention(db);
+  expect(await commanderFlags()).toHaveLength(1);
+  console.info(`Demonstrated Reproduction idle-alert-churn: ${phase} review dispatch survives settings change; list/inspect REVIEW; three churn ticks produce zero idle flags; completed review permits idle`);
+});

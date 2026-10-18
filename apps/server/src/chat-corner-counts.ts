@@ -90,7 +90,16 @@ export function cornerWorkSql(): string {
         AND t.agent_id=ANY(ARRAY[parent.reviewer_agent_id]||parent.reviewer_fallback_ids)) OR
       EXISTS(SELECT 1 FROM agent_commands command WHERE command.room_id=c.id
         AND command.agent_id=ANY(ARRAY[parent.reviewer_agent_id]||parent.reviewer_fallback_ids)
-        AND command.state IN ('pending','claimed') AND command.action<>'stop') reviewer_active
+        AND command.state IN ('pending','claimed') AND command.action<>'stop') OR
+      EXISTS(SELECT 1 FROM agent_commands dispatched
+        JOIN messages source ON source.id=dispatched.source_message_id
+        LEFT JOIN agent_turns review_turn ON review_turn.room_id=dispatched.room_id
+          AND review_turn.agent_id=dispatched.agent_id AND review_turn.request_id=dispatched.turn_request_id
+        WHERE dispatched.room_id=c.id AND dispatched.action<>'stop'
+          AND (dispatched.reason='corner_review_dispatch'
+            OR (dispatched.reason='subscribed_event' AND source.system_event->>'kind'='check-passed'))
+          AND source.system_event->'object'->>'headSha'=f.lifecycle->'pr'->>'headSha'
+          AND (dispatched.state IN ('pending','claimed') OR review_turn.status='working')) reviewer_active
     ) activity ON true`;
 }
 

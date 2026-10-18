@@ -1,0 +1,20 @@
+{
+  "baseCommit": "1afe5e6ffc12c3a4ebb55f75e492cf806c70034d",
+  "apkSha256": "10f73e3c00d4f8cbaa73e7a4f0a5fe82056f69d954e5c536562162a7d41671fc",
+  "device": "Beeline-leased emulator-5558, Android API 36, x86_64",
+  "build": "Release/Hermes, fixture entry, two Gradle and Metro workers, 4 GiB Gradle heap",
+  "sourceSha256": {
+    "apps/server/src/voice-room-runtime.ts": "8bd891a9924293c2e5a3e8af75013af8234a681bc79eeda0e782c011073d3d14",
+    "apps/server/src/voice-request-assembler.ts": "bdf56fb5409df60ddbaad7223b0d29b99509b947fbf5f133c96bc3e2b0586b57",
+    "apps/server/src/voice-service.ts": "f9aa1ce6e7f78882d0f8c49bd1c8ad3754d9d5d19279112327543259e755b512",
+    "apps/server/src/voice-providers.ts": "e36f34bc7cc865760bd16f438b9a9c3496eb0c071befe1f149a527ec41ad2b6e",
+    "apps/mobile/scripts/voice-delivery-android-proof.tsx": "8d7b03f7da9c881a01a7749cec4d51b5cc1d0b3d8526ee7c04dcd452aa38c3ac",
+    "apps/mobile/scripts/voice-delivery-native-proof.tsx": "01240a4c9e8f147e8ac75510b04df989e348aa2e581017031ea273ab244f42f4",
+    "apps/mobile/sources/buzz/use-voice-call.ts": "d30dd9186cb95cd5076cde2d0e2b98f9214788b69e7af14f20a78d557b1f4931",
+    "apps/mobile/sources/buzz/voice-transport.native.ts": "c0c2e8dbcda9e9e127631862dcc308242af67037afa75321a31dee4db332d026",
+    "apps/mobile/sources/components/buzz/VoiceBar.tsx": "1ddf7d53385e124aa9cfe950a6927ce98362f076b6afef3ac1fc05616c156231",
+    "apps/mobile/sources/components/buzz/VoiceCallCard.tsx": "adacac17693f9b3196a2b73953a9db0c23092047c7ab31c673a8373aa12141ac",
+    "scripts/prove-voice-delivery.ts": "0bc9d1e66596e7f0c1ebf61540d93fc72ae3e6d03b44edc5e8a24ca4689b75f0",
+    "scripts/prove-voice-delivery.py": "acb337852ed1535730117aeb6ec8d72bb04de1ee597a68d808cd85c49cc85c5d"
+  }
+}

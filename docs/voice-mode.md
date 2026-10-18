@@ -44,11 +44,16 @@ field; the server ignores it. Room assignment reserves saved voices and resolves
 collisions deterministically. The profile opened from a Room shows its effective
 assignment. There are no cloning or upload controls.
 
-Say an agent's handle or display name anywhere in the utterance to address it;
+Say an agent's handle or display name at the start of a request to address it;
 matching ignores case and respects word boundaries. Tapping its avatar still
-sets the current target. With two or more humans in the call, every utterance
-must open with an agent's name or use an explicit one-turn avatar tap to get a reply.
-An unnamed continuation cannot inherit a pending agent target.
+sets the current target. With two or more humans in the call, start each request
+with an agent's name or an explicit avatar tap to get a reply.
+A name-only segment or deliberate avatar tap holds that human's addressee for
+three seconds, renewed while that human speaks. An unfinished request retains
+its addressee across further segments; an explicit new name replaces it. Other
+humans cannot consume the draft. Delivery, cancel, expiry or departure clears
+the pending address. An expired name alone never dispatches work; an unaddressed
+request asks for the agent's name again.
 With exactly one human, unnamed speech addresses the eligible agent who most
 recently posted a message in that Room or corner. An opening agent name or an
 explicit avatar tap takes priority. If no eligible agent has posted there, the
@@ -99,8 +104,19 @@ transport participant speaks as the existing agents; it is never a Beeline
 identity. Ordinary human and agent messages form the transcript. Luna's voice
 conversation uses `openai/gpt-6-luna` through OpenRouter with reasoning disabled.
 External work is dispatched through `routeHumanMessage`, the existing command
-grammar. Real agent reports are matched to their original command and spoken
-back. Agent work has no voice timeout and continues independently of playback.
+grammar. `voice-request-assembler.ts` owns one unfinished request per human,
+independently of playback. Each request uses a stable source message ID. The final
+external-work decision commits its command before scheduling any acknowledgement
+speech. Interruptions and synthesis failures cannot cancel classification or
+accepted delivery. A speaker can revise their own unfinished request; explicit
+cancel clears it. A failed delivery remains retryable with the same ID: say
+"try again" to retry the commit without reclassifying or editing its source.
+A delivery whose acknowledgement audio fails shows "Request delivered; voice reply
+unavailable". Committed orders cannot be revised, and retry uses the existing
+transactional order deduplication.
+[Android delivery proof](voice-mode-proof/request-delivery/README.md) records
+Reproduction DELIVERY-2 and its controlled STT/provider stand-ins. Real agent
+reports are matched to their original command and spoken back. Agent work has no voice timeout and continues independently of playback.
 Call callbacks and detached work share a terminal error boundary. Known transient
 connection/database failures retry twice, at 250 ms and 1 s with jitter, only for
 reads or idempotent operations. Dispatch reuses the source message ID. An access

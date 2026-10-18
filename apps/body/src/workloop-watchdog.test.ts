@@ -119,7 +119,10 @@ it('acknowledges watchdog progress throughout 615 archived refusals while preser
     expect(established).toHaveBeenCalledTimes(1);
     await vi.waitFor(() => expect(pending.size).toBe(0), { timeout: 25_000 });
     expect(pending.size).toBe(0);
-    expect(await readdir(resolve(root, 'corner-cleanup-refusals'))).toHaveLength(615);
+    // Clearing the queue can precede the final atomic refusal write.
+    await vi.waitFor(async () => {
+      expect(await readdir(resolve(root, 'corner-cleanup-refusals'))).toHaveLength(615);
+    }, { timeout: 25_000 });
     expect(preserve).toHaveBeenCalledTimes(1); // one job across the whole backlog
     expect(execute.mock.calls.filter(([name]) => name === 'getCornerRestoreState')).toHaveLength(615);
     const reads = execute.mock.calls.length;

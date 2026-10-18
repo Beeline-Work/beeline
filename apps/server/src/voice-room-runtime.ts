@@ -9,8 +9,13 @@ import { VOICE_DATA_TOPIC, type VoiceSignal, type VoiceBudget } from '@beeline/a
 import type { VoiceService } from './voice-service.js';
 import { VOICE_SAMPLE_RATE, VoiceQuotaError, type VoiceAgent, type VoiceStt, type FluxEvent } from './voice-providers.js';
 
+import { VoiceRequestAssembler, voiceNameOnly } from './voice-request-assembler.js';
 import { namedVoiceTarget, openingVoiceName } from './voice-target.js';
 export { namedVoiceTarget } from './voice-target.js';
+
+class DeliveredVoicePlaybackError extends Error {
+  constructor(cause: unknown) { super('Request delivered; voice reply unavailable', { cause }); }
+}
 
 const speechWords = (text: string) => text.trim().toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
 
@@ -79,14 +84,12 @@ export class VoiceRoomRuntime {
   private readonly turnIndices = new Map<string, number>();
   private readonly inputVersions = new Map<string, number>();
   private readonly inputSpeech = new Map<string, { turn: number; playback: Set<string> }>();
-  private readonly pendingTurns = new Map<string, { text: string; source: Promise<string>;
-    controller: AbortController; playbackStarted: boolean; audible: boolean; agent?: VoiceAgent; selected?: string }>();
+  private readonly assembler = new VoiceRequestAssembler();
   private readonly shutdown = new AbortController();
-  /** One-turn avatar taps in a call with several humans. */
-  private readonly taps = new Map<string, string>();
   private lastAnnouncedHumanCount?: number;
   private humanCountRefresh = Promise.resolve();
   private speaking?: AbortController;
+  private playbackVersion = 0;
   private speechIdle = Promise.resolve();
   private lastActivity = performance.now();
   private lastWorkFinishedAt = 0;
@@ -116,8 +119,11 @@ export class VoiceRoomRuntime {
     if (error instanceof Error && error.name === 'AbortError') return;
     captureServerError(error, { surface: 'voice', callId: this.callId });
     try {
-      await this.signal({ type: 'error', message: error instanceof VoiceQuotaError ? error.message :
-        'Voice reply unavailable; please try again', ...(error instanceof VoiceQuotaError ? { code: error.code } : {}) }, human);
+      const cause = error instanceof DeliveredVoicePlaybackError ? error.cause : error;
+      const message = cause instanceof VoiceQuotaError ? cause.message : 'Voice reply unavailable; please try again';
+      await this.signal({ type: 'error', message: error instanceof DeliveredVoicePlaybackError
+        ? `Request delivered; ${cause instanceof VoiceQuotaError ? message : 'voice reply unavailable'}` : message,
+        ...(cause instanceof VoiceQuotaError ? { code: cause.code } : {}) }, human);
     } catch (reportError) { captureServerError(reportError, { surface: 'voice-error-signal' }); }
   }
   private async safeSignal(signal: VoiceSignal, human?: string): Promise<void> {
@@ -168,7 +174,7 @@ export class VoiceRoomRuntime {
           const allowed = await this.retry(() => this.service.agents(this.roomId, participant.identity));
           if (!allowed.some(a => a.id === data.agentId)) return;
           this.targets.set(participant.identity, data.agentId);
-          if (data.tap) this.taps.set(participant.identity, data.agentId);
+          if (data.tap) this.assembler.address(participant.identity, data.agentId);
         }
         if (data.type === 'target') { await this.refresh(); return; }
         // HTTP may land on another server; the retained RTC channel reaches
@@ -275,10 +281,11 @@ export class VoiceRoomRuntime {
         return;
       }
       this.markCallActivity();
+      this.assembler.speaking(human);
       this.task(() => this.signal({ type: 'speech' }, human), human);
       // Partial recognized names can aim the strip immediately; only EndOfTurn dispatches.
       if (event.event !== 'EndOfTurn') this.task(() => this.aimSpokenName(human, event.transcript, version), human);
-      const stop = /^(stop|stop conversation|end conversation|leave conversation|stop conversation mode)$/.test(speechWords(event.transcript).join(' '));
+      const stop = /^(stop|cancel|stop conversation|end conversation|leave conversation|stop conversation mode)$/.test(speechWords(event.transcript).join(' '));
       if (event.event === 'EndOfTurn' && event.transcript.trim() && !stop) {
         this.turnIndices.set(human, event.turn_index);
         const interrupts = voiceInterrupt(event);
@@ -289,12 +296,15 @@ export class VoiceRoomRuntime {
       const humans = await this.retry(() => this.service.humanCount(this.callId));
       if (this.inputVersions.get(human) !== version || event.turn_index <= (this.turnIndices.get(human) ?? -1)) return;
       const interrupts = humans === 1 || voiceInterrupt(event);
-      if (interrupts) { this.pendingTurns.get(human)?.controller.abort(); this.speaking?.abort(); this.audio.clearQueue(); }
+      if (interrupts) {
+        if (event.event !== 'EndOfTurn') this.assembler.pause(human);
+        this.interruptPlayback();
+      }
       if (event.event !== 'EndOfTurn' || !event.transcript.trim() ||
           event.turn_index <= (this.turnIndices.get(human) ?? -1)) return;
       this.turnIndices.set(human, event.turn_index);
       if (stop) {
-        this.pendingTurns.get(human)?.controller.abort();
+        this.assembler.cancel(human);
         this.speaking?.abort(); this.audio.clearQueue();
         return;
       }
@@ -452,6 +462,17 @@ export class VoiceRoomRuntime {
     }
   }
 
+  private interruptPlayback() {
+    this.playbackVersion++;
+    this.speaking?.abort(); this.audio.clearQueue();
+  }
+
+  participantLeft(human: string) {
+    this.assembler.cancel(human);
+    this.targets.delete(human);
+    this.stopInput(human);
+  }
+
   async stopCall() { await this.signal({ type: 'stop' }); }
 
   private async aimSpokenName(human: string, text: string, version: number) {
@@ -471,14 +492,25 @@ export class VoiceRoomRuntime {
         if (this.endingDeadline !== null) await this.signal({ type: 'ending', deadline: this.endingDeadline, serverNow: Date.now() });
       }
       this.lastAnnouncedHumanCount = count;
+      const humans = this.assembler.humans();
+      if (humans.length) {
+        const active = await this.retry(() => this.service.db.query<{identity_id: string}>(
+          `SELECT identity_id FROM voice_participants WHERE call_id=$1 AND left_at IS NULL AND identity_id=ANY($2::text[])`,
+          [this.callId, humans]));
+        const joined = new Set(active.rows.map(row => row.identity_id));
+        for (const human of humans) if (!joined.has(human)) this.participantLeft(human);
+      }
     });
     this.humanCountRefresh = refresh;
     return refresh;
   }
 
-  async utterance(human: string, text: string, startedAt = performance.now(), interrupts = true) {
+  async utterance(human: string, fragment: string, startedAt = performance.now(), interrupts = true) {
     this.markCallActivity();
-    if (!interrupts && this.speaking && await this.retry(() => this.service.humanCount(this.callId)) > 1) return;
+    if (!interrupts && this.speaking && await this.retry(() => this.service.humanCount(this.callId)) > 1 &&
+        !voiceNameOnly(fragment, await this.retry(() => this.service.agents(this.roomId, human)))) return;
+    if (interrupts) this.interruptPlayback();
+    let playbackVersion = this.playbackVersion;
     const traceId = randomUUID();
     const stages = new Set<string>();
     const timing = (stage: string) => {
@@ -488,184 +520,134 @@ export class VoiceRoomRuntime {
         elapsedMs: performance.now() - startedAt }));
     };
     timing('flux_final');
-    const fragment = text;
-    const previous = this.pendingTurns.get(human);
-    const continuation = previous && !previous.playbackStarted ? previous : undefined;
-    if (continuation) {
-      timing('continuation_restart');
-      continuation.controller.abort();
-      text = `${continuation.text} ${text}`;
-    }
+    const failed = this.assembler.retryable(human);
+    const retry = failed?.state === 'retryable' && /^(retry|try again|retry that)[.!?]*$/i.test(fragment.trim());
+    const { request, previous } = retry ? { request: failed, previous: undefined } : this.assembler.begin(human, fragment);
+    const generation = request.classification;
     const controller = new AbortController();
+    const stop = () => { generation.abort(); controller.abort(); };
+    this.shutdown.signal.addEventListener('abort', stop, { once: true });
     let resolveSource!: (id: string) => void;
     let rejectSource!: (error: unknown) => void;
-    const source = new Promise<string>((resolve, reject) => { resolveSource = resolve; rejectSource = reject; });
-    void source.catch(() => {});
-    const turn: { text: string; source: Promise<string>; controller: AbortController; playbackStarted: boolean; audible: boolean; agent?: VoiceAgent; selected?: string } =
-      { text, source, controller, playbackStarted: false, audible: false, selected: this.targets.get(human) };
-    const generation = new AbortController();
-    let decisionFinal = false;
-    controller.signal.addEventListener('abort', () => { if (!turn.audible || decisionFinal) generation.abort(); }, { once: true });
-    const stopGeneration = () => generation.abort();
-    this.shutdown.signal.addEventListener('abort', stopGeneration, { once: true });
-    // Reserve the draft and its write before any await. Successors share the
-    // initial insert and wait for this revision before editing the same row.
-    this.pendingTurns.set(human, turn);
+    const priorSource = request.source;
+    if (!retry) {
+      request.source = new Promise<string>((resolve, reject) => { resolveSource = resolve; rejectSource = reject; });
+      void request.source.catch(() => {});
+    }
+    let finishSpeech: (() => void) | undefined;
+    let delivered = false;
+    let completion: Promise<void> | undefined;
+    let answerToRecord: { agentId: string; text: string } | undefined;
+    const recordAnswer = () => {
+      if (answerToRecord && !completion) {
+        completion = this.service.recordAnswer(this.roomId, answerToRecord.agentId, answerToRecord.text);
+        void completion.catch(() => {});
+      }
+    };
     try {
       const roomMembers = this.service.memberNames
         ? this.retry(() => this.service.memberNames(this.roomId)).catch(() => []) : Promise.resolve([]);
       const agents = await this.retry(() => this.service.agents(this.roomId, human));
       const humans = await this.retry(() => this.service.humanCount(this.callId));
-      // Final input shares routing's live count rather than adding a serial lookup.
-      if (humans > 1 && this.speaking && !interrupts) {
-        resolveSource('');
-        if (this.pendingTurns.get(human) === turn) this.pendingTurns.delete(human);
-        return;
-      }
-      if (humans === 1 || interrupts) {
-        previous?.controller.abort(); this.speaking?.abort(); this.audio.clearQueue();
-      }
-      const members: SpeechMember[] = [
-        ...agents.map(agent => ({ handle: agent.handle, name: agent.name })),
-        ...await roomMembers,
-      ];
-      let sourceId = continuation ? await continuation.source : '';
-      let selected = this.targets.get(human);
-      const inherited = selected !== continuation?.selected && selected !== continuation?.agent?.id
-        ? selected : continuation?.agent?.id ?? selected;
-      const named = openingVoiceName(continuation ? fragment : text, agents);
-      const tapped = agents.find(agent => agent.id === this.taps.get(human));
-      this.taps.delete(human);
-      if (humans === 1 && !continuation && !named && !tapped) {
+      if (humans === 1 && !interrupts) { this.interruptPlayback(); playbackVersion = this.playbackVersion; }
+      const members: SpeechMember[] = [...agents.map(agent => ({ handle: agent.handle, name: agent.name })), ...await roomMembers];
+      let sourceId = retry ? await request.source : previous ? await priorSource : '';
+      const named = openingVoiceName(fragment, agents);
+      const tapped = agents.find(agent => agent.id === this.assembler.target(human));
+      let selected = request.agent?.id ?? this.targets.get(human);
+      if (humans === 1 && !previous && !named && !tapped && !retry)
         selected = await this.retry(() => this.service.lastActiveAgent(this.roomId, agents)) ?? selected;
+      const changedTarget = previous?.agent && this.targets.get(human) !== previous.agent.id
+        ? agents.find(agent => agent.id === this.targets.get(human)) : undefined;
+      const agent = retry ? request.agent : named ?? tapped ?? changedTarget ?? request.agent ?? openingVoiceName(request.text, agents) ??
+        (humans === 1 ? namedVoiceTarget(request.text, agents, selected, humans) : undefined);
+      if (generation.signal.aborted || this.closed) { resolveSource?.(sourceId); return; }
+      if (!agent) {
+        resolveSource?.(''); this.assembler.finish(human, request);
+        await this.safeSignal({ type: 'unaddressed' }, human); return;
       }
-      const agent = humans > 1 ? named ?? tapped : continuation
-        ? namedVoiceTarget(fragment, agents, inherited, 1)
-        : named ?? tapped ?? namedVoiceTarget(text, agents, selected, humans);
-      if (!agent || this.closed) {
-        resolveSource('');
-        if (!agent && !this.closed) await this.signal({ type: 'unaddressed' }, human);
-        if (this.pendingTurns.get(human) === turn) this.pendingTurns.delete(human);
-        return;
+      request.agent = agent;
+      this.targets.set(human, agent.id);
+      await this.safeSignal({ type: 'target', agentId: agent.id }, human);
+      if (voiceNameOnly(fragment, agents) && !previous && !retry) {
+        this.assembler.finish(human, request);
+        this.assembler.address(human, agent.id);
+        resolveSource(''); return;
       }
-      turn.agent = agent;
-      if (!controller.signal.aborted) {
-        this.targets.set(human, agent.id);
-        await this.signal({ type: 'target', agentId: agent.id }, human);
+      if (!retry) {
+        if (sourceId) await this.retry(() => this.service.reviseHuman(this.callId, this.roomId, human, agent, sourceId, request.text, this.leaseOwner));
+        else sourceId = await this.retry(() => this.service.recordHuman(this.callId, this.roomId, human, agent, request.text, this.leaseOwner, request.id));
+        resolveSource(sourceId);
       }
-      if (this.closed) { resolveSource(''); return; }
-      if (!continuation) {
-        sourceId = await this.service.recordHuman(this.callId, this.roomId, human, agent, text, this.leaseOwner);
-      } else if (!controller.signal.aborted) {
-        if (sourceId) await this.retry(() => this.service.reviseHuman(this.callId, this.roomId, human, agent, sourceId, text, this.leaseOwner));
-        else sourceId = await this.service.recordHuman(this.callId, this.roomId, human, agent, text, this.leaseOwner);
-      }
-      resolveSource(sourceId);
       timing('human_committed');
-      if (controller.signal.aborted || this.closed || !sourceId) return;
-      this.speaking?.abort(); this.audio.clearQueue();
-      this.speaking = controller;
-      let finishSpeech!: () => void;
-      this.speechIdle = new Promise<void>(resolve => { finishSpeech = resolve; });
+      if (generation.signal.aborted || this.closed || !sourceId) return;
       const key = `${human}:${agent.id}`;
       let history = this.history.get(key)?.map(message => ({ ...message }));
-      const speechText = new MarkdownSpeechStream(members);
-      let receivedText = ''; let handedOff = false; let firstAudio = false; let speechQueue = Promise.resolve();
-      let speechFailure: unknown;
-      let answer: string | undefined;
-      let completion: Promise<void> | undefined;
-      const commitAudibleReply = () => {
-        if (!firstAudio || answer === undefined || completion) return;
-        // Barge-in cancels playback, never work whose acknowledgement was heard.
-        // Start the write once both the final decision and first audio exist.
-        completion = handedOff ? this.retry(() => this.service.dispatch(this.callId, sourceId, agent.id))
-          : this.service.recordAnswer(this.roomId, agent.id, answer);
-        void completion.catch(() => {});
-      };
-      let speechComplete = false;
-      try {
-        if (!history) {
-          const rows = await this.retry(() => this.service.db.query<{ text: string; author_id: string }>(
-            `SELECT text,author_id FROM messages WHERE room_id=$1 AND author_id=ANY($2::text[])
-              AND id<>$3 AND presentation='message' AND deleted_at IS NULL ORDER BY created_at DESC,id DESC LIMIT 16`,
-            [this.roomId, [human, agent.id], sourceId]));
-          history = rows.rows.reverse().map(row => ({ role: row.author_id === agent.id ? 'assistant' : 'user', content: row.text }));
-        }
-        if (controller.signal.aborted || this.closed) return;
-        history.push({ role: 'user', content: text });
-        const flush = (phrase: string) => {
-          if (!phrase.trim()) return;
-          speechQueue = speechQueue.then(async () => {
-            if (controller.signal.aborted || this.closed) throw new DOMException('Interrupted', 'AbortError');
-            await this.signal({ type: 'speaker', agentId: agent.id });
-            if (controller.signal.aborted || this.closed) throw new DOMException('Interrupted', 'AbortError');
-            await this.play(phrase, agent, controller.signal, () => {
-              if (!firstAudio) {
-                timing('first_voiced_audio_published');
-                firstAudio = true; turn.audible = true; commitAudibleReply();
-                this.task(() => this.signal({ type: 'latency', firstAudioMs: performance.now() - startedAt }));
-              }
-            }, () => { turn.playbackStarted = true; }, timing, members);
-          });
-          void speechQueue.catch(error => {
-            if (error instanceof Error && error.name === 'AbortError') return;
-            speechFailure ??= error; controller.abort(); generation.abort();
-          });
-        };
-        timing('brain_request');
-        const reply = await this.service.config.brain.answer(agent, history, delta => {
-          if (controller.signal.aborted || this.closed) return;
-          if (delta) timing('brain_first_token');
-          receivedText += delta;
-          for (const phrase of speechText.push(delta)) flush(phrase);
-        }, generation.signal).catch(error => { throw speechFailure ?? error; });
-        timing('brain_complete');
-        decisionFinal = true;
-        if (controller.signal.aborted) generation.abort();
-        if (!firstAudio && (controller.signal.aborted || this.closed)) throw new DOMException('Interrupted', 'AbortError');
-        handedOff = !!reply.order;
-        answer = reply.text || (handedOff ? "Checking. I’ll tell you when I have it." : '');
-        commitAudibleReply();
-        if (!reply.text || !receivedText.trim()) { speechText.finish(); flush(answer); }
-        else if (answer.startsWith(receivedText)) speechText.push(answer.slice(receivedText.length)).forEach(flush);
-        flush(speechText.finish()); await speechQueue;
-        if (!firstAudio && (controller.signal.aborted || this.closed)) throw new DOMException('Interrupted', 'AbortError');
-        if (handedOff && !completion) throw new Error('Voice acknowledgement produced no audio');
-        if (!handedOff && !completion) completion = this.service.recordAnswer(this.roomId, agent.id, answer);
-        await completion;
-        if (!controller.signal.aborted && !this.closed) {
-          history.push({ role: 'assistant', content: answer });
-          this.history.set(key, history.slice(-16));
-        }
-        if (this.pendingTurns.get(human) === turn) this.pendingTurns.delete(human);
-        speechComplete = true;
-      } finally {
-        if (!speechComplete) controller.abort();
-        if (this.speaking === controller) {
-          if (!speechComplete) {
-            try { this.audio.clearQueue(); } catch (error) { captureServerError(error, { surface: 'voice-playback-cleanup' }); }
-          }
-          this.speaking = undefined; finishSpeech();
-          await this.safeSignal({ type: 'speaker', agentId: null });
-        } else finishSpeech();
-        if (this.pendingTurns.get(human) === turn && firstAudio) this.pendingTurns.delete(human);
-        // No unheard text enters the ledger. An in-flight commit owns its row
-        // even if playback was interrupted while the database was writing.
-        if (!completion && !handedOff && firstAudio && receivedText.trim()) {
-          completion = this.service.recordAnswer(this.roomId, agent.id, receivedText.trim());
-        }
-        await completion;
+      if (!history) {
+        const rows = await this.retry(() => this.service.db.query<{ text: string; author_id: string }>(
+          `SELECT text,author_id FROM messages WHERE room_id=$1 AND author_id=ANY($2::text[])
+            AND id<>$3 AND presentation='message' AND deleted_at IS NULL ORDER BY created_at DESC,id DESC LIMIT 16`,
+          [this.roomId, [human, agent.id], sourceId]));
+        history = rows.rows.reverse().map(row => ({ role: row.author_id === agent.id ? 'assistant' : 'user', content: row.text }));
+      }
+      history.push({ role: 'user', content: request.text });
+      request.state = 'classifying';
+      timing('brain_request');
+      // Deltas cannot announce work before the final decision has committed it.
+      let streamed = false;
+      const reply = retry ? { order: true, text: "Checking. I’ll tell you when I have it." } :
+        await this.service.config.brain.answer(agent, history, delta => { if (delta) { streamed = true; timing('brain_first_token'); } }, generation.signal);
+      timing('brain_complete');
+      if (generation.signal.aborted || this.closed) return;
+      if (reply.order) {
+        request.state = 'delivering';
+        try {
+          await this.retry(() => this.service.dispatch(this.callId, sourceId, agent.id));
+        } catch (error) { this.assembler.retainFailure(human, request); throw error; }
+        delivered = true;
+        timing('delivery_committed');
+      }
+      this.assembler.finish(human, request);
+      const answer = reply.text || (reply.order ? "Checking. I’ll tell you when I have it." : '');
+      if (!reply.order) answerToRecord = {agentId: agent.id, text: answer};
+      history.push({ role: 'assistant', content: answer });
+      this.history.set(key, history.slice(-16));
+      // A different speaker may have taken the audio lane during classification.
+      if (controller.signal.aborted || this.closed || (this.speaking && !this.speaking.signal.aborted) || playbackVersion !== this.playbackVersion) return;
+      this.speaking = controller;
+      this.speechIdle = new Promise<void>(resolve => { finishSpeech = resolve; });
+      await this.safeSignal({ type: 'speaker', agentId: agent.id });
+      let firstAudio = false;
+      if (controller.signal.aborted || this.closed) return;
+      const stream = new MarkdownSpeechStream(members);
+      const phrases = streamed ? [...stream.push(answer), stream.finish()] : [answer];
+      for (const phrase of phrases) {
+        if (!phrase.trim()) continue;
+        if (controller.signal.aborted || this.closed) throw new DOMException('Interrupted', 'AbortError');
+        await this.play(phrase, agent, controller.signal, () => {
+          if (firstAudio) return;
+          firstAudio = true; timing('first_voiced_audio_published');
+          this.task(() => this.signal({ type: 'latency', firstAudioMs: performance.now() - startedAt }));
+          recordAnswer();
+        }, undefined, timing, members);
       }
     } catch (error) {
-      // Fence queued phrases and late provider chunks before releasing playback.
-      const wasInterrupted = error instanceof Error && error.name === 'AbortError' && controller.signal.aborted;
-      generation.abort(); controller.abort();
-      if (!this.speaking || this.speaking === controller) this.audio.clearQueue();
-      rejectSource(error);
-      const interrupted = error instanceof Error && error.name === 'AbortError';
-      if ((!interrupted || !wasInterrupted || turn.audible) && this.pendingTurns.get(human) === turn) this.pendingTurns.delete(human);
+      rejectSource?.(error);
+      if (request.state !== 'retryable' && !(generation.signal.aborted && error instanceof Error && error.name === 'AbortError'))
+        this.assembler.finish(human, request);
+      if (delivered && !(error instanceof Error && error.name === 'AbortError')) throw new DeliveredVoicePlaybackError(error);
       throw error;
-    } finally { this.shutdown.signal.removeEventListener('abort', stopGeneration); }
+    } finally {
+      controller.abort();
+      if (this.speaking === controller) {
+        this.audio.clearQueue(); this.speaking = undefined;
+        await this.safeSignal({ type: 'speaker', agentId: null });
+      }
+      finishSpeech?.();
+      this.shutdown.signal.removeEventListener('abort', stop);
+      recordAnswer();
+      await completion;
+    }
   }
 
   /** Match actual command provenance, never agent thought/draft events. No work deadline. */
@@ -793,13 +775,12 @@ export class VoiceRoomRuntime {
     clearTimeout(this.leaseExpiry);
     clearInterval(this.quietCheck);
     this.shutdown.abort();
+    this.assembler.close();
     const cleanup = async (work: () => unknown) => {
       try { await work(); } catch (error) { captureServerError(error, { surface: 'voice-cleanup' }); }
     };
     await cleanup(() => { this.speaking?.abort(); this.audio.clearQueue(); });
     this.missingSince.clear();
-    for (const turn of this.pendingTurns.values()) turn.controller.abort();
-    this.pendingTurns.clear();
     for (const human of this.inputs.keys()) await cleanup(() => this.stopInput(human));
     await cleanup(() => this.meter?.close());
     await cleanup(() => this.room.disconnect());

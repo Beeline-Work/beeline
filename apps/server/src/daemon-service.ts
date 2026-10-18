@@ -1521,7 +1521,7 @@ export class DaemonService {
           authenticatedAgentId,
         )) as Output<Name>;
       case 'getAgentUsage':
-        return (await agentUsage(this.database, authenticatedAgentId) ?? null) as Output<Name>;
+        return ((await agentUsage(this.database, authenticatedAgentId)) ?? null) as Output<Name>;
       case 'postAgentUsage':
         await saveAgentUsage(this.database, authenticatedAgentId, (input as Input<'postAgentUsage'>).usage);
         return this.writeResult() as Output<Name>;

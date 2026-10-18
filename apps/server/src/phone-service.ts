@@ -1,4 +1,4 @@
-import { agentUsage, agentUsages } from './agent-usage.js';
+import { agentUsageColumns, projectAgentUsage, type AgentUsageRow } from './agent-usage.js';
 import { prepareCornerCompatibility } from './corner-person-state.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
 import { companyHost } from './company-registry.js';
@@ -427,7 +427,7 @@ interface MemberRow extends IdentityRow {
   presence_updated_at: Date | null;
 }
 /** A roster agent row with the configuration its Members row shows. */
-type RosterAgentRow = MemberRow & {
+type RosterAgentRow = MemberRow & AgentUsageRow & {
   selected_model: string | null;
   model_catalog: AgentDetailView['catalog'] | null;
   owner_id: string | null;
@@ -3351,7 +3351,7 @@ export class PhoneService {
       owner_id: string | null; owner_name: string | null; owner_handle: string | null;
       recent_work: Array<{ title: string; url: string; merged_at: string }>;
       grants: AgentGrantRow[];
-    }>(`SELECT agent_identity.id member_id,agent_identity.name member_name,
+    } & AgentUsageRow>(`SELECT agent_identity.id member_id,agent_identity.name member_name,
         agent_identity.handle member_handle,agent_identity.avatar member_avatar,
         agent_identity.face_id member_face,agent_membership.role member_role,
         a.harness,a.soul,a.model_catalog,a.commands,a.selected_model,a.selected_effort,
@@ -3365,6 +3365,7 @@ export class PhoneService {
         setter.name yolo_set_by_name,a.access_policy,a.owner_id,
         owner.name owner_name,owner.handle owner_handle,
         a.owner_id=$3 can_change_yolo,
+        ${agentUsageColumns('a', '$3')},
         (a.owner_id=$3 OR viewer_membership.role IN ('owner','admin')) can_manage_grants,
         COALESCE((SELECT jsonb_agg(to_jsonb(work)) FROM (
           SELECT max(f.lifecycle->'pr'->>'title') title,
@@ -3430,7 +3431,7 @@ export class PhoneService {
     return {
       workspaceId,
       ...(config?.harness ? { harness: config.harness } : {}),
-      ...(config?.owner_id === viewerId ? { usage: await agentUsage(this.database, agentId, viewerId) } : {}),
+      ...(config?.owner_id === viewerId ? { usage: projectAgentUsage(config) } : {}),
       ...(config?.config_version ? { configVersion: config.config_version } : {}),
       ...(config?.avatar_generation_id ? { avatarGenerationId: config.avatar_generation_id } : {}),
       avatarGenerationPending: config?.avatar_generation_pending ?? false,
@@ -9879,7 +9880,8 @@ export class PhoneService {
         SELECT i.id,i.kind,i.name,i.handle,i.avatar,i.face_id,m.role,
           NULL::jsonb presence_body,NULL::timestamptz presence_updated_at,
           agent.selected_model,agent.model_catalog,
-          owner.id owner_id,owner.name owner_name,owner.handle owner_handle
+          owner.id owner_id,owner.name owner_name,owner.handle owner_handle,
+          ${agentUsageColumns('agent', '$7')}
         FROM memberships m JOIN identities i ON i.id=m.identity_id
         LEFT JOIN agents agent ON agent.agent_id=i.id
         LEFT JOIN identities owner ON owner.id=agent.owner_id
@@ -9950,13 +9952,6 @@ export class PhoneService {
     }
     const people = this.projectMembers(pageRows.filter((row) => row.kind === 'human'), null);
     const agents = this.projectWorkspaceAgents(pageRows.filter((row) => row.kind === 'agent'), agentPage);
-    const usages = await agentUsages(this.database,
-      agents.filter(agent => agent.owner?.pubkey === viewerId).map(agent => agent.identity.pubkey), viewerId);
-    for (const [index, agent] of agents.entries()) {
-      const usage = usages.get(agent.identity.pubkey);
-      if (usage) agents[index] = { ...agent, usage };
-    }
-
     return {
       workspaceRow: reviveDates(data.workspace_row, ['created_at', 'updated_at']),
       viewerIdentity: identity(data.viewer_row, this.publicOrigin),
@@ -9973,9 +9968,12 @@ export class PhoneService {
     return this.projectMembers(rows, null).map((member) => {
       const config = agentConfig.get(member.identity.pubkey);
       const model = config ? selectedModelLabel(config.selected_model, config.model_catalog ?? []) : undefined;
+      // Usage columns are owner-filtered in SQL; other viewers' rows carry nulls.
+      const usage = config ? projectAgentUsage(config) : undefined;
       return {
         ...member,
         ...(model ? { model } : {}),
+        ...(usage ? { usage } : {}),
         ...(config?.owner_id && config.owner_name ? { owner: {
           pubkey: config.owner_id,kind: 'human' as const,name: config.owner_name,
           ...(config.owner_handle ? { handle: config.owner_handle } : {}),

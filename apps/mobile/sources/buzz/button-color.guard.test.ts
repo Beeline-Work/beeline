@@ -14,6 +14,8 @@ const decorativeAccentFills = new Set([
   'components/buzz/ConversationRow.tsx:dot',
   // A pending corner create's status square (corner-open mock).
   'components/buzz/CornerOpenToast.tsx:glyphPending',
+  // The usage meter's thin bar at 80% or more; a status mark, not a button.
+  'components/buzz/AgentUsageSection.tsx:fillWarning',
   'components/buzz/DesktopWorkspaceRail.tsx:pill',
   // The live dictation waveform's level bars.
   'components/buzz/DictationWaveform.tsx:barLive',

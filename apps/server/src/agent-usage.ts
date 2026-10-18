@@ -1,62 +1,64 @@
 import { readAgentUsage, type AgentUsage } from '@beeline/api-contract/daemon';
 import type { SqlDatabase } from './database.js';
-import { freeAgentBudgetReached, freeAgentLimitsFromEnv } from './free-agent-limits.js';
+import { freeAgentLimitsFromEnv } from './free-agent-limits.js';
 
-/** Plan snapshots never cross the owner boundary, including roster reads. */
+/** Usage inputs for an `agents` row, null unless `viewer` (a SQL expression) owns it. */
+export function agentUsageColumns(agent: string, viewer: string): string {
+  const owned = `${agent}.owner_id=${viewer}`;
+  const today = `(now() AT TIME ZONE 'UTC')::date`;
+  return `CASE WHEN ${owned} THEN ${agent}.usage_snapshot END usage_snapshot,
+    CASE WHEN ${owned} THEN EXISTS(SELECT 1 FROM free_agents f
+      WHERE f.agent_id=${agent}.agent_id AND f.removed_at IS NULL) END usage_free,
+    CASE WHEN ${owned} THEN (SELECT u.tokens::text FROM free_agent_usage u
+      WHERE u.owner_id=${agent}.owner_id AND u.day=${today}) END usage_free_tokens,
+    CASE WHEN ${owned} THEN (SELECT b.usd::text FROM free_agent_budget b
+      WHERE b.day=${today}) END usage_free_budget_usd`;
+}
+
+export type AgentUsageRow = {
+  usage_snapshot?: unknown;
+  usage_free?: boolean | null;
+  usage_free_tokens?: string | null;
+  usage_free_budget_usd?: string | null;
+};
+
+/**
+ * The owner's usage for one row read with `agentUsageColumns`. A free agent's
+ * paused state is derived from Beeline's shared budget, whose dollar figure
+ * never leaves the server.
+ */
+export function projectAgentUsage(row: AgentUsageRow): AgentUsage | undefined {
+  if (row.usage_free) {
+    const now = new Date();
+    const configured = Number(process.env.BEELINE_FREE_AGENT_DAILY_TOKENS);
+    const paused =
+      Number(row.usage_free_budget_usd ?? 0) >= freeAgentLimitsFromEnv(process.env).dailyBudgetUsd;
+    return {
+      updatedAt: Date.now() / 1000,
+      windows: [],
+      free: {
+        used: Number(row.usage_free_tokens ?? 0),
+        limit: Number.isFinite(configured) && configured > 0 ? configured : 1_000_000,
+        resetsAt: Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1) / 1000,
+        ...(paused ? { paused: true } : {}),
+      },
+    };
+  }
+  return readAgentUsage(row.usage_snapshot);
+}
+
+/** An agent's own usage, for its usage tool. */
 export async function agentUsage(
   database: Pick<SqlDatabase, 'query'>,
   agentId: string,
-  viewerId?: string,
 ): Promise<AgentUsage | undefined> {
-  return (await agentUsages(database, [agentId], viewerId)).get(agentId);
-}
-
-export async function agentUsages(
-  database: Pick<SqlDatabase, 'query'>,
-  agentIds: readonly string[],
-  viewerId?: string,
-): Promise<Map<string, AgentUsage>> {
-  const result = new Map<string, AgentUsage>();
-  if (!agentIds.length) return result;
-  const rows = (
-    await database.query<{
-      agent_id: string;
-      usage_snapshot: unknown;
-      free_agent: boolean;
-      tokens: string;
-    }>(
-      `SELECT a.agent_id,a.usage_snapshot,
-       EXISTS(SELECT 1 FROM free_agents f WHERE f.agent_id=a.agent_id AND f.removed_at IS NULL) free_agent,
-       COALESCE(u.tokens,0)::text tokens
-     FROM agents a LEFT JOIN free_agent_usage u ON u.owner_id=a.owner_id AND u.day=(now() AT TIME ZONE 'UTC')::date
-     WHERE a.agent_id=ANY($1::text[]) AND ($2::text IS NULL OR a.owner_id=$2)`,
-      [agentIds, viewerId ?? null],
+  const row = (
+    await database.query<AgentUsageRow>(
+      `SELECT ${agentUsageColumns('a', 'a.owner_id')} FROM agents a WHERE a.agent_id=$1`,
+      [agentId],
     )
-  ).rows;
-  // Paused means Beeline's shared daily free budget is spent; its dollar figure never leaves the server.
-  const paused = rows.some((row) => row.free_agent)
-    ? await freeAgentBudgetReached(database, freeAgentLimitsFromEnv(process.env).dailyBudgetUsd)
-    : false;
-  for (const row of rows) {
-    if (row.free_agent) {
-      const now = new Date();
-      const configured = Number(process.env.BEELINE_FREE_AGENT_DAILY_TOKENS);
-      result.set(row.agent_id, {
-        updatedAt: Date.now() / 1000,
-        windows: [],
-        free: {
-          used: Number(row.tokens),
-          limit: Number.isFinite(configured) && configured > 0 ? configured : 1_000_000,
-          resetsAt: Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1) / 1000,
-          ...(paused ? { paused: true } : {}),
-        },
-      });
-    } else {
-      const usage = readAgentUsage(row.usage_snapshot);
-      if (usage) result.set(row.agent_id, usage);
-    }
-  }
-  return result;
+  ).rows[0];
+  return row ? projectAgentUsage(row) : undefined;
 }
 
 export async function saveAgentUsage(

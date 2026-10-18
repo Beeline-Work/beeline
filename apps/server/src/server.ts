@@ -300,10 +300,13 @@ async function bytes(request: IncomingMessage, maximum: number): Promise<Buffer>
   return Buffer.concat(chunks);
 }
 const clientErrorLimit = new IdentityRateLimit('client-error', 12);
-async function body(request: IncomingMessage): Promise<Record<string, unknown>> {
+async function body(request: IncomingMessage, allowEmptyVoiceBody = false): Promise<Record<string, unknown>> {
   const raw = await bytes(request, MAX_JSON_BYTES);
   if (!raw.length) return {};
-  const parsed = JSON.parse(raw.toString('utf8')) as unknown;
+  const text = raw.toString('utf8');
+  // Android expo/fetch can encode a bodyless voice action as a NUL byte.
+  if (allowEmptyVoiceBody && /^[\s\u0000]*$/u.test(text)) return {};
+  const parsed = JSON.parse(text) as unknown;
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
     throw new Error('JSON object required');
   return parsed as Record<string, unknown>;
@@ -2322,7 +2325,7 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     if (voiceMatch[2] === 'current' && method === 'GET') {
       json(response, 200, await options.voice.current(voiceMatch[1]!, identityId!));
     } else if (voiceMatch[2] === 'join' && method === 'POST') {
-      try { json(response, 200, await options.voice.join(voiceMatch[1]!, identityId!, (await body(request)).expectedCallId as string | undefined)); }
+      try { json(response, 200, await options.voice.join(voiceMatch[1]!, identityId!, (await body(request, true)).expectedCallId as string | undefined)); }
       catch (error) {
         if (!(error instanceof VoiceBudgetExceeded)) throw error;
         json(response, 429, { error: error.message, code: 'voice-daily-limit', budget: error.budget });
@@ -2331,11 +2334,11 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     } else if (voiceMatch[2] === 'state' && method === 'GET') {
       json(response, 200, await options.voice.idleState(voiceMatch[1]!, identityId!, undefined, url.searchParams.get('sessionId') ?? undefined));
     } else if (voiceMatch[2] === 'idle' && method === 'POST') {
-      json(response, 200, await options.voice.idle(voiceMatch[1]!, identityId!, (await body(request)).sessionId as string | undefined));
+      json(response, 200, await options.voice.idle(voiceMatch[1]!, identityId!, (await body(request, true)).sessionId as string | undefined));
     } else if (voiceMatch[2] === 'resume' && method === 'POST') {
-      await options.voice.resume(voiceMatch[1]!, identityId!, (await body(request)).sessionId as string); json(response, 200, { resumed: true });
+      await options.voice.resume(voiceMatch[1]!, identityId!, (await body(request, true)).sessionId as string); json(response, 200, { resumed: true });
     } else if (voiceMatch[2] === 'leave' && method === 'POST') {
-      await options.voice.leave(voiceMatch[1]!, identityId!, false, (await body(request)).sessionId as string | undefined); json(response, 200, { left: true });
+      await options.voice.leave(voiceMatch[1]!, identityId!, false, (await body(request, true)).sessionId as string | undefined); json(response, 200, { left: true });
     } else { json(response, 405, { error: 'method_not_allowed' }); }
     return;
   }

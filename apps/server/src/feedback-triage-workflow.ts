@@ -41,7 +41,7 @@ export const FEEDBACK_TRIAGE_CONTRACT: WorkflowContract = {
       timeoutSeconds: 1800,
     },
     browse: {
-      does: 'Read eligible workspaces in full and add at most five redacted findings to this sweep.',
+      does: 'Read 3–5 opted-in workspaces in full from 18 October 2026, with no notice wait, and add at most five redacted findings to this sweep.',
       role: 'triager',
       requires: ['findings', 'reviewedCount', 'skipReason'],
       on: { reviewed: 'approve', skipped: 'approve', timeout: 'approve' },
@@ -184,7 +184,7 @@ For each returned workspace id read successive pages with:
 
 Parameters are agent id, run id, workspace id and the last returned message id
 (empty string on the first page). Continue until an empty page. The SQL functions
-recheck the notice period, reservation and workspace opt-out on
+recheck the effective date, reservation and workspace opt-out on
 every read; they run inside a read-only transaction. Never query raw messages as
 a fallback. The current scheduled Claude triager uses Anthropic, as disclosed
 in the subprocessors inventory. Keep that inventory current when providers change.
@@ -205,7 +205,7 @@ off reviewed with findings, reviewedCount, and skipReason set to none; if no ids
 are returned hand off skipped with empty findings and the actual reason.
 If the granted read-only credential route is unavailable, skip and say so; never use an
 unrestricted database query as a fallback. Keep feedback and Sentry assessment
-running during the notice period. Put findings in this run's same report and card,
+running alongside workspace browsing. Put findings in this run's same report and card,
 not in a separate sweep. Only build findings are proposed for dispatch.
 
 ## approve

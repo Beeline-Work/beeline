@@ -1,4 +1,4 @@
-import { SERVICE_REVIEW_READ_SCHEMA } from './service-review.js';
+import { SERVICE_REVIEW_EFFECTIVE_AT, SERVICE_REVIEW_READ_SCHEMA } from './service-review.js';
 import { CORNER_PERSON_STATE_SCHEMA, migrateCornerPersonState } from './corner-person-state.js';
 import { deleteArchivedCornerWakeSources } from './migrations/archived-corner-wakes.js';
 import { retireBotDirectMessages } from './migrations/one-system-thread.js';
@@ -753,10 +753,11 @@ CREATE TABLE IF NOT EXISTS service_review_notice_deliveries (
 CREATE TABLE IF NOT EXISTS service_review_rollout (
   id integer PRIMARY KEY CHECK(id=1),
   notice_sent_at timestamptz,
-  effective_at timestamptz,
-  CHECK(effective_at IS NULL OR notice_sent_at IS NULL OR effective_at >= notice_sent_at + interval '14 days')
+  effective_at timestamptz
 );
-INSERT INTO service_review_rollout(id) VALUES(1) ON CONFLICT DO NOTHING;
+ALTER TABLE service_review_rollout DROP CONSTRAINT IF EXISTS service_review_rollout_check;
+INSERT INTO service_review_rollout(id,effective_at) VALUES(1,'${SERVICE_REVIEW_EFFECTIVE_AT}')
+  ON CONFLICT(id) DO UPDATE SET effective_at=EXCLUDED.effective_at;
 CREATE TABLE IF NOT EXISTS service_review_visits (
   agent_id text,
   run_id text,

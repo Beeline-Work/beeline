@@ -144,7 +144,7 @@ describe('feedback-triage workflow', () => {
   it('refreshes deployed tool guidance and legacy schedule prompts despite the old completion marker', async () => {
     await backfillFeedbackTriageWorkflow(database);
     await database.query(`DELETE FROM workflow_backfills WHERE name='feedback-triage-adapter-check-v1'`);
-    await database.query(`INSERT INTO workflow_backfills(name) VALUES('feedback-triage-v3') ON CONFLICT DO NOTHING`);
+    await database.query(`INSERT INTO workflow_backfills(name) VALUES('feedback-triage-v7') ON CONFLICT DO NOTHING`);
     await database.query(`UPDATE agent_schedules SET message=$2 WHERE id=$1`, [UNRELATED_SCHEDULE,
       'Start the feedback-triage workflow with start_workflow, binding triager to yourself, and follow the feedback-triage-steps procedure (load_workspace_skill) at each step.',
     ]);
@@ -162,6 +162,8 @@ describe('feedback-triage workflow', () => {
     )).rows[0]!;
     expect(procedure.markdown).toBe(FEEDBACK_TRIAGE_STEPS);
     expect(procedure.markdown).toContain('occurrence_count');
+    expect(procedure.markdown).not.toContain('notice period');
+    expect(procedure.markdown).toContain('effective date');
     expect(procedure.markdown).toContain('app_tool(app:beeline:workflow)');
     expect(procedure.markdown).toContain('report(kind:fixed)');
     expect(procedure.markdown).not.toMatch(/start_workflow|notify_feedback_fixed|load_workspace_skill/);

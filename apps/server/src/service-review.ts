@@ -1,5 +1,7 @@
 import type { SqlDatabase } from './database.js';
 
+export const SERVICE_REVIEW_EFFECTIVE_AT = '2026-10-18T00:00:00-04:00';
+
 /** These SQL reads are executable with the operator's read-only Neon route. */
 export const SERVICE_REVIEW_READ_SCHEMA = `
 CREATE OR REPLACE FUNCTION service_review_targets(review_agent text,review_run text)
@@ -10,7 +12,7 @@ BEGIN
     WHERE v.agent_id=review_agent AND v.run_id=review_run AND w.allow_fix_sweep=true
       AND v.visited_at>now()-interval '1 day'
       AND EXISTS(SELECT 1 FROM service_review_rollout rollout WHERE rollout.id=1
-        AND effective_at<=now() AND effective_at>=notice_sent_at+interval '14 days');
+        AND effective_at<=now());
 END $$;
 CREATE OR REPLACE FUNCTION service_review_page(review_agent text,review_run text,review_workspace uuid,after_id text DEFAULT '')
 RETURNS TABLE(id text,room_id uuid,text text,activity jsonb) LANGUAGE plpgsql STABLE AS $$
@@ -22,7 +24,7 @@ BEGIN
         AND EXISTS(SELECT 1 FROM service_review_visits v WHERE v.workspace_id=w.id AND v.agent_id=review_agent AND v.run_id=review_run
           AND v.visited_at > now()-interval '1 day')
         AND EXISTS(SELECT 1 FROM service_review_rollout rollout WHERE rollout.id=1
-          AND effective_at<=now() AND effective_at>=notice_sent_at+interval '14 days')
+          AND effective_at<=now())
     ), content AS (
       SELECT m.id,m.room_id,m.text,m.activity FROM messages m
       JOIN target_rooms r ON r.id=m.room_id WHERE m.deleted_at IS NULL
@@ -34,15 +36,14 @@ BEGIN
 END $$;
 `;
 
-/** Reserve today's workspaces only after notice and its full waiting period. */
+/** Reserve opted-in workspaces once the policy is effective. */
 export async function reserveServiceReviewWorkspaces(database: SqlDatabase, agentId: string, runId: string): Promise<string[]> {
   return database.transaction(async (db) => {
     await db.query(`SELECT pg_advisory_xact_lock(hashtext('beeline-service-review'))`);
     const result = await db.query<{ workspace_id: string }>(`
       WITH rollout AS (
         SELECT 1 FROM service_review_rollout
-        WHERE id=1 AND notice_sent_at IS NOT NULL
-          AND effective_at >= notice_sent_at + interval '14 days' AND effective_at <= now()
+        WHERE id=1 AND effective_at <= now()
       ), candidates AS (
         SELECT w.id FROM workspaces w
         WHERE w.allow_fix_sweep=true AND EXISTS(SELECT 1 FROM rollout)

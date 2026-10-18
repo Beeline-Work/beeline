@@ -1,0 +1,164 @@
+{
+  "observationSeconds": 52.719,
+  "start": {
+    "reads": 2,
+    "events": [
+      {
+        "at": 1792343332877,
+        "event": "ready"
+      },
+      {
+        "at": 1792343361726,
+        "event": "socket-open"
+      },
+      {
+        "at": 1792343362236,
+        "event": "frame",
+        "type": "subscribe"
+      },
+      {
+        "at": 1792343362241,
+        "event": "frame",
+        "type": "viewing"
+      },
+      {
+        "at": 1792343362740,
+        "event": "room-read",
+        "reads": 1
+      },
+      {
+        "at": 1792343375115,
+        "event": "blackhole"
+      },
+      {
+        "at": 1792343375116,
+        "event": "final-committed"
+      },
+      {
+        "at": 1792343392327,
+        "event": "socket-open"
+      },
+      {
+        "at": 1792343392825,
+        "event": "frame",
+        "type": "subscribe"
+      },
+      {
+        "at": 1792343392825,
+        "event": "frame",
+        "type": "viewing"
+      },
+      {
+        "at": 1792343393328,
+        "event": "room-read",
+        "reads": 2
+      },
+      {
+        "at": 1792343412833,
+        "event": "frame",
+        "type": "ping"
+      },
+      {
+        "at": 1792343432848,
+        "event": "frame",
+        "type": "ping"
+      },
+      {
+        "at": 1792343452864,
+        "event": "frame",
+        "type": "ping"
+      }
+    ],
+    "paths": [
+      {
+        "drop": true
+      },
+      {
+        "drop": false
+      }
+    ]
+  },
+  "end": {
+    "reads": 2,
+    "events": [
+      {
+        "at": 1792343332877,
+        "event": "ready"
+      },
+      {
+        "at": 1792343361726,
+        "event": "socket-open"
+      },
+      {
+        "at": 1792343362236,
+        "event": "frame",
+        "type": "subscribe"
+      },
+      {
+        "at": 1792343362241,
+        "event": "frame",
+        "type": "viewing"
+      },
+      {
+        "at": 1792343362740,
+        "event": "room-read",
+        "reads": 1
+      },
+      {
+        "at": 1792343375115,
+        "event": "blackhole"
+      },
+      {
+        "at": 1792343375116,
+        "event": "final-committed"
+      },
+      {
+        "at": 1792343392327,
+        "event": "socket-open"
+      },
+      {
+        "at": 1792343392825,
+        "event": "frame",
+        "type": "subscribe"
+      },
+      {
+        "at": 1792343392825,
+        "event": "frame",
+        "type": "viewing"
+      },
+      {
+        "at": 1792343393328,
+        "event": "room-read",
+        "reads": 2
+      },
+      {
+        "at": 1792343412833,
+        "event": "frame",
+        "type": "ping"
+      },
+      {
+        "at": 1792343432848,
+        "event": "frame",
+        "type": "ping"
+      },
+      {
+        "at": 1792343452864,
+        "event": "frame",
+        "type": "ping"
+      },
+      {
+        "at": 1792343455738,
+        "event": "frame",
+        "type": "viewing"
+      }
+    ],
+    "paths": [
+      {
+        "drop": true
+      },
+      {
+        "drop": false
+      }
+    ]
+  }
+}

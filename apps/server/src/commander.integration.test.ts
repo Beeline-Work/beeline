@@ -303,7 +303,7 @@ it('revises a reachable corner brief from a DM with the same active-order author
 describe('a worker records a later waiver in its corner brief', () => {
   const STRANGER = 'd'.repeat(64), OUTSIDER = 'e'.repeat(64);
   const revise = async (turn: AgentCommand, cornerId: string, expectedRevision: number, sourceMessageId: string) => {
-    // Self-revision now returns to a Room/DM turn; retain the approval-chain coverage.
+    // Self-revision now returns to a Room/DM turn; exercise approval membership from a reachable turn.
     const source = (await db.query<{ parent_id: string | null }>(`SELECT parent_id FROM rooms WHERE id=$1`, [turn.roomId])).rows[0];
     if (source?.parent_id) turn = await dmTurn(await directMessage(HUMAN, HUMAN, 'Revise the assigned widget brief'));
     return daemon.execute('reviseCornerBrief', { ...authority(turn), cornerId, expectedRevision,
@@ -360,66 +360,47 @@ describe('a worker records a later waiver in its corner brief', () => {
       sourceMessageId: waiver, snapshot: 'Waive the proof for this corner.' });
   });
 
-  it('Reproduction CHAIN-01: a worker rejects outside shared-Room approval and records in-chain approval itself', async () => {
+  it('HUMAN-01: a worker accepts any shared-Room human approval and announces the change', async () => {
     const opened = await open(), turn = await worker(opened.cornerId);
     await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
       [WS, ROOM, STRANGER]);
-    const outside = randomBytes(32).toString('hex'), inside = randomBytes(32).toString('hex');
+    const outside = randomBytes(32).toString('hex');
     await phone.execute('sendRoomMessage', { roomId: ROOM, messageId: outside, text: 'Approved: waive the proof.' }, STRANGER);
     const revision = (sourceMessageId: string) => daemon.execute('reviseCornerBrief', {
       ...authority(turn), cornerId: opened.cornerId, expectedRevision: 1,
       brief: { spec: 'Build the widget; proof waived', repositoryWork: false, change: 'Record approval', approval: { sourceMessageId } },
     }, WORKER);
-    await expect(revision(outside)).rejects.toThrow('ask your commander');
-    expect((await daemon.execute('getCornerRestoreState', { cornerId: opened.cornerId }, WORKER)).brief?.revision).toBe(1);
-    await phone.execute('sendRoomMessage', { roomId: ROOM, messageId: inside, text: 'Approved: waive the proof.' }, HUMAN);
-    expect(await revision(inside)).toMatchObject({ revision: 2 });
-    expect(await approval(opened.cornerId)).toMatchObject({ approvedBy: HUMAN, sourceMessageId: inside });
-    await daemon.execute('postRoomMessage', { ...authority(turn), text: '@ruby Recorded the proof waiver approved by Captain.' }, WORKER);
-    expect((await phone.readRoom(opened.cornerId, HUMAN))?.messages.some(m => m.text === '@ruby Recorded the proof waiver approved by Captain.')).toBe(true);
-    console.log('CHAIN-01: shared-Room outsider refused; worker saved human approval as revision 2 and notified commander');
+    expect(await revision(outside)).toMatchObject({ revision: 2 });
+    expect(await approval(opened.cornerId)).toMatchObject({ approvedBy: STRANGER, sourceMessageId: outside });
+    await daemon.execute('postRoomMessage', { ...authority(turn), text: '@ruby Recorded the proof waiver approved by Stranger.' }, WORKER);
+    expect((await phone.readRoom(opened.cornerId, HUMAN))?.messages.some(m => m.text === '@ruby Recorded the proof waiver approved by Stranger.')).toBe(true);
+    console.log('HUMAN-01: shared-Room member approval saved as revision 2 and announced in the corner');
   });
 
-  it('refuses reusing a stored shared-Room approval from outside the chain', async () => {
+  it('refuses a stored approval when its human author is not a Room member', async () => {
     const opened = await open(), turn = await worker(opened.cornerId);
     const outside = randomBytes(32).toString('hex');
     await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Approved')`, [outside, ROOM, STRANGER]);
-    // Simulate a revision saved under the previous shared-Room policy.
+    // A stored snapshot does not substitute for current membership.
     await db.query(`UPDATE corner_brief_revisions SET approval_basis=approval_basis || $2::jsonb WHERE corner_id=$1`,
       [opened.cornerId, JSON.stringify({ kind: 'explicit-human-answer', sourceMessageId: outside, approvedBy: STRANGER, snapshot: 'Approved' })]);
-    await expect(revise(turn, opened.cornerId, 1, outside)).rejects.toThrow('ask your commander');
+    await expect(revise(turn, opened.cornerId, 1, outside)).rejects.toThrow('must name a human message or commander order');
     expect((await daemon.execute('getCornerRestoreState', { cornerId: opened.cornerId }, WORKER)).brief?.revision).toBe(1);
   });
 
-  it.each(['parent', 'opening', 'cycle'] as const)('Reproduction CHAIN-02: accepts grandparent owner via %s ancestry', async (link) => {
+  it('refuses a DM approval after the human membership is removed', async () => {
     const opened = await open(), turn = await worker(opened.cornerId);
-    const parent = randomUUID(), grandparent = randomUUID();
-    // Only the grandparent commander belongs to HUMAN; the immediate commander belongs to STRANGER.
-    await db.query(`UPDATE agents SET owner_id=$2 WHERE agent_id=$1`, [WORKER, STRANGER]);
-    try {
-      await db.query(`UPDATE rooms SET created_by=$2 WHERE id=$1`, [ROOM, STRANGER]);
-      await db.query(`UPDATE rooms SET created_by=$2 WHERE id=$1`, [opened.cornerId, WORKER]);
-      await db.query(`UPDATE corner_facts SET commissioned_by=$2 WHERE corner_id=$1`, [opened.cornerId, STRANGER]);
-      for (const [id, creator] of [[grandparent, RUBY], [parent, WORKER]]) {
-        await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name,created_by) VALUES($1,$2,$3,'Ancestor',$4)`, [id, WS, ROOM, creator]);
-        await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by) VALUES($1,$2,$3)`, [id, WORKER, STRANGER]);
-        for (const member of [WORKER, HUMAN]) await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [WS, id, member]);
-      }
-      if (link === 'parent') {
-        await db.query(`UPDATE rooms SET parent_id=$2 WHERE id=$1`, [opened.cornerId, parent]);
-        await db.query(`UPDATE rooms SET parent_id=$2 WHERE id=$1`, [parent, grandparent]);
-      } else {
-        await db.query(`UPDATE corner_facts SET opened_from_corner_id=$2 WHERE corner_id=$1`, [opened.cornerId, parent]);
-        await db.query(`UPDATE corner_facts SET opened_from_corner_id=$2 WHERE corner_id=$1`, [parent, grandparent]);
-        if (link === 'cycle') await db.query(`UPDATE corner_facts SET opened_from_corner_id=$2 WHERE corner_id=$1`, [grandparent, parent]);
-      }
-      const waiver = await directMessage(HUMAN, HUMAN, 'Approved: waive the proof.');
-      expect((await revise(turn, opened.cornerId, 1, waiver)).revision).toBe(2);
-      expect(await approval(opened.cornerId)).toMatchObject({ approvedBy: HUMAN, sourceMessageId: waiver });
-      console.log(`CHAIN-02: grandparent owner approval recorded through ${link} ancestry`);
-    } finally {
-      await db.query(`UPDATE agents SET owner_id=$2 WHERE agent_id=$1`, [WORKER, HUMAN]);
-    }
+    const waiver = await directMessage(STRANGER, STRANGER, 'Waive the proof.');
+    await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,
+      [rooms.get(waiver), STRANGER]);
+    await expect(revise(turn, opened.cornerId, 1, waiver)).rejects.toThrow('current Room member');
+  });
+
+  it('refuses approval from an unrelated Room even when the human belongs to it', async () => {
+    const opened = await open(), turn = await worker(opened.cornerId);
+    const waiver = await directMessage(STRANGER, STRANGER, 'Waive the proof.');
+    await db.query(`UPDATE rooms SET direct_participants=NULL WHERE id=$1`, [rooms.get(waiver)]);
+    await expect(revise(turn, opened.cornerId, 1, waiver)).rejects.toThrow('must name a human message or commander order');
   });
 
   it('accepts an earlier private order from the corner\'s commander', async () => {
@@ -431,18 +412,18 @@ describe('a worker records a later waiver in its corner brief', () => {
       sourceMessageId: waiver.sourceMessageId, snapshot: 'Skip the proof.' });
   });
 
-  it('refuses a DM from a person outside the corner\'s authority chain', async () => {
+  it('HUMAN-01: accepts any human member approval in a DM shared with the worker', async () => {
     const opened = await open(), turn = await worker(opened.cornerId);
     const waiver = await directMessage(STRANGER, STRANGER, 'Waive the proof for this corner.');
-    await expect(revise(turn, opened.cornerId, 1, waiver)).rejects.toThrow('must name a human message or commander order');
+    expect((await revise(turn, opened.cornerId, 1, waiver)).revision).toBe(2);
+    expect(await approval(opened.cornerId)).toMatchObject({ approvedBy: STRANGER, sourceMessageId: waiver });
   });
 
-  it('refuses a person outside the authority chain from the worker\'s active DM turn', async () => {
+  it('HUMAN-01: accepts any human member approval from the worker\'s active DM turn', async () => {
     const opened = await open();
     const waiver = await directMessage(STRANGER, STRANGER, 'Waive the proof for this corner.');
-    await expect(revise(await dmTurn(waiver), opened.cornerId, 1, waiver))
-      .rejects.toThrow('must name a human message or commander order');
-    expect((await db.query(`SELECT 1 FROM corner_brief_revisions WHERE corner_id=$1`, [opened.cornerId])).rowCount).toBe(1);
+    expect((await revise(await dmTurn(waiver), opened.cornerId, 1, waiver)).revision).toBe(2);
+    expect(await approval(opened.cornerId)).toMatchObject({ approvedBy: STRANGER, sourceMessageId: waiver });
   });
 
   it('accepts the owner\'s waiver from the worker\'s active DM turn', async () => {

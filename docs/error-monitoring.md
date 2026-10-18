@@ -149,19 +149,13 @@ Skip creating an alert workflow; the earlier HTTP 403 on alert creation is not
 a blocker. No new alert id exists or is required. Existing Telegram alert
 `6181673` stays independent.
 
-**Secret rotation needs a decision:** Sentry returned HTTP 403 for
-`POST /api/0/sentry-apps/beeline-triage-wake-efb45b/rotate-secret/` using the setup
-credential. The credential has `org:read`; rotation requires `org:write` or
-`org:admin`. The secret was not rotated and the existing vault entry remains
-unchanged. Rotate before activation because Squire exposed the initial value in
-a tool observation (reported separately, without its value). An authorized
-rotation must store the replacement in the same vault entry without putting
-its value in tool arguments or outputs.
-
-**Fly transfer belongs to Ruby:** after the owner's approval, Ruby handles the
-secure transfer to `BEELINE_SENTRY_CLIENT_SECRET` on `beeline-server`. Jellybean
-does not stage it. The secret has not been staged by this work. Staging must
-skip deployment; production activation remains a release follow-up.
+**Setup complete, pending deployment:** Ruby confirmed that the integration's
+client secret was rotated and its replacement stored in the existing
+`sentry-triage-webhook` vault entry. The replacement is staged on Fly app
+`beeline-server` as `BEELINE_SENTRY_CLIENT_SECRET`. It is staged only, not
+deployed. The earlier API rotation refusal is resolved by this completed setup;
+no secret value belongs in the repository or proof. Jellybean performed no Fly
+staging. Production activation remains a follow-up for the next normal release.
 
 **Production proof remains pending the next release:** after deployment, use
 Sentry's send-test-notification action and verify Jellybean receives the digest in

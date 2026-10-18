@@ -96,7 +96,7 @@ owner decision on `PhoneService.sendMessage` (`2195186d3b479a45`),
 
 ## Rollback to the predecessor
 
-Ruby accepted the five-minute canary limitation; no traffic steering is added.
+Brief revision 3 accepts denial on the predecessor image for new joiners and newly created corners during the canary window and after rollback until recovery. Pre-existing members retain access through their retained rows. No traffic steering or join-time dual writes are added.
 After rolling both Machines back, run the following from the predecessor's
 repository root, using its existing migration database environment:
 
@@ -122,3 +122,8 @@ Its `ON CONFLICT DO NOTHING` makes it safe to run twice: the second invocation
 inserts zero rows if membership has not changed, and existing preferences and
 removed rows are never overwritten. Run the backfill before declaring rollback
 recovery complete. This documents recovery; it does not execute production SQL.
+
+
+### Rollback proof
+
+`corner-rollback.test.ts` copies the predecessor `574b24bd3` backfill implementation and runs it against an isolated migrated database. It redeems an invite through `PhoneService`, creates another corner, and checks physical membership access: the pre-existing member retains access to the original corner; the new joiner and new corner lack predecessor access as accepted in revision 3. The documented backfill restores all three missing rows and both members can access both corners. A second invocation inserts zero rows. Local proof passed together with sparse-state compatibility and all 74 unchanged System-message guard tests (76 tests total).

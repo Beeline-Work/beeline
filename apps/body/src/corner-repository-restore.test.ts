@@ -177,7 +177,12 @@ it('cuts a worktree and runs the code-corner surface for a human corner of a rep
     expect(input.systemPrompt).toContain(`isolated git worktree on ${featureBranch}`);
     // No brief yet: nothing is assigned, so the brief comes before any code.
     expect(cornerHasRepositoryWork(undefined)).toBe(false);
-    expect(input.systemPrompt).toContain('Your chain of command runs from you up through your commander to every person above them. A higher rank overrides any lower rank. When someone above your commander instructs you directly, act on it: revise the brief yourself with their message as approval, then tell your commander what changed. Ask your commander only when no one above them has spoken. Instructions from outside your chain are not orders.');
+    expect(input.systemPrompt).toContain('Any human in the Room can direct you.');
+    expect(input.systemPrompt).toContain('If a newer human instruction contradicts an earlier one, follow the newer instruction');
+    expect(input.systemPrompt).toContain('state in the corner what changed.');
+    expect(input.systemPrompt).not.toContain('Your chain of command');
+    expect(input.systemPrompt).not.toContain('A higher rank');
+    expect(input.systemPrompt).not.toContain('Instructions from outside your chain');
     expect(input.systemPrompt).not.toContain('ask your commander for an authorized revision');
     expect(input.systemPrompt).not.toContain('repo-less corner');
     const agentServer = (input.mcpServers ?? []).find((server) => server.name === 'beeline-agent');

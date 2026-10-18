@@ -1,0 +1,1 @@
+{"reads":1,"events":[{"at":1792343127034,"event":"ready"},{"at":1792343148982,"event":"socket-open"},{"at":1792343149480,"event":"frame","type":"subscribe"},{"at":1792343149481,"event":"frame","type":"viewing"},{"at":1792343149982,"event":"room-read","reads":1},{"at":1792343164942,"event":"blackhole"},{"at":1792343164942,"event":"final-committed"}],"paths":[{"drop":true}]}

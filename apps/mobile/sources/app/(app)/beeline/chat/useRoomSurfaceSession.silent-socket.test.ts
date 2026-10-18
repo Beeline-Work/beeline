@@ -179,7 +179,7 @@ async function advance(ms: number) {
 
 describe('Reproduction R1: open Room whose live socket goes silent', () => {
   for (const failures of [0, 1]) {
-    it(`reply-hidden-until-next-send: recovers a silent working turn with ${failures} failed catch-up reads`, async () => {
+    it(`reply-hidden-until-next-send: reads once on replacement subscription with ${failures} failed catch-up reads`, async () => {
       controls.working = true;
       let latest: UseRoomSurfaceSessionResult | undefined;
       let renderer!: ReactTestRenderer;
@@ -191,7 +191,11 @@ describe('Reproduction R1: open Room whose live socket goes silent', () => {
       controls.serverMessages.push(message('hidden-reply', 1_791_247_547, 'A long reply. '.repeat(200)));
       controls.working = false;
       controls.failures = failures;
-      await advance(14_000);
+      await advance(30_000);
+      expect(controls.roomReads).toBe(1);
+      expect(latest!.roomSurface!.messages.at(-1)!.id).toBe('m-2042');
+      await act(async () => controls.emit({ monolithLive: { type: 'subscribed', roomId: 'experiments' } }));
+      await advance(1_100);
       expect(latest!.roomSurface!.messages.at(-1)!.id).toBe('hidden-reply');
       expect(latest!.roomSurface!.latestAgentTurns![0]!.status).toBe('complete');
       const reads = controls.roomReads;
@@ -201,30 +205,23 @@ describe('Reproduction R1: open Room whose live socket goes silent', () => {
     });
   }
 
-  it('backs off empty working reads and resets its deadline on a Room frame', async () => {
+  it('never polls a working Room, including after live frames', async () => {
     controls.working = true;
     let renderer!: ReactTestRenderer;
     await act(async () => { renderer = create(React.createElement(Harness, { capture: () => {} })); });
     await advance(100);
     const opening = controls.roomReads;
-    await advance(60_000);
-    expect(controls.roomReads - opening).toBe(5); // 8, 20, 32, 44, 56 seconds
-    await advance(60_000);
-    expect(controls.roomReads - opening).toBe(10);
+    await advance(120_000);
+    expect(controls.roomReads).toBe(opening);
     await act(async () => controls.emit({ monolithLive: {
       type: 'presence', roomId: 'experiments', agentId: 'bbc', status: 'online', observedAt: 1,
     } }));
-    const reads = controls.roomReads;
-    await advance(7_000);
-    expect(controls.roomReads).toBe(reads);
-    await advance(1_001);
-    expect(controls.roomReads).toBe(reads + 1);
+    await advance(60_000);
+    expect(controls.roomReads).toBe(opening);
     controls.appState = 'background';
     await advance(60_000);
-    expect(controls.roomReads).toBe(reads + 1);
+    expect(controls.roomReads).toBe(opening);
     await act(async () => renderer.unmount());
-    await advance(60_000);
-    expect(controls.roomReads).toBe(reads + 1);
   });
 
   it('bounds failed refresh retries to three after the opening read', async () => {

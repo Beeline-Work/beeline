@@ -3,17 +3,21 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
+import { resolve } from 'node:path';
 import { Room,RoomEvent,AudioSource,AudioFrame,AudioStream,LocalAudioTrack,TrackPublishOptions,TrackSource,TrackKind,dispose } from '@livekit/rtc-node';
 import { PgliteDatabase } from '../apps/server/src/test-support.js';
-import { PostgresDatabase, migrate } from '../apps/server/dist/database.js';
-import { TokenAuth } from '../apps/server/dist/auth.js';
-import { PhoneService } from '../apps/server/dist/phone-service.js';
-import { DaemonService } from '../apps/server/dist/daemon-service.js';
-import { LiveHub } from '../apps/server/dist/live.js';
-import { VoiceService } from '../apps/server/dist/voice-service.js';
-import { createBeelineServer } from '../apps/server/dist/server.js';
 import { readVoiceJoin, type VoiceJoin, type VoiceOwner } from '@beeline/api-contract/phone';
 async function main() {
+// Load compiled server code at runtime while checking its interface from source.
+const builtServerModule = (name: string) => pathToFileURL(resolve(`apps/server/dist/${name}.js`)).href;
+const { PostgresDatabase, migrate } = await import(builtServerModule('database')) as typeof import('../apps/server/src/database.js');
+const { TokenAuth } = await import(builtServerModule('auth')) as typeof import('../apps/server/src/auth.js');
+const { PhoneService } = await import(builtServerModule('phone-service')) as typeof import('../apps/server/src/phone-service.js');
+const { DaemonService } = await import(builtServerModule('daemon-service')) as typeof import('../apps/server/src/daemon-service.js');
+const { LiveHub } = await import(builtServerModule('live')) as typeof import('../apps/server/src/live.js');
+const { VoiceService } = await import(builtServerModule('voice-service')) as typeof import('../apps/server/src/voice-service.js');
+const { createBeelineServer } = await import(builtServerModule('server')) as typeof import('../apps/server/src/server.js');
+
 const H='a'.repeat(64), S='d'.repeat(64), A='b'.repeat(64), W=randomUUID(), R=randomUUID(), DM=randomUUID();
 const baseline=process.env.VOICE_OWNER_BASELINE_MODULE;
 const Service:typeof VoiceService=baseline?(await import(pathToFileURL(baseline).href)).VoiceService:VoiceService;

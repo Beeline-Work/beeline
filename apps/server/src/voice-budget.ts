@@ -14,36 +14,37 @@ export function voiceBudgetDay(now: number) {
 
 export class VoiceBudgetExceeded extends Error {
   constructor(readonly budget: VoiceBudget) {
-    super(`0 minutes of call time remaining today. Resets at ${new Date(budget.resetAt).toISOString().replace('T', ' ').replace('.000Z', ' UTC')}.`);
+    super('Calls resume at 12:00 AM');
   }
 }
 
-/** Union server-observed audio intervals, so retries and overlapping devices never
- * spend the same wall-clock time twice. One identity/day row serializes writers. */
+/** Union microphone intervals within each call. Concurrent calls add to the
+ * workspace total; retrying a checkpoint never spends the same time twice. */
 export class VoiceBudgetStore {
   constructor(private readonly db: SqlDatabase, readonly limitMs = DAILY_VOICE_MS,
     private readonly now = Date.now) {}
 
-  async read(human: string, db = this.db): Promise<VoiceBudget> {
+  async read(workspace: string, db = this.db): Promise<VoiceBudget> {
     const { start, resetAt } = voiceBudgetDay(this.now());
-    const row = (await db.query<{ used: string }>(`SELECT COALESCE((SELECT sum(upper(r)-lower(r))
-      FROM unnest(audio) r),0)::text used FROM voice_daily_usage WHERE identity_id=$1 AND day_start=$2`,
-      [human, start])).rows[0];
+    const row = (await db.query<{ used: string }>(`SELECT COALESCE(sum((SELECT sum(upper(r)-lower(r)) FROM unnest(audio) r)),0)::text used
+      FROM voice_workspace_usage WHERE workspace_id=$1 AND day_start=$2`,
+      [workspace, start])).rows[0];
     return { remainingMs: Math.max(0, this.limitMs - Number(row?.used ?? 0)), resetAt, timeZone: 'UTC' };
   }
 
-  async require(human: string, db = this.db) {
-    const budget = await this.read(human, db);
+  async require(workspace: string, db = this.db) {
+    const budget = await this.read(workspace, db);
     if (budget.remainingMs <= 0) throw new VoiceBudgetExceeded(budget);
     return budget;
   }
 
-  async record(call: string, owner: string, human: string, intervals: readonly AudioInterval[]): Promise<VoiceBudget | null> {
+  async record(call: string, owner: string, workspace: string, intervals: readonly AudioInterval[]): Promise<VoiceBudget | null> {
     return this.db.transaction(async db => {
+      await db.query('SELECT pg_advisory_xact_lock(hashtext($1))', [`voice-budget:${workspace}`]);
       // A stale runtime may neither spend nor remove a successor's participant.
-      const lease = await db.query(`SELECT 1 FROM voice_calls c JOIN voice_participants p ON p.call_id=c.id
+      const lease = await db.query(`SELECT 1 FROM voice_calls c JOIN rooms r ON r.id=c.room_id
         WHERE c.id=$1 AND c.runtime_owner=$2 AND c.runtime_until>now()
-        AND p.identity_id=$3 FOR SHARE OF c,p`, [call, owner, human]);
+        AND r.workspace_id=$3 FOR SHARE OF c`, [call, owner, workspace]);
       if (!lease.rowCount) return null;
       const now = this.now();
       const days = new Map<number, AudioInterval[]>();
@@ -59,17 +60,17 @@ export class VoiceBudgetStore {
       }
       for (const [day, slices] of [...days].sort(([a], [b]) => a - b)) {
         const ranges = `{${slices.map(([a, b]) => `[${a},${b})`).join(',')}}`;
-        await db.query(`INSERT INTO voice_daily_usage(identity_id,day_start,audio) VALUES($1,$2,$3::int8multirange)
-          ON CONFLICT(identity_id,day_start) DO UPDATE SET audio=voice_daily_usage.audio + excluded.audio`, [human, day, ranges]);
+        await db.query(`INSERT INTO voice_workspace_usage(workspace_id,call_id,day_start,audio) VALUES($1,$2,$3,$4::int8multirange)
+          ON CONFLICT(workspace_id,call_id,day_start) DO UPDATE SET audio=voice_workspace_usage.audio + excluded.audio`, [workspace, call, day, ranges]);
       }
-      return this.read(human, db);
+      return this.read(workspace, db);
     });
   }
 }
 
 /** PCM forwarding performs only local arithmetic. The ordered checkpoint lane
  * retains failed batches for idempotent retry and bounds uncommitted audio to
- * one second per input stream. The durable daily budget is shared per human. */
+ * one second per call. The durable daily budget is shared per workspace. */
 export class VoiceAudioMeter {
   private pending: AudioInterval[] = [];
   private inFlight: AudioInterval[] = [];
@@ -80,7 +81,7 @@ export class VoiceAudioMeter {
   private paused = false;
   private readonly timer: ReturnType<typeof setInterval>;
   constructor(private readonly store: VoiceBudgetStore, private readonly call: string,
-    private readonly owner: string, private readonly human: string, initial: VoiceBudget,
+    private readonly owner: string, private readonly workspace: string, initial: VoiceBudget,
     private readonly receipt: (budget: VoiceBudget | null) => void,
     private readonly log: (message: string) => void, private readonly now = Date.now) {
     this.budget = initial;
@@ -99,22 +100,27 @@ export class VoiceAudioMeter {
     const unsettled = [...this.inFlight, ...this.pending];
     const uncommitted = unsettled.reduce((sum, [a, b]) => sum + b - a, 0);
     const todayUncommitted = unsettled.reduce((sum, [a, b]) => sum + Math.max(0, b - Math.max(today, a)), 0);
-    const duration = Math.max(0, Math.min(Math.ceil(milliseconds), 1000 - uncommitted,
+    const end = capturedAt;
+    const frameStart = end - Math.ceil(milliseconds);
+    // Bridge scheduling jitter while the microphone stays live. This also
+    // keeps a continuous call from accumulating thousands of tiny ranges.
+    const start = this.lastEnd && frameStart - this.lastEnd < 100
+      ? this.lastEnd : Math.max(this.lastEnd, frameStart);
+    const elapsed = Math.max(0, end - start);
+    const duration = Math.max(0, Math.min(elapsed, 1000 - uncommitted,
       this.budget.remainingMs - todayUncommitted));
-    if (duration < milliseconds && uncommitted >= 1000 && !this.paused) {
+    if (elapsed > duration && uncommitted >= 1000 && !this.paused) {
       this.paused = true; this.log('Voice input paused at the one-second accounting checkpoint bound');
     }
+    // Simultaneous microphones may forward audio but never add time twice.
+    if (!elapsed) return uncommitted < 1000 && this.budget.remainingMs > todayUncommitted ? milliseconds : 0;
     if (!duration) return 0;
-    // Keep one PCM timeline through small scheduling jitter, rather than
-    // persisting thousands of artificial millisecond gaps in a continuous mic.
-    const expected = this.lastEnd + duration;
-    const end = this.lastEnd && Math.abs(capturedAt - expected) < 100 ? expected : Math.max(capturedAt, expected);
-    const start = end - duration;
+    const acceptedEnd = start + duration;
     const tail = this.pending[this.pending.length - 1];
-    if (tail && tail[1] === start) this.pending[this.pending.length - 1] = [tail[0], end];
-    else this.pending.push([start, end]);
-    this.lastEnd = end;
-    return Math.min(duration, milliseconds);
+    if (tail && tail[1] === start) this.pending[this.pending.length - 1] = [tail[0], acceptedEnd];
+    else this.pending.push([start, acceptedEnd]);
+    this.lastEnd = acceptedEnd;
+    return duration === elapsed ? milliseconds : Math.min(duration, milliseconds);
   }
 
   flush(): Promise<void> {
@@ -123,8 +129,8 @@ export class VoiceAudioMeter {
     this.flushing = (async () => {
       let budget: VoiceBudget | null;
       try {
-        // Empty checkpoints observe spending by another device of this identity.
-        budget = await this.store.record(this.call, this.owner, this.human, this.inFlight);
+        // Empty checkpoints observe spending by another call in this workspace.
+        budget = await this.store.record(this.call, this.owner, this.workspace, this.inFlight);
       } catch (error) {
         this.pending = [...this.inFlight, ...this.pending]; this.inFlight = [];
         this.log('Voice accounting checkpoint failed; retrying');

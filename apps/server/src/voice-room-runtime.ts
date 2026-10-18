@@ -49,10 +49,10 @@ export class VoiceRoomRuntime {
   private readonly audio = new AudioSource(VOICE_SAMPLE_RATE, 1, 100);
   private readonly inputs = new Map<string, { stt?: VoiceStt; reader: ReadableStreamDefaultReader<AudioFrame>;
     track: RemoteTrack; participant: RemoteParticipant }>();
-  private readonly meters = new Map<string, VoiceAudioMeter>();
-  private readonly meterClosures = new Set<Promise<void>>();
-  private readonly budgetWarnings = new Map<string, string>();
-  private readonly budgetEnding = new Set<string>();
+  private meter?: VoiceAudioMeter;
+  private workspaceId = '';
+  private budgetDisplay = '';
+  private budgetEnding = false;
   private readonly recentSpeech: { text: string; until: number }[] = [];
   private readonly targets = new Map<string, string>();
   private readonly turnIndices = new Map<string, number>();
@@ -82,6 +82,13 @@ export class VoiceRoomRuntime {
     try { await runtime.start(); return runtime; } catch (error) { await runtime.close(); throw error; }
   }
   private async start() {
+    this.workspaceId = await this.service.workspaceId(this.roomId);
+    const budget = await this.service.budget.read(this.workspaceId);
+    this.meter = new VoiceAudioMeter(this.service.budget, this.callId, this.leaseOwner, this.workspaceId, budget,
+      remaining => {
+        if (!remaining) { void this.close(); return; }
+        void this.enforceBudget(remaining).catch(() => {});
+      }, message => console.warn('[voice-budget]', message));
     const token = new AccessToken(this.service.config.apiKey, this.service.config.apiSecret,
       { identity: `beeline-voice-${this.callId}`, ttl: '1h', metadata: JSON.stringify({ kind: 'transport' }) });
     token.addGrant({ roomJoin: true, room: `beeline-voice-${this.callId}`, canPublish: true,
@@ -153,7 +160,7 @@ export class VoiceRoomRuntime {
     if (this.inputs.get(human)?.track === track) return;
     this.stopInput(human);
     // A new device/track needs its current countdown even within the same unit.
-    this.budgetWarnings.delete(human);
+    this.budgetDisplay = '';
     const version = (this.inputVersions.get(human) ?? 0) + 1;
     this.inputVersions.set(human, version);
     this.turnIndices.delete(human);
@@ -162,9 +169,9 @@ export class VoiceRoomRuntime {
     const reader = new AudioStream(track, 16_000, 1).getReader();
     this.inputs.set(human, { reader, track, participant });
     let stt: VoiceStt | undefined;
-    let meter: VoiceAudioMeter | undefined;
     const send = (data: Int16Array, capturedAt: number) => {
-      const allowed = meter?.audio(data.length / 16, capturedAt) ?? 0;
+      if (track.muted) return;
+      const allowed = this.meter?.audio(data.length / 16, capturedAt) ?? 0;
       if (allowed > 0) stt!.send(data.subarray(0, Math.min(data.length, Math.floor(allowed * 16))));
     };
     // Drain the SDK continuously while opening STT; retain at most two seconds.
@@ -187,17 +194,10 @@ export class VoiceRoomRuntime {
       if (!(await this.service.db.query(`SELECT 1 FROM voice_participants WHERE call_id=$1 AND identity_id=$2 AND left_at IS NULL AND parked_at IS NULL`,
         [this.callId, human])).rowCount) { this.stopInput(human); return; }
       const [agents, budget] = await Promise.all([
-        this.service.agents(this.roomId, human), this.service.budget.read(human),
+        this.service.agents(this.roomId, human), this.service.budget.read(this.workspaceId),
       ]);
       if (this.closed || this.inputVersions.get(human) !== version) return;
-      meter = new VoiceAudioMeter(this.service.budget, this.callId, this.leaseOwner, human, budget,
-        remaining => {
-          if (this.meters.get(human) !== meter) return;
-          if (!remaining) { this.stopInput(human); return; }
-          void this.enforceBudget(human, remaining).catch(() => {});
-        }, message => console.warn('[voice-budget]', message));
-      this.meters.set(human, meter);
-      void this.enforceBudget(human, budget).catch(() => {});
+      void this.enforceBudget(budget).catch(() => {});
       if (budget.remainingMs <= 0) { this.stopInput(human); return; }
       const hints = agents.flatMap(agent => [agent.name, agent.handle]);
       stt = await this.service.config.stt(event => {
@@ -258,38 +258,31 @@ export class VoiceRoomRuntime {
     } finally { if (this.inputs.get(human)?.stt === stt) this.stopInput(human); }
   }
   private stopInput(human: string) {
-    const meter = this.meters.get(human);
-    if (meter) {
-      this.meters.delete(human);
-      const closing = meter.close().catch(() => console.warn('[voice-budget] Final checkpoint failed'))
-        .finally(() => this.meterClosures.delete(closing));
-      this.meterClosures.add(closing);
-    }
     this.inputVersions.set(human, (this.inputVersions.get(human) ?? 0) + 1);
     this.inputSpeech.delete(human);
     const input = this.inputs.get(human);
     if (!input) return;
     this.inputs.delete(human); input.stt?.close(); void input.reader.cancel().catch(() => {});
   }
-  private async enforceBudget(human: string, budget: VoiceBudget) {
-    if (this.closed || this.budgetEnding.has(human)) return;
-    if (budget.remainingMs > VOICE_WARNING_MS) return;
+  private async enforceBudget(budget: VoiceBudget) {
+    if (this.closed || this.budgetEnding) return;
+    if (budget.remainingMs > VOICE_WARNING_MS) {
+      if (this.budgetDisplay) { this.budgetDisplay = ''; await this.signal({ type: 'budget', budget }); }
+      return;
+    }
     if (budget.remainingMs > 0) {
       const unit = budget.remainingMs >= 60_000 ? 60_000 : 1000;
       const display = `${budget.resetAt}:${unit}:${Math.ceil(budget.remainingMs / unit)}`;
-      if (this.budgetWarnings.get(human) === display) return;
-      await this.signal({ type: 'budget', budget }, human);
-      this.budgetWarnings.set(human, display);
+      if (this.budgetDisplay === display) return;
+      await this.signal({ type: 'budget', budget });
+      this.budgetDisplay = display;
       return;
     }
-    this.budgetEnding.add(human);
+    this.budgetEnding = true;
     try {
-      // Midnight can arrive while a checkpoint or delivery was in flight.
-      if ((await this.service.budget.read(human)).remainingMs > 0) return;
-      this.stopInput(human);
-      await this.signal({ type: 'budget', budget }, human).catch(() => {});
-      await this.service.leave(this.callId, human, true);
-    } finally { this.budgetEnding.delete(human); }
+      if ((await this.service.budget.read(this.workspaceId)).remainingMs > 0) return;
+      await this.service.endWorkspaceCalls(this.workspaceId);
+    } finally { this.budgetEnding = false; }
   }
 
   private touch() {
@@ -653,7 +646,7 @@ export class VoiceRoomRuntime {
     for (const turn of this.pendingTurns.values()) turn.controller.abort();
     this.pendingTurns.clear();
     for (const human of this.inputs.keys()) this.stopInput(human);
-    await Promise.allSettled([...this.meterClosures]);
+    await this.meter?.close();
     await this.room.disconnect(); await this.audio.close();
     await this.service.db.query(`UPDATE voice_calls SET runtime_until=NULL WHERE id=$1 AND runtime_owner=$2`,
       [this.callId, this.leaseOwner]);

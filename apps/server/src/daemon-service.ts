@@ -650,18 +650,6 @@ export class DaemonService {
           delete candidate.reason;
           delete candidate.reasonKind;
         }
-        // A terminal receipt consumes execution, not the assignment's outcome.
-        // Check while this generation still owns the command so the existing
-        // failure reporter can deliver one idempotent report (including old helpers).
-        if (name === 'postAgentTurnReceipt' && candidate.status === 'complete' &&
-          command.state === 'claimed' && command.private_payload?.kind === 'order' &&
-          command.private_payload.reportedGenerationId !== command.generation_id &&
-          !(await hasOrderContinuation(db, command))) {
-          candidate.status = 'failed';
-          delete candidate.completionKind;
-          candidate.reason = 'unreported_order: assigned turn ended without a delivered report or recorded continuation; requested work is unconfirmed';
-          candidate.reasonKind = 'hiccup';
-        }
         // A corner is the ordered work's own address: its viewers watch the
         // turn's live work and progress there. Urgent terminal prose still
         // reports privately; done uses the explicit guarded report tool.

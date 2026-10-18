@@ -8,14 +8,13 @@ vi.mock('react-native', () => {
 });
 import { VoiceCallCard } from './VoiceCallCard';
 
-it('renders the committed ended line with its workspace exhaustion reason', async () => {
-  const text = "Call ended · 3:00 · Today's 60 minutes are used";
+it('removes the ended call pill and Join after workspace exhaustion', async () => {
   let renderer: any;
   await act(async () => { renderer = create(<VoiceCallCard
     call={{ id: 'call', roomId: 'room', startedAt: 100, endedAt: 280, participants: [] }}
-    text={text} joined={false} onJoin={vi.fn()} />); });
+    joined={false} onJoin={vi.fn()} />); });
   try {
-    expect(renderer.root.findByProps({ testID: 'voice-call-ended' }).props.children).toBe(text);
+    expect(renderer.toJSON()).toBeNull();
     expect(renderer.root.findAllByProps({ testID: 'voice-call-join' })).toHaveLength(0);
   } finally { await act(async () => renderer.unmount()); }
 });

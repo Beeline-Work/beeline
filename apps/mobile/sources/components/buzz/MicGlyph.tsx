@@ -34,8 +34,8 @@ export function ArrowUpGlyph({ color, testID }: { color: string; testID?: string
 }
 
 /** Stop a take: an outlined rounded square. */
-export function StopGlyph({ color, testID }: { color: string; testID?: string }) {
-  return <StrokeGlyph color={color} testID={testID}><Rect x="6" y="6" width="8" height="8" rx="2" /></StrokeGlyph>;
+export function StopGlyph({ color, testID, filled = false }: { color: string; testID?: string; filled?: boolean }) {
+  return <StrokeGlyph color={color} testID={testID}><Rect x={filled ? 2 : 6} y={filled ? 2 : 6} width={filled ? 16 : 8} height={filled ? 16 : 8} rx="2" fill={filled ? color : 'none'} stroke={filled ? 'none' : color} /></StrokeGlyph>;
 }
 
 /**
@@ -46,8 +46,10 @@ export function MicGlyph({
   color,
   size = 18,
   testID,
+  muted = false,
 }: {
   color: string;
+  muted?: boolean;
   size?: number;
   testID?: string;
 }) {
@@ -59,6 +61,7 @@ export function MicGlyph({
       viewBox="0 0 20 20"
       width={size}
     >
+      {muted && <Path d="M3 3l14 14" stroke={color} strokeWidth={MIC_GLYPH_STROKE_WIDTH} strokeLinecap="round" />}
       <Rect
         fill="none"
         height="9.5"

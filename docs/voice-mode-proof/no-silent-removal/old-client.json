@@ -1,0 +1,75 @@
+{
+  "elapsedSeconds": 26.002427730942145,
+  "result": {
+    "humans": 2,
+    "operations": [
+      "/v1/phone/voice/f5f190f3-e906-40a2-b0ca-91ae94d0ae2c/idle",
+      "/v1/phone/voice/f5f190f3-e906-40a2-b0ca-91ae94d0ae2c/state?sessionId=44020ae6-8eab-4604-b485-c540dd4f5282",
+      "/v1/phone/voice/f5f190f3-e906-40a2-b0ca-91ae94d0ae2c/resume"
+    ],
+    "microphoneFrames": [
+      4294,
+      2632
+    ],
+    "replies": [
+      "Ruby",
+      "Ruby",
+      "Ruby",
+      "Ruby",
+      "Ruby",
+      "Ruby"
+    ],
+    "signalCounts": {
+      "target": 7,
+      "speaker": 12,
+      "humans": 2,
+      "latency": 6,
+      "park": 1,
+      "resume": 1
+    },
+    "observations": [
+      {
+        "at": 1792270897477,
+        "joined": false,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792270901254,
+        "joined": false,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792270901385,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      }
+    ],
+    "secondMicrophone": [
+      {
+        "muted": false,
+        "kind": 1
+      }
+    ],
+    "participants": [
+      {
+        "identity_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "parked_at": null,
+        "left_at": null
+      },
+      {
+        "identity_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "parked_at": null,
+        "left_at": null
+      }
+    ]
+  }
+}

@@ -1,0 +1,370 @@
+{
+  "room": {
+    "id": "375ebf52-b493-4982-bd6d-f3b8fe814a62",
+    "workspaceId": "509a0dfc-ee35-4b11-bd34-014794153d20",
+    "name": "Experiments",
+    "visibility": "public",
+    "archived": false,
+    "createdAt": 1792287433,
+    "updatedAt": 1792287433
+  },
+  "messages": [
+    {
+      "id": "79979c2e443941bdaa5bdbddb3cef29700000000000000000000000000000000",
+      "text": "Morning! Let\u2019s use this call for the mobile stand-up.",
+      "createdAt": 1792286953,
+      "createdAtMs": 1792286953092,
+      "version": 0,
+      "author": {
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "kind": "human",
+        "name": "Alex",
+        "handle": "alex"
+      },
+      "presentation": "message",
+      "reference": {
+        "channelId": "375ebf52-b493-4982-bd6d-f3b8fe814a62",
+        "eventId": "79979c2e443941bdaa5bdbddb3cef29700000000000000000000000000000000",
+        "rootId": "79979c2e443941bdaa5bdbddb3cef29700000000000000000000000000000000"
+      }
+    },
+    {
+      "id": "dab6931f27f648c8a22517f42fcf324b00000000000000000000000000000000",
+      "text": "Sounds good. I have the Android checks ready.",
+      "createdAt": 1792287013,
+      "createdAtMs": 1792287013098,
+      "version": 0,
+      "author": {
+        "pubkey": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "kind": "human",
+        "name": "Sam",
+        "handle": "sam"
+      },
+      "presentation": "message",
+      "reference": {
+        "channelId": "375ebf52-b493-4982-bd6d-f3b8fe814a62",
+        "eventId": "dab6931f27f648c8a22517f42fcf324b00000000000000000000000000000000",
+        "rootId": "dab6931f27f648c8a22517f42fcf324b00000000000000000000000000000000"
+      }
+    },
+    {
+      "id": "48554b55c3424a9a97df0d102c4b4fa700000000000000000000000000000000",
+      "text": "The call changes are ready to walk through together.",
+      "createdAt": 1792287073,
+      "createdAtMs": 1792287073100,
+      "version": 0,
+      "author": {
+        "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "kind": "agent",
+        "name": "Ruby",
+        "handle": "ruby"
+      },
+      "presentation": "message",
+      "reference": {
+        "channelId": "375ebf52-b493-4982-bd6d-f3b8fe814a62",
+        "eventId": "48554b55c3424a9a97df0d102c4b4fa700000000000000000000000000000000",
+        "rootId": "48554b55c3424a9a97df0d102c4b4fa700000000000000000000000000000000"
+      }
+    },
+    {
+      "id": "f759eb915dc446d6b6ca65e80278eaab00000000000000000000000000000000",
+      "text": "Great. Sam, what did you find in the latest build?",
+      "createdAt": 1792287133,
+      "createdAtMs": 1792287133102,
+      "version": 0,
+      "author": {
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "kind": "human",
+        "name": "Alex",
+        "handle": "alex"
+      },
+      "presentation": "message",
+      "reference": {
+        "channelId": "375ebf52-b493-4982-bd6d-f3b8fe814a62",
+        "eventId": "f759eb915dc446d6b6ca65e80278eaab00000000000000000000000000000000",
+        "rootId": "f759eb915dc446d6b6ca65e80278eaab00000000000000000000000000000000"
+      }
+    },
+    {
+      "id": "c626b5a9de7149ba9239a420f4f3840100000000000000000000000000000000",
+      "text": "The Room stays open while I listen. Let\u2019s check the end controls next.",
+      "createdAt": 1792287193,
+      "createdAtMs": 1792287193104,
+      "version": 0,
+      "author": {
+        "pubkey": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "kind": "human",
+        "name": "Sam",
+        "handle": "sam"
+      },
+      "presentation": "message",
+      "reference": {
+        "channelId": "375ebf52-b493-4982-bd6d-f3b8fe814a62",
+        "eventId": "c626b5a9de7149ba9239a420f4f3840100000000000000000000000000000000",
+        "rootId": "c626b5a9de7149ba9239a420f4f3840100000000000000000000000000000000"
+      }
+    },
+    {
+      "id": "df5418d64b24e2cbd6e44c69a9e76cab910f1feedf0b6b5b1d5ebdf993c1ae07",
+      "text": "Voice call ended \u00b7 2:56 \u00b7 No one spoke for 60s",
+      "createdAt": 1792287433,
+      "createdAtMs": 1792287433109,
+      "version": 8,
+      "author": {
+        "pubkey": "972a35ec7a6e572c01c5b0a48cbdc82f6137dd7f35435cf9cc0ec305fdafa248",
+        "kind": "human",
+        "name": "System",
+        "handle": "system",
+        "avatar": "http://10.0.2.2:18097/v1/connectors/logo/system.svg"
+      },
+      "presentation": "system",
+      "systemEvent": {
+        "verb": "ended",
+        "subject": {
+          "kind": "system",
+          "name": "Voice call"
+        },
+        "consequence": "2:56 \u00b7 No one spoke for 60s"
+      },
+      "voiceCall": {
+        "id": "ade8f530-23e4-429e-bdb5-65c3bff2d958",
+        "roomId": "375ebf52-b493-4982-bd6d-f3b8fe814a62",
+        "endedAt": 1792287609,
+        "startedAt": 1792287433,
+        "startedAtMs": 1792287433109,
+        "participants": [],
+        "endReason": "silence"
+      }
+    },
+    {
+      "id": "48c378f4a2e2ac886ca15f24db328909b64afd93362a96df4fe529b90b47ad35",
+      "text": "@ruby Ruby, ready?",
+      "createdAt": 1792287434,
+      "createdAtMs": 1792287434817,
+      "version": 0,
+      "author": {
+        "pubkey": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "kind": "human",
+        "name": "Sam",
+        "handle": "sam"
+      },
+      "presentation": "message",
+      "reference": {
+        "channelId": "375ebf52-b493-4982-bd6d-f3b8fe814a62",
+        "eventId": "48c378f4a2e2ac886ca15f24db328909b64afd93362a96df4fe529b90b47ad35",
+        "rootId": "48c378f4a2e2ac886ca15f24db328909b64afd93362a96df4fe529b90b47ad35"
+      },
+      "mentionPubkeys": [
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      ]
+    },
+    {
+      "id": "fd64768dc8851ed9df683a450ddbcc71079f7ca634cdde67567a21f3fddec347",
+      "text": "Ready.",
+      "createdAt": 1792287434,
+      "createdAtMs": 1792287434867,
+      "version": 0,
+      "author": {
+        "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "kind": "agent",
+        "name": "Ruby",
+        "handle": "ruby"
+      },
+      "presentation": "message",
+      "reference": {
+        "channelId": "375ebf52-b493-4982-bd6d-f3b8fe814a62",
+        "eventId": "fd64768dc8851ed9df683a450ddbcc71079f7ca634cdde67567a21f3fddec347",
+        "rootId": "fd64768dc8851ed9df683a450ddbcc71079f7ca634cdde67567a21f3fddec347"
+      },
+      "agentModel": "openai/gpt-6-luna"
+    },
+    {
+      "id": "5be699291df0385521e3268dffafbbbbe5b9222f99b7093a15fe63e78a7e6391",
+      "text": "@ruby Check the Android call flow and let us know when you\u2019re finished.",
+      "createdAt": 1792287434,
+      "createdAtMs": 1792287434967,
+      "version": 0,
+      "author": {
+        "pubkey": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "kind": "human",
+        "name": "Sam",
+        "handle": "sam"
+      },
+      "presentation": "message",
+      "reference": {
+        "channelId": "375ebf52-b493-4982-bd6d-f3b8fe814a62",
+        "eventId": "5be699291df0385521e3268dffafbbbbe5b9222f99b7093a15fe63e78a7e6391",
+        "rootId": "5be699291df0385521e3268dffafbbbbe5b9222f99b7093a15fe63e78a7e6391"
+      },
+      "mentionPubkeys": [
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      ]
+    },
+    {
+      "id": "0f9fde939274513ae75fbca0c1a7d723d86c2cb61a437b0f45fd4c31d25a2904",
+      "text": "@ruby Ruby, ready?",
+      "createdAt": 1792287444,
+      "createdAtMs": 1792287444108,
+      "version": 0,
+      "author": {
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "kind": "human",
+        "name": "Alex",
+        "handle": "alex"
+      },
+      "presentation": "message",
+      "reference": {
+        "channelId": "375ebf52-b493-4982-bd6d-f3b8fe814a62",
+        "eventId": "0f9fde939274513ae75fbca0c1a7d723d86c2cb61a437b0f45fd4c31d25a2904",
+        "rootId": "0f9fde939274513ae75fbca0c1a7d723d86c2cb61a437b0f45fd4c31d25a2904"
+      },
+      "mentionPubkeys": [
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      ]
+    },
+    {
+      "id": "db2ed0fd2ebaa6c39604af4185cd012d6ad3434940d3993ae90100f51683b03d",
+      "text": "Ready.",
+      "createdAt": 1792287444,
+      "createdAtMs": 1792287444135,
+      "version": 0,
+      "author": {
+        "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "kind": "agent",
+        "name": "Ruby",
+        "handle": "ruby"
+      },
+      "presentation": "message",
+      "reference": {
+        "channelId": "375ebf52-b493-4982-bd6d-f3b8fe814a62",
+        "eventId": "db2ed0fd2ebaa6c39604af4185cd012d6ad3434940d3993ae90100f51683b03d",
+        "rootId": "db2ed0fd2ebaa6c39604af4185cd012d6ad3434940d3993ae90100f51683b03d"
+      },
+      "agentModel": "openai/gpt-6-luna"
+    },
+    {
+      "id": "1398477c1a3a6214ccd6312c69c9ab8cc5e7436b9210cbbbc0211bfe67a40d0c",
+      "text": "Voice call ended \u00b7 0:54",
+      "createdAt": 1792287665,
+      "createdAtMs": 1792287665654,
+      "version": 3,
+      "author": {
+        "pubkey": "972a35ec7a6e572c01c5b0a48cbdc82f6137dd7f35435cf9cc0ec305fdafa248",
+        "kind": "human",
+        "name": "System",
+        "handle": "system",
+        "avatar": "http://10.0.2.2:18097/v1/connectors/logo/system.svg"
+      },
+      "presentation": "system",
+      "systemEvent": {
+        "verb": "ended",
+        "subject": {
+          "kind": "system",
+          "name": "Voice call"
+        },
+        "consequence": "0:54"
+      },
+      "voiceCall": {
+        "id": "aef00143-a26d-45d0-94d9-73f171c999c0",
+        "roomId": "375ebf52-b493-4982-bd6d-f3b8fe814a62",
+        "endedAt": 1792287719,
+        "startedAt": 1792287665,
+        "startedAtMs": 1792287665654,
+        "participants": []
+      }
+    }
+  ],
+  "leaveDeletesRoom": false,
+  "members": [
+    {
+      "identity": {
+        "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "kind": "human",
+        "name": "Alex",
+        "handle": "alex"
+      },
+      "role": "member"
+    },
+    {
+      "identity": {
+        "pubkey": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "kind": "agent",
+        "name": "Ruby",
+        "handle": "ruby"
+      },
+      "role": "member"
+    },
+    {
+      "identity": {
+        "pubkey": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "kind": "human",
+        "name": "Sam",
+        "handle": "sam"
+      },
+      "role": "member"
+    }
+  ],
+  "latestAgentTurns": [],
+  "pendingAgentCommands": [],
+  "viewer": {
+    "readCursor": {
+      "messageId": null,
+      "unreadCount": 9,
+      "firstUnreadMessageId": "dab6931f27f648c8a22517f42fcf324b00000000000000000000000000000000"
+    },
+    "identity": {
+      "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "kind": "human",
+      "name": "Alex",
+      "handle": "alex"
+    },
+    "role": "member",
+    "permissions": {
+      "send": true,
+      "manage": true
+    }
+  },
+  "briefing": [],
+  "repositoryResolution": "none",
+  "watchFilters": [
+    {
+      "kinds": [
+        0,
+        9,
+        9000,
+        9001,
+        9002,
+        9007,
+        9008,
+        30078,
+        39000,
+        39001,
+        39002
+      ],
+      "#h": [
+        "509a0dfc-ee35-4b11-bd34-014794153d20",
+        "375ebf52-b493-4982-bd6d-f3b8fe814a62"
+      ]
+    },
+    {
+      "kinds": [
+        0
+      ],
+      "authors": [
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      ]
+    },
+    {
+      "kinds": [
+        30078
+      ],
+      "#d": [
+        "agent-draft:375ebf52-b493-4982-bd6d-f3b8fe814a62",
+        "agent-thought:375ebf52-b493-4982-bd6d-f3b8fe814a62",
+        "agent-presence:375ebf52-b493-4982-bd6d-f3b8fe814a62"
+      ]
+    }
+  ]
+}

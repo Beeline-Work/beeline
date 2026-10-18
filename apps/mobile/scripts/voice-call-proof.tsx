@@ -29,8 +29,7 @@ function Proof() {
       <Text style={{ ...groknight.type.bodyStrong, color: groknight.textPrimary }}># Voice proof</Text>
     </View>
     <View style={{ flex: 1, gap: 16, paddingTop: 24, overflow: 'auto' as 'hidden' }} testID="voice-proof-transcript">
-      {room?.messages.map(message => message.voiceCall ? <VoiceCallCard key={message.id} call={message.voiceCall as VoiceCall} text={message.text}
-        agents={room.members.filter(member => member.identity.kind === 'agent').map(member => member.identity)}
+      {room?.messages.map(message => message.voiceCall ? <VoiceCallCard key={message.id} call={message.voiceCall as VoiceCall}
         joined={voice.call?.id === message.voiceCall.id} onJoin={() => void voice.join()} /> :
         <View key={message.id} style={{ gap: 6 }}>
           <View style={{ flexDirection: 'row', gap: 8, alignItems: 'center' }}>

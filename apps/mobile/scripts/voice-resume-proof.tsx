@@ -20,19 +20,20 @@ const lines: string[] = [];
 const check = (label: string, pass: boolean) => lines.push(`${pass ? 'PASS' : 'FAIL'} ${label}`);
 async function run() {
   await pause(300);
-  await fixture.idle();
-  await pause(100);
   fixture.offline = true;
   fixture.ready = true;
   fixture.reconnect();
   await pause(100);
-  check('R1: DNS fails during parked resume without a rendered error', errors.length === 0 && !document.querySelector('[role="alert"]')?.textContent);
+  check('R1: DNS fails during the active call without a rendered error', errors.length === 0 && !document.querySelector('[role="alert"]')?.textContent);
   fixture.offline = false;
   await pause(1_100);
   const bridge = { identity: 'beeline-voice-proof-call' };
   fixture.emit('data', new TextEncoder().encode(JSON.stringify({ type: 'speaker', agentId: null })), bridge, undefined, VOICE_DATA_TOPIC);
   await pause(100);
-  check('R1: call resumes audio and microphone after network returns', fixture.resumed && fixture.mic && Boolean(voice!.call));
+  check('R1: microphone stays live after network returns', fixture.mic && Boolean(voice!.call));
+  fixture.ready = false; fixture.ended = true; fixture.reconnect();
+  await pause(100);
+  check('call-wide-end-3: committed end closes the call', !voice!.call);
   check('R1: no raw error reaches the rendered voice surface', errors.length === 0 && !document.body.textContent?.includes('UnknownHostException'));
   await voice!.end();
 }

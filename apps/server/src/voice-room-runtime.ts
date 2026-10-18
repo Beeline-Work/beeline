@@ -63,9 +63,16 @@ export class VoiceRoomRuntime {
   private readonly shutdown = new AbortController();
   /** One-turn avatar taps in a call with several humans. */
   private readonly taps = new Map<string, string>();
-  private humans = 1;
+  private lastAnnouncedHumanCount?: number;
+  private humanCountRefresh = Promise.resolve();
   private speaking?: AbortController;
   private speechIdle = Promise.resolve();
+  private lastActivity = performance.now();
+  private lastWorkFinishedAt = 0;
+  private endingDeadline: number | null = null;
+  private endingTonePlayed = false;
+  private quietCheck?: ReturnType<typeof setInterval>;
+  private checkingInactivity = false;
   private lastTouch = 0;
   private touching = false;
   private leaseRenewal?: ReturnType<typeof setInterval>;
@@ -127,11 +134,11 @@ export class VoiceRoomRuntime {
         if (typeof data.sessionId !== 'string' || !(await this.service.db.query(`SELECT 1 FROM voice_participants
           WHERE call_id=$1 AND identity_id=$2 AND session_id=$3 AND left_at IS NULL
           AND (parked_at IS NOT NULL)=$4`, [this.callId, participant.identity, data.sessionId, data.type === 'park'])).rowCount) return;
-        if (data.type === 'park') await this.park(participant.identity, data.sessionId);
+        if (data.type === 'park') return;
         else await this.resume(participant.identity);
       })().catch(() => {});
     });
-    this.room.on(RoomEvent.ParticipantConnected, () => { void this.countHumans(undefined, true).catch(() => {}); });
+    this.room.on(RoomEvent.ParticipantConnected, () => { void this.countHumans(true).catch(() => {}); });
     this.room.on(RoomEvent.Disconnected, () => { if (!this.closed) void this.close(); });
     await this.room.connect(this.service.config.url, await token.toJwt(), { autoSubscribe: true, dynacast: false });
     const options = new TrackPublishOptions(); options.source = TrackSource.SOURCE_MICROPHONE;
@@ -140,18 +147,21 @@ export class VoiceRoomRuntime {
     // Sweep missing humans even when no audio or signals arrive.
     // Committed events still drive report reads.
     this.leaseRenewal = setInterval(() => {
-      return this.renewLease().then(kept => {
-        if (kept) return this.sweepMissingParticipants();
+      return this.renewLease().then(async kept => {
+        if (kept) { await this.sweepMissingParticipants(); }
       }).catch(() => this.close());
     }, 5000);
     this.leaseRenewal.unref();
+    this.quietCheck = setInterval(() => this.checkInactivity().catch(() => {}), 1000);
+    this.quietCheck.unref();
     this.touch();
-    await this.countHumans(undefined, true).catch(() => {});
+    await this.countHumans(true).catch(() => {});
     await this.refresh();
   }
 
   private async signal(signal: VoiceSignal, human?: string) {
-    this.touch();
+    // A visual countdown must not start heartbeat work or count as activity.
+    if (signal.type !== 'stop' && signal.type !== 'ending') this.touch();
     if (!this.closed) await this.room.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify(signal)),
       { reliable: true, topic: VOICE_DATA_TOPIC, ...(human ? { destination_identities: [human] } : {}) });
   }
@@ -191,7 +201,7 @@ export class VoiceRoomRuntime {
     void pump.catch(() => {});
     try {
       await this.service.access(this.roomId, human);
-      if (!(await this.service.db.query(`SELECT 1 FROM voice_participants WHERE call_id=$1 AND identity_id=$2 AND left_at IS NULL AND parked_at IS NULL`,
+      if (!(await this.service.db.query(`SELECT 1 FROM voice_participants WHERE call_id=$1 AND identity_id=$2 AND left_at IS NULL`,
         [this.callId, human])).rowCount) { this.stopInput(human); return; }
       const [agents, budget] = await Promise.all([
         this.service.agents(this.roomId, human), this.service.budget.read(this.workspaceId),
@@ -200,7 +210,7 @@ export class VoiceRoomRuntime {
       void this.enforceBudget(budget).catch(() => {});
       if (budget.remainingMs <= 0) { this.stopInput(human); return; }
       const hints = agents.flatMap(agent => [agent.name, agent.handle]);
-      stt = await this.service.config.stt(event => {
+      stt = await this.service.config.stt(event => { void (async () => {
       if (this.inputVersions.get(human) !== version ||
           event.turn_index <= (this.turnIndices.get(human) ?? -1)) return;
       const recent = this.recentSpeech.filter(spoken => spoken.until > performance.now());
@@ -219,28 +229,35 @@ export class VoiceRoomRuntime {
         if (event.event === 'EndOfTurn') this.turnIndices.set(human, event.turn_index);
         return;
       }
+      this.markCallActivity();
       void this.signal({ type: 'speech' }, human);
       // Partial recognized names can aim the strip immediately; only EndOfTurn dispatches.
       if (event.event !== 'EndOfTurn') void this.aimSpokenName(human, event.transcript, version);
+      const stop = /^(stop|stop conversation|end conversation|leave conversation|stop conversation mode)$/.test(speechWords(event.transcript).join(' '));
+      if (event.event === 'EndOfTurn' && event.transcript.trim() && !stop) {
+        this.turnIndices.set(human, event.turn_index);
+        const interrupts = voiceInterrupt(event);
+        void this.utterance(human, event.transcript, performance.now(), interrupts).catch(error => {
+          if (error instanceof Error && error.name === 'AbortError') return;
+          void this.signal({ type: 'error', message: error instanceof VoiceQuotaError ? error.message : 'Voice reply unavailable; your message is in the transcript',
+            ...(error instanceof VoiceQuotaError ? { code: error.code } : {}) }, human);
+        });
+        return;
+      }
       // With several humans, anyone may interrupt, but only with real speech.
-      const interrupts = this.humans === 1 || voiceInterrupt(event);
+      const humans = await this.service.humanCount(this.callId);
+      if (this.inputVersions.get(human) !== version || event.turn_index <= (this.turnIndices.get(human) ?? -1)) return;
+      const interrupts = humans === 1 || voiceInterrupt(event);
       if (interrupts) { this.pendingTurns.get(human)?.controller.abort(); this.speaking?.abort(); this.audio.clearQueue(); }
       if (event.event !== 'EndOfTurn' || !event.transcript.trim() ||
           event.turn_index <= (this.turnIndices.get(human) ?? -1)) return;
       this.turnIndices.set(human, event.turn_index);
-      if (/^(stop|stop conversation|end conversation|leave conversation|stop conversation mode)$/.test(speechWords(event.transcript).join(' '))) {
-        this.inputVersions.set(human, version + 1);
-        this.stopInput(human);
-        void this.signal({ type: 'stop' }, human)
-          .finally(() => this.service.leave(this.callId, human, true)).catch(() => {});
+      if (stop) {
+        this.pendingTurns.get(human)?.controller.abort();
+        this.speaking?.abort(); this.audio.clearQueue();
         return;
       }
-      void this.utterance(human, event.transcript, performance.now(), interrupts).catch(error => {
-        if (error instanceof Error && error.name === 'AbortError') return;
-        void this.signal({ type: 'error', message: error instanceof VoiceQuotaError ? error.message : 'Voice reply unavailable; your message is in the transcript',
-          ...(error instanceof VoiceQuotaError ? { code: error.code } : {}) }, human);
-      });
-      }, error => {
+      })().catch(() => this.signal({ type: 'error', message: 'Speech input unavailable; please try again' }, human)); }, error => {
         if (this.inputVersions.get(human) !== version) return;
         void this.signal({ type: 'error', message: error instanceof VoiceQuotaError ? error.message : 'Speech input disconnected; please rejoin',
           ...(error instanceof VoiceQuotaError ? { code: error.code } : {}) }, human); this.stopInput(human);
@@ -313,7 +330,7 @@ export class VoiceRoomRuntime {
   private async sweepMissingParticipants() {
     if (this.closed) return;
     const missing = await this.service.db.query<{ identity_id: string }>(
-      `SELECT identity_id FROM voice_participants WHERE call_id=$1 AND left_at IS NULL AND parked_at IS NULL
+      `SELECT identity_id FROM voice_participants WHERE call_id=$1 AND left_at IS NULL
         AND NOT identity_id=ANY($2::text[])`,
       [this.callId, [...this.room.remoteParticipants.keys()]]);
     const absent = new Set(missing.rows.map(participant => participant.identity_id));
@@ -328,6 +345,53 @@ export class VoiceRoomRuntime {
       }
     }
   }
+  /** Audio frames and lease traffic are not speech. Only real activity resets this window. */
+  private async checkInactivity() {
+    if (this.closed || this.checkingInactivity) return;
+    this.checkingInactivity = true;
+    try {
+      const { pending: work, finishedAt } = await this.service.callWorkState(this.callId);
+      if (work) this.markCallActivity();
+      if (finishedAt > this.lastWorkFinishedAt) {
+        this.lastWorkFinishedAt = finishedAt;
+        this.endingTonePlayed = false;
+        this.lastActivity = Math.max(this.lastActivity, performance.now() - Math.max(0, Date.now() - finishedAt));
+      }
+      const quietFor = performance.now() - this.lastActivity;
+      const warning = !work && quietFor >= 45_000;
+      if (warning && this.endingDeadline === null) {
+        this.endingDeadline = Date.now() + Math.max(0, 60_000 - quietFor);
+        await this.signal({ type: 'ending', deadline: this.endingDeadline, serverNow: Date.now() });
+      } else if (!warning && this.endingDeadline !== null) {
+        this.endingDeadline = null;
+        await this.signal({ type: 'ending', deadline: null, serverNow: Date.now() });
+      }
+      if (warning && quietFor >= 50_000 && quietFor < 60_000 && !this.endingTonePlayed) {
+        this.endingTonePlayed = true;
+        // A warning tone is not speech and must not restart the quiet window.
+        const samples = new Int16Array(Math.floor(VOICE_SAMPLE_RATE * 0.12));
+        for (let i = 0; i < samples.length; i++) {
+          const envelope = Math.sin(Math.PI * i / samples.length);
+          samples[i] = Math.round(1800 * envelope * Math.sin(2 * Math.PI * 660 * i / VOICE_SAMPLE_RATE));
+        }
+        await this.audio.captureFrame(new AudioFrame(samples, VOICE_SAMPLE_RATE, 1, samples.length));
+      }
+      const inactive = () => !this.closed && !work && performance.now() - this.lastActivity >= 60_000;
+      if (inactive()) await this.service.endInactive(this.callId, this.leaseOwner, inactive);
+    } finally { this.checkingInactivity = false; }
+  }
+
+  private markCallActivity() {
+    this.lastActivity = performance.now();
+    this.endingTonePlayed = false;
+    if (this.endingDeadline !== null) {
+      this.endingDeadline = null;
+      void this.signal({ type: 'ending', deadline: null, serverNow: Date.now() }).catch(() => {});
+    }
+  }
+
+  async stopCall() { await this.signal({ type: 'stop' }); }
+
   private async aimSpokenName(human: string, text: string, version: number) {
     const agent = namedVoiceTarget(text, await this.service.agents(this.roomId, human), undefined, 2);
     if (!agent || this.closed || this.inputVersions.get(human) !== version) return;
@@ -335,16 +399,24 @@ export class VoiceRoomRuntime {
     await this.signal({ type: 'target', agentId: agent.id }, human);
   }
 
-  /** Every human hears the same count, so each panel shows the same speaking tips. */
-  private async countHumans(count?: number, announce = false) {
-    count ??= await this.service.humanCount(this.callId);
-    const changed = count !== this.humans;
-    this.humans = count;
-    if (changed || announce) await this.signal({ type: 'humans', count });
+  /** Deduplicate announcements only; mode decisions always read the database count. */
+  countHumans(announce = false): Promise<void> {
+    const refresh = this.humanCountRefresh.catch(() => {}).then(async () => {
+      const count = await this.service.humanCount(this.callId);
+      const changed = count !== this.lastAnnouncedHumanCount;
+      if (changed || announce) {
+        await this.signal({ type: 'humans', count });
+        if (this.endingDeadline !== null) await this.signal({ type: 'ending', deadline: this.endingDeadline, serverNow: Date.now() });
+      }
+      this.lastAnnouncedHumanCount = count;
+    });
+    this.humanCountRefresh = refresh;
+    return refresh;
   }
 
   async utterance(human: string, text: string, startedAt = performance.now(), interrupts = true) {
-    if (this.humans > 1 && this.speaking && !interrupts) return;
+    this.markCallActivity();
+    if (!interrupts && this.speaking && await this.service.humanCount(this.callId) > 1) return;
     const traceId = randomUUID();
     const stages = new Set<string>();
     const timing = (stage: string) => {
@@ -382,11 +454,19 @@ export class VoiceRoomRuntime {
         ? this.service.memberNames(this.roomId).catch(() => []) : Promise.resolve([]);
       const agents = await this.service.agents(this.roomId, human);
       const humans = await this.service.humanCount(this.callId);
+      // Final input shares routing's live count rather than adding a serial lookup.
+      if (humans > 1 && this.speaking && !interrupts) {
+        resolveSource('');
+        if (this.pendingTurns.get(human) === turn) this.pendingTurns.delete(human);
+        return;
+      }
+      if (humans === 1 || interrupts) {
+        previous?.controller.abort(); this.speaking?.abort(); this.audio.clearQueue();
+      }
       const members: SpeechMember[] = [
         ...agents.map(agent => ({ handle: agent.handle, name: agent.name })),
         ...await roomMembers,
       ];
-      void this.countHumans(humans).catch(() => {});
       let sourceId = continuation ? await continuation.source : '';
       let selected = this.targets.get(human);
       const inherited = selected !== continuation?.selected && selected !== continuation?.agent?.id
@@ -397,10 +477,9 @@ export class VoiceRoomRuntime {
       if (humans === 1 && !continuation && !named && !tapped) {
         selected = await this.service.lastActiveAgent(this.roomId, agents) ?? selected;
       }
-      const agent = continuation
+      const agent = humans > 1 ? named ?? tapped : continuation
         ? namedVoiceTarget(fragment, agents, inherited, 1)
-        : humans > 1 ? named ?? tapped
-          : named ?? tapped ?? namedVoiceTarget(text, agents, selected, humans);
+        : named ?? tapped ?? namedVoiceTarget(text, agents, selected, humans);
       if (!agent || this.closed) {
         resolveSource('');
         if (!agent && !this.closed) await this.signal({ type: 'unaddressed' }, human);
@@ -565,7 +644,7 @@ export class VoiceRoomRuntime {
           ...(error instanceof VoiceQuotaError ? { code: error.code } : {}) });
         });
       }
-    } finally { this.refreshPending = false; }
+    } finally { this.refreshPending = false; await this.checkInactivity(); }
   }
 
   private async play(text: string, agent: VoiceAgent, signal: AbortSignal, onFirstAudio?: () => void,
@@ -594,6 +673,7 @@ export class VoiceRoomRuntime {
           const samples = new Int16Array(frameBytes / 2);
           for (let i = 0; i < samples.length; i++) samples[i] = pending.readInt16LE(i * 2);
           pending = pending.subarray(frameBytes);
+          this.markCallActivity();
           this.touch();
           const voiced = first && samples.some(sample => Math.abs(sample) > 150);
           if (voiced) { first = false; onFirstVoicedFrame?.(); }
@@ -605,6 +685,7 @@ export class VoiceRoomRuntime {
       if (pending.length > 1) {
         const samples = new Int16Array(Math.floor(pending.length / 2));
         for (let i = 0; i < samples.length; i++) samples[i] = pending.readInt16LE(i * 2);
+        this.markCallActivity();
         this.touch();
         const voiced = first && samples.some(sample => Math.abs(sample) > 150);
         if (voiced) { first = false; onFirstVoicedFrame?.(); }
@@ -613,17 +694,12 @@ export class VoiceRoomRuntime {
         if (!signal.aborted && !this.closed && voiced) onFirstAudio?.();
       }
       await this.audio.waitForPlayout();
-    } finally { spoken.until = performance.now() + 1500; }
+    } finally {
+      spoken.until = performance.now() + 1500;
+    }
   }
 
   get isClosed() { return this.closed; }
-
-  async park(human: string, sessionId?: string) {
-    if (!(await this.service.db.query(`SELECT 1 FROM voice_participants WHERE call_id=$1 AND identity_id=$2
-      AND left_at IS NULL AND parked_at IS NOT NULL AND ($3::text IS NULL OR session_id=$3)`,
-      [this.callId, human, sessionId ?? null])).rowCount) return;
-    this.stopInput(human);
-  }
 
   async resume(human: string) {
     const participant = this.room.remoteParticipants.get(human);
@@ -634,12 +710,16 @@ export class VoiceRoomRuntime {
         .catch(() => this.signal({ type: 'error', message: 'Speech input unavailable; please try again' }, human));
     }
     await this.refresh();
+    // Older clients wait for playback to finish before restoring their mic.
+    // A protected multi-human idle can resume with no report to produce that signal.
+    if (!this.speaking) await this.signal({ type: 'speaker', agentId: null }, human);
   }
 
   async close() {
     if (this.closed) return;
     this.closed = true;
     clearInterval(this.leaseRenewal);
+    clearInterval(this.quietCheck);
     this.speaking?.abort(); this.audio.clearQueue();
     this.missingSince.clear();
     this.shutdown.abort();

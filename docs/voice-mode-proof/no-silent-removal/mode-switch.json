@@ -1,0 +1,1071 @@
+{
+  "reproduction": "multi-human-mode-2",
+  "standIn": "Android A; actual Node RTC partner B; injected final text/brain/TTS; partner transport disconnected without leave for 30 seconds",
+  "solo": {
+    "humans": 1,
+    "replies": [
+      "Ruby"
+    ],
+    "observations": [
+      {
+        "at": 1792273510518,
+        "joined": false,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273538879,
+        "joined": false,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273541527,
+        "joined": false,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273543024,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273543085,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 1,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273548120,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 2,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273553191,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 3,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273558193,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 4,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273563225,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 5,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273568253,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 6,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273573281,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 7,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273578318,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 8,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273583350,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 9,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273588391,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 10,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273593410,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 11,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273598438,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 12,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273603467,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 13,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273608870,
+        "joined": true,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 13,
+        "firstAudioMs": null
+      }
+    ],
+    "operations": [],
+    "participants": [
+      {
+        "identity_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "parked_at": null,
+        "left_at": "2026-10-17T21:46:48.474Z"
+      },
+      {
+        "identity_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "parked_at": null,
+        "left_at": null
+      }
+    ],
+    "signalCounts": {
+      "target": 2,
+      "speaker": 2,
+      "humans": 3,
+      "latency": 1
+    }
+  },
+  "soloReply": {
+    "humans": 1,
+    "replies": [
+      "Ruby",
+      "Ruby"
+    ],
+    "observations": [
+      {
+        "at": 1792273510518,
+        "joined": false,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273538879,
+        "joined": false,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273541527,
+        "joined": false,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273543024,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273543085,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 1,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273548120,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 2,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273553191,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 3,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273558193,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 4,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273563225,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 5,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273568253,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 6,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273573281,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 7,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273578318,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 8,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273583350,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 9,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273588391,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 10,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273593410,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 11,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273598438,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 12,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273603467,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 13,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273608870,
+        "joined": true,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 13,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273609433,
+        "joined": true,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 13,
+        "firstAudioMs": 47.16615000000456
+      }
+    ],
+    "operations": [],
+    "participants": [
+      {
+        "identity_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "parked_at": null,
+        "left_at": "2026-10-17T21:46:48.474Z"
+      },
+      {
+        "identity_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "parked_at": null,
+        "left_at": null
+      }
+    ],
+    "signalCounts": {
+      "target": 2,
+      "speaker": 2,
+      "humans": 3,
+      "latency": 1
+    }
+  },
+  "rejoined": {
+    "humans": 2,
+    "replies": [
+      "Ruby",
+      "Ruby"
+    ],
+    "observations": [
+      {
+        "at": 1792273510518,
+        "joined": false,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273538879,
+        "joined": false,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273541527,
+        "joined": false,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273543024,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273543085,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 1,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273548120,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 2,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273553191,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 3,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273558193,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 4,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273563225,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 5,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273568253,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 6,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273573281,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 7,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273578318,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 8,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273583350,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 9,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273588391,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 10,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273593410,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 11,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273598438,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 12,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273603467,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 13,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273608870,
+        "joined": true,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 13,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273609433,
+        "joined": true,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 13,
+        "firstAudioMs": 47.16615000000456
+      },
+      {
+        "at": 1792273609560,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 13,
+        "firstAudioMs": 47.16615000000456
+      }
+    ],
+    "operations": [],
+    "participants": [
+      {
+        "identity_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "parked_at": null,
+        "left_at": null
+      },
+      {
+        "identity_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "parked_at": null,
+        "left_at": null
+      }
+    ],
+    "signalCounts": {
+      "target": 2,
+      "speaker": 2,
+      "humans": 3,
+      "latency": 1
+    }
+  },
+  "dropCheckpoints": [
+    {
+      "seconds": 0.03,
+      "humans": 2,
+      "nativeHumans": 2
+    },
+    {
+      "seconds": 5.06,
+      "humans": 2,
+      "nativeHumans": 2
+    },
+    {
+      "seconds": 10.09,
+      "humans": 2,
+      "nativeHumans": 2
+    },
+    {
+      "seconds": 15.13,
+      "humans": 2,
+      "nativeHumans": 2
+    },
+    {
+      "seconds": 20.16,
+      "humans": 2,
+      "nativeHumans": 2
+    },
+    {
+      "seconds": 25.19,
+      "humans": 2,
+      "nativeHumans": 2
+    }
+  ],
+  "afterDrop": {
+    "humans": 2,
+    "replies": [
+      "Ruby",
+      "Ruby"
+    ],
+    "observations": [
+      {
+        "at": 1792273510518,
+        "joined": false,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273538879,
+        "joined": false,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273541527,
+        "joined": false,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273543024,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273543085,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 1,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273548120,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 2,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273553191,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 3,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273558193,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 4,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273563225,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 5,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273568253,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 6,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273573281,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 7,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273578318,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 8,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273583350,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 9,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273588391,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 10,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273593410,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 11,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273598438,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 12,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273603467,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 13,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273608870,
+        "joined": true,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 13,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273609433,
+        "joined": true,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 13,
+        "firstAudioMs": 47.16615000000456
+      },
+      {
+        "at": 1792273609560,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 13,
+        "firstAudioMs": 47.16615000000456
+      },
+      {
+        "at": 1792273609653,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 14,
+        "firstAudioMs": 47.16615000000456
+      },
+      {
+        "at": 1792273609703,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 15,
+        "firstAudioMs": 47.16615000000456
+      },
+      {
+        "at": 1792273614726,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 16,
+        "firstAudioMs": 47.16615000000456
+      },
+      {
+        "at": 1792273619760,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 17,
+        "firstAudioMs": 47.16615000000456
+      },
+      {
+        "at": 1792273624797,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 18,
+        "firstAudioMs": 47.16615000000456
+      },
+      {
+        "at": 1792273629828,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 19,
+        "firstAudioMs": 47.16615000000456
+      },
+      {
+        "at": 1792273634854,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 20,
+        "firstAudioMs": 47.16615000000456
+      }
+    ],
+    "operations": [],
+    "participants": [
+      {
+        "identity_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "parked_at": null,
+        "left_at": null
+      },
+      {
+        "identity_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "parked_at": null,
+        "left_at": null
+      }
+    ],
+    "signalCounts": {
+      "target": 2,
+      "speaker": 2,
+      "humans": 4,
+      "latency": 1
+    }
+  },
+  "returned": {
+    "humans": 2,
+    "replies": [
+      "Ruby",
+      "Ruby"
+    ],
+    "observations": [
+      {
+        "at": 1792273510518,
+        "joined": false,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273538879,
+        "joined": false,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273541527,
+        "joined": false,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273543024,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273543085,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 1,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273548120,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 2,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273553191,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 3,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273558193,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 4,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273563225,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 5,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273568253,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 6,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273573281,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 7,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273578318,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 8,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273583350,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 9,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273588391,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 10,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273593410,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 11,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273598438,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 12,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273603467,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 13,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273608870,
+        "joined": true,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 13,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273609433,
+        "joined": true,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 13,
+        "firstAudioMs": 47.16615000000456
+      },
+      {
+        "at": 1792273609560,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 13,
+        "firstAudioMs": 47.16615000000456
+      },
+      {
+        "at": 1792273609653,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 14,
+        "firstAudioMs": 47.16615000000456
+      },
+      {
+        "at": 1792273609703,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 15,
+        "firstAudioMs": 47.16615000000456
+      },
+      {
+        "at": 1792273614726,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 16,
+        "firstAudioMs": 47.16615000000456
+      },
+      {
+        "at": 1792273619760,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 17,
+        "firstAudioMs": 47.16615000000456
+      },
+      {
+        "at": 1792273624797,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 18,
+        "firstAudioMs": 47.16615000000456
+      },
+      {
+        "at": 1792273629828,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 19,
+        "firstAudioMs": 47.16615000000456
+      },
+      {
+        "at": 1792273634854,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 20,
+        "firstAudioMs": 47.16615000000456
+      }
+    ],
+    "operations": [],
+    "participants": [
+      {
+        "identity_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "parked_at": null,
+        "left_at": null
+      },
+      {
+        "identity_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "parked_at": null,
+        "left_at": null
+      }
+    ],
+    "signalCounts": {
+      "target": 2,
+      "speaker": 2,
+      "humans": 4,
+      "latency": 1
+    }
+  },
+  "firstAudioMs": [
+    18.820013000018662,
+    18.021073999989312,
+    20.368891000020085,
+    19.944486000022152,
+    22.251393999991706
+  ],
+  "firstAudioMedianMs": 19.944486000022152
+}

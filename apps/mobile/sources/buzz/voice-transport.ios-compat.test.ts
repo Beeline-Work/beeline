@@ -60,7 +60,6 @@ it('starts and closes audio when the iOS native capabilities are present', async
   const stop = vi.fn(async () => {});
   state.background = {
     async configureStop() {}, async start() { return 1; }, stop,
-    async setActivity() {}, async endForIdle() {}, async armSilence() {}, async cancelSilence() {},
     addListener() { return { remove() {} }; },
   };
   state.rejectLiveKit = false;
@@ -88,7 +87,7 @@ it('Reproduction iphone-022-false-gate: reports exact failures once while keepin
   expect(diagnostic.message).toContain('iOS voice capability check failed:');
   expect(JSON.parse(diagnostic.message.split('failed: ')[1])).toMatchObject({
     webrtc: true, livekit: true, background_module: true,
-    missing_methods: ['configureStop', 'start', 'stop', 'setActivity', 'endForIdle', 'armSilence', 'cancelSilence', 'addListener'],
+    missing_methods: ['configureStop', 'start', 'stop', 'addListener'],
     appVersion: '0.2.22', build: '92', runtime: '35', bridgeless: false,
   });
   expect(state.loadLiveKit).not.toHaveBeenCalled();
@@ -102,16 +101,15 @@ it('Reproduction iphone-022-false-gate: bridgeless modules and inherited Expo ev
   const stop = vi.fn(async () => {});
   state.background = Object.assign(Object.create({ addListener: listener }), {
     async configureStop() {}, async start() { return 7; }, stop,
-    async setActivity() {}, async endForIdle() {}, async armSilence() {}, async cancelSilence() {},
   });
   expect(state.modules.WebRTCModule).toBeUndefined();
   expect(state.modules.LivekitReactNativeModule).toBeUndefined();
   expect(Object.hasOwn(state.background!, 'addListener')).toBe(false);
   state.rejectLiveKit = false;
   const transport = await createVoiceRoom();
-  expect(listener.mock.calls.map(call => call[0])).toEqual(['stopRequested', 'idleRequested']);
+  expect(listener.mock.calls.map(call => call[0])).toEqual(['stopRequested']);
   await transport.closeAudio();
-  expect(remove).toHaveBeenCalledTimes(2);
+  expect(remove).toHaveBeenCalledTimes(1);
   expect(stop).toHaveBeenCalledWith(7);
   expect(state.captureException).not.toHaveBeenCalled();
 });
@@ -126,11 +124,10 @@ it('uses the Expo EventEmitter for a background module without its own listener 
   });
   state.background = {
     async configureStop() {}, async start() { return 1; }, async stop() {},
-    async setActivity() {}, async endForIdle() {}, async armSilence() {}, async cancelSilence() {},
   };
   state.rejectLiveKit = false;
   const transport = await createVoiceRoom();
   await transport.closeAudio();
-  expect(state.emitterListener).toHaveBeenCalledTimes(2);
-  expect(remove).toHaveBeenCalledTimes(2);
+  expect(state.emitterListener).toHaveBeenCalledTimes(1);
+  expect(remove).toHaveBeenCalledTimes(1);
 });

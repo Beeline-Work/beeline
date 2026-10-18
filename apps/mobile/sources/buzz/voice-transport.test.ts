@@ -71,38 +71,13 @@ it('retains a cold iOS restart across navigation and consumes it once in the mat
 });
 
 
-it('parks audio without stopping the foreground service and resumes the same native generation', async () => {
-  native.background.stop.mockClear();
-  const transport = await createVoiceRoom(() => {}, 'same-room');
-  await transport.parkAudio('Ruby');
-  expect(native.background.setActivity).toHaveBeenLastCalledWith(false, 'Ruby', 1);
-  expect(native.background.stop).not.toHaveBeenCalled();
-  await transport.resumeAudio();
-  expect(native.background.setActivity).toHaveBeenLastCalledWith(true, null, 1);
-  await transport.idleEnd();
-  expect(native.background.endForIdle).toHaveBeenCalledWith(undefined, 1);
-  await transport.closeAudio();
-  expect(native.background.stop).toHaveBeenCalledWith(1);
-});
-
-it('uses native one-shot deadlines and drops idle events from stale or closed sessions', async () => {
-  vi.useFakeTimers();
-  const idle = vi.fn();
+it('keeps audio live without a per-person idle event or deadline', async () => {
+  vi.useFakeTimers(); native.background.addListener.mockClear();
   try {
-    const transport = await createVoiceRoom(() => {}, 'room', idle);
-    const callback = native.background.addListener.mock.calls.filter(([event]) => event === 'idleRequested').at(-1)![1];
-    await transport.armSilence();
-    expect(native.background.armSilence).toHaveBeenLastCalledWith(1);
+    const transport = await createVoiceRoom(() => {}, 'room');
+    expect(native.background.addListener.mock.calls.map(([event]) => event)).toEqual(['stopRequested']);
     expect(vi.getTimerCount()).toBe(0);
-    callback({ generation: 2 });
-    expect(idle).not.toHaveBeenCalled();
-    callback({ generation: 1 });
-    expect(idle).toHaveBeenCalledOnce();
-    await transport.cancelSilence();
-    expect(native.background.cancelSilence).toHaveBeenLastCalledWith(1);
     await transport.closeAudio();
-    callback({ generation: 1 });
-    expect(idle).toHaveBeenCalledOnce();
   } finally { vi.useRealTimers(); }
 });
 

@@ -1,0 +1,26 @@
+{
+  "method": "Same local LiveKit + disposable PGlite + deterministic brain/tone-TTS; Android app stopped, emulator idle; one warmup and five samples per head; first voiced audio accepted by RTC, not live providers or physical speaker latency.",
+  "beforeHead": "d0d1249891c5a120838d60b38cd91eaa7227ad32",
+  "revision6": {
+    "warmupMs": 378.0843869999999,
+    "samplesMs": [
+      18.023519000000306,
+      16.889769000000342,
+      16.042159000000538,
+      20.98286200000075,
+      18.656473000000005
+    ],
+    "medianMs": 18.023519000000306
+  },
+  "revision7": {
+    "warmupMs": 288.58062900000004,
+    "samplesMs": [
+      15.957992999999988,
+      18.816054000000804,
+      16.150148000000627,
+      15.666008000000147,
+      18.482465999999476
+    ],
+    "medianMs": 16.150148000000627
+  }
+}

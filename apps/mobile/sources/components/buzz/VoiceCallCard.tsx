@@ -1,32 +1,39 @@
+import { voiceCallHumanNames } from '@/buzz/voice-call-members';
 import * as React from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { type VoiceCall, type RoomViewIdentity, voiceDuration } from '@beeline/api-contract/phone';
+import { type VoiceCall, voiceDuration } from '@beeline/api-contract/phone';
 
-export function VoiceCallCard({ call, text, joined, onJoin, connecting = false, error, agents = [] }: { call: VoiceCall; text: string; joined: boolean; onJoin(): void;
-  agents?: readonly RoomViewIdentity[]; connecting?: boolean; error?: string | null }) {
+/** The running call occupies its own row below the Room header. */
+export function VoiceCallCard({ call, joined, onJoin, connecting = false, viewer }: {
+  call: VoiceCall; joined: boolean; onJoin(): void; connecting?: boolean; viewer?: string;
+}) {
   const [now, setNow] = React.useState(() => Date.now() / 1000);
   React.useEffect(() => {
     if (call.endedAt) return;
-    const timer = setInterval(() => setNow(Date.now() / 1000), 1000); return () => clearInterval(timer);
+    const timer = setInterval(() => setNow(Date.now() / 1000), 1000);
+    return () => clearInterval(timer);
   }, [call.endedAt]);
-  const duration = voiceDuration((call.endedAt ?? now) - call.startedAt);
-  if (call.endedAt) return <Text style={styles.ended} testID="voice-call-ended">{text}</Text>;
-  return <View style={styles.card} testID="voice-call-card">
-    <View style={styles.copy}><Text style={styles.title}>Conversation mode · {duration}</Text>
-      <Text style={styles.people} numberOfLines={1}>{[...call.participants, ...agents].map(p => p.name).join(', ')}</Text>
-      {error && <Text accessibilityRole="alert" style={styles.people} testID="voice-call-error">{error}</Text>}
+  if (call.endedAt) return null;
+  return <View style={styles.row} testID="voice-call-header">
+    <View style={styles.pill}>
+      <View style={styles.dot} />
+      <Text style={styles.title} numberOfLines={1}>Call · {voiceDuration(now - call.startedAt)} · {voiceCallHumanNames(call, viewer)}</Text>
+      {!joined && <Pressable onPress={onJoin} disabled={connecting} hitSlop={8}
+        accessibilityState={{ busy: connecting }} accessibilityRole="button" accessibilityLabel="Join call"
+        style={styles.join} testID="voice-call-join">
+        <Text style={styles.joinText}>{connecting ? 'Joining…' : 'Join'}</Text>
+      </Pressable>}
     </View>
-    {!joined && <Pressable onPress={onJoin} disabled={connecting} accessibilityState={{ busy: connecting }} accessibilityRole="button" accessibilityLabel="Join Conversation mode" style={styles.join} testID="voice-call-join">
-      <Text style={styles.joinText}>{connecting ? 'Joining…' : 'Join'}</Text></Pressable>}
   </View>;
 }
 const styles = StyleSheet.create(theme => ({
-  card: { flexDirection: 'row', alignItems: 'center', padding: 16, borderWidth: 1, borderRadius: 10,
-    borderColor: theme.buzz.border, backgroundColor: theme.buzz.bgRaised }, copy: { flex: 1 },
-  title: { ...theme.buzz.type.bodyStrong, color: theme.buzz.textPrimary },
-  people: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
-  join: { minWidth: 44, minHeight: 44, alignItems: 'center', justifyContent: 'center' },
-  joinText: { ...theme.buzz.type.bodyStrong, color: theme.buzz.accent },
-  ended: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
+  row: { paddingHorizontal: 16, paddingVertical: 8 },
+  pill: { minHeight: 44, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 16, gap: 8,
+    borderWidth: 1, borderRadius: 10, borderColor: theme.buzz.border, backgroundColor: theme.buzz.bgRaised },
+  dot: { width: 8, height: 8, borderRadius: 999, backgroundColor: theme.buzz.accent },
+  title: { ...theme.buzz.type.meta, color: theme.buzz.textPrimary, flex: 1 },
+  join: { minWidth: 44, minHeight: 28, paddingHorizontal: 16, borderRadius: 999,
+    alignItems: 'center', justifyContent: 'center', backgroundColor: theme.buzz.textPrimary },
+  joinText: { ...theme.buzz.type.meta, color: theme.buzz.bgRaised },
 }));

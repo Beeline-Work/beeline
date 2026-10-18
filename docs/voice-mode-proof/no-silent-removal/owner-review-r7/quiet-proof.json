@@ -1,0 +1,176 @@
+{
+  "releasedAt": 1792287548.436664,
+  "releaseResponse": "{}",
+  "endedObservedAt": 1792287609.5554352,
+  "elapsedSeconds": 61.11877155303955,
+  "result": {
+    "activeCallWork": false,
+    "pendingCommands": 0,
+    "call": {
+      "ended_at": "2026-10-18T01:40:09.367Z"
+    },
+    "card": {
+      "id": "df5418d64b24e2cbd6e44c69a9e76cab910f1feedf0b6b5b1d5ebdf993c1ae07",
+      "text": "Voice call ended \u00b7 2:56 \u00b7 No one spoke for 60s",
+      "createdAt": 1792287433,
+      "createdAtMs": 1792287433109,
+      "version": 8,
+      "author": {
+        "pubkey": "972a35ec7a6e572c01c5b0a48cbdc82f6137dd7f35435cf9cc0ec305fdafa248",
+        "kind": "human",
+        "name": "System",
+        "handle": "system",
+        "avatar": "http://proof/v1/connectors/logo/system.svg"
+      },
+      "presentation": "system",
+      "systemEvent": {
+        "verb": "ended",
+        "subject": {
+          "kind": "system",
+          "name": "Voice call"
+        },
+        "consequence": "2:56 \u00b7 No one spoke for 60s"
+      },
+      "voiceCall": {
+        "id": "ade8f530-23e4-429e-bdb5-65c3bff2d958",
+        "roomId": "375ebf52-b493-4982-bd6d-f3b8fe814a62",
+        "endedAt": 1792287609,
+        "startedAt": 1792287433,
+        "startedAtMs": 1792287433109,
+        "participants": [],
+        "endReason": "silence"
+      }
+    },
+    "humans": 0,
+    "operations": [
+      "/v1/phone/voice/ade8f530-23e4-429e-bdb5-65c3bff2d958/state?sessionId=37cac683-5255-408b-87a4-5516e098e2fb",
+      "/v1/phone/voice/ade8f530-23e4-429e-bdb5-65c3bff2d958/state?sessionId=37cac683-5255-408b-87a4-5516e098e2fb",
+      "/v1/phone/voice/ade8f530-23e4-429e-bdb5-65c3bff2d958/state?sessionId=37cac683-5255-408b-87a4-5516e098e2fb",
+      "/v1/phone/voice/ade8f530-23e4-429e-bdb5-65c3bff2d958/leave",
+      "/v1/phone/voice/ade8f530-23e4-429e-bdb5-65c3bff2d958/state?sessionId=45ad2de1-1ac8-42a1-a624-70fcfadbb768",
+      "/v1/phone/voice/ade8f530-23e4-429e-bdb5-65c3bff2d958/leave",
+      "/v1/phone/voice/ade8f530-23e4-429e-bdb5-65c3bff2d958/state?sessionId=3ead7b5f-eedf-449d-8cbe-1079b4cbf1e9",
+      "/v1/phone/voice/ade8f530-23e4-429e-bdb5-65c3bff2d958/leave"
+    ],
+    "microphoneFrames": [
+      17458,
+      6767,
+      3366,
+      6223
+    ],
+    "replies": [
+      "Ruby",
+      "Ruby"
+    ],
+    "signals": [
+      {
+        "type": "target",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "humans",
+        "count": 1
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 326.8857750000002
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "humans",
+        "count": 2
+      },
+      {
+        "type": "target",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "humans",
+        "count": 2
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 29.592107000000397
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "humans",
+        "count": 1
+      },
+      {
+        "type": "humans",
+        "count": 2
+      },
+      {
+        "type": "target",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "humans",
+        "count": 2
+      },
+      {
+        "type": "humans",
+        "count": 1
+      },
+      {
+        "type": "humans",
+        "count": 2
+      },
+      {
+        "type": "target",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "humans",
+        "count": 2
+      },
+      {
+        "type": "ending",
+        "deadline": 1792287608467.956,
+        "serverNow": 1792287594357
+      },
+      {
+        "type": "stop"
+      },
+      {
+        "type": "humans",
+        "count": 0
+      },
+      {
+        "type": "ending",
+        "deadline": 1792287608467.956,
+        "serverNow": 1792287609376
+      }
+    ],
+    "observations": [],
+    "secondMicrophone": [],
+    "participants": [
+      {
+        "identity_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "parked_at": null,
+        "left_at": "2026-10-18T01:40:09.367Z"
+      },
+      {
+        "identity_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "parked_at": null,
+        "left_at": "2026-10-18T01:40:09.367Z"
+      }
+    ]
+  },
+  "countdownCaptured": false
+}

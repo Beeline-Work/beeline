@@ -1,0 +1,1207 @@
+{
+  "reproduction": "call-wide-end-3",
+  "scenario": "outside",
+  "standIn": "Android A plus actual Node RTC B; real service/database/native mic and VoiceCallCard; injected STT/brain/tone TTS",
+  "pendingQuietCheckpoints": [],
+  "afterFinishCheckpoints": [
+    {
+      "seconds": 0.06,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 0.46,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 0.89,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 1.36,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 1.75,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 2.13,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 2.48,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 2.88,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 3.3,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 3.8,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 4.22,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 4.64,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 5.14,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 5.5,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 5.86,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 6.38,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 6.82,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 7.27,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 7.86,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 8.25,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 8.74,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 9.29,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 9.7,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 10.15,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 10.55,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 11.12,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 11.7,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 12.21,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 12.69,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 13.08,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 13.51,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 13.85,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 14.2,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 14.52,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 14.85,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 15.19,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 15.51,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 15.91,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 16.32,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 16.74,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 17.13,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 17.44,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 17.75,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 18.09,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 18.5,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 18.9,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 19.31,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 19.79,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 20.2,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 20.52,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 20.9,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 21.29,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 21.72,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 22.11,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 22.55,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 22.9,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 23.37,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 23.71,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 24.14,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 24.62,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 25.06,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 25.49,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 25.92,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 26.36,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 26.76,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 27.23,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 27.68,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 28.15,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 28.57,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 29.05,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 29.48,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 29.95,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 30.29,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 30.68,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 31.1,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 31.69,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 32.18,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 32.66,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 33.13,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 33.57,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 34.09,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 34.6,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 35.04,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 35.39,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 35.81,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 36.19,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 36.62,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 37.07,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 37.58,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 38.04,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 38.53,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 38.94,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 39.28,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 39.72,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 40.22,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 40.6,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 40.95,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 41.39,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 41.89,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 42.3,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 42.62,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 42.92,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 43.44,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 43.79,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 44.11,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 44.54,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 44.95,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 45.29,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 45.68,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 46.06,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 46.46,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 46.86,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 47.31,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 47.82,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 48.28,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 48.78,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 49.18,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 49.58,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 50.08,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 50.55,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 50.96,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 51.4,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 51.76,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 52.07,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 52.46,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 52.81,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 53.16,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 53.62,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 53.95,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 54.47,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 54.87,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 55.21,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 55.57,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 56.01,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 56.46,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 56.97,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 57.39,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 57.83,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 58.25,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 58.58,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 58.97,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 59.3,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 59.76,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 60.33,
+      "humans": 0,
+      "ended": "2026-10-17T21:56:57.192Z",
+      "joined": true
+    },
+    {
+      "seconds": 60.79,
+      "humans": 0,
+      "ended": "2026-10-17T21:56:57.192Z",
+      "joined": true
+    },
+    {
+      "seconds": 61.16,
+      "humans": 0,
+      "ended": "2026-10-17T21:56:57.192Z",
+      "joined": false
+    }
+  ],
+  "endElapsedSeconds": 61.1595599190332,
+  "final": {
+    "activeCallWork": false,
+    "pendingCommands": 1,
+    "call": {
+      "ended_at": "2026-10-17T21:56:57.192Z"
+    },
+    "card": {
+      "id": "b4b35210a186a803e742d1dfe36e4bb4f207b6f38df280c2d1c23ae07325705a",
+      "text": "Voice call ended \u00b7 3:06",
+      "createdAt": 1792274030,
+      "createdAtMs": 1792274030692,
+      "version": 6,
+      "author": {
+        "pubkey": "972a35ec7a6e572c01c5b0a48cbdc82f6137dd7f35435cf9cc0ec305fdafa248",
+        "kind": "human",
+        "name": "System",
+        "handle": "system",
+        "avatar": "http://proof/v1/connectors/logo/system.svg"
+      },
+      "presentation": "system",
+      "systemEvent": {
+        "verb": "ended",
+        "subject": {
+          "kind": "system",
+          "name": "Voice call"
+        },
+        "consequence": "3:06"
+      },
+      "voiceCall": {
+        "id": "58926573-e5ae-4d2c-ba3c-dcd4755ba236",
+        "roomId": "9ac23d94-6f11-48a9-be25-6f10d352d09b",
+        "endedAt": 1792274217,
+        "startedAt": 1792274030,
+        "startedAtMs": 1792274030692,
+        "participants": []
+      }
+    },
+    "humans": 0,
+    "operations": [
+      "/v1/phone/voice/58926573-e5ae-4d2c-ba3c-dcd4755ba236/leave",
+      "/v1/phone/voice/58926573-e5ae-4d2c-ba3c-dcd4755ba236/leave"
+    ],
+    "microphoneFrames": [
+      18559,
+      1768,
+      7755
+    ],
+    "replies": [
+      "Ruby",
+      "Ruby",
+      "Ruby",
+      "Ruby",
+      "Ruby",
+      "Ruby",
+      "Ruby"
+    ],
+    "signals": [
+      {
+        "type": "target",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "humans",
+        "count": 1
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 383.39762300000075
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "humans",
+        "count": 2
+      },
+      {
+        "type": "humans",
+        "count": 2
+      },
+      {
+        "type": "target",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "humans",
+        "count": 1
+      },
+      {
+        "type": "humans",
+        "count": 2
+      },
+      {
+        "type": "humans",
+        "count": 2
+      },
+      {
+        "type": "target",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 97.67622400002438
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 69.07243299999391
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 110.4945080000034
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 91.74388900000486
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 60.208153000014136
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 153.96999199999846
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "stop"
+      },
+      {
+        "type": "humans",
+        "count": 0
+      }
+    ],
+    "observations": [
+      {
+        "at": 1792274045270,
+        "joined": false,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792274088839,
+        "joined": false,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792274099326,
+        "joined": false,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792274104205,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792274121800,
+        "joined": false,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792274138781,
+        "joined": false,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792274140532,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792274151200,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 97.67622400002438
+      },
+      {
+        "at": 1792274152420,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 69.07243299999391
+      },
+      {
+        "at": 1792274154112,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 110.4945080000034
+      },
+      {
+        "at": 1792274155375,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 91.74388900000486
+      },
+      {
+        "at": 1792274155988,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 60.208153000014136
+      },
+      {
+        "at": 1792274157136,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 153.96999199999846
+      },
+      {
+        "at": 1792274217969,
+        "joined": false,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 153.96999199999846
+      }
+    ],
+    "secondMicrophone": [],
+    "participants": [
+      {
+        "identity_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "parked_at": null,
+        "left_at": "2026-10-17T21:56:57.192Z"
+      },
+      {
+        "identity_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "parked_at": null,
+        "left_at": "2026-10-17T21:56:57.192Z"
+      }
+    ]
+  },
+  "endedCardJoinVisible": false,
+  "firstAudioMs": [
+    69.07243299999391,
+    110.4945080000034,
+    91.74388900000486,
+    60.208153000014136,
+    153.96999199999846
+  ],
+  "firstAudioMedianMs": 91.74388900000486
+}

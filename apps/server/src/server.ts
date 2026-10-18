@@ -2322,7 +2322,7 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     if (voiceMatch[2] === 'current' && method === 'GET') {
       json(response, 200, await options.voice.current(voiceMatch[1]!, identityId!));
     } else if (voiceMatch[2] === 'join' && method === 'POST') {
-      try { json(response, 200, await options.voice.join(voiceMatch[1]!, identityId!)); }
+      try { json(response, 200, await options.voice.join(voiceMatch[1]!, identityId!, (await body(request)).expectedCallId as string | undefined)); }
       catch (error) {
         if (!(error instanceof VoiceBudgetExceeded)) throw error;
         json(response, 429, { error: error.message, code: 'voice-daily-limit', budget: error.budget });

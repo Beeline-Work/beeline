@@ -1,0 +1,1230 @@
+{
+  "reproduction": "call-wide-end-3",
+  "scenario": "pending",
+  "standIn": "Android A plus actual Node RTC B; real service/database/native mic and VoiceCallCard; injected STT/brain/tone TTS",
+  "pendingQuietCheckpoints": [
+    {
+      "seconds": 0.06,
+      "humans": 2,
+      "microphoneFrames": [
+        4277,
+        254
+      ]
+    },
+    {
+      "seconds": 5.15,
+      "humans": 2,
+      "microphoneFrames": [
+        4784,
+        761
+      ]
+    },
+    {
+      "seconds": 10.25,
+      "humans": 2,
+      "microphoneFrames": [
+        5293,
+        1270
+      ]
+    },
+    {
+      "seconds": 15.35,
+      "humans": 2,
+      "microphoneFrames": [
+        5803,
+        1780
+      ]
+    },
+    {
+      "seconds": 20.48,
+      "humans": 2,
+      "microphoneFrames": [
+        6314,
+        2291
+      ]
+    },
+    {
+      "seconds": 25.58,
+      "humans": 2,
+      "microphoneFrames": [
+        6826,
+        2803
+      ]
+    },
+    {
+      "seconds": 30.67,
+      "humans": 2,
+      "microphoneFrames": [
+        7335,
+        3313
+      ]
+    },
+    {
+      "seconds": 35.77,
+      "humans": 2,
+      "microphoneFrames": [
+        7845,
+        3822
+      ]
+    },
+    {
+      "seconds": 40.82,
+      "humans": 2,
+      "microphoneFrames": [
+        8355,
+        4332
+      ]
+    },
+    {
+      "seconds": 45.89,
+      "humans": 2,
+      "microphoneFrames": [
+        8860,
+        4837
+      ]
+    },
+    {
+      "seconds": 51.01,
+      "humans": 2,
+      "microphoneFrames": [
+        9367,
+        5344
+      ]
+    },
+    {
+      "seconds": 56.16,
+      "humans": 2,
+      "microphoneFrames": [
+        9878,
+        5855
+      ]
+    },
+    {
+      "seconds": 61.32,
+      "humans": 2,
+      "microphoneFrames": [
+        10394,
+        6371
+      ]
+    }
+  ],
+  "afterFinishCheckpoints": [
+    {
+      "seconds": 0.08,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 0.41,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 0.75,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 1.09,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 1.51,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 1.99,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 2.41,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 2.81,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 3.24,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 3.6,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 3.99,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 4.36,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 4.78,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 5.25,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 5.58,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 5.9,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 6.36,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 6.74,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 7.09,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 7.46,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 7.83,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 8.2,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 8.54,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 8.89,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 9.25,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 9.59,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 9.94,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 10.28,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 10.64,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 11.04,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 11.52,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 11.85,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 12.2,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 12.52,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 12.85,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 13.34,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 13.73,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 14.04,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 14.38,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 14.72,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 15.13,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 15.49,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 15.91,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 16.32,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 16.7,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 17.06,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 17.38,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 17.75,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 18.14,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 18.51,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 18.83,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 19.33,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 19.73,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 20.18,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 20.52,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 20.88,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 21.23,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 21.6,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 21.94,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 22.3,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 22.66,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 22.98,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 23.39,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 23.82,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 24.17,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 24.6,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 24.99,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 25.34,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 25.68,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 26.01,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 26.42,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 26.78,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 27.18,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 27.52,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 27.99,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 28.32,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 28.72,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 29.13,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 29.52,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 29.89,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 30.28,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 30.67,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 31.04,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 31.46,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 31.77,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 32.19,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 32.56,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 32.9,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 33.28,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 33.74,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 34.13,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 34.51,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 34.94,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 35.35,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 35.73,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 36.12,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 36.49,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 36.86,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 37.19,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 37.51,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 37.85,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 38.23,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 38.59,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 38.93,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 39.31,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 39.75,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 40.13,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 40.53,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 40.92,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 41.28,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 41.65,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 42.0,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 42.42,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 42.77,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 43.24,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 43.59,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 43.94,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 44.3,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 44.73,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 45.08,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 45.44,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 45.77,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 46.11,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 46.43,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 46.87,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 47.22,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 47.6,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 47.98,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 48.29,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 48.63,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 48.97,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 49.33,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 49.69,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 50.03,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 50.38,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 50.89,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 51.23,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 51.61,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 51.92,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 52.28,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 52.6,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 53.01,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 53.37,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 53.7,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 54.07,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 54.58,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 54.9,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 55.27,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 55.72,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 56.14,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 56.52,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 56.96,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 57.32,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 57.74,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 58.23,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 58.87,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 59.21,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 59.56,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 60.13,
+      "humans": 2,
+      "ended": null,
+      "joined": true
+    },
+    {
+      "seconds": 60.57,
+      "humans": 0,
+      "ended": "2026-10-17T21:53:21.387Z",
+      "joined": true
+    },
+    {
+      "seconds": 60.94,
+      "humans": 0,
+      "ended": "2026-10-17T21:53:21.387Z",
+      "joined": true
+    },
+    {
+      "seconds": 61.48,
+      "humans": 0,
+      "ended": "2026-10-17T21:53:21.387Z",
+      "joined": true
+    },
+    {
+      "seconds": 61.86,
+      "humans": 0,
+      "ended": "2026-10-17T21:53:21.387Z",
+      "joined": false
+    }
+  ],
+  "endElapsedSeconds": 61.8576802960597,
+  "final": {
+    "activeCallWork": false,
+    "pendingCommands": 0,
+    "call": {
+      "ended_at": "2026-10-17T21:53:21.387Z"
+    },
+    "card": {
+      "id": "50c115edcaabeffc84a23534bb851ea9cc1519ed6af0e24a5ec7d5ace00b1a49",
+      "text": "Voice call ended \u00b7 2:50",
+      "createdAt": 1792273830,
+      "createdAtMs": 1792273830801,
+      "version": 4,
+      "author": {
+        "pubkey": "972a35ec7a6e572c01c5b0a48cbdc82f6137dd7f35435cf9cc0ec305fdafa248",
+        "kind": "human",
+        "name": "System",
+        "handle": "system",
+        "avatar": "http://proof/v1/connectors/logo/system.svg"
+      },
+      "presentation": "system",
+      "systemEvent": {
+        "verb": "ended",
+        "subject": {
+          "kind": "system",
+          "name": "Voice call"
+        },
+        "consequence": "2:50"
+      },
+      "voiceCall": {
+        "id": "832a4f6e-c067-4af5-9145-b5cf24379559",
+        "roomId": "67a58a7e-32c4-44a6-b26c-d7652092ccca",
+        "endedAt": 1792274001,
+        "startedAt": 1792273830,
+        "startedAtMs": 1792273830801,
+        "participants": []
+      }
+    },
+    "humans": 0,
+    "operations": [
+      "/v1/phone/voice/832a4f6e-c067-4af5-9145-b5cf24379559/leave"
+    ],
+    "microphoneFrames": [
+      16951,
+      12925
+    ],
+    "replies": [
+      "Ruby"
+    ],
+    "signals": [
+      {
+        "type": "target",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "humans",
+        "count": 1
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 358.7851040000005
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "humans",
+        "count": 2
+      },
+      {
+        "type": "target",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "humans",
+        "count": 2
+      },
+      {
+        "type": "stop"
+      },
+      {
+        "type": "humans",
+        "count": 0
+      }
+    ],
+    "observations": [
+      {
+        "at": 1792273841712,
+        "joined": false,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273870764,
+        "joined": false,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792273874363,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792274002829,
+        "joined": false,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      }
+    ],
+    "secondMicrophone": [],
+    "participants": [
+      {
+        "identity_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "parked_at": null,
+        "left_at": "2026-10-17T21:53:21.387Z"
+      },
+      {
+        "identity_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "parked_at": null,
+        "left_at": "2026-10-17T21:53:21.387Z"
+      }
+    ]
+  },
+  "endedCardJoinVisible": false
+}

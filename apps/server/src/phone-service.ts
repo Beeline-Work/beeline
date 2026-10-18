@@ -8690,8 +8690,20 @@ export class PhoneService {
     return companySearchResults(view, composioResults, query, this.publicOrigin);
   }
 
+  /** Project the end cause without changing the stored System card or its wording. */
+  private async decorateVoiceCallReasons(roomId: string, messages: RoomViewMessage[]): Promise<RoomViewMessage[]> {
+    const ids = messages.flatMap(message => message.voiceCall?.endedAt ? [message.voiceCall.id] : []);
+    if (!ids.length) return messages;
+    const rows = await this.database.query<{ id: string; end_reason: string | null }>(
+      `SELECT id,end_reason FROM voice_calls WHERE room_id=$1 AND id=ANY($2::uuid[]) AND ended_at IS NOT NULL`, [roomId, ids]);
+    const silent = new Set(rows.rows.filter(row => row.end_reason === 'silence').map(row => row.id));
+    return messages.map(message => message.voiceCall && silent.has(message.voiceCall.id)
+      ? { ...message, voiceCall: { ...message.voiceCall, endReason: 'silence' as const } } : message);
+  }
+
   /** Resolve navigation labels from current corner state without rewriting historical System cards. */
   private async decorateCornerOpenCards(roomId: string, messages: RoomViewMessage[]): Promise<RoomViewMessage[]> {
+    messages = await this.decorateVoiceCallReasons(roomId, messages);
     const cornerIds = [...new Set(messages.flatMap((message) => {
       const card = message.daemonFact;
       return card?.type === 'corner-open' && UUID_PATTERN.test(card.cornerId) ? [card.cornerId] : [];

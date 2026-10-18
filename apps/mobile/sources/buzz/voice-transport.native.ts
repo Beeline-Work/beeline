@@ -5,13 +5,13 @@ import { Linking, NativeModules, PermissionsAndroid, Platform, TurboModuleRegist
 
 let reportedIOSCapabilityFailure = false;
 
-export async function createVoiceRoom(onStop: () => void = () => {}, roomId?: string, onIdle: () => void = () => {}): Promise<{ room: Room; closeAudio(): Promise<void>; configureStop(callId: string, token: string): Promise<void>; parkAudio(agentName: string): Promise<void>; resumeAudio(): Promise<void>; idleEnd(): Promise<void>; armSilence(): Promise<void>; cancelSilence(): Promise<void> }> {
+export async function createVoiceRoom(onStop: () => void = () => {}, roomId?: string): Promise<{ room: Room; closeAudio(): Promise<void>; configureStop(callId: string, token: string): Promise<void> }> {
   if (Platform.OS === 'ios') {
     // Check before evaluating LiveKit/WebRTC: their emitters throw during import
     // on store binaries without the native half, before our join recovery runs.
     const { requireOptionalNativeModule, EventEmitter } = await import('expo-modules-core');
     const background = requireOptionalNativeModule<Record<string, unknown>>('VoiceBackgroundAudio');
-    const methods = ['configureStop', 'start', 'stop', 'setActivity', 'endForIdle', 'armSilence', 'cancelSilence'];
+    const methods = ['configureStop', 'start', 'stop'];
     const missing_methods = methods.filter(method => typeof background?.[method] !== 'function');
     if (typeof background?.addListener !== 'function' && typeof EventEmitter?.prototype.addListener !== 'function') {
       missing_methods.push('addListener');
@@ -47,10 +47,7 @@ export async function createVoiceRoom(onStop: () => void = () => {}, roomId?: st
   const background = requireNativeModule<{
     configureStop(url: string, token: string, generation: number): Promise<void>;
     start(resumeUrl?: string): Promise<number>; stop(generation: number): Promise<void>;
-    setActivity(active: boolean, waitingFor: string | null, generation: number): Promise<void>;
-    endForIdle(resumeUrl: string | undefined, generation: number): Promise<void>;
-    armSilence(generation: number): Promise<void>; cancelSilence(generation: number): Promise<void>;
-    addListener(event: 'stopRequested' | 'idleRequested', listener: (event: { generation: number }) => void): { remove(): void };
+    addListener(event: 'stopRequested', listener: (event: { generation: number }) => void): { remove(): void };
   }>('VoiceBackgroundAudio');
   if (Platform.OS === 'android' && await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO)
       !== PermissionsAndroid.RESULTS.GRANTED) throw new Error('Microphone permission is required for Conversation mode.');
@@ -60,11 +57,10 @@ export async function createVoiceRoom(onStop: () => void = () => {}, roomId?: st
     : (await import('expo-modules-core')).EventEmitter.prototype.addListener.bind(background) as typeof background.addListener;
   const subscription = addListener('stopRequested', event => { if (event.generation === generation) onStop(); });
   let closed = false;
-  const idleSubscription = addListener('idleRequested', event => { if (!closed && event.generation === generation) onIdle(); });
   let cleanup: Promise<void> | undefined;
   const closeAudio = () => cleanup ??= (async () => {
     closed = true;
-    subscription.remove(); idleSubscription.remove();
+    subscription.remove();
     try { await AudioSession.stopAudioSession(); } finally { if (generation !== undefined) await background.stop(generation); }
   })();
   try {
@@ -75,20 +71,6 @@ export async function createVoiceRoom(onStop: () => void = () => {}, roomId?: st
     return { room, closeAudio,
       configureStop: async (callId, token) => {
         if (!closed && generation !== undefined) await background.configureStop(`${getBuzzRuntimeConfig().monolithUrl}/v1/phone/voice/${callId}/native-stop`, token, generation);
-      },
-      armSilence: async () => { if (!closed && generation !== undefined) await background.armSilence(generation); },
-      cancelSilence: async () => { if (!closed && generation !== undefined) await background.cancelSilence(generation); },
-      parkAudio: async agentName => {
-        await AudioSession.stopAudioSession();
-        if (generation !== undefined) await background.setActivity(false, agentName, generation);
-      },
-      resumeAudio: async () => {
-        if (generation !== undefined) await background.setActivity(true, null, generation);
-        await AudioSession.startAudioSession();
-      },
-      idleEnd: async () => {
-        await AudioSession.stopAudioSession();
-        if (generation !== undefined) await background.endForIdle(undefined, generation);
       },
     };
   } catch (cause) {

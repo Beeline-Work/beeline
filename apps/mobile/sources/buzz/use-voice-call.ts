@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { Platform } from 'react-native';
 import { RoomEvent, Track, type Room } from 'livekit-client';
-import { VOICE_DATA_TOPIC, type VoiceBudget, type VoiceJoin, type VoiceIdleState, type VoiceSignal, type VoiceCall, type RoomViewIdentity } from '@beeline/api-contract/phone';
+import { VOICE_DATA_TOPIC, type VoiceBudget, type VoiceJoin, type VoiceSignal, type VoiceCall, type RoomViewIdentity } from '@beeline/api-contract/phone';
 import { getBuzzRuntimeConfig } from './runtime-config';
 import { createVoiceRoom, subscribeVoiceResume, voiceFetch } from './voice-transport';
 import { errorDiagnostic, reportClientError } from './client-error-report';
@@ -12,10 +12,10 @@ function dailyLimitMessage(budget: VoiceBudget): string {
   return `Calls resume at ${new Date(budget.resetAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: budget.timeZone })}`;
 }
 
-async function voiceRequest<T>(id: string, action: 'join' | 'leave' | 'current' | 'idle' | 'state' | 'resume', sessionId?: string): Promise<T> {
+async function voiceRequest<T>(id: string, action: 'join' | 'leave' | 'current' | 'state', sessionId?: string, expectedCallId?: string): Promise<T> {
   const response = await voiceFetch(`${getBuzzRuntimeConfig().monolithUrl}/v1/phone/voice/${id}/${action}${action === 'state' && sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ''}`,
     { method: action === 'current' || action === 'state' ? 'GET' : 'POST',
-      ...(sessionId && action !== 'state' ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId }) } : {}) });
+      ...((sessionId || expectedCallId) && action !== 'state' ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId, expectedCallId }) } : {}) });
   const value = await response.json() as T & { error?: string; code?: string; budget?: VoiceBudget };
   if (!response.ok) throw new Error(value.code === 'voice-daily-limit' && value.budget
     ? dailyLimitMessage(value.budget) : value.error ?? 'Conversation mode could not connect');
@@ -33,12 +33,23 @@ async function closeVoiceTransport(transport: { room: Room; closeAudio(): Promis
 const NO_AGENTS: readonly RoomViewIdentity[] = [];
 
 export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: readonly RoomViewIdentity[] = NO_AGENTS) {
+  const [endingDeadline, setEndingDeadline] = React.useState<number | null>(null);
+  const [endingSeconds, setEndingSeconds] = React.useState<number | null>(null);
+  React.useEffect(() => {
+    if (endingDeadline === null) { setEndingSeconds(null); return; }
+    const update = () => setEndingSeconds(Math.max(0, Math.ceil((endingDeadline - Date.now()) / 1000)));
+    update(); const timer = setInterval(update, 1000);
+    return () => clearInterval(timer);
+  }, [endingDeadline]);
   const [call, setCall] = React.useState<VoiceCall | null>(null);
   const [joinedAgents, setJoinedAgents] = React.useState<{ roomId: string; agents: readonly RoomViewIdentity[] } | null>(null);
   const agents = joinedAgents?.roomId === roomId ? joinedAgents.agents : roomAgents;
   const [target, setTarget] = React.useState<string | null>(null);
   const [speaker, setSpeaker] = React.useState<string | null>(null);
   const [level, setLevel] = React.useState(0);
+  const [muted, setMuted] = React.useState(false);
+  const mutedRef = React.useRef(false);
+  const mutePending = React.useRef(false);
   const [connecting, setConnecting] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const [quotaExhausted, setQuotaExhausted] = React.useState(false);
@@ -46,15 +57,14 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
   const [budgetWarning, setBudgetWarning] = React.useState<string | null>(null);
   const [firstAudioMs, setFirstAudioMs] = React.useState<number | null>(null);
   const [humans, setHumans] = React.useState(1);
-  /** Counts turns dropped because no agent was named, so the tip line can flash. */
+  /** Counts group turns that did not name or tap an agent. */
   const [unaddressed, setUnaddressed] = React.useState(0);
   const session = React.useRef<{ room: Room; callId: string; sessionId: string; closeAudio(): Promise<void> } | null>(null);
   const revision = React.useRef(0);
   const pending = React.useRef(false);
   const speakerRef = React.useRef<string | null>(null);
   const targetRef = React.useRef<string | null>(null);
-  const cancelSilence = React.useRef<(() => Promise<void>) | undefined>(undefined);
-  const mode = React.useRef<'active' | 'parking' | 'parked' | 'resuming' | 'ended'>('ended');
+  const mode = React.useRef<'active' | 'ended'>('ended');
   const liveCleanup = React.useRef<(() => void) | null>(null);
   const joiningCleanup = React.useRef<(() => Promise<void>) | null>(null);
 
@@ -63,14 +73,13 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
   const end = React.useCallback(async () => {
     revision.current++;
     for (const cancel of retryWaiters.current) cancel();
-    const cancelDeadline = cancelSilence.current; cancelSilence.current = undefined;
-    if (cancelDeadline) void cancelDeadline().catch(() => {});
     mode.current = 'ended';
     setBudgetWarning(null);
     liveCleanup.current?.(); liveCleanup.current = null;
     const current = session.current; session.current = null;
     const cancelJoin = joiningCleanup.current; joiningCleanup.current = null;
-    setCall(null); setSpeaker(null); setLevel(0); setConnecting(false); setError(null);
+    mutedRef.current = false; setMuted(false);
+    setEndingDeadline(null); setCall(null); setSpeaker(null); setLevel(0); setConnecting(false); setError(null);
     setJoinedAgents(null); setTarget(null); targetRef.current = null; setHumans(1);
     speakerRef.current = null;
     if (cancelJoin) await cancelJoin();
@@ -89,15 +98,14 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
     let transport: Awaited<ReturnType<typeof createVoiceRoom>> | undefined;
     let joined: VoiceJoin | undefined;
     let closing: Promise<void> | undefined;
-    let expireDeadline: () => Promise<void> = async () => {};
     const release = () => closing ??= closeVoiceTransport(transport);
     const current = () => version === revision.current;
-    const request = async <T,>(id: string, action: Parameters<typeof voiceRequest>[1], sessionId?: string): Promise<T> => {
+    const request = async <T,>(id: string, action: Parameters<typeof voiceRequest>[1], sessionId?: string, expectedCallId?: string): Promise<T> => {
       // Android can resume before DNS is ready. Retry only transport failures,
       // within this call's lifetime, for at most fifteen seconds of backoff.
       for (let attempt = 0; ; attempt++) {
         if (!current()) throw new Error('Conversation mode ended');
-        try { return await voiceRequest<T>(id, action, sessionId); }
+        try { return await voiceRequest<T>(id, action, sessionId, expectedCallId); }
         catch (cause) {
           if (!current()) throw cause;
           if (!/UnknownHostException|fetch failed|Network request failed|Failed to fetch/i.test(errorDiagnostic(cause).message)) throw cause;
@@ -111,7 +119,7 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
       }
     };
     try {
-      transport = await createVoiceRoom(() => { void end(); }, roomId, () => { void expireDeadline(); });
+      transport = await createVoiceRoom(() => { void end(); }, roomId);
       joiningCleanup.current = release;
       if (version !== revision.current) { await release(); return; }
       joined = await request<VoiceJoin>(roomId, 'join');
@@ -120,69 +128,9 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
       if (version !== revision.current) { await release(); await voiceRequest(joined.call.id, 'leave', joined.sessionId); return; }
       setJoinedAgents({ roomId, agents: joined.agents });
       const { room } = transport;
+      let humanCount = joined.call.participants.filter(p => p.kind === 'human').length;
+      setHumans(humanCount);
       mode.current = 'active';
-      cancelSilence.current = transport.cancelSilence;
-      const armSilence = () => {
-        if (!current() || mode.current !== 'active' || speakerRef.current) return;
-        void transport!.armSilence().catch(cause => { if (current()) { void end(); setError(errorDiagnostic(cause).message); } });
-      };
-      const finishIdle = async () => {
-        if (!current()) return;
-        await transport!.idleEnd();
-        if (current()) await end();
-      };
-      let checking = false; let checkAgain = false;
-      const checkReply = async (): Promise<void> => {
-        if (!current() || mode.current !== 'parked') return;
-        if (checking) { checkAgain = true; return; }
-        checking = true;
-        try {
-          do {
-            checkAgain = false;
-            const state = await request<VoiceIdleState>(joined!.call.id, 'state', joined!.sessionId);
-            if (!current() || mode.current !== 'parked') return;
-            setError(null);
-            if (state.state === 'ended') { await finishIdle(); return; }
-            if (state.state === 'ready') {
-              mode.current = 'resuming';
-              await transport!.resumeAudio();
-              await request(joined!.call.id, 'resume', joined!.sessionId);
-              if (!current()) return;
-              await room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ type: 'resume', sessionId: joined!.sessionId })),
-                { reliable: true, topic: VOICE_DATA_TOPIC });
-              return;
-            }
-          } while (checkAgain && current() && mode.current === 'parked');
-        } catch (cause) {
-          if (current()) {
-            if (mode.current === 'resuming') {
-              if (current()) await transport!.parkAudio('agent').catch(() => {});
-              if (current()) mode.current = 'parked';
-            }
-            if (current()) setError(errorDiagnostic(cause).message);
-          }
-        } finally { checking = false; }
-      };
-      const expireSilence = async () => {
-        if (!current() || mode.current !== 'active' || speakerRef.current) return;
-        mode.current = 'parking'; setLevel(0);
-        try {
-          await transport!.cancelSilence();
-          await room.localParticipant.setMicrophoneEnabled(false);
-          const state = await request<VoiceIdleState>(joined!.call.id, 'idle', joined!.sessionId);
-          if (!current()) return;
-          if (state.state === 'ended') { await finishIdle(); return; }
-          await room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ type: 'park', sessionId: joined!.sessionId })),
-            { reliable: true, topic: VOICE_DATA_TOPIC });
-          await transport!.parkAudio(state.agentName ?? 'agent');
-          if (!current()) return;
-          mode.current = 'parked';
-          await checkReply();
-        } catch (cause) {
-          if (current()) { await end(); setError(errorDiagnostic(cause).message); }
-        }
-      };
-      expireDeadline = expireSilence;
       room.on(RoomEvent.DataReceived, (bytes, participant, _kind, topic) => {
         if (version !== revision.current || topic !== VOICE_DATA_TOPIC || participant?.identity !== `beeline-voice-${joined!.call.id}`) return;
         try {
@@ -205,14 +153,13 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
             return;
           }
           if (data.type === 'stop') { void end(); return; }
-          if (data.type === 'speech') armSilence();
+          if (data.type === 'ending') {
+            if (data.deadline === null) setEndingDeadline(null);
+            else if (Number.isFinite(data.deadline) && Number.isFinite(data.serverNow))
+              setEndingDeadline(Date.now() + Math.max(0, data.deadline - data.serverNow));
+          }
           if (data.type === 'speaker') {
             speakerRef.current = data.agentId; setSpeaker(data.agentId);
-            void transport!.cancelSilence().catch(() => { if (current()) void end(); });
-            if (!data.agentId && mode.current === 'resuming') {
-              void room.localParticipant.setMicrophoneEnabled(!quotaRef.current, { echoCancellation: true, noiseSuppression: true, autoGainControl: false })
-                .then(() => { if (current()) { mode.current = 'active'; armSilence(); } }).catch(() => { void end(); });
-            } else if (!data.agentId) armSilence();
           }
           if (data.type === 'target' && joined!.agents.some(agent => agent.pubkey === data.agentId)) {
             targetRef.current = data.agentId; setTarget(data.agentId);
@@ -225,7 +172,9 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
             }
           }
           if (data.type === 'latency') setFirstAudioMs(data.firstAudioMs);
-          if (data.type === 'humans') setHumans(data.count);
+          if (data.type === 'humans') {
+            humanCount = data.count; setHumans(data.count);
+          }
           if (data.type === 'unaddressed') setUnaddressed(count => count + 1);
         } catch {}
       });
@@ -243,9 +192,11 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
         recovering = true;
         void (async () => {
           // A full reconnect after token expiry needs a freshly authorized token.
-          const fresh = await request<VoiceJoin>(roomId, 'join');
+          const fresh = await request<VoiceJoin>(roomId, 'join', undefined, joined!.call.id);
           if (version !== revision.current) { await voiceRequest(fresh.call.id, 'leave', fresh.sessionId).catch(() => {}); return; }
+          if (fresh.call.id !== joined!.call.id) { await voiceRequest(fresh.call.id, 'leave', fresh.sessionId); await end(); return; }
           joined = fresh;
+          humanCount = fresh.call.participants.filter(p => p.kind === 'human').length; setHumans(humanCount);
           await transport!.configureStop(fresh.call.id, fresh.stopToken);
           if (version !== revision.current) { await voiceRequest(fresh.call.id, 'leave', fresh.sessionId).catch(() => {}); return; }
           if (session.current?.room === room) { session.current.callId = fresh.call.id; session.current.sessionId = fresh.sessionId; }
@@ -255,7 +206,7 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
           const agentId = targetRef.current;
           if (agentId) await room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ type: 'target', agentId })),
             { reliable: true, topic: VOICE_DATA_TOPIC });
-          await room.localParticipant.setMicrophoneEnabled(!quotaRef.current, { echoCancellation: true, noiseSuppression: true, autoGainControl: false });
+          await room.localParticipant.setMicrophoneEnabled(!quotaRef.current && !mutedRef.current, { echoCancellation: true, noiseSuppression: true, autoGainControl: false });
           if (version !== revision.current) await release();
         })().catch(cause => {
           if (version !== revision.current) return;
@@ -288,13 +239,17 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
       room.on(RoomEvent.ActiveSpeakersChanged, updateLevel);
       const live = sharedLiveConnection();
       const reconcile = () => {
-        if (mode.current === 'parked') void checkReply();
+        const active = joined!;
+        void request<{ state: string }>(active.call.id, 'state', active.sessionId).then(state => {
+          if (current() && joined === active && state.state === 'ended') {
+            void end();
+          }
+        }).catch(() => {});
       };
       const dispose = await live.register([{ '#h': [roomId] }], reconcile);
       if (!current()) { dispose(); return; }
       const disconnectListener = live.subscribeConnected(reconcile);
       liveCleanup.current = () => { dispose(); disconnectListener(); };
-      armSilence();
     } catch (cause) {
       void reportClientError('voice-join', cause);
       await release();
@@ -316,7 +271,18 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
     void session.current?.room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ type: 'target', agentId, tap: true })),
       { reliable: true, topic: VOICE_DATA_TOPIC });
   }, [agents]);
-  return { budgetWarning, call, agents, target, speaker, level, connecting, error, quotaExhausted, firstAudioMs, humans, unaddressed, join, end, aim };
+  const toggleMute = React.useCallback(async () => {
+    const current = session.current;
+    if (!current || mutePending.current || quotaRef.current) return;
+    mutePending.current = true;
+    const next = !mutedRef.current;
+    try {
+      await current.room.localParticipant.setMicrophoneEnabled(!next);
+      if (session.current === current) { mutedRef.current = next; setMuted(next); }
+    } catch (cause) { void reportClientError('voice-join', cause); }
+    finally { mutePending.current = false; }
+  }, []);
+  return { budgetWarning, muted, toggleMute, endingWarning: endingSeconds === null ? undefined : `Ending in ${endingSeconds}s`, call, agents, target, speaker, level, connecting, error, quotaExhausted, firstAudioMs, humans, unaddressed, join, end, aim };
 }
 
 export type VoiceCallState = ReturnType<typeof useVoiceCall>;

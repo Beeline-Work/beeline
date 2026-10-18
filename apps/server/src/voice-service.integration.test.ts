@@ -13,7 +13,7 @@ import { PhoneService } from './phone-service.js';
 import { readChatListView, readRoomViewMessage } from '@beeline/api-contract/phone';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 
-vi.mock('./voice-room-runtime.js', () => ({ VoiceRoomRuntime: { connect: vi.fn(async () => ({ close: vi.fn(), park: vi.fn(), resume: vi.fn(), refresh: vi.fn() })) } }));
+vi.mock('./voice-room-runtime.js', () => ({ VoiceRoomRuntime: { connect: vi.fn(async (_service: unknown, _call: string, roomId: string) => ({ roomId, stopCall: vi.fn(), close: vi.fn(), park: vi.fn(), resume: vi.fn(), refresh: vi.fn(), countHumans: vi.fn(async () => {}) })) } }));
 vi.mock('livekit-server-sdk', async original => {
   const actual = await original<typeof import('livekit-server-sdk')>();
   return { ...actual, RoomServiceClient: class { async removeParticipant() {} async deleteRoom() {} } };
@@ -185,34 +185,56 @@ it('demonstrates authenticated Aura saves and WAV previews while ignoring old pr
   }
 });
 
-it('parks only this session’s pending command and prevents recovery from starting parked RTC', async () => {
-  const joined = await service.join(R, H);
-  const agent = (await service.agents(R, H)).find(a => a.id === A)!;
-  const source = await service.recordHuman(joined.call.id, R, H, agent, 'Work until the report is ready');
-  await service.dispatch(joined.call.id, source, A);
+it('call-wide-end-3: idle is a no-op in solo calls even while call work is pending', async () => {
+  const joined = await service.join(R,H);
   try {
-    expect(await service.idle(joined.call.id, H)).toEqual({ state: 'parked', agentName: 'Ruby' });
-    expect((await db.query(`SELECT 1 FROM voice_participants WHERE call_id=$1 AND parked_at IS NOT NULL AND left_at IS NULL`, [joined.call.id])).rowCount).toBe(1);
-    const runtime = await vi.mocked(VoiceRoomRuntime.connect).mock.results.at(-1)!.value;
-    expect(runtime.park).toHaveBeenCalledWith(H, undefined);
-    expect(runtime.close).not.toHaveBeenCalled();
-    await service.resume(joined.call.id, H, joined.sessionId);
-    expect(runtime.resume).toHaveBeenCalledWith(H);
-    expect((await db.query(`SELECT session_id,parked_at FROM voice_participants WHERE call_id=$1 AND identity_id=$2`, [joined.call.id, H])).rows[0]).toMatchObject({ session_id: joined.sessionId, parked_at: null });
-    await db.query(`UPDATE voice_participants SET parked_at=now() WHERE call_id=$1 AND identity_id=$2`, [joined.call.id,H]);
-    await db.query(`UPDATE voice_calls SET runtime_until=NULL WHERE id=$1`, [joined.call.id]);
-    const contender = new VoiceService(db, live, service.config);
-    try { expect(await contender.ensureRuntime((await db.query<any>(`SELECT * FROM voice_calls WHERE id=$1`, [joined.call.id])).rows[0]!)).toBeUndefined(); }
-    finally { await contender.close(); }
-    await db.query(`UPDATE agent_commands SET state='cancelled',completed_at=now() WHERE source_message_id=$1`, [source]);
-    expect(await service.idleState(joined.call.id, H)).toEqual({ state: 'ended' });
-  } finally { await service.leave(joined.call.id, H); }
+    expect(await service.idle(joined.call.id,H)).toEqual({state:'ready'});
+    const agent = (await service.agents(R,H)).find(a => a.id===A)!;
+    const source = await service.recordHuman(joined.call.id,R,H,agent,'Work');
+    await service.dispatch(joined.call.id,source,A);
+    expect(await service.hasCallWork(joined.call.id)).toBe(true);
+    expect(await service.idle(joined.call.id,H)).toEqual({state:'ready'});
+    expect((await db.query(`SELECT parked_at,left_at FROM voice_participants WHERE call_id=$1 AND identity_id=$2`,[joined.call.id,H])).rows[0]).toEqual({parked_at:null,left_at:null});
+    await db.query(`UPDATE agent_commands SET state='cancelled',completed_at=now() WHERE source_message_id=$1`,[source]);
+  } finally { await service.leave(joined.call.id,H); }
 });
 
-it('idle with no session command ends participation while unrelated Room work cannot park it', async () => {
+it('multi-human-silence-1: an old client idle deadline keeps both participants active', async () => {
   const joined = await service.join(R, H);
-  expect(await service.idle(joined.call.id, H)).toEqual({ state: 'ended' });
-  expect(await service.current(R, H)).toBeNull();
+  // Earlier access tests deliberately leave SECOND a spectator.
+  await db.query(`UPDATE memberships SET role='owner' WHERE room_id IS NULL AND identity_id=$1`, [SECOND]);
+  await service.join(R, SECOND);
+  try {
+    expect(await service.idle(joined.call.id, H, joined.sessionId)).toEqual({ state: 'ready' });
+    expect(await service.humanCount(joined.call.id)).toBe(2);
+    expect(await service.idleState(joined.call.id, H, db, joined.sessionId)).toEqual({ state: 'ready' });
+    expect((await db.query(`SELECT parked_at,left_at FROM voice_participants WHERE call_id=$1 AND identity_id=$2`, [joined.call.id,H])).rows[0]).toEqual({ parked_at: null, left_at: null });
+  } finally { await service.leave(joined.call.id,H); await service.leave(joined.call.id,SECOND); }
+});
+
+it('multi-human-mode-2: join, leave and rejoin notify the RTC owner immediately after commit', async () => {
+  const joined = await service.join(R,H);
+  const runtime = await vi.mocked(VoiceRoomRuntime.connect).mock.results.at(-1)!.value;
+  const counts: number[] = [];
+  vi.spyOn(runtime,'countHumans').mockImplementation(async () => { counts.push(await service.humanCount(joined.call.id)); });
+  const other = new VoiceService(db,live,service.config);
+  try {
+    await other.join(R,SECOND);
+    await vi.waitFor(() => expect(counts.at(-1)).toBe(2));
+    await other.leave(joined.call.id,SECOND);
+    await vi.waitFor(() => expect(counts.at(-1)).toBe(1));
+    await other.join(R,SECOND);
+    await vi.waitFor(() => expect(counts.at(-1)).toBe(2));
+    await db.query(`UPDATE voice_participants SET parked_at=now() WHERE call_id=$1 AND identity_id=$2`,[joined.call.id,SECOND]);
+    expect(await service.humanCount(joined.call.id)).toBe(2);
+  } finally { await other.close(); await service.leave(joined.call.id,H); await service.leave(joined.call.id,SECOND); }
+});
+
+it('idle with no session command keeps participation active', async () => {
+  const joined = await service.join(R, H);
+  expect(await service.idle(joined.call.id, H)).toEqual({ state: 'ready' });
+  expect(await service.current(R, H)).not.toBeNull();
+  await service.leave(joined.call.id,H);
 });
 
 it('rejects delayed idle and leave from a superseded participation generation', async () => {
@@ -290,6 +312,53 @@ it('call-feedback-1: delivers a recorded utterance before leave while PostgreSQL
     await service.leave(joined.call.id, H);
   }
 });
+
+it('call-wide-end-3: reconnect cannot create or join a successor after its call ends', async () => {
+  const joined = await service.join(R,H);
+  await service.leave(joined.call.id,H);
+  await expect(service.join(R,H,joined.call.id)).rejects.toThrow('voice session ended');
+  expect(await service.current(R,H)).toBeNull();
+  const successor=await service.join(R,H);
+  try { await expect(service.join(R,SECOND,joined.call.id)).rejects.toThrow('voice session ended'); }
+  finally { await service.leave(successor.call.id,H); }
+});
+
+it('call-wide-end-3: a stale owner or speech during the end transaction cannot close the call', async () => {
+  const joined=await service.join(R,H);
+  const owner=(await db.query<{runtime_owner:string}>(`SELECT runtime_owner FROM voice_calls WHERE id=$1`,[joined.call.id])).rows[0]!.runtime_owner;
+  expect(await service.endInactive(joined.call.id,'stale-owner',()=>true)).toBe(false);
+  const update=service.updateCard.bind(service); let quiet=true;
+  const card=vi.spyOn(service,'updateCard').mockImplementationOnce(async (...args)=>{await update(...args);quiet=false;});
+  try {
+    expect(await service.endInactive(joined.call.id,owner,()=>quiet)).toBe(false);
+    expect(await service.current(R,H)).not.toBeNull();
+    expect(await service.humanCount(joined.call.id)).toBe(1);
+  } finally { card.mockRestore();await service.leave(joined.call.id,H); }
+});
+
+it('quiet termination puts its reason on the ended card and explicit leave omits it', async () => {
+  const first = await service.join(R, H);
+  const second = await service.join(R, SECOND);
+  await service.leave(first.call.id, SECOND, false, second.sessionId);
+  await db.query(`UPDATE voice_calls SET runtime_owner=$2,runtime_until=now()+interval '1 minute' WHERE id=$1`, [first.call.id, service.owner]);
+  await db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE state IN ('pending','claimed')`);
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'That answers my question.')`, ['f'.repeat(64),R,H]);
+  expect(await service.endInactive(first.call.id, service.owner, () => true)).toBe(true);
+  const endedRoom=await new PhoneService(db,'http://proof').readRoom(R,H);
+  expect(endedRoom?.messages.at(-1)?.voiceCall?.id).toBe(first.call.id);
+  expect((await new PhoneService(db,'http://proof').readRoom(R,H))?.messages.find(m=>m.voiceCall?.id===first.call.id)?.voiceCall?.endReason).toBe('silence');
+  expect((await new PhoneService(db,'http://proof').readRoom(R,H))?.messages.find(m=>m.voiceCall?.id===first.call.id)?.text)
+    .toMatch(/^Voice call ended · \d+:\d{2} · No one spoke for 60s$/);
+  expect(await service.idleState(first.call.id, SECOND, db, second.sessionId)).toEqual({state:'ended'});
+  expect(await service.idleState(first.call.id, H, db, 'old-session')).toEqual({state:'ended'});
+  const fresh = await service.join(R, H);
+  expect(fresh.call.id).not.toBe(first.call.id);
+  await service.leave(fresh.call.id, H, false, fresh.sessionId);
+  expect(await service.idleState(fresh.call.id, H, db, fresh.sessionId)).toEqual({state:'ended'});
+  expect((await new PhoneService(db,'http://proof').readRoom(R,H))?.messages.find(m=>m.voiceCall?.id===fresh.call.id)?.voiceCall?.endReason).toBeUndefined();
+});
+
+
 
 it('demonstrates workspace exhaustion ending the whole call and refusing HTTP joins until reset', async () => {
   const otherRoom = '55555555-5555-4555-8555-555555555555';

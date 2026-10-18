@@ -20,7 +20,7 @@ it.skipIf(!existsSync(CHROME))('call-feedback-1: mic levels move the rendered co
         globalThis.__callFeedback = { room, emit: (event, ...args) => listeners.get(event)?.(...args) };
         export const subscribeVoiceResume = () => () => {};
         export const voiceFetch = async () => new Response(JSON.stringify({ sessionId: 'proof-session',
-          call: { id: 'proof-call', roomId: 'proof-room' }, url: 'wss://proof', token: 'proof', agents: [] }));
+          call: { id: 'proof-call', roomId: 'proof-room', participants: [{ kind: 'human', identity: 'proof-viewer' }] }, url: 'wss://proof', token: 'proof', agents: [] }));
         export const createVoiceRoom = async () => ({ room, configureStop: async () => {}, closeAudio: async () => {},
           armSilence: async () => {}, cancelSilence: async () => {} });`,
       './runtime-config': 'export const getBuzzRuntimeConfig = () => ({ monolithUrl: "http://proof" });',

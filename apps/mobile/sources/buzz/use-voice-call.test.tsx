@@ -16,10 +16,8 @@ vi.mock('./client-error-report', async original => ({ ...await original<object>(
 vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({ subscribeConnected: (listener: () => void) => { fixture.connected = listener; return () => { fixture.connected = undefined; }; }, register: async (_filters: unknown, listener: () => void) => { fixture.live = listener; return () => { fixture.live = undefined; }; } }) }));
 vi.mock('react-native', () => ({ Platform: { OS: 'android' } }));
 vi.mock('livekit-client', () => ({ RoomEvent: { DataReceived: 'data', Disconnected: 'left', ActiveSpeakersChanged: 'levels' }, Track: {} }));
-vi.mock('./voice-transport', () => ({ voiceFetch: (...args: unknown[]) => fixture.fetch(...args), subscribeVoiceResume: () => () => {}, createVoiceRoom: async (stop: () => void, _roomId: string, idle: () => void) => {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const cancelSilence = async () => { clearTimeout(timer); timer = undefined; };
-  fixture.stop = stop; return { configureStop: fixture.configureStop, armSilence: async () => { await cancelSilence(); timer = setTimeout(idle, 20_000); }, cancelSilence, room: fixture.room, closeAudio: async () => { await cancelSilence(); await fixture.closeAudio(); }, parkAudio: fixture.parkAudio, resumeAudio: fixture.resumeAudio, idleEnd: fixture.idleEnd };
+vi.mock('./voice-transport', () => ({ voiceFetch: (...args: unknown[]) => fixture.fetch(...args), subscribeVoiceResume: () => () => {}, createVoiceRoom: async (stop: () => void) => {
+  fixture.stop = stop; return { configureStop: fixture.configureStop, room: fixture.room, closeAudio: fixture.closeAudio };
 } }));
 vi.mock('./runtime-config', () => ({ getBuzzRuntimeConfig: () => ({ monolithUrl: 'http://proof' }) }));
 vi.mock('@/auth/monolith-session', () => ({ monolithSession: { fetch: (...args: unknown[]) => fixture.fetch(...args) } }));
@@ -51,7 +49,7 @@ it('notification Stop during RTC connect fences the late join and releases audio
   } finally { await act(async () => renderer.unmount()); }
 });
 
-it('accepts spoken Stop only from the trusted voice bridge and clears the lifetime timer', async () => {
+it('accepts whole-call end only from the trusted voice bridge', async () => {
   vi.useFakeTimers(); fixture.closeAudio.mockClear();
   fixture.room = Object.assign(new EventEmitter(), { connect: async () => {}, disconnect: vi.fn(async () => {}),
     remoteParticipants: new Map(), localParticipant: { publishData: vi.fn(async () => {}), setMicrophoneEnabled: vi.fn(async () => {}) } });
@@ -245,73 +243,6 @@ it('obtains a fresh authorized token after terminal RTC loss without ending the 
   } finally { await act(async () => renderer.unmount()); }
 });
 
-it.each(['ended', 'parked'] as const)('20 seconds of silence chooses %s and uses no recurring timer', async state => {
-  vi.useFakeTimers(); fixture.fetch.mockClear(); fixture.parkAudio.mockClear(); fixture.idleEnd.mockClear();
-  fixture.room = Object.assign(new EventEmitter(), { connect: vi.fn(async () => {}), disconnect: vi.fn(async () => {}),
-    remoteParticipants: new Map(), localParticipant: { publishData: vi.fn(async () => {}), setMicrophoneEnabled: vi.fn(async () => {}) } });
-  fixture.fetch.mockImplementation(async (url: string) => new Response(JSON.stringify(
-    url.endsWith('/idle') || url.includes('/state') ? { state, agentName: 'Ruby' }
-      : { sessionId: 'proof-session', call: { id: fixture.callId, roomId: fixture.callId, startedAt: 1, participants: [] }, url: 'ws://proof', token: 'test', agents: [] }
-  )));
-  let voice!: ReturnType<typeof useVoiceCall>; let renderer: any;
-  function Probe() { voice = useVoiceCall(fixture.callId, true); return null; }
-  await act(async () => { renderer = create(<Probe />); });
-  try {
-    await act(async () => voice.join());
-    await act(async () => vi.advanceTimersByTimeAsync(19_999));
-    expect(fixture.room.disconnect).not.toHaveBeenCalled();
-    await act(async () => vi.advanceTimersByTimeAsync(1));
-    expect(fixture.room.localParticipant.setMicrophoneEnabled).toHaveBeenLastCalledWith(false);
-    if (state === 'ended') {
-      expect(fixture.idleEnd).toHaveBeenCalledOnce(); expect(voice.call).toBeNull();
-    } else {
-      expect(fixture.parkAudio).toHaveBeenCalledWith('Ruby'); expect(voice.call).not.toBeNull();
-      const reads = fixture.fetch.mock.calls.length;
-      await act(async () => vi.advanceTimersByTimeAsync(3_600_000));
-      expect(fixture.fetch).toHaveBeenCalledTimes(reads);
-    }
-    expect(vi.getTimerCount()).toBe(0);
-  } finally { await act(async () => renderer.unmount()); vi.useRealTimers(); }
-});
-
-it('waits parked until a committed socket event, speaks the report, then reopens the mic', async () => {
-  vi.useFakeTimers(); fixture.fetch.mockClear(); fixture.parkAudio.mockClear(); fixture.resumeAudio.mockClear();
-  let ready = false;
-  fixture.room = Object.assign(new EventEmitter(), { connect: vi.fn(async () => {}), disconnect: vi.fn(async () => {}),
-    remoteParticipants: new Map(), localParticipant: { publishData: vi.fn(async () => {}), setMicrophoneEnabled: vi.fn(async () => {}) } });
-  fixture.fetch.mockImplementation(async (url: string) => new Response(JSON.stringify(
-    url.endsWith('/idle') || url.includes('/state') ? { state: ready ? 'ready' : 'parked', agentName: 'Ruby' }
-      : { sessionId: 'proof-session', call: { id: fixture.callId, roomId: fixture.callId, startedAt: 1, participants: [] }, url: 'ws://proof', token: 'fresh', agents: [] }
-  )));
-  let voice!: ReturnType<typeof useVoiceCall>; let renderer: any;
-  function Probe() { voice = useVoiceCall(fixture.callId, true); return null; }
-  await act(async () => { renderer = create(<Probe />); });
-  try {
-    await act(async () => voice.join());
-    await act(async () => vi.advanceTimersByTimeAsync(20_000));
-    expect(fixture.parkAudio).toHaveBeenCalledOnce();
-    ready = true;
-    await act(async () => fixture.connected!());
-    expect(fixture.resumeAudio).toHaveBeenCalledOnce();
-    const controls = fixture.room.localParticipant.publishData.mock.calls.map(([bytes]: [Uint8Array]) => JSON.parse(new TextDecoder().decode(bytes)));
-    expect(controls).toContainEqual({ type: 'park', sessionId: 'proof-session' });
-    expect(controls).toContainEqual({ type: 'resume', sessionId: 'proof-session' });
-    expect(fixture.room.connect).toHaveBeenCalledTimes(1);
-    expect(fixture.fetch.mock.calls.filter(([url]) => String(url).endsWith('/join'))).toHaveLength(1);
-    expect(fixture.fetch.mock.calls.some(([url]) => String(url).endsWith('/resume'))).toBe(true);
-    expect(fixture.room.disconnect).not.toHaveBeenCalled();
-    expect(fixture.room.localParticipant.setMicrophoneEnabled).toHaveBeenLastCalledWith(false);
-    const bridge = { identity: `beeline-voice-${fixture.callId}` };
-    const signal = (agentId: string | null) => fixture.room.emit('data', new TextEncoder().encode(JSON.stringify({type:'speaker',agentId})), bridge, undefined, VOICE_DATA_TOPIC);
-    await act(async () => signal('ruby'));
-    expect(fixture.room.localParticipant.setMicrophoneEnabled).toHaveBeenLastCalledWith(false);
-    await act(async () => signal(null));
-    expect(fixture.room.localParticipant.setMicrophoneEnabled).toHaveBeenLastCalledWith(true, expect.any(Object));
-    expect(vi.getTimerCount()).toBe(1);
-  } finally { await act(async () => renderer.unmount()); vi.useRealTimers(); }
-});
-
-
 it('notification Stop fences a successor join while native Stop configuration is pending', async () => {
   fixture.fetch.mockClear();
   fixture.configureStop.mockReset().mockResolvedValue(undefined);
@@ -367,53 +298,6 @@ it('call-feedback-1: follows the mic when a stale speaker signal outlives bridge
   } finally { await act(async () => renderer.unmount()); vi.clearAllTimers(); vi.useRealTimers(); }
 });
 
-it.each(['recover', 'lasting', 'stop', 'other'] as const)('R1: parked resume network failure: %s', async outcome => {
-  vi.useFakeTimers(); fixture.fetch.mockClear(); fixture.resumeAudio.mockClear();
-  let failure: string | null = null;
-  let ready = false;
-  fixture.room = Object.assign(new EventEmitter(), { connect: vi.fn(async () => {}), disconnect: vi.fn(async () => {}),
-    remoteParticipants: new Map(), localParticipant: { publishData: vi.fn(async () => {}), setMicrophoneEnabled: vi.fn(async () => {}) } });
-  fixture.fetch.mockImplementation(async (url: string) => {
-    if (url.includes('/state') && failure) throw new Error(failure);
-    return new Response(JSON.stringify(url.endsWith('/idle') || url.includes('/state')
-      ? { state: ready ? 'ready' : 'parked', agentName: 'Ruby' }
-      : { sessionId: 'proof-session', call: { id: fixture.callId, roomId: fixture.callId, startedAt: 1, participants: [] }, url: 'ws://proof', token: 'test', agents: [] }));
-  });
-  let voice!: ReturnType<typeof useVoiceCall>; let renderer: any;
-  function Probe() { voice = useVoiceCall(fixture.callId, true); return null; }
-  await act(async () => { renderer = create(<Probe />); });
-  try {
-    await act(async () => voice.join());
-    await act(async () => vi.advanceTimersByTimeAsync(20_000));
-    failure = outcome === 'other' ? 'Permission denied' : 'fetch failed: java.net.UnknownHostException: Unable to resolve host "server.usebeeline.app": No address associated with hostname';
-    ready = true;
-    await act(async () => fixture.connected!());
-    if (outcome === 'other') { expect(voice.error).toBe('Permission denied'); return; }
-    expect(voice.error).toBeNull();
-    expect(voice.call).not.toBeNull();
-    if (outcome === 'recover') {
-      failure = null;
-      await act(async () => vi.advanceTimersByTimeAsync(1_000));
-      expect(fixture.resumeAudio).toHaveBeenCalledOnce();
-      expect(voice.error).toBeNull();
-      expect(voice.call).not.toBeNull();
-      expect(fixture.fetch.mock.calls.filter(([url]) => String(url).endsWith('/join'))).toHaveLength(1);
-    } else if (outcome === 'lasting') {
-      await act(async () => vi.advanceTimersByTimeAsync(15_000));
-      expect(voice.error).toBe('Lost connection to Beeline. Check your network.');
-      expect(vi.getTimerCount()).toBe(0);
-    } else {
-      await act(async () => voice.end());
-      const requests = fixture.fetch.mock.calls.length;
-      expect(vi.getTimerCount()).toBe(0);
-      await act(async () => vi.advanceTimersByTimeAsync(30_000));
-      expect(fixture.fetch).toHaveBeenCalledTimes(requests);
-      expect(voice.error).toBeNull();
-      expect(voice.call).toBeNull();
-    }
-  } finally { await act(async () => renderer.unmount()); vi.clearAllTimers(); vi.useRealTimers(); }
-});
-
 it.each(['Network request failed', 'fetch failed'] as const)('retries join transport failure: %s', async message => {
   vi.useFakeTimers();
   fixture.room = Object.assign(new EventEmitter(), { connect: vi.fn(async () => {}), disconnect: vi.fn(async () => {}),
@@ -434,6 +318,88 @@ it.each(['Network request failed', 'fetch failed'] as const)('retries join trans
     expect(voice.error).toBeNull();
   } finally { await act(async () => renderer.unmount()); vi.clearAllTimers(); vi.useRealTimers(); }
 });
+
+it.each([1,2])('call-wide-end-3: %s-human silence never parks the mic or removes a participant locally', async count => {
+  vi.useFakeTimers(); fixture.fetch.mockClear();
+  fixture.room = Object.assign(new EventEmitter(), { connect: async () => {}, disconnect: vi.fn(async () => {}),
+    remoteParticipants: new Map(), localParticipant: { publishData: vi.fn(async () => {}), setMicrophoneEnabled: vi.fn(async () => {}) } });
+  let voice!: ReturnType<typeof useVoiceCall>; let renderer: any;
+  function Probe() { voice = useVoiceCall(fixture.callId, true); return null; }
+  await act(async () => { renderer = create(<Probe />); });
+  try {
+    await act(async () => voice.join());
+    await act(async () => fixture.room.emit('data', new TextEncoder().encode(JSON.stringify({type:'humans',count})),
+      {identity:`beeline-voice-${fixture.callId}`}, undefined, VOICE_DATA_TOPIC));
+    await act(async () => vi.advanceTimersByTimeAsync(120_000));
+    expect(voice.call).not.toBeNull(); expect(voice.humans).toBe(count);
+    expect(fixture.fetch.mock.calls.some(([url]) => /idle|leave/.test(String(url)))).toBe(false);
+    expect(fixture.room.localParticipant.setMicrophoneEnabled.mock.calls.map(([enabled]: boolean[]) => enabled)).toEqual([true]);
+    expect(vi.getTimerCount()).toBe(0);
+  } finally { await act(async () => renderer.unmount()); vi.useRealTimers(); }
+});
+
+it('call-wide-end-3: a terminal disconnect cannot restart an ended call', async () => {
+  fixture.fetch.mockClear();
+  fixture.room = Object.assign(new EventEmitter(), { connect: vi.fn(async () => {}), disconnect: vi.fn(async () => {}),
+    remoteParticipants: new Map(), localParticipant: { publishData: vi.fn(async () => {}), setMicrophoneEnabled: vi.fn(async () => {}) } });
+  let voice!: ReturnType<typeof useVoiceCall>; let renderer: any;
+  function Probe() { voice = useVoiceCall(fixture.callId, true); return null; }
+  await act(async () => { renderer = create(<Probe />); });
+  try {
+    await act(async () => voice.join());
+    fixture.fetch.mockImplementationOnce(async (_url,init) => {
+      expect(JSON.parse(init.body).expectedCallId).toBe(fixture.callId);
+      return new Response(JSON.stringify({error:'voice session ended'}),{status:409});
+    });
+    await act(async () => fixture.room.emit('left'));
+    expect(voice.call).toBeNull(); expect(fixture.room.connect).toHaveBeenCalledOnce();
+  } finally { await act(async () => renderer.unmount()); }
+});
+
+it('renders only a trusted server deadline, counts down without ending locally, and clears on cancellation', async () => {
+  vi.useFakeTimers();
+  fixture.room = Object.assign(new EventEmitter(), { connect: async () => {}, disconnect: vi.fn(async () => {}),
+    remoteParticipants: new Map(), localParticipant: { publishData: vi.fn(async () => {}), setMicrophoneEnabled: vi.fn(async () => {}) } });
+  fixture.fetch.mockImplementation(async () => new Response(JSON.stringify({ sessionId: 'countdown-session',
+    call: { id: fixture.callId, roomId: fixture.callId, startedAt: 1, participants: [] }, url: 'ws://proof', token: 'test', agents: [] })));
+  let voice!: ReturnType<typeof useVoiceCall>; let renderer: any;
+  function Probe() { voice = useVoiceCall(fixture.callId, true); return null; }
+  await act(async () => { renderer = create(<Probe />); });
+  const signal = (deadline: number | null, trusted = true) => fixture.room.emit('data',
+    new TextEncoder().encode(JSON.stringify({ type: 'ending', deadline, serverNow: 1000 })),
+    { identity: trusted ? `beeline-voice-${fixture.callId}` : 'peer' }, undefined, VOICE_DATA_TOPIC);
+  try {
+    await act(async () => voice.join());
+    await act(async () => signal(16_000, false)); expect(voice.endingWarning).toBeUndefined();
+    await act(async () => signal(16_000)); expect(voice.endingWarning).toBe('Ending in 15s');
+    await act(async () => vi.advanceTimersByTimeAsync(5000)); expect(voice.endingWarning).toBe('Ending in 10s');
+    await act(async () => vi.advanceTimersByTimeAsync(10_000));
+    expect(voice.call).not.toBeNull();
+    await act(async () => signal(null)); expect(voice.endingWarning).toBeUndefined();
+  } finally { await act(async () => renderer.unmount()); vi.useRealTimers(); }
+});
+
+it('mute stays muted through RTC recovery and unmute restores the microphone', async () => {
+  fixture.room = Object.assign(new EventEmitter(), { connect: vi.fn(async () => {}), disconnect: vi.fn(async () => {}),
+    remoteParticipants: new Map(), localParticipant: { publishData: vi.fn(async () => {}), setMicrophoneEnabled: vi.fn(async () => {}) } });
+  let voice!: ReturnType<typeof useVoiceCall>; let renderer: any;
+  function Probe() { voice = useVoiceCall(fixture.callId, true); return null; }
+  await act(async () => { renderer = create(<Probe />); });
+  try {
+    await act(async () => voice.join());
+    await act(async () => voice.toggleMute());
+    expect(voice.muted).toBe(true);
+    expect(fixture.room.localParticipant.setMicrophoneEnabled).toHaveBeenLastCalledWith(false);
+    await act(async () => fixture.room.emit('left'));
+    expect(voice.muted).toBe(true);
+    expect(fixture.room.localParticipant.setMicrophoneEnabled.mock.calls.at(-1)[0]).toBe(false);
+    await act(async () => voice.toggleMute());
+    expect(voice.muted).toBe(false);
+    expect(fixture.room.localParticipant.setMicrophoneEnabled).toHaveBeenLastCalledWith(true);
+  } finally { await act(async () => renderer.unmount()); }
+});
+
+
 
 it('shows the workspace warning and retains the owner-midnight message when calls are exhausted', async () => {
   fixture.room = Object.assign(new EventEmitter(), { connect: async () => {}, disconnect: vi.fn(async () => {}),

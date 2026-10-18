@@ -1,3 +1,4 @@
+import { voiceCallHumanNames } from './voice-call-members';
 import { describe, expect, it } from 'vitest';
 import type { ChatListItem, ChatListView, RoomViewMessage } from '@beeline/buzz-client';
 import {
@@ -315,4 +316,15 @@ describe('chatWatchFiltersKey', () => {
     expect(chatWatchFiltersKey([{ '#h': ['room-b', 'room-a'], kinds: [9000, 9] }])).toBe(key);
     expect(chatWatchFiltersKey([{ kinds: [9, 9000], '#h': ['room-a', 'room-c'] }])).not.toBe(key);
   });
+});
+
+it('replaces the shared header and deck roster with the committed leave roster', () => {
+  const sam = {pubkey:'sam',kind:'human' as const,name:'Sam'};
+  const call = {id:'call',roomId:'a',startedAt:5,participants:[viewer,sam,agent]};
+  const view = deck(item('a',20,{voiceCall:call}));
+  expect(voiceCallHumanNames(call,viewer.pubkey)).toBe('You, Sam');
+  const left = applyChatListDelta(view,{type:'message-delta',roomId:'a',
+    message:message('call-card',5,{voiceCall:{...call,participants:[sam]}})});
+  expect(voiceCallHumanNames(left.chats[0]!.voiceCall!,viewer.pubkey)).toBe('Sam');
+  expect(left.chats[0]!.latestMessage).toEqual(view.chats[0]!.latestMessage);
 });

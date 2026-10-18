@@ -18,7 +18,7 @@ import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { groknight } from '@/buzz/groknight';
 import { HullDialog } from './HullDialog';
 import { ArrowUpGlyph, COMPOSER_GLYPH_SIZE, MicGlyph, PlusGlyph, StopGlyph, WaveformGlyph } from './MicGlyph';
-import { VoiceBar } from './VoiceBar';
+import { VoiceAgentStrip, VoiceBar } from './VoiceBar';
 import { RuntimeErrorBoundary } from './RuntimeErrorBoundary';
 import type { VoiceCallState } from '@/buzz/use-voice-call';
 import { VOICE_LONG_PRESS_MS } from '@beeline/api-contract/phone';
@@ -401,6 +401,8 @@ function ConversationComposerContent({
   const visibleAttachments = attachments.slice(0, 3);
   const hiddenAttachmentCount = Math.max(0, attachments.length - visibleAttachments.length);
   return (
+    <>
+    {conversationActive && voice && <VoiceAgentStrip voice={voice} />}
     <View
       ref={containerRef as React.Ref<View>}
       {...containerProps}
@@ -492,7 +494,7 @@ function ConversationComposerContent({
         </View>
       )}
       {conversationActive && voice ? (
-        <VoiceBar voice={voice} onAttach={onAttach} attachDisabled={attachDisabled} testIDPrefix={testIDPrefix} />
+        <VoiceBar voice={voice} testIDPrefix={testIDPrefix} />
       ) : (
         <View
         style={[styles.inputRow, viewerPill && styles.viewerPillRow, multiline && styles.composerMultiline]}
@@ -841,6 +843,7 @@ function ConversationComposerContent({
         testID={`${testIDPrefix}-speech-model-dialog`}
       />
     </View>
+    </>
   );
 }
 

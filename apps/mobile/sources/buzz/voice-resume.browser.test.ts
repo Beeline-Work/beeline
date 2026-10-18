@@ -3,7 +3,7 @@ import path from 'node:path';
 import { expect, it } from 'vitest';
 import { CHROME, runBrowserProof, webProofShims } from '@/test/browserProof';
 
-it.skipIf(!existsSync(CHROME))('R1: parked call resumes after DNS returns without rendering a raw error', async () => {
+it.skipIf(!existsSync(CHROME))('R1: active call survives DNS failure without rendering a raw error', async () => {
   const mobile = process.cwd();
   const { result, status, stderr } = await runBrowserProof({ mobile, width: 480, height: 300,
     entry: path.join(mobile, 'scripts/voice-resume-proof.tsx'), budgetMs: 5000,
@@ -23,8 +23,8 @@ it.skipIf(!existsSync(CHROME))('R1: parked call resumes after DNS returns withou
         export const voiceFetch = async url => {
           if (url.includes('/state') && fixture.offline) throw new Error('fetch failed: java.net.UnknownHostException: Unable to resolve host "server.usebeeline.app": No address associated with hostname');
           return new Response(JSON.stringify(url.includes('/state') || url.endsWith('/idle')
-            ? { state: fixture.ready ? 'ready' : 'parked', agentName: 'Ruby' }
-            : { sessionId: 'proof-session', call: { id: 'proof-call', roomId: 'proof-room' }, url: 'wss://proof', token: 'proof', agents: [] }));
+            ? { state: fixture.ended ? 'ended' : 'ready' }
+            : { sessionId: 'proof-session', call: { id: 'proof-call', roomId: 'proof-room', participants: [{ kind: 'human', identity: 'proof-viewer' }] }, url: 'wss://proof', token: 'proof', agents: [] }));
         };
         export const createVoiceRoom = async (_stop, _roomId, idle) => {
           fixture.idle = idle;

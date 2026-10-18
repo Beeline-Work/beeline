@@ -4039,7 +4039,9 @@
     "file": "apps/server/src/voice-service.ts",
     "kind": "wrapper",
     "template": "this.updateCard(call, db)",
-    "literals": [],
+    "literals": [
+      "'silence'"
+    ],
     "occurrences": 1
   },
   {
@@ -4053,15 +4055,17 @@
     "occurrences": 1
   },
   {
-    "id": "src/voice-service.ts:VoiceService.updateCard:restateSystemLine:e8c0c2f2a04da268",
+    "id": "src/voice-service.ts:VoiceService.updateCard:restateSystemLine:ceb84a5481c3ef58",
     "file": "apps/server/src/voice-service.ts",
     "kind": "restateSystemLine",
-    "template": "restateSystemLine(db, row.message_id, { subject: { kind: 'system', name: row.end_reason ? 'Call' : 'Voice call' },\n    verb: row.ended_at ? 'ended' : 'started',\n    ...(row.ended_at ? { consequence: voiceDuration((row.ended_at.getTime() - row.started_at.getTime()) / 1000) + (row.end_reason ? ` · ${row.end_reason}` : '') } : {}) }, call as unknown as Record<string, unknown>)",
+    "template": "restateSystemLine(db, row.message_id, { subject: { kind: 'system', name: row.end_reason && row.end_reason !== 'silence' ? 'Call' : 'Voice call' },\n    verb: row.ended_at ? 'ended' : 'started',\n    ...(row.ended_at ? { consequence: voiceDuration((row.ended_at.getTime() - row.started_at.getTime()) / 1000) + (row.end_reason === 'silence' ? ' · No one spoke for 60s' : row.end_reason ? ` · ${row.end_reason}` : '') } : {}) }, call as unknown as Record<string, unknown>)",
     "literals": [
+      "' · No one spoke for 60s'",
       "''",
       "'Call'",
       "'Voice call'",
       "'ended'",
+      "'silence'",
       "'started'",
       "'system'",
       "` · ${row.end_reason}`"

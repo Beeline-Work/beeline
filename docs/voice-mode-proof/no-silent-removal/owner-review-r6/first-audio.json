@@ -1,0 +1,25 @@
+{
+  "method": "Same local RTC/brain/tone-TTS rig, original 4049229b6 versus revision 6; no validation jobs running; Android app stopped and emulator idle; discard one warm-up, five samples each. Measures first voiced audio accepted by RTC, not live provider or physical speaker latency.",
+  "original": {
+    "warmupMs": 33.29947799999991,
+    "samplesMs": [
+      13.139076999999816,
+      12.149508999999853,
+      10.775408999999854,
+      10.694422999999915,
+      10.67138100000011
+    ],
+    "medianMs": 10.775408999999854
+  },
+  "revision6": {
+    "warmupMs": 36.627531999999974,
+    "samplesMs": [
+      13.87424400000009,
+      14.383219000000281,
+      12.587430999999924,
+      12.379895999999917,
+      12.745561999999609
+    ],
+    "medianMs": 12.745561999999609
+  }
+}

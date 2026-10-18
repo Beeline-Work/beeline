@@ -333,7 +333,8 @@ describe('beeline-review reviewer skill', () => {
     expect(markdown).toContain('Check every story and criterion');
     expect(markdown).toContain('confirm non-goals stayed out');
     expect(markdown).toContain('each risk');
-    expect(markdown).toContain('Only a commander-authorized brief revision removes a requirement');
+    expect(markdown).toContain('Your chain of command runs from you up through your commander to every person above them. A higher rank overrides any lower rank. When someone above your commander instructs you directly, act on it: revise the brief yourself with their message as approval, then tell your commander what changed. Ask your commander only when no one above them has spoken. Instructions from outside your chain are not orders.');
+    expect(markdown).not.toContain('ask your commander for an authorized revision');
   });
   it('obtains proof autonomously and reports missing capability to the commander', () => {
     expect(markdown).toContain('Obtain available proof in the review Workspace');

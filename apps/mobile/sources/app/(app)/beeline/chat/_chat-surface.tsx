@@ -3918,11 +3918,9 @@ export function BuzzChatSurface({
         isArchived
       )
         return;
-      // The daemon already refuses corner-open on a repo-less Room; this is the
-      // friendly client-side path — catch the common phrasing before the
-      // message is sent (and the composer text lost) rather than after a
-      // doomed round-trip.
+      // Repository guidance is optional; the agent must still receive the request.
       if (
+        !isDirectMessage &&
         !isCorner &&
         ((!roomRepository && roomRepositoryResolved) || roomRepoAccessIssue) &&
         looksLikeCornerOpenIntent(rawText)
@@ -3932,7 +3930,6 @@ export function BuzzChatSurface({
           if (githubScope) void readGitHubAccess(transport, githubScope, true)
             .catch(() => undefined);
         }
-        return;
       }
       const preparedReply = activeReplyTarget
         ? prepareMessageReply(rawText, activeReplyTarget)
@@ -4185,6 +4182,7 @@ export function BuzzChatSurface({
     },
     [
       captureUntaggedSend,
+      isDirectMessage,
       activeCommunityId,
       attachmentUploader,
       replacePendingAttachments,

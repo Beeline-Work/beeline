@@ -61,17 +61,12 @@ describe('Room→repo header chip', () => {
 });
 
 describe('Room→repo corner-open lazy prompt', () => {
-  it('short-circuits message submission on a repo-less Room before the composer is cleared', () => {
+  it('keeps repository guidance non-blocking and outside DMs', () => {
     const handleSend = blockFrom(chatSource, 'const handleSend = useCallback(', 'handleSend');
-    const guardIndex = handleSend.indexOf('looksLikeCornerOpenIntent(rawText)');
-    expect(guardIndex).toBeGreaterThanOrEqual(0);
-    expect(handleSend).toContain('roomRepoAccessIssue');
-    expect(handleSend).toContain('roomRepositoryResolved');
-    // The composer must not be cleared before this guard — it sits before the
-    // optimistic-message / clearSubmittedDraft() side effects.
-    expect(handleSend.indexOf('clearSubmittedDraft()')).toBeGreaterThan(
-      handleSend.indexOf('setCornerOpenRepoPrompt(true)'),
-    );
+    const prompt = blockFrom(handleSend, 'if (\n        !isDirectMessage', 'optional repository prompt');
+    expect(prompt).toContain('looksLikeCornerOpenIntent(rawText)');
+    expect(prompt).toContain('setCornerOpenRepoPrompt(true)');
+    expect(prompt).not.toMatch(/\breturn\b/);
   });
 
   it('sends proposal shortcuts without consuming the composer draft or its attachments', () => {

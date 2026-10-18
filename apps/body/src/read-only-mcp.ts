@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { builtinBeelineApp } from '@beeline/api-contract/workbench';
 import { Check } from 'typebox/value';
 import { CAPABILITY_ROUTES, REPOSITORY_ROUTES, SCRATCH_ROUTES, minimalTools, repositoryTools, scratchTools, CAPABILITY_TOOLS, RUNNER_TOOL, SILENT_TOOL } from './minimal-tool-surface.js';
 import { squireReachCause } from './squire-status.js';
@@ -2784,6 +2785,10 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
       return execute(name);
     case 'connect': {
       const capabilities = availableCapabilities();
+      const builtin = builtinBeelineApp(String(args.service ?? args.query ?? ''));
+      if (builtin && (args.mode === undefined || ['status', 'ensure', 'discover'].includes(String(args.mode))))
+        return JSON.stringify({ status: 'ready', app: builtin,
+          next: `Use app_tool(app:${builtin}) to discover its tools. Existing tool permissions still apply.` });
       if (args.mode === 'status') return JSON.stringify({ readiness: await execute('connectors_status'), capabilities });
       if (args.mode === 'discover') return JSON.stringify({ integrations: args.query ? JSON.parse(await execute('find_connectors')) : [], capabilities });
       if (args.mode !== undefined && args.mode !== 'ensure') throw new Error('mode must be discover, status or ensure');

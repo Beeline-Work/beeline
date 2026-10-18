@@ -109,12 +109,25 @@ export type AppIdentity = {
   readonly domain?: string;
 };
 
+/** Built-in tool namespaces do not represent external account connections. */
+export function builtinBeelineApp(input: string): string | undefined {
+  const text = input.trim().toLowerCase();
+  if (/^beeline:[a-z][a-z0-9_]*$/.test(text)) return text;
+  const key = text.replace(/[ _-]/g, '');
+  for (const name of ['workflow', 'wallet', 'browser_share', 'corner_app', 'avatar']) {
+    const alias = name.replace(/_/g, '');
+    if (key === `beeline${alias}` || (name !== 'wallet' && key === alias)) return `beeline:${name}`;
+  }
+  return undefined;
+}
+
 /**
  * Normalize what a person or agent typed — `Linear`, `linear.app`,
  * `https://api.linear.app/graphql` — to the app's brand key. A name keeps
  * letters and digits only, so `Hugging Face` and `huggingface.co` agree.
  */
 export function appIdentity(input: string): AppIdentity | undefined {
+  if (builtinBeelineApp(input)) return undefined;
   const text = input.trim();
   if (!text || text.length > APP_INPUT_MAX_LENGTH) return undefined;
   const host = hostOf(text);

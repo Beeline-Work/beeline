@@ -205,5 +205,19 @@ missing artifacts, completion/publication checks, and the workflow time budget.
 
 ## Compatibility and signing invariants
 
-- Runtime pins in `apps/mobile/app.config.js` must retain old installs in `COMPAT_RUNTIMES` (`ota-release.mjs`).
+- OTA targets are computed in `ota-release.mjs`: each platform's current pin
+  from `apps/mobile/app.config.js` plus the two highest shipped runtimes below
+  it, excluding `RETIRED_COMPAT_RUNTIMES` before filling the two slots (at most
+  six targets). Shipped means present in EAS production history **or** the
+  committed `SHIPPED_NATIVE_RUNTIMES` store ledger. Older production runtimes
+  are logged as dropped under the pin-plus-two rule; missing selected targets
+  and rollback anchors still fail closed. No compatibility-list edit is needed
+  after a pin bump. Production queries EAS before computing targets; promotion
+  and release proof consume the exact targets saved in the release ledger.
+  Rollback computes from the production response it already queries.
+- Offline `publish --dry-run` uses the committed store ledger only. For a
+  deterministic plan matching production, save `eas update:list --branch
+  production --limit 50 --json --non-interactive` and pass its JSON file as
+  `--production-history <path>` with `--dry-run`. Live releases reject that
+  override and always query EAS.
 - Store submission and signing: [mobile store runbook](../apps/mobile/docs/store-submission.md). The sideload keystore lives in `ANDROID_SIDELOAD_*` secrets and the Trusty Squire vault; see the [signing guide](../apps/mobile/android-signing/README.md) for rotation and recovery.

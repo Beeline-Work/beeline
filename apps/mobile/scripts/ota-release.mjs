@@ -44,33 +44,9 @@ const PRODUCTION_LOOKUP_CEILING = 50;
 function productionLookupLimit() {
   return String(PRODUCTION_LOOKUP_CEILING);
 }
-// Compatibility runtime targets: OTA updates published alongside the current
-// store pins under the owner's retention decision. Keep this list ordered
-// so the release log is deterministic. Each platform
-// keeps its pin plus the two latest shipped runtimes below it; older runtimes
-// are recorded in RETIRED_COMPAT_RUNTIMES.
-export const COMPAT_RUNTIMES = [
-  { platform: 'android', runtimeVersion: '31' },
-  { platform: 'android', runtimeVersion: '32' },
-  { platform: 'ios', runtimeVersion: '29' },
-  { platform: 'ios', runtimeVersion: '31' },
-  { platform: 'android', runtimeVersion: '33' },
-  { platform: 'ios', runtimeVersion: '32' },
-  { platform: 'android', runtimeVersion: '34' },
-  { platform: 'android', runtimeVersion: '35' },
-  { platform: 'ios', runtimeVersion: '33' },
-  { platform: 'android', runtimeVersion: '36' },
-  { platform: 'ios', runtimeVersion: '34' },
-  { platform: 'android', runtimeVersion: '38' },
-  { platform: 'ios', runtimeVersion: '35' },
-];
-
-// Every (platform, runtimeVersion) a shipped or submitted native store binary
-// carries, traced from successful unified releases and native-build/submission
-// checkpoints — NOT from the current pins. Inferring coverage from pins is
-// exactly how #1353/#1383 stranded android@25 and ios@26 installs: the pins
-// moved (25→24, 26→25) and the compat list silently shrank with them. Release
-// planning must cover every entry: the current pins plus COMPAT_RUNTIMES.
+// Shipped means a runtime appears in production EAS history OR this native
+// store ledger. The ledger also proves an embedded rollback anchor when a
+// shipped binary has not received its first production OTA yet.
 export const SHIPPED_NATIVE_RUNTIMES = [
   {
     platform: 'android',
@@ -176,11 +152,7 @@ export const SHIPPED_NATIVE_RUNTIMES = [
   },
 ];
 
-// Compat runtimes retired by an explicit, committed decision backed by
-// adoption/store evidence. Retiring an entry here is the ONLY way it may
-// leave COMPAT_RUNTIMES: the coverage governor (planCoverageErrors) refuses
-// release planning while a shipped runtime is neither planned nor retired,
-// so this list cannot silently shrink.
+// Explicit retirements are excluded before selecting the latest two shipped runtimes.
 const RETIRED_BY_PIN_PLUS_TWO =
   'retired by owner decision (lunchboxfortwo, Room message 49d2569e): publish OTA only to the current pin plus the latest two shipped runtimes per platform; per-target publishes of 17 runtimes pushed mobile_ota past its 15-minute cap in unified release runs 37891485721 and 37944067762. EAS GraphQL production-branch update insights totalUniqueUsers, 2026-09-25 to 2026-10-09, project 58f1e94e-5ce5-475e-9dde-3eaa9e36699c, latest production group 2026-10-08 06:27: android@33=6, android@32=1, android@31=1, android@24=1, every other Android runtime=0; ios@31=2, every other iOS runtime (32, 29, 27, 26, 25, 24, 23)=0. The approved plan covers every observed install except the one android@24 install, which stops receiving OTA updates; update insights do not establish public store runtime versions';
 
@@ -208,49 +180,49 @@ function targetKey(target) {
   return `${target.platform}@${target.runtimeVersion}`;
 }
 
-// The pre-publication coverage governor: release planning fails while ANY
-// runtime a shipped or submitted native binary carries is absent from the
-// plan (current pins ∪ COMPAT_RUNTIMES) and not explicitly retired. The
-// compat/retired/shipped overrides exist for tests; production planning
-// always reads the committed lists.
-export function planCoverageErrors(
+// The same computed set feeds publish, coverage and rollback. With no history
+// (offline dry runs), the committed shipped-native ledger is the deterministic
+// stand-in. Supply --production-history <JSON> to dry-run an EAS snapshot.
+export function releaseUpdateTargets(
+  projectDir = process.cwd(),
   pins,
-  compat = COMPAT_RUNTIMES,
-  retired = RETIRED_COMPAT_RUNTIMES,
+  history = null,
   shipped = SHIPPED_NATIVE_RUNTIMES,
+  retired = RETIRED_COMPAT_RUNTIMES,
 ) {
-  const planned = new Set(
-    [
-      ...RELEASE_PLATFORMS.map((platform) => ({ platform, runtimeVersion: pins[platform] })),
-      ...compat,
-    ].map(targetKey),
-  );
-  const retiredKeys = new Set(retired.map(targetKey));
-  return shipped
-    .filter((runtime) => !planned.has(targetKey(runtime)) && !retiredKeys.has(targetKey(runtime)))
-    .map(
-      (runtime) =>
-        `${targetKey(runtime)} was shipped or submitted (${runtime.evidence}) but is absent from the release plan; add it to COMPAT_RUNTIMES or record its retirement in RETIRED_COMPAT_RUNTIMES.`,
-    );
-}
-
-// Current runtimes come from the same resolved Expo config that EAS reads.
-// The compatibility runtimes are the exceptional, explicitly temporary
-// targets. Keep this list ordered so the release log is deterministic.
-export function releaseUpdateTargets(projectDir = process.cwd(), pins) {
   if (process.env.EXPO_RUNTIME_OVERRIDE) {
     throw new Error('EXPO_RUNTIME_OVERRIDE is reserved for ota-release.mjs child processes.');
   }
   const resolvedPins = pins ?? readPinnedRuntimeVersion(projectDir);
-  const targets = [
-    { platform: 'android', runtimeVersion: resolvedPins.android },
-    ...COMPAT_RUNTIMES,
-    { platform: 'ios', runtimeVersion: resolvedPins.ios },
-  ];
-  return targets.filter(
-    (target, index) =>
-      targets.findIndex((candidate) => targetKey(candidate) === targetKey(target)) === index,
-  );
+  const retiredKeys = new Set(retired.map(targetKey));
+  const known = [...shipped, ...collectUpdates(history).updates];
+  return RELEASE_PLATFORMS.flatMap((platform) => {
+    const pin = resolvedPins[platform];
+    if (!/^\d+$/.test(pin)) throw new Error(`Invalid runtime pin: ${platform}@${pin}`);
+    const versions = [...new Set(known
+      .filter((target) => target.platform === platform &&
+        /^\d+$/.test(target.runtimeVersion) &&
+        BigInt(target.runtimeVersion) < BigInt(pin) && !retiredKeys.has(targetKey(target)))
+      .map((target) => target.runtimeVersion))]
+      .sort((a, b) => BigInt(a) > BigInt(b) ? -1 : BigInt(a) < BigInt(b) ? 1 : 0)
+      .slice(0, 2);
+    return [pin, ...versions].map((runtimeVersion) => ({ platform, runtimeVersion }));
+  });
+}
+
+// Missing targets inside the retention window still fail closed. Older shipped
+// runtimes intentionally fall outside the window and no longer block releases.
+export function planCoverageErrors(
+  pins,
+  targets,
+  history = null,
+  shipped = SHIPPED_NATIVE_RUNTIMES,
+  retired = RETIRED_COMPAT_RUNTIMES,
+) {
+  const planned = new Set(targets.map(targetKey));
+  return releaseUpdateTargets(process.cwd(), pins, history, shipped, retired)
+    .filter((target) => !planned.has(targetKey(target)))
+    .map((target) => `${targetKey(target)} is missing from the pin-plus-two release plan.`);
 }
 
 function fail(message) {
@@ -584,22 +556,32 @@ function readLedger(path) {
 function publish(options) {
   if (!options.sha || !options.ref) fail('publish requires --sha and --ref');
   const configuredPins = readPinnedRuntimeVersion(process.cwd());
-  const targets = releaseUpdateTargets(process.cwd());
-  // Requirement: the release plan always states the exact platform/runtime
-  // target set it will publish, so a stranded runtime is visible in logs.
-  console.log(`ota_plan_targets=${targets.map(targetKey).join(',')}`);
-
-  // Pre-publication coverage governor: refuse to plan a release that would
-  // strand any runtime a shipped or submitted native binary still carries.
-  // This runs before ANY EAS call so a bad plan fails before publication.
-  const coverageErrors = planCoverageErrors(configuredPins);
-  if (coverageErrors.length > 0) {
-    fail(
-      'Refusing to plan an OTA release that strands shipped binaries:\n' +
-        coverageErrors.map((line) => `  - ${line}`).join('\n'),
-    );
+  if (options.productionHistory && !options.dryRun) {
+    fail('--production-history is only allowed with --dry-run; live releases query EAS.');
   }
+  const previous = options.productionHistory ? readJson(options.productionHistory) : runEas(
+    ['update:list', '--branch', 'production', '--limit', productionLookupLimit(),
+      '--json', '--non-interactive'],
+    { dryRun: options.dryRun },
+  );
+  if (!options.dryRun && !previous) fail('Production history is unreadable; refusing to plan OTA.');
+  const targets = releaseUpdateTargets(process.cwd(), configuredPins, previous);
+  console.log(`ota_plan_targets=${targets.map(targetKey).join(',')}`);
+  const coverageErrors = planCoverageErrors(configuredPins, targets, previous);
+  if (coverageErrors.length) fail(coverageErrors.join('\n'));
   console.log(`release_plan_targets=${targets.map(targetKey).join(',')}`);
+  const retiredKeys = new Set(RETIRED_COMPAT_RUNTIMES.map(targetKey));
+  const dropped = [...new Set(collectUpdates(previous).updates
+    .filter((target) => RELEASE_PLATFORMS.includes(target.platform) &&
+      !retiredKeys.has(targetKey(target)) &&
+      /^\d+$/.test(target.runtimeVersion) &&
+      BigInt(target.runtimeVersion) < BigInt(configuredPins[target.platform]) &&
+      !targets.some((planned) => targetKey(planned) === targetKey(target)))
+    .map(targetKey))].sort();
+  if (dropped.length) console.log(`pin-plus-two rule: dropping older production runtimes ${dropped.join(', ')}`);
+  if (options.dryRun && !options.productionHistory) {
+    console.log('Offline dry-run: using shipped-native ledger only; --production-history supplies an EAS snapshot.');
+  }
 
   const channel = runEas(['channel:view', 'beta', '--json', '--non-interactive'], {
     allowFailure: true,
@@ -614,43 +596,9 @@ function publish(options) {
     dryRun: options.dryRun,
   });
 
-  const previous = runEas(
-    [
-      'update:list',
-      '--branch',
-      'production',
-      '--limit',
-      productionLookupLimit(targets),
-      '--json',
-      '--non-interactive',
-    ],
-    { dryRun: options.dryRun },
-  );
-  const previousProductionTargets = options.dryRun ? [] : newestTargets(previous, targets);
+  const previousProductionTargets = newestTargets(previous, targets);
   const requiredRollbackTargets = targets;
   const previousTargetKeys = new Set(previousProductionTargets.map(targetKey));
-  // Strand guard: every runtime that already has a production update (i.e. a
-  // runtime live installs may carry) must remain in the target set. Publishing
-  // a target list that drops a shipped runtime strands those installs forever,
-  // unless RETIRED_COMPAT_RUNTIMES records that decision with its evidence.
-  {
-    const retiredKeys = new Set(RETIRED_COMPAT_RUNTIMES.map(targetKey));
-    const shippedKeys = new Set(
-      collectUpdates(previous)
-        .updates.filter((u) => u.platform && u.runtimeVersion)
-        .map(targetKey),
-    );
-    const stranded = [...shippedKeys].filter(
-      (k) => !retiredKeys.has(k) && !targets.some((t) => targetKey(t) === k),
-    );
-    if (stranded.length > 0) {
-      fail(
-        'OTA target set does not cover previously shipped runtime(s): ' +
-          stranded.join(', ') +
-          '; refusing to publish. Add them to COMPAT_RUNTIMES or record an explicit, evidence-backed retirement.',
-      );
-    }
-  }
   // A runtime's FIRST production release has no earlier update to roll back to,
   // but the store binary built for it in this same release carries an embedded
   // bundle, and `rollback` already falls back to update:roll-back-to-embedded
@@ -664,13 +612,8 @@ function publish(options) {
       .filter(Boolean),
   );
   const pins = readPinnedRuntimeVersion(process.cwd());
-  // A compatibility runtime can likewise reach its FIRST production update
-  // only because a store binary already shipped for it (that is the only way
-  // it enters COMPAT_RUNTIMES: the shipped-runtime coverage gate demands it).
-  // That binary's embedded update is its rollback anchor, and `rollback`
-  // already reaches it through update:roll-back-to-embedded per target.
-  // Refusing here would contradict the coverage gate, which is exactly how
-  // #1388's ios@24 entry left every OTA unpublishable.
+  // Shipped-native ledger entries may use their store binary's embedded update
+  // when no earlier production OTA exists. History-only targets use that OTA.
   const shippedBinaryKeys = new Set(SHIPPED_NATIVE_RUNTIMES.map(targetKey));
   const embeddedAnchorTargets = requiredRollbackTargets.filter(
     (target) =>
@@ -1125,7 +1068,7 @@ function rollback(options) {
       'rollback --embedded requires --expected-current-group naming the production group being rolled back',
     );
   }
-  if (!embeddedOnly && sourceIds.length > releaseUpdateTargets(process.cwd()).length) {
+  if (!embeddedOnly && sourceIds.length > RELEASE_PLATFORMS.length * 3) {
     fail(
       `rollback --group names ${sourceIds.length} update groups; production carries at most one per release target.`,
     );
@@ -1137,7 +1080,7 @@ function rollback(options) {
         '--branch',
         'production',
         '--limit',
-        productionLookupLimit(releaseUpdateTargets(process.cwd())),
+        productionLookupLimit(),
         '--json',
         '--non-interactive',
       ],
@@ -1147,7 +1090,7 @@ function rollback(options) {
       const expectedCurrentIds = groupIdList(options.expectedCurrentGroup);
       currentTargets =
         expectedCurrentIds.length > RELEASE_PLATFORMS.length
-          ? newestTargets(current, releaseUpdateTargets(process.cwd()))
+          ? newestTargets(current, releaseUpdateTargets(process.cwd(), undefined, current))
           : [];
       const observed =
         currentTargets.length > 0

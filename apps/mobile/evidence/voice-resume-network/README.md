@@ -39,7 +39,8 @@ The Chrome proof builds and renders the affected hook and VoiceBar, restores
 network availability, and verifies audio plus microphone recovery automatically.
 
 The iOS compatibility tests assert the complete honest unavailable message and
-verify unsupported native modules are never evaluated. `COMPAT_RUNTIMES` in
-`apps/mobile/scripts/ota-release.mjs` includes `{ platform: 'ios', runtimeVersion:
-'31' }`, so the existing OTA plan covers that binary. No release or store
-submission is part of this change.
+verify unsupported native modules are never evaluated. At the time of this
+proof, the OTA plan included ios@31. The current release script automatically
+keeps each pin plus its latest two shipped, non-retired runtimes; older binaries
+fall out under that retention rule. No release or store submission is part of
+this change.

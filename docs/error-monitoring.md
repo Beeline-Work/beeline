@@ -143,20 +143,25 @@ UUID `efa4fa03-8ba9-4433-b746-e1407ff79b9e`, installation UUID
 webhooks; only Created and Unresolved were selected. The client secret is vaulted
 as **Beeline triage webhook client secret** under `sentry-triage-webhook`.
 
-**Setup blocked:** the Sentry setup credential returned HTTP 403 when creating
-the alert workflow, so there is no new alert id. The intended alert is
-**Wake Beeline issues-triage**, connected to all-project issue-stream detector
-`10667649`, with first-seen OR regression triggers, no action throttle, and a
-webhook action targeting `beeline-triage-wake-efb45b`. This covers the three
-Beeline projects. Do not alter existing Telegram alert `6181673`.
+**No alert rule is needed:** the internal integration's `issue.created` and
+`issue.unresolved` webhooks provide the new-issue and regression deliveries.
+Skip creating an alert workflow; the earlier HTTP 403 on alert creation is not
+a blocker. No new alert id exists or is required. Existing Telegram alert
+`6181673` stays independent.
 
-**Secret staging blocked:** Fly rejected creation of the short-lived app token
-needed to transfer the vaulted signing secret without exposing it. The secret
-has not been staged in Fly. Rotate it before staging: Squire exposed the initial
-value in a tool observation (reported separately, without its value). Complete
-the secure transfer of the replacement to
-`BEELINE_SENTRY_CLIENT_SECRET` on `beeline-server` and finish alert creation with
-authorized credentials before activation. Staging must skip deployment.
+**Secret rotation needs a decision:** Sentry returned HTTP 403 for
+`POST /api/0/sentry-apps/beeline-triage-wake-efb45b/rotate-secret/` using the setup
+credential. The credential has `org:read`; rotation requires `org:write` or
+`org:admin`. The secret was not rotated and the existing vault entry remains
+unchanged. Rotate before activation because Squire exposed the initial value in
+a tool observation (reported separately, without its value). An authorized
+rotation must store the replacement in the same vault entry without putting
+its value in tool arguments or outputs.
+
+**Fly transfer belongs to Ruby:** after the owner's approval, Ruby handles the
+secure transfer to `BEELINE_SENTRY_CLIENT_SECRET` on `beeline-server`. Jellybean
+does not stage it. The secret has not been staged by this work. Staging must
+skip deployment; production activation remains a release follow-up.
 
 **Production proof remains pending the next release:** after deployment, use
 Sentry's send-test-notification action and verify Jellybean receives the digest in

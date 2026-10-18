@@ -1,0 +1,92 @@
+{
+  "bone-empty": {
+    "senderHints": 0,
+    "secondAccountHints": 0,
+    "placeholder": "Tag an agent with @"
+  },
+  "bone-untagged": {
+    "senderHints": 1,
+    "secondAccountHints": 0,
+    "placeholder": "Tag an agent with @"
+  },
+  "bone-tagged-person": {
+    "senderHints": 0,
+    "secondAccountHints": 0,
+    "placeholder": "Tag an agent with @"
+  },
+  "bone-tagged-agent": {
+    "senderHints": 0,
+    "secondAccountHints": 0,
+    "placeholder": "Tag an agent with @"
+  },
+  "bone-left": {
+    "senderHints": 0,
+    "secondAccountHints": 0,
+    "placeholder": "Tag an agent with @"
+  },
+  "bone-returned": {
+    "senderHints": 0,
+    "secondAccountHints": 0,
+    "placeholder": "Tag an agent with @"
+  },
+  "bone-dm": {
+    "senderHints": 0,
+    "secondAccountHints": 0,
+    "placeholder": "Message"
+  },
+  "bone-no-agents": {
+    "senderHints": 0,
+    "secondAccountHints": 0,
+    "placeholder": "Message"
+  },
+  "bone-corner": {
+    "senderHints": 1,
+    "secondAccountHints": 0,
+    "placeholder": "Tag an agent with @"
+  },
+  "obsidian-empty": {
+    "senderHints": 0,
+    "secondAccountHints": 0,
+    "placeholder": "Tag an agent with @"
+  },
+  "obsidian-untagged": {
+    "senderHints": 1,
+    "secondAccountHints": 0,
+    "placeholder": "Tag an agent with @"
+  },
+  "obsidian-tagged-person": {
+    "senderHints": 0,
+    "secondAccountHints": 0,
+    "placeholder": "Tag an agent with @"
+  },
+  "obsidian-tagged-agent": {
+    "senderHints": 0,
+    "secondAccountHints": 0,
+    "placeholder": "Tag an agent with @"
+  },
+  "obsidian-left": {
+    "senderHints": 0,
+    "secondAccountHints": 0,
+    "placeholder": "Tag an agent with @"
+  },
+  "obsidian-returned": {
+    "senderHints": 0,
+    "secondAccountHints": 0,
+    "placeholder": "Tag an agent with @"
+  },
+  "obsidian-dm": {
+    "senderHints": 0,
+    "secondAccountHints": 0,
+    "placeholder": "Message"
+  },
+  "obsidian-no-agents": {
+    "senderHints": 0,
+    "secondAccountHints": 0,
+    "placeholder": "Message"
+  },
+  "obsidian-corner": {
+    "senderHints": 1,
+    "secondAccountHints": 0,
+    "placeholder": "Tag an agent with @"
+  }
+}

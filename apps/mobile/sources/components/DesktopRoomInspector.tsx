@@ -1,3 +1,5 @@
+import { useUntaggedMessageHints } from '@/buzz/use-untagged-message-hints';
+import { resolveComposerMentions } from '@/buzz/room-participants';
 import { Button } from '@/components/buzz/Button';
 import { useTextDraft } from '@/buzz/use-text-draft';
 import * as React from 'react';
@@ -322,6 +324,12 @@ function CornerCockpit({
   const [height, setHeight] = React.useState(COMPOSER_MIN_HEIGHT);
   const [sending, setSending] = React.useState(false);
   const [sendError, setSendError] = React.useState<string | null>(null);
+  const { captureSend: captureUntaggedSend, hintMessageIds } = useUntaggedMessageHints({
+    roomId,
+    viewerPubkey: detail?.viewer.identity.pubkey ?? '',
+    viewerKind: detail?.viewer.identity.kind,
+    hasAgentMembers: Boolean(detail?.members.some(member => member.identity.kind === 'agent')),
+  });
   const [stopping, setStopping] = React.useState(false);
   const [now, setNow] = React.useState(Date.now);
   const {
@@ -436,6 +444,10 @@ function CornerCockpit({
   const send = React.useCallback(async () => {
     const text = input.trim();
     if (!text || !detail || sending) return;
+    const recordUntaggedSend = captureUntaggedSend(resolveComposerMentions(text,
+      detail.members.flatMap(({ identity }) => identity.handle
+        ? [{ pubkey: identity.pubkey, handle: identity.handle, name: identity.name }] : []),
+      new Map()).pubkeys.length > 0);
     const clearInput = inputDraft.captureMessage();
     setSending(true);
     setSendError(null);
@@ -445,6 +457,7 @@ function CornerCockpit({
       const transport = new BuzzRigTransport(identity);
       const event = await transport.composeMessage({ sessionId: detail.room.id, text });
       await transport.publishPreparedMessage(event);
+      recordUntaggedSend(event.id);
       clearInput();
       setHeight(COMPOSER_MIN_HEIGHT);
       // The focus jump that put the reader up in this corner's history is
@@ -458,7 +471,7 @@ function CornerCockpit({
     } finally {
       setSending(false);
     }
-  }, [detail, focusMessageId, input, inputDraft, onRefresh, roomId, sending]);
+  }, [captureUntaggedSend, detail, focusMessageId, input, inputDraft, onRefresh, roomId, sending]);
   const bylineOpeners = React.useMemo(
     () =>
       transcriptBylineOpeners(
@@ -513,6 +526,7 @@ function CornerCockpit({
               identity.handle ? [{ pubkey: identity.pubkey, handle: identity.handle }] : [],
             )}
             channelIndex={channelIndex}
+            untaggedHint={hintMessageIds.has(item.id)}
             deliveryFailed={false}
             onChannelReference={onChannelReference ?? (() => undefined)}
             onReply={() => undefined}
@@ -535,7 +549,7 @@ function CornerCockpit({
       }
       return captioned;
     },
-    [bylineOpeners, channelIndex, detail, focusMessageId, messages, onOpenCorner, onChannelReference],
+    [bylineOpeners, channelIndex, detail, focusMessageId, hintMessageIds, messages, onOpenCorner, onChannelReference],
   );
   const storedName = summary?.corner.name ?? detail?.room.name;
   const cornerId = summary?.corner.id ?? detail?.room.id;
@@ -632,6 +646,7 @@ function CornerCockpit({
             )}
           </View>
           <ConversationComposer
+            hasAgentMembers={detail.members.some(member => member.identity.kind === 'agent')}
             onStop={ack?.stop ? stop : undefined}
             value={input}
             height={height}

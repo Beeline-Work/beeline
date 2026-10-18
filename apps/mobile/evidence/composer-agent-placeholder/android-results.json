@@ -1,0 +1,14 @@
+{
+  "bone": {
+    "Room with agents": "Tag an agent with @",
+    "agent DM": "Message",
+    "Room without agents": "Message",
+    "corner with agents": "Tag an agent with @"
+  },
+  "obsidian": {
+    "Room with agents": "Tag an agent with @",
+    "agent DM": "Message",
+    "Room without agents": "Message",
+    "corner with agents": "Tag an agent with @"
+  }
+}

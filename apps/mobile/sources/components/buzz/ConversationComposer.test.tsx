@@ -109,7 +109,7 @@ afterEach(() => {
 });
 
 describe('one composer', () => {
-  it('uses the same empty placeholder on every surface', () => {
+  it('defaults to the Message placeholder', () => {
     const f = render('');
     expect(f.renderer.root.findByType('TextInput').props.placeholder).toBe('Message');
   });
@@ -451,6 +451,20 @@ describe('one composer', () => {
 
 
 describe('Conversation mode inside the composer', () => {
+  it('returns the composer with the daily limit message in its error slot', async () => {
+    const f = render('');
+    const props = f.renderer.root.findByType(ConversationComposer).props;
+    const error = 'Daily voice limit reached. Resets at 12:00 AM';
+    const voice = { call: null, agents: [], target: null, speaker: null, level: 0,
+      connecting: false, error, muted: false, toggleMute: async () => {}, endingWarning: undefined, quotaExhausted: false, budgetWarning: null, warningAudio: null,
+      clearWarningAudio() {}, firstAudioMs: null, humans: 1, unaddressed: 0,
+      join: vi.fn(), end: vi.fn(), aim: vi.fn() } as VoiceCallState;
+    await act(async () => f.renderer.update(<ConversationComposer {...props} voice={voice} />));
+    expect(f.renderer.root.findAllByProps({ testID: 'voice-bar' })).toHaveLength(0);
+    expect(f.renderer.root.findByProps({ testID: 'voice-connection-error' }).props.children).toBe(error);
+    expect(f.renderer.root.findByProps({ testID: 'chat-conversation' })).toBeTruthy();
+  });
+
   it.each([
     ['connecting', true, null],
     ['connection error', false, 'TLS connection failed'],
@@ -459,7 +473,7 @@ describe('Conversation mode inside the composer', () => {
     const props = f.renderer.root.findByType(ConversationComposer).props;
     const aim = vi.fn();
     const voice = { call: null, agents: [{ pubkey: 'ruby', kind: 'agent', name: 'Ruby' }],
-      target: null, speaker: null, level: 0, connecting, error, endingWarning: undefined, quotaExhausted: false,
+      target: null, speaker: null, level: 0, connecting, error, endingWarning: undefined, quotaExhausted: false, budgetWarning: null, warningAudio: null, clearWarningAudio() {},
       muted: false, toggleMute: async () => {}, firstAudioMs: null, humans: 1, unaddressed: 0, join: vi.fn(), end: vi.fn(), aim } as VoiceCallState;
     await act(async () => f.renderer.update(<ConversationComposer {...props} voice={voice} />));
     expect(f.renderer.root.findByProps({ testID: 'conversation-target-strip' })).toBeTruthy();
@@ -476,7 +490,7 @@ describe('Conversation mode inside the composer', () => {
     const props = f.renderer.root.findByType(ConversationComposer).props;
     const onAttach = vi.fn();
     const voice = { call: { id: 'call' }, agents: [], target: null, speaker, level,
-      connecting: false, error: null, endingWarning: undefined, quotaExhausted: false, muted: false, toggleMute: async () => {}, firstAudioMs: null,
+      connecting: false, error: null, endingWarning: undefined, quotaExhausted: false, budgetWarning: null, warningAudio: null, clearWarningAudio() {}, muted: false, toggleMute: async () => {}, firstAudioMs: null,
       join: vi.fn(), end: vi.fn(), aim: vi.fn() } as unknown as VoiceCallState;
     await act(async () => f.renderer.update(<ConversationComposer {...props} voice={voice} onAttach={onAttach} />));
     expect(f.renderer.root.findAllByProps({ testID: 'conversation-mode-label' })).toHaveLength(0);
@@ -509,5 +523,22 @@ describe('Conversation mode inside the composer', () => {
     await act(async () => f.renderer.update(<ConversationComposer {...props} voice={{...voice, muted:true}} />));
     expect(controls()).toEqual(before);
     expect(f.renderer.root.findByProps({testID:'chat-mic'}).props.accessibilityLabel).toBe('Unmute microphone');
+  });
+});
+
+
+describe('conversation placeholder', () => {
+  it.each([
+    ['Room with agents', false, true, 'Tag an agent with @'],
+    ['corner with agents', false, true, 'Tag an agent with @'],
+    ['Room without agents', false, false, 'Message'],
+    ['agent DM', true, true, 'Message'],
+    ['human DM', true, false, 'Message'],
+  ])('%s', (_, isDirectMessage, hasAgentMembers, placeholder) => {
+    const f = render('');
+    const props = f.renderer.root.findByType(ConversationComposer).props;
+    act(() => f.renderer.update(<ConversationComposer {...props}
+      isDirectMessage={isDirectMessage} hasAgentMembers={hasAgentMembers} />));
+    expect(f.renderer.root.findAllByType('TextInput')[0].props.placeholder).toBe(placeholder);
   });
 });

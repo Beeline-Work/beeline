@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { VoicePreviewPlayer } from './VoicePreviewPlayer';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { IdentityMark } from './IdentityMark';
@@ -24,26 +25,30 @@ export function VoiceBar({ voice, testIDPrefix = 'chat' }: {
   voice: VoiceCallState; testIDPrefix?: string;
 }) {
   const { theme } = useUnistyles();
-  return <View style={styles.controls} testID="voice-bar">
-    <View style={styles.waveform} accessibilityLabel={voice.muted ? 'Microphone muted' : voice.speaker
-      ? `${voice.agents.find(a => a.pubkey === voice.speaker)?.name ?? 'Agent'} speaking` : 'Listening'} testID="voice-waveform">
-      {voice.endingWarning ? <Text accessibilityLiveRegion="polite" numberOfLines={1}
-        style={styles.warning} testID="conversation-tip">{voice.endingWarning}</Text>
-        : voice.error ? <Text accessibilityRole="alert" style={styles.error}
-          testID={voice.quotaExhausted ? 'voice-quota-error' : 'voice-connection-error'}>{voice.error}</Text>
-        : <DictationWaveform key={voice.muted ? 'muted' : 'live'} level={voice.muted ? 0 : voice.level} live={!voice.connecting} flat={voice.muted} />}
+  const warning = voice.endingWarning ?? voice.budgetWarning;
+  return <>
+    {voice.warningAudio && <VoicePreviewPlayer source={voice.warningAudio} onEnd={voice.clearWarningAudio} onError={voice.clearWarningAudio} />}
+    <View style={styles.controls} testID="voice-bar">
+      <View style={styles.waveform} accessibilityLabel={voice.muted ? 'Microphone muted' : voice.speaker
+        ? `${voice.agents.find(a => a.pubkey === voice.speaker)?.name ?? 'Agent'} speaking` : 'Listening'} testID="voice-waveform">
+        {warning ? <Text accessibilityLiveRegion="polite" numberOfLines={1}
+          style={styles.warning} testID="conversation-tip">{warning}</Text>
+          : voice.error ? <Text accessibilityRole="alert" style={styles.error}
+            testID={voice.quotaExhausted ? 'voice-quota-error' : 'voice-connection-error'}>{voice.error}</Text>
+          : <DictationWaveform key={voice.muted ? 'muted' : 'live'} level={voice.muted ? 0 : voice.level} live={!voice.connecting} flat={voice.muted} />}
+      </View>
+      <Pressable onPress={() => void voice.toggleMute()} disabled={voice.connecting || voice.quotaExhausted}
+        accessibilityLabel={voice.muted ? 'Unmute microphone' : 'Mute microphone'} accessibilityRole="button"
+        accessibilityState={{ selected: voice.muted, disabled: voice.connecting || voice.quotaExhausted }}
+        hitSlop={9} style={styles.controlSlot} testID={`${testIDPrefix}-mic`}>
+        <MicGlyph color={theme.buzz.textPrimary} size={COMPOSER_GLYPH_SIZE} muted={voice.muted} testID={`${testIDPrefix}-mic-glyph`} />
+      </Pressable>
+      <Pressable onPress={() => void voice.end()} accessibilityRole="button" hitSlop={9}
+        accessibilityLabel={voice.humans > 1 ? 'Leave call' : 'End call'} style={styles.controlSlot} testID="voice-mic">
+        <StopGlyph color={theme.buzz.textPrimary} filled testID="voice-stop-glyph" />
+      </Pressable>
     </View>
-    <Pressable onPress={() => void voice.toggleMute()} disabled={voice.connecting || voice.quotaExhausted}
-      accessibilityLabel={voice.muted ? 'Unmute microphone' : 'Mute microphone'} accessibilityRole="button"
-      accessibilityState={{ selected: voice.muted, disabled: voice.connecting || voice.quotaExhausted }}
-      hitSlop={9} style={styles.controlSlot} testID={`${testIDPrefix}-mic`}>
-      <MicGlyph color={theme.buzz.textPrimary} size={COMPOSER_GLYPH_SIZE} muted={voice.muted} testID={`${testIDPrefix}-mic-glyph`} />
-    </Pressable>
-    <Pressable onPress={() => void voice.end()} accessibilityRole="button" hitSlop={9}
-      accessibilityLabel={voice.humans > 1 ? 'Leave call' : 'End call'} style={styles.controlSlot} testID="voice-mic">
-      <StopGlyph color={theme.buzz.textPrimary} filled testID="voice-stop-glyph" />
-    </Pressable>
-  </View>;
+  </>;
 }
 
 const styles = StyleSheet.create(theme => ({

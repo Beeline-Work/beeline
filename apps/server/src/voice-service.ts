@@ -1,7 +1,8 @@
-import { AgentVoiceService } from './agent-voice.js';
+import { VoiceBudgetStore, VOICE_WARNING_MS } from './voice-budget.js';
+import { AgentVoiceService, renderVoiceAudio } from './agent-voice.js';
 import { createHmac, timingSafeEqual, randomBytes, randomUUID } from 'node:crypto';
 import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
-import { type VoiceIdleState, type VoiceCall, type VoiceJoin, type RoomViewIdentity, voiceDuration } from '@beeline/api-contract/phone';
+import { VOICE_BUDGET_WARNING, type AgentVoicePreview, type VoiceIdleState, type VoiceCall, type VoiceJoin, type RoomViewIdentity, voiceDuration } from '@beeline/api-contract/phone';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-contract/agent-access';
 import type { SqlDatabase } from './database.js';
@@ -9,11 +10,12 @@ import type { LiveHub } from './live.js';
 import { systemLine, restateSystemLine, ensureSystemIdentity } from './system-line.js';
 import { routeHumanMessage } from './agent-command.js';
 import { assignVoiceAgents, type VoiceAgent, type VoiceBrain, type VoiceSpeech, type VoiceSttFactory,
-  OpenRouterVoiceBrain, AuraSpeech, fluxFactory, VOICE_MODEL, savedAuraVoice } from './voice-providers.js';
+  OpenRouterVoiceBrain, AuraSpeech, fluxFactory, VOICE_MODEL, AURA_VOICES, savedAuraVoice } from './voice-providers.js';
 import { VoiceRoomRuntime } from './voice-room-runtime.js';
+import type { SpeechMember } from './markdown-to-speech.js';
 
 export type VoiceConfig = { url: string; apiKey: string; apiSecret: string; brain: VoiceBrain;
-  speech: VoiceSpeech; stt: VoiceSttFactory };
+  speech: VoiceSpeech; stt: VoiceSttFactory; budgetLimitMs?: number };
 type CallRow = { id: string; room_id: string; message_id: string; started_at: Date; ended_at: Date | null; end_reason?: string | null };
 type IdentityRow = { id: string; kind: 'human' | 'agent'; name: string; handle: string | null; face_id: string | null };
 const identity = (row: IdentityRow): RoomViewIdentity => ({ pubkey: row.id, kind: row.kind,
@@ -23,10 +25,13 @@ const identity = (row: IdentityRow): RoomViewIdentity => ({ pubkey: row.id, kind
 export class VoiceService {
   readonly owner = randomUUID();
   readonly profiles: AgentVoiceService;
+  readonly budget: VoiceBudgetStore;
+  private warningAudio?: Promise<AgentVoicePreview>;
   private readonly runtimes = new Map<string, Promise<VoiceRoomRuntime | undefined>>();
   private readonly rooms: RoomServiceClient;
   private readonly unsubscribe: () => void;
   constructor(readonly db: SqlDatabase, readonly live: LiveHub, readonly config: VoiceConfig) {
+    this.budget = new VoiceBudgetStore(db, config.budgetLimitMs);
     this.profiles = new AgentVoiceService(db, () => this.speech());
     this.rooms = new RoomServiceClient(config.url.replace(/^ws/, 'http'), config.apiKey, config.apiSecret);
     this.unsubscribe = live.subscribeAll(event => {
@@ -87,6 +92,16 @@ export class VoiceService {
     ).filter((a) => allowed.has(a.id));
   }
 
+  /** Handle-to-display-name pairs for every current Room member, for spoken names. */
+  async memberNames(roomId: string): Promise<SpeechMember[]> {
+    const rows = await this.db.query<IdentityRow>(
+      `SELECT i.id,i.kind,i.name,i.handle,i.face_id FROM memberships m
+       JOIN identities i ON i.id=m.identity_id WHERE m.room_id=$1 AND m.removed_at IS NULL`,
+      [roomId],
+    );
+    return rows.rows.map(row => ({ handle: row.handle ?? row.name, name: row.name }));
+  }
+
   /** Only current, addressable agents' committed messages in this exact Room/corner count. */
   async lastActiveAgent(roomId: string, agents: readonly VoiceAgent[]): Promise<string | undefined> {
     if (!agents.length) return undefined;
@@ -128,11 +143,13 @@ export class VoiceService {
 
   async join(roomId: string, humanId: string, expectedCallId?: string): Promise<VoiceJoin> {
     await this.access(roomId, humanId);
+    await this.budget.require(humanId);
     const agents = await this.agents(roomId, humanId);
     if (!agents.length) throw new Error('This conversation has no agent you can address');
     const sessionId = randomUUID();
     const row = await this.db.transaction(async db => {
       await this.access(roomId, humanId, db);
+      await this.budget.require(humanId, db);
       await db.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [`voice:${roomId}`]);
       let call = (await db.query<CallRow>(`SELECT * FROM voice_calls WHERE room_id=$1 AND ended_at IS NULL FOR UPDATE`, [roomId])).rows[0];
       if (expectedCallId && call?.id !== expectedCallId) throw new Error('voice session ended');
@@ -203,12 +220,27 @@ export class VoiceService {
       AND p.session_id=$3 AND p.left_at IS NULL AND c.ended_at IS NULL`, [callId, humanId, sessionId])).rows[0];
     if (!participant) throw new Error('voice session ended');
     await this.access(participant.room_id, humanId);
+    await this.budget.require(humanId);
     await this.db.query(`UPDATE voice_participants SET parked_at=NULL WHERE call_id=$1 AND identity_id=$2
       AND session_id=$3 AND left_at IS NULL`, [callId, humanId, sessionId]);
     const call = (await this.db.query<CallRow>(`SELECT * FROM voice_calls WHERE id=$1 AND ended_at IS NULL`, [callId])).rows[0];
     if (!call) throw new Error('voice session ended');
     const runtime = await this.ensureRuntime(call);
     await runtime?.resume(humanId);
+  }
+
+  async warning(callId: string, humanId: string): Promise<AgentVoicePreview> {
+    const call = (await this.db.query<{ room_id: string }>(`SELECT c.room_id FROM voice_calls c
+      JOIN voice_participants p ON p.call_id=c.id WHERE c.id=$1 AND p.identity_id=$2
+      AND p.left_at IS NULL AND c.ended_at IS NULL`, [callId, humanId])).rows[0];
+    if (!call) throw new Error('voice session ended');
+    await this.access(call.room_id, humanId);
+    if ((await this.budget.read(humanId)).remainingMs > VOICE_WARNING_MS)
+      throw new Error('Voice warning is not due');
+    // A private authenticated response, never the call's shared audio track.
+    this.warningAudio ??= this.speech().then(speech => renderVoiceAudio(speech, VOICE_BUDGET_WARNING, AURA_VOICES[0]))
+      .catch(error => { this.warningAudio = undefined; throw error; });
+    return this.warningAudio;
   }
 
   private stopToken(callId: string, humanId: string, sessionId: string): string {

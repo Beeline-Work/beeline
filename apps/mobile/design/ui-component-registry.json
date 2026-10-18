@@ -171,6 +171,7 @@
       "LedgerDayCaption",
       "LedgerEntry",
       "LedgerGhostLine",
+      "LedgerUntaggedHint",
       "LedgerHistoryLine",
       "LedgerMarginalia",
       "LedgerRoomUpdate",

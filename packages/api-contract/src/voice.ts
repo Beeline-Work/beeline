@@ -14,6 +14,9 @@ export type VoiceCall = {
   participants: readonly RoomViewIdentity[];
 };
 
+export const VOICE_BUDGET_WARNING = 'Two minutes left today';
+export type VoiceBudget = { remainingMs: number; resetAt: number; timeZone: string };
+
 export type VoiceJoin = {
   sessionId: string;
   /** Capability for native Stop only, fenced to this participant session. */
@@ -27,6 +30,7 @@ export type VoiceJoin = {
 export type VoiceIdleState = { state: 'ended' | 'parked' | 'ready'; agentName?: string };
 
 export type VoiceSignal =
+  | { type: 'budget'; budget: VoiceBudget }
   | { type: 'stop' }
   | { type: 'ending'; deadline: number | null; serverNow: number }
   | { type: 'resume' | 'park'; sessionId: string }

@@ -12,7 +12,7 @@ export async function createVoiceRoom(onStop: () => void = () => {}, roomId?: st
     const methods = ['configureStop', 'start', 'stop', 'addListener'];
     if (!NativeModules.WebRTCModule || !NativeModules.LivekitReactNativeModule ||
       !background || methods.some(method => typeof background[method] !== 'function')) {
-      throw new Error('Conversation mode is not available in this iPhone version yet. It arrives in the next App Store update.');
+      throw new Error('Update Beeline in the App Store to join calls.');
     }
   }
   // Lazy: installed binaries without WebRTC can still dictate/use the Room.

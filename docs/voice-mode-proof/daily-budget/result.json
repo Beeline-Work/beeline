@@ -1,0 +1,19 @@
+{
+  "inputMs": 180000,
+  "budget": {
+    "remainingMs": 0,
+    "resetAt": 1792281600000,
+    "timeZone": "UTC"
+  },
+  "peerBudget": {
+    "remainingMs": 180000,
+    "resetAt": 1792281600000,
+    "timeZone": "UTC"
+  },
+  "peerSignals": [],
+  "peerVoicedFrames": 0,
+  "survivors": [
+    "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+  ],
+  "callStillActive": true
+}

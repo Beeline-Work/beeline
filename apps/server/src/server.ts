@@ -1,3 +1,4 @@
+import { VoiceBudgetExceeded } from './voice-budget.js';
 import { readCompanyLogo } from './company-logos.js';
 import { captureServerError } from './sentry.js';
 import { authenticSentryAlert, sendSentryTelegram, sentryTelegramMessage, type SentryTelegramConfig } from './sentry-telegram.js';
@@ -2304,13 +2305,19 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     return;
   }
 
-  const voiceMatch = url.pathname.match(/^\/v1\/phone\/voice\/([0-9a-f-]{36})\/(current|join|leave|idle|state|resume)$/);
+  const voiceMatch = url.pathname.match(/^\/v1\/phone\/voice\/([0-9a-f-]{36})\/(current|join|leave|idle|state|resume|warning)$/);
   if (voiceMatch) {
     if (!options.voice) { json(response, 503, { error: 'Voice mode is unavailable' }); return; }
     if (voiceMatch[2] === 'current' && method === 'GET') {
       json(response, 200, await options.voice.current(voiceMatch[1]!, identityId!));
     } else if (voiceMatch[2] === 'join' && method === 'POST') {
-      json(response, 200, await options.voice.join(voiceMatch[1]!, identityId!, (await body(request)).expectedCallId as string | undefined));
+      try { json(response, 200, await options.voice.join(voiceMatch[1]!, identityId!, (await body(request)).expectedCallId as string | undefined)); }
+      catch (error) {
+        if (!(error instanceof VoiceBudgetExceeded)) throw error;
+        json(response, 429, { error: error.message, code: 'voice-daily-limit', budget: error.budget });
+      }
+    } else if (voiceMatch[2] === 'warning' && method === 'POST') {
+      json(response, 200, await options.voice.warning(voiceMatch[1]!, identityId!));
     } else if (voiceMatch[2] === 'state' && method === 'GET') {
       json(response, 200, await options.voice.idleState(voiceMatch[1]!, identityId!, undefined, url.searchParams.get('sessionId') ?? undefined));
     } else if (voiceMatch[2] === 'idle' && method === 'POST') {

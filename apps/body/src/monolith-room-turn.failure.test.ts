@@ -730,7 +730,8 @@ describe('Room turn failure receipt', () => {
     expect(receipts.find((receipt) => receipt.status === 'failed')?.reason).toMatch(/^provider error 402/);
     await vi.waitFor(() =>
       expect(usagePosts).toContainEqual(expect.objectContaining({ spend: { rejected: true } })));
-    expect(keyReads.every((url) => url === OPENROUTER_KEY_URL)).toBe(true);
+    // The turn's own read and the refusal share one /key call inside the minute.
+    expect(keyReads).toEqual([OPENROUTER_KEY_URL]);
     expect(JSON.stringify(usagePosts)).not.toContain('sk-or');
   });
 

@@ -75,8 +75,9 @@ async function fetchKeySpend(apiKey: string, fetchImpl: typeof fetch): Promise<U
  * when throttled or when OpenRouter does not answer with key figures.
  *
  * `refused` reports that OpenRouter refused a turn with 402. That is the stop
- * itself, so it is published at once: the read skips the throttle, and when
- * the read fails the key's last figures (or none) carry the reached mark.
+ * itself, so it is published at once. The throttle still bounds `/key` reads:
+ * inside it, or when the read fails, the key's last figures (or none) carry
+ * the reached mark.
  */
 export async function readOpenRouterKeyUsage(
   apiKey: string,
@@ -84,10 +85,14 @@ export async function readOpenRouterKeyUsage(
 ): Promise<AgentUsage | undefined> {
   const now = options.now?.() ?? Date.now();
   const id = createHash('sha256').update(apiKey).digest('hex');
-  if (!options.refused && now - (lastRead.get(id) ?? -Infinity) < OPENROUTER_KEY_MIN_INTERVAL_MS) return undefined;
-  lastRead.set(id, now);
-  const read = await fetchKeySpend(apiKey, options.fetchImpl ?? fetch);
-  if (read) lastSpend.set(id, read);
+  const throttled = now - (lastRead.get(id) ?? -Infinity) < OPENROUTER_KEY_MIN_INTERVAL_MS;
+  if (throttled && !options.refused) return undefined;
+  let read: UsageSpend | undefined;
+  if (!throttled) {
+    lastRead.set(id, now);
+    read = await fetchKeySpend(apiKey, options.fetchImpl ?? fetch);
+    if (read) lastSpend.set(id, read);
+  }
   const spend = options.refused ? { ...(read ?? lastSpend.get(id)), rejected: true } : read;
   return spend ? { updatedAt: now / 1000, windows: [], spend } : undefined;
 }

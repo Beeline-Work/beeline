@@ -57,20 +57,29 @@ describe('OpenRouter key spend', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
-  it('publishes a 402 refusal at once: past the throttle, and with the last figures when the read fails', async () => {
+  it('publishes a 402 refusal at once from the last figures, without a second key read inside a minute', async () => {
     let now = 1_000_000;
-    const ok = vi.fn(async () => Response.json(keyBody({ limit: 20, limit_remaining: 0.4 })));
-    await readOpenRouterKeyUsage('sk-or-k', { fetchImpl: ok, now: () => now });
-    now += 1_000;
+    const fetchImpl = vi.fn(async () => Response.json(keyBody({ limit: 20, limit_remaining: 0.4 })));
+    await readOpenRouterKeyUsage('sk-or-k', { fetchImpl, now: () => now });
+    for (const step of [1_000, 1_000]) {
+      now += step;
+      expect(await readOpenRouterKeyUsage('sk-or-k', { fetchImpl, now: () => now, refused: true })).toEqual({
+        updatedAt: now / 1000,
+        windows: [],
+        spend: { today: 4.12, week: 18.4, limit: 20, remaining: 0.4, rejected: true },
+      });
+    }
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  it('publishes a 402 refusal with no figures when the key read fails', async () => {
     const failing = vi.fn(async () => new Response('{}', { status: 503 }));
-    expect(await readOpenRouterKeyUsage('sk-or-k', { fetchImpl: failing, now: () => now, refused: true })).toEqual({
-      updatedAt: now / 1000,
-      windows: [],
-      spend: { today: 4.12, week: 18.4, limit: 20, remaining: 0.4, rejected: true },
-    });
-    expect(failing).toHaveBeenCalledTimes(1);
+    const now = 1_000_000;
     expect(await readOpenRouterKeyUsage('sk-or-new', { fetchImpl: failing, now: () => now, refused: true }))
       .toEqual({ updatedAt: now / 1000, windows: [], spend: { rejected: true } });
+    expect(await readOpenRouterKeyUsage('sk-or-new', { fetchImpl: failing, now: () => now + 1_000, refused: true }))
+      .toEqual({ updatedAt: (now + 1_000) / 1000, windows: [], spend: { rejected: true } });
+    expect(failing).toHaveBeenCalledTimes(1);
   });
 
   it('answers nothing when OpenRouter refuses the read', async () => {

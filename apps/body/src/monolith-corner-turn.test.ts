@@ -4302,6 +4302,7 @@ describe('a context-window overflow', () => {
     expect(usage).toContainEqual(expect.objectContaining({
       spend: { today: 11.2, week: 20, limit: 20, remaining: 0.4, rejected: true },
     }));
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(usage)).not.toContain('sk-or');
   });
 

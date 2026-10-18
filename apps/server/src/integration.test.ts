@@ -517,7 +517,7 @@ describe('monolith integration', () => {
       files: Parameters<typeof revise>[1] = [],
     ) => {
       const refused = await revise(sourceMessageId, files);
-      expect(refused.status).toBe(files.length ? 400 : 503);
+      expect(refused.status).toBe(files.length ? 400 : 403);
       expect(await refused.json()).toMatchObject({
         error: files.length
           ? expect.stringContaining('missing or unavailable in this Room')
@@ -616,7 +616,7 @@ describe('monolith integration', () => {
       expect(second.status).toBe(200);
       expect(await second.json()).toMatchObject({ revision: 2, sourceRoomId: secondSource });
       const refused = await revise(unrelated, 2);
-      expect(refused.status).toBe(503);
+      expect(refused.status).toBe(403);
       expect(await refused.json()).toMatchObject({
         error: 'corner brief approval must name a human message or commander order',
       });
@@ -9911,7 +9911,7 @@ describe('monolith integration', () => {
         repository: 'example/repository',
         brief: { spec: '## Checklist\n\n- Ship it.', approval: { sourceMessageId } },
       });
-      expect(response.status).not.toBe(200);
+      expect(response.status).toBe(403);
       expect(await response.text()).toContain(
         'corner brief approval must name a human message or commander order',
       );

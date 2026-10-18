@@ -1,3 +1,4 @@
+import { CommandRefusalError } from './commander.js';
 import type { SqlDatabase } from './database.js';
 import { createAgentCommand, type CommandRow } from './agent-command.js';
 import { advanceCorner, lockCornerLifecycle } from './corner-lifecycle.js';
@@ -78,7 +79,7 @@ export async function closeCornerState(database: SqlDatabase, cornerId: string) 
     [cornerId],
   );
   if (pullRequest.rowCount)
-    throw new Error('close the corner pull request with close_corner_pr before closing the corner');
+    throw new CommandRefusalError('close the corner pull request with close_corner_pr before closing the corner', 409);
   await cancelCornerAgentCommands(database, cornerId);
   await database.query(
     `UPDATE rooms SET archived_at=COALESCE(archived_at,now()),updated_at=now() WHERE id=$1`,

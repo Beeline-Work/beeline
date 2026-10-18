@@ -8,6 +8,7 @@ import {
 import type { SqlDatabase } from './database.js';
 import type { CommandRow } from './agent-command.js';
 import { commandOrder } from './commander.js';
+import { CommandRefusalError } from './command-refusal.js';
 
 /** Most files one brief revision may carry. */
 const CORNER_BRIEF_ATTACHMENT_LIMIT = 16;
@@ -356,7 +357,7 @@ export async function resolveCornerBriefApproval(
     }
   }
   if (!message || message.kind !== 'human' && !commanderOrder)
-    throw new Error('corner brief approval must name a human message or commander order');
+    throw new CommandRefusalError('corner brief approval must name a human message or commander order', 403);
   const revisionHash = cornerBriefRevisionHash(draft, attachments);
   return {
     approvalBasis: {

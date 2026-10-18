@@ -31,7 +31,7 @@ it('Reproduction SENTRY-6: old iPhone update messages remain intact without Sent
   const { captureMobileError } = await import('./sentry');
   for (const message of [
     'Update Beeline from the App Store to use Conversation mode.',
-    'Conversation mode is not available in this iPhone version yet. It arrives in the next App Store update.',
+    'Update Beeline in the App Store to join calls.',
   ]) {
     const cause = new Error(message);
     captureMobileError('voice-join', cause);

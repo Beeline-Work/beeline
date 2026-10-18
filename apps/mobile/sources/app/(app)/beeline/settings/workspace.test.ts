@@ -198,6 +198,7 @@ vi.mock('react-native', async () => {
     AppState: { addEventListener: () => ({ remove: () => undefined }) },
     Platform: { select: (choices: Record<string, unknown>) => choices.default },
     ScrollView: host('ScrollView'),
+    Switch: host('Switch'),
     Share: { share: vi.fn() },
     StyleSheet: { flatten: (style: any): any => Array.isArray(style) ? Object.assign({}, ...style) : style,  create: (styles: unknown) => styles },
     Text: host('Text'),

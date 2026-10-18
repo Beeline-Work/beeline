@@ -7,6 +7,7 @@ import { DaemonService } from '../apps/server/dist/daemon-service.js';
 import { LiveHub } from '../apps/server/dist/live.js';
 import { TokenAuth, tokenHash } from '../apps/server/dist/auth.js';
 import { PhoneService } from '../apps/server/dist/phone-service.js';
+import { createAgentCommand } from '../apps/server/dist/agent-command.js';
 import { CommandRefusalError } from '../apps/server/dist/commander.js';
 const envelopes = [];
 const collector = createServer(async (request, response) => {
@@ -62,12 +63,31 @@ try {
     assert.deepEqual(await response.json(), { error: code ? `${code}: ${detail}` : detail });
     console.log(`Reproduction ${id} ${code ?? 'OPEN_PR'}: HTTP ${response.status}; message unchanged; expectedRefusal=${error instanceof CommandRefusalError}`);
   }
+  const source = '1'.repeat(64), invalidApproval = '2'.repeat(64);
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$3,$4,'Open work'),($2,$3,$5,'Agent suggestion')`, [source, invalidApproval, parent, owner, agent]);
+  const command = await createAgentCommand(db, { roomId: parent, agentId: agent, sourceMessageId: source, reason: 'human_tag' });
+  await daemon.execute('claimAgentCommand', { roomId: parent, commandId: command.id, generationId: 'proof' }, agent);
+  const input = { roomId: parent, requestId: command.turn_request_id, generationId: 'proof',
+    name: 'Invalid-approval', objective: 'Refuse unapproved work',
+    brief: { spec: 'Do the assigned work', approval: { sourceMessageId: invalidApproval } } };
+  const before = (await db.query('SELECT id FROM rooms WHERE parent_id=$1', [parent])).rows;
+  const error = await daemon.execute('createCorner', input, agent).catch(error => error);
+  const baseD = process.argv.includes('--base-d') || expected === 503;
+  assert.equal(error instanceof CommandRefusalError, !baseD);
+  assert.equal(error.message, 'corner brief approval must name a human message or commander order');
+  const response = await fetch(`${origin}/v1/daemon/operations/createCorner`, {
+    method: 'POST', headers: { authorization: 'Bearer bdt_refusal_fixture_123456789', 'content-type': 'application/json' }, body: JSON.stringify(input),
+  });
+  assert.equal(response.status, baseD ? 503 : 403);
+  assert.deepEqual(await response.json(), { error: error.message });
+  assert.deepEqual((await db.query('SELECT id FROM rooms WHERE parent_id=$1', [parent])).rows, before);
+  console.log(`Reproduction SENTRY-D: HTTP ${response.status}; message unchanged; no corner created`);
   captureServerError(new Error('Corner refusal proof control fault'));
   await flushServerErrors();
   const events = envelopes.flatMap(envelope => envelope.split('\n').filter(line => line.startsWith('{')).map(line => JSON.parse(line))).filter(item => item.exception);
   const control = events.filter(event => event.exception.values.some(value => value.value === 'Corner refusal proof control fault'));
   assert.equal(control.length, 1, 'unexpected faults still reach Sentry');
-  assert.equal(events.length - control.length, expected === 409 ? 0 : 4);
+  assert.equal(events.length - control.length, (expected === 503 ? 4 : 0) + (baseD ? 1 : 0));
   console.log(`Sentry refusal events from built HTTP server: ${events.length - control.length}; control fault events: ${control.length}`);
 } finally {
   if (server) await new Promise(resolve => server.close(resolve));

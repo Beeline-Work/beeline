@@ -1,3 +1,4 @@
+import type { AgentUsage } from './agent-usage.js';
 import type { SystemEvent } from './system-events.js';
 import type { AgentGrantKind, AgentGrantStatus, CommandGrantScript } from './agent-grants.js';
 import type { ChoiceMode, ChoiceOptionView, ChoiceStatus } from './room-choices.js';
@@ -141,6 +142,9 @@ export type RoomViewMember = {
 
 /** Paint-ready agent metadata for the Workspace Members row. */
 export type WorkspaceAgentView = RoomViewMember & {
+  readonly usage?: AgentUsage;
+  readonly harness?: string;
+  readonly machine?: string;
   /** Selected model label, resolved from the latest catalog when available. */
   readonly model?: string;
   /** The person who connected and owns this agent's configuration. */
@@ -987,6 +991,8 @@ export type AgentComposerCommand = {
 };
 
 export type AgentDetailView = {
+  readonly usage?: AgentUsage;
+  readonly harness?: string;
   /** Agent configuration commit order, for deduping a live echo of a write receipt. */
   readonly configVersion?: string;
   /** Present only after a generated portrait has committed successfully. */

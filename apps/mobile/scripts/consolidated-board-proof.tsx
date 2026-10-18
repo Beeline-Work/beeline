@@ -1,3 +1,5 @@
+import { MemberRosterRow } from '../sources/components/buzz/MemberRosterRow';
+import { PageHeader } from '../sources/components/buzz/PageHeader';
 import { HumanProfile } from '../sources/app/(app)/beeline/human-profile';
 import BuzzMembers from '../sources/app/(app)/beeline/members';
 import React, { useState } from 'react';
@@ -51,6 +53,20 @@ const agent = {
     : [{ title: 'Illustrative merged pull request', url: 'https://github.com/acme/repo/pull/1' }],
   watchFilters: [],
 } as AgentDetailView;
+// Usage proof fixtures render the production profile and Members components.
+const usageState = params.get('usage');
+if (usageState) {
+  const now = Date.now() / 1000;
+  Object.assign(agent, { harness: 'claude', usage: usageState === 'none' ? undefined : {
+    updatedAt: now - (usageState === 'old' ? 1900 : 0),
+    windows: usageState === 'free' ? [] : [
+      { rateLimitType: 'five_hour', status: usageState === 'stopped' ? 'rejected' : 'allowed', utilization: 0.42, resetsAt: now + 3600, updatedAt: now },
+      { rateLimitType: 'seven_day', status: 'allowed', utilization: usageState === 'warning' ? 0.83 : 0.18, resetsAt: now + 86400 * 3, updatedAt: now },
+      { rateLimitType: 'seven_day_opus', status: 'allowed', utilization: 0.18, resetsAt: now + 86400 * 3, updatedAt: now },
+    ],
+    ...(usageState === 'free' ? { free: { used: 123000, limit: 1000000, resetsAt: Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate() + 1) / 1000 } } : { context: { used: 612000, size: 1000000 } }),
+  } });
+}
 const workspaces = [
   { id: agent.workspaceId, name: 'Tubing Crew' },
   { id: 'second', name: 'Acme' },
@@ -98,7 +114,7 @@ Object.assign(globalThis, {
           role: 'member',
         },
       ],
-      agents: [agent.agent],
+      agents: [{ ...agent.agent, usage: agent.usage, harness: agent.harness, machine: 'squire', owner: { ...viewer, handle: 'owner' } }],
       watchFilters: [],
     },
   },
@@ -233,7 +249,12 @@ function App() {
   );
 }
 createRoot(document.getElementById('root')!).render(
-  mode === 'manage' ? (
+  mode === 'usage-members' ? (
+    <View style={{ flex: 1, backgroundColor: theme.bgBase }}>
+      <PageHeader title="Members" />
+      <MemberRosterRow kind="agent" divider="bottom" name={agent.agent.identity.name} handle={agent.agent.identity.handle} pubkey={agent.agent.identity.pubkey} face="owl" testID="usage-member" usage={agent.usage} harness={agent.harness} machine="squire" ownerHandle="owner" />
+    </View>
+  ) : mode === 'manage' ? (
     <BuzzMembers
       profileAgentId={agent.agent.identity.pubkey}
       workspaceIdOverride={agent.workspaceId}

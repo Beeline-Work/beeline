@@ -1,3 +1,4 @@
+import { usagePrompt } from '@beeline/api-contract/daemon';
 import { subscriptionActionPrompt } from '@beeline/api-contract/daemon';
 import { TurnUsageAccumulator } from './turn-usage.js';
 import { CommandExecutionContext, runServerCommandIntake } from './server-command-intake.js';
@@ -1260,6 +1261,10 @@ export class MonolithRoomTurnLoop {
           hostServers,
           shellSandboxed: Boolean(this.options.config.bwrapPath),
         }),
+      onUsage: (usage) => {
+        void this.options.api.execute('postAgentUsage', { agentId: this.agent.publicKey, usage })
+          .catch(error => console.error('[agent-usage] publish failed', error));
+      },
       onCommands: agentCommandCatalogPublisher({
         api: this.options.api,
         agentId: this.agent.publicKey,
@@ -1682,6 +1687,8 @@ export class MonolithRoomTurnLoop {
                 )
                 .sort((a, b) => (b.closedAt ?? 0) - (a.closedAt ?? 0));
               let deviceResume: string | undefined;
+              const turnUsage = await api.execute('getAgentUsage', { agentId: this.agent.publicKey })
+                  .catch(error => { console.error('[agent-usage] read failed', error); return null; });
               const buildPrompt = (): string => {
                 const transcript = this.warmTranscript.select(
                   this.sessionId,
@@ -1732,7 +1739,7 @@ export class MonolithRoomTurnLoop {
                   ...this.sessionPromptSectionIds,
                   ...assembled.report.map((section) => section.id),
                 ]);
-                return assembled.text;
+                return `${assembled.text}\n\n${usagePrompt(turnUsage ?? undefined)}`;
               };
               // Rooms and corners stream through ONE presentation (C100): the
               // provisional draft lane, the request-id handoff, and the single

@@ -1,3 +1,4 @@
+import type { AgentUsage } from './agent-usage.js';
 import type { RoomSubscriptionListResult, RoomSubscriptionView, SubscriptionSource, SubscriptionEventCatalog } from './subscriptions.js';
 import type { AppRoute, AppTransport, ConnectAppStatus } from './app-connections.js';
 import type { CornerHoldInput, CornerMergeHold } from './phone-operations.js';
@@ -524,6 +525,8 @@ export type DaemonOperationMap = {
   postAgentToolMandate: Operation<PostAgentToolMandateInput, WriteResult>;
   getAgentAvatar: Operation<RoomInput, { readonly drawing: unknown; readonly soul: unknown }>;
   postAgentAvatar: Operation<RoomInput & { readonly drawing: unknown }, WriteResult>;
+  postAgentUsage: Operation<AgentInput & { readonly usage: AgentUsage }, WriteResult>;
+  getAgentUsage: Operation<AgentInput, AgentUsage | null>;
   postAgentCommands: Operation<PostAgentCommandsInput, WriteResult>;
   postAgentModelCatalog: Operation<PostAgentModelCatalogInput, WriteResult>;
   postAgentMachineReport: Operation<

@@ -71,9 +71,9 @@ export const FadeInDown = { duration: () => FadeInDown, springify: () => FadeInD
 
 // Only the transport and native host adapters are fixtures; profile and management render production components.
 const fixtureMocks = {
-  'expo-router': `export const router = { back() {}, push() {}, replace() {} }; export const useNavigation = () => ({addListener:()=>()=>{},dispatch(){}}); export const useLocalSearchParams = () => ({communityId: globalThis.__boardFixture.workspace.workspace.id});`,
+  'expo-router': `export { useEffect as useFocusEffect } from 'react'; export const router = { back() {}, push() {}, replace() {} }; export const useNavigation = () => ({addListener:()=>()=>{},dispatch(){}}); export const useLocalSearchParams = () => ({communityId: globalThis.__boardFixture.workspace.workspace.id});`,
   'react-native-keyboard-controller': `export { ScrollView as KeyboardAwareScrollView, KeyboardAvoidingView } from 'react-native';`,
-  '@/auth/buzz-identity-storage': `export const loadBuzzIdentity = async () => globalThis.__boardFixture.identity; export const getEffectiveRelayUrl = async () => 'https://fixture.invalid';`,
+  '@/auth/buzz-identity-storage': `export const loadBuzzViewerPubkey = async () => globalThis.__boardFixture.identity.publicKey; export const loadBuzzIdentity = async () => globalThis.__boardFixture.identity; export const getEffectiveRelayUrl = async () => 'https://fixture.invalid';`,
   '@/buzz/surface-storage': `export const surfaceAddress = () => ({}); export const mobileSurfaceCache = {read:async()=>null,write:async()=>{}};`,
   '@/sync/transport/room-view-client': `export class RoomViewClient { workspace = async () => globalThis.__boardFixture.workspace; agent = async () => globalThis.__boardFixture.agent; workspaceMembers = async () => globalThis.__boardFixture.workspace; }`,
   '@/sync/transport': `export class BuzzRigTransport { ensureClient = async () => ({surfaceSubscribe:async()=>()=>{}}); resolveDirectMessage = async () => ({channelId:'fixture-dm'}); }`,

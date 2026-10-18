@@ -1,3 +1,5 @@
+import { type AgentUsage, usageTokens } from '@beeline/api-contract/phone';
+import { usageTime, usageHarness } from '@/buzz/agent-usage';
 import React, { type ReactNode } from 'react';
 import {
   Text,
@@ -42,6 +44,9 @@ export type MemberRosterRowProps = SharedRowProps &
         kind: 'agent';
         model?: string;
         ownerHandle?: string;
+        usage?: AgentUsage;
+        harness?: string;
+        machine?: string;
       }
   );
 
@@ -69,8 +74,18 @@ export function memberRosterModel(member: { kind: 'human' } | { kind: 'agent'; m
  */
 export function MemberRosterRow(props: MemberRosterRowProps) {
   const Row = props.onPress ? TouchableOpacity : View;
+  const usage =
+    props.kind === 'agent' && (props.usage?.free || props.usage?.windows.length)
+      ? props.usage
+      : undefined;
   const title = props.title ?? memberRosterTitle(props);
-  const subtitle = props.subtitle ?? memberRosterSubtitle(props);
+  const subtitle =
+    props.subtitle ??
+    (props.kind === 'agent' && usage
+      ? usage.free
+        ? 'Free'
+        : [usageHarness(props.harness), props.machine].filter(Boolean).join(' · ')
+      : memberRosterSubtitle(props));
   const model = memberRosterModel(props);
   const address = title.slice(1);
   // Presence is not spoken: it ages out while an idle agent waits on its
@@ -111,7 +126,39 @@ export function MemberRosterRow(props: MemberRosterRowProps) {
         </View>
         {subtitle !== undefined ? (
           <Text numberOfLines={1} style={styles.subtitle}>
-            {subtitle}
+            {props.kind === 'agent' && usage ? (
+              <>
+                {subtitle}
+                {usage.free
+                  ? ` · ${usageTokens(usage.free.used)} of ${usageTokens(usage.free.limit)} today`
+                  : usage.windows
+                      .filter(
+                        (w) =>
+                          (w.utilization ?? 0) >= 0.8 ||
+                          w.status === 'rejected' ||
+                          w ===
+                            usage.windows.reduce((a, b) =>
+                              (a.utilization ?? 0) >= (b.utilization ?? 0) ? a : b,
+                            ),
+                      )
+                      .map((w) => (
+                        <Text
+                          key={w.rateLimitType}
+                          style={
+                            w.status === 'rejected'
+                              ? styles.danger
+                              : (w.utilization ?? 0) >= 0.8
+                                ? styles.warning
+                                : styles.usage
+                          }
+                        >
+                          {` · ${w.status === 'rejected' ? `limit reached${w.resetsAt ? ` · back ${usageTime(w.resetsAt)}` : ''}` : `${w.rateLimitType === 'five_hour' ? '5h' : w.rateLimitType === 'seven_day' ? 'week' : w.rateLimitType.replaceAll('_', ' ')} ${Math.round((w.utilization ?? 0) * 100)}%`}`}
+                        </Text>
+                      ))}
+              </>
+            ) : (
+              subtitle
+            )}
           </Text>
         ) : null}
       </View>
@@ -150,6 +197,9 @@ const styles = StyleSheet.create((theme) => {
       textAlign: 'right',
       color: hull.textMuted,
     },
+    warning: { color: hull.accent },
+    danger: { color: hull.dialogDanger },
+    usage: { color: hull.textSecondary },
     subtitle: { ...Typography.default(), ...hull.type.meta, color: hull.textMuted },
   };
 });

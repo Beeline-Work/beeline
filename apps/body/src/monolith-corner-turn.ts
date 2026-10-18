@@ -1,3 +1,4 @@
+import { usagePrompt } from '@beeline/api-contract/daemon';
 import { modelContextWindowTokens } from './model-context-window.js';
 import { TurnUsageAccumulator } from './turn-usage.js';
 import { CommandExecutionContext, runServerCommandIntake } from './server-command-intake.js';
@@ -1190,6 +1191,10 @@ export class MonolithCornerTurnLoop {
       permissionHandler: async () => {
         return 'allow';
       },
+      onUsage: (usage) => {
+        void this.options.api.execute('postAgentUsage', { agentId: this.agent.publicKey, usage })
+          .catch(error => console.error('[agent-usage] publish failed', error));
+      },
       onCommands: agentCommandCatalogPublisher({
         api: this.options.api,
         agentId: this.agent.publicKey,
@@ -1831,7 +1836,9 @@ export class MonolithCornerTurnLoop {
                   return text;
                 }
                 trace.notePromptWindow(assembled.text, this.modelContextTokens);
-                return assembled.text;
+                const turnUsage = await api.execute('getAgentUsage', { agentId: this.agent.publicKey })
+                  .catch(error => { console.error('[agent-usage] read failed', error); return null; });
+                return `${assembled.text}\n\n${usagePrompt(turnUsage ?? undefined)}`;
               };
               // Rooms and corners share the provisional draft lane, request-id
               // handoff, and single durable final reply in `turn-stream.ts`.

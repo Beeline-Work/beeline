@@ -1,0 +1,92 @@
+
+ RUN  v2.1.9 /home/lunchbox/.local/state/beeline/corners/3be78ae4-c99d-446a-b9cb-70224513563b
+
+stdout | apps/server/src/postgres-live.test.ts
+reconcileConfiguredCornerReviewers: restored 0 subscription(s), dispatched 0 review(s)
+syncTopLevelSharedRoomRoles: updated 0 stale Room role(s)
+backfillAgentHandles: assigned 0 name-derived agent handle(s)
+backfillYoloModeDefault: flipped 0 agent row(s) to yolo_mode=true
+
+stdout | apps/server/src/postgres-live.test.ts > Postgres live fanout > publishes room-scoped message and turn notifications without a database lookup
+[live-listener] connected
+
+stderr | apps/server/src/postgres-live.test.ts > Postgres live fanout > publishes room-scoped message and turn notifications without a database lookup
+[live-listener] connect failed PGlite is closed
+
+ ✓ apps/server/src/postgres-live.test.ts (33 tests) 20306ms
+   ✓ Postgres live fanout > re-arms Sentry batching on every server without publishing a Room message 549ms
+   ✓ Postgres live fanout > publishes owner-scoped install, vault and agent commits without an idle read 529ms
+   ✓ Postgres live fanout > publishes machine broker reports and sign-in progress to the owner surfaces 579ms
+   ✓ Postgres live fanout > names a Workspace header or identity change by id, and only to who shares it 585ms
+   ✓ Postgres live fanout > wakes push only after message and device writes commit 499ms
+   ✓ Postgres live fanout > fans out one committed helper release without a follow-up read 522ms
+   ✓ Postgres live fanout > delivers read-mark changes to the listener with the reader identity 509ms
+   ✓ Postgres live fanout > routes a bookmark change to its owner without broadcasting its content 502ms
+   ✓ Postgres live fanout > coalesces a section clear into one Needs-you wake per Room 550ms
+   ✓ Postgres live fanout > bounds notification DB projections and coalesces a repeated repository wake 526ms
+   ✓ Postgres live fanout > sends one recovery resync after a saturated notification backlog drains 499ms
+   ✓ Postgres live fanout > fans a committed write from server A to a subscriber on server B 505ms
+   ✓ Postgres live fanout > publishes room-scoped message and turn notifications without a database lookup 497ms
+   ✓ Postgres live fanout > relays a newer helper connection epoch to every other server instance 500ms
+   ✓ Postgres live fanout > delivers a membership change as an agent-directed invalidation 506ms
+   ✓ Postgres live fanout > pushes an expired Registry OAuth attempt when its server clock ends 601ms
+   ✓ Postgres live fanout > names the parent Room and corner opener on a sparse corner preference invalidate 504ms
+   ✓ Postgres live fanout > names the parent Room and opener on a queued command for a corner this helper never watched 537ms
+   ✓ Postgres live fanout > marks a command released only when it leaves claimed 520ms
+   ✓ Postgres live fanout > nudges the parent Room only when a corner status input changes 597ms
+   ✓ Postgres live fanout > nudges the parent Room for every projected corner-row change 2133ms
+   ✓ Postgres live fanout > nudges the parent Room on every server machine, whichever one wrote 678ms
+   ✓ Postgres live fanout > delivers one parent nudge for an owed refresh that rewrites many rows 628ms
+   ✓ Postgres live fanout > nudges the parent Room on every machine when the leader sees an owed item expire 764ms
+   ✓ Postgres live fanout > decides an owed expiry by the database clock when the app clock runs ahead 761ms
+   ✓ Postgres live fanout > leaves a top-level Room membership without a corner opener 549ms
+   ✓ Postgres live fanout > delivers a connector-assignment wake without a catalog 527ms
+   ✓ Postgres live fanout > delivers a Squire machine-grant wake as an agent-config invalidation 554ms
+   ✓ Postgres live fanout > delivers a phone-side model/effort change as an agent-config invalidation 521ms
+   ✓ Postgres live fanout > fans an agent presence fact to every joined Room on another server 605ms
+   ✓ Postgres live fanout > fans one canonical presence notification across thirty Rooms on each listener 613ms
+   ✓ Postgres live fanout > rehydrates a missed delivery deadline when its first LISTEN connection opens 697ms
+   ✓ Postgres live fanout > broadcasts resync after its listener connection is restored 659ms
+stdout | apps/server/src/phone-service.agent-profile.test.ts > agent profile recent work > shows only merged, attributed work in readable corners, and revokes it with membership
+reconcileConfiguredCornerReviewers: restored 0 subscription(s), dispatched 0 review(s)
+syncTopLevelSharedRoomRoles: updated 0 stale Room role(s)
+backfillAgentHandles: assigned 0 name-derived agent handle(s)
+backfillYoloModeDefault: flipped 0 agent row(s) to yolo_mode=true
+
+stdout | apps/server/src/phone-service.agent-profile.test.ts > removing a human from the Workspace > spends the invite on first use, so a removed person cannot rejoin with the old link
+reconcileConfiguredCornerReviewers: restored 0 subscription(s), dispatched 0 review(s)
+syncTopLevelSharedRoomRoles: updated 0 stale Room role(s)
+backfillAgentHandles: assigned 0 name-derived agent handle(s)
+backfillYoloModeDefault: flipped 0 agent row(s) to yolo_mode=true
+
+stdout | apps/server/src/phone-service.agent-profile.test.ts > enforces strict role authority and spectator writes and lists Workspace-owned agents
+reconcileConfiguredCornerReviewers: restored 0 subscription(s), dispatched 0 review(s)
+syncTopLevelSharedRoomRoles: updated 0 stale Room role(s)
+backfillAgentHandles: assigned 0 name-derived agent handle(s)
+backfillYoloModeDefault: flipped 0 agent row(s) to yolo_mode=true
+
+stdout | apps/server/src/phone-service.agent-profile.test.ts > Reproduction R12-1: exposes grant Room names only to authorized viewers
+reconcileConfiguredCornerReviewers: restored 0 subscription(s), dispatched 0 review(s)
+syncTopLevelSharedRoomRoles: updated 0 stale Room role(s)
+backfillAgentHandles: assigned 0 name-derived agent handle(s)
+backfillYoloModeDefault: flipped 0 agent row(s) to yolo_mode=true
+Reproduction R12-1: plain member sees roomName=undefined
+
+ ✓ apps/server/src/phone-service.agent-profile.test.ts (4 tests) 6393ms
+   ✓ agent profile recent work > shows only merged, attributed work in readable corners, and revokes it with membership 1986ms
+   ✓ removing a human from the Workspace > spends the invite on first use, so a removed person cannot rejoin with the old link 1460ms
+   ✓ enforces strict role authority and spectator writes and lists Workspace-owned agents 1478ms
+   ✓ Reproduction R12-1: exposes grant Room names only to authorized viewers 1468ms
+stdout | apps/server/src/agent-usage.integration.test.ts
+reconcileConfiguredCornerReviewers: restored 0 subscription(s), dispatched 0 review(s)
+syncTopLevelSharedRoomRoles: updated 0 stale Room role(s)
+backfillAgentHandles: assigned 0 name-derived agent handle(s)
+backfillYoloModeDefault: flipped 0 agent row(s) to yolo_mode=true
+
+ ✓ apps/server/src/agent-usage.integration.test.ts (3 tests) 1846ms
+
+ Test Files  3 passed (3)
+      Tests  40 passed (40)
+   Start at  10:49:40
+   Duration  33.82s (transform 1.09s, setup 0ms, collect 4.44s, tests 28.54s, environment 0ms, prepare 130ms)
+

@@ -1,0 +1,11 @@
+Real Claude SDK turn on squire, 2026-10-18T14:45:53.977Z
+Isolated in-memory migrated server; captured provider event → daemon postAgentUsage → daemon getAgentUsage → production usagePrompt → Claude Haiku turn.
+No running helper was restarted or changed.
+
+Prompt line:
+Usage: Claude 5-hour 6% (resets 14:20), weekly 16% (resets Fri 01:00), as of 10:45.
+
+Model response:
+Usage: Claude 5-hour 6% (resets 14:20), weekly 16% (resets Fri 01:00), as of 10:45.
+
+PASS: model received and returned the exact usage line.

@@ -47,6 +47,7 @@ async function runTurns(options: {
     attempt: number;
     ask: Ask;
     agentHomeRoot: string;
+    promptText: unknown;
     onChunk?: (delta: string, full: string) => void;
     onToolCalls?: (calls: readonly { id?: string; status?: string }[]) => void;
   }) => Promise<Awaited<ReturnType<AcpClient['sessionPrompt']>>>;
@@ -116,6 +117,7 @@ async function runTurns(options: {
   let currentAsk: Ask = options.asks[0]!;
   const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
     operations.push(name);
+    if (name === 'getAgentUsage') return null;
     if (name === 'getAgentConfiguration') return { commands: [], yoloMode: false };
     if (name === 'getRoomRepositoryState') return { resolution: 'none' };
     if (name === 'getWorkspaceRoster') {
@@ -209,6 +211,7 @@ async function runTurns(options: {
         attempt,
         ask: currentAsk,
         agentHomeRoot,
+        promptText: _prompt,
         ...(onChunk ? { onChunk } : {}),
         ...(onToolCalls ? { onToolCalls } : {}),
       });
@@ -259,6 +262,12 @@ const answer = (text: string) => ({
 });
 
 describe('Room turn phase trace', () => {
+  it('delivers the usage line in the real turn assembly path', async () => {
+    await runTurns({ asks: [{ id: 'usage-turn', body: 'hello' }], prompt: async ({ promptText }) => {
+      expect(JSON.stringify(promptText)).toContain('Usage: unknown (harness reports none).');
+      return answer('Done');
+    } });
+  });
   it('uses the legacy private layout on the next cold activation after rollback', async () => {
     vi.stubEnv('BEELINE_SHARED_ASSETS_ENABLED', '0');
     const prepare = vi.spyOn(workspaceAssets, 'prepareWorkspaceAdapter');
@@ -551,6 +560,7 @@ describe('Room turn phase trace', () => {
         'getWorkspaceRoster',
         'postAgentActivity',
         'getAgentConfiguration',
+        'getAgentUsage',
         'getInstitutionalContext',
         'getInstitutionalMemoryTurnStats',
         'listAgentGrants',

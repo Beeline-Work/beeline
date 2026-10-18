@@ -1,3 +1,4 @@
+import { agentUsage, agentUsages } from './agent-usage.js';
 import { prepareCornerCompatibility } from './corner-person-state.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
 import { companyHost } from './company-registry.js';
@@ -427,6 +428,8 @@ interface MemberRow extends IdentityRow {
 }
 /** A roster agent row with the configuration its Members row shows. */
 type RosterAgentRow = MemberRow & {
+  harness?: string;
+  machine_name?: string;
   selected_model: string | null;
   model_catalog: AgentDetailView['catalog'] | null;
   owner_id: string | null;
@@ -1644,7 +1647,7 @@ export class PhoneService {
       ), owned AS (
         SELECT i.id,i.kind,i.name,i.handle,i.avatar,i.face_id,m.role,
           NULL::jsonb presence_body,NULL::timestamptz presence_updated_at,
-          agent.selected_model,agent.model_catalog,
+          agent.selected_model,agent.model_catalog,agent.harness,agent.machine_name,
           owner.id owner_id,owner.name owner_name,owner.handle owner_handle
         FROM agents agent JOIN identities i ON i.id=agent.agent_id
         JOIN memberships m ON m.identity_id=i.id
@@ -3428,6 +3431,8 @@ export class PhoneService {
     const lastWork = workPage.at(-1);
     return {
       workspaceId,
+      ...(config?.harness ? { harness: config.harness } : {}),
+      ...(config?.owner_id === viewerId ? { usage: await agentUsage(this.database, agentId, viewerId) } : {}),
       ...(config?.config_version ? { configVersion: config.config_version } : {}),
       ...(config?.avatar_generation_id ? { avatarGenerationId: config.avatar_generation_id } : {}),
       avatarGenerationPending: config?.avatar_generation_pending ?? false,
@@ -9878,7 +9883,7 @@ export class PhoneService {
       ), agent_rows AS (
         SELECT i.id,i.kind,i.name,i.handle,i.avatar,i.face_id,m.role,
           NULL::jsonb presence_body,NULL::timestamptz presence_updated_at,
-          agent.selected_model,agent.model_catalog,
+          agent.selected_model,agent.model_catalog,agent.harness,agent.machine_name,
           owner.id owner_id,owner.name owner_name,owner.handle owner_handle
         FROM memberships m JOIN identities i ON i.id=m.identity_id
         LEFT JOIN agents agent ON agent.agent_id=i.id
@@ -9950,6 +9955,13 @@ export class PhoneService {
     }
     const people = this.projectMembers(pageRows.filter((row) => row.kind === 'human'), null);
     const agents = this.projectWorkspaceAgents(pageRows.filter((row) => row.kind === 'agent'), agentPage);
+    const usages = await agentUsages(this.database,
+      agents.filter(agent => agent.owner?.pubkey === viewerId).map(agent => agent.identity.pubkey), viewerId);
+    for (const [index, agent] of agents.entries()) {
+      const usage = usages.get(agent.identity.pubkey);
+      if (usage) agents[index] = { ...agent, usage };
+    }
+
     return {
       workspaceRow: reviveDates(data.workspace_row, ['created_at', 'updated_at']),
       viewerIdentity: identity(data.viewer_row, this.publicOrigin),
@@ -9969,6 +9981,8 @@ export class PhoneService {
       return {
         ...member,
         ...(model ? { model } : {}),
+        ...(config?.harness ? { harness: config.harness } : {}),
+        ...(config?.machine_name ? { machine: config.machine_name } : {}),
         ...(config?.owner_id && config.owner_name ? { owner: {
           pubkey: config.owner_id,kind: 'human' as const,name: config.owner_name,
           ...(config.owner_handle ? { handle: config.owner_handle } : {}),

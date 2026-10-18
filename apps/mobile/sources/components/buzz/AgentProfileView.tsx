@@ -1,3 +1,4 @@
+import { AgentUsageSection } from './AgentUsageSection';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { HullDialogActions, HullDialogInput } from '@/components/buzz/HullDialog';
 import React, { useEffect, useRef, useState } from 'react';
@@ -268,6 +269,7 @@ export function AgentProfileView({
                 </>
               )}
             </View>
+            {canEdit ? <AgentUsageSection usage={detail.usage} harness={detail.harness} /> : null}
             <AgentVoiceSection
               key={`${detail.workspaceId}:${identity.pubkey}:${voiceApi?.contextKey ?? ''}`}
               agentId={identity.pubkey}

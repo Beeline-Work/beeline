@@ -192,6 +192,9 @@ BEGIN
     WHEN 'workspace_connections' THEN
       payload = jsonb_build_object('table', TG_TABLE_NAME, 'operation', TG_OP,
         'roomId', '', 'ownerId', COALESCE(NEW.owner_identity_id,OLD.owner_identity_id));
+    WHEN 'free_agent_usage' THEN
+      payload = jsonb_build_object('table', TG_TABLE_NAME, 'operation', TG_OP,
+        'roomId', '', 'ownerId', COALESCE(NEW.owner_id,OLD.owner_id));
     WHEN 'agents' THEN
       payload = jsonb_build_object('table', TG_TABLE_NAME, 'operation', TG_OP,
         'roomId', '', 'ownerId', COALESCE(NEW.owner_id,OLD.owner_id),
@@ -365,7 +368,7 @@ BEGIN
     'needs_you_marks',
     'agent_grants', 'agent_schedules', 'agent_subscriptions', 'agent_commands',
     'github_installations', 'github_repositories',
-    'workspace_connectors', 'workspace_connections', 'agents', 'agent_avatars',
+    'workspace_connectors', 'workspace_connections', 'agents', 'agent_avatars', 'free_agent_usage',
     'registry_mcp_oauth_attempts', 'push_devices',
     'workspace_join_notifications',
     'helper_release_notifications', 'workspaces', 'identities'
@@ -768,7 +771,7 @@ export class PostgresLiveListener {
     if (!payload) return;
     if (payload.ownerId && (payload.table === 'workspace_connectors' ||
       payload.table === 'workspace_connections' || payload.table === 'agents' ||
-      payload.table === 'agent_avatars' || payload.table === 'avatar_job')) {
+      payload.table === 'agent_avatars' || payload.table === 'avatar_job' || payload.table === 'free_agent_usage')) {
       this.live.publish({ type: 'resource-change', roomId: '', ownerId: payload.ownerId,
         resource: payload.table === 'workspace_connectors' ? 'install'
           : payload.table === 'workspace_connections' ? 'workbench' : 'agent',

@@ -1,3 +1,4 @@
+import { agentUsage, saveAgentUsage } from './agent-usage.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
 import { setRoomEventSubscriptions } from './corner-person-state.js';
 import { agentMemberMetadata } from './agent-member-metadata.js';
@@ -1519,6 +1520,11 @@ export class DaemonService {
           input as Input<'postAgentAvatar'>,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'getAgentUsage':
+        return (await agentUsage(this.database, authenticatedAgentId) ?? null) as Output<Name>;
+      case 'postAgentUsage':
+        await saveAgentUsage(this.database, authenticatedAgentId, (input as Input<'postAgentUsage'>).usage);
+        return this.writeResult() as Output<Name>;
       case 'postAgentCommands':
         return (await this.commands(
           input as Input<'postAgentCommands'>,
@@ -8275,6 +8281,8 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   postAgentToolMandate: true,
   getAgentAvatar: true,
   postAgentAvatar: true,
+  postAgentUsage: true,
+  getAgentUsage: true,
   postAgentCommands: true,
   postAgentModelCatalog: true,
   postAgentMachineReport: true,

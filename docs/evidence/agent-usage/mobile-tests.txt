@@ -1,0 +1,24 @@
+
+ RUN  v3.2.7 /home/lunchbox/.local/state/beeline/corners/3be78ae4-c99d-446a-b9cb-70224513563b/apps/mobile
+
+ ✓ sources/buzz/design-lint.design.test.ts (9 tests) 314ms
+   ✓ design lint > holds every module to its baseline, and the baseline to the scan  306ms
+ ✓ sources/buzz/calm-lint.design.test.ts (8 tests) 93ms
+stderr | sources/components/buzz/MemberRosterRow.test.tsx > MemberRosterRow > formats a human with only the role under the single handle title
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | sources/components/buzz/MemberRosterRow.test.tsx > MemberRosterRow > formats an agent as handle and right-aligned model over its owner
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+stderr | sources/components/buzz/MemberRosterRow.test.tsx > shows the highest window, every warning and provider stop, and no context-only suffix
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+react-test-renderer is deprecated. See https://react.dev/warnings/react-test-renderer
+
+ ✓ sources/components/buzz/MemberRosterRow.test.tsx (3 tests) 23ms
+
+ Test Files  3 passed (3)
+      Tests  20 passed (20)
+   Start at  10:49:41
+   Duration  1.43s (transform 351ms, setup 85ms, collect 496ms, tests 430ms, environment 0ms, prepare 129ms)
+

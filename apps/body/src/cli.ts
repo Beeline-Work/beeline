@@ -198,6 +198,10 @@ async function main(): Promise<void> {
     const activated = await activateDaemonTransport(resolve(configPath));
     if (!activated) throw new Error('corner-read-token requires monolith transport');
     const credential = await activated.client.execute('getRoomGitHubToken', { roomId });
+    // A caller may close its reader before this short-lived command writes.
+    process.stdout.once('error', (error: NodeJS.ErrnoException) => {
+      if (error.code !== 'EPIPE') throw error;
+    });
     process.stdout.write(`${credential.token}\n`);
     return;
   }

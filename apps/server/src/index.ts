@@ -1,4 +1,10 @@
 import { captureServerError, flushServerErrors } from './sentry.js';
+
+// Expected voice failures are handled at their task boundary. Report any escape.
+process.on('unhandledRejection', error => {
+  captureServerError(error, { surface: 'unhandled-rejection' });
+  console.error('[unhandled-rejection]', error instanceof Error ? error.name : 'Unknown rejection');
+});
 import { sentryTelegramFromEnv } from './sentry-telegram.js';
 import { flushSentryWakes, nextSentryWakeAt, sentryWakeAgentFromEnv } from './sentry-wake.js';
 import { randomUUID } from 'node:crypto';

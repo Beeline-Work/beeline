@@ -101,6 +101,24 @@ conversation uses `openai/gpt-6-luna` through OpenRouter with reasoning disabled
 External work is dispatched through `routeHumanMessage`, the existing command
 grammar. Real agent reports are matched to their original command and spoken
 back. Agent work has no voice timeout and continues independently of playback.
+Call callbacks and detached work share a terminal error boundary. Known transient
+connection/database failures retry twice, at 250 ms and 1 s with jitter, only for
+reads or idempotent operations. Dispatch reuses the source message ID. An access
+query failure never implies membership denial. A failed reply cancels its own
+queued phrases and clears its speaker state; error publication is best effort.
+Lease errors retain the worker only through its last confirmed 20-second lease;
+expiry releases the worker without ending the durable call. Cleanup steps run
+independently. Unexpected unhandled rejections have a final reporting boundary.
+
+The conversation provider has 8 seconds to its first text/tool token and 20 seconds
+total. Aura has 5 seconds to its first audio bytes and 30 seconds per phrase.
+These budgets start before HTTP headers, abort the request and cancel the stream,
+and discard late results. A timeout fails that turn and releases playback for the
+next request or report. There are no provider retries or fallbacks. STT and real
+agent work retain their existing lifetimes.
+[Android recovery proof](voice-mode-proof/call-error-policy/README.md) records
+Reproduction CALL-ERROR-1 and its provider-response stand-ins.
+
 Flux receives raw 16 kHz mono PCM over Workers AI WebSockets; speech providers
 stream 24 kHz mono PCM into LiveKit. Barge-in interrupts playback, never the real
 agent's command. Live call ownership uses a database lease across server Machines. Concurrent joins

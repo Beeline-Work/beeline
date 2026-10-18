@@ -115,3 +115,83 @@ describe('voice providers', () => {
     stt.close(); socket.emit('close'); expect(error).not.toHaveBeenCalled();
   });
 });
+
+describe('call provider deadlines', () => {
+  const agent = { id: 'a', name: 'Ruby', handle: 'ruby', soul: '', voice: 'luna' };
+  it.each(['brain', 'speech'] as const)('%s aborts a fetch stalled before headers and accepts the next request', async kind => {
+    vi.useFakeTimers();
+    try {
+      let requestSignal!: AbortSignal;
+      const fetcher = vi.fn<typeof fetch>().mockImplementationOnce(async (_url, init) => {
+        requestSignal = init!.signal as AbortSignal;
+        return new Promise<Response>(() => {});
+      }).mockImplementation(async () => new Response(kind === 'brain'
+        ? 'data: {"choices":[{"delta":{"content":"Ready."}}]}\n\n' : new Uint8Array([200, 1])));
+      const brain = new OpenRouterVoiceBrain('test', fetcher);
+      const speech = new AuraSpeech('test', 'account', fetcher);
+      const next = () => kind === 'brain' ? brain.answer(agent, [], vi.fn(), new AbortController().signal)
+        : speech.synthesize('Ready.', 'luna', new AbortController().signal)[Symbol.asyncIterator]().next();
+      const failed = expect(next()).rejects.toThrow('timed out');
+      await vi.advanceTimersByTimeAsync(kind === 'brain' ? 8000 : 5000);
+      await failed;
+      expect(requestSignal.aborted).toBe(true);
+      await expect(next()).resolves.toBeDefined();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it.each(['brain', 'speech'] as const)('%s enforces the total stream budget after the first result', async kind => {
+    vi.useFakeTimers();
+    try {
+      const cancel = vi.fn();
+      const body = new ReadableStream<Uint8Array>({ start(controller) {
+        controller.enqueue(kind === 'brain' ? new TextEncoder().encode('data: {"choices":[{"delta":{"content":"Hi"}}]}\n\n') : new Uint8Array([1, 2]));
+      }, cancel });
+      const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(body));
+      const onText = vi.fn();
+      let work: Promise<unknown>;
+      if (kind === 'brain') work = new OpenRouterVoiceBrain('test', fetcher).answer(agent, [], onText, new AbortController().signal);
+      else {
+        const iterator = new AuraSpeech('test', 'account', fetcher).synthesize('Hello', 'luna', new AbortController().signal)[Symbol.asyncIterator]();
+        await iterator.next(); work = iterator.next();
+      }
+      const failed = expect(work).rejects.toThrow('timed out');
+      await vi.advanceTimersByTimeAsync(kind === 'brain' ? 8000 : 5000);
+      expect(cancel).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(kind === 'brain' ? 12000 : 25000);
+      await failed;
+      expect(cancel).toHaveBeenCalledOnce();
+      if (kind === 'brain') expect(onText.mock.calls).toEqual([['Hi']]);
+    } finally { vi.useRealTimers(); }
+  });
+});
+
+it.each(['brain', 'speech'] as const)('CALL-ERROR-1: %s times out after headers without a first result and cancels the body', async kind => {
+  vi.useFakeTimers();
+  try {
+    const cancel = vi.fn();
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response(new ReadableStream({ cancel })));
+    const signal = new AbortController();
+    const text = vi.fn();
+    const work = kind === 'brain' ? new OpenRouterVoiceBrain('test', fetcher).answer(
+      { id: 'a', name: 'Ruby', handle: 'ruby', soul: '', voice: 'luna' }, [], text, signal.signal)
+      : new AuraSpeech('test', 'account', fetcher).synthesize('Hello', 'luna', signal.signal)[Symbol.asyncIterator]().next();
+    const failed = expect(work).rejects.toThrow('timed out');
+    await vi.advanceTimersByTimeAsync(kind === 'brain' ? 8000 : 5000);
+    await failed; expect(cancel).toHaveBeenCalledOnce(); expect(text).not.toHaveBeenCalled();
+  } finally { vi.useRealTimers(); }
+});
+
+it('CALL-ERROR-1: late brain headers cannot emit text after timeout', async () => {
+  vi.useFakeTimers();
+  try {
+    let late!: (response: Response) => void;
+    const fetcher = vi.fn<typeof fetch>().mockImplementation(() => new Promise(resolve => { late = resolve; }));
+    const onText = vi.fn();
+    const failed = expect(new OpenRouterVoiceBrain('test', fetcher).answer(
+      { id: 'a', name: 'Ruby', handle: 'ruby', soul: '', voice: 'luna' }, [], onText, new AbortController().signal)).rejects.toThrow('timed out');
+    await vi.advanceTimersByTimeAsync(8000); await failed;
+    late(new Response('data: {"choices":[{"delta":{"content":"Stale reply"}}]}\n\n'));
+    await vi.advanceTimersByTimeAsync(1);
+    expect(onText).not.toHaveBeenCalled();
+  } finally { vi.useRealTimers(); }
+});

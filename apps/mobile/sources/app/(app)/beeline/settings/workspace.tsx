@@ -153,7 +153,6 @@ export default function WorkspaceSettings() {
   const joinLinkGeneration = useRef(0);
   const [publicJoinUrl, setPublicJoinUrl] = useState<string | null>(null);
   const [joinLinkCopied, setJoinLinkCopied] = useState(false);
-  const [rotateLinkOpen, setRotateLinkOpen] = useState(false);
   const [client, setClient] = useState<BuzzClient | null>(null);
   const [workspaceAddress, setWorkspaceAddress] = useState<ReturnType<typeof surfaceAddress> | null>(null);
   const workspaceView = useSurfaceSnapshot(workspaceAddress, isWorkspaceView);
@@ -184,7 +183,7 @@ export default function WorkspaceSettings() {
     if (workspace) workspaceDraft.initialize(workspace.name);
   }, [workspace?.name, workspaceDraft]);
   const canManageWorkspace = workspaceView?.viewer.permissions.manage === true;
-  const loadPublicJoinLink = useCallback(async (rotate = false) => {
+  const loadPublicJoinLink = useCallback(async () => {
     if (!communityId || !canManageWorkspace || workspace?.visibility !== 'public') return;
     const generation = ++joinLinkGeneration.current;
     setJoinLinkBusy(true);
@@ -192,7 +191,6 @@ export default function WorkspaceSettings() {
     try {
       const invite = await monolithPhoneOperation('createInvite', {
         workspaceId: communityId,
-        ...(rotate ? { rotate: true } : {}),
       });
       if (generation !== joinLinkGeneration.current) return;
       setPublicJoinUrl(buildCommunityInviteUrl(invite.token, getBuzzRuntimeConfig().relayUrl));
@@ -592,23 +590,6 @@ export default function WorkspaceSettings() {
                     void Clipboard.setStringAsync(publicJoinUrl).then(() => setJoinLinkCopied(true));
                   }}
                   testID="workspace-public-join-copy"
-                />
-                <SettingsRow
-                  title="Rotate public join link"
-                  description="Replace the link and invalidate the old one."
-                  disabled={workingKey !== null || joinLinkBusy || !publicJoinUrl}
-                  onPress={() => setRotateLinkOpen(true)}
-                  testID="workspace-public-join-rotate"
-                />
-                <HullDialog
-                  visible={rotateLinkOpen}
-                  title="Rotate public join link?"
-                  body="The old link will stop working. Update any websites or messages where you shared it."
-                  onRequestClose={() => setRotateLinkOpen(false)}
-                  actions={[
-                    { label: 'Cancel', testID: 'workspace-public-join-cancel', onPress: () => setRotateLinkOpen(false) },
-                    { label: 'Rotate link', variant: 'primary', testID: 'workspace-public-join-confirm', onPress: () => { setRotateLinkOpen(false); void loadPublicJoinLink(true); } },
-                  ]}
                 />
               </View>
             )}

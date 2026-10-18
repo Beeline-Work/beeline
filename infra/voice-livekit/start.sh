@@ -17,6 +17,7 @@ rtc:
 keys:
   ${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}
 room:
+  auto_create: false
   empty_timeout: 60
   departure_timeout: 20
 logging:

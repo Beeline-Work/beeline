@@ -1,0 +1,81 @@
+{
+  "reproduction": "CALL-OWNER-1",
+  "androidDevices": [
+    "emulator-5558 API36 phone",
+    "emulator-5562 API35 listener"
+  ],
+  "callId": "a0866d87-f65b-418b-a7b9-e5f4d182a052",
+  "takeoverRequestedAt": 1792367170943,
+  "ownershipEpochBefore": 1,
+  "ownershipEpochAfter": 2,
+  "phoneTerminalReplaced": true,
+  "listenerAudioEnergyBefore": 0.009791060795233794,
+  "listenerAudioEnergyAfter": 0.010835154486679743,
+  "oldRuntimeStreamsFrozen": [
+    131,
+    113
+  ],
+  "oldPhoneAudioInNewRoom": false,
+  "observations": [
+    {
+      "role": "listener",
+      "at": 1792367166409,
+      "event": "state",
+      "joined": false,
+      "error": null
+    },
+    {
+      "role": "phone",
+      "at": 1792367166043,
+      "event": "state",
+      "joined": false,
+      "error": null
+    },
+    {
+      "role": "phone",
+      "at": 1792367168250,
+      "event": "state",
+      "joined": true,
+      "error": null,
+      "callId": "a0866d87-f65b-418b-a7b9-e5f4d182a052"
+    },
+    {
+      "role": "listener",
+      "at": 1792367168689,
+      "event": "state",
+      "joined": true,
+      "error": null,
+      "callId": "a0866d87-f65b-418b-a7b9-e5f4d182a052"
+    },
+    {
+      "role": "listener",
+      "at": 1792367169985,
+      "event": "rtc-disconnected",
+      "rtcRoom": "beeline-voice-a0866d87-f65b-418b-a7b9-e5f4d182a052-e1"
+    },
+    {
+      "role": "phone",
+      "at": 1792367169621,
+      "event": "rtc-disconnected",
+      "rtcRoom": "beeline-voice-a0866d87-f65b-418b-a7b9-e5f4d182a052-e1"
+    },
+    {
+      "role": "phone",
+      "at": 1792367169662,
+      "event": "state",
+      "joined": false,
+      "error": "Call replaced on another device"
+    },
+    {
+      "role": "listener",
+      "at": 1792367170093,
+      "event": "state",
+      "joined": true,
+      "error": null,
+      "callId": "a0866d87-f65b-418b-a7b9-e5f4d182a052"
+    }
+  ],
+  "standIn": "Production Android hook/native RTC, built authenticated server and LiveKit 1.9.12. Synthetic provider text/PCM, actual decoded native RTP energy; new owner is a native Node RTC client. No physical speaker measurement.",
+  "observedAudioGapMsIncludingDriverPause": 1617,
+  "initialApplicationTokenTtlSeconds": 10
+}

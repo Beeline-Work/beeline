@@ -16,7 +16,29 @@ export type VoiceCall = {
 
 export type VoiceBudget = { remainingMs: number; resetAt: number; timeZone: string };
 
+export type VoiceOwner = { callId: string; deviceId: string; sessionId: string; epoch: number };
+export function readVoiceOwner(value: unknown): VoiceOwner | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const v = value as VoiceOwner;
+  if (typeof v.callId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v.callId) ||
+    typeof v.deviceId !== 'string' || !v.deviceId.length || v.deviceId.length > 200 ||
+    typeof v.sessionId !== 'string' || !v.sessionId.length || v.sessionId.length > 200 ||
+    !Number.isSafeInteger(v.epoch) || v.epoch < 1) return undefined;
+  return { callId: v.callId, deviceId: v.deviceId, sessionId: v.sessionId, epoch: v.epoch };
+}
+export type VoiceOwnershipState = { state: 'elsewhere' | 'replaced'; owner?: VoiceOwner };
+export function readVoiceOwnershipState(value: unknown): VoiceOwnershipState | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const v = value as VoiceOwnershipState;
+  if (v.state !== 'elsewhere' && v.state !== 'replaced') return undefined;
+  const owner = v.owner === undefined ? undefined : readVoiceOwner(v.owner);
+  if (v.owner !== undefined && !owner) return undefined;
+  return { state: v.state, ...(owner ? { owner } : {}) };
+}
+
 export type VoiceJoin = {
+  deviceId?: string;
+  epoch?: number;
   sessionId: string;
   /** Capability for native Stop only, fenced to this participant session. */
   stopToken: string;
@@ -26,16 +48,31 @@ export type VoiceJoin = {
   agents: readonly RoomViewIdentity[];
 };
 
-export type VoiceIdleState = { state: 'ended' | 'parked' | 'ready'; agentName?: string };
+/** Accept legacy receipts; validate ownership fields together when present. */
+export function readVoiceJoin(value: unknown): VoiceJoin | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const v = value as VoiceJoin;
+  const call = readVoiceCall(v.call);
+  if (!call || typeof v.sessionId !== 'string' || !v.sessionId.length ||
+    typeof v.stopToken !== 'string' || !v.stopToken.length || typeof v.token !== 'string' || !v.token.length ||
+    typeof v.url !== 'string' || !/^wss?:\/\//.test(v.url) || !Array.isArray(v.agents) ||
+    !readVoiceCall({ ...call, participants: v.agents })) return undefined;
+  if ((v.deviceId !== undefined || v.epoch !== undefined) && !readVoiceOwner({
+    callId: call.id, deviceId: v.deviceId, sessionId: v.sessionId, epoch: v.epoch })) return undefined;
+  return { sessionId: v.sessionId, stopToken: v.stopToken, call, url: v.url, token: v.token,
+    agents: v.agents, ...(v.deviceId !== undefined ? {deviceId:v.deviceId,epoch:v.epoch} : {}) };
+}
+
+export type VoiceIdleState = { state: 'ended' | 'parked' | 'ready' | 'replaced'; agentName?: string };
 
 export type VoiceSignal =
   | { type: 'budget'; budget: VoiceBudget }
   | { type: 'stop' }
   | { type: 'ending'; deadline: number | null; serverNow: number }
-  | { type: 'resume' | 'park'; sessionId: string }
+  | { type: 'resume' | 'park'; sessionId: string; epoch?: number }
   | { type: 'speech' }
   /** A tap also sends the next turn to this agent when several humans are in the call. */
-  | { type: 'target'; agentId: string; tap?: boolean }
+  | { type: 'target'; agentId: string; tap?: boolean; sessionId?: string; epoch?: number }
   | { type: 'humans'; count: number }
   /** Several humans are in the call and this turn named no agent, so nobody answers. */
   | { type: 'unaddressed' }

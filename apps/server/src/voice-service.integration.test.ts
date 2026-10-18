@@ -16,7 +16,7 @@ import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 vi.mock('./voice-room-runtime.js', () => ({ VoiceRoomRuntime: { connect: vi.fn(async (_service: unknown, _call: string, roomId: string) => ({ roomId, stopCall: vi.fn(), close: vi.fn(), park: vi.fn(), resume: vi.fn(), refresh: vi.fn(), countHumans: vi.fn(async () => {}) })) } }));
 vi.mock('livekit-server-sdk', async original => {
   const actual = await original<typeof import('livekit-server-sdk')>();
-  return { ...actual, RoomServiceClient: class { async removeParticipant() {} async deleteRoom() {} } };
+  return { ...actual, RoomServiceClient: class { async removeParticipant() {} async deleteRoom() {} async createRoom() {} } };
 });
 const H = 'a'.repeat(64), SECOND = 'd'.repeat(64), A = 'b'.repeat(64), B = 'c'.repeat(64);
 const W = '11111111-1111-4111-8111-111111111111', R = '22222222-2222-4222-8222-222222222222';
@@ -408,6 +408,7 @@ it('demonstrates workspace exhaustion ending the whole call and refusing HTTP jo
   await db.query(`UPDATE memberships SET role='owner',removed_at=NULL WHERE identity_id=ANY($1::text[])`, [[H, SECOND]]);
   const first = await service.join(R, H);
   await service.join(R, SECOND);
+  await service.leave(first.call.id, SECOND);
   const concurrent = await service.join(otherRoom, SECOND);
   const now = Date.now();
   // Seed today's exhausted budget without depending on the test's hour of day.
@@ -423,7 +424,7 @@ it('demonstrates workspace exhaustion ending the whole call and refusing HTTP jo
   const ending = service.endWorkspaceCalls(W);
   try {
     // A stuck final checkpoint in one call cannot delay another Room's eviction.
-    await vi.waitFor(() => expect(deleteRoom).toHaveBeenCalledWith(`beeline-voice-${concurrent.call.id}`));
+    await vi.waitFor(() => expect(deleteRoom).toHaveBeenCalledWith(`beeline-voice-${concurrent.call.id}-e1`));
   } finally {
     releaseClose?.(); await ending; deleteRoom.mockRestore();
   }
@@ -478,4 +479,132 @@ it('DELIVERY-2: stable request IDs deduplicate uncertain recording and delivery,
     await expect(service.reviseHuman(joined.call.id,room,H,agent,id,'replace the order',owner)).rejects.toThrow('access denied');
     expect((await db.query<{text:string}>(`SELECT text FROM messages WHERE id=$1`, [id])).rows[0]!.text).toBe('@ruby check my latest report');
   } finally { await service.leave(joined.call.id,H); await db.query(`DELETE FROM rooms WHERE id=$1`, [room]); }
+});
+
+it('CALL-OWNER-1: second devices cannot evict; takeover and reconnect fence stale cleanup and callbacks', async () => {
+  const first = await service.join(R,H,undefined,'phone');
+  const owner = {callId:first.call.id,deviceId:'phone',sessionId:first.sessionId,epoch:first.epoch!};
+  const lease = (await db.query<{runtime_owner:string}>(`SELECT runtime_owner FROM voice_calls WHERE id=$1`,[first.call.id])).rows[0]!.runtime_owner;
+  try {
+    await expect(service.join(R,H,undefined,'laptop')).rejects.toMatchObject({state:'elsewhere',owner});
+    expect(await service.sessionCurrent(first.call.id,H,first.sessionId,first.epoch!)).toBe(true);
+    const replacement = await service.join(R,H,undefined,'laptop',owner);
+    expect(replacement.epoch).toBeGreaterThan(first.epoch!);
+    expect(replacement.call.id).toBe(first.call.id);
+    const payload = JSON.parse(Buffer.from(replacement.token.split('.')[1]!,'base64url').toString());
+    expect(payload.sub).toContain(`:laptop:${replacement.epoch}`);
+    expect(payload.video.room).toBe(`beeline-voice-${first.call.id}-e2`);
+    await expect(service.join(R,H,first.call.id,'phone')).rejects.toMatchObject({state:'replaced'});
+    await service.leave(first.call.id,H,false,first.sessionId,undefined,first.epoch);
+    await service.nativeStop(first.call.id,first.stopToken);
+    const agent=(await service.agents(R,H))[0]!;
+    await expect(service.recordHuman(first.call.id,R,H,agent,'stale callback',lease,undefined,{sessionId:first.sessionId,epoch:first.epoch!})).rejects.toThrow('access denied');
+    const captured={callId:first.call.id,deviceId:'laptop',sessionId:replacement.sessionId,epoch:replacement.epoch!};
+    const reconnected=await service.join(R,H,first.call.id,'laptop',undefined,captured);
+    expect(reconnected.epoch).toBe(replacement.epoch);
+    expect(reconnected.sessionId).not.toBe(replacement.sessionId);
+    await expect(service.join(R,H,first.call.id,'laptop',undefined,captured)).rejects.toMatchObject({state:'replaced'});
+    await service.leave(first.call.id,H,false,replacement.sessionId,undefined,replacement.epoch);
+    await service.nativeStop(first.call.id,replacement.stopToken);
+    expect(await service.sessionCurrent(first.call.id,H,reconnected.sessionId,reconnected.epoch!)).toBe(true);
+    await service.leave(first.call.id,H,false,reconnected.sessionId,undefined,reconnected.epoch);
+    await service.leave(first.call.id,H,false,reconnected.sessionId,undefined,reconnected.epoch);
+    expect(await service.current(R,H)).toBeNull();
+  } finally { await service.leave(first.call.id,H); }
+});
+
+it('CALL-OWNER-1: failed retired-room deletion never restores ownership and retries before issuing tokens', async () => {
+  const first=await service.join(R,H,undefined,'phone');
+  const remove=vi.spyOn((service as any).rooms,'deleteRoom');
+  const owner={callId:first.call.id,deviceId:'phone',sessionId:first.sessionId,epoch:first.epoch!};
+  remove.mockRejectedValue(Object.assign(new Error('connection lost'),{code:'ECONNRESET'}));
+  try {
+    await expect(service.join(R,H,undefined,'laptop',owner)).rejects.toThrow('connection lost');
+    expect(remove).toHaveBeenCalledTimes(3);
+    const persisted=(await db.query<any>(`SELECT * FROM voice_account_owners WHERE identity_id=$1`,[H])).rows[0]!;
+    expect(persisted.device_id).toBe('laptop');expect(persisted.epoch).toBeGreaterThan(first.epoch!);
+    expect((await db.query<any>(`SELECT retired_transport_epochs FROM voice_calls WHERE id=$1`,[first.call.id])).rows[0].retired_transport_epochs).toEqual([1]);
+    await expect(service.join(R,H,first.call.id,'phone')).rejects.toMatchObject({state:'replaced'});
+    remove.mockResolvedValue(undefined);
+    const retry=await service.join(R,H,first.call.id,'laptop');
+    expect(retry.epoch).toBe(persisted.epoch);
+    expect((await db.query<any>(`SELECT retired_transport_epochs FROM voice_calls WHERE id=$1`,[first.call.id])).rows[0].retired_transport_epochs).toEqual([]);
+  } finally {remove.mockRestore();await service.leave(first.call.id,H);}
+});
+
+it('CALL-OWNER-1: account acquisition serializes across Rooms and logout is idempotent', async()=>{
+  const room='56565656-5656-4565-8565-565656565656';
+  await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Other owner room')`,[room,W]);
+  for(const who of [H,A]) await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,[W,room,who]);
+  try {
+    const results=await Promise.allSettled([service.join(R,H,undefined,'phone'),service.join(room,H,undefined,'laptop')]);
+    expect(results.filter(r=>r.status==='fulfilled')).toHaveLength(1);
+    expect(results.filter(r=>r.status==='rejected')).toHaveLength(1);
+    const active=(await db.query<any>(`SELECT * FROM voice_account_owners WHERE identity_id=$1`,[H])).rows[0];
+    await service.logout(H,'other-device');
+    expect(await service.sessionCurrent(active.call_id,H,active.session_id,active.epoch)).toBe(true);
+    await service.logout(H,active.device_id);await service.logout(H,active.device_id);
+    expect(await service.current(R,H)).toBeNull();expect(await service.current(room,H)).toBeNull();
+  } finally {await service.leave((await service.current(R,H))?.id??room,H);await db.query('DELETE FROM rooms WHERE id=$1',[room]);}
+});
+
+it('CALL-OWNER-1: migration adopts an existing call and fences the legacy transport on reconnect', async()=>{
+  const joined=await service.join(R,H,undefined,'phone');
+  await db.query(`DELETE FROM voice_account_owners WHERE identity_id=$1`,[H]);
+  await db.query(`UPDATE voice_participants SET ownership_epoch=0,device_id='',rtc_identity='' WHERE call_id=$1`,[joined.call.id]);
+  await db.query(`UPDATE voice_calls SET transport_epoch=0,transport_ready_epoch=0 WHERE id=$1`,[joined.call.id]);
+  const {VOICE_SCHEMA}=await import('./voice-schema.js');
+  await db.query(VOICE_SCHEMA);
+  try {
+    await expect(service.join(R,H,undefined,'laptop')).rejects.toMatchObject({state:'elsewhere'});
+    const restored=await service.join(R,H,joined.call.id,'phone');
+    expect(restored.epoch).toBe(2);
+    expect(JSON.parse(Buffer.from(restored.token.split('.')[1]!,'base64url').toString()).video.room).toBe(`beeline-voice-${joined.call.id}-e1`);
+    await service.leave(joined.call.id,H,false,joined.sessionId,undefined,joined.epoch);
+    expect(await service.sessionCurrent(joined.call.id,H,restored.sessionId,restored.epoch!)).toBe(true);
+  } finally {await service.leave(joined.call.id,H);}
+});
+
+it('CALL-OWNER-1: hang-up during credential issuance cannot issue a token into another human\'s call',async()=>{
+  const other=await service.join(R,SECOND,undefined,'listener');
+  const prepare=service.prepareTransport.bind(service);
+  const spy=vi.spyOn(service,'prepareTransport').mockImplementationOnce(async id=>{
+    await prepare(id);
+    const captured=(await db.query<any>('SELECT * FROM voice_account_owners WHERE identity_id=$1',[H])).rows[0];
+    await service.leave(id,H,true,captured.session_id,undefined,captured.epoch);
+  });
+  try{
+    await expect(service.join(R,H,undefined,'phone')).rejects.toMatchObject({state:'replaced'});
+    expect((await service.current(R,SECOND))?.participants.map(p=>p.pubkey)).toEqual([SECOND]);
+  }finally{spy.mockRestore();await service.leave(other.call.id,SECOND);}
+});
+
+it('CALL-OWNER-1: recovery ends an empty legacy call instead of keeping a ghost call card',async()=>{
+  const joined=await service.join(R,H,undefined,'phone');
+  await db.query('UPDATE voice_participants SET left_at=now() WHERE call_id=$1',[joined.call.id]);
+  await service.recover();
+  expect(await service.current(R,H)).toBeNull();
+  const room=await new PhoneService(db,'http://proof').readRoom(R,H);
+  expect(room?.messages.find(m=>m.voiceCall?.id===joined.call.id)?.presentation).toBe('system');
+});
+
+it('CALL-OWNER-1: cross-Room takeover retires only the old transport and preserves its other human',async()=>{
+  const target='67676767-6767-4767-8767-676767676767';
+  await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Takeover destination')`,[target,W]);
+  for(const who of [H,A])await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,[W,target,who]);
+  const phone=await service.join(R,H,undefined,'phone');
+  const listener=await service.join(R,SECOND,undefined,'listener');
+  try{
+    await expect(service.join(target,H,undefined,'laptop')).rejects.toMatchObject({state:'elsewhere'});
+    const moved=await service.join(target,H,undefined,'laptop',{callId:phone.call.id,deviceId:'phone',sessionId:phone.sessionId,epoch:phone.epoch!});
+    expect(moved.call.id).not.toBe(phone.call.id);
+    expect((await service.current(R,SECOND))?.participants.map(p=>p.pubkey)).toEqual([SECOND]);
+    expect((await db.query<any>('SELECT transport_epoch FROM voice_calls WHERE id=$1',[phone.call.id])).rows[0].transport_epoch).toBe(2);
+    await service.nativeStop(phone.call.id,phone.stopToken);
+    expect((await service.current(target,H))?.id).toBe(moved.call.id);
+    const reconnected=await service.join(R,SECOND,listener.call.id,'listener');
+    expect(reconnected.epoch).toBe(listener.epoch);
+    expect(JSON.parse(Buffer.from(reconnected.token.split('.')[1]!,'base64url').toString()).video.room).toBe(`beeline-voice-${phone.call.id}-e2`);
+    await service.leave(moved.call.id,H);
+  }finally{await service.leave(phone.call.id,SECOND);await db.query('DELETE FROM rooms WHERE id=$1',[target]);}
 });

@@ -222,6 +222,12 @@ export class TokenAuth {
     });
   }
 
+  async phoneSession(refreshToken: string): Promise<{ identityId: string; deviceId: string } | undefined> {
+    const row = (await this.database.query<{ identity_id: string; family_id: string }>(
+      'SELECT identity_id,family_id FROM phone_sessions WHERE refresh_hash=$1', [tokenHash(refreshToken)])).rows[0];
+    return row ? { identityId: row.identity_id, deviceId: row.family_id } : undefined;
+  }
+
   /** Revoke only the presenting device session; repeated sign-out is harmless. */
   async revokePhoneSession(refreshToken: string): Promise<void> {
     await this.database.transaction(async database => {
@@ -248,14 +254,17 @@ export class TokenAuth {
   }
 
   async authenticatePhone(token: string): Promise<string | null> {
+    return (await this.authenticatePhoneContext(token))?.identityId ?? null;
+  }
+
+  /** One authentication read also captures the stable device family for calls. */
+  async authenticatePhoneContext(token: string): Promise<{identityId: string; deviceId: string} | null> {
     const hash = tokenHash(token);
-    const result = await this.database.query<{ identity_id: string; token_hash: string }>(
-      `SELECT identity_id, token_hash FROM phone_access_tokens
-       WHERE token_hash = $1 AND expires_at > $2`,
-      [hash, this.now()],
-    );
+    const result = await this.database.query<{ identity_id: string; token_hash: string; family_id: string }>(
+      `SELECT identity_id,token_hash,family_id FROM phone_access_tokens WHERE token_hash=$1 AND expires_at>$2`,
+      [hash, this.now()]);
     const row = result.rows[0];
-    return row && sameHash(row.token_hash, hash) ? row.identity_id : null;
+    return row && sameHash(row.token_hash, hash) ? {identityId: row.identity_id, deviceId: row.family_id} : null;
   }
 
   async createDaemonExchange(

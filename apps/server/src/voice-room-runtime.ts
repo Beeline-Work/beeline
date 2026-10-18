@@ -1,3 +1,5 @@
+import { retryVoice } from './voice-retry.js';
+import { voiceRoomName, voiceRtcAccount } from './voice-ownership.js';
 import { captureServerError } from './sentry.js';
 import { VoiceAudioMeter, VOICE_WARNING_MS } from './voice-budget.js';
 import { randomUUID } from 'node:crypto';
@@ -49,26 +51,6 @@ export function voicePlaybackEcho(transcript: string, playback: string): boolean
   return spoken.some((_, at) => words.every((word, i) => spoken[at + i] === word));
 }
 
-/** Only known transport/database failures are retryable, never arbitrary operations. */
-async function retryVoice<T>(work: () => Promise<T>, signal?: AbortSignal): Promise<T> {
-  for (let attempt = 0; ; attempt++) {
-    signal?.throwIfAborted();
-    try { return await work(); } catch (error) {
-      const code = (error as { code?: string; cause?: { code?: string } })?.code ??
-        (error as { cause?: { code?: string } })?.cause?.code;
-      const transient = !!code && /^(08|40|53|57P0|ECONN|ETIMEDOUT|EAI_AGAIN|UND_ERR)/.test(code) ||
-        error instanceof Error && /^(Connection terminated (unexpectedly|due to connection timeout)|Connection ended unexpectedly)$/.test(error.message);
-      if (attempt === 2 || !transient) throw error;
-      await new Promise<void>((resolve, reject) => {
-        const abort = () => { clearTimeout(timer); reject(signal?.reason); };
-        const timer = setTimeout(() => { signal?.removeEventListener('abort', abort); resolve(); },
-          [250, 1000][attempt]! * (0.8 + Math.random() * 0.4));
-        signal?.addEventListener('abort', abort, { once: true });
-      });
-    }
-  }
-}
-
 /** One lease-bound call runtime. Real agents continue outside this audio turn. */
 export class VoiceRoomRuntime {
   private readonly room = new Room();
@@ -107,6 +89,10 @@ export class VoiceRoomRuntime {
   private reportQueue = Promise.resolve();
   private readonly queuedReports = new Set<string>();
   private readonly history = new Map<string, { role: 'user' | 'assistant'; content: string }[]>();
+  private readonly rtcIdentities = new Map<string, string>();
+  private readonly sessions = new Map<string, { sessionId: string; epoch: number }>();
+  private transportEpoch = 0;
+  private remote(human: string) { return this.room.remoteParticipants.get(this.rtcIdentities.get(human) ?? human); }
   private readonly missingSince = new Map<string, number>();
   private constructor(private readonly service: VoiceService, readonly callId: string, readonly roomId: string, private readonly leaseOwner: string) {}
 
@@ -140,6 +126,7 @@ export class VoiceRoomRuntime {
     } catch (error) { await runtime.close(); throw error; }
   }
   private async start() {
+    this.transportEpoch = (await this.service.db.query<{transport_epoch: number}>('SELECT transport_epoch FROM voice_calls WHERE id=$1', [this.callId])).rows[0]?.transport_epoch ?? 0;
     this.workspaceId = await this.retry(() => this.service.workspaceId(this.roomId));
     const budget = await this.retry(() => this.service.budget.read(this.workspaceId));
     this.meter = new VoiceAudioMeter(this.service.budget, this.callId, this.leaseOwner, this.workspaceId, budget,
@@ -148,45 +135,56 @@ export class VoiceRoomRuntime {
       }, message => console.warn('[voice-budget]', message));
     const token = new AccessToken(this.service.config.apiKey, this.service.config.apiSecret,
       { identity: `beeline-voice-${this.callId}`, ttl: '1h', metadata: JSON.stringify({ kind: 'transport' }) });
-    token.addGrant({ roomJoin: true, room: `beeline-voice-${this.callId}`, canPublish: true,
+    token.addGrant({ roomJoin: true, room: voiceRoomName(this.callId, this.transportEpoch), canPublish: true,
       canSubscribe: true, canPublishData: true });
     this.room.on(RoomEvent.TrackSubscribed, (track, _publication, participant) => {
-      if (track.kind === TrackKind.KIND_AUDIO) this.task(() => this.listen(track, participant), participant.identity);
+      if (track.kind === TrackKind.KIND_AUDIO) this.task(() => this.listen(track, participant), voiceRtcAccount(participant.identity));
     });
     this.room.on(RoomEvent.TrackUnsubscribed, (track, _pub, participant) => this.task(() => {
-      if (this.inputs.get(participant.identity)?.track === track) this.stopInput(participant.identity);
-    }, participant.identity));
+      if (this.inputs.get(voiceRtcAccount(participant.identity))?.track === track) this.stopInput(voiceRtcAccount(participant.identity));
+    }, voiceRtcAccount(participant.identity)));
     this.room.on(RoomEvent.ParticipantDisconnected, participant => this.task(() => {
       if (this.closed) return;
-      if (this.inputs.get(participant.identity)?.participant === participant) this.stopInput(participant.identity);
+      if (this.inputs.get(voiceRtcAccount(participant.identity))?.participant === participant) this.stopInput(voiceRtcAccount(participant.identity));
       // A newer device with the same Beeline identity can replace this RTC
       // participant. Do not let the old socket remove its successor.
-      if (!this.room.remoteParticipants.has(participant.identity) && !this.missingSince.has(participant.identity))
-        this.missingSince.set(participant.identity, performance.now());
-    }, participant.identity));
+      if (!this.room.remoteParticipants.has(participant.identity) && !this.missingSince.has(voiceRtcAccount(participant.identity)))
+        this.missingSince.set(voiceRtcAccount(participant.identity), performance.now());
+    }, voiceRtcAccount(participant.identity)));
     this.room.on(RoomEvent.DataReceived, (bytes, participant, _kind, topic) => {
       if (!participant || topic !== VOICE_DATA_TOPIC || bytes.length > 2048) return;
       this.task(async () => {
         const data = JSON.parse(new TextDecoder().decode(bytes)) as VoiceSignal;
         if (data.type !== 'target' && data.type !== 'resume' && data.type !== 'park') return;
-        await this.retry(() => this.service.access(this.roomId, participant.identity));
+        const captured = await this.service.rtcOwner(this.callId, participant.identity);
+        if (!captured || data.epoch !== undefined && data.epoch !== captured.epoch ||
+          data.sessionId !== undefined && data.sessionId !== captured.sessionId) return;
+        this.rtcIdentities.set(voiceRtcAccount(participant.identity), participant.identity);
+        this.sessions.set(voiceRtcAccount(participant.identity), captured);
+        await this.retry(() => this.service.access(this.roomId, voiceRtcAccount(participant.identity)));
         if (data.type === 'target') {
-          const allowed = await this.retry(() => this.service.agents(this.roomId, participant.identity));
+          const allowed = await this.retry(() => this.service.agents(this.roomId, voiceRtcAccount(participant.identity)));
           if (!allowed.some(a => a.id === data.agentId)) return;
-          this.targets.set(participant.identity, data.agentId);
-          if (data.tap) this.assembler.address(participant.identity, data.agentId);
+          this.targets.set(voiceRtcAccount(participant.identity), data.agentId);
+          if (data.tap) this.assembler.address(voiceRtcAccount(participant.identity), data.agentId);
         }
         if (data.type === 'target') { await this.refresh(); return; }
         // HTTP may land on another server; the retained RTC channel reaches
         // the owner. Durable session/state checks fence queued old packets.
         if (typeof data.sessionId !== 'string' || !(await this.retry(() => this.service.db.query(`SELECT 1 FROM voice_participants
           WHERE call_id=$1 AND identity_id=$2 AND session_id=$3 AND left_at IS NULL
-          AND (parked_at IS NOT NULL)=$4`, [this.callId, participant.identity, data.sessionId, data.type === 'park']))).rowCount) return;
+          AND (parked_at IS NOT NULL)=$4`, [this.callId, voiceRtcAccount(participant.identity), data.sessionId, data.type === 'park']))).rowCount) return;
         if (data.type === 'park') return;
-        else await this.resume(participant.identity);
-      }, participant.identity);
+        else await this.resume(voiceRtcAccount(participant.identity));
+      }, voiceRtcAccount(participant.identity));
     });
-    this.room.on(RoomEvent.ParticipantConnected, () => { this.task(() => this.countHumans(true)); });
+    this.room.on(RoomEvent.ParticipantConnected, participant => { this.task(async () => {
+      const captured = await this.service.rtcOwner(this.callId, participant.identity);
+      if (!captured) return;
+      this.rtcIdentities.set(voiceRtcAccount(participant.identity), participant.identity);
+      this.sessions.set(voiceRtcAccount(participant.identity), captured);
+      await this.countHumans(true);
+    }); });
     this.room.on(RoomEvent.Disconnected, () => { if (!this.closed) this.task(() => this.close()); });
     await this.room.connect(this.service.config.url, await token.toJwt(), { autoSubscribe: true, dynacast: false });
     this.shutdown.signal.throwIfAborted();
@@ -214,10 +212,14 @@ export class VoiceRoomRuntime {
     // A visual countdown must not start heartbeat work or count as activity.
     if (signal.type !== 'stop' && signal.type !== 'ending') this.touch();
     if (!this.closed) await this.room.localParticipant?.publishData(new TextEncoder().encode(JSON.stringify(signal)),
-      { reliable: true, topic: VOICE_DATA_TOPIC, ...(human ? { destination_identities: [human] } : {}) });
+      { reliable: true, topic: VOICE_DATA_TOPIC, ...(human ? { destination_identities: [this.rtcIdentities.get(human) ?? human] } : {}) });
   }
   private async listen(track: RemoteTrack, participant: RemoteParticipant) {
-    const human = participant.identity;
+    const human = voiceRtcAccount(participant.identity);
+    const captured = await this.service.rtcOwner(this.callId, participant.identity);
+    if (!captured) return;
+    this.rtcIdentities.set(human, participant.identity);
+    this.sessions.set(human, captured);
     if (this.inputs.get(human)?.track === track) return;
     this.stopInput(human);
     // A new device/track needs its current countdown even within the same unit.
@@ -262,6 +264,7 @@ export class VoiceRoomRuntime {
       if (budget.remainingMs <= 0) { this.stopInput(human); return; }
       const hints = agents.flatMap(agent => [agent.name, agent.handle]);
       stt = await this.service.config.stt(event => { this.task(async () => {
+      if (!await this.service.sessionCurrent(this.callId, human, captured.sessionId, captured.epoch)) return;
       if (this.inputVersions.get(human) !== version ||
           event.turn_index <= (this.turnIndices.get(human) ?? -1)) return;
       const recent = this.recentSpeech.filter(spoken => spoken.until > performance.now());
@@ -386,12 +389,12 @@ export class VoiceRoomRuntime {
     if (!await this.renewLease()) return;
     // Token refresh does not re-grant Beeline membership: remove a retired/removed member.
     for (const participant of this.room.remoteParticipants.values()) {
-      this.missingSince.delete(participant.identity);
-      try { await this.retry(() => this.service.access(this.roomId, participant.identity)); }
+      this.missingSince.delete(voiceRtcAccount(participant.identity));
+      try { await this.retry(() => this.service.access(this.roomId, voiceRtcAccount(participant.identity))); }
       catch (error) {
         if (error instanceof Error && error.message === 'voice call access denied')
-          await this.service.leave(this.callId, participant.identity, true);
-        else await this.failure(error, participant.identity);
+          await this.service.leave(this.callId, voiceRtcAccount(participant.identity), true, this.sessions.get(voiceRtcAccount(participant.identity))?.sessionId, undefined, this.sessions.get(voiceRtcAccount(participant.identity))?.epoch);
+        else await this.failure(error, voiceRtcAccount(participant.identity));
       }
     }
     await this.sweepMissingParticipants();
@@ -401,18 +404,18 @@ export class VoiceRoomRuntime {
 
   private async sweepMissingParticipants() {
     if (this.closed) return;
-    const missing = await this.retry(() => this.service.db.query<{ identity_id: string }>(
-      `SELECT identity_id FROM voice_participants WHERE call_id=$1 AND left_at IS NULL
+    const missing = await this.retry(() => this.service.db.query<{ identity_id: string; session_id: string; ownership_epoch: number }>(
+      `SELECT identity_id,session_id,ownership_epoch FROM voice_participants WHERE call_id=$1 AND left_at IS NULL
         AND NOT identity_id=ANY($2::text[])`,
-      [this.callId, [...this.room.remoteParticipants.keys()]]));
+      [this.callId, [...this.room.remoteParticipants.keys()].map(voiceRtcAccount)]));
     const absent = new Set(missing.rows.map(participant => participant.identity_id));
     for (const identity of this.missingSince.keys()) if (!absent.has(identity)) this.missingSince.delete(identity);
     for (const participant of missing.rows) {
       const since = this.missingSince.get(participant.identity_id);
       if (since === undefined) this.missingSince.set(participant.identity_id, performance.now());
       // Allow RTC's retry window and a fresh mobile join after a radio handoff.
-      else if (performance.now() - since >= 120_000 && !this.room.remoteParticipants.has(participant.identity_id)) {
-        await this.service.leave(this.callId, participant.identity_id, true);
+      else if (performance.now() - since >= 120_000 && !this.remote(participant.identity_id)) {
+        await this.service.leave(this.callId, participant.identity_id, true, participant.session_id, undefined, participant.ownership_epoch);
         this.missingSince.delete(participant.identity_id);
       }
     }
@@ -506,6 +509,7 @@ export class VoiceRoomRuntime {
   }
 
   async utterance(human: string, fragment: string, startedAt = performance.now(), interrupts = true) {
+    const captured = this.sessions.get(human);
     this.markCallActivity();
     if (!interrupts && this.speaking && await this.retry(() => this.service.humanCount(this.callId)) > 1 &&
         !voiceNameOnly(fragment, await this.retry(() => this.service.agents(this.roomId, human)))) return;
@@ -575,8 +579,8 @@ export class VoiceRoomRuntime {
         resolveSource(''); return;
       }
       if (!retry) {
-        if (sourceId) await this.retry(() => this.service.reviseHuman(this.callId, this.roomId, human, agent, sourceId, request.text, this.leaseOwner));
-        else sourceId = await this.retry(() => this.service.recordHuman(this.callId, this.roomId, human, agent, request.text, this.leaseOwner, request.id));
+        if (sourceId) await this.retry(() => this.service.reviseHuman(this.callId, this.roomId, human, agent, sourceId, request.text, this.leaseOwner, captured));
+        else sourceId = await this.retry(() => this.service.recordHuman(this.callId, this.roomId, human, agent, request.text, this.leaseOwner, request.id, captured));
         resolveSource(sourceId);
       }
       timing('human_committed');
@@ -602,7 +606,7 @@ export class VoiceRoomRuntime {
       if (reply.order) {
         request.state = 'delivering';
         try {
-          await this.retry(() => this.service.dispatch(this.callId, sourceId, agent.id));
+          await this.retry(() => this.service.dispatch(this.callId, sourceId, agent.id, captured));
         } catch (error) { this.assembler.retainFailure(human, request); throw error; }
         delivered = true;
         timing('delivery_committed');
@@ -665,7 +669,7 @@ export class VoiceRoomRuntime {
          WHERE o.call_id=$1 AND o.spoken_message_id IS NULL AND m.presentation='message' AND m.deleted_at IS NULL
          ORDER BY o.source_message_id,m.created_at DESC`, [this.callId, this.roomId]));
       for (const report of reports.rows) {
-        if (!this.room.remoteParticipants.has(report.human_id)) continue;
+        if (!this.remote(report.human_id)) continue;
         if (this.queuedReports.has(report.source_message_id)) continue;
         this.queuedReports.add(report.source_message_id);
         this.reportQueue = this.reportQueue.catch(() => {}).then(async () => {
@@ -756,7 +760,7 @@ export class VoiceRoomRuntime {
   get isClosed() { return this.closed; }
 
   async resume(human: string) {
-    const participant = this.room.remoteParticipants.get(human);
+    const participant = this.remote(human);
     if (!participant) throw new Error('voice transport disconnected');
     await this.heartbeat();
     for (const publication of participant.trackPublications.values()) {

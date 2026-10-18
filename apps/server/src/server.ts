@@ -1,3 +1,5 @@
+import { VoiceOwnershipError } from './voice-ownership.js';
+import { readVoiceOwner } from '@beeline/api-contract/phone';
 import { VoiceBudgetExceeded } from './voice-budget.js';
 import { readCompanyLogo } from './company-logos.js';
 import { captureServerError } from './sentry.js';
@@ -1439,12 +1441,17 @@ export function createBeelineServer(options: ServerOptions): Server {
   return server;
 }
 
+const phoneDevices = new WeakMap<IncomingMessage,string>();
 async function phoneIdentity(
   request: IncomingMessage,
   options: ServerOptions,
 ): Promise<string | null> {
   const value = bearer(request.headers.authorization);
-  return value ? options.auth.authenticatePhone(value) : null;
+  if (!value) return null;
+  if (typeof options.auth.authenticatePhoneContext !== 'function') return options.auth.authenticatePhone(value);
+  const context = await options.auth.authenticatePhoneContext(value);
+  if (context) phoneDevices.set(request, context.deviceId);
+  return context?.identityId ?? null;
 }
 async function daemonIdentity(
   request: IncomingMessage,
@@ -1953,7 +1960,9 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
   if (method === 'POST' && url.pathname === '/v1/auth/logout') {
     const input = await body(request);
     if (typeof input.refreshToken !== 'string') throw new Error('refreshToken is required');
+    const signingOut = await options.auth.phoneSession(input.refreshToken);
     await options.auth.revokePhoneSession(input.refreshToken);
+    if (signingOut && options.voice) await options.voice.logout(signingOut.identityId, signingOut.deviceId);
     json(response, 200, { signedOut: true });
     return;
   }
@@ -2319,14 +2328,22 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     return;
   }
 
-  const voiceMatch = url.pathname.match(/^\/v1\/phone\/voice\/([0-9a-f-]{36})\/(current|join|leave|idle|state|resume)$/);
+  const voiceMatch = url.pathname.match(/^\/v1\/phone\/voice\/([0-9a-f-]{36})\/(current|join|takeover|reconnect|leave|idle|state|resume)$/);
   if (voiceMatch) {
     if (!options.voice) { json(response, 503, { error: 'Voice mode is unavailable' }); return; }
     if (voiceMatch[2] === 'current' && method === 'GET') {
       json(response, 200, await options.voice.current(voiceMatch[1]!, identityId!));
-    } else if (voiceMatch[2] === 'join' && method === 'POST') {
-      try { json(response, 200, await options.voice.join(voiceMatch[1]!, identityId!, (await body(request, true)).expectedCallId as string | undefined)); }
+    } else if (['join', 'takeover', 'reconnect'].includes(voiceMatch[2]!) && method === 'POST') {
+      try {
+        const input = await body(request, true);
+        const deviceId = phoneDevices.get(request) ?? 'legacy';
+        const captured = readVoiceOwner(input.owner);
+        if (voiceMatch[2] !== 'join' && !captured) { json(response, 400, { error: 'A captured call owner is required' }); return; }
+        json(response, 200, await options.voice.join(voiceMatch[1]!, identityId!, input.expectedCallId as string | undefined,
+          deviceId, voiceMatch[2] === 'takeover' ? captured : undefined, voiceMatch[2] === 'reconnect' ? captured : undefined));
+      }
       catch (error) {
+        if (error instanceof VoiceOwnershipError) { json(response, 409, { error: error.message, code: 'voice-owner-' + error.state, state: error.state, ...(error.owner ? { owner: error.owner } : {}) }); return; }
         if (!(error instanceof VoiceBudgetExceeded)) throw error;
         json(response, 429, { error: error.message, code: 'voice-daily-limit', budget: error.budget });
       }
@@ -2338,7 +2355,11 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     } else if (voiceMatch[2] === 'resume' && method === 'POST') {
       await options.voice.resume(voiceMatch[1]!, identityId!, (await body(request, true)).sessionId as string); json(response, 200, { resumed: true });
     } else if (voiceMatch[2] === 'leave' && method === 'POST') {
-      await options.voice.leave(voiceMatch[1]!, identityId!, false, (await body(request, true)).sessionId as string | undefined); json(response, 200, { left: true });
+      const input = await body(request, true);
+      if (typeof input.sessionId !== 'string' || (input.epoch !== undefined && (!Number.isSafeInteger(input.epoch) || Number(input.epoch) < 1))) {
+        json(response, 400, { error: 'A captured session is required' }); return;
+      }
+      await options.voice.leave(voiceMatch[1]!, identityId!, false, input.sessionId, undefined, input.epoch as number | undefined); json(response, 200, { left: true });
     } else { json(response, 405, { error: 'method_not_allowed' }); }
     return;
   }

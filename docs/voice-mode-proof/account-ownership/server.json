@@ -1,0 +1,38 @@
+{
+  "reproduction": "CALL-OWNER-1",
+  "baseline": false,
+  "latenciesMs": [
+    381.0747430000001
+  ],
+  "newRoomAndDmAndRuntime": true,
+  "database": "PostgreSQL",
+  "crossRoomAtomic": true,
+  "initialTokenTtlSeconds": 10,
+  "reconnectAfterInitialTokenExpiry": true,
+  "replays": [
+    {
+      "delay": 0,
+      "refreshed": false,
+      "rejected": true
+    },
+    {
+      "delay": 0,
+      "refreshed": true,
+      "rejected": true
+    },
+    {
+      "delay": 6000,
+      "refreshed": false,
+      "rejected": true
+    },
+    {
+      "delay": 6000,
+      "refreshed": true,
+      "rejected": true
+    }
+  ],
+  "staleAudioFrames": 0,
+  "replacedTerminal": true,
+  "reconnectRetainedEpoch": true,
+  "staleCleanupSafe": true
+}

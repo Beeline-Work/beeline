@@ -1,0 +1,11 @@
+{
+  "reproduction": "CALL-OWNER-1",
+  "baseline": true,
+  "latenciesMs": [
+    509.0900139999999
+  ],
+  "newRoomAndDmAndRuntime": true,
+  "ordinarySecondJoinStatus": 200,
+  "ordinarySecondJoinReplacedSession": true,
+  "cachedReplayStaleAudioFrames": 47
+}

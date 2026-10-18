@@ -142,6 +142,42 @@ reserve one runtime promise before database work. Each runtime attempt has a uni
 lease token; stale cleanup and input cannot release or dispatch through its successor.
 Duplicate microphone subscriptions and final STT events cannot start a second stream.
 
+## Account ownership
+
+The server binds one active call to each account's authenticated device family,
+participant session and monotonically increasing ownership epoch. Another device's
+ordinary join returns HTTP 409 `voice-owner-elsewhere`, with a validated owner tuple;
+it cannot replace the first device. Explicit `POST /voice/:roomId/takeover` supplies
+that tuple as `owner` and compares it under the account lock. A replaced device's
+reconnect join returns terminal `voice-owner-replaced` without credentials.
+
+`POST /voice/:roomId/reconnect` compares the captured `owner`, retains its ownership
+epoch and rotates the participant session. Existing clients' same-device reconnect
+join remains supported through their authenticated device family. Cleanup compares
+its captured session/epoch; native Stop embeds both in its signed capability. The
+API contract supplies `VoiceOwner`, ownership-state and join validators for the
+mobile controller. RTC identities bind account, device and ownership epoch;
+legacy packets inherit that fence from their signed transport identity.
+
+On takeover, the ownership transaction commits first and records retired transport
+epochs. The server retries deleting those rooms through the call error policy,
+creates the new room explicitly, then issues credentials. Failure never restores
+an old epoch and withholds new credentials; recovery retries the durable pending
+cleanup. `voiceRoomName` owns all room names. LiveKit must set `room.auto_create:
+false`, so cached original and refreshed publishing tokens cannot recreate a
+retired room. Roll out explicit server room creation before disabling automatic
+creation, and apply the LiveKit setting before exposing takeover to clients. This
+change does not deploy either service. The runtime and other existing clients reconnect to the same durable
+call in its new RTC room. This briefly interrupts the call only on takeover;
+ordinary join, reconnect and turns retain the transport epoch.
+
+Application-issued participant tokens last ten seconds; LiveKit's own connected
+refresh can extend them. Room rotation, rather than expiry or a delayed webhook,
+is the publishing fence. Legacy persisted calls are adopted during migration;
+their first authenticated reconnect binds the device and retires the old transport.
+[Ownership proof](voice-mode-proof/account-ownership/README.md) records server,
+PostgreSQL, token-replay, paired latency and Android takeover results.
+
 ## Deployment
 
 The self-hosted Fly app is `beeline-voice-livekit` in `iad`, beside

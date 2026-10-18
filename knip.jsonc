@@ -27,6 +27,8 @@
         "scripts/prove-voice-mode.ts",
         "scripts/prove-voice-call-errors.ts",
         "scripts/prove-voice-delivery.ts",
+        "scripts/prove-voice-ownership.ts",
+        "scripts/prove-voice-ownership-android.ts",
         "scripts/prove-voice-budget.ts",
         "scripts/prove-voice-multiparty.ts",
         "scripts/prove-multi-human-silence.ts",
@@ -79,6 +81,7 @@
         // The native status fixture is bundled through Gradle's entryFile override.
         "scripts/status-band-native-entry.js",
         "scripts/unread-controls-native-proof.tsx",
+        "scripts/voice-owner-native-proof.tsx",
         "scripts/jump-disc-proof.mjs",
         "scripts/reply-recovery-proof.mjs",
         "scripts/workspace-picture-clip-proof.tsx",

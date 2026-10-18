@@ -1,0 +1,11 @@
+{
+  "base": "7f127c49c",
+  "sha256": {
+    "apps/mobile/android/app/build/outputs/apk/release/app-release.apk": "a0c8e9f52e9ea2ca47fafa88b90bb35f62b7cd40d9c3d3c55268f14d47c13153",
+    "apps/server/dist/voice-service.js": "38122e996c49eda29550cda461d24a13dddb58318e185b47d4057186c837f7e5",
+    "apps/server/dist/voice-room-runtime.js": "5d2956d3520efaaffc614a92bbe84d78a69df8a8f3b2243b0980e3467ae8a264",
+    "apps/server/dist/server.js": "69d7f74653b0c3c47874e84f6dc897e1238fab388c5cb99192d57f6f1da5914f",
+    "apps/server/dist/auth.js": "9cf0b54d98411cc4b98aeb1254c54b9ea29bab5b903dc90fd8c50736ce1ba9b2"
+  },
+  "note": "Disposable modified-source fixture; base stamp is not the implementation commit."
+}

@@ -21,6 +21,10 @@ vi.mock('@livekit/rtc-node', () => ({
   LocalAudioTrack: { createAudioTrack: vi.fn() }, TrackPublishOptions: class {},
   TrackSource: { SOURCE_MICROPHONE: 1 }, TrackKind: { KIND_AUDIO: 1 }, AudioFrame: class {},
 }));
+vi.mock('livekit-server-sdk', async original => {
+  const actual = await original<typeof import('livekit-server-sdk')>();
+  return { ...actual, RoomServiceClient: class { async createRoom() {} async deleteRoom() {} async removeParticipant() {} } };
+});
 import { VoiceRoomRuntime, confirmedVoiceSpeech, voiceInterrupt, voicePlaybackEcho } from './voice-room-runtime.js';
 import { VoiceQuotaError } from './voice-providers.js';
 import { VoiceService as RealVoiceService } from './voice-service.js';
@@ -73,8 +77,8 @@ it('retains an absent RTC participant through a short radio handoff and resets t
   const { service } = conversationService(1);
   const leave = vi.fn(async () => {});
   service.db.query.mockImplementation(async (sql: string) => ({ rowCount: 1,
-    rows: sql.includes('SELECT identity_id FROM voice_participants') && !state.room.remoteParticipants.has('human')
-      ? [{ identity_id: 'human' }] : [] as any }));
+    rows: sql.includes('SELECT identity_id,session_id,ownership_epoch FROM voice_participants') && !state.room.remoteParticipants.has('human')
+      ? [{ identity_id: 'human', session_id:'session', ownership_epoch:1 }] : [] as any }));
   const runtime = await VoiceRoomRuntime.connect({ ...service, leave } as unknown as VoiceService, 'call', 'room');
   const tick = () => (runtime as any).heartbeat();
   try {
@@ -95,7 +99,7 @@ it('Reproduction MD-TTS-1: conversational streamed replies and delayed reports s
   const spoken: string[] = [];
   const answer = '**Hello, friend.**\n\n[Visit](https://example.com/a_(b)/details).\n\n```ts\nignore me\n```\n\nHi @jellybean.';
   let reports: any[] = [];
-  const service = { workspaceId: vi.fn(async () => 'human'), endWorkspaceCalls: vi.fn(async () => {}), callWorkState: vi.fn(async () => ({pending:false,finishedAt:0})), hasCallWork: vi.fn(async () => false), endInactive: vi.fn(async () => false), budget: { read: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), record: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), limitMs: 3600000 }, owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret',
+  const service = { rtcOwner: vi.fn(async () => ({sessionId:'session',epoch:1})), sessionCurrent: vi.fn(async()=>true), workspaceId: vi.fn(async () => 'human'), endWorkspaceCalls: vi.fn(async () => {}), callWorkState: vi.fn(async () => ({pending:false,finishedAt:0})), hasCallWork: vi.fn(async () => false), endInactive: vi.fn(async () => false), budget: { read: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), record: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), limitMs: 3600000 }, owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret',
     brain: { answer: async (_agent: unknown, _history: unknown, delta: (text: string) => void) => {
       for (const character of answer) delta(character);
       return { text: answer };
@@ -119,7 +123,7 @@ it('Reproduction MD-TTS-1: conversational streamed replies and delayed reports s
 it('cancels microphone input and sends a targeted quota signal when Flux rejects the handshake', async () => {
   const cancel = vi.fn();
   state.streams = [new ReadableStream({ cancel })];
-  const service = { workspaceId: vi.fn(async () => 'human'), endWorkspaceCalls: vi.fn(async () => {}), callWorkState: vi.fn(async () => ({pending:false,finishedAt:0})), hasCallWork: vi.fn(async () => false), endInactive: vi.fn(async () => false), budget: { read: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), record: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), limitMs: 3600000 }, owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret',
+  const service = { rtcOwner: vi.fn(async () => ({sessionId:'session',epoch:1})), sessionCurrent: vi.fn(async()=>true), workspaceId: vi.fn(async () => 'human'), endWorkspaceCalls: vi.fn(async () => {}), callWorkState: vi.fn(async () => ({pending:false,finishedAt:0})), hasCallWork: vi.fn(async () => false), endInactive: vi.fn(async () => false), budget: { read: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), record: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), limitMs: 3600000 }, owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret',
     stt: vi.fn(async () => { throw new VoiceQuotaError(); }) }, access: vi.fn(async () => {}),
     humanCount: vi.fn(async () => 1), agents: vi.fn(async () => []), db: { query: vi.fn(async () => ({ rowCount: 1, rows: [] })) },
     runtimeClosed: vi.fn() } as unknown as VoiceService;
@@ -142,6 +146,7 @@ it('buffers first microphone frames during authorization and ignores stale STT f
   const callbacks: Array<() => void> = [];
   const inputs: Array<{ send: ReturnType<typeof vi.fn>; close: ReturnType<typeof vi.fn> }> = [];
   const service = {
+    rtcOwner: vi.fn(async () => ({sessionId: 'session', epoch: 1})), sessionCurrent: vi.fn(async () => true),
     workspaceId: vi.fn(async () => 'human'), endWorkspaceCalls: vi.fn(async () => {}), callWorkState: vi.fn(async () => ({pending:false,finishedAt:0})), hasCallWork: vi.fn(async () => false), endInactive: vi.fn(async () => false), budget: { read: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), record: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), limitMs: 3600000 }, owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret',
       stt: vi.fn(async (_event, failure) => {
         callbacks.push(failure); const input = { send: vi.fn(), close: vi.fn() }; inputs.push(input); return input;
@@ -155,6 +160,7 @@ it('buffers first microphone frames during authorization and ignores stale STT f
   try {
     const human = { identity: 'human' };
     state.room.emit('track', { kind: 1 }, {}, human);
+    await vi.waitFor(() => expect(authorize).toBeDefined());
     first.enqueue({ data: new Int16Array([123, 456]) });
     expect(inputs).toHaveLength(0);
     authorize();
@@ -175,6 +181,7 @@ const roster = [
 function conversationService(humans = 2) {
   const speech = { synthesize: vi.fn(async function* () { yield new Uint8Array([200, 1, 200, 1]); }) };
   const service = {
+    rtcOwner: vi.fn(async () => ({sessionId: 'session', epoch: 1})), sessionCurrent: vi.fn(async () => true),
     workspaceId: vi.fn(async () => 'human'), endWorkspaceCalls: vi.fn(async () => {}), callWorkState: vi.fn(async () => ({pending:false,finishedAt:0})), hasCallWork: vi.fn(async () => false), endInactive: vi.fn(async () => false), budget: { read: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), record: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), limitMs: 3600000 }, owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret', stt: vi.fn(),
       brain: { answer: vi.fn(async (_agent, _history, onText) => {
         onText('First sentence. Second sentence! Third sentence.');
@@ -198,7 +205,7 @@ it('routes unnamed solo speech to the last active agent despite the initial firs
       { identity: 'human' }, undefined, 'beeline.voice.v1');
     await vi.waitFor(() => expect(service.access).toHaveBeenCalled());
     await runtime.utterance('human', 'What do you think?');
-    expect(service.recordHuman).toHaveBeenCalledWith('call', 'room', 'human', roster[1], 'What do you think?', 'owner', expect.any(String));
+    expect(service.recordHuman).toHaveBeenCalledWith('call', 'room', 'human', roster[1], 'What do you think?', 'owner', expect.any(String), {sessionId:'session',epoch:1});
     expect(service.config.brain.answer.mock.calls.at(-1)?.[0].id).toBe('goose');
   } finally { await runtime.close(); }
 });
@@ -487,6 +494,7 @@ function phantomHarness(answer = 'Hey there is the answer.') {
     } finally { removeListener(); note(`TTS stop: ${text}`); }
   }) };
   const service = {
+    rtcOwner: vi.fn(async () => ({sessionId: 'session', epoch: 1})), sessionCurrent: vi.fn(async () => true),
     workspaceId: vi.fn(async () => 'human'), endWorkspaceCalls: vi.fn(async () => {}), callWorkState: vi.fn(async () => ({pending:false,finishedAt:0})), hasCallWork: vi.fn(async () => false), endInactive: vi.fn(async () => false), budget: { read: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), record: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), limitMs: 3600000 }, owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret',
       stt: vi.fn(async (onEvent: typeof receive) => { receive = onEvent; return { send() {}, close() {} }; }),
       brain: { answer: vi.fn(async (_agent: unknown, history: readonly { content: string }[], onText: (text: string) => void, _signal: AbortSignal) => {
@@ -663,7 +671,7 @@ it('Reproduction voice-name-1: switches transcript, reply and voice together and
   ];
   const recordHuman = vi.fn(async () => 'source');
   const answer = vi.fn(async () => ({ text: '' }));
-  const service = { workspaceId: vi.fn(async () => 'human'), endWorkspaceCalls: vi.fn(async () => {}), callWorkState: vi.fn(async () => ({pending:false,finishedAt:0})), hasCallWork: vi.fn(async () => false), endInactive: vi.fn(async () => false), budget: { read: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), record: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), limitMs: 3600000 }, owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret', brain: { answer } },
+  const service = { rtcOwner: vi.fn(async () => ({sessionId:'session',epoch:1})), sessionCurrent: vi.fn(async()=>true), workspaceId: vi.fn(async () => 'human'), endWorkspaceCalls: vi.fn(async () => {}), callWorkState: vi.fn(async () => ({pending:false,finishedAt:0})), hasCallWork: vi.fn(async () => false), endInactive: vi.fn(async () => false), budget: { read: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), record: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), limitMs: 3600000 }, owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret', brain: { answer } },
     access: vi.fn(async () => {}),
     lastActiveAgent: vi.fn(async () => undefined),
     humanCount: vi.fn(async () => 1), agents: vi.fn(async () => agents), recordHuman, recordAnswer: vi.fn(async () => {}),
@@ -693,6 +701,7 @@ it('Reproduction voice-name-1: switches transcript, reply and voice together and
 
 it('ignores legacy park and routes resume to the RTC owner only for the current session', async () => {
   const { service } = conversationService();
+  service.rtcOwner.mockResolvedValue({sessionId:'current',epoch:1});
   const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
   const resume = vi.spyOn(runtime, 'resume').mockResolvedValue(undefined);
   let parked = true;
@@ -1063,7 +1072,7 @@ it('Reproduction DELIVERY-2: dispatch retry reuses the accepted source without r
     await expect(runtime.utterance('human', 'Ruby build it')).rejects.toThrow('commit acknowledgement lost');
     expect(speech.synthesize).not.toHaveBeenCalled();
     await runtime.utterance('human', 'try again');
-    expect(service.dispatch.mock.calls).toEqual([['call', 'source', 'ruby'], ['call', 'source', 'ruby']]);
+    expect(service.dispatch.mock.calls).toEqual([['call', 'source', 'ruby', undefined], ['call', 'source', 'ruby', undefined]]);
     expect(service.config.brain.answer).toHaveBeenCalledOnce();
     expect(service.recordHuman).toHaveBeenCalledOnce();
     expect(service.reviseHuman).not.toHaveBeenCalled();
@@ -1099,7 +1108,7 @@ it.each([1200, 1500])('CONTINUATION-1: real service and phone read retain one so
     const joined = await voice.join(room, human);
     const runtime = await voice.ensureRuntime((await db.query<any>(`SELECT * FROM voice_calls WHERE id=$1`, [joined.call.id])).rows[0]);
     state.streams = [new ReadableStream()];
-    state.room.emit('track', { kind: 1 }, {}, { identity: human });
+    state.room.emit('track', { kind: 1 }, {}, { identity: JSON.parse(Buffer.from(joined.token.split('.')[1]!, 'base64url').toString()).sub });
     await vi.waitFor(() => expect(receive).toBeDefined());
     const event = (type: string, transcript: string, turn: number) => receive({ event: type, transcript, turn_index: turn, sequence_id: turn,
       words: transcript.split(' ').map((word, i) => ({ word, start: i * .2, end: (i + 1) * .2, confidence: .95 })) });
@@ -1159,7 +1168,7 @@ it('Reproduction MULTI-1: another human\'s laughter does not cancel the reply to
     receivers.get(human)!({ event, transcript, turn_index: turn, sequence_id: turn, words: words(transcript) });
   try {
     for (const human of ['starter', 'second']) {
-      state.room.emit('track', { kind: 1 }, {}, { identity: human });
+      state.room.emit('track', { kind: 1 }, {}, { identity: `${human}:legacy:1` });
       await vi.waitFor(() => expect(opened).toHaveLength(receivers.size + 1));
       receivers.set(human, opened.at(-1)!);
     }
@@ -1219,7 +1228,7 @@ it('Demonstration MULTI-1: two humans in one call both get the agent reply, with
     state.streams = [new ReadableStream(), new ReadableStream()];
     const receivers = new Map<string, (event: any) => void>();
     for (const human of [starter, second]) {
-      state.room.emit('track', { kind: 1 }, {}, { identity: human });
+      state.room.emit('track', { kind: 1 }, {}, { identity: `${human}:legacy:1` });
       await vi.waitFor(() => expect(opened).toHaveLength(receivers.size + 1));
       receivers.set(human, opened.at(-1)!);
     }
@@ -1345,7 +1354,7 @@ it('multi-human: any human interrupts a speaking agent with real speech, never w
       words: transcript.split(' ').map((word, i, all) => ({ word, start: i * seconds / all.length, end: (i + 1) * seconds / all.length, confidence: 0.95 })) });
   try {
     for (const human of ['alex', 'sam']) {
-      state.room.emit('track', { kind: 1 }, {}, { identity: human });
+      state.room.emit('track', { kind: 1 }, {}, { identity: `${human}:legacy:1` });
       await vi.waitFor(() => expect(opened).toHaveLength(receivers.size + 1));
       receivers.set(human, opened.at(-1)!);
     }
@@ -1429,7 +1438,7 @@ it('multi-human: a completed backchannel turn after an avatar tap neither interr
       words: transcript.split(' ').map((word, i, all) => ({ word, start: i * seconds / all.length, end: (i + 1) * seconds / all.length, confidence: 0.95 })) });
   try {
     for (const human of ['alex', 'sam']) {
-      state.room.emit('track', { kind: 1 }, {}, { identity: human });
+      state.room.emit('track', { kind: 1 }, {}, { identity: `${human}:legacy:1` });
       await vi.waitFor(() => expect(opened).toHaveLength(receivers.size + 1));
       receivers.set(human, opened.at(-1)!);
     }
@@ -1467,7 +1476,7 @@ it('multi-human: a short name-only completed turn does not interrupt a speaking 
       words: transcript.split(' ').map((word, i, all) => ({ word, start: i * seconds / all.length, end: (i + 1) * seconds / all.length, confidence: 0.95 })) });
   try {
     for (const human of ['alex', 'sam']) {
-      state.room.emit('track', { kind: 1 }, {}, { identity: human });
+      state.room.emit('track', { kind: 1 }, {}, { identity: `${human}:legacy:1` });
       await vi.waitFor(() => expect(opened).toHaveLength(receivers.size + 1));
       receivers.set(human, opened.at(-1)!);
     }
@@ -1531,7 +1540,8 @@ it('Reproduction PARK-LEASE-1: a nonowner resume after 25 seconds keeps the park
     const call = (await db.query<any>(`SELECT * FROM voice_calls WHERE id=$1`, [joined.call.id])).rows[0];
     const runtime = (await owner.ensureRuntime(call))!;
     state.room.remoteParticipants.clear();
-    state.room.remoteParticipants.set(human, { identity: human, trackPublications: new Map() });
+    const rtcIdentity=JSON.parse(Buffer.from(joined.token.split('.')[1]!, 'base64url').toString()).sub;
+    state.room.remoteParticipants.set(rtcIdentity, { identity: rtcIdentity, trackPublications: new Map() });
     const retainedRoom = state.room;
     const resumed = vi.spyOn(runtime, 'resume');
     const source = await owner.recordHuman(joined.call.id, room, human, (await owner.agents(room, human))[0]!, 'Work until the report is ready');
@@ -1544,7 +1554,7 @@ it('Reproduction PARK-LEASE-1: a nonowner resume after 25 seconds keeps the park
     expect(connect).toHaveBeenCalledTimes(1);
     expect(runtime.isClosed).toBe(false);
     retainedRoom.emit('data', new TextEncoder().encode(JSON.stringify({ type: 'resume', sessionId: joined.sessionId })),
-      { identity: human }, undefined, 'beeline.voice.v1');
+      { identity: rtcIdentity }, undefined, 'beeline.voice.v1');
     await vi.waitFor(() => expect(resumed).toHaveBeenCalledWith(human));
     await resumed.mock.results[0]!.value;
     expect(state.room).toBe(retainedRoom);
@@ -1579,7 +1589,8 @@ it.each(['quiet','pending','outside'])('call-wide-end-3: %s work uses one 60-sec
     const call = (await db.query<any>(`SELECT * FROM voice_calls WHERE id=$1`, [joined.call.id])).rows[0];
     const runtime = (await owner.ensureRuntime(call))!;
     state.room.remoteParticipants.clear();
-    state.room.remoteParticipants.set(human, { identity: human, trackPublications: new Map() });
+    const rtcIdentity=JSON.parse(Buffer.from(joined.token.split('.')[1]!, 'base64url').toString()).sub;
+    state.room.remoteParticipants.set(rtcIdentity, { identity: rtcIdentity, trackPublications: new Map() });
     const retainedRoom = state.room;
     const phone = new PhoneService(db, 'http://proof');
     const tick = timer.mock.calls.find(([callback, delay]) => delay === 1000 && String(callback).includes('checkInactivity'))![0] as () => Promise<void>;
@@ -1702,7 +1713,7 @@ it('Reproduction VOICE-IDS-7: the synthesis path never receives a leaked ID when
   for (const { answer, leak, keep } of cases) {
     const agent = { id: 'agent', name: 'Jellybean', handle: 'jellybean', voice: 'warm' };
     const spoken: string[] = [];
-    const service = { workspaceId: vi.fn(async () => 'human'), endWorkspaceCalls: vi.fn(async () => {}), callWorkState: vi.fn(async () => ({ pending: false, finishedAt: 0 })), endInactive: vi.fn(async () => false), budget: { read: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), record: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), limitMs: 3600000 }, owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret',
+    const service = { rtcOwner: vi.fn(async () => ({sessionId:'session',epoch:1})), sessionCurrent: vi.fn(async()=>true), workspaceId: vi.fn(async () => 'human'), endWorkspaceCalls: vi.fn(async () => {}), callWorkState: vi.fn(async () => ({ pending: false, finishedAt: 0 })), endInactive: vi.fn(async () => false), budget: { read: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), record: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), limitMs: 3600000 }, owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret',
       brain: { answer: async (_agent: unknown, _history: unknown, delta: (text: string) => void) => {
         for (const character of answer) delta(character);
         return { text: answer };
@@ -1962,4 +1973,17 @@ it('Reproduction DELIVERY-2: name pause, expiry, other-human isolation and retar
     await runtime.utterance('human', 'check my latest report');
     expect(service.dispatch).toHaveBeenCalledTimes(2);
   } finally { await runtime.close(); now.mockRestore(); }
+});
+
+it('CALL-OWNER-1: target packets compare their captured session and ownership epoch',async()=>{
+  const call=multiCall(1);
+  const runtime=await VoiceRoomRuntime.connect(call.service as unknown as VoiceService,'call','room');
+  try{
+    call.roomData('human',{type:'target',agentId:'goose',epoch:0,sessionId:'session'});
+    call.roomData('human',{type:'target',agentId:'goose',epoch:1,sessionId:'old-session'});
+    await new Promise(resolve=>setImmediate(resolve));
+    expect((runtime as any).targets.has('human')).toBe(false);
+    call.roomData('human',{type:'target',agentId:'goose',epoch:1,sessionId:'session'});
+    await vi.waitFor(()=>expect((runtime as any).targets.get('human')).toBe('goose'));
+  }finally{await runtime.close();}
 });

@@ -599,11 +599,10 @@ describe('fresh Room discovery through the live membership wake', () => {
         expect(corner.messages.some((m) => (m.text ?? '').includes('ECHO REPLY'))).toBe(true);
         const opening = (await database.query(`SELECT state FROM agent_commands WHERE room_id=$1 AND reason='corner_objective'`, [cornerId])).rows[0];
         expect(opening?.state).toBe('complete');
-        const report = (await database.query(`SELECT private_payload FROM agent_commands WHERE reason='report' AND private_payload->>'fromRoomId'=$1`, [cornerId])).rows[0];
         // The echo harness posts conversation but never reports this order.
-        // Discovery must run it and preserve its missing-outcome failure.
-        expect(report?.private_payload).toMatchObject({ kind: 'report',
-          text: expect.stringMatching(/^failed: unreported_order: .*unconfirmed/) });
+        // The order stays open; the server sends no failure for the quiet turn.
+        const reports = await database.query(`SELECT 1 FROM agent_commands WHERE reason='report' AND private_payload->>'fromRoomId'=$1`, [cornerId]);
+        expect(reports.rowCount).toBe(0);
       },
       { timeout: 30_000, interval: 500 },
     );
@@ -649,11 +648,10 @@ describe('fresh Room discovery through the live membership wake', () => {
         expect(corner.messages.some((m) => (m.text ?? '').includes('ECHO REPLY'))).toBe(true);
         const opening = (await database.query(`SELECT state FROM agent_commands WHERE room_id=$1 AND reason='corner_objective'`, [cornerId])).rows[0];
         expect(opening?.state).toBe('complete');
-        const report = (await database.query(`SELECT private_payload FROM agent_commands WHERE reason='report' AND private_payload->>'fromRoomId'=$1`, [cornerId])).rows[0];
         // The echo harness posts conversation but never reports this order.
-        // Discovery must run it and preserve its missing-outcome failure.
-        expect(report?.private_payload).toMatchObject({ kind: 'report',
-          text: expect.stringMatching(/^failed: unreported_order: .*unconfirmed/) });
+        // The order stays open; the server sends no failure for the quiet turn.
+        const reports = await database.query(`SELECT 1 FROM agent_commands WHERE reason='report' AND private_payload->>'fromRoomId'=$1`, [cornerId]);
+        expect(reports.rowCount).toBe(0);
       },
       { timeout: 30_000, interval: 500 },
     );
@@ -729,11 +727,10 @@ describe('fresh Room discovery through the live membership wake', () => {
         expect(corner.messages.some((m) => (m.text ?? '').includes('ECHO REPLY'))).toBe(true);
         const opening = (await database.query(`SELECT state FROM agent_commands WHERE room_id=$1 AND reason='corner_objective'`, [cornerId])).rows[0];
         expect(opening?.state).toBe('complete');
-        const report = (await database.query(`SELECT private_payload FROM agent_commands WHERE reason='report' AND private_payload->>'fromRoomId'=$1`, [cornerId])).rows[0];
         // The echo harness posts conversation but never reports this order.
-        // Discovery must run it and preserve its missing-outcome failure.
-        expect(report?.private_payload).toMatchObject({ kind: 'report',
-          text: expect.stringMatching(/^failed: unreported_order: .*unconfirmed/) });
+        // The order stays open; the server sends no failure for the quiet turn.
+        const reports = await database.query(`SELECT 1 FROM agent_commands WHERE reason='report' AND private_payload->>'fromRoomId'=$1`, [cornerId]);
+        expect(reports.rowCount).toBe(0);
       },
       { timeout: 30_000, interval: 500 },
     );

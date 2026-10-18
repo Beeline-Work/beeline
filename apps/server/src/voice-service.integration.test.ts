@@ -457,3 +457,25 @@ it('demonstrates workspace exhaustion ending the whole call and refusing HTTP jo
     await db.query('DELETE FROM rooms WHERE id=$1', [otherRoom]);
   }
 });
+
+it('DELIVERY-2: stable request IDs deduplicate uncertain recording and delivery, and committed orders cannot be revised', async () => {
+  const room = '78787878-7878-4787-8787-787878787878';
+  const id = 'stable-voice-request-delivery-2';
+  await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Delivery proof')`, [room,W]);
+  for (const who of [H,A]) await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [W,room,who]);
+  const joined = await service.join(room,H);
+  try {
+    const agent = (await service.agents(room,H))[0]!;
+    const owner = (await db.query<{runtime_owner:string}>(`SELECT runtime_owner FROM voice_calls WHERE id=$1`, [joined.call.id])).rows[0]!.runtime_owner;
+    const record = () => service.recordHuman(joined.call.id,room,H,agent,'check my latest report',owner,id);
+    expect(await record()).toBe(id);
+    expect(await record()).toBe(id);
+    expect((await db.query(`SELECT * FROM messages WHERE id=$1`, [id])).rowCount).toBe(1);
+    await service.dispatch(joined.call.id,id,agent.id);
+    await service.dispatch(joined.call.id,id,agent.id);
+    expect((await db.query(`SELECT * FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2`, [id,agent.id])).rowCount).toBe(1);
+    expect((await db.query(`SELECT * FROM voice_orders WHERE source_message_id=$1`, [id])).rowCount).toBe(1);
+    await expect(service.reviseHuman(joined.call.id,room,H,agent,id,'replace the order',owner)).rejects.toThrow('access denied');
+    expect((await db.query<{text:string}>(`SELECT text FROM messages WHERE id=$1`, [id])).rows[0]!.text).toBe('@ruby check my latest report');
+  } finally { await service.leave(joined.call.id,H); await db.query(`DELETE FROM rooms WHERE id=$1`, [room]); }
+});

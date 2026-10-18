@@ -1,0 +1,433 @@
+{
+  "reproduction": "DELIVERY-2",
+  "mode": "baseline",
+  "firstAudioMs": [
+    188.58438600000045,
+    20.652611999999863,
+    22.37887999999839,
+    19.12448399999994,
+    23.9280660000004
+  ],
+  "medianFirstAudioMs": 22.37887999999839,
+  "steps": [
+    {
+      "scenario": "TTS failure",
+      "commands": 0,
+      "error": "Voice reply unavailable; please try again"
+    }
+  ],
+  "result": {
+    "decisionRequests": 7,
+    "synthesis": [
+      {
+        "text": "Ready.",
+        "at": 1792363028601
+      },
+      {
+        "text": "Ready.",
+        "at": 1792363033855
+      },
+      {
+        "text": "Ready.",
+        "at": 1792363034039
+      },
+      {
+        "text": "Ready.",
+        "at": 1792363034220
+      },
+      {
+        "text": "Ready.",
+        "at": 1792363034397
+      },
+      {
+        "text": "Ready.",
+        "at": 1792363034577
+      },
+      {
+        "text": "Checking.",
+        "at": 1792363034749
+      }
+    ],
+    "deliveries": [],
+    "orders": [],
+    "transcript": [
+      {
+        "text": "Voice call started",
+        "author": "972a35ec7a6e572c01c5b0a48cbdc82f6137dd7f35435cf9cc0ec305fdafa248"
+      },
+      {
+        "text": "@ruby Ruby, ready?",
+        "author": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      },
+      {
+        "text": "Ready.",
+        "author": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "text": "@ruby Ruby ready?",
+        "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "text": "Ready.",
+        "author": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "text": "@ruby Ruby ready?",
+        "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "text": "Ready.",
+        "author": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "text": "@ruby Ruby ready?",
+        "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "text": "Ready.",
+        "author": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "text": "@ruby Ruby ready?",
+        "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "text": "Ready.",
+        "author": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "text": "@ruby Ruby ready?",
+        "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "text": "Ready.",
+        "author": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "text": "@ruby Ruby check my latest report",
+        "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ],
+    "pid": 17403,
+    "callId": "4e18d5d9-35f3-490e-b243-3904e9ad678e",
+    "dispatchAttempts": 0,
+    "frameCounts": {
+      "received": 67
+    },
+    "commands": {
+      "count": 0
+    },
+    "activeCallWork": false,
+    "pendingCommands": 0,
+    "call": {
+      "ended_at": null
+    },
+    "card": {
+      "id": "7497d895fd87bce08422e1b7e3f4f140fe60ed4df33bcff868497091fa9ae4e7",
+      "text": "Voice call started",
+      "createdAt": 1792363027,
+      "createdAtMs": 1792363027086,
+      "version": 2,
+      "author": {
+        "pubkey": "972a35ec7a6e572c01c5b0a48cbdc82f6137dd7f35435cf9cc0ec305fdafa248",
+        "kind": "human",
+        "name": "System",
+        "handle": "system",
+        "avatar": "http://proof/v1/connectors/logo/system.svg"
+      },
+      "presentation": "card",
+      "systemEvent": {
+        "verb": "started",
+        "subject": {
+          "kind": "system",
+          "name": "Voice call"
+        }
+      },
+      "voiceCall": {
+        "id": "4e18d5d9-35f3-490e-b243-3904e9ad678e",
+        "roomId": "375ebf52-b493-4982-bd6d-f3b8fe814a62",
+        "startedAt": 1792363027,
+        "startedAtMs": 1792363027086,
+        "participants": [
+          {
+            "kind": "human",
+            "name": "Sam",
+            "handle": "sam",
+            "pubkey": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          },
+          {
+            "kind": "human",
+            "name": "Alex",
+            "handle": "alex",
+            "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ]
+      }
+    },
+    "humans": 2,
+    "operations": [],
+    "microphoneFrames": [
+      649,
+      118
+    ],
+    "replies": [
+      "Ready.",
+      "Ready.",
+      "Ready.",
+      "Ready.",
+      "Ready.",
+      "Ready.",
+      "Checking."
+    ],
+    "signals": [
+      {
+        "type": "target",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "humans",
+        "count": 1
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 847.2231579999998
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "humans",
+        "count": 2
+      },
+      {
+        "type": "humans",
+        "count": 2
+      },
+      {
+        "type": "target",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 188.58438600000045
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 20.652611999999863
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 22.37887999999839
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 19.12448399999994
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 23.9280660000004
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      }
+    ],
+    "observations": [
+      {
+        "at": 1792363029224,
+        "joined": false,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792363031307,
+        "joined": false,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792363032157,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792363032508,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 188.58438600000045
+      },
+      {
+        "at": 1792363032535,
+        "nativeAudio": [
+          {
+            "bytesReceived": 58,
+            "packetsReceived": 2,
+            "totalAudioEnergy": 1.5833450150821014e-10
+          }
+        ]
+      },
+      {
+        "at": 1792363032535,
+        "nativeAudio": [
+          {
+            "bytesReceived": 210,
+            "packetsReceived": 3,
+            "totalAudioEnergy": 0
+          }
+        ]
+      },
+      {
+        "at": 1792363032690,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 20.652611999999863
+      },
+      {
+        "at": 1792363032868,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 22.37887999999839
+      },
+      {
+        "at": 1792363033045,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 19.12448399999994
+      },
+      {
+        "at": 1792363033050,
+        "nativeAudio": [
+          {
+            "bytesReceived": 116,
+            "packetsReceived": 4,
+            "totalAudioEnergy": 4.0980694508007376e-10
+          }
+        ]
+      },
+      {
+        "at": 1792363033050,
+        "nativeAudio": [
+          {
+            "bytesReceived": 5972,
+            "packetsReceived": 29,
+            "totalAudioEnergy": 0.002295285194660754
+          }
+        ]
+      },
+      {
+        "at": 1792363033226,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 23.9280660000004
+      },
+      {
+        "at": 1792363033402,
+        "joined": true,
+        "humans": 2,
+        "error": "Voice reply unavailable; please try again",
+        "unaddressed": 0,
+        "firstAudioMs": 23.9280660000004
+      },
+      {
+        "at": 1792363033565,
+        "nativeAudio": [
+          {
+            "bytesReceived": 10040,
+            "packetsReceived": 55,
+            "totalAudioEnergy": 0.004535602909267565
+          }
+        ]
+      },
+      {
+        "at": 1792363033568,
+        "nativeAudio": [
+          {
+            "bytesReceived": 174,
+            "packetsReceived": 6,
+            "totalAudioEnergy": 6.985345654773976e-10
+          }
+        ]
+      }
+    ],
+    "secondMicrophone": [],
+    "participants": [
+      {
+        "identity_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "parked_at": null,
+        "left_at": null
+      },
+      {
+        "identity_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "parked_at": null,
+        "left_at": null
+      }
+    ]
+  },
+  "standIn": "Built production Android hook/VoiceBar with native RTC, disposable PGlite, controlled STT finals and provider SSE/PCM; commands and provenance-bound reports use actual server routing."
+}

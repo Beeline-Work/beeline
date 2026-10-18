@@ -290,3 +290,38 @@ it('call-feedback-1: delivers a recorded utterance before leave while PostgreSQL
     await service.leave(joined.call.id, H);
   }
 });
+
+it('demonstrates an exhausted human getting a reset time on HTTP join while their peer stays in the call', async () => {
+  await db.query(`UPDATE memberships SET role='owner',removed_at=NULL WHERE identity_id=ANY($1::text[])`, [[H, SECOND]]);
+  const first = await service.join(R, H);
+  await service.join(R, SECOND);
+  const now = Date.now();
+  // Seed today's exhausted budget without depending on the test's hour of day.
+  const day = Math.floor(now / 86_400_000) * 86_400_000;
+  await db.query(`INSERT INTO voice_daily_usage(identity_id,day_start,audio)
+    VALUES($1,$2,$3::int8multirange)`, [H, day, `{[${day},${day + 3_600_000})}`]);
+  await service.leave(first.call.id, H, true);
+  const auth = new TokenAuth(db, async token => ({ subject: token, login: token, name: token }));
+  await db.query(`INSERT INTO identity_external_links(provider,subject,identity_id,issuer,audience,provider_login)
+    VALUES('github','budget-proof-human',$1,'https://github.com','beeline','budget-proof-human')`, [H]);
+  const { accessToken } = await auth.exchangeGitHubOidc('budget-proof-human');
+  const server = createBeelineServer({ database: db, auth, phone: new PhoneService(db, 'http://proof'),
+    daemon: new DaemonService(db, live), live, voice: service, mediaMaximumBytes: 1024 });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const response = await fetch(`http://127.0.0.1:${(server.address() as AddressInfo).port}/v1/phone/voice/${R}/join`, {
+      method: 'POST', headers: { authorization: `Bearer ${accessToken}` },
+    });
+    expect(response.status).toBe(429);
+    const body = await response.json();
+    expect(body.error).toContain('0 minutes');
+    expect(body.error).toContain('UTC');
+    expect(body.budget.remainingMs).toBe(0);
+    expect(body.budget.resetAt).toBeGreaterThan(Date.now());
+    expect((await service.current(R, SECOND))?.participants.map(p => p.pubkey)).toEqual([SECOND]);
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    await service.leave(first.call.id, SECOND);
+    await db.query('DELETE FROM voice_daily_usage');
+  }
+});

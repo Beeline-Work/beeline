@@ -3,13 +3,14 @@ import { AccessibilityInfo, Pressable, ScrollView, Text, View } from 'react-nati
 import { HullModal } from './HullDialog';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { IdentityMark } from './IdentityMark';
+import { VoicePreviewPlayer } from './VoicePreviewPlayer';
 import { MicGlyph } from './MicGlyph';
 import { DictationWaveform } from './DictationWaveform';
 import { BeelineMarkSpinner } from './BeelineMarkSpinner';
 import type { VoiceCallState } from '@/buzz/use-voice-call';
 
 export function VoiceBar({ voice, fullScreen = false, onAttach, attachDisabled = false, testIDPrefix = 'chat' }: {
-  voice: VoiceCallState; fullScreen?: boolean; onAttach?: () => void; attachDisabled?: boolean; testIDPrefix?: string;
+  voice: VoiceCallState & { endingWarning?: string | null }; fullScreen?: boolean; onAttach?: () => void; attachDisabled?: boolean; testIDPrefix?: string;
 }) {
   const { theme } = useUnistyles();
   const [expanded, setExpanded] = React.useState(fullScreen);
@@ -20,6 +21,7 @@ export function VoiceBar({ voice, fullScreen = false, onAttach, attachDisabled =
     return () => listener.remove();
   }, []);
   const tip = useVoiceTip(voice);
+  const warning = voice.endingWarning ?? voice.budgetWarning;
   const bar = <View style={styles.bar} testID="voice-bar">
     <View style={styles.targetStrip} testID="conversation-target-strip">
       <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.agents}
@@ -32,9 +34,11 @@ export function VoiceBar({ voice, fullScreen = false, onAttach, attachDisabled =
           <IdentityMark kind="agent" seed={agent.pubkey} face={agent.face} name={agent.name} size={32} />
         </Pressable>)}
       </ScrollView>
-      {voice.humans > 1 ? <Text style={[styles.modeLabel, styles.tip, tip.flash && styles.tipFlash]} numberOfLines={2}
-        accessibilityLiveRegion={tip.flash ? 'polite' : 'none'} testID="conversation-tip">{tip.text}</Text>
-        : <Text style={styles.modeLabel} testID="conversation-mode-label">Conversation mode</Text>}
+      <Text style={[styles.modeLabel, styles.tip, (warning || tip.flash) && styles.tipFlash]}
+        numberOfLines={2} accessibilityLiveRegion={warning || tip.flash ? 'polite' : 'none'}
+        testID={voice.humans > 1 ? 'conversation-tip' : 'conversation-mode-label'}>
+        {warning ?? (voice.humans > 1 ? tip.text : 'Conversation mode')}
+      </Text>
     </View>
     <View style={styles.controls}>
       <Pressable onPress={onAttach} disabled={attachDisabled || !onAttach} accessibilityRole="button"
@@ -54,6 +58,8 @@ export function VoiceBar({ voice, fullScreen = false, onAttach, attachDisabled =
     </View>
   </View>;
   return <>
+    {voice.warningAudio && <VoicePreviewPlayer source={voice.warningAudio}
+      onEnd={voice.clearWarningAudio} onError={voice.clearWarningAudio} />}
     {bar}
     <HullModal visible={expanded} onRequestClose={() => setExpanded(false)} placement="fill" animationType="fade">
       <View style={styles.fullScreen}>

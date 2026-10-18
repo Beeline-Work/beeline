@@ -7,6 +7,24 @@ hold the waveform to open the optional full-screen view. Room members join
 through the live call card. After the last person leaves, that card becomes
 `Voice call ended · duration`.
 
+Each human has 60 minutes of live microphone input per day across calls and
+devices. Muted microphones and reconnect periods without input spend nothing.
+There is currently no stored identity timezone, so the budget resets at UTC
+midnight. With two minutes remaining, the existing tip slot shows `2 min left today`
+and that human privately hears “Two minutes left today”. The slot counts down
+from committed input, with seconds below one minute; a call-ending warning has
+priority. At zero, only that human leaves. Their composer returns with
+`Daily voice limit reached. Resets at …` in the existing error style, using the
+device’s local time. Denied joins show the same message.
+
+The runtime unions server-observed audio intervals in `voice_daily_usage`, so
+overlapping devices and retries do not count the same time twice. Checkpoints
+run every 250 ms outside the audio path. Failed checkpoints retain their batches
+for retry; input pauses at one second of uncommitted audio and resumes after a
+successful checkpoint. Abrupt process death can lose at most that one-second
+window. Runtime lease checks fence stale writers. Private warning playback uses
+the authenticated warning endpoint, never the call's shared audio track.
+
 **Aura 2 is the only speech provider.** Workspace Settings has no provider
 selection. Agent Profile presents Soul, Model / difficulty, then Voice.
 The owner can preview an Aura library voice and Save it; other members can

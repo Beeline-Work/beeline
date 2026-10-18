@@ -323,6 +323,19 @@ describe('connect_app', () => {
     console.info('Reproduction link-route-1: Stripe Link -> one Link sign-in card -> login.link.com -> verified callback -> request resumed -> Link ready with no new card');
   });
 
+  it('Reproduction first-party-connect-card: built-in apps are ready without grants or cards', async () => {
+    await connectSquire();
+    const daemon = daemonWith(fakeRegistry([]).client);
+    for (const service of ['beeline:corner_app', 'beeline:workflow', 'beeline:browser_share',
+      'beeline corner app', 'beelinecornerapp', 'corner_app']) {
+      expect(await daemon.execute('connect', { ...turn, service, reason: 'Use built-in app',
+        squireAvailable: true }, HELPER)).toMatchObject({ status: 'ready', next: expect.stringContaining('app_tool') });
+    }
+    expect((await database.query('SELECT id FROM agent_grants')).rows).toHaveLength(0);
+    expect((await database.query(`SELECT id FROM messages WHERE card_type IN
+      ('grant-request','app-sign-in','connector-offer')`)).rows).toHaveLength(0);
+  });
+
   it('connect posts a Composio sign-in card without issuing an agent sign-in URL', async () => {
     const provider = fakeComposio();
     const result = await daemonWith(fakeRegistry([]).client, provider).execute('connect',

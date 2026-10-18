@@ -77,8 +77,10 @@ export function deriveCornerState(facts: CornerStateFacts): DerivedCornerState {
       facts.run?.state === 'landed' || facts.run?.state === 'closed')
     return { state: 'archived' };
   if (facts.turnRunning || facts.workerQueued) return { state: 'working' };
-  if (facts.reviewerActive || facts.lifecycle?.checks === 'pending' || facts.lifecycle?.checksSummary?.status === 'pending' ||
+  if (facts.reviewerActive) return { state: 'review' };
+  if (facts.owed === true) return { state: 'waiting' };
+  if (facts.lifecycle?.checks === 'pending' || facts.lifecycle?.checksSummary?.status === 'pending' ||
       facts.lifecycle?.checksSummary?.checks.some(check => check.status === 'pending'))
     return { state: 'review' };
-  return { state: facts.owed === true ? 'waiting' : 'idle' };
+  return { state: 'idle' };
 }

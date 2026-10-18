@@ -438,7 +438,10 @@ describe('corner_owed', () => {
     walk((typeof root === 'string' ? JSON.parse(root) : root)[0].Plan);
     expect(scans).toContainEqual({ relation: 'corner_owed', alias: 'owed_item' });
     // The combined deck enrichment also reads the unread cursor and DM peer
-    // activity. Owed facts themselves still come from corner_owed.
-    expect(scans.filter((scan) => scan.relation === 'messages')).toHaveLength(3);
+    // activity. Review activity additionally looks up its dispatched source
+    // by message id; owed facts still come from corner_owed.
+    const messageScans = scans.filter((scan) => scan.relation === 'messages');
+    expect(messageScans.filter((scan) => scan.alias === 'source')).toHaveLength(1);
+    expect(messageScans.filter((scan) => scan.alias !== 'source')).toHaveLength(3);
   });
 });

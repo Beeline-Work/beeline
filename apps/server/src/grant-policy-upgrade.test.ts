@@ -70,6 +70,30 @@ describe('withdrawSupersededGrantAsks', () => {
     );
   }
 
+  it('cancels only pending Beeline connection installs and settles their cards', async () => {
+    const builtin = '20000000-0000-4000-8000-000000000001';
+    const external = '20000000-0000-4000-8000-000000000002';
+    const approved = '20000000-0000-4000-8000-000000000003';
+    await pendingAsk(builtin, 'mcp', 'connection-install:beelinecornerapp');
+    await pendingAsk(external, 'mcp', 'connection-install:linear');
+    await pendingAsk(approved, 'mcp', 'connection-install:beelineworkflow');
+    await database.query(`UPDATE agent_grants SET status='approved',decided_by=$2,decided_at=now() WHERE id=$1`, [approved, OWNER]);
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,card_type,card)
+      VALUES('builtin-card',$1,$2,'Connection approval','card','grant-request',$3::jsonb)`,
+      [ROOM, AGENT, JSON.stringify({ grants: [
+        { grantId: builtin, status: 'pending' }, { grantId: external, status: 'pending' },
+      ] })]);
+    await migrate(database);
+    expect((await database.query(`SELECT id::text,status FROM agent_grants ORDER BY id`)).rows).toEqual([
+      { id: builtin, status: 'revoked' }, { id: external, status: 'pending' },
+      { id: approved, status: 'approved' },
+    ]);
+    expect((await database.query<{ card: { grants: { status: string }[] } }>(
+      `SELECT card FROM messages WHERE id='builtin-card'`)).rows[0]!.card.grants.map(g => g.status))
+      .toEqual(['revoked', 'pending']);
+    expect(await withdrawSupersededGrantAsks(database)).toBe(0);
+  });
+
   it('settles on boot the cards the current server would never raise, without waking their turns', async () => {
     const dm = await ensureSystemDirectMessageRoom(database, WORKSPACE, OWNER);
     const docs = '10000000-0000-4000-8000-000000000001';

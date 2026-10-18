@@ -1,3 +1,4 @@
+import { showVoiceJoinError } from '@/buzz/voice-update';
 import { useUntaggedMessageHints } from '@/buzz/use-untagged-message-hints';
 import { focusComposerSelection } from '@/buzz/composer-selection';
 import { HullDialogActions } from '@/components/buzz/HullDialog';
@@ -1208,7 +1209,7 @@ export function BuzzChatSurface({
   const roomVoiceAgents = useMemo(() => roomSurface?.members
     .filter(member => member.identity.kind === 'agent').map(member => member.identity) ?? [], [roomSurface?.members]);
   const voice = useVoiceCall(decodedId, Boolean(roomSurface?.viewer.permissions.send && !viewerIsAgent && !isArchived), roomVoiceAgents);
-  useEffect(() => { if (voice.error && !voice.quotaExhausted) Modal.alert('Conversation mode', voice.error); }, [voice.error, voice.quotaExhausted]);
+  useEffect(() => { if (voice.error && !voice.quotaExhausted && !voice.error.startsWith('Daily voice limit reached.')) showVoiceJoinError(voice.error); }, [voice.error, voice.quotaExhausted]);
   // The SERVER's statement of who is reading, so the phone's requester test and
   // the server's own are the same comparison over the same namespace.
   const viewerPubkey = roomSurface?.viewer.identity.pubkey;
@@ -5680,7 +5681,7 @@ export function BuzzChatSurface({
         if (isDirectMessage && !item.voiceCall.endedAt) return null;
         return (
           <VoiceCallCard call={item.voiceCall} joined={voice.call?.id === item.voiceCall.id}
-          connecting={voice.connecting} error={voice.error}
+          connecting={voice.connecting} error={voice.error?.startsWith('Daily voice limit reached.') ? null : voice.error}
           agents={roomSurface?.members.filter(member => member.identity.kind === 'agent').map(member => member.identity)}
           onJoin={() => void voice.join()} />
         );

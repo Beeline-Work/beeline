@@ -15,8 +15,11 @@ CREATE TABLE IF NOT EXISTS corner_attention_spans (
   corner_id uuid PRIMARY KEY REFERENCES rooms(id) ON DELETE CASCADE,
   revision bigint NOT NULL DEFAULT 0,
   last_state text,
+  episode bigint NOT NULL DEFAULT 0,
   checked_at timestamptz
 );
+ALTER TABLE corner_attention_spans ADD COLUMN IF NOT EXISTS episode bigint NOT NULL DEFAULT 0;
+UPDATE corner_attention_spans SET episode=revision WHERE episode=0 AND last_state='idle';
 CREATE INDEX IF NOT EXISTS corner_attention_checked ON corner_attention_spans(checked_at);
 CREATE TABLE IF NOT EXISTS corner_attention_flags (
   id text PRIMARY KEY,
@@ -54,9 +57,15 @@ CREATE TRIGGER corner_attention_reminder_clear AFTER INSERT OR UPDATE OF reminde
 CREATE OR REPLACE FUNCTION corner_attention_new_work() RETURNS trigger
 LANGUAGE plpgsql AS $attention$
 BEGIN
+  IF TG_TABLE_NAME='agent_commands' THEN
+    IF NEW.action='stop' OR NEW.state NOT IN ('pending','claimed') THEN RETURN NULL; END IF;
+  ELSE
+    IF NEW.status<>'working' THEN RETURN NULL; END IF;
+  END IF;
   INSERT INTO corner_attention_spans(corner_id,revision)
   SELECT NEW.room_id,1 FROM rooms WHERE id=NEW.room_id AND parent_id IS NOT NULL
-  ON CONFLICT(corner_id) DO UPDATE SET revision=corner_attention_spans.revision+1;
+  ON CONFLICT(corner_id) DO UPDATE SET revision=corner_attention_spans.revision+1,
+    last_state=CASE WHEN NEW.agent_id=(SELECT COALESCE(worker_agent_id,owner_agent_id) FROM corner_facts WHERE corner_id=NEW.room_id) THEN 'working' ELSE corner_attention_spans.last_state END;
   RETURN NULL;
 END
 $attention$;
@@ -89,8 +98,8 @@ type Row = CornerStateRow & {
   id: string;
   name: string;
   worker: string;
-  revision: string;
   last_state: string | null;
+  episode: string;
   worker_wait: boolean;
 };
 type Flag = {
@@ -111,7 +120,7 @@ function attentionSql(where: string): string {
     activity.worker_active,activity.reviewer_active,NULL::text latest_turn_status,
     blocker.item_id IS NOT NULL blocking,blocker.item_id waiting_item_id,
     blocker.person_id waiting_person_id,blocker.created_at waiting_since,${worker} worker,
-    span.revision::text,span.last_state,
+    span.episode::text,span.last_state,
     (EXISTS(SELECT 1 FROM agent_schedules schedule WHERE schedule.room_id=c.id
       AND schedule.agent_id=${worker} AND (schedule.max_runs IS NULL OR schedule.run_count<schedule.max_runs))
     OR EXISTS(SELECT 1 FROM agent_subscriptions subscription WHERE subscription.room_id=c.id
@@ -138,18 +147,16 @@ export async function recordCornerAttention(db: SqlDatabase): Promise<void> {
     ).rows;
     for (const row of rows) {
       const state = cornerRowState(row).state;
-      const revision =
-        BigInt(row.revision) +
-        (row.last_state && row.last_state !== 'idle' && state === 'idle' ? 1n : 0n);
+      const episode = BigInt(row.episode) + (row.last_state !== 'idle' && state === 'idle' ? 1n : 0n);
       await tx.query(
-        `UPDATE corner_attention_spans SET revision=$2,last_state=$3,checked_at=now() WHERE corner_id=$1`,
-        [row.id, revision.toString(), state],
+        `UPDATE corner_attention_spans SET episode=$2,last_state=$3,checked_at=now() WHERE corner_id=$1`,
+        [row.id, episode.toString(), state],
       );
       if (state === 'idle' && !row.worker_wait) {
         await tx.query(
           `INSERT INTO corner_attention_flags(id,corner_id,kind,revision)
           VALUES($1,$2,'idle',$3) ON CONFLICT DO NOTHING`,
-          [key('idle', row.id, revision.toString()), row.id, revision.toString()],
+          [key('idle', row.id, episode.toString()), row.id, episode.toString()],
         );
       } else if (
         state === 'waiting' &&
@@ -163,7 +170,7 @@ export async function recordCornerAttention(db: SqlDatabase): Promise<void> {
           [
             key('waiting', row.id, row.waiting_item_id, row.waiting_person_id),
             row.id,
-            revision.toString(),
+            episode.toString(),
             row.waiting_item_id,
             row.waiting_person_id,
             row.waiting_since,
@@ -200,7 +207,7 @@ export async function deliverCornerAttention(db: SqlDatabase): Promise<void> {
       }
       const state = cornerRowState(row).state;
       if (flag.kind === 'idle') {
-        if (row.revision !== String(flag.revision) || state !== 'idle') {
+        if (row.episode !== String(flag.revision) || row.last_state !== 'idle' || state !== 'idle') {
           await tx.query('UPDATE corner_attention_flags SET dismissed_at=now() WHERE id=$1', [
             flag.id,
           ]);

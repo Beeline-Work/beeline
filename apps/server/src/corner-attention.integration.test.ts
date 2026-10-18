@@ -1,4 +1,5 @@
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest';
+import { cornerOwedSchemaSql } from './corner-owed.js';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { DaemonService } from './daemon-service.js';
@@ -179,7 +180,7 @@ it('records an idle flag before delivery and retries after restart without repea
   await deliverCornerAttention(db);
   expect(await commanderFlags()).toHaveLength(1);
 });
-it('a new turn or push creates a new idle span even between attention ticks', async () => {
+it('a new worker command starts an episode but a head update alone does not', async () => {
   await runCornerAttention(db);
   await wake();
   await db.query(`UPDATE agent_commands SET state='complete' WHERE id='new-work'`);
@@ -191,7 +192,7 @@ it('a new turn or push creates a new idle span even between attention ticks', as
   );
   await runCornerAttention(db);
   await runCornerAttention(db);
-  expect(await commanderFlags()).toHaveLength(3);
+  expect(await commanderFlags()).toHaveLength(2);
 });
 it('excludes the commander watch and commander schedules from worker waits', async () => {
   await db.query(
@@ -428,4 +429,98 @@ it('preserves already-posted reminders and honors their dismissal', async () => 
   await runCornerAttention(db);
   expect((await db.query("SELECT id FROM messages ORDER BY id")).rows).toEqual([{ id: 'legacy-reminder' }, { id: 'legacy-request' }]);
   expect((await db.query("SELECT deliveries,dismissed_at IS NOT NULL dismissed FROM corner_attention_flags WHERE id=$1", [flag.id])).rows).toEqual([{ deliveries: 1, dismissed: true }]);
+});
+
+it.each(['needs-decision','blocked'])('Reproduction idle-alert-churn: private %s reports remain waiting through check churn', async (status) => {
+  await wake();
+  const command = (await readAgentCommands(db, C, WORKER)).commands[0]!;
+  await daemon.execute('claimAgentCommand', {roomId:C,commandId:command.id,generationId:'decision-proof'},WORKER);
+  const authority = {roomId:C,requestId:command.turnRequestId,generationId:'decision-proof'};
+  await daemon.execute('report', {...authority,status:status==='blocked'?'blocked':'needs_decision',text:status+': @owner Approve the pending proof.'},WORKER);
+  await daemon.execute('postRoomMessage',{...authority,text:'Waiting for approval.'},WORKER);
+  await daemon.execute('postAgentTurnReceipt',{...authority,agentId:WORKER,status:'complete'},WORKER);
+  // A restart must recover private reports without creating visible messages.
+  await db.query('DELETE FROM corner_report_blockers');
+  await db.query(cornerOwedSchemaSql());
+  expect(await state()).toBe('waiting');
+  for (let i=0;i<3;i++) {
+    await db.query(`UPDATE corner_attention_spans SET revision=revision+3 WHERE corner_id=$1`,[C]);
+    await db.query(`UPDATE corner_facts SET lifecycle=jsonb_build_object('checks',CASE WHEN $2::int=1 THEN 'pending' ELSE 'passing' END,'activity',$2::int) WHERE corner_id=$1`,[C,i]);
+    expect(await state()).toBe('waiting');
+    expect((await phone.readCorners(ROOM,HUMAN))!.corners[0]!.state).toBe('waiting');
+    await runCornerAttention(db);
+  }
+  expect((await db.query('SELECT kind FROM corner_attention_flags')).rows).toEqual([{kind:'waiting'}]);
+  await post('decision-arrives','Approved, continue.',HUMAN);
+  await wake(WORKER,'decision-resume');
+  expect(await state()).toBe('working');
+  console.info('Demonstrated Reproduction idle-alert-churn: private human decision + three check updates -> WAITING in list/inspect; waiting=1 idle=0; answer and resume -> WORKING');
+});
+
+it('Reproduction idle-alert-churn: idle revision churn sends once to the unchanged call site', async () => {
+  for(let i=0;i<3;i++) {
+    await db.query(`UPDATE corner_attention_spans SET revision=revision+3 WHERE corner_id=$1`,[C]);
+    await runCornerAttention(db);
+  }
+  expect(await commanderFlags()).toHaveLength(1);
+  expect((await db.query("SELECT kind FROM corner_attention_flags WHERE kind='idle'")).rows).toHaveLength(1);
+  await wake();
+  await runCornerAttention(db);
+  await db.query(`UPDATE agent_commands SET state='complete' WHERE id='new-work'`);
+  await runCornerAttention(db);
+  expect((await db.query("SELECT kind FROM corner_attention_flags WHERE kind='idle'")).rows).toHaveLength(2);
+  console.info('Demonstrated Reproduction idle-alert-churn: three revisions -> one private idle alert at the call site; real work and return to idle -> second episode');
+});
+
+it('does not deliver an old idle flag after worker activity between ticks', async () => {
+  await recordCornerAttention(db);
+  await wake();
+  await db.query(`UPDATE agent_commands SET state='complete' WHERE id='new-work'`);
+  await deliverCornerAttention(db);
+  expect(await commanderFlags()).toHaveLength(0);
+  await runCornerAttention(db);
+  expect(await commanderFlags()).toHaveLength(1);
+});
+
+it('Reproduction idle-alert-churn: a newer brief preserves the call-site recipient', async () => {
+  const DM='77777777-7777-4777-8777-777777777777';
+  await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Brief session')`,[DM,WS]);
+  await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,[WS,DM,COMMANDER]);
+  await db.query(`INSERT INTO corner_brief_revisions(corner_id,revision,content,author_id,source_room_id)
+    VALUES($1,1,'Approved work',$2,$3)`,[C,COMMANDER,DM]);
+  await runCornerAttention(db);
+  expect(await commanderFlags()).toHaveLength(1);
+  expect((await readAgentCommands(db,DM,COMMANDER)).commands).toHaveLength(0);
+});
+
+it.each(['pending','active'] as const)('Reproduction idle-alert-churn: a dispatched %s reviewer remains in review after reviewer settings change', async phase => {
+  const head='review-head';
+  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`,[C,JSON.stringify({lifecycle:'in-review',checks:'passing',pr:{headSha:head}})]);
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text,presentation,system_event)
+    VALUES('review-source',$1,$2,'Review requested','system',$3::jsonb)`,
+    [C,COMMANDER,JSON.stringify({kind:'check-passed',object:{headSha:head}})]);
+  const dispatch=await createAgentCommand(db,{id:'review-dispatch',roomId:C,agentId:REVIEWER,sourceMessageId:'review-source',reason:'corner_review_dispatch'});
+  expect(dispatch).toBeTruthy();
+  if(phase==='active') await daemon.execute('claimAgentCommand',{roomId:C,commandId:dispatch!.id,generationId:'review-proof'},REVIEWER);
+  expect(await state()).toBe('review');
+  // The dispatched recipient still owns this review even if settings change.
+  await db.query(`UPDATE rooms SET reviewer_agent_id=NULL,reviewer_fallback_ids='{}' WHERE id=$1`,[ROOM]);
+  for(let i=0;i<3;i++) {
+    await db.query(`UPDATE corner_attention_spans SET revision=revision+3 WHERE corner_id=$1`,[C]);
+    expect(await state()).toBe('review');
+    expect((await phone.readCorners(ROOM,HUMAN))!.corners[0]!.state).toBe('review');
+    await runCornerAttention(db);
+  }
+  expect((await db.query("SELECT id FROM corner_attention_flags WHERE kind='idle'")).rows).toHaveLength(0);
+  expect(await commanderFlags()).toHaveLength(0);
+  await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}','"next-head"') WHERE corner_id=$1`,[C]);
+  expect(await state()).toBe('idle');
+  await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}',$2::jsonb) WHERE corner_id=$1`,[C,JSON.stringify(head)]);
+  expect(await state()).toBe('review');
+  await db.query(`UPDATE agent_commands SET state='complete' WHERE id='review-dispatch'`);
+  await db.query(`UPDATE agent_turns SET status='complete' WHERE room_id=$1 AND agent_id=$2`,[C,REVIEWER]);
+  expect(await state()).toBe('idle');
+  await runCornerAttention(db);
+  expect(await commanderFlags()).toHaveLength(1);
+  console.info(`Demonstrated Reproduction idle-alert-churn: ${phase} review dispatch survives settings change; list/inspect REVIEW; three churn ticks produce zero idle flags; completed review permits idle`);
 });

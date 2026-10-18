@@ -123,7 +123,7 @@ import {
 } from './system-line.js';
 import { mediaIdFromUrl } from './media-ttl.js';
 import { postRoomChoice } from './room-choice.js';
-import { APP_INPUT_MAX_LENGTH, appIdentity, appResourceTarget, connectorAdapter } from '@beeline/api-contract/workbench';
+import { APP_INPUT_MAX_LENGTH, builtinBeelineApp, appIdentity, appResourceTarget, connectorAdapter } from '@beeline/api-contract/workbench';
 import { normalizeAppContinuation, registrableDomain, urlBelongsToApp,
   type AppTransport } from '@beeline/api-contract/app-connections';
 import { McpRegistryClient, DEFAULT_MCP_REGISTRY_CLIENT } from './mcp-registry.js';
@@ -6757,6 +6757,11 @@ export class DaemonService {
     const reason = typeof input.reason === 'string' ? input.reason.trim() : '';
     if (!service || service.length > APP_INPUT_MAX_LENGTH || !reason || reason.length > 500)
       throw new Error('service and reason are required');
+    const builtin = builtinBeelineApp(service);
+    if (builtin) {
+      await this.access(input.roomId, agentId);
+      return { status: 'ready', app: builtin, next: `Use app_tool(app:${builtin}) to discover its tools. Existing tool permissions still apply.` };
+    }
     const continuation = normalizeAppContinuation(input.continuation);
     const context = await this.offerContext(input.roomId, agentId);
     const commandId = this.authorizedCommand?.id;

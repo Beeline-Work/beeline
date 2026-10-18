@@ -235,6 +235,15 @@ describe('minimal agent surface', () => {
     expect(calls[0]!.input).toMatchObject({ messageId: 'message', offset: 4000 });
     expect(calls[1]!.input).toMatchObject({ cornerId: 'target', beforeRevision: 3 });
   });
+  it.each(['status', 'ensure', 'discover'])('built-in connect %s never calls external setup', async mode => {
+    for (const service of ['beeline:corner_app', 'beeline:workflow', 'beeline:browser_share',
+      'beeline corner app', 'beelinecornerapp', 'corner_app']) {
+      expect(JSON.parse(await callAgentTool('connect', { mode, service, reason: 'Use built-in app', continuation: 'Use its tools.' }, 'builtin')))
+        .toMatchObject({ status: 'ready', next: expect.stringContaining('app_tool') });
+    }
+    expect(calls).toEqual([]);
+  });
+
   it('wraps formatted connection readiness and advertises optional capabilities without connecting', async () => {
     const status = JSON.parse(await callAgentTool('connect', { mode: 'status' }, 'status'));
     expect(typeof status.readiness).toBe('string');

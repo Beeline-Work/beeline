@@ -199,8 +199,7 @@ export const MESSAGE_CURSOR_MS_SQL =
 
 // Bump only after every server and auth migration required by that image has
 // completed. Machine boot reads this marker; it never mutates the schema.
-// Step A is additive: retain the preceding image's schema marker for rollback compatibility.
-export const REQUIRED_SCHEMA_VERSION = 29;
+export const REQUIRED_SCHEMA_VERSION = 30;
 
 export async function markSchemaCurrent(database: SqlDatabase): Promise<void> {
   await database.query(`

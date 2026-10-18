@@ -6,7 +6,7 @@ New servers derive corner access from current parent Room membership. `membershi
 
 ## Online compatibility migration
 
-The migration creates the table and derived view, then copies only non-default state in transactions of at most 250 locked legacy rows. It deletes no membership rows and installs no insert-reject trigger. Existing sparse state wins on retry. Temporary synchronization triggers carry old-image preference writes into sparse state and reflect new-image changes into existing legacy rows; they never create a membership row. The old image's schema marker (29) is retained because this expansion is additive.
+The migration creates the table and derived view, then copies only non-default state in transactions of at most 250 locked legacy rows. It deletes no membership rows and installs no insert-reject trigger. Existing sparse state wins on retry. Temporary synchronization triggers carry old-image preference writes into sparse state and reflect new-image changes into existing legacy rows; they never create a membership row. Step A adds no schema marker bump; marker 30 comes from main's independent voice-usage migration. Rollback must use the immediate predecessor with that migration, rather than a marker-29 image.
 
 Step B belongs to a follow-up corner after both Machines run step A: drain legacy rows in batches, add the database write guard and remove compatibility synchronization. This corner dispatches no release and edits no production data.
 

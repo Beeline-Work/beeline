@@ -1208,7 +1208,7 @@ export function BuzzChatSurface({
   });
   const roomVoiceAgents = useMemo(() => roomSurface?.members
     .filter(member => member.identity.kind === 'agent').map(member => member.identity) ?? [], [roomSurface?.members]);
-  const voice = useVoiceCall(decodedId, Boolean(roomSurface?.viewer.permissions.send && !viewerIsAgent && !isArchived && !isCorner && !isDirectMessage), roomVoiceAgents);
+  const voice = useVoiceCall(decodedId, Boolean(roomSurface?.viewer.permissions.send && !viewerIsAgent && !isArchived && !isCorner), roomVoiceAgents);
   useEffect(() => { if (voice.error && !voice.quotaExhausted && !voice.error.startsWith('Calls resume at ')) showVoiceJoinError(voice.error); }, [voice.error, voice.quotaExhausted]);
   // The SERVER's statement of who is reading, so the phone's requester test and
   // the server's own are the same comparison over the same namespace.

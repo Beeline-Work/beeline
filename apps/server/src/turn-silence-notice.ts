@@ -1,4 +1,4 @@
-import { reportToCommander, hasOrderContinuation } from './commander.js';
+import { reportToCommander } from './commander.js';
 import type { CommandRow } from './agent-command.js';
 /**
  * First silence after a delivered message: one durable Room line, and for a
@@ -107,14 +107,6 @@ export async function reclaimExpiredCommandLeases(
       const current = await db.query<CommandRow>(`SELECT * FROM agent_commands WHERE id=$1 AND state='claimed'
         AND lease_expires_at<now() FOR UPDATE`, [command.id]);
       if (!current.rowCount) return false;
-      const assigned = current.rows[0]!;
-      if (assigned.private_payload?.kind === 'order' &&
-        assigned.private_payload.reportedGenerationId !== assigned.generation_id &&
-        !(await hasOrderContinuation(db, assigned))) {
-        await noteFirstSilence(db, live, { roomId: command.room_id, agentId: command.agent_id,
-          requestId: command.turn_request_id, generationId: command.generation_id,
-          reason: 'unreported_order: execution lease expired; requested work is unconfirmed' });
-      }
       const result = await db.query(
         `UPDATE agent_commands SET state='complete',completed_at=now()
          WHERE id=$1 AND state='claimed' AND lease_expires_at<now()`,

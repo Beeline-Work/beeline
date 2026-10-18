@@ -13,6 +13,8 @@ const ALLOWED = new Set([
   'components/DesktopRoomInspector.tsx',
   // Not the Room transcript: the tag menu's own scroll view.
   'components/buzz/MentionSuggestionMenu.tsx',
+  // Not the Room transcript: the viewer dock owns a separate bounded ScrollView.
+  'components/buzz/ViewerConversationDock.tsx',
 ]);
 
 const SCROLL_METHODS = 'scrollToIndex|scrollToOffset|scrollToEnd|scrollIntoView|scrollTo';

@@ -1,0 +1,39 @@
+{
+  "reproduction": "viewer-dock-overflow",
+  "device": "emulator-5554",
+  "androidApi": 36,
+  "screen": [
+    1080,
+    2400
+  ],
+  "density": 420,
+  "fixture": true,
+  "newest": {
+    "panelBounds": "[42,1201][1038,2161]",
+    "panelHeight": 960,
+    "screenFraction": 0.4,
+    "scrollBounds": "[87,1317][993,2116]",
+    "scrollable": "true",
+    "visibleLine": "NEWEST LINE",
+    "lineBounds": "[87,2056][993,2116]"
+  },
+  "top": {
+    "panelBounds": "[42,1201][1038,2161]",
+    "panelHeight": 960,
+    "screenFraction": 0.4,
+    "scrollBounds": "[87,1317][993,2116]",
+    "scrollable": "true",
+    "visibleLine": "FIRST LINE",
+    "lineBounds": "[87,1560][993,1621]"
+  },
+  "reopened": {
+    "panelBounds": "[42,1201][1038,2161]",
+    "panelHeight": 960,
+    "screenFraction": 0.4,
+    "scrollBounds": "[87,1317][993,2116]",
+    "scrollable": "true",
+    "visibleLine": "NEWEST LINE",
+    "lineBounds": "[87,2056][993,2116]"
+  },
+  "apkSha256": "5f417e21467630f8f6b6f4ec7ef5e9660a53d964074f2b2493a118ecd7c18ba1"
+}

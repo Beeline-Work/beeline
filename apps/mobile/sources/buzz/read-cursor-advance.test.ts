@@ -33,6 +33,13 @@ describe('newestVisibleMessageId', () => {
     expect(newestVisibleMessageId(folded, [folded[1]!])).toBe('b2');
   });
 
+  it('does not mark a provisional turn or draft id as a stored message', () => {
+    const rows = [row('stored'), row('draft', { isAgentDraft: true }),
+      row('turn', { isAgentLiveTurn: true }), row('activity', { isAgentActivity: true })];
+    expect(newestVisibleMessageId(rows, rows)).toBe('stored');
+    expect(newestVisibleMessageId(rows, rows.slice(1))).toBeNull();
+  });
+
   it('names nothing when the viewport is empty', () => {
     expect(newestVisibleMessageId(TRANSCRIPT, [])).toBeNull();
   });

@@ -155,6 +155,11 @@ export class LiveConnection {
     return Promise.resolve(() => this.stop(registration));
   }
 
+  /** Safe transport metadata for a recovery receipt; no URL or authorization. */
+  diagnostics(): { state: number | null; connecting: boolean } {
+    return { state: this.socket?.readyState ?? null, connecting: Boolean(this.connectInFlight) };
+  }
+
   dispose(): void {
     this.dropConnection();
     for (const registration of this.registrations.values()) registration.closed = true;

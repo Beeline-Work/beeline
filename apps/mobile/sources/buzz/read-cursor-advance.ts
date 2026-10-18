@@ -34,6 +34,7 @@ export function newestVisibleMessageId(
 ): string | null {
   let newestIndex = -1;
   for (const message of visible) {
+    if (message.isAgentDraft || message.isAgentLiveTurn || message.isAgentActivity) continue;
     const index = chronological.findIndex((row) => row.id === message.id);
     if (index > newestIndex) newestIndex = index;
   }

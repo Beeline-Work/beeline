@@ -212,18 +212,25 @@ type StoredCornerBriefApproval = {
 
 type ApprovingMessage = { text: string; author_id: string; kind: string; room_id: string };
 
-/**
- * The corner's authority chain: its commander (who opened it) and its owner
- * (the person who asked for it, or the person who owns the commander agent).
- */
-async function cornerAuthority(db: SqlDatabase, cornerId: string): Promise<string[]> {
+/** Human approval authority includes every ancestor corner and the root Room. */
+async function cornerAuthority(db: SqlDatabase, cornerId: string, ancestors = true): Promise<string[]> {
   return (
     await db.query<{ ids: string[] }>(
-      `SELECT ARRAY_REMOVE(ARRAY[room.created_by,fact.commissioned_by,commander.owner_id],NULL) ids
-       FROM rooms room JOIN corner_facts fact ON fact.corner_id=room.id
+      `WITH RECURSIVE chain(id) AS (
+         SELECT id FROM rooms WHERE id=$1
+         UNION
+         SELECT parent.id FROM chain child
+         JOIN rooms room ON room.id=child.id
+         LEFT JOIN corner_facts fact ON fact.corner_id=room.id
+         CROSS JOIN LATERAL (VALUES (room.parent_id),(fact.opened_from_corner_id)) parent(id)
+         WHERE $2 AND room.parent_id IS NOT NULL AND parent.id IS NOT NULL
+       )
+       SELECT ARRAY_REMOVE(ARRAY_AGG(DISTINCT authority.id),NULL) ids
+       FROM chain JOIN rooms room ON room.id=chain.id
+       LEFT JOIN corner_facts fact ON fact.corner_id=room.id
        LEFT JOIN agents commander ON commander.agent_id=room.created_by
-       WHERE room.id=$1`,
-      [cornerId],
+       CROSS JOIN LATERAL (VALUES (room.created_by),(fact.commissioned_by),(commander.owner_id)) authority(id)`,
+      [cornerId, ancestors],
     )
   ).rows[0]?.ids ?? [];
 }
@@ -251,12 +258,13 @@ async function laterCornerApproval(
     )
   ).rows[0];
   const stored = current?.approval_basis;
+  const authority = await cornerAuthority(db, revision.cornerId);
   if (
     stored?.sourceMessageId === sourceMessageId && stored.kind &&
-    typeof stored.snapshot === 'string' && typeof stored.approvedBy === 'string'
+    typeof stored.snapshot === 'string' && typeof stored.approvedBy === 'string' &&
+    (stored.kind === 'commander-order' || authority.includes(stored.approvedBy))
   )
     return { stored: stored as StoredCornerBriefApproval, sourceRoomId: current!.source_room_id };
-  const authority = await cornerAuthority(db, revision.cornerId);
   if (!authority.length) return undefined;
   const direct = (
     await db.query<ApprovingMessage>(
@@ -270,11 +278,12 @@ async function laterCornerApproval(
     )
   ).rows[0];
   if (direct) return { message: direct, commanderOrder: false };
+  const orderAuthority = await cornerAuthority(db, revision.cornerId, false);
   const order = (
     await db.query<CommandRow>(
       `SELECT * FROM agent_commands WHERE id=$1 AND room_id=$2
          AND private_payload->>'kind'='order' AND private_payload->>'authorId'=ANY($3::text[])`,
-      [sourceMessageId, revision.cornerId, authority],
+      [sourceMessageId, revision.cornerId, orderAuthority],
     )
   ).rows[0];
   if (!order?.private_payload) return undefined;
@@ -331,10 +340,8 @@ export async function resolveCornerBriefApproval(
       )).rows[0];
     }
   }
-  // A revision may run from the reviser's DM; a person's message there counts
-  // only from the corner's authority chain.
-  if (revision && message?.kind === 'human' && !(await cornerAuthority(db, revision.cornerId)).includes(message.author_id) &&
-      (await db.query(`SELECT 1 FROM rooms WHERE id=$1 AND direct_participants IS NOT NULL`, [message.room_id])).rowCount)
+  // Human approvals for revisions require chain authority in every Room.
+  if (revision && message?.kind === 'human' && !(await cornerAuthority(db, revision.cornerId)).includes(message.author_id))
     message = undefined;
   if (revision && (!message || message.kind !== 'human' && !commanderOrder)) {
     const later = await laterCornerApproval(db, revision, draft.approval.sourceMessageId);
@@ -356,6 +363,8 @@ export async function resolveCornerBriefApproval(
       ({ message, commanderOrder } = later);
     }
   }
+  if (revision && (!message || message.kind !== 'human' && !commanderOrder))
+    throw new CommandRefusalError('corner brief approval must name a human message or commander order in the corner authority chain; ask your commander for an authorized approval', 403);
   if (!message || message.kind !== 'human' && !commanderOrder)
     throw new CommandRefusalError('corner brief approval must name a human message or commander order', 403);
   const revisionHash = cornerBriefRevisionHash(draft, attachments);

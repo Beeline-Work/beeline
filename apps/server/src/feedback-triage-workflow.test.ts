@@ -22,6 +22,7 @@ const TRIAGE_CORNER = '20000000-0000-4000-8000-000000000302';
 const OTHER_ROOM = '20000000-0000-4000-8000-000000000303';
 const CREATOR = 'a'.repeat(64);
 const TRIAGER = 'c'.repeat(64);
+const BROWSER = 'd'.repeat(64);
 const TRIAGE_SCHEDULE = '7d7fa17b-0000-4000-8000-000000000001';
 const SWEEP_SCHEDULE = '30000000-0000-4000-8000-000000000002';
 const UNRELATED_SCHEDULE = '30000000-0000-4000-8000-000000000003';
@@ -64,6 +65,10 @@ beforeEach(async () => {
     `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner'),($1,NULL,$3,'member')`,
     [WORKSPACE, CREATOR, TRIAGER],
   );
+  await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Browser')`, [BROWSER]);
+  await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [BROWSER,CREATOR]);
+  await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+    VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`, [WORKSPACE,BROWSER,ROOM]);
   const schedule = (id: string, workspaceId: string, roomId: string, message: string) =>
     database.query(
       `INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at)
@@ -143,7 +148,7 @@ describe('feedback-triage workflow', () => {
 
   it('refreshes deployed tool guidance and legacy schedule prompts despite the old completion marker', async () => {
     await backfillFeedbackTriageWorkflow(database);
-    await database.query(`DELETE FROM workflow_backfills WHERE name='feedback-triage-v4'`);
+    await database.query(`DELETE FROM workflow_backfills WHERE name='feedback-triage-v5'`);
     await database.query(`INSERT INTO workflow_backfills(name) VALUES('feedback-triage-v3') ON CONFLICT DO NOTHING`);
     await database.query(`UPDATE agent_schedules SET message=$2 WHERE id=$1`, [UNRELATED_SCHEDULE,
       'Start the feedback-triage workflow with start_workflow, binding triager to yourself, and follow the feedback-triage-steps procedure (load_workspace_skill) at each step.',
@@ -169,8 +174,8 @@ describe('feedback-triage workflow', () => {
     expect(after.find((row) => row.id === UNRELATED_SCHEDULE)!.message).toBe(FEEDBACK_TRIAGE_SCHEDULE_PROMPT);
     for (const row of after) {
       const was = before.find((schedule) => schedule.id === row.id)!;
-      expect(row.cadence).toEqual(was.cadence);
-      expect(row.next_run_at).toEqual(was.next_run_at);
+      expect(row.cadence).toEqual({ ...DAILY, timeZone: 'America/New_York' });
+      expect(row.next_run_at.getTime()).toBeGreaterThan(Date.now());
     }
     const versions = (await database.query<{ version: number; markdown: string }>(
       `SELECT version.version,version.markdown FROM workspace_skills skill
@@ -210,7 +215,7 @@ describe('feedback-triage workflow', () => {
     expect(validateSavedWorkflow(FEEDBACK_TRIAGE_CONTRACT)).toBeNull();
   });
 
-  it('installs the workflow and its steps where a triage schedule runs and points that schedule at it, cadence unchanged', async () => {
+  it('installs the workflow and its steps where a triage schedule runs and points that schedule at it, at 2 PM America/New_York', async () => {
     const before = await schedules();
     expect(await backfillFeedbackTriageWorkflow(database)).toBe(6);
     expect(await skills()).toEqual([
@@ -221,8 +226,14 @@ describe('feedback-triage workflow', () => {
     const after = await schedules();
     for (const row of after) {
       const was = before.find((schedule) => schedule.id === row.id)!;
-      expect(row.cadence, row.id).toEqual(was.cadence);
-      expect(row.next_run_at, row.id).toEqual(was.next_run_at);
+      if (row.id === UNRELATED_SCHEDULE) {
+        expect(row.cadence).toEqual(was.cadence);
+        expect(row.next_run_at).toEqual(was.next_run_at);
+      } else {
+        expect(row.cadence).toEqual({ ...DAILY, timeZone: 'America/New_York' });
+        const hour = new Intl.DateTimeFormat('en-US', { hour: 'numeric', hourCycle: 'h23', timeZone: 'America/New_York' }).format(row.next_run_at);
+        expect(hour).toBe('14');
+      }
     }
     expect(after.find((row) => row.id === TRIAGE_SCHEDULE)!.message).toBe(FEEDBACK_TRIAGE_SCHEDULE_PROMPT);
     expect(after.find((row) => row.id === SWEEP_SCHEDULE)!.message).toBe(FEEDBACK_TRIAGE_SCHEDULE_PROMPT);
@@ -250,7 +261,7 @@ describe('feedback-triage workflow', () => {
     expect(steps.markdown).toContain('## dispatch');
     const started = await startWorkflow(database, turn, {
       name: 'feedback-triage',
-      roleBindings: { triager: TRIAGER },
+      roleBindings: { triager: TRIAGER, browser: BROWSER },
     });
     expect(started.state).toBe('notify');
   });
@@ -264,7 +275,7 @@ describe('feedback-triage workflow', () => {
     const turn = cornerTurn('schedule-ran');
     const { runId } = await startWorkflow(database, turn, {
       name: 'feedback-triage',
-      roleBindings: { triager: TRIAGER },
+      roleBindings: { triager: TRIAGER, browser: BROWSER },
     });
     await expect(
       handoff(database, turn, { runId, outcome: 'skipped', contents: { fixedPullRequests: 'none' } }),
@@ -286,7 +297,7 @@ describe('feedback-triage workflow', () => {
     ).resolves.toEqual({ alreadyAdvanced: true, runId, state: 'pull', seq: 1 });
     await expect(
       handoff(database, turn, { runId, outcome: 'nothing_new', contents: { problems: [] }, attempt: 1 }),
-    ).resolves.toEqual({ runId, state: 'done', attempt: 2, status: 'done' });
+    ).resolves.toEqual({ runId, state: 'browse', attempt: 2 });
   });
 
   it("refreshes its own outdated seed but never a team's own workflow of the same name", async () => {

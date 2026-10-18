@@ -109,9 +109,8 @@ A triager whose owner has no such credential stops at `pull` and says so.
 
 ### Daily schedule
 
-The triage corner keeps its daily schedule (`0 14 * * *` UTC). On deploy the
-server rewrites that schedule's prompt, and only its prompt (cadence, agent and
-next run are untouched), to start the workflow:
+The triage corner runs daily at 2 PM America/New_York (`0 14 * * *` with that time zone). On deploy the
+server rewrites that schedule's prompt, and its cadence, preserving the assigned agent, to start the workflow:
 
 > Start the feedback-triage workflow with start_workflow, binding triager to
 > yourself, and follow the feedback-triage-steps procedure (load_workspace_skill)
@@ -194,3 +193,49 @@ issue filing with its redaction rules, and the `issues` webhook resolver are
 gone. Fix corners replace the public issues. The unused `corner_facts.feedback_triage`
 column is dropped. The `feedback_items.issue_*` columns and `feedback_issue_comments`
 stay unread for rolling-update compatibility.
+
+## Workspace browsing rollout
+
+Workspace owners and admins control **Allow fix sweep** directly in Workspace
+settings. It defaults on; turning it off excludes that workspace from browsing,
+including subsequent pages of a read already in progress. Feedback reports remain
+available to triage regardless of this flag.
+
+The browser role has a separate one-hour step in the existing run. It uses only
+the operator-granted `service-review-cli` command. `reserve` selects up to five
+workspaces per New York calendar day, prioritizing signups within seven days and
+then seven-day message activity, with no repeat within 14 days. `read` pages through
+all messages and activity and rechecks the workspace flag on every page.
+
+The `service_review_rollout` row starts disabled. Browsing requires a recorded
+notice delivery time and an effective date at least 14 days later, and waits until
+that effective date. The operator must complete verified email delivery before
+activating the rollout. No UI banner or System message is sent.
+
+The policy's proposed effective date is November 15, 2026; the notice must go out
+November 1, 2026. If delivery or publication slips, move both dates together and
+preserve the complete notice period. Never backdate delivery or activation.
+
+The browser reports at most five findings in the same report/card as feedback,
+with paraphrased evidence and build/hold/drop verdicts. Never quote content or name
+people, Rooms or workspace ids. Incomplete reads are declared; they do not count
+as full workspace reviews. During the notice period the sweep uses feedback and
+Sentry only.
+
+### Notice command
+
+The operator runs `node dist/service-review-notice-cli.js` with the verified
+identityId/email inventory on stdin, and the granted database connection,
+`RESEND_API_KEY`, and `BEELINE_NOTICE_FROM` supplied by the approved secret route.
+The inventory must cover every current human account. No recipient is guessed;
+Beeline currently stores no user email address. The source of that verified
+inventory remains an operator rollout decision. Never copy it into the repository.
+
+The command sends the November 15 policy notice on November 1, at least 14 days
+before activation. Each account has a durable receipt and a provider idempotency
+key. Only complete delivery records the rollout time; failures leave browsing
+disabled. Provider acceptance is recorded; bounce/delivery monitoring remains an
+operator responsibility. The command is separate from release dispatch.
+
+Resend transport reference: https://resend.com/docs/api-reference/emails/send-email
+and https://resend.com/docs/dashboard/emails/idempotency-keys.

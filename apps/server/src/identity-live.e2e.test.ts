@@ -8,6 +8,8 @@ import { migrate } from './database.js';
 import type { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
+import { reserveServiceReviewWorkspaces, readServiceReviewPage } from './service-review.js';
+import { sendServiceReviewNotices } from './service-review-notice.js';
 import { POSTGRES_LIVE_CHANNEL, PostgresLiveListener, type LivePgClient } from './postgres-live.js';
 import { createBeelineServer } from './server.js';
 import { PgliteDatabase } from './test-support.js';
@@ -133,6 +135,64 @@ describe('live Workspace and identity changes across sessions', () => {
       workspace: { id: WORKSPACE, name: 'Atelier' } }]);
     await new Promise((resolve) => setTimeout(resolve, 200));
     expect(outsiderFrames).toEqual([]);
+  });
+
+  it('persists the manager sweep choice and rejects member writes', async () => {
+    const phone = new PhoneService(database, 'http://local.test');
+    expect((await phone.readWorkspace(WORKSPACE, VIEWER))?.managerSettings?.allowFixSweep).toBe(true);
+    await phone.execute('updateWorkspace', { workspaceId: WORKSPACE, allowFixSweep: false }, VIEWER);
+    expect((await phone.readWorkspace(WORKSPACE, VIEWER))?.managerSettings?.allowFixSweep).toBe(false);
+    await expect(phone.execute('updateWorkspace', { workspaceId: WORKSPACE, allowFixSweep: true }, MATE)).rejects.toThrow();
+    expect((await phone.readWorkspace(WORKSPACE, VIEWER))?.managerSettings?.allowFixSweep).toBe(false);
+    await phone.execute('updateWorkspace', { workspaceId: WORKSPACE, allowFixSweep: true }, VIEWER);
+    expect((await phone.readWorkspace(WORKSPACE, VIEWER))?.managerSettings?.allowFixSweep).toBe(true);
+  });
+
+  it('keeps browsing off until the notice period, skips opted-out workspaces and rotates visits', async () => {
+    expect(await reserveServiceReviewWorkspaces(database)).toEqual([]);
+    await database.query(`UPDATE service_review_rollout SET notice_sent_at=now()-interval '15 days',
+      effective_at=now()-interval '1 day' WHERE id=1`);
+    const phone = new PhoneService(database, 'http://local.test');
+    await phone.execute('updateWorkspace', { workspaceId: WORKSPACE, allowFixSweep: false }, VIEWER);
+    expect(await reserveServiceReviewWorkspaces(database)).toEqual([ELSEWHERE]);
+    expect(await reserveServiceReviewWorkspaces(database)).toEqual([]);
+    await phone.execute('updateWorkspace', { workspaceId: WORKSPACE, allowFixSweep: true }, VIEWER);
+    expect(await reserveServiceReviewWorkspaces(database)).toEqual([WORKSPACE]);
+    expect(await reserveServiceReviewWorkspaces(database)).toEqual([]);
+  });
+
+  it('reads every reserved page and stops immediately after a workspace opts out', async () => {
+    const room = '33333333-3333-4333-8333-333333333333';
+    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Synthetic room')`,[room,WORKSPACE]);
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text)
+      SELECT lpad(n::text,4,'0'),$1,$2,'Synthetic message' FROM generate_series(1,205) n`,[room,VIEWER]);
+    await database.query(`UPDATE service_review_rollout SET notice_sent_at=now()-interval '15 days',
+      effective_at=now()-interval '1 day' WHERE id=1`);
+    await reserveServiceReviewWorkspaces(database);
+    const first = await readServiceReviewPage(database,WORKSPACE);
+    expect(first.rows).toHaveLength(200);
+    const phone = new PhoneService(database, 'http://local.test');
+    await phone.execute('updateWorkspace', {workspaceId:WORKSPACE,allowFixSweep:false},VIEWER);
+    expect((await readServiceReviewPage(database,WORKSPACE,first.rows.at(-1)!.id)).rows).toEqual([]);
+    await phone.execute('updateWorkspace', {workspaceId:WORKSPACE,allowFixSweep:true},VIEWER);
+    const last = await readServiceReviewPage(database,WORKSPACE,first.rows.at(-1)!.id);
+    expect(last.rows).toHaveLength(5);
+    expect((await readServiceReviewPage(database,WORKSPACE,last.rows.at(-1)!.id)).rows).toEqual([]);
+  });
+
+  it('requires verified notice coverage, sends once and leaves browsing off before the effective date', async () => {
+    const send = vi.fn(async () => 'provider-ack');
+    const date = new Date('2026-11-01T18:00:00Z');
+    await expect(sendServiceReviewNotices(database, [], send, date)).rejects.toThrow('cover every');
+    expect(send).not.toHaveBeenCalled();
+    const recipients = [VIEWER,MATE,OUTSIDER].map((identityId,index) => ({identityId,email:`person${index}@example.invalid`}));
+    expect(await sendServiceReviewNotices(database,recipients,send,date)).toBe(3);
+    expect(send).toHaveBeenCalledTimes(3);
+    expect(await sendServiceReviewNotices(database,recipients,send,date)).toBe(0);
+    expect(send).toHaveBeenCalledTimes(3);
+    expect(await reserveServiceReviewWorkspaces(database)).toEqual([]);
+    expect((await readServiceReviewPage(database,WORKSPACE)).rows).toEqual([]);
+    await expect(sendServiceReviewNotices(database,recipients,send,new Date('2026-11-14'))).rejects.toThrow('at least 14 days');
   });
 
   it('sends a push level change from another device to its owner only', async () => {

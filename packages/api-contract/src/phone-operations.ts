@@ -623,6 +623,7 @@ export type ChoiceDecisionResult = {
   readonly roomId: string;
 };
 export type UpdateWorkspaceInput = WorkspaceInput & {
+  readonly allowFixSweep?: boolean;
   readonly name?: string;
   readonly avatar?: string;
   readonly visibility?: 'public' | 'invite-only';

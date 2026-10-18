@@ -742,6 +742,26 @@ CREATE TABLE IF NOT EXISTS workspaces (
   updated_at timestamptz NOT NULL DEFAULT now()
 );
 
+ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS allow_fix_sweep boolean NOT NULL DEFAULT true;
+
+CREATE TABLE IF NOT EXISTS service_review_notice_deliveries (
+  identity_id text PRIMARY KEY REFERENCES identities(id) ON DELETE CASCADE,
+  provider_id text NOT NULL,
+  sent_at timestamptz NOT NULL
+);
+CREATE TABLE IF NOT EXISTS service_review_rollout (
+  id integer PRIMARY KEY CHECK(id=1),
+  notice_sent_at timestamptz,
+  effective_at timestamptz,
+  CHECK(effective_at IS NULL OR notice_sent_at IS NULL OR effective_at >= notice_sent_at + interval '14 days')
+);
+INSERT INTO service_review_rollout(id) VALUES(1) ON CONFLICT DO NOTHING;
+CREATE TABLE IF NOT EXISTS service_review_visits (
+  workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+  visited_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY(workspace_id,visited_at)
+);
+
 -- Retained but unused: the workspace-level seeded-souls switch was removed
 -- (C99); every agent now always carries its seeded soul as before that
 -- switch existed. Dropping the column is left for a later migration.
@@ -3237,7 +3257,7 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
   await dataStep('stored corner workflows', () => deleteStoredCornerWorkflows(database));
   await dataStep('corner lifecycle runs', () => backfillCornerLifecycleRuns(database));
   await dataStep('feedback triage workflow', () =>
-    workflowBackfillOnce(database, 'feedback-triage-v4', backfillFeedbackTriageWorkflow));
+    workflowBackfillOnce(database, 'feedback-triage-v5', backfillFeedbackTriageWorkflow));
   await dataStep('workflow skill summary/does', () =>
     workflowBackfillOnce(database, 'workflow-descriptions-v1', backfillWorkflowSkillDescriptions));
   await dataStep('repair workflow step descriptions', () =>

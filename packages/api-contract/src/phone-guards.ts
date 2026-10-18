@@ -1823,6 +1823,7 @@ export function readWorkspaceView(value: unknown): WorkspaceView | null {
     (managerSettings.visibility === 'public' || managerSettings.visibility === 'invite-only')
       ? {
           visibility: managerSettings.visibility as 'public' | 'invite-only',
+          ...field('allowFixSweep', typeof managerSettings.allowFixSweep === 'boolean' ? managerSettings.allowFixSweep : undefined),
           ...field('rooms', readList(managerSettings.rooms, readManagedRoom, ROOM_VIEW_CHAT_LIMIT)),
           ...field(
             'roomsTruncated',

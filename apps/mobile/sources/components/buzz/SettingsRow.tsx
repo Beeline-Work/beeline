@@ -1,6 +1,6 @@
 import { Button } from './Button';
 import React from 'react';
-import { Text, TouchableOpacity, View } from 'react-native';
+import { Switch, Text, TouchableOpacity, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { Typography } from '@/constants/Typography';
 import { StateDot } from './StateDot';
@@ -35,6 +35,7 @@ type SettingsRowDescriptionAction = {
 };
 
 type SettingsRowProps = {
+  toggle?: { value: boolean; onValueChange: (value: boolean) => void; disabled?: boolean };
   /** Approved Workbench app-board row metrics. */
   appBoard?: boolean;
   accessibilityLabel?: string;
@@ -118,6 +119,7 @@ export function SettingsRow({
   accessibilityRole = 'button',
   action,
   actionControl,
+  toggle,
   chevron,
   description,
   descriptionLead,
@@ -169,7 +171,14 @@ export function SettingsRow({
   // The trailing slot owns the width cap, not the text inside it: a percentage
   // on the text resolves against a content-sized press target and collapses.
   const trailing =
-    actionControl !== undefined ? (
+    toggle ? (
+      <View style={[styles.trailingSlot, styles.trailingControl]}>
+        <Switch accessibilityLabel={title} value={toggle.value} onValueChange={toggle.onValueChange}
+          trackColor={{ false: styles.toggleOff.backgroundColor, true: styles.toggleOn.backgroundColor }}
+          thumbColor={styles.title.color}
+          disabled={toggle.disabled} testID={testID ? `${testID}-toggle` : undefined} />
+      </View>
+    ) : actionControl !== undefined ? (
       <View style={styles.trailingSlot}>
         <Button
           label={actionControl.label}
@@ -308,6 +317,8 @@ const styles = StyleSheet.create((theme) => {
     },
     boardRow: { minHeight: 64, gap: 16, paddingHorizontal: 0,
       borderBottomWidth: 1, borderBottomColor: board.border },
+    toggleOff: { backgroundColor: hull.borderStrong },
+    toggleOn: { backgroundColor: hull.accent },
     disabled: { opacity: 0.42 },
     copy: { flex: 1, minWidth: 0 },
     // A whole title sizes the copy column to itself; the trailing value yields.

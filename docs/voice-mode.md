@@ -7,23 +7,29 @@ hold the waveform to open the optional full-screen view. Room members join
 through the live call card. After the last person leaves, that card becomes
 `Voice call ended · duration`.
 
-Each human has 60 minutes of live microphone input per day across calls and
-devices. Muted microphones and reconnect periods without input spend nothing.
-There is currently no stored identity timezone, so the budget resets at UTC
-midnight. With two minutes remaining, the existing tip slot shows `2 min left today`
-and that human privately hears “Two minutes left today”. The slot counts down
-from committed input, with seconds below one minute; a call-ending warning has
-priority. At zero, only that human leaves. Their composer returns with
-`Daily voice limit reached. Resets at …` in the existing error style, using the
-device’s local time. Denied joins show the same message.
+Each Workspace has 60 minutes of call time per day. A call spends wall-clock
+time while at least one human has a live microphone; adding people does not
+multiply it. Concurrent calls in different Rooms each spend from that same
+budget. Muted microphones and reconnect periods without input spend nothing.
+No owner timezone is stored today, so the explicit fallback is UTC midnight.
+With two minutes remaining, everyone's existing tip slot shows `2 min left today`
+and counts down, using seconds below one minute. A call-ending warning keeps
+priority in that same slot. At zero, every live call in the Workspace ends,
+and its existing ended card reads
+`Call ended · <duration> · Today's 60 minutes are used`.
+Starting or joining again is refused with `Calls resume at 12:00 AM`, formatted
+in the budget's timezone, until reset.
 
-The runtime unions server-observed audio intervals in `voice_daily_usage`, so
-overlapping devices and retries do not count the same time twice. Checkpoints
+The runtime unions server-observed microphone intervals within each call in
+`voice_workspace_usage`; separate calls add to the Workspace total. Usage
+survives Room/call deletion until the Workspace itself is deleted. Checkpoints
 run every 250 ms outside the audio path. Failed checkpoints retain their batches
-for retry; input pauses at one second of uncommitted audio and resumes after a
-successful checkpoint. Abrupt process death can lose at most that one-second
-window. Runtime lease checks fence stale writers. Private warning playback uses
-the authenticated warning endpoint, never the call's shared audio track.
+for retry; all input in that call pauses at one second of uncommitted time and
+resumes after a successful checkpoint. Abrupt process death can lose at most
+one second per live call. Runtime lease checks fence stale writers. There are
+no per-person counters, private warnings, or per-person budget removals.
+[Android verification](voice-mode-proof/workspace-daily-budget/README.md) records
+the three-minute real-app path and the bounded recovery checks.
 
 **Aura 2 is the only speech provider.** Workspace Settings has no provider
 selection. Agent Profile presents Soul, Model / difficulty, then Voice.

@@ -3,7 +3,7 @@ import { Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import { type VoiceCall, type RoomViewIdentity, voiceDuration } from '@beeline/api-contract/phone';
 
-export function VoiceCallCard({ call, joined, onJoin, connecting = false, error, agents = [] }: { call: VoiceCall; joined: boolean; onJoin(): void;
+export function VoiceCallCard({ call, text, joined, onJoin, connecting = false, error, agents = [] }: { call: VoiceCall; text: string; joined: boolean; onJoin(): void;
   agents?: readonly RoomViewIdentity[]; connecting?: boolean; error?: string | null }) {
   const [now, setNow] = React.useState(() => Date.now() / 1000);
   React.useEffect(() => {
@@ -11,7 +11,7 @@ export function VoiceCallCard({ call, joined, onJoin, connecting = false, error,
     const timer = setInterval(() => setNow(Date.now() / 1000), 1000); return () => clearInterval(timer);
   }, [call.endedAt]);
   const duration = voiceDuration((call.endedAt ?? now) - call.startedAt);
-  if (call.endedAt) return <Text style={styles.ended} testID="voice-call-ended">Conversation ended · {duration}</Text>;
+  if (call.endedAt) return <Text style={styles.ended} testID="voice-call-ended">{text}</Text>;
   return <View style={styles.card} testID="voice-call-card">
     <View style={styles.copy}><Text style={styles.title}>Conversation mode · {duration}</Text>
       <Text style={styles.people} numberOfLines={1}>{[...call.participants, ...agents].map(p => p.name).join(', ')}</Text>

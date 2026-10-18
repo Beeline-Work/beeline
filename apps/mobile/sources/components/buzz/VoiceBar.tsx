@@ -3,7 +3,6 @@ import { AccessibilityInfo, Pressable, ScrollView, Text, View } from 'react-nati
 import { HullModal } from './HullDialog';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { IdentityMark } from './IdentityMark';
-import { VoicePreviewPlayer } from './VoicePreviewPlayer';
 import { MicGlyph } from './MicGlyph';
 import { DictationWaveform } from './DictationWaveform';
 import { BeelineMarkSpinner } from './BeelineMarkSpinner';
@@ -58,8 +57,6 @@ export function VoiceBar({ voice, fullScreen = false, onAttach, attachDisabled =
     </View>
   </View>;
   return <>
-    {voice.warningAudio && <VoicePreviewPlayer source={voice.warningAudio}
-      onEnd={voice.clearWarningAudio} onError={voice.clearWarningAudio} />}
     {bar}
     <HullModal visible={expanded} onRequestClose={() => setExpanded(false)} placement="fill" animationType="fade">
       <View style={styles.fullScreen}>

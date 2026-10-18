@@ -12,6 +12,8 @@ import {
   AUTO_DETECT_AGENT_KINDS,
   detectInstalledAgentCommands,
   installLatestAgentAdapter,
+  requireInstalledAgentProgram,
+  installedAgentProgramEnvironment,
   resolveAgentCommand,
   type AgentCommand,
   type AgentKind,
@@ -353,6 +355,7 @@ export async function loadConnectModelCatalog(
   input: ConnectModelCatalogRequest,
   dependencies: ConnectModelCatalogDependencies = {},
 ): Promise<ConnectModelCatalog> {
+  if (!dependencies.resolveAgent) requireInstalledAgentProgram(input.harness);
   // Resolve only after the refresh. Otherwise the wizard can interrogate an
   // old adapter, persist its model id, then launch a different adapter from a
   // later PATH resolution. A picker choice must come from the exact command
@@ -364,12 +367,12 @@ export async function loadConnectModelCatalog(
   const model = input.model ?? defaultConnectModel(input.harness, input.provider);
   const catalog = await (dependencies.fetchCatalog ?? fetchAgentModelCatalog)(
     agent,
-    providerEnvironment({
+    { ...installedAgentProgramEnvironment(input.harness), ...providerEnvironment({
       harness: input.harness,
       ...(input.provider ? { provider: input.provider } : {}),
       ...(input.apiKey ? { apiKey: input.apiKey } : {}),
       model,
-    }),
+    }) },
     input.model ? { model: input.model } : undefined,
     input.timeoutMs === undefined ? {} : { timeoutMs: input.timeoutMs },
   );
@@ -465,14 +468,15 @@ export function connectFoundLine(input: {
 export interface ConnectWizardSeams {
   /** Supported harnesses installed on this machine; defaults to a real scan. */
   detect?: () => DetectedAgentCommand[];
+  checkProgram?: (kind: AgentKind, env: NodeJS.ProcessEnv) => void;
   /** Where the wizard says what it found instead of asking for it. */
   announce?: (line: string) => void;
 }
 
 /**
  * Ask before assuming — except about what the agent will think with. Setup
- * facts the machine can establish it establishes: which harness (asked only
- * when more than one is installed), which provider and key (asked only when
+ * facts the machine can establish it establishes: it checks the chosen harness
+ * before asking for its provider and key (asked only when
  * the harness holds none; a harness that answers `session/new` with its own
  * model list is authenticated by definition). Model and reasoning effort are
  * always asked, including of an already-configured harness: the harness's
@@ -575,22 +579,16 @@ export async function collectConnectWizard(
     }
   };
 
-  const sole = soleInstalledConnectHarness((seams.detect ?? detectInstalledAgentCommands)());
-  let harness = sole;
-  let configured = sole ? await probe(sole) : undefined;
-  if (!harness || !configured) {
-    const chosen = await prompts.select<(typeof CONNECT_HARNESSES)[number]>({
-      message: brass('Choose harness'),
-      options: CONNECT_HARNESSES.map((value) => ({
-        value,
-        label: connectHarnessLabel(value),
-      })),
-    });
-    // The sole harness has already had its one attempt; picking it again does
-    // not buy a second.
-    if (chosen !== harness) configured = await probe(chosen);
-    harness = chosen;
-  }
+  const detected = (seams.detect ?? detectInstalledAgentCommands)();
+  const sole = soleInstalledConnectHarness(detected);
+  const harness = await prompts.select<(typeof CONNECT_HARNESSES)[number]>({
+    message: brass('Choose harness'),
+    options: CONNECT_HARNESSES.map(value => ({ value, label: connectHarnessLabel(value) })),
+    ...(sole ? { initialValue: sole } : {}),
+  });
+  const checkProgram = seams.checkProgram ?? requireInstalledAgentProgram;
+  checkProgram(harness, env);
+  const configured = await probe(harness);
   if (configured) {
     announce(
       connectFoundLine({

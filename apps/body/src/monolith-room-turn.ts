@@ -9,7 +9,7 @@ import { realpathSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { machineHost } from './machine-host.js';
-import { isolatedSharedAssetCategories, markWorkspaceLayoutLive, prepareCodexCacheTargets, preparePackageCacheTargets, preparePrivateAssets, prepareWorkspaceAdapter, prepareWorkspaceAssets, sharedAssetsEnabled, workspaceAssetPaths, workspaceCacheEnv } from './workspace-assets.js';
+import { isolatedSharedAssetCategories, markWorkspaceLayoutLive, prepareCodexCacheTargets, preparePackageCacheTargets, preparePrivateAssets, prepareWorkspaceAssets, sharedAssetsEnabled, workspaceAssetPaths, workspaceCacheEnv } from './workspace-assets.js';
 import type { SharedAssetCategory } from '@beeline/api-contract/agent-grants';
 import { admitSharedAssets } from './shared-asset-capacity.js';
 import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
@@ -968,6 +968,7 @@ export class MonolithRoomTurnLoop {
   }
 
   private async activate(trace?: TurnTrace): Promise<string> {
+    if (this.options.config.agentProgramError) throw new Error(this.options.config.agentProgramError);
     const startupAt = performance.now();
     let previousStep = startupAt;
     const startupStep = (step: string) => {
@@ -1086,22 +1087,9 @@ export class MonolithRoomTurnLoop {
       ? await prepareWorkspaceAssets(this.options.config.agentSharedAssetRoot)
       : undefined;
     startupStep('asset-layout');
-    let toolchain;
     if (isolatedCategories.length)
       await preparePrivateAssets(privateAssetRoot, isolatedCategories);
-    if (assets) {
-      try {
-        toolchain = await prepareWorkspaceAdapter(assets, this.options.config.agentKind, command, {
-          ...this.options.config.agentEnv, ...homeOverlay,
-          ...workspaceCacheEnv(assets, undefined,
-            isolatedCategories.includes('package-cache') ? privateAssetRoot : undefined),
-        }, { background: true });
-      } catch (error) {
-        // Pinning is optional: a failed install or registry lookup leaves the
-        // host adapter usable, while the Workspace download cache stays shared.
-        console.warn('[body] Workspace adapter pinning failed; using host adapter:', error);
-      }
-    }
+
     this.sharedAssetsActive = Boolean(assets);
     startupStep('toolchain');
     const cacheEnv = assets
@@ -1117,11 +1105,8 @@ export class MonolithRoomTurnLoop {
     if (assets && this.options.config.agentPrivateRoot)
       await mkdir(this.options.config.agentPrivateRoot, { recursive: true, mode: 0o700 });
     const agentEnv: Record<string, string> = { ...this.options.config.agentEnv, ...homeOverlay, ...cacheEnv };
-    if (toolchain && assets) {
-      agentEnv.PATH = `${join(toolchain.binDir, '../../bin')}:${toolchain.binDir}:${agentEnv.PATH ?? ''}`;
-      if (this.options.config.agentKind === 'pi') agentEnv.PI_ACP_PI_COMMAND = toolchain.cliCommand;
-    }
-    const selectedCommand = toolchain?.command ?? command;
+
+    const selectedCommand = command;
     this.agentEnv = agentEnv;
     this.modelContextTokens = await modelContextWindowTokens(
       selectionModel,

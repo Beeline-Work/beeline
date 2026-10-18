@@ -63,6 +63,38 @@ const AGENT_EXECUTABLES: Record<(typeof AUTO_DETECT_AGENT_KINDS)[number], string
   opencode: 'opencode',
 };
 
+/** Install hints verified against the upstream docs; see docs/agent-programs.md. */
+const AGENT_PROGRAMS = {
+  codex: { name: 'Codex', binary: 'codex', install: 'npm install -g @openai/codex' },
+  claude: { name: 'Claude Code', binary: 'claude', install: 'curl -fsSL https://claude.ai/install.sh | bash' },
+  goose: { name: 'Goose', binary: 'goose', install: 'curl -fsSL https://github.com/aaif-goose/goose/releases/download/stable/download_cli.sh | bash' },
+  pi: { name: 'Pi', binary: 'pi', install: 'curl -fsSL https://pi.dev/install.sh | sh' },
+  grok: { name: 'Grok', binary: 'grok', install: 'curl -fsSL https://x.ai/cli/install.sh | bash' },
+  cursor: { name: 'Cursor', binary: 'cursor-agent', install: 'curl https://cursor.com/install -fsS | bash' },
+  opencode: { name: 'OpenCode', binary: 'opencode', install: 'npm install -g opencode-ai' },
+} as const;
+
+export function missingAgentProgramMessage(kind: keyof typeof AGENT_PROGRAMS): string {
+  const program = AGENT_PROGRAMS[kind];
+  return `${program.name} is not installed on this machine (${program.binary}). Install it with \`${program.install}\`, then try again.`;
+}
+
+export function requireInstalledAgentProgram(kind: AgentKind, env: NodeJS.ProcessEnv = process.env): string | undefined {
+  if (!(kind in AGENT_PROGRAMS)) return undefined;
+  const key = kind as keyof typeof AGENT_PROGRAMS;
+  const path = executableOnPath(AGENT_PROGRAMS[key].binary, env);
+  if (!path) throw new Error(missingAgentProgramMessage(key));
+  return path;
+}
+
+/** Explicit upstream overrides keep adapters on the operator's program. */
+export function installedAgentProgramEnvironment(kind: AgentKind, env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+  const variable = kind === 'claude' ? 'CLAUDE_CODE_EXECUTABLE' : kind === 'codex' ? 'CODEX_PATH' : kind === 'pi' ? 'PI_ACP_PI_COMMAND' : undefined;
+  if (!variable) return {};
+  const path = executableOnPath(AGENT_PROGRAMS[kind as 'claude' | 'codex' | 'pi'].binary, env);
+  return path ? { [variable]: path } : {};
+}
+
 const ADAPTER_INSTALL_COMMANDS: Record<'codex' | 'claude' | 'pi', AdapterInstallCommand> = {
   codex: {
     command: 'npm',
@@ -89,7 +121,7 @@ export async function runAdapterInstall(
   opts: { cwd?: string; env?: NodeJS.ProcessEnv; stdio?: 'inherit' | 'ignore' } = {},
 ): Promise<void> {
   await new Promise<void>((resolveInstall, rejectInstall) => {
-    const child = spawn(install.command, install.args, {
+    const child = spawn(install.command, [...install.args, '--omit=optional'], {
       ...(opts.cwd ? { cwd: opts.cwd } : {}),
       env: opts.env ?? process.env,
       stdio: opts.stdio ?? 'inherit',
@@ -181,6 +213,14 @@ async function publishedAdapterVersion(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<string> {
   return npmOutput(['view', packageName, 'version'], env);
+}
+
+/** Older user CLIs can reject flags required by the latest adapter. */
+export async function explainAgentProgramFailure(error: unknown, env: NodeJS.ProcessEnv): Promise<unknown> {
+  if (!env.CLAUDE_CODE_EXECUTABLE || !/unknown option|unrecognized (?:option|argument)|unsupported.*version|requires.*version/i.test(String(error))) return error;
+  const version = await execFileAsync(env.CLAUDE_CODE_EXECUTABLE, ['--version'], { env, timeout: 3000, maxBuffer: 4096 })
+    .then(result => result.stdout.trim().replace(/\s+/g, ' ').slice(0, 80)).catch(() => 'version unavailable');
+  return new Error(`Claude Code ${version} could not start. Install it with \`${AGENT_PROGRAMS.claude.install}\`, then try again. ${String(error)}`, { cause: error });
 }
 
 function adapterInstallHint(kind: keyof typeof ADAPTER_INSTALL_COMMANDS): string {
@@ -369,6 +409,7 @@ export function resolveAgentCommand(opts: {
   const typedKind = kind as AgentKind;
   const env = opts.env ?? process.env;
   const cwd = resolve(opts.cwd ?? process.cwd());
+  requireInstalledAgentProgram(typedKind, env);
 
   if (typedKind !== 'custom' && opts.customCommand !== undefined) {
     throw new Error('--agent-command may only be used with --agent custom');

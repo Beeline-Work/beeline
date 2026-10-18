@@ -18,6 +18,7 @@ import { EventEmitter } from 'node:events';
 import { watch, readFileSync, realpathSync, writeFileSync, type FSWatcher } from 'node:fs';
 import { delimiter, dirname, isAbsolute } from 'node:path';
 import { withAdapterInstallLock } from './adapter-install-lock.js';
+import { explainAgentProgramFailure } from './agent-command.js';
 import { piStartupEnvironment } from './pi-startup.js';
 import { AcpResourceScope } from './acp-resource-scope.js';
 import type { SessionMode } from './config.js';
@@ -972,7 +973,7 @@ export class AcpClient extends EventEmitter {
       if (/EPIPE/.test(String(error)) && this.stderrTail.trim()) {
         throw new AcpRuntimeExitedError(`ACP agent ${this.agentLabel}: ${String(error)}: ${flattenHarnessCause(this.stderrTail)}`);
       }
-      throw error;
+      throw await explainAgentProgramFailure(error, this.agentEnv);
     }
     const initMeta = initResult._meta as Record<string, unknown> | undefined;
     const steering = initMeta?.steering as Record<string, unknown> | undefined;
@@ -1150,7 +1151,7 @@ export class AcpClient extends EventEmitter {
       meta.systemPrompt = { append: opts.systemPrompt };
     }
     if (Object.keys(meta).length > 0) params._meta = meta;
-    const raw = (await this.request('session/new', params, opts.timeoutMs ?? 60_000)) as Record<
+    const raw = (await this.request('session/new', params, opts.timeoutMs ?? 60_000).catch(async error => { throw await explainAgentProgramFailure(error, this.agentEnv); })) as Record<
       string,
       unknown
     >;

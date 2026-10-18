@@ -640,6 +640,8 @@ createInterface({ input: process.stdin }).on('line', (line) => {
           launchedDaemonConfig = configPath;
           const liveRuntime = await readRuntimeRecord(configPath);
           liveRuntime.sandbox = 'off';
+          // This service acceptance fixture deliberately uses a custom ACP executable.
+          liveRuntime.agentKind = 'custom';
           await writeRuntimeRecord(liveRuntime);
           // Same layout scripts/verify-beeline-install.mjs materializes:
           // binDir <root>/prefix/bin, libDir <root>/prefix/lib/beeline.

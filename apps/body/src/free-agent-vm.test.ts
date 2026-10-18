@@ -113,10 +113,8 @@ describe('free agent Machine entry', () => {
     expect(dockerfile).not.toMatch(/ARG \w+=latest/);
     expect(dockerfile).not.toContain('opencode-ai');
     const installer = await readFile(new URL('./free-agent-vm.ts', import.meta.url), 'utf8');
-    for (const [arg, packageName] of [['PI_VERSION', '@earendil-works/pi-coding-agent'], ['PI_ACP_VERSION', 'pi-acp']]) {
-      const version = dockerfile.match(new RegExp(`ARG ${arg}=(\\S+)`))![1];
-      expect(installer).toContain(`${packageName}@${version}`);
-    }
+    expect(installer).not.toContain("['install', '-g'");
+    expect(installer).toContain("resolveAgentCommand({ kind: 'pi', env })");
   });
 
   it('retries a failed bootstrap and stops on a refused token', async () => {

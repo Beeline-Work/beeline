@@ -84,8 +84,8 @@ reaped_idle, deleted_idle and allowance_reached.
 
 Existing free agents switch to Pi on their next cold boot. The helper upgrades
 the persisted runtime and writes a private Pi provider configuration before
-starting sessions. An older image installs the same pinned Pi and pi-acp versions
-when those tools are missing. Prior OpenCode harness session history does not carry over;
+starting sessions. The image supplies Pi and pi-acp; the helper reports a missing program instead
+of downloading a replacement. Prior OpenCode harness session history does not carry over;
 Workspace messages remain available. Pi and pi-acp state directories are covered
 by the existing sandbox binds. The provider pins a 1,000,000-token context window
 and a 65,536-token output ceiling.
@@ -255,11 +255,7 @@ and monotonic step durations for configuration, home preparation, toolchain,
 MCP bridge, ACP initialization and session creation, separating helper
 preparation from provider time when investigating the 37-second gap. A local
 cold run measured 7,762 ms reinstalling the already-installed Pi/ACP packages
-into a Workspace generation. Rooms and corners now use the installed host
-harness immediately while that optional immutable generation prepares in the
-background. A later cold activation can select the prepared generation;
-an active session never switches executables. Free-agent images prepare the exact
-version-keyed Pi/ACP generation and the normal 128 MiB recovery reserve during
-construction, so a matching image needs neither allocation nor an npm pinning
-job on its first turn. Missing or changed generations retain the Workspace
-preparation path.
+into a Workspace generation. Rooms and corners use the installed host
+harness directly, without cloning it into a Workspace generation. Free-agent
+images allocate the normal 128 MiB recovery reserve during construction, so a
+matching image needs no reserve allocation on its first turn.

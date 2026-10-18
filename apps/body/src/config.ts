@@ -10,7 +10,7 @@ import { accessSync, constants, existsSync, readFileSync } from 'node:fs';
 import { basename, dirname, resolve } from 'node:path';
 import {
   executableOnPath,
-  resolveAgentCommand,
+  resolveAgentCommand, installedAgentProgramEnvironment,
   type AgentCommand,
   type AgentKind,
 } from './agent-command.js';
@@ -39,6 +39,7 @@ export const WRITE_TOOL_NAMES = [
 ] as const;
 
 export interface BodyConfig {
+  agentProgramError?: string;
   /** Installed daemon bundle identity reported with the monolith startup presence announcement. */
   daemonReleaseVersion?: string;
   daemonSourceSha?: string;
@@ -583,7 +584,7 @@ export function loadBodyConfig(opts: {
   const agent = opts.agent ?? resolveAgentCommand({ kind: 'reference', env });
   const mcpBinary = resolveMcpBinary(env);
   const readonlyMcp = resolveReadonlyMcpCommand(env);
-  const agentEnv = buildAgentEnv(env, opts.llmEnvFile);
+  const agentEnv = { ...buildAgentEnv(env, opts.llmEnvFile), ...installedAgentProgramEnvironment(agent.kind, env) };
   return {
     agentBinary: agent.command,
     agentKind: agent.kind,

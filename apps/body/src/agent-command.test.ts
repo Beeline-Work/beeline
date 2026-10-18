@@ -130,7 +130,7 @@ describe('agent command selection', () => {
       },
     ]);
     expect(() => resolveAgentCommand({ kind: 'opencode', env: { ...env, PATH: '' } })).toThrow(
-      'npm install -g opencode-ai@latest',
+      'npm install -g opencode-ai',
     );
   });
 
@@ -186,7 +186,7 @@ describe('agent command selection', () => {
   it('gives an actionable install error when the Cursor Agent CLI is missing', async () => {
     const home = await hermeticHome();
     expect(() => resolveAgentCommand({ kind: 'cursor', env: { HOME: home, PATH: '' } })).toThrow(
-      'Cursor Agent CLI not found',
+      'Cursor is not installed on this machine',
     );
   });
 
@@ -331,9 +331,7 @@ describe('augmented harness lookup', () => {
     } catch (error) {
       message = (error as Error).message;
     }
-    expect(message).toContain('npm install -g @mariozechner/pi-coding-agent@latest');
-    expect(message).toContain('Searched:');
-    expect(message).toContain('/usr/bin');
-    expect(message).toContain(resolve(home, '.local', 'bin'));
+    expect(message).toContain('curl -fsSL https://pi.dev/install.sh | sh');
+    expect(message).toContain('Pi is not installed on this machine (pi)');
   });
 });

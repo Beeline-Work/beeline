@@ -62,6 +62,36 @@ If nothing is new, hand off `nothing_new`. Otherwise hand off `ranked` with
 `problems`: the top groups (at most 4), each with a one-line description in your
 own words, its report count, and its item ids.
 
+## adapters
+
+Run `npm run build -w @beeline/body` and then
+`node scripts/check-acp-adapters.mjs` from the repository checkout. Read the script
+before executing it. Run once per daily sweep, including when pull found nothing.
+It installs only `@agentclientprotocol/codex-acp@latest`,
+`@agentclientprotocol/claude-agent-acp@latest` and `pi-acp@latest` in disposable
+prefixes, omits optional bundled harness binaries, and uses installed Codex,
+Claude Code and Pi programs. It gives each check an empty private HOME/XDG tree
+and a small environment without provider keys, tokens or logins. Do not supply
+credentials, start login, or copy operator configuration. It uses Beeline's ACP
+client to run `initialize` and `session/new`, never a model prompt.
+
+Read its JSON results even when the exit code is nonzero. Each result names the
+adapter, exact installed version, program path, status and failed stage. A missing
+host program or refused unauthenticated session is a finding with that precise
+limit, not evidence of a broken logged-in turn. Report each failing check with
+`report_feedback(category:bug)` naming the adapter/version and the observed
+stage, attach the returned item id, and add it to `adapterFindings`. Assess and
+propose fixes through the same approve/dispatch path as other findings; a local
+missing install calls for that concrete setup step rather than an unrelated code
+fix. Never hide an authentication requirement by injecting a key.
+
+Hand off `checked` when all checks pass, otherwise `failed`, with
+`adapterResults` holding the compact versioned results, `adapterFindings` holding
+the findings and item ids (empty on success), and `skipReason` `none`. If the
+checkout/build/npm is unavailable, use `failed` and record the actual limitation
+in `skipReason`; continue the other sweep work. This check establishes ACP
+connection compatibility only, not model availability or a logged-in turn.
+
 ## browse
 
 This step belongs to the scheduled triager and has a separate 3600-second budget.
@@ -108,7 +138,7 @@ not in a separate sweep. Only build findings are proposed for dispatch.
 
 ## approve
 
-Combine the feedback problems and browse findings in the same report/card. The card offers **dispatch** or **skip** for the listed build problems. Nothing is
+Combine the feedback problems, adapter findings and browse findings in the same report/card. The card offers **dispatch** or **skip** for the listed build problems. Nothing is
 dispatched until a person answers. **dispatch** approves every listed problem;
 **skip** ends the run.
 

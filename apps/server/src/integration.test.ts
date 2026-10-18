@@ -4604,7 +4604,16 @@ describe('monolith integration', () => {
     expect(await taggedBy(database, '3'.repeat(64))).toEqual([]);
   });
 
-  it('does not route an untagged threaded human reply to its parent agent', async () => {
+  it.each([false, true])('routes an untagged threaded reply only for a solo-agent Room (extra human: %s)', async extraHuman => {
+    if (extraHuman) {
+      const peer = 'c'.repeat(64);
+      await database.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Peer','peer')`, [peer]);
+      await database.query(
+        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
+         VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`,
+        [WORKSPACE, peer, ROOM],
+      );
+    }
     await announceAgentLifecycle(database, new LiveHub(), ROOM, AGENT, {
       lifecycleId: 'routing-fixture',
     });
@@ -4642,13 +4651,8 @@ describe('monolith integration', () => {
     );
     expect(stored.rows[0]).toEqual({ tagged_ids: [], reply_to_message_id: parentId });
     const inbox = await daemonOperation('getRoomInbox', { roomId: ROOM });
-    expect(
-      (
-        (await inbox.json()) as {
-          items: Array<{ id: string; replyToAuthorId?: string }>;
-        }
-      ).items,
-    ).not.toContainEqual(expect.objectContaining({ id: '5'.repeat(64) }));
+    const items = ((await inbox.json()) as { items: Array<{ id: string }> }).items;
+    expect(items.some(item => item.id === '5'.repeat(64))).toBe(!extraHuman);
   });
 
   it('does not notify an untagged direct parent agent', async () => {

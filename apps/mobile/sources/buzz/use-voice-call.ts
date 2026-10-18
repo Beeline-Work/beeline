@@ -1,24 +1,24 @@
 import * as React from 'react';
 import { Platform } from 'react-native';
 import { RoomEvent, Track, type Room } from 'livekit-client';
-import { VOICE_DATA_TOPIC, readAgentVoicePreview, type VoiceBudget, type VoiceJoin, type VoiceIdleState, type VoiceSignal, type VoiceCall, type RoomViewIdentity } from '@beeline/api-contract/phone';
+import { VOICE_DATA_TOPIC, type VoiceBudget, type VoiceJoin, type VoiceIdleState, type VoiceSignal, type VoiceCall, type RoomViewIdentity } from '@beeline/api-contract/phone';
 import { getBuzzRuntimeConfig } from './runtime-config';
 import { createVoiceRoom, subscribeVoiceResume, voiceFetch } from './voice-transport';
 import { errorDiagnostic, reportClientError } from './client-error-report';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { voiceWaveformLevel } from './waveform-level';
 
-function dailyLimitMessage(resetAt: number): string {
-  return `Daily voice limit reached. Resets at ${new Date(resetAt).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })}`;
+function dailyLimitMessage(budget: VoiceBudget): string {
+  return `Calls resume at ${new Date(budget.resetAt).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true, timeZone: budget.timeZone })}`;
 }
 
-async function voiceRequest<T>(id: string, action: 'join' | 'leave' | 'current' | 'idle' | 'state' | 'resume' | 'warning', sessionId?: string): Promise<T> {
+async function voiceRequest<T>(id: string, action: 'join' | 'leave' | 'current' | 'idle' | 'state' | 'resume', sessionId?: string): Promise<T> {
   const response = await voiceFetch(`${getBuzzRuntimeConfig().monolithUrl}/v1/phone/voice/${id}/${action}${action === 'state' && sessionId ? `?sessionId=${encodeURIComponent(sessionId)}` : ''}`,
     { method: action === 'current' || action === 'state' ? 'GET' : 'POST',
       ...(sessionId && action !== 'state' ? { headers: { 'content-type': 'application/json' }, body: JSON.stringify({ sessionId }) } : {}) });
   const value = await response.json() as T & { error?: string; code?: string; budget?: VoiceBudget };
   if (!response.ok) throw new Error(value.code === 'voice-daily-limit' && value.budget
-    ? dailyLimitMessage(value.budget.resetAt) : value.error ?? 'Conversation mode could not connect');
+    ? dailyLimitMessage(value.budget) : value.error ?? 'Conversation mode could not connect');
   return value;
 }
 
@@ -44,7 +44,6 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
   const [quotaExhausted, setQuotaExhausted] = React.useState(false);
   const quotaRef = React.useRef(false);
   const [budgetWarning, setBudgetWarning] = React.useState<string | null>(null);
-  const [warningAudio, setWarningAudio] = React.useState<string | null>(null);
   const [firstAudioMs, setFirstAudioMs] = React.useState<number | null>(null);
   const [humans, setHumans] = React.useState(1);
   /** Counts turns dropped because no agent was named, so the tip line can flash. */
@@ -67,7 +66,7 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
     const cancelDeadline = cancelSilence.current; cancelSilence.current = undefined;
     if (cancelDeadline) void cancelDeadline().catch(() => {});
     mode.current = 'ended';
-    setBudgetWarning(null); setWarningAudio(null);
+    setBudgetWarning(null);
     liveCleanup.current?.(); liveCleanup.current = null;
     const current = session.current; session.current = null;
     const cancelJoin = joiningCleanup.current; joiningCleanup.current = null;
@@ -93,7 +92,6 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
     let expireDeadline: () => Promise<void> = async () => {};
     const release = () => closing ??= closeVoiceTransport(transport);
     const current = () => version === revision.current;
-    let budgetSpoken = false;
     const request = async <T,>(id: string, action: Parameters<typeof voiceRequest>[1], sessionId?: string): Promise<T> => {
       // Android can resume before DNS is ready. Retry only transport failures,
       // within this call's lifetime, for at most fifteen seconds of backoff.
@@ -195,20 +193,15 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
               !Number.isFinite(budget.resetAt) || budget.timeZone !== 'UTC') return;
             if (budget.remainingMs === 0) {
               // Fence reconnection before the server removes this RTC participant.
-              const message = dailyLimitMessage(budget.resetAt);
+              const message = dailyLimitMessage(budget);
               const endedVersion = revision.current + 1;
               void end().then(() => { if (revision.current === endedVersion) setError(message); });
               return;
             }
+            if (budget.remainingMs > 120_000) { setBudgetWarning(null); return; }
             setBudgetWarning(budget.remainingMs >= 60_000
               ? `${Math.ceil(budget.remainingMs / 60_000)} min left today`
               : `${Math.ceil(budget.remainingMs / 1000)}s left today`);
-            if (budgetSpoken) return;
-            budgetSpoken = true;
-            void voiceRequest<unknown>(joined!.call.id, 'warning').then(value => {
-              const audio = readAgentVoicePreview(value);
-              if (current() && audio) setWarningAudio(`data:audio/wav;base64,${audio.wavBase64}`);
-            }).catch(cause => { if (current()) void reportClientError('conversation', cause); });
             return;
           }
           if (data.type === 'stop') { void end(); return; }
@@ -323,7 +316,7 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
     void session.current?.room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ type: 'target', agentId, tap: true })),
       { reliable: true, topic: VOICE_DATA_TOPIC });
   }, [agents]);
-  return { budgetWarning, warningAudio, clearWarningAudio: () => setWarningAudio(null), call, agents, target, speaker, level, connecting, error, quotaExhausted, firstAudioMs, humans, unaddressed, join, end, aim };
+  return { budgetWarning, call, agents, target, speaker, level, connecting, error, quotaExhausted, firstAudioMs, humans, unaddressed, join, end, aim };
 }
 
 export type VoiceCallState = ReturnType<typeof useVoiceCall>;

@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
+import { loadUntaggedHintCount, reserveUntaggedHint } from './untagged-hint-storage';
+
 const NO_HINTS: ReadonlySet<string> = new Set();
 
 /** Transient feedback for this device's sends, never derived from message history. */
@@ -23,18 +25,37 @@ export function useUntaggedMessageHints({
     return () => { currentSession.current = null; };
   }, [session]);
 
+  const hintGeneration = useRef(0);
+  const ready = useRef<object | null>(null);
+  const recorded = useMemo(() => new Set<string>(), [session]);
+  useEffect(() => {
+    ready.current = null;
+    let cancelled = false;
+    void loadUntaggedHintCount(viewerPubkey).then(count => {
+      if (!cancelled && count < 2) ready.current = session;
+    }).catch(() => {});
+    return () => { cancelled = true; ready.current = null; };
+  }, [session, viewerPubkey]);
+
   // Capture before awaiting the send. A receipt arriving after navigation must
   // not put a hint back into a conversation the sender already left.
   const captureSend = useCallback((hasMentions: boolean) => (messageId: string) => {
     if (!enabled || !active || currentSession.current !== session) return;
-    setHints((previous) => {
-      if (currentSession.current !== session) return previous;
-      const ids = new Set(previous?.session === session ? previous.ids : []);
-      if (hasMentions) ids.clear();
-      else ids.add(messageId);
-      return { session, ids };
+    if (hasMentions) {
+      hintGeneration.current += 1;
+      setHints({ session, ids: NO_HINTS });
+      return;
+    }
+    if (ready.current !== session || recorded.has(messageId)) return;
+    recorded.add(messageId);
+    const generation = hintGeneration.current;
+    void reserveUntaggedHint(viewerPubkey).then(allowed => {
+      if (!allowed || currentSession.current !== session || hintGeneration.current !== generation) return;
+      setHints(previous => ({ session, ids: new Set([
+        ...(previous?.session === session ? previous.ids : []), messageId,
+      ]) }));
     });
-  }, [active, enabled, session]);
+  }, [active, enabled, session, recorded, viewerPubkey]);
 
   return {
     captureSend,

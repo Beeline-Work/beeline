@@ -60,15 +60,17 @@ export function distillTurnFailureReason(error: unknown): DistilledTurnFailureRe
     .filter((line) => line && !/^at\s/.test(line));
   const firstLine = informative[0] ?? '';
   const stripped = firstLine.replace(/^(?:[A-Za-z]*Error|Error):\s*/, '').replace(/\s+/g, ' ');
-  const clean = redactToolDetail(stripped).trim();
+  const classified = classifyTurnSilence(
+    redactToolDetail(informative.join(' ')).replace(/\s+/g, ' '),
+  );
+  const clean = classified.kind === 'hiccup' && classified.fault?.startsWith("it couldn't start:")
+    ? classified.fault
+    : redactToolDetail(stripped).trim();
   const text = !clean
     ? 'turn failed'
     : clean.length > TURN_FAILURE_REASON_MAX
       ? `${clean.slice(0, TURN_FAILURE_REASON_MAX - 1)}…`
       : clean;
-  const classified = classifyTurnSilence(
-    redactToolDetail(informative.join(' ')).replace(/\s+/g, ' ') || text,
-  );
   // A transient token-refresh race on the harness's own provider connection
   // (claude-agent-acp mid-OAuth-refresh, say) can read identically to a
   // genuinely expired/missing credential. Report every auth-shaped failure as

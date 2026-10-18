@@ -208,11 +208,9 @@ workspaces on entering that step. It then reads through the read-only
 STABLE SQL functions `service_review_targets(agentId,runId)` and
 `service_review_page(agentId,runId,workspaceId,afterId)`.
 
-Both reservation and every read check that the configured model provider appears
-in the published service-review inventory. Currently the scheduled Claude triager
-uses Anthropic. A missing, unknown or changed provider refuses the step and its
-read-only queries. Tests compare the model-provider inventory to the rendered
-page. Workspace opt-out, the notice period, current run/agent reservation and
+The scheduled Claude triager currently uses Anthropic, as disclosed in the
+published inventory. Keep that inventory current when providers change.
+Workspace opt-out, the notice period, current run/agent reservation and
 pagination are rechecked server-side; raw table reads are not a fallback.
 
 Reservations cap the day at five workspaces, prioritize signups within seven days

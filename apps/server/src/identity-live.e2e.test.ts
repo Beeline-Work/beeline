@@ -9,8 +9,6 @@ import type { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
 import { reserveServiceReviewWorkspaces, readServiceReviewPage } from './service-review.js';
-import { readFileSync } from 'node:fs';
-import { SERVICE_REVIEW_MODEL_PROVIDERS } from './service-review.js';
 import { sendServiceReviewNotices } from './service-review-notice.js';
 import { POSTGRES_LIVE_CHANNEL, PostgresLiveListener, type LivePgClient } from './postgres-live.js';
 import { createBeelineServer } from './server.js';
@@ -186,17 +184,6 @@ describe('live Workspace and identity changes across sessions', () => {
     const last = await readServiceReviewPage(database,REVIEW_AGENT,'test-run',WORKSPACE,first.rows.at(-1)!.id);
     expect(last.rows).toHaveLength(5);
     expect((await readServiceReviewPage(database,REVIEW_AGENT,'test-run',WORKSPACE,last.rows.at(-1)!.id)).rows).toEqual([]);
-  });
-
-  it('refuses reserve and read-only queries after the review agent switches to an unlisted provider', async () => {
-    const html = readFileSync(new URL('../../../relay-stack/web/subprocessors/index.html',import.meta.url),'utf8');
-    const published = [...html.matchAll(/data-service-review-model-provider="([a-z]+)"/g)].map((match) => match[1]);
-    expect(published).toEqual([...SERVICE_REVIEW_MODEL_PROVIDERS]);
-    await database.query(`UPDATE agents SET harness='codex',selected_model='gpt-6' WHERE agent_id=$1`,[REVIEW_AGENT]);
-    await expect(reserveServiceReviewWorkspaces(database,REVIEW_AGENT,'test-run')).rejects.toThrow('published subprocessors');
-    await expect(database.query('SELECT * FROM service_review_targets($1,$2)',[REVIEW_AGENT,'test-run'])).rejects.toThrow('published subprocessors');
-    await expect(readServiceReviewPage(database,REVIEW_AGENT,'test-run',WORKSPACE)).rejects.toThrow('published subprocessors');
-    expect((await database.query('SELECT count(*)::int count FROM service_review_visits')).rows[0]).toEqual({count:0});
   });
 
   it('requires verified notice coverage, sends once and leaves browsing off before the effective date', async () => {

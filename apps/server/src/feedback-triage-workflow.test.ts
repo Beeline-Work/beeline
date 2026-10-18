@@ -246,18 +246,6 @@ describe('feedback-triage workflow', () => {
       .toEqual({kind:'cron',expression:'0 14 * * *',timeZone:'America/New_York'});
   });
 
-  it('refuses entering browse when the scheduled triager has an unlisted provider', async () => {
-    await backfillFeedbackTriageWorkflow(database);
-    await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES('guard-schedule',$1,$2,'Run triage')`,[TRIAGE_CORNER,CREATOR]);
-    const turn = cornerTurn('guard-schedule');
-    const {runId} = await startWorkflow(database,turn,{name:'feedback-triage',roleBindings:{triager:TRIAGER}});
-    await handoff(database,turn,{runId,outcome:'skipped',contents:{fixedPullRequests:'none',skipReason:'none',unnotifiedPullRequests:'none'}});
-    await database.query(`UPDATE agents SET harness='codex',selected_model='gpt-6' WHERE agent_id=$1`,[TRIAGER]);
-    await expect(handoff(database,turn,{runId,outcome:'nothing_new',contents:{problems:[]},attempt:1}))
-      .rejects.toThrow('published subprocessors');
-    expect((await database.query('SELECT count(*)::int count FROM service_review_visits')).rows[0]).toEqual({count:0});
-  });
-
   it('lets the scheduled agent find, read and start it right after install, with no setting', async () => {
     await backfillFeedbackTriageWorkflow(database);
     await database.query(

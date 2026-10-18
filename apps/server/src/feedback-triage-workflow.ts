@@ -131,9 +131,7 @@ own words, its report count, and its item ids.
 
 This step belongs to the scheduled triager and has a separate 3600-second budget.
 No web-browser session or separate agent binding is involved. The server reserves
-at most five eligible workspaces when this run enters browse. It checks the
-triager's configured model provider against the published subprocessors inventory
-before dispatch and refuses an unlisted or unknown provider. Do not bypass a refusal.
+at most five eligible workspaces when this run enters browse.
 
 Read only through Trusty Squire \`use_credential\` with the operator's vaulted
 read-only \`beeline-prod-db\` connection and the Neon HTTP SQL endpoint. Put
@@ -149,11 +147,10 @@ For each returned workspace id read successive pages with:
 
 Parameters are agent id, run id, workspace id and the last returned message id
 (empty string on the first page). Continue until an empty page. The SQL functions
-recheck the current provider, notice period, reservation and workspace opt-out on
+recheck the notice period, reservation and workspace opt-out on
 every read; they run inside a read-only transaction. Never query raw messages as
-a fallback. The provider inventory currently permits Anthropic for the scheduled
-Claude triager; if the agent switches providers, update and verify the inventory
-before reading again.
+a fallback. The current scheduled Claude triager uses Anthropic, as disclosed
+in the subprocessors inventory. Keep that inventory current when providers change.
 
 The reservation prioritizes signups within seven days, then seven-day message
 activity, rotates workspaces for 14 days, and caps the New York calendar day at

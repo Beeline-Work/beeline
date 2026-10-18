@@ -35,9 +35,5 @@ previous published privacy policy. The authorized metadata query selected only
 schedule cadence, agent harness and selected model; it never selected secrets,
 message bodies, prompts, workspace names or user content.
 
-The workflow reserves its reads before dispatch. The configured agent is checked
-against the published model-provider inventory before reservation and again in
-every read-only SQL function. Only the verified Claude/Anthropic route is currently
-allowed; unknown harness/model combinations or a switch to another provider fail
-before workspace content is returned. The test suite also checks that the public
-page's named service-review model providers match that executable inventory.
+The workflow reserves its reads before dispatch. Provider changes require keeping
+the published inventory current; there is no provider allowlist or runtime refusal.

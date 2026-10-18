@@ -14,13 +14,9 @@ The policy remains vendor-neutral. Squire's returned query data and Neon's datab
 hosting are covered by their named table rows, along with Squire's disclosed Fly
 hosting infrastructure.
 
-The service integration proof uses synthetic records. It switches the configured
-review agent from Claude/Anthropic to an unlisted provider and verifies that both
-reservation and the read-only targets/page functions refuse before returning
-content. The workflow integration proof also verifies refusal before entering the
-browse step. A normal paginated read runs inside `SET TRANSACTION READ ONLY` and
-stops when the workspace opts out. Tests assert that the published model-provider
-inventory matches the executable allowlist.
+The service integration proof uses synthetic records. A paginated read runs
+inside `SET TRANSACTION READ ONLY` and stops when the workspace opts out.
+The provider inventory is a disclosure, without a runtime provider gate.
 
 Commands:
 

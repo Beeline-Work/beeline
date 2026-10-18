@@ -1,28 +1,10 @@
 import type { SqlDatabase } from './database.js';
 
-export const SERVICE_REVIEW_MODEL_PROVIDERS = ['anthropic'] as const;
-
 /** These SQL reads are executable with the operator's read-only Neon route. */
 export const SERVICE_REVIEW_READ_SCHEMA = `
-CREATE OR REPLACE FUNCTION service_review_provider_allowed(review_agent text)
-RETURNS boolean LANGUAGE sql STABLE AS $$
-  SELECT EXISTS(SELECT 1 FROM agents a WHERE a.agent_id=review_agent
-    AND a.harness='claude'
-    AND (a.selected_model IS NULL OR lower(a.selected_model) IN ('default','opus','sonnet','haiku')
-      OR lower(a.selected_model) LIKE 'claude-%')
-    AND 'anthropic'=ANY(ARRAY[${SERVICE_REVIEW_MODEL_PROVIDERS.map((provider) => "'"+provider+"'").join(',')}]))
-$$;
-CREATE OR REPLACE FUNCTION service_review_assert_provider(review_agent text)
-RETURNS void LANGUAGE plpgsql STABLE AS $$
-BEGIN
-  IF NOT service_review_provider_allowed(review_agent) THEN
-    RAISE EXCEPTION 'Service review provider is not in the published subprocessors inventory';
-  END IF;
-END $$;
 CREATE OR REPLACE FUNCTION service_review_targets(review_agent text,review_run text)
 RETURNS TABLE(workspace_id uuid) LANGUAGE plpgsql STABLE AS $$
 BEGIN
-  PERFORM service_review_assert_provider(review_agent);
   RETURN QUERY SELECT v.workspace_id FROM service_review_visits v
     JOIN workspaces w ON w.id=v.workspace_id
     WHERE v.agent_id=review_agent AND v.run_id=review_run AND w.allow_fix_sweep=true
@@ -33,7 +15,6 @@ END $$;
 CREATE OR REPLACE FUNCTION service_review_page(review_agent text,review_run text,review_workspace uuid,after_id text DEFAULT '')
 RETURNS TABLE(id text,room_id uuid,text text,activity jsonb) LANGUAGE plpgsql STABLE AS $$
 BEGIN
-  PERFORM service_review_assert_provider(review_agent);
   RETURN QUERY
     WITH target_rooms AS (
       SELECT r.id FROM rooms r JOIN workspaces w ON w.id=r.workspace_id
@@ -56,7 +37,6 @@ END $$;
 /** Reserve today's workspaces only after notice and its full waiting period. */
 export async function reserveServiceReviewWorkspaces(database: SqlDatabase, agentId: string, runId: string): Promise<string[]> {
   return database.transaction(async (db) => {
-    await db.query(`SELECT service_review_assert_provider($1)`, [agentId]);
     await db.query(`SELECT pg_advisory_xact_lock(hashtext('beeline-service-review'))`);
     const result = await db.query<{ workspace_id: string }>(`
       WITH rollout AS (
@@ -80,7 +60,7 @@ export async function reserveServiceReviewWorkspaces(database: SqlDatabase, agen
   });
 }
 
-/** Same guarded SQL function used by the read-only Squire path. */
+/** Same SQL function used by the read-only Squire path. */
 export async function readServiceReviewPage(database: SqlDatabase, agentId: string, runId: string, workspaceId: string, after = '') {
   return database.query<{ id: string; room_id: string; text: string; activity: unknown }>(
     'SELECT * FROM service_review_page($1,$2,$3,$4)', [agentId,runId,workspaceId,after]);

@@ -153,25 +153,32 @@ it('Reproduction VOICE-IDS-6: a stray open bracket flushes past the hold cap ins
 });
 
 it('Reproduction VOICE-IDS-7: a capped flush keeps a token that crosses the cap whole', () => {
-  const input = 'Note (' + 'word '.repeat(36) + 'a' + '1'.repeat(39) + ').';
-  const full = markdownToSpeech(input);
-  expect(full).not.toContain('111');
-  for (let at = 0; at <= input.length; at++) {
-    const stream = new MarkdownSpeechStream();
-    const spoken = [...stream.push(input.slice(0, at)), ...stream.push(input.slice(at)), stream.finish()]
-      .filter(Boolean).join('');
-    expect(spoken, `split at ${at}`).toBe(full);
-    expect(spoken, `leak at ${at}`).not.toContain('111');
-  }
-  for (let seed = 1; seed <= 20; seed++) {
-    let cursor = 0; let random = seed; const stream = new MarkdownSpeechStream(); const phrases: string[] = [];
-    while (cursor < input.length) {
-      random = (random * 48271) % 2147483647;
-      const next = Math.min(input.length, cursor + (random % 11) + 1);
-      phrases.push(...stream.push(input.slice(cursor, next))); cursor = next;
+  const cases = [
+    // Speedy's exact threshold-crossing case: the ID starts at 186 and the cap lands inside it.
+    { input: 'Note (' + 'word '.repeat(36) + 'a' + '1'.repeat(39) + ').', leak: '111' },
+    // The ID starts exactly at the cap boundary (index 200), so the cap cuts at its first character.
+    { input: 'Note (' + 'word '.repeat(38) + 'pad ' + 'b' + '2'.repeat(39) + ').', leak: '222' },
+  ];
+  for (const { input, leak } of cases) {
+    const full = markdownToSpeech(input);
+    expect(full).not.toContain(leak);
+    for (let at = 0; at <= input.length; at++) {
+      const stream = new MarkdownSpeechStream();
+      const spoken = [...stream.push(input.slice(0, at)), ...stream.push(input.slice(at)), stream.finish()]
+        .filter(Boolean).join('');
+      expect(spoken, `split at ${at}`).toBe(full);
+      expect(spoken, `leak at ${at}`).not.toContain(leak);
     }
-    phrases.push(stream.finish());
-    expect(phrases.filter(Boolean).join(''), `seed ${seed}`).toBe(full);
+    for (let seed = 1; seed <= 20; seed++) {
+      let cursor = 0; let random = seed; const stream = new MarkdownSpeechStream(); const phrases: string[] = [];
+      while (cursor < input.length) {
+        random = (random * 48271) % 2147483647;
+        const next = Math.min(input.length, cursor + (random % 11) + 1);
+        phrases.push(...stream.push(input.slice(cursor, next))); cursor = next;
+      }
+      phrases.push(stream.finish());
+      expect(phrases.filter(Boolean).join(''), `seed ${seed}`).toBe(full);
+    }
   }
   // An ordinary word crossing the cap is retained, not split.
   const words = 'Note (' + 'word '.repeat(38) + 'wonderful).';

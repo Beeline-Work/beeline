@@ -5,8 +5,9 @@ import type { InterruptedTurn } from './force-update-journal.js';
 import { SquireTaskRelay } from './squire-task-relay.js';
 import { resourceCallFacts } from './resource-mcp-facade.js';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { realpathSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { machineHost } from './machine-host.js';
 import { isolatedSharedAssetCategories, markWorkspaceLayoutLive, prepareCodexCacheTargets, preparePackageCacheTargets, preparePrivateAssets, prepareWorkspaceAdapter, prepareWorkspaceAssets, sharedAssetsEnabled, workspaceAssetPaths, workspaceCacheEnv } from './workspace-assets.js';
 import type { SharedAssetCategory } from '@beeline/api-contract/agent-grants';
@@ -187,10 +188,43 @@ function isRoomShellPermissionRequest(
   return !isMcpShapedPermissionRequest(request, hostServers);
 }
 
+/** Allow only existing files named entirely within this session's attachment tree. */
+function isAttachmentRead(request: AcpPermissionRequest, attachmentsDir?: string): boolean {
+  const call = request.toolCall;
+  if (!attachmentsDir || call?.kind !== 'read') return false;
+  const paths: string[] = [];
+  if (call.locations !== undefined) {
+    if (!Array.isArray(call.locations)) return false;
+    for (const location of call.locations) {
+      if (!location || typeof location.path !== 'string' || !location.path) return false;
+      paths.push(location.path);
+    }
+  }
+  const input = call.rawInput;
+  if (input && typeof input === 'object' && 'file_path' in input) {
+    if (typeof input.file_path !== 'string' || !input.file_path) return false;
+    paths.push(input.file_path);
+  }
+  if (!paths.length) return false;
+  const inside = (root: string, path: string) => {
+    const suffix = relative(root, path);
+    return suffix !== '' && suffix !== '..' && !suffix.startsWith(`..${sep}`) && !isAbsolute(suffix);
+  };
+  try {
+    const root = resolve(attachmentsDir);
+    const realRoot = realpathSync(root);
+    return paths.every(path => isAbsolute(path) && inside(root, resolve(path)) &&
+      inside(realRoot, realpathSync(path)));
+  } catch {
+    return false;
+  }
+}
+
 /**
  * The Room ACP client applies this host-owned decision fail-closed: a mounted
  * MCP tool call is approved, a shell command is approved while the OS sandbox
- * wraps this session, and nothing else crosses (native reads/writes,
+ * wraps this session, and native reads confined to its downloaded attachments
+ * are approved. Nothing else crosses (other native reads/writes,
  * unstructured requests).
  *
  * Shell is conditioned on the sandbox because the sandbox IS the Room's
@@ -209,11 +243,14 @@ export function roomPermissionDecision(
     hostServers?: readonly string[];
     /** `config.bwrapPath`, set only when the sandbox self-test passed. */
     shellSandboxed?: boolean;
+    /** The attachment subtree under BEELINE_ATTACH_SCRATCH_ROOT. */
+    attachmentsDir?: string;
   } = {},
 ): AcpPermissionDecision {
   const hostServers = options.hostServers ?? CODE_OWNED_HOST_MCP_NAMES;
   const mountedServers = options.mountedServers ?? ROOM_MOUNTED_MCP_SERVERS;
   if (isRoomMcpPermissionRequest(request, mountedServers, hostServers)) return 'allow';
+  if (!isMcpShapedPermissionRequest(request, hostServers) && isAttachmentRead(request, options.attachmentsDir)) return 'allow';
   if (!options.shellSandboxed) return 'reject';
   return isRoomShellPermissionRequest(request, hostServers) ? 'allow' : 'reject';
 }
@@ -1259,6 +1296,7 @@ export class MonolithRoomTurnLoop {
           mountedServers,
           hostServers,
           shellSandboxed: Boolean(this.options.config.bwrapPath),
+          attachmentsDir: attachScratchRoot ? join(attachScratchRoot, 'attachments') : undefined,
         }),
       onCommands: agentCommandCatalogPublisher({
         api: this.options.api,

@@ -23,6 +23,7 @@ import {
   isTaggedLoginText,
   reconcileConfiguredCornerReviewers,
   routeHumanMessage,
+  soloRoomAgentSql,
   turnRootMessageSql,
   type CommandRow,
 } from './agent-command.js';
@@ -4903,9 +4904,11 @@ export class PhoneService {
         direct: boolean;
         corner: boolean;
         author_kind: 'human' | 'agent';
+        solo_agent: boolean;
       }>(
         `WITH access AS (
            SELECT room.id,room.parent_id,room.direct_participants,identity.kind author_kind,
+             ${soloRoomAgentSql('room', 'identity.id')} IS NOT NULL solo_agent,
              COALESCE(room.direct_participants ? $6,false) system_dm,
              COALESCE(workspace_member.role<>'spectator',$3=$6) writable
            FROM rooms room
@@ -4938,7 +4941,7 @@ export class PhoneService {
                AND message.reply_to_message_id IS NULL) retry,
            access.writable,access.system_dm,
            access.direct_participants IS NOT NULL direct,
-           access.parent_id IS NOT NULL corner,access.author_kind
+           access.parent_id IS NOT NULL corner,access.author_kind,access.solo_agent
          FROM access`,
         [id, input.roomId, author, input.text, attachments, SYSTEM_IDENTITY_ID],
       )).rows[0];
@@ -4947,7 +4950,7 @@ export class PhoneService {
       if (!write.writable) throw new Error('spectator access is read-only (access denied)');
       if (author !== SYSTEM_IDENTITY_ID && write.system_dm)
         throw new Error('this is a read-only system thread; only @system may post here (access denied)');
-      const mayRoute = write.direct || write.corner || input.text.includes('@');
+      const mayRoute = write.direct || write.corner || write.solo_agent || input.text.includes('@');
       if (!write.inserted) {
         if (!write.retry) throw new Error('messageId is invalid');
         return {

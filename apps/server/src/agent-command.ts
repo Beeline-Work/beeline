@@ -816,6 +816,17 @@ async function routeTaggedLifecycleCommand(
   return true;
 }
 
+/** The sole agent in a top-level Room with exactly one current human member. */
+export function soloRoomAgentSql(room: string, author: string): string {
+  return `(SELECT min(member.identity_id) FILTER (WHERE identity.kind='agent')
+    FROM memberships member JOIN identities identity ON identity.id=member.identity_id
+    WHERE member.room_id=${room}.id AND member.removed_at IS NULL
+      AND ${room}.parent_id IS NULL AND ${room}.direct_participants IS NULL
+    HAVING count(*) FILTER (WHERE identity.kind='human')=1
+       AND count(*) FILTER (WHERE identity.kind='agent')=1
+       AND bool_or(member.identity_id=${author}))`;
+}
+
 export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Promise<boolean> {
     db = new CornerAccessDatabase(db);
   // Who this message tags is read in the SAME statement that reads the message.
@@ -829,25 +840,29 @@ export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Prom
       direct_participants: string[] | null;
       parent_id: string | null;
       tagged_ids: string[];
+      solo_agent_id: string | null;
     }>(
       `SELECT m.room_id,m.author_id,m.text,r.direct_participants,r.parent_id,
-   ${taggedIdentityIdsSql('m')} tagged_ids
+   ${taggedIdentityIdsSql('m')} tagged_ids,
+   ${soloRoomAgentSql('r', 'm.author_id')} solo_agent_id
  FROM messages m JOIN identities i ON i.id=m.author_id AND i.kind='human'
  JOIN rooms r ON r.id=m.room_id
- WHERE m.id=$1`,
+ WHERE m.id=$1 AND m.presentation='message' AND m.system_event IS NULL`,
       [sourceId],
     )
   ).rows[0];
   if (!source) return false;
   if (await routeTaggedLifecycleCommand(db, source, sourceId)) return true;
-  // A human message reaches an agent only when it addresses that agent: a
-  // typed tag, or membership of a direct conversation. Nothing routes on
-  // transcript adjacency — an untagged top-level message starts no turn.
+  // A sole human and agent in a top-level Room use the same target/command
+  // path as direct conversations. Count current members in the source read,
+  // without adding a database round trip; explicit addresses keep routing.
   const avatarJob = /^(?:@[^\s]+\s+)?\/draw-avatar(?:\s|$)/i.test(source.text.trim());
   // A report to `@system` (feedback.ts) addresses System, which is nobody:
   // in a DM it wakes only an agent the message also tags by name.
   const targets = new Set([
     ...source.tagged_ids,
+    ...(source.solo_agent_id && typedMentionHandles(source.text).size === 0
+      ? [source.solo_agent_id] : []),
     ...(hasSystemReportMention(source.text) ? [] : (source.direct_participants ?? [])),
   ]);
   targets.delete(source.author_id);

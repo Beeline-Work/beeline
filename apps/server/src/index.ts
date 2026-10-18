@@ -539,7 +539,7 @@ async function main() {
   const stopComputerExpiry = startComputerExpirySweep(database, live);
   console.log(`[server] listening on ${host}:${port}; store=postgres; background=advisory-lock`);
   const stop = async () => {
-    leader.stop();
+    await leader.stop();
     stopComputerExpiry();
     stopBackgroundWake();
     stopFreeAgentWake?.();

@@ -1034,3 +1034,50 @@ it('R1 carries a closed corner artifact into a successor brief and refuses priva
     await rm(scratch, { recursive: true, force: true });
   }
 });
+
+// Reproduction duplicate-artifact: worker report -> commander upload -> human DM.
+for (const delivery of ['report', 'postRoomMessage'] as const) {
+  it(`delivers identical carried and uploaded artifacts once through ${delivery}`, async () => {
+    const opened = await open();
+    const turn = await worker(opened.cornerId);
+    const original = randomUUID(), copy = randomUUID();
+    await db.query(`DELETE FROM objects WHERE sha256=$1`, ['c97fb129a60faa9cdb824abfecf20b2dbcc3e1b8b8c8b590c61e3238a6db282b']);
+    const hash = 'c97fb129a60faa9cdb824abfecf20b2dbcc3e1b8b8c8b590c61e3238a6db282b';
+    const attachment = (id: string, name: string) => ({
+      url: 'http://test/v1/media/' + id, name, mimeType: 'text/html', size: 11867,
+    });
+    for (const [id, owner] of [[original, WORKER], [copy, RUBY]]) {
+      await db.query(
+        `INSERT INTO objects(id,owner_id,kind,key,mime,title,size,sha256,state,expires_at)
+         VALUES($1,$2,'artifact',$3,'text/html','design',11867,$4,'ready',now()+interval '24 hours')`,
+        [id, owner, 'artifact/' + id, hash]);
+    }
+    await daemon.execute('postAgentAttachment', {
+      ...authority(turn), attachment: attachment(original, 'owner approval'),
+    }, WORKER);
+    await daemon.execute('report', {
+      ...authority(turn), status: 'done', text: 'done: design ready',
+    }, WORKER);
+    const report = (await commands(DM, RUBY)).find(c => c.reason === 'report')!;
+    await claim(report);
+    await daemon.execute('postAgentAttachment', {
+      ...authority(report), attachment: attachment(copy, 'design for approval'),
+    }, RUBY);
+    if (delivery === 'report') {
+      await daemon.execute('report', {
+        ...authority(report), status: 'done', text: 'done: design attached',
+      }, RUBY);
+    } else {
+      await daemon.execute('postRoomMessage', {
+        ...authority(report), text: 'Here is the design',
+      }, RUBY);
+    }
+    const visible = (await phone.readRoom(DM, HUMAN))!.messages.filter(m => m.attachments?.length);
+    expect(visible).toHaveLength(1);
+    expect(visible[0]!.attachments).toEqual([expect.objectContaining({
+      url: 'http://test/v1/media/' + original, name: 'owner approval',
+    })]);
+    expect((await db.query(`SELECT 1 FROM agent_pending_attachments WHERE request_id=$1`,
+      [report.turnRequestId])).rowCount).toBe(0);
+  });
+}

@@ -417,11 +417,18 @@ describe('free agent model proxy', () => {
     let running = 0;
     let peak = 0;
     let attempts = 0;
+    let releaseFirstWave!: () => void;
+    const firstWave = new Promise<void>((resolve) => { releaseFirstWave = resolve; });
     const flaky = (async (_input: Parameters<typeof fetch>[0], init?: RequestInit) => {
       attempts += 1;
       running += 1;
       peak = Math.max(peak, running);
       try {
+        // Hold the first eight calls until all slots fill, independent of runner speed.
+        if (attempts <= 8) {
+          if (running === 8) releaseFirstWave();
+          await firstWave;
+        }
         await new Promise((resolve) => setTimeout(resolve, 20));
         const id = String(JSON.parse(String(init?.body)).messages[0].content);
         if (!refused.has(id)) {

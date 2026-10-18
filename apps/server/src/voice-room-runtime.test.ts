@@ -21,6 +21,7 @@ vi.mock('@livekit/rtc-node', () => ({
   TrackSource: { SOURCE_MICROPHONE: 1 }, TrackKind: { KIND_AUDIO: 1 }, AudioFrame: class {},
 }));
 import { VoiceRoomRuntime, confirmedVoiceSpeech, voiceInterrupt, voicePlaybackEcho } from './voice-room-runtime.js';
+import { markdownToSpeech } from './markdown-to-speech.js';
 import { VoiceQuotaError } from './voice-providers.js';
 import { VoiceService as RealVoiceService } from './voice-service.js';
 import { migrate } from './database.js';
@@ -82,7 +83,7 @@ it('retains an absent RTC participant through a short radio handoff and resets t
 it('Reproduction MD-TTS-1: conversational streamed replies and delayed reports send natural text to synthesis', async () => {
   const agent = { id: 'agent', name: 'Jellybean', handle: 'jellybean', voice: 'warm' };
   const spoken: string[] = [];
-  const answer = '**Hello, friend.**\n\n[Visit](https://example.com/a_(b)/details).\n\n```ts\nignore me\n```\n\nHi @jellybean.';
+  const answer = '**Hello, friend.**\n\n[Visit](https://example.com/a_(b)/details).\n\n```ts\nignore me\n```\n\nHi @jellybean, population 12345678, total 1,234,567 at 20:37, year 2026, PR 2547. Machine xkcd12345678 ready. Bug (ID: fb_409eec12d3be6644d9eba2bf).';
   let reports: any[] = [];
   const service = { budget: { read: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), record: vi.fn(async () => ({ remainingMs: 3600000, resetAt: Date.now() + 86400000, timeZone: 'UTC' })), limitMs: 3600000 },
     owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret',
@@ -97,13 +98,50 @@ it('Reproduction MD-TTS-1: conversational streamed replies and delayed reports s
   const runtime = await VoiceRoomRuntime.connect(service, 'call', 'room');
   try {
     await runtime.utterance('human', 'Jellybean, hello');
-    expect(spoken.join(' ')).toBe('Hello, friend. Visit. Hi jellybean.');
+    expect(spoken.join(' ')).toBe('Hello, friend. Visit. Hi Jellybean, population 12345678, total 1,234,567 at 20:37, year 2026, PR 2547. Machine ready. Bug.');
     expect(service.recordAnswer).toHaveBeenCalledWith('room', 'agent', answer);
     reports = [{ source_message_id: 'source', id: 'report', text: '**Done**: [result](https://example.com/a_(b)/details)', agent_id: 'agent', human_id: 'human' }];
     await runtime.refresh();
     await vi.waitFor(() => expect(spoken.at(-1)).toBe('Done: result'));
     console.log('MD-TTS-1 synthesis:', spoken);
   } finally { await runtime.close(); }
+});
+
+it('Reproduction VOICE-IDS-7: the synthesis path never receives a leaked ID when the cap flushes mid-clause', async () => {
+  const longWord = 'w'.repeat(250);
+  const cases = [
+    { answer: 'Note (' + 'word '.repeat(36) + 'a' + '1'.repeat(39) + ').', leak: '111' },
+    // An ID longer than the cap with no whitespace inside it.
+    { answer: 'Bug (' + 'a' + '1'.repeat(250) + ').', leak: '111' },
+    // A plain word longer than the cap must stay whole, not be sliced.
+    { answer: 'Note (' + longWord + ').', keep: longWord },
+  ];
+  for (const { answer, leak, keep } of cases) {
+    const agent = { id: 'agent', name: 'Jellybean', handle: 'jellybean', voice: 'warm' };
+    const spoken: string[] = [];
+    const service = { owner: 'owner', config: { url: 'ws://local', apiKey: 'devkey', apiSecret: 'secret',
+      brain: { answer: async (_agent: unknown, _history: unknown, delta: (text: string) => void) => {
+        for (const character of answer) delta(character);
+        return { text: answer };
+      } } }, agents: vi.fn(async () => [agent]), humanCount: vi.fn(async () => 1),
+      speech: async () => ({ async *synthesize(text: string) { spoken.push(text); } }),
+      recordHuman: vi.fn(async () => 'source'), recordAnswer: vi.fn(async () => {}),
+      db: { query: vi.fn(async () => ({ rowCount: 1, rows: [] })) },
+      access: vi.fn(async () => {}), leave: vi.fn(async () => {}), runtimeClosed: vi.fn() } as unknown as VoiceService;
+    const runtime = await VoiceRoomRuntime.connect(service, 'call', 'room');
+    try {
+      await runtime.utterance('human', 'Jellybean, hello');
+      if (keep) {
+        // The long token reaches synthesis whole inside a single phrase.
+        expect(spoken.some((text) => text.includes(keep))).toBe(true);
+      } else {
+        // The cap splits the parenthetical, but the ID token stays whole and is dropped.
+        expect(spoken.join('')).toBe(markdownToSpeech(answer));
+        expect(spoken.join('')).not.toContain(leak!);
+      }
+      console.log('VOICE-IDS-7 synthesis:', spoken);
+    } finally { await runtime.close(); }
+  }
 });
 
 it('cancels microphone input and sends a targeted quota signal when Flux rejects the handshake', async () => {

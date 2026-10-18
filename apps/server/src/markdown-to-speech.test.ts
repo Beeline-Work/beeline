@@ -44,3 +44,192 @@ it('starts plain prose before generation completes', () => {
   expect(stream.push('Hello, friend')).toEqual(['Hello,']);
   expect(stream.finish()).toBe('friend');
 });
+
+const members = [{ handle: 'bananaman614305', name: 'Bananaman' }];
+
+it('Reproduction VOICE-IDS-1: speaks handles and drops machine identifiers', () => {
+  // Old code kept every token verbatim: "Hi bananaman614305, a bug (fb_...)."
+  expect(markdownToSpeech('Hi @bananaman614305, a bug (fb_409eec12d3be6644d9eba2bf).', members))
+    .toBe('Hi Bananaman, a bug.');
+  expect(markdownToSpeech('Hi @bananaman614305, a bug (fb_409eec12d3be6644d9eba2bf).'))
+    .toBe('Hi bananaman, a bug.');
+  expect(markdownToSpeech('Hi bananaman614305.', members)).toBe('Hi Bananaman.');
+  expect(markdownToSpeech('Commit 0123456789abcdef0123456789abcdef01234567 is live.'))
+    .toBe('Commit is live.');
+  expect(markdownToSpeech('Join 123e4567-e89b-12d3-a456-426614174000 now.'))
+    .toBe('Join now.');
+  expect(markdownToSpeech('Message ID: msg_abc123xyz done.')).toBe('Message done.');
+  expect(markdownToSpeech('Machine 857614db620078 ready.')).toBe('Machine ready.');
+});
+
+it('keeps ordinary numbers, times, versions and digit-bearing words', () => {
+  const input = 'Wait 60 minutes, PR 2546 at 20:37, version 1.2.3, B2B, MP3, H264, COVID-19, March2026, defaced.';
+  expect(markdownToSpeech(input)).toBe(input);
+});
+
+it('Reproduction VOICE-IDS-2: keeps long ordinary numbers while dropping lettered hex', () => {
+  expect(markdownToSpeech('Population 12345678 people.')).toBe('Population 12345678 people.');
+  expect(markdownToSpeech('Call 1234567890 and 12345678901234567890 now.')).toBe('Call 1234567890 and 12345678901234567890 now.');
+  expect(markdownToSpeech('Order 00000000000000000001 shipped.')).toBe('Order 00000000000000000001 shipped.');
+  expect(markdownToSpeech('Hash 0123456789abcdef0123456789abcdef01234567.')).toBe('Hash.');
+  expect(markdownToSpeech('Hex deadbeef12345678 and abcdefabcdefabcdef.')).toBe('Hex and.');
+  expect(markdownToSpeech('The defaced facade stays.')).toBe('The defaced facade stays.');
+});
+
+it('Reproduction VOICE-IDS-3: keeps digits-only and number-punctuation tokens out of the ID filter', () => {
+  const input = 'Population 12345678, total 1,234,567, pi 3.14, meet at 20:37, year 2026, PR 2547, ref 12345678901234567890.';
+  expect(markdownToSpeech(input)).toBe(input);
+  for (const token of ['12345678', '1,234,567', '3.14', '20:37', '2026', 'PR 2547']) {
+    expect(markdownToSpeech(`Keep ${token} here.`), token).toBe(`Keep ${token} here.`);
+  }
+  // Lettered hex, SHAs, UUIDs and feedback ids still drop.
+  expect(markdownToSpeech('Hex deadbeef12345678 and 123e4567-e89b-12d3-a456-426614174000 and fb_409eec12d3be6644d9eba2bf.'))
+    .toBe('Hex and and.');
+  // Streaming cannot split a number or turn it into an identifier.
+  for (let at = 0; at <= input.length; at++) {
+    const stream = new MarkdownSpeechStream();
+    const spoken = [...stream.push(input.slice(0, at)), ...stream.push(input.slice(at)), stream.finish()]
+      .filter(Boolean).join(' ');
+    expect(spoken, `split at ${at}`).toBe(input);
+  }
+});
+
+it('Reproduction VOICE-IDS-4: drops consonant-only machine IDs before the bare-handle fallback', () => {
+  // xkcd12345678 is 8+ mixed letters/digits with no vowel-pattern word, so it is an ID.
+  expect(markdownToSpeech('Machine xkcd12345678 ready.')).toBe('Machine ready.');
+  expect(markdownToSpeech('Node qwrtp12345678 and zxcv98765432 are up.')).toBe('Node and are up.');
+  // Explicit mentions and matched Room members still win over the ID filter.
+  expect(markdownToSpeech('Ping @xkcd12345678 now.')).toBe('Ping xkcd now.');
+  expect(markdownToSpeech('Ping xkcd12345678 now.', [{ handle: 'xkcd12345678', name: 'Xkcd' }])).toBe('Ping Xkcd now.');
+  // A pronounceable bare handle keeps its letters.
+  expect(markdownToSpeech('Hi bananaman614305.')).toBe('Hi bananaman.');
+  for (let at = 0; at <= 'Machine xkcd12345678 ready.'.length; at++) {
+    const stream = new MarkdownSpeechStream();
+    const input = 'Machine xkcd12345678 ready.';
+    const spoken = [...stream.push(input.slice(0, at)), ...stream.push(input.slice(at)), stream.finish()]
+      .filter(Boolean).join(' ');
+    expect(spoken, `split at ${at}`).toBe('Machine ready.');
+  }
+});
+
+it('Reproduction VOICE-IDS-5: streams a parenthesized ID clause without empty brackets', () => {
+  const input = 'Bug (ID: fb_409eec12d3be6644d9eba2bf). Done.';
+  expect(markdownToSpeech(input)).toBe('Bug. Done.');
+  for (let at = 0; at <= input.length; at++) {
+    const stream = new MarkdownSpeechStream();
+    const spoken = [...stream.push(input.slice(0, at)), ...stream.push(input.slice(at)), stream.finish()]
+      .filter(Boolean).join(' ');
+    expect(spoken, `split at ${at}`).toBe('Bug. Done.');
+  }
+  for (let seed = 1; seed <= 20; seed++) {
+    let cursor = 0; let random = seed; const stream = new MarkdownSpeechStream(); const phrases: string[] = [];
+    while (cursor < input.length) {
+      random = (random * 48271) % 2147483647;
+      const next = Math.min(input.length, cursor + (random % 7) + 1);
+      phrases.push(...stream.push(input.slice(cursor, next))); cursor = next;
+    }
+    phrases.push(stream.finish());
+    expect(phrases.filter(Boolean).join(' '), `seed ${seed}`).toBe('Bug. Done.');
+  }
+  // An open bracket only holds its own clause; the clause before it still starts playback.
+  const stream = new MarkdownSpeechStream();
+  expect(stream.push('Hello, friend (ID: 409eec12d3be6644d9eba2bf).')).toEqual(['Hello,']);
+  expect(stream.finish()).toBe('friend.');
+});
+
+it('Reproduction VOICE-IDS-6: a stray open bracket flushes past the hold cap instead of stalling', () => {
+  const stream = new MarkdownSpeechStream();
+  const text = `Start (${'word '.repeat(80)}end`;
+  const duringPush: string[] = [];
+  for (const character of text) duringPush.push(...stream.push(character));
+  // Speech starts before generation ends even though the parenthesis never closes.
+  expect(duringPush.length).toBeGreaterThan(0);
+  expect(duringPush.join(' ')).toContain('Start');
+  expect(stream.finish()).not.toBe('');
+  // Ordinary prose without brackets still flushes on the first clause.
+  const plain = new MarkdownSpeechStream();
+  expect(plain.push('Hello, friend and welcome')).toEqual(['Hello,']);
+  expect(plain.finish()).toBe('friend and welcome');
+});
+
+it('Reproduction VOICE-IDS-7: a capped flush keeps a token that crosses the cap whole', () => {
+  const cases = [
+    // Speedy's exact threshold-crossing case: the ID starts at 186 and the cap lands inside it.
+    { input: 'Note (' + 'word '.repeat(36) + 'a' + '1'.repeat(39) + ').', leak: '111' },
+    // The ID starts exactly at the cap boundary (index 200), so the cap cuts at its first character.
+    { input: 'Note (' + 'word '.repeat(38) + 'pad ' + 'b' + '2'.repeat(39) + ').', leak: '222' },
+    // An ID longer than the cap with no whitespace inside it: the cap must not slice it.
+    { input: 'Bug (' + 'a' + '1'.repeat(250) + ').', leak: '111' },
+  ];
+  for (const { input, leak } of cases) {
+    const full = markdownToSpeech(input);
+    expect(full).not.toContain(leak);
+    for (let at = 0; at <= input.length; at++) {
+      const stream = new MarkdownSpeechStream();
+      const spoken = [...stream.push(input.slice(0, at)), ...stream.push(input.slice(at)), stream.finish()]
+        .filter(Boolean).join('');
+      expect(spoken, `split at ${at}`).toBe(full);
+      expect(spoken, `leak at ${at}`).not.toContain(leak);
+    }
+    for (let seed = 1; seed <= 20; seed++) {
+      let cursor = 0; let random = seed; const stream = new MarkdownSpeechStream(); const phrases: string[] = [];
+      while (cursor < input.length) {
+        random = (random * 48271) % 2147483647;
+        const next = Math.min(input.length, cursor + (random % 11) + 1);
+        phrases.push(...stream.push(input.slice(cursor, next))); cursor = next;
+      }
+      phrases.push(stream.finish());
+      expect(phrases.filter(Boolean).join(''), `seed ${seed}`).toBe(full);
+    }
+  }
+  // A long ID after ordinary words is not sliced either; only the split whitespace differs.
+  const longId = 'Bug (' + 'word '.repeat(40) + 'a' + '1'.repeat(250) + ').';
+  const longFull = markdownToSpeech(longId);
+  for (let at = 0; at <= longId.length; at++) {
+    const stream = new MarkdownSpeechStream();
+    const spoken = [...stream.push(longId.slice(0, at)), ...stream.push(longId.slice(at)), stream.finish()]
+      .filter(Boolean).join('');
+    expect(spoken, `long split at ${at}`).not.toContain('111');
+    expect(spoken.replace(/\s+/g, ''), `long split at ${at}`).toBe(longFull.replace(/\s+/g, ''));
+  }
+  // An ordinary word crossing the cap is retained, not split.
+  const words = 'Note (' + 'word '.repeat(38) + 'wonderful).';
+  for (let at = 0; at <= words.length; at++) {
+    const stream = new MarkdownSpeechStream();
+    const phrases = [...stream.push(words.slice(0, at)), ...stream.push(words.slice(at)), stream.finish()]
+      .filter(Boolean);
+    // A split would show up as `wonder` + `ful`; the intact word survives.
+    expect(phrases.join(' '), `word split at ${at}`).toContain('wonderful');
+  }
+  // A word longer than the cap is retained whole too.
+  const longWord = 'Note (' + 'w'.repeat(250) + ').';
+  for (let at = 0; at <= longWord.length; at++) {
+    const stream = new MarkdownSpeechStream();
+    const phrases = [...stream.push(longWord.slice(0, at)), ...stream.push(longWord.slice(at)), stream.finish()]
+      .filter(Boolean);
+    expect(phrases.join(' '), `long word split at ${at}`).toContain('w'.repeat(250));
+  }
+});
+
+it('speaks identifiers the same way when streamed in any chunk size', () => {
+  const input = 'I filed this as a bug (fb_409eec12d3be6644d9eba2bf). Hi @bananaman614305, PR 2546 at 20:37, version 1.2.3.\n\n'
+    + 'Commit 0123456789abcdef0123456789abcdef01234567 and 123e4567-e89b-12d3-a456-426614174000.';
+  const full = markdownToSpeech(input, members);
+  expect(full).toBe('I filed this as a bug. Hi Bananaman, PR 2546 at 20:37, version 1.2.3. Commit and.');
+  for (let at = 0; at <= input.length; at++) {
+    const stream = new MarkdownSpeechStream(members);
+    const spoken = [...stream.push(input.slice(0, at)), ...stream.push(input.slice(at)), stream.finish()]
+      .filter(Boolean).join(' ');
+    expect(spoken, `split at ${at}`).toBe(full);
+  }
+  for (let seed = 1; seed <= 20; seed++) {
+    let cursor = 0; let random = seed; const stream = new MarkdownSpeechStream(members); const phrases: string[] = [];
+    while (cursor < input.length) {
+      random = (random * 48271) % 2147483647;
+      const next = Math.min(input.length, cursor + (random % 17) + 1);
+      phrases.push(...stream.push(input.slice(cursor, next))); cursor = next;
+    }
+    phrases.push(stream.finish());
+    expect(phrases.filter(Boolean).join(' '), `seed ${seed}`).toBe(full);
+  }
+});

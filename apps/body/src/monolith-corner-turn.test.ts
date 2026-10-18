@@ -1,3 +1,4 @@
+import { resetOpenRouterKeyThrottle } from './openrouter-key-usage.js';
 import { commandFixtureApi } from './command-fixture.test-support.js';
 import { execFile, spawnSync } from 'node:child_process';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -4107,7 +4108,8 @@ describe('a context-window overflow', () => {
     "400 This endpoint's maximum context length is 1048576 tokens. However, you requested about 1053212 tokens (109494 of text input, 943718 in the output).";
 
   /** A pi-acp corner whose sessions each leave a pi record the test chooses. */
-  async function overflowCorner(answers: Array<'overflow' | string>) {
+  /** `refused` is an OpenRouter 402; `fetchImpl` makes the agent a Pi agent on an OpenRouter key. */
+  async function overflowCorner(answers: Array<'overflow' | 'refused' | string>, fetchImpl?: typeof fetch) {
     const root = await mkdtemp(join(tmpdir(), 'beeline-corner-overflow-'));
     roots.push(root);
     await execFileAsync('git', ['init', root]);
@@ -4132,12 +4134,17 @@ describe('a context-window overflow', () => {
     } as unknown as AgentRuntimeRecord;
     const config: BodyConfig = {
       agentBinary: '/opt/bin/pi-acp',
-      agentKind: 'codex',
+      agentKind: fetchImpl ? 'pi' : 'codex',
       agentCommand: '/opt/bin/pi-acp',
       agentArgs: [],
       mcpBinary: '/fake-dev-mcp',
       readonlyMcpCommand: '/fake-beeline-mcp',
-      agentEnv: { HOME: join(root, 'user'), PI_CODING_AGENT_DIR: piDir },
+      agentEnv: {
+        HOME: join(root, 'user'),
+        PI_CODING_AGENT_DIR: piDir,
+        ...(fetchImpl ? { OPENROUTER_API_KEY: 'sk-or-v1-test' } : {}),
+      },
+      ...(fetchImpl ? { modelSelection: { model: 'openrouter/deepseek/deepseek-v4' } } : {}),
       workspaceRoot: root,
       autoApprovePermissions: true,
     };
@@ -4207,8 +4214,15 @@ describe('a context-window overflow', () => {
           JSON.stringify({
             type: 'message',
             message:
-              answer === 'overflow'
-                ? { role: 'assistant', content: [], stopReason: 'error', errorMessage: OVERFLOW }
+              answer === 'overflow' || answer === 'refused'
+                ? {
+                    role: 'assistant',
+                    content: [],
+                    stopReason: 'error',
+                    errorMessage: answer === 'overflow'
+                      ? OVERFLOW
+                      : '402: {"error":{"message":"Key limit exceeded","code":402}}',
+                  }
                 : { role: 'assistant', content: [{ type: 'text', text: answer }], stopReason: 'stop' },
           }),
         ].join('\n'),
@@ -4216,7 +4230,7 @@ describe('a context-window overflow', () => {
       return {
         stopReason: 'end_turn',
         updates: [],
-        agentText: answer === 'overflow' ? '' : answer,
+        agentText: answer === 'overflow' || answer === 'refused' ? '' : answer,
         toolCalls: [],
       };
     });
@@ -4243,6 +4257,7 @@ describe('a context-window overflow', () => {
       onFailure: vi.fn(),
       onCloseRequested: vi.fn(async () => undefined),
       createAcpClient: () => acp,
+      ...(fetchImpl ? { fetchImpl } : {}),
     })
       .run()
       .catch((error: unknown) => error);
@@ -4253,6 +4268,8 @@ describe('a context-window overflow', () => {
         ),
       { timeout: 10_000 },
     );
+    if (fetchImpl)
+      await vi.waitFor(() => expect(writes.some((write) => write.name === 'postAgentUsage')).toBe(true));
     abort.abort();
     await running;
     await scheduler.dispose();
@@ -4272,6 +4289,20 @@ describe('a context-window overflow', () => {
     expect(receipts.some((receipt) => receipt.status === 'failed')).toBe(false);
     expect(receipts.some((receipt) => receipt.status === 'complete')).toBe(true);
     expect(JSON.stringify(writes)).toContain('Recovered in a fresh session.');
+  });
+
+  it('marks the OpenRouter key limit reached when OpenRouter refuses the turn with 402', async () => {
+    resetOpenRouterKeyThrottle();
+    const fetchImpl = vi.fn(async () => Response.json({
+      data: { usage_daily: 11.2, usage_weekly: 20, limit: 20, limit_remaining: 0.4 },
+    })) as unknown as typeof fetch;
+    const { writes } = await overflowCorner(['refused'], fetchImpl);
+    const usage = writes.filter((write) => write.name === 'postAgentUsage').map((write) => write.input.usage);
+    // The refusal is the stop itself, whatever the key's last remaining figure says.
+    expect(usage).toContainEqual(expect.objectContaining({
+      spend: { today: 11.2, week: 20, limit: 20, remaining: 0.4, rejected: true },
+    }));
+    expect(JSON.stringify(usage)).not.toContain('sk-or');
   });
 
   it('fails as context-overflow after one fresh session, never as a restartable hiccup', async () => {

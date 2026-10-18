@@ -43,5 +43,8 @@ describe('usage projection', () => {
     expect(usageSummary(limited, now)).toMatch(/^Usage: \$4\.12 spent today, \$18\.40 this week on the shared OpenRouter key, \$15\.88 of \$20 key limit left, as of \d\d:\d\d\.$/);
     expect(usageSummary(open, now)).not.toContain('key limit');
     expect(usageSummary(reached, now)).toContain('$20 key limit reached');
+    const refused = readAgentUsage({ updatedAt: now, windows: [], spend: { rejected: true } })!;
+    expect(usageSummary(refused, now)).toMatch(/^Usage: on the shared OpenRouter key, key limit reached \(OpenRouter refused the last call\), as of/);
+    expect(readAgentUsage({ updatedAt: now, windows: [], spend: {} })).toBeUndefined();
   });
 });

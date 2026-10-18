@@ -728,12 +728,21 @@ export class MonolithCornerTurnLoop {
    */
   /** This agent's own OpenRouter key when its model routes there. */
   private openRouterKey?: string;
+  private openRouterSpendPublish: Promise<unknown> = Promise.resolve();
 
-  /** After a turn, refresh the owner's view of this agent's OpenRouter key spend. */
-  private publishOpenRouterSpend(): void {
+  /**
+   * After a turn, refresh the owner's view of this agent's OpenRouter key
+   * spend. `refused` marks a turn OpenRouter refused with 402.
+   */
+  private publishOpenRouterSpend(refused = false): void {
     const key = this.openRouterKey;
     if (!key) return;
-    void readOpenRouterKeyUsage(key, this.options.fetchImpl ? { fetchImpl: this.options.fetchImpl } : {})
+    // One read at a time, so a later normal read cannot land over a 402 stop.
+    this.openRouterSpendPublish = this.openRouterSpendPublish
+      .then(() => readOpenRouterKeyUsage(key, {
+        ...(this.options.fetchImpl ? { fetchImpl: this.options.fetchImpl } : {}),
+        ...(refused ? { refused } : {}),
+      }))
       .then((usage) => usage
         ? this.options.api.execute('postAgentUsage', { agentId: this.agent.publicKey, usage })
         : undefined)
@@ -1511,6 +1520,9 @@ export class MonolithCornerTurnLoop {
       sessionId: this.sessionId!,
       result,
     });
+    // OpenRouter refuses a key past its limit with 402; show the stop now.
+    if (explanation.record?.kind === 'error' && explanation.record.status === 402)
+      this.publishOpenRouterSpend(true);
     if (isSilentCompletion(result, explanation)) return undefined;
     return explanation;
   }

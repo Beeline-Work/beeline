@@ -57,6 +57,22 @@ describe('OpenRouter key spend', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
+  it('publishes a 402 refusal at once: past the throttle, and with the last figures when the read fails', async () => {
+    let now = 1_000_000;
+    const ok = vi.fn(async () => Response.json(keyBody({ limit: 20, limit_remaining: 0.4 })));
+    await readOpenRouterKeyUsage('sk-or-k', { fetchImpl: ok, now: () => now });
+    now += 1_000;
+    const failing = vi.fn(async () => new Response('{}', { status: 503 }));
+    expect(await readOpenRouterKeyUsage('sk-or-k', { fetchImpl: failing, now: () => now, refused: true })).toEqual({
+      updatedAt: now / 1000,
+      windows: [],
+      spend: { today: 4.12, week: 18.4, limit: 20, remaining: 0.4, rejected: true },
+    });
+    expect(failing).toHaveBeenCalledTimes(1);
+    expect(await readOpenRouterKeyUsage('sk-or-new', { fetchImpl: failing, now: () => now, refused: true }))
+      .toEqual({ updatedAt: now / 1000, windows: [], spend: { rejected: true } });
+  });
+
   it('answers nothing when OpenRouter refuses the read', async () => {
     const fetchImpl = vi.fn(async () => new Response('{}', { status: 401 }));
     expect(await readOpenRouterKeyUsage('sk-or-bad', { fetchImpl })).toBeUndefined();

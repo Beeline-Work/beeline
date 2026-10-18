@@ -85,6 +85,7 @@ const USAGE_FIXTURES: Record<string, [string, unknown]> = {
   'key-warning': ['pi', keyUsage({ today: 9.75, week: 16.4, limit: 20, remaining: 3.6 })],
   'key-reached': ['pi', keyUsage({ today: 11.2, week: 20, limit: 20, remaining: 0, rejected: true })],
   'key-old': ['pi', keyUsage({ today: 4.12, week: 18.4, limit: 20, remaining: 15.88 }, 1900)],
+  'key-refused': ['pi', { updatedAt: usageNow, windows: [], spend: { rejected: true }, context: { used: 88000, size: 1000000 } }],
   'no-source': ['pi', { updatedAt: usageNow, windows: [], context: { used: 88000, size: 200000 } }],
   none: ['codex', undefined],
 };

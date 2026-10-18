@@ -69,6 +69,9 @@ describe('Usage cell (mock r7)', () => {
     expect(near.columns[2]).toMatchObject({ label: 'Key limit', value: '$3.60 left', foot: 'of $20', tone: 'warning' });
     const reached = usageCell({ updatedAt: now, windows: [], spend: { today: 11.2, week: 20, limit: 20, remaining: 0, rejected: true } }, 'pi', now);
     expect(reached.columns[2]).toMatchObject({ value: 'Reached', tone: 'danger' });
+    // A 402 before any key figures were read still shows the stop.
+    const refused = usageCell({ updatedAt: now, windows: [], spend: { rejected: true } }, 'pi', now);
+    expect(refused.columns).toEqual([{ label: 'Key limit', value: 'Reached', fill: 1, tone: 'danger' }]);
   });
 
   it('says plainly when the harness reports nothing', () => {

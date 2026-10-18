@@ -15,6 +15,7 @@ This is a feature, not a defect report. The design authority is mock r7, which t
 - [contract-tests.txt](contract-tests.txt): parsing, the 30-minute old rule, and the summary sentence for each agent type. Free-agent sentences contain no `$`.
 - [body-tests.txt](body-tests.txt):
   - Mapping of the OpenRouter `/api/v1/key` answer. A key with nothing left counts as reached.
+  - A turn that OpenRouter refuses with 402 publishes a reached snapshot at once, in both the Room and corner loops. The publish skips the one-minute throttle, and if the key read fails it uses the key's last figures, or no figures at all. Publishes run one at a time, so a later normal read cannot overwrite the stop.
   - The key goes only in the request header. Reads happen at most once a minute, and only for Pi, Goose or OpenCode on an OpenRouter model.
   - The `read` facet `usage` always reads the calling agent.
   - The Room turn trace shows no usage line in the assembled prompt and no per-turn usage read.
@@ -44,6 +45,7 @@ Start `node apps/mobile/scripts/render-consolidated-board-proof.mjs` and open `h
 | C. OpenRouter key with a limit | [key-limit](profile-key-limit.png) |
 | C. Key limit at 80% or more | [key-warning](profile-key-warning.png) / [Bone](profile-key-warning-light.png) |
 | C. Key limit reached | [key-reached](profile-key-reached.png) |
+| C. OpenRouter refused a turn with 402 before any key figures were read | [key-refused](profile-key-refused.png) |
 | C. Old data | [key-old](profile-key-old.png) |
 | D. No source, with context | [no-source](profile-no-source.png) |
 | D. No source, no context: no USAGE section | [none](profile-none.png) |

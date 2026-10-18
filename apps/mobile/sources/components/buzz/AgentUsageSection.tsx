@@ -58,22 +58,26 @@ export function usageCell(
   if (usage.spend) {
     const s = usage.spend;
     const columns: UsageColumn[] = [
-      { label: 'Today', value: usageDollars(s.today) },
-      { label: 'This week', value: usageDollars(s.week) },
+      ...(s.today !== undefined ? [{ label: 'Today', value: usageDollars(s.today) }] : []),
+      ...(s.week !== undefined ? [{ label: 'This week', value: usageDollars(s.week) }] : []),
     ];
-    if (s.limit) {
+    if (s.rejected) {
+      columns.push({
+        label: 'Key limit',
+        value: 'Reached',
+        fill: 1,
+        ...(s.limit ? { foot: `of ${usageDollars(s.limit)}` } : {}),
+        tone: 'danger',
+      });
+    } else if (s.limit) {
       const used = 1 - (s.remaining ?? 0) / s.limit;
-      columns.push(
-        s.rejected
-          ? { label: 'Key limit', value: 'Reached', fill: 1, foot: `of ${usageDollars(s.limit)}`, tone: 'danger' }
-          : {
-              label: 'Key limit',
-              value: `${usageDollars(s.remaining ?? 0)} left`,
-              fill: used,
-              foot: `of ${usageDollars(s.limit)}`,
-              tone: used >= 0.8 ? 'warning' : undefined,
-            },
-      );
+      columns.push({
+        label: 'Key limit',
+        value: `${usageDollars(s.remaining ?? 0)} left`,
+        fill: used,
+        foot: `of ${usageDollars(s.limit)}`,
+        tone: used >= 0.8 ? 'warning' : undefined,
+      });
     }
     return {
       columns,

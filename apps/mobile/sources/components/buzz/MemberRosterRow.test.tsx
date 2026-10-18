@@ -125,6 +125,8 @@ it('appends usage only at 80% or more, or when stopped or paused', () => {
   expect(text()).toContain(' · $3.60 of $20 left');
   render({ updatedAt: now, windows: [], spend: { today: 11.2, week: 20, limit: 20, remaining: 0, rejected: true } });
   expect(text()).toContain(' · key limit reached');
+  render({ updatedAt: now, windows: [], spend: { rejected: true } });
+  expect(text()).toContain(' · key limit reached');
   render({ updatedAt: now, windows: [], spend: { today: 4.12, week: 18.4 } });
   expect(text()).not.toContain(' · ');
 });

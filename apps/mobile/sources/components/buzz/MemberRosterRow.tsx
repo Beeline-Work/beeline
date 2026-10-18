@@ -77,8 +77,8 @@ export function memberRosterUsage(
   }
   if (usage.spend) {
     const s = usage.spend;
-    if (!s.limit) return undefined;
     if (s.rejected) return { text: 'key limit reached', tone: 'danger' };
+    if (!s.limit) return undefined;
     return 1 - (s.remaining ?? 0) / s.limit >= 0.8
       ? { text: `${usageDollars(s.remaining ?? 0)} of ${usageDollars(s.limit)} left`, tone: 'warning' }
       : undefined;

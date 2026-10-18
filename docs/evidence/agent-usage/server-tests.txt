@@ -2,5 +2,6 @@
  ✓ src/agent-usage.integration.test.ts > keeps a provider stop without inventing utilization and rejects another agent write
  ✓ src/agent-usage.integration.test.ts > reports the owner-wide free allowance with its UTC reset and keeps it private
  ✓ src/agent-usage.integration.test.ts > stores the latest OpenRouter key read for the owner and the agent only
+ ✓ src/agent-usage.integration.test.ts > shows a 402 refusal with no key figures as reached on the profile, in Members and to the agent
  Test Files  1 passed (1)
-      Tests  4 passed (4)
+      Tests  5 passed (5)

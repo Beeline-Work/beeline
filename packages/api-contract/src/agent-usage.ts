@@ -8,8 +8,9 @@ export type UsageWindow = {
 };
 /** Spend on the agent's own OpenRouter key, in US dollars, shared by every agent on that key. */
 export type UsageSpend = {
-  today: number;
-  week: number;
+  /** Absent when OpenRouter refused a turn before the key's figures could be read. */
+  today?: number;
+  week?: number;
   /** Key credit limit; absent when the key is unlimited. */
   limit?: number;
   remaining?: number;
@@ -63,13 +64,14 @@ function readSpend(value: unknown): UsageSpend | undefined | null {
   if (value === undefined) return undefined;
   if (!value || typeof value !== 'object') return null;
   const s = value as Record<string, unknown>;
-  if (!finite(s.today) || !finite(s.week)) return null;
+  if ((s.today !== undefined && !finite(s.today)) || (s.week !== undefined && !finite(s.week))) return null;
+  if (s.today === undefined && s.week === undefined && s.rejected !== true) return null;
   if (s.limit !== undefined && (!finite(s.limit) || s.limit === 0)) return null;
   if (s.remaining !== undefined && typeof s.remaining !== 'number') return null;
   if (s.rejected !== undefined && typeof s.rejected !== 'boolean') return null;
   return {
-    today: s.today,
-    week: s.week,
+    ...(s.today !== undefined ? { today: s.today as number } : {}),
+    ...(s.week !== undefined ? { week: s.week as number } : {}),
     ...(s.limit !== undefined ? { limit: s.limit as number } : {}),
     ...(typeof s.remaining === 'number' && Number.isFinite(s.remaining)
       ? { remaining: Math.max(0, s.remaining) }
@@ -166,12 +168,18 @@ export function usageSummary(usage?: AgentUsage, now = Date.now() / 1000): strin
   }
   if (usage?.spend) {
     const s = usage.spend;
-    const limit = s.limit
-      ? s.rejected
-        ? `, ${usageDollars(s.limit)} key limit reached`
-        : `, ${usageDollars(s.remaining ?? 0)} of ${usageDollars(s.limit)} key limit left`
-      : '';
-    return `Usage: ${usageDollars(s.today)} spent today, ${usageDollars(s.week)} this week on the shared OpenRouter key${limit}${context ? `, ${context}` : ''}, ${asOf(usage)}.`;
+    const parts = [
+      ...(s.today !== undefined ? [`${usageDollars(s.today)} spent today`] : []),
+      ...(s.week !== undefined ? [`${usageDollars(s.week)} this week`] : []),
+    ];
+    const limit = s.rejected
+      ? s.limit
+        ? `${usageDollars(s.limit)} key limit reached`
+        : 'key limit reached (OpenRouter refused the last call)'
+      : s.limit
+        ? `${usageDollars(s.remaining ?? 0)} of ${usageDollars(s.limit)} key limit left`
+        : undefined;
+    return `Usage: ${[`${parts.length ? `${parts.join(', ')} on` : 'on'} the shared OpenRouter key`, ...(limit ? [limit] : []), ...(context ? [context] : [])].join(', ')}, ${asOf(usage)}.`;
   }
   if (usage?.windows.length) {
     const windows = usage.windows.map((w) => {

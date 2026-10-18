@@ -209,3 +209,18 @@ it('stores the latest OpenRouter key read for the owner and the agent only', asy
     '$20 key limit reached',
   );
 });
+
+it('shows a 402 refusal with no key figures as reached on the profile, in Members and to the agent', async () => {
+  await daemon.execute(
+    'postAgentUsage',
+    { agentId: sibling, usage: { updatedAt: Date.now() / 1000, windows: [], spend: { rejected: true } } },
+    sibling,
+  );
+  const profile = readAgentDetailView(await phone.readAgent(workspace, sibling, owner));
+  expect(profile?.usage?.spend).toEqual({ rejected: true });
+  const members = readWorkspaceMemberListView(await phone.readWorkspaceMembers(workspace, owner));
+  expect(members?.agents.find((a) => a.identity.pubkey === sibling)?.usage?.spend).toEqual({ rejected: true });
+  expect(usageSummary((await daemon.execute('getAgentUsage', { agentId: sibling }, sibling)) ?? undefined)).toContain(
+    'key limit reached (OpenRouter refused the last call)',
+  );
+});

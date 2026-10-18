@@ -56,33 +56,44 @@ export function agentOpenRouterKey(
 }
 
 const lastRead = new Map<string, number>();
+const lastSpend = new Map<string, UsageSpend>();
 
-/**
- * Read the key's spend and hand back a usage snapshot to publish, or nothing
- * when throttled or when OpenRouter does not answer with key figures.
- */
-export async function readOpenRouterKeyUsage(
-  apiKey: string,
-  options: { fetchImpl?: typeof fetch; now?: () => number } = {},
-): Promise<AgentUsage | undefined> {
-  const now = options.now?.() ?? Date.now();
-  const id = createHash('sha256').update(apiKey).digest('hex');
-  if (now - (lastRead.get(id) ?? -Infinity) < OPENROUTER_KEY_MIN_INTERVAL_MS) return undefined;
-  lastRead.set(id, now);
+async function fetchKeySpend(apiKey: string, fetchImpl: typeof fetch): Promise<UsageSpend | undefined> {
   try {
-    const response = await (options.fetchImpl ?? fetch)(OPENROUTER_KEY_URL, {
+    const response = await fetchImpl(OPENROUTER_KEY_URL, {
       headers: { authorization: `Bearer ${apiKey}` },
       signal: AbortSignal.timeout(OPENROUTER_KEY_TIMEOUT_MS),
     });
-    if (!response.ok) return undefined;
-    const spend = openRouterKeySpend(await response.json());
-    return spend ? { updatedAt: now / 1000, windows: [], spend } : undefined;
+    return response.ok ? openRouterKeySpend(await response.json()) : undefined;
   } catch {
     return undefined;
   }
 }
 
-/** Test hook: forget the per-key throttle. */
+/**
+ * Read the key's spend and hand back a usage snapshot to publish, or nothing
+ * when throttled or when OpenRouter does not answer with key figures.
+ *
+ * `refused` reports that OpenRouter refused a turn with 402. That is the stop
+ * itself, so it is published at once: the read skips the throttle, and when
+ * the read fails the key's last figures (or none) carry the reached mark.
+ */
+export async function readOpenRouterKeyUsage(
+  apiKey: string,
+  options: { fetchImpl?: typeof fetch; now?: () => number; refused?: boolean } = {},
+): Promise<AgentUsage | undefined> {
+  const now = options.now?.() ?? Date.now();
+  const id = createHash('sha256').update(apiKey).digest('hex');
+  if (!options.refused && now - (lastRead.get(id) ?? -Infinity) < OPENROUTER_KEY_MIN_INTERVAL_MS) return undefined;
+  lastRead.set(id, now);
+  const read = await fetchKeySpend(apiKey, options.fetchImpl ?? fetch);
+  if (read) lastSpend.set(id, read);
+  const spend = options.refused ? { ...(read ?? lastSpend.get(id)), rejected: true } : read;
+  return spend ? { updatedAt: now / 1000, windows: [], spend } : undefined;
+}
+
+/** Test hook: forget the per-key throttle and last figures. */
 export function resetOpenRouterKeyThrottle(): void {
   lastRead.clear();
+  lastSpend.clear();
 }

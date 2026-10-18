@@ -75,6 +75,11 @@ describe('sanitizeAgentReply', () => {
 });
 
 describe('isCornerStatusRestatement', () => {
+  it('Reproduction HELPER-3: ignores inherited synonym keys', () => {
+    expect(isCornerStatusRestatement('PR checks passed.', ['constructor checks passed'])).toBe(true);
+    expect(isCornerStatusRestatement('A new finding.', ['constructor checks passed'])).toBe(false);
+  });
+
   const passed = ['GitHub passed a check Beeline CI'];
 
   it.each([

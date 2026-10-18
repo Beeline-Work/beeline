@@ -2232,6 +2232,65 @@ describe('corner close-request delivery', () => {
     ]);
   });
 
+  it('Reproduction HELPER-3: publishes interim narration with constructor in the system line', async () => {
+    const writes: Array<{ name: string; input: Record<string, unknown> }> = [];
+    const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
+      if (name === 'getAgentConfiguration') return { commands: [] };
+      if (name === 'getWorkspaceRoster') return { members: [] };
+      if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+      if (name === 'getRoomAuthority') return { member: true, principalKind: 'human' };
+      writes.push({ name, input });
+      return { id: 'write-id', createdAt: 1 };
+    });
+    const { acp, loop, scheduler } = await cornerHarness(execute, 60_000);
+    vi.spyOn(acp, 'sessionPrompt').mockImplementation(
+      async (_id, _prompt, _timeout, draft, _activity, toolActivity) => {
+        draft?.('Inspecting', 'Inspecting');
+        toolActivity?.([
+          {
+            kind: 'read',
+            title: 'Read package.json',
+            rawInput: { path: 'package.json' },
+            status: 'in_progress',
+          },
+        ]);
+        const tool = {
+          kind: 'read' as const,
+          title: 'Read package.json',
+          rawInput: { path: 'package.json' },
+          status: 'completed' as const,
+        };
+        toolActivity?.([tool]);
+        return { stopReason: 'end_turn', updates: [], agentText: 'Inspecting', toolCalls: [tool] };
+      },
+    );
+    await (loop as unknown as {
+      prompt(id: string, trigger: string, attachments: [], requestedById: undefined, restates: string[]): Promise<void>;
+    }).prompt('helper-3', 'constructor checks passed', [], undefined, ['constructor checks passed']);
+    await scheduler.dispose();
+
+    const durableTexts = [
+      ...writes
+        .filter((write) => write.name === 'postAgentActivity')
+        .flatMap((write) =>
+          (write.input.activity as Array<{ kind: string; text?: string }>)
+            .filter((activity) => activity.kind === 'output')
+            .map((activity) => activity.text),
+        ),
+      ...writes
+        .filter((write) => write.name === 'postRoomMessage')
+        .map((write) => write.input.text),
+    ];
+    expect(durableTexts).toEqual(['Inspecting']);
+    expect(writes.filter((write) => write.name === 'postAgentActivity')).toEqual([
+      expect.objectContaining({
+        input: expect.objectContaining({
+          activity: [expect.objectContaining({ kind: 'tool', title: 'Read package.json' })],
+        }),
+      }),
+    ]);
+  });
+
   it('drafts only the unsaved tail and settles the remainder past the saved narration', async () => {
     // Reproduction C100-OFFSET. The turn speaks, a tool settles that prose
     // into the work ledger, then the SAME assistant run keeps writing. Without

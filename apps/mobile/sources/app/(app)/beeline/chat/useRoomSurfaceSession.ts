@@ -579,11 +579,43 @@ export function useRoomSurfaceSession({
     // A backgrounded app reads nothing: returning to the foreground replaces
     // the socket, and that resubscribe's `subscribed` frame is the covering read.
     const visibleScheduler = () =>
-      AppState.currentState === 'background' ? undefined : scheduler;
+      AppState.currentState === 'background' || AppState.currentState === 'inactive' ? undefined : scheduler;
     // Any frame on this watch since the last applied read. A read that finds a
     // newer message while the socket stayed silent proves the socket missed it.
     let heardSinceRead = false;
     let liveReadApplied = false;
+    let recoveryTransport: BuzzRigTransport | undefined;
+    let lastRoomFrameAt = Date.now();
+    let recoveryTimer: ReturnType<typeof setTimeout> | undefined;
+    // 8 s leaves room for a normal GET and one 1 s retry within 15 s.
+    // A silent, still-working Room backs off to at most five GETs per minute after the first read.
+    let recoveryDelay = 8_000;
+    let recoveryDisabled = false;
+    let recoveryDiagnostic: string | undefined;
+    let readRecoveryDiagnostic: string | undefined;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let refreshFailures = 0;
+    const clearRecovery = () => {
+      if (recoveryTimer) clearTimeout(recoveryTimer);
+      recoveryTimer = undefined;
+    };
+    const armRecovery = () => {
+      const working = reconciledViewRef.current?.latestAgentTurns.some((turn) => turn.status === 'working');
+      if (!working || cancelled || recoveryDisabled) { clearRecovery(); recoveryDelay = 8_000; return; }
+      if (recoveryTimer) return;
+      recoveryTimer = setTimeout(() => {
+        recoveryTimer = undefined;
+        if (cancelled) return;
+        if (AppState.currentState !== 'background' && AppState.currentState !== 'inactive') {
+          recoveryDiagnostic = JSON.stringify({ roomId: channelId, lastRoomFrameAt,
+            socket: recoveryTransport?.liveDiagnostics?.(), silenceMs: Date.now() - lastRoomFrameAt });
+          console.info('[live-recovery] working turn catch-up', recoveryDiagnostic);
+          visibleScheduler()?.followUp();
+          recoveryDelay = Math.min(recoveryDelay * 2, 12_000);
+        }
+        armRecovery();
+      }, recoveryDelay);
+    };
     // Turn deltas heard while a Room read is in flight. Turn times are whole
     // seconds, so the read cannot tell a same-second retry from a stale turn;
     // replaying these in order on top of the read keeps what the socket said.
@@ -662,6 +694,7 @@ export function useRoomSurfaceSession({
         }
       }
       reconciledViewRef.current = stableView;
+      armRecovery();
       hasPainted = true;
       bindingsRef.current.observeRoomSurface();
       if (fresh && !isCornerRef.current) {
@@ -802,6 +835,12 @@ export function useRoomSurfaceSession({
           if ('monolithLive' in event) {
             const surfaceEvent = event as MonolithSurfaceEvent;
             const live = surfaceEvent.monolithLive;
+            if ('roomId' in live && live.roomId === channelId) {
+              lastRoomFrameAt = Date.now();
+              clearRecovery();
+              recoveryDelay = 8_000;
+              armRecovery();
+            }
             if (live.type === 'trace-painted') {
               logLivePaintAck(live);
               return;
@@ -872,6 +911,7 @@ export function useRoomSurfaceSession({
                 return;
               }
               reconciledViewRef.current = next;
+              armRecovery();
               hasPainted = true;
               bindingsRef.current.observeRoomSurface();
               if (received)
@@ -1151,8 +1191,11 @@ export function useRoomSurfaceSession({
         let openingPrefetch = notificationResponseId
           ? takePrefetchedPushRoom(notificationResponseId, channelId)
           : null;
+        recoveryTransport = nextTransport;
         scheduler = new SurfaceRefreshScheduler({
           fetch: async () => {
+            readRecoveryDiagnostic = recoveryDiagnostic ?? readRecoveryDiagnostic;
+            recoveryDiagnostic = undefined;
             const traces = pendingReadTraces;
             pendingReadTraces = [];
             logLiveTrace('room-read-start', traces);
@@ -1179,6 +1222,17 @@ export function useRoomSurfaceSession({
           },
           apply: (view) => {
             if (cancelled) return;
+            refreshFailures = 0;
+            if (retryTimer) clearTimeout(retryTimer);
+            retryTimer = undefined;
+            const missing = readFoundUnheardMessage(reconciledViewRef.current, view);
+            if (readRecoveryDiagnostic && missing) {
+              const diagnostic = readRecoveryDiagnostic;
+              void import('@/buzz/sentry').then(({ captureMobileError }) =>
+                captureMobileError('live-recovery', new Error(`Working turn recovery found missing messages: ${diagnostic}`)),
+              ).catch(() => undefined);
+            }
+            readRecoveryDiagnostic = undefined;
             const missedLive =
               liveReadApplied &&
               !heardSinceRead &&
@@ -1235,9 +1289,19 @@ export function useRoomSurfaceSession({
               error instanceof RoomViewHttpError &&
               (error.status === 401 ||
                 error.status === 403 ||
-                error.status === 404 ||
-                error.status === 502);
+                error.status === 404);
+            if (!terminal && refreshFailures < 3 && !retryTimer) {
+              const delay = 1_000 * 2 ** refreshFailures++;
+              retryTimer = setTimeout(() => {
+                retryTimer = undefined;
+                if (!cancelled) visibleScheduler()?.followUp();
+              }, delay);
+            }
             if (terminal) {
+              recoveryDisabled = true;
+              clearRecovery();
+              if (retryTimer) clearTimeout(retryTimer);
+              retryTimer = undefined;
               setRoomSurface(null);
               for (const overlay of liveOverlaysRef.current) {
                 if (overlay.kind === 'draft') {
@@ -1300,6 +1364,8 @@ export function useRoomSurfaceSession({
         if (view && cacheAddress) void mobileSurfaceCache.write(cacheAddress, view, isRoomView);
       }
       cancelled = true;
+      clearRecovery();
+      if (retryTimer) clearTimeout(retryTimer);
       watchGeneration += 1;
       abandonHandshakeWait?.();
       scheduler?.dispose();

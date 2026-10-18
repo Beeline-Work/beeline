@@ -77,6 +77,7 @@
         "scripts/status-band-native-entry.js",
         "scripts/unread-controls-native-proof.tsx",
         "scripts/jump-disc-proof.mjs",
+        "scripts/reply-recovery-proof.mjs",
         "scripts/workspace-picture-clip-proof.tsx",
         "scripts/workspace-picture-seat-proof.tsx",
         "scripts/workspace-room-join-proof.tsx",

@@ -1,4 +1,4 @@
-import { commanderReportAddress } from './commander.js';
+import { CommandRefusalError, commanderReportAddress } from './commander.js';
 import type { SqlDatabase } from './database.js';
 import { advanceCorner, lockCornerLifecycle } from './corner-lifecycle.js';
 
@@ -85,12 +85,12 @@ export type CornerVerdictRejection =
   | 'NO_PULL_REQUEST'
   | 'STALE_HEAD';
 
-export class CornerVerdictRejectedError extends Error {
+export class CornerVerdictRejectedError extends CommandRefusalError {
   constructor(
     readonly code: CornerVerdictRejection,
     detail: string,
   ) {
-    super(`${code}: ${detail}`);
+    super(`${code}: ${detail}`, 409);
     this.name = 'CornerVerdictRejectedError';
   }
 }

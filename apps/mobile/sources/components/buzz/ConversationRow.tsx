@@ -154,7 +154,7 @@ export function ConversationRow({
               ]}
               testID={`${testID}-preview`}
             >
-              {call ? <><Text style={styles.liveVoice}>●</Text> Call · {voiceCallHumanNames(call, viewer)}</> : showReason ? (
+              {call ? <><Text style={styles.liveVoice}>●</Text> Ongoing call: {voiceCallHumanNames(call, viewer)}</> : showReason ? (
                 showReason
               ) : (
                 <>

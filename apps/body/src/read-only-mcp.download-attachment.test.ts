@@ -5,6 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { callAgentTool } from './read-only-mcp.js';
+import { roomPermissionDecision } from './monolith-room-turn.js';
+import { CLAUDE_ACP_NATIVE_READ_TOOL_CALL } from './fixtures/claude-agent-acp-permissions.js';
 
 const MESSAGE_ID = '81431c68109a0d5f8d726dcfddb9bed215392897ded9bb2ec3aadbc9b1babe0f';
 const IMAGE_ID = '0b1c2d3e-4f50-4617-8293-a4b5c6d7e8f9';
@@ -135,6 +137,19 @@ describe('download_attachment', () => {
 
   const download = (attachmentId: string, messageId = MESSAGE_ID) =>
     callAgentTool('read', { facet: "attachment", ...{ messageId, attachmentId } }, 'call').then(JSON.parse);
+
+  it('R1 downloads a screenshot then permits native Read of the returned path', async () => {
+    const image = await download(IMAGE_ID);
+    const decision = roomPermissionDecision({
+      toolCall: {
+        ...CLAUDE_ACP_NATIVE_READ_TOOL_CALL,
+        rawInput: { file_path: image.path },
+        locations: [{ path: image.path }],
+      },
+    }, { attachmentsDir: join(root, 'attachments') });
+    expect(decision).toBe('allow');
+    if (decision === 'allow') expect(await readFile(image.path)).toEqual(IMAGE);
+  });
 
   it('returns readable local paths for an image and a markdown artifact', async () => {
     const image = await download(IMAGE_ID);

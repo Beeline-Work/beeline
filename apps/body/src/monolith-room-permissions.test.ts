@@ -605,6 +605,23 @@ describe('a granted host route reaches the permission matcher', () => {
     return async (request) => (await handler!(request)) === 'allow';
   }
 
+  it('R1 wires the agent attachment directory into the installed Room callback', async () => {
+    const allow = await capturedHandler([]);
+    const root = roots[roots.length - 1]!;
+    const attachment = join(root, 'agent-home', 'attachments', 'message', 'screenshot.jpg');
+    await mkdir(join(attachment, '..'), { recursive: true });
+    await writeFile(attachment, 'image stand-in');
+    const request = (path: string): AcpPermissionRequest => ({ toolCall: {
+      ...CLAUDE_ACP_NATIVE_READ_TOOL_CALL,
+      rawInput: { file_path: path },
+      locations: [{ path }],
+    } });
+    expect(await allow(request(attachment))).toBe(true);
+    const outside = join(root, 'outside.txt');
+    await writeFile(outside, 'outside');
+    expect(await allow(request(outside))).toBe(false);
+  });
+
   const grokUseTool: AcpPermissionRequest = {
     toolCall: {
       title: 'use_tool',

@@ -1916,7 +1916,6 @@
       "'getPrChecksStatus'",
       "'getRoomAuthority'",
       "'getRoomConversation'",
-      "'hiccup'",
       "'listCornerBriefRevisions'",
       "'listRoomMembers'",
       "'mergeCorner'",
@@ -1924,8 +1923,7 @@
       "'postRoomMessage'",
       "'readCornerPullRequest'",
       "'retractAgentLiveOutput'",
-      "'string'",
-      "'unreported_order: assigned turn ended without a delivered report or recorded continuation; requested work is unconfirmed'"
+      "'string'"
     ],
     "occurrences": 1
   },

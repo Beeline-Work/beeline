@@ -168,7 +168,7 @@ export type PhoneOperationMap = {
   addRoomMember: { input: AddRoomMembersInput; output: MembershipResult & { readonly joinedIds?: readonly string[] } };
   removeRoomMember: { input: RoomMemberInput; output: void };
   resolveDirectMessage: { input: ResolveDirectMessageInput; output: DirectMessageResult };
-  createInvite: { input: WorkspaceInput & { readonly rotate?: boolean }; output: InviteTokenResult };
+  createInvite: { input: WorkspaceInput; output: InviteTokenResult };
   resolveInvite: { input: InviteTokenInput; output: InviteView };
   redeemInvite: { input: InviteTokenInput; output: InviteMembershipResult };
   createAgentPairingCode: { input: WorkspaceInput; output: PairingCodeResult };
@@ -623,6 +623,7 @@ export type ChoiceDecisionResult = {
   readonly roomId: string;
 };
 export type UpdateWorkspaceInput = WorkspaceInput & {
+  readonly allowFixSweep?: boolean;
   readonly name?: string;
   readonly avatar?: string;
   readonly visibility?: 'public' | 'invite-only';

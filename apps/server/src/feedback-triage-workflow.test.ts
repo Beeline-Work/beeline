@@ -38,7 +38,7 @@ beforeEach(async () => {
     `INSERT INTO identities(id,kind,name) VALUES($1,'human','Creator'),($2,'agent','Triager')`,
     [CREATOR, TRIAGER],
   );
-  await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [TRIAGER, CREATOR]);
+  await database.query(`INSERT INTO agents(agent_id,owner_id,harness,selected_model) VALUES($1,$2,'claude','default')`, [TRIAGER, CREATOR]);
   await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Beeline'),($2,'Other')`, [
     WORKSPACE,
     OTHER_WORKSPACE,
@@ -143,8 +143,8 @@ describe('feedback-triage workflow', () => {
 
   it('refreshes deployed tool guidance and legacy schedule prompts despite the old completion marker', async () => {
     await backfillFeedbackTriageWorkflow(database);
-    await database.query(`DELETE FROM workflow_backfills WHERE name='feedback-triage-v4'`);
-    await database.query(`INSERT INTO workflow_backfills(name) VALUES('feedback-triage-v3') ON CONFLICT DO NOTHING`);
+    await database.query(`DELETE FROM workflow_backfills WHERE name='feedback-triage-v7'`);
+    await database.query(`INSERT INTO workflow_backfills(name) VALUES('feedback-triage-v6') ON CONFLICT DO NOTHING`);
     await database.query(`UPDATE agent_schedules SET message=$2 WHERE id=$1`, [UNRELATED_SCHEDULE,
       'Start the feedback-triage workflow with start_workflow, binding triager to yourself, and follow the feedback-triage-steps procedure (load_workspace_skill) at each step.',
     ]);
@@ -162,6 +162,8 @@ describe('feedback-triage workflow', () => {
     )).rows[0]!;
     expect(procedure.markdown).toBe(FEEDBACK_TRIAGE_STEPS);
     expect(procedure.markdown).toContain('occurrence_count');
+    expect(procedure.markdown).not.toContain('notice period');
+    expect(procedure.markdown).toContain('effective date');
     expect(procedure.markdown).toContain('app_tool(app:beeline:workflow)');
     expect(procedure.markdown).toContain('report(kind:fixed)');
     expect(procedure.markdown).not.toMatch(/start_workflow|notify_feedback_fixed|load_workspace_skill/);
@@ -169,8 +171,8 @@ describe('feedback-triage workflow', () => {
     expect(after.find((row) => row.id === UNRELATED_SCHEDULE)!.message).toBe(FEEDBACK_TRIAGE_SCHEDULE_PROMPT);
     for (const row of after) {
       const was = before.find((schedule) => schedule.id === row.id)!;
-      expect(row.cadence).toEqual(was.cadence);
-      expect(row.next_run_at).toEqual(was.next_run_at);
+      expect(row.cadence).toEqual({ ...DAILY, timeZone: 'America/New_York' });
+      expect(row.next_run_at.getTime()).toBeGreaterThan(Date.now());
     }
     const versions = (await database.query<{ version: number; markdown: string }>(
       `SELECT version.version,version.markdown FROM workspace_skills skill
@@ -210,7 +212,7 @@ describe('feedback-triage workflow', () => {
     expect(validateSavedWorkflow(FEEDBACK_TRIAGE_CONTRACT)).toBeNull();
   });
 
-  it('installs the workflow and its steps where a triage schedule runs and points that schedule at it, cadence unchanged', async () => {
+  it('installs the workflow and its steps where a triage schedule runs and points that schedule at it, at 2 PM America/New_York', async () => {
     const before = await schedules();
     expect(await backfillFeedbackTriageWorkflow(database)).toBe(6);
     expect(await skills()).toEqual([
@@ -221,14 +223,29 @@ describe('feedback-triage workflow', () => {
     const after = await schedules();
     for (const row of after) {
       const was = before.find((schedule) => schedule.id === row.id)!;
-      expect(row.cadence, row.id).toEqual(was.cadence);
-      expect(row.next_run_at, row.id).toEqual(was.next_run_at);
+      if (row.id === UNRELATED_SCHEDULE) {
+        expect(row.cadence).toEqual(was.cadence);
+        expect(row.next_run_at).toEqual(was.next_run_at);
+      } else {
+        expect(row.cadence).toEqual({ ...DAILY, timeZone: 'America/New_York' });
+        const hour = new Intl.DateTimeFormat('en-US', { hour: 'numeric', hourCycle: 'h23', timeZone: 'America/New_York' }).format(row.next_run_at);
+        expect(hour).toBe('14');
+      }
     }
     expect(after.find((row) => row.id === TRIAGE_SCHEDULE)!.message).toBe(FEEDBACK_TRIAGE_SCHEDULE_PROMPT);
     expect(after.find((row) => row.id === SWEEP_SCHEDULE)!.message).toBe(FEEDBACK_TRIAGE_SCHEDULE_PROMPT);
     expect(after.find((row) => row.id === UNRELATED_SCHEDULE)!.message).toBe('Post the standup summary.');
     // Every release reruns it; nothing changes twice.
     expect(await backfillFeedbackTriageWorkflow(database)).toBe(0);
+  });
+
+  it('moves an already-New-York seeded schedule from 10 AM to 2 PM', async () => {
+    await backfillFeedbackTriageWorkflow(database);
+    await database.query(`UPDATE agent_schedules SET cadence=$2::jsonb WHERE id=$1`,
+      [TRIAGE_SCHEDULE,JSON.stringify({kind:'cron',expression:'0 10 * * *',timeZone:'America/New_York'})]);
+    expect(await backfillFeedbackTriageWorkflow(database)).toBe(1);
+    expect((await schedules()).find((row) => row.id===TRIAGE_SCHEDULE)!.cadence)
+      .toEqual({kind:'cron',expression:'0 14 * * *',timeZone:'America/New_York'});
   });
 
   it('lets the scheduled agent find, read and start it right after install, with no setting', async () => {
@@ -286,7 +303,7 @@ describe('feedback-triage workflow', () => {
     ).resolves.toEqual({ alreadyAdvanced: true, runId, state: 'pull', seq: 1 });
     await expect(
       handoff(database, turn, { runId, outcome: 'nothing_new', contents: { problems: [] }, attempt: 1 }),
-    ).resolves.toEqual({ runId, state: 'done', attempt: 2, status: 'done' });
+    ).resolves.toEqual({ runId, state: 'browse', attempt: 2 });
   });
 
   it("refreshes its own outdated seed but never a team's own workflow of the same name", async () => {

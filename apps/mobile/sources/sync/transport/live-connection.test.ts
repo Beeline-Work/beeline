@@ -1,9 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+const appStateListeners = vi.hoisted(() => new Set<(state: string) => void>());
 vi.mock('react-native', () => ({
-  AppState: { currentState: 'active', addEventListener: () => ({ remove: () => undefined }) },
+  AppState: {
+    currentState: 'active',
+    addEventListener: (_event: string, listener: (state: string) => void) => {
+      appStateListeners.add(listener);
+      return { remove: () => appStateListeners.delete(listener) };
+    },
+  },
 }));
 
+import { AppState } from 'react-native';
 import { LiveConnection } from './live-connection';
 import { liveFrameEpoch } from './live-frame-epoch';
 import { getRoomCornerSummary, getRoomCorners } from '@/buzz/room-corner-store';
@@ -13,6 +21,7 @@ const ROOM_A = 'room-a';
 const ROOM_B = 'room-b';
 
 type TestSocket = {
+  autoPong: boolean;
   sent: string[];
   closed: boolean;
   readyState: number;
@@ -27,6 +36,7 @@ function stubSockets(): TestSocket[] {
   const sockets: TestSocket[] = [];
   class TestWebSocket {
     static readonly OPEN = 1;
+    autoPong = true;
     sent: string[] = [];
     closed = false;
     readyState = 0;
@@ -41,6 +51,7 @@ function stubSockets(): TestSocket[] {
     }
     send(value: string) {
       this.sent.push(value);
+      if (value === '{"type":"ping"}' && this.autoPong) this.emit({ type: 'pong' });
     }
     close() {
       this.closed = true;
@@ -93,12 +104,97 @@ describe('LiveConnection', () => {
   let sockets: TestSocket[];
 
   beforeEach(() => {
+    appStateListeners.clear();
+    AppState.currentState = 'active';
     sockets = stubSockets();
   });
 
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
+  });
+
+  it('Reproduction R1: replaces an open silent socket within one ping interval plus timeout', async () => {
+    vi.useFakeTimers();
+    const { connection } = createConnection();
+    const room = vi.fn();
+    await connection.register([{ '#h': [ROOM_A] }], room);
+    sockets[0]!.open();
+    sockets[0]!.emit({ type: 'subscribed', roomId: ROOM_A, epoch: 'before', cursor: 4 });
+    sockets[0]!.autoPong = false;
+    room.mockClear();
+    await vi.advanceTimersByTimeAsync(20_000);
+    await vi.advanceTimersByTimeAsync(9_999);
+    expect(sockets).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(sockets[0]!.closed).toBe(true);
+    expect(sockets).toHaveLength(2);
+    sockets[1]!.open();
+    expect(sockets[1]!.sent).toEqual([JSON.stringify({ type: 'subscribe', roomIds: [ROOM_A] })]);
+    sockets[1]!.emit({ type: 'subscribed', roomId: ROOM_A });
+    expect(room).toHaveBeenCalledExactlyOnceWith({ monolithLive: { type: 'subscribed', roomId: ROOM_A } });
+    connection.dispose();
+  });
+
+  it('sends one tiny ping per interval and keeps a slow live connection without invalidating Rooms', async () => {
+    vi.useFakeTimers();
+    const { connection } = createConnection();
+    const room = vi.fn();
+    await connection.register([{ '#h': [ROOM_A] }], room);
+    sockets[0]!.open();
+    sockets[0]!.autoPong = false;
+    await vi.advanceTimersByTimeAsync(20_000);
+    await vi.advanceTimersByTimeAsync(9_000);
+    const epoch = liveFrameEpoch();
+    sockets[0]!.emit({ type: 'pong' });
+    expect(liveFrameEpoch()).toBe(epoch);
+    expect(room).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(19_999);
+    expect(sockets[0]!.sent.filter(f => f === '{"type":"ping"}')).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(sockets[0]!.sent.filter(f => f === '{"type":"ping"}')).toHaveLength(2);
+    expect(sockets).toHaveLength(1);
+    connection.dispose();
+  });
+
+  it('sends no periodic traffic or replacements in background and resumes on foreground', async () => {
+    vi.useFakeTimers();
+    const { connection, foreground } = createConnection();
+    await connection.register([{ '#h': [ROOM_A] }], () => undefined);
+    sockets[0]!.open();
+    sockets[0]!.autoPong = false;
+    await vi.advanceTimersByTimeAsync(20_000);
+    AppState.currentState = 'background';
+    for (const listener of appStateListeners) listener('background');
+    await vi.advanceTimersByTimeAsync(120_000);
+    expect(sockets).toHaveLength(1);
+    expect(sockets[0]!.sent.filter(f => f === '{"type":"ping"}')).toHaveLength(1);
+    AppState.currentState = 'active';
+    for (const listener of appStateListeners) listener('active');
+    foreground();
+    sockets[0]!.emit({ type: 'sync-ok' });
+    await vi.advanceTimersByTimeAsync(20_000);
+    expect(sockets[0]!.sent.at(-1)).toBe('{"type":"ping"}');
+    connection.dispose();
+  });
+
+  it('backs off repeated silent replacements even when TCP opens', async () => {
+    vi.useFakeTimers();
+    const { connection } = createConnection();
+    await connection.register([{ '#h': [ROOM_A] }], () => undefined);
+    sockets[0]!.open(); sockets[0]!.autoPong = false;
+    await vi.advanceTimersByTimeAsync(30_000);
+    sockets[1]!.open(); sockets[1]!.autoPong = false;
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(sockets).toHaveLength(2);
+    await vi.advanceTimersByTimeAsync(1_000);
+    sockets[2]!.open(); sockets[2]!.autoPong = false;
+    await vi.advanceTimersByTimeAsync(30_000);
+    await vi.advanceTimersByTimeAsync(1_999);
+    expect(sockets).toHaveLength(3);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(sockets).toHaveLength(4);
+    connection.dispose();
   });
 
   it('dispatches identity-scoped workspace changes only to workspace registrations', async () => {
@@ -584,7 +680,7 @@ describe('LiveConnection', () => {
 
     connection.dispose();
   });
-  it('sends and delivers nothing while an open Room sits idle', async () => {
+  it('only pings while idle, with no Room frames or reads', async () => {
     vi.useFakeTimers();
     const { connection } = createConnection();
     const first: unknown[] = [];
@@ -598,7 +694,8 @@ describe('LiveConnection', () => {
     await vi.advanceTimersByTimeAsync(30 * 60_000);
     expect(first).toEqual([]);
     expect(second).toEqual([]);
-    expect(sockets[0]!.sent).toEqual(sent);
+    expect(sockets[0]!.sent.filter(frame => frame !== '{"type":"ping"}')).toEqual(sent);
+    expect(sockets[0]!.sent.filter(frame => frame === '{"type":"ping"}')).toHaveLength(90);
     expect(sockets).toHaveLength(1);
 
     connection.dispose();

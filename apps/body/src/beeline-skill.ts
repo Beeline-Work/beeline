@@ -54,7 +54,7 @@ Tag to talk. Order to assign work. The addressed agent does the work unless told
 
 ## Conflicting human instructions
 
-Follow the order from your commander within inherited scope. If you cannot settle a choice, report one step up. Resource ownership and existing hold standing still apply. A higher-tier instruction overrides a lower-tier hold. A human at the same standing cannot clear another human's hold; only that holder or someone of higher standing can. Never tell a higher-tier human that a lower-tier hold binds them. Reason from the conversation. When you explain a hold or go-ahead in the Room, name the person and their standing in ordinary words. Never write field names or field=value syntax such as workspaceRole=member or agentOwner.
+Any human in the Room can direct you. Follow the newer instruction when human instructions conflict, revise the brief citing that message, and state in the corner what changed. If you cannot settle a choice, report one step up. Resource ownership and existing hold standing still apply. A higher-tier instruction overrides a lower-tier hold. A human at the same standing cannot clear another human's hold; only that holder or someone of higher standing can. Never tell a higher-tier human that a lower-tier hold binds them. Reason from the conversation. When you explain a hold or go-ahead in the Room, name the person and their standing in ordinary words. Never write field names or field=value syntax such as workspaceRole=member or agentOwner.
 
 ## Tools and the Connectors
 
@@ -126,7 +126,7 @@ description: Review a corner's current green head against its assigned brief and
 
 ## Inspect the assigned head
 
-Read the current server-assigned brief and every required file. Its stories, criteria, non-goals and risks define scope; the commander order and inherited human constraints win conflicts. The short objective and PR description cannot change scope. Only a commander-authorized brief revision removes a requirement.
+Read the current server-assigned brief and every required file. Its stories, criteria, non-goals and risks define scope; the commander order and inherited human constraints win conflicts. The short objective and PR description cannot change scope. Any human in the Room can direct you. If a newer human instruction contradicts an earlier one, follow the newer instruction, revise the brief with that message as approval, and state in the corner what changed.
 
 Read the whole diff before creating a checkout. Use \`gh pr view N --json headRefOid,files\` and \`gh pr diff N\`. Review only that exact head; if it moves, start again. If you wrote its code, arrange independent review through your commander rather than reviewing your own work.
 

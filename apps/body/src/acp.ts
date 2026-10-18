@@ -16,7 +16,8 @@ import { readUsageWindow, type AgentUsage, type UsageWindow } from '@beeline/api
  */
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { EventEmitter } from 'node:events';
-import { watch, readFileSync, writeFileSync, type FSWatcher } from 'node:fs';
+import { watch, readFileSync, realpathSync, writeFileSync, type FSWatcher } from 'node:fs';
+import { delimiter, dirname, isAbsolute } from 'node:path';
 import { withAdapterInstallLock } from './adapter-install-lock.js';
 import { piStartupEnvironment } from './pi-startup.js';
 import { AcpResourceScope } from './acp-resource-scope.js';
@@ -744,6 +745,7 @@ export class AcpClient extends EventEmitter {
    *  instead of just the bare exit code, in the daemon's log. */
   private stderrTail = '';
   private agentEnv: Record<string, string>;
+  private harnessCommand: string;
   private agentCommand: string;
   private agentLabel: string;
   private agentArgs: string[];
@@ -786,6 +788,8 @@ export class AcpClient extends EventEmitter {
      */
     osSandbox?: boolean;
     agentEnv: Record<string, string>;
+    /** Actual harness executable before any OS sandbox wrapper. */
+    harnessCommand?: string;
     /**
      * Working directory for the child process. The ACP session `cwd` is a
      * protocol parameter, so without this a harness that keys per-project
@@ -823,6 +827,7 @@ export class AcpClient extends EventEmitter {
     const command = opts.agentCommand ?? opts.agentBinary;
     if (!command) throw new Error('ACP agent command is required');
     this.agentCommand = command;
+    this.harnessCommand = opts.harnessCommand ?? command;
     this.agentLabel = opts.agentLabel ?? command;
     this.agentArgs = [...(opts.agentArgs ?? [])];
     this.agentEnv = opts.agentEnv;
@@ -850,10 +855,32 @@ export class AcpClient extends EventEmitter {
     // probe at exit time (which would miss it).
     await this.oomKills.prime().catch(() => undefined);
     this.stopping = false;
-    const childEnv = piStartupEnvironment(
+    let childEnv = piStartupEnvironment(
       this.agentLabel,
       this.inheritProcessEnv ? { ...process.env, ...this.agentEnv } : this.agentEnv,
     );
+    if (isAbsolute(this.harnessCommand) &&
+        !childEnv.BEELINE_FREE_AGENT_ID && !childEnv.BEELINE_FREE_AGENT_MODEL_TOKEN) {
+      try {
+        // npm links point into node_modules, while Node lives beside the bin
+        // link. Prefer the real entry's directory, then its invoked directory,
+        // before the inherited PATH so version-manager siblings stay together.
+        const directories = [dirname(realpathSync(this.harnessCommand)), dirname(this.harnessCommand)];
+        const pathKey = process.platform === 'win32'
+          ? Object.keys(childEnv).find(key => key.toLowerCase() === 'path') ?? 'PATH'
+          : 'PATH';
+        const previous = childEnv[pathKey];
+        // POSIX exec uses this default search path when PATH is absent.
+        // Adding the harness directory must preserve that implicit fallback.
+        const entries = previous === undefined
+          ? (process.platform === 'win32' ? [] : ['/usr/bin', '/bin'])
+          : previous.split(delimiter);
+        const additions = [...new Set(directories)].filter(dir => !entries.includes(dir));
+        if (additions.length) childEnv = { ...childEnv, [pathKey]: [...additions, ...entries].join(delimiter) };
+      } catch {
+        // Preserve the spawn error for a missing or inaccessible executable.
+      }
+    }
     this.resourceScope = this.useResourceScope && !this.resourceScopeUnavailable
       ? new AcpResourceScope(this.resourceScopeMemoryMaxBytes) : undefined;
     const launch = this.resourceScope?.launch(this.agentCommand, this.agentArgs, childEnv);
@@ -929,8 +956,8 @@ export class AcpClient extends EventEmitter {
         timeoutMs,
       )) as Record<string, unknown>;
     } catch (error) {
-      // A failed launcher can close stdin before its bus error reaches stderr.
-      if (launch && /EPIPE/.test(String(error)) && this.child?.exitCode === null) {
+      // A failed launcher or shebang can close stdin before stderr arrives.
+      if (/EPIPE/.test(String(error)) && this.child?.exitCode === null) {
         await new Promise<void>((resolve) => {
           const timer = setTimeout(resolve, 250);
           this.child?.once('close', () => { clearTimeout(timer); resolve(); });
@@ -947,6 +974,9 @@ export class AcpClient extends EventEmitter {
         this.alive = false;
         console.warn('[acp] systemd user scope unavailable; starting ACP session in a process group');
         return this.start(timeoutMs);
+      }
+      if (/EPIPE/.test(String(error)) && this.stderrTail.trim()) {
+        throw new AcpRuntimeExitedError(`ACP agent ${this.agentLabel}: ${String(error)}: ${flattenHarnessCause(this.stderrTail)}`);
       }
       throw error;
     }

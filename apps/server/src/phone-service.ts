@@ -1598,7 +1598,7 @@ export class PhoneService {
         ...(row.about ? { about: row.about } : {}),createdAt: unix(row.created_at),
       },
       ...(managedRooms ? { managerSettings: {
-        visibility: row.visibility,rooms: managedRooms,
+        visibility: row.visibility,allowFixSweep: row.allow_fix_sweep,rooms: managedRooms,
         roomsTruncated: roster.managedRoomRows.length > ROOM_VIEW_CHAT_LIMIT,
       } } : {}),
       members: roster.members,agents: roster.agents,
@@ -6239,6 +6239,8 @@ export class PhoneService {
     return { id, roomId };
   }
   private async updateWorkspace(input: Input<'updateWorkspace'>, viewerId: string) {
+    if (input.allowFixSweep !== undefined && typeof input.allowFixSweep !== 'boolean')
+      throw new Error('allowFixSweep must be a boolean');
     await this.database.transaction(async (database) => {
       await this.requireWorkspaceManager(input.workspaceId, viewerId, database);
       const current = (
@@ -6261,8 +6263,8 @@ export class PhoneService {
                 : undefined,
             );
       await database.query(
-        `UPDATE workspaces SET name=COALESCE($2,name),avatar=COALESCE($3,avatar),visibility=COALESCE($4,visibility),updated_at=now() WHERE id=$1`,
-        [input.workspaceId, input.name ?? null, avatar, input.visibility ?? null],
+        `UPDATE workspaces SET name=COALESCE($2,name),avatar=COALESCE($3,avatar),visibility=COALESCE($4,visibility),allow_fix_sweep=COALESCE($5,allow_fix_sweep),updated_at=now() WHERE id=$1`,
+        [input.workspaceId, input.name ?? null, avatar, input.visibility ?? null, input.allowFixSweep ?? null],
       );
     });
   }
@@ -7024,18 +7026,13 @@ export class PhoneService {
         [input.workspaceId],
       );
       const isPublic = workspace.rows[0]?.visibility === 'public';
-      if (input.rotate && !isPublic) throw new Error('only public Workspace links can rotate');
       if (isPublic) {
         const existing = await database.query<{ public_token: string }>(
           `SELECT public_token FROM invites WHERE workspace_id=$1 AND public_token IS NOT NULL`,
           [input.workspaceId],
         );
-        if (existing.rows[0] && !input.rotate)
+        if (existing.rows[0])
           return { token: existing.rows[0].public_token, expiresAt: 0 };
-        await database.query(
-          `DELETE FROM invites WHERE workspace_id=$1 AND public_token IS NOT NULL`,
-          [input.workspaceId],
-        );
       }
       const value = createCommunityInviteToken(randomBytes(32));
       const expiresAt = isPublic ? null : new Date(Date.now() + 7 * 86400_000);
@@ -7070,7 +7067,7 @@ export class PhoneService {
     if (!row) throw new Error('invite not found');
     return this.database.transaction(async (database) => {
       // Use the handle allocator's Workspace lock before locking the invite:
-      // creation/rotation and membership writes then share the same lock order.
+      // invite creation and membership writes then share the same lock order.
       const workspaceIds = await lockIdentityHandleWorkspaces(database, viewerId, [
         row.workspace_id,
       ]);
@@ -9840,7 +9837,7 @@ export class PhoneService {
   ): Promise<(WorkspaceMemberListView & {
     workspaceRow: {
       id: string; name: string; about: string | null; avatar: string | null;
-      visibility: 'public' | 'invite-only'; created_at: Date; updated_at: Date;
+      visibility: 'public' | 'invite-only'; allow_fix_sweep: boolean; created_at: Date; updated_at: Date;
       role: 'owner' | 'admin' | 'member' | 'spectator';
     };
     viewerIdentity: RoomViewIdentity;
@@ -9855,7 +9852,7 @@ export class PhoneService {
     const result = await this.database.query<{
       workspace_row: {
         id: string; name: string; about: string | null; avatar: string | null;
-        visibility: 'public' | 'invite-only'; created_at: Date; updated_at: Date;
+        visibility: 'public' | 'invite-only'; allow_fix_sweep: boolean; created_at: Date; updated_at: Date;
         role: 'owner' | 'admin' | 'member' | 'spectator';
       };
       viewer_row: IdentityRow;
@@ -9867,7 +9864,7 @@ export class PhoneService {
       people_total: string;
       agent_total: string;
     }>(`WITH visible_workspace AS (
-        SELECT w.id,w.name,w.about,w.avatar,w.visibility,w.created_at,w.updated_at,wm.role
+        SELECT w.id,w.name,w.about,w.avatar,w.visibility,w.allow_fix_sweep,w.created_at,w.updated_at,wm.role
         FROM workspaces w JOIN memberships wm ON wm.workspace_id=w.id AND wm.room_id IS NULL
         WHERE w.id=$1 AND wm.identity_id=$7 AND wm.removed_at IS NULL
       ), viewer_row AS (

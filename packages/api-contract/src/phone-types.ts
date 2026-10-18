@@ -930,6 +930,7 @@ export type WorkspaceView = {
     readonly createdAt: number;
   };
   readonly managerSettings?: {
+    readonly allowFixSweep?: boolean;
     readonly visibility: 'public' | 'invite-only';
     /**
      * Up to 200 visibility-bearing top-level Rooms, including private Rooms

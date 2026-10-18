@@ -9,15 +9,8 @@ import {
 } from './agent-command.js';
 import { tagsKnownIdentitySql } from './message-mentions.js';
 import { cornerImplementerSql } from './corner-worker.js';
-
-export class CommandRefusalError extends Error {
-  constructor(
-    message: string,
-    readonly status: 400 | 403 | 409 | 410,
-  ) {
-    super(message);
-  }
-}
+import { CommandRefusalError } from './command-refusal.js';
+export { CommandRefusalError } from './command-refusal.js';
 
 /** A report/lifecycle wake resumes the recipient's original incoming order. */
 export async function commandOrder(db: SqlDatabase, command: CommandRow): Promise<CommandRow> {

@@ -303,7 +303,7 @@ it('revises a reachable corner brief from a DM with the same active-order author
 describe('a worker records a later waiver in its corner brief', () => {
   const STRANGER = 'd'.repeat(64), OUTSIDER = 'e'.repeat(64);
   const revise = async (turn: AgentCommand, cornerId: string, expectedRevision: number, sourceMessageId: string) => {
-    // Self-revision now returns to a Room/DM turn; retain the approval-chain coverage.
+    // Self-revision now returns to a Room/DM turn; exercise approval membership from a reachable turn.
     const source = (await db.query<{ parent_id: string | null }>(`SELECT parent_id FROM rooms WHERE id=$1`, [turn.roomId])).rows[0];
     if (source?.parent_id) turn = await dmTurn(await directMessage(HUMAN, HUMAN, 'Revise the assigned widget brief'));
     return daemon.execute('reviseCornerBrief', { ...authority(turn), cornerId, expectedRevision,
@@ -360,6 +360,49 @@ describe('a worker records a later waiver in its corner brief', () => {
       sourceMessageId: waiver, snapshot: 'Waive the proof for this corner.' });
   });
 
+  it('HUMAN-01: a worker accepts any shared-Room human approval and announces the change', async () => {
+    const opened = await open(), turn = await worker(opened.cornerId);
+    await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
+      [WS, ROOM, STRANGER]);
+    const outside = randomBytes(32).toString('hex');
+    await phone.execute('sendRoomMessage', { roomId: ROOM, messageId: outside, text: 'Approved: waive the proof.' }, STRANGER);
+    const revision = (sourceMessageId: string) => daemon.execute('reviseCornerBrief', {
+      ...authority(turn), cornerId: opened.cornerId, expectedRevision: 1,
+      brief: { spec: 'Build the widget; proof waived', repositoryWork: false, change: 'Record approval', approval: { sourceMessageId } },
+    }, WORKER);
+    expect(await revision(outside)).toMatchObject({ revision: 2 });
+    expect(await approval(opened.cornerId)).toMatchObject({ approvedBy: STRANGER, sourceMessageId: outside });
+    await daemon.execute('postRoomMessage', { ...authority(turn), text: '@ruby Recorded the proof waiver approved by Stranger.' }, WORKER);
+    expect((await phone.readRoom(opened.cornerId, HUMAN))?.messages.some(m => m.text === '@ruby Recorded the proof waiver approved by Stranger.')).toBe(true);
+    console.log('HUMAN-01: shared-Room member approval saved as revision 2 and announced in the corner');
+  });
+
+  it('refuses a stored approval when its human author is not a Room member', async () => {
+    const opened = await open(), turn = await worker(opened.cornerId);
+    const outside = randomBytes(32).toString('hex');
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Approved')`, [outside, ROOM, STRANGER]);
+    // A stored snapshot does not substitute for current membership.
+    await db.query(`UPDATE corner_brief_revisions SET approval_basis=approval_basis || $2::jsonb WHERE corner_id=$1`,
+      [opened.cornerId, JSON.stringify({ kind: 'explicit-human-answer', sourceMessageId: outside, approvedBy: STRANGER, snapshot: 'Approved' })]);
+    await expect(revise(turn, opened.cornerId, 1, outside)).rejects.toThrow('must name a human message or commander order');
+    expect((await daemon.execute('getCornerRestoreState', { cornerId: opened.cornerId }, WORKER)).brief?.revision).toBe(1);
+  });
+
+  it('refuses a DM approval after the human membership is removed', async () => {
+    const opened = await open(), turn = await worker(opened.cornerId);
+    const waiver = await directMessage(STRANGER, STRANGER, 'Waive the proof.');
+    await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,
+      [rooms.get(waiver), STRANGER]);
+    await expect(revise(turn, opened.cornerId, 1, waiver)).rejects.toThrow('current Room member');
+  });
+
+  it('refuses approval from an unrelated Room even when the human belongs to it', async () => {
+    const opened = await open(), turn = await worker(opened.cornerId);
+    const waiver = await directMessage(STRANGER, STRANGER, 'Waive the proof.');
+    await db.query(`UPDATE rooms SET direct_participants=NULL WHERE id=$1`, [rooms.get(waiver)]);
+    await expect(revise(turn, opened.cornerId, 1, waiver)).rejects.toThrow('must name a human message or commander order');
+  });
+
   it('accepts an earlier private order from the corner\'s commander', async () => {
     const opened = await open(), turn = await worker(opened.cornerId);
     await daemon.execute('order', { ...authority(order), address: opened.cornerId, text: 'Skip the proof.' }, RUBY);
@@ -369,18 +412,18 @@ describe('a worker records a later waiver in its corner brief', () => {
       sourceMessageId: waiver.sourceMessageId, snapshot: 'Skip the proof.' });
   });
 
-  it('refuses a DM from a person outside the corner\'s authority chain', async () => {
+  it('HUMAN-01: accepts any human member approval in a DM shared with the worker', async () => {
     const opened = await open(), turn = await worker(opened.cornerId);
     const waiver = await directMessage(STRANGER, STRANGER, 'Waive the proof for this corner.');
-    await expect(revise(turn, opened.cornerId, 1, waiver)).rejects.toThrow('must name a human message or commander order');
+    expect((await revise(turn, opened.cornerId, 1, waiver)).revision).toBe(2);
+    expect(await approval(opened.cornerId)).toMatchObject({ approvedBy: STRANGER, sourceMessageId: waiver });
   });
 
-  it('refuses a person outside the authority chain from the worker\'s active DM turn', async () => {
+  it('HUMAN-01: accepts any human member approval from the worker\'s active DM turn', async () => {
     const opened = await open();
     const waiver = await directMessage(STRANGER, STRANGER, 'Waive the proof for this corner.');
-    await expect(revise(await dmTurn(waiver), opened.cornerId, 1, waiver))
-      .rejects.toThrow('must name a human message or commander order');
-    expect((await db.query(`SELECT 1 FROM corner_brief_revisions WHERE corner_id=$1`, [opened.cornerId])).rowCount).toBe(1);
+    expect((await revise(await dmTurn(waiver), opened.cornerId, 1, waiver)).revision).toBe(2);
+    expect(await approval(opened.cornerId)).toMatchObject({ approvedBy: STRANGER, sourceMessageId: waiver });
   });
 
   it('accepts the owner\'s waiver from the worker\'s active DM turn', async () => {

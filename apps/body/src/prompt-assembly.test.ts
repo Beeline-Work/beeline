@@ -516,10 +516,14 @@ describe('prompt assembly guards', () => {
 
   it('tells a code-corner author that a human opening the corner and prompting inside it is not the outline', () => {
     const author = assembleSessionPrompt(SESSION_VARIANTS['code-corner-reviewed']!).systemPrompt;
-    expect(author).toContain('Chat cannot revise scope');
-    expect(author).toContain('Chat cannot revise scope');
-    expect(author).toContain('ask your commander for an authorized revision');
-    expect(promptRules.CORNER_AUTHOR_CONTRACT).toContain('Chat cannot revise scope');
+    expect(author).toContain('Before code/build, read the current brief.');
+    expect(author).toContain('Any human in the Room can direct you. If a newer human instruction contradicts an earlier one, follow the newer instruction, revise the brief with that message as approval, and state in the corner what changed.');
+    expect(author).not.toContain('Your chain of command');
+    expect(author).not.toContain('A higher rank');
+    expect(author).not.toContain('Instructions from outside your chain');
+    expect(author).not.toContain('ask your commander for an authorized revision');
+    expect(promptRules.CORNER_AUTHOR_CONTRACT).toContain('Any human in the Room can direct you.');
+    expect(promptRules.CORNER_AUTHOR_CONTRACT).not.toContain('A higher rank');
   });
 
   it('authorizes building from dispatch and leaves spec or mock questions to judgment', () => {
@@ -635,7 +639,11 @@ describe('prompt assembly guards', () => {
     const { brief: _brief, ...unbriefed } = SESSION_VARIANTS['code-corner-reviewed']!;
     const session = assembleSessionPrompt(unbriefed).systemPrompt;
     expect(session).toContain('isolated git worktree on feature/corner-abc');
-    expect(session).toContain('ask your commander for an authorized revision');
+    expect(session).toContain('Any human in the Room can direct you. If a newer human instruction contradicts an earlier one, follow the newer instruction, revise the brief with that message as approval, and state in the corner what changed.');
+    expect(session).not.toContain('Your chain of command');
+    expect(session).not.toContain('A higher rank');
+    expect(session).not.toContain('Instructions from outside your chain');
+    expect(session).not.toContain('ask your commander for an authorized revision');
     expect(session).not.toContain('Open the pull request with gh');
     expect(session).not.toContain(cornerMergeInstruction('sol'));
     const turn = assembleTurnPrompt(TURN_VARIANTS['code-corner-turn']!).text;

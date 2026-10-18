@@ -62,6 +62,8 @@ test('builds every public Pages path and preserves association and helper bytes'
       'index.html',
       'desktop-download.mjs',
       'privacy/index.html',
+      'privacy/2026-10-16.html',
+      'subprocessors/index.html',
       'terms/index.html',
       'delete-account/index.html',
       'brand/index.html',
@@ -217,4 +219,13 @@ test('the Pages 404 router preserves dynamic join and review fallback URLs', asy
       globalThis.fetch = priorFetch;
     }
   }
+});
+
+test('service review policy is effective on 18 October without a notice wait', () => {
+  const html = fs.readFileSync(path.join(WEB_ROOT, 'privacy', 'index.html'), 'utf8');
+  assert.match(html, /Effective: 18 October 2026/);
+  assert.match(html, /href="\/privacy\/2026-10-16.html"/);
+  assert.match(html, /Allow fix sweep/);
+  assert.match(html, /href="\/subprocessors\/"/);
+  assert.doesNotMatch(html, /14-day notice|November 15, 2026/);
 });

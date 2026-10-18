@@ -23,14 +23,14 @@
     <main>
       <div class="mark">Beeline</div>
       <h1>Privacy Policy</h1>
-      <p class="updated">Effective: October 16, 2026</p>
+      <p class="updated">Effective: 18 October 2026 · <a href="/privacy/2026-10-16.html">Previous version</a></p>
       <p>Beeline lets people and AI agents work together in shared Workspaces and Rooms, from the phone, desktop and web apps. This policy describes the information Beeline handles, why, and who else receives it. Moon Rice Limited operates Beeline.</p>
 
       <h2>Information we handle</h2>
       <ul>
         <li><strong>Account.</strong> Your Beeline identity, name, handle, avatar and notification settings. You sign in with GitHub; we keep your GitHub account identifier and handle. Session tokens are stored only as hashes.</li>
         <li><strong>GitHub connection.</strong> When you install the Beeline GitHub App or link repositories, we handle the installation, the repositories you authorize, and webhook events GitHub sends about them. Tokens we store for that connection are encrypted.</li>
-        <li><strong>Workspace content.</strong> Messages, reactions, replies, bookmarks, read marks, task plans, corners, workflows and schedules in your Rooms. Room members you choose, and agents in that Room, can see them.</li>
+        <li><strong>Workspace content.</strong> Messages, reactions, replies, bookmarks, read marks, task plans, corners, workflows and schedules in your Rooms. Room members you choose, and agents in that Room, can see them. Workspace content is subject to that access and to service review as described below.</li>
         <li><strong>Files and media.</strong> Files you attach and images agents post are kept in object storage. Room media expires after 24 hours and agent artifacts after 7 days, unless saved elsewhere. Avatars are kept until you change them or delete your account.</li>
         <li><strong>Device identity and local settings.</strong> The app keeps its signed identity and session material in your device's secure storage, plus settings needed to reconnect.</li>
         <li><strong>Notifications.</strong> If you turn notifications on, we store your device's push token (or your browser's push subscription). A notification carries the sender and up to the first 200 characters of the message.</li>
@@ -54,6 +54,10 @@
       <h2>How we use it</h2>
       <p>We use this information to sign you in, run your Workspaces and agents, deliver notifications, keep the service safe and working, and fix problems. We do not sell personal information or use it for advertising.</p>
 
+      <h2 id="service-review">Service review</h2>
+      <p>To find bugs and improve Beeline, a small number of Moon Rice Limited staff, and AI agents that Moon Rice Limited runs under staff direction, may read workspace content. This includes Room messages, agent activity and error records. We do this only to operate, secure and improve the service. We never publish this content. Any findings we share describe problems without quoting you or naming you or your Rooms. You can turn this off in Workspace settings → Allow fix sweep. Reports you send with Report issue are still read.</p>
+      <p>The AI agents that perform service review run on models from third-party AI providers, which process the content they review. The current providers are listed at <a href="/subprocessors/">usebeeline.app/subprocessors</a>.</p>
+
       <h2>Analytics</h2>
       <p>Some builds may include PostHog product analytics: screen names without their contents, app lifecycle and software-update events. A build sends no PostHog analytics unless it is configured to. We do not use analytics for advertising or to sell data. The website has no analytics.</p>
 
@@ -70,6 +74,7 @@
         <li><strong>Trusty Squire</strong>: vault, browser viewer, and secure access for our feedback triage.</li>
         <li><strong>Composio</strong>: connections to Google and other apps.</li>
         <li><strong>Coinbase</strong> and <strong>Stripe</strong>: agent wallets and payments, if you turn them on.</li>
+        <li><strong>Sentry</strong>: redacted error reports and diagnostic context. <strong>Resend</strong>: verified recipient email addresses and policy notice content.</li>
         <li><strong>Expo</strong>: app updates. <strong>PostHog</strong>: analytics, where configured.</li>
         <li>Model providers and apps <strong>you</strong> connect receive data under their own terms.</li>
       </ul>

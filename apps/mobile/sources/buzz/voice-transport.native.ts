@@ -4,6 +4,7 @@ import { Room } from 'livekit-client';
 import { Linking, NativeModules, PermissionsAndroid, Platform, TurboModuleRegistry } from 'react-native';
 
 let reportedIOSCapabilityFailure = false;
+let reportedAndroidCapabilityFailure = false;
 
 export async function createVoiceRoom(onStop: () => void = () => {}, roomId?: string): Promise<{ room: Room; closeAudio(): Promise<void>; configureStop(callId: string, token: string): Promise<void> }> {
   if (Platform.OS === 'ios') {
@@ -39,6 +40,30 @@ export async function createVoiceRoom(onStop: () => void = () => {}, roomId?: st
         })().catch(() => {});
       }
       throw new Error('Update Beeline in the App Store to join calls.');
+    }
+  }
+  if (Platform.OS === 'android') {
+    const { requireOptionalNativeModule, EventEmitter } = await import('expo-modules-core');
+    const background = requireOptionalNativeModule<Record<string, unknown>>('VoiceBackgroundAudio');
+    const missing_methods = ['configureStop', 'start', 'stop'].filter(method => typeof background?.[method] !== 'function');
+    if (typeof background?.addListener !== 'function' && typeof EventEmitter?.prototype.addListener !== 'function') {
+      missing_methods.push('addListener');
+    }
+    if (!background || missing_methods.length) {
+      if (!reportedAndroidCapabilityFailure) {
+        reportedAndroidCapabilityFailure = true;
+        void (async () => {
+          const [application, updates, { reportClientError }] = await Promise.all([
+            import('expo-application'), import('expo-updates'), import('./client-error-report'),
+          ]);
+          await reportClientError('voice-join', new Error(`Android voice capability check failed: ${JSON.stringify({
+            background_module: !background, missing_methods,
+            appVersion: application.nativeApplicationVersion, build: application.nativeBuildVersion,
+            runtime: updates.runtimeVersion,
+          })}`));
+        })().catch(() => {});
+      }
+      throw new Error('Update Beeline from the Play Store to join calls.');
     }
   }
   // Lazy: installed binaries without WebRTC can still dictate/use the Room.

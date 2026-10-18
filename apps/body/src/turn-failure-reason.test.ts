@@ -5,6 +5,26 @@ import { AcpResourceLimitError, AcpRuntimeExitedError, AcpTurnBackstopError, TUR
 import { classifyTurnSilence, phraseTurnSilence } from '@beeline/api-contract/daemon';
 
 describe('distillTurnFailureReason', () => {
+  it.each([
+    "env: node: No such file or directory",
+    "/usr/bin/env: ‘node’: No such file or directory",
+    "/usr/bin/env: 'node': No such file or directory",
+  ])('harness-node-missing-path: keeps %s actionable through the Room receipt', diagnostic => {
+    const raw = new AcpRuntimeExitedError(`ACP agent /${'long-install-path/'.repeat(25)}codex-acp exited code=127: ${diagnostic}`);
+    const receipt = distillTurnFailureReason(raw);
+    const phrase = phraseTurnSilence('@agent', classifyTurnSilence(receipt.text, receipt.kind), { givingUp: true });
+    expect(phrase.consequence).toContain("background service can't find Node");
+    expect(phrase.consequence).toContain('`beeline connect`');
+    expect(phrase.consequence).not.toContain('runtime_exited');
+    expect(redactTurnError(raw)).toContain(diagnostic);
+  });
+
+  it('keeps spawn ENOENT actionable without claiming the executable exists', () => {
+    const receipt = distillTurnFailureReason(new AcpRuntimeExitedError('ACP agent /bin/agent: spawn /bin/agent ENOENT'));
+    expect(receipt.text).toContain('program or interpreter is missing');
+    expect(receipt.text).toContain('`beeline connect`');
+  });
+
   it('keeps the journal stack while scrubbing its credential values', () => {
     const error = new Error('failed GH_TOKEN=ghp_abcdefghijklmnop');
     error.stack = `${error.message}\n    at prompt (/fixture/acp.js:12:1)`;

@@ -31,7 +31,7 @@ async function setup(visibility: 'public' | 'invite-only') {
   ]);
   return new PhoneService(db, 'https://server.example');
 }
-it('seeds once, joins multiple people and default Rooms, and invalidates rotated tokens', async () => {
+it('seeds once, joins multiple people and default Rooms, and preserves the original token', async () => {
   const phone = await setup('public');
   await migrate(db);
   const first = await phone.execute('createInvite', { workspaceId: workspace }, owner);
@@ -53,39 +53,32 @@ it('seeds once, joins multiple people and default Rooms, and invalidates rotated
     joinedWorkspaceId: workspace,
   });
   await expect(
-    phone.execute('createInvite', { workspaceId: workspace, rotate: true }, alice),
+    phone.execute('createInvite', { workspaceId: workspace }, alice),
   ).rejects.toThrow('manager');
-  const rotated = await phone.execute(
-    'createInvite',
-    { workspaceId: workspace, rotate: true },
-    owner,
-  );
-  expect(rotated.token).not.toBe(first.token);
-  expect(await phone.readInvite(first.token, alice)).toBeNull();
-  expect((await preview.resolve(first.token, 'visitor')).status).toBe('not_found');
-  await expect(phone.execute('redeemInvite', { token: first.token }, bob)).rejects.toThrow(
-    'invite not found',
-  );
+  // Legacy clients cannot replace a previously shared public link.
+  const legacyInput = { workspaceId: workspace, rotate: true };
+  expect(await phone.execute('createInvite', legacyInput, owner)).toEqual(first);
+  await db.query(`DELETE FROM memberships WHERE identity_id=$1`, [bob]);
+  expect(await phone.execute('redeemInvite', { token: first.token }, bob)).toMatchObject({
+    joined: true, workspaceId: workspace, roomId: room,
+  });
   await migrate(db);
-  expect(await phone.execute('createInvite', { workspaceId: workspace }, owner)).toEqual(rotated);
+  expect(await phone.execute('createInvite', { workspaceId: workspace }, owner)).toEqual(first);
   await db.query(`UPDATE memberships SET removed_at=now() WHERE identity_id=$1`, [owner]);
-  expect((await preview.resolve(rotated.token, 'visitor')).status).toBe('found');
-  expect(await phone.execute('redeemInvite', { token: rotated.token }, alice)).toMatchObject({
+  expect((await preview.resolve(first.token, 'visitor')).status).toBe('found');
+  expect(await phone.execute('redeemInvite', { token: first.token }, alice)).toMatchObject({
     joined: false,
   });
   await db.query(`UPDATE workspaces SET visibility='invite-only' WHERE id=$1`, [workspace]);
-  expect((await preview.resolve(rotated.token, 'visitor')).status).toBe('not_found');
-  await expect(phone.execute('redeemInvite', { token: rotated.token }, alice)).rejects.toThrow(
+  expect((await preview.resolve(first.token, 'visitor')).status).toBe('not_found');
+  await expect(phone.execute('redeemInvite', { token: first.token }, alice)).rejects.toThrow(
     'invite not found',
   );
 });
-it('keeps private invites expiring and single-use, and disallows rotation', async () => {
+it('keeps private invites expiring and single-use', async () => {
   const phone = await setup('invite-only');
   const first = await phone.execute('createInvite', { workspaceId: workspace }, owner);
   expect(first.expiresAt).toBeGreaterThan(Date.now() / 1000);
-  await expect(
-    phone.execute('createInvite', { workspaceId: workspace, rotate: true }, owner),
-  ).rejects.toThrow('only public');
   expect((await phone.execute('redeemInvite', { token: first.token }, alice)).joined).toBe(true);
   await expect(phone.execute('redeemInvite', { token: first.token }, bob)).rejects.toThrow(
     'invite not found',

@@ -109,9 +109,8 @@ A triager whose owner has no such credential stops at `pull` and says so.
 
 ### Daily schedule
 
-The triage corner keeps its daily schedule (`0 14 * * *` UTC). On deploy the
-server rewrites that schedule's prompt, and only its prompt (cadence, agent and
-next run are untouched), to start the workflow:
+The triage corner runs daily at 2 PM America/New_York (`0 14 * * *` with that time zone). On deploy the
+server rewrites that schedule's prompt, and its cadence, preserving the assigned agent, to start the workflow:
 
 > Start the feedback-triage workflow with start_workflow, binding triager to
 > yourself, and follow the feedback-triage-steps procedure (load_workspace_skill)
@@ -194,3 +193,34 @@ issue filing with its redaction rules, and the `issues` webhook resolver are
 gone. Fix corners replace the public issues. The unused `corner_facts.feedback_triage`
 column is dropped. The `feedback_items.issue_*` columns and `feedback_issue_comments`
 stay unread for rolling-update compatibility.
+
+## Workspace browsing rollout
+
+Workspace owners and admins control **Allow fix sweep** directly in Workspace
+settings. It defaults on; turning it off excludes that workspace from browsing,
+including subsequent pages of a read already in progress. Feedback reports remain
+available to triage regardless of this flag.
+
+The scheduled triager owns a separate one-hour browse step; no web browser or
+separate agent binding is involved. The workflow engine reserves eligible
+workspaces on entering that step. It then reads through the read-only
+`beeline-prod-db` credential using Trusty Squire `use_credential`, calling the
+STABLE SQL functions `service_review_targets(agentId,runId)` and
+`service_review_page(agentId,runId,workspaceId,afterId)`.
+
+The scheduled Claude triager currently uses Anthropic, as disclosed in the
+published inventory. Keep that inventory current when providers change.
+Workspace opt-out, the effective date, current run/agent reservation and
+pagination are rechecked server-side; raw table reads are not a fallback.
+
+Reservations cap the day at five workspaces, prioritize signups within seven days
+then seven-day message activity, and do not repeat a workspace within 14 days.
+
+The `service_review_rollout` row enables browsing from 18 October 2026.
+No notice record or waiting period is required. No email, UI banner or System
+message is sent. Workspaces with Allow fix sweep off remain excluded.
+
+The browser reports at most five findings in the same report/card as feedback,
+with paraphrased evidence and build/hold/drop verdicts. Never quote content or name
+people, Rooms or workspace ids. Incomplete reads are declared; they do not count
+as full workspace reviews. The sweep also reviews feedback and Sentry.

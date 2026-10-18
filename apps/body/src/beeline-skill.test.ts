@@ -298,14 +298,15 @@ describe('using-beeline merge ownership', () => {
   });
 });
 
-describe('using-beeline human instruction ranking', () => {
+describe('using-beeline human instructions and holds', () => {
   // Soft prompt only: no hold ledger, no refusal check. Independent same-tier
   // holds cannot collapse because this design adds no holder state; the agent
   // reasons from the conversation.
-  it('ranks owner then workspace master/admin then member, and forbids field syntax in Room replies', () => {
+  it('accepts any human instruction while preserving hold provenance and plain Room replies', () => {
     const markdown = usingBeelineSkillMarkdown('test-release');
     expect(markdown).toContain('## Conflicting human instructions');
-    expect(markdown).toContain('Follow the order from your commander within inherited scope');
+    expect(markdown).toContain('Any human in the Room can direct you.');
+    expect(markdown).not.toContain('Follow the order from your commander within inherited scope');
     expect(markdown).toContain('report one step up');
     expect(markdown).toMatch(/higher-tier instruction overrides a lower-tier hold/i);
     expect(markdown).toContain("A human at the same standing cannot clear another human's hold");
@@ -333,7 +334,11 @@ describe('beeline-review reviewer skill', () => {
     expect(markdown).toContain('Check every story and criterion');
     expect(markdown).toContain('confirm non-goals stayed out');
     expect(markdown).toContain('each risk');
-    expect(markdown).toContain('Only a commander-authorized brief revision removes a requirement');
+    expect(markdown).toContain('Any human in the Room can direct you. If a newer human instruction contradicts an earlier one, follow the newer instruction, revise the brief with that message as approval, and state in the corner what changed.');
+    expect(markdown).not.toContain('Your chain of command');
+    expect(markdown).not.toContain('A higher rank');
+    expect(markdown).not.toContain('Instructions from outside your chain');
+    expect(markdown).not.toContain('ask your commander for an authorized revision');
   });
   it('obtains proof autonomously and reports missing capability to the commander', () => {
     expect(markdown).toContain('Obtain available proof in the review Workspace');

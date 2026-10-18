@@ -1106,6 +1106,46 @@ it('recovers a dirty PR lifecycle once per head and retries an undelivered confl
   await expect(reconcileCornerMergeBlockers(db)).resolves.toBe(0);
 });
 
+it('Reproduction STALE-1: drops a merge-conflict wake whose head moved before the implementer claims it', async () => {
+  const headA = '1'.repeat(40), headB = '2'.repeat(40);
+  const dirty = (headSha: string) =>
+    JSON.stringify({
+      checks: 'passing',
+      pr: {
+        number: 41,
+        headSha,
+        title: 'Resolve conflict',
+        url: 'https://github.com/acme/repo/pull/41',
+        mergeability: 'dirty',
+      },
+    });
+  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [C, dirty(headA)]);
+  await expect(reconcileCornerMergeBlockers(db)).resolves.toBe(1);
+  const [staleWake] = await commands(B, C);
+  expect(staleWake?.reason).toBe('corner_merge_conflict');
+  expect(staleWake?.source.body).toContain(headA);
+  // The PR head moves before the implementer claims the queued wake.
+  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [C, dirty(headB)]);
+  const delivered = (await commands(B, C)).filter((command) => command.reason === 'corner_merge_conflict');
+  const staleState = (
+    await db.query<{ state: string }>(`SELECT state FROM agent_commands WHERE id=$1`, [staleWake!.id])
+  ).rows[0]?.state;
+  console.info(
+    `Reproduction STALE-1: wrong=1 delivered wake naming ${headA.slice(0, 8)}; right=0; observed=${delivered.filter((command) => command.source.body.includes(headA)).length}`,
+  );
+  expect(delivered).toHaveLength(0);
+  expect(staleState).toBe('cancelled');
+  await expect(claim(staleWake!)).rejects.toThrow();
+  // The current dirty head still gets exactly one wake, naming that head.
+  await expect(reconcileCornerMergeBlockers(db)).resolves.toBe(1);
+  const current = (await commands(B, C)).filter((command) => command.reason === 'corner_merge_conflict');
+  expect(current).toHaveLength(1);
+  expect(current[0]?.source.body).toContain(headB);
+  expect(current[0]?.source.body).not.toContain(headA);
+  await expect(reconcileCornerMergeBlockers(db)).resolves.toBe(0);
+  console.log('Demonstrated Reproduction STALE-1: stale head A wake cancelled and refused; current dirty head B wake delivered exactly once');
+});
+
 it('keeps a failed-check wake retryable while its opener is unreachable', async () => {
   const headSha = '9'.repeat(40);
   await db.query(

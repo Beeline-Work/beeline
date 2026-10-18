@@ -10,6 +10,17 @@ import {
 } from './turn-silence.js';
 
 describe('turn silence classification', () => {
+  it('harness-node-missing-path: gives old helper receipts the same recovery command', () => {
+    const reason = 'runtime_exited: ACP agent /nvm/bin/codex-acp exited code=127: env: node: No such file or directory';
+    const classified = classifyTurnSilence(reason, 'hiccup');
+    expect(phraseTurnSilence('@codex', classified, { givingUp: true }).consequence)
+      .toContain("background service can't find Node");
+    expect(phraseTurnSilence('@codex', classified, { givingUp: true }).consequence)
+      .toContain('`beeline connect`');
+    expect(classifyTurnSilence('tool failed: env: node: No such file or directory').fault)
+      .toContain('tool failed');
+  });
+
   it('settles a session memory limit without retrying the same allocation', () => {
     const reason = 'resource_limit: ACP session exceeded its 8192 MiB memory limit';
     expect(classifyTurnSilence(reason)).toEqual({ kind: 'resource-limit' });

@@ -5,12 +5,15 @@ import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vite
 import type { RoomView, RoomViewMessage } from '@beeline/buzz-client';
 
 // The real SurfaceRefreshScheduler drives the reads here; only the network
-// edges are faked. The socket subscribes and then never says another word.
+// edges are faked. The socket subscribes and then stalls until the explicit frame test.
 const controls = vi.hoisted(() => ({
   serverMessages: [] as RoomViewMessage[],
   roomReads: 0,
   appState: 'active' as string,
   reconnects: 0,
+  working: false,
+  failures: 0,
+  emit: (_event: unknown) => {},
 }));
 
 vi.mock('@react-native-async-storage/async-storage', () => ({
@@ -26,6 +29,8 @@ vi.mock('react-native', () => ({
   },
   Platform: { OS: 'android', select: (choices: Record<string, unknown>) => choices.default },
 }));
+
+vi.mock('@/buzz/sentry', () => ({ captureMobileError: vi.fn() }));
 
 vi.mock('expo-router', () => ({ router: { replace: vi.fn() } }));
 
@@ -63,12 +68,14 @@ vi.mock('@/sync/transport', () => ({
     async ensureClient() {
       return {
         surfaceSubscribe: async (_filters: unknown, emit: (event: unknown) => void) => {
+          controls.emit = emit;
           emit({ monolithLive: { type: 'subscribed', roomId: 'experiments' } });
           return vi.fn();
         },
       };
     }
     async publishPreparedMessage() {}
+    liveDiagnostics() { return { state: 1, connecting: false }; }
     reconnectLive() {
       controls.reconnects += 1;
     }
@@ -86,6 +93,7 @@ vi.mock('@/sync/transport/room-view-client', async () => {
     RoomViewClient: class {
       async room(): Promise<RoomView> {
         controls.roomReads += 1;
+        if (controls.failures-- > 0) throw new Error('temporary network failure');
         return roomView([...controls.serverMessages]);
       }
       async markRead() {}
@@ -109,7 +117,7 @@ function roomView(messages: RoomViewMessage[]): RoomView {
     },
     messages,
     members: [],
-    latestAgentTurns: [],
+    latestAgentTurns: [{ agentPubkey: 'bbc', requestId: 'turn-a', status: controls.working ? 'working' : 'complete', createdAt: 1 }],
     viewer: {
       identity: { pubkey: 'viewer', kind: 'human', name: 'Captain' },
       role: 'owner',
@@ -155,6 +163,8 @@ beforeEach(() => {
   controls.roomReads = 0;
   controls.appState = 'active';
   controls.reconnects = 0;
+  controls.working = false;
+  controls.failures = 0;
 });
 
 afterEach(() => {
@@ -168,6 +178,61 @@ async function advance(ms: number) {
 }
 
 describe('Reproduction R1: open Room whose live socket goes silent', () => {
+  for (const failures of [0, 1]) {
+    it(`reply-hidden-until-next-send: reads once on replacement subscription with ${failures} failed catch-up reads`, async () => {
+      controls.working = true;
+      let latest: UseRoomSurfaceSessionResult | undefined;
+      let renderer!: ReactTestRenderer;
+      await act(async () => {
+        renderer = create(React.createElement(Harness, { capture: (r) => (latest = r) }));
+      });
+      await advance(100);
+      expect(latest!.roomSurface!.latestAgentTurns![0]!.status).toBe('working');
+      controls.serverMessages.push(message('hidden-reply', 1_791_247_547, 'A long reply. '.repeat(200)));
+      controls.working = false;
+      controls.failures = failures;
+      await advance(30_000);
+      expect(controls.roomReads).toBe(1);
+      expect(latest!.roomSurface!.messages.at(-1)!.id).toBe('m-2042');
+      await act(async () => controls.emit({ monolithLive: { type: 'subscribed', roomId: 'experiments' } }));
+      await advance(1_100);
+      expect(latest!.roomSurface!.messages.at(-1)!.id).toBe('hidden-reply');
+      expect(latest!.roomSurface!.latestAgentTurns![0]!.status).toBe('complete');
+      const reads = controls.roomReads;
+      await advance(10 * 60_000);
+      expect(controls.roomReads).toBe(reads);
+      await act(async () => renderer.unmount());
+    });
+  }
+
+  it('never polls a working Room, including after live frames', async () => {
+    controls.working = true;
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(React.createElement(Harness, { capture: () => {} })); });
+    await advance(100);
+    const opening = controls.roomReads;
+    await advance(120_000);
+    expect(controls.roomReads).toBe(opening);
+    await act(async () => controls.emit({ monolithLive: {
+      type: 'presence', roomId: 'experiments', agentId: 'bbc', status: 'online', observedAt: 1,
+    } }));
+    await advance(60_000);
+    expect(controls.roomReads).toBe(opening);
+    controls.appState = 'background';
+    await advance(60_000);
+    expect(controls.roomReads).toBe(opening);
+    await act(async () => renderer.unmount());
+  });
+
+  it('bounds failed refresh retries to three after the opening read', async () => {
+    controls.failures = 100;
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(React.createElement(Harness, { capture: () => {} })); });
+    await advance(60_000);
+    expect(controls.roomReads).toBe(4);
+    await act(async () => renderer.unmount());
+  });
+
   it('reads nothing while idle or after a send whose receipt paints locally', async () => {
     let latest: UseRoomSurfaceSessionResult | undefined;
     let renderer!: ReactTestRenderer;

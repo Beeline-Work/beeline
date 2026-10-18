@@ -136,6 +136,22 @@ export function classifyTurnSilence(
   reason: string | null | undefined,
   reasonKind?: string,
 ): ClassifiedTurnSilence {
+  // Match before honoring the legacy hiccup kind, and before a long absolute
+  // harness path can hide the interpreter diagnostic behind the receipt cap.
+  const missingInterpreter = (reason ?? '').match(/\benv:\s*[‘'"`]?([\w.+-]+)[’'"`]?\s*:\s*(?:No such file or directory|command not found)/i);
+  if (missingInterpreter && /\bACP agent\b/.test(reason ?? '')) {
+    const dependency = missingInterpreter[1]?.toLowerCase() === 'node' ? 'Node' : 'its interpreter';
+    return {
+      kind: 'hiccup',
+      fault: `it couldn't start: the background service can't find ${dependency}. Install ${dependency === 'Node' ? 'Node' : 'the required interpreter'} on this computer, then run \`beeline connect\``,
+    };
+  }
+  if (/\bACP agent\b[^\n]*\bspawn\b[^\n]*\bENOENT\b/i.test(reason ?? '')) {
+    return {
+      kind: 'hiccup',
+      fault: "it couldn't start: its program or interpreter is missing. Reinstall the agent on this computer with `beeline connect`",
+    };
+  }
   if (isTurnReceiptReasonKind(reasonKind)) {
     const kind = receiptKindToSilenceKind(reasonKind);
     if (kind === 'hiccup') {

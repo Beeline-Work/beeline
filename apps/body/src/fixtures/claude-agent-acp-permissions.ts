@@ -118,7 +118,7 @@ export const CLAUDE_ACP_NATIVE_BASH_PERMISSION = {
  * its built-in `Read`, so it never reaches the host's permission callback —
  * but the `kind: 'read'` it declares is the same one a permission request
  * would carry under a stricter CLI permission config, which is why the Room
- * policy trusts an adapter-declared read kind.
+ * policy additionally requires paths confined to the agent’s attachment tree.
  */
 export const CLAUDE_ACP_NATIVE_READ_TOOL_CALL = {
   toolCallId: 'toolu_019tW72ndNqRijgT7umPctKw',

@@ -36,6 +36,7 @@ function shims(mobile: string): Record<string, string> {
     });`,
     '@/sync/transport/monolith-operation': `export const monolithPhoneOperation = async (name, input) => {
       (globalThis.__inputs ??= []).push([name, input]);
+      if (name === 'updateWorkspace') globalThis.__allowFixSweep = input.allowFixSweep;
       if (name === 'addRoomMember') return { joined: true };
       if (name === 'createInvite') return { token: 'proof-token' };
       return undefined;
@@ -52,6 +53,7 @@ function shims(mobile: string): Record<string, string> {
           },
           managerSettings: {
             visibility: 'invite-only',
+            allowFixSweep: globalThis.__allowFixSweep ?? true,
             rooms: [
               { id: '${FANTASTIK}', name: 'fantastik', visibility: 'invite-only', createdAt: 1700000000 },
               { id: '${GENERAL}', name: 'general', visibility: 'public', createdAt: 1700000000 },
@@ -81,6 +83,24 @@ type Proof = {
 
 // Reproduction R1: tapping an unjoined invite-only Room flipped it to Public.
 describe.skipIf(!existsSync(CHROME))('Workspace settings: join a Room (R1)', () => {
+  it('shows the approved toggle directly between Visibility and Members and persists both choices', async () => {
+    const mobile = process.cwd();
+    const { result, status, stderr } = await runBrowserProof({
+      entry: path.join(mobile, 'scripts/workspace-fix-sweep-proof.tsx'), mobile,
+      shims: shims(mobile), width: 390, height: 844,
+    });
+    expect(status, stderr).toBe(0);
+    expect(result.startsWith('{'), result).toBe(true);
+    const proof = JSON.parse(result);
+    expect(proof.order).toEqual(['workspace-visibility-row','workspace-fix-sweep','open-members']);
+    expect(proof.before).toBe(true);
+    expect(proof.off).toBe(false);
+    expect(proof.on).toBe(true);
+    expect(proof.operations).toContainEqual(['updateWorkspace', {workspaceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', allowFixSweep: false}]);
+    expect(proof.operations).toContainEqual(['updateWorkspace', {workspaceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', allowFixSweep: true}]);
+    console.log('Demonstrated SERVICE-REVIEW-1: owner opens Workspace settings; toggle is below Visibility and before Members; on/off actions persist through the settings refresh. Synthetic transport; no real workspace read.');
+  }, 120_000);
+
   it('opens a sheet on row tap, then joins and opens the Room', async () => {
     const mobile = process.cwd();
     const { result, status, stderr } = await runBrowserProof({

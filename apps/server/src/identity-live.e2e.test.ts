@@ -8,6 +8,7 @@ import { migrate } from './database.js';
 import type { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
+import { reserveServiceReviewWorkspaces, readServiceReviewPage } from './service-review.js';
 import { POSTGRES_LIVE_CHANNEL, PostgresLiveListener, type LivePgClient } from './postgres-live.js';
 import { createBeelineServer } from './server.js';
 import { PgliteDatabase } from './test-support.js';
@@ -17,6 +18,7 @@ import { PgliteDatabase } from './test-support.js';
 // another session's socket, and never a viewer outside the shared scope.
 const VIEWER = 'a'.repeat(64);
 const MATE = 'b'.repeat(64);
+const REVIEW_AGENT = 'd'.repeat(64);
 const OUTSIDER = 'c'.repeat(64);
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ELSEWHERE = '22222222-2222-4222-8222-222222222222';
@@ -72,6 +74,8 @@ describe('live Workspace and identity changes across sessions', () => {
     await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
       ($1,NULL,$3,'owner'),($1,NULL,$4,'member'),($2,NULL,$5,'owner')`,
       [WORKSPACE, ELSEWHERE, VIEWER, MATE, OUTSIDER]);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Synthetic reviewer')`,[REVIEW_AGENT]);
+    await database.query(`INSERT INTO agents(agent_id,owner_id,harness,selected_model) VALUES($1,$2,'claude','default')`,[REVIEW_AGENT,VIEWER]);
     const live = new LiveHub();
     listener = new PostgresLiveListener(database, live, () => new PgliteListenClient(database), 1);
     void listener.run();
@@ -133,6 +137,63 @@ describe('live Workspace and identity changes across sessions', () => {
       workspace: { id: WORKSPACE, name: 'Atelier' } }]);
     await new Promise((resolve) => setTimeout(resolve, 200));
     expect(outsiderFrames).toEqual([]);
+  });
+
+  it('persists the manager sweep choice and rejects member writes', async () => {
+    const phone = new PhoneService(database, 'http://local.test');
+    expect((await phone.readWorkspace(WORKSPACE, VIEWER))?.managerSettings?.allowFixSweep).toBe(true);
+    await phone.execute('updateWorkspace', { workspaceId: WORKSPACE, allowFixSweep: false }, VIEWER);
+    expect((await phone.readWorkspace(WORKSPACE, VIEWER))?.managerSettings?.allowFixSweep).toBe(false);
+    await expect(phone.execute('updateWorkspace', { workspaceId: WORKSPACE, allowFixSweep: true }, MATE)).rejects.toThrow();
+    expect((await phone.readWorkspace(WORKSPACE, VIEWER))?.managerSettings?.allowFixSweep).toBe(false);
+    await phone.execute('updateWorkspace', { workspaceId: WORKSPACE, allowFixSweep: true }, VIEWER);
+    expect((await phone.readWorkspace(WORKSPACE, VIEWER))?.managerSettings?.allowFixSweep).toBe(true);
+  });
+
+  it('browses without a notice today, skips opted-out workspaces and rotates visits', async () => {
+    expect((await database.query('SELECT notice_sent_at FROM service_review_rollout WHERE id=1')).rows).toEqual([{notice_sent_at:null}]);
+    const phone = new PhoneService(database, 'http://local.test');
+    await phone.execute('updateWorkspace', { workspaceId: WORKSPACE, allowFixSweep: false }, VIEWER);
+    expect(await reserveServiceReviewWorkspaces(database,REVIEW_AGENT,'test-run')).toEqual([ELSEWHERE]);
+    expect(await reserveServiceReviewWorkspaces(database,REVIEW_AGENT,'test-run')).toEqual([]);
+    await phone.execute('updateWorkspace', { workspaceId: WORKSPACE, allowFixSweep: true }, VIEWER);
+    expect(await reserveServiceReviewWorkspaces(database,REVIEW_AGENT,'test-run')).toEqual([WORKSPACE]);
+    expect(await reserveServiceReviewWorkspaces(database,REVIEW_AGENT,'test-run')).toEqual([]);
+  });
+
+  it('enables an existing rollout without notice and still respects future effective dates', async () => {
+    await database.query(`ALTER TABLE service_review_rollout ADD CONSTRAINT service_review_rollout_check
+      CHECK(effective_at IS NULL OR notice_sent_at IS NULL OR effective_at >= notice_sent_at + interval '14 days')`);
+    await database.query(`UPDATE service_review_rollout SET effective_at='2026-11-15T19:00:00Z' WHERE id=1`);
+    await migrate(database);
+    expect((await database.query('SELECT notice_sent_at FROM service_review_rollout WHERE id=1')).rows).toEqual([{notice_sent_at:null}]);
+    expect((await database.query<{ effective_at: Date }>('SELECT effective_at FROM service_review_rollout WHERE id=1')).rows[0].effective_at.toISOString()).toBe('2026-10-18T04:00:00.000Z');
+    expect(await reserveServiceReviewWorkspaces(database,REVIEW_AGENT,'test-run')).toHaveLength(2);
+    expect((await database.query('SELECT * FROM service_review_targets($1,$2)',[REVIEW_AGENT,'test-run'])).rows).toHaveLength(2);
+    await database.query(`UPDATE service_review_rollout SET effective_at=now()+interval '1 day' WHERE id=1`);
+    expect(await reserveServiceReviewWorkspaces(database,REVIEW_AGENT,'test-run')).toEqual([]);
+    expect((await database.query('SELECT * FROM service_review_targets($1,$2)',[REVIEW_AGENT,'test-run'])).rows).toEqual([]);
+    expect((await readServiceReviewPage(database,REVIEW_AGENT,'test-run',WORKSPACE)).rows).toEqual([]);
+  });
+
+  it('reads every reserved page and stops immediately after a workspace opts out', async () => {
+    const room = '33333333-3333-4333-8333-333333333333';
+    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Synthetic room')`,[room,WORKSPACE]);
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text)
+      SELECT lpad(n::text,4,'0'),$1,$2,'Synthetic message' FROM generate_series(1,205) n`,[room,VIEWER]);
+    await reserveServiceReviewWorkspaces(database,REVIEW_AGENT,'test-run');
+    const first = await database.transaction(async (db) => {
+      await db.query('SET TRANSACTION READ ONLY');
+      return readServiceReviewPage(db,REVIEW_AGENT,'test-run',WORKSPACE);
+    });
+    expect(first.rows).toHaveLength(200);
+    const phone = new PhoneService(database, 'http://local.test');
+    await phone.execute('updateWorkspace', {workspaceId:WORKSPACE,allowFixSweep:false},VIEWER);
+    expect((await readServiceReviewPage(database,REVIEW_AGENT,'test-run',WORKSPACE,first.rows.at(-1)!.id)).rows).toEqual([]);
+    await phone.execute('updateWorkspace', {workspaceId:WORKSPACE,allowFixSweep:true},VIEWER);
+    const last = await readServiceReviewPage(database,REVIEW_AGENT,'test-run',WORKSPACE,first.rows.at(-1)!.id);
+    expect(last.rows).toHaveLength(5);
+    expect((await readServiceReviewPage(database,REVIEW_AGENT,'test-run',WORKSPACE,last.rows.at(-1)!.id)).rows).toEqual([]);
   });
 
   it('sends a push level change from another device to its owner only', async () => {

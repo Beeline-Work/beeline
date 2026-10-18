@@ -89,7 +89,7 @@ describe('workflowRunLine execution history', () => {
   it('predicts the rest of the path from the current state, stopping at the first predicted terminal', () => {
     const line = workflowRunLine(feedbackTriage, [{ toState: 'notify', at: 100 }], 'live');
     expect(rowsOf(line)).toEqual([
-      ['notify', 'current'], ['pull', 'pending'], ['approve', 'pending'],
+      ['notify', 'current'], ['pull', 'pending'], ['browse', 'pending'], ['approve', 'pending'],
       ['dispatch', 'pending'], ['done', 'pending'],
     ]);
     expect(line.slice(1).every((step) => step.visits.length === 0)).toBe(true);

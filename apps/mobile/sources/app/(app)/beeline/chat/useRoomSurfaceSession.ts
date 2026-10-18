@@ -579,11 +579,13 @@ export function useRoomSurfaceSession({
     // A backgrounded app reads nothing: returning to the foreground replaces
     // the socket, and that resubscribe's `subscribed` frame is the covering read.
     const visibleScheduler = () =>
-      AppState.currentState === 'background' ? undefined : scheduler;
+      AppState.currentState === 'background' || AppState.currentState === 'inactive' ? undefined : scheduler;
     // Any frame on this watch since the last applied read. A read that finds a
     // newer message while the socket stayed silent proves the socket missed it.
     let heardSinceRead = false;
     let liveReadApplied = false;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let refreshFailures = 0;
     // Turn deltas heard while a Room read is in flight. Turn times are whole
     // seconds, so the read cannot tell a same-second retry from a stale turn;
     // replaying these in order on top of the read keeps what the socket said.
@@ -1179,6 +1181,9 @@ export function useRoomSurfaceSession({
           },
           apply: (view) => {
             if (cancelled) return;
+            refreshFailures = 0;
+            if (retryTimer) clearTimeout(retryTimer);
+            retryTimer = undefined;
             const missedLive =
               liveReadApplied &&
               !heardSinceRead &&
@@ -1235,9 +1240,17 @@ export function useRoomSurfaceSession({
               error instanceof RoomViewHttpError &&
               (error.status === 401 ||
                 error.status === 403 ||
-                error.status === 404 ||
-                error.status === 502);
+                error.status === 404);
+            if (!terminal && refreshFailures < 3 && !retryTimer) {
+              const delay = 1_000 * 2 ** refreshFailures++;
+              retryTimer = setTimeout(() => {
+                retryTimer = undefined;
+                if (!cancelled) visibleScheduler()?.followUp();
+              }, delay);
+            }
             if (terminal) {
+              if (retryTimer) clearTimeout(retryTimer);
+              retryTimer = undefined;
               setRoomSurface(null);
               for (const overlay of liveOverlaysRef.current) {
                 if (overlay.kind === 'draft') {
@@ -1300,6 +1313,7 @@ export function useRoomSurfaceSession({
         if (view && cacheAddress) void mobileSurfaceCache.write(cacheAddress, view, isRoomView);
       }
       cancelled = true;
+      if (retryTimer) clearTimeout(retryTimer);
       watchGeneration += 1;
       abandonHandshakeWait?.();
       scheduler?.dispose();

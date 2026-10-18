@@ -8,6 +8,7 @@ import {
 import type { SqlDatabase } from './database.js';
 import type { CommandRow } from './agent-command.js';
 import { commandOrder } from './commander.js';
+import { CommandRefusalError } from './command-refusal.js';
 
 /** Most files one brief revision may carry. */
 const CORNER_BRIEF_ATTACHMENT_LIMIT = 16;
@@ -211,28 +212,17 @@ type StoredCornerBriefApproval = {
 
 type ApprovingMessage = { text: string; author_id: string; kind: string; room_id: string };
 
-/**
- * The corner's authority chain: its commander (who opened it) and its owner
- * (the person who asked for it, or the person who owns the commander agent).
- */
-async function cornerAuthority(db: SqlDatabase, cornerId: string): Promise<string[]> {
-  return (
-    await db.query<{ ids: string[] }>(
-      `SELECT ARRAY_REMOVE(ARRAY[room.created_by,fact.commissioned_by,commander.owner_id],NULL) ids
-       FROM rooms room JOIN corner_facts fact ON fact.corner_id=room.id
-       LEFT JOIN agents commander ON commander.agent_id=room.created_by
-       WHERE room.id=$1`,
-      [cornerId],
-    )
-  ).rows[0]?.ids ?? [];
+/** A human may approve from the message's Room or the corner's Room. */
+async function humanRoomMember(db: SqlDatabase, cornerId: string, roomId: string, personId: string): Promise<boolean> {
+  return (await db.query(
+    `SELECT 1 FROM effective_memberships member
+     JOIN identities identity ON identity.id=member.identity_id AND identity.kind='human'
+     WHERE member.room_id=ANY($1::uuid[]) AND member.identity_id=$2 AND member.removed_at IS NULL
+     LIMIT 1`, [[cornerId, roomId], personId],
+  )).rowCount > 0;
 }
 
-/**
- * A later approval for an existing corner's revision: the approval stored on
- * the current revision, a human message from the corner's commander or owner
- * in a DM they share with the reviser, or a private order from the commander
- * to this corner. Nobody outside the corner's authority chain qualifies.
- */
+/** Later approvals may reuse a stored approval, a shared DM, or a commander order. */
 async function laterCornerApproval(
   db: SqlDatabase,
   revision: { cornerId: string; agentId: string },
@@ -252,11 +242,10 @@ async function laterCornerApproval(
   const stored = current?.approval_basis;
   if (
     stored?.sourceMessageId === sourceMessageId && stored.kind &&
-    typeof stored.snapshot === 'string' && typeof stored.approvedBy === 'string'
+    typeof stored.snapshot === 'string' && typeof stored.approvedBy === 'string' &&
+    (stored.kind === 'commander-order' || await humanRoomMember(db, revision.cornerId, current!.source_room_id, stored.approvedBy))
   )
     return { stored: stored as StoredCornerBriefApproval, sourceRoomId: current!.source_room_id };
-  const authority = await cornerAuthority(db, revision.cornerId);
-  if (!authority.length) return undefined;
   const direct = (
     await db.query<ApprovingMessage>(
       `SELECT message.text,message.author_id,identity.kind,message.room_id
@@ -264,16 +253,25 @@ async function laterCornerApproval(
        JOIN rooms dm ON dm.id=message.room_id AND dm.direct_participants IS NOT NULL
        JOIN effective_memberships member ON member.room_id=dm.id AND member.identity_id=$2
          AND member.removed_at IS NULL
-       WHERE message.id=$1 AND identity.kind='human' AND message.author_id=ANY($3::text[])`,
-      [sourceMessageId, revision.agentId, authority],
+       JOIN effective_memberships author ON author.room_id=dm.id AND author.identity_id=message.author_id
+         AND author.removed_at IS NULL
+       WHERE message.id=$1 AND identity.kind='human'`,
+      [sourceMessageId, revision.agentId],
     )
   ).rows[0];
   if (direct) return { message: direct, commanderOrder: false };
+  // Private orders retain the existing local commander authority.
+  const orderAuthority = (await db.query<{ ids: string[] }>(
+    `SELECT ARRAY_REMOVE(ARRAY[room.created_by,fact.commissioned_by,commander.owner_id],NULL) ids
+     FROM rooms room LEFT JOIN corner_facts fact ON fact.corner_id=room.id
+     LEFT JOIN agents commander ON commander.agent_id=room.created_by WHERE room.id=$1`,
+    [revision.cornerId],
+  )).rows[0]?.ids ?? [];
   const order = (
     await db.query<CommandRow>(
       `SELECT * FROM agent_commands WHERE id=$1 AND room_id=$2
          AND private_payload->>'kind'='order' AND private_payload->>'authorId'=ANY($3::text[])`,
-      [sourceMessageId, revision.cornerId, authority],
+      [sourceMessageId, revision.cornerId, orderAuthority],
     )
   ).rows[0];
   if (!order?.private_payload) return undefined;
@@ -330,10 +328,8 @@ export async function resolveCornerBriefApproval(
       )).rows[0];
     }
   }
-  // A revision may run from the reviser's DM; a person's message there counts
-  // only from the corner's authority chain.
-  if (revision && message?.kind === 'human' && !(await cornerAuthority(db, revision.cornerId)).includes(message.author_id) &&
-      (await db.query(`SELECT 1 FROM rooms WHERE id=$1 AND direct_participants IS NOT NULL`, [message.room_id])).rowCount)
+  // Human approvals require current membership in the corner or source Room.
+  if (revision && message?.kind === 'human' && !(await humanRoomMember(db, revision.cornerId, message.room_id, message.author_id)))
     message = undefined;
   if (revision && (!message || message.kind !== 'human' && !commanderOrder)) {
     const later = await laterCornerApproval(db, revision, draft.approval.sourceMessageId);
@@ -355,8 +351,10 @@ export async function resolveCornerBriefApproval(
       ({ message, commanderOrder } = later);
     }
   }
+  if (revision && (!message || message.kind !== 'human' && !commanderOrder))
+    throw new CommandRefusalError('corner brief approval must name a human message or commander order; the human author must be a current Room member', 403);
   if (!message || message.kind !== 'human' && !commanderOrder)
-    throw new Error('corner brief approval must name a human message or commander order');
+    throw new CommandRefusalError('corner brief approval must name a human message or commander order', 403);
   const revisionHash = cornerBriefRevisionHash(draft, attachments);
   return {
     approvalBasis: {

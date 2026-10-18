@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="index,follow" />
+    <title>Beeline Subprocessors</title>
+    <style>
+      :root { color-scheme: dark; --ink: #14091a; --paper: #f0f0f3; --quiet: #c9c9d1; --chrome: #83838d; --brass: #b08a4a; }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: var(--ink); color: var(--paper); font: 17px/1.55 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+      main { max-width: 740px; margin: 0 auto; padding: 64px 24px 88px; }
+      .mark { color: var(--brass); font: 700 13px/1 ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: .13em; text-transform: uppercase; }
+      h1 { margin: 12px 0 8px; font-size: clamp(34px, 8vw, 52px); line-height: 1.05; letter-spacing: -.04em; }
+      h2 { margin: 42px 0 10px; font-size: 20px; }
+      p, li { color: var(--quiet); }
+      a { color: var(--paper); text-decoration-color: var(--brass); text-underline-offset: 3px; }
+      .updated { color: var(--chrome); font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+      strong { color: var(--paper); }
+      table { table-layout: fixed; }
+      th, td { text-align: left; overflow-wrap: anywhere; }
+      @media (max-width: 600px) { th, td { font-size: 14px; line-height: 1.45; } }
+    </style>
+  </head>
+  <body><main><div class="mark">Beeline</div><h1>Subprocessors</h1><p class="updated">Updated: October 18, 2026</p><p>Moon Rice Limited uses these providers to operate Beeline. Each receives the data needed for its role. Apps and model providers you connect separately also process your requests under their own terms.</p><div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse"><thead>
+<tr><th>Provider</th><th>Purpose</th><th>Data</th></tr>
+</thead><tbody>
+<tr data-service-review-model-provider="anthropic"><td style="padding:16px 8px;border-bottom:1px solid #3b3048;vertical-align:top">Anthropic</td><td style="padding:16px 8px;border-bottom:1px solid #3b3048;vertical-align:top">Staff-directed service review using the scheduled triager’s Claude model</td><td style="padding:16px 8px;border-bottom:1px solid #3b3048;vertical-align:top">Room messages, agent activity and error records included in review prompts and responses</td></tr>
+
+<tr><td style="padding:16px 8px;border-bottom:1px solid #3b3048;vertical-align:top">Fly.io / Tigris</td><td style="padding:16px 8px;border-bottom:1px solid #3b3048;vertical-align:top">Server hosting, logs, object storage and free-agent computers</td><td style="padding:16px 8px;border-bottom:1px solid #3b3048;vertical-align:top">Service records, uploaded files, free-agent working data and credential-proxy processing hosted for Trusty Squire</td></tr>
+
+<tr><td style="padding:16px 8px;border-bottom:1px solid #3b3048;vertical-align:top">Neon</td><td style="padding:16px 8px;border-bottom:1px solid #3b3048;vertical-align:top">Database hosting</td><td style="padding:16px 8px;border-bottom:1px solid #3b3048;vertical-align:top">Account and workspace records</td></tr>
+
+<tr><td style="padding:16px 8px;border-bottom:1px solid #3b3048;vertical-align:top">GitHub</td><td style="padding:16px 8px;border-bottom:1px solid #3b3048;vertical-align:top">Sign-in, repository connections and website hosting</td><td style="padding:16px 8px;border-bottom:1px solid #3b3048;vertical-align:top">GitHub identity and authorized repository requests</td></tr>
+
+<tr><td style="padding:16px 8px;border-bottom:1px solid #3b3048;vertical-align:top">Apple / Google Firebase / browser push service</td><td style="padding:16px 8px;border-bottom:1px solid #3b3048;vertical-align:top">Notifications</td><td style="padding:16px 8px;border-bottom:1px solid #3b3048;vertical-align:top">Push subscriptions and notification payloads</td></tr>
+
+<tr><td style="padding:16px 8px;border-bottom:1px solid #3b3048;vertical-align:top">OpenRouter and the provider of the selected model</td><td style="padding:16px 8px;border-bottom:1px solid #3b3048;vertical-align:top">Free agents, voice answers and memory search</td><td style="padding:16px 8px;border-bottom:1px solid #3b3048;vertical-align:top">Model prompts and responses, including relevant Room content</td></tr>
+
+<tr><td style="padding:16px 8px;border-bottom:1px solid #3b3048;vertical-align:top">Groq</td><td style="padding:16px 8px;border-bottom:1px solid #3b3048;vertical-align:top">Dictation transcription</td><td style="padding:16px 8px;border-bottom:1px solid #3b3048;vertical-align:top">Dictated audio</td></tr>
+
+<tr><td style="padding:16px 8px;border-bottom:1px solid #3b3048;vertical-align:top">Cloudflare</td><td style="padding:16px 8px;border-bottom:1px solid #3b3048;vertical-align:top">Speech processing and shared-browser tunnels</td><td style="padding:16px 8px;border-bottom:1px solid #3b3048;vertical-align:top">Voice audio, speech text and shared-browser traffic</td></tr>
+
+<tr><td style="padding:16px 8px;border-bottom:1px solid #3b3048;vertical-align:top">Trusty Squire</td><td style="padding:16px 8px;border-bottom:1px solid #3b3048;vertical-align:top">Credential vault, browser viewer and query proxy for service review</td><td style="padding:16px 8px;border-bottom:1px solid #3b3048;vertical-align:top">Vaulted credentials, browser sessions, authorized read-only review queries and returned workspace content</td></tr>
+
+<tr><td style="padding:16px 8px;border-bottom:1px solid #3b3048;vertical-align:top">Composio</td><td style="padding:16px 8px;border-bottom:1px solid #3b3048;vertical-align:top">App connections</td><td style="padding:16px 8px;border-bottom:1px solid #3b3048;vertical-align:top">Connected-app authorization and requested app data</td></tr>
+
+<tr><td style="padding:16px 8px;border-bottom:1px solid #3b3048;vertical-align:top">Coinbase / Stripe</td><td style="padding:16px 8px;border-bottom:1px solid #3b3048;vertical-align:top">Optional wallets and payments</td><td style="padding:16px 8px;border-bottom:1px solid #3b3048;vertical-align:top">Wallet records, Link authorization and transaction details</td></tr>
+
+<tr><td style="padding:16px 8px;border-bottom:1px solid #3b3048;vertical-align:top">Expo</td><td style="padding:16px 8px;border-bottom:1px solid #3b3048;vertical-align:top">App updates</td><td style="padding:16px 8px;border-bottom:1px solid #3b3048;vertical-align:top">Update requests and app/runtime versions</td></tr>
+
+<tr><td style="padding:16px 8px;border-bottom:1px solid #3b3048;vertical-align:top">PostHog</td><td style="padding:16px 8px;border-bottom:1px solid #3b3048;vertical-align:top">Analytics where configured</td><td style="padding:16px 8px;border-bottom:1px solid #3b3048;vertical-align:top">Screen names without contents, app lifecycle and update events</td></tr>
+
+<tr><td style="padding:16px 8px;border-bottom:1px solid #3b3048;vertical-align:top">Sentry</td><td style="padding:16px 8px;border-bottom:1px solid #3b3048;vertical-align:top">Error tracking</td><td style="padding:16px 8px;border-bottom:1px solid #3b3048;vertical-align:top">Redacted error reports and diagnostic context</td></tr>
+
+<tr><td style="padding:16px 8px">Resend</td><td style="padding:16px 8px">Privacy notice email delivery</td><td style="padding:16px 8px">Verified recipient email addresses and notice content</td></tr>
+</tbody></table></div><p>Service review currently uses Anthropic. Other AI providers in this table support other Beeline features. Before the review agent changes model provider, the service-review inventory and its execution guard must be updated together. Review is subject to the workspace’s Allow fix sweep choice. We never publish reviewed content. <a href="/privacy/">Read the Privacy Policy</a>.</p></main></body></html>

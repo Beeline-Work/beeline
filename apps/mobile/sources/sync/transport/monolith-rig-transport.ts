@@ -397,6 +397,10 @@ export class MonolithRigTransport {
   }
 
   /** A read proved the live socket missed events: replace it. */
+  liveDiagnostics(): { state: number | null; connecting: boolean } {
+    return sharedLiveConnection().diagnostics();
+  }
+
   reconnectLive(): void {
     sharedLiveConnection().reconnect();
   }

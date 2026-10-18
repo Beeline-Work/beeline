@@ -22,7 +22,7 @@ export async function setCornerHold(db: SqlDatabase, input: CornerHoldInput, act
     await db.query<{ role: CornerMergeHold['standing'] }>(
       `SELECT workspace_member.role FROM rooms corner
      JOIN corner_facts fact ON fact.corner_id=corner.id
-     JOIN memberships room_member ON room_member.room_id=corner.id AND room_member.identity_id=$2
+     JOIN memberships room_member ON room_member.room_id=corner.parent_id AND room_member.identity_id=$2
        AND room_member.removed_at IS NULL
      JOIN memberships workspace_member ON workspace_member.workspace_id=corner.workspace_id
        AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
@@ -32,7 +32,7 @@ export async function setCornerHold(db: SqlDatabase, input: CornerHoldInput, act
       [input.cornerId, actorId],
     )
   ).rows[0];
-  if (!actor) throw new Error('hold access denied: current human corner membership required');
+  if (!actor) throw new Error('hold access denied: current human Room membership required');
   if (input.releaseHoldId !== undefined) {
     const hold = (
       await db.query<{ actor_id: string; standing: CornerMergeHold['standing'] }>(

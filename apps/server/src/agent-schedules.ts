@@ -1,3 +1,4 @@
+import { CornerAccessDatabase } from './corner-access-database.js';
 import { createAgentCommand } from './agent-command.js';
 import { randomBytes } from 'node:crypto';
 import { CronExpressionParser } from 'cron-parser';
@@ -91,7 +92,8 @@ export class AgentScheduleLoop {
   constructor(
     private readonly database: SqlDatabase,
     private readonly onPosted?: (roomId: string) => void,
-  ) {}
+  ) {
+    this.database = new CornerAccessDatabase(database);}
 
   async nextDueAt(): Promise<Date | undefined> {
     const row = (

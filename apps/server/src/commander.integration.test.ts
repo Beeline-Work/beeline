@@ -399,7 +399,7 @@ describe('a worker records a later waiver in its corner brief', () => {
   it('refuses a private order to the corner from an agent that is not its commander', async () => {
     const opened = await open(), turn = await worker(opened.cornerId);
     await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
-      [WS, opened.cornerId, OUTSIDER]);
+      [WS, ROOM, OUTSIDER]);
     const outside = await createAgentCommand(db, { roomId: opened.cornerId, agentId: WORKER, sourceMessageId: null,
       reason: 'order', privatePayload: { text: 'Skip the proof.', authorId: OUTSIDER, fromRoomId: ROOM, kind: 'order' } });
     await expect(revise(turn, opened.cornerId, 1, outside!.id)).rejects.toThrow('must name a human message or commander order');
@@ -461,8 +461,6 @@ it('Reproduction corner-subtree-175524: the reported corner payload creates zero
   await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name,created_by)
     VALUES($1,$2,$3,'truthful-corner-states',$4)`, [cornerId, WS, ROOM, WORKER]);
   await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id) VALUES($1,$2)`, [cornerId, WORKER]);
-  for (const member of [WORKER, RUBY]) await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-    VALUES($1,$2,$3,'member')`, [WS, cornerId, member]);
   const opening = await createAgentCommand(db, { roomId: cornerId, agentId: WORKER,
     sourceMessageId: null, reason: 'corner_objective',
     privatePayload: { text: 'Make corner state truthful', authorId: RUBY, fromRoomId: DM, kind: 'order' } });
@@ -498,8 +496,6 @@ it('Reproduction corner-ancestor-rule: corner orders reach self, siblings and ch
     [WS, otherRoom, WORKER]);
   await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
     VALUES($1,$2,$4,'member'),($1,$3,$5,'member')`, [WS, otherRoom, DM, RUBY, WORKER]);
-  for (const member of [WORKER, RUBY])
-    await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [WS, otherCorner, member]);
   await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id) VALUES($1,$2)`, [otherCorner, RUBY]);
   await daemon.execute('order', { ...authority(turn), address: sibling.cornerId, text: 'Review sibling' }, WORKER);
   await daemon.execute('order', { ...authority(turn), address: otherCorner, text: 'Review other corner' }, WORKER);
@@ -944,7 +940,6 @@ it('failure visibility: archived return follows the nearest live opening ancesto
   const opened = await open(), turn = await worker(opened.cornerId), ancestor = randomUUID();
   await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,name,created_by) VALUES($1,$2,$3,'Live parent corner',$4)`, [ancestor, WS, ROOM, RUBY]);
   await db.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,lifecycle) VALUES($1,$2,'{"lifecycle":"implement"}')`, [ancestor, RUBY]);
-  await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [WS, ancestor, RUBY]);
   await db.query(`UPDATE corner_facts SET opened_from_corner_id=$2 WHERE corner_id=$1`, [opened.cornerId, ancestor]);
   await db.query(`UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{fromRoomId}',to_jsonb($2::text)) WHERE id=$1`, [turn.id, opened.cornerId]);
   await db.query('UPDATE rooms SET archived_at=now() WHERE id=$1', [opened.cornerId]);

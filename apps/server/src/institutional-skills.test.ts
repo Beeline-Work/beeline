@@ -85,10 +85,8 @@ beforeEach(async () => {
   await database.query(`UPDATE rooms SET parent_id=$1 WHERE id=$2`, [ROOM, CORNER]);
   await database.query(
     `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-       ($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,NULL,$4,'member'),($1,NULL,$5,'member'),
-       ($1,$6,$2,'owner'),($1,$6,$3,'member'),($1,$6,$4,'member'),($1,$6,$5,'member'),
-       ($1,$7,$2,'owner'),($1,$7,$3,'member'),($1,$7,$4,'member'),($1,$7,$5,'member')`,
-    [WORKSPACE, REQUESTER, OTHER_HUMAN, WORKER, OTHER_AGENT, ROOM, CORNER],
+       ($1,NULL,$2,'owner'),($1,NULL,$3,'member'),($1,NULL,$4,'member'),($1,NULL,$5,'member'),($1,$6,$2,'owner'),($1,$6,$3,'member'),($1,$6,$4,'member'),($1,$6,$5,'member') `,
+    [WORKSPACE, REQUESTER, OTHER_HUMAN, WORKER, OTHER_AGENT, ROOM],
   );
   await database.query(
     `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by,objective,feature_branch,lifecycle)

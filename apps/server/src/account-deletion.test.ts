@@ -365,9 +365,7 @@ describe('deleteAccount', () => {
   it('cancels a surviving helper assignment when its owner account archives the corner', async () => {
     const helper = 'd'.repeat(64);
     await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Helper')`, [helper]);
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
-      [WORKSPACE, CORNER, helper]);
+    await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,[WORKSPACE,ROOM,helper]);
     await database.query(
       `INSERT INTO agent_commands(id,room_id,agent_id,source_message_id,turn_request_id,
         action,reason,root_command_id,root_source_message_id,agent_depth)

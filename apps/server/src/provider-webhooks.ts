@@ -37,7 +37,7 @@ export async function connectedProviderApp(db: SqlDatabase, roomId: string, agen
   service: ProviderService): Promise<App | undefined> {
   return (await db.query<App>(
     `SELECT app.id,app.connector_id FROM rooms room
-     JOIN memberships agent_member ON agent_member.room_id=room.id
+     JOIN effective_memberships agent_member ON agent_member.room_id=room.id
        AND agent_member.identity_id=$2 AND agent_member.removed_at IS NULL
      JOIN agents actor ON actor.agent_id=$2
      JOIN workspace_apps app ON app.workspace_id=room.workspace_id AND app.app_key=$3
@@ -219,7 +219,7 @@ export async function ingestProviderWebhook(db: SqlDatabase, service: ProviderSe
        subscription.prompt,subscription.workflow_slug
      FROM agent_subscriptions subscription
      JOIN rooms room ON room.id=subscription.room_id AND room.archived_at IS NULL
-     JOIN memberships agent ON agent.room_id=room.id AND agent.identity_id=subscription.agent_id
+     JOIN effective_memberships agent ON agent.room_id=room.id AND agent.identity_id=subscription.agent_id
        AND agent.removed_at IS NULL
      JOIN provider_webhooks hook ON hook.id::text=subscription.trigger_id AND hook.status='active'
      JOIN workspace_apps app ON app.id=hook.app_id AND app.workspace_id=room.workspace_id

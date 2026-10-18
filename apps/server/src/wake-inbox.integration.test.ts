@@ -126,6 +126,7 @@ it('keeps actual human messages immediate without shortening the pending digest 
   console.info('Demonstrated inbox-human: human follow-up claims immediately while nonhuman digest retains its original deadline');
 });
 it('uses separate durable windows for the same agent in a Room and corner', async () => {
+  await db.query('DELETE FROM memberships WHERE room_id=$1', [OTHER]);
   await db.query('UPDATE rooms SET parent_id=$2 WHERE id=$1', [OTHER, ROOM]);
   await db.query("INSERT INTO corner_facts(corner_id,workflow_state,owner_agent_id) VALUES($1,'implement',$2)", [OTHER, AGENT]);
   await delivery('batch:3');

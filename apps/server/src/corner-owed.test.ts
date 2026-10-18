@@ -152,16 +152,11 @@ describe('corner_owed', () => {
       `INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Corner')`,
       [CORNER, WORKSPACE, ROOM],
     );
-    for (const id of [OWNER, OTHER, AGENT, LATE])
+    for (const id of [OWNER, OTHER, AGENT])
       await database.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
          VALUES($1,NULL,$2,$3),($1,$4,$2,$3)`,
         [WORKSPACE, id, id === OWNER ? 'owner' : 'member', ROOM],
-      );
-    for (const id of [OWNER, OTHER, AGENT])
-      await database.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
-        [WORKSPACE, CORNER, id],
       );
     await database.query(
       `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by)
@@ -385,12 +380,12 @@ describe('corner_owed', () => {
     await step(idle);
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,
-      [WORKSPACE, CORNER, LATE],
+      [WORKSPACE, ROOM, LATE],
     );
     await step(owedToSomeoneElse);
     await database.query(
       `UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`,
-      [CORNER, LATE],
+      [ROOM, LATE],
     );
     await step(idle);
   });

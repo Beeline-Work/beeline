@@ -69,11 +69,7 @@ describe('PRODUCTION-CORPUS width-shaped room-list', () => {
          VALUES($1,$2,$3,$4,$5)`,
         [cornerId, WORKSPACE, WIDE_ROOM, VIEWER, `Corner ${i}`],
       );
-      await database.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-         VALUES($1,$2,$3,'owner'),($1,$2,$4,'member')`,
-        [WORKSPACE, cornerId, VIEWER, AGENT],
-      );
+
       await database.query(
         `INSERT INTO corner_facts(corner_id,owner_agent_id,objective,lifecycle)
          VALUES($1,$2,$3,'{"lifecycle":"working","checks":"unknown"}')`,

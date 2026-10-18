@@ -14,8 +14,7 @@ const CORNER = '33333333-3333-4333-8333-333333333333';
 
 /**
  * A top-level Room (AUTHOR, BEE, CARL, AGENT) plus one corner under it whose
- * OWN membership deliberately omits BEE — `@channel` in the corner must still
- * reach BEE through the parent Room, not the corner's narrower roster.
+ * membership is inherited without any corner membership rows.
  */
 async function fixture(): Promise<PgliteDatabase> {
   const database = new PgliteDatabase();
@@ -38,14 +37,29 @@ async function fixture(): Promise<PgliteDatabase> {
   await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [AGENT, AUTHOR]);
   await database.query(
     `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-      ($1,$2,$3,'owner'),($1,$2,$4,'member'),($1,$2,$5,'member'),($1,$2,$6,'member'),
-      ($1,$7,$3,'owner'),($1,$7,$6,'member')`,
-    [WORKSPACE, ROOM, AUTHOR, BEE, CARL, AGENT, CORNER],
+      ($1,$2,$3,'owner'),($1,$2,$4,'member'),($1,$2,$5,'member'),($1,$2,$6,'member')`,
+    [WORKSPACE, ROOM, AUTHOR, BEE, CARL, AGENT],
   );
   return database;
 }
 
 describe('@channel mention expansion', () => {
+  it('resolves a typed corner handle from the parent roster and drops it on removal', async () => {
+    const database = await fixture();
+    try {
+      const id = '9'.repeat(64);
+      await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@bee status?')`, [id, CORNER, AGENT]);
+      const readTags = async () => (await database.query<{ tagged_ids: string[] }>(
+        `SELECT ${taggedIdentityIdsSql('m')} tagged_ids FROM messages m WHERE m.id=$1`, [id],
+      )).rows[0]!.tagged_ids;
+      expect(await readTags()).toEqual([BEE]);
+      await database.query('UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2', [ROOM, BEE]);
+      expect(await readTags()).toEqual([]);
+    } finally {
+      await database.close();
+    }
+  });
+
   it('resolves to every current human Room member except the author, never an agent', async () => {
     const database = await fixture();
     try {

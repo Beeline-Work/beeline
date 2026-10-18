@@ -127,7 +127,7 @@ function attentionSql(where: string): string {
       AND subscription.agent_id=${worker})
     OR EXISTS(SELECT 1 FROM corner_watches watch WHERE watch.watcher_room_id=c.id
       AND watch.agent_id=${worker} AND jsonb_array_length(watch.kinds)>0)
-    OR EXISTS(SELECT 1 FROM memberships membership WHERE membership.room_id=c.id
+    OR EXISTS(SELECT 1 FROM effective_memberships membership WHERE membership.room_id=c.id
       AND membership.identity_id=${worker} AND membership.removed_at IS NULL
       AND jsonb_array_length(membership.event_subscriptions)>0)) worker_wait
     FROM rooms c JOIN corner_facts f ON f.corner_id=c.id

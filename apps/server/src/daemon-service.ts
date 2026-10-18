@@ -1,3 +1,5 @@
+import { CornerAccessDatabase } from './corner-access-database.js';
+import { setRoomEventSubscriptions } from './corner-person-state.js';
 import { agentMemberMetadata } from './agent-member-metadata.js';
 import { normalizeTrayAsk } from '@beeline/api-contract/phone';
 import { assertCornerCommandTarget, commandAddress, sendOrder, reportToCommander, hasOrderContinuation, CommandRefusalError } from './commander.js';
@@ -379,7 +381,8 @@ export class DaemonService {
       cornerId: string,
     ) => Promise<Output<'readCornerPullRequest'>>,
     private readonly subscriptionReceiverUrl?: string,
-  ) {}
+  ) {
+    this.database = new CornerAccessDatabase(database);}
 
   /** A turn's memory query, embedded before its command transaction opened. */
   private memoryEmbed: EmbedFn | undefined;
@@ -5057,8 +5060,8 @@ export class DaemonService {
    * newcomers can start greeting newcomers without a person editing a database
    * row for it. The write is scoped by construction: the daemon token names the
    * agent, `roomId` names the Room, `execute` has already refused a Room this
-   * agent is not a member of, and the UPDATE touches exactly that one
-   * membership. Only server kinds may be subscribed to — an `agent:` kind is a
+   * agent is not a member of, and the write touches exactly that Room
+   * membership or sparse corner preference. Only server kinds may be subscribed to — an `agent:` kind is a
    * sentence some agent chose to say, and reacting to it is a mention, not a
    * subscription. A per-item kind (`PER_ITEM_EVENT_KINDS`) is refused outright:
    * its item's owner already wakes directly, with no subscription involved,
@@ -5078,20 +5081,7 @@ export class DaemonService {
       );
     }
     const kinds = [...new Set(requested)] as EventSubscriptionsResult['kinds'];
-    const updated = await this.database.query<{ event_subscriptions: EventSubscriptionsResult['kinds'] }>(
-      `UPDATE memberships member
-       SET event_subscriptions=CASE WHEN parent.reviewer_agent_id=$2
-         AND NOT $3::jsonb @> '["check-passed"]'::jsonb
-         THEN $3::jsonb||'["check-passed"]'::jsonb ELSE $3::jsonb END
-       FROM rooms surface
-       JOIN rooms parent ON parent.id=COALESCE(surface.parent_id,surface.id)
-       WHERE member.room_id=$1 AND member.identity_id=$2 AND member.removed_at IS NULL
-         AND surface.id=member.room_id
-       RETURNING member.event_subscriptions`,
-      [input.roomId, agentId, JSON.stringify(kinds)],
-    );
-    if (!updated.rowCount) throw new Error('daemon room access denied');
-    return { kinds: [...new Set(updated.rows[0]!.event_subscriptions)] };
+    return { kinds: await setRoomEventSubscriptions(this.database, input.roomId, agentId, kinds) };
   }
   private async listEventSubscriptions(input: Input<'listEventSubscriptions'>, agentId: string) {
     const rows = await this.database.query<{ event_subscriptions: unknown }>(
@@ -5604,8 +5594,8 @@ export class DaemonService {
           AND ($3::text IS NULL OR turn_request_id=$3)
         ORDER BY created_at DESC,id DESC LIMIT 1`, [input.roomId, agentId, input.requestId ?? null])).rows[0];
       const member = await db.query<{ parent_id: string | null }>(
-        `SELECT r.parent_id FROM memberships m JOIN rooms r ON r.id=m.room_id
-         WHERE m.room_id=$1 AND m.identity_id=$2 AND m.removed_at IS NULL
+        `SELECT r.parent_id FROM memberships m JOIN rooms r ON m.room_id=COALESCE(r.parent_id,r.id)
+         WHERE r.id=$1 AND m.identity_id=$2 AND m.removed_at IS NULL
            AND r.archived_at IS NULL FOR SHARE OF m,r`,
         [input.roomId, agentId],
       );
@@ -7631,22 +7621,6 @@ export class DaemonService {
         ],
       );
       await db.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role,event_subscriptions)
-         SELECT workspace_id,$2,identity_id,role,
-           (SELECT COALESCE(jsonb_agg(elem),'[]'::jsonb)
-            FROM jsonb_array_elements_text(event_subscriptions) elem
-            WHERE elem=ANY($3::text[]))
-         FROM memberships
-         WHERE room_id=$1 AND removed_at IS NULL ON CONFLICT DO NOTHING`,
-        [roomId, cornerId, SUBSCRIBABLE_EVENT_KINDS],
-      );
-      await db.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')
-         ON CONFLICT(room_id,identity_id) WHERE room_id IS NOT NULL
-         DO UPDATE SET role='owner',removed_at=NULL`,
-        [parent.workspace_id, cornerId, implementerAgentId],
-      );
-      await db.query(
         `INSERT INTO corner_facts(corner_id,owner_agent_id,commissioned_by,objective,request_id,open_idempotency_key,opened_from_corner_id,lifecycle)
          VALUES($1,$2,$3,$4,$5,$6,$7,'{"lifecycle":"working","checks":"unknown"}')`,
         [
@@ -7893,12 +7867,16 @@ export class DaemonService {
   }
   private async ensureMembership(input: Input<'ensureAgentMembership'>, agentId: string) {
     const room = (
-      await this.database.query<{ workspace_id: string }>(
-        `SELECT workspace_id FROM rooms WHERE id=$1`,
+      await this.database.query<{ workspace_id: string; parent_id: string | null }>(
+        `SELECT workspace_id,parent_id FROM rooms WHERE id=$1`,
         [input.roomId],
       )
     ).rows[0];
     if (!room) throw new Error('room not found');
+    if (room.parent_id) {
+      await this.access(input.roomId, agentId);
+      return this.writeResult();
+    }
     const workspaceMember = await this.database.query(
       `SELECT 1 FROM memberships WHERE workspace_id=$1 AND room_id IS NULL AND identity_id=$2 AND removed_at IS NULL`,
       [room.workspace_id, agentId],
@@ -8038,6 +8016,7 @@ export class DaemonService {
    * its parent Room. Returns the parent Room id.
    */
   private async reach(cornerId: string, agentId: string, database: SqlDatabase = this.database) {
+    database = new CornerAccessDatabase(database);
     if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cornerId))
       throw new AccessDeniedError();
     const row = (

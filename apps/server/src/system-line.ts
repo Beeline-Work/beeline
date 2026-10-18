@@ -1,3 +1,4 @@
+import { CornerAccessDatabase } from './corner-access-database.js';
 import { approvalAsk } from './tray-approval-ask.js';
 import { createAgentCommand, type CommandRow, routeSystemCommand } from './agent-command.js';
 import { createHash, randomBytes } from 'node:crypto';
@@ -145,6 +146,7 @@ export async function ensureSystemDirectMessageRoomResult(
   workspaceId: string,
   personId: string,
 ): Promise<{ id: string; created: boolean }> {
+    database = new CornerAccessDatabase(database);
   await ensureSystemIdentity(database);
   const participants = [SYSTEM_IDENTITY_ID, personId].sort() as [string, string];
   const roomId = directMessageRoomId(workspaceId, participants);
@@ -340,6 +342,7 @@ async function subscribers(
   roomId: string,
   kind: SystemEventKind | undefined,
 ): Promise<string[]> {
+    database = new CornerAccessDatabase(database);
   if (!kind || !isSubscribableEventKind(kind)) return [];
   try {
     const rows = await database.query<{ identity_id: string }>(
@@ -437,6 +440,7 @@ export async function systemLine(
   database: SqlDatabase,
   input: SystemLineInput,
 ): Promise<SystemLineResult> {
+    database = new CornerAccessDatabase(database);
   const authorId = input.authorId ?? input.subject.id;
   if (!authorId) throw new Error('system line needs an author identity');
   // Workflow cards name their own author without a self-address.

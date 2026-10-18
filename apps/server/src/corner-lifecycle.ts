@@ -1,3 +1,4 @@
+import { CornerAccessDatabase } from './corner-access-database.js';
 import { isZeroCheckCommander } from './corner-merge-approval.js';
 import { reportToCommander } from './commander.js';
 import type { activeCornerHolds } from './corner-holds.js';
@@ -242,6 +243,7 @@ async function loadCornerLifecycleState(
 }
 
 async function loadCorner(db: SqlDatabase, cornerId: string): Promise<CornerRow | undefined> {
+    db = new CornerAccessDatabase(db);
   return (
     await db.query<CornerRow>(
       `SELECT corner.parent_id,parent.workspace_id,
@@ -365,7 +367,8 @@ class Transition {
     public run: RunState,
     /** The corner's current PR head; every card records the head it was written for. */
     private readonly headSha: string | undefined,
-  ) {}
+  ) {
+    this.db = new CornerAccessDatabase(db);}
 
   /** The handoff card the last `take` wrote. */
   lastCardId: string | undefined;
@@ -1283,6 +1286,7 @@ export async function cornerMergeGate(
   cornerId: string,
   head: { number: number; headSha: string },
 ): Promise<CornerMergeGate> {
+    db = new CornerAccessDatabase(db);
   const rows = await db.query<{
     configured_reviewer_id: string | null;
     approved: boolean;

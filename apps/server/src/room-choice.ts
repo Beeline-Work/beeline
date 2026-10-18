@@ -1,3 +1,4 @@
+import { CornerAccessDatabase } from './corner-access-database.js';
 import { workflowRunIsLiveSql } from './workflow-run-saved-status.js';
 import { randomBytes, randomUUID } from 'node:crypto';
 import type { ChoiceCardView, RoomViewIdentity } from '@beeline/api-contract/phone';
@@ -84,6 +85,7 @@ export async function loadHumanElectorate(
   database: SqlDatabase,
   roomId: string,
 ): Promise<string[]> {
+    database = new CornerAccessDatabase(database);
   const rows = await database.query<{ id: string }>(
     `SELECT identity.id
      FROM memberships member
@@ -113,6 +115,7 @@ async function loadMentionIds(
   prompt: string,
   constraint: string | undefined,
 ): Promise<string[]> {
+    database = new CornerAccessDatabase(database);
   const handles = [...typedMentionHandles(`${prompt} ${constraint ?? ''}`)].map((handle) =>
     handle.toLowerCase(),
   );
@@ -599,6 +602,7 @@ export async function answerRoomChoice(
   input: { choiceId: string; optionId: string; viewerId: string; note?: unknown },
   { wake = true }: { wake?: boolean } = {},
 ): Promise<{ choiceId: string; status: ChoiceStatus; roomId: string }> {
+    database = new CornerAccessDatabase(database);
   const note = normalizeChoiceNote(input.note);
   const choice = await loadChoice(database, input.choiceId);
   if (!choice) throw new Error('choice not found');
@@ -716,6 +720,7 @@ export async function skipRoomChoice(
   input: { choiceId: string; viewerId: string },
   { wake = true }: { wake?: boolean } = {},
 ): Promise<{ choiceId: string; status: ChoiceStatus; roomId: string }> {
+    database = new CornerAccessDatabase(database);
   const choice = await loadChoice(database, input.choiceId);
   if (!choice) throw new Error('choice not found');
   if (choice.mode !== 'question') throw new Error('skip is invalid on a poll');

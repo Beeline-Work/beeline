@@ -1,3 +1,4 @@
+import { CornerAccessDatabase } from './corner-access-database.js';
 /**
  * Agent health for the ordered agent lists a Room reviewer and a workflow
  * role can name: which listed agent should take the work now, and whether an
@@ -50,6 +51,7 @@ export async function roomAgentHealth(
   roomId: string,
   agentIds: readonly string[],
 ): Promise<Map<string, AgentHealth>> {
+    db = new CornerAccessDatabase(db);
   if (!agentIds.length) return new Map();
   const rows = await db.query<CandidateRow>(
     `SELECT agent.agent_id,
@@ -132,6 +134,7 @@ export async function isConfiguredReviewer(
   parentRoomId: string,
   agentId: string,
 ): Promise<boolean> {
+    db = new CornerAccessDatabase(db);
   const room = (
     await db.query<{ reviewer_agent_id: string | null; reviewer_fallback_ids: string[] | null }>(
       `SELECT reviewer_agent_id,reviewer_fallback_ids FROM rooms WHERE id=$1`,
@@ -142,7 +145,7 @@ export async function isConfiguredReviewer(
   if (room.reviewer_agent_id === agentId) return true;
   if (!reviewerList(room).includes(agentId)) return false;
   const member = await db.query(
-    `SELECT 1 FROM memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
+    `SELECT 1 FROM effective_memberships WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL`,
     [parentRoomId, agentId],
   );
   return member.rowCount > 0;
@@ -161,6 +164,7 @@ export async function isCornerReviewer(
   cornerId: string,
   agentId: string,
 ): Promise<boolean> {
+    db = new CornerAccessDatabase(db);
   const row = (
     await db.query<{ parent_room_id: string }>(
       `SELECT parent.id parent_room_id FROM rooms corner
@@ -171,7 +175,7 @@ export async function isCornerReviewer(
   if (!row) return false;
   if (!(await isConfiguredReviewer(db, row.parent_room_id, agentId))) return false;
   const member = await db.query(
-    `SELECT 1 FROM memberships reviewer
+    `SELECT 1 FROM effective_memberships reviewer
      JOIN identities identity ON identity.id=reviewer.identity_id AND identity.kind='agent'
      WHERE reviewer.room_id=$1 AND reviewer.identity_id=$2 AND reviewer.removed_at IS NULL`,
     [row.parent_room_id, agentId],

@@ -1,3 +1,4 @@
+import { CornerAccessDatabase } from './corner-access-database.js';
 import { workflowRunIsLiveSql } from './workflow-run-saved-status.js';
 import type { SqlDatabase } from './database.js';
 
@@ -20,6 +21,7 @@ export async function humanRoomAdmin(
   roomId: string,
   actorId: string,
 ): Promise<boolean> {
+    db = new CornerAccessDatabase(db);
   return Boolean(
     (
       await db.query(
@@ -73,6 +75,7 @@ export async function activeWorkflowRunIds(
   name: string,
   viewerId: string,
 ): Promise<string[]> {
+    db = new CornerAccessDatabase(db);
   const skill = (
     await db.query<{ id: string }>(
       `SELECT skill.id FROM workspace_skills skill JOIN rooms room ON room.workspace_id=skill.workspace_id
@@ -85,7 +88,7 @@ export async function activeWorkflowRunIds(
     `SELECT message.id run_id
     FROM messages message JOIN rooms surface ON surface.id=message.room_id
     JOIN rooms requested ON requested.id=$1 AND requested.workspace_id=surface.workspace_id
-    JOIN memberships readable ON readable.room_id=surface.id AND readable.identity_id=$3 AND readable.removed_at IS NULL
+    JOIN effective_memberships readable ON readable.room_id=surface.id AND readable.identity_id=$3 AND readable.removed_at IS NULL
     WHERE (surface.id=COALESCE(requested.parent_id,requested.id)
       OR surface.parent_id=COALESCE(requested.parent_id,requested.id))
       AND message.card_type='workflow-handoff' AND message.card->>'workflowSlug'=$2

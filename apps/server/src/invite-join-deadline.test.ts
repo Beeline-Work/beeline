@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { Pool } from 'pg';
 import { expect, it } from 'vitest';
-import { migrate, PostgresDatabase } from './database.js';
+import { migrate, PostgresDatabase, type SqlDatabase } from './database.js';
 import { PhoneService } from './phone-service.js';
 import { PgliteDatabase } from './test-support.js';
 
@@ -42,12 +42,18 @@ it('redeems an invite with historical corners without scanning unrelated message
       VALUES($1,$3,'General','public'),($2,$3,'Unrelated','invite-only')`,
       [room, unrelated, workspace],
     );
+    await db.query(
+      `INSERT INTO rooms(id,workspace_id,name,visibility)
+       SELECT md5('invite-public-room-'||n)::uuid,$1,'Public '||n,'public'
+       FROM generate_series(1,10) n`,
+      [workspace],
+    );
     await db.query(`INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'owner')`, [
       workspace,
       owner,
     ]);
-    const corners = postgresUrl ? 1033 : 240;
-    const messages = postgresUrl ? 333000 : 100000;
+    const corners = 10;
+    const messages = 333000;
     await db.query(
       `INSERT INTO rooms(id,workspace_id,parent_id,name,archived_at)
       SELECT md5('invite-corner-'||n)::uuid,$1,$2,'History '||n,now()
@@ -64,29 +70,77 @@ it('redeems an invite with historical corners without scanning unrelated message
     );
     await db.query('ALTER TABLE messages ENABLE TRIGGER USER');
     await db.query('ANALYZE');
-    const phone = new PhoneService(db, 'https://server.example');
-    const invite = await phone.execute('createInvite', { workspaceId: workspace }, owner);
-    const started = performance.now();
-    const result = await phone.execute('redeemInvite', { token: invite.token }, viewer);
-    const elapsed = performance.now() - started;
-    console.log(
-      `Reproduction invite-join-deadline: ${messages} messages, ${corners} corners: ${elapsed.toFixed(0)} ms`,
-    );
-    expect(result).toMatchObject({ joined: true, workspaceId: workspace, roomId: room });
-    expect(elapsed).toBeLessThan(10_000);
-    expect(
-      (
+    let queryCount = 0;
+    const counted = (database: SqlDatabase): SqlDatabase => ({
+      query: (sql, values) => {
+        queryCount++;
+        return database.query(sql, values);
+      },
+      transaction: (work) => database.transaction((tx) => work(counted(tx))),
+    });
+    const phone = new PhoneService(counted(db), 'https://server.example');
+    const samples: { corners: number; queries: number; elapsed: number }[] = [];
+    for (const size of [10, 1000]) {
+      if (size === 1000)
         await db.query(
-          `SELECT count(*)::int count FROM memberships
-      WHERE identity_id=$1 AND room_id IN (SELECT id FROM rooms WHERE parent_id=$2)
-        AND removed_at IS NULL`,
-          [viewer, room],
-        )
-      ).rows[0]?.count,
-    ).toBe(corners);
-    expect((await phone.execute('redeemInvite', { token: invite.token }, viewer)).joined).toBe(
-      false,
-    );
+          `INSERT INTO rooms(id,workspace_id,parent_id,name,archived_at)
+         SELECT md5('invite-corner-'||n)::uuid,$1,$2,'History '||n,now()
+         FROM generate_series(11,1000) n`,
+          [workspace, room],
+        );
+      const joiner = size === 10 ? viewer : 'c'.repeat(64);
+      if (size === 1000)
+        await db.query(
+          `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Second joiner','second')`,
+          [joiner],
+        );
+      await db.query('ANALYZE');
+      const invite = await phone.execute('createInvite', { workspaceId: workspace }, owner);
+      queryCount = 0;
+      const started = performance.now();
+      const result = await phone.execute('redeemInvite', { token: invite.token }, joiner);
+      const elapsed = performance.now() - started;
+      samples.push({ corners: size, queries: queryCount, elapsed });
+      console.log(
+        `Reproduction invite-join-corner-rows: ${messages} messages, ${size} corners: ${elapsed.toFixed(0)} ms, ${queryCount} queries`,
+      );
+      expect(result).toMatchObject({ joined: true, workspaceId: workspace, roomId: room });
+      expect(elapsed).toBeLessThan(10_000);
+      expect(
+        (
+          await db.query(`SELECT count(*)::int count FROM memberships member
+        JOIN rooms corner ON corner.id=member.room_id WHERE corner.parent_id IS NOT NULL`)
+        ).rows[0]?.count,
+      ).toBe(0);
+      expect(
+        (
+          await db.query(`SELECT count(*)::int count FROM memberships WHERE identity_id=$1`, [
+            joiner,
+          ])
+        ).rows[0]?.count,
+      ).toBe(12);
+      expect(
+        (await db.query(`SELECT count(*)::int count FROM corner_person_state`)).rows[0]?.count,
+      ).toBe(0);
+      expect(
+        (
+          await phone.canReadRooms(
+            [
+              '00000000-0000-0000-0000-000000000000',
+              (await db.query(`SELECT id FROM rooms WHERE parent_id=$1 LIMIT 1`, [room])).rows[0]!
+                .id,
+            ],
+            joiner,
+          )
+        ).size,
+      ).toBe(1);
+      expect((await phone.execute('redeemInvite', { token: invite.token }, joiner)).joined).toBe(
+        false,
+      );
+    }
+    expect(samples[1]!.queries).toBe(samples[0]!.queries);
+    // Allow scheduling noise, but reject the old per-corner refresh cost.
+    expect(samples[1]!.elapsed).toBeLessThan(Math.max(250, samples[0]!.elapsed * 3));
   } finally {
     await db.close();
     await admin?.query(`DROP SCHEMA ${schema} CASCADE`);

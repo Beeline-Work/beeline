@@ -44,7 +44,7 @@ beforeAll(async () => {
     [C, B],
   );
   for (const who of [H, A, B])
-    for (const room of [null, R, C])
+    for (const room of [null, R])
       await db.query(
         `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'owner')`,
         [W, room, who],

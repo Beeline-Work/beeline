@@ -90,7 +90,7 @@ export async function refreshWakeDigests(db: SqlDatabase, roomId: string, agentI
 export async function flushDueCommanderWakes(db: SqlDatabase): Promise<number> {
   const recipients = (await db.query<{ room_id: string; agent_id: string }>(
     `SELECT DISTINCT command.room_id,command.agent_id FROM agent_commands command
-     JOIN memberships member ON member.room_id=command.room_id AND member.identity_id=command.agent_id
+     JOIN effective_memberships member ON member.room_id=command.room_id AND member.identity_id=command.agent_id
        AND member.removed_at IS NULL
      JOIN rooms room ON room.id=command.room_id AND room.archived_at IS NULL
      WHERE command.state='pending' AND command.wake_after<=now() LIMIT 100`)).rows;
@@ -98,7 +98,7 @@ export async function flushDueCommanderWakes(db: SqlDatabase): Promise<number> {
   for (const recipient of recipients) await db.transaction(async (tx) => {
     await lockWakeConsumer(tx, recipient.room_id, recipient.agent_id);
     const membership = await tx.query(
-      `SELECT 1 FROM memberships member JOIN rooms room ON room.id=member.room_id
+      `SELECT 1 FROM effective_memberships member JOIN rooms room ON room.id=member.room_id
        WHERE member.room_id=$1 AND member.identity_id=$2 AND member.removed_at IS NULL
          AND room.archived_at IS NULL`, [recipient.room_id, recipient.agent_id]);
     if (!membership.rowCount) return;

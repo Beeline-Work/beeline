@@ -57,11 +57,11 @@ export async function notifyAgentConfigChange(
 ): Promise<void> {
   const rooms = await database.query<{ room_id: string }>(
     workspaceId
-      ? `SELECT membership.room_id FROM memberships membership
+      ? `SELECT membership.room_id FROM effective_memberships membership
          JOIN rooms room ON room.id=membership.room_id
          WHERE membership.identity_id=$1 AND membership.workspace_id=$2
            AND membership.removed_at IS NULL AND room.archived_at IS NULL`
-      : `SELECT membership.room_id FROM memberships membership
+      : `SELECT membership.room_id FROM effective_memberships membership
          JOIN rooms room ON room.id=membership.room_id
          WHERE membership.identity_id=$1
            AND membership.removed_at IS NULL AND room.archived_at IS NULL`,
@@ -221,7 +221,19 @@ BEGIN
         'registryDueAt', CASE WHEN TG_OP = 'DELETE' OR NEW.code IS NOT NULL THEN NULL
           ELSE floor(extract(epoch FROM NEW.expires_at) * 1000)::bigint END
       );
+    WHEN 'corner_person_state' THEN
+      payload = jsonb_build_object('table','memberships','operation',TG_OP,
+        'roomId',COALESCE(NEW.corner_id,OLD.corner_id),
+        'identityId',COALESCE(NEW.identity_id,OLD.identity_id),'removed',false)
+        || COALESCE((SELECT jsonb_build_object('parentRoomId',room.parent_id,
+          'cornerParentId',room.parent_id,'archived',room.archived_at IS NOT NULL,
+          'openedBy',COALESCE((SELECT owner_agent_id FROM corner_facts WHERE corner_id=room.id),room.created_by))
+          FROM rooms room WHERE room.id=COALESCE(NEW.corner_id,OLD.corner_id)),'{}'::jsonb);
     WHEN 'memberships' THEN
+      -- Removing legacy copied rows changes no inherited authority or live session.
+      IF EXISTS(SELECT 1 FROM rooms WHERE id=COALESCE(NEW.room_id,OLD.room_id) AND parent_id IS NOT NULL) THEN
+        RETURN NULL;
+      END IF;
       payload = jsonb_build_object(
         'table', TG_TABLE_NAME, 'operation', TG_OP,
         'roomId', COALESCE(NEW.room_id::text, OLD.room_id::text, ''),
@@ -347,7 +359,7 @@ DO $$
 DECLARE table_name text;
 BEGIN
   FOREACH table_name IN ARRAY ARRAY[
-    'messages', 'live_outputs', 'agent_turns', 'rooms', 'memberships',
+    'messages', 'live_outputs', 'agent_turns', 'rooms', 'memberships', 'corner_person_state',
     'corner_facts', ${PARENT_ONLY_SQL},
     'permission_authority', 'room_read_marks', 'message_bookmarks',
     'needs_you_marks',
@@ -789,7 +801,7 @@ export class PostgresLiveListener {
           body: Record<string, unknown>;
         }>(
           `SELECT membership.room_id,presence.body
-           FROM memberships membership
+           FROM effective_memberships membership
            JOIN LATERAL(
              SELECT body FROM live_outputs
              WHERE agent_id=$1 AND kind='presence'

@@ -28,7 +28,6 @@ import {
   isTransientDatabaseConnectionError,
   type SqlDatabase,
 } from './database.js';
-import { backfillInheritedCornerMemberships } from './membership-join.js';
 import { PgliteDatabase } from './test-support.js';
 import { requireRoomSlug, reserveRoomName } from './room-names.js';
 
@@ -1350,78 +1349,6 @@ describe('the agent handle migration', () => {
   });
 });
 
-describe('the inherited corner membership migration', () => {
-  const OWNER = 'a'.repeat(64);
-  const LATE_MEMBER = 'b'.repeat(64);
-  const REMOVED_MEMBER = 'c'.repeat(64);
-  const WORKSPACE = '11111111-1111-4111-8111-111111111111';
-  const ROOM = '22222222-2222-4222-8222-222222222222';
-  const CORNER = '33333333-3333-4333-8333-333333333333';
-  let database: PgliteDatabase;
-
-  beforeEach(async () => {
-    database = new PgliteDatabase();
-    await migrate(database);
-    await database.query(
-      `INSERT INTO identities(id,kind,name) VALUES
-       ($1,'human','Owner'),($2,'human','Late'),($3,'agent','Removed')`,
-      [OWNER, LATE_MEMBER, REMOVED_MEMBER],
-    );
-    await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Workspace')`, [WORKSPACE]);
-    await database.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Room')`, [
-      ROOM,
-      WORKSPACE,
-    ]);
-    await database.query(
-      `INSERT INTO rooms(id,workspace_id,parent_id,name) VALUES($1,$2,$3,'Corner')`,
-      [CORNER, WORKSPACE, ROOM],
-    );
-    await database.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role,removed_at) VALUES
-       ($1,$2,$3,'owner',NULL),($1,$2,$4,'member',NULL),
-       ($1,$2,$5,'member',NULL),($1,$6,$5,'member',now())`,
-      [WORKSPACE, ROOM, OWNER, LATE_MEMBER, REMOVED_MEMBER, CORNER],
-    );
-    await database.query(
-      `UPDATE memberships SET event_subscriptions='["check-passed","grant-decided"]'::jsonb
-       WHERE room_id=$1 AND identity_id=$2`,
-      [ROOM, LATE_MEMBER],
-    );
-  });
-
-  afterEach(() => database.close());
-
-  it('adds absent late joiners without restoring an explicitly removed corner member, inheriting only Room-level kinds', async () => {
-    await expect(backfillInheritedCornerMemberships(database)).resolves.toBe(2);
-    const memberships = await database.query<{
-      identity_id: string;
-      role: string;
-      removed_at: Date | null;
-      event_subscriptions: string[];
-    }>(
-      `SELECT identity_id,role,removed_at,event_subscriptions FROM memberships
-       WHERE room_id=$1 ORDER BY identity_id`,
-      [CORNER],
-    );
-    expect(memberships.rows).toEqual([
-      { identity_id: OWNER, role: 'owner', removed_at: null, event_subscriptions: [] },
-      {
-        identity_id: LATE_MEMBER,
-        role: 'member',
-        removed_at: null,
-        event_subscriptions: ['check-passed'],
-      },
-      {
-        identity_id: REMOVED_MEMBER,
-        role: 'member',
-        removed_at: expect.any(Date),
-        event_subscriptions: [],
-      },
-    ]);
-    await expect(backfillInheritedCornerMemberships(database)).resolves.toBe(0);
-  });
-});
-
 describe('the per-item event subscription migration', () => {
   const AGENT_A = 'a'.repeat(64);
   const AGENT_B = 'b'.repeat(64);
@@ -1461,7 +1388,7 @@ describe('the per-item event subscription migration', () => {
 });
 
 describe('the top-level shared Room role migration', () => {
-  it('repairs shared Room roles without changing corner or DM authority', async () => {
+  it('repairs shared Room roles inherited by corners and preserves DM authority', async () => {
     const database = new PgliteDatabase();
     await migrate(database);
     const workspace = '41111111-1111-4111-8111-111111111111';
@@ -1480,21 +1407,21 @@ describe('the top-level shared Room role migration', () => {
     );
     await database.query(
       `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
-       ($1,NULL,$2,'admin'),($1,$3,$2,'member'),($1,$4,$2,'owner'),($1,$5,$2,'owner')`,
-      [workspace, member, room, corner, dm],
+       ($1,NULL,$2,'admin'),($1,$3,$2,'member'),($1,$4,$2,'owner')`,
+      [workspace, member, room, dm],
     );
 
     await migrate(database);
 
     const roles = await database.query<{ room_id: string | null; role: string }>(
-      `SELECT room_id,role FROM memberships WHERE workspace_id=$1 AND identity_id=$2
+      `SELECT room_id,role FROM effective_memberships WHERE workspace_id=$1 AND identity_id=$2
        ORDER BY room_id NULLS FIRST`,
       [workspace, member],
     );
     expect(roles.rows).toEqual([
       { room_id: null, role: 'admin' },
       { room_id: room, role: 'admin' },
-      { room_id: corner, role: 'owner' },
+      { room_id: corner, role: 'admin' },
       { room_id: dm, role: 'owner' },
     ]);
     database.close();

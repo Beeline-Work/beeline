@@ -1,3 +1,5 @@
+import { prepareCornerCompatibility } from './corner-person-state.js';
+import { CornerAccessDatabase } from './corner-access-database.js';
 import { companyHost } from './company-registry.js';
 import { companyPopularity, companySearchResults, projectWorkbenchCompanies } from './workbench-companies.js';
 import { notifyAgentConfigChange } from './postgres-live.js';
@@ -40,7 +42,6 @@ import {
   isServerEventKind,
   isAgentSignInHarness,
   ROOM_VIEW_AGENT_LIMIT,
-  SUBSCRIBABLE_EVENT_KINDS,
   ROOM_VIEW_BRIEFING_LIMIT,
   ROOM_VIEW_CHAT_LIMIT,
   ROOM_VIEW_MEMBER_LIMIT,
@@ -1028,6 +1029,8 @@ export class PhoneService {
     private readonly composio?: ComposioApps,
     private readonly linkWallet?: LinkAgentWallet,
   ) {
+    this.database = new CornerAccessDatabase(database);
+    this.enrichmentDatabase = new CornerAccessDatabase(enrichmentDatabase);
     if (live) this.outlineCache = new HistoryOutlineCache(live);
   }
 
@@ -1137,6 +1140,7 @@ export class PhoneService {
       { type: 'message'; messageId: string } | { type: 'turn'; agentId: string; requestId: string },
     database: SqlDatabase = this.database,
   ): Promise<ReadonlyMap<string, RoomLiveDelta>> {
+    database = new CornerAccessDatabase(database);
     const viewers = [...new Set(viewerIds)];
     const deltas = new Map<string, RoomLiveDelta>();
     if (!viewers.length) return deltas;
@@ -2434,7 +2438,7 @@ export class PhoneService {
     const result = await this.database.query<{ rows: MessageRow[] }>(
       `WITH authorized AS (
         SELECT 1 FROM memberships room_member JOIN rooms room ON room.id=room_member.room_id
-        WHERE room_member.room_id=$1 AND room_member.identity_id=$2
+        WHERE room.id=$1 AND room_member.identity_id=$2
           AND room_member.removed_at IS NULL
           AND ($2=$4 OR EXISTS(SELECT 1 FROM memberships workspace_member
             WHERE workspace_member.workspace_id=room.workspace_id
@@ -2484,7 +2488,7 @@ export class PhoneService {
     const result = await this.database.query<{ rows: MessageRow[]; cursor_exists: boolean }>(
       `WITH authorized AS (
         SELECT 1 FROM memberships room_member JOIN rooms room ON room.id=room_member.room_id
-        WHERE room_member.room_id=$1 AND room_member.identity_id=$2
+        WHERE room.id=$1 AND room_member.identity_id=$2
           AND room_member.removed_at IS NULL
           AND ($2=$4 OR EXISTS(SELECT 1 FROM memberships workspace_member
             WHERE workspace_member.workspace_id=room.workspace_id
@@ -2529,7 +2533,7 @@ export class PhoneService {
       `WITH authorized AS (
         SELECT 1 FROM memberships room_member
         JOIN rooms room ON room.id=room_member.room_id
-        WHERE room_member.room_id=$1 AND room_member.identity_id=$2
+        WHERE room.id=$1 AND room_member.identity_id=$2
           AND room_member.removed_at IS NULL
           AND ($2=$4 OR EXISTS(SELECT 1 FROM memberships workspace_member
             WHERE workspace_member.workspace_id=room.workspace_id
@@ -2790,7 +2794,10 @@ export class PhoneService {
     const row = (
       await this.database.query<RoomReadRow>(
         `WITH authorized_room AS (
-           SELECT room.*,membership.role viewer_role,membership.push_muted viewer_push_muted,
+           SELECT room.*,membership.role viewer_role,
+             CASE WHEN room.parent_id IS NULL THEN membership.push_muted ELSE COALESCE(
+               (SELECT state.push_muted FROM corner_person_state state
+                WHERE state.corner_id=room.id AND state.identity_id=$2),false) END viewer_push_muted,
              workspace_member.role workspace_role,
              (workspace_member.role IN ('owner','admin') AND NOT EXISTS (
                SELECT 1 FROM memberships other_room
@@ -2799,12 +2806,12 @@ export class PhoneService {
                  AND other_workspace.identity_id=other_room.identity_id
                  AND other_workspace.removed_at IS NULL
                  AND other_workspace.role IN ('owner','admin')
-               WHERE other_room.room_id=room.id AND other_room.removed_at IS NULL
+               WHERE other_room.room_id=COALESCE(room.parent_id,room.id) AND other_room.removed_at IS NULL
                  AND other_room.identity_id<>$2
              )) leave_deletes_room,
              NULL::jsonb read_cursor
            FROM rooms room
-           JOIN memberships membership ON membership.room_id=room.id
+           JOIN memberships membership ON membership.room_id=COALESCE(room.parent_id,room.id)
              AND membership.identity_id=$2 AND membership.removed_at IS NULL
            JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
              AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
@@ -2812,13 +2819,13 @@ export class PhoneService {
            WHERE room.id=$1
          ), member_rows AS (
            SELECT i.id,i.kind,i.name,i.handle,i.avatar,i.face_id,
-             membership.role,NULL::jsonb presence_body,
+             roster_member.role,NULL::jsonb presence_body,
              NULL::timestamptz presence_updated_at
            FROM authorized_room room
-           JOIN memberships membership ON membership.workspace_id=room.workspace_id
-             AND membership.room_id=room.id
-           JOIN identities i ON i.id=membership.identity_id
-           WHERE membership.removed_at IS NULL AND i.hidden_from_roster=false
+           JOIN memberships roster_member ON roster_member.workspace_id=room.workspace_id
+             AND roster_member.room_id=COALESCE(room.parent_id,room.id)
+           JOIN identities i ON i.id=roster_member.identity_id
+           WHERE roster_member.removed_at IS NULL AND i.hidden_from_roster=false
            ORDER BY (i.id<>$2),i.id LIMIT (SELECT CASE WHEN parent_id IS NULL THEN 2147483647
              ELSE ${ROOM_VIEW_MEMBER_LIMIT} END FROM authorized_room)
          ), turn_rows AS (
@@ -3119,7 +3126,8 @@ export class PhoneService {
                SELECT body,updated_at FROM live_outputs
                WHERE agent_id=member.identity_id AND kind='presence'
                ORDER BY updated_at DESC LIMIT 1) presence ON true
-             WHERE member.room_id=$1 AND member.removed_at IS NULL
+             WHERE member.room_id=(SELECT COALESCE(parent_id,id) FROM rooms WHERE id=$1)
+               AND member.removed_at IS NULL
                AND member.identity_id=ANY($3::text[])),'[]'::jsonb) presence,
            COALESCE((SELECT jsonb_agg(jsonb_build_object('id',m.id,
              'tagged_ids',${taggedIdentityIdsSql('m')}))
@@ -3602,6 +3610,7 @@ export class PhoneService {
   }
 
   private async lockPairingIssuer(database: SqlDatabase, workspaceId: string, issuerId: string) {
+    database = new CornerAccessDatabase(database);
     await database.query(`SELECT id FROM workspaces WHERE id=$1 FOR UPDATE`, [workspaceId]);
     const issuer = await database.query(
       `SELECT id FROM memberships WHERE workspace_id=$1 AND room_id IS NULL
@@ -3700,6 +3709,7 @@ export class PhoneService {
     workspaceId: string,
     exceptIdentityId: string,
   ): Promise<{ faces: string[]; names: string[] }> {
+    database = new CornerAccessDatabase(database);
     const rows = await database.query<{
       id: string;
       name: string;
@@ -3727,6 +3737,7 @@ export class PhoneService {
     name: string,
     lockedWorkspaces = lockIdentityHandleWorkspaces(database, exceptIdentityId, [workspaceId]),
   ): Promise<string> {
+    database = new CornerAccessDatabase(database);
     const workspaceIds = await lockedWorkspaces;
     const rows = await database.query<{ handle: string }>(
       `SELECT identity.handle
@@ -4883,6 +4894,7 @@ export class PhoneService {
     if (!/^[0-9a-f]{64}$/.test(id)) throw new Error('messageId is invalid');
     const attachments = JSON.stringify(input.attachments ?? []);
     return this.database.transaction(async (database) => {
+      database = await prepareCornerCompatibility(database, input.roomId, author);
       const write = (await database.query<{
         inserted: boolean;
         retry: boolean;
@@ -4931,6 +4943,7 @@ export class PhoneService {
         [id, input.roomId, author, input.text, attachments, SYSTEM_IDENTITY_ID],
       )).rows[0];
       if (!write) throw new Error('room access denied');
+      database = new CornerAccessDatabase(database);
       if (!write.writable) throw new Error('spectator access is read-only (access denied)');
       if (author !== SYSTEM_IDENTITY_ID && write.system_dm)
         throw new Error('this is a read-only system thread; only @system may post here (access denied)');
@@ -5169,6 +5182,7 @@ export class PhoneService {
   ): Promise<RoomViewMessage | null> {
     if (!/^[0-9a-f]{64}$/.test(input.messageId)) throw new Error('messageId is invalid');
     await this.database.transaction(async (database) => {
+      database = await prepareCornerCompatibility(database, input.roomId, viewerId);
       const deleted = await database.query<{ author_id: string; deleted_by: string }>(
         `UPDATE messages message SET deleted_at=COALESCE(message.deleted_at,now()),
            deleted_by=COALESCE(message.deleted_by,$3),text='',attachments='[]'::jsonb,reactions='{}'::jsonb
@@ -5187,6 +5201,7 @@ export class PhoneService {
          RETURNING message.author_id,message.deleted_by`,
         [input.messageId, input.roomId, viewerId],
       );
+      database = new CornerAccessDatabase(database);
       const row = deleted.rows[0];
       if (!row) throw new Error('message is not available for deletion');
       // The deleted row keeps its place and time and reads as a system line
@@ -5997,11 +6012,11 @@ export class PhoneService {
       const member = (
         await database.query<{ role: string }>(
           `SELECT room_member.role FROM memberships room_member
-         JOIN rooms room ON room.id=room_member.room_id
+         JOIN rooms room ON room_member.room_id=COALESCE(room.parent_id,room.id)
          JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
            AND workspace_member.room_id IS NULL AND workspace_member.identity_id=room_member.identity_id
            AND workspace_member.removed_at IS NULL
-         WHERE room_member.room_id=$1 AND room_member.identity_id=$2 AND room_member.removed_at IS NULL
+         WHERE room.id=$1 AND room_member.identity_id=$2 AND room_member.removed_at IS NULL
          FOR SHARE OF room_member,workspace_member`,
           [input.roomId, viewerId],
         )
@@ -6055,14 +6070,14 @@ export class PhoneService {
       await lockCornerLifecycle(database, roomId);
       const access = await database.query<{ workspace_role: string }>(
         `SELECT workspace_member.role workspace_role FROM memberships room_member
-         JOIN rooms room ON room.id=room_member.room_id
+         JOIN rooms room ON room_member.room_id=COALESCE(room.parent_id,room.id)
          JOIN memberships workspace_member
            ON workspace_member.workspace_id=room.workspace_id
           AND workspace_member.room_id IS NULL
           AND workspace_member.identity_id=room_member.identity_id
           AND workspace_member.removed_at IS NULL
          JOIN identities viewer ON viewer.id=room_member.identity_id AND viewer.kind='human'
-         WHERE room_member.room_id=$1 AND room_member.identity_id=$2
+         WHERE room.id=$1 AND room_member.identity_id=$2
            AND room_member.removed_at IS NULL
          FOR SHARE OF room_member,workspace_member,room,viewer`,
         [roomId, viewerId],
@@ -6127,7 +6142,7 @@ export class PhoneService {
         const access = await database.query(
           `SELECT room_member.id FROM memberships workspace_member
            JOIN rooms room ON room.workspace_id=workspace_member.workspace_id
-           JOIN memberships room_member ON room_member.room_id=room.id
+           JOIN memberships room_member ON room_member.room_id=COALESCE(room.parent_id,room.id)
              AND room_member.identity_id=workspace_member.identity_id
            WHERE room.id=$1 AND workspace_member.room_id IS NULL
              AND workspace_member.identity_id=$2 AND workspace_member.removed_at IS NULL
@@ -6456,23 +6471,6 @@ export class PhoneService {
         return false;
       }
       await database.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role,event_subscriptions)
-         SELECT workspace_id,$2,identity_id,role,
-           (SELECT COALESCE(jsonb_agg(elem),'[]'::jsonb)
-            FROM jsonb_array_elements_text(event_subscriptions) elem
-            WHERE elem=ANY($3::text[]))
-         FROM memberships
-         WHERE room_id=$1 AND removed_at IS NULL ON CONFLICT DO NOTHING`,
-        [input.roomId, id, SUBSCRIBABLE_EVENT_KINDS],
-      );
-      await database.query(
-        `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-         VALUES($1,$2,$3,'owner')
-         ON CONFLICT(room_id,identity_id) WHERE room_id IS NOT NULL
-         DO UPDATE SET role='owner',removed_at=NULL`,
-        [parent.workspace_id, id, viewerId],
-      );
-      await database.query(
         `INSERT INTO corner_facts(corner_id,commissioned_by,objective,kind,lifecycle,title_generated)
          VALUES($1,$2,'','human','{"lifecycle":"working","checks":"unknown"}',$3)`,
         [id, viewerId, input.titleGenerated === true],
@@ -6529,7 +6527,7 @@ export class PhoneService {
         await database.query<{ parent_id: string; archived_at: Date | null }>(
           `SELECT room.parent_id, room.archived_at
            FROM rooms room
-           JOIN memberships room_member ON room_member.room_id=room.id
+           JOIN memberships room_member ON room_member.room_id=COALESCE(room.parent_id,room.id)
              AND room_member.identity_id=$2 AND room_member.removed_at IS NULL
            JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
              AND workspace_member.room_id IS NULL AND workspace_member.identity_id=$2
@@ -6656,6 +6654,18 @@ export class PhoneService {
                AND (room.id=$1 OR room.parent_id=$1)`,
             [input.roomId, reviewerAgentId],
           );
+        if (current?.reviewer_agent_id) await database.query(
+          `UPDATE corner_person_state state SET event_subscriptions=state.event_subscriptions-'check-passed'
+           FROM rooms corner WHERE corner.id=state.corner_id AND corner.parent_id=$1
+             AND state.identity_id=$2 AND state.event_subscriptions ? 'check-passed'`,
+          [input.roomId,current.reviewer_agent_id],
+        );
+        if (reviewerAgentId) await database.query(
+          `UPDATE corner_person_state state SET event_subscriptions=state.event_subscriptions||'["check-passed"]'::jsonb
+           FROM rooms corner WHERE corner.id=state.corner_id AND corner.parent_id=$1
+             AND state.identity_id=$2 AND state.event_subscriptions IS NOT NULL
+             AND NOT state.event_subscriptions ? 'check-passed'`, [input.roomId,reviewerAgentId],
+        );
       }
       if (reviewerAgentId !== undefined)
         await reconcileConfiguredCornerReviewers(database, input.roomId);
@@ -8238,10 +8248,22 @@ export class PhoneService {
       throw new Error('invalid push state');
     return this.database.transaction(async (database) => {
       const updated = await database.query<{ push_muted: boolean }>(
-        `UPDATE memberships SET push_muted=COALESCE($3,push_muted)
-         WHERE room_id=$1 AND identity_id=$2 AND removed_at IS NULL
-           AND EXISTS (SELECT 1 FROM identities WHERE id=$2 AND kind='human')
-         RETURNING push_muted`,
+        `WITH surface AS (
+           SELECT room.id,room.parent_id,member.push_muted FROM rooms room
+           JOIN memberships member ON member.room_id=room.id
+             AND member.identity_id=$2 AND member.removed_at IS NULL
+           JOIN identities person ON person.id=$2 AND person.kind='human' WHERE room.id=$1
+         ), room_update AS (
+           UPDATE memberships member SET push_muted=COALESCE($3,member.push_muted) FROM surface
+           WHERE surface.parent_id IS NULL AND member.room_id=surface.id AND member.identity_id=$2
+           RETURNING member.push_muted
+         ), corner_update AS (
+           INSERT INTO corner_person_state(corner_id,identity_id,push_muted)
+           SELECT id,$2,$3 FROM surface WHERE parent_id IS NOT NULL AND $3 IS NOT NULL
+           ON CONFLICT(corner_id,identity_id) DO UPDATE SET push_muted=EXCLUDED.push_muted
+           RETURNING push_muted
+         ) SELECT * FROM room_update UNION ALL SELECT * FROM corner_update
+           UNION ALL SELECT push_muted FROM surface WHERE parent_id IS NOT NULL AND $3 IS NULL`,
         [input.roomId, viewerId, input.muted ?? null],
       );
       if (!updated.rows[0]) throw new Error('room not found');
@@ -8565,7 +8587,7 @@ export class PhoneService {
         await this.database.query(
           `SELECT 1 FROM memberships room_member
            JOIN rooms room ON room.id=room_member.room_id
-           WHERE room_member.room_id=$1 AND room_member.identity_id=$2
+           WHERE room.id=$1 AND room_member.identity_id=$2
              AND room_member.removed_at IS NULL
              AND ($2=$3 OR EXISTS(
                SELECT 1 FROM memberships workspace_member

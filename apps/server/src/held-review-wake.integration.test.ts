@@ -48,7 +48,7 @@ beforeAll(async () => {
   await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Held review proof')`, [WORKSPACE]);
   await db.query(`INSERT INTO rooms(id,workspace_id,name,reviewer_agent_id) VALUES($1,$2,'Team',$3)`, [PARENT, WORKSPACE, REVIEWER]);
   await db.query(`INSERT INTO rooms(id,workspace_id,parent_id,created_by,name) VALUES($1,$2,$3,$4,'fix')`, [CORNER, WORKSPACE, PARENT, HUMAN]);
-  for (const room of [null, PARENT, CORNER])
+  for (const room of [null, PARENT])
     for (const who of [HUMAN, WORKER, REVIEWER])
       await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [WORKSPACE, room, who]);
   const auth = new TokenAuth(db, async () => ({ subject: 'proof', login: 'proof' }));

@@ -358,7 +358,7 @@ export class ConnectionPresence {
          p.body->>'lifecycleId' lifecycle,
          COALESCE(p.body->>'evidenceNonce',p.body->>'lifecycleId',p.body->>'observedAt') evidence_token,
          m.system_event->>'kind' system_kind
-       FROM memberships member
+       FROM effective_memberships member
        JOIN agents a ON a.agent_id=member.identity_id
        JOIN identities target ON target.id=a.agent_id
        JOIN rooms r ON r.id=member.room_id AND r.archived_at IS NULL
@@ -427,7 +427,7 @@ export class ConnectionPresence {
         owner_id: string;
         author_member: boolean;
       }>(
-        `SELECT a.access_policy,a.owner_id,EXISTS(SELECT 1 FROM memberships
+        `SELECT a.access_policy,a.owner_id,EXISTS(SELECT 1 FROM effective_memberships
          WHERE identity_id=$3 AND room_id=$2 AND removed_at IS NULL) author_member
        FROM agents a JOIN rooms r ON r.id=$2 AND r.archived_at IS NULL
        WHERE a.agent_id=$1`,
@@ -456,7 +456,7 @@ export class ConnectionPresence {
          )
          AND (p.body->>'lifecycleId') IS NOT DISTINCT FROM $2::text
          AND COALESCE(p.body->>'evidenceNonce',p.body->>'lifecycleId',p.body->>'observedAt')=$7
-         AND EXISTS(SELECT 1 FROM memberships WHERE identity_id=$1 AND room_id=$5 AND removed_at IS NULL)
+         AND EXISTS(SELECT 1 FROM effective_memberships WHERE identity_id=$1 AND room_id=$5 AND removed_at IS NULL)
          AND NOT EXISTS(SELECT 1 FROM agent_turns t WHERE t.agent_id=$1 AND t.room_id=$5
            AND COALESCE(t.generation_id,'') NOT LIKE 'pending:%'
            AND (t.request_id=$3 OR t.created_at >= $6::timestamptz))`,
@@ -476,7 +476,7 @@ export class ConnectionPresence {
     // Presence is one canonical row; the unanswered-delivery fact is per request
     // and per Room. Losing the demotion race must not skip the Room line.
     const unanswered = await this.database.query(
-      `SELECT 1 FROM memberships member
+      `SELECT 1 FROM effective_memberships member
        WHERE member.identity_id=$1 AND member.room_id=$2 AND member.removed_at IS NULL
          AND NOT EXISTS(
            SELECT 1 FROM agent_turns turn
@@ -763,7 +763,7 @@ async function writeAgentAnnouncement(
     roomId ??
     (
       await db.query<{ room_id: string }>(
-        `SELECT room_id FROM memberships
+        `SELECT room_id FROM effective_memberships
          WHERE identity_id=$1 AND room_id IS NOT NULL AND removed_at IS NULL LIMIT 1`,
         [agentId],
       )
@@ -855,7 +855,7 @@ export async function recordAgentEvidence(
      ), target AS MATERIALIZED (
        SELECT membership.room_id,previous.room_id previous_room,previous.body
        FROM (SELECT 1) singleton LEFT JOIN previous ON true
-       JOIN memberships membership
+       JOIN effective_memberships membership
          ON membership.room_id=COALESCE($2::uuid,previous.room_id)
         AND membership.identity_id=$1 AND membership.removed_at IS NULL
      ), written AS (
@@ -895,7 +895,7 @@ async function broadcastAgentPresence(
     room_id: string;
     body: { status: 'online' | 'offline'; observedAt: number; held?: unknown };
   }>(
-    `SELECT m.room_id,p.body FROM memberships m
+    `SELECT m.room_id,p.body FROM effective_memberships m
         JOIN LATERAL(SELECT body FROM live_outputs WHERE agent_id=$1 AND kind='presence'
           ORDER BY updated_at DESC LIMIT 1)p ON true
         WHERE m.identity_id=$1 AND m.room_id IS NOT NULL AND m.removed_at IS NULL`,

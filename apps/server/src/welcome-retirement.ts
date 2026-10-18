@@ -151,7 +151,7 @@ export async function retireWelcomeWorkspace(
         `UPDATE daemon_tokens SET revoked_at=now()
          WHERE agent_id=ANY($1) AND revoked_at IS NULL
            AND NOT EXISTS (
-             SELECT 1 FROM memberships m
+             SELECT 1 FROM effective_memberships m
              WHERE m.identity_id=daemon_tokens.agent_id AND m.removed_at IS NULL
                AND m.workspace_id<>$2
            )`,

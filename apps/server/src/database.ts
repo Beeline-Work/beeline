@@ -1,3 +1,4 @@
+import { CORNER_PERSON_STATE_SCHEMA, migrateCornerPersonState } from './corner-person-state.js';
 import { deleteArchivedCornerWakeSources } from './migrations/archived-corner-wakes.js';
 import { retireBotDirectMessages } from './migrations/one-system-thread.js';
 import { VOICE_SCHEMA } from './voice-schema.js';
@@ -39,10 +40,7 @@ import { backfillWorkflowRunTimers, backfillWorkflowSkillDescriptions, closeStal
 import { retireAgentClasses } from './agent-class-retirement.js';
 import { upgradeGrantPolicy, withdrawSupersededGrantAsks } from './grant-policy-upgrade.js';
 import { backfillRegistryApps } from './app-connections.js';
-import {
-  backfillInheritedCornerMemberships,
-  syncTopLevelSharedRoomRoles,
-} from './membership-join.js';
+import { syncTopLevelSharedRoomRoles } from './membership-join.js';
 import { POSTGRES_LIVE_SCHEMA } from './postgres-live.js';
 import { TERMINAL_PUSH_CLAIMS_SQL } from './push-claim-cleanup.js';
 import { askingMessageSql, cardExpiresAtSql, EXPIRING_CARD_TYPES } from './needs-you.js';
@@ -3183,6 +3181,7 @@ export async function migrate(
      ((CASE WHEN private_payload->>'originCornerId' ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
        THEN (private_payload->>'originCornerId')::uuid ELSE room_id END))`,
   ));
+  await ddlScript('corner person state', CORNER_PERSON_STATE_SCHEMA);
   await ddlScript('corner owed schema', cornerOwedSchemaSql());
   await ddlScript('corner attention schema', CORNER_ATTENTION_SCHEMA);
   await ddlScript('corner follows schema', cornerFollowsSchemaSql());
@@ -3234,7 +3233,7 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
     workflowBackfillOnce(database, 'corner-names-continuous-v1', hyphenateCornerNames));
   await dataStep('corner follows backfill', () =>
     workflowBackfillOnce(database, 'corner-follows-v1', backfillCornerFollows));
-  await dataStep('inherited corner memberships', () => backfillInheritedCornerMemberships(database));
+  await dataStep('corner person state migration', () => migrateCornerPersonState(database));
   await dataStep('stored corner workflows', () => deleteStoredCornerWorkflows(database));
   await dataStep('corner lifecycle runs', () => backfillCornerLifecycleRuns(database));
   await dataStep('feedback triage workflow', () =>

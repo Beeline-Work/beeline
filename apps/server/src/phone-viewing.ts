@@ -56,7 +56,7 @@ export class PhoneViewing {
     const inserted = await this.database.query(
       `INSERT INTO room_push_views(room_id,identity_id,session_id,instance_id,expires_at)
        SELECT member.room_id,member.identity_id,$3,$4,NULL
-       FROM memberships member
+       FROM effective_memberships member
        JOIN identities person ON person.id=member.identity_id AND person.kind='human'
        WHERE member.room_id=$1 AND member.identity_id=$2 AND member.removed_at IS NULL
        ON CONFLICT(room_id,identity_id,session_id) DO UPDATE

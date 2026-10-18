@@ -56,12 +56,6 @@ beforeEach(async () => {
     `INSERT INTO rooms(id,workspace_id,parent_id,name,created_by) VALUES($1,$2,$3,'Corner',$4)`,
     [C, WS, ROOM, COMMANDER],
   );
-  for (const identity of [HUMAN, COMMANDER, WORKER, REVIEWER])
-    await db.query(
-      `INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-    VALUES($1,$2,$3,'member')`,
-      [WS, C, identity],
-    );
   await db.query(
     `INSERT INTO corner_facts(corner_id,owner_agent_id,worker_agent_id,commissioned_by,objective)
     VALUES($1,$2,$2,$3,'Truthful corner states')`,

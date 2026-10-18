@@ -1,3 +1,4 @@
+import { reserveServiceReviewWorkspaces } from './service-review.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
 import { workflowTimerId } from './workflow-timer-id.js';
 import { workflowRunIsLiveSql } from './workflow-run-saved-status.js';
@@ -942,6 +943,11 @@ async function enterState(
     : undefined;
   const exhausted = Boolean(nextResolution && 'exhausted' in nextResolution);
   const nextAgentId = nextResolution && !exhausted ? (nextResolution as { agentId: string }).agentId : null;
+  if (contract.name === FEEDBACK_TRIAGE_SLUG && toState === 'browse') {
+    if (!nextAgentId || nextAgentId !== roleBindings.triager)
+      throw new Error('Service review must use the scheduled triager');
+    await reserveServiceReviewWorkspaces(db,nextAgentId,runId);
+  }
   const attempt = run.seq + 1;
   const cardId = randomBytes(32).toString('hex');
   const status = isTerminal ? (nextState as { status: 'done' | 'failed' }).status : undefined;

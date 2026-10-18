@@ -201,11 +201,22 @@ settings. It defaults on; turning it off excludes that workspace from browsing,
 including subsequent pages of a read already in progress. Feedback reports remain
 available to triage regardless of this flag.
 
-The browser role has a separate one-hour step in the existing run. It uses only
-the operator-granted `service-review-cli` command. `reserve` selects up to five
-workspaces per New York calendar day, prioritizing signups within seven days and
-then seven-day message activity, with no repeat within 14 days. `read` pages through
-all messages and activity and rechecks the workspace flag on every page.
+The scheduled triager owns a separate one-hour browse step; no web browser or
+separate agent binding is involved. The workflow engine reserves eligible
+workspaces on entering that step. It then reads through the read-only
+`beeline-prod-db` credential using Trusty Squire `use_credential`, calling the
+STABLE SQL functions `service_review_targets(agentId,runId)` and
+`service_review_page(agentId,runId,workspaceId,afterId)`.
+
+Both reservation and every read check that the configured model provider appears
+in the published service-review inventory. Currently the scheduled Claude triager
+uses Anthropic. A missing, unknown or changed provider refuses the step and its
+read-only queries. Tests compare the model-provider inventory to the rendered
+page. Workspace opt-out, the notice period, current run/agent reservation and
+pagination are rechecked server-side; raw table reads are not a fallback.
+
+Reservations cap the day at five workspaces, prioritize signups within seven days
+then seven-day message activity, and do not repeat a workspace within 14 days.
 
 The `service_review_rollout` row starts disabled. Browsing requires a recorded
 notice delivery time and an effective date at least 14 days later, and waits until

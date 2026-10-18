@@ -9,6 +9,8 @@ import type { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
 import { PhoneService } from './phone-service.js';
 import { reserveServiceReviewWorkspaces, readServiceReviewPage } from './service-review.js';
+import { readFileSync } from 'node:fs';
+import { SERVICE_REVIEW_MODEL_PROVIDERS } from './service-review.js';
 import { sendServiceReviewNotices } from './service-review-notice.js';
 import { POSTGRES_LIVE_CHANNEL, PostgresLiveListener, type LivePgClient } from './postgres-live.js';
 import { createBeelineServer } from './server.js';
@@ -19,6 +21,7 @@ import { PgliteDatabase } from './test-support.js';
 // another session's socket, and never a viewer outside the shared scope.
 const VIEWER = 'a'.repeat(64);
 const MATE = 'b'.repeat(64);
+const REVIEW_AGENT = 'd'.repeat(64);
 const OUTSIDER = 'c'.repeat(64);
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ELSEWHERE = '22222222-2222-4222-8222-222222222222';
@@ -74,6 +77,8 @@ describe('live Workspace and identity changes across sessions', () => {
     await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES
       ($1,NULL,$3,'owner'),($1,NULL,$4,'member'),($2,NULL,$5,'owner')`,
       [WORKSPACE, ELSEWHERE, VIEWER, MATE, OUTSIDER]);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Synthetic reviewer')`,[REVIEW_AGENT]);
+    await database.query(`INSERT INTO agents(agent_id,owner_id,harness,selected_model) VALUES($1,$2,'claude','default')`,[REVIEW_AGENT,VIEWER]);
     const live = new LiveHub();
     listener = new PostgresLiveListener(database, live, () => new PgliteListenClient(database), 1);
     void listener.run();
@@ -149,16 +154,16 @@ describe('live Workspace and identity changes across sessions', () => {
   });
 
   it('keeps browsing off until the notice period, skips opted-out workspaces and rotates visits', async () => {
-    expect(await reserveServiceReviewWorkspaces(database)).toEqual([]);
+    expect(await reserveServiceReviewWorkspaces(database,REVIEW_AGENT,'test-run')).toEqual([]);
     await database.query(`UPDATE service_review_rollout SET notice_sent_at=now()-interval '15 days',
       effective_at=now()-interval '1 day' WHERE id=1`);
     const phone = new PhoneService(database, 'http://local.test');
     await phone.execute('updateWorkspace', { workspaceId: WORKSPACE, allowFixSweep: false }, VIEWER);
-    expect(await reserveServiceReviewWorkspaces(database)).toEqual([ELSEWHERE]);
-    expect(await reserveServiceReviewWorkspaces(database)).toEqual([]);
+    expect(await reserveServiceReviewWorkspaces(database,REVIEW_AGENT,'test-run')).toEqual([ELSEWHERE]);
+    expect(await reserveServiceReviewWorkspaces(database,REVIEW_AGENT,'test-run')).toEqual([]);
     await phone.execute('updateWorkspace', { workspaceId: WORKSPACE, allowFixSweep: true }, VIEWER);
-    expect(await reserveServiceReviewWorkspaces(database)).toEqual([WORKSPACE]);
-    expect(await reserveServiceReviewWorkspaces(database)).toEqual([]);
+    expect(await reserveServiceReviewWorkspaces(database,REVIEW_AGENT,'test-run')).toEqual([WORKSPACE]);
+    expect(await reserveServiceReviewWorkspaces(database,REVIEW_AGENT,'test-run')).toEqual([]);
   });
 
   it('reads every reserved page and stops immediately after a workspace opts out', async () => {
@@ -168,16 +173,30 @@ describe('live Workspace and identity changes across sessions', () => {
       SELECT lpad(n::text,4,'0'),$1,$2,'Synthetic message' FROM generate_series(1,205) n`,[room,VIEWER]);
     await database.query(`UPDATE service_review_rollout SET notice_sent_at=now()-interval '15 days',
       effective_at=now()-interval '1 day' WHERE id=1`);
-    await reserveServiceReviewWorkspaces(database);
-    const first = await readServiceReviewPage(database,WORKSPACE);
+    await reserveServiceReviewWorkspaces(database,REVIEW_AGENT,'test-run');
+    const first = await database.transaction(async (db) => {
+      await db.query('SET TRANSACTION READ ONLY');
+      return readServiceReviewPage(db,REVIEW_AGENT,'test-run',WORKSPACE);
+    });
     expect(first.rows).toHaveLength(200);
     const phone = new PhoneService(database, 'http://local.test');
     await phone.execute('updateWorkspace', {workspaceId:WORKSPACE,allowFixSweep:false},VIEWER);
-    expect((await readServiceReviewPage(database,WORKSPACE,first.rows.at(-1)!.id)).rows).toEqual([]);
+    expect((await readServiceReviewPage(database,REVIEW_AGENT,'test-run',WORKSPACE,first.rows.at(-1)!.id)).rows).toEqual([]);
     await phone.execute('updateWorkspace', {workspaceId:WORKSPACE,allowFixSweep:true},VIEWER);
-    const last = await readServiceReviewPage(database,WORKSPACE,first.rows.at(-1)!.id);
+    const last = await readServiceReviewPage(database,REVIEW_AGENT,'test-run',WORKSPACE,first.rows.at(-1)!.id);
     expect(last.rows).toHaveLength(5);
-    expect((await readServiceReviewPage(database,WORKSPACE,last.rows.at(-1)!.id)).rows).toEqual([]);
+    expect((await readServiceReviewPage(database,REVIEW_AGENT,'test-run',WORKSPACE,last.rows.at(-1)!.id)).rows).toEqual([]);
+  });
+
+  it('refuses reserve and read-only queries after the review agent switches to an unlisted provider', async () => {
+    const html = readFileSync(new URL('../../../relay-stack/web/subprocessors/index.html',import.meta.url),'utf8');
+    const published = [...html.matchAll(/data-service-review-model-provider="([a-z]+)"/g)].map((match) => match[1]);
+    expect(published).toEqual([...SERVICE_REVIEW_MODEL_PROVIDERS]);
+    await database.query(`UPDATE agents SET harness='codex',selected_model='gpt-6' WHERE agent_id=$1`,[REVIEW_AGENT]);
+    await expect(reserveServiceReviewWorkspaces(database,REVIEW_AGENT,'test-run')).rejects.toThrow('published subprocessors');
+    await expect(database.query('SELECT * FROM service_review_targets($1,$2)',[REVIEW_AGENT,'test-run'])).rejects.toThrow('published subprocessors');
+    await expect(readServiceReviewPage(database,REVIEW_AGENT,'test-run',WORKSPACE)).rejects.toThrow('published subprocessors');
+    expect((await database.query('SELECT count(*)::int count FROM service_review_visits')).rows[0]).toEqual({count:0});
   });
 
   it('requires verified notice coverage, sends once and leaves browsing off before the effective date', async () => {
@@ -190,8 +209,8 @@ describe('live Workspace and identity changes across sessions', () => {
     expect(send).toHaveBeenCalledTimes(3);
     expect(await sendServiceReviewNotices(database,recipients,send,date)).toBe(0);
     expect(send).toHaveBeenCalledTimes(3);
-    expect(await reserveServiceReviewWorkspaces(database)).toEqual([]);
-    expect((await readServiceReviewPage(database,WORKSPACE)).rows).toEqual([]);
+    expect(await reserveServiceReviewWorkspaces(database,REVIEW_AGENT,'test-run')).toEqual([]);
+    expect((await readServiceReviewPage(database,REVIEW_AGENT,'test-run',WORKSPACE)).rows).toEqual([]);
     await expect(sendServiceReviewNotices(database,recipients,send,new Date('2026-11-14'))).rejects.toThrow('at least 14 days');
   });
 

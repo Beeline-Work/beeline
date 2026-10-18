@@ -22,7 +22,6 @@ const TRIAGE_CORNER = '20000000-0000-4000-8000-000000000302';
 const OTHER_ROOM = '20000000-0000-4000-8000-000000000303';
 const CREATOR = 'a'.repeat(64);
 const TRIAGER = 'c'.repeat(64);
-const BROWSER = 'd'.repeat(64);
 const TRIAGE_SCHEDULE = '7d7fa17b-0000-4000-8000-000000000001';
 const SWEEP_SCHEDULE = '30000000-0000-4000-8000-000000000002';
 const UNRELATED_SCHEDULE = '30000000-0000-4000-8000-000000000003';
@@ -39,7 +38,7 @@ beforeEach(async () => {
     `INSERT INTO identities(id,kind,name) VALUES($1,'human','Creator'),($2,'agent','Triager')`,
     [CREATOR, TRIAGER],
   );
-  await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [TRIAGER, CREATOR]);
+  await database.query(`INSERT INTO agents(agent_id,owner_id,harness,selected_model) VALUES($1,$2,'claude','default')`, [TRIAGER, CREATOR]);
   await database.query(`INSERT INTO workspaces(id,name) VALUES($1,'Beeline'),($2,'Other')`, [
     WORKSPACE,
     OTHER_WORKSPACE,
@@ -65,10 +64,6 @@ beforeEach(async () => {
     `INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner'),($1,NULL,$3,'member')`,
     [WORKSPACE, CREATOR, TRIAGER],
   );
-  await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Browser')`, [BROWSER]);
-  await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [BROWSER,CREATOR]);
-  await database.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role)
-    VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`, [WORKSPACE,BROWSER,ROOM]);
   const schedule = (id: string, workspaceId: string, roomId: string, message: string) =>
     database.query(
       `INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at)
@@ -148,7 +143,7 @@ describe('feedback-triage workflow', () => {
 
   it('refreshes deployed tool guidance and legacy schedule prompts despite the old completion marker', async () => {
     await backfillFeedbackTriageWorkflow(database);
-    await database.query(`DELETE FROM workflow_backfills WHERE name='feedback-triage-v5'`);
+    await database.query(`DELETE FROM workflow_backfills WHERE name='feedback-triage-v6'`);
     await database.query(`INSERT INTO workflow_backfills(name) VALUES('feedback-triage-v3') ON CONFLICT DO NOTHING`);
     await database.query(`UPDATE agent_schedules SET message=$2 WHERE id=$1`, [UNRELATED_SCHEDULE,
       'Start the feedback-triage workflow with start_workflow, binding triager to yourself, and follow the feedback-triage-steps procedure (load_workspace_skill) at each step.',
@@ -242,6 +237,27 @@ describe('feedback-triage workflow', () => {
     expect(await backfillFeedbackTriageWorkflow(database)).toBe(0);
   });
 
+  it('moves an already-New-York seeded schedule from 10 AM to 2 PM', async () => {
+    await backfillFeedbackTriageWorkflow(database);
+    await database.query(`UPDATE agent_schedules SET cadence=$2::jsonb WHERE id=$1`,
+      [TRIAGE_SCHEDULE,JSON.stringify({kind:'cron',expression:'0 10 * * *',timeZone:'America/New_York'})]);
+    expect(await backfillFeedbackTriageWorkflow(database)).toBe(1);
+    expect((await schedules()).find((row) => row.id===TRIAGE_SCHEDULE)!.cadence)
+      .toEqual({kind:'cron',expression:'0 14 * * *',timeZone:'America/New_York'});
+  });
+
+  it('refuses entering browse when the scheduled triager has an unlisted provider', async () => {
+    await backfillFeedbackTriageWorkflow(database);
+    await database.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES('guard-schedule',$1,$2,'Run triage')`,[TRIAGE_CORNER,CREATOR]);
+    const turn = cornerTurn('guard-schedule');
+    const {runId} = await startWorkflow(database,turn,{name:'feedback-triage',roleBindings:{triager:TRIAGER}});
+    await handoff(database,turn,{runId,outcome:'skipped',contents:{fixedPullRequests:'none',skipReason:'none',unnotifiedPullRequests:'none'}});
+    await database.query(`UPDATE agents SET harness='codex',selected_model='gpt-6' WHERE agent_id=$1`,[TRIAGER]);
+    await expect(handoff(database,turn,{runId,outcome:'nothing_new',contents:{problems:[]},attempt:1}))
+      .rejects.toThrow('published subprocessors');
+    expect((await database.query('SELECT count(*)::int count FROM service_review_visits')).rows[0]).toEqual({count:0});
+  });
+
   it('lets the scheduled agent find, read and start it right after install, with no setting', async () => {
     await backfillFeedbackTriageWorkflow(database);
     await database.query(
@@ -261,7 +277,7 @@ describe('feedback-triage workflow', () => {
     expect(steps.markdown).toContain('## dispatch');
     const started = await startWorkflow(database, turn, {
       name: 'feedback-triage',
-      roleBindings: { triager: TRIAGER, browser: BROWSER },
+      roleBindings: { triager: TRIAGER },
     });
     expect(started.state).toBe('notify');
   });
@@ -275,7 +291,7 @@ describe('feedback-triage workflow', () => {
     const turn = cornerTurn('schedule-ran');
     const { runId } = await startWorkflow(database, turn, {
       name: 'feedback-triage',
-      roleBindings: { triager: TRIAGER, browser: BROWSER },
+      roleBindings: { triager: TRIAGER },
     });
     await expect(
       handoff(database, turn, { runId, outcome: 'skipped', contents: { fixedPullRequests: 'none' } }),

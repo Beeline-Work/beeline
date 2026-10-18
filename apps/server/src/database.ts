@@ -1,3 +1,4 @@
+import { SERVICE_REVIEW_READ_SCHEMA } from './service-review.js';
 import { CORNER_PERSON_STATE_SCHEMA, migrateCornerPersonState } from './corner-person-state.js';
 import { deleteArchivedCornerWakeSources } from './migrations/archived-corner-wakes.js';
 import { retireBotDirectMessages } from './migrations/one-system-thread.js';
@@ -757,10 +758,15 @@ CREATE TABLE IF NOT EXISTS service_review_rollout (
 );
 INSERT INTO service_review_rollout(id) VALUES(1) ON CONFLICT DO NOTHING;
 CREATE TABLE IF NOT EXISTS service_review_visits (
+  agent_id text,
+  run_id text,
   workspace_id uuid NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
   visited_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY(workspace_id,visited_at)
 );
+
+ALTER TABLE service_review_visits ADD COLUMN IF NOT EXISTS agent_id text;
+ALTER TABLE service_review_visits ADD COLUMN IF NOT EXISTS run_id text;
 
 -- Retained but unused: the workspace-level seeded-souls switch was removed
 -- (C99); every agent now always carries its seeded soul as before that
@@ -2946,6 +2952,7 @@ DO $$ BEGIN
   END IF;
 END $$;
 
+${SERVICE_REVIEW_READ_SCHEMA}
 `;
 
 export async function migrate(
@@ -3257,7 +3264,7 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
   await dataStep('stored corner workflows', () => deleteStoredCornerWorkflows(database));
   await dataStep('corner lifecycle runs', () => backfillCornerLifecycleRuns(database));
   await dataStep('feedback triage workflow', () =>
-    workflowBackfillOnce(database, 'feedback-triage-v5', backfillFeedbackTriageWorkflow));
+    workflowBackfillOnce(database, 'feedback-triage-v6', backfillFeedbackTriageWorkflow));
   await dataStep('workflow skill summary/does', () =>
     workflowBackfillOnce(database, 'workflow-descriptions-v1', backfillWorkflowSkillDescriptions));
   await dataStep('repair workflow step descriptions', () =>

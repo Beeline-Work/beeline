@@ -4,8 +4,7 @@
   "description": "Daily Beeline feedback sweep; steps: feedback-triage-steps",
   "summary": "Report merged fixes, rank new feedback, ask a person, and open fix corners.",
   "roles": [
-    "triager",
-    "browser"
+    "triager"
   ],
   "start": "notify",
   "handoffs": {
@@ -39,7 +38,7 @@
     },
     "browse": {
       "does": "Read eligible workspaces in full and add at most five redacted findings to this sweep.",
-      "role": "browser",
+      "role": "triager",
       "requires": [
         "findings",
         "reviewedCount",

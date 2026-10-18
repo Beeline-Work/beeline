@@ -264,7 +264,7 @@ CREATE TABLE IF NOT EXISTS corner_report_blockers (
   created_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY(corner_id,person_id)
 );
-CREATE INDEX IF NOT EXISTS corner_report_blockers_return ON corner_report_blockers(person_id,return_room_id);
+CREATE INDEX IF NOT EXISTS corner_report_blockers_return_room ON corner_report_blockers(return_room_id,person_id);
 CREATE INDEX IF NOT EXISTS corner_private_reports_origin ON agent_commands
   ((private_payload->>'fromRoomId'),(private_payload->>'authorId'),created_at DESC,id DESC)
   WHERE private_payload->>'kind'='report';

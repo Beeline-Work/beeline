@@ -131,7 +131,8 @@ export function isCornerStatusRestatement(reply: string, systemLines: readonly s
   for (const line of systemLines) {
     for (const word of statusWords(line)) {
       admitted.add(word);
-      for (const synonym of STATUS_SYNONYMS[word] ?? []) admitted.add(synonym);
+      const synonyms = Object.hasOwn(STATUS_SYNONYMS, word) ? STATUS_SYNONYMS[word]! : [];
+      for (const synonym of synonyms) admitted.add(synonym);
     }
   }
   return statusWords(text).every((word) => !word || admitted.has(word));

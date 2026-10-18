@@ -64,8 +64,8 @@ export default {
         // without bumping it. The gate hashes the installed native dependency
         // tree for both platforms, so a patch to one platform's native source
         // (apps/mobile/patches) moves the other platform's stamp too; both pins
-        // move together and previously shipped runtimes stay in `COMPAT_RUNTIMES` so
-        // installed binaries keep receiving OTA.
+        // move together. OTA automatically targets each pin plus the two highest
+        // shipped runtimes below it, excluding explicit retirements.
         orientation: "default",
         icon: "./sources/assets/images/icon.png",
         scheme,

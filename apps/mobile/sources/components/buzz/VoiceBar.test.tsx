@@ -88,6 +88,11 @@ it('header lists only humans with the viewer first and offers Join after leaving
     const text=renderer.root.findAllByType('Text').map((node:any)=>React.Children.toArray(node.props.children)
       .filter(value=>typeof value==='string').join('')).join('');
     expect(text).toContain('You, Sam'); expect(text).not.toContain('Ruby');
+    const leftCall = {...call,participants:call.participants.filter(person=>person.pubkey!=='alex')};
+    await act(async()=>renderer.update(<VoiceCallCard call={leftCall} viewer="alex" joined={false} onJoin={join} />));
+    const leftText=renderer.root.findAllByType('Text').map((node:any)=>React.Children.toArray(node.props.children)
+      .filter(value=>typeof value==='string').join('')).join('');
+    expect(leftText).toContain('Sam'); expect(leftText).not.toContain('You'); expect(leftText).not.toContain('Ruby');
     await act(async()=>renderer.root.findByProps({testID:'voice-call-join'}).props.onPress());
     expect(join).toHaveBeenCalledOnce();
     await act(async()=>renderer.update(<VoiceCallCard call={call} viewer="alex" joined onJoin={join} />));

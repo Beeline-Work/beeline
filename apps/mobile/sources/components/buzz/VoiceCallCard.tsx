@@ -1,3 +1,4 @@
+import { voiceCallHumanNames } from '@/buzz/voice-call-members';
 import * as React from 'react';
 import { Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
@@ -17,8 +18,7 @@ export function VoiceCallCard({ call, joined, onJoin, connecting = false, viewer
   return <View style={styles.row} testID="voice-call-header">
     <View style={styles.pill}>
       <View style={styles.dot} />
-      <Text style={styles.title} numberOfLines={1}>Call · {voiceDuration(now - call.startedAt)} · {call.participants
-        .filter(p => p.kind === 'human').sort((a, b) => Number(b.pubkey === viewer) - Number(a.pubkey === viewer)).map(p => p.pubkey === viewer ? 'You' : p.name).join(', ')}</Text>
+      <Text style={styles.title} numberOfLines={1}>Call · {voiceDuration(now - call.startedAt)} · {voiceCallHumanNames(call, viewer)}</Text>
       {!joined && <Pressable onPress={onJoin} disabled={connecting} hitSlop={8}
         accessibilityState={{ busy: connecting }} accessibilityRole="button" accessibilityLabel="Join call"
         style={styles.join} testID="voice-call-join">

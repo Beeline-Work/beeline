@@ -1,5 +1,7 @@
 # Revision 7 owner review
 
+This initial capture set was rejected by Ruby. Use the [revised capture set](../owner-review-r7-revised/README.md) for owner review.
+
 Seven full-phone, unedited Android captures from the normal Experiments Room. The app uses its real Room screen, server-indexed reads, transcript, existing System lines and composer. Bone is selected. These replace revision 6's four captures for owner review; the owner hold remains.
 
 | State | Capture | Artifact |

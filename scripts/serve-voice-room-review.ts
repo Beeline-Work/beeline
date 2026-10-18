@@ -22,8 +22,19 @@ await db.query(`INSERT INTO agents(agent_id,owner_id,soul) VALUES($1,$2,'{}')`,[
 await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Beeline')`,[W]);
 await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Experiments')`,[R,W]);
 for (const id of [H,SECOND,A]) await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'owner'),($1,$3,$2,'member')`,[W,id,R]);
+for (const [name, text, minutes] of [['General','The stand-up notes are ready for tomorrow.',12],['Design','The revised call controls use our existing brass and ink.',28],['Mobile','Android checks are complete. Ready for review.',45],['Launch','We will keep the release on hold until the owner is ready.',80]] as const) {
+  const room = randomUUID();
+  await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,$3)`,[room,W,name]);
+  for (const id of [H,SECOND,A]) await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,[W,room,id]);
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text,created_at) VALUES($1,$2,$3,$4,now()-($5::text||' minutes')::interval)`,[randomUUID().replaceAll('-','').padEnd(64,'0'),room,SECOND,text,minutes]);
+}
 for (const [who,text,minutes] of [[H,'Morning! Let’s use this call for the mobile stand-up.',8],[SECOND,'Sounds good. I have the Android checks ready.',7],[A,'The call changes are ready to walk through together.',6],[H,'Great. Sam, what did you find in the latest build?',5],[SECOND,'The Room stays open while I listen. Let’s check the end controls next.',4]] as const) {
  await db.query(`INSERT INTO messages(id,room_id,author_id,text,created_at) VALUES($1,$2,$3,$4,now()-($5::text||' minutes')::interval)`,[randomUUID().replaceAll('-','').padEnd(64,'0'),R,who,text,minutes]);
+}
+for (let index=0;index<18;index++) {
+  const who=index%2?SECOND:H;
+  const notes=['I checked the Room list on the latest build.','The Android microphone control stays in the same place.','Let’s keep the call open while everyone listens.','I will add the review notes here after the stand-up.'];
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text,created_at) VALUES($1,$2,$3,$4,now()-($5::text||' minutes')::interval)`,[randomUUID().replaceAll('-','').padEnd(64,'0'),R,who,notes[index%notes.length],50-index]);
 }
 const phone=new PhoneService(db,'http://10.0.2.2:18097');
 const inputs: ((event: FluxEvent) => void)[] = [];
@@ -39,6 +50,11 @@ const service = new Service(db,live,{url:'ws://127.0.0.1:17890',apiKey:'devkey',
   speech:{voices:['luna'], async *synthesize(){ const pcm = Buffer.alloc(speechMs * 48); for(let i=0;i<speechMs * 24;i++) pcm.writeInt16LE(Math.round(2000*Math.sin(i/8)),i*2); yield pcm; }},
   stt:async onEvent => { inputs.push(onEvent); const index=microphoneFrames.push(0)-1; return {send(){microphoneFrames[index]!++;},close(){}}; },
 });
+// Real deployments fan out committed database changes; the disposable rig sends the same invalidation.
+for (const method of ['recordHuman','recordAnswer'] as const) {
+  const original=service[method].bind(service) as (...args:any[])=>Promise<any>;
+  (service as any)[method]=async (...args:any[])=>{const value=await original(...args);live.publish({type:'invalidate',roomId:R,reason:'voice-transcript'});return value;};
+}
 const nativeHuman = process.env.SILENCE_PROOF_ANDROID_FIRST === '1' ? H : SECOND;
 const partner = nativeHuman === H ? SECOND : H;
 const first = await service.join(R,partner);
@@ -78,6 +94,7 @@ const server = createServer((req,res)=> { void (async()=>{
   else if(url.pathname===`/v1/phone/rooms/${R}`) value=await phone.readRoom(R,H);
   else if(url.pathname.endsWith('/welcome-cards')) value=await phone.readWelcomeCards(H);
   else if(url.pathname.includes('/operations/')) value=url.pathname.endsWith('workspaceGitHubAccess')?{installed:true,installations:[],candidates:[],githubReconnectNeeded:false}:{};
+  else if(url.pathname.endsWith('/read')) { await phone.markRead(R,body.messageId,H); value={}; }
   else if(url.pathname.includes('/history')) value=await phone.readHistory(R,H);
 
   else if(req.url==='/observe') { observations.push(body); value={}; }
@@ -92,7 +109,7 @@ const server = createServer((req,res)=> { void (async()=>{
     await runtime.refresh();
   }
   else if(req.url==='/work-finish') { await db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE source_message_id=$1`,[workSource]); await runtime.refresh(); }
-  else if(req.url==='/say') { speechMs=body.speechMs??100; await runtime.utterance(H,body.text??'How are you doing today?'); speechMs=100; }
+  else if(req.url==='/say') { speechMs=body.speechMs??100; const current=await service.current(R,H); if(!current)throw new Error('No active call'); const row=(await db.query<any>('SELECT * FROM voice_calls WHERE id=$1',[current.id])).rows[0]; await (await service.ensureRuntime(row))!.utterance(H,body.text??'How are you doing today?'); speechMs=100; }
   else if(req.url==='/partner-leave') { await service.leave(first.call.id,partner); }
   else if(req.url==='/partner-rejoin') { await connectPartner(await service.join(R,partner)); }
   else if(req.url==='/partner-drop') { await client.disconnect(); }

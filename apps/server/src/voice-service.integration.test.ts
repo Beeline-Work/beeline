@@ -342,7 +342,10 @@ it('quiet termination puts its reason on the ended card and explicit leave omits
   await service.leave(first.call.id, SECOND, false, second.sessionId);
   await db.query(`UPDATE voice_calls SET runtime_owner=$2,runtime_until=now()+interval '1 minute' WHERE id=$1`, [first.call.id, service.owner]);
   await db.query(`UPDATE agent_commands SET state='complete',completed_at=now() WHERE state IN ('pending','claimed')`);
+  await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'That answers my question.')`, ['f'.repeat(64),R,H]);
   expect(await service.endInactive(first.call.id, service.owner, () => true)).toBe(true);
+  const endedRoom=await new PhoneService(db,'http://proof').readRoom(R,H);
+  expect(endedRoom?.messages.at(-1)?.voiceCall?.id).toBe(first.call.id);
   expect((await new PhoneService(db,'http://proof').readRoom(R,H))?.messages.find(m=>m.voiceCall?.id===first.call.id)?.voiceCall?.endReason).toBe('silence');
   expect((await new PhoneService(db,'http://proof').readRoom(R,H))?.messages.find(m=>m.voiceCall?.id===first.call.id)?.text)
     .toMatch(/^Voice call ended · \d+:\d{2} · No one spoke for 60s$/);

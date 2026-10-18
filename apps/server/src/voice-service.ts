@@ -271,7 +271,7 @@ export class VoiceService {
       verb: row.ended_at ? 'ended' : 'started',
       ...(row.ended_at ? { consequence: voiceDuration((row.ended_at.getTime() - row.started_at.getTime()) / 1000) + (row.end_reason === 'silence' ? ' · No one spoke for 60s' : '') } : {}) },
       call as unknown as Record<string, unknown>);
-    if (row.ended_at) await db.query(`UPDATE messages SET presentation=$2 WHERE id=$1`, [row.message_id, 'system']);
+    if (row.ended_at) await db.query(`UPDATE messages SET presentation=$2,created_at=$3 WHERE id=$1`, [row.message_id, 'system', row.ended_at]);
   }
 
   async leave(callId: string, humanId: string, disconnected = false, sessionId?: string, inactivity?: { owner: string; stillInactive(): boolean; ended: boolean }): Promise<void> {

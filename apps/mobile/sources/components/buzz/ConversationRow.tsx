@@ -1,3 +1,4 @@
+import { voiceCallHumanNames } from '@/buzz/voice-call-members';
 import React from 'react';
 import { Pressable, Text, View } from 'react-native';
 import Animated, {
@@ -153,8 +154,7 @@ export function ConversationRow({
               ]}
               testID={`${testID}-preview`}
             >
-              {call ? <><Text style={styles.liveVoice}>●</Text> Call · {call.participants.filter(p => p.kind === 'human').sort((a, b) => Number(b.pubkey === viewer) - Number(a.pubkey === viewer))
-                .map(p => p.pubkey === viewer ? 'You' : p.name).join(', ')}</> : showReason ? (
+              {call ? <><Text style={styles.liveVoice}>●</Text> Call · {voiceCallHumanNames(call, viewer)}</> : showReason ? (
                 showReason
               ) : (
                 <>

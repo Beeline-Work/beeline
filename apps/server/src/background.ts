@@ -868,6 +868,7 @@ export async function runMaintenance(database: SqlDatabase): Promise<void> {
  */
 export class BackgroundLeader {
   #stopped = false;
+  #running: Promise<void> | undefined;
   #client: LeaderConnection | undefined;
   #wake: (() => void) | undefined;
   #wakePending = false;
@@ -878,7 +879,11 @@ export class BackgroundLeader {
     private readonly reconciliationMs = 60_000,
   ) {}
 
-  async run(): Promise<void> {
+  run(): Promise<void> {
+    return this.#running ??= this.runLoop();
+  }
+
+  private async runLoop(): Promise<void> {
     while (!this.#stopped) {
       try {
         const client = await this.database.connectDedicated();
@@ -897,6 +902,7 @@ export class BackgroundLeader {
         while (!this.#stopped) {
           // Detect a dead lock-owning connection before any work can fire.
           await client.query('SELECT 1');
+          if (this.#stopped) break;
           const nextDelay = await this.cycle(newLeader);
           newLeader = false;
           await this.wait(
@@ -916,11 +922,10 @@ export class BackgroundLeader {
     }
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     this.#stopped = true;
     this.#wake?.();
-    this.#client?.release(true);
-    this.#client = undefined;
+    await this.#running;
   }
 
   /** Recompute background work after a committed database notification. */
@@ -930,6 +935,7 @@ export class BackgroundLeader {
   }
 
   private wait(milliseconds = this.reconciliationMs): Promise<void> {
+    if (this.#stopped) return Promise.resolve();
     if (this.#wakePending) {
       this.#wakePending = false;
       return Promise.resolve();

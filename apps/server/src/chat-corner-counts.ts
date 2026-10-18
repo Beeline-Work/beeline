@@ -1,4 +1,4 @@
-import { deriveCornerState, type DerivedCornerState } from './corner-state.js';
+import { CORNER_CHECKS_BLOCKED_AFTER, deriveCornerState, type DerivedCornerState } from './corner-state.js';
 import { cornerOwedLookupSql } from './corner-owed.js';
 import { followsCornerSql } from './corner-follow.js';
 import { visibleChatMessageSql } from './read-cursor.js';
@@ -87,10 +87,15 @@ export function cornerWorkSql(): string {
         AND command.agent_id=${cornerImplementerSql('f', 'c')}
         AND command.state IN ('pending','claimed') AND command.action<>'stop') worker_active,
       EXISTS(SELECT 1 FROM agent_turns t WHERE t.room_id=c.id AND t.status='working'
-        AND t.agent_id=ANY(ARRAY[parent.reviewer_agent_id]||parent.reviewer_fallback_ids)) OR
+        AND t.agent_id=ANY(ARRAY[parent.reviewer_agent_id]||parent.reviewer_fallback_ids)
+        AND (COALESCE(t.generation_id,'') NOT LIKE 'pending:%' OR EXISTS(
+          SELECT 1 FROM agent_commands queued WHERE queued.room_id=t.room_id
+            AND queued.agent_id=t.agent_id AND queued.turn_request_id=t.request_id
+            AND queued.state='pending'
+            AND queued.created_at>now()-interval '${CORNER_CHECKS_BLOCKED_AFTER}'))) OR
       EXISTS(SELECT 1 FROM agent_commands command WHERE command.room_id=c.id
         AND command.agent_id=ANY(ARRAY[parent.reviewer_agent_id]||parent.reviewer_fallback_ids)
-        AND command.state IN ('pending','claimed') AND command.action<>'stop') OR
+        AND command.action<>'stop' AND ${reviewCommandActiveSql('command')}) OR
       EXISTS(SELECT 1 FROM agent_commands dispatched
         JOIN messages source ON source.id=dispatched.source_message_id
         LEFT JOIN agent_turns review_turn ON review_turn.room_id=dispatched.room_id
@@ -99,8 +104,19 @@ export function cornerWorkSql(): string {
           AND (dispatched.reason='corner_review_dispatch'
             OR (dispatched.reason='subscribed_event' AND source.system_event->>'kind'='check-passed'))
           AND source.system_event->'object'->>'headSha'=f.lifecycle->'pr'->>'headSha'
-          AND (dispatched.state IN ('pending','claimed') OR review_turn.status='working')) reviewer_active
+          AND (${reviewCommandActiveSql('dispatched')} OR (review_turn.status='working'
+            AND COALESCE(review_turn.generation_id,'') NOT LIKE 'pending:%'))) reviewer_active
     ) activity ON true`;
+}
+
+/** A terminal receipt wins over its stale claim; only fresh unclaimed commands count. */
+function reviewCommandActiveSql(command: string): string {
+  return `((${command}.state='pending'
+      AND ${command}.created_at>now()-interval '${CORNER_CHECKS_BLOCKED_AFTER}')
+    OR (${command}.state='claimed' AND NOT EXISTS(
+      SELECT 1 FROM agent_turns ended WHERE ended.room_id=${command}.room_id
+        AND ended.agent_id=${command}.agent_id AND ended.request_id=${command}.turn_request_id
+        AND ended.status<>'working')))`;
 }
 
 /** Indexed unanswered requests and active human holds; ordinary mentions are not blockers. */

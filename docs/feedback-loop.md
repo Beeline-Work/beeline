@@ -210,41 +210,17 @@ STABLE SQL functions `service_review_targets(agentId,runId)` and
 
 The scheduled Claude triager currently uses Anthropic, as disclosed in the
 published inventory. Keep that inventory current when providers change.
-Workspace opt-out, the notice period, current run/agent reservation and
+Workspace opt-out, the effective date, current run/agent reservation and
 pagination are rechecked server-side; raw table reads are not a fallback.
 
 Reservations cap the day at five workspaces, prioritize signups within seven days
 then seven-day message activity, and do not repeat a workspace within 14 days.
 
-The `service_review_rollout` row starts disabled. Browsing requires a recorded
-notice delivery time and an effective date at least 14 days later, and waits until
-that effective date. The operator must complete verified email delivery before
-activating the rollout. No UI banner or System message is sent.
-
-The policy's proposed effective date is November 15, 2026; the notice must go out
-November 1, 2026. If delivery or publication slips, move both dates together and
-preserve the complete notice period. Never backdate delivery or activation.
+The `service_review_rollout` row enables browsing from 18 October 2026.
+No notice record or waiting period is required. No email, UI banner or System
+message is sent. Workspaces with Allow fix sweep off remain excluded.
 
 The browser reports at most five findings in the same report/card as feedback,
 with paraphrased evidence and build/hold/drop verdicts. Never quote content or name
 people, Rooms or workspace ids. Incomplete reads are declared; they do not count
-as full workspace reviews. During the notice period the sweep uses feedback and
-Sentry only.
-
-### Notice command
-
-The operator runs `node dist/service-review-notice-cli.js` with the verified
-identityId/email inventory on stdin, and the granted database connection,
-`RESEND_API_KEY`, and `BEELINE_NOTICE_FROM` supplied by the approved secret route.
-The inventory must cover every current human account. No recipient is guessed;
-Beeline currently stores no user email address. The source of that verified
-inventory remains an operator rollout decision. Never copy it into the repository.
-
-The command sends the November 15 policy notice on November 1, at least 14 days
-before activation. Each account has a durable receipt and a provider idempotency
-key. Only complete delivery records the rollout time; failures leave browsing
-disabled. Provider acceptance is recorded; bounce/delivery monitoring remains an
-operator responsibility. The command is separate from release dispatch.
-
-Resend transport reference: https://resend.com/docs/api-reference/emails/send-email
-and https://resend.com/docs/dashboard/emails/idempotency-keys.
+as full workspace reviews. The sweep also reviews feedback and Sentry.

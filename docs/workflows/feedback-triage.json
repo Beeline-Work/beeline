@@ -37,7 +37,7 @@
       "timeoutSeconds": 1800
     },
     "browse": {
-      "does": "Read eligible workspaces in full and add at most five redacted findings to this sweep.",
+      "does": "Read 3–5 opted-in workspaces in full from 18 October 2026, with no notice wait, and add at most five redacted findings to this sweep.",
       "role": "triager",
       "requires": [
         "findings",

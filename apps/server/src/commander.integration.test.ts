@@ -276,8 +276,7 @@ it('allows one new unreachable notice after a worker turn ends the previous fail
     FROM agent_commands WHERE id=$1 RETURNING *`, [pending.id])).rows[0]!;
   await noteCornerAgentUnreachable(db, opened.cornerId, WORKER, next.id, next);
   await noteCornerAgentUnreachable(db, opened.cornerId, WORKER, next.id, next);
-  expect((await commands(DM, RUBY)).filter(c => c.reason === 'report' && !c.source.body.includes('unreported_order:'))).toHaveLength(2);
-  expect((await commands(DM, RUBY)).filter(c => c.source.body.startsWith('failed: unreported_order:'))).toHaveLength(1);
+  expect((await commands(DM, RUBY)).filter(c => c.reason === 'report')).toHaveLength(2);
 });
 it('reconnect recovery keeps every private report, even when each was queued offline', async () => {
   const opened = await open(), turn = await worker(opened.cornerId);
@@ -829,19 +828,17 @@ async function privateAssignment() {
   await daemon.execute('postAgentTurnReceipt', { ...authority(turn), agentId: WORKER, status: 'working' }, WORKER);
   return { turn, receipt };
 }
-it.each(['empty', 'no-reply', 'read-only', 'feedback-only', 'failed-report', 'completed-open-without-provenance'])('failure visibility: old helper %s completion produces one private failure on replay', async kind => {
+it.each(['empty', 'no-reply'])('an unreported Room order completion stays complete and sends no failure on replay (%s)', async kind => {
   const { turn } = await privateAssignment();
   const input = { ...authority(turn), agentId: WORKER, status: 'complete' as const,
     ...(kind === 'no-reply' ? { completionKind: 'no-reply' as const } : {}), toolCalls: kind === 'empty' ? 0 : 1 };
   const before = (await db.query('SELECT id FROM messages ORDER BY id')).rows;
   await daemon.execute('postAgentTurnReceipt', { ...input }, WORKER);
   await daemon.execute('postAgentTurnReceipt', { ...input }, WORKER);
-  expect((await commands(DM, RUBY)).filter(c => c.reason === 'report')).toEqual([
-    expect.objectContaining({ private: true, source: expect.objectContaining({ body: expect.stringMatching(/^failed: .*unconfirmed/) }) }),
-  ]);
+  expect((await commands(DM, RUBY)).filter(c => c.reason === 'report')).toEqual([]);
   expect((await db.query('SELECT id FROM messages ORDER BY id')).rows).toEqual(before);
-  expect((await db.query('SELECT status,failure_reason FROM agent_turns WHERE request_id=$1', [turn.turnRequestId])).rows[0])
-    .toMatchObject({ status: 'failed', failure_reason: expect.stringContaining('without a delivered report') });
+  expect((await db.query('SELECT status,failure_reason FROM agent_turns WHERE request_id=$1 AND agent_id=$2', [turn.turnRequestId, WORKER])).rows[0])
+    .toMatchObject({ status: 'complete', failure_reason: null });
 });
 it.each(['repeated-tool-call', 'free-agent-time-limit', 'login-required'])('failure visibility: %s reports the unresolved order once and reaches the original human Room', async reason => {
   const { turn } = await privateAssignment();
@@ -904,9 +901,6 @@ it('failure visibility: unavailable commander membership refuses automatic publi
   await expect(daemon.execute('postRoomMessage', { ...authority(turn), text: 'The login needs attention' }, WORKER)).rejects.toThrow('not delivered');
   expect((await db.query('SELECT state,private_payload FROM agent_commands WHERE id=$1', [turn.id])).rows[0])
     .toMatchObject({ state: 'claimed', private_payload: expect.not.objectContaining({ reportedGenerationId: expect.anything() }) });
-  const failedReceipt = await daemon.execute('postAgentTurnReceipt', { ...authority(turn), agentId: WORKER, status: 'complete' }, WORKER);
-  expect(failedReceipt).toMatchObject({ failureReportDelivered: false });
-  expect((await db.query('SELECT status FROM agent_turns WHERE request_id=$1', [turn.turnRequestId])).rows[0]?.status).toBe('failed');
 });
 it('failure visibility: dispatch receipt confirms only private queue acceptance', async () => {
   const { receipt } = await privateAssignment();
@@ -914,7 +908,8 @@ it('failure visibility: dispatch receipt confirms only private queue acceptance'
 });
 it('failure visibility: terminal completion read distinguishes failed work from successful execution', async () => {
   const { turn } = await privateAssignment();
-  await daemon.execute('postAgentTurnReceipt', { ...authority(turn), agentId: WORKER, status: 'complete' }, WORKER);
+  await daemon.execute('postAgentTurnReceipt', { ...authority(turn), agentId: WORKER, status: 'failed',
+    reason: 'unreported_order: repeated-tool-call; requested work is unconfirmed' }, WORKER);
   expect(await daemon.execute('getRequestCompletion', { roomId: ROOM, requestId: turn.turnRequestId }, WORKER))
     .toMatchObject({ completed: true, outcome: 'failed', failureReason: expect.stringContaining('unconfirmed') });
 });
@@ -932,16 +927,18 @@ it('failure visibility: an old report marker or approval cannot discharge a new 
   await db.query(`UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{reportedGenerationId}','"old-generation"'::jsonb) WHERE id=$1`, [turn.id]);
   await db.query(`INSERT INTO agent_grants(id,agent_id,workspace_id,kind,target,reason,requested_by,room_id,status,command_id,created_at)
     VALUES($1,$2,$3,'host','example.com','Old approval',$2,$4,'pending',$5,now()-interval '1 hour')`, [randomUUID(), WORKER, WS, ROOM, turn.id]);
-  await daemon.execute('postAgentTurnReceipt', { ...authority(turn), agentId: WORKER, status: 'complete' }, WORKER);
+  await daemon.execute('postAgentTurnReceipt', { ...authority(turn), agentId: WORKER, status: 'failed',
+    reason: 'unreported_order: repeated-tool-call; requested work is unconfirmed' }, WORKER);
   expect((await commands(DM, RUBY)).filter(c => c.source.body.startsWith('failed:'))).toHaveLength(1);
 });
-it('failure visibility: expired private execution produces one report through the existing lease sweep', async () => {
+it('an expired order execution lease is reclaimed without an unreported-order report', async () => {
   const { turn } = await privateAssignment();
   await db.query(`UPDATE agent_commands SET lease_expires_at=now()-interval '10 minutes' WHERE id=$1`, [turn.id]);
   const { reclaimExpiredCommandLeases } = await import('./turn-silence-notice.js');
+  expect(await reclaimExpiredCommandLeases(db, new LiveHub())).toBe(1);
   await reclaimExpiredCommandLeases(db, new LiveHub());
-  await reclaimExpiredCommandLeases(db, new LiveHub());
-  expect((await commands(DM, RUBY)).filter(c => c.source.body.includes('execution lease expired'))).toHaveLength(1);
+  expect((await commands(DM, RUBY)).filter(c => c.reason === 'report')).toEqual([]);
+  expect((await db.query('SELECT state FROM agent_commands WHERE id=$1', [turn.id])).rows[0]?.state).toBe('complete');
 });
 it('failure visibility: archived return follows the nearest live opening ancestor before the top Room', async () => {
   const opened = await open(), turn = await worker(opened.cornerId), ancestor = randomUUID();
@@ -975,7 +972,7 @@ it('failure visibility: public corner prose cannot consume private assignment au
   await daemon.execute('postRoomMessage', { ...authority(turn), text: 'I checked the login page.' }, WORKER);
   expect((await db.query('SELECT state FROM agent_commands WHERE id=$1', [turn.id])).rows[0]?.state).toBe('claimed');
   await daemon.execute('postAgentTurnReceipt', { ...authority(turn), agentId: WORKER, status: 'complete' }, WORKER);
-  expect((await commands(DM, RUBY)).filter(c => c.source.body.startsWith('failed:'))).toHaveLength(1);
+  expect((await commands(DM, RUBY)).filter(c => c.reason === 'report')).toEqual([]);
 });
 
 it('failure visibility: lease expiry does not report a failure after a delivered outcome', async () => {
@@ -1035,4 +1032,36 @@ it.each(['complete', 'failed'] as const)('Reproduction R1: delivered needs-decis
     ...(status === 'failed' ? { reason: 'unreported_order: requested work is unconfirmed' } : {}) }, WORKER);
   expect((await commands(DM, RUBY)).filter(c => c.reason === 'report')).toHaveLength(1);
   expect((await db.query('SELECT status FROM agent_turns WHERE request_id=$1', [turn.turnRequestId])).rows[0]?.status).toBe('complete');
+});
+
+// Orders stay open until the worker reports; the server checks corner state, not every turn.
+async function cornerTurnWithPendingChecks() {
+  const opened = await open();
+  const lifecycle = { lifecycle: 'in-review', checks: 'pending', pr: { number: 2545, headSha: 'd'.repeat(40) } };
+  await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [opened.cornerId, JSON.stringify(lifecycle)]);
+  const turn = await worker(opened.cornerId);
+  await daemon.execute('postAgentTurnReceipt', { ...authority(turn), agentId: WORKER, status: 'working' }, WORKER);
+  await daemon.execute('postAgentTurnReceipt', { ...authority(turn), agentId: WORKER, status: 'complete' }, WORKER);
+  return { opened, turn, lifecycle };
+}
+it('Reproduction unreported-order-false: an unreported corner turn with pending checks sends nothing', async () => {
+  const { opened, turn, lifecycle } = await cornerTurnWithPendingChecks();
+  expect((await commands(DM, RUBY)).filter(c => c.reason === 'report')).toEqual([]);
+  expect((await db.query('SELECT status FROM agent_turns WHERE request_id=$1 AND agent_id=$2', [turn.turnRequestId, WORKER])).rows[0]?.status).toBe('complete');
+  expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND card_type='turn-failed'`, [opened.cornerId])).rowCount).toBe(0);
+  expect((await db.query('SELECT private_payload FROM agent_commands WHERE id=$1', [turn.id])).rows[0]?.private_payload)
+    .not.toHaveProperty('reportedGenerationId');
+  expect((await db.query('SELECT lifecycle FROM corner_facts WHERE corner_id=$1', [opened.cornerId])).rows[0]?.lifecycle)
+    .toMatchObject(lifecycle);
+  console.info('Demonstrated Reproduction unreported-order-false: pending-checks corner turn ended unreported; commander reports=0; order open; corner in-review');
+});
+it('Reproduction unreported-order-false: a later report(done) closes the open order as before', async () => {
+  const { opened } = await cornerTurnWithPendingChecks();
+  await createAgentCommand(db, { roomId: opened.cornerId, agentId: WORKER, sourceMessageId: null, reason: 'corner_check' });
+  const wake = (await commands(opened.cornerId, WORKER)).find(c => c.reason === 'corner_check')!;
+  await claim(wake);
+  await expect(daemon.execute('report', { ...authority(wake), status: 'done', text: 'done: checks passed' }, WORKER))
+    .resolves.toMatchObject({ delivered: true });
+  expect((await commands(DM, RUBY)).filter(c => c.reason === 'report').map(c => c.source.body)).toEqual(['done: checks passed']);
+  console.info('Demonstrated Reproduction unreported-order-false: later report(done) delivered once to the commander');
 });

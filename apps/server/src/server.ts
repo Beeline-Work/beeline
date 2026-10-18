@@ -2316,7 +2316,7 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     return;
   }
 
-  const voiceMatch = url.pathname.match(/^\/v1\/phone\/voice\/([0-9a-f-]{36})\/(current|join|leave|idle|state|resume|warning)$/);
+  const voiceMatch = url.pathname.match(/^\/v1\/phone\/voice\/([0-9a-f-]{36})\/(current|join|leave|idle|state|resume)$/);
   if (voiceMatch) {
     if (!options.voice) { json(response, 503, { error: 'Voice mode is unavailable' }); return; }
     if (voiceMatch[2] === 'current' && method === 'GET') {
@@ -2327,8 +2327,7 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
         if (!(error instanceof VoiceBudgetExceeded)) throw error;
         json(response, 429, { error: error.message, code: 'voice-daily-limit', budget: error.budget });
       }
-    } else if (voiceMatch[2] === 'warning' && method === 'POST') {
-      json(response, 200, await options.voice.warning(voiceMatch[1]!, identityId!));
+
     } else if (voiceMatch[2] === 'state' && method === 'GET') {
       json(response, 200, await options.voice.idleState(voiceMatch[1]!, identityId!, undefined, url.searchParams.get('sessionId') ?? undefined));
     } else if (voiceMatch[2] === 'idle' && method === 'POST') {

@@ -1,6 +1,6 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import {
   allowanceMessage,
@@ -418,18 +418,16 @@ describe('free agent model proxy', () => {
     let peak = 0;
     let attempts = 0;
     let releaseFirstWave!: () => void;
-    const firstWave = new Promise<void>((resolve) => { releaseFirstWave = resolve; });
+    const firstWave = new Promise<void>(resolve => { releaseFirstWave = resolve; });
     const flaky = (async (_input: Parameters<typeof fetch>[0], init?: RequestInit) => {
       attempts += 1;
       running += 1;
       peak = Math.max(peak, running);
       try {
-        // Hold the first eight calls until all slots fill, independent of runner speed.
-        if (attempts <= 8) {
-          if (running === 8) releaseFirstWave();
-          await firstWave;
-        }
-        await new Promise((resolve) => setTimeout(resolve, 20));
+        // Hold the initial requests until the test observes all eight slots.
+        // A fixed sleep can finish before the last request arrives on busy CI.
+        if (attempts <= 8) await firstWave;
+        else await new Promise((resolve) => setTimeout(resolve, 20));
         const id = String(JSON.parse(String(init?.body)).messages[0].content);
         if (!refused.has(id)) {
           refused.add(id);
@@ -448,10 +446,17 @@ describe('free agent model proxy', () => {
         database: db, config, upstreamKey: 'sk-or-server-only', fetchImpl: flaky,
       });
     });
-    const responses = await Promise.all(Array.from({ length: 20 }, async (_, i) => {
+    const pendingResponses = Promise.all(Array.from({ length: 20 }, async (_, i) => {
       const response = await call({ messages: [{ role: 'user', content: `call ${i}` }] });
       return { status: response.status, content: (await response.json()).choices?.[0]?.message?.content };
     }));
+    try {
+      await vi.waitFor(() => expect(running).toBe(8), { timeout: 5000 });
+    } finally {
+      releaseFirstWave();
+      await pendingResponses;
+    }
+    const responses = await pendingResponses;
     expect(responses).toEqual(Array(20).fill({ status: 200, content: 'done' }));
     expect(attempts).toBe(40);
     expect(peak).toBeLessThanOrEqual(8);
@@ -459,7 +464,7 @@ describe('free agent model proxy', () => {
     // Each call settles once, at its reported usage: 200 uncached + 40 completion + ceil(300 * 0.25).
     expect((await freeAgentAllowance(db, OWNER, new Date())).today).toBe(20 * 315);
     console.log(`Demonstrated FREE-INFLIGHT-1: 20/20 calls HTTP 200 after an in-flight 402 each; ${attempts} upstream attempts, peak ${peak} in flight; charged ${20 * 315} tokens once each.`);
-  });
+  }, 15_000);
 
   it('passes other 402 refusals through without retry and refunds them', async () => {
     reply = () => new Response(JSON.stringify({ error: { code: 402, message: 'no credits',

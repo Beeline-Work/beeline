@@ -24,29 +24,24 @@ function Proof() {
             usage={{
               updatedAt: now,
               windows: [
-                {
-                  rateLimitType: 'five_hour',
-                  status: 'allowed',
-                  utilization: 0.42,
-                  resetsAt: now + 3600,
-                  updatedAt: now,
-                },
-                {
-                  rateLimitType: 'seven_day',
-                  status: 'allowed',
-                  utilization: 0.83,
-                  resetsAt: now + 86400 * 3,
-                  updatedAt: now,
-                },
-                {
-                  rateLimitType: 'seven_day_opus',
-                  status: 'allowed',
-                  utilization: 0.18,
-                  resetsAt: now + 86400 * 3,
-                  updatedAt: now,
-                },
+                { rateLimitType: 'five_hour', status: 'allowed', utilization: 0.42, resetsAt: now + 3600, updatedAt: now },
+                { rateLimitType: 'seven_day', status: 'allowed', utilization: 0.83, resetsAt: now + 86400 * 3, updatedAt: now },
+                { rateLimitType: 'seven_day_opus', status: 'allowed', utilization: 0.18, resetsAt: now + 86400 * 3, updatedAt: now },
               ],
               context: { used: 612000, size: 1000000 },
+            }}
+          />
+          <AgentUsageSection
+            harness="pi"
+            usage={{ updatedAt: now, windows: [], free: { used: 840000, limit: 1000000, resetsAt: now + 7200 } }}
+          />
+          <AgentUsageSection
+            harness="pi"
+            usage={{
+              updatedAt: now,
+              windows: [],
+              spend: { today: 9.75, week: 16.4, limit: 20, remaining: 3.6 },
+              context: { used: 88000, size: 1000000 },
             }}
           />
         </ScrollView>

@@ -1,4 +1,3 @@
-import { usagePrompt } from '@beeline/api-contract/daemon';
 import { modelContextWindowTokens } from './model-context-window.js';
 import { TurnUsageAccumulator } from './turn-usage.js';
 import { CommandExecutionContext, runServerCommandIntake } from './server-command-intake.js';
@@ -57,6 +56,7 @@ import {
   grantedSquireHostRoute,
 } from './host-mcp-route.js';
 import { openRouterRoutingInput } from './openrouter-routing.js';
+import { agentOpenRouterKey, readOpenRouterKeyUsage } from './openrouter-key-usage.js';
 import { agentCommandCatalogPublisher } from './agent-command-catalog.js';
 import {
   attachmentImageBlocks,
@@ -726,7 +726,22 @@ export class MonolithCornerTurnLoop {
    * institutional block's share of a real prompt instead of a byte estimate.
    * Missing numbers are omitted rather than zeroed.
    */
+  /** This agent's own OpenRouter key when its model routes there. */
+  private openRouterKey?: string;
+
+  /** After a turn, refresh the owner's view of this agent's OpenRouter key spend. */
+  private publishOpenRouterSpend(): void {
+    const key = this.openRouterKey;
+    if (!key) return;
+    void readOpenRouterKeyUsage(key, this.options.fetchImpl ? { fetchImpl: this.options.fetchImpl } : {})
+      .then((usage) => usage
+        ? this.options.api.execute('postAgentUsage', { agentId: this.agent.publicKey, usage })
+        : undefined)
+      .catch((error) => console.error('[agent-usage] OpenRouter key read failed', error));
+  }
+
   private async captureTurnMetrics() {
+    this.publishOpenRouterSpend();
     const { model: _model, ...usage } = this.turnUsage.usage ?? {};
     const promptBytes = this.client?.lastPromptBytes;
     return {
@@ -905,6 +920,9 @@ export class MonolithCornerTurnLoop {
       effort: configuration.effort ?? this.options.config.modelSelection?.effort,
       fastMode: configuration.fastMode,
     };
+    this.openRouterKey = agentOpenRouterKey(
+      this.options.config.agentKind, selection.model, this.options.config.agentEnv,
+    );
     const operatorHome = this.options.config.operatorHome ?? homedir();
     const registryHostDeclarations = registryMcpHostDeclarations(
       configuration.registryMcpRoutes,
@@ -1837,9 +1855,7 @@ export class MonolithCornerTurnLoop {
                   return text;
                 }
                 trace.notePromptWindow(assembled.text, this.modelContextTokens);
-                const turnUsage = await api.execute('getAgentUsage', { agentId: this.agent.publicKey })
-                  .catch(error => { console.error('[agent-usage] read failed', error); return null; });
-                return `${assembled.text}\n\n${usagePrompt(turnUsage ?? undefined)}`;
+                return assembled.text;
               };
               // Rooms and corners share the provisional draft lane, request-id
               // handoff, and single durable final reply in `turn-stream.ts`.

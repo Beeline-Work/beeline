@@ -87,7 +87,7 @@ import {
 } from '@beeline/api-contract/phone';
 import { normalizeAppContinuation } from '@beeline/api-contract/app-connections';
 import { squireSessionSignedIn } from './squire-sign-in.js';
-import { REPOSITORY_SUBSCRIPTION_EVENTS } from '@beeline/api-contract/daemon';
+import { REPOSITORY_SUBSCRIPTION_EVENTS, readAgentUsage, usageIsOld, usageSummary } from '@beeline/api-contract/daemon';
 import { READ_ONLY_TOOL_NAMES } from './read-only-policy.js';
 import { findChromiumPage } from './browser-share.js';
 import { startHostedBrowserShare } from './browser-share-host.js';
@@ -662,6 +662,7 @@ async function turnPromptSectionIds(): Promise<string[]> {
  */
 const SAFE_TO_REPEAT_DAEMON_OPERATIONS: ReadonlySet<string> = new Set([
   'getAgentAvatar',
+  'getAgentUsage',
   'getCornerRestoreState',
   'getPrChecksStatus',
   'getRoomAuthority',
@@ -2747,6 +2748,7 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
         case 'checks': return execute('pr_checks_status', input);
         case 'pr': return execute('read_pull_request', input);
         case 'procedure': return execute('load_workspace_skill', { ...input, slug: args.slug });
+        case 'usage': return execute('read_agent_usage', {});
         default: throw new Error('unknown read facet');
       }
     }
@@ -3193,6 +3195,16 @@ async function executeAgentOperation(
       return reviseCornerBrief(args);
     case 'read_corner_brief':
       return readCornerBrief(args);
+    case 'read_agent_usage': {
+      // The server answers only for the token's own agent; no provider is called here.
+      const usage = readAgentUsage(
+        await daemonExecute('getAgentUsage', { agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID') }),
+      );
+      return JSON.stringify({
+        summary: usageSummary(usage),
+        ...(usage ? { usage, old: usageIsOld(usage) } : {}),
+      });
+    }
     case 'order': {
       const result = await daemonExecute('order', { address: args.address as string, text: args.text as string, agent: args.agent as string | undefined });
       return `${JSON.stringify(result)}\nAfter ordering another agent, end the turn; its report wakes a new turn; do not sleep or poll.`;

@@ -7,10 +7,16 @@ export function usageTime(seconds: number): string {
     minute: '2-digit',
   });
 }
+const HARNESS_NAMES: Record<string, string> = Object.assign(Object.create(null), {
+  claude: 'Claude Code',
+  'claude-code': 'Claude Code',
+  codex: 'Codex',
+  pi: 'Pi',
+  goose: 'Goose',
+  opencode: 'OpenCode',
+  grok: 'Grok',
+  cursor: 'Cursor',
+});
 export function usageHarness(harness?: string): string {
-  return harness === 'claude' || harness === 'claude-code'
-    ? 'Claude Code'
-    : harness === 'codex'
-      ? 'Codex'
-      : (harness ?? 'Harness');
+  return (harness && HARNESS_NAMES[harness]) ?? harness ?? 'This harness';
 }

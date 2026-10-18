@@ -117,7 +117,6 @@ async function runTurns(options: {
   let currentAsk: Ask = options.asks[0]!;
   const execute = vi.fn(async (name: string, input: Record<string, unknown>) => {
     operations.push(name);
-    if (name === 'getAgentUsage') return null;
     if (name === 'getAgentConfiguration') return { commands: [], yoloMode: false };
     if (name === 'getRoomRepositoryState') return { resolution: 'none' };
     if (name === 'getWorkspaceRoster') {
@@ -262,11 +261,12 @@ const answer = (text: string) => ({
 });
 
 describe('Room turn phase trace', () => {
-  it('delivers the usage line in the real turn assembly path', async () => {
-    await runTurns({ asks: [{ id: 'usage-turn', body: 'hello' }], prompt: async ({ promptText }) => {
-      expect(JSON.stringify(promptText)).toContain('Usage: unknown (harness reports none).');
+  it('keeps usage out of the assembled prompt; agents read it with their usage tool', async () => {
+    const { operations } = await runTurns({ asks: [{ id: 'usage-turn', body: 'hello' }], prompt: async ({ promptText }) => {
+      expect(JSON.stringify(promptText)).not.toMatch(/Usage: /);
       return answer('Done');
     } });
+    expect(operations).not.toContain('getAgentUsage');
   });
   it('uses the legacy private layout on the next cold activation after rollback', async () => {
     vi.stubEnv('BEELINE_SHARED_ASSETS_ENABLED', '0');
@@ -560,7 +560,6 @@ describe('Room turn phase trace', () => {
         'getWorkspaceRoster',
         'postAgentActivity',
         'getAgentConfiguration',
-        'getAgentUsage',
         'getInstitutionalContext',
         'getInstitutionalMemoryTurnStats',
         'listAgentGrants',

@@ -18,8 +18,8 @@ export function RoomListSectionHeader({
   testID,
 }: {
   title: string;
-  /** Content already supplies its own screen inset. */
-  inset?: 'screen' | 'content';
+  /** Content already supplies its own screen inset; `row` aligns with SettingsRow titles. */
+  inset?: 'screen' | 'content' | 'row';
   /** Flush when the surrounding section already supplies its vertical gap. */
   spacing?: 'section' | 'flush';
   testID?: string;
@@ -34,6 +34,7 @@ export function RoomListSectionHeader({
       style={[
         styles.sectionHeader,
         inset === 'content' && styles.contentInset,
+        inset === 'row' && styles.rowInset,
         spacing === 'flush' && styles.flushSpacing,
       ]}
     >
@@ -71,6 +72,7 @@ const styles = StyleSheet.create((theme) => {
       backgroundColor: hull.bgTerminal,
     },
     contentInset: { paddingHorizontal: 0 },
+    rowInset: { paddingHorizontal: hull.space.sm },
     flushSpacing: { paddingTop: 0 },
     sectionHeaderText: {
       ...Typography.default('semiBold'),

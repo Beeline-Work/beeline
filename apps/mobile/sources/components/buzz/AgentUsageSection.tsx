@@ -1,124 +1,198 @@
-import { usageTime, usageHarness } from '@/buzz/agent-usage';
+import { usageHarness, usageTime } from '@/buzz/agent-usage';
 import React from 'react';
 import { Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import { type AgentUsage, USAGE_WINDOW_LABELS, usageTokens } from '@beeline/api-contract/phone';
+import {
+  type AgentUsage,
+  usageDollars,
+  usageIsOld,
+  usageTokens,
+  usageWindowLabel,
+} from '@beeline/api-contract/phone';
 import { RoomListSectionHeader } from './RoomListSectionHeader';
-import { SettingsRow } from './SettingsRow';
 import { Typography } from '@/constants/Typography';
 
-export function UsageBar({
-  label,
-  value,
-  fraction,
-  stopped = false,
-}: {
+type Tone = 'warning' | 'danger' | undefined;
+/** One column of the Usage cell: a window, an allowance, or a spend figure. */
+export type UsageColumn = {
   label: string;
   value: string;
-  fraction: number;
-  stopped?: boolean;
-}) {
-  const color = stopped
-    ? styles.danger.color
-    : fraction >= 0.8
-      ? styles.warning.color
-      : styles.copy.color;
+  /** Fraction used; absent for a plain figure with no bar. */
+  fill?: number;
+  foot?: string;
+  tone?: Tone;
+};
+
+/** The Usage cell's columns and bottom line for one snapshot (mock r7). */
+export function usageCell(
+  usage: AgentUsage,
+  harness?: string,
+  now = Date.now() / 1000,
+): { columns: UsageColumn[]; note: string; old: boolean } {
+  const old = usageIsOld(usage, now);
+  const context = usage.context
+    ? `Context ${usageTokens(usage.context.used)} of ${usageTokens(usage.context.size)}`
+    : undefined;
+  const stamp = old
+    ? `last updated ${usageTime(usage.updatedAt)} · agent idle since`
+    : `updated ${usageTime(usage.updatedAt)}`;
+  if (usage.free) {
+    const f = usage.free;
+    const fraction = f.used / f.limit;
+    return {
+      columns: [
+        f.paused
+          ? { label: 'Today', value: 'Paused', fill: 1, foot: `back ${usageTime(f.resetsAt)}`, tone: 'danger' }
+          : {
+              label: 'Today',
+              value: `${usageTokens(f.used)} of ${usageTokens(f.limit)}`,
+              fill: fraction,
+              foot: `↻ ${usageTime(f.resetsAt)}`,
+              tone: fraction >= 0.8 ? 'warning' : undefined,
+            },
+      ],
+      note: 'Shared by your free agents · counted by Beeline',
+      old: false,
+    };
+  }
+  if (usage.spend) {
+    const s = usage.spend;
+    const columns: UsageColumn[] = [
+      { label: 'Today', value: usageDollars(s.today) },
+      { label: 'This week', value: usageDollars(s.week) },
+    ];
+    if (s.limit) {
+      const used = 1 - (s.remaining ?? 0) / s.limit;
+      columns.push(
+        s.rejected
+          ? { label: 'Key limit', value: 'Reached', fill: 1, foot: `of ${usageDollars(s.limit)}`, tone: 'danger' }
+          : {
+              label: 'Key limit',
+              value: `${usageDollars(s.remaining ?? 0)} left`,
+              fill: used,
+              foot: `of ${usageDollars(s.limit)}`,
+              tone: used >= 0.8 ? 'warning' : undefined,
+            },
+      );
+    }
+    return {
+      columns,
+      note: [context, `OpenRouter key, shared · ${stamp}`].filter(Boolean).join(' · '),
+      old,
+    };
+  }
+  if (usage.windows.length) {
+    return {
+      columns: usage.windows.map((w): UsageColumn => {
+        const label = usageWindowLabel(w.rateLimitType);
+        if (w.status === 'rejected')
+          return {
+            label,
+            value: 'Limit',
+            fill: 1,
+            ...(w.resetsAt ? { foot: `back ${usageTime(w.resetsAt)}` } : {}),
+            tone: 'danger',
+          };
+        const fraction = w.utilization ?? 0;
+        return {
+          label,
+          value: `${Math.round(fraction * 100)}%`,
+          fill: fraction,
+          ...(w.resetsAt ? { foot: `↻ ${usageTime(w.resetsAt)}` } : {}),
+          tone: fraction >= 0.8 ? 'warning' : undefined,
+        };
+      }),
+      note: [context, `${usageHarness(harness)} · ${stamp}`].filter(Boolean).join(' · '),
+      old,
+    };
+  }
+  return {
+    columns: [],
+    note: [`${usageHarness(harness)} doesn't report usage to Beeline`, context].filter(Boolean).join(' · '),
+    old: false,
+  };
+}
+
+/** Owner-only USAGE section: one cell, one column per window (mock r7). */
+export function AgentUsageSection({ usage, harness }: { usage?: AgentUsage; harness?: string }) {
+  if (!usage || (!usage.free && !usage.spend && !usage.windows.length && !usage.context)) return null;
+  const { columns, note, old } = usageCell(usage, harness);
   return (
-    <View>
-      <SettingsRow
-        title={label}
-        description={value}
-        descriptionContent={<Text style={[styles.copy, { color }]}>{value}</Text>}
-      />
-      <View
-        accessibilityRole="progressbar"
-        accessibilityLabel={`${label}: ${value}`}
-        accessibilityValue={{ min: 0, max: 100, now: Math.round(fraction * 100) }}
-        style={styles.track}
-      >
-        <View
-          style={[
-            styles.fill,
-            { width: `${Math.min(100, Math.max(0, fraction * 100))}%`, backgroundColor: color },
-          ]}
-        />
+    <View style={styles.section} testID="agent-usage">
+      <RoomListSectionHeader title="Usage" inset="row" spacing="flush" />
+      <View style={styles.cell}>
+        {columns.length ? (
+          <View style={styles.columns}>
+            {columns.map((c) => (
+              <View
+                key={c.label}
+                style={styles.column}
+                testID={`agent-usage-${c.label}`}
+                {...(c.fill !== undefined
+                  ? {
+                      accessibilityRole: 'progressbar' as const,
+                      accessibilityLabel: `${c.label}: ${c.value}${c.foot ? `, ${c.foot.replace('↻', 'resets')}` : ''}`,
+                      accessibilityValue: { min: 0, max: 100, now: Math.round(Math.min(1, c.fill) * 100) },
+                    }
+                  : { accessible: true, accessibilityLabel: `${c.label}: ${c.value}` })}
+              >
+                <Text numberOfLines={1} style={styles.label}>{c.label}</Text>
+                <Text numberOfLines={1} style={[styles.value, c.tone && styles[c.tone]]}>
+                  {c.value}
+                </Text>
+                {c.fill !== undefined ? (
+                  <View style={styles.track}>
+                    <View
+                      style={[
+                        styles.fill,
+                        { width: `${Math.min(100, Math.max(0, Math.round(c.fill * 100)))}%` },
+                        c.tone === 'warning' && styles.fillWarning,
+                        c.tone === 'danger' && styles.fillDanger,
+                      ]}
+                    />
+                  </View>
+                ) : null}
+                {c.foot ? (
+                  <Text numberOfLines={1} style={[styles.label, c.tone === 'danger' && styles.danger]}>
+                    {c.foot}
+                  </Text>
+                ) : null}
+              </View>
+            ))}
+          </View>
+        ) : null}
+        <Text style={[styles.note, old && styles.warning]} testID="agent-usage-note">
+          {note}
+        </Text>
       </View>
     </View>
   );
 }
 
-export function AgentUsageSection({ usage, harness }: { usage?: AgentUsage; harness?: string }) {
-  const old = usage && Date.now() / 1000 - usage.updatedAt >= 30 * 60;
-  return (
-    <View style={styles.section} testID="agent-usage">
-      <RoomListSectionHeader
-        title={usage?.free ? 'FREE ALLOWANCE' : 'PLAN USAGE'}
-        inset="content"
-        spacing="flush"
-      />
-      {usage?.free ? (
-        <>
-          <UsageBar
-            label="Today"
-            value={`${usageTokens(usage.free.used)} of ${usageTokens(usage.free.limit)} tokens · resets ${usageTime(usage.free.resetsAt)}`}
-            fraction={usage.free.used / usage.free.limit}
-          />
-          <Text style={styles.note}>Counted by Beeline · live</Text>
-        </>
-      ) : usage?.windows.length ? (
-        <>
-          {usage.windows.map((window) => (
-            <UsageBar
-              key={window.rateLimitType}
-              label={USAGE_WINDOW_LABELS[window.rateLimitType] ?? window.rateLimitType}
-              value={
-                window.status === 'rejected'
-                  ? `limit reached${window.resetsAt ? ` · back ${usageTime(window.resetsAt)}` : ''}`
-                  : `${Math.round((window.utilization ?? 0) * 100)}%${window.resetsAt ? ` · resets ${usageTime(window.resetsAt)}` : ''}`
-              }
-              fraction={window.status === 'rejected' ? 1 : (window.utilization ?? 0)}
-              stopped={window.status === 'rejected'}
-            />
-          ))}
-          <Text style={[styles.note, old && styles.warning]}>
-            {old
-              ? `Last updated ${usageTime(usage.updatedAt)} · agent idle since`
-              : `From Claude Code · updated ${usageTime(usage.updatedAt)}`}
-          </Text>
-        </>
-      ) : (
-        <Text style={styles.note}>{usageHarness(harness)} doesn't report usage to Beeline.</Text>
-      )}
-      {usage?.context ? (
-        <>
-          <RoomListSectionHeader title="CONTEXT" inset="content" spacing="flush" />
-          <UsageBar
-            label="This session"
-            value={`${usageTokens(usage.context.used)} of ${usageTokens(usage.context.size)} tokens`}
-            fraction={usage.context.used / usage.context.size}
-          />
-        </>
-      ) : null}
-    </View>
-  );
-}
 const styles = StyleSheet.create((theme) => ({
-  section: { paddingTop: theme.buzz.space.md, gap: theme.buzz.space.md },
-  copy: { ...Typography.default(), ...theme.buzz.type.meta, color: theme.buzz.textSecondary },
-  note: {
-    ...Typography.default(),
-    ...theme.buzz.type.meta,
-    color: theme.buzz.textSecondary,
+  section: { paddingTop: theme.buzz.space.lg, gap: theme.buzz.space.xs },
+  cell: {
     paddingHorizontal: theme.buzz.space.sm,
+    paddingVertical: theme.buzz.space.sm,
+    gap: theme.buzz.space.sm,
+    borderBottomWidth: StyleSheet.hairlineWidth,
+    borderBottomColor: theme.buzz.border,
   },
+  columns: { flexDirection: 'row', gap: theme.buzz.space.md },
+  column: { flex: 1, minWidth: 0, gap: 3 },
+  label: { ...Typography.default(), ...theme.buzz.type.meta, color: theme.buzz.textMuted },
+  value: { ...Typography.default(), ...theme.buzz.type.body, color: theme.buzz.textPrimary },
+  track: {
+    height: 3,
+    borderRadius: 2,
+    backgroundColor: theme.buzz.bgHighlight,
+    overflow: 'hidden',
+    marginVertical: 2,
+  },
+  fill: { height: 3, backgroundColor: theme.buzz.textSecondary },
+  fillWarning: { backgroundColor: theme.buzz.accent },
+  fillDanger: { backgroundColor: theme.buzz.dialogDanger },
+  note: { ...Typography.default(), ...theme.buzz.type.meta, color: theme.buzz.textMuted },
   warning: { color: theme.buzz.accent },
   danger: { color: theme.buzz.dialogDanger },
-  track: {
-    height: 4,
-    marginHorizontal: theme.buzz.space.sm,
-    backgroundColor: theme.buzz.bgHighlight,
-    borderRadius: theme.buzz.radius,
-    overflow: 'hidden',
-  },
-  fill: { height: '100%' },
 }));

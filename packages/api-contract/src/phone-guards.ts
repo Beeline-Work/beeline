@@ -253,8 +253,6 @@ function readWorkspaceAgent(value: unknown): WorkspaceAgentView | null {
   return {
     ...member,
     ...field('usage', readAgentUsage(item.usage)),
-    ...field('harness', typeof item.harness === 'string' ? item.harness : undefined),
-    ...field('machine', typeof item.machine === 'string' ? item.machine : undefined),
     ...field('model', typeof item.model === 'string' ? item.model : undefined),
     ...field('owner', owner && owner.kind === 'human' ? owner : undefined),
   };

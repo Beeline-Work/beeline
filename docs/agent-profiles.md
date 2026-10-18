@@ -52,4 +52,12 @@ PR #1704 is integrated through merge commit `1930c6b6`; save-error reporting is 
 
 ## Owner-only usage
 
-Agent profiles show provider-reported plan windows and session context when available, or a plain harness-specific no-report sentence. Members shows the highest utilization window and all windows at 80% or more. Warnings begin at 80%; only a provider rejection uses the danger tone. Snapshots older than 30 minutes retain their figures with a brass age line. Both APIs filter usage to the agent owner before projection. Free agents use the owner's shared daily token allowance and midnight UTC reset. Claude ACP reports are merged per window; Codex plan limits and OAuth fill-in remain outside phase 1. Captured provider, API, Chrome, native Android and real-turn evidence is recorded in [agent usage proof](evidence/agent-usage/README.md).
+The owner sees one USAGE cell on an agent's profile, between MODEL / DIFFICULTY and VOICE, with one column per window: name, value, thin bar and reset time. A bottom line gives context, source and update time.
+- **Claude Code:** plan windows come from the ACP `rate_limit_event`, merged per window.
+- **Free agents:** they show the owner's shared daily token allowance and its midnight UTC reset, and a paused state when Beeline's shared budget is spent. They never show money.
+- **OpenRouter:** Pi, Goose and OpenCode agents on an OpenRouter key show that key's spend today and this week, plus the key limit left. The helper reads `/api/v1/key` after turns, at most once a minute, and the key never leaves the helper.
+- **No source:** other harnesses show a plain line saying they don't report usage.
+
+Warnings start at 80%. Red means the provider stopped the agent or Beeline paused it. Data older than 30 minutes keeps its numbers and gets a brass age line. Members appends usage text only at 80% or more, or when the agent is stopped or paused. Both APIs filter usage to the owner. The profile groups Permission mode and Answer scope under ACCESS and lines up the section headers with the row titles.
+
+Agents do not get usage in their prompt. They call `read` with facet `usage`, which returns only their own snapshot and a one-sentence summary, when their user asks. Codex plan limits and the OAuth fill-in remain outside phase 1. Evidence is recorded in [agent usage proof](evidence/agent-usage/README.md).

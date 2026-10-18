@@ -142,9 +142,8 @@ export type RoomViewMember = {
 
 /** Paint-ready agent metadata for the Workspace Members row. */
 export type WorkspaceAgentView = RoomViewMember & {
+  /** Owner-only plan, allowance or key spend; absent for other viewers. */
   readonly usage?: AgentUsage;
-  readonly harness?: string;
-  readonly machine?: string;
   /** Selected model label, resolved from the latest catalog when available. */
   readonly model?: string;
   /** The person who connected and owns this agent's configuration. */

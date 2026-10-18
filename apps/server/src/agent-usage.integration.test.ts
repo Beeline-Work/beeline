@@ -1,7 +1,7 @@
 import capturedEvent from '../../body/src/fixtures/claude-rate-limit-event.json';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { readAgentDetailView, readWorkspaceMemberListView } from '@beeline/api-contract/phone';
-import { usagePrompt } from '@beeline/api-contract/daemon';
+import { usageSummary } from '@beeline/api-contract/daemon';
 import { parseAcpUsage } from '../../body/src/acp.js';
 import { DaemonService } from './daemon-service.js';
 import { PhoneService } from './phone-service.js';
@@ -11,7 +11,8 @@ import { PgliteDatabase } from './test-support.js';
 
 const agent = 'a'.repeat(64),
   owner = 'b'.repeat(64),
-  other = 'c'.repeat(64);
+  other = 'c'.repeat(64),
+  sibling = 'd'.repeat(64);
 const workspace = '11111111-1111-4111-8111-111111111111';
 const db = new PgliteDatabase();
 const daemon = new DaemonService(db, new LiveHub());
@@ -19,23 +20,23 @@ const phone = new PhoneService(db, 'https://server.example');
 beforeAll(async () => {
   await migrate(db);
   await db.query(
-    `INSERT INTO identities(id,kind,name) VALUES($1,'agent','Agent'),($2,'human','Owner'),($3,'human','Other')`,
-    [agent, owner, other],
+    `INSERT INTO identities(id,kind,name) VALUES($1,'agent','Agent'),($2,'human','Owner'),($3,'human','Other'),($4,'agent','Sibling')`,
+    [agent, owner, other, sibling],
   );
   await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Usage')`, [workspace]);
-  await db.query(`INSERT INTO agents(agent_id,owner_id,harness) VALUES($1,$2,'claude')`, [
-    agent,
-    owner,
-  ]);
   await db.query(
-    `INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'member'),($1,$3,'owner'),($1,$4,'member')`,
-    [workspace, agent, owner, other],
+    `INSERT INTO agents(agent_id,owner_id,harness) VALUES($1,$2,'claude'),($3,$2,'pi')`,
+    [agent, owner, sibling],
+  );
+  await db.query(
+    `INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'member'),($1,$3,'owner'),($1,$4,'member'),($1,$5,'member')`,
+    [workspace, agent, owner, other, sibling],
   );
 });
 afterAll(async () => db.close());
 
 describe('daemon → stored usage → owner profile and Members', () => {
-  it('merges partial windows, exposes the same figures to the prompt, and hides plans from other viewers', async () => {
+  it('merges partial windows, gives the same figures to the usage tool, and hides plans from other viewers', async () => {
     const captured = parseAcpUsage({
       sessionUpdate: 'usage_update',
       _meta: { '_claude/rateLimit': capturedEvent.rate_limit_info },
@@ -88,12 +89,14 @@ describe('daemon → stored usage → owner profile and Members', () => {
     const members = await phone.readWorkspaceMembers(workspace, owner);
     expect(readWorkspaceMemberListView(members)?.agents[0]?.usage).toEqual(profile?.usage);
     expect((await phone.readWorkspaceMembers(workspace, other))?.agents[0]?.usage).toBeUndefined();
-    const prompt = usagePrompt(
+    const summary = usageSummary(
       (await daemon.execute('getAgentUsage', { agentId: agent }, agent)) ?? undefined,
     );
-    expect(prompt).toContain('5-hour 42%');
-    expect(prompt).toContain('weekly 83%');
-    expect(usagePrompt()).toBe('Usage: unknown (harness reports none).');
+    expect(summary).toContain('5-hour 42%');
+    expect(summary).toContain('weekly 83%');
+    // An agent's usage tool cannot read another agent's usage.
+    await expect(daemon.execute('getAgentUsage', { agentId: agent }, sibling)).rejects.toThrow('does not own');
+    expect(usageSummary()).toBe('Usage: unknown (harness reports none).');
     await expect(
       daemon.execute(
         'postAgentUsage',
@@ -170,5 +173,39 @@ it('reports the owner-wide free allowance with its UTC reset and keeps it privat
     profile?.usage?.free,
   );
   expect((await phone.readAgent(workspace, agent, other))?.usage).toBeUndefined();
-  expect(usagePrompt(profile?.usage)).toContain('Usage: 123K of 1M free tokens today, resets');
+  const own = await daemon.execute('getAgentUsage', { agentId: agent }, agent);
+  expect(usageSummary(own ?? undefined)).toMatch(
+    /^Usage: 123K of 1M free tokens today \(shared with your other free agents\), resets/,
+  );
+  expect(JSON.stringify(own)).not.toContain('$');
+  await db.query(
+    `INSERT INTO free_agent_budget(day,usd) VALUES((now() AT TIME ZONE 'UTC')::date,25)`,
+  );
+  const paused = await daemon.execute('getAgentUsage', { agentId: agent }, agent);
+  expect(paused?.free).toMatchObject({ used: 123000, paused: true });
+  expect(JSON.stringify(paused)).not.toMatch(/\$|usd|25/);
+  expect(usageSummary(paused ?? undefined)).toMatch(/^Usage: free tokens paused until \d\d:\d\d\.$/);
+  expect((await phone.readAgent(workspace, agent, owner))?.usage?.free?.paused).toBe(true);
+});
+
+it('stores the latest OpenRouter key read for the owner and the agent only', async () => {
+  const usage = {
+    updatedAt: Date.now() / 1000,
+    windows: [],
+    spend: { today: 9.75, week: 16.4, limit: 20, remaining: 3.6 },
+    context: { used: 88000, size: 1000000 },
+  };
+  await daemon.execute('postAgentUsage', { agentId: sibling, usage }, sibling);
+  await daemon.execute(
+    'postAgentUsage',
+    { agentId: sibling, usage: { ...usage, spend: { today: 11.2, week: 20, limit: 20, remaining: 0, rejected: true } } },
+    sibling,
+  );
+  const profile = readAgentDetailView(await phone.readAgent(workspace, sibling, owner));
+  expect(profile?.usage?.spend).toEqual({ today: 11.2, week: 20, limit: 20, remaining: 0, rejected: true });
+  expect(profile?.usage?.context).toEqual({ used: 88000, size: 1000000 });
+  expect((await phone.readAgent(workspace, sibling, other))?.usage).toBeUndefined();
+  expect(usageSummary((await daemon.execute('getAgentUsage', { agentId: sibling }, sibling)) ?? undefined)).toContain(
+    '$20 key limit reached',
+  );
 });

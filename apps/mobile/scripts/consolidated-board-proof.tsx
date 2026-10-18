@@ -53,19 +53,44 @@ const agent = {
     : [{ title: 'Illustrative merged pull request', url: 'https://github.com/acme/repo/pull/1' }],
   watchFilters: [],
 } as AgentDetailView;
-// Usage proof fixtures render the production profile and Members components.
+// Usage proof fixtures render the production profile and Members components (mock r7 states).
 const usageState = params.get('usage');
+const usageNow = Date.now() / 1000;
+const utcMidnight = Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate() + 1) / 1000;
+const usageWindow = (rateLimitType: string, utilization: number, status = 'allowed', resetIn = 3600) =>
+  ({ rateLimitType, status, utilization, resetsAt: usageNow + resetIn, updatedAt: usageNow });
+const claudeUsage = (fiveHour: number, weekly: number, status = 'allowed', age = 0) => ({
+  updatedAt: usageNow - age,
+  windows: [
+    usageWindow('five_hour', fiveHour, status),
+    usageWindow('seven_day', weekly, 'allowed', 86400 * 3),
+    usageWindow('seven_day_opus', 0.18, 'allowed', 86400 * 3),
+  ],
+  context: { used: 612000, size: 1000000 },
+});
+const freeUsage = (used: number, paused = false) =>
+  ({ updatedAt: usageNow, windows: [], free: { used, limit: 1000000, resetsAt: utcMidnight, ...(paused ? { paused } : {}) } });
+const keyUsage = (spend: object, age = 0) =>
+  ({ updatedAt: usageNow - age, windows: [], spend, context: { used: 88000, size: 1000000 } });
+const USAGE_FIXTURES: Record<string, [string, unknown]> = {
+  normal: ['claude', claudeUsage(0.42, 0.18)],
+  warning: ['claude', claudeUsage(0.42, 0.83)],
+  stopped: ['claude', claudeUsage(1, 0.64, 'rejected')],
+  old: ['claude', claudeUsage(0.42, 0.18, 'allowed', 1900)],
+  free: ['pi', freeUsage(123000)],
+  'free-warning': ['pi', freeUsage(840000)],
+  'free-paused': ['pi', freeUsage(310000, true)],
+  'key-open': ['pi', keyUsage({ today: 4.12, week: 18.4 })],
+  'key-limit': ['pi', keyUsage({ today: 4.12, week: 18.4, limit: 20, remaining: 15.88 })],
+  'key-warning': ['pi', keyUsage({ today: 9.75, week: 16.4, limit: 20, remaining: 3.6 })],
+  'key-reached': ['pi', keyUsage({ today: 11.2, week: 20, limit: 20, remaining: 0, rejected: true })],
+  'key-old': ['pi', keyUsage({ today: 4.12, week: 18.4, limit: 20, remaining: 15.88 }, 1900)],
+  'no-source': ['pi', { updatedAt: usageNow, windows: [], context: { used: 88000, size: 200000 } }],
+  none: ['codex', undefined],
+};
 if (usageState) {
-  const now = Date.now() / 1000;
-  Object.assign(agent, { harness: 'claude', usage: usageState === 'none' ? undefined : {
-    updatedAt: now - (usageState === 'old' ? 1900 : 0),
-    windows: usageState === 'free' ? [] : [
-      { rateLimitType: 'five_hour', status: usageState === 'stopped' ? 'rejected' : 'allowed', utilization: 0.42, resetsAt: now + 3600, updatedAt: now },
-      { rateLimitType: 'seven_day', status: 'allowed', utilization: usageState === 'warning' ? 0.83 : 0.18, resetsAt: now + 86400 * 3, updatedAt: now },
-      { rateLimitType: 'seven_day_opus', status: 'allowed', utilization: 0.18, resetsAt: now + 86400 * 3, updatedAt: now },
-    ],
-    ...(usageState === 'free' ? { free: { used: 123000, limit: 1000000, resetsAt: Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), new Date().getUTCDate() + 1) / 1000 } } : { context: { used: 612000, size: 1000000 } }),
-  } });
+  const [harness, usage] = USAGE_FIXTURES[usageState] ?? ['claude', undefined];
+  Object.assign(agent, { harness, usage });
 }
 const workspaces = [
   { id: agent.workspaceId, name: 'Tubing Crew' },
@@ -252,7 +277,15 @@ createRoot(document.getElementById('root')!).render(
   mode === 'usage-members' ? (
     <View style={{ flex: 1, backgroundColor: theme.bgBase }}>
       <PageHeader title="Members" />
-      <MemberRosterRow kind="agent" divider="bottom" name={agent.agent.identity.name} handle={agent.agent.identity.handle} pubkey={agent.agent.identity.pubkey} face="owl" testID="usage-member" usage={agent.usage} harness={agent.harness} machine="squire" ownerHandle="owner" />
+      <MemberRosterRow kind="agent" divider="bottom" name="Emberus" handle="emberus" pubkey="emberus" face="owl" testID="usage-member-emberus" usage={USAGE_FIXTURES['normal']![1] as never} ownerHandle="owner" />
+      <MemberRosterRow kind="agent" divider="bottom" name="Jellybean" handle="jellybean" pubkey="jellybean" face="owl" testID="usage-member-jellybean" usage={USAGE_FIXTURES['warning']![1] as never} ownerHandle="owner" />
+      <MemberRosterRow kind="agent" divider="bottom" name="Speedy" handle="speedy" pubkey="speedy" face="owl" testID="usage-member-speedy" usage={USAGE_FIXTURES['stopped']![1] as never} ownerHandle="owner" />
+      <MemberRosterRow kind="agent" divider="bottom" name="Beebee" handle="beebee" pubkey="beebee" face="owl" testID="usage-member-beebee" usage={USAGE_FIXTURES['free-warning']![1] as never} ownerHandle="owner" />
+      <MemberRosterRow kind="agent" divider="bottom" name="Baby" handle="baby" pubkey="baby" face="owl" testID="usage-member-baby" usage={USAGE_FIXTURES['free-paused']![1] as never} ownerHandle="owner" />
+      <MemberRosterRow kind="agent" divider="bottom" name="Goosy" handle="goosy" pubkey="goosy" face="owl" testID="usage-member-goosy" usage={USAGE_FIXTURES['key-warning']![1] as never} ownerHandle="owner" />
+      <MemberRosterRow kind="agent" divider="bottom" name="Nerd" handle="nerd" pubkey="nerd" face="owl" testID="usage-member-nerd" usage={USAGE_FIXTURES['key-reached']![1] as never} ownerHandle="owner" />
+      <MemberRosterRow kind="agent" divider="bottom" name="Candy" handle="candy" pubkey="candy" face="owl" testID="usage-member-candy" usage={USAGE_FIXTURES['key-open']![1] as never} ownerHandle="owner" />
+      <MemberRosterRow kind="agent" divider="bottom" name="Fathom" handle="fathom" pubkey="fathom" face="owl" testID="usage-member-fathom" ownerHandle="moonscannerai" />
     </View>
   ) : mode === 'manage' ? (
     <BuzzMembers

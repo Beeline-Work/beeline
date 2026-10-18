@@ -428,8 +428,6 @@ interface MemberRow extends IdentityRow {
 }
 /** A roster agent row with the configuration its Members row shows. */
 type RosterAgentRow = MemberRow & {
-  harness?: string;
-  machine_name?: string;
   selected_model: string | null;
   model_catalog: AgentDetailView['catalog'] | null;
   owner_id: string | null;
@@ -1647,7 +1645,7 @@ export class PhoneService {
       ), owned AS (
         SELECT i.id,i.kind,i.name,i.handle,i.avatar,i.face_id,m.role,
           NULL::jsonb presence_body,NULL::timestamptz presence_updated_at,
-          agent.selected_model,agent.model_catalog,agent.harness,agent.machine_name,
+          agent.selected_model,agent.model_catalog,
           owner.id owner_id,owner.name owner_name,owner.handle owner_handle
         FROM agents agent JOIN identities i ON i.id=agent.agent_id
         JOIN memberships m ON m.identity_id=i.id
@@ -9880,7 +9878,7 @@ export class PhoneService {
       ), agent_rows AS (
         SELECT i.id,i.kind,i.name,i.handle,i.avatar,i.face_id,m.role,
           NULL::jsonb presence_body,NULL::timestamptz presence_updated_at,
-          agent.selected_model,agent.model_catalog,agent.harness,agent.machine_name,
+          agent.selected_model,agent.model_catalog,
           owner.id owner_id,owner.name owner_name,owner.handle owner_handle
         FROM memberships m JOIN identities i ON i.id=m.identity_id
         LEFT JOIN agents agent ON agent.agent_id=i.id
@@ -9978,8 +9976,6 @@ export class PhoneService {
       return {
         ...member,
         ...(model ? { model } : {}),
-        ...(config?.harness ? { harness: config.harness } : {}),
-        ...(config?.machine_name ? { machine: config.machine_name } : {}),
         ...(config?.owner_id && config.owner_name ? { owner: {
           pubkey: config.owner_id,kind: 'human' as const,name: config.owner_name,
           ...(config.owner_handle ? { handle: config.owner_handle } : {}),

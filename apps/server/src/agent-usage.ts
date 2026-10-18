@@ -1,5 +1,6 @@
 import { readAgentUsage, type AgentUsage } from '@beeline/api-contract/daemon';
 import type { SqlDatabase } from './database.js';
+import { freeAgentBudgetReached, freeAgentLimitsFromEnv } from './free-agent-limits.js';
 
 /** Plan snapshots never cross the owner boundary, including roster reads. */
 export async function agentUsage(
@@ -32,6 +33,10 @@ export async function agentUsages(
       [agentIds, viewerId ?? null],
     )
   ).rows;
+  // Paused means Beeline's shared daily free budget is spent; its dollar figure never leaves the server.
+  const paused = rows.some((row) => row.free_agent)
+    ? await freeAgentBudgetReached(database, freeAgentLimitsFromEnv(process.env).dailyBudgetUsd)
+    : false;
   for (const row of rows) {
     if (row.free_agent) {
       const now = new Date();
@@ -43,6 +48,7 @@ export async function agentUsages(
           used: Number(row.tokens),
           limit: Number.isFinite(configured) && configured > 0 ? configured : 1_000_000,
           resetsAt: Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1) / 1000,
+          ...(paused ? { paused: true } : {}),
         },
       });
     } else {
@@ -83,7 +89,7 @@ export async function saveAgentUsage(
       [
         agentId,
         JSON.stringify({
-          updatedAt: windows.size
+          updatedAt: windows.size && !usage.spend
             ? Math.max(...[...windows.values()].map((w) => w.updatedAt))
             : updatedAt,
           windows: [...windows.values()],
@@ -92,6 +98,8 @@ export async function saveAgentUsage(
             : previous?.context
               ? { context: previous.context }
               : {}),
+          // OpenRouter reports the whole key at once, so the latest read replaces the last.
+          ...(usage.spend ? { spend: usage.spend } : previous?.spend ? { spend: previous.spend } : {}),
         }),
       ],
     );

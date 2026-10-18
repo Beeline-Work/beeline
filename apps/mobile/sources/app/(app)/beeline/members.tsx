@@ -1505,8 +1505,6 @@ export default function BuzzMembers({
                     kind="agent"
                     model={member.model}
                     usage={member.usage}
-                    harness={member.harness}
-                    machine={member.machine}
                     name={member.identity.name}
                     onPress={() =>
                       router.push({

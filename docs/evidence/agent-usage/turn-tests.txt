@@ -1,7 +1,0 @@
-Command: npx vitest run apps/body/src/monolith-room-turn.trace.test.ts apps/body/src/monolith-corner-turn.test.ts --maxWorkers=1 --minWorkers=1
-
- Test Files  2 passed (2)
-      Tests  88 passed (88)
-   Start at  10:43:12
-   Duration  51.94s (transform 1.05s, setup 0ms, collect 1.76s, tests 49.83s, environment 0ms, prepare 90ms)
-

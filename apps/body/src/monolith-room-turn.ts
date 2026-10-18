@@ -1,4 +1,3 @@
-import { usagePrompt } from '@beeline/api-contract/daemon';
 import { subscriptionActionPrompt } from '@beeline/api-contract/daemon';
 import { TurnUsageAccumulator } from './turn-usage.js';
 import { CommandExecutionContext, runServerCommandIntake } from './server-command-intake.js';
@@ -53,6 +52,7 @@ import {
   ungatedHostServers,
 } from './host-mcp-route.js';
 import { openRouterRoutingInput } from './openrouter-routing.js';
+import { agentOpenRouterKey, readOpenRouterKeyUsage } from './openrouter-key-usage.js';
 import { agentCommandCatalogPublisher } from './agent-command-catalog.js';
 import {
   attachmentImageBlocks,
@@ -518,6 +518,8 @@ export class MonolithRoomTurnLoop {
   private sessionCodegraphReady = false;
   /** The live session's environment, read back for pi's own turn record. */
   private agentEnv: Record<string, string> = {};
+  /** This agent's own OpenRouter key when its model routes there. */
+  private openRouterKey?: string;
   private sharedAssetsActive = false;
   private isolatedCategories: SharedAssetCategory[] = [];
   /**
@@ -814,7 +816,19 @@ export class MonolithRoomTurnLoop {
    * institutional block's share of a real prompt instead of a byte estimate.
    * Missing numbers are omitted rather than zeroed.
    */
+  /** After a turn, refresh the owner's view of this agent's OpenRouter key spend. */
+  private publishOpenRouterSpend(): void {
+    const key = this.openRouterKey;
+    if (!key) return;
+    void readOpenRouterKeyUsage(key, this.options.fetchImpl ? { fetchImpl: this.options.fetchImpl } : {})
+      .then((usage) => usage
+        ? this.options.api.execute('postAgentUsage', { agentId: this.agent.publicKey, usage })
+        : undefined)
+      .catch((error) => console.error('[agent-usage] OpenRouter key read failed', error));
+  }
+
   private async captureTurnMetrics() {
+    this.publishOpenRouterSpend();
     const { model: _model, ...usage } = this.turnUsage.usage ?? {};
     const promptBytes = this.client?.lastPromptBytes;
     return {
@@ -1016,6 +1030,9 @@ export class MonolithRoomTurnLoop {
       effort: selectionEffort,
       fastMode: configuration.fastMode,
     };
+    this.openRouterKey = agentOpenRouterKey(
+      this.options.config.agentKind, selection.model, this.options.config.agentEnv,
+    );
     const operatorHome = this.options.config.operatorHome ?? homedir();
     const registryHostDeclarations = registryMcpHostDeclarations(
       configuration.registryMcpRoutes,
@@ -1730,8 +1747,6 @@ export class MonolithRoomTurnLoop {
                 )
                 .sort((a, b) => (b.closedAt ?? 0) - (a.closedAt ?? 0));
               let deviceResume: string | undefined;
-              const turnUsage = await api.execute('getAgentUsage', { agentId: this.agent.publicKey })
-                  .catch(error => { console.error('[agent-usage] read failed', error); return null; });
               const buildPrompt = (): string => {
                 const transcript = this.warmTranscript.select(
                   this.sessionId,
@@ -1782,7 +1797,7 @@ export class MonolithRoomTurnLoop {
                   ...this.sessionPromptSectionIds,
                   ...assembled.report.map((section) => section.id),
                 ]);
-                return `${assembled.text}\n\n${usagePrompt(turnUsage ?? undefined)}`;
+                return assembled.text;
               };
               // Rooms and corners stream through ONE presentation (C100): the
               // provisional draft lane, the request-id handoff, and the single

@@ -131,7 +131,7 @@ export function AgentVoiceSection({
   const changeable = canEdit && catalog?.canChange;
   return (
     <View style={styles.section} testID="voice-section">
-      <RoomListSectionHeader title="Voice" inset="content" spacing="flush" />
+      <RoomListSectionHeader title="Voice" inset="row" spacing="flush" />
       <SettingsRow
         title={selected?.name ?? (api && !error ? 'Loading voice…' : 'Voice unavailable')}
         description={catalog ? 'Aura 2' : undefined}
@@ -224,7 +224,7 @@ export function AgentVoiceSection({
   );
 }
 const styles = StyleSheet.create((theme) => ({
-  section: { paddingTop: theme.buzz.space.lg, gap: theme.buzz.space.md },
+  section: { paddingTop: theme.buzz.space.lg, gap: theme.buzz.space.xs },
   copy: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
   library: { maxHeight: theme.buzz.layout.row * 5 },
 }));

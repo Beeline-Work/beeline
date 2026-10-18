@@ -5,10 +5,13 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import type { RoomViewMessage } from '@beeline/api-contract/phone';
 import { publishViewerConversation, removeViewerConversation } from '@/buzz/viewer-conversation';
 
+const scrollToEnd = vi.hoisted(() => vi.fn());
+const dimensions = vi.hoisted(() => ({ width: 390, height: 800 }));
 const keyboardListeners = vi.hoisted(() => new Map<string, Set<() => void>>());
 vi.mock('react-native', () => {
   const host = (name: string) => (props: any) => React.createElement(name, props, props.children);
   return {
+    useWindowDimensions: () => dimensions, ScrollView: host('ScrollView'),
     View: host('View'), Text: host('Text'), Pressable: host('Pressable'), Platform: { OS: 'android' },
     Keyboard: {
       addListener: (name: string, callback: () => void) => {
@@ -29,6 +32,7 @@ vi.mock('./TranscriptReference', () => ({
   ViewerConversationRing: () => null,
   TranscriptReference: ({ children }: any) => React.createElement('Text', {}, children),
 }));
+vi.mock('./MonoMarkdown', () => ({ MonoMarkdown: ({ markdown }: any) => React.createElement('Text', {}, markdown) }));
 vi.mock('./AttachmentPickerSheet', () => ({ AttachmentPickerSheet: () => null }));
 
 import { ViewerConversationDock } from './ViewerConversationDock';
@@ -51,14 +55,17 @@ const transcriptText = () => node('viewer-conversation-transcript').findAllByTyp
 
 beforeEach(() => {
   vi.useFakeTimers();
+  scrollToEnd.mockClear();
+  vi.stubGlobal('requestAnimationFrame', (callback: () => void) => setTimeout(callback, 16));
   send.mockReset().mockResolvedValue(true);
   publish([reply('old', 'Earlier Room history')]);
-  act(() => { renderer = create(<ViewerConversationDock kind="artifact" title="Checkout" roomId="viewer-test" />); });
+  act(() => { renderer = create(<ViewerConversationDock kind="artifact" title="Checkout" roomId="viewer-test" />, { createNodeMock: (element: any) => element.type === 'ScrollView' ? { scrollToEnd } : null }); });
 });
 afterEach(() => {
   act(() => renderer.unmount());
   removeViewerConversation('viewer-test');
   vi.useRealTimers();
+  vi.unstubAllGlobals();
 });
 
 it('keeps an unsent draft in the composer without revealing the transcript', () => {
@@ -160,4 +167,33 @@ it('keeps a browser conversation open after sending its captured screen', async 
   expect(send).toHaveBeenCalledWith(expect.objectContaining({ screenshotBase64: 'screen-base64', context: 'Viewing browser: Checkout' }), undefined);
   expect(node('viewer-conversation-toggle').props.accessibilityState.expanded).toBe(true);
   expect(transcriptText()).toContain('Please check this screen');
+});
+
+
+it('recomputes the expanded transcript cap on rotation and preserves the collapsed preview', async () => {
+  toggle();
+  type('Explain the artifact');
+  await act(async () => { await composer().props.onSend(); });
+  publish([reply('long', '**Bold**\n\n' + '- A long line of explanation\n'.repeat(120))]);
+  expect(node('viewer-conversation-transcript').props.style).toContainEqual({ maxHeight: 320 });
+  expect(node('viewer-conversation-scroll').props.keyboardShouldPersistTaps).toBe('handled');
+  dimensions.height = 390;
+  act(() => renderer.update(<ViewerConversationDock kind="artifact" title="Checkout" roomId="viewer-test" />));
+  expect(node('viewer-conversation-transcript').props.style).toContainEqual({ maxHeight: 156 });
+  toggle();
+  publish([reply('long', 'long reply'), reply('ticker', '**Raw preview**')]);
+  expect(renderer.root.findAllByProps({ testID: 'viewer-conversation-scroll' })).toHaveLength(0);
+  expect(node('viewer-conversation-transcript').findAllByType('Text').filter((n: any) => n.props.numberOfLines === 2)).toHaveLength(2);
+  dimensions.height = 800;
+});
+
+
+it('waits for a native frame before following new transcript content', async () => {
+  toggle();
+  type('Explain the artifact');
+  await act(async () => { await composer().props.onSend(); });
+  act(() => node('viewer-conversation-scroll').props.onContentSizeChange(300, 4000));
+  expect(scrollToEnd).not.toHaveBeenCalled();
+  act(() => vi.advanceTimersByTime(16));
+  expect(scrollToEnd).toHaveBeenCalledWith({ animated: false });
 });

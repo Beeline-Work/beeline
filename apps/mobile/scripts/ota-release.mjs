@@ -61,6 +61,8 @@ export const COMPAT_RUNTIMES = [
   { platform: 'ios', runtimeVersion: '33' },
   { platform: 'android', runtimeVersion: '36' },
   { platform: 'ios', runtimeVersion: '34' },
+  { platform: 'android', runtimeVersion: '38' },
+  { platform: 'ios', runtimeVersion: '35' },
 ];
 
 // Every (platform, runtimeVersion) a shipped or submitted native store binary
@@ -70,6 +72,18 @@ export const COMPAT_RUNTIMES = [
 // moved (25→24, 26→25) and the compat list silently shrank with them. Release
 // planning must cover every entry: the current pins plus COMPAT_RUNTIMES.
 export const SHIPPED_NATIVE_RUNTIMES = [
+  {
+    platform: 'android',
+    runtimeVersion: '38',
+    evidence:
+      'store binary built on the android@38 pin (923d7a17) and uploaded by successful unified release run 38662034119 (mobile_native_android step "Upload Android to the selected Play track")',
+  },
+  {
+    platform: 'ios',
+    runtimeVersion: '35',
+    evidence:
+      'store binary built on the ios@35 pin (923d7a17) and submitted by successful unified release run 38662034119 (mobile_native_ios step "Submit iOS build to TestFlight for a selected store track")',
+  },
   {
     platform: 'android',
     runtimeVersion: '23',

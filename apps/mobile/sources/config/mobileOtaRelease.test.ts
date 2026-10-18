@@ -81,9 +81,14 @@ const priorCompat = [
 ];
 const priorTargets = [{ platform: 'android', runtimeVersion: '33' }, ...priorCompat]
   .filter((target, index, all) => all.findIndex(t => t.platform === target.platform && t.runtimeVersion === target.runtimeVersion) === index);
+// The historical release predates the runtime-38/35 store submissions.
+const priorShipped = SHIPPED_NATIVE_RUNTIMES.filter(
+  target => !['android@38', 'ios@35'].includes(`${target.platform}@${target.runtimeVersion}`),
+);
 const priorReleaseScript = join(releaseFixtureRoot, 'ota-release.mjs');
 writeFileSync(priorReleaseScript, releaseSource
   .replace(/export const COMPAT_RUNTIMES = \[[\s\S]*?\n\];/, `export const COMPAT_RUNTIMES = ${JSON.stringify(priorCompat)};`)
+  .replace(/export const SHIPPED_NATIVE_RUNTIMES = \[[\s\S]*?\n\];/, `export const SHIPPED_NATIVE_RUNTIMES = ${JSON.stringify(priorShipped)};`)
   .replace("'./native-fingerprint.mjs'", JSON.stringify(join(mobileRoot, 'scripts/native-fingerprint.mjs')))
   .replace("'./ota-delivery-index.mjs'", JSON.stringify(join(mobileRoot, 'scripts/ota-delivery-index.mjs'))));
 
@@ -115,8 +120,10 @@ describe('mobile OTA release governor', () => {
       { platform: 'ios', runtimeVersion: '33' },
       { platform: 'android', runtimeVersion: '36' },
       { platform: 'ios', runtimeVersion: '34' },
+      { platform: 'android', runtimeVersion: '38' },
+      { platform: 'ios', runtimeVersion: '35' },
     ]);
-    expect(releaseUpdateTargets(mobileRoot)).toHaveLength(13);
+    expect(releaseUpdateTargets(mobileRoot)).toHaveLength(15);
     expect(releaseUpdateTargets(mobileRoot)).toContainEqual({ platform: 'android', runtimeVersion: '35' });
     expect(releaseUpdateTargets(mobileRoot)).toContainEqual({ platform: 'ios', runtimeVersion: '33' });
     // Each platform publishes to its pin plus the two latest shipped runtimes.
@@ -132,6 +139,8 @@ describe('mobile OTA release governor', () => {
       { platform: 'ios', runtimeVersion: '33' },
       { platform: 'android', runtimeVersion: '36' },
       { platform: 'ios', runtimeVersion: '34' },
+      { platform: 'android', runtimeVersion: '38' },
+      { platform: 'ios', runtimeVersion: '35' },
     ]);
   });
 
@@ -156,7 +165,7 @@ describe('mobile OTA release governor', () => {
       expect(runtime.evidence).toContain('owner decision');
     }
     // Retirement does not rewrite history: every shipped runtime stays listed.
-    expect(SHIPPED_NATIVE_RUNTIMES).toHaveLength(15);
+    expect(SHIPPED_NATIVE_RUNTIMES).toHaveLength(17);
     expect(planCoverageErrors({ android: '33', ios: '32' })).toEqual([]);
   });
 
@@ -258,6 +267,62 @@ describe('mobile OTA release governor', () => {
     expect(result.stderr).toContain('android@31 was shipped or submitted');
     expect(result.stdout).not.toContain('eas-cli');
     expect(result.stdout).not.toContain('release_plan_targets=');
+  });
+
+  it('R1 keeps android@38 and ios@35 covered through publish planning', () => {
+    const pins = { android: '39', ios: '36' };
+    const previous = releaseUpdateTargets(mobileRoot, pins).filter(
+      target => target.runtimeVersion !== pins[target.platform as keyof typeof pins],
+    );
+    for (const target of [
+      { platform: 'android', runtimeVersion: '38' },
+      { platform: 'ios', runtimeVersion: '35' },
+    ]) {
+      if (!previous.some(t => t.platform === target.platform && t.runtimeVersion === target.runtimeVersion)) {
+        previous.push(target);
+      }
+    }
+    expect(planCoverageErrors(pins, COMPAT_RUNTIMES, RETIRED_COMPAT_RUNTIMES,
+      previous.map(target => ({ ...target, evidence: 'R1 previous production update' })),
+    )).toEqual([]);
+
+    const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-r1-'));
+    const fakeEas = join(directory, 'fake-eas.sh');
+    const production = JSON.stringify({ currentPage: previous.map(target => ({
+      ...target, platforms: target.platform, group: `previous-${target.platform}-${target.runtimeVersion}`,
+    })) });
+    // Exercise publish planning and candidate recording without contacting EAS.
+    writeFileSync(fakeEas, `#!/bin/sh
+case "$1" in
+  channel:view|channel:edit) echo '{}' ;;
+  update:list) echo '${production}' ;;
+  update)
+    while [ "$1" != "--platform" ]; do shift; done
+    target_platform="$2"
+    printf '[{"id":"candidate-%s-%s","platform":"%s","runtimeVersion":"%s","group":"candidate-%s-%s"}]' "$target_platform" "$EXPO_RUNTIME_OVERRIDE" "$target_platform" "$EXPO_RUNTIME_OVERRIDE" "$target_platform" "$EXPO_RUNTIME_OVERRIDE"
+    ;;
+  *) exit 8 ;;
+esac
+`);
+    chmodSync(fakeEas, 0o755);
+    const result = spawnSync(process.execPath, [releaseScript, 'publish',
+      '--sha', 'a24a483eb422968b612791fc86676625653adc18', '--ref', 'main',
+      '--ledger', join(directory, 'ledger.json')], {
+      cwd: mobileRoot, encoding: 'utf8',
+      env: { ...process.env, EAS_CLI_PATH: fakeEas, OTA_EMBEDDED_ANCHOR_PLATFORMS: 'android,ios' },
+    });
+    expect(result.status).toBe(0);
+    const ledger = JSON.parse(readFileSync(join(directory, 'ledger.json'), 'utf8'));
+    expect(ledger.status).toBe('beta');
+    expect(ledger.candidateTargets).toHaveLength(15);
+    expect(ledger.candidateTargets).toEqual(expect.arrayContaining([
+      expect.objectContaining({ platform: 'android', runtimeVersion: '38' }),
+      expect.objectContaining({ platform: 'ios', runtimeVersion: '35' }),
+    ]));
+    expect(result.stderr).not.toContain('does not cover previously shipped');
+    expect(result.stderr).not.toContain('no rollback anchor');
+    expect(result.stdout).toContain('android@38');
+    expect(result.stdout).toContain('ios@35');
   });
 
   it('reserves the runtime override for release-script child processes', () => {

@@ -1110,6 +1110,18 @@ jobs:
         env:
           NATIVE_APP_VERSION: ${{ needs.initialize.outputs.native_app_version }}
         run: echo "version=$NATIVE_APP_VERSION" >> "$GITHUB_OUTPUT"
+      - name: Preserve Android build evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: mobile-native-android-build-${{ needs.initialize.outputs.release_id }}
+          # The AAB rides along so the release-proof lane can install the exact
+          # store binary (bundletool re-signs it with the sideload key) instead
+          # of rebuilding an APK from source.
+          path: |
+            ${{ runner.temp }}/android-build.json
+            ${{ runner.temp }}/beeline.aab
+          if-no-files-found: error
+          retention-days: 1
       - name: Authenticate to Google Play
         if: inputs.store_track != 'none'
         id: play-auth
@@ -1131,18 +1143,6 @@ jobs:
           test -s "$RUNNER_TEMP/beeline.aab" || { echo 'no local aab to upload' >&2; exit 1; }
           AAB_PATH="$RUNNER_TEMP/beeline.aab" RELEASE_NAME="${{ steps.native_version.outputs.version }}" RELEASE_STATUS=completed bash scripts/play-publish.sh
           METADATA_DIR=apps/mobile/fastlane/metadata/android LANGUAGE=en-US bash scripts/play-publish-listing.sh
-      - name: Preserve Android build evidence
-        uses: actions/upload-artifact@v4
-        with:
-          name: mobile-native-android-build-${{ needs.initialize.outputs.release_id }}
-          # The AAB rides along so the release-proof lane can install the exact
-          # store binary (bundletool re-signs it with the sideload key) instead
-          # of rebuilding an APK from source.
-          path: |
-            ${{ runner.temp }}/android-build.json
-            ${{ runner.temp }}/beeline.aab
-          if-no-files-found: error
-          retention-days: 1
       - name: Remove Android build output
         if: always()
         run: rm -rf "$RUNNER_TEMP/beeline.aab" apps/mobile/android/app/build apps/mobile/android/build 2>/dev/null || true

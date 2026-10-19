@@ -60,15 +60,15 @@ A matcher is a plain value (equal), `{"equals": value}`, `{"contains": "text"}`,
 
 ```
 npm run test:prompt-cases                        # offline: rule tests, case validity, section coverage
-OPENROUTER_API_KEY=… npm run prompt-cases        # replay every case
-OPENROUTER_API_KEY=… npm run prompt-cases -- --only tagging-no-stray-handle
+ANTHROPIC_API_KEY=… npm run prompt-cases         # replay every case
+ANTHROPIC_API_KEY=… npm run prompt-cases -- --only tagging-no-stray-handle
 ```
 
 The runner builds each prompt with the real assembler and tool descriptions,
-sends it to `PROMPT_CASES_MODEL` (default `anthropic/claude-sonnet-5.5`) through
-OpenRouter (`OPENROUTER_BASE_URL` points it at a proxy such as a Squire egress
-grant), answers tool calls with stub results for up to four steps, and
-checks the pass rule on everything the model did. It samples each case up to 3
+sends it to the Anthropic Messages API with `ANTHROPIC_API_KEY`, or to OpenRouter
+with `OPENROUTER_API_KEY` (`OPENROUTER_BASE_URL` points it at a proxy). The model
+is `PROMPT_CASES_MODEL`, default the agents' default Claude model. It answers
+tool calls with stub results for up to four steps, and checks the pass rule on everything the model did. It samples each case up to 3
 times; a case passes at 2 of 3.
 
 In CI, a case that fails and is unchanged on the target branch is replayed

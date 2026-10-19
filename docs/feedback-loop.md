@@ -79,7 +79,7 @@ adds the case in its pull request. The `PROMPT CASES` check
 (`.github/workflows/prompt-cases.yml`) replays every case against the real model
 on any pull request that changes prompt text. It blocks when a case that passed
 on the target branch now fails, or when a new case does not pass. The check
-needs the repository secret `OPENROUTER_API_KEY`.
+needs the repository secret `ANTHROPIC_API_KEY` (or `OPENROUTER_API_KEY`).
 
 ### Production database access
 

@@ -14,13 +14,14 @@
  *
  * Each case builds the session and turn prompt with the real assembler
  * (`apps/body/src/prompt-assembly.ts`) and the real tool descriptions
- * (`apps/body/src/minimal-tool-surface.ts`), sends the turn to the model
- * through OpenRouter, answers tool calls with stub results for up to four
+ * (`apps/body/src/minimal-tool-surface.ts`), sends the turn to the model, answers tool calls with stub results for up to four
  * steps, and evaluates the case's pass rule on every call and all text.
  *
- * Environment: OPENROUTER_API_KEY (required unless --check),
- * PROMPT_CASES_MODEL (default anthropic/claude-sonnet-5.5),
- * OPENROUTER_BASE_URL (default https://openrouter.ai/api/v1).
+ * Environment (one key required unless --check): ANTHROPIC_API_KEY calls the
+ * Anthropic Messages API directly (ANTHROPIC_BASE_URL overrides the host);
+ * otherwise OPENROUTER_API_KEY calls OpenRouter (OPENROUTER_BASE_URL overrides
+ * it). PROMPT_CASES_MODEL overrides the model, default the agents' default
+ * Claude model.
  */
 import { appendFileSync, existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -51,8 +52,12 @@ const SAMPLES = Number(option('--samples') ?? 3);
 const NEED = Number(option('--need') ?? 2);
 const MAX_STEPS = 4;
 const CONCURRENCY = 6;
-const MODEL = process.env.PROMPT_CASES_MODEL || 'anthropic/claude-sonnet-5.5';
-const BASE_URL = (process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/$/, '');
+// ANTHROPIC_API_KEY wins; OPENROUTER_API_KEY is the fallback provider.
+const PROVIDER = process.env.ANTHROPIC_API_KEY ? 'anthropic' : process.env.OPENROUTER_API_KEY ? 'openrouter' : undefined;
+// The Claude model the agent setup selects by default (`DEFAULT_MODELS.claude`, apps/body/src/connect-command.ts).
+const MODEL = process.env.PROMPT_CASES_MODEL || (PROVIDER === 'openrouter' ? 'anthropic/claude-opus-4.1' : 'claude-opus-4-1');
+const ANTHROPIC_BASE_URL = (process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com').replace(/\/$/, '');
+const OPENROUTER_BASE_URL = (process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/$/, '');
 const SILENT_TOOL_NAME = 'no_reply_needed';
 // Fixed so a case's prompt does not change with the runner's own host.
 const FIXED_MEMORY_MAX_BYTES = 32 * 1024 ** 3;
@@ -183,68 +188,124 @@ function check(source: PromptSource, cases: readonly PromptCase[]): string[] {
   return problems;
 }
 
-type ChatMessage = Record<string, unknown>;
+interface ModelCall {
+  readonly id: string;
+  readonly name: string;
+  readonly args: Record<string, unknown>;
+}
 
-async function chat(messages: ChatMessage[], tools: ToolDefinition[]): Promise<{ content: string; calls: Array<{ id: string; name: string; args: string }> }> {
-  const body = JSON.stringify({
-    model: MODEL,
-    max_tokens: 2_000,
-    messages,
-    tools: tools.map((tool) => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.inputSchema } })),
-  });
+/** One model provider: it sends the conversation and appends each answer and its stub tool results. */
+interface Conversation {
+  send(): Promise<{ text: string; calls: ModelCall[] }>;
+  answer(calls: readonly ModelCall[], results: readonly string[]): void;
+}
+
+const RETRY_STATUSES = [0, 408, 429, 500, 502, 503, 504, 529];
+
+async function postJson(url: string, headers: Record<string, string>, body: unknown): Promise<unknown> {
   for (let attempt = 1; ; attempt++) {
-    const response = await fetch(`${BASE_URL}/chat/completions`, {
+    const response = await fetch(url, {
       method: 'POST',
-      headers: { authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`, 'content-type': 'application/json' },
-      body,
+      headers: { ...headers, 'content-type': 'application/json' },
+      body: JSON.stringify(body),
       signal: AbortSignal.timeout(180_000),
     }).catch((error: Error) => ({ ok: false, status: 0, text: async () => error.message }) as const);
     const text = await response.text();
-    if (response.ok) {
-      const parsed = JSON.parse(text) as { choices?: Array<{ message?: { content?: string | null; tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }> } }>; error?: { message?: string } };
-      const message = parsed.choices?.[0]?.message;
-      if (message) {
-        return {
-          content: message.content ?? '',
-          calls: (message.tool_calls ?? []).map((call) => ({ id: call.id, name: call.function.name, args: call.function.arguments || '{}' })),
-        };
-      }
-      if (attempt >= 4) throw new Error(`model returned no message: ${text.slice(0, 300)}`);
-    } else if (attempt >= 4 || ![0, 408, 429, 500, 502, 503, 504, 529].includes(response.status)) {
+    if (response.ok) return JSON.parse(text) as unknown;
+    if (attempt >= 4 || !RETRY_STATUSES.includes(response.status)) {
       throw new Error(`model request failed (${response.status}): ${text.slice(0, 300)}`);
     }
     await new Promise((done) => setTimeout(done, 2_000 * 2 ** attempt));
   }
 }
 
+const parseArgs = (raw: string): Record<string, unknown> => {
+  try {
+    return JSON.parse(raw || '{}') as Record<string, unknown>;
+  } catch {
+    return { unparsed: raw };
+  }
+};
+
+/** The Anthropic Messages API, called directly. */
+function anthropicConversation(system: string, user: string, tools: readonly ToolDefinition[]): Conversation {
+  const messages: Array<{ role: string; content: unknown }> = [{ role: 'user', content: user }];
+  return {
+    async send() {
+      const reply = (await postJson(
+        `${ANTHROPIC_BASE_URL}/v1/messages`,
+        { 'x-api-key': process.env.ANTHROPIC_API_KEY!, 'anthropic-version': '2023-06-01' },
+        {
+          model: MODEL,
+          max_tokens: 2_000,
+          ...(system ? { system } : {}),
+          messages,
+          tools: tools.map((tool) => ({ name: tool.name, description: tool.description, input_schema: tool.inputSchema })),
+        },
+      )) as { content?: Array<{ type: string; text?: string; id?: string; name?: string; input?: Record<string, unknown> }> };
+      const content = reply.content ?? [];
+      messages.push({ role: 'assistant', content });
+      return {
+        text: content.filter((block) => block.type === 'text').map((block) => block.text ?? '').join('\n'),
+        calls: content
+          .filter((block) => block.type === 'tool_use')
+          .map((block) => ({ id: block.id!, name: block.name!, args: block.input ?? {} })),
+      };
+    },
+    answer(calls, results) {
+      messages.push({
+        role: 'user',
+        content: calls.map((call, index) => ({ type: 'tool_result', tool_use_id: call.id, content: results[index] })),
+      });
+    },
+  };
+}
+
+/** OpenRouter's OpenAI-compatible chat completions. */
+function openRouterConversation(system: string, user: string, tools: readonly ToolDefinition[]): Conversation {
+  const messages: Array<Record<string, unknown>> = [
+    ...(system ? [{ role: 'system', content: system }] : []),
+    { role: 'user', content: user },
+  ];
+  return {
+    async send() {
+      const reply = (await postJson(
+        `${OPENROUTER_BASE_URL}/chat/completions`,
+        { authorization: `Bearer ${process.env.OPENROUTER_API_KEY}` },
+        {
+          model: MODEL,
+          max_tokens: 2_000,
+          messages,
+          tools: tools.map((tool) => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.inputSchema } })),
+        },
+      )) as { choices?: Array<{ message?: { content?: string | null; tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }> } }> };
+      const message = reply.choices?.[0]?.message;
+      if (!message) throw new Error(`model returned no message: ${JSON.stringify(reply).slice(0, 300)}`);
+      const toolCalls = message.tool_calls ?? [];
+      messages.push({ role: 'assistant', content: message.content ?? null, ...(toolCalls.length ? { tool_calls: toolCalls } : {}) });
+      return {
+        text: message.content ?? '',
+        calls: toolCalls.map((call) => ({ id: call.id, name: call.function.name, args: parseArgs(call.function.arguments) })),
+      };
+    },
+    answer(calls, results) {
+      calls.forEach((call, index) => messages.push({ role: 'tool', tool_call_id: call.id, content: results[index] }));
+    },
+  };
+}
+
 async function replay(source: PromptSource, testCase: PromptCase): Promise<Transcript> {
   const prompt = assemble(source, testCase);
   const tools = toolsFor(source, testCase);
-  const messages: ChatMessage[] = [
-    ...(prompt.system ? [{ role: 'system', content: prompt.system }] : []),
-    { role: 'user', content: prompt.user },
-  ];
+  const conversation = (PROVIDER === 'anthropic' ? anthropicConversation : openRouterConversation)(prompt.system, prompt.user, tools);
   const calls: ToolCall[] = [];
   const text: string[] = [];
   for (let step = 0; step < MAX_STEPS; step++) {
-    const answer = await chat(messages, tools);
-    if (answer.content.trim()) text.push(answer.content.trim());
+    const answer = await conversation.send();
+    if (answer.text.trim()) text.push(answer.text.trim());
     if (!answer.calls.length) break;
-    messages.push({
-      role: 'assistant',
-      content: answer.content || null,
-      tool_calls: answer.calls.map((call) => ({ id: call.id, type: 'function', function: { name: call.name, arguments: call.args } })),
-    });
-    for (const call of answer.calls) {
-      let parsed: Record<string, unknown> = {};
-      try {
-        parsed = JSON.parse(call.args) as Record<string, unknown>;
-      } catch {
-        parsed = { unparsed: call.args };
-      }
-      calls.push({ name: call.name, args: parsed });
-      messages.push({ role: 'tool', tool_call_id: call.id, content: testCase.toolResults?.[call.name] ?? '{"ok":true}' });
-    }
+    calls.push(...answer.calls.map((call) => ({ name: call.name, args: call.args })));
+    conversation.answer(answer.calls, answer.calls.map((call) => testCase.toolResults?.[call.name] ?? '{"ok":true}'));
     if (answer.calls.some((call) => call.name === SILENT_TOOL_NAME)) break;
   }
   return { calls, text: text.join('\n\n') };
@@ -308,8 +369,8 @@ async function main(): Promise<number> {
     console.log(`${all.length} prompt cases valid; every prompt section has a case.`);
     return 0;
   }
-  if (!process.env.OPENROUTER_API_KEY) {
-    summarize(['## Prompt cases', 'OPENROUTER_API_KEY is not set, so no case was replayed.']);
+  if (!PROVIDER) {
+    summarize(['## Prompt cases', 'Neither ANTHROPIC_API_KEY nor OPENROUTER_API_KEY is set, so no case was replayed.']);
     return 1;
   }
   const cases = only ? all.filter((testCase) => only.includes(testCase.id)) : all;
@@ -317,7 +378,7 @@ async function main(): Promise<number> {
     console.error(`unknown case id in --only: ${only.filter((id) => !cases.some((testCase) => testCase.id === id)).join(', ')}`);
     return 1;
   }
-  console.log(`Replaying ${cases.length} cases on ${MODEL}: ${SAMPLES} samples, ${NEED} must pass.`);
+  console.log(`Replaying ${cases.length} cases on ${MODEL} (${PROVIDER}): ${SAMPLES} samples, ${NEED} must pass.`);
   const results = await runAll(head, cases);
 
   // A failing case that is unchanged on the target branch is replayed there.

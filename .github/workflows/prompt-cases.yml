@@ -74,20 +74,25 @@ jobs:
       - name: Check the model key
         id: key
         env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
         run: |
           set -euo pipefail
-          if [ -n "$OPENROUTER_API_KEY" ]; then
+          if [ -n "$ANTHROPIC_API_KEY" ]; then
+            echo "Replaying with secret ANTHROPIC_API_KEY."
+            echo "replay=true" >> "$GITHUB_OUTPUT"
+          elif [ -n "$OPENROUTER_API_KEY" ]; then
+            echo "Replaying with secret OPENROUTER_API_KEY."
             echo "replay=true" >> "$GITHUB_OUTPUT"
           elif [ "$FORK" = true ]; then
-            message="Prompt cases were NOT replayed: a fork pull request gets no OPENROUTER_API_KEY. A maintainer must replay them from a branch in this repository."
+            message="Prompt cases were NOT replayed: a fork pull request gets no model key secret. A maintainer must replay them from a branch in this repository."
             echo "::warning title=Prompt cases skipped::$message"
             echo "## Prompt cases skipped" >> "$GITHUB_STEP_SUMMARY"
             echo "$message" >> "$GITHUB_STEP_SUMMARY"
             echo "replay=false" >> "$GITHUB_OUTPUT"
           else
-            echo "::error title=Prompt cases::Repository secret OPENROUTER_API_KEY is not set, so the saved cases cannot be replayed."
+            echo "::error title=Prompt cases::Repository secret ANTHROPIC_API_KEY (or OPENROUTER_API_KEY) is not set, so the saved cases cannot be replayed."
             exit 1
           fi
       - name: Check out the target branch prompt
@@ -102,6 +107,7 @@ jobs:
       - name: Replay the saved cases
         if: steps.key.outputs.replay == 'true'
         env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
           PROMPT_CASES_MODEL: ${{ vars.PROMPT_CASES_MODEL }}
           BASELINE: ${{ github.event_name == 'pull_request' && format('{0}/base', runner.temp) || '' }}

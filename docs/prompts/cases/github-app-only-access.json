@@ -1,6 +1,6 @@
 {
   "id": "github-app-only-access",
-  "section": "surface.tools",
+  "section": "tools",
   "summary": "Repository App access does not require connecting personal GitHub.",
   "place": "code-corner",
   "session": {
@@ -21,9 +21,7 @@
     }
   },
   "toolResults": {
-    "connect": {
-      "readiness": "Apps: none. No personal GitHub connection is reported. The existing repository App credential serves this linked repository."
-    }
+    "connect": "{\"readiness\": \"Apps: none. No personal GitHub connection is reported. The existing repository App credential serves this linked repository.\"}"
   },
   "pass": {
     "all": [

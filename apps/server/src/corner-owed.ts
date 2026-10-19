@@ -282,6 +282,7 @@ ALTER TABLE corner_report_blockers ADD COLUMN IF NOT EXISTS commander_id text RE
 UPDATE corner_report_blockers blocker SET commander_id=report.agent_id FROM agent_commands report
   WHERE report.id=blocker.report_id AND blocker.commander_id IS NULL;
 CREATE INDEX IF NOT EXISTS corner_report_blockers_return_room ON corner_report_blockers(return_room_id,person_id);
+CREATE INDEX IF NOT EXISTS corner_report_blockers_message ON corner_report_blockers(message_id);
 CREATE INDEX IF NOT EXISTS corner_private_reports_origin ON agent_commands
   ((private_payload->>'fromRoomId'),(private_payload->>'authorId'),created_at DESC,id DESC)
   WHERE private_payload->>'kind'='report';

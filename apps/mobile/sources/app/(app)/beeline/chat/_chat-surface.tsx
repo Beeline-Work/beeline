@@ -329,6 +329,7 @@ import {
   AppSignInCard,
   ChoiceCard,
   WalletCards,
+  AgentCommandCard,
   OrdinaryLedgerMessage,
   TargetBranchProposalCard,
   WritePermissionCard,
@@ -5765,6 +5766,10 @@ export function BuzzChatSurface({
             onOpenWorkbench={openWorkbench}
           />
         );
+      }
+
+      if (item.agentCommand) {
+        return <AgentCommandCard message={item} stamp={ledgerStamp(item.timestamp)} />;
       }
 
       if (item.walletTx || item.walletInsufficient || item.walletDelegation) {

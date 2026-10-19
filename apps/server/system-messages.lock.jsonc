@@ -1,6 +1,7 @@
 // Do not delete, disable or modify this guard or its list without lunchboxfortwo's express command.
 // Workspace ended-line wording approved by lunchboxfortwo in brief revision 1, rule 4 (message 8c3fae7b28a63868a4626d32d35cd9f8963cb18be26cd9d3b306cef8c3d5f590).
 // Merge-refusal notification ID change approved by lunchboxfortwo in Room message 1c880c7a; wording unchanged.
+// Agent order/report record card in corners ("@worker reported to @ruby · blocked") approved by lunchboxfortwo in brief revision 1 (message 9e84105213578731c324d5ef563a955f64c27f985f1508bee4c74a3539384968); callers of reportToCommander and sendOrder become wrappers.
 [
   {
     "id": "src/agent-class-retirement.ts:retireAgentClasses:message-write:137f066b6c9f70c2",
@@ -58,6 +59,23 @@
     "occurrences": 1
   },
   {
+    "id": "src/agent-command.ts:dropQueuedOrdersForStop:wrapper:c5b7066bc0680a73",
+    "file": "apps/server/src/agent-command.ts",
+    "kind": "wrapper",
+    "template": "reportToCommander(db, stopped.room_id, stopped.agent_id, `failed: ${dropped.rowCount} queued ${dropped.rowCount === 1 ? 'order was' : 'orders were'} dropped by a Stop; the running turn was cancelled`, dropped.rows[0], createHash('sha256').update(`stop-orders:${stopped.id}`).digest('hex'), { automatic: true, digestSource: true })",
+    "literals": [
+      "'cancelled'",
+      "'hex'",
+      "'order was'",
+      "'orders were'",
+      "'sha256'",
+      "'stop'",
+      "`failed: ${dropped.rowCount} queued ${dropped.rowCount === 1 ? 'order was' : 'orders were'} dropped by a Stop; the running turn was cancelled`",
+      "`stop-orders:${stopped.id}`"
+    ],
+    "occurrences": 1
+  },
+  {
     "id": "src/agent-command.ts:noteBlockedCornerChecks:systemLine:123a7d1394ef6fc9",
     "file": "apps/server/src/agent-command.ts",
     "kind": "systemLine",
@@ -71,6 +89,24 @@
       "`checks fail on ${pullRequest} and a check has not finished for ${CORNER_CHECK_STUCK_AFTER}`",
       "`checks still fail on ${pullRequest} and the fix turn ended with nothing new pushed`",
       "`pull request #${row.number}`"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/agent-command.ts:noteCornerAgentUnreachable:wrapper:9906e49646c56b82",
+    "file": "apps/server/src/agent-command.ts",
+    "kind": "wrapper",
+    "template": "reportToCommander(db, cornerId, agentId, `blocked: ${failure.agent_name} (${agentId}) could not be reached in corner ${failure.name} (${cornerId}): ${failed}`, command, reportId, { automatic: true, agentOnly: true })",
+    "literals": [
+      "''",
+      "'2 minutes'",
+      "'hex'",
+      "'never-run'",
+      "'sha256'",
+      "`${cause}; source ${sourceMessageId}`",
+      "`blocked: ${failure.agent_name} (${agentId}) could not be reached in corner ${failure.name} (${cornerId}): ${failed}`",
+      "`command ${command.id} (${command.reason}) remained unclaimed for ${CORNER_CHECKS_BLOCKED_AFTER}`",
+      "`unreachable:${cornerId}:${agentId}:${failure.last_run ?? 'never-run'}:${failure.generation ?? ''}`"
     ],
     "occurrences": 1
   },
@@ -202,10 +238,8 @@
     "kind": "wrapper",
     "template": "line('stopped its running turn', dropped ? `${dropped} queued ${dropped === 1 ? 'order' : 'orders'} dropped` : undefined)",
     "literals": [
-      "'cancelled'",
       "'order'",
       "'orders'",
-      "'stop'",
       "'stopped its running turn'",
       "`${dropped} queued ${dropped === 1 ? 'order' : 'orders'} dropped`"
     ],
@@ -322,6 +356,14 @@
     "literals": [
       "'the sender may not address this agent'"
     ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/agent-command.ts:routeTaggedLifecycleCommand:wrapper:9231f724276cc9ce",
+    "file": "apps/server/src/agent-command.ts",
+    "kind": "wrapper",
+    "template": "dropQueuedOrdersForStop(db, parent)",
+    "literals": [],
     "occurrences": 1
   },
   {
@@ -784,6 +826,69 @@
     "occurrences": 1
   },
   {
+    "id": "src/commander.ts:recordAgentCommandCard:systemLine:00ceafd3869f80cb",
+    "file": "apps/server/src/commander.ts",
+    "kind": "systemLine",
+    "template": "systemLine(db, {\n    id: createHash('sha256').update(`agent-command-card:${input.id}`).digest('hex'),\n    roomId: input.cornerId,\n    authorId: input.authorId,\n    subject: { kind: 'agent', id: input.authorId, name: input.authorId },\n    verb: input.kind === 'order' ? 'ordered' : 'reported to',\n    object: { text: recipient?.name ?? input.recipientId, id: input.recipientId },\n    ...(input.status ? { consequence: input.status } : {}),\n    presentation: 'card',\n    cardType: AGENT_COMMAND_CARD_TYPE,\n    card: {\n        kind: input.kind,\n        recipient: { id: input.recipientId, name: recipient?.name ?? '', ...(recipient?.handle ? { handle: recipient.handle } : {}) },\n        ...(input.status ? { status: input.status } : {}),\n        text: input.text,\n    },\n})",
+    "literals": [
+      "''",
+      "'agent'",
+      "'agent-command'",
+      "'order'",
+      "'ordered'",
+      "'reported to'"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/commander.ts:reportToCommander:wrapper:69505f9f0a9e6c42",
+    "file": "apps/server/src/commander.ts",
+    "kind": "wrapper",
+    "template": "reportToCommander(db, roomId, agentId, text, source, first ? createHash('sha256').update(`${reportId}:${route}`).digest('hex') : reportId, { ...options, digestSource: true })",
+    "literals": [
+      "'hex'",
+      "'sha256'",
+      "`${reportId}:${route}`"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/commander.ts:reportToCommander:wrapper:6d2e5de0d12f3034",
+    "file": "apps/server/src/commander.ts",
+    "kind": "wrapper",
+    "template": "recordAgentCommandCard(db, { id: reportId, cornerId: roomId, kind: 'report', authorId: agentId,\n    recipientId: recipient, text, status: /^(done|blocked|needs-decision|failed):/.exec(text)?.[1] })",
+    "literals": [
+      "'report'"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/commander.ts:sendOrder:wrapper:ff3f39d69e554e70",
+    "file": "apps/server/src/commander.ts",
+    "kind": "wrapper",
+    "template": "recordAgentCommandCard(db, { id: queued.id, cornerId: address, kind: 'order', authorId: agentId, recipientId: worker, text })",
+    "literals": [
+      "''",
+      "'1 minute'",
+      "'corner_'",
+      "'hex'",
+      "'human'",
+      "'input'",
+      "'lifecycle'",
+      "'message'",
+      "'order'",
+      "'resume'",
+      "'schedule'",
+      "'sha256'",
+      "'subscribed_event'",
+      "`${parent.private_payload.text}\\nResume context: ${sourceText}`",
+      "`${sourceText ?? ''}${note}`",
+      "`\\n${input.wakeNote}`",
+      "`order:${command.id}:${address}:${worker}:${text}`"
+    ],
+    "occurrences": 1
+  },
+  {
     "id": "src/computer-session.ts:createComputerSession:systemLine:3b9ba2708e2a0550",
     "file": "apps/server/src/computer-session.ts",
     "kind": "systemLine",
@@ -1155,6 +1260,16 @@
     "occurrences": 1
   },
   {
+    "id": "src/corner-attention.ts:deliverCornerAttention:wrapper:de1ad65d72087d45",
+    "file": "apps/server/src/corner-attention.ts",
+    "kind": "wrapper",
+    "template": "reportToCommander(tx, row.id, SYSTEM_IDENTITY_ID, `blocked: Corner ${row.name} is idle with no worker schedule or event subscription. Resume, schedule or close it.`, undefined, flag.id, { automatic: true, agentOnly: true })",
+    "literals": [
+      "`blocked: Corner ${row.name} is idle with no worker schedule or event subscription. Resume, schedule or close it.`"
+    ],
+    "occurrences": 1
+  },
+  {
     "id": "src/corner-close.ts:closeCornerState:message-write:e24a6d43943208d1",
     "file": "apps/server/src/corner-close.ts",
     "kind": "message-write",
@@ -1217,7 +1332,14 @@
     "file": "apps/server/src/corner-lifecycle.ts",
     "kind": "wrapper",
     "template": "ensureReviewDispatch(db, cornerId, corner, transition)",
-    "literals": [],
+    "literals": [
+      "'contents'",
+      "'headSha'",
+      "'outcome'",
+      "'roleBindings'",
+      "'seq'",
+      "'toState'"
+    ],
     "occurrences": 1
   },
   {
@@ -1243,7 +1365,14 @@
     "file": "apps/server/src/corner-lifecycle.ts",
     "kind": "wrapper",
     "template": "applyEvent(db, cornerId, corner, transition, event)",
-    "literals": [],
+    "literals": [
+      "'contents'",
+      "'headSha'",
+      "'outcome'",
+      "'roleBindings'",
+      "'seq'",
+      "'toState'"
+    ],
     "occurrences": 1
   },
   {
@@ -1406,12 +1535,70 @@
     "occurrences": 1
   },
   {
+    "id": "src/corner-lifecycle.ts:checksReported:wrapper:025e5a84172baa15",
+    "file": "apps/server/src/corner-lifecycle.ts",
+    "kind": "wrapper",
+    "template": "noteMissingReviewer(db, cornerId, corner, headSha ?? event.sourceMessageId)",
+    "literals": [],
+    "occurrences": 1
+  },
+  {
+    "id": "src/corner-lifecycle.ts:checksReported:wrapper:0fc4eee6905d0280",
+    "file": "apps/server/src/corner-lifecycle.ts",
+    "kind": "wrapper",
+    "template": "reachableReviewer(db, cornerId, corner, event.sourceMessageId, headSha)",
+    "literals": [],
+    "occurrences": 1
+  },
+  {
     "id": "src/corner-lifecycle.ts:checksReported:wrapper:1605776ffbdfd072",
     "file": "apps/server/src/corner-lifecycle.ts",
     "kind": "wrapper",
     "template": "ensureReviewDispatch(db, cornerId, corner, transition)",
     "literals": [],
     "occurrences": 3
+  },
+  {
+    "id": "src/corner-lifecycle.ts:checksReported:wrapper:4940b4d56f56f2a3",
+    "file": "apps/server/src/corner-lifecycle.ts",
+    "kind": "wrapper",
+    "template": "noteReviewBlocked(db, cornerId, corner, headSha ?? event.sourceMessageId, 'the configured reviewer is unreachable or unhealthy', false)",
+    "literals": [
+      "'the configured reviewer is unreachable or unhealthy'"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/corner-lifecycle.ts:checksReported:wrapper:539a68e43cbbe330",
+    "file": "apps/server/src/corner-lifecycle.ts",
+    "kind": "wrapper",
+    "template": "noteReviewBlocked(db, cornerId, corner, headSha ?? event.sourceMessageId, reason)",
+    "literals": [
+      "''",
+      "'1 minute'",
+      "'corner_'",
+      "'failing'",
+      "'hex'",
+      "'human'",
+      "'input'",
+      "'lifecycle'",
+      "'message'",
+      "'no_reviewer'",
+      "'order'",
+      "'passing'",
+      "'resume'",
+      "'schedule'",
+      "'subscribed_event'",
+      "'this head'",
+      "'unknown dispatch error'",
+      "`${parent.private_payload.text}\\nResume context: ${sourceText}`",
+      "`${sourceText ?? ''}${note}`",
+      "`: ${queued.error}`",
+      "`Review against brief revision ${brief.revision}, the corner's current brief at this dispatch.`",
+      "`\\n${input.wakeNote}`",
+      "`the reviewer command could not be queued on ${headSha ?? 'this head'}${queued.error ? `: ${queued.error}` : ''}; restore reviewer access or choose an available reviewer`"
+    ],
+    "occurrences": 1
   },
   {
     "id": "src/corner-lifecycle.ts:checksReported:wrapper:666f5946f9b8413a",
@@ -1424,6 +1611,16 @@
     "occurrences": 1
   },
   {
+    "id": "src/corner-lifecycle.ts:checksReported:wrapper:6f21b29f3b2c72d3",
+    "file": "apps/server/src/corner-lifecycle.ts",
+    "kind": "wrapper",
+    "template": "noteReviewDispatchFailure(db, cornerId, headSha ?? event.sourceMessageId, 'the corner has no implementer')",
+    "literals": [
+      "'the corner has no implementer'"
+    ],
+    "occurrences": 2
+  },
+  {
     "id": "src/corner-lifecycle.ts:checksReported:wrapper:908ce094b82a5c98",
     "file": "apps/server/src/corner-lifecycle.ts",
     "kind": "wrapper",
@@ -1431,12 +1628,7 @@
     "literals": [
       "'failing'",
       "'no_reviewer'",
-      "'offline'",
-      "'online'",
-      "'out-of-credit'",
-      "'passing'",
-      "'recent-failure'",
-      "'status'"
+      "'passing'"
     ],
     "occurrences": 1
   },
@@ -1461,6 +1653,28 @@
     "occurrences": 1
   },
   {
+    "id": "src/corner-lifecycle.ts:dispatchableListReviewer:wrapper:ac3d131792c044b0",
+    "file": "apps/server/src/corner-lifecycle.ts",
+    "kind": "wrapper",
+    "template": "readableByReviewer(db, cornerId, reviewerAgentId, sourceMessageId)",
+    "literals": [
+      "'offline'",
+      "'online'",
+      "'out-of-credit'",
+      "'recent-failure'",
+      "'status'"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/corner-lifecycle.ts:dispatchableListReviewer:wrapper:d7001698ea3b3f34",
+    "file": "apps/server/src/corner-lifecycle.ts",
+    "kind": "wrapper",
+    "template": "noteReviewerListExhausted(db, { cornerId, sourceMessageId, headSha })",
+    "literals": [],
+    "occurrences": 1
+  },
+  {
     "id": "src/corner-lifecycle.ts:ensureReviewDispatch:systemLine:90a5ee7e7c1e8b53",
     "file": "apps/server/src/corner-lifecycle.ts",
     "kind": "systemLine",
@@ -1470,6 +1684,128 @@
       "'github'",
       "'requested review of'",
       "`pull request #${pr.number}`"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/corner-lifecycle.ts:ensureReviewDispatch:wrapper:3e1a0cf66a7f92d6",
+    "file": "apps/server/src/corner-lifecycle.ts",
+    "kind": "wrapper",
+    "template": "reachableReviewer(db, cornerId, corner, sourceId, pr.headSha)",
+    "literals": [],
+    "occurrences": 1
+  },
+  {
+    "id": "src/corner-lifecycle.ts:ensureReviewDispatch:wrapper:4224bff1b3d31620",
+    "file": "apps/server/src/corner-lifecycle.ts",
+    "kind": "wrapper",
+    "template": "noteReviewBlocked(db, cornerId, corner, pr.headSha, 'the configured reviewer is unreachable or unhealthy', false)",
+    "literals": [
+      "'the configured reviewer is unreachable or unhealthy'"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/corner-lifecycle.ts:ensureReviewDispatch:wrapper:925659e8861c8779",
+    "file": "apps/server/src/corner-lifecycle.ts",
+    "kind": "wrapper",
+    "template": "noteMissingReviewer(db, cornerId, corner, pr.headSha)",
+    "literals": [],
+    "occurrences": 1
+  },
+  {
+    "id": "src/corner-lifecycle.ts:ensureReviewDispatch:wrapper:9ed529d882544a96",
+    "file": "apps/server/src/corner-lifecycle.ts",
+    "kind": "wrapper",
+    "template": "noteReviewBlocked(db, cornerId, corner, pr.headSha, reason)",
+    "literals": [
+      "' '",
+      "''",
+      "'1 minute'",
+      "'Approve'",
+      "'Beeline'",
+      "'GitHub'",
+      "'NFKD'",
+      "'Use your passkey for'",
+      "'Vouch for'",
+      "'_'",
+      "'a Room event'",
+      "'access to'",
+      "'agent'",
+      "'check-failed'",
+      "'command'",
+      "'computer-session-activity'",
+      "'connectorName'",
+      "'corner-opened'",
+      "'corner_'",
+      "'corner_review_dispatch'",
+      "'github'",
+      "'harness'",
+      "'hex'",
+      "'human'",
+      "'input'",
+      "'lifecycle'",
+      "'mergeCommitSha'",
+      "'merged'",
+      "'message'",
+      "'name'",
+      "'opened'",
+      "'order'",
+      "'passkey'",
+      "'pr'",
+      "'prompt'",
+      "'received'",
+      "'repository'",
+      "'requested review of'",
+      "'resume'",
+      "'room'",
+      "'running'",
+      "'schedule'",
+      "'sha256'",
+      "'spending with '",
+      "'squire-spending'",
+      "'string'",
+      "'subscribed_event'",
+      "'subscription-fired'",
+      "'system'",
+      "'title'",
+      "'tool'",
+      "'unknown dispatch error'",
+      "'vouch'",
+      "'watched_corner'",
+      "'workflow-handoff'",
+      "'write access to '",
+      "` · merge commit ${watched?.merge_sha}`",
+      "`${card.linkKind === 'passkey' ? 'Use your passkey for' : card.linkKind === 'vouch' ? 'Vouch for' : 'Approve'} ${field('title')}?`",
+      "`${parent.private_payload.text}\\nResume context: ${sourceText}`",
+      "`${sourceText ?? ''}${note}`",
+      "`: ${queued.error}`",
+      "`@${agentHandle(phrase.subject.name)}`",
+      "`@${clause(phrase.subject.name).replace(/^@/, '')}`",
+      "`@${row.handle ?? agentHandle(row.name)}`",
+      "`@${row.handle}`",
+      "`Allow ${grant.kind === 'command' ? 'running' : 'access to'} ${grant.target}?`",
+      "`Approve ${card.purpose === 'squire-spending' ? 'spending with ' + field('tool') : 'write access to ' + field('repository')}?`",
+      "`Connect ${field('connectorName')}?`",
+      "`Review against brief revision ${brief.revision}, the corner's current brief at this dispatch.`",
+      "`Sign in to ${AGENT_SIGN_IN_SERVICE_LABELS[field('harness') as AgentSignInHarness] ?? field('harness')}?`",
+      "`Sign in to ${field('name')}?`",
+      "`Watched corner ${watched?.name ?? input.subject.name} (${input.card?.cornerId ?? input.roomId}): ${input.kind === 'corner-opened' ? 'opened' : input.kind}${input.kind === 'merged' && watched?.merge_sha ? ` · merge commit ${watched?.merge_sha}` : ''}\\n${text}`",
+      "`\\n${input.wakeNote}`",
+      "`pull request #${pr.number}`",
+      "`room-subscription:${id}:${subscription.id}`",
+      "`the reviewer command could not be queued on ${pr.headSha}${queued.error ? `: ${queued.error}` : ''}; restore reviewer access or choose an available reviewer`"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/corner-lifecycle.ts:ensureReviewDispatch:wrapper:dce69b3c211c9e96",
+    "file": "apps/server/src/corner-lifecycle.ts",
+    "kind": "wrapper",
+    "template": "noteReviewBlocked(db, cornerId, corner, `${pr.headSha}:${ended}`, 'the review ended without a PASS on the current head')",
+    "literals": [
+      "'the review ended without a PASS on the current head'",
+      "`${pr.headSha}:${ended}`"
     ],
     "occurrences": 1
   },
@@ -1495,6 +1831,184 @@
     "literals": [
       "'merge_refused'"
     ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/corner-lifecycle.ts:noteMissingReviewer:wrapper:b906357182da3a7b",
+    "file": "apps/server/src/corner-lifecycle.ts",
+    "kind": "wrapper",
+    "template": "noteReviewBlocked(db, cornerId, corner, headKey, 'no reviewer is configured')",
+    "literals": [
+      "'no reviewer is configured'"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/corner-lifecycle.ts:noteReviewBlocked:wrapper:46ffbcc85bc25170",
+    "file": "apps/server/src/corner-lifecycle.ts",
+    "kind": "wrapper",
+    "template": "reportToCommander(db, cornerId, SYSTEM_IDENTITY_ID, `blocked: ${reason}`, undefined, createHash('sha256').update(`review-gap:${episode}`).digest('hex'))",
+    "literals": [
+      "'hex'",
+      "'sha256'",
+      "`${cornerId}:${headKey}:${reason}`",
+      "`blocked: ${reason}`",
+      "`review-gap:${episode}`"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/corner-lifecycle.ts:noteReviewBlocked:wrapper:4e0dad7a0e1f7738",
+    "file": "apps/server/src/corner-lifecycle.ts",
+    "kind": "wrapper",
+    "template": "noteReviewDispatchFailure(db, cornerId, headKey, wakeResult.reason!)",
+    "literals": [
+      "''",
+      "'1 minute'",
+      "'The implementer cannot be woken to arrange review'",
+      "'corner_'",
+      "'corner_review_needed'",
+      "'hex'",
+      "'human'",
+      "'input'",
+      "'lifecycle'",
+      "'message'",
+      "'order'",
+      "'resume'",
+      "'schedule'",
+      "'sha256'",
+      "'subscribed_event'",
+      "`${cornerId}:${headKey}:${reason}`",
+      "`${parent.private_payload.text}\\nResume context: ${sourceText}`",
+      "`${sourceText ?? ''}${note}`",
+      "`Checks passed; ${reason}; arrange review or report the blocker to its commander`",
+      "`\\n${input.wakeNote}`",
+      "`review-needed:${episode}`"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/corner-lifecycle.ts:noteReviewDispatchFailure:wrapper:f318d11c4fa7c9ad",
+    "file": "apps/server/src/corner-lifecycle.ts",
+    "kind": "wrapper",
+    "template": "reportToCommander(db, cornerId, SYSTEM_IDENTITY_ID, `blocked: ${reason}`, undefined, createHash('sha256').update(`review-dispatch:${cornerId}:${headSha}:${reason}`).digest('hex'))",
+    "literals": [
+      "'hex'",
+      "'sha256'",
+      "`blocked: ${reason}`",
+      "`review-dispatch:${cornerId}:${headSha}:${reason}`"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/corner-lifecycle.ts:noteReviewerListExhausted:wrapper:6363512276940c18",
+    "file": "apps/server/src/corner-lifecycle.ts",
+    "kind": "wrapper",
+    "template": "reportToCommander(db, input.cornerId, SYSTEM_IDENTITY_ID, 'blocked: no reviewer on the configured list is healthy; arrange a reviewer or restore access', undefined, id)",
+    "literals": [
+      "'blocked: no reviewer on the configured list is healthy; arrange a reviewer or restore access'",
+      "'hex'",
+      "'no-head'",
+      "'sha256'",
+      "`beeline:${input.cornerId}:reviewer-list-exhausted:${input.headSha ?? 'no-head'}:${input.sourceMessageId}`"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/corner-lifecycle.ts:noteUnreachableReviewer:wrapper:a96f38d0efceb2ea",
+    "file": "apps/server/src/corner-lifecycle.ts",
+    "kind": "wrapper",
+    "template": "reportToCommander(db, input.cornerId, input.reviewerId, `blocked: configured reviewer ${input.reviewerName ?? input.reviewerId} could not be reached: ${input.reason}`, undefined, id)",
+    "literals": [
+      "'hex'",
+      "'sha256'",
+      "`beeline:${input.cornerId}:reviewer-unreachable:${input.reviewerId}:${input.reason}`",
+      "`blocked: configured reviewer ${input.reviewerName ?? input.reviewerId} could not be reached: ${input.reason}`"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/corner-lifecycle.ts:reachableReviewer:wrapper:ea26aa6bae09e186",
+    "file": "apps/server/src/corner-lifecycle.ts",
+    "kind": "wrapper",
+    "template": "readableByReviewer(db, cornerId, corner.configured_reviewer_id, sourceMessageId)",
+    "literals": [],
+    "occurrences": 1
+  },
+  {
+    "id": "src/corner-lifecycle.ts:reachableReviewer:wrapper:ecd8cf88722380e4",
+    "file": "apps/server/src/corner-lifecycle.ts",
+    "kind": "wrapper",
+    "template": "noteUnreachableReviewer(db, {\n    cornerId,\n    sourceMessageId,\n    reviewerId: corner.configured_reviewer_id,\n    reviewerKind: corner.configured_reviewer_kind,\n    reviewerName: corner.configured_reviewer_name,\n    reason: REVIEWER_NOT_PARENT_MEMBER,\n})",
+    "literals": [
+      "'not a current member of the parent Room'"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/corner-lifecycle.ts:reachableReviewer:wrapper:f9ba3ef26827e995",
+    "file": "apps/server/src/corner-lifecycle.ts",
+    "kind": "wrapper",
+    "template": "dispatchableListReviewer(db, cornerId, corner, sourceMessageId, headSha)",
+    "literals": [],
+    "occurrences": 1
+  },
+  {
+    "id": "src/corner-lifecycle.ts:readableByReviewer:wrapper:e7192ff6ee76af3b",
+    "file": "apps/server/src/corner-lifecycle.ts",
+    "kind": "wrapper",
+    "template": "noteUnreachableReviewer(db, {\n    cornerId,\n    sourceMessageId,\n    reviewerId: reviewerAgentId,\n    reviewerKind: reviewer?.kind ?? null,\n    reviewerName: reviewer?.name ?? null,\n    reason: REVIEWER_NOT_CORNER_MEMBER,\n})",
+    "literals": [
+      "'not a current member of this corner'"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/corner-lifecycle.ts:reassignFailedCornerReviewer:wrapper:9d6f4526408209ac",
+    "file": "apps/server/src/corner-lifecycle.ts",
+    "kind": "wrapper",
+    "template": "noteReviewBlocked(db, input.roomId, corner, corner.lifecycle.pr?.headSha ?? input.requestId, `the fallback reviewer command could not be queued${queued.error ? `: ${queued.error}` : ''}`)",
+    "literals": [
+      "''",
+      "'1 minute'",
+      "'corner_'",
+      "'headSha'",
+      "'hex'",
+      "'human'",
+      "'input'",
+      "'lifecycle'",
+      "'message'",
+      "'object'",
+      "'order'",
+      "'resume'",
+      "'schedule'",
+      "'subscribed_event'",
+      "'unknown dispatch error'",
+      "`${parent.private_payload.text}\\nResume context: ${sourceText}`",
+      "`${sourceText ?? ''}${note}`",
+      "`: ${queued.error}`",
+      "`Review against brief revision ${brief.revision}, the corner's current brief at this dispatch.`",
+      "`\\n${input.wakeNote}`",
+      "`the fallback reviewer command could not be queued${queued.error ? `: ${queued.error}` : ''}`"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/corner-lifecycle.ts:reassignFailedCornerReviewer:wrapper:aa6ab51255530149",
+    "file": "apps/server/src/corner-lifecycle.ts",
+    "kind": "wrapper",
+    "template": "noteReviewBlocked(db, input.roomId, corner, corner.lifecycle.pr?.headSha ?? input.requestId, 'no reviewer on the configured list is healthy enough to continue', false)",
+    "literals": [
+      "'no reviewer on the configured list is healthy enough to continue'"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/corner-lifecycle.ts:reassignFailedCornerReviewer:wrapper:ef41a77069753c1b",
+    "file": "apps/server/src/corner-lifecycle.ts",
+    "kind": "wrapper",
+    "template": "dispatchableListReviewer(db, input.roomId, corner, input.requestId, corner.lifecycle.pr?.headSha ?? null, input.agentId)",
+    "literals": [],
     "occurrences": 1
   },
   {
@@ -1968,6 +2482,16 @@
     "occurrences": 1
   },
   {
+    "id": "src/daemon-service.ts:DaemonService.execute:wrapper:b22c0e5979352f05",
+    "file": "apps/server/src/daemon-service.ts",
+    "kind": "wrapper",
+    "template": "sendOrder(this.database, this.authorizedCommand!, authenticatedAgentId, String(candidate.address), String(candidate.text), candidate.agent === undefined ? undefined : String(candidate.agent))",
+    "literals": [
+      "'complete'"
+    ],
+    "occurrences": 1
+  },
+  {
     "id": "src/daemon-service.ts:DaemonService.execute:wrapper:bf958f41c062221f",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "wrapper",
@@ -1998,6 +2522,31 @@
     "occurrences": 1
   },
   {
+    "id": "src/daemon-service.ts:DaemonService.execute:wrapper:bfdba40474d67f32",
+    "file": "apps/server/src/daemon-service.ts",
+    "kind": "wrapper",
+    "template": "this.report(text, authenticatedAgentId, command, db, true)",
+    "literals": [
+      "''",
+      "'approveCornerMerge'",
+      "'complete'",
+      "'failed'",
+      "'getCornerRestoreState'",
+      "'getPrChecksStatus'",
+      "'getRoomAuthority'",
+      "'getRoomConversation'",
+      "'listCornerBriefRevisions'",
+      "'listRoomMembers'",
+      "'mergeCorner'",
+      "'postAgentTurnReceipt'",
+      "'postRoomMessage'",
+      "'readCornerPullRequest'",
+      "'retractAgentLiveOutput'",
+      "'string'"
+    ],
+    "occurrences": 1
+  },
+  {
     "id": "src/daemon-service.ts:DaemonService.execute:wrapper:d47f65aa8145d60e",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "wrapper",
@@ -2014,6 +2563,16 @@
     "template": "agentSignTypedData(this.database, authenticatedAgentId, input as Input<'walletSignTypedData'>)",
     "literals": [
       "'walletSignTypedData'"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/daemon-service.ts:DaemonService.execute:wrapper:d89356ac1b672cd5",
+    "file": "apps/server/src/daemon-service.ts",
+    "kind": "wrapper",
+    "template": "this.report(String(candidate.text), authenticatedAgentId, this.authorizedCommand!, this.database, false, candidate.status, ask)",
+    "literals": [
+      "'complete'"
     ],
     "occurrences": 1
   },
@@ -2263,6 +2822,22 @@
       "'github'",
       "'passed checks on'",
       "'this zero-check pull request'"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/daemon-service.ts:DaemonService.report:wrapper:81dd50d7510bbab7",
+    "file": "apps/server/src/daemon-service.ts",
+    "kind": "wrapper",
+    "template": "reportToCommander(database, command.room_id, agentId, text, command, createHash('sha256').update(`report:${command.id}:${command.generation_id}:${text}:${ask ?? \"\"}:${JSON.stringify(uniqueAttachments)}`).digest('hex'), { attachments: uniqueAttachments, automatic, ask })",
+    "literals": [
+      "\"\"",
+      "''",
+      "'/'",
+      "'/v1/media/'",
+      "'hex'",
+      "'sha256'",
+      "`report:${command.id}:${command.generation_id}:${text}:${ask ?? \"\"}:${JSON.stringify(uniqueAttachments)}`"
     ],
     "occurrences": 1
   },
@@ -3001,16 +3576,22 @@
       "''",
       "'/'",
       "'agent'",
-      "'cancelled'",
       "'order'",
       "'orders'",
       "'person'",
-      "'stop'",
       "'stopped'",
       "` · ${dropped} queued ${dropped === 1 ? 'order' : 'orders'} dropped`",
       "`${publicOrigin}${value}`",
       "`turn cancelled${dropped ? ` · ${dropped} queued ${dropped === 1 ? 'order' : 'orders'} dropped` : ''}`"
     ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/phone-service.ts:PhoneService.cancelAgentTurn:wrapper:c1989750ff33a588",
+    "file": "apps/server/src/phone-service.ts",
+    "kind": "wrapper",
+    "template": "dropQueuedOrdersForStop(database, commands.rows[0])",
+    "literals": [],
     "occurrences": 1
   },
   {
@@ -3964,6 +4545,21 @@
       "'hiccup'",
       "'turn-failed'",
       "'unreported_order:'"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/turn-silence-notice.ts:inscribeSilence:wrapper:8988f5b358276876",
+    "file": "apps/server/src/turn-silence-notice.ts",
+    "kind": "wrapper",
+    "template": "reportToCommander(database, input.roomId, input.agentId, `failed: ${reason || classified.fault || 'agent turn failed'}`, command, `failure:${command.id}:${attempt}`, { automatic: true })",
+    "literals": [
+      "' '",
+      "''",
+      "'agent turn failed'",
+      "'claimed'",
+      "`failed: ${reason || classified.fault || 'agent turn failed'}`",
+      "`failure:${command.id}:${attempt}`"
     ],
     "occurrences": 1
   },

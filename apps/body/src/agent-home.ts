@@ -74,12 +74,9 @@ import {
   BEELINE_REVIEW_SKILL_NAME,
   BEELINE_SPEC_SKILL_NAME,
   BEELINE_TRIAGE_SKILL_NAME,
-  beelineReviewSkillMarkdown,
-  beelineSpecSkillMarkdown,
-  beelineTriageSkillMarkdown,
+  beelineManagedSkills,
   runningBeelineReleaseId,
-  USING_BEELINE_SKILL_NAME,
-  usingBeelineSkillMarkdown,
+  SITUATIONAL_SKILL_NAMES,
 } from './beeline-skill.js';
 import { isTrustySquireMcpLaunch } from './external-mcp-capabilities.js';
 import { classifyImportedMcpServer, isCodeOwnedHostMcpName } from './mcp-route-class.js';
@@ -164,7 +161,7 @@ export const BEELINE_DEFAULT_SKILL_NAMES = [
   BEELINE_SPEC_SKILL_NAME,
   BEELINE_TRIAGE_SKILL_NAME,
   DRAW_AVATAR_SKILL_NAME,
-  USING_BEELINE_SKILL_NAME,
+  ...SITUATIONAL_SKILL_NAMES,
 ] as const;
 
 /**
@@ -351,7 +348,7 @@ export interface RoomAgentHomeInput {
   inheritedPath?: string;
   failClosed?: boolean;
   /**
-   * Release id stamped into the managed `using-beeline` skill. Defaults to
+   * Release id stamped into the managed Beeline skills. Defaults to
    * the RUNNING release (`runningBeelineReleaseId`); tests inject explicit
    * ids to prove regeneration on version change.
    */
@@ -368,7 +365,7 @@ export interface RoomAgentHomeInput {
    * This activation runs as the parent Room's configured reviewer. Only a
    * reviewer's home carries the `beeline-review` skill: an implementer that
    * reads the review procedure mistakes its reviewer-never-merge rule for
-   * its own (see `usingBeelineSkillMarkdown`'s merge line).
+   * its own.
    */
   isReviewer?: boolean;
   /**
@@ -719,12 +716,7 @@ async function provisionAgentSkillsAndMcp(
 ): Promise<void> {
   const managedSkills = [
     { name: DRAW_AVATAR_SKILL_NAME, content: drawAvatarSkillMarkdown(skillReleaseId) },
-    { name: USING_BEELINE_SKILL_NAME, content: usingBeelineSkillMarkdown(skillReleaseId) },
-    { name: BEELINE_TRIAGE_SKILL_NAME, content: beelineTriageSkillMarkdown(skillReleaseId) },
-    { name: BEELINE_SPEC_SKILL_NAME, content: beelineSpecSkillMarkdown(skillReleaseId) },
-    ...(isReviewer
-      ? [{ name: BEELINE_REVIEW_SKILL_NAME, content: beelineReviewSkillMarkdown(skillReleaseId) }]
-      : []),
+    ...beelineManagedSkills(skillReleaseId, { isReviewer }),
   ];
   const shared = await resolveSharedSkillSources(operatorHome, sharedSkills);
   await provisionManagedSkillsDir(

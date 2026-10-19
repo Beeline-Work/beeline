@@ -335,6 +335,8 @@ export class PushDeliveryLoop {
           AND m.card_type IS DISTINCT FROM 'turn-failed'
           AND (m.card_type IS DISTINCT FROM 'relay' OR m.card->>'direction' IS DISTINCT FROM 'up')
           AND m.card_type IS DISTINCT FROM 'workspace-member-joined'
+          -- An agent's order or report record is reference for corner readers.
+          AND m.card_type IS DISTINCT FROM 'agent-command'
           AND m.deleted_at IS NULL
           AND btrim(m.text)<>''
           -- A closed corner is done: nothing posted there may push anyone.

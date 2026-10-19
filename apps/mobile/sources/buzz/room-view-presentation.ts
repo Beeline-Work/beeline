@@ -320,6 +320,8 @@ export type ChatDisplayMessage = {
   /** `@agent /login`: Claude's sign-in card at the call site. Never holds a code. */
   agentSignIn?: NonNullable<RoomViewMessage['agentSignIn']>;
   choice?: NonNullable<RoomViewMessage['choice']>;
+  /** An agent's order into, or report from, a corner; a collapsed record card. */
+  agentCommand?: NonNullable<RoomViewMessage['agentCommand']>;
   /** @wallet ledger facts, rendered as ledger cards in the @wallet thread. */
   walletTx?: NonNullable<RoomViewMessage['walletTx']>;
   walletInsufficient?: NonNullable<RoomViewMessage['walletInsufficient']>;
@@ -456,6 +458,7 @@ export function displayRoomMessage(
     ...(message.appSignIn ? { appSignIn: { ...message.appSignIn } } : {}),
     ...(message.agentSignIn ? { agentSignIn: { ...message.agentSignIn } } : {}),
     ...(message.choice ? { choice: message.choice } : {}),
+    ...(message.agentCommand ? { agentCommand: message.agentCommand } : {}),
     ...(message.walletTx ? { walletTx: { ...message.walletTx } } : {}),
     ...(message.walletInsufficient
       ? { walletInsufficient: { ...message.walletInsufficient } }

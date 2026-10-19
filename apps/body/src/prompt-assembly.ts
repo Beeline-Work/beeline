@@ -7,6 +7,7 @@ import { ACP_SESSION_MEMORY_MAX_BYTES } from './acp-resource-scope.js';
 import { harnessHonorsSessionSystemPrompt } from './harness-capabilities.js';
 import { boundRoomTaskBody, budgetTranscript } from './transcript-budget.js';
 import type { MachineHost } from './machine-host.js';
+import { SITUATIONAL_SKILL_NAMES } from './beeline-skill.js';
 
 /**
  * The ONE place Beeline prompt text is written and assembled.
@@ -47,6 +48,10 @@ export function renderReplyContext(message: ReplyContext): string {
       : []),
   ].join('\n');
 }
+
+/** Tells every agent where the how-to steps live; the skills it names are `SITUATIONAL_SKILL_NAMES`. */
+export const SKILL_FALLBACK_LINE =
+  "If a Beeline tool refuses you or you don't know how to do something here, load the matching beeline-* skill before retrying.";
 
 export const PROMPT_SURFACES = [
   'room',
@@ -318,7 +323,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
         surface === 'room' &&
           [
             `This is a Beeline Room. The repository filesystem is read-only here.${repository ? ` The Room is bound to ${repository.name} (branch ${repository.branch}); the read-only checkout is at the session root.` : ''} Web search is available.`,
-            !repository ? 'For coding work without a linked repository, guide Room header → Repository → Link/Create (or create a repository-backed Room). If gh is unavailable, consult using-beeline for repository and organization setup before proposing a personal GitHub connection.' : '',
+            !repository ? 'For coding work without a linked repository, guide Room header → Repository → Link/Create (or create a repository-backed Room). If gh is unavailable, consult beeline-connecting-services for repository and organization setup before proposing a personal GitHub connection.' : '',
             shellLine(shell),
             writableHomeLine(writableHome),
             shell?.available === false
@@ -425,18 +430,18 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
       'surface.squire-drive': 'Agents hand-drove browser goals (ts-drive-adoption-scout); Jellybean treated unsupported_credential_type during PR #2599 verification as blocked instead of sharing the browser for human sign-in.',
       'room.replying': 'Several agents share a Room; replies with nothing to act on, and echoed nudges, are noise.',
       'dm.choices': 'A pick in a DM is a preference, never authority, and polls need an electorate.',
+      'core.skills': 'Agents retried refused Beeline tools or guessed at steps a beeline-* skill already covered, because nothing told them to look.',
     },
     budgetBytes: 1_100,
     layer: 'session',
     surfaces: EVERYWHERE,
-    render: ({ surface, squireAvailable }) =>
+    render: ({ squireAvailable }) =>
       paragraphs(
         "For a 📎 file, call read(facet:attachment, messageId, attachmentId) and read its path. Never fetch media URLs; on failure, say you couldn't open it.",
         'For any service or capability request, use connect(mode:discover) if unclear, then connect(mode:ensure, service, reason, continuation). For supported GitHub API work, check connect(mode:status) and prefer personal GitHub over the repository App.',
         squireAvailable === true &&
           'For multi-step browser goals, use Trusty Squire operate_drive {url, goal, facts}. On low_confidence/needs_value, answer or take one flat step, then resume drive. If sign-in/human action (2FA, captcha, passkey) cannot be completed or Squire refuses it, start app_tool(app:beeline:browser_share, tool:start) for that session; ask the person to take over. On handback, resume drive in that session.',
-        surface === 'room' && 'Consult the using-beeline skill for Room mechanics (files, artifacts, wakes, reactions, mocks).',
-        surface === 'dm' && 'Consult the using-beeline skill for files, artifacts, and reactions.',
+        `${SKILL_FALLBACK_LINE} Skills: ${SITUATIONAL_SKILL_NAMES.join(', ')}.`,
       ),
   },
   {

@@ -18,12 +18,7 @@ import {
   type SessionPromptContext,
   type TurnPromptContext,
 } from './prompt-assembly.js';
-import {
-  beelineReviewSkillMarkdown,
-  beelineSpecSkillMarkdown,
-  beelineTriageSkillMarkdown,
-  usingBeelineSkillMarkdown,
-} from './beeline-skill.js';
+import { beelineManagedSkills } from './beeline-skill.js';
 
 /**
  * One rule, one layer. The system prompt holds the rules, a tool description
@@ -31,7 +26,8 @@ import {
  * written in two layers drifts: one copy is edited and the other is not.
  */
 
-type Layer = 'prompt' | 'skill' | 'tool';
+/** Each skill is its own place, so a sentence copied from one skill into another fails too. */
+type Layer = 'prompt' | `skill:${string}` | 'tool';
 
 /** Tool text an agent reads: tool descriptions, tool results, and rewritten procedures. */
 const TOOL_SOURCES = [
@@ -140,21 +136,23 @@ function layerSentences(extraSkillText = ''): Map<string, Map<Layer, string>> {
       }
   };
   add('prompt', 'apps/body/src/prompt-assembly.ts', promptText());
-  for (const [name, render] of Object.entries({
-    'using-beeline': usingBeelineSkillMarkdown,
-    'beeline-review': beelineReviewSkillMarkdown,
-    'beeline-spec': beelineSpecSkillMarkdown,
-    'beeline-triage': beelineTriageSkillMarkdown,
-  }))
-    add('skill', `apps/body/src/beeline-skill.ts (${name})`, [render('test') + (name === 'using-beeline' ? extraSkillText : '')]);
+  for (const { name, content } of beelineManagedSkills('test', { isReviewer: true }))
+    add(`skill:${name}`, `apps/body/src/beeline-skill.ts (${name})`, [
+      skillBody(content) + (name === 'beeline-files-and-mocks' ? extraSkillText : ''),
+    ]);
   for (const path of TOOL_SOURCES) add('tool', path, sourceStrings(path));
   return owners;
+}
+
+/** A skill's text without its frontmatter and release stamp, which every skill shares by design. */
+function skillBody(markdown: string): string {
+  return markdown.replace(/^---\n[\s\S]*?\n---\n/, '').replace(/<!--[\s\S]*?-->/g, '');
 }
 
 function duplicateSentences(owners: Map<string, Map<Layer, string>>): string[] {
   return [...owners]
     .filter(([, places]) => places.size > 1)
-    .map(([sentence, places]) => `"${sentence}" in ${[...places].map(([layer, where]) => `${layer}: ${where}`).join(' and ')}`);
+    .map(([sentence, places]) => `"${sentence}" in ${[...places].map(([layer, where]) => `${layer.split(':')[0]}: ${where}`).join(' and ')}`);
 }
 
 describe('one rule, one layer', () => {
@@ -168,8 +166,14 @@ describe('one rule, one layer', () => {
   });
 
   it('rejects a short rule restated in the skill and names both places', () => {
-    expect(duplicateSentences(layerSentences('\n# Using Beeline\nTag to talk.\n'))).toContain(
-      '"tag to talk." in prompt: apps/body/src/prompt-assembly.ts and skill: apps/body/src/beeline-skill.ts (using-beeline)',
+    expect(duplicateSentences(layerSentences('\n# Files\nTag to talk.\n'))).toContain(
+      '"tag to talk." in prompt: apps/body/src/prompt-assembly.ts and skill: apps/body/src/beeline-skill.ts (beeline-files-and-mocks)',
+    );
+  });
+
+  it('rejects a how-to step copied from one skill into another', () => {
+    expect(duplicateSentences(layerSentences('\nYou keep memory yourself.\n'))).toContain(
+      '"you keep memory yourself." in skill: apps/body/src/beeline-skill.ts (beeline-files-and-mocks) and skill: apps/body/src/beeline-skill.ts (beeline-memory)',
     );
   });
 

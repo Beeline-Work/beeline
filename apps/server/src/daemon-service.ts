@@ -103,6 +103,7 @@ import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
 import { closeCornerState } from './corner-close.js';
 import { writeCornerTitle } from './corner-title.js';
 import { advanceCorner, lockCornerLifecycle } from './corner-lifecycle.js';
+import type { LandCornerOutcome } from './github-operations.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { SCHEDULE_SCHEDULER_ID } from '@beeline/api-contract/scheduled-prompts';
 import {
@@ -369,7 +370,7 @@ export class DaemonService {
     private readonly linkWallet?: import('./link-agent-wallet.js').LinkAgentWallet,
     private readonly refreshMergeability?: (cornerId: string) => Promise<void>,
     /** The merge attempt behind `merge_corner` and `order_corner_merge`. */
-    private readonly landCorner?: (cornerId: string) => Promise<boolean>,
+    private readonly landCorner?: (cornerId: string) => Promise<LandCornerOutcome>,
     /** The GitHub close behind `close_pull_request`. */
     private readonly closePullRequest?: (
       cornerId: string,
@@ -3525,8 +3526,10 @@ export class DaemonService {
       ].filter(Boolean);
       return { status: 'blocked', blocker: blockers.join('; ') || 'the merge gate is closed' };
     }
-    if (!(await this.landCorner(input.cornerId)))
+    const landed = await this.landCorner(input.cornerId);
+    if (landed.status === 'not-attempted')
       return { status: 'blocked', blocker: 'a merge of this head was already attempted, or the head moved' };
+    if (landed.status === 'refused') return { status: 'blocked', blocker: landed.reason };
     return { status: 'merge-started', headSha: corner.head_sha };
   }
 

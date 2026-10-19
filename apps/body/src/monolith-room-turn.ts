@@ -3,6 +3,9 @@ import { TurnUsageAccumulator } from './turn-usage.js';
 import { CommandExecutionContext, runServerCommandIntake } from './server-command-intake.js';
 import type { InterruptedTurn } from './force-update-journal.js';
 import { SquireTaskRelay } from './squire-task-relay.js';
+import { installRoomGitHubLauncher } from './room-github-auth.js';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { resourceCallFacts } from './resource-mcp-facade.js';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
@@ -135,6 +138,7 @@ import { PromptSectionBaseline } from './prompt-section-baseline.js';
 import type { RoomSupervisor } from './room-supervisor.js';
 
 export const ROOM_PROMPT_BACKSTOP_MS = TURN_BACKSTOP_MS;
+const execFileAsync = promisify(execFile);
 
 type WorkspaceRoster = DaemonOperationMap['getWorkspaceRoster']['output'];
 type RoomRepositoryState = DaemonOperationMap['getRoomRepositoryState']['output'];
@@ -1135,13 +1139,23 @@ export class MonolithRoomTurnLoop {
     if (assets && this.options.config.agentPrivateRoot)
       await mkdir(this.options.config.agentPrivateRoot, { recursive: true, mode: 0o700 });
     const agentEnv: Record<string, string> = { ...this.options.config.agentEnv, ...homeOverlay, ...cacheEnv };
-    // A configured personal credential wins. Never retry a rejected identity
-    // with the App token. Only the exact server-bound repository token enters
-    // this session; it is not part of a persisted fingerprint or prompt.
+    // Keep an explicitly configured credential ahead of the repository App.
+    // Tokens are not part of a persisted fingerprint or prompt.
     const githubToken = agentEnv.GH_TOKEN || agentEnv.GITHUB_TOKEN || this.turnCheckout?.githubToken;
     if (githubToken) {
       agentEnv.GH_TOKEN = githubToken;
       agentEnv.GITHUB_TOKEN = githubToken;
+    }
+    if (this.turnCheckout?.githubToken && this.options.config.agentHomeRoot) {
+      const ghBinary = await execFileAsync('which', ['gh'], { env: agentEnv })
+        .then(result => result.stdout.trim()).catch(() => undefined);
+      if (ghBinary) agentEnv.PATH = await installRoomGitHubLauncher({
+        root: this.options.config.agentHomeRoot,
+        ghBinary,
+        inheritedPath: agentEnv.PATH ?? '',
+        resourceAuthFile,
+        ...(squireScope.relay ? { relay: squireScope.relay } : {}),
+      });
     }
 
     const selectedCommand = command;
@@ -1245,7 +1259,7 @@ export class MonolithRoomTurnLoop {
     const shellCapability = roomShellCapability(harnessLabel, { osSandbox: Boolean(this.options.config.bwrapPath) });
     const servers: McpServerWire[] = [
       ...(shellCapability === 'runs' ? [] : [readOnlyMcpServer(
-        this.options.config, this.options.cwd, undefined, githubToken,
+        this.options.config, this.options.cwd, undefined, githubToken, agentEnv.PATH,
       )]),
       beelineAgentMcpServer(this.options.config, this.options.api, {
         roomId: this.options.roomId,

@@ -113,6 +113,13 @@ export default function AppDetailScreen() {
           statusGlyph={app.status === 'connected' ? 'live' : app.status === 'connecting' ? 'pulse' : 'failed'}
           valueTone={app.status === 'error' ? 'danger' : undefined}
           trailingPress={{ accessibilityLabel: 'Change connection', onPress: () => setStatusOpen(true) }} />
+            {app.status === 'error' && app.transport !== 'composio' ? (
+              // The computer that will retry, with the retry one tap away.
+              <SettingsRow title={needsSquire ? 'Trusty Squire' : app.helperName ?? 'Your computer'}
+                description={needsSquire ? 'Connect Trusty Squire first' : `Retries ${app.name} on this computer`}
+                action={working ? undefined : needsSquire ? 'Connect' : 'Reconnect'} disabled={working}
+                onPress={() => void reconnect()} testID="app-detail-reconnect" />
+            ) : null}
             <View>
               <RoomListSectionHeader title="WHAT YOUR AGENTS CAN DO" inset="content" spacing="flush" />
               <Text style={styles.permission}>{app.key === 'gmail' ? 'Let agents work with your mail when you ask them to.' :

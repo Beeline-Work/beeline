@@ -2,13 +2,13 @@ import React, { useState } from 'react';
 import { Ionicons } from '@expo/vector-icons';
 import { ScrollView, Text, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { router, useLocalSearchParams, type Href } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import { useIsDesktop } from '@/utils/responsive';
 import { useActiveCommunityId } from '@/buzz/use-active-community';
 import { useSharedWorkbench } from '@/buzz/workbench-surface';
-import { useConnectCompanyApp } from '@/buzz/company-connection-actions';
+import { connectorDestination, useConnectCompanyApp } from '@/buzz/company-connection-actions';
 import { Button } from '@/components/buzz/Button';
 import { PageHeader } from '@/components/buzz/PageHeader';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
@@ -34,7 +34,6 @@ export default function WorkbenchScreen() {
   const index = view?.companies;
   const [searchOpen, setSearchOpen] = useState(false);
   const actions = useConnectCompanyApp(scope);
-  const open = (id: string) => router.push({ pathname: '/beeline/settings/workbench/service', params: { ...scope, service: id } } as Href);
   const header = <PageHeader prominent backAccessibilityLabel="Back to Settings" eyebrow="Settings" title="Connectors" testID="workbench-header" onBack={() => router.back()} />;
   return <View style={[styles.container, { paddingTop: desktop ? 0 : insets.top }]}>
     {header}
@@ -47,16 +46,19 @@ export default function WorkbenchScreen() {
           <Text style={styles.note}>No connections yet. Choose a service to get started.</Text>
           <RoomListSectionHeader title="Suggested" inset="content" spacing="flush" />
           {index.suggestions.map(app => <SettingsRow appBoard key={app.providerId} title={app.name} description={app.purpose}
-            leading={<ServiceMark company={app.providerName} domain={app.domain} mark={app.logo} />} chevron="right"
+            leading={<ServiceMark company={app.providerName} domain={app.domain} mark={app.logo} />} value="Connect" chevron="right"
             disabled={Boolean(actions.busy)} onPress={() => void actions.connect(app)} testID={`connectors-suggest-${app.providerId}`} />)}
         </View> : SECTIONS.map(([section, title]) => {
           const rows = index.rows.filter(row => row.section === section);
           return rows.length ? <View key={section} testID={`connectors-${section}`}>
             <RoomListSectionHeader title={title} inset="content" spacing="flush" />
-            {rows.map(row => <SettingsRow appBoard key={row.id} title={row.name} description={row.subtitle}
-              leading={<ServiceMark company={row.name} domain={row.domain} mark={row.logo} />} value={row.status}
-              valueTone={row.attention ? 'danger' : undefined} statusGlyph={row.attention ? 'failed' : row.kind === 'sign-in-service' && row.status === 'Ready' ? 'live' : undefined}
-              chevron="right" onPress={() => open(row.id)} testID={`connectors-company-${row.id}`} />)}
+            {rows.map(row => {
+              const reconnects = Boolean(row.attention) && connectorDestination(row, view?.apps).kind !== 'info';
+              return <SettingsRow appBoard key={row.id} title={row.name} description={reconnects && row.status ? `${row.status} · ${row.subtitle}` : row.subtitle}
+                leading={<ServiceMark company={row.name} domain={row.domain} mark={row.logo} />} value={reconnects ? 'Reconnect' : row.status}
+                valueTone={row.attention ? 'danger' : undefined} statusGlyph={row.attention ? 'failed' : row.kind === 'sign-in-service' && row.status === 'Ready' ? 'live' : undefined}
+                chevron="right" disabled={actions.busy === row.id} onPress={() => void actions.open(row, view?.apps)} testID={`connectors-company-${row.id}`} />;
+            })}
           </View> : null;
         })}
         {error ? <Text accessibilityRole="alert" style={styles.error}>Could not refresh connections. Try again.</Text> : null}

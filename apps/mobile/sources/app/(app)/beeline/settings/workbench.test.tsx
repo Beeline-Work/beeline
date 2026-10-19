@@ -42,6 +42,8 @@ vi.mock('expo-router', () => ({
     React.useEffect(effect, [effect]);
   },
 }));
+const appSignIn = vi.hoisted(() => ({ open: vi.fn(async () => undefined) }));
+vi.mock('@/buzz/app-sign-in', () => ({ openAppSignIn: appSignIn.open }));
 vi.mock('expo-web-browser', () => ({
   openAuthSessionAsync: vi.fn(async () => ({ type: 'success' })),
 }));
@@ -239,5 +241,65 @@ describe('Connectors server-owned settings screen', () => {
     setWorkbenchSource(source); const renderer = await render();
     await act(async () => { await renderer.root.findByType('SettingsRow').props.onPress(); });
     await vi.waitFor(() => expect(cancel).toHaveBeenCalledWith('pending'));
+  });
+});
+
+describe('one tap from a Connectors row', () => {
+  const scope = { workspaceId: 'workspace-1', viewerId: 'human-dani' };
+  const app = (id: string, transport: 'composio' | 'squire-browser') => ({ id, key: id, name: id, transport, status: 'error', useCount: 0 }) as any;
+  const serve = (view: WorkbenchView) => { const source = new MockWorkbenchSource(); source.readWorkbench = async () => view; setWorkbenchSource(source); return source; };
+  const row = (renderer: ReactTestRenderer, id: string) => renderer.root.findByProps({ testID: `connectors-company-${id}` });
+  it('connected with a frontend: opens the wallet itself in one push', async () => {
+    serve(companyWorkbench([{ ...companyRow('coinbase', 'Coinbase', 'apps'),
+      items: [{ id: 'builtin:wallet', title: 'Wallet', subtitle: 'built in', kind: 'connection', target: { kind: 'wallet' } }] }]));
+    const renderer = await render();
+    await act(async () => row(renderer, 'coinbase').props.onPress());
+    expect(navigation.push.mock.calls).toEqual([[{ pathname: '/beeline/settings/workbench/wallet', params: scope }]]);
+  });
+  it('connected without a frontend: opens the one info page', async () => {
+    const renderer = await render();
+    await act(async () => row(renderer, 'vercel').props.onPress());
+    expect(navigation.push.mock.calls).toEqual([[{ pathname: '/beeline/settings/workbench/service', params: { ...scope, service: 'vercel' } }]]);
+  });
+  it('not connected: the suggestion starts its own connect flow', async () => {
+    serve(companyWorkbench([], [companyOption('tailscale', 'Tailscale', 'tailscale')]));
+    const renderer = await render();
+    const suggestion = renderer.root.findByProps({ testID: 'connectors-suggest-tailscale' });
+    expect(suggestion.props.value).toBe('Connect');
+    await act(async () => suggestion.props.onPress());
+    expect(navigation.push.mock.calls).toEqual([[{ pathname: '/beeline/settings/workbench/connect', params: { ...scope, connectorId: 'tailscale' } }]]);
+  });
+  it('errored sign-in: opens the provider sign-in directly, with no page first', async () => {
+    const source = serve({ ...companyWorkbench([{ ...companyRow('linear', 'Linear', 'attention'), status: 'Offline', attention: '1 connection needs attention',
+      items: [{ id: 'linear', title: 'Linear', subtitle: 'via Composio', kind: 'connection', target: { kind: 'app', appId: 'linear' }, status: 'Offline', attention: true }] }]),
+      apps: [app('linear', 'composio')] });
+    const begin = vi.spyOn(source, 'beginAppSignIn').mockResolvedValue({ authorizationUrl: 'https://linear.app/oauth/authorize' } as any);
+    const renderer = await render();
+    expect(row(renderer, 'linear').props.value).toBe('Reconnect');
+    await act(async () => { await row(renderer, 'linear').props.onPress(); });
+    expect(begin).toHaveBeenCalledWith({ appId: 'linear' });
+    expect(appSignIn.open).toHaveBeenCalledWith('https://linear.app/oauth/authorize', { ...scope, appId: 'linear' });
+    expect(navigation.push).not.toHaveBeenCalled();
+  });
+  it('errored on a computer: opens the app page that shows the computer and its Reconnect', async () => {
+    serve({ ...companyWorkbench([{ ...companyRow('notion', 'Notion', 'attention'), status: 'Offline', attention: '1 connection needs attention',
+      items: [{ id: 'notion', title: 'Notion', subtitle: 'via Trusty Squire', kind: 'connection', target: { kind: 'app', appId: 'notion' }, status: 'Offline', attention: true }] }]),
+      apps: [app('notion', 'squire-browser')] });
+    const renderer = await render();
+    await act(async () => row(renderer, 'notion').props.onPress());
+    expect(navigation.push.mock.calls).toEqual([[{ pathname: '/beeline/settings/workbench/app', params: { ...scope, appId: 'notion' } }]]);
+  });
+  it('errored with no retry: opens the info page that shows the error', async () => {
+    serve(companyWorkbench([{ ...companyRow('stripe', 'Stripe', 'attention'), status: 'Expired', attention: '1 connection needs attention',
+      items: [{ id: 'stripe-key', title: 'Stripe key', subtitle: 'stripe.com', kind: 'key', target: { kind: 'key', connectionId: 'stripe-key' }, status: 'Expired', attention: true }] }]));
+    const renderer = await render();
+    expect(row(renderer, 'stripe').props.value).toBe('Expired');
+    await act(async () => row(renderer, 'stripe').props.onPress());
+    expect(navigation.push.mock.calls).toEqual([[{ pathname: '/beeline/settings/workbench/service', params: { ...scope, service: 'stripe' } }]]);
+  });
+  it('Trusty Squire always opens its computer list', async () => {
+    const renderer = await render();
+    await act(async () => row(renderer, 'squire-signin').props.onPress());
+    expect(navigation.push.mock.calls).toEqual([[{ pathname: '/beeline/settings/workbench/service', params: { ...scope, service: 'squire-signin' } }]]);
   });
 });

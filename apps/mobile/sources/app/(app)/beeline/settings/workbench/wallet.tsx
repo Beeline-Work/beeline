@@ -17,7 +17,8 @@ import { getWalletSource } from '@/buzz/wallet-source';
 import { useSharedWallet, useSharedWalletHistory } from '@/buzz/wallet-surface';
 import { resolveWalletWorkspaceId } from '@/buzz/wallet-workspace';
 import { useActiveCommunityId } from '@/buzz/use-active-community';
-import { CONNECTOR_DESCRIPTIONS, WALLET_GRANT_ENDED_MESSAGE } from '@/buzz/workbench';
+import { WALLET_GRANT_ENDED_MESSAGE } from '@/buzz/workbench';
+import { useSharedWorkbench } from '@/buzz/workbench-surface';
 import { phoneOperationFailureReason } from '@/sync/transport/monolith-operation';
 
 function firstParam(value: string | string[] | undefined): string | undefined {
@@ -47,8 +48,12 @@ function activityStamp(createdAt: number, now: number = Date.now()): string {
  */
 export default function WalletScreen() {
   useLatencyRouteFrame('/beeline/settings/workbench/wallet');
-  const params = useLocalSearchParams<{ workspaceId?: string | string[] }>();
+  const params = useLocalSearchParams<{ workspaceId?: string | string[]; viewerId?: string | string[] }>();
   const routeWorkspaceId = firstParam(params.workspaceId);
+  const viewerId = firstParam(params.viewerId);
+  // The Connectors row's own name titles this page, so the tap and the page agree.
+  const { value: workbench } = useSharedWorkbench(viewerId ? { workspaceId: routeWorkspaceId ?? '', viewerId } : null);
+  const title = workbench?.companies?.rows.find(row => row.items.some(item => item.target.kind === 'wallet'))?.name ?? 'Coinbase wallet';
   const activeWorkspaceId = useActiveCommunityId();
   // A route Workspace wins; only a personal entry follows a later Room open.
   const followedWorkspaceId = routeWorkspaceId ? undefined : activeWorkspaceId;
@@ -140,7 +145,7 @@ export default function WalletScreen() {
       prominent
       onBack={() => router.back()}
       testID="wallet-header"
-      title="Wallet"
+      title={title}
     />
   );
   const screenStyle = [styles.container, { paddingTop: insets.top }];
@@ -185,7 +190,6 @@ export default function WalletScreen() {
         testID="wallet-scroll"
       >
         <View testID="wallet-screen">
-          <Text style={styles.explainer} testID="wallet-explainer">{CONNECTOR_DESCRIPTIONS.wallet}</Text>
           {needsGrant ? (
             // Nothing of the wallet shows until the connect sequence (the
             // grant to sign) has finished.
@@ -205,16 +209,6 @@ export default function WalletScreen() {
             />
           ) : (
             <>
-              <SettingsRow
-                title="Disconnect wallet"
-                description={revokeError ?? 'Revoke signing permission for all agents. Your funds and transaction history stay in your wallet.'}
-                descriptionTone={revokeError ? 'danger' : undefined}
-                disabled={revoking}
-                onPress={disconnect}
-                value={revoking ? 'Disconnecting…' : undefined}
-                testID="wallet-disconnect-row"
-                tone="action"
-              />
               {/* Address: one row, copy on the trailing axis, QR on demand. */}
               <View style={styles.addressBlock} testID="wallet-address">
                 <View style={styles.addressCopy}>
@@ -383,6 +377,20 @@ export default function WalletScreen() {
               ))
             )}
             </>
+          )}
+          <RoomListSectionHeader title="Agent permissions" inset="content" testID="wallet-permissions-head" />
+          <Text style={styles.explainer} testID="wallet-permissions">Your agents can prepare wallet actions within the permissions you grant. You review spending before it happens.</Text>
+          {needsGrant ? null : (
+            <SettingsRow
+              title="Revoke agent signing"
+              description={revokeError ?? 'Your funds and transaction history stay in your wallet.'}
+              descriptionTone={revokeError ? 'danger' : undefined}
+              disabled={revoking}
+              onPress={disconnect}
+              value={revoking ? 'Revoking…' : undefined}
+              testID="wallet-disconnect-row"
+              tone="action"
+            />
           )}
         </View>
       </ScrollView>

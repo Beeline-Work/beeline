@@ -18,6 +18,7 @@ import {
 } from '@beeline/api-contract/daemon';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import type { CommandRow } from './agent-command.js';
+import { CommandRefusalError } from './command-refusal.js';
 import type { SqlDatabase } from './database.js';
 import { PROHIBITED_SECRET_PATTERNS } from './institutional-memory-shadow.js';
 import { hasSystemReportMention } from './message-mentions.js';
@@ -214,8 +215,9 @@ export async function reportAgentFeedback(
     )
   ).rows[0]!.count;
   if (today >= FEEDBACK_AGENT_DAILY_CAP)
-    throw new Error(
+    throw new CommandRefusalError(
       `feedback cap reached: ${FEEDBACK_AGENT_DAILY_CAP} reports per agent per UTC day`,
+      429,
     );
   const owner = (
     await database.query<{ owner_id: string }>(`SELECT owner_id FROM agents WHERE agent_id=$1`, [

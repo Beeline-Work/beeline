@@ -1,0 +1,38 @@
+{
+  "reproduction": "PROOF-THEME-1",
+  "entry": "delivery",
+  "pid": "6095",
+  "coldObservation": {
+    "at": 1792371954346,
+    "joined": false,
+    "humans": 1,
+    "error": null,
+    "unaddressed": 0,
+    "firstAudioMs": null
+  },
+  "before": {
+    "humans": 2,
+    "call": "fea573cb-7827-4b66-bc02-94ab3f6afae7",
+    "latestObservation": {
+      "at": 1792371957652,
+      "joined": true,
+      "humans": 2,
+      "error": null,
+      "unaddressed": 0,
+      "firstAudioMs": null
+    }
+  },
+  "after": {
+    "humans": 2,
+    "call": "fea573cb-7827-4b66-bc02-94ab3f6afae7",
+    "latestObservation": {
+      "at": 1792371957652,
+      "joined": true,
+      "humans": 2,
+      "error": null,
+      "unaddressed": 0,
+      "firstAudioMs": null
+    }
+  },
+  "themeErrors": []
+}

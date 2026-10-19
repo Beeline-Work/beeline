@@ -1,5 +1,9 @@
 # Shipped Android theme audit
 
+This is the audit recorded at commit `9e1c9274f`. Ruby subsequently reauthorized
+brief revision 2 in message `b8a80f15557ba1a69f754ae1cd8df19c75f0d02b4b1704ee3e6efe739807ec99`;
+the proof-entry fix is restored separately. These shipped-path observations remain unchanged.
+
 Reproduction attempt `SHIPPED-THEME-1`: **not reproduced**. Following Ruby's
 corrective instruction `33ad5f74e75228ac2ae1e73fa408cfacdfdb56f11cfd2767a57016eb7bab2264`,
 this tests `apps/mobile/index.ts`, rather than replacing it with a proof entry.

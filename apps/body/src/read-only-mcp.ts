@@ -2491,7 +2491,7 @@ export async function workbenchStatus(
     const route = github.transport === 'squire-api'
       ? 'call Squire use_credential (service "github")'
       : `use app_tool(app:"${github.appId}")`;
-    lines.push('', `GitHub operation identity: prefer this owner's personal GitHub connection (app ${github.appId}, ${github.transport}) over the repository App for supported API operations, including Git Data API pushes; ${route}. Follow its reported status; a denial requires repairing this connection, never switching to the App identity. Consult using-beeline for checkout and merge boundaries.`);
+    lines.push('', `GitHub operation identity: prefer this owner's personal GitHub connection (app ${github.appId}, ${github.transport}) over the repository App for supported API operations, including Git Data API pushes; ${route}. Follow its reported status; a denial requires repairing this connection, never switching to the App identity. Consult beeline-connecting-services for checkout and merge boundaries.`);
   }
   if (deps.tailscaleReach) {
     const enabled = Boolean(

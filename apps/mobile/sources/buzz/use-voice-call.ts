@@ -1,6 +1,7 @@
 import * as React from 'react';
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import { RoomEvent, Track, type Room } from 'livekit-client';
+import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { VOICE_DATA_TOPIC, type VoiceBudget, type VoiceJoin, type VoiceSignal, type VoiceCall, type RoomViewIdentity } from '@beeline/api-contract/phone';
 import { getBuzzRuntimeConfig } from './runtime-config';
 import { createVoiceRoom, subscribeVoiceResume, voiceFetch } from './voice-transport';
@@ -31,6 +32,13 @@ async function closeVoiceTransport(transport: { room: Room; closeAudio(): Promis
 }
 
 const NO_AGENTS: readonly RoomViewIdentity[] = [];
+
+const KEEP_AWAKE_TAG = 'conversation-mode';
+// Run screen-wake changes in call order: a release must not overtake the next call's hold.
+let keepAwakeQueue = Promise.resolve();
+function queueKeepAwake(change: (tag: string) => Promise<void>) {
+  keepAwakeQueue = keepAwakeQueue.then(() => change(KEEP_AWAKE_TAG)).catch(() => {});
+}
 
 export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: readonly RoomViewIdentity[] = NO_AGENTS) {
   const [endingDeadline, setEndingDeadline] = React.useState<number | null>(null);
@@ -89,6 +97,20 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
   }, []);
   React.useEffect(() => () => { void end(); }, [roomId, end]);
   React.useEffect(() => { if (!enabled) void end(); }, [enabled, end]);
+  // Keep the screen on only while a call runs; every end path clears `call` or unmounts.
+  const callActive = call !== null;
+  React.useEffect(() => {
+    if (!callActive) return;
+    queueKeepAwake(activateKeepAwakeAsync);
+    return () => queueKeepAwake(deactivateKeepAwake);
+  }, [callActive]);
+  // Calls run only in the foreground on phones. `inactive` (iOS control center, system sheets) keeps the call.
+  const callStarted = callActive || connecting;
+  React.useEffect(() => {
+    if (!callStarted || Platform.OS === 'web') return;
+    const subscription = AppState.addEventListener('change', state => { if (state === 'background') void end(); });
+    return () => subscription.remove();
+  }, [callStarted, end]);
 
   const join = React.useCallback(async () => {
     if (session.current || pending.current) return;

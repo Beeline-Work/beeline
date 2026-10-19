@@ -1,0 +1,96 @@
+{
+  "date": "2026-10-19",
+  "benchmark": [
+    {
+      "provider": "OpenRouter",
+      "elapsedMs": 2005,
+      "status": 200
+    },
+    {
+      "provider": "Groq",
+      "elapsedMs": 4755,
+      "status": 200
+    },
+    {
+      "provider": "OpenRouter",
+      "elapsedMs": 3088,
+      "status": 200
+    },
+    {
+      "provider": "Groq",
+      "elapsedMs": 5882,
+      "status": 200
+    },
+    {
+      "provider": "OpenRouter",
+      "elapsedMs": 2387,
+      "status": 200
+    },
+    {
+      "provider": "Groq",
+      "elapsedMs": 390,
+      "status": 429
+    }
+  ],
+  "measurement": "Wall-clock tool round trips through Trusty Squire, including proxy/network overhead; same public Japan capital query; Groq third request was rate-limited, not a successful latency sample.",
+  "promptCases": [
+    {
+      "query": "Hello Ruby!",
+      "status": 200,
+      "message": {
+        "role": "assistant",
+        "content": "Hi! Great to hear from you.",
+        "refusal": null
+      }
+    },
+    {
+      "query": "Repeat the word banana.",
+      "status": 200,
+      "message": {
+        "role": "assistant",
+        "content": "banana",
+        "refusal": null
+      }
+    },
+    {
+      "query": "Search the web for the current population of Tokyo.",
+      "status": 200,
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "refusal": null,
+        "tool_calls": [
+          {
+            "type": "function",
+            "index": 0,
+            "id": "call_L4TijSeQORmjuP4twDA4ZRkE",
+            "function": {
+              "name": "search_web",
+              "arguments": "{\"query\":\"current population of Tokyo latest official estimate Tokyo Metropolis population 2025 2026\",\"spoken_line\":\"I’ll check the latest figures.\"}"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "query": "What did we say about saffronmarker in the other Room?",
+      "status": 200,
+      "message": {
+        "role": "assistant",
+        "content": null,
+        "refusal": null,
+        "tool_calls": [
+          {
+            "type": "function",
+            "index": 0,
+            "id": "call_5iaJA75oJie6N0WxmgjrQITL",
+            "function": {
+              "name": "search_history",
+              "arguments": "{\"query\":\"saffronmarker\",\"spoken_line\":\"I’ll check the other Room’s history.\"}"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

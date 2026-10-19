@@ -116,7 +116,23 @@ unavailable". Committed orders cannot be revised, and retry uses the existing
 transactional order deduplication.
 [Android delivery proof](voice-mode-proof/request-delivery/README.md) records
 Reproduction DELIVERY-2 and its controlled STT/provider stand-ins. Real agent
-reports are matched to their original command and spoken back. Agent work has no voice timeout and continues independently of playback.
+reports are matched to their original command. Their first short paragraph is
+spoken, followed by “The rest is in the chat.” Long openings stop at the last
+whole sentence within about ten seconds; chat retains the complete report.
+A report waits while anyone speaks, then rechecks that its requester is still
+present and still targeting that agent. A failed recheck permanently handles the
+report without speech. Call-origin commands privately ask agents to put a short
+spoken line before their full report. Agent work has no voice timeout and
+continues independently of playback.
+
+Quick web facts use the router's `search_web`; chat-history questions use
+`search_history`, with the existing institutional history access rules from the
+output Room and answering agent. The router supplies a short spoken line while
+the search runs. A search has a 2.5-second limit; failure or timeout becomes an
+ordinary order, without a spoken error. Successful results are bounded before
+one further router call. Conversation without a search still makes one router
+call. [Search and report proof](voice-mode-proof/quick-search/README.md) records
+provider measurements, access tests and the Android call fixture.
 Call callbacks and detached work share a terminal error boundary. Known transient
 connection/database failures retry twice, at 250 ms and 1 s with jitter, only for
 reads or idempotent operations. Dispatch reuses the source message ID. An access

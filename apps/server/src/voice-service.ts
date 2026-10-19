@@ -10,14 +10,15 @@ import { parseAgentAccessPolicy, senderMayAddressAgent } from '@beeline/api-cont
 import type { SqlDatabase } from './database.js';
 import type { LiveHub } from './live.js';
 import { systemLine, restateSystemLine, ensureSystemIdentity } from './system-line.js';
+import { searchInstitutionalHistory } from './institutional-history.js';
 import { routeHumanMessage } from './agent-command.js';
-import { assignVoiceAgents, type VoiceAgent, type VoiceBrain, type VoiceSpeech, type VoiceSttFactory,
-  OpenRouterVoiceBrain, AuraSpeech, fluxFactory, VOICE_MODEL, AURA_VOICES, savedAuraVoice } from './voice-providers.js';
+import { assignVoiceAgents, type VoiceAgent, type VoiceBrain, type VoiceSearch, type VoiceSpeech, type VoiceSttFactory,
+  OpenRouterVoiceBrain, openRouterWebSearch, AuraSpeech, fluxFactory, VOICE_MODEL, AURA_VOICES, savedAuraVoice } from './voice-providers.js';
 import { VoiceRoomRuntime } from './voice-room-runtime.js';
 import type { SpeechMember } from './markdown-to-speech.js';
 
 export type VoiceConfig = { url: string; apiKey: string; apiSecret: string; brain: VoiceBrain;
-  speech: VoiceSpeech; stt: VoiceSttFactory; budgetLimitMs?: number };
+  speech: VoiceSpeech; stt: VoiceSttFactory; searchWeb?: (query: string, signal: AbortSignal) => Promise<string>; budgetLimitMs?: number };
 type CallRow = { id: string; room_id: string; message_id: string; started_at: Date; ended_at: Date | null; end_reason?: string | null };
 type IdentityRow = { id: string; kind: 'human' | 'agent'; name: string; handle: string | null; face_id: string | null };
 const identity = (row: IdentityRow): RoomViewIdentity => ({ pubkey: row.id, kind: row.kind,
@@ -407,6 +408,26 @@ export class VoiceService {
     });
   }
 
+  async search(callId: string, sourceId: string, agentId: string, request: VoiceSearch, signal: AbortSignal) {
+    if (signal.aborted) throw signal.reason;
+    const source = (await this.db.query<{ room_id: string; author_id: string }>(
+      `SELECT m.room_id,m.author_id FROM messages m JOIN voice_calls c ON c.room_id=m.room_id
+       JOIN voice_participants p ON p.call_id=c.id AND p.identity_id=m.author_id
+       WHERE c.id=$1 AND m.id=$2 AND c.ended_at IS NULL AND p.left_at IS NULL`, [callId, sourceId])).rows[0];
+    if (!source) throw new Error('Voice request is no longer available');
+    await this.access(source.room_id, source.author_id);
+    if (!(await this.agents(source.room_id, source.author_id)).some(agent => agent.id === agentId))
+      throw new Error('Voice agent is no longer available');
+    if (signal.aborted) throw signal.reason;
+    if (request.name === 'search_history') {
+      return JSON.stringify(await searchInstitutionalHistory(this.db, {
+        room_id: source.room_id, root_source_message_id: sourceId, agent_id: agentId, turn_request_id: sourceId,
+      }, { roomId: source.room_id, agentId, query: request.query, limit: 3 }));
+    }
+    if (!this.config.searchWeb) throw new Error('Voice web search is unavailable');
+    return this.config.searchWeb(request.query, signal);
+  }
+
   async dispatch(callId: string, sourceId: string, agentId: string) {
     await this.db.transaction(async db => {
       const row = (await db.query<{ room_id: string; author_id: string; text: string }>(`SELECT m.room_id,m.author_id,m.text FROM messages m
@@ -462,6 +483,6 @@ export function voiceConfigFromEnv(env = process.env): VoiceConfig | undefined {
       !cloudflareToken || !env.CLOUDFLARE_ACCOUNT_ID) return undefined;
   const aura = new AuraSpeech(cloudflareToken, env.CLOUDFLARE_ACCOUNT_ID);
   return { url: env.LIVEKIT_URL, apiKey: env.LIVEKIT_API_KEY, apiSecret: env.LIVEKIT_API_SECRET,
-    brain: new OpenRouterVoiceBrain(key), speech: aura,
+    brain: new OpenRouterVoiceBrain(key), searchWeb: openRouterWebSearch(key), speech: aura,
     stt: fluxFactory(cloudflareToken, env.CLOUDFLARE_ACCOUNT_ID) };
 }

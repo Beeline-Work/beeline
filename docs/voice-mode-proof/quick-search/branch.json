@@ -1,0 +1,1050 @@
+{
+  "mode": "branch",
+  "firstAudioMs": [
+    102.25200399999812,
+    22.750318999998854,
+    20.971212000000378,
+    20.559563000002527,
+    21.471134999999776
+  ],
+  "medianFirstAudioMs": 21.471134999999776,
+  "steps": [
+    "fast web search answered as native audio without a command",
+    "slow search dispatched once, full report retained, short report heard on Android",
+    "failed search dispatched once, full report retained, short report heard on Android",
+    "real avatar retarget during human speech suppressed and handled the report at quiet",
+    "caller departure during human speech suppressed and handled the report at quiet"
+  ],
+  "result": {
+    "decisionRequests": 12,
+    "synthesis": [
+      {
+        "text": "Ready.",
+        "at": 1792433821468
+      },
+      {
+        "text": "Ready.",
+        "at": 1792433826836
+      },
+      {
+        "text": "Ready.",
+        "at": 1792433827214
+      },
+      {
+        "text": "Ready.",
+        "at": 1792433827597
+      },
+      {
+        "text": "Ready.",
+        "at": 1792433827977
+      },
+      {
+        "text": "Ready.",
+        "at": 1792433828360
+      },
+      {
+        "text": "Let me look.",
+        "at": 1792433828802
+      },
+      {
+        "text": "Tokyo is the capital of Japan.",
+        "at": 1792433828908
+      },
+      {
+        "text": "Let me look.",
+        "at": 1792433829155
+      },
+      {
+        "text": "Checking.",
+        "at": 1792433831673
+      },
+      {
+        "text": "I\u2019ll tell you when I have it.",
+        "at": 1792433831776
+      },
+      {
+        "text": "The work is done. The rest is in the chat.",
+        "at": 1792433832591
+      },
+      {
+        "text": "Let me look.",
+        "at": 1792433832729
+      },
+      {
+        "text": "Checking.",
+        "at": 1792433832851
+      },
+      {
+        "text": "I\u2019ll tell you when I have it.",
+        "at": 1792433832955
+      },
+      {
+        "text": "The work is done. The rest is in the chat.",
+        "at": 1792433833176
+      },
+      {
+        "text": "Let me look.",
+        "at": 1792433833261
+      },
+      {
+        "text": "Checking.",
+        "at": 1792433833382
+      },
+      {
+        "text": "I\u2019ll tell you when I have it.",
+        "at": 1792433833486
+      },
+      {
+        "text": "Let me look.",
+        "at": 1792433834902
+      },
+      {
+        "text": "Checking.",
+        "at": 1792433835027
+      },
+      {
+        "text": "I\u2019ll tell you when I have it.",
+        "at": 1792433835129
+      }
+    ],
+    "deliveries": [
+      {
+        "source": "f4cca76f79e187a4cc4601b8d8ff4ab9c5a2f7ba62cbed4505fd3e65709c6c88",
+        "at": 1792433831664
+      },
+      {
+        "source": "daac851e5e1302e3116d118412b6df3e0177a73caabc5b068f2cff4ceb5a538a",
+        "at": 1792433832847
+      },
+      {
+        "source": "f63e45573094703bc0754cf7ee1b62bfbbc2fe8dd950e02d32400b4717f77a27",
+        "at": 1792433833380
+      },
+      {
+        "source": "be69bf2140eb68a2b221ad344d7b45dded0b69e094a88a42bbcbda906f3db74a",
+        "at": 1792433835022
+      }
+    ],
+    "orders": [
+      {
+        "source_message_id": "be69bf2140eb68a2b221ad344d7b45dded0b69e094a88a42bbcbda906f3db74a",
+        "call_id": "c10653b1-045c-4cbf-a869-5c78f9cf1505",
+        "agent_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "spoken_message_id": "c19246f24175bb337e259b5497455ba10768b1180c1fc93394bdb7cd59cfa5ec",
+        "text": "@ruby Ruby failed search Japan"
+      },
+      {
+        "source_message_id": "daac851e5e1302e3116d118412b6df3e0177a73caabc5b068f2cff4ceb5a538a",
+        "call_id": "c10653b1-045c-4cbf-a869-5c78f9cf1505",
+        "agent_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "spoken_message_id": "f6850941071bcd49bce7e78fcce83ccaa11234323704ccf89ce997fc6236ff59",
+        "text": "@ruby Ruby failed search Japan"
+      },
+      {
+        "source_message_id": "f4cca76f79e187a4cc4601b8d8ff4ab9c5a2f7ba62cbed4505fd3e65709c6c88",
+        "call_id": "c10653b1-045c-4cbf-a869-5c78f9cf1505",
+        "agent_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "spoken_message_id": "9d30b22487028d2d99bdfa5cbc89aca8d0ae455cfd013a4ca0135520a6278ba2",
+        "text": "@ruby Ruby slow search Japan"
+      },
+      {
+        "source_message_id": "f63e45573094703bc0754cf7ee1b62bfbbc2fe8dd950e02d32400b4717f77a27",
+        "call_id": "c10653b1-045c-4cbf-a869-5c78f9cf1505",
+        "agent_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "spoken_message_id": "38c0b60f350a2589354b6a71a14b1704251f926f37bae3338fcf1b158df63a26",
+        "text": "@ruby Ruby failed search Japan"
+      }
+    ],
+    "transcript": [
+      {
+        "text": "Voice call started",
+        "author": "972a35ec7a6e572c01c5b0a48cbdc82f6137dd7f35435cf9cc0ec305fdafa248"
+      },
+      {
+        "text": "@ruby Ruby, ready?",
+        "author": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      },
+      {
+        "text": "Ready.",
+        "author": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "text": "@ruby Ruby ready?",
+        "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "text": "Ready.",
+        "author": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "text": "@ruby Ruby ready?",
+        "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "text": "Ready.",
+        "author": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "text": "@ruby Ruby ready?",
+        "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "text": "Ready.",
+        "author": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "text": "@ruby Ruby ready?",
+        "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "text": "Ready.",
+        "author": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "text": "@ruby Ruby ready?",
+        "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "text": "Ready.",
+        "author": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "text": "@ruby Ruby search Japan",
+        "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "text": "Tokyo is the capital of Japan.",
+        "author": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "text": "@ruby Ruby slow search Japan",
+        "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "text": "The work is done.\n\nFull report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. ",
+        "author": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "text": "@ruby Ruby failed search Japan",
+        "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "text": "The work is done.\n\nFull report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. ",
+        "author": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "text": "@ruby Ruby failed search Japan",
+        "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "text": "The work is done.\n\nFull report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. ",
+        "author": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "text": "@ruby Ruby failed search Japan",
+        "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "text": "The work is done.\n\nFull report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. Full report details. ",
+        "author": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    ],
+    "pid": 11197,
+    "callId": "c10653b1-045c-4cbf-a869-5c78f9cf1505",
+    "dispatchAttempts": 4,
+    "frameCounts": {
+      "received": 239
+    },
+    "commands": {
+      "count": 4
+    },
+    "activeCallWork": false,
+    "pendingCommands": 0,
+    "call": {
+      "ended_at": null
+    },
+    "card": {
+      "id": "abe52a084feb5903c442d3759e6d9545762ed129df54a0295a2dda116c07a592",
+      "text": "Voice call started",
+      "createdAt": 1792433812,
+      "createdAtMs": 1792433812292,
+      "version": 4,
+      "author": {
+        "pubkey": "972a35ec7a6e572c01c5b0a48cbdc82f6137dd7f35435cf9cc0ec305fdafa248",
+        "kind": "human",
+        "name": "System",
+        "handle": "system",
+        "avatar": "http://proof/v1/connectors/logo/system.svg"
+      },
+      "presentation": "card",
+      "systemEvent": {
+        "verb": "started",
+        "subject": {
+          "kind": "system",
+          "name": "Voice call"
+        }
+      },
+      "voiceCall": {
+        "id": "c10653b1-045c-4cbf-a869-5c78f9cf1505",
+        "roomId": "375ebf52-b493-4982-bd6d-f3b8fe814a62",
+        "startedAt": 1792433812,
+        "startedAtMs": 1792433812292,
+        "participants": [
+          {
+            "kind": "human",
+            "name": "Sam",
+            "handle": "sam",
+            "pubkey": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          },
+          {
+            "kind": "human",
+            "name": "Alex",
+            "handle": "alex",
+            "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ]
+      }
+    },
+    "humans": 2,
+    "operations": [
+      "/leave-proof"
+    ],
+    "microphoneFrames": [
+      1538,
+      849,
+      11
+    ],
+    "replies": [
+      "Ready.",
+      "Ready.",
+      "Ready.",
+      "Ready.",
+      "Ready.",
+      "Ready.",
+      "Let me look.",
+      "Tokyo is the capital of Japan.",
+      "Let me look.",
+      "Let me look.",
+      "Let me look.",
+      "Let me look."
+    ],
+    "signals": [
+      {
+        "type": "humans",
+        "count": 1
+      },
+      {
+        "type": "target",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 3154.8717770000003
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "humans",
+        "count": 2
+      },
+      {
+        "type": "target",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "humans",
+        "count": 2
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 102.25200399999812
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 22.750318999998854
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 20.971212000000378
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 20.559563000002527
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 21.471134999999776
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 25.897257000000536
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 28.2759670000014
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 28.12161600000036
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 24.521358999998483
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "target",
+        "agentId": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "tap": true
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 24.66520799999853
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "humans",
+        "count": 1
+      },
+      {
+        "type": "humans",
+        "count": 2
+      },
+      {
+        "type": "target",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "humans",
+        "count": 2
+      }
+    ],
+    "observations": [
+      {
+        "at": 1792433823078,
+        "joined": false,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792433825072,
+        "joined": false,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792433825966,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792433826266,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 102.25200399999812
+      },
+      {
+        "at": 1792433826292,
+        "nativeAudio": [
+          {
+            "bytesReceived": 116,
+            "packetsReceived": 4,
+            "totalAudioEnergy": 2.6078623777822853e-10
+          }
+        ]
+      },
+      {
+        "at": 1792433826292,
+        "nativeAudio": [
+          {
+            "bytesReceived": 165,
+            "packetsReceived": 3,
+            "totalAudioEnergy": 1.5833450150821014e-10
+          }
+        ]
+      },
+      {
+        "at": 1792433826647,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 22.750318999998854
+      },
+      {
+        "at": 1792433826806,
+        "nativeAudio": [
+          {
+            "bytesReceived": 174,
+            "packetsReceived": 6,
+            "totalAudioEnergy": 5.029448871437268e-10
+          }
+        ]
+      },
+      {
+        "at": 1792433826806,
+        "nativeAudio": [
+          {
+            "bytesReceived": 4023,
+            "packetsReceived": 27,
+            "totalAudioEnergy": 0.0007368748458968715
+          }
+        ]
+      },
+      {
+        "at": 1792433827028,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 20.971212000000378
+      },
+      {
+        "at": 1792433827324,
+        "nativeAudio": [
+          {
+            "bytesReceived": 232,
+            "packetsReceived": 8,
+            "totalAudioEnergy": 1.0058897742874526e-09
+          }
+        ]
+      },
+      {
+        "at": 1792433827323,
+        "nativeAudio": [
+          {
+            "bytesReceived": 7410,
+            "packetsReceived": 51,
+            "totalAudioEnergy": 0.0017719499531576213
+          }
+        ]
+      },
+      {
+        "at": 1792433827405,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 20.559563000002527
+      },
+      {
+        "at": 1792433827787,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 21.471134999999776
+      },
+      {
+        "at": 1792433827839,
+        "nativeAudio": [
+          {
+            "bytesReceived": 290,
+            "packetsReceived": 10,
+            "totalAudioEnergy": 1.4529518961929908e-09
+          }
+        ]
+      },
+      {
+        "at": 1792433827840,
+        "nativeAudio": [
+          {
+            "bytesReceived": 10761,
+            "packetsReceived": 73,
+            "totalAudioEnergy": 0.0023531975939910157
+          }
+        ]
+      },
+      {
+        "at": 1792433828232,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 25.897257000000536
+      },
+      {
+        "at": 1792433828358,
+        "nativeAudio": [
+          {
+            "bytesReceived": 14157,
+            "packetsReceived": 94,
+            "totalAudioEnergy": 0.0031569184816001906
+          }
+        ]
+      },
+      {
+        "at": 1792433828358,
+        "nativeAudio": [
+          {
+            "bytesReceived": 406,
+            "packetsReceived": 14,
+            "totalAudioEnergy": 1.955896783336719e-09
+          }
+        ]
+      },
+      {
+        "at": 1792433828583,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 28.2759670000014
+      },
+      {
+        "at": 1792433828874,
+        "nativeAudio": [
+          {
+            "bytesReceived": 18271,
+            "packetsReceived": 120,
+            "totalAudioEnergy": 0.005370780345136237
+          }
+        ]
+      },
+      {
+        "at": 1792433828874,
+        "nativeAudio": [
+          {
+            "bytesReceived": 464,
+            "packetsReceived": 16,
+            "totalAudioEnergy": 2.4588416704804384e-09
+          }
+        ]
+      },
+      {
+        "at": 1792433829393,
+        "nativeAudio": [
+          {
+            "bytesReceived": 522,
+            "packetsReceived": 18,
+            "totalAudioEnergy": 2.9059037923859667e-09
+          }
+        ]
+      },
+      {
+        "at": 1792433829393,
+        "nativeAudio": [
+          {
+            "bytesReceived": 18505,
+            "packetsReceived": 124,
+            "totalAudioEnergy": 0.005400646916959172
+          }
+        ]
+      },
+      {
+        "at": 1792433829906,
+        "nativeAudio": [
+          {
+            "bytesReceived": 18563,
+            "packetsReceived": 126,
+            "totalAudioEnergy": 0.005400647922848965
+          }
+        ]
+      },
+      {
+        "at": 1792433829906,
+        "nativeAudio": [
+          {
+            "bytesReceived": 580,
+            "packetsReceived": 20,
+            "totalAudioEnergy": 3.408848679529686e-09
+          }
+        ]
+      },
+      {
+        "at": 1792433830422,
+        "nativeAudio": [
+          {
+            "bytesReceived": 696,
+            "packetsReceived": 24,
+            "totalAudioEnergy": 4.22846256968983e-09
+          }
+        ]
+      },
+      {
+        "at": 1792433830426,
+        "nativeAudio": [
+          {
+            "bytesReceived": 18621,
+            "packetsReceived": 128,
+            "totalAudioEnergy": 0.005400648826287022
+          }
+        ]
+      },
+      {
+        "at": 1792433830939,
+        "nativeAudio": [
+          {
+            "bytesReceived": 754,
+            "packetsReceived": 26,
+            "totalAudioEnergy": 4.666210897388993e-09
+          }
+        ]
+      },
+      {
+        "at": 1792433830939,
+        "nativeAudio": [
+          {
+            "bytesReceived": 18679,
+            "packetsReceived": 130,
+            "totalAudioEnergy": 0.005400649487566427
+          }
+        ]
+      },
+      {
+        "at": 1792433831456,
+        "nativeAudio": [
+          {
+            "bytesReceived": 812,
+            "packetsReceived": 28,
+            "totalAudioEnergy": 5.4858247875491375e-09
+          }
+        ]
+      },
+      {
+        "at": 1792433831456,
+        "nativeAudio": [
+          {
+            "bytesReceived": 21742,
+            "packetsReceived": 150,
+            "totalAudioEnergy": 0.006420460124364428
+          }
+        ]
+      },
+      {
+        "at": 1792433831973,
+        "nativeAudio": [
+          {
+            "bytesReceived": 870,
+            "packetsReceived": 30,
+            "totalAudioEnergy": 5.9235731152483006e-09
+          }
+        ]
+      },
+      {
+        "at": 1792433831974,
+        "nativeAudio": [
+          {
+            "bytesReceived": 22206,
+            "packetsReceived": 156,
+            "totalAudioEnergy": 0.006650080869952107
+          }
+        ]
+      },
+      {
+        "at": 1792433832161,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 28.12161600000036
+      },
+      {
+        "at": 1792433832497,
+        "nativeAudio": [
+          {
+            "bytesReceived": 984,
+            "packetsReceived": 33,
+            "totalAudioEnergy": 6.435831796598385e-09
+          }
+        ]
+      },
+      {
+        "at": 1792433832497,
+        "nativeAudio": [
+          {
+            "bytesReceived": 26991,
+            "packetsReceived": 180,
+            "totalAudioEnergy": 0.007961344650687428
+          }
+        ]
+      },
+      {
+        "at": 1792433832700,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 24.521358999998483
+      },
+      {
+        "at": 1792433833006,
+        "nativeAudio": [
+          {
+            "bytesReceived": 31728,
+            "packetsReceived": 205,
+            "totalAudioEnergy": 0.010367228944179529
+          }
+        ]
+      },
+      {
+        "at": 1792433833006,
+        "nativeAudio": [
+          {
+            "bytesReceived": 1044,
+            "packetsReceived": 36,
+            "totalAudioEnergy": 7.469662953504934e-09
+          }
+        ]
+      },
+      {
+        "at": 1792433833522,
+        "nativeAudio": [
+          {
+            "bytesReceived": 33310,
+            "packetsReceived": 217,
+            "totalAudioEnergy": 0.011534172093466143
+          }
+        ]
+      },
+      {
+        "at": 1792433833523,
+        "nativeAudio": [
+          {
+            "bytesReceived": 1102,
+            "packetsReceived": 38,
+            "totalAudioEnergy": 8.000549223267749e-09
+          }
+        ]
+      },
+      {
+        "at": 1792433834041,
+        "nativeAudio": [
+          {
+            "bytesReceived": 33368,
+            "packetsReceived": 219,
+            "totalAudioEnergy": 0.011534280692306597
+          }
+        ]
+      },
+      {
+        "at": 1792433834041,
+        "nativeAudio": [
+          {
+            "bytesReceived": 1160,
+            "packetsReceived": 40,
+            "totalAudioEnergy": 8.503494110411468e-09
+          }
+        ]
+      },
+      {
+        "at": 1792433834334,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 24.66520799999853
+      },
+      {
+        "at": 1792433834556,
+        "nativeAudio": [
+          {
+            "bytesReceived": 1218,
+            "packetsReceived": 42,
+            "totalAudioEnergy": 9.257911441127047e-09
+          }
+        ]
+      },
+      {
+        "at": 1792433834557,
+        "nativeAudio": [
+          {
+            "bytesReceived": 35846,
+            "packetsReceived": 233,
+            "totalAudioEnergy": 0.011711170516498294
+          }
+        ]
+      },
+      {
+        "at": 1792433834803,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 24.66520799999853
+      },
+      {
+        "at": 1792433835473,
+        "nativeAudio": [
+          {
+            "bytesReceived": 58,
+            "packetsReceived": 2,
+            "totalAudioEnergy": 1.2107932468274894e-10
+          }
+        ]
+      },
+      {
+        "at": 1792433835473,
+        "nativeAudio": [
+          {
+            "bytesReceived": 116,
+            "packetsReceived": 4,
+            "totalAudioEnergy": 3.0735520881005517e-10
+          }
+        ]
+      }
+    ],
+    "secondMicrophone": [],
+    "participants": [
+      {
+        "identity_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "parked_at": null,
+        "left_at": null
+      },
+      {
+        "identity_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "parked_at": null,
+        "left_at": null
+      }
+    ]
+  }
+}

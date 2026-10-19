@@ -125,7 +125,7 @@ function snippet(text: string, query: string): string {
  */
 export async function searchInstitutionalHistory(
   database: SqlDatabase,
-  command: CommandRow,
+  command: Pick<CommandRow, 'room_id' | 'root_source_message_id' | 'agent_id' | 'turn_request_id'>,
   input: SearchInstitutionalHistoryInput,
 ): Promise<SearchInstitutionalHistoryResult> {
   const query = boundedQuery(input.query);

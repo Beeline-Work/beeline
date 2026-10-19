@@ -122,7 +122,7 @@ it('Reproduction squire-spinner: an expired online computer offers Reconnect aft
   setWorkbenchSource(source);
   const renderer = await render();
   const computer = renderer.root.findByProps({ testID: 'squire-computer-machine-one' });
-  expect(computer.props.action).toBe('Reconnect'); expect(computer.props.description).toBe('Google reconnect failed');
+  expect(computer.props.action).toBe('Reconnect'); expect(computer.props.description).toBe('Google sign-in expired · Google reconnect failed');
   await act(async () => computer.props.onPress());
   expect(navigation.push).toHaveBeenCalledWith({ pathname: '/beeline/settings/workbench/connect',
     params: { workspaceId: 'ws', viewerId: 'human-dani', connectorId: 'trusty-squire', helperId: 'machine-one' } });

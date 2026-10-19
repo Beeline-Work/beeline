@@ -65,7 +65,7 @@ export default function ConnectorServiceScreen() {
             const status = item.statusText ?? (item.reconnecting ? 'Reconnecting…' : item.signedInAs ?? (item.status === 'error' ? 'Google sign-in expired' : item.status === 'connected' ? 'Google signed in' : 'Google sign-in needed'));
             // An online computer that can retry does it in one tap; an offline one shows why it cannot.
             return !item.reconnecting && item.online && needsFix(item)
-              ? <SettingsRow appBoard key={item.id} title={item.name} description={item.error ?? status} descriptionTone={item.status === 'error' ? 'danger' : undefined}
+              ? <SettingsRow appBoard key={item.id} title={item.name} description={[status, item.error].filter(Boolean).join(' · ')} descriptionTone={item.status === 'error' ? 'danger' : undefined}
                 action={item.status === 'not-added' ? 'Set up' : 'Reconnect'} onPress={() => reconnectMachine(item.id)} testID={`squire-computer-${item.id}`} />
               : <SettingsRow appBoard key={item.id} title={item.name} description={item.error} value={status}
                 valueTone={item.status === 'error' || (item.status === 'connected' && !item.online) ? 'danger' : undefined}

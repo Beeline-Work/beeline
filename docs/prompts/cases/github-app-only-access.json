@@ -1,0 +1,46 @@
+{
+  "id": "github-app-only-access",
+  "section": "tools",
+  "summary": "Repository App access does not require connecting personal GitHub.",
+  "place": "code-corner",
+  "session": {
+    "worktree": {
+      "featureBranch": "feature/corner-proof",
+      "targetBranch": "main"
+    },
+    "brief": {
+      "repositoryWork": true,
+      "spec": "## Intent\nExplain repository access in this linked corner. No writes are assigned in this proof."
+    }
+  },
+  "turn": {
+    "task": {
+      "body": "This corner has working repository App access, and I have no personal GitHub connector. Which credential route should you use for repository work? Do I need to connect personal GitHub? Answer only; do not push anything or open a PR.",
+      "fromName": "dana",
+      "commandReason": "human_tag"
+    }
+  },
+  "toolResults": {
+    "connect": "{\"readiness\": \"Apps: none. No personal GitHub connection is reported. The existing repository App credential serves this linked repository.\"}"
+  },
+  "pass": {
+    "all": [
+      {
+        "text": {
+          "matches": "App",
+          "flags": "i"
+        }
+      },
+      {
+        "noCall": "connect",
+        "args": {
+          "mode": "ensure",
+          "service": {
+            "matches": "github",
+            "flags": "i"
+          }
+        }
+      }
+    ]
+  }
+}

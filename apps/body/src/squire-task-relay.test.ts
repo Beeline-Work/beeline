@@ -75,6 +75,41 @@ async function request(
 }
 
 describe('helper-owned Squire task relay', () => {
+  it.each([200, 403])('R2594: forwards the personal Git Data API push and preserves HTTP %s without an App retry', async status => {
+    const authorize = vi.fn(async () => true);
+    const proxyResult = { content: [{ type: 'text', text: JSON.stringify({ response: { status } }) }] };
+    const upstream = vi.fn(async () => proxyResult);
+    const { relay } = fixture(undefined, authorize, upstream);
+    relay.activate(command('root', 'turn-one'), 'generation');
+    const push = { name: 'use_credential', arguments: { service: 'github', http: {
+      method: 'PATCH', url: 'https://api.github.com/repos/owner/widgets/git/refs/heads/proof/github-personal',
+      headers: { Authorization: 'Bearer ${SECRET.access_token}' },
+      body: JSON.stringify({ sha: '1'.repeat(40), force: false }),
+    } } };
+    const result = await request(relay, 'root', 'turn-one', 'tools/call', push);
+    expect(result.status).toBe(200);
+    expect(result.body.result).toEqual(proxyResult);
+    expect(upstream).toHaveBeenCalledTimes(1);
+    expect(upstream).toHaveBeenCalledWith('tools/call', push);
+    expect(authorize).toHaveBeenCalledWith(expect.objectContaining({ tool: 'use_credential',
+      taskId: 'root', requestId: 'turn-one' }));
+  });
+
+  it('R2594: refuses a personal GitHub push before reaching the vault when owner authorization fails', async () => {
+    const upstream = vi.fn();
+    const { relay } = fixture(undefined, async () => false, upstream);
+    relay.activate(command('root', 'turn-one'), 'generation');
+    const result = await request(relay, 'root', 'turn-one', 'tools/call', {
+      name: 'use_credential', arguments: { service: 'github', http: {
+        method: 'PATCH', url: 'https://api.github.com/repos/owner/widgets/git/refs/heads/proof/github-personal',
+        body: JSON.stringify({ sha: '1'.repeat(40), force: false }),
+      } },
+    });
+    expect(result.status).toBe(400);
+    expect(result.body.error).toMatch(/not authorized/);
+    expect(upstream).not.toHaveBeenCalled();
+  });
+
   it('forwards list_changed only after the active turn finishes', async () => {
     const { relay, notify } = fixture();
     await request(relay, 'root', 'turn-one', 'tools/list');

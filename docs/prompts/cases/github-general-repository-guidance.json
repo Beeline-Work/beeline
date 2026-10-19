@@ -1,0 +1,45 @@
+{
+  "id": "github-general-repository-guidance",
+  "section": "place",
+  "summary": "Coding in General with unavailable gh guides repository setup before personal connector setup.",
+  "place": "room",
+  "turn": {
+    "task": {
+      "body": "@ruby fix the login bug in my project. We are in General with no linked repository; gh says it cannot find a GitHub repository. What should I do?",
+      "fromName": "dana",
+      "commandReason": "human_tag"
+    }
+  },
+  "pass": {
+    "all": [
+      {
+        "text": {
+          "matches": "repository|repo",
+          "flags": "i"
+        }
+      },
+      {
+        "text": {
+          "matches": "link|connect",
+          "flags": "i"
+        }
+      },
+      {
+        "text": {
+          "matches": "Room|Repository",
+          "flags": "i"
+        }
+      },
+      {
+        "noCall": "connect",
+        "args": {
+          "mode": "ensure",
+          "service": {
+            "matches": "github",
+            "flags": "i"
+          }
+        }
+      }
+    ]
+  }
+}

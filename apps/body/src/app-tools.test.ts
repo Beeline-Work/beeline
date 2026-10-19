@@ -240,6 +240,36 @@ describe('server-mediated connected app tools', () => {
     expect(text.match(/app:slack/g)).toHaveLength(1);
   });
 
+  it.each(['connected', 'error'].flatMap(status => ['squire-api', 'composio'].map(transport => ({ status, transport }))))('R2594: gives the personal GitHub API route priority with App checkout available ($status, $transport)', async ({ status, transport }) => {
+    const text = await workbenchStatus({ roomId: 'room-1', execute: async () => ({
+      apps: [{ appId, appKey: 'github', name: 'GitHub', transport,
+        status, ...(status === 'error' ? { errorMessage: 'Permission denied' } : {}) }],
+    }) });
+    expect(text).toContain(`personal GitHub connection (app ${appId}, ${transport})`);
+    expect(text).toContain('including Git Data API pushes');
+    expect(text).toContain('never switching to the App identity');
+    expect(text).toContain(transport === 'squire-api'
+      ? 'call Squire use_credential (service "github")' : `use app_tool(app:"${appId}")`);
+    if (status === 'error') expect(text).toContain('Permission denied');
+  });
+
+  it('R2594: does not invent a personal credential when only repository App access is available', async () => {
+    const text = await workbenchStatus({ roomId: 'room-1', execute: async () => ({ apps: [] }) });
+    expect(text).not.toContain('GitHub operation identity:');
+    expect(calls).toEqual([]);
+  });
+
+  it('R2594: preserves a personal GitHub push denial without requesting an App credential', async () => {
+    answer = () => Response.json({ status: 'needs_permission', grantId: 'github-push' });
+    const result = JSON.parse(await callAgentTool('app_tool', { app: appId,
+      tool: 'GITHUB_UPDATE_A_REFERENCE', args: { owner: 'owner', repo: 'widgets',
+        ref: 'heads/proof/github-personal', sha: '1'.repeat(40), force: false } }, 'push'));
+    expect(result).toEqual({ status: 'needs_permission', grantId: 'github-push' });
+    expect(calls.map(call => call.name)).toEqual(['executeAppTool']);
+    expect(calls[0]!.input).toMatchObject({ appId, roomId: 'room-1',
+      arguments: { ref: 'heads/proof/github-personal', force: false } });
+  });
+
   it('lets a corner turn discover X and start its connection with the same turn authority', async () => {
     vi.stubEnv('BEELINE_DAEMON_CORNER_ID', 'corner-1');
     writeFileSync(join(home, 'turn.json'), JSON.stringify({ roomId: 'corner-1',

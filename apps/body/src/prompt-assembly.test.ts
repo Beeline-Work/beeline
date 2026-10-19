@@ -791,6 +791,16 @@ describe('assigned corner brief', () => {
       brief: { brief: value, fileLines: [], missingRequiredFile: false },
     }).text;
 
+  it.each(['code-corner', 'repo-less-corner'] as const)('keeps current brief authority on %s without demoting a new human direction', (surface) => {
+    const text = assembleTurnPrompt({ surface,
+      brief: { brief, fileLines: [], missingRequiredFile: false },
+      task: { body: 'Change brief revision 2 again.', commandReason: 'human_tag' },
+    }).text;
+    expect(text).toContain('Read the current brief revision 3 before acting');
+    expect(text).toContain('Newest message:\nChange brief revision 2 again.');
+    expect(text).not.toContain('historical context only');
+  });
+
   it('renders the revision, the spec, then the approving message in the human words', () => {
     expect(renderAssignedCornerBrief(brief)).toBe(
       `Brief revision 3:\n${brief.spec}\n\nApproved by lunchboxfortwo, message m2: Also keep the marker write last.`,

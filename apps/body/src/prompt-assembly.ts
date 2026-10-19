@@ -840,7 +840,7 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
     surfaces: CORNERS,
     render: ({ brief, surface, generatedTitle }) =>
       brief
-        ? `${renderAssignedCornerBrief(brief.brief)}${cornerHasRepositoryWork(brief.brief) ? `\n\nAssigned files:\n${brief.fileLines.join('\n') || '(none)'}` : brief.fileLines.length ? `\n\nBrief attachments:\n${brief.fileLines.join('\n')}` : ''}${brief.missingRequiredFile ? '\nRequired assignment files are unavailable. Pause work that depends on them and report the missing file precisely.' : ''}`
+        ? `${renderAssignedCornerBrief(brief.brief)}${cornerHasRepositoryWork(brief.brief) ? `\n\nAssigned files:\n${brief.fileLines.join('\n') || '(none)'}` : brief.fileLines.length ? `\n\nBrief attachments:\n${brief.fileLines.join('\n')}` : ''}\n\nRead the current brief revision ${brief.brief.revision} before acting. It governs this turn. Replaced instructions: earlier delivered orders and review targets are historical wherever they conflict with this brief; do not act on their superseded scope.${brief.missingRequiredFile ? '\nRequired assignment files are unavailable. Pause work that depends on them and report the missing file precisely.' : ''}`
         : surface === 'code-corner'
           ? `No assigned brief yet. Before any code, ${generatedTitle ? 'write the first brief from the newest human request with revise_corner(action:install_brief, address, name, brief)' : 'report needs-decision: to your commander for the first brief'}.`
           : 'No assigned brief: the human messages in this corner are the authority; skip steps that need a brief revision.',
@@ -938,7 +938,13 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
     budgetBytes: 1_200,
     layer: 'turn',
     surfaces: ['code-corner'],
-    render: ({ reviewerTarget }) => reviewerTarget ?? '',
+    render: ({ reviewerTarget, brief }) => {
+      if (!reviewerTarget) return '';
+      if (!brief) return reviewerTarget;
+      // The brief refreshed during assembly also owns the target's revision.
+      return reviewerTarget.replace(/brief revision (\d+)/gi, (match, revision: string) =>
+        Number(revision) < brief.brief.revision ? `brief revision ${brief.brief.revision}` : match);
+    },
   },
   {
     id: 'turn.task',
@@ -947,7 +953,7 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
     budgetBytes: 64_000,
     layer: 'turn',
     surfaces: EVERYWHERE,
-    render: ({ task, surface }) => [
+    render: ({ task, surface, brief }) => [
       nonhumanSilentWake(task.commandReason)
         ? 'This is a nonhuman wake. Do not post an update merely because time has passed or a reminder asks you to say what you are doing. If this nonhuman wake needs no message, use no_reply_needed when mounted, otherwise end silently. The tool posts nothing. Continue required work and report actual blockers instead of using silence to abandon it.'
         : ['human_tag', 'direct_message'].includes(task.commandReason ?? '')
@@ -965,7 +971,9 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
             ...(task.reactionTargetId
               ? [`Reaction target message id: ${task.reactionTargetId}`]
               : []),
-            `Newest message:\n${task.body}`,
+            brief && ['order', 'corner_review_dispatch', 'subscribed_event', 'corner_brief_revision'].includes(task.commandReason ?? '') && [...task.body.matchAll(/brief revision (\d+)/gi)].some(match => Number(match[1]) < brief.brief.revision)
+              ? `Replaced instructions from an older brief revision (historical context only). Read the current brief revision ${brief.brief.revision} before acting.\n${task.body.split('\n').map(line => `> ${line}`).join('\n')}`
+              : `Newest message:\n${task.body}`,
             ...(task.reply?.replyToMessageId ? [renderReplyContext(task.reply)] : []),
             ...(task.attachmentLines ?? []),
           ].join('\n'),

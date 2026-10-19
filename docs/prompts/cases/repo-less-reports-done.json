@@ -1,0 +1,22 @@
+{
+  "id": "repo-less-reports-done",
+  "section": "corner.repo-less-reply",
+  "summary": "Ordered work in a repo-less corner ends with a done: report.",
+  "place": "repo-less-corner",
+  "turn": {
+    "task": {
+      "body": "Order from Juniper: draft three taglines for the Beeline launch page and report them back. Beeline is a chat app where small software teams and their AI agents work together in shared Rooms.",
+      "commandReason": "order"
+    },
+    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
+  },
+  "pass": {
+    "call": "report",
+    "args": {
+      "text": {
+        "matches": "^done:",
+        "flags": "i"
+      }
+    }
+  }
+}

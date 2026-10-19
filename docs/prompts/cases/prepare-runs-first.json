@@ -1,0 +1,48 @@
+{
+  "id": "prepare-runs-first",
+  "section": "corner.prepare",
+  "summary": "A repository corner whose checkout defines corner:prepare runs it first.",
+  "place": "code-corner",
+  "session": {
+    "worktree": {
+      "featureBranch": "feature/corner-case",
+      "targetBranch": "main"
+    },
+    "reviewerHandle": "@juniper",
+    "brief": {
+      "repositoryWork": true,
+      "spec": "## Intent\nFix the token expiry check so expired tokens are refused.\n## Acceptance criteria\n1. An expired token gets 401.\n## Assigned files\napps/server/src/auth.ts",
+      "approval": {
+        "sourceMessageId": "m1",
+        "text": "Go ahead.",
+        "approvedBy": "dana-id",
+        "approverName": "dana"
+      }
+    },
+    "cornerPrepareScript": true
+  },
+  "turn": {
+    "task": {
+      "body": "@ruby start implementing the brief.",
+      "fromName": "dana",
+      "commandReason": "human_tag"
+    },
+    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above.",
+    "brief": {
+      "fileLines": [
+        "apps/server/src/auth.ts"
+      ]
+    }
+  },
+  "tools": [
+    "Bash"
+  ],
+  "pass": {
+    "call": "Bash",
+    "args": {
+      "command": {
+        "contains": "corner:prepare"
+      }
+    }
+  }
+}

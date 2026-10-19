@@ -1,0 +1,35 @@
+{
+  "id": "tagging-no-stray-handle",
+  "section": "core.tagging",
+  "summary": "Mentioning another agent in an answer does not tag it.",
+  "place": "room",
+  "turn": {
+    "task": {
+      "body": "@ruby what did Juniper say about the cache plan earlier? One line.",
+      "fromName": "dana",
+      "commandReason": "human_tag"
+    },
+    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
+  },
+  "messages": [
+    "[message id: m1]\njuniper [message]: The cache plan: keep a 5 minute TTL and drop the warm-up job.",
+    "[message id: m2]\ndana [message]: ok"
+  ],
+  "pass": {
+    "all": [
+      {
+        "text": {
+          "matches": "TTL|5 min|warm",
+          "flags": "i"
+        }
+      },
+      {
+        "text": {
+          "not": {
+            "matches": "@juniper"
+          }
+        }
+      }
+    ]
+  }
+}

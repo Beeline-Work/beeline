@@ -1,0 +1,37 @@
+{
+  "id": "dm-place-no-tag",
+  "section": "dm.place",
+  "summary": "In a DM the agent replies without tagging the person and finds Room addresses itself.",
+  "place": "dm",
+  "turn": {
+    "task": {
+      "body": "Start work on rotating the TLS certificate in the Ops room.",
+      "fromName": "dana",
+      "commandReason": "direct_message"
+    }
+  },
+  "pass": {
+    "all": [
+      {
+        "any": [
+          {
+            "call": "read",
+            "args": {
+              "facet": "addresses"
+            }
+          },
+          {
+            "call": "open_corner"
+          }
+        ]
+      },
+      {
+        "text": {
+          "not": {
+            "matches": "@dana"
+          }
+        }
+      }
+    ]
+  }
+}

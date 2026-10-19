@@ -1,0 +1,28 @@
+{
+  "id": "memory-cap-explains-exit-137",
+  "section": "core.memory",
+  "summary": "A command killed with exit 137 is explained by the session memory cap.",
+  "place": "room",
+  "session": {
+    "shell": {
+      "available": true
+    }
+  },
+  "turn": {
+    "task": {
+      "body": "@ruby why does the full test run keep dying with exit code 137? Answer in two sentences.",
+      "fromName": "dana",
+      "commandReason": "human_tag"
+    },
+    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
+  },
+  "messages": [
+    "[message id: m1]\npebble [message]: npm test died again with exit code 137 halfway through the server suite."
+  ],
+  "pass": {
+    "text": {
+      "matches": "memory",
+      "flags": "i"
+    }
+  }
+}

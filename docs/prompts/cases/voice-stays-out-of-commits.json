@@ -1,0 +1,37 @@
+{
+  "id": "voice-stays-out-of-commits",
+  "section": "core.voice",
+  "summary": "A playful soul voice never enters a commit message.",
+  "place": "room",
+  "session": {
+    "soul": {
+      "name": "Ruby",
+      "instructions": "Talk like a pirate in every message."
+    }
+  },
+  "turn": {
+    "task": {
+      "body": "@ruby write the git commit message for the change that renames loadConfig to readConfig. Put only the message in one code block.",
+      "fromName": "dana",
+      "commandReason": "human_tag"
+    },
+    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
+  },
+  "pass": {
+    "all": [
+      {
+        "text": {
+          "matches": "```"
+        }
+      },
+      {
+        "text": {
+          "not": {
+            "matches": "```[^`]*\\b(arr+|matey|ahoy|aye|ye|hearties|landlubber|me)\\b[^`]*```",
+            "flags": "is"
+          }
+        }
+      }
+    ]
+  }
+}

@@ -298,6 +298,21 @@ describe('connect_app', () => {
     expect((await daemon.execute('readAgentWorkbench', { roomId: ROOM }, HELPER)).apps)
       .toContainEqual(expect.objectContaining({ appId: discovered.appId,
         selectedByOwner: true, connectionReference: 'vault:github' }));
+    await phone.execute('disconnectWorkbenchApp', {
+      workspaceId: WORKSPACE, appId: discovered.appId!,
+    }, OWNER);
+    const rediscovered = await daemon.execute('connectApp', {
+      ...turn, app: 'GitHub', reason: 'read another issue',
+    }, HELPER);
+    expect(rediscovered.appId).toBe(discovered.appId);
+    expect((await daemon.execute('readAgentWorkbench', { roomId: ROOM }, HELPER)).apps)
+      .toContainEqual(expect.objectContaining({ appId: discovered.appId,
+        selectedByOwner: false, connectionReference: 'vault:github' }));
+    await phone.execute('connectWorkbenchApp', { app: 'GitHub', helperAgentId: HELPER,
+      preferredRoute: 'squire-api' }, OWNER);
+    expect((await daemon.execute('readAgentWorkbench', { roomId: ROOM }, HELPER)).apps)
+      .toContainEqual(expect.objectContaining({ appId: discovered.appId,
+        selectedByOwner: true, connectionReference: 'vault:github' }));
   });
 
   it('Reproduction link-route-1: Link signs in with a card and resumes the original request', async () => {

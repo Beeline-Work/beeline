@@ -6696,9 +6696,12 @@ export class DaemonService {
       )
     ).rows;
     const ownerSelectedApps = new Set((await this.database.query<{ app_id: string }>(
-      `SELECT DISTINCT r.app_id FROM workspace_app_routes r
-       JOIN workspace_apps a ON a.id=r.app_id
-       WHERE a.owner_identity_id=$1 AND r.requested_by=a.owner_identity_id`,
+      `SELECT a.id AS app_id FROM workspace_apps a
+       JOIN LATERAL (
+         SELECT requested_by FROM workspace_app_routes
+         WHERE app_id=a.id ORDER BY created_at DESC,id DESC LIMIT 1
+       ) r ON r.requested_by=a.owner_identity_id
+       WHERE a.owner_identity_id=$1 AND a.state='active'`,
       [context.owner.pubkey],
     )).rows.map(row => row.app_id));
     const registryServers = paired.flatMap((row) =>

@@ -10,7 +10,7 @@ it('the MCP transport refuses retired tools, aliases and nonobject arguments bef
   const requests = [
     {method:'tools/list'},
     ...['list_rooms','set_avatar','execute_app_tool','save_skill','watch','wallet_address'].map(name => ({method:'tools/call',params:{name,arguments:{}}})),
-    {method:'tools/call',params:{name:'post_to_corner',arguments:{cornerId:'child',text:'note'}}},
+    {method:'tools/call',params:{name:'post',arguments:{cornerId:'child',text:'note'}}},
     {method:'tools/call',params:{name:'connect',arguments:[]}},
     {method:'tools/call',params:{name:'app_tool',arguments:{appId:'legacy'}}},
   ];
@@ -23,7 +23,7 @@ it('the MCP transport refuses retired tools, aliases and nonobject arguments bef
   const responses = output.trim().split('\n').map(line => JSON.parse(line));
   expect(responses).toHaveLength(requests.length);
   const tools = responses.find(response => response.id===0).result.tools;
-  expect(tools.map((tool:{name:string})=>tool.name)).toContain('post_to_corner');
+  expect(tools.map((tool:{name:string})=>tool.name)).toContain('post');
   for (const tool of tools) {
     expect(tool.inputSchema.type).toBe('object');
     expect(tool.inputSchema.properties).toBeDefined();

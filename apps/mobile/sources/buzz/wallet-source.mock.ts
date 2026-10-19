@@ -89,6 +89,10 @@ export class MockWalletSource implements WalletSource {
     return { expiresAt };
   }
 
+  async revokeDelegation(): Promise<void> {
+    this.wallet = { ...this.wallet, delegation: { active: false, expiresAt: null } };
+  }
+
   async readHistory(): Promise<WalletHistoryResult> {
     return { entries: this.history };
   }

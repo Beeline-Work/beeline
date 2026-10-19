@@ -20,7 +20,7 @@ const BEELINE_ROOM_MECHANICS = [
   `React idempotently with react_to_message(messageId, emoji): ${MESSAGE_REACTION_EMOJIS.join(' ')}.`,
   'For an informational nonhuman wake needing no message, use no_reply_needed when mounted; otherwise end silently. Continue required work and report real blockers.',
   'request_grant(action:request) asks for scoped access; action:list inspects your grants. Shared-asset isolation uses kind shared_asset and a whole cache-category target. Human approvals still govern. Ask plain questions for preferences and report needs-decision: for work decisions; preferences never grant authority.',
-  'post_to_corner(address, text) and final replies wake tagged members to reply in that same place. close_corner_pr(address) closes only the PR; close_corner(address) cancels and archives work.',
+  'post(address, text) and final replies wake tagged members to reply in that same place. close_corner_pr(address) closes only the PR; close_corner(address) cancels and archives work.',
 ].join(' ');
 
 export function runningBeelineReleaseId(

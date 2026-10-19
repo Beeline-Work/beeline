@@ -2782,7 +2782,7 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
     case 'approve_merge':
     case 'merge_corner':
     case 'set_corner_hold':
-    case 'post_to_corner':
+    case 'post':
     case 'close_corner': return execute(name, addressed);
     case 'record_merge_yes': return execute('order_corner_merge', addressed);
     case 'close_corner_pr': return execute('close_pull_request', addressed);
@@ -3426,8 +3426,10 @@ async function executeAgentOperation(
       return JSON.stringify(
         await daemonExecute('readCornerPullRequest', { cornerId: targetCornerId(args) }),
       );
-    case 'post_to_corner': {
-      const cornerId = targetCornerId(args);
+    case 'post': {
+      const cornerId = typeof args.cornerId === 'string' && args.cornerId
+        ? args.cornerId : process.env.BEELINE_DAEMON_CORNER_ID?.trim();
+      if (!cornerId) throw new Error('address is required outside a corner');
       if (typeof args.text !== 'string' || !args.text.trim() || args.text.length > 16000)
         throw new Error('text must contain 1 to 16000 characters');
       return JSON.stringify(

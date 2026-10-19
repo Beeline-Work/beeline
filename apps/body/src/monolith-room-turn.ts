@@ -2084,9 +2084,19 @@ export class MonolithRoomTurnLoop {
               // Synthetic recovery replies stand alone, and an empty final
               // result must not promote an abandoned draft into an answer.
               let reply = durableReplyText(result.agentText);
-              const steps = reply
+              let steps = reply
                 ? roomReplySteps(agentTurnSteps(result.updates ?? []), this.requesterOf(item.authorId))
                 : [];
+              if (!steps) {
+                // The earlier text does not fit the reply's steps. It is kept
+                // in the reply itself, every run joined, rather than lost.
+                console.warn(
+                  `[thin-core] monolith Room ${this.options.roomId} turn ${item.id}: ` +
+                    'earlier text runs exceed the reply steps bounds; posting every run in the reply',
+                );
+                reply = durableReplyText(stream.streamedText) || reply;
+                steps = [];
+              }
               if (!reply && explained?.recoveredText) {
                 // Text the harness recorded but never streamed. Kept on a
                 // corner-open turn too: it is the same reply the live lane

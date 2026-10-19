@@ -180,3 +180,19 @@ it('#2495: an answer followed by a tool and a short pointer stays whole, as a no
   expect(reply.text).toBe(pointer);
   expect(shape(reply.steps)).toEqual([`note: ${answer}`, 'tool: read status']);
 });
+
+it('keeps a note before more tool calls than the steps bound allows', async () => {
+  const tools = Array.from({ length: 200 }, (_, index) => tool(`t${index}`, `step ${index}`)).flat();
+  const reply = posted(await roomTurnWrites([text('Before the tools.'), ...tools, text('Done.')]));
+  expect(reply.text).toBe('Done.');
+  expect(reply.steps).toHaveLength(200);
+  expect(shape(reply.steps)[0]).toBe('note: Before the tools.');
+  expect(shape(reply.steps)[1]).toBe('tool: 2 earlier steps');
+});
+
+it('posts every run in the reply when an earlier run is longer than a note may be', async () => {
+  const long = `Start. ${'x'.repeat(16_000)} End.`;
+  const reply = posted(await roomTurnWrites([text(long), ...tool('t1', 'read status'), text('Done.')]));
+  expect(reply.steps).toBeUndefined();
+  expect(reply.text).toBe(`${long}\n\nDone.`);
+});

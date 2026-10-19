@@ -195,3 +195,105 @@ it('CALL-ERROR-1: late brain headers cannot emit text after timeout', async () =
     expect(onText).not.toHaveBeenCalled();
   } finally { vi.useRealTimers(); }
 });
+
+it.each([
+  'Short report.',
+  'One whole sentence. '.repeat(300),
+  'word '.repeat(1000),
+  'é'.repeat(2100),
+  '😀'.repeat(2100),
+  'x'.repeat(4001),
+])('chunks Aura text losslessly within the character budget (%#)', async text => {
+  const requests: string[] = [];
+  const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
+    const part = JSON.parse(init!.body as string).text as string;
+    requests.push(part);
+    return new Response(new Uint8Array([1, 2]));
+  });
+  for await (const _ of new AuraSpeech('test', 'account', fetcher).synthesize(text, 'luna', new AbortController().signal)) {}
+  expect(requests.join('')).toBe(text);
+  expect(requests.every(part => part.length <= 1800 && new TextDecoder().decode(new TextEncoder().encode(part)) === part)).toBe(true);
+  if (text.length <= 1800) expect(requests).toEqual([text]);
+  if (text.includes(' ')) expect(requests.slice(0, -1).every(part => part.endsWith(' '))).toBe(true);
+  if (text.includes('. ')) expect(requests.slice(0, -1).every(part => part.endsWith('. '))).toBe(true);
+});
+
+it('does not start a new Aura request when aborted between chunks or before playback', async () => {
+  const controller = new AbortController();
+  const fetcher = vi.fn<typeof fetch>(async () => new Response(new Uint8Array([1, 2])));
+  const speech = new AuraSpeech('test', 'account', fetcher);
+  const iterator = speech.synthesize('Ready. '.repeat(600), 'luna', controller.signal)[Symbol.asyncIterator]();
+  await iterator.next();
+  controller.abort();
+  await expect(iterator.next()).rejects.toMatchObject({ name: 'AbortError' });
+  await expect(speech.synthesize('Hi.', 'luna', controller.signal)[Symbol.asyncIterator]().next()).rejects.toMatchObject({ name: 'AbortError' });
+  expect(fetcher).toHaveBeenCalledOnce();
+});
+
+it('cancels an active later Aura request and retains its first-byte deadline', async () => {
+  vi.useFakeTimers();
+  try {
+    const cancel = vi.fn();
+    const fetcher = vi.fn<typeof fetch>().mockImplementationOnce(async () => new Response(new Uint8Array([1, 2])))
+      .mockImplementation(async () => new Response(new ReadableStream({ cancel })));
+    const iterator = new AuraSpeech('test', 'account', fetcher).synthesize('Ready. '.repeat(600), 'luna', new AbortController().signal)[Symbol.asyncIterator]();
+    await iterator.next();
+    const failed = expect(iterator.next()).rejects.toThrow('timed out');
+    await vi.advanceTimersByTimeAsync(5000);
+    await failed;
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    expect(cancel).toHaveBeenCalledOnce();
+  } finally { vi.useRealTimers(); }
+});
+
+it('aborts the body of a later Aura request without starting another chunk', async () => {
+  const controller = new AbortController();
+  const cancel = vi.fn();
+  const fetcher = vi.fn<typeof fetch>().mockImplementationOnce(async () => new Response(new Uint8Array([1, 2])))
+    .mockImplementation(async () => new Response(new ReadableStream({ cancel })));
+  const iterator = new AuraSpeech('test', 'account', fetcher).synthesize('Ready. '.repeat(900), 'luna', controller.signal)[Symbol.asyncIterator]();
+  await iterator.next();
+  const failed = expect(iterator.next()).rejects.toMatchObject({ name: 'AbortError' });
+  await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+  controller.abort();
+  await failed;
+  expect(cancel).toHaveBeenCalledOnce();
+  expect(fetcher).toHaveBeenCalledTimes(2);
+});
+
+it('keeps long-report playback pacing outside the provider deadline', async () => {
+  vi.useFakeTimers();
+  try {
+    const fetcher = vi.fn<typeof fetch>(async () => new Response(new Uint8Array([1, 2])));
+    const iterator = new AuraSpeech('test', 'account', fetcher).synthesize('Ready. '.repeat(600), 'luna', new AbortController().signal)[Symbol.asyncIterator]();
+    await iterator.next();
+    // Simulate RTC backpressure while the caller plays the current chunk.
+    await vi.advanceTimersByTimeAsync(31000);
+    const audio: Uint8Array[] = [];
+    for (;;) {
+      const next = await iterator.next();
+      if (next.done) break;
+      audio.push(next.value);
+    }
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(audio).toHaveLength(2);
+  } finally { vi.useRealTimers(); }
+});
+
+it('enforces the total provider budget when a later long-report chunk stalls after its first byte', async () => {
+  vi.useFakeTimers();
+  try {
+    const cancel = vi.fn();
+    const fetcher = vi.fn<typeof fetch>().mockImplementationOnce(async () => new Response(new Uint8Array([1, 2])))
+      .mockImplementation(async () => new Response(new ReadableStream({ start(c) { c.enqueue(new Uint8Array([1, 2])); }, cancel })));
+    const iterator = new AuraSpeech('test', 'account', fetcher).synthesize('Ready. '.repeat(600), 'luna', new AbortController().signal)[Symbol.asyncIterator]();
+    await iterator.next();
+    const failed = expect(iterator.next()).rejects.toThrow('timed out');
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(cancel).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(25000);
+    await failed;
+    expect(cancel).toHaveBeenCalledOnce();
+    expect(fetcher).toHaveBeenCalledTimes(2);
+  } finally { vi.useRealTimers(); }
+});

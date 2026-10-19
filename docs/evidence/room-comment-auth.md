@@ -63,6 +63,17 @@ rediscovery and reselection, verifying that historical selection does not
 restore personal precedence after disconnect. These are executable
 route proofs, not live GitHub comments.
 
+The owner-completed sign-in regression reproduced a connected managed OAuth
+account with `selectedByOwner:false` after an agent initiated connection.
+Verified phone completion now records the owner's selection in the current
+route ledger transaction. An unverified completion leaves selection false.
+For Registry MCP, the authenticated owner opening the pending sign-in card
+records selection for that exact active app and connector; the public OAuth
+callback is not treated as authenticated owner selection. Focused integration
+tests execute both phone paths and retained-key disconnect/rediscovery. These
+provider fixtures do not establish live personal-account coverage. The native
+proof below predates this server provenance fix and does not prove it deployed.
+
 GitHub's [configuration reference](https://cli.github.com/manual/gh_config)
 documents the HTTP Unix socket transport; native `gh` keeps argument parsing,
 pagination, JSON filtering and GraphQL handling.

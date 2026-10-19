@@ -948,6 +948,29 @@ export async function disconnectApp(
   });
 }
 
+/** Record a person's selection on the current connection, never a historical lifecycle. */
+export async function recordOwnerGitHubSelection(
+  database: SqlDatabase,
+  appId: string,
+  ownerId: string,
+  transport: 'composio' | 'registry-mcp',
+  connectorId?: string,
+): Promise<void> {
+  const app = (await database.query<{ route: string; transport: string }>(
+    `SELECT route,transport FROM workspace_apps
+     WHERE id=$1::uuid AND owner_identity_id=$2 AND app_key='github'
+       AND state='active' AND transport=$3
+       AND ($4::uuid IS NULL OR connector_id=$4::uuid) FOR UPDATE`,
+    [appId, ownerId, transport, connectorId ?? null],
+  )).rows[0];
+  if (!app) return;
+  await database.query(
+    `INSERT INTO workspace_app_routes(id,app_id,route,transport,reason,requested_by)
+     VALUES ($1,$2,$3,$4,$5,$6)`,
+    [randomUUID(), appId, app.route, app.transport, 'person selected GitHub sign-in', ownerId],
+  );
+}
+
 /** The phone redeems a verifier session as its authenticated Beeline identity. */
 export async function completeComposioSignIn(
   database: SqlDatabase,
@@ -1009,6 +1032,7 @@ export async function completeComposioSignIn(
       [pending.id, viewerId, completed.accountId],
     );
     if (!updated.rowCount) throw new Error('App sign-in is no longer pending for this person');
+    await recordOwnerGitHubSelection(db, pending.id, viewerId, 'composio');
     await settle?.(db, pending.id);
     return { appId: pending.id };
   });

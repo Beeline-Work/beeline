@@ -212,6 +212,7 @@ import {
   hasExistingAppRoute,
   OFFICIAL_REGISTRY_APPS,
   readOwnerApps,
+  recordOwnerGitHubSelection,
 } from './app-connections.js';
 import { McpRegistryClient } from './mcp-registry.js';
 import {
@@ -4640,6 +4641,12 @@ export class PhoneService {
                 [card.connectorId, viewerId])).rows[0];
             const signIn = status && ('sign_in' in status ? status.sign_in : status.signIn);
             if (!signIn?.url) throw new Error('This sign-in is no longer pending. Reconnect to retry.');
+            if (card.connectKind === 'registry-mcp') {
+              await this.database.transaction(database => recordOwnerGitHubSelection(
+                database, (input as Input<'beginAppSignIn'>).appId, viewerId,
+                'registry-mcp', card.connectorId,
+              ));
+            }
             return { authorizationUrl: signIn.url } as Output<Name>;
           }
         }

@@ -1158,6 +1158,7 @@ CREATE TABLE IF NOT EXISTS agent_turns (
   PRIMARY KEY (room_id, request_id, agent_id)
 );
 ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS failure_reason text;
+ALTER TABLE agent_turns ADD COLUMN IF NOT EXISTS completion_kind text;
 -- How much work the turn did, as the harness's own stream counted it. A turn is
 -- the unit mid-close cohorts compare, so the count has to live where both the
 -- served and the unserved cohort can be read from — a serve ledger only ever

@@ -130,7 +130,7 @@ export function cornerBlockerSql(sourcePredicate = 'true'): string {
       WHERE owed.corner_id=c.id AND owed.blocking
         AND (owed.expires_at IS NULL OR owed.expires_at>now())
       UNION ALL
-      SELECT report.report_id,report.person_id,report.created_at FROM corner_report_blockers report
+      SELECT COALESCE(report.message_id,report.report_id),report.person_id,report.created_at FROM corner_report_blockers report
       JOIN effective_memberships member ON member.room_id=c.id AND member.identity_id=report.person_id AND member.removed_at IS NULL
       WHERE report.corner_id=c.id
       UNION ALL

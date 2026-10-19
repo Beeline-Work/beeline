@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest';
 import { systemLine } from './system-line.js';
 import { cornerOwedSchemaSql } from './corner-owed.js';
@@ -115,6 +116,8 @@ it('an untagged needs-decision report waits on the human who ordered the turn', 
     WORKER,
   );
   expect(await state()).toBe('waiting');
+  expect(await createAgentCommand(db,{roomId:C,agentId:WORKER,sourceMessageId:null,reason:'schedule'})).toBeUndefined();
+  expect((await phone.readCorners(ROOM,HUMAN))!.corners[0]!.state).toBe('waiting');
   await post('scope-answer', 'Use the approved scope.', HUMAN);
   expect(await state()).toBe('idle');
 });
@@ -642,4 +645,47 @@ it('Reproduction waiting-answer: a queued automatic wake is cancelled when the w
   expect((await readAgentCommands(db,C,WORKER)).commands).toHaveLength(0);
   await expect(daemon.execute('claimAgentCommand',{roomId:C,commandId:queued!.id,generationId:'stale-wake'},WORKER)).rejects.toThrow();
   expect(await state()).toBe('waiting');
+});
+
+it.each(['blocked','needs_decision'] as const)('Reproduction waiting-answer: human-directed %s stays quiet until each answer path', async status => {
+  await db.query(`UPDATE corner_facts SET lifecycle=jsonb_build_object('checks','failing','pr',jsonb_build_object('headSha','human-proof-head')) WHERE corner_id=$1`,[C]);
+  await systemLine(db,{roomId:C,authorId:WORKER,subject:{kind:'github',name:'GitHub'},verb:'found failing checks on',kind:'check-failed',object:{text:'Human proof PR',headSha:'human-proof-head'}});
+  await db.query(`UPDATE agent_commands SET state='complete',completed_at=now()-interval '3 minutes' WHERE room_id=$1`,[C]);
+  for (const answer of ['human message','commander order','push']) {
+    await phone.execute('sendRoomMessage',{roomId:C,messageId:createHash('sha256').update(`human-request-${answer}`).digest('hex'),text:'@worker Continue the proof.'},HUMAN);
+    const command = (await readAgentCommands(db,C,WORKER)).commands[0]!;
+    await daemon.execute('claimAgentCommand',{roomId:C,commandId:command.id,generationId:answer},WORKER);
+    const authority = {roomId:C,requestId:command.turnRequestId,generationId:answer};
+    const text = `${status === 'blocked' ? 'blocked' : 'needs-decision'}: Choose the product scope.`;
+    await daemon.execute('report',{...authority,status,text},WORKER);
+    await daemon.execute('postRoomMessage',{...authority,text:'Waiting for the scope decision.'},WORKER);
+    await daemon.execute('postAgentTurnReceipt',{...authority,agentId:WORKER,status:'complete'},WORKER);
+    expect(await state()).toBe('waiting');
+    expect((await db.query('SELECT text,card FROM messages WHERE text=$1 ORDER BY created_at DESC LIMIT 1',[text])).rows[0])
+      .toMatchObject({text,card:{reportToId:HUMAN}});
+    await db.query('DELETE FROM corner_report_blockers WHERE corner_id=$1',[C]);
+    await db.query(cornerOwedSchemaSql());
+    for(let i=0;i<3;i++) {
+      expect(await noteBlockedCornerChecks(db)).toBe(0);
+      for(const reason of ['schedule','subscribed_event','corner_check'])
+        expect(await createAgentCommand(db,{roomId:C,agentId:WORKER,sourceMessageId:null,reason})).toBeUndefined();
+      await runCornerAttention(db);
+      expect((await phone.readCorners(ROOM,HUMAN))!.corners[0]!.state).toBe('waiting');
+    }
+    expect((await db.query("SELECT id FROM corner_attention_flags WHERE kind='idle'")).rowCount).toBe(0);
+    if(answer === 'human message')
+      await phone.execute('sendRoomMessage',{roomId:C,messageId:'f'.repeat(64),text:'@worker Use the approved scope.'},HUMAN);
+    else if(answer === 'commander order')
+      await createAgentCommand(db,{id:'human-commander-order',roomId:C,agentId:WORKER,sourceMessageId:null,reason:'order',privatePayload:{kind:'order',authorId:HUMAN,fromRoomId:ROOM,text:'Use the approved scope.'}});
+    else {
+      await db.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{pr,headSha}','"human-proof-next-head"') WHERE corner_id=$1`,[C]);
+      await createAgentCommand(db,{roomId:C,agentId:WORKER,sourceMessageId:null,reason:'corner_check'});
+    }
+    await db.query(cornerOwedSchemaSql());
+    expect((await db.query('SELECT 1 FROM corner_report_blockers WHERE corner_id=$1',[C])).rowCount).toBe(0);
+    expect((await readAgentCommands(db,C,WORKER)).commands).toHaveLength(1);
+    expect(await state()).toBe('working');
+    await db.query(`UPDATE agent_commands SET state='complete' WHERE room_id=$1`,[C]);
+    await db.query(`UPDATE agent_turns SET status='complete' WHERE room_id=$1`,[C]);
+  }
 });

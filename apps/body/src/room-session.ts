@@ -122,9 +122,9 @@ export function readOnlyMcpServer(
     env: [
       { name: 'BEELINE_READONLY_ROOT', value: resolve(cwd) },
       ...(githubPath ? [{ name: 'PATH', value: githubPath }] : []),
-      ...['GH_TOKEN', 'GITHUB_TOKEN'].flatMap((name) => githubToken
-        ? [{ name, value: githubToken }]
-        : []),
+      ...['GH_TOKEN', 'GITHUB_TOKEN'].flatMap((name) =>
+        githubToken ? [{ name, value: githubToken }] : [],
+      ),
       ...(config.agentHomeRoot
         ? [
             {

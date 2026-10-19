@@ -469,7 +469,12 @@ export interface MonolithRoomTurnOptions {
   workspaceId: string;
   cwd: string;
   /** Refresh the server-bound checkout before each admitted Room turn. */
-  refreshCheckout?: () => Promise<{ cwd: string; branch?: string; commit?: string; githubToken?: string }>;
+  refreshCheckout?: () => Promise<{
+    cwd: string;
+    branch?: string;
+    commit?: string;
+    githubToken?: string;
+  }>;
   runtime: AgentRuntimeRecord;
   config: BodyConfig;
   api: DaemonApiClient;
@@ -1135,28 +1140,37 @@ export class MonolithRoomTurnLoop {
     if (assets && this.options.config.agentKind === 'codex' && homeOverlay.CODEX_HOME)
       await prepareCodexCacheTargets(homeOverlay.CODEX_HOME);
     if (assets && homeOverlay.HOME) await preparePackageCacheTargets(homeOverlay.HOME);
-    await Promise.all(Object.values(cacheEnv).map((path) => mkdir(path, { recursive: true, mode: 0o700 })));
+    await Promise.all(
+      Object.values(cacheEnv).map((path) => mkdir(path, { recursive: true, mode: 0o700 })),
+    );
     if (assets && this.options.config.agentPrivateRoot)
       await mkdir(this.options.config.agentPrivateRoot, { recursive: true, mode: 0o700 });
-    const agentEnv: Record<string, string> = { ...this.options.config.agentEnv, ...homeOverlay, ...cacheEnv };
+    const agentEnv: Record<string, string> = {
+      ...this.options.config.agentEnv,
+      ...homeOverlay,
+      ...cacheEnv,
+    };
     // Keep an explicitly configured credential ahead of the repository App.
     // Tokens are not part of a persisted fingerprint or prompt.
-    const githubToken = agentEnv.GH_TOKEN || agentEnv.GITHUB_TOKEN || this.turnCheckout?.githubToken;
+    const githubToken =
+      agentEnv.GH_TOKEN || agentEnv.GITHUB_TOKEN || this.turnCheckout?.githubToken;
     if (githubToken) {
       agentEnv.GH_TOKEN = githubToken;
       agentEnv.GITHUB_TOKEN = githubToken;
     }
     if (this.turnCheckout?.githubToken && this.options.config.agentHomeRoot) {
       const ghBinary = await execFileAsync('which', ['gh'], { env: agentEnv })
-        .then(result => result.stdout.trim()).catch(() => undefined);
-      if (ghBinary) agentEnv.PATH = await installRoomGitHubLauncher({
-        root: this.options.config.agentHomeRoot,
-        ghBinary,
-        inheritedPath: agentEnv.PATH ?? '',
-        resourceAuthFile,
-        registryBrokerSocket: this.options.config.registryMcpBrokerSocket,
-        ...(squireScope.relay ? { relay: squireScope.relay } : {}),
-      });
+        .then((result) => result.stdout.trim())
+        .catch(() => undefined);
+      if (ghBinary)
+        agentEnv.PATH = await installRoomGitHubLauncher({
+          root: this.options.config.agentHomeRoot,
+          ghBinary,
+          inheritedPath: agentEnv.PATH ?? '',
+          resourceAuthFile,
+          registryBrokerSocket: this.options.config.registryMcpBrokerSocket,
+          ...(squireScope.relay ? { relay: squireScope.relay } : {}),
+        });
     }
 
     const selectedCommand = command;
@@ -1257,11 +1271,21 @@ export class MonolithRoomTurnLoop {
     // Built before the client: the permission allowlist resolves a harness's
     // own tool-dispatch envelope (grok's `use_tool`) against exactly the
     // servers this session mounts, so it has to know them up front.
-    const shellCapability = roomShellCapability(harnessLabel, { osSandbox: Boolean(this.options.config.bwrapPath) });
+    const shellCapability = roomShellCapability(harnessLabel, {
+      osSandbox: Boolean(this.options.config.bwrapPath),
+    });
     const servers: McpServerWire[] = [
-      ...(shellCapability === 'runs' ? [] : [readOnlyMcpServer(
-        this.options.config, this.options.cwd, undefined, githubToken, agentEnv.PATH,
-      )]),
+      ...(shellCapability === 'runs'
+        ? []
+        : [
+            readOnlyMcpServer(
+              this.options.config,
+              this.options.cwd,
+              undefined,
+              githubToken,
+              agentEnv.PATH,
+            ),
+          ]),
       beelineAgentMcpServer(this.options.config, this.options.api, {
         roomId: this.options.roomId,
         workspaceId: this.options.workspaceId,

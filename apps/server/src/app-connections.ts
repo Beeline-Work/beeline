@@ -808,15 +808,31 @@ export async function connectApp(
         `UPDATE workspace_connectors
          SET install_agent_id=$2,install_room_id=$3,install_command_id=$4,updated_at=now()
          WHERE id=$1::uuid AND status='installing' AND helper_agent_id=$2`,
-        [existing.connector_id, params.helperAgentId, params.installRoomId, params.installCommandId],
+        [
+          existing.connector_id,
+          params.helperAgentId,
+          params.installRoomId,
+          params.installCommandId,
+        ],
       );
     }
-    if (key === 'github' && decision.kind === 'keep' && row && params.requestedBy === params.ownerId) {
+    if (
+      key === 'github' &&
+      decision.kind === 'keep' &&
+      row &&
+      params.requestedBy === params.ownerId
+    ) {
       await db.query(
         `INSERT INTO workspace_app_routes(id,app_id,route,transport,reason,requested_by)
          VALUES ($1,$2,$3,$4,$5,$6)`,
-        [randomUUID(), row.id, row.route, row.transport,
-          'person selected the existing GitHub connection', params.requestedBy],
+        [
+          randomUUID(),
+          row.id,
+          row.route,
+          row.transport,
+          'person selected the existing GitHub connection',
+          params.requestedBy,
+        ],
       );
     }
     return { decision, row };
@@ -956,13 +972,15 @@ export async function recordOwnerGitHubSelection(
   transport: 'composio' | 'registry-mcp',
   connectorId?: string,
 ): Promise<void> {
-  const app = (await database.query<{ route: string; transport: string }>(
-    `SELECT route,transport FROM workspace_apps
+  const app = (
+    await database.query<{ route: string; transport: string }>(
+      `SELECT route,transport FROM workspace_apps
      WHERE id=$1::uuid AND owner_identity_id=$2 AND app_key='github'
        AND state='active' AND transport=$3
        AND ($4::uuid IS NULL OR connector_id=$4::uuid) FOR UPDATE`,
-    [appId, ownerId, transport, connectorId ?? null],
-  )).rows[0];
+      [appId, ownerId, transport, connectorId ?? null],
+    )
+  ).rows[0];
   if (!app) return;
   await database.query(
     `INSERT INTO workspace_app_routes(id,app_id,route,transport,reason,requested_by)

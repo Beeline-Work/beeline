@@ -1,7 +1,7 @@
 import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import { delimiter, join } from 'node:path';
 
-/** Keep native gh while letting Squire spend a selected personal key sealed. */
+/** Keep native gh while routing personal requests through sealed provider boundaries. */
 export async function installRoomGitHubLauncher(input: {
   root: string;
   ghBinary: string;
@@ -13,17 +13,22 @@ export async function installRoomGitHubLauncher(input: {
   const bin = join(input.root, 'room-github-bin');
   await mkdir(bin, { recursive: true, mode: 0o700 });
   const path = join(bin, 'gh');
-  await writeFile(path, `#!${process.execPath}
+  await writeFile(
+    path,
+    `#!${process.execPath}
 const config = ${JSON.stringify(input)};
 ${launcherSource}
-`, { mode: 0o700 });
+`,
+    { mode: 0o700 },
+  );
   await chmod(path, 0o700);
   return [bin, input.inheritedPath].filter(Boolean).join(delimiter);
 }
 
 // Native gh owns argument parsing, pagination, jq and GraphQL. Its supported
-// HTTP socket transport forwards personal-account requests to Squire rather
-// than retrieving a provider token into the helper or the harness.
+// HTTP socket transport forwards requests through sealed providers: Squire
+// supports HTTP, while managed OAuth and registry MCP translate issue comments.
+// Provider tokens never enter the helper or the harness.
 const launcherSource = String.raw`
 const { readFile, mkdtemp, writeFile, rm } = require('node:fs/promises');
 const { tmpdir } = require('node:os');

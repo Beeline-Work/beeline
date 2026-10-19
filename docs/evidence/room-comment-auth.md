@@ -127,8 +127,8 @@ The supplied `/tmp/jellybean-2609-final-proof-output.log` records a completed
 proof against pipeline head `79f72e332063c30dc36bba5c9175c5b8bdb7b5b8`.
 The supplied `proof-2609` driver, helper and ACP harness were inspected read-only;
 its `final-source` copies of `monolith-room-turn.ts` and `room-github-auth.ts`
-match this worktree byte-for-byte. The bundle README still names an earlier
-source head; the final run and matching source are the evidence for this head.
+were verified byte-for-byte against the proof head during the test phase. The
+bundle README still names an earlier source head; the final run and matching source are the evidence for this head.
 The live write was not repeated during this test phase.
 
 A disposable Docker container provided its own PID 1 systemd, proof user,
@@ -163,8 +163,10 @@ a passing live scenario.
 ## Focused test-phase validation
 
 The isolated no-mistakes setup is now repaired: this assigned test phase runs
-inside its active worktree at the exact pipeline head above with dependencies
-available. The earlier shared-remote initialization conflict is historical,
+inside its active worktree at the proof head above with dependencies
+available. The later owner-sign-in provenance fix is covered by the focused
+integration regressions described above, rather than that earlier native run.
+The earlier shared-remote initialization conflict is historical,
 not a current blocker. This phase did not initialize or control another run;
 review, lint, push, PR and CI phases remain the outer executor's responsibility.
 

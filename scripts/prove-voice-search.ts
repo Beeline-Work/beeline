@@ -14,7 +14,7 @@ import { VoiceService } from '../apps/server/src/voice-service.js';
 import { claimAgentCommand } from '../apps/server/src/agent-command.js';
 import { DaemonService } from '../apps/server/src/daemon-service.js';
 import { AuraSpeech, OpenRouterVoiceBrain } from '../apps/server/src/voice-providers.js';
-import type { FluxEvent } from '../apps/server/src/voice-providers.js';
+import type { VoiceBrain, VoiceSpeech, FluxEvent } from '../apps/server/src/voice-providers.js';
 async function main() {
 const B = 'c'.repeat(64);
 const H = 'a'.repeat(64), SECOND = 'd'.repeat(64), A = 'b'.repeat(64), W = '509a0dfc-ee35-4b11-bd34-014794153d20', R = '375ebf52-b493-4982-bd6d-f3b8fe814a62';
@@ -42,13 +42,17 @@ const turns = new Map<string, number>();
 let dispatchAttempts = 0;
 const frameCounts = { received: 0 };
 const replies: string[] = [], signals: unknown[] = [], observations: unknown[] = [];
+let BrainProvider: new (key: string, fetchImpl?: typeof fetch) => VoiceBrain = OpenRouterVoiceBrain;
+let SpeechProvider: new (key: string, account: string, fetchImpl?: typeof fetch) => VoiceSpeech = AuraSpeech;
 if (process.env.VOICE_DELIVERY_BASELINE === '1') {
+  const providers = await import('../apps/server/src/' + '.voice-providers-baseline.js');
+  BrainProvider = providers.OpenRouterVoiceBrain; SpeechProvider = providers.AuraSpeech;
   const before = await import('../apps/server/src/' + '.voice-delivery-baseline.js');
   VoiceRoomRuntime.connect = before.VoiceRoomRuntime.connect;
 }
 const live=new LiveHub();
 const service = new VoiceService(db,live,{url:'ws://127.0.0.1:17890',apiKey:'devkey',apiSecret:'secret',
-  brain:new OpenRouterVoiceBrain('local-proof', async (_url, init) => {
+  brain:new BrainProvider('local-proof', async (_url, init) => {
     const input = JSON.parse(String(init!.body));
     const query = input.messages.at(-1).content;
     const search = !!input.tools && /search|history|slow|failed/.test(query);
@@ -61,7 +65,7 @@ const service = new VoiceService(db,live,{url:'ws://127.0.0.1:17890',apiKey:'dev
       ...(search ? { tool_calls: [{function:{name: /history/.test(query) ? 'search_history' : 'search_web', arguments: JSON.stringify({query})}}] } : {}),
       ...(work ? { tool_calls: [{function:{name:'order'}}] } : {}) } }] })+'\n\n');
   }),
-  speech:new AuraSpeech('local-proof','local-account', async (_url, init) => {
+  speech:new SpeechProvider('local-proof','local-account', async (_url, init) => {
     synthesis.push({text: JSON.parse(String(init!.body)).text, at: Date.now()});
     if (fault === 'tts-fail') { fault = ''; throw new Error('Injected TTS failure'); }
     const pcm = Buffer.alloc(speechMs * 48);

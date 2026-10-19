@@ -1971,6 +1971,8 @@ it('shortens only spoken reports, preserving sentence boundaries and the source 
   const text = 'The build is ready.\n\n' + 'Full details remain here. '.repeat(30);
   expect(spokenReport(text)).toBe('The build is ready. The rest is in the chat.');
   expect(text).toContain('Full details remain here.');
+  expect(spokenReport('x'.repeat(2000))).toBe('The rest is in the chat.');
+  expect(spokenReport('短い文。' + '長い'.repeat(100))).toBe('短い文。 The rest is in the chat.');
   expect(spokenReport('Short sentence. ' + 'more '.repeat(80) + '.')).toBe('Short sentence. The rest is in the chat.');
 });
 

@@ -1,13 +1,13 @@
 {
-  "baselineCommit": "64f9a1a9b7f15f1970c0967d324baa9309f2f9c6",
+  "baselineCommit": "710cb552c9e63f936221cdeb88ceaee85aec7f7f",
   "android": "API 36 x86_64, Beeline-leased emulator-5554",
   "apkSha256": "b633e3b7bf7bed2a7c18bba87ec3d3f876cac7258c65c5f90241e4a9dff45517",
   "sources": {
-    "apps/server/src/voice-providers.ts": "2ec3f2908609c408a85e2a1a7acbdb8d4294e0d529c993a247e4046737f61982",
-    "apps/server/src/voice-room-runtime.ts": "751809af4438bea267062039b750c643eeb00611b78e8ea316cac5f4520a81a1",
+    "apps/server/src/voice-providers.ts": "8802126200a749ca4c3fbfb8200cf9e5356ea992a02bdc3c7b73b639db9ab108",
+    "apps/server/src/voice-room-runtime.ts": "f4afee19151af54c381fa9a15270e2cfd4ebed2b1c2c9052530cdcf9604e62bd",
     "apps/server/src/voice-service.ts": "f9e431c4377f815fbf3c0809c8e57182ad8062d0f60f4ae2dd119df65f30a4af",
     "apps/server/src/agent-command.ts": "9146b3218b752df0ae5c9f3246f17384ac930b04233520348b4345d7831db4d0",
-    "scripts/prove-voice-search.ts": "c106f2960462c0c73881296d7dd1a5424b11d6232248b457d4a1fec36c0ac464",
+    "scripts/prove-voice-search.ts": "be4885e1d27c27698ccea43de271bf72b3a3a0f107af380cdfe06cfc6ef0ef14",
     "scripts/prove-voice-search.py": "24df06c4b80c3ca0b494f0e89cdb3b223edaa56f508097febd4068a23f912fc4"
   },
   "fixture": "Production Android voice hook and VoiceBar entry, native WebRTC; controlled STT, search and provider SSE/PCM; no physical phone or live-provider call latency measured."

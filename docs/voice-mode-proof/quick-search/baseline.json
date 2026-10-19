@@ -1,40 +1,44 @@
 {
   "mode": "baseline",
   "firstAudioMs": [
-    29.07906300000468,
-    26.336279000002833,
-    18.358930000002147,
-    21.333792000004905,
-    21.50536500000453
+    2290.5778979999995,
+    34.877837,
+    54.447576999999,
+    50.79046300000482,
+    33.30085400000098
   ],
-  "medianFirstAudioMs": 21.50536500000453,
+  "medianFirstAudioMs": 50.79046300000482,
   "steps": [],
   "result": {
+    "currentTargets": {
+      "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+    },
     "decisionRequests": 6,
     "synthesis": [
       {
         "text": "Ready.",
-        "at": 1792433752065
+        "at": 1792434107898
       },
       {
         "text": "Ready.",
-        "at": 1792433790893
+        "at": 1792434133432
       },
       {
         "text": "Ready.",
-        "at": 1792433791267
+        "at": 1792434133898
       },
       {
         "text": "Ready.",
-        "at": 1792433791759
+        "at": 1792434134360
       },
       {
         "text": "Ready.",
-        "at": 1792433792133
+        "at": 1792434134881
       },
       {
         "text": "Ready.",
-        "at": 1792433792512
+        "at": 1792434135335
       }
     ],
     "deliveries": [],
@@ -93,11 +97,11 @@
         "author": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
       }
     ],
-    "pid": 10727,
-    "callId": "3e61e15e-d489-4a17-8b4b-f39a524461ac",
+    "pid": 13484,
+    "callId": "b71aed45-23b0-49be-8fba-f92f6a056a29",
     "dispatchAttempts": 0,
     "frameCounts": {
-      "received": 74
+      "received": 79
     },
     "commands": {
       "count": 0
@@ -108,10 +112,10 @@
       "ended_at": null
     },
     "card": {
-      "id": "54f35be3bb2c6040872dd92e9a671b8556a82ab3fc2319b434695d50fbedac62",
+      "id": "c2b30615a715bbefe4467491aabbec4806cfa6ed8ea9339cbc31caa73beea396",
       "text": "Voice call started",
-      "createdAt": 1792433734,
-      "createdAtMs": 1792433734885,
+      "createdAt": 1792434104,
+      "createdAtMs": 1792434104182,
       "version": 2,
       "author": {
         "pubkey": "972a35ec7a6e572c01c5b0a48cbdc82f6137dd7f35435cf9cc0ec305fdafa248",
@@ -129,10 +133,10 @@
         }
       },
       "voiceCall": {
-        "id": "3e61e15e-d489-4a17-8b4b-f39a524461ac",
+        "id": "b71aed45-23b0-49be-8fba-f92f6a056a29",
         "roomId": "375ebf52-b493-4982-bd6d-f3b8fe814a62",
-        "startedAt": 1792433734,
-        "startedAtMs": 1792433734885,
+        "startedAt": 1792434104,
+        "startedAtMs": 1792434104182,
         "participants": [
           {
             "kind": "human",
@@ -152,8 +156,8 @@
     "humans": 2,
     "operations": [],
     "microphoneFrames": [
-      5034,
-      217
+      2777,
+      258
     ],
     "replies": [
       "Ready.",
@@ -169,16 +173,16 @@
         "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
       },
       {
-        "type": "humans",
-        "count": 1
-      },
-      {
         "type": "speaker",
         "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
       },
       {
+        "type": "humans",
+        "count": 1
+      },
+      {
         "type": "latency",
-        "firstAudioMs": 17644.322498
+        "firstAudioMs": 4775.928760999999
       },
       {
         "type": "speaker",
@@ -202,7 +206,7 @@
       },
       {
         "type": "latency",
-        "firstAudioMs": 29.07906300000468
+        "firstAudioMs": 2290.5778979999995
       },
       {
         "type": "speaker",
@@ -214,7 +218,7 @@
       },
       {
         "type": "latency",
-        "firstAudioMs": 26.336279000002833
+        "firstAudioMs": 34.877837
       },
       {
         "type": "speaker",
@@ -226,7 +230,7 @@
       },
       {
         "type": "latency",
-        "firstAudioMs": 18.358930000002147
+        "firstAudioMs": 54.447576999999
       },
       {
         "type": "speaker",
@@ -238,7 +242,7 @@
       },
       {
         "type": "latency",
-        "firstAudioMs": 21.333792000004905
+        "firstAudioMs": 50.79046300000482
       },
       {
         "type": "speaker",
@@ -250,7 +254,7 @@
       },
       {
         "type": "latency",
-        "firstAudioMs": 21.50536500000453
+        "firstAudioMs": 33.30085400000098
       },
       {
         "type": "speaker",
@@ -259,399 +263,7 @@
     ],
     "observations": [
       {
-        "at": 1792433760771,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433760771,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433761287,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433761287,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433761804,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433761804,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433762321,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433762321,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433762838,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433762837,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433763354,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433763354,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433763871,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433763871,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433764387,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433764387,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433764904,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433764904,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433765421,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433765421,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433765937,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433765937,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433766454,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433766454,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433766971,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433766971,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433767487,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433767488,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433768004,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433768004,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433768521,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433768521,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433769037,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433769037,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433769554,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433769554,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433770071,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433770071,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433770587,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433770587,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433771104,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433771104,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433771621,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433771621,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433772138,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433772137,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433772654,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433772654,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433773171,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433773171,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433773687,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433773687,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433774204,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433774204,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433774721,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433774721,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433775237,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433775237,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433775754,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433775754,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433776271,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433776271,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433776787,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433776788,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433777304,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433777304,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433777821,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433777821,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433778337,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433778337,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433778854,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433778854,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433779371,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433779371,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433779887,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433779888,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433780404,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433780404,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433780921,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433780921,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433781438,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433781437,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433781954,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433781955,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433782471,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433782471,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433782987,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433782988,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433783504,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433783505,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433784021,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433784021,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433784537,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433784538,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433785054,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433785054,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433785571,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433785571,
-        "nativeAudio": []
-      },
-      {
-        "at": 1792433787533,
+        "at": 1792434125214,
         "joined": false,
         "humans": 1,
         "error": null,
@@ -659,7 +271,7 @@
         "firstAudioMs": null
       },
       {
-        "at": 1792433789514,
+        "at": 1792434129270,
         "joined": false,
         "humans": 2,
         "error": null,
@@ -667,7 +279,7 @@
         "firstAudioMs": null
       },
       {
-        "at": 1792433790182,
+        "at": 1792434130333,
         "joined": true,
         "humans": 2,
         "error": null,
@@ -675,15 +287,17 @@
         "firstAudioMs": null
       },
       {
-        "at": 1792433790322,
-        "joined": true,
-        "humans": 2,
-        "error": null,
-        "unaddressed": 0,
-        "firstAudioMs": 29.07906300000468
+        "at": 1792434130601,
+        "nativeAudio": [
+          {
+            "bytesReceived": 58,
+            "packetsReceived": 2,
+            "totalAudioEnergy": 2.0490347254003665e-10
+          }
+        ]
       },
       {
-        "at": 1792433790530,
+        "at": 1792434130602,
         "nativeAudio": [
           {
             "bytesReceived": 58,
@@ -693,106 +307,204 @@
         ]
       },
       {
-        "at": 1792433790530,
+        "at": 1792434131125,
         "nativeAudio": [
           {
-            "bytesReceived": 1804,
-            "packetsReceived": 12,
-            "totalAudioEnergy": 0.00027740115251814035
+            "bytesReceived": 174,
+            "packetsReceived": 6,
+            "totalAudioEnergy": 4.191207392864391e-10
           }
         ]
       },
       {
-        "at": 1792433790698,
-        "joined": true,
-        "humans": 2,
-        "error": null,
-        "unaddressed": 0,
-        "firstAudioMs": 26.336279000002833
-      },
-      {
-        "at": 1792433791095,
+        "at": 1792434131123,
         "nativeAudio": [
           {
-            "bytesReceived": 4591,
-            "packetsReceived": 35,
-            "totalAudioEnergy": 0.002015927428197124
+            "bytesReceived": 116,
+            "packetsReceived": 4,
+            "totalAudioEnergy": 2.0490347254003665e-10
           }
         ]
       },
       {
-        "at": 1792433791103,
-        "nativeAudio": [
-          {
-            "bytesReceived": 172,
-            "packetsReceived": 5,
-            "totalAudioEnergy": 3.0735520881005517e-10
-          }
-        ]
-      },
-      {
-        "at": 1792433791187,
-        "joined": true,
-        "humans": 2,
-        "error": null,
-        "unaddressed": 0,
-        "firstAudioMs": 18.358930000002147
-      },
-      {
-        "at": 1792433791559,
+        "at": 1792434131626,
         "nativeAudio": [
           {
             "bytesReceived": 232,
             "packetsReceived": 8,
-            "totalAudioEnergy": 6.985345654773976e-10
+            "totalAudioEnergy": 8.661828611919726e-10
           }
         ]
       },
       {
-        "at": 1792433791560,
+        "at": 1792434131624,
         "nativeAudio": [
           {
-            "bytesReceived": 7070,
-            "packetsReceived": 52,
-            "totalAudioEnergy": 0.002895881013537035
+            "bytesReceived": 232,
+            "packetsReceived": 8,
+            "totalAudioEnergy": 5.588276523819185e-10
           }
         ]
       },
       {
-        "at": 1792433791565,
-        "joined": true,
-        "humans": 2,
-        "error": null,
-        "unaddressed": 0,
-        "firstAudioMs": 21.333792000004905
-      },
-      {
-        "at": 1792433791943,
-        "joined": true,
-        "humans": 2,
-        "error": null,
-        "unaddressed": 0,
-        "firstAudioMs": 21.50536500000453
-      },
-      {
-        "at": 1792433792074,
+        "at": 1792434132142,
         "nativeAudio": [
           {
             "bytesReceived": 290,
             "packetsReceived": 10,
-            "totalAudioEnergy": 1.1455966873829333e-09
+            "totalAudioEnergy": 9.965759800810872e-10
           }
         ]
       },
       {
-        "at": 1792433792075,
+        "at": 1792434132143,
         "nativeAudio": [
           {
-            "bytesReceived": 10364,
-            "packetsReceived": 73,
-            "totalAudioEnergy": 0.00361345906559365
+            "bytesReceived": 290,
+            "packetsReceived": 10,
+            "totalAudioEnergy": 1.3039311888911447e-09
           }
         ]
+      },
+      {
+        "at": 1792434132657,
+        "nativeAudio": [
+          {
+            "bytesReceived": 348,
+            "packetsReceived": 12,
+            "totalAudioEnergy": 1.5460898382566446e-09
+          }
+        ]
+      },
+      {
+        "at": 1792434132657,
+        "nativeAudio": [
+          {
+            "bytesReceived": 406,
+            "packetsReceived": 14,
+            "totalAudioEnergy": 1.853445047066702e-09
+          }
+        ]
+      },
+      {
+        "at": 1792434132915,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 2290.5778979999995
+      },
+      {
+        "at": 1792434133178,
+        "nativeAudio": [
+          {
+            "bytesReceived": 2947,
+            "packetsReceived": 30,
+            "totalAudioEnergy": 0.000765922045988295
+          }
+        ]
+      },
+      {
+        "at": 1792434133179,
+        "nativeAudio": [
+          {
+            "bytesReceived": 464,
+            "packetsReceived": 16,
+            "totalAudioEnergy": 2.3657037284167867e-09
+          }
+        ]
+      },
+      {
+        "at": 1792434133329,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 34.877837
+      },
+      {
+        "at": 1792434133724,
+        "nativeAudio": [
+          {
+            "bytesReceived": 522,
+            "packetsReceived": 18,
+            "totalAudioEnergy": 2.8500210271477757e-09
+          }
+        ]
+      },
+      {
+        "at": 1792434133721,
+        "nativeAudio": [
+          {
+            "bytesReceived": 5767,
+            "packetsReceived": 50,
+            "totalAudioEnergy": 0.0018697525227736476
+          }
+        ]
+      },
+      {
+        "at": 1792434133807,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 54.447576999999
+      },
+      {
+        "at": 1792434134230,
+        "nativeAudio": [
+          {
+            "bytesReceived": 8338,
+            "packetsReceived": 67,
+            "totalAudioEnergy": 0.0026973533919589046
+          }
+        ]
+      },
+      {
+        "at": 1792434134232,
+        "nativeAudio": [
+          {
+            "bytesReceived": 580,
+            "packetsReceived": 20,
+            "totalAudioEnergy": 3.3157107374660343e-09
+          }
+        ]
+      },
+      {
+        "at": 1792434134320,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 50.79046300000482
+      },
+      {
+        "at": 1792434134749,
+        "nativeAudio": [
+          {
+            "bytesReceived": 696,
+            "packetsReceived": 24,
+            "totalAudioEnergy": 4.126010833419813e-09
+          }
+        ]
+      },
+      {
+        "at": 1792434134754,
+        "nativeAudio": [
+          {
+            "bytesReceived": 10915,
+            "packetsReceived": 84,
+            "totalAudioEnergy": 0.003405482814010433
+          }
+        ]
+      },
+      {
+        "at": 1792434134797,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 33.30085400000098
       }
     ],
     "secondMicrophone": [],

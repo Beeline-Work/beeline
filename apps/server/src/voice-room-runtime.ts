@@ -74,11 +74,13 @@ export function spokenReport(text: string): string {
   const plain = markdownToSpeech(text);
   const first = markdownToSpeech(text.trim().split(/\n\s*\n/)[0] ?? '');
   const words = (value: string) => value.match(/\S+/g)?.length ?? 0;
+  const short = (value: string) => words(value) <= 25 && value.length <= 180 &&
+    (value.match(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/gu)?.length ?? 0) <= 40;
   let opening = first;
-  if (words(first) > 25) {
+  if (!short(first)) {
     opening = '';
-    for (const sentence of plain.match(/[^.!?]+[.!?]+(?:["’”']|$)?/g) ?? []) {
-      if (words(opening + sentence) > 25) break;
+    for (const sentence of plain.match(/[^.!?。！？]+[.!?。！？]+(?:["’”']|$)?/g) ?? []) {
+      if (!short(opening + sentence)) break;
       opening += sentence;
     }
   }

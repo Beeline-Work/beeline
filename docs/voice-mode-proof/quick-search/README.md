@@ -19,7 +19,7 @@ caller cannot read; only the shared message returns. No new access rule is added
 The existing `voice_orders` relation privately marks commands when they are read
 by the agent. The human transcript does not acquire that instruction. Reports
 retain their full chat text. Playback uses the first short paragraph or whole
-sentences within 25 words, followed by “The rest is in the chat.” Reports wait
+sentences within about ten seconds (25 words with character bounds), followed by “The rest is in the chat.” Reports wait
 for human and agent speech to finish, then recheck presence and the caller's
 current target. Departed or retargeted reports are marked handled without audio.
 
@@ -66,23 +66,24 @@ python3 scripts/prove-voice-search.py branch
 The driver uses a Beeline-leased emulator named `emulator-5554`, the real Join
 control and agent avatar, native RTP observations, and the server's first-audio
 signal. It saves observations and screenshots beside this file. For the main
-comparison, materialize the main runtime as temporary
-`apps/server/src/.voice-delivery-baseline.ts`, restart with
+comparison, materialize the main runtime and provider files as temporary
+`apps/server/src/.voice-delivery-baseline.ts` and
+`apps/server/src/.voice-providers-baseline.ts`, restart with
 `VOICE_DELIVERY_BASELINE=1`, and run the driver with `baseline`. Remove the
-temporary module afterward. Every server run starts with a fresh database.
+temporary modules afterward. Every server run starts with a fresh database.
 
 ## Demonstrated on Android
 
 `baseline.json` and `branch.json` contain five ordinary call turns each, including
-the first turn after the Android participant joins. Main at `64f9a1a9b` measured
-21.505 ms median to first server-published voiced audio; the branch measured
-21.471 ms. These controlled-provider native RTC runs meet the requested median
-criterion; the tiny difference is not evidence of a speed improvement. They do
+the first turn after the Android participant joins. Main at `710cb552c` (including #2613) measured
+50.790 ms median to first server-published voiced audio; the branch measured
+22.509 ms. The baseline uses both the main router provider and main runtime. These controlled-provider native RTC runs meet the requested median
+criterion; the observed difference is not evidence of a general speed improvement. They do
 not measure live-provider latency or a physical phone speaker. A first unequal-load
 comparison is retained in `diagnostic-unequal-load.json`: its branch run overlapped
 history-test migrations, so both versions were rerun without those tests.
 
-`functional.json` records a separate final run through the same built Android
+`branch.json` also records the final functional run through the same built Android
 voice controls and real native RTC. It proves a fast web search reaches audio
 without dispatch, a forced slow search and a failed search each dispatch exactly
 one ordinary command whose report arrives, and a long report speaks only its
@@ -100,3 +101,8 @@ The group history-access and private call-mark regressions live in
 shortened reports, quiet waiting, target changes, departures and interrupted
 report deduplication. Existing institutional-history regressions also pass.
 Root `npm run typecheck` and `npm run lint:workflow-paths` pass.
+
+After #2613 merged, all conflicts were resolved together and its chunking was
+retained. The integrated voice suites pass 153 tests, including its Aura/RTC
+regressions; the institutional-history suite passes 17 tests. Earlier matched
+latency samples are retained in `pre-integration-latency.json`.

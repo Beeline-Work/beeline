@@ -411,7 +411,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     why: {
       'core.files': 'Files on earlier messages are shown only as markers and never pre-downloaded; agents fetched media URLs instead.',
       'surface.tools': 'Agents use one server-owned connection path in every turn.',
-      'surface.squire-drive': 'Agents rarely called operate_drive and instead hand-drove checkouts/signups one flat step at a time, including after a drive handback (ts-drive-adoption-scout).',
+      'surface.squire-drive': 'Agents hand-drove browser goals (ts-drive-adoption-scout); Jellybean treated unsupported_credential_type during PR #2599 verification as blocked instead of sharing the browser for human sign-in.',
       'room.replying': 'Several agents share a Room; replies with nothing to act on, and echoed nudges, are noise.',
       'dm.choices': 'A pick in a DM is a preference, never authority, and polls need an electorate.',
     },
@@ -423,7 +423,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
         "For a 📎 file, call read(facet:attachment, messageId, attachmentId) and read its path. Never fetch media URLs; on failure, say you couldn't open it.",
         'For any service or capability request, use connect(mode:discover) if unclear, then connect(mode:ensure, service, reason, continuation).',
         squireAvailable === true &&
-          'For a multi-step browser goal (signup, checkout, provisioning), start with Trusty Squire operate_drive {url, goal, facts} rather than individual steps. On a low_confidence or needs_value handback, answer it from the offered options or take one flat step (operate_click, operate_type, operate_select, …), then resume operate_drive on that same session instead of finishing the task by hand.',
+          'For multi-step browser goals, use Trusty Squire operate_drive {url, goal, facts}. On low_confidence/needs_value, answer or take one flat step, then resume drive. If sign-in/human action (2FA, captcha, passkey) cannot be completed or Squire refuses it, start app_tool(app:beeline:browser_share, tool:start) for that session; ask the person to take over. On handback, resume drive in that session.',
         surface === 'room' && 'Consult the using-beeline skill for Room mechanics (files, artifacts, wakes, reactions, mocks).',
         surface === 'dm' && 'Consult the using-beeline skill for files, artifacts, and reactions.',
       ),

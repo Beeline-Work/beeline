@@ -1,4 +1,5 @@
 import { reserveServiceReviewWorkspaces } from './service-review.js';
+import { CommandRefusalError } from './command-refusal.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
 import { workflowTimerId } from './workflow-timer-id.js';
 import { workflowRunIsLiveSql } from './workflow-run-saved-status.js';
@@ -325,11 +326,11 @@ async function saveRunStatus(
 
 // The daemon authorizes this Room before lookup; never search outside it.
 async function resolveWorkflowRunId(db: SqlDatabase, roomId: string, runId: string): Promise<string> {
-  if (typeof runId !== 'string' || !runId) throw new Error('runId is required');
+  if (typeof runId !== 'string' || !runId) throw new CommandRefusalError('runId is required', 400);
   // Run IDs are 32 random bytes encoded as hex. Keep full-ID callers on the
   // existing path, including taking the write lock before reading run state.
   if (runId.length === 64) return runId;
-  if (runId.length < 8) throw new Error('workflow run ID prefixes must contain at least 8 characters');
+  if (runId.length < 8) throw new CommandRefusalError('workflow run ID prefixes must contain at least 8 characters', 400);
   const matches = (await db.query<{ run_id: string }>(
     `SELECT DISTINCT card->>'runId' AS run_id FROM messages
      WHERE room_id=$1 AND card_type=$2
@@ -337,8 +338,8 @@ async function resolveWorkflowRunId(db: SqlDatabase, roomId: string, runId: stri
      ORDER BY run_id`,
     [roomId, WORKFLOW_HANDOFF_CARD_TYPE, runId],
   )).rows;
-  if (!matches.length) throw new Error('workflow run is unavailable in this Room');
-  if (matches.length > 1) throw new Error(`workflow run ID prefix is ambiguous: ${matches.map(row => row.run_id).join(', ')}`);
+  if (!matches.length) throw new CommandRefusalError('workflow run is unavailable in this Room', 404);
+  if (matches.length > 1) throw new CommandRefusalError(`workflow run ID prefix is ambiguous: ${matches.map(row => row.run_id).join(', ')}`, 400);
   return matches[0]!.run_id;
 }
 

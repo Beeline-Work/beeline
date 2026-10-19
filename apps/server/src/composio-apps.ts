@@ -253,24 +253,30 @@ function schemaNode(schema: unknown, root: Json): Json | undefined {
   return node && typeof node === 'object' && !Array.isArray(node) ? node as Json : undefined;
 }
 
-/** Collects the references that sit where the tool schema marks `file_uploadable`. */
-function fileSlots(value: unknown, schema: unknown, root: Json, slots: Set<unknown>, depth = 0): void {
+/** Checks file inputs and collects Room references at schema-marked `file_uploadable` slots. */
+function fileSlots(value: unknown, schema: unknown, root: Json, slots: Set<unknown>,
+  depth = 0, path = 'arguments'): void {
   const node = schemaNode(schema, root);
   if (depth > 12 || !node) return;
   if (node.file_uploadable === true) {
+    if (typeof value === 'string' && !(value.startsWith('https://') && URL.canParse(value)))
+      throw new CommandRefusalError(
+        `App tool parameter ${path} must use a staged Room object: stage the file in the Room ` +
+        'and pass { beelineObjectId: "<Room object id>" } instead of a local path or storage key.', 400);
     if (isFileReference(value)) slots.add(value);
     return;
   }
   for (const key of ['anyOf', 'oneOf', 'allOf'])
     if (Array.isArray(node[key]))
-      for (const variant of node[key] as unknown[]) fileSlots(value, variant, root, slots, depth + 1);
+      for (const variant of node[key] as unknown[]) fileSlots(value, variant, root, slots, depth + 1, path);
   if (Array.isArray(value)) {
     const items = Array.isArray(node.items) ? node.items[0] : node.items;
-    for (const item of value) fileSlots(item, items, root, slots, depth + 1);
+    for (const [index, item] of value.entries())
+      fileSlots(item, items, root, slots, depth + 1, `${path}[${index}]`);
   } else if (value && typeof value === 'object' && node.properties &&
     typeof node.properties === 'object') {
     for (const [key, item] of Object.entries(value))
-      fileSlots(item, (node.properties as Json)[key], root, slots, depth + 1);
+      fileSlots(item, (node.properties as Json)[key], root, slots, depth + 1, `${path}.${key}`);
   }
 }
 
@@ -636,7 +642,9 @@ export class ComposioApps {
     } catch (error) {
       if (error instanceof Error) {
         // Provider errors can have read-only messages; their stack and cause may contain secrets.
-        const concealed = new Error(conceal(error.message) as string);
+        const message = conceal(error.message) as string;
+        const concealed = error instanceof CommandRefusalError
+          ? new CommandRefusalError(message, error.status) : new Error(message);
         const status = (error as Error & { status?: unknown }).status;
         if (typeof status === 'number') Object.assign(concealed, { status });
         throw concealed;
@@ -648,22 +656,22 @@ export class ComposioApps {
   private async executeStaged(input: { accountId: string; userId: string; toolkit: string;
     tool: string; arguments: Json; files?: AppFiles }, hidden: string[]): Promise<unknown> {
     if (input.toolkit === 'youtube' && input.tool === YOUTUBE_BROKEN_UPLOAD_TOOL)
-      throw new Error(`${YOUTUBE_BROKEN_UPLOAD_TOOL} does not deliver the video file; ` +
-        `use ${YOUTUBE_UPLOAD_TOOL} instead`);
+      throw new CommandRefusalError(`${YOUTUBE_BROKEN_UPLOAD_TOOL} does not deliver the video file; ` +
+        `use ${YOUTUBE_UPLOAD_TOOL} instead`, 400);
     const files = input.files ?? new Map<unknown, never>();
     if (fileReferences(input.arguments).some((reference) => !files.has(reference)))
-      throw new Error('Room files are unavailable for app tools');
+      throw new CommandRefusalError('Room files are unavailable for app tools', 400);
     if (!(await this.account(input.accountId, input.userId, input.toolkit)))
-      throw new Error('App connection is unavailable');
+      throw new CommandRefusalError('App connection is unavailable', 409);
     if (input.tool === YOUTUBE_ANALYTICS_TOOL && input.toolkit === 'youtube') {
-      if (files.size) throw new Error('A Room file was passed for a parameter that does not take a file');
+      if (files.size) throw new CommandRefusalError('A Room file was passed for a parameter that does not take a file', 400);
       return this.youtubeAnalyticsReport(input.accountId, input.arguments);
     }
     const definition = await this.request(
       `/tools/${encodeURIComponent(input.tool)}?toolkit_versions=latest`, 'GET');
     if (object(definition.toolkit).slug !== input.toolkit)
-      throw new Error('App tool does not belong to this connection');
-    const args = files.size ? await this.stageFiles(input, definition, files, hidden) : input.arguments;
+      throw new CommandRefusalError('App tool does not belong to this connection', 400);
+    const args = await this.stageFiles(input, definition, files, hidden);
     const result = await this.request(`/tools/execute/${encodeURIComponent(input.tool)}`, 'POST', {
       connected_account_id: input.accountId,
       user_id: input.userId,
@@ -702,10 +710,10 @@ export class ComposioApps {
     const slots = new Set<unknown>();
     fileSlots(input.arguments, parameters, parameters, slots);
     if ([...files.keys()].some((reference) => !slots.has(reference)))
-      throw new Error('A Room file was passed for a parameter that does not take a file');
+      throw new CommandRefusalError('A Room file was passed for a parameter that does not take a file', 400);
     const staged = new Map<unknown, Json>();
     for (const [reference, { file, mimetype }] of files)
       staged.set(reference, await this.stageFile(input.toolkit, input.tool, file, mimetype, hidden));
-    return substitute(input.arguments, staged) as Json;
+    return files.size ? substitute(input.arguments, staged) as Json : input.arguments;
   }
 }

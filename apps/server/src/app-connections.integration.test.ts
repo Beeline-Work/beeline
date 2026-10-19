@@ -1365,6 +1365,54 @@ describe('connect_app', () => {
       return { daemon, upload, calls, transport, getObject };
     }
 
+    it.each(['local path', 'broken tool', 'Room object', 'provider 5xx', 'network', 'upload PUT'])(
+      'Reproduction APP-FILE-1: daemon HTTP handles %s with the correct capture count', async (failure) => {
+        const { daemon, transport, calls } = await youtubeRoom();
+        const original = transport.getMockImplementation()!;
+        transport.mockImplementation(async (url, init) => {
+          const path = new URL(String(url)).pathname;
+          if (path.endsWith('/tools/execute/YOUTUBE_MULTIPART_UPLOAD_VIDEO')) {
+            if (failure === 'local path') return Response.json({ error: 'storage returned HTTP 404' });
+            if (failure === 'provider 5xx') return Response.json({ message: 'provider unavailable' }, { status: 503 });
+            if (failure === 'network') throw new Error('network failed');
+          }
+          if (failure === 'upload PUT' && init?.method === 'PUT') return new Response(null, { status: 503 });
+          return original(url, init);
+        });
+        const server = createBeelineServer({ database,
+          phone: new PhoneService(database, 'http://placeholder'), daemon, live: new LiveHub(),
+          mediaMaximumBytes: 1,
+          auth: { authenticateDaemon: async () => HELPER, authenticatePhone: async () => null } as unknown as TokenAuth });
+        await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+        const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+        vi.mocked(captureServerError).mockClear();
+        try {
+          const response = await fetch(`${origin}/v1/daemon/operations/executeAppTool`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', authorization: 'Bearer bdt_fixture-token-0001' },
+            body: JSON.stringify({ ...turn, appId: YOUTUBE_APP,
+              tool: failure === 'broken tool' ? 'YOUTUBE_UPLOAD_VIDEO' : 'YOUTUBE_MULTIPART_UPLOAD_VIDEO',
+              arguments: { title: 'Song', videoFile: failure === 'local path'
+                ? '/tmp/video.mp4' : { beelineObjectId: IN_ROOM } } }),
+          });
+          const result = await response.json();
+          console.log(`Reproduction APP-FILE-1: ${failure} → HTTP ${response.status}, captures=${vi.mocked(captureServerError).mock.calls.length}, ${JSON.stringify(result)}`);
+          const refused = failure === 'local path' || failure === 'broken tool';
+          expect(response.status).toBe(refused ? 400 : failure === 'Room object' ? 200 : 503);
+          expect(captureServerError).toHaveBeenCalledTimes(refused || failure === 'Room object' ? 0 : 1);
+          if (failure === 'Room object') expect(result).toMatchObject({ status: 'executed', data: { id: 'yt-1' } });
+          if (failure === 'local path') {
+            expect(result.error).toContain('videoFile');
+            expect(result.error).toContain('staged Room object');
+            expect(transport.mock.calls.some(([url, init]) =>
+              init?.method === 'POST' && String(url).includes('/tools/execute/'))).toBe(false);
+            expect(calls.some(call => call.method === 'PUT')).toBe(false);
+          }
+        } finally {
+          await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+        }
+    });
+
     it('uploads a Room video: the server stages it and the agent sees no key, URL or s3key', async () => {
       const { upload, calls } = await youtubeRoom();
       const result = await upload(IN_ROOM);

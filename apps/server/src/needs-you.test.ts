@@ -51,6 +51,16 @@ describe('the Needs-you ask rule', () => {
     expect(withoutReaderTags('@adam please', 'ada')).toBe('@adam please');
   });
 
+  it('strips hyphenated reader tags while preserving other handles and boundaries', () => {
+    expect(needsYouRowText('@a-b can you ask @c-d to review?', 'a-b'))
+      .toBe('can you ask @c-d to review?');
+    expect(withoutReaderTags('@a-bc please review', 'a-b')).toBe('@a-bc please review');
+    expect(withoutReaderTags('Thanks @a-b.', 'a-b')).toBe('Thanks.');
+    expect(withoutReaderTags('Thanks @a-b-', 'a-b')).toBe('Thanks -');
+    expect(withoutReaderTags('@a.b_c please ask @axb_c?', 'a.b_c'))
+      .toBe('please ask @axb_c?');
+  });
+
   it('keeps the start of long asks and strips markdown and long hashes', () => {
     const long = 'Please confirm the App Store review note ' + 'before we ship '.repeat(15);
     expect(shortenAsk(long)).toMatch(/^Please confirm/);
@@ -167,6 +177,13 @@ describe('PhoneService Needs-you tray', () => {
     console.log('Reproduction tray-ask-1: Tray > Needs you →', items.map(item => item.text));
     await database.query(`UPDATE messages SET card=$2::jsonb WHERE id=$1`, [feedback, JSON.stringify({ ask: 'Enable Feedback Fixed notices?' })]);
     expect((await read()).items.find(item => item.messageId === feedback)?.text).toBe('Enable Feedback Fixed notices?');
+  });
+
+  it('Reproduction 7801081289: reads Needs You rows for a hyphenated viewer', async () => {
+    await database.query('UPDATE identities SET handle=$2 WHERE id=$1', [VIEWER, 'a-b']);
+    const messageId = await post(ROOM, AGENT, '@a-b can you ask @c-d to review?');
+    expect((await read()).items.find(item => item.messageId === messageId)?.text)
+      .toBe('can you ask @c-d to review?');
   });
 
   it('system approval writers store an explicit ask and Tray renders it', async () => {

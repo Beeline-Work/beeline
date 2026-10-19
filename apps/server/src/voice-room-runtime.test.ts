@@ -21,7 +21,7 @@ vi.mock('@livekit/rtc-node', () => ({
   LocalAudioTrack: { createAudioTrack: vi.fn() }, TrackPublishOptions: class {},
   TrackSource: { SOURCE_MICROPHONE: 1 }, TrackKind: { KIND_AUDIO: 1 }, AudioFrame: class { constructor(readonly data: Int16Array) {} },
 }));
-import { VoiceRoomRuntime, confirmedVoiceSpeech, voiceInterrupt, voicePlaybackEcho } from './voice-room-runtime.js';
+import { VoiceRoomRuntime, spokenReport, confirmedVoiceSpeech, voiceInterrupt, voicePlaybackEcho } from './voice-room-runtime.js';
 import { AuraSpeech, VoiceQuotaError } from './voice-providers.js';
 import { VoiceService as RealVoiceService } from './voice-service.js';
 import { migrate } from './database.js';
@@ -111,7 +111,7 @@ it('Reproduction MD-TTS-1: conversational streamed replies and delayed reports s
     expect(service.recordAnswer).toHaveBeenCalledWith('room', 'agent', answer);
     reports = [{ source_message_id: 'source', id: 'report', text: '**Done**: [result](https://example.com/a_(b)/details)', agent_id: 'agent', human_id: 'human' }];
     await runtime.refresh();
-    await vi.waitFor(() => expect(spoken.at(-1)).toBe('Done: result'));
+    await vi.waitFor(() => expect(spoken.at(-1)).toBe('Done: result The rest is in the chat.'));
     console.log('MD-TTS-1 synthesis:', spoken);
   } finally { await runtime.close(); }
 });
@@ -340,6 +340,7 @@ it('claims a report once before playback and never replays an interrupted openin
   speech.synthesize.mockImplementation(async function* () { throw new DOMException('Interrupted', 'AbortError'); });
   const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
   try {
+    (runtime as any).targets.set('human', report.agent_id);
     offered = true;
     await runtime.refresh();
     await vi.waitFor(() => expect(speech.synthesize).toHaveBeenCalledOnce());
@@ -363,6 +364,7 @@ it('waits for an utterance that starts while a report claim is in flight', async
   let releasePlayback!: () => void;
   state.audio.waitForPlayout.mockImplementationOnce(() => new Promise<void>(resolve => { releasePlayback = resolve; }));
   try {
+    (runtime as any).targets.set('human', report.agent_id);
     offered = true; await runtime.refresh();
     await vi.waitFor(() => expect(releaseClaim).toBeDefined());
     const utterance = runtime.utterance('human', 'Ruby hello');
@@ -372,7 +374,7 @@ it('waits for an utterance that starts while a report claim is in flight', async
     expect(speech.synthesize).toHaveBeenCalledOnce();
     releasePlayback(); await utterance;
     await vi.waitFor(() => expect(speech.synthesize).toHaveBeenCalledTimes(4));
-    expect(speech.synthesize.mock.calls.at(-1)?.[0]).toBe(report.text);
+    expect(speech.synthesize.mock.calls.at(-1)?.[0]).toBe(spokenReport(report.text));
   } finally { await runtime.close(); }
 });
 
@@ -644,6 +646,7 @@ it('Reproduction phantom-2: an interrupted delegated answer does not replay its 
   try {
     state.room.emit('track', { kind: 1 }, {}, { identity: 'human' });
     await vi.waitFor(() => expect(harness.service.config.stt).toHaveBeenCalledOnce());
+    (runtime as any).targets.set('human', report.agent_id);
     offered = true; await runtime.refresh();
     await vi.waitFor(() => expect(harness.speech.synthesize).toHaveBeenCalledOnce());
     harness.emit('EndOfTurn', 'wait', 0);
@@ -652,7 +655,7 @@ it('Reproduction phantom-2: an interrupted delegated answer does not replay its 
     await runtime.refresh();
     await new Promise<void>(resolve => setImmediate(resolve));
     console.log('Reproduction phantom-2\n' + harness.timeline.join('\n'));
-    expect(harness.speech.synthesize.mock.calls.filter(call => call[0] === report.text)).toHaveLength(1);
+    expect(harness.speech.synthesize.mock.calls.filter(call => call[0] === spokenReport(report.text))).toHaveLength(1);
   } finally { await runtime.close(); }
 });
 
@@ -1962,6 +1965,69 @@ it('Reproduction DELIVERY-2: name pause, expiry, other-human isolation and retar
     await runtime.utterance('human', 'check my latest report');
     expect(service.dispatch).toHaveBeenCalledTimes(2);
   } finally { await runtime.close(); now.mockRestore(); }
+});
+
+it('shortens only spoken reports, preserving sentence boundaries and the source text', () => {
+  const text = 'The build is ready.\n\n' + 'Full details remain here. '.repeat(30);
+  expect(spokenReport(text)).toBe('The build is ready. The rest is in the chat.');
+  expect(text).toContain('Full details remain here.');
+  expect(spokenReport('x'.repeat(2000))).toBe('The rest is in the chat.');
+  expect(spokenReport('短い文。' + '長い'.repeat(100))).toBe('短い文。 The rest is in the chat.');
+  expect(spokenReport('Short sentence. ' + 'more '.repeat(80) + '.')).toBe('Short sentence. The rest is in the chat.');
+});
+
+it.each(['stay', 'turn', 'leave'] as const)('reports wait for human quiet and recheck the caller: %s', async action => {
+  const { service, speech } = conversationService(2);
+  let claimed = false;
+  const report = { source_message_id: 'order', id: 'report', text: 'Done.\n\n' + 'Details. '.repeat(100), agent_id: 'ruby', human_id: 'human' };
+  service.db.query.mockImplementation(async (sql: string) => {
+    if (sql.startsWith('SELECT DISTINCT ON')) return { rowCount: claimed ? 0 : 1, rows: claimed ? [] : [report] };
+    if (sql.startsWith('UPDATE voice_orders')) claimed = true;
+    return { rowCount: 1, rows: [] };
+  });
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  try {
+    (runtime as any).targets.set('human', 'ruby');
+    (runtime as any).humanSpeaking.add('human');
+    await runtime.refresh();
+    await new Promise(resolve => setImmediate(resolve));
+    expect(speech.synthesize).not.toHaveBeenCalled();
+    if (action === 'turn') (runtime as any).targets.set('human', 'goose');
+    if (action === 'leave') { state.room.remoteParticipants.delete('human'); runtime.participantLeft('human'); }
+    (runtime as any).humanQuiet('human');
+    await (runtime as any).reportQueue;
+    expect(claimed).toBe(true);
+    expect(speech.synthesize).toHaveBeenCalledTimes(action === 'stay' ? 1 : 0);
+    if (action === 'stay') expect(speech.synthesize.mock.calls[0]![0]).toBe('Done. The rest is in the chat.');
+    await runtime.refresh(); await (runtime as any).reportQueue;
+    expect(speech.synthesize).toHaveBeenCalledTimes(action === 'stay' ? 1 : 0);
+  } finally { await runtime.close(); }
+});
+
+it.each(['fast', 'failed', 'slow'] as const)('call search %s reaches audio or exactly one ordinary order', async mode => {
+  const { OpenRouterVoiceBrain } = await import('./voice-providers.js');
+  const { service, speech } = conversationService(1);
+  const fetcher = vi.fn<typeof fetch>()
+    .mockResolvedValueOnce(new Response('data: ' + JSON.stringify({ choices: [{ delta: { tool_calls: [{
+      function: { name: 'search_web', arguments: JSON.stringify({ query: 'Japan', spoken_line: 'Let me look.' }) },
+    }] } }] }) + '\n\n'))
+    .mockResolvedValueOnce(new Response('data: {"choices":[{"delta":{"content":"Tokyo."}}]}\n\n'));
+  const search = vi.fn(async () => {
+    if (mode === 'failed') throw new Error('Search unavailable');
+    if (mode === 'slow') return new Promise<string>(() => {});
+    return 'Tokyo, Japan.';
+  });
+  const configured = { ...service, search, config: { ...service.config, brain: new OpenRouterVoiceBrain('test', fetcher) } };
+  const runtime = await VoiceRoomRuntime.connect(configured as unknown as VoiceService, 'call', 'room');
+  try {
+    await runtime.utterance('human', 'Ruby search Japan');
+    const spoken = speech.synthesize.mock.calls.map(call => call[0]).join(' ');
+    expect(spoken).toContain('Let me look.');
+    expect(service.dispatch).toHaveBeenCalledTimes(mode === 'fast' ? 0 : 1);
+    expect(fetcher).toHaveBeenCalledTimes(mode === 'fast' ? 2 : 1);
+    if (mode === 'fast') expect(spoken).toContain('Tokyo.');
+    else expect(spoken).not.toMatch(/error|unavailable|timed out/i);
+  } finally { await runtime.close(); }
 });
 
 it('Reproduction AURA-413-1: a long report plays completely through provider requests and RTC frames', async () => {

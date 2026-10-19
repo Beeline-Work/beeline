@@ -479,3 +479,29 @@ it('DELIVERY-2: stable request IDs deduplicate uncertain recording and delivery,
     expect((await db.query<{text:string}>(`SELECT text FROM messages WHERE id=$1`, [id])).rows[0]!.text).toBe('@ruby check my latest report');
   } finally { await service.leave(joined.call.id,H); await db.query(`DELETE FROM rooms WHERE id=$1`, [room]); }
 });
+
+it('call history search excludes Rooms another caller cannot read and privately marks dispatched work', async () => {
+  const room = '77777777-7777-4777-8777-777777777777';
+  const privateRoom = '88888888-8888-4888-8888-888888888888';
+  await db.query(`INSERT INTO institutional_memory_workspace_rollouts(workspace_id,stage) VALUES($1,'live') ON CONFLICT(workspace_id) DO UPDATE SET stage='live'`, [W]);
+  await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$3,'Search call'),($2,$3,'Private source')`, [room, privateRoom, W]);
+  for (const id of [H, A, SECOND]) await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [W, room, id]);
+  for (const id of [H, A]) await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [W, privateRoom, id]);
+  const call = await service.join(room, H);
+  await service.join(room, SECOND);
+  await db.query(`UPDATE voice_calls SET runtime_owner=$2,runtime_until=now()+interval '60 seconds' WHERE id=$1`, [call.call.id, service.owner]);
+  try {
+    const agent = (await service.agents(room, H)).find(a => a.id === A)!;
+    const source = await service.recordHuman(call.call.id, room, H, agent, 'Find saffronmarker', service.owner);
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES('voice-shared-search',$1,$3,'saffronmarker public answer'),('voice-private-search',$2,$3,'saffronmarker secret answer')`, [room, privateRoom, H]);
+    const result = JSON.parse(await service.search(call.call.id, source, A, { name: 'search_history', query: 'saffronmarker' }, new AbortController().signal));
+    expect(result.results.some((row: any) => row.messageId === 'voice-shared-search')).toBe(true);
+    expect(result.results.some((row: any) => row.messageId === 'voice-private-search')).toBe(false);
+    await service.dispatch(call.call.id, source, A);
+    const { readAgentCommands } = await import('./agent-command.js');
+    const commands = await readAgentCommands(db, room, A);
+    expect(commands.commands[0]?.source.body).toContain('This request came from a live voice call.');
+    const message = (await db.query<{text:string}>(`SELECT text FROM messages WHERE id=$1`, [source])).rows[0]!;
+    expect(message.text).not.toContain('This request came');
+  } finally { await service.leave(call.call.id, H); await service.leave(call.call.id, SECOND); }
+});

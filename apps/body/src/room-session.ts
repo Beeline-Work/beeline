@@ -105,6 +105,7 @@ export function readOnlyMcpServer(
   cwd: string,
   agentMemoryDir?: string,
   githubToken?: string,
+  githubPath?: string,
 ): McpServerWire {
   if (!config.readonlyMcpCommand) {
     throw new ReadOnlyToolsUnavailableError(
@@ -120,6 +121,7 @@ export function readOnlyMcpServer(
     args: [...(config.readonlyMcpArgs ?? [])],
     env: [
       { name: 'BEELINE_READONLY_ROOT', value: resolve(cwd) },
+      ...(githubPath ? [{ name: 'PATH', value: githubPath }] : []),
       ...['GH_TOKEN', 'GITHUB_TOKEN'].flatMap((name) => githubToken
         ? [{ name, value: githubToken }]
         : []),

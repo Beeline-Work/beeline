@@ -276,6 +276,30 @@ describe('connect_app', () => {
       )
     ).rows;
 
+  it('distinguishes automatic GitHub discovery from the owner selecting that same connection', async () => {
+    await connectSquire();
+    await applyVaultList(database,
+      { machine_id: 'machine-one', workspace_id: WORKSPACE, owner_identity_id: OWNER }, [{
+        reference: 'vault:github', service: 'github', label: 'Existing key',
+        fieldNames: ['access_token'], allowedHosts: ['api.github.com'],
+        createdAt: 1, stale: false, state: 'active',
+      }]);
+    const registry = fakeRegistry([]);
+    const provider = fakeComposio();
+    const daemon = daemonWith(registry.client, provider);
+    const discovered = await daemon.execute('connectApp', { ...turn, app: 'GitHub', reason: 'read an issue' }, HELPER);
+    expect((await daemon.execute('readAgentWorkbench', { roomId: ROOM }, HELPER)).apps)
+      .toContainEqual(expect.objectContaining({ appId: discovered.appId,
+        selectedByOwner: false, connectionReference: 'vault:github' }));
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, registry.client, provider);
+    await phone.execute('connectWorkbenchApp', { app: 'GitHub', helperAgentId: HELPER,
+      preferredRoute: 'squire-api' }, OWNER);
+    expect((await daemon.execute('readAgentWorkbench', { roomId: ROOM }, HELPER)).apps)
+      .toContainEqual(expect.objectContaining({ appId: discovered.appId,
+        selectedByOwner: true, connectionReference: 'vault:github' }));
+  });
+
   it('Reproduction link-route-1: Link signs in with a card and resumes the original request', async () => {
     await connectSquire();
     const transport = vi.fn(async (url: string | URL | Request) => String(url).endsWith('/auth/token')

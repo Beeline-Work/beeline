@@ -810,6 +810,14 @@ export async function connectApp(
         [existing.connector_id, params.helperAgentId, params.installRoomId, params.installCommandId],
       );
     }
+    if (key === 'github' && decision.kind === 'keep' && row && params.requestedBy === params.ownerId) {
+      await db.query(
+        `INSERT INTO workspace_app_routes(id,app_id,route,transport,reason,requested_by)
+         VALUES ($1,$2,$3,$4,$5,$6)`,
+        [randomUUID(), row.id, row.route, row.transport,
+          'person selected the existing GitHub connection', params.requestedBy],
+      );
+    }
     return { decision, row };
   });
 

@@ -41,8 +41,8 @@ async function fixture(personal: boolean, transport = 'squire-api', outcome = 'e
       const name = request.url.split('/').at(-1)!;
       calls.push({ name, arguments: input });
       reply.end(JSON.stringify(name === 'listAppTools' ? { tools: outcome === 'missing' ? [] : [
-        { slug: 'GITHUB_CREATE_AN_ISSUE_COMMENT' },
-      ] } : { status: outcome, data: { id: 42 } }));
+        { slug: 'GITHUB_CREATE_AN_ISSUE_COMMENT' }, { slug: 'GITHUB_GET_AN_ISSUE' },
+      ] } : { status: outcome === 'write_denied' ? (input.tool === 'GITHUB_CREATE_AN_ISSUE_COMMENT' ? 'needs_permission' : 'executed') : outcome, data: { id: 42, html_url: input.tool === 'GITHUB_GET_AN_ISSUE' ? 'https://github.com/owner/widgets/issues/1' : 'https://github.com/owner/widgets/issues/1#issuecomment-42' } }));
       return;
     }
     expect(request.headers.authorization).toBe('Bearer relay-fixture');
@@ -73,16 +73,17 @@ async function fixture(personal: boolean, transport = 'squire-api', outcome = 'e
     const message = JSON.parse(init!.body as string);
     calls.push({ name: message.method, arguments: message.params });
     let result: unknown = {};
-    if (message.method === 'tools/list') result = { tools: outcome === 'missing' ? [] : [{ name: 'add_issue_comment' }] };
+    if (message.method === 'tools/list') result = { tools: outcome === 'missing' ? [] : [{ name: 'add_issue_comment' }, { name: 'issue_read' }] };
     if (message.method === 'tools/call') result = { isError: outcome === 'provider_error',
-      content: [{ type: 'text', text: JSON.stringify({ id: 42 }) }] };
+      ...(outcome === 'structured' && message.params.name === 'issue_read' ? { structuredContent: { method: 'get', issue: { number: 1, html_url: 'https://github.com/owner/widgets/issues/1' } } } : {}),
+      content: [{ type: 'text', text: JSON.stringify({ id: 42, html_url: message.params.name === 'issue_read' ? 'https://github.com/owner/widgets/issues/1' : 'https://github.com/owner/widgets/issues/1#issuecomment-42' }) }] };
     return message.id === undefined ? new Response(null, { status: 202 })
       : Response.json({ jsonrpc: '2.0', id: message.id, result });
   }) as typeof fetch, async input => {
     expect(input).toMatchObject({ roomId: context.roomId, requestId: context.requestId,
       generationId: context.generationId, target: 'registry-mcp:github/github' });
     authorizations.push(input);
-    return !(input.consume && outcome === 'needs_permission');
+    return !(input.consume && (outcome === 'needs_permission' || (outcome === 'write_denied' && input.operation === 'add_issue_comment')));
   }, registryBrokerSocket);
   brokers.push(broker);
   await broker.start();
@@ -148,6 +149,49 @@ for (const transport of ['composio', 'registry-mcp']) {
         expect.objectContaining({ operation: 'add_issue_comment', consume: true }),
       ]);
     }
+  });
+
+  async function standardComment(f: Awaited<ReturnType<typeof fixture>>) {
+    const ghBinary = (await exec('which', ['gh'], { env: { PATH: '/usr/bin:/bin' } })).stdout.trim();
+    const path = await installRoomGitHubLauncher({ ...f, ghBinary, inheritedPath: '/usr/bin:/bin' });
+    const result = await exec('gh', ['issue', 'comment', '1', '--repo', 'owner/widgets',
+      '--body', 'Room authentication verification'], {
+      cwd: f.root, env: { ...process.env, PATH: path, GH_TOKEN: 'app-fixture',
+        GH_HOST: 'github.com', GH_DEBUG: '' },
+    });
+    return result;
+  }
+
+  it(`runs the standard issue comment command through ${transport}`, async () => {
+    const f = await fixture(true, transport);
+    expect((await standardComment(f)).stdout).toContain('issuecomment-42');
+    const toolCalls = f.calls.filter(call => call.name === (transport === 'composio' ? 'executeAppTool' : 'tools/call'));
+    expect(toolCalls.map(call => call.arguments[transport === 'composio' ? 'tool' : 'name'])).toEqual(
+      transport === 'composio' ? ['GITHUB_GET_AN_ISSUE', 'GITHUB_CREATE_AN_ISSUE_COMMENT'] : ['issue_read', 'add_issue_comment']);
+    expect(toolCalls[1].arguments.arguments).toEqual({ owner: 'owner', repo: 'widgets', issue_number: 1, body: 'Room authentication verification' });
+  });
+
+  if (transport === 'registry-mcp') it('reads structured Registry issue lookup results', async () => {
+    const f = await fixture(true, transport, 'structured');
+    expect((await standardComment(f)).stdout).toContain('issuecomment-42');
+  });
+
+  it(`preserves personal ${transport} lookup refusal in the standard command`, async () => {
+    const f = await fixture(true, transport, 'needs_permission');
+    await expect(standardComment(f)).rejects.toMatchObject({ code: 1 });
+    expect(f.calls.some(call => call.arguments.tool === 'GITHUB_CREATE_AN_ISSUE_COMMENT' || call.arguments.name === 'add_issue_comment')).toBe(false);
+  });
+
+  it(`preserves personal ${transport} write refusal after the standard lookup`, async () => {
+    const f = await fixture(true, transport, 'write_denied');
+    await expect(standardComment(f)).rejects.toMatchObject({ code: 1 });
+    const toolCalls = f.calls.filter(call => call.name === (transport === 'composio' ? 'executeAppTool' : 'tools/call'));
+    expect(toolCalls[0].arguments[transport === 'composio' ? 'tool' : 'name']).toBe(
+      transport === 'composio' ? 'GITHUB_GET_AN_ISSUE' : 'issue_read');
+    if (transport === 'registry-mcp') {
+      expect(f.authorizations).toContainEqual(expect.objectContaining({ operation: 'add_issue_comment', consume: true }));
+      expect(toolCalls).toHaveLength(1);
+    } else expect(toolCalls).toHaveLength(2);
   });
 
   it(`preserves ${transport} refusal without falling back to the App`, async () => {

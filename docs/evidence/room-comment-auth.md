@@ -183,3 +183,27 @@ regressions pass (2 tests). Together with the native-gh suite, all 13 selected
 tests pass. No full suite, linter or static-analysis check was run in this
 phase. Generated workspace build outputs and task logs were removed afterward;
 prepared dependencies were retained.
+
+## Standard native issue-comment follow-up
+
+Reproduction **room-comment-auth**: reviewer substituted `gh issue comment 1
+--repo owner/widgets --body 'Room authentication verification'` for `gh api`
+in the selected managed OAuth and Registry MCP fixtures. Both commands returned
+HTTP 502 at `/graphql` before posting: the adapter accepted only the REST comment
+endpoint. The same native command was reproduced locally before this fix.
+
+The adapter now translates native gh's `IssueByNumber` lookup through the
+selected provider's issue-read tool and `CommentCreate` through its comment tool.
+A process-local opaque subject binds the mutation to the successful lookup;
+provider authorization still runs on each operation, and refusal never falls
+back to the App. Registry text and structured issue-read results are covered.
+Native argument parsing remains with gh. Translation covers the observed gh
+lookup and creation query shapes; edit/delete, attachments and general GraphQL
+are outside this adapter's supported operations.
+
+The same standard command now exits successfully and prints the fixture comment
+URL for both transports. Regressions also exercise lookup and comment-write
+refusals without fallback. These are real native CLI commands against local
+provider-boundary fixtures, not live personal-account writes; no new live
+comment was created for this follow-up. The earlier isolated App proof remains
+bound to its recorded head.

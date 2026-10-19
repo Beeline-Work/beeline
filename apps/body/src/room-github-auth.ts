@@ -111,25 +111,64 @@ async function issueCommentRoute(personal, auth, context) {
   const name = managed ? 'GITHUB_CREATE_AN_ISSUE_COMMENT' : 'add_issue_comment';
   const tool = tools?.find(tool => (managed ? tool.slug : tool.name) === name);
   if (!tool) throw new Error('The connected GitHub provider has no issue-comment tool');
+  const subjects = new Map();
+  const json = (data, status = 200) => ({ status,
+    headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) });
+  async function execute(toolName, args) {
+    if (managed && !tools.some(tool => tool.slug === toolName)) {
+      const page = await daemon(auth, context, 'listAppTools', { appId: personal.appId, query: toolName });
+      tools.push(...(page.tools ?? []));
+    }
+    if (!tools.some(tool => (managed ? tool.slug : tool.name) === toolName))
+      throw new Error('The connected GitHub provider has no required issue tool');
+    if (managed) {
+      const result = await daemon(auth, context, 'executeAppTool', { appId: personal.appId,
+        tool: toolName, arguments: args });
+      if (result.status !== 'executed') throw new Error('GitHub app request was not executed');
+      return result.data;
+    }
+    return unpack(await mcp('tools/call', { name: toolName, arguments: args }));
+  }
   return async (request, body) => {
-    const match = /^\/repos\/([^/]+)\/([^/]+)\/issues\/([1-9][0-9]*)\/comments$/.exec(request.url);
-    if (request.method !== 'POST' || request.headers.host !== 'api.github.com' || !match)
+    if (request.method !== 'POST' || request.headers.host !== 'api.github.com')
       throw new Error('This GitHub provider supports issue-comment requests only');
     const input = JSON.parse(body);
+    if (request.url === '/graphql') {
+      // Only bridge native gh's issue lookup and comment creation. The opaque
+      // subject is bound to a successful personal-provider read in this process.
+      const query = input.query?.replace(/\s+/g, ' ').trim();
+      if (query === 'query IssueByNumber($owner: String!, $repo: String!, $number: Int!) { repository(owner: $owner, name: $repo) { hasIssuesEnabled issue: issueOrPullRequest(number: $number) { __typename ...on Issue{id,url} ...on PullRequest{id,url} } } }') {
+        const { owner, repo, number } = input.variables ?? {};
+        if (typeof owner !== 'string' || typeof repo !== 'string' || !Number.isSafeInteger(number) || number < 1)
+          throw new Error('Invalid issue lookup');
+        const args = { owner, repo, issue_number: number };
+        const result = await execute(managed ? 'GITHUB_GET_AN_ISSUE' : 'issue_read',
+          managed ? args : { ...args, method: 'get' });
+        const issue = managed ? result : (result?.issue ?? result);
+        if (!issue || typeof issue.html_url !== 'string') throw new Error('Issue lookup unavailable');
+        const id = randomUUID();
+        subjects.set(id, args);
+        return json({ data: { repository: { hasIssuesEnabled: true,
+          issue: { __typename: issue.pull_request ? 'PullRequest' : 'Issue', id, url: issue.html_url } } } });
+      }
+      if (query === 'mutation CommentCreate($input:AddCommentInput!){addComment(input: $input){commentEdge{node{url}}}}') {
+        const comment = input.variables?.input;
+        const args = subjects.get(comment?.subjectId);
+        if (!args || typeof comment.body !== 'string' || Object.keys(comment).some(key => !['subjectId', 'body'].includes(key)))
+          throw new Error('Invalid issue-comment request');
+        const data = await execute(name, { ...args, body: comment.body });
+        if (typeof data?.html_url !== 'string') throw new Error('Comment response unavailable');
+        return json({ data: { addComment: { commentEdge: { node: { url: data.html_url } } } } });
+      }
+      throw new Error('Unsupported GitHub GraphQL request');
+    }
+    const match = /^\/repos\/([^/]+)\/([^/]+)\/issues\/([1-9][0-9]*)\/comments$/.exec(request.url);
+    if (!match) throw new Error('This GitHub provider supports issue-comment requests only');
     if (typeof input.body !== 'string' || Object.keys(input).some(key => key !== 'body'))
       throw new Error('Invalid issue-comment request');
     const args = { owner: decodeURIComponent(match[1]), repo: decodeURIComponent(match[2]),
       issue_number: Number(match[3]), body: input.body };
-    let data;
-    if (managed) {
-      const result = await daemon(auth, context, 'executeAppTool', { appId: personal.appId,
-        tool: name, arguments: args });
-      if (result.status !== 'executed') throw new Error('GitHub app request was not executed');
-      data = result.data;
-    } else {
-      data = unpack(await mcp('tools/call', { name, arguments: args }));
-    }
-    return { status: 201, headers: { 'content-type': 'application/json' }, body: JSON.stringify(data) };
+    return json(await execute(name, args), 201);
   };
 }
 async function run(env) {

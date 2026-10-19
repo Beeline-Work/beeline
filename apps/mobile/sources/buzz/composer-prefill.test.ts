@@ -106,6 +106,23 @@ describe('answer prefill', () => {
     expect(answerPrefillCandidate(messages, ME, handleFor)?.sourceMessageId).toBe('a-1');
   });
 
+  it.each(['h-1', 'relay-h-1'])('R1: fills only the requester composer for requestId %s', (requestId) => {
+    const messages = [
+      { ...human('h-1', ME, '@charles can you find me this for luna?'), relayId: 'relay-h-1' },
+      agent('charles-answer', { requestId }),
+    ];
+    const charlesHandle = () => 'charles';
+    const candidate = answerPrefillCandidate(messages, ME, charlesHandle);
+    expect(planAnswerPrefill({ draft: '', prefill: null, candidate, offered: new Set() }))
+      .toMatchObject({ kind: 'fill', text: '@charles ' });
+    expect(answerPrefillCandidate(messages, OTHER, charlesHandle)).toBeUndefined();
+  });
+
+  it('does not prefill when the request message is not loaded', () => {
+    expect(answerPrefillCandidate([agent('a-1', { requestId: 'unloaded' })], ME, handleFor))
+      .toBeUndefined();
+  });
+
   it('offers nothing to another person viewing the same Room', () => {
     const messages = [human('h-1', ME), agent('a-1', { mentionPubkeys: [ME], replyToId: 'h-1' })];
     expect(answerPrefillCandidate(messages, OTHER, handleFor)).toBeUndefined();

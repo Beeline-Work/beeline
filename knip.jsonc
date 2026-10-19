@@ -147,6 +147,7 @@
         "scripts/composer-waveform-native-proof.tsx",
         "scripts/composer-v4-native-proof.tsx",
         "scripts/composer-v4-web-proof.tsx",
+        "scripts/answer-prefill-proof.tsx",
         "scripts/sign-in-notice-native-proof.tsx",
         "scripts/composer-waveform-web-proof.tsx",
         "scripts/voice-multi-tips-native-proof.tsx",

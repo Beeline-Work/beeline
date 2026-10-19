@@ -1,0 +1,7 @@
+I/TaskService( 6020): Started headless task 1 to keep JS timers alive for 'app.usebeeline'
+I/TaskService( 6020): Finished task 'beeline-read-clear' with eventId 'c8828dac-2a6e-4387-b56f-ecc1c571f1d8'.
+I/TaskService( 6020): Finished task 'beeline-notification-action' with eventId '33571427-d859-423f-bab4-ef5b367c99a3'.
+I/TaskService( 6020): Finished headless task 1 for 'app.usebeeline'
+W/ReactNativeJS( 6108): [PUSH ROUTING] Full notification response:
+W/ReactNativeJS( 6108): [PUSH ROUTING] notification.request.content.data:
+W/ReactNativeJS( 6108): [PUSH ROUTING] Navigating to Beeline message: dc65f2ae-b315-45fc-bd49-f58945fcfa20

@@ -173,3 +173,14 @@ Play Review sign-in and same-session handback is the only known remaining human
 step. It has not been represented as completed reviewer proof or merge approval.
 `npm run corner:prepare` passed again after the proof; this update changes evidence
 only, so the earlier 291 focused tests and typechecks remain the code validation.
+
+## Main integration and checks repair
+
+Integrated main at `64f9a1a9b` and resolved the add/add conflict in the generated
+`room-squire` prompt snapshot by retaining this branch's repository guidance and
+personal GitHub precedence. The merged prompt assembly matches every snapshot.
+The previous BODY SUITE failure was this stale snapshot; its regression now passes.
+After integration: full root typecheck, 243 Body tests, 98 server tests (GitHub
+operations, Workbench routing and brief refusals), nine connector/sign-in/opener
+tests, and workflow-path lint pass. Authenticated Play Review browser proof remains
+pending; this integration does not claim that proof or a release.

@@ -1,0 +1,25 @@
+{
+  "reproduction": "SHIPPED-THEME-1",
+  "result": "not reproduced",
+  "androidApi": 36,
+  "architecture": "x86_64",
+  "entry": "apps/mobile/index.ts",
+  "releaseMode": true,
+  "hermes": true,
+  "updatesEnabled": false,
+  "sentryInitializationEnabled": true,
+  "sentryDestination": "disposable local endpoint",
+  "apkSha256": "d8d1ec05edad9bfd7fc2dd638dbb1e835943479f93aaf0041fe69288bf4ae927",
+  "coldNotificationProcessBefore": null,
+  "resumeProcessBefore": "6108",
+  "resumeProcessAfter": "6108",
+  "themeErrors": [],
+  "sourceSha256": {
+    "apps/mobile/index.ts": "2c9417f2d728ad8e9cfcd53496c0f93fe7569afa6436f6d6762706027c0809bb",
+    "apps/mobile/metro.config.js": "daf23f87023924f6002b8f4865d2dde334cebc29f66f43695bc3440ec63fc7d4",
+    "apps/mobile/sources/unistyles.ts": "f976ec9833008b852a38f99588d22864c3e6c9c3ec92486711ff7570a73fba86",
+    "apps/mobile/sources/buzz/sentry.ts": "3d459b3bde43607944624a40aad4706d15715f6474c746699cdf40ac80b8dfb7",
+    "apps/mobile/sources/push/notification-action-runtime.ts": "c2d73a15f0e2e760b2477bc84b42e7e6dce2641f669ea2601e7f410ad3858024",
+    "apps/mobile/sources/shipped-theme-bootstrap.test.ts": "4b30f3e210ac85efc46061ca965ab1625edbcb91f11793dc3e29016abf458b39"
+  }
+}

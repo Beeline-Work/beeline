@@ -816,25 +816,7 @@ export async function connectApp(
         ],
       );
     }
-    if (
-      key === 'github' &&
-      decision.kind === 'keep' &&
-      row &&
-      params.requestedBy === params.ownerId
-    ) {
-      await db.query(
-        `INSERT INTO workspace_app_routes(id,app_id,route,transport,reason,requested_by)
-         VALUES ($1,$2,$3,$4,$5,$6)`,
-        [
-          randomUUID(),
-          row.id,
-          row.route,
-          row.transport,
-          'person selected the existing GitHub connection',
-          params.requestedBy,
-        ],
-      );
-    }
+    await recordExistingOwnerGitHubSelection(db, row, decision, params);
     return { decision, row };
   });
 
@@ -962,6 +944,32 @@ export async function disconnectApp(
     ).rows[0];
     return connector ? { helperAgentId: connector.helper_agent_id } : {};
   });
+}
+
+/** Record an owner's explicit choice to keep the current GitHub connection. */
+async function recordExistingOwnerGitHubSelection(
+  database: SqlDatabase,
+  row: AppRow | undefined,
+  decision: AppRouteDecision,
+  params: ConnectAppParams,
+): Promise<void> {
+  if (
+    row?.app_key !== 'github' ||
+    decision.kind !== 'keep' ||
+    params.requestedBy !== params.ownerId
+  ) return;
+  await database.query(
+    `INSERT INTO workspace_app_routes(id,app_id,route,transport,reason,requested_by)
+     VALUES ($1,$2,$3,$4,$5,$6)`,
+    [
+      randomUUID(),
+      row.id,
+      row.route,
+      row.transport,
+      'person selected the existing GitHub connection',
+      params.requestedBy,
+    ],
+  );
 }
 
 /** Record a person's selection on the current connection, never a historical lifecycle. */

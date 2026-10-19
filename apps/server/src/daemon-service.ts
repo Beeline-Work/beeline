@@ -641,6 +641,14 @@ export class DaemonService {
         // this generation. Never replace its stored failed outcome with success.
         if (name === 'postAgentTurnReceipt' && candidate.status === 'complete' && command.state === 'complete')
           return this.writeResult() as Output<Name>;
+        // Silence is a server-owned terminal outcome, including private return
+        // routes. Older helpers may still submit final text after the tool.
+        if (name === 'postRoomMessage' && (await db.query(
+          `SELECT 1 FROM agent_turns WHERE room_id=$1 AND agent_id=$2 AND request_id=$3
+             AND completion_kind='no-reply'`,
+          [scopedRoom, authenticatedAgentId, requestId],
+        )).rowCount)
+          return this.writeResult() as Output<Name>;
         // Helpers cannot impose an order outcome on an informational wake.
         // The stored command and its delivered receipt own that obligation.
         if (name === 'postAgentTurnReceipt' && candidate.status === 'failed' &&
@@ -3997,6 +4005,7 @@ export class DaemonService {
           | 'authority_rejected'
           | 'turn_cancelled'
           | 'already_completed'
+          | 'no_reply'
           | 'result_conflict'
           | 'write_failed';
         row: (Omit<CommittedMessageLiveRow, 'created_at'> & { created_at: string }) | null;
@@ -4013,14 +4022,17 @@ export class DaemonService {
              SELECT command.*,
                EXISTS(SELECT 1 FROM agent_turns turn
                  WHERE turn.room_id=command.room_id AND turn.agent_id=command.agent_id
-                   AND turn.request_id=command.turn_request_id AND turn.status='cancelled') turn_cancelled
+                   AND turn.request_id=command.turn_request_id AND turn.status='cancelled') turn_cancelled,
+               EXISTS(SELECT 1 FROM agent_turns turn
+                 WHERE turn.room_id=command.room_id AND turn.agent_id=command.agent_id
+                   AND turn.request_id=command.turn_request_id AND turn.completion_kind='no-reply') no_reply
              FROM agent_commands command
              WHERE command.room_id=$2 AND command.agent_id=$3 AND command.turn_request_id=$6
                AND command.action IN ('input','resume') AND command.generation_id=$10
              ORDER BY command.created_at DESC,command.id DESC LIMIT 1 FOR UPDATE OF command
            ), writable AS (
              SELECT * FROM candidate
-             WHERE state='claimed' AND lease_expires_at>clock_timestamp() AND NOT turn_cancelled
+             WHERE state='claimed' AND lease_expires_at>clock_timestamp() AND NOT turn_cancelled AND NOT no_reply
            ), pending AS (
              DELETE FROM agent_pending_attachments attachment USING writable
              WHERE attachment.room_id=$2 AND attachment.agent_id=$3
@@ -4120,6 +4132,7 @@ export class DaemonService {
            SELECT CASE
              WHEN NOT EXISTS(SELECT 1 FROM candidate) THEN 'authority_rejected'
              WHEN (SELECT turn_cancelled FROM candidate) THEN 'turn_cancelled'
+             WHEN (SELECT no_reply FROM candidate) THEN 'no_reply'
              WHEN (SELECT state FROM candidate)='complete'
                AND (SELECT result_message_id FROM candidate) IS NULL THEN 'already_completed'
              WHEN (SELECT state FROM candidate)='complete' THEN 'result_conflict'
@@ -4148,6 +4161,7 @@ export class DaemonService {
       if (result.outcome === 'authority_rejected')
         throw new Error('command output authority rejected');
       if (result.outcome === 'turn_cancelled') throw new Error('command turn cancelled');
+      if (result.outcome === 'no_reply') return this.writeResult();
       if (result.outcome === 'already_completed') throw new Error('command already completed');
       if (result.outcome === 'result_conflict') throw new Error('command result conflict');
       if (!result.row) throw new Error('command output authority rejected');
@@ -4368,14 +4382,15 @@ export class DaemonService {
         const written = await database.query<CommittedTurnLiveRow>(
           `WITH written AS (
              INSERT INTO agent_turns(room_id,request_id,agent_id,status,generation_id,failure_reason,
-                                     tool_calls)
-             VALUES($1,$2,$3,$4,$5,$6,$7)
+                                     tool_calls,completion_kind)
+             VALUES($1,$2,$3,$4,$5,$6,$7,$8)
              ON CONFLICT(room_id,request_id,agent_id) DO UPDATE SET
                status=EXCLUDED.status,generation_id=EXCLUDED.generation_id,
                failure_reason=EXCLUDED.failure_reason,created_at=now(),
                started_at=CASE WHEN EXCLUDED.status='working' AND agent_turns.status<>'working'
                  THEN now() ELSE agent_turns.started_at END,
-               tool_calls=COALESCE(EXCLUDED.tool_calls,agent_turns.tool_calls)
+               tool_calls=COALESCE(EXCLUDED.tool_calls,agent_turns.tool_calls),
+               completion_kind=COALESCE(agent_turns.completion_kind,EXCLUDED.completion_kind)
              WHERE agent_turns.status<>'cancelled'
              RETURNING room_id,request_id,agent_id,status,started_at,created_at,generation_id
            )
@@ -4391,6 +4406,7 @@ export class DaemonService {
             input.generationId ?? null,
             reason,
             toolCalls,
+            input.completionKind ?? null,
           ],
         );
         if (!written.rowCount) return;

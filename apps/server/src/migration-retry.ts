@@ -71,6 +71,8 @@ export async function retryMigrationStep(
     attempts?: number;
     delayMs?: (attempt: number) => number;
     sleep?: (ms: number) => Promise<void>;
+    /** Runs after every lock timeout, before the retry or the final throw. */
+    onLockTimeout?: () => Promise<void>;
   } = {},
 ): Promise<void> {
   const attempts = options.attempts ?? 6;
@@ -82,6 +84,7 @@ export async function retryMigrationStep(
       return;
     } catch (error) {
       const code = (error as { code?: unknown } | null)?.code;
+      if (code === '55P03') await options.onLockTimeout?.().catch(() => undefined);
       if ((code !== '40P01' && code !== '55P03') || attempt >= attempts) throw error;
       const wait = delayMs(attempt);
       console.warn(`[migration] ${name} lock conflict on attempt ${attempt}/${attempts}; retrying in ${wait}ms`);
@@ -118,5 +121,51 @@ export async function retryOnDeadlock(
       console.warn(`[migration] deadlock on attempt ${attempt}/${attempts}; retrying in ${wait}ms`);
       await sleep(wait);
     }
+  }
+}
+
+type DiagnosticDatabase = {
+  query(sql: string, values?: unknown[]): Promise<{ rows: Record<string, unknown>[] }>;
+  transaction<T>(work: (database: DiagnosticDatabase) => Promise<T>): Promise<T>;
+};
+
+const LOCKED_TABLE =
+  /\b(?:ALTER\s+TABLE|LOCK\s+TABLE|DROP\s+TABLE|TRUNCATE(?:\s+TABLE)?|REFERENCES|UPDATE|INSERT\s+INTO|DELETE\s+FROM|ON)\s+(?:IF\s+EXISTS\s+)?(?:ONLY\s+)?([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)/gi;
+
+/** Table names a migration statement locks. Unknown words resolve to no table. */
+export function lockedTables(statement: string): string[] {
+  return [...new Set([...statement.matchAll(LOCKED_TABLE)].map((match) => match[1]!.toLowerCase()))];
+}
+
+/** A lock timeout leaves no record of who held the table. Log the sessions
+ * that hold or wait on its locks. Read-only, short timeouts, never throws. */
+export async function logLockHolders(
+  database: DiagnosticDatabase,
+  name: string,
+  statement: string,
+): Promise<void> {
+  const tables = lockedTables(statement);
+  try {
+    const { rows } = await database.transaction(async (tx) => {
+      await tx.query(`SET LOCAL statement_timeout = '2000ms'`);
+      await tx.query(`SET LOCAL lock_timeout = '500ms'`);
+      return tx.query(
+        `SELECT l.relation::regclass::text AS relation, l.mode, l.granted, a.pid, a.state,
+           a.wait_event_type, a.wait_event, a.xact_start::text AS xact_start,
+           a.query_start::text AS query_start, a.application_name, left(a.query, 200) AS query
+         FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid
+         WHERE l.locktype = 'relation' AND l.pid <> pg_backend_pid()
+           AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
+           AND (cardinality($1::text[]) = 0
+             OR l.relation IN (SELECT to_regclass(t) FROM unnest($1::text[]) t))
+         ORDER BY a.xact_start NULLS LAST
+         LIMIT 20`,
+        [tables],
+      );
+    });
+    console.warn(`[migration] ${name} lock holders on ${tables.join(',') || 'any table'}: ${rows.length}`);
+    for (const row of rows) console.warn('[migration] lock holder', row);
+  } catch (error) {
+    console.warn(`[migration] ${name} lock holder diagnostic failed: ${(error as Error)?.message ?? error}`);
   }
 }

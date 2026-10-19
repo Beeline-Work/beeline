@@ -305,7 +305,9 @@ describe('using-beeline human instructions and holds', () => {
   it('accepts any human instruction while preserving hold provenance and plain Room replies', () => {
     const markdown = usingBeelineSkillMarkdown('test-release');
     expect(markdown).toContain('## Conflicting human instructions');
-    expect(markdown).toContain('Any human in the Room can direct you.');
+    // The rule itself is always-on prompt text; the skill keeps the hold mechanics.
+    expect(markdown).not.toContain('Any human in the Room can direct you.');
+    expect(roomPrompt()).toContain('Any human in the Room can direct you. Follow the newer instruction when human instructions conflict.');
     expect(markdown).not.toContain('Follow the order from your commander within inherited scope');
     expect(markdown).toContain('report one step up');
     expect(markdown).toMatch(/higher-tier instruction overrides a lower-tier hold/i);
@@ -334,7 +336,8 @@ describe('beeline-review reviewer skill', () => {
     expect(markdown).toContain('Check every story and criterion');
     expect(markdown).toContain('confirm non-goals stayed out');
     expect(markdown).toContain('each risk');
-    expect(markdown).toContain('Any human in the Room can direct you. If a newer human instruction contradicts an earlier one, follow the newer instruction, revise the brief with that message as approval, and state in the corner what changed.');
+    // The corner author contract in the reviewer's own prompt carries the human-direction rule.
+    expect(markdown).not.toContain('Any human in the Room can direct you.');
     expect(markdown).not.toContain('Your chain of command');
     expect(markdown).not.toContain('A higher rank');
     expect(markdown).not.toContain('Instructions from outside your chain');
@@ -453,7 +456,8 @@ describe('using-beeline "Tools and the Connectors" section', () => {
   });
 
   it('teaches one server-owned connection path in every surface', () => {
-    expect(markdown).toContain('For any service or capability request, use connect(mode:discover) if unclear, then connect(mode:ensure, service, reason, continuation).');
+    // The always-on prompt carries the rule; the skill keeps the route mechanics.
+    expect(markdown).not.toContain('For any service or capability request');
     expect(markdown).toContain('drive the supplied goal locally and recheck connect');
     expect(markdown).toContain('switchGoogleAccount');
     expect(markdown).toContain('end the turn and wait for its connection wake');
@@ -538,8 +542,8 @@ describe('using-beeline "Showing a photograph" section', () => {
 
 it('keeps the command contract aligned with asynchronous ordering and corner-only watches', () => {
   const text = usingBeelineSkillMarkdown('test-release');
-  expect(text).toContain('After ordering another agent, end the turn');
-  expect(text).toContain('its report wakes a new turn');
-  expect(text).toContain('do not sleep or poll');
+  // The always-on prompt carries the end-the-turn rule; the skill does not restate it.
+  expect(text).not.toContain('After ordering another agent, end the turn');
+  expect(roomPrompt()).toContain('After ordering another agent, end the turn; its report wakes a new turn; do not sleep or poll.');
   expect(text).not.toContain('read(address) and watch(address) across member Rooms, corners and DMs');
 });

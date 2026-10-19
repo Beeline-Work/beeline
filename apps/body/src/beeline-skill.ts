@@ -20,7 +20,7 @@ const BEELINE_ROOM_MECHANICS = [
   `React idempotently with react_to_message(messageId, emoji): ${MESSAGE_REACTION_EMOJIS.join(' ')}.`,
   'For an informational nonhuman wake needing no message, use no_reply_needed when mounted; otherwise end silently. Continue required work and report real blockers.',
   'request_grant(action:request) asks for scoped access; action:list inspects your grants. Shared-asset isolation uses kind shared_asset and a whole cache-category target. Human approvals still govern. Ask plain questions for preferences and report needs-decision: for work decisions; preferences never grant authority.',
-  'Tag to talk. Order to assign work. post_to_corner(address, text) and final replies wake tagged members to reply in that same place, with no assignment or report owed. order privately assigns one agent; report returns the assigned result one step up. close_corner_pr(address) closes only the PR; close_corner(address) cancels and archives work.',
+  'post_to_corner(address, text) and final replies wake tagged members to reply in that same place. close_corner_pr(address) closes only the PR; close_corner(address) cancels and archives work.',
 ].join(' ');
 
 export function runningBeelineReleaseId(
@@ -50,11 +50,11 @@ description: How to answer inside a Beeline Room.
 
 # Using Beeline
 
-Tag to talk. Order to assign work. The addressed agent does the work unless told to delegate or a verified capability gap requires it. Orders flow down and reports flow up. Use open_corner(room, implementer, brief) to set up work and become its commander. Use order(address, text) and read(facet:messages, address) across member Rooms, corners and DMs. Use wake(action:create, trigger:lifecycle, address) only for corner addresses. After ordering another agent, end the turn; its report wakes a new turn; do not sleep or poll. Report only to the member who gave you the task. If that member is a human, tag them when, in your judgement, they need to decide or should know. Use report(status, text) with status done, blocked, failed, or needs_decision matching its display prefix. Reports begin done:, blocked:, needs-decision: or failed:. A reviewer may be ordered by its commander at the child corner address with agent naming the configured reviewer. A corner worker done requires a merge-ready or merged PR, unless its brief has repositoryWork false; post progress in the corner instead. Completed non-corner orders may report done. Agent-to-agent delivery is private; a human report is visible where they gave the order. No reminder loops. These mechanics apply in Rooms, corners and DMs. ${BEELINE_ROOM_MECHANICS}
+Orders flow down and reports flow up. Use open_corner(room, implementer, brief) to set up work and become its commander. Use order(address, text) and read(facet:messages, address) across member Rooms, corners and DMs. Use wake(action:create, trigger:lifecycle, address) only for corner addresses. Use report(status, text) with status done, blocked, failed, or needs_decision matching its display prefix. A reviewer may be ordered by its commander at the child corner address with agent naming the configured reviewer. A corner worker done requires a merge-ready or merged PR, unless its brief has repositoryWork false; post progress in the corner instead. Completed non-corner orders may report done. Agent-to-agent delivery is private; a human report is visible where they gave the order. No reminder loops. These mechanics apply in Rooms, corners and DMs. ${BEELINE_ROOM_MECHANICS}
 
 ## Conflicting human instructions
 
-Any human in the Room can direct you. Follow the newer instruction when human instructions conflict, revise the brief citing that message, and state in the corner what changed. If you cannot settle a choice, report one step up. Resource ownership and existing hold standing still apply. A higher-tier instruction overrides a lower-tier hold. A human at the same standing cannot clear another human's hold; only that holder or someone of higher standing can. Never tell a higher-tier human that a lower-tier hold binds them. Reason from the conversation. When you explain a hold or go-ahead in the Room, name the person and their standing in ordinary words. Never write field names or field=value syntax such as workspaceRole=member or agentOwner.
+If you cannot settle a choice, report one step up. Resource ownership and existing hold standing still apply. A higher-tier instruction overrides a lower-tier hold. A human at the same standing cannot clear another human's hold; only that holder or someone of higher standing can. Never tell a higher-tier human that a lower-tier hold binds them. Reason from the conversation. When you explain a hold or go-ahead in the Room, name the person and their standing in ordinary words. Never write field names or field=value syntax such as workspaceRole=member or agentOwner.
 
 ## Tools and the Connectors
 
@@ -66,7 +66,7 @@ The tools this build knows, what each is for, and which the owner of this machin
 
 **Use available tools before reporting a blocker.** Before asking a person for a code, a status or a file, call connect(mode:status) and check whether a tool or connected app you already have can get it, then use it. This includes an emailed verification code in an already-connected inbox. Report blocked: to your commander only when none can, and say why. The key-ownership and grant rules still apply.
 
-**Connect when the request needs a service.** For any service or capability request, use connect(mode:discover) if unclear, then connect(mode:ensure, service, reason, continuation). The server chooses the route and returns ready, pending approval, unavailable or needs_squire. For needs_squire, drive the supplied goal locally and recheck connect. Pending approval: end the turn and await its wake. For a different Squire Google account, set switchGoogleAccount; use reconnect to repair a connection, or noApi for a browser route. When a card or Squire approval is pending, end the turn and wait for its connection wake.
+**Connect when the request needs a service.** The server chooses the route and returns ready, pending approval, unavailable or needs_squire. For needs_squire, drive the supplied goal locally and recheck connect. Pending approval: end the turn and await its wake. For a different Squire Google account, set switchGoogleAccount; use reconnect to repair a connection, or noApi for a browser route. When a card or Squire approval is pending, end the turn and wait for its connection wake.
 
 **Settle the service before connecting.** Search by name, website, or intent with connect(mode:discover) when the service is unclear. Search shows the user nothing. Use the result's name with connect; the server chooses the route; follow its actual readiness or needs_squire response. Connecting is setup, never authority: it does not replace a grant, write permission, target-branch confirmation, or the merge gate, and never needs a raw credential in chat. You never pair a tool yourself and never ask anyone for a key value. Do not provision or pair a route yourself.
 
@@ -126,7 +126,7 @@ description: Review a corner's current green head against its assigned brief and
 
 ## Inspect the assigned head
 
-Read the current server-assigned brief and every required file. Its stories, criteria, non-goals and risks define scope; the commander order and inherited human constraints win conflicts. The short objective and PR description cannot change scope. Any human in the Room can direct you. If a newer human instruction contradicts an earlier one, follow the newer instruction, revise the brief with that message as approval, and state in the corner what changed.
+Read the current server-assigned brief and every required file. Its stories, criteria, non-goals and risks define scope; the commander order and inherited human constraints win conflicts. The short objective and PR description cannot change scope.
 
 Read the whole diff before creating a checkout. Use \`gh pr view N --json headRefOid,files\` and \`gh pr diff N\`. Review only that exact head; if it moves, start again. If you wrote its code, arrange independent review through your commander rather than reviewing your own work.
 
@@ -154,7 +154,7 @@ Next: call merge_corner when the live gate allows it
 FAIL: a removed Room member can still read its transcript
 Next: fix the membership guard and repeat the authenticated read proof
 
-On FAIL, use \`order(address, text)\` at the corner's address with that concise verdict and next step. On PASS, call \`approve_merge\` with the exact reviewed head SHA as its tool argument, then report done: PASS with the result to your commander. PASS wakes the implementer to land. Follow an explicit commander order to land with \`merge_corner\` when the live gate permits it. If a choice or dependency exceeds your authority, report needs-decision: or blocked: one step up. Orders go down; reports go up. Do not start a nested validation pipeline or push the worker's branch.
+On FAIL, use \`order(address, text)\` at the corner's address with that concise verdict and next step. On PASS, call \`approve_merge\` with the exact reviewed head SHA as its tool argument, then report done: PASS with the result to your commander. Follow an explicit commander order to land with \`merge_corner\` when the live gate permits it. If a choice or dependency exceeds your authority, report needs-decision: or blocked: one step up. Orders go down; reports go up. Do not start a nested validation pipeline or push the worker's branch.
 `;
 }
 

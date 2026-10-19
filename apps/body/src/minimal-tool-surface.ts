@@ -857,7 +857,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
   },
   {
     "name": "order",
-    "description": "Privately assign one agent at address. A Room requires agent; a corner selects its implementer unless its commander names the configured reviewer. From a corner, DMs, parent Room and ancestor corners are forbidden: report to your commander. Receipt confirms acceptance, not completion. End this turn; its report resumes you. Never poll.",
+    "description": "Privately assign one agent at address. A Room requires agent; a corner selects its implementer unless its commander names the configured reviewer. From a corner, DMs, parent Room and ancestor corners are forbidden: report to your commander. Receipt confirms acceptance, not completion.",
     "inputSchema": {
       "type": "object",
       "required": ["address", "text"],
@@ -928,7 +928,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
   },
   {
     "name": "approve_merge",
-    "description": "Configured reviewer PASS (or eligible zero-check commander yes) on the exact headSha. Never review your own code. This records approval; it does not land or release a hold.",
+    "description": "Configured reviewer PASS (or eligible zero-check commander yes) on the exact headSha. This records approval; it does not land or release a hold.",
     "inputSchema": {
       "type": "object",
       "properties": {

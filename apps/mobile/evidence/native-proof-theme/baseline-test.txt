@@ -1,0 +1,49 @@
+
+ RUN  v3.2.7 /home/lunchbox/.local/state/beeline/corners/cffcc4fc-fd0a-4e89-9ff3-91ed60b586dd/apps/mobile
+
+ ❯ sources/native-proof-theme-bootstrap.test.ts (2 tests | 2 failed) 425ms
+   × native voice proof startup after Metro inline requires > scripts/multi-human-silence-native-proof.tsx selects a theme before loading the call stylesheet 356ms
+     → Call stylesheet evaluated before the initial theme was selected
+   × native voice proof startup after Metro inline requires > scripts/voice-delivery-native-proof.tsx selects a theme before loading the call stylesheet 68ms
+     → Call stylesheet evaluated before the initial theme was selected
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  sources/native-proof-theme-bootstrap.test.ts > native voice proof startup after Metro inline requires > scripts/multi-human-silence-native-proof.tsx selects a theme before loading the call stylesheet
+Error: Call stylesheet evaluated before the initial theme was selected
+ ❯ Object.create sources/native-proof-theme-bootstrap.test.ts:63:32
+     61|       if (id === 'react-native-unistyles') return {
+     62|         StyleSheet: { create: (definition: (theme: typeof obsidianThem…
+     63|           if (!selected) throw new Error('Call stylesheet evaluated be…
+       |                                ^
+     64|           stylesheetLoads++;
+     65|           return definition(obsidianTheme);
+ ❯ evalmachine.<anonymous>:62:59
+ ❯ nativeRequire sources/native-proof-theme-bootstrap.test.ts:58:9
+ ❯ Object.Call evalmachine.<anonymous>:47:54
+ ❯ sources/native-proof-theme-bootstrap.test.ts:78:12
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  sources/native-proof-theme-bootstrap.test.ts > native voice proof startup after Metro inline requires > scripts/voice-delivery-native-proof.tsx selects a theme before loading the call stylesheet
+Error: Call stylesheet evaluated before the initial theme was selected
+ ❯ Object.create sources/native-proof-theme-bootstrap.test.ts:63:32
+     61|       if (id === 'react-native-unistyles') return {
+     62|         StyleSheet: { create: (definition: (theme: typeof obsidianThem…
+     63|           if (!selected) throw new Error('Call stylesheet evaluated be…
+       |                                ^
+     64|           stylesheetLoads++;
+     65|           return definition(obsidianTheme);
+ ❯ evalmachine.<anonymous>:62:59
+ ❯ nativeRequire sources/native-proof-theme-bootstrap.test.ts:58:9
+ ❯ Object.Call evalmachine.<anonymous>:86:54
+ ❯ sources/native-proof-theme-bootstrap.test.ts:78:12
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  2 failed (2)
+   Start at  20:59:03
+   Duration  728ms (transform 57ms, setup 56ms, collect 69ms, tests 425ms, environment 0ms, prepare 45ms)
+

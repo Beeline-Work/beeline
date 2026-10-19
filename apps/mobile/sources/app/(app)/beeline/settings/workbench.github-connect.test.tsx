@@ -71,6 +71,16 @@ it('R2594: clicking Suggested GitHub opens its connection page when setup has no
   });
 });
 
+it('does not introduce management or delete controls for the Beeline GitHub App', async () => {
+  await clickGitHub(tree => {
+    const rendered = tree.root.findAll((node: any) => typeof node.type === 'string')
+      .flatMap((node: any) => [node.props.label, node.props.accessibilityLabel,
+        ...node.children.filter((child: unknown) => typeof child === 'string')]).join(' ');
+    expect(rendered).not.toContain('Beeline GitHub App');
+    expect(rendered).not.toMatch(/Delete GitHub|Disconnect GitHub|Remove GitHub/);
+  });
+});
+
 it('opens a server-issued GitHub authorization link through the desktop system browser', async () => {
   source.connectApp.mockResolvedValue({ appId: 'github-app', authorizationUrl: 'https://github.com/login/oauth/authorize?state=fixture' });
   await clickGitHub(() => {

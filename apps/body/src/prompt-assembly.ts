@@ -417,12 +417,13 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     id: 'room.place',
     topic: 'place',
     why: 'The agent must know it cannot write here, where the checkout is, and whether it has a shell.',
-    budgetBytes: 700,
+    budgetBytes: 1_000,
     layer: 'surface',
     surfaces: ['room'],
     render: ({ repository, shell }) =>
       [
         `This is a Beeline Room. The repository filesystem is read-only here.${repository ? ` The Room is bound to ${repository.name} (branch ${repository.branch}); the read-only checkout is at the session root.` : ''} Web search is available.`,
+        !repository ? 'For coding work without a linked repository, guide Room header → Repository → Link/Create (or create a repository-backed Room). If gh is unavailable, consult using-beeline for repository and organization setup before proposing a personal GitHub connection.' : '',
         shellLine(shell),
         shell?.available === false
           ? 'Read code with CodeGraph when available, then repository_io(action:search/read).'

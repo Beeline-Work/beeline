@@ -52,4 +52,31 @@ proof. No release or production deployment is assigned or performed.
 
 Related PR search found no superseding fix for this click handler.
 
-Local validation: `npm run corner:prepare` and root `npm run typecheck` passed.
+## Revised repository guidance (revision 3, work in progress)
+
+On 2026-10-19, a new read-only Squire browser session on the deployed site
+confirmed General → Room settings → Repository None/change → Link/Create →
+Choose a repo, listing existing personal and organization repositories. No
+repository was selected, and no authorization or binding changed. The owner
+already has a GitHub key, so this session cannot demonstrate Suggested GitHub.
+This confirms the guidance's navigation, not deployment of this branch.
+
+The assembled repository-less Room prompt now guides repository setup before
+personal connector setup. A real-model replay with the actual prompt and
+using-beeline skill returned actionable Room header → Repository → Link/Create
+guidance and the missing-organization installation action. See
+`guidance-replay.md`. This is a model replay, not an agent turn deployed in
+General. The saved case is in the format of pending PR #2606; its runner is not
+on this branch yet.
+
+Personal credential inspection through Squire's sealed HTTP boundary returned
+GitHub `/user` identity `lunchboxfortwo` and repository permissions including
+`push: true` for `Beeline-Work/beeline`. No personal push was attempted. The
+current corner git launcher still refreshes the Beeline App token. Squire's
+mounted personal credential route provides HTTP requests, not credential
+injection into native git; personal push precedence remains unimplemented.
+Revision 3's actual agent-chat and successful personal-push criteria remain
+outstanding. This PR must remain draft and must not be approved as complete.
+
+Local validation: `npm run corner:prepare`, root `npm run typecheck`, and 154
+body prompt/skill tests passed.

@@ -47,6 +47,23 @@ const repositoryBrief: CornerBrief = {
   spec: '## Intent\nFix the widget\n## Assigned files\napps/body/src/widget.ts',
 };
 
+describe('R2594 repository setup guidance', () => {
+  it('guides repository setup in a Room with no repository and unavailable shell', () => {
+    const prompt = assembleSessionPrompt({ surface: 'room', agentName: 'Bee',
+      agentCommand: 'claude-agent-acp', shell: { available: false } }).systemPrompt;
+    expect(prompt).toContain('Room header → Repository → Link/Create');
+    expect(prompt).toContain('organization setup before proposing a personal GitHub connection');
+    const skill = usingBeelineSkillMarkdown('test');
+    expect(skill).toContain('Add repositories, accounts, or organizations');
+    expect(skill).toContain('not a removable Connectors entry');
+  });
+  it('does not ask a repository-backed Room to link its repository again', () => {
+    const prompt = assembleSessionPrompt({ surface: 'room', agentName: 'Bee',
+      agentCommand: 'claude-agent-acp', repository: { name: 'owner/widgets', branch: 'main' } }).systemPrompt;
+    expect(prompt).not.toContain('For coding work without a linked repository');
+  });
+});
+
 describe('corner wake reporting (Reproduction schedule-silence-4)', () => {
   it.each(['report', 'order', 'watched_corner', 'corner_check', 'schedule', 'subscribed_event', 'system'])('makes a %s wake quiet without a progress nudge', (commandReason) => {
     const text = assembleTurnPrompt({ surface: 'room', task: { body: 'Handle this wake', commandReason } }).text;

@@ -34,7 +34,8 @@ export type TurnActivityFile = {
 
 export type TurnActivityAction = {
   id: string;
-  kind: 'tool' | 'thought';
+  /** `note` is an earlier text run of the turn, shown in full between tools. */
+  kind: 'tool' | 'thought' | 'note';
   weight: ActionWeight;
   title: string;
   /** The transcript's compact verb-object copy. Always <= 40 characters. */
@@ -586,12 +587,32 @@ export function buildTurnActivity(items: readonly AgentActivityItem[]): TurnActi
   let thoughtMs = 0;
   let anonymousIndex = 0;
   let observedIndex = 0;
+  let noteIndex = 0;
 
   for (const item of items) {
     if (item.plan) plan = item.plan;
     if (item.kind === 'output') {
       const prose = item.text?.trim();
       if (prose && narration.at(-1) !== prose) narration.push(prose);
+      continue;
+    }
+    if (item.kind === 'note') {
+      // An earlier text run keeps its place between the tool lines. It is
+      // shown whole, so the label is the full text, never a clamp of it.
+      const text = item.text?.trim();
+      if (text) {
+        ordered.push({
+          kind: 'projected',
+          step: {
+            id: item.id ?? `note-${noteIndex++}`,
+            kind: 'note',
+            weight: 'observation',
+            title: text,
+            label: text,
+            outcome: 'success',
+          },
+        });
+      }
       continue;
     }
     if (item.kind === 'thinking') {

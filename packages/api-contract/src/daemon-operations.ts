@@ -2000,9 +2000,13 @@ export type ConnectorAssignmentsResult = {
   readonly assignments: readonly ConnectorAssignment[];
 };
 export type DaemonActivityItem = {
-  readonly kind: 'thinking' | 'tool' | 'output' | 'summary';
+  readonly kind: 'thinking' | 'tool' | 'output' | 'summary' | 'note';
   readonly title: string;
-  /** Durable corner narration when `kind='output'`; never private thought text. */
+  /**
+   * Durable corner narration when `kind='output'`; an earlier assistant text
+   * run shown inside the steps line when `kind='note'`. Never private thought
+   * text.
+   */
   readonly text?: string;
   readonly operation?: string;
   readonly status?: string;

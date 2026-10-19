@@ -63,7 +63,7 @@ reads the steps. An agent starts a run with `start_workflow`, binding
 | `pull` | triager | Reads new `feedback_items` and each report's `message_ids` context through the vaulted database credential, groups them by problem, and ranks the groups by report count. It judges which problems are prompt defects (no label marks them) and drafts a saved case for each (`docs/prompts/cases/`). |
 | `adapters` | triager | Runs `scripts/check-acp-adapters.mjs`: latest adapters in temp directories, no credentials, ACP initialize/session/new only. Versioned failures join the same approval card and dispatch path. |
 | `approve` | a person | A card with **dispatch** or **skip**. Nothing is dispatched before someone answers. |
-| `dispatch` | triager | One fix corner per approved problem, opened with `open_corner` (from a corner it opens a sibling in the parent Room), with an agent tagged. The brief lists the item ids and requires the fix PR body to carry `Feedback items: <ids>`. A prompt-fix brief also carries the drafted case; its PR adds the case and passes the `PROMPT CASES` check. |
+| `dispatch` | triager | One fix corner per approved problem, opened with `open_corner` (from a corner it opens a sibling in the parent Room), with an agent tagged. The brief lists the item ids and requires the fix PR body to carry `Feedback items: <ids>`. A prompt-fix brief also carries the drafted case; its PR adds the case, passes the `PROMPT CASES` check, and carries an agent's replay table. |
 | `done` | | The run ends. |
 
 Feedback is written by people across all of Beeline, so the procedure treats
@@ -76,10 +76,11 @@ saved case (`docs/prompts/cases/`, format in its README). When triage judges a
 problem to be a prompt defect, it drafts the case: the place, what the agent saw
 in invented names, its tools, and a pass rule on tool calls. The prompt-fix corner
 adds the case in its pull request. The `PROMPT CASES` check
-(`.github/workflows/prompt-cases.yml`) replays every case against the real model
-on any pull request that changes prompt text. It blocks when a case that passed
-on the target branch now fails, or when a new case does not pass. The check
-needs the repository secret `ANTHROPIC_API_KEY` (or `OPENROUTER_API_KEY`).
+(`.github/workflows/prompt-cases.yml`) validates every case and builds its
+prompt; it calls no model and needs no secret. The model replay is done by an
+agent: the worker orders one other agent in the Room to replay every case on the
+pull request head with its own model and post the pass/fail table on the pull
+request. The new case must pass, and no other case may fail.
 
 ### Production database access
 

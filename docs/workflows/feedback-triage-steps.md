@@ -165,8 +165,11 @@ the people, Rooms or emails behind it. Tag the agent best suited to the work in
 that corner.
 
 For a prompt defect, the brief also carries the drafted case. It requires the
-pull request to add that case as `docs/prompts/cases/<id>.json`, to show the case
-failing on the current prompt and passing with the fix (`npm run prompt-cases --
---only <id>`), and to keep every other saved case passing in the `PROMPT CASES`
-check. Hand off `dispatched` with `corners` listing each corner's
+pull request to add that case as `docs/prompts/cases/<id>.json` and to pass the
+`PROMPT CASES` check. It also requires a replay: once the pull request is open,
+the worker orders one other agent in the Room to replay every saved case on the
+pull request head with its own model (`docs/prompts/cases/README.md`, Replay).
+That agent posts the pass/fail table on the pull request. The new case must
+fail on the old prompt and pass with the fix, and every other case must pass.
+The reviewer does not pass the pull request without that table. Hand off `dispatched` with `corners` listing each corner's
 `cornerId` (from `open_corner`), its name and its item ids.

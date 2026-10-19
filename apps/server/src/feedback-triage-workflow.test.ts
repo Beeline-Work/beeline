@@ -213,7 +213,8 @@ describe('feedback-triage workflow', () => {
     expect(FEEDBACK_TRIAGE_STEPS).toContain('Never quote a report, and never name\nthe people, Rooms, Workspaces or emails behind it.');
     expect(FEEDBACK_TRIAGE_STEPS).toContain('For a prompt defect, the brief also carries the drafted case.');
     expect(FEEDBACK_TRIAGE_STEPS).toContain('add that case as `docs/prompts/cases/<id>.json`');
-    expect(FEEDBACK_TRIAGE_STEPS).toContain('`PROMPT CASES`\ncheck');
+    expect(FEEDBACK_TRIAGE_STEPS).toContain('the worker orders one other agent in the Room to replay every saved case on the\npull request head with its own model');
+    expect(FEEDBACK_TRIAGE_STEPS).toContain('The reviewer does not pass the pull request without that table.');
     expect(FEEDBACK_TRIAGE_CONTRACT.handoffs.pull!.requires).toEqual(['problems']);
   });
 

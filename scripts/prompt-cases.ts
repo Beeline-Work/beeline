@@ -1,29 +1,19 @@
 /**
- * Replays the saved prompt behavior cases in `docs/prompts/cases/` against a
- * real model. Run with `node --import tsx scripts/prompt-cases.ts`.
+ * The saved prompt behavior cases in `docs/prompts/cases/`. Run with
+ * `node --import tsx scripts/prompt-cases.ts`; it never calls a model.
  *
- *   --check                 offline: validate every case, assemble its prompt,
- *                           and require one case per prompt section; no model.
- *   --baseline-root <dir>   a checkout of the target branch. A case that fails
- *                           here and is unchanged there is replayed against that
- *                           checkout's prompt; failing there too, it is reported
- *                           as already failing instead of as a regression.
- *   --only <id,id>          replay only these cases.
- *   --samples <n>           samples per case (default 3).
- *   --need <n>              passing samples a case needs (default 2).
- *
- * Each case builds the session and turn prompt with the real assembler
- * (`apps/body/src/prompt-assembly.ts`) and the real tool descriptions
- * (`apps/body/src/minimal-tool-surface.ts`), sends the turn to the model, answers tool calls with stub results for up to four
- * steps, and evaluates the case's pass rule on every call and all text.
- *
- * Environment (one key required unless --check): ANTHROPIC_API_KEY calls the
- * Anthropic Messages API directly (ANTHROPIC_BASE_URL overrides the host);
- * otherwise OPENROUTER_API_KEY calls OpenRouter (OPENROUTER_BASE_URL overrides
- * it). PROMPT_CASES_MODEL overrides the model, default the agents' default
- * Claude model.
+ *   (no flag)            validate every case, build its prompt with the real
+ *                        assembler (`apps/body/src/prompt-assembly.ts`) and
+ *                        tool descriptions (`apps/body/src/minimal-tool-surface.ts`),
+ *                        and require one case per prompt section. CI runs this.
+ *   --export <dir>       write one self-contained replay prompt per case. An
+ *                        agent replays them with its own model (see
+ *                        docs/prompts/cases/README.md).
+ *   --grade <dir>        grade the recorded answers `<id>.<n>.json` against
+ *                        each case's pass rule and print a pass/fail table.
+ *   --only <id,id>       limit export or grading to these cases.
  */
-import { appendFileSync, existsSync, readdirSync, readFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import type * as Assembly from '../apps/body/src/prompt-assembly.js';
@@ -48,16 +38,9 @@ const option = (name: string): string | undefined => {
   return index === -1 ? undefined : args[index + 1];
 };
 
-const SAMPLES = Number(option('--samples') ?? 3);
-const NEED = Number(option('--need') ?? 2);
+const SAMPLES = 3;
+const NEED = 2;
 const MAX_STEPS = 4;
-const CONCURRENCY = 6;
-// ANTHROPIC_API_KEY wins; OPENROUTER_API_KEY is the fallback provider.
-const PROVIDER = process.env.ANTHROPIC_API_KEY ? 'anthropic' : process.env.OPENROUTER_API_KEY ? 'openrouter' : undefined;
-// The Claude model the agent setup selects by default (`DEFAULT_MODELS.claude`, apps/body/src/connect-command.ts).
-const MODEL = process.env.PROMPT_CASES_MODEL || (PROVIDER === 'openrouter' ? 'anthropic/claude-opus-4.1' : 'claude-opus-4-1');
-const ANTHROPIC_BASE_URL = (process.env.ANTHROPIC_BASE_URL || 'https://api.anthropic.com').replace(/\/$/, '');
-const OPENROUTER_BASE_URL = (process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/$/, '');
 const SILENT_TOOL_NAME = 'no_reply_needed';
 // Fixed so a case's prompt does not change with the runner's own host.
 const FIXED_MEMORY_MAX_BYTES = 32 * 1024 ** 3;
@@ -65,14 +48,13 @@ const FIXED_MEMORY_MAX_BYTES = 32 * 1024 ** 3;
 type ToolDefinition = ToolSurface.ToolDefinition;
 
 interface PromptSource {
-  readonly label: string;
   readonly assembly: typeof Assembly;
   readonly tools: typeof ToolSurface;
 }
 
-async function loadSource(root: string, label: string): Promise<PromptSource> {
+async function loadSource(root: string): Promise<PromptSource> {
   const load = (file: string) => import(pathToFileURL(join(root, 'apps', 'body', 'src', file)).href);
-  return { label, assembly: await load('prompt-assembly.ts'), tools: await load('minimal-tool-surface.ts') };
+  return { assembly: await load('prompt-assembly.ts'), tools: await load('minimal-tool-surface.ts') };
 }
 
 const NATIVE_TOOLS: Record<(typeof NATIVE_TOOL_NAMES)[number], ToolDefinition> = {
@@ -188,176 +170,94 @@ function check(source: PromptSource, cases: readonly PromptCase[]): string[] {
   return problems;
 }
 
-interface ModelCall {
-  readonly id: string;
-  readonly name: string;
-  readonly args: Record<string, unknown>;
-}
-
-/** One model provider: it sends the conversation and appends each answer and its stub tool results. */
-interface Conversation {
-  send(): Promise<{ text: string; calls: ModelCall[] }>;
-  answer(calls: readonly ModelCall[], results: readonly string[]): void;
-}
-
-const RETRY_STATUSES = [0, 408, 429, 500, 502, 503, 504, 529];
-
-async function postJson(url: string, headers: Record<string, string>, body: unknown): Promise<unknown> {
-  for (let attempt = 1; ; attempt++) {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { ...headers, 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(180_000),
-    }).catch((error: Error) => ({ ok: false, status: 0, text: async () => error.message }) as const);
-    const text = await response.text();
-    if (response.ok) return JSON.parse(text) as unknown;
-    if (attempt >= 4 || !RETRY_STATUSES.includes(response.status)) {
-      throw new Error(`model request failed (${response.status}): ${text.slice(0, 300)}`);
-    }
-    await new Promise((done) => setTimeout(done, 2_000 * 2 ** attempt));
-  }
-}
-
-const parseArgs = (raw: string): Record<string, unknown> => {
-  try {
-    return JSON.parse(raw || '{}') as Record<string, unknown>;
-  } catch {
-    return { unparsed: raw };
-  }
-};
-
-/** The Anthropic Messages API, called directly. */
-function anthropicConversation(system: string, user: string, tools: readonly ToolDefinition[]): Conversation {
-  const messages: Array<{ role: string; content: unknown }> = [{ role: 'user', content: user }];
-  return {
-    async send() {
-      const reply = (await postJson(
-        `${ANTHROPIC_BASE_URL}/v1/messages`,
-        { 'x-api-key': process.env.ANTHROPIC_API_KEY!, 'anthropic-version': '2023-06-01' },
-        {
-          model: MODEL,
-          max_tokens: 2_000,
-          ...(system ? { system } : {}),
-          messages,
-          tools: tools.map((tool) => ({ name: tool.name, description: tool.description, input_schema: tool.inputSchema })),
-        },
-      )) as { content?: Array<{ type: string; text?: string; id?: string; name?: string; input?: Record<string, unknown> }> };
-      const content = reply.content ?? [];
-      messages.push({ role: 'assistant', content });
-      return {
-        text: content.filter((block) => block.type === 'text').map((block) => block.text ?? '').join('\n'),
-        calls: content
-          .filter((block) => block.type === 'tool_use')
-          .map((block) => ({ id: block.id!, name: block.name!, args: block.input ?? {} })),
-      };
-    },
-    answer(calls, results) {
-      messages.push({
-        role: 'user',
-        content: calls.map((call, index) => ({ type: 'tool_result', tool_use_id: call.id, content: results[index] })),
-      });
-    },
-  };
-}
-
-/** OpenRouter's OpenAI-compatible chat completions. */
-function openRouterConversation(system: string, user: string, tools: readonly ToolDefinition[]): Conversation {
-  const messages: Array<Record<string, unknown>> = [
-    ...(system ? [{ role: 'system', content: system }] : []),
-    { role: 'user', content: user },
-  ];
-  return {
-    async send() {
-      const reply = (await postJson(
-        `${OPENROUTER_BASE_URL}/chat/completions`,
-        { authorization: `Bearer ${process.env.OPENROUTER_API_KEY}` },
-        {
-          model: MODEL,
-          max_tokens: 2_000,
-          messages,
-          tools: tools.map((tool) => ({ type: 'function', function: { name: tool.name, description: tool.description, parameters: tool.inputSchema } })),
-        },
-      )) as { choices?: Array<{ message?: { content?: string | null; tool_calls?: Array<{ id: string; function: { name: string; arguments: string } }> } }> };
-      const message = reply.choices?.[0]?.message;
-      if (!message) throw new Error(`model returned no message: ${JSON.stringify(reply).slice(0, 300)}`);
-      const toolCalls = message.tool_calls ?? [];
-      messages.push({ role: 'assistant', content: message.content ?? null, ...(toolCalls.length ? { tool_calls: toolCalls } : {}) });
-      return {
-        text: message.content ?? '',
-        calls: toolCalls.map((call) => ({ id: call.id, name: call.function.name, args: parseArgs(call.function.arguments) })),
-      };
-    },
-    answer(calls, results) {
-      calls.forEach((call, index) => messages.push({ role: 'tool', tool_call_id: call.id, content: results[index] }));
-    },
-  };
-}
-
-async function replay(source: PromptSource, testCase: PromptCase): Promise<Transcript> {
+/**
+ * One self-contained replay prompt. The replaying agent hands it to a fresh
+ * session of its own model, which answers with the calls and text it would
+ * produce on that turn.
+ */
+function replayPrompt(source: PromptSource, testCase: PromptCase): string {
   const prompt = assemble(source, testCase);
-  const tools = toolsFor(source, testCase);
-  const conversation = (PROVIDER === 'anthropic' ? anthropicConversation : openRouterConversation)(prompt.system, prompt.user, tools);
-  const calls: ToolCall[] = [];
-  const text: string[] = [];
-  for (let step = 0; step < MAX_STEPS; step++) {
-    const answer = await conversation.send();
-    if (answer.text.trim()) text.push(answer.text.trim());
-    if (!answer.calls.length) break;
-    calls.push(...answer.calls.map((call) => ({ name: call.name, args: call.args })));
-    conversation.answer(answer.calls, answer.calls.map((call) => testCase.toolResults?.[call.name] ?? '{"ok":true}'));
-    if (answer.calls.some((call) => call.name === SILENT_TOOL_NAME)) break;
-  }
-  return { calls, text: text.join('\n\n') };
+  const tools = toolsFor(source, testCase).map((tool) => ({ name: tool.name, description: tool.description, input_schema: tool.inputSchema }));
+  return [
+    `# Prompt case replay: ${testCase.id}`,
+    '',
+    'You are the agent described below, on exactly one turn. Do not run anything. Decide what you would do on this turn with the tools listed.',
+    testCase.toolResults
+      ? `Tool calls return these stub results by tool name: ${JSON.stringify(testCase.toolResults)}. Any other call returns {"ok":true}.`
+      : 'Every tool call returns {"ok":true}.',
+    `Continue for up to ${MAX_STEPS} rounds of tool calls, as you would after those results.`,
+    'Reply with only one JSON object and nothing else:',
+    '{"calls":[{"name":"<tool name>","args":{...}}],"text":"<everything you would post as your reply, or an empty string>"}',
+    '',
+    '## System prompt',
+    '',
+    '````text',
+    prompt.system || '(none: the session rules ride in the turn below)',
+    '````',
+    '',
+    '## Tools',
+    '',
+    '````json',
+    JSON.stringify(tools),
+    '````',
+    '',
+    '## Turn',
+    '',
+    '````text',
+    prompt.user,
+    '````',
+    '',
+  ].join('\n');
 }
 
 interface CaseResult {
   readonly id: string;
-  readonly outcome: 'pass' | 'fail' | 'error';
+  readonly section: string;
+  readonly outcome: 'pass' | 'fail' | 'needs samples' | 'missing';
   readonly passed: number;
   readonly sampled: number;
-  readonly reasons: readonly string[];
+  readonly reason: string;
 }
 
-async function runCase(source: PromptSource, testCase: PromptCase): Promise<CaseResult> {
-  const samples: boolean[] = [];
-  const reasons: string[] = [];
-  try {
-    while (caseOutcome(samples, SAMPLES, NEED) === 'open') {
-      const verdict = evaluateRule(testCase.pass, await replay(source, testCase));
-      samples.push(verdict.pass);
-      if (!verdict.pass) reasons.push(verdict.reason);
-    }
-  } catch (error) {
-    return { id: testCase.id, outcome: 'error', passed: samples.filter(Boolean).length, sampled: samples.length, reasons: [...reasons, (error as Error).message] };
-  }
-  const outcome = caseOutcome(samples, SAMPLES, NEED) === 'pass' ? 'pass' : 'fail';
-  return { id: testCase.id, outcome, passed: samples.filter(Boolean).length, sampled: samples.length, reasons };
-}
-
-async function runAll(source: PromptSource, cases: readonly PromptCase[]): Promise<CaseResult[]> {
-  const results: CaseResult[] = new Array(cases.length);
-  let next = 0;
-  await Promise.all(
-    Array.from({ length: Math.min(CONCURRENCY, cases.length) }, async () => {
-      while (next < cases.length) {
-        const index = next++;
-        const result = await runCase(source, cases[index]!);
-        results[index] = result;
-        console.log(`${result.outcome.toUpperCase().padEnd(5)} ${result.id} (${result.passed}/${result.sampled}, ${source.label})${result.outcome === 'pass' ? '' : `\n      ${result.reasons.join('\n      ')}`}`);
+/**
+ * Grades `<id>.<n>.json` answers in `dir`. One passing sample passes a case;
+ * a failing case needs two more samples and passes at 2 of 3.
+ */
+function grade(dir: string, cases: readonly PromptCase[]): CaseResult[] {
+  const files = readdirSync(dir);
+  return cases.map((testCase) => {
+    const samples = files
+      .filter((file) => new RegExp(`^${testCase.id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\.\\d+\\.json$`).test(file))
+      .sort();
+    const verdicts = samples.map((file) => {
+      try {
+        const answer = JSON.parse(readFileSync(join(dir, file), 'utf8')) as Partial<Transcript>;
+        const calls: ToolCall[] = Array.isArray(answer.calls)
+          ? answer.calls.map((call) => ({ name: String(call?.name ?? ''), args: (call?.args ?? {}) as Record<string, unknown> }))
+          : [];
+        return evaluateRule(testCase.pass, { calls, text: typeof answer.text === 'string' ? answer.text : '' });
+      } catch (error) {
+        return { pass: false, reason: `${file}: ${(error as Error).message}` };
       }
-    }),
-  );
-  return results;
+    });
+    const passes = verdicts.map((verdict) => verdict.pass);
+    const passed = passes.filter(Boolean).length;
+    const reason = verdicts.find((verdict) => !verdict.pass)?.reason ?? '';
+    const base = { id: testCase.id, section: testCase.section, passed, sampled: passes.length, reason };
+    if (!passes.length) return { ...base, outcome: 'missing', reason: 'no answer recorded' };
+    if (passed === passes.length) return { ...base, outcome: 'pass' };
+    const outcome = caseOutcome(passes, SAMPLES, NEED);
+    return { ...base, outcome: outcome === 'open' ? 'needs samples' : outcome };
+  });
 }
 
 function summarize(lines: string[]): void {
-  console.log(`\n${lines.join('\n')}`);
+  console.log(lines.join('\n'));
   if (process.env.GITHUB_STEP_SUMMARY) appendFileSync(process.env.GITHUB_STEP_SUMMARY, `${lines.join('\n')}\n`);
 }
 
 async function main(): Promise<number> {
-  const head = await loadSource(repoRoot, 'head');
+  const head = await loadSource(repoRoot);
   const only = option('--only')?.split(',').map((id) => id.trim()).filter(Boolean);
   const all = loadCases();
   const problems = check(head, all);
@@ -365,52 +265,34 @@ async function main(): Promise<number> {
     summarize(['## Prompt cases: invalid case library', ...problems.map((problem) => `- ${problem}`)]);
     return 1;
   }
-  if (flag('--check')) {
-    console.log(`${all.length} prompt cases valid; every prompt section has a case.`);
-    return 0;
-  }
-  if (!PROVIDER) {
-    summarize(['## Prompt cases', 'Neither ANTHROPIC_API_KEY nor OPENROUTER_API_KEY is set, so no case was replayed.']);
-    return 1;
-  }
   const cases = only ? all.filter((testCase) => only.includes(testCase.id)) : all;
   if (only && cases.length !== only.length) {
     console.error(`unknown case id in --only: ${only.filter((id) => !cases.some((testCase) => testCase.id === id)).join(', ')}`);
     return 1;
   }
-  console.log(`Replaying ${cases.length} cases on ${MODEL} (${PROVIDER}): ${SAMPLES} samples, ${NEED} must pass.`);
-  const results = await runAll(head, cases);
-
-  // A failing case that is unchanged on the target branch is replayed there.
-  const baselineRoot = option('--baseline-root');
-  const alreadyFailing = new Set<string>();
-  if (baselineRoot) {
-    const unchanged = cases.filter((testCase) => {
-      const result = results.find((entry) => entry.id === testCase.id)!;
-      const baselineFile = join(baselineRoot, 'docs', 'prompts', 'cases', `${testCase.id}.json`);
-      return result.outcome === 'fail' && existsSync(baselineFile) &&
-        readFileSync(baselineFile, 'utf8') === readFileSync(join(casesDir, `${testCase.id}.json`), 'utf8');
-    });
-    if (unchanged.length) {
-      console.log(`\nReplaying ${unchanged.length} failing unchanged cases against the target branch prompt.`);
-      const base = await loadSource(resolve(baselineRoot), 'target');
-      for (const result of await runAll(base, unchanged)) {
-        if (result.outcome === 'fail') alreadyFailing.add(result.id);
-      }
-    }
+  const exportDir = option('--export');
+  if (exportDir) {
+    mkdirSync(exportDir, { recursive: true });
+    for (const testCase of cases) writeFileSync(join(exportDir, `${testCase.id}.prompt.md`), replayPrompt(head, testCase));
+    console.log(`Wrote ${cases.length} replay prompts to ${exportDir}. Save each answer as <id>.1.json there, then run --grade ${exportDir}.`);
+    return 0;
   }
-
-  const failed = results.filter((result) => result.outcome === 'fail' && !alreadyFailing.has(result.id));
-  const errored = results.filter((result) => result.outcome === 'error');
-  const row = (result: CaseResult) => `- \`${result.id}\` ${result.passed}/${result.sampled}: ${result.reasons[0] ?? ''}`.slice(0, 600);
-  summarize([
-    '## Prompt cases',
-    `${results.filter((result) => result.outcome === 'pass').length}/${results.length} cases passed on ${MODEL} (${NEED} of ${SAMPLES} samples).`,
-    ...(failed.length ? ['', '### Failing (regressed, new or changed)', ...failed.map(row)] : []),
-    ...(alreadyFailing.size ? ['', '### Already failing on the target branch (not blocking)', ...results.filter((result) => alreadyFailing.has(result.id)).map(row)] : []),
-    ...(errored.length ? ['', '### Model errors', ...errored.map(row)] : []),
-  ]);
-  return failed.length || errored.length ? 1 : 0;
+  const gradeDir = option('--grade');
+  if (gradeDir) {
+    const results = grade(gradeDir, cases);
+    const blocking = results.filter((result) => result.outcome !== 'pass');
+    summarize([
+      `**Prompt case replay:** ${results.length - blocking.length}/${results.length} passed.`,
+      '',
+      '| Case | Section | Result | Samples passed |',
+      '| --- | --- | --- | --- |',
+      ...results.map((result) =>
+        `| \`${result.id}\` | \`${result.section}\` | ${result.outcome.toUpperCase()}${result.reason && result.outcome !== 'pass' ? `: ${result.reason.replace(/\|/g, '\\|').replace(/\n/g, ' ').slice(0, 240)}` : ''} | ${result.passed}/${result.sampled} |`),
+    ]);
+    return blocking.length ? 1 : 0;
+  }
+  console.log(`${all.length} prompt cases valid; every prompt section has a case and every case renders its section.`);
+  return 0;
 }
 
 void main().then((code) => {

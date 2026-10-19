@@ -2,9 +2,14 @@
 
 Each JSON file here is one saved behavior case: a situation an agent was in, and
 the rule a correct answer must pass. Together they define correct agent
-behavior. The `PROMPT CASES` check (`.github/workflows/prompt-cases.yml`)
-replays them against the real model on every pull request that changes the
-prompt sections, the Beeline skills, the tool descriptions or the cases.
+behavior. On every pull request that changes prompt text (the prompt sections,
+the Beeline skills, the tool descriptions or the cases), two things prove them:
+
+- The `PROMPT CASES` check (`.github/workflows/prompt-cases.yml`) validates every
+  case and builds its prompt with the real assembler and tool descriptions. It
+  never calls a model and needs no secret.
+- One agent in the Room replays the cases with its own model and posts a
+  pass/fail table on the pull request (see Replay below).
 
 Every prompt section in `apps/body/src/prompt-assembly.ts` has at least one case.
 A new section needs a case before `npm run test:prompt-cases` passes.
@@ -56,22 +61,32 @@ An argument path may be dotted (`http.url`); `*` means all arguments as JSON.
 A matcher is a plain value (equal), `{"equals": value}`, `{"contains": "text"}`,
 `{"matches": "regex", "flags": "i"}` or `{"not": matcher}`.
 
-## Running
+## Checking
 
 ```
-npm run test:prompt-cases                        # offline: rule tests, case validity, section coverage
-ANTHROPIC_API_KEY=… npm run prompt-cases         # replay every case
-ANTHROPIC_API_KEY=… npm run prompt-cases -- --only tagging-no-stray-handle
+npm run test:prompt-cases     # rule tests, case validity, one case per section
 ```
 
-The runner builds each prompt with the real assembler and tool descriptions,
-sends it to the Anthropic Messages API with `ANTHROPIC_API_KEY`, or to OpenRouter
-with `OPENROUTER_API_KEY` (`OPENROUTER_BASE_URL` points it at a proxy). The model
-is `PROMPT_CASES_MODEL`, default the agents' default Claude model. It answers
-tool calls with stub results for up to four steps, and checks the pass rule on everything the model did. It samples each case up to 3
-times; a case passes at 2 of 3.
+## Replay
 
-In CI, a case that fails and is unchanged on the target branch is replayed
-against the target branch's prompt. If it fails there too, it is listed as
-already failing and does not block. Every other failure blocks: a regressed
-case, and a new or changed case that does not pass.
+When a pull request changes prompt text, its worker orders one other agent in
+the Room to replay the cases on the pull request head. Feedback triage writes
+this into every prompt-fix brief, and the reviewer does not pass the pull
+request without the posted table. The replaying agent:
+
+1. Checks out the pull request head and runs `npm run corner:prepare` (or builds
+   `@beeline/api-contract`).
+2. Runs `npm run prompt-cases -- --export <dir>`. This writes one self-contained
+   `<id>.prompt.md` per case: the system prompt, the tools, the stub results and
+   the turn, built with the real assembler and tool descriptions.
+3. Gives each prompt file to a fresh session of its own model, never to its own
+   context, and saves the JSON answer as `<dir>/<id>.1.json`. With Claude Code:
+   `claude -p --tools "" --strict-mcp-config < <dir>/<id>.prompt.md > <dir>/<id>.1.json`.
+4. Runs `npm run prompt-cases -- --grade <dir>`. One passing sample passes a
+   case. A failing case shows `NEEDS SAMPLES`: record `<id>.2.json` and
+   `<id>.3.json` and grade again; it passes at 2 of 3.
+5. Posts the printed table on the pull request (`gh pr comment <number>
+   --body-file <file>`) and reports the result to whoever ordered the replay.
+
+Every case must pass. A new case for a prompt fix must also fail when replayed
+on the prompt before the fix (`--only <id>`).

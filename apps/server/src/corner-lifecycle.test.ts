@@ -2902,6 +2902,43 @@ describe('unfinished merge claim recovery (R6a–R6f)', () => {
     expect(await implementersMerge()).toBe(0);
   });
 
+  it('Reproduction R1: confirmed HTTP 405 refusals release the head for repeated retries', async () => {
+    const cornerId = await approved();
+    githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId));
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      githubApp.mergePullRequest.mockRejectedValueOnce(new Error('HTTP 405: 2 of 13 required status checks are expected'));
+      expect(await github.landCorner(cornerId)).toBe(true);
+      expect(await claimHead(cornerId)).toBeNull();
+      expect((await reasons(cornerId, A)).filter(reason => reason === 'corner_merge_refused')).toHaveLength(attempt);
+    }
+    expect(await github.landCorner(cornerId)).toBe(true);
+    expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(3);
+    expect(await github.landCorner(cornerId)).toBe(false);
+    expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(3);
+    expect((await db.query(`SELECT 1 FROM messages WHERE room_id=$1 AND text LIKE '%refused to merge%'`, [cornerId])).rowCount).toBe(2);
+    await mergedWebhook(cornerId, 7, SHA);
+    const visible = (await phone.readCorners(R, H, false, true))?.corners.find(row => row.corner.id === cornerId);
+    expect(visible).toMatchObject({ state: 'archived', lifecycle: { outcome: 'landed' } });
+    console.info('R1: two confirmed 405 refusals each woke the worker; the same head reached GitHub again and merged once.');
+  });
+
+  it.each(['merged', 'read fails', 'different head', 'different branch'])(
+    'Reproduction R1 safety: %s keeps the head claimed after a merge error', async outcome => {
+      const cornerId = await approved();
+      githubApp.readPullRequest.mockResolvedValueOnce(providerPr(cornerId));
+      if (outcome === 'read fails') githubApp.readPullRequest.mockRejectedValueOnce(new Error('read failed'));
+      else githubApp.readPullRequest.mockResolvedValueOnce({
+        ...providerPr(cornerId, outcome === 'merged', outcome === 'different head' ? '9'.repeat(40) : SHA),
+        ...(outcome === 'different branch' ? { headRef: 'feature/other' } : {}),
+      });
+      githubApp.mergePullRequest.mockRejectedValueOnce(new Error('HTTP 405'));
+      expect(await github.landCorner(cornerId)).toBe(true);
+      if (outcome !== 'merged') expect(await claimHead(cornerId)).toBe(SHA);
+      expect(await github.landCorner(cornerId)).toBe(false);
+      expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
+    },
+  );
+
   it('Reproduction R6f(ii): an already-refused head is never recovered after reapproval', async () => {
     const cornerId = await approved();
     githubApp.mergePullRequest.mockRejectedValueOnce(new Error('GitHub pull request merge failed: HTTP 405'));

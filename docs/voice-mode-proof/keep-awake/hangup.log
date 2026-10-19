@@ -1,0 +1,17 @@
+tapped Conversation mode at 981 2259
+screen_off_timeout=15000ms; call started, no touches from t=0
+t=0s mWakefulness=Awake windowKeepScreenOn=1 server={"active":true,"participants":["human"]}
+t=4s mWakefulness=Awake windowKeepScreenOn=1 server={"active":true,"participants":["human"]}
+t=8s mWakefulness=Awake windowKeepScreenOn=1 server={"active":true,"participants":["human"]}
+t=12s mWakefulness=Awake windowKeepScreenOn=1 server={"active":true,"participants":["human"]}
+t=16s mWakefulness=Awake windowKeepScreenOn=1 server={"active":true,"participants":["human"]}
+t=20s mWakefulness=Awake windowKeepScreenOn=1 server={"active":true,"participants":["human"]}
+t=24s mWakefulness=Awake windowKeepScreenOn=1 server={"active":true,"participants":["human"]}
+t=28s mWakefulness=Awake windowKeepScreenOn=1 server={"active":true,"participants":["human"]}
+t=32s TAP end-call (stop button)
+t=32s mWakefulness=Awake windowKeepScreenOn=0 server={"active":true,"participants":["human"]}
+t=37s mWakefulness=Awake windowKeepScreenOn=0 server={"active":false,"participants":[]}
+t=41s mWakefulness=Awake windowKeepScreenOn=0 server={"active":false,"participants":[]}
+t=45s mWakefulness=Awake windowKeepScreenOn=0 server={"active":false,"participants":[]}
+t=49s mWakefulness=Asleep windowKeepScreenOn=0 server={"active":false,"participants":[]}
+t=53s mWakefulness=Asleep windowKeepScreenOn=0 server={"active":false,"participants":[]}

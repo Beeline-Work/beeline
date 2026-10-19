@@ -8010,7 +8010,7 @@ export class DaemonService {
   private async postCornerMessage(input: Input<'postCornerMessage'>, agentId: string) {
     const text = typeof input.text === 'string' ? input.text.trim() : '';
     if (!text || text.length > 16000) throw new Error('message text must be 1 to 16000 characters');
-    await this.reach(input.cornerId, agentId);
+    await this.postAddressAccess(input.cornerId, agentId);
     const command = this.authorizedCommand ?? await authorizeCommandOutput(
       this.database, input.roomId, agentId, input.requestId, input.generationId,
     );
@@ -8023,12 +8023,28 @@ export class DaemonService {
         [id(), input.cornerId, agentId, text],
       )
     ).rows[0];
-    if (!saved) throw new Error('corner is archived');
+    if (!saved) throw new CommandRefusalError('post refused: address is archived', 409);
     const delivery = await routeAgentResult(this.database, { ...command, room_id: input.cornerId }, saved.id);
     this.live.publish({ type: 'invalidate', roomId: input.cornerId, reason: 'message', agentId });
     return { id: saved.id, createdAt: seconds(saved.created_at), effect: 'conversation',
       address: input.cornerId, visibility: 'public', reportsAssignment: false, ...delivery,
       stored: true, visible: true, receipt: 'Message stored and visible.' };
+  }
+
+  /** Public posts accept Rooms and corners without broadening corner-only operations. */
+  private async postAddressAccess(address: string, agentId: string) {
+    if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(address))
+      throw new CommandRefusalError('post refused: unknown address', 400);
+    const target = (await new CornerAccessDatabase(this.database).query<{
+      archived: boolean; member: boolean;
+    }>(`SELECT room.archived_at IS NOT NULL AS archived,
+        EXISTS(SELECT 1 FROM memberships member
+          WHERE member.room_id IN (room.id,room.parent_id)
+            AND member.identity_id=$2 AND member.removed_at IS NULL) AS member
+        FROM rooms room WHERE room.id=$1`, [address, agentId])).rows[0];
+    if (!target) throw new CommandRefusalError('post refused: unknown address', 400);
+    if (!target.member) throw new CommandRefusalError('post refused: agent is not a current member of the Room', 403);
+    if (target.archived) throw new CommandRefusalError('post refused: address is archived', 409);
   }
 
   /**

@@ -1103,3 +1103,22 @@ it('Reproduction unreported-order-false: a later report(done) closes the open or
   expect((await commands(DM, RUBY)).filter(c => c.reason === 'report').map(c => c.source.body)).toEqual(['done: checks passed']);
   console.info('Demonstrated Reproduction unreported-order-false: later report(done) delivered once to the commander');
 });
+
+
+it('R1: a member posts a public message to a top-level Room', async () => {
+  const posted = await daemon.execute('postCornerMessage', { ...authority(order), cornerId: ROOM, text: 'Room posting proof' }, RUBY);
+  expect(posted).toMatchObject({ address: ROOM, stored: true, visible: true });
+  expect((await phone.readRoom(ROOM, HUMAN))?.messages.some(message => message.id === posted.id && message.text === 'Room posting proof')).toBe(true);
+});
+
+it('R1: post refuses removed membership, archived and unknown addresses clearly', async () => {
+  const unknown = randomUUID();
+  await expect(daemon.execute('postCornerMessage', { ...authority(order), cornerId: unknown, text: 'Refused' }, RUBY)).rejects.toThrow('unknown address');
+  await expect(daemon.execute('postCornerMessage', { ...authority(order), cornerId: 'bad-address', text: 'Refused' }, RUBY)).rejects.toThrow('unknown address');
+  await db.query(`UPDATE rooms SET archived_at=now() WHERE id=$1`, [ROOM]);
+  await expect(daemon.execute('postCornerMessage', { ...authority(order), cornerId: ROOM, text: 'Refused' }, RUBY)).rejects.toThrow('address is archived');
+  await db.query(`UPDATE rooms SET archived_at=NULL WHERE id=$1`, [ROOM]);
+  await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [ROOM, RUBY]);
+  await expect(daemon.execute('postCornerMessage', { ...authority(order), cornerId: ROOM, text: 'Refused' }, RUBY)).rejects.toThrow('not a current member');
+  expect((await db.query(`SELECT id FROM messages WHERE text='Refused'`)).rowCount).toBe(0);
+});

@@ -403,13 +403,13 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
   {
     id: 'surface.squire-drive',
     topic: 'squire-browser',
-    why: 'Agents rarely called operate_drive and instead hand-drove checkouts/signups one flat step at a time, including after a drive handback (ts-drive-adoption-scout).',
+    why: 'Agents hand-drove browser goals (ts-drive-adoption-scout); Jellybean treated unsupported_credential_type during PR #2599 verification as blocked instead of sharing the browser for human sign-in.',
     budgetBytes: 420,
     layer: 'surface',
     surfaces: EVERYWHERE,
     when: ({ squireAvailable }) => squireAvailable === true,
     render: () =>
-      'For a multi-step browser goal (signup, checkout, provisioning), start with Trusty Squire operate_drive {url, goal, facts} rather than individual steps. On a low_confidence or needs_value handback, answer it from the offered options or take one flat step (operate_click, operate_type, operate_select, …), then resume operate_drive on that same session instead of finishing the task by hand.',
+      'For multi-step browser goals, use Trusty Squire operate_drive {url, goal, facts}. On low_confidence/needs_value, answer or take one flat step, then resume drive. If sign-in/human action (2FA, captcha, passkey) cannot be completed or Squire refuses it, start app_tool(app:beeline:browser_share, tool:start) for that session; ask the person to take over. On handback, resume drive in that session.',
   },
 
   // --- Room ----------------------------------------------------------------

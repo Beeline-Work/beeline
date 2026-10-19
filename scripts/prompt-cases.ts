@@ -20,7 +20,7 @@
  *
  * Environment: OPENROUTER_API_KEY (required unless --check),
  * PROMPT_CASES_MODEL (default anthropic/claude-sonnet-5.5),
- * PROMPT_CASES_BASE_URL (default https://openrouter.ai/api/v1).
+ * OPENROUTER_BASE_URL (default https://openrouter.ai/api/v1).
  */
 import { appendFileSync, existsSync, readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
@@ -52,7 +52,7 @@ const NEED = Number(option('--need') ?? 2);
 const MAX_STEPS = 4;
 const CONCURRENCY = 6;
 const MODEL = process.env.PROMPT_CASES_MODEL || 'anthropic/claude-sonnet-5.5';
-const BASE_URL = (process.env.PROMPT_CASES_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/$/, '');
+const BASE_URL = (process.env.OPENROUTER_BASE_URL || 'https://openrouter.ai/api/v1').replace(/\/$/, '');
 const SILENT_TOOL_NAME = 'no_reply_needed';
 // Fixed so a case's prompt does not change with the runner's own host.
 const FIXED_MEMORY_MAX_BYTES = 32 * 1024 ** 3;

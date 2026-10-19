@@ -66,7 +66,8 @@ OPENROUTER_API_KEY=… npm run prompt-cases -- --only tagging-no-stray-handle
 
 The runner builds each prompt with the real assembler and tool descriptions,
 sends it to `PROMPT_CASES_MODEL` (default `anthropic/claude-sonnet-5.5`) through
-OpenRouter, answers tool calls with stub results for up to four steps, and
+OpenRouter (`OPENROUTER_BASE_URL` points it at a proxy such as a Squire egress
+grant), answers tool calls with stub results for up to four steps, and
 checks the pass rule on everything the model did. It samples each case up to 3
 times; a case passes at 2 of 3.
 

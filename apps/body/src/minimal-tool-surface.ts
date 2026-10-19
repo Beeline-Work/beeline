@@ -614,17 +614,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
         "pullRequest": {"anyOf": [{"type": "string"}, {"type": "integer"}]}
       },
       "additionalProperties": false,
-      "required": ["facet"],
-      "anyOf": [
-        {
-          "properties": {
-            "facet": {"enum": ["addresses", "corners", "members", "messages", "brief", "status", "checks", "pr", "usage"]}
-          }
-        },
-        {"properties": {"facet": {"const": "message"}}, "required": ["messageId"]},
-        {"properties": {"facet": {"const": "attachment"}}, "required": ["attachmentId"]},
-        {"properties": {"facet": {"const": "procedure"}}, "required": ["slug"]}
-      ]
+      "required": ["facet"]
     }
   },
   {
@@ -638,15 +628,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
         "limit": {"type": "integer", "minimum": 1, "maximum": 10}
       },
       "required": ["scope", "query"],
-      "additionalProperties": false,
-      "anyOf": [
-        {
-          "properties": {"scope": {"const": "history"}, "limit": {"type": "integer", "minimum": 1, "maximum": 10}}
-        },
-        {
-          "properties": {"scope": {"const": "memory"}, "limit": {"type": "integer", "minimum": 1, "maximum": 10}}
-        }
-      ]
+      "additionalProperties": false
     }
   },
   {

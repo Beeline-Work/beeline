@@ -180,6 +180,21 @@ describe('minimal agent surface', () => {
     ] as const) await expect(callAgentTool(name, args, 'invalid')).rejects.toThrow();
     expect(calls).toEqual([]);
   });
+  it('R1/R2 exposes complete flat read/search arguments to schema consumers', async () => {
+    const tools = agentToolsFor(true, false);
+    for (const name of ['read', 'search']) {
+      const schema = tools.find(tool => tool.name === name)!.inputSchema;
+      expect(schema.anyOf).toBeUndefined();
+      expect(Check(schema, name === 'read'
+        ? { facet: 'messages', cursor: { before: `123,${'a'.repeat(64)}` } }
+        : { scope: 'history', query: 'synthetic query' })).toBe(true);
+    }
+    for (const [facet, field] of [['message', 'messageId'], ['attachment', 'attachmentId'], ['procedure', 'slug']]) {
+      await expect(callAgentTool('read', { facet }, 'missing')).rejects.toThrow(`${field} is required`);
+    }
+    await expect(callAgentTool('read', { facet: 'messages', cursor: '123' }, 'bad')).rejects.toThrow('pass the returned next object unchanged');
+    expect(calls).toEqual([]);
+  });
   it('routes searches and sourced memory writes without changing privacy/version/used inputs', async () => {
     await callAgentTool('search', { scope: 'history', query: 'prior decision', limit: 3 }, 'h');
     await callAgentTool('search', { scope: 'memory', query: 'preference' }, 'm');

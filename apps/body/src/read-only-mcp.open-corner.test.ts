@@ -600,11 +600,12 @@ describe('private command tools', () => {
       limit: 9,
       window: 'recent',
     });
-    await callTool(
+    const continued = await callTool(
       door.origin,
-      {facet:'messages',address:CORNER,from: 'newest',cursor:{before: page.next.before}},
+      {facet:'messages',address:CORNER,cursor:page.next},
       { name: 'read' },
     );
+    expect(continued.result?.isError).not.toBe(true);
     expect(door.calls.filter((call) => call.operation === 'getRoomConversation').at(-1)).toMatchObject({
       window: 'recent',
       before: items[1]!.cursor,

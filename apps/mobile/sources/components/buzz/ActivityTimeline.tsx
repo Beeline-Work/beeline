@@ -51,6 +51,7 @@ const OUTCOME_WORDS = {
 } as const;
 
 function lineAccessibilityLabel(line: ToolLedgerLine): string {
+  if (line.kind === 'note') return `Note: ${line.label}`;
   const parts = [line.label];
   if (line.kind !== 'thought') parts.push(OUTCOME_WORDS[line.outcome]);
   if (line.reason) parts.push(line.reason);
@@ -73,8 +74,22 @@ function ToolLedgerLineRow({
   testID?: string;
 }) {
   const duration = formatToolCallDuration(line.durationMs);
-  const showVerdict = line.kind !== 'thought';
+  const showVerdict = line.kind === 'tool';
   const accessibilityLabel = lineAccessibilityLabel(line);
+  if (line.kind === 'note') {
+    // Text the agent wrote before a later tool call. It is not the reply, but
+    // it is the agent's own words, so it is shown whole — never cut to a line.
+    return (
+      <View accessibilityLabel={accessibilityLabel} style={styles.noteRow} testID={testID}>
+        <Text accessibilityElementsHidden style={styles.callGlyph}>
+          {line.glyph}
+        </Text>
+        <View style={styles.noteBody}>
+          <MonoMarkdown markdown={line.label} textStyle={styles.noteText} />
+        </View>
+      </View>
+    );
+  }
   const row = (
     <>
       <Text accessibilityElementsHidden numberOfLines={1} style={styles.callGlyph}>
@@ -154,7 +169,8 @@ function ToolRunGroupRow({
 }) {
   const [expanded, setExpanded] = useState(false);
   const duration = formatToolCallDuration(run.durationMs);
-  const summary = toolGroupSummary(run.count, run.failed, run.durationMs);
+  const summary = toolGroupSummary(run.count, run.failed, run.durationMs, run.notes);
+  const steps = run.count > 0 || run.notes === 0;
   return (
     <View>
       <Pressable
@@ -174,8 +190,9 @@ function ToolRunGroupRow({
           />
         </View>
         <Text ellipsizeMode="middle" numberOfLines={1} style={styles.groupLabel}>
-          {`${run.count} ${run.count === 1 ? 'step' : 'steps'}`}
+          {steps ? `${run.count} ${run.count === 1 ? 'step' : 'steps'}` : null}
           {run.failed ? <Text style={styles.groupFailed}>{` · ${run.failed} failed`}</Text> : null}
+          {run.notes ? `${steps ? ' · ' : ''}${run.notes} ${run.notes === 1 ? 'note' : 'notes'}` : null}
           {duration ? ` · ${duration}` : null}
         </Text>
       </Pressable>
@@ -192,6 +209,40 @@ function ToolRunGroupRow({
     </View>
   );
 }
+
+/**
+ * A settled reply's steps line: the turn's tool calls and the text it wrote
+ * before its final answer, folded into one collapsed `ToolRunGroupRow` under
+ * the reply. Renders nothing when the reply carries no steps.
+ */
+export const TurnStepsLine = React.memo(function TurnStepsLine({
+  items,
+  testID,
+}: {
+  items: readonly AgentActivityItem[];
+  testID?: string;
+}) {
+  const runs = useMemo(
+    () => groupToolLedgerRuns(toolLedgerLines(buildTurnActivity(items).steps)),
+    [items],
+  );
+  const [sheetLine, setSheetLine] = useState<ToolLedgerLine | null>(null);
+  if (!runs.length) return null;
+  return (
+    <View testID={testID}>
+      {runs.map((run) => (
+        <ToolRunGroupRow key={run.id} onPressLine={setSheetLine} run={run} />
+      ))}
+      <ToolOutputSheet
+        detail={sheetLine?.detail}
+        onClose={() => setSheetLine(null)}
+        subtitle={sheetLine?.outcome === 'failure' ? sheetLine?.reason : undefined}
+        title={sheetLine?.label ?? 'Output'}
+        visible={Boolean(sheetLine?.detail)}
+      />
+    </View>
+  );
+});
 
 /**
  * The live conversational turn: agent prose, and beneath it the one-line tool
@@ -313,6 +364,21 @@ const styles = StyleSheet.create((theme) => {
       fontVariant: ['tabular-nums'],
     },
     callVerdict: { width: 18, flexShrink: 0, alignItems: 'flex-end' },
+    // A note wraps to its full length, so it keeps the ledger line's hairline
+    // and gutter but not its fixed one-line height.
+    noteRow: {
+      minHeight: 44,
+      minWidth: 0,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: groknight.borderQuiet,
+      paddingHorizontal: groknight.space.xs,
+      paddingVertical: groknight.space.sm,
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+      gap: groknight.space.sm,
+    },
+    noteBody: { flex: 1, minWidth: 0 },
+    noteText: { ...groknight.type.machine, color: groknight.ledgerBody },
     callVerdictText: {
       ...groknight.type.machine,
       width: 18,

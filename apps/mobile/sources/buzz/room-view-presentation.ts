@@ -346,6 +346,7 @@ function activityItems(message: RoomViewMessage): AgentActivityItem[] | undefine
     title: activity.title,
     id: `${message.id}:${index}`,
     ...(activity.text ? { text: activity.text } : {}),
+    ...(activity.continues ? { continues: true } : {}),
     ...(activity.operation ? { toolKind: activity.operation } : {}),
     ...(activity.rollup ? { rollup: { ...activity.rollup } } : {}),
     ...(activity.observed ? { observed: activity.observed.map((item) => ({ ...item })) } : {}),
@@ -555,7 +556,9 @@ export function foldSettledActivityRuns(
   const turnTools = new Map<string, TurnTools>();
   for (const [index, message] of messages.entries()) {
     if (!isSettledTurnActivity(message)) continue;
-    const tools = message.activity?.filter((item) => item.kind === 'tool') ?? [];
+    // A note is a step of the run: it folds with the tools it sat between.
+    const tools =
+      message.activity?.filter((item) => item.kind === 'tool' || item.kind === 'note') ?? [];
     if (!tools.length) continue;
     const key = `${message.pubkey}\0${message.requestId}`;
     const turn = turnTools.get(key);
@@ -567,7 +570,9 @@ export function foldSettledActivityRuns(
     if (!isSettledTurnActivity(message) || !message.activity?.length) return [message];
     const turn = turnTools.get(`${message.pubkey}\0${message.requestId}`);
     if (!turn) return [message];
-    const nonTools = message.activity.filter((item) => item.kind !== 'tool');
+    const nonTools = message.activity.filter(
+      (item) => item.kind !== 'tool' && item.kind !== 'note',
+    );
     const activity = index === turn.anchor ? [...nonTools, ...turn.activity] : nonTools;
     return activity.length ? [{ ...message, activity }] : [];
   });

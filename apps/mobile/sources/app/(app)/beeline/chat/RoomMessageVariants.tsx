@@ -70,7 +70,7 @@ import { Modal } from '@/modal';
 import { monolithSession } from '@/auth/monolith-session';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { openExternalUrl } from '@/utils/open-external-url';
-import { ActivityTimeline } from '@/components/buzz/ActivityTimeline';
+import { ActivityTimeline, TurnStepsLine } from '@/components/buzz/ActivityTimeline';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import { MessageReactionRoster } from '@/components/buzz/MessageReactionRoster';
 import { ALIVE_RING_PAD } from '@/buzz/identity-mark';
@@ -1685,13 +1685,26 @@ export const OrdinaryLedgerMessage = React.memo(function OrdinaryLedgerMessage({
     connectorReceipt && !isSelfSteer ? (
       <ConnectorReceiptCard receipt={connectorReceipt.receipt} identity={message.authorIdentity} />
     ) : null;
-  const machineNoise = ledgerText?.machine ? (
+  const ghostLine = ledgerText?.machine ? (
     <LedgerGhostLine
       body={ledgerText.machine}
       label={`${ledgerText.machineLines} lines of tool output`}
       testID={`chat-machine-noise-${message.id}`}
     />
   ) : null;
+  // A Room reply carries its turn's steps — tool calls and the text written
+  // before the answer — and shows them folded under the prose.
+  const stepsLine =
+    isAgent && message.activity?.length ? (
+      <TurnStepsLine items={message.activity} testID={`reply-steps-${message.id}`} />
+    ) : null;
+  const machineNoise =
+    ghostLine || stepsLine ? (
+      <>
+        {ghostLine}
+        {stepsLine}
+      </>
+    ) : null;
   const livePhotoArtifacts = message.attachments?.filter(
     (attachment) =>
       attachment.kind === 'artifact' &&

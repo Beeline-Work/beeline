@@ -26,6 +26,8 @@ import {
  *   `⋯`   thought — the fold glyph: reasoning is folded content, shown only
  *         through the sheet
  *   `·`   everything else (web fetch, MCP, unknown) — quiet by default
+ *   `✎`   note — text the agent wrote before a later tool call; it is not
+ *         the reply, so it lives here, shown in full between the tools
  *
  * Colour is spent in exactly two places: the brass `✗` and the group's failed
  * count — both needs-attention facts (the design supersedes C88's red failure
@@ -40,6 +42,7 @@ import {
 const GLYPH_SHELL = '>_';
 const GLYPH_FILE = '≡';
 const GLYPH_THOUGHT = '⋯';
+const GLYPH_NOTE = '✎';
 const GLYPH_TOOL = '·';
 
 const FILE_VERBS = new Set([
@@ -57,6 +60,7 @@ const FILE_VERBS = new Set([
 
 export function toolGlyph(step: Pick<TurnActivityAction, 'kind' | 'toolKind'>): string {
   if (step.kind === 'thought') return GLYPH_THOUGHT;
+  if (step.kind === 'note') return GLYPH_NOTE;
   const verb = step.toolKind?.toLowerCase() ?? '';
   if (verb === 'execute') return GLYPH_SHELL;
   if (FILE_VERBS.has(verb)) return GLYPH_FILE;
@@ -65,7 +69,7 @@ export function toolGlyph(step: Pick<TurnActivityAction, 'kind' | 'toolKind'>): 
 
 export type ToolLedgerLine = {
   id: string;
-  kind: 'tool' | 'thought';
+  kind: 'tool' | 'thought' | 'note';
   glyph: string;
   label: string;
   outcome: 'running' | 'success' | 'failure';
@@ -100,9 +104,10 @@ export function toolLedgerLines(
       id: step.id,
       kind: step.kind,
       glyph: toolGlyph(step),
-      // A thought's own label already says `thought`; a tool's label is the
-      // call's object (tool-call-row.ts) — the glyph carries the family.
-      label: step.kind === 'thought' ? step.label : toolCallLabel(step),
+      // A thought's own label already says `thought` and a note's label is its
+      // whole text; a tool's label is the call's object (tool-call-row.ts) —
+      // the glyph carries the family.
+      label: step.kind === 'tool' ? toolCallLabel(step) : step.label,
       outcome,
       ...(outcome === 'failure' && step.reason ? { reason: step.reason } : {}),
       ...(durationMs ? { durationMs } : {}),
@@ -131,8 +136,10 @@ function detailOf(step: TurnActivityAction): Pick<ToolLedgerLine, 'detail'> | {}
 export type ToolLedgerRun = {
   kind: 'group';
   id: string;
+  /** Tool and thought steps; notes are counted apart. */
   count: number;
   failed: number;
+  notes: number;
   durationMs?: number;
   lines: ToolLedgerLine[];
 };
@@ -145,6 +152,7 @@ export type ToolLedgerRun = {
 export function groupToolLedgerRuns(lines: readonly ToolLedgerLine[]): ToolLedgerRun[] {
   if (!lines.length) return [];
   const failed = lines.filter((line) => line.outcome === 'failure').length;
+  const notes = lines.filter((line) => line.kind === 'note').length;
   const durations = lines
     .map((line) => line.durationMs)
     .filter((ms): ms is number => typeof ms === 'number');
@@ -153,22 +161,25 @@ export function groupToolLedgerRuns(lines: readonly ToolLedgerLine[]): ToolLedge
     {
       kind: 'group',
       id: lines[0]!.id,
-      count: lines.length,
+      count: lines.length - notes,
       failed,
+      notes,
       ...(durationMs ? { durationMs } : {}),
       lines: [...lines],
     },
   ];
 }
 
-/** The group line's copy: `6 steps · 2 failed · 48s` — segments the run earned. */
+/** The group line's copy: `6 steps · 2 failed · 2 notes · 48s` — segments the run earned. */
 export function toolGroupSummary(
   count: number,
   failed: number,
   durationMs: number | undefined,
+  notes = 0,
 ): string {
-  const segments = [`${count} ${count === 1 ? 'step' : 'steps'}`];
+  const segments = count > 0 || notes === 0 ? [`${count} ${count === 1 ? 'step' : 'steps'}`] : [];
   if (failed > 0) segments.push(`${failed} failed`);
+  if (notes > 0) segments.push(`${notes} ${notes === 1 ? 'note' : 'notes'}`);
   const duration = formatToolCallDuration(durationMs);
   if (duration) segments.push(duration);
   return segments.join(' · ');

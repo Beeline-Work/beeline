@@ -1205,7 +1205,12 @@ export type PostRoomMessageInput = TurnOutputAuthority &
     readonly replyToMessageId?: string;
     /** Inbox message that started this turn; independent of optional reply threading. */
     readonly triggerMessageId?: string;
-
+    /**
+     * The turn's steps, in order: its tool calls and every text run before
+     * the final one (`kind='note'`). They ride on the reply, so text written
+     * before a tool call is kept without leading the answer.
+     */
+    readonly steps?: readonly DaemonActivityItem[];
   };
 export type PostAgentAttachmentInput = TurnOutputAuthority &
   RoomInput & {
@@ -2000,9 +2005,13 @@ export type ConnectorAssignmentsResult = {
   readonly assignments: readonly ConnectorAssignment[];
 };
 export type DaemonActivityItem = {
-  readonly kind: 'thinking' | 'tool' | 'output' | 'summary';
+  readonly kind: 'thinking' | 'tool' | 'output' | 'summary' | 'note';
   readonly title: string;
-  /** Durable corner narration when `kind='output'`; never private thought text. */
+  /**
+   * Durable corner narration when `kind='output'`; an earlier assistant text
+   * run shown inside the steps line when `kind='note'`. Never private thought
+   * text.
+   */
   readonly text?: string;
   readonly operation?: string;
   readonly status?: string;
@@ -2014,6 +2023,11 @@ export type DaemonActivityItem = {
   /** The identity whose message triggered the turn this row belongs to. */
   readonly requestedBy?: { readonly pubkey: string; readonly name?: string };
   readonly files?: readonly { readonly path: string; readonly status?: string }[];
+  /**
+   * On a `note`: this text carries on the previous note. One text run longer
+   * than a note may be is split across consecutive notes, never cut.
+   */
+  readonly continues?: boolean;
   readonly plan?: {
     readonly objective?: string;
     readonly items: readonly {

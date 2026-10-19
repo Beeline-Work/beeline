@@ -28,6 +28,7 @@ import {
   AcpTurnBackstopError,
   TURN_BACKSTOP_MS,
   isPureRetryNarration,
+  agentTurnSteps,
   type AcpPermissionDecision,
   type AcpPermissionRequest,
   type McpServerWire,
@@ -128,6 +129,7 @@ import {
 } from './prompt-assembly.js';
 import { TurnStoppedError } from './turn-stop.js';
 import { AgentTurnStream, durableReplyText } from './turn-stream.js';
+import { roomReplySteps } from './room-turn-steps.js';
 import { TurnTrace, TurnTraceFile, type TurnTraceSink } from './turn-trace.js';
 import { isCompletedToolCall, isPrivateWorkToolCall, toolCallFailureLine } from './tool-call-failure.js';
 import { distillTurnFailureReason, redactTurnError, redactToolDetail } from './turn-failure-reason.js';
@@ -2141,15 +2143,15 @@ export class MonolithRoomTurnLoop {
               // Close the draft lane before the answer is published: the finished
               // reply must never queue behind a draft nobody will read.
               stream.close();
-              // Rooms save no pre-tool prose separately. Commit the same runs
-              // the draft showed when this result ends that stream. Synthetic
-              // recovery replies still stand alone, and an empty final result
-              // must not promote an abandoned draft into an answer.
-              let reply = durableReplyText(
-                result.agentText && stream.lastRunText === result.agentText
-                  ? stream.streamedText
-                  : result.agentText,
-              );
+              // The reply is the turn's last text run. Every earlier run rides
+              // on it as a note between the tool steps, so text written
+              // before a tool call is kept without leading the answer.
+              // Synthetic recovery replies stand alone, and an empty final
+              // result must not promote an abandoned draft into an answer.
+              let reply = durableReplyText(result.agentText);
+              const steps = reply
+                ? roomReplySteps(agentTurnSteps(result.updates ?? []), this.requesterOf(item.authorId))
+                : [];
               if (!reply && explained?.recoveredText) {
                 // Text the harness recorded but never streamed. Kept on a
                 // corner-open turn too: it is the same reply the live lane
@@ -2184,6 +2186,7 @@ export class MonolithRoomTurnLoop {
                   reply
                     ? {
                         triggerMessageId: item.id,
+                        ...(steps.length ? { steps } : {}),
                       }
                     : {},
                 ),

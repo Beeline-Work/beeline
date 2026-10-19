@@ -296,6 +296,35 @@ async function settleTurnFailureLine(
   }
 }
 const seconds = (date: Date) => Math.floor(date.getTime() / 1_000);
+
+const MAX_REPLY_STEPS = 2_000;
+const MAX_REPLY_NOTE_LENGTH = 16_000;
+/** The whole stored steps payload; a note longer than one row spans several. */
+const MAX_REPLY_STEPS_BYTES = 4_000_000;
+/**
+ * A reply's steps (`PostRoomMessageInput.steps`) as the JSON its `activity`
+ * column stores, or null when it has none. Only tool rows and notes belong
+ * there; anything else is refused rather than stored.
+ */
+function replySteps(steps: unknown): string | null {
+  if (steps === undefined) return null;
+  if (!Array.isArray(steps) || steps.length > MAX_REPLY_STEPS)
+    throw new Error('reply steps are invalid');
+  for (const step of steps as Record<string, unknown>[]) {
+    if (!step || typeof step !== 'object') throw new Error('reply steps are invalid');
+    if (step.kind !== 'tool' && step.kind !== 'note') throw new Error('reply steps are invalid');
+    if (typeof step.title !== 'string' || step.title.length > 240)
+      throw new Error('reply steps are invalid');
+    if (step.kind === 'note' &&
+      (typeof step.text !== 'string' || !step.text || step.text.length > MAX_REPLY_NOTE_LENGTH))
+      throw new Error('reply steps are invalid');
+    if (step.continues !== undefined && (step.kind !== 'note' || step.continues !== true))
+      throw new Error('reply steps are invalid');
+  }
+  const json = JSON.stringify(steps);
+  if (Buffer.byteLength(json) > MAX_REPLY_STEPS_BYTES) throw new Error('reply steps are invalid');
+  return steps.length ? json : null;
+}
 /** Corner reads and merge writes that also admit a current parent Room member. */
 const CORNER_REACH_OPERATIONS = new Set<string>([
   'getCornerRestoreState',
@@ -3847,6 +3876,7 @@ export class DaemonService {
   ) {
     if (!this.commandTransaction && !atomicCommandWrite) await this.access(input.roomId, agentId);
     if ('relay' in input) throw new CommandRefusalError('relay cards are retired; use order and report', 410);
+    const steps = replySteps(input.steps);
     const messageId = id();
     const parent = input.replyToMessageId
       ? (
@@ -3953,6 +3983,7 @@ export class DaemonService {
             size: row.size,
           })),
         ),
+        steps,
       ];
       if (this.commandTransaction) {
         return (
@@ -3960,13 +3991,13 @@ export class DaemonService {
             `WITH inserted AS (
                INSERT INTO messages(
                  id,room_id,author_id,text,presentation,request_id,legacy_event,
-                 reply_to_message_id,root_message_id,agent_hop_count,attachments,agent_model
-               ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11::jsonb,
+                 reply_to_message_id,root_message_id,agent_hop_count,attachments,activity,agent_model
+               ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11::jsonb,$12::jsonb,
                  (SELECT selected_model FROM agents WHERE agent_id=$3))
                RETURNING *
              ), completed AS (
                UPDATE agent_commands SET state='complete',completed_at=now(),result_message_id=inserted.id
-               FROM inserted WHERE agent_commands.id=$12
+               FROM inserted WHERE agent_commands.id=$13
                  AND agent_commands.private_payload->>'kind' IS DISTINCT FROM 'order'
              ), cleared AS (
                DELETE FROM live_outputs
@@ -3985,8 +4016,8 @@ export class DaemonService {
           `WITH inserted AS (
              INSERT INTO messages(
                id,room_id,author_id,text,presentation,request_id,legacy_event,
-               reply_to_message_id,root_message_id,agent_hop_count,attachments,agent_model
-             ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11::jsonb,
+               reply_to_message_id,root_message_id,agent_hop_count,attachments,activity,agent_model
+             ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11::jsonb,$12::jsonb,
                (SELECT selected_model FROM agents WHERE agent_id=$3))
              RETURNING *
            )
@@ -4079,9 +4110,9 @@ export class DaemonService {
            ), inserted AS (
              INSERT INTO messages(
                id,room_id,author_id,text,presentation,request_id,legacy_event,
-               reply_to_message_id,root_message_id,agent_hop_count,attachments,agent_model
+               reply_to_message_id,root_message_id,agent_hop_count,attachments,activity,agent_model
              ) SELECT $1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,
-                 writable.agent_depth,attachment_payload.attachments,
+                 writable.agent_depth,attachment_payload.attachments,$12::jsonb,
                  (SELECT selected_model FROM agents WHERE agent_id=$3)
                FROM writable,settled,attachment_payload,recovery_barrier
              RETURNING *
@@ -4155,6 +4186,7 @@ export class DaemonService {
           rootMessageId,
           input.generationId,
           STAR_PROMPT_MILESTONES,
+          steps,
         ],
       );
       if (this.livePaintDiagnostics) databaseAwaitResolvedAt = Date.now();

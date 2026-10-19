@@ -43,8 +43,12 @@ export type AgentActivityItem = {
    * synthetic per-batch receipt body publishes, so the corner can show the one
    * and fold the other. Conflating them is what buried an agent's narration
    * behind a "tool output" disclosure.
+   *
+   * `note` is a Room turn's earlier text run: text the agent wrote before a
+   * later tool call. It is not the reply, so it sits inside the collapsed
+   * steps line in turn order, between the tool lines, shown in full.
    */
-  kind: 'thinking' | 'tool' | 'output' | 'summary';
+  kind: 'thinking' | 'tool' | 'output' | 'summary' | 'note';
   title: string;
   id?: string;
   toolKind?: string;
@@ -84,6 +88,11 @@ export type AgentActivityItem = {
     status?: string;
     diff?: string;
   }>;
+  /**
+   * On a `note`: this text carries on the previous note. One text run longer
+   * than a note may be is split across consecutive notes, never cut.
+   */
+  continues?: boolean;
   plan?: {
     objective?: string;
     items: Array<{

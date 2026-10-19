@@ -90,6 +90,7 @@
         "scripts/workspace-fix-sweep-proof.tsx",
         "scripts/workbench-keys-proof.tsx",
         "scripts/render-workbench-keys-proof.mjs",
+        "scripts/{render-room-reply-notes-proof.mjs,room-reply-notes-proof.tsx}",
         "scripts/render-squire-wallet-freshness-proof.mjs",
         "scripts/squire-wallet-freshness-proof.tsx",
         "scripts/squire-wallet-freshness-fixtures.ts",

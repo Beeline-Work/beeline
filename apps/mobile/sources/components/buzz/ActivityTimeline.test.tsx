@@ -49,7 +49,7 @@ vi.mock('expo-clipboard', () => ({
 
 import * as Clipboard from 'expo-clipboard';
 import { groknight } from '@/buzz/groknight';
-import { ActivityTimeline } from './ActivityTimeline';
+import { ActivityTimeline, TurnStepsLine } from './ActivityTimeline';
 import { foldSettledActivityRuns } from '@/buzz/room-view-presentation';
 
 const originalConsoleError = console.error;
@@ -321,6 +321,85 @@ describe('grouping consecutive steps', () => {
     expect(renderer.root.findByProps({ testID: 'tool-run-group-a' }).props.accessibilityLabel).toBe(
       '4 steps, expandable',
     );
+  });
+});
+
+describe('a reply’s steps line', () => {
+  const note = (id: string, text: string) => ({ kind: 'note' as const, id, title: 'Note', text });
+  const tool = (id: string, title: string) => ({
+    kind: 'tool' as const,
+    id,
+    title,
+    toolKind: 'other',
+    status: 'completed',
+  });
+  const STEPS = [
+    note('n1', 'Now close the Play declaration corner.'),
+    tool('t1', 'ToolSearch'),
+    tool('t2', 'close_corner'),
+    note('n2', 'I’ll check the corner’s blocker.\n\nThen decide whether it stays parked.'),
+    tool('t3', 'corner_status'),
+    tool('t4', 'order'),
+  ];
+
+  it('counts notes apart from steps in the collapsed summary', () => {
+    const renderer = render(<TurnStepsLine items={STEPS} />);
+    const group = renderer.root.findByProps({ testID: 'tool-run-group-n1' });
+    expect(group.props.accessibilityLabel).toBe('4 steps · 2 notes, expandable');
+    expect(JSON.stringify(group.findByType('Text' as never).props.children)).toContain('2 notes');
+    expect(hostNodes(renderer, /^tool-ledger-line-/)).toHaveLength(0);
+  });
+
+  it('expands to every note in full, in order, between the tool lines', () => {
+    const renderer = render(<TurnStepsLine items={STEPS} />);
+    expandRun(renderer, 'n1');
+    expect(hostNodes(renderer, /^tool-ledger-line-/).map((node: { props: { testID?: string } }) => node.props.testID)).toEqual([
+      'tool-ledger-line-n1',
+      'tool-ledger-line-t1',
+      'tool-ledger-line-t2',
+      'tool-ledger-line-n2',
+      'tool-ledger-line-t3',
+      'tool-ledger-line-t4',
+    ]);
+    const second = renderer.root.findByProps({ testID: 'tool-ledger-line-n2' });
+    // The whole note, never cut to one line, and no verdict mark.
+    expect(second.findByType('MonoMarkdown' as never).props.markdown).toBe(
+      'I’ll check the corner’s blocker.\n\nThen decide whether it stays parked.',
+    );
+    expect(hostNodes(renderer, /^activity-verdict-n/)).toHaveLength(0);
+    expect(hostNodes(renderer, /^activity-verdict-t/)).toHaveLength(4);
+  });
+
+  it('joins a long run split across continuing notes back into one note', () => {
+    const renderer = render(
+      <TurnStepsLine
+        items={[
+          note('n1', 'First half, '),
+          { ...note('n1b', 'second half.'), continues: true },
+          tool('t1', 'ToolSearch'),
+        ]}
+      />,
+    );
+    expect(
+      renderer.root.findByProps({ testID: 'tool-run-group-n1' }).props.accessibilityLabel,
+    ).toBe('1 step · 1 note, expandable');
+    expandRun(renderer, 'n1');
+    expect(
+      renderer.root
+        .findByProps({ testID: 'tool-ledger-line-n1' })
+        .findByType('MonoMarkdown' as never).props.markdown,
+    ).toBe('First half, second half.');
+  });
+
+  it('a reply with notes only reads as notes', () => {
+    const renderer = render(<TurnStepsLine items={[note('n1', 'Checked.')]} />);
+    expect(
+      renderer.root.findByProps({ testID: 'tool-run-group-n1' }).props.accessibilityLabel,
+    ).toBe('1 note, expandable');
+  });
+
+  it('a reply with no steps renders nothing', () => {
+    expect(render(<TurnStepsLine items={[]} />).toJSON()).toBeNull();
   });
 });
 

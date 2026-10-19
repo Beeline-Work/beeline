@@ -412,10 +412,18 @@ const CHUNK_CONTINUES_PREVIOUS_WORD = /^[\s'\u2018\u2019\u02bc.,!?;:%)\]}-]/;
  * the word had already turned over — and lowercase once; each reading
  * resolved one pair above by corrupting the other.
  */
-function continuesPreviousWord(current: string, delta: string): boolean {
+function continuesPreviousWord(current: string, delta: string, afterTool = false): boolean {
   if (/\s$/.test(current)) return false;
+  // A tool call ends a message when the text that resumes opens on a line
+  // break: a word cannot continue across one, so the break is the model
+  // starting its next text block. Claude's post-tool text can open with
+  // `\n\n`, and joining it kept the pre-tool sentence at the top of the
+  // reply. Other metadata keeps the old reading.
+  if (afterTool && /^\r?\n/.test(delta)) return false;
   return CHUNK_CONTINUES_PREVIOUS_WORD.test(delta);
 }
+
+const TOOL_UPDATE_TYPES = new Set(['tool_call', 'tool_call_update', 'tool_result']);
 
 const PI_ACP_HARNESS = /(^|[/\\])pi-acp(?:\.[a-z]+)?$/i;
 
@@ -447,23 +455,36 @@ function normalizeStreamDelta(text: string, _agentLabel?: string): string {
  * stopped being part of the final message. Whether the run ended is only
  * knowable from what resumes it. */
 export function agentMessageRuns(updates: readonly SessionUpdate[], agentLabel?: string): string[] {
-  const runs: string[] = [];
+  return agentMessageRunSpans(updates, agentLabel).map((run) => run.text);
+}
+
+/** Each message run with the index of the update that opened it. */
+function agentMessageRunSpans(
+  updates: readonly SessionUpdate[],
+  agentLabel?: string,
+): { text: string; at: number }[] {
+  const runs: { text: string; at: number }[] = [];
   let current = '';
+  let at = 0;
   let lastWasText = false;
-  for (const u of updates) {
+  let toolSinceText = false;
+  for (const [index, u] of updates.entries()) {
     const delta = normalizeStreamDelta(agentMessageChunkText(u.update), agentLabel);
     if (!delta) {
       lastWasText = false;
+      if (TOOL_UPDATE_TYPES.has(u.update.sessionUpdate as string)) toolSinceText = true;
       continue;
     }
-    if (!lastWasText && current && !continuesPreviousWord(current, delta)) {
-      runs.push(current);
+    if (!lastWasText && current && !continuesPreviousWord(current, delta, toolSinceText)) {
+      runs.push({ text: current, at });
       current = '';
     }
+    if (!current) at = index;
     current += delta;
     lastWasText = true;
+    toolSinceText = false;
   }
-  if (current) runs.push(current);
+  if (current) runs.push({ text: current, at });
 
   // A reconnecting or noisy harness can replay a completed message run. Keep
   // the first occurrence so both the live draft and final selection are
@@ -471,8 +492,8 @@ export function agentMessageRuns(updates: readonly SessionUpdate[], agentLabel?:
   // ("very very") remains untouched.
   const seen = new Set<string>();
   return runs.filter((run) => {
-    if (seen.has(run)) return false;
-    seen.add(run);
+    if (seen.has(run.text)) return false;
+    seen.add(run.text);
     return true;
   });
 }
@@ -528,9 +549,70 @@ export function finalAgentMessageText(
   updates: readonly SessionUpdate[],
   agentLabel?: string,
 ): string {
-  const last = agentMessageRuns(updates, agentLabel).at(-1);
+  const runs = agentMessageRunSpans(updates, agentLabel);
+  const last = runs[finalRunIndex(runs)]?.text;
   if (!last || isPureRetryNarration(last)) return '';
   return last;
+}
+
+/** The last run with any text in it: a whitespace-only run is not an answer. */
+function finalRunIndex(runs: readonly { text: string }[]): number {
+  for (let index = runs.length - 1; index >= 0; index -= 1) {
+    if (runs[index]!.text.trim()) return index;
+  }
+  return -1;
+}
+
+/** One step of a turn, in stream order: an earlier text run or a tool call. */
+export type AgentTurnStep =
+  | { kind: 'note'; text: string }
+  | { kind: 'tool'; call: ToolCallEntry };
+
+/**
+ * Everything a turn did besides its reply, in the order it happened: every
+ * text run except the final one (`finalAgentMessageText`) as a note, and
+ * every tool call. A Room posts the final run as the reply and these as the
+ * reply's steps, so text written before a tool call is kept without leading
+ * the answer. Retry narration is harness noise, not the agent's text, and is
+ * dropped.
+ */
+export function agentTurnSteps(
+  updates: readonly SessionUpdate[],
+  agentLabel?: string,
+): AgentTurnStep[] {
+  const runs = agentMessageRunSpans(updates, agentLabel);
+  const final = finalRunIndex(runs);
+  const steps: { at: number; step: AgentTurnStep }[] = runs.flatMap((run, index) =>
+    index === final || !run.text.trim() || isPureRetryNarration(run.text)
+      ? []
+      : [{ at: run.at, step: { kind: 'note' as const, text: run.text.trim() } }],
+  );
+  const calls = toolCallEntries(updates);
+  const opened = toolCallOpenings(updates);
+  calls.forEach((call, index) => {
+    steps.push({ at: opened[index] ?? updates.length, step: { kind: 'tool', call } });
+  });
+  return steps.sort((left, right) => left.at - right.at).map(({ step }) => step);
+}
+
+/** The update index that opened each entry of `toolCallEntries`, same order. */
+function toolCallOpenings(updates: readonly SessionUpdate[]): number[] {
+  const opened = new Map<string, number>();
+  let anonymous = 0;
+  let activeAnonymous: string | undefined;
+  for (const [index, { update }] of updates.entries()) {
+    const sessionUpdate = update.sessionUpdate as string | undefined;
+    if (!sessionUpdate || !TOOL_UPDATE_TYPES.has(sessionUpdate)) continue;
+    const id = typeof update.toolCallId === 'string' ? update.toolCallId : undefined;
+    if (id) activeAnonymous = undefined;
+    if (!id && (sessionUpdate === 'tool_call' || !activeAnonymous)) {
+      activeAnonymous = `anonymous-${anonymous++}`;
+    }
+    const key = id ?? activeAnonymous!;
+    if (!opened.has(key)) opened.set(key, index);
+    if (!id && sessionUpdate === 'tool_result') activeAnonymous = undefined;
+  }
+  return [...opened.values()];
 }
 
 /**
@@ -586,6 +668,7 @@ export function agentStreamSnapshot(
   let lastWasMessage = false;
   let thoughtText = '';
   let thoughtRunOpen = false;
+  let toolSinceMessage = false;
   for (const { update } of updates) {
     const kind = typeof update.sessionUpdate === 'string' ? update.sessionUpdate : '';
     if (kind === 'agent_message_chunk') {
@@ -594,8 +677,7 @@ export function agentStreamSnapshot(
       if (
         !lastWasMessage &&
         messageText &&
-        !/\s$/.test(messageText) &&
-        !CHUNK_CONTINUES_PREVIOUS_WORD.test(delta)
+        !continuesPreviousWord(messageText, delta, toolSinceMessage)
       ) {
         if (!completedMessages.includes(messageText)) completedMessages.push(messageText);
         messageText = '';
@@ -603,8 +685,10 @@ export function agentStreamSnapshot(
       messageText += delta;
       lastWasMessage = true;
       thoughtRunOpen = false;
+      toolSinceMessage = false;
       continue;
     }
+    if (TOOL_UPDATE_TYPES.has(kind)) toolSinceMessage = true;
     if (lastWasMessage && messageText) {
       if (!completedMessages.includes(messageText)) completedMessages.push(messageText);
       messageText = '';

@@ -19,10 +19,10 @@ vi.mock('@livekit/rtc-node', () => ({
     constructor() { state.audio = this; } async close() {}
   },
   LocalAudioTrack: { createAudioTrack: vi.fn() }, TrackPublishOptions: class {},
-  TrackSource: { SOURCE_MICROPHONE: 1 }, TrackKind: { KIND_AUDIO: 1 }, AudioFrame: class {},
+  TrackSource: { SOURCE_MICROPHONE: 1 }, TrackKind: { KIND_AUDIO: 1 }, AudioFrame: class { constructor(readonly data: Int16Array) {} },
 }));
 import { VoiceRoomRuntime, confirmedVoiceSpeech, voiceInterrupt, voicePlaybackEcho } from './voice-room-runtime.js';
-import { VoiceQuotaError } from './voice-providers.js';
+import { AuraSpeech, VoiceQuotaError } from './voice-providers.js';
 import { VoiceService as RealVoiceService } from './voice-service.js';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
@@ -1962,4 +1962,36 @@ it('Reproduction DELIVERY-2: name pause, expiry, other-human isolation and retar
     await runtime.utterance('human', 'check my latest report');
     expect(service.dispatch).toHaveBeenCalledTimes(2);
   } finally { await runtime.close(); now.mockRestore(); }
+});
+
+it('Reproduction AURA-413-1: a long report plays completely through provider requests and RTC frames', async () => {
+  const text = 'The report is complete and every detail should be heard. '.repeat(100).trim();
+  const requests: string[] = [];
+  const wire: Buffer[] = [];
+  const fetcher = vi.fn<typeof fetch>(async (_url, init) => {
+    const { text: part } = JSON.parse(init!.body as string);
+    requests.push(part);
+    if (part.length > 2000) return new Response(null, { status: 413 });
+    // Odd provider boundaries must survive both response reads and request boundaries.
+    const pcm = Buffer.alloc(part.length * 2 + 1, requests.length);
+    wire.push(pcm);
+    return new Response(new ReadableStream({ start(c) {
+      c.enqueue(pcm.subarray(0, 3)); c.enqueue(pcm.subarray(3)); c.close();
+    } }));
+  });
+  const { service } = conversationService(1);
+  const speech = new AuraSpeech('test', 'account', fetcher);
+  const runtime = await VoiceRoomRuntime.connect({ ...service, agents: async () => [{ ...roster[0], voice: 'luna' }], speech: async () => speech } as unknown as VoiceService, 'call', 'room');
+  try {
+    await (runtime as any).play(text, { ...roster[0], voice: 'luna' }, new AbortController().signal);
+    expect(requests.length).toBeGreaterThan(1);
+    expect(requests.every(part => part.length <= 1800)).toBe(true);
+    expect(requests.join('')).toBe(text);
+    const frames = state.audio.captureFrame.mock.calls.map(([frame]: any[]) => Buffer.from(frame.data.buffer));
+    const expected = Buffer.concat(wire);
+    expect(Buffer.concat(frames)).toEqual(expected.subarray(0, expected.length - expected.length % 2));
+    expect(frames.slice(0, -1).every((frame: Buffer) => frame.length === 960)).toBe(true);
+    expect(state.audio.waitForPlayout).toHaveBeenCalledOnce();
+    console.log('AURA-413-1:', text.length, 'characters,', requests.length, 'requests,', frames.length, 'ordered PCM frames');
+  } finally { await runtime.close(); }
 });

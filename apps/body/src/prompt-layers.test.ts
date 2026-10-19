@@ -47,7 +47,8 @@ function sentences(text: string): string[] {
     .replace(/[`*]/g, '')
     .split(/(?<=[.!?])\s+|\n+/)
     .map((sentence) => sentence.replace(/^\s*(?:[-#>|]+\s*)+/, '').replace(/\s+/g, ' ').trim())
-    .filter((sentence) => sentence.length > 24);
+    // A rule has at least two words; a lone word is a label or heading, never a rule.
+    .filter((sentence) => /\p{L}+\s+\p{L}/u.test(sentence));
 }
 
 /** Every string a source file writes, with template holes as a line break so no sentence spans one. */
@@ -125,7 +126,7 @@ function promptText(): string[] {
   return texts;
 }
 
-function layerSentences(): Map<string, Map<Layer, string>> {
+function layerSentences(extraSkillText = ''): Map<string, Map<Layer, string>> {
   const owners = new Map<string, Map<Layer, string>>();
   const add = (layer: Layer, where: string, texts: readonly string[]) => {
     for (const text of texts)
@@ -143,9 +144,15 @@ function layerSentences(): Map<string, Map<Layer, string>> {
     'beeline-spec': beelineSpecSkillMarkdown,
     'beeline-triage': beelineTriageSkillMarkdown,
   }))
-    add('skill', `apps/body/src/beeline-skill.ts (${name})`, [render('test')]);
+    add('skill', `apps/body/src/beeline-skill.ts (${name})`, [render('test') + (name === 'using-beeline' ? extraSkillText : '')]);
   for (const path of TOOL_SOURCES) add('tool', path, sourceStrings(path));
   return owners;
+}
+
+function duplicateSentences(owners: Map<string, Map<Layer, string>>): string[] {
+  return [...owners]
+    .filter(([, places]) => places.size > 1)
+    .map(([sentence, places]) => `"${sentence}" in ${[...places].map(([layer, where]) => `${layer}: ${where}`).join(' and ')}`);
 }
 
 describe('one rule, one layer', () => {
@@ -155,12 +162,16 @@ describe('one rule, one layer', () => {
       'Then call report(status) once',
       'Heading that is long enough',
     ]);
+    expect(sentences('Tag to talk.\n## Intent')).toEqual(['Tag to talk.']);
+  });
+
+  it('rejects a short rule restated in the skill and names both places', () => {
+    expect(duplicateSentences(layerSentences('\n# Using Beeline\nTag to talk.\n'))).toContain(
+      '"tag to talk." in prompt: apps/body/src/prompt-assembly.ts and skill: apps/body/src/beeline-skill.ts (using-beeline)',
+    );
   });
 
   it('never writes the same sentence in more than one of prompt, skill and tool text', () => {
-    const duplicates = [...layerSentences()]
-      .filter(([, places]) => places.size > 1)
-      .map(([sentence, places]) => `"${sentence}" in ${[...places].map(([layer, where]) => `${layer}: ${where}`).join(' and ')}`);
-    expect(duplicates).toEqual([]);
+    expect(duplicateSentences(layerSentences())).toEqual([]);
   });
 });

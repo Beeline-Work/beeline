@@ -1008,7 +1008,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
   },
   {
     "name": "post",
-    "description": "Post a public message at address. Tag to talk. Order to assign work. Tags wake named members to reply here, with no assignment or report owed; receipt names who woke or why not.",
+    "description": "Post a public message at address. Tags wake named members to reply here, with no assignment or report owed; receipt names who woke or why not.",
     "inputSchema": {
       "type": "object",
       "properties": {

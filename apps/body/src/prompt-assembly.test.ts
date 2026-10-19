@@ -58,6 +58,21 @@ describe('R2594 repository setup guidance', () => {
   });
 });
 
+describe('RW1 writable home in the Room primer', () => {
+  const home = '/srv/beeline/agents/a/rooms/r/agent-home/user';
+  it('names the sandbox home and post_artifact only when the sandbox wraps the session', () => {
+    for (const surface of ['room', 'dm'] as const) {
+      const prompt = assembleSessionPrompt({ surface, agentName: 'Bee', agentCommand: 'claude-agent-acp',
+        shell: { available: true }, writableHome: home }).systemPrompt;
+      expect(prompt).toContain(`You can write files only in your home, ${home} (~/)`);
+      expect(prompt).toContain('post_artifact posts files saved there');
+      const unwrapped = assembleSessionPrompt({ surface, agentName: 'Bee', agentCommand: 'claude-agent-acp',
+        shell: { available: true } }).systemPrompt;
+      expect(unwrapped).not.toContain('You can write files only in your home');
+    }
+  });
+});
+
 describe('corner wake reporting (Reproduction schedule-silence-4)', () => {
   it.each(['report', 'order', 'watched_corner', 'corner_check', 'schedule', 'subscribed_event', 'system'])('makes a %s wake quiet without a progress nudge', (commandReason) => {
     const text = assembleTurnPrompt({ surface: 'room', task: { body: 'Handle this wake', commandReason } }).text;
@@ -204,6 +219,7 @@ const SESSION_VARIANTS_BASE: Record<string, SessionPromptContext> = {
     agentCommand: 'claude-agent-acp',
     repository: { name: 'Beeline-Work/beeline', branch: 'main' },
     shell: { available: true },
+    writableHome: '/srv/beeline/agents/bee/rooms/room/agent-home/user',
   },
   dm: {
     surface: 'dm',

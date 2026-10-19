@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { parse as parseToml } from 'smol-toml';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -40,6 +40,7 @@ const decide = (
     mountedServers?: readonly string[];
     hostServers?: readonly string[];
     shellSandboxed?: boolean;
+    sandboxHome?: string;
   } = {},
 ): 'allow' | 'reject' => roomPermissionDecision(request, { shellSandboxed: true, ...options });
 
@@ -439,6 +440,91 @@ describe('top-level Room native permission policy', () => {
   });
 });
 
+describe('native writes inside the sandbox home', () => {
+  const dirs: string[] = [];
+  afterEach(async () => {
+    await Promise.all(dirs.splice(0).map((dir) => rm(dir, { recursive: true, force: true })));
+  });
+
+  /** A checkout beside an `agent-home` whose `user/` is the sandbox HOME, as on the host. */
+  async function layout() {
+    const root = await mkdtemp(join(tmpdir(), 'beeline-home-write-'));
+    dirs.push(root);
+    const home = join(root, 'agent-home', 'user');
+    const checkout = join(root, 'checkout');
+    const outside = join(root, 'outside');
+    await Promise.all([home, checkout, outside, join(root, 'agent-home', 'claude')].map(
+      (dir) => mkdir(dir, { recursive: true })));
+    await writeFile(join(home, 'notes.md'), 'old');
+    await symlink(outside, join(home, 'escape'));
+    await symlink(join(outside, 'missing.txt'), join(home, 'dangling.txt'));
+    await mkdir(join(outside, 'sub'));
+    await symlink(join(outside, 'sub'), join(home, 'link'));
+    return { root, home, checkout, outside };
+  }
+
+  const write = (path: string): AcpPermissionRequest => ({ toolCall: {
+    ...CLAUDE_ACP_NATIVE_WRITE_PERMISSION.toolCall,
+    rawInput: { file_path: path, content: 'hi' },
+    title: `Write ${path}`,
+    content: [{ type: 'diff', path, oldText: null, newText: 'hi' }],
+    locations: [{ path }],
+  } });
+
+  it('RW1 allows a Write or Edit whose every path resolves inside the sandbox home', async () => {
+    const { home } = await layout();
+    for (const path of [
+      join(home, 'work-notes-mock.html'),
+      join(home, 'mocks', 'nested', 'viewer.html'),
+      join(home, 'notes.md'),
+    ]) expect(decide(write(path), { sandboxHome: home }), path).toBe('allow');
+    expect(decide({ toolCall: {
+      kind: 'edit',
+      title: 'Edit notes.md',
+      rawInput: { file_path: join(home, 'notes.md'), old_string: 'old', new_string: 'new' },
+      locations: [{ path: join(home, 'notes.md') }],
+    } }, { sandboxHome: home })).toBe('allow');
+  });
+
+  it('RW1 still refuses writes outside the sandbox home', async () => {
+    const { root, home, checkout, outside } = await layout();
+    for (const path of [
+      join(checkout, 'README.md'),
+      join(root, 'agent-home', 'claude', 'settings.json'),
+      join(root, 'agent-home', 'mock.html'),
+      '/tmp/beeline-probe.txt',
+      join(home, '..', 'mock.html'),
+      join(home, 'escape', 'mock.html'),
+      join(home, 'dangling.txt'),
+      // Unnormalized on purpose: the filesystem follows link to outside/sub
+      // and then `..` to outside, not back to home.
+      `${home}/link/../escaped.txt`,
+      `${home}/./mock.html`,
+      `${home}//mock.html`,
+      home,
+      'mock.html',
+      '~/mock.html',
+    ]) expect(decide(write(path), { sandboxHome: home }), path).toBe('reject');
+    // Every named path must be inside, not just the first.
+    expect(decide({ toolCall: {
+      kind: 'edit',
+      rawInput: { file_path: join(home, 'notes.md') },
+      locations: [{ path: join(home, 'notes.md') }, { path: join(outside, 'x.txt') }],
+    } }, { sandboxHome: home })).toBe('reject');
+    expect(decide({ toolCall: { kind: 'edit', title: 'Bash script edit' } }, { sandboxHome: home }))
+      .toBe('reject');
+    // A home path is still not a delete or a move.
+    expect(decide({ toolCall: { kind: 'delete', locations: [{ path: join(home, 'notes.md') }] } },
+      { sandboxHome: home })).toBe('reject');
+  });
+
+  it('RW1 refuses home writes when the sandbox does not wrap the session', async () => {
+    const { home } = await layout();
+    expect(decide(write(join(home, 'mock.html')), { sandboxHome: home, shellSandboxed: false }))
+      .toBe('reject');
+  });
+});
+
 /**
  * The wiring, not the predicate: a granted host route only becomes callable if
  * the turn loop hands the matcher the names this session actually mounted.
@@ -618,6 +704,21 @@ describe('a granted host route reaches the permission matcher', () => {
     expect(await readFile(outside, 'utf8')).toBe('sandbox-exposed content');
     const unwrapped = await capturedHandler([]);
     expect(await unwrapped(request)).toBe(false);
+  });
+
+  it('RW1 wires the sandbox home into the installed Room callback', async () => {
+    const wrapped = await capturedHandler([], true, '/usr/bin/bwrap');
+    const root = roots[roots.length - 1]!;
+    const request = (path: string): AcpPermissionRequest => ({ toolCall: {
+      ...CLAUDE_ACP_NATIVE_WRITE_PERMISSION.toolCall,
+      rawInput: { file_path: path, content: 'hi' },
+      locations: [{ path }],
+    } });
+    expect(await wrapped(request(join(root, 'agent-home', 'user', 'work-notes-mock.html')))).toBe(true);
+    expect(await wrapped(request(join(root, 'README.md')))).toBe(false);
+    const unwrapped = await capturedHandler([]);
+    const unwrappedRoot = roots[roots.length - 1]!;
+    expect(await unwrapped(request(join(unwrappedRoot, 'agent-home', 'user', 'mock.html')))).toBe(false);
   });
 
   it('R1 wires the agent attachment directory into the installed Room callback', async () => {

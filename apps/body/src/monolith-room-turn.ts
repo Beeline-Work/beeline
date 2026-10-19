@@ -8,9 +8,9 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { resourceCallFacts } from './resource-mcp-facade.js';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { realpathSync } from 'node:fs';
+import { lstatSync, realpathSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { machineHost } from './machine-host.js';
 import { isolatedSharedAssetCategories, markWorkspaceLayoutLive, prepareCodexCacheTargets, preparePackageCacheTargets, preparePrivateAssets, prepareWorkspaceAssets, sharedAssetsEnabled, workspaceAssetPaths, workspaceCacheEnv } from './workspace-assets.js';
 import type { SharedAssetCategory } from '@beeline/api-contract/agent-grants';
@@ -193,33 +193,87 @@ function isRoomShellPermissionRequest(
   return !isMcpShapedPermissionRequest(request, hostServers);
 }
 
+/** Every path a native file request names, or undefined when one is malformed. */
+function nativeRequestPaths(call: AcpPermissionRequest['toolCall']): string[] | undefined {
+  const paths: string[] = [];
+  if (call?.locations !== undefined) {
+    if (!Array.isArray(call.locations)) return undefined;
+    for (const location of call.locations) {
+      if (!location || typeof location.path !== 'string' || !location.path) return undefined;
+      paths.push(location.path);
+    }
+  }
+  const input = call?.rawInput;
+  if (input && typeof input === 'object') {
+    for (const key of ['file_path', 'notebook_path', 'path'] as const) {
+      if (!(key in input)) continue;
+      const value = (input as Record<string, unknown>)[key];
+      if (typeof value !== 'string' || !value) return undefined;
+      paths.push(value);
+    }
+  }
+  return paths;
+}
+
+const strictlyInside = (root: string, path: string): boolean => {
+  const suffix = relative(root, path);
+  return suffix !== '' && suffix !== '..' && !suffix.startsWith(`..${sep}`) && !isAbsolute(suffix);
+};
+
 /** Allow only existing files named entirely within this session's attachment tree. */
 function isAttachmentRead(request: AcpPermissionRequest, attachmentsDir?: string): boolean {
   const call = request.toolCall;
   if (!attachmentsDir || call?.kind !== 'read') return false;
-  const paths: string[] = [];
-  if (call.locations !== undefined) {
-    if (!Array.isArray(call.locations)) return false;
-    for (const location of call.locations) {
-      if (!location || typeof location.path !== 'string' || !location.path) return false;
-      paths.push(location.path);
-    }
-  }
-  const input = call.rawInput;
-  if (input && typeof input === 'object' && 'file_path' in input) {
-    if (typeof input.file_path !== 'string' || !input.file_path) return false;
-    paths.push(input.file_path);
-  }
-  if (!paths.length) return false;
-  const inside = (root: string, path: string) => {
-    const suffix = relative(root, path);
-    return suffix !== '' && suffix !== '..' && !suffix.startsWith(`..${sep}`) && !isAbsolute(suffix);
-  };
+  const paths = nativeRequestPaths(call);
+  if (!paths?.length) return false;
   try {
     const root = resolve(attachmentsDir);
     const realRoot = realpathSync(root);
-    return paths.every(path => isAbsolute(path) && inside(root, resolve(path)) &&
-      inside(realRoot, realpathSync(path)));
+    return paths.every(path => isAbsolute(path) && strictlyInside(root, resolve(path)) &&
+      strictlyInside(realRoot, realpathSync(path)));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * A path as the filesystem would resolve it on write: the nearest entry that
+ * exists (a dangling symlink counts, and then fails realpath) is realpathed and
+ * the not-yet-created remainder is appended, so a new file is judged by the
+ * directory it lands in.
+ */
+function realWriteTarget(path: string): string {
+  let existing = resolve(path);
+  const missing: string[] = [];
+  for (;;) {
+    try {
+      lstatSync(existing);
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      const parent = dirname(existing);
+      if (parent === existing) throw error;
+      missing.unshift(basename(existing));
+      existing = parent;
+    }
+  }
+  return join(realpathSync(existing), ...missing);
+}
+
+/** Allow a native write/edit only when every path it names lands inside the sandbox home. */
+function isSandboxHomeEdit(request: AcpPermissionRequest, sandboxHome?: string): boolean {
+  const call = request.toolCall;
+  if (!sandboxHome || call?.kind !== 'edit') return false;
+  const paths = nativeRequestPaths(call);
+  if (!paths?.length) return false;
+  try {
+    const root = resolve(sandboxHome);
+    const realRoot = realpathSync(root);
+    // Only an already-normal path: `resolve` folds `..` before symlinks are
+    // followed, so `home/link/../x` would be judged by a different directory
+    // than the one the filesystem writes through.
+    return paths.every(path => isAbsolute(path) && path === resolve(path) &&
+      strictlyInside(root, path) && strictlyInside(realRoot, realWriteTarget(path)));
   } catch {
     return false;
   }
@@ -228,9 +282,12 @@ function isAttachmentRead(request: AcpPermissionRequest, attachmentsDir?: string
 /**
  * The Room ACP client applies this host-owned decision fail-closed: a mounted
  * MCP tool call is approved; shell commands and native read/search requests
- * are approved while the OS sandbox wraps this session. Without the sandbox,
- * only native reads confined to downloaded attachments are approved. Native
- * writes/edits and unstructured requests remain refused.
+ * are approved while the OS sandbox wraps this session, as are native
+ * writes/edits whose every path resolves inside the sandbox home (`$HOME`, the
+ * `agent-home/user` directory the sandbox already binds writable for the
+ * shell). Without the sandbox, only native reads confined to downloaded
+ * attachments are approved. Other native writes/edits, deletes, moves and
+ * unstructured requests remain refused.
  *
  * Shell is conditioned on the sandbox because the sandbox IS the Room's
  * read-only filesystem: unwrapped, `wrapAgentCommand` spawns the harness bare
@@ -239,7 +296,9 @@ function isAttachmentRead(request: AcpPermissionRequest, attachmentsDir?: string
  * that case (`harness-capabilities.ts`), so requiring the wrap is what parity
  * means. `ensureBwrapSandbox` installs bubblewrap at daemon start so this is a
  * capability the host gains rather than a refusal it lives with, and the
- * session primer states the outcome either way.
+ * session primer states the outcome either way. The same wrap is why a home
+ * write is safe to approve: the native tool runs inside it, so a symlink the
+ * agent swaps in after this check still reaches only what the shell could.
  */
 export function roomPermissionDecision(
   request: AcpPermissionRequest,
@@ -250,6 +309,8 @@ export function roomPermissionDecision(
     shellSandboxed?: boolean;
     /** The attachment subtree under BEELINE_ATTACH_SCRATCH_ROOT. */
     attachmentsDir?: string;
+    /** The wrapped session's `$HOME` (`agent-home/user`), writable in the sandbox. */
+    sandboxHome?: string;
   } = {},
 ): AcpPermissionDecision {
   const hostServers = options.hostServers ?? CODE_OWNED_HOST_MCP_NAMES;
@@ -258,6 +319,7 @@ export function roomPermissionDecision(
   if (!isMcpShapedPermissionRequest(request, hostServers)) {
     if (options.shellSandboxed) {
       if (request.toolCall?.kind === 'read' || request.toolCall?.kind === 'search') return 'allow';
+      if (isSandboxHomeEdit(request, options.sandboxHome)) return 'allow';
     } else if (isAttachmentRead(request, options.attachmentsDir)) return 'allow';
   }
   if (!options.shellSandboxed) return 'reject';
@@ -1366,6 +1428,7 @@ export class MonolithRoomTurnLoop {
           hostServers,
           shellSandboxed: Boolean(this.options.config.bwrapPath),
           attachmentsDir: attachScratchRoot ? join(attachScratchRoot, 'attachments') : undefined,
+          sandboxHome: homeOverlay.HOME,
         }),
       onUsage: (usage) => {
         void this.options.api.execute('postAgentUsage', { agentId: this.agent.publicKey, usage })
@@ -1406,6 +1469,8 @@ export class MonolithRoomTurnLoop {
         : {}),
       agentCommand: command,
       ...(repositoryInfo ? { repository: repositoryInfo } : {}),
+      // The permission handler approves home writes only under the same wrap.
+      ...(this.options.config.bwrapPath && homeOverlay.HOME ? { writableHome: homeOverlay.HOME } : {}),
       ...(shellCapability === 'runs'
         ? { shell: { available: true } as const }
         : shellCapability === 'refused'

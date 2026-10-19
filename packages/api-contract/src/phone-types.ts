@@ -198,6 +198,11 @@ export type RoomViewActivity = {
     readonly result?: string;
   }[];
   readonly files?: readonly { readonly path: string; readonly status?: string }[];
+  /**
+   * On a `note`: this text carries on the previous note. One text run longer
+   * than a note may be is split across consecutive notes, never cut.
+   */
+  readonly continues?: boolean;
   readonly plan?: {
     readonly objective?: string;
     readonly items: readonly {

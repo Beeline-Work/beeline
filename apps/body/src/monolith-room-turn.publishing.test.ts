@@ -181,18 +181,25 @@ it('#2495: an answer followed by a tool and a short pointer stays whole, as a no
   expect(shape(reply.steps)).toEqual([`note: ${answer}`, 'tool: read status']);
 });
 
-it('keeps a note before more tool calls than the steps bound allows', async () => {
-  const tools = Array.from({ length: 200 }, (_, index) => tool(`t${index}`, `step ${index}`)).flat();
-  const reply = posted(await roomTurnWrites([text('Before the tools.'), ...tools, text('Done.')]));
-  expect(reply.text).toBe('Done.');
-  expect(reply.steps).toHaveLength(200);
-  expect(shape(reply.steps)[0]).toBe('note: Before the tools.');
-  expect(shape(reply.steps)[1]).toBe('tool: 2 earlier steps');
-});
+const noteText = (steps: Array<Record<string, unknown>> | undefined) =>
+  (steps ?? []).filter(step => step.kind === 'note').map(step => step.text).join('');
 
-it('posts every run in the reply when an earlier run is longer than a note may be', async () => {
+it('keeps a long earlier run whole in the steps and the reply clean', async () => {
   const long = `Start. ${'x'.repeat(16_000)} End.`;
   const reply = posted(await roomTurnWrites([text(long), ...tool('t1', 'read status'), text('Done.')]));
-  expect(reply.steps).toBeUndefined();
-  expect(reply.text).toBe(`${long}\n\nDone.`);
+  expect(reply.text).toBe('Done.');
+  expect(noteText(reply.steps)).toBe(long);
+  expect(reply.steps!.map(step => step.kind)).toEqual(['note', 'note', 'tool']);
+  expect(reply.steps![1]).toMatchObject({ continues: true });
+});
+
+it('keeps more than 200 earlier runs as notes and the reply clean', async () => {
+  const updates = Array.from({ length: 201 }, (_, index) => [
+    text(`Note ${index}.`), ...tool(`t${index}`, `step ${index}`),
+  ]).flat();
+  const reply = posted(await roomTurnWrites([...updates, text('Done.')]));
+  expect(reply.text).toBe('Done.');
+  const notes = shape(reply.steps).filter(step => step.startsWith('note: '));
+  expect(notes).toEqual(Array.from({ length: 201 }, (_, index) => `note: Note ${index}.`));
+  expect(shape(reply.steps)).toHaveLength(402);
 });

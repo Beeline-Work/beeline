@@ -370,6 +370,27 @@ describe('a reply’s steps line', () => {
     expect(hostNodes(renderer, /^activity-verdict-t/)).toHaveLength(4);
   });
 
+  it('joins a long run split across continuing notes back into one note', () => {
+    const renderer = render(
+      <TurnStepsLine
+        items={[
+          note('n1', 'First half, '),
+          { ...note('n1b', 'second half.'), continues: true },
+          tool('t1', 'ToolSearch'),
+        ]}
+      />,
+    );
+    expect(
+      renderer.root.findByProps({ testID: 'tool-run-group-n1' }).props.accessibilityLabel,
+    ).toBe('1 step · 1 note, expandable');
+    expandRun(renderer, 'n1');
+    expect(
+      renderer.root
+        .findByProps({ testID: 'tool-ledger-line-n1' })
+        .findByType('MonoMarkdown' as never).props.markdown,
+    ).toBe('First half, second half.');
+  });
+
   it('a reply with notes only reads as notes', () => {
     const renderer = render(<TurnStepsLine items={[note('n1', 'Checked.')]} />);
     expect(

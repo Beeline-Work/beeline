@@ -598,9 +598,17 @@ export function buildTurnActivity(items: readonly AgentActivityItem[]): TurnActi
     }
     if (item.kind === 'note') {
       // An earlier text run keeps its place between the tool lines. It is
-      // shown whole, so the label is the full text, never a clamp of it.
-      const text = item.text?.trim();
-      if (text) {
+      // shown whole, so the label is the full text, never a clamp of it. A
+      // run longer than one stored note arrives split; its pieces join here.
+      const previous = ordered.at(-1);
+      if (item.continues && previous?.kind === 'projected' && previous.step.kind === 'note') {
+        const joined = `${previous.step.label}${item.text ?? ''}`;
+        previous.step = { ...previous.step, title: joined, label: joined };
+        continue;
+      }
+      // The body already trimmed the run; a piece's edges are real text.
+      const text = item.text;
+      if (text?.trim()) {
         ordered.push({
           kind: 'projected',
           step: {

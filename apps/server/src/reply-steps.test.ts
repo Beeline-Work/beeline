@@ -99,6 +99,15 @@ describe('a Room reply’s steps', () => {
     ]);
   });
 
+  it('stores one long run split across continuing notes', async () => {
+    const steps = [
+      { kind: 'note', title: 'Note', text: 'x'.repeat(16_000) },
+      { kind: 'note', title: 'Note', text: 'y'.repeat(14), continues: true },
+    ];
+    await reply({ steps });
+    expect((await stored())[0]!.activity).toEqual(steps);
+  });
+
   it('a reply without steps stores none', async () => {
     await reply({});
     expect((await stored())[0]!.activity).toBeNull();
@@ -106,9 +115,14 @@ describe('a Room reply’s steps', () => {
 
   it.each([
     ['an output row', [{ kind: 'output', title: 'Update', text: 'prose' }]],
-    ['an empty note', [{ kind: 'note', title: 'Note', text: '  ' }]],
+    ['an empty note', [{ kind: 'note', title: 'Note', text: '' }]],
     ['an oversized note', [{ kind: 'note', title: 'Note', text: 'x'.repeat(16_001) }]],
-    ['too many steps', Array.from({ length: 201 }, () => STEPS[1])],
+    ['a tool marked as continuing', [{ ...STEPS[1], continues: true }]],
+    ['too many steps', Array.from({ length: 2_001 }, () => STEPS[1])],
+    [
+      'a payload over 4 MB',
+      Array.from({ length: 260 }, () => ({ kind: 'note', title: 'Note', text: 'x'.repeat(16_000) })),
+    ],
   ])('refuses %s and posts nothing', async (_name, steps) => {
     await expect(reply({ steps })).rejects.toThrow('reply steps are invalid');
     expect(await stored()).toEqual([]);

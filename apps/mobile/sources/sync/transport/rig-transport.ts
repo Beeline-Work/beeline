@@ -88,6 +88,11 @@ export type AgentActivityItem = {
     status?: string;
     diff?: string;
   }>;
+  /**
+   * On a `note`: this text carries on the previous note. One text run longer
+   * than a note may be is split across consecutive notes, never cut.
+   */
+  continues?: boolean;
   plan?: {
     objective?: string;
     items: Array<{

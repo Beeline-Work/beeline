@@ -297,8 +297,10 @@ async function settleTurnFailureLine(
 }
 const seconds = (date: Date) => Math.floor(date.getTime() / 1_000);
 
-const MAX_REPLY_STEPS = 200;
+const MAX_REPLY_STEPS = 2_000;
 const MAX_REPLY_NOTE_LENGTH = 16_000;
+/** The whole stored steps payload; a note longer than one row spans several. */
+const MAX_REPLY_STEPS_BYTES = 4_000_000;
 /**
  * A reply's steps (`PostRoomMessageInput.steps`) as the JSON its `activity`
  * column stores, or null when it has none. Only tool rows and notes belong
@@ -314,10 +316,14 @@ function replySteps(steps: unknown): string | null {
     if (typeof step.title !== 'string' || step.title.length > 240)
       throw new Error('reply steps are invalid');
     if (step.kind === 'note' &&
-      (typeof step.text !== 'string' || !step.text.trim() || step.text.length > MAX_REPLY_NOTE_LENGTH))
+      (typeof step.text !== 'string' || !step.text || step.text.length > MAX_REPLY_NOTE_LENGTH))
+      throw new Error('reply steps are invalid');
+    if (step.continues !== undefined && (step.kind !== 'note' || step.continues !== true))
       throw new Error('reply steps are invalid');
   }
-  return steps.length ? JSON.stringify(steps) : null;
+  const json = JSON.stringify(steps);
+  if (Buffer.byteLength(json) > MAX_REPLY_STEPS_BYTES) throw new Error('reply steps are invalid');
+  return steps.length ? json : null;
 }
 /** Corner reads and merge writes that also admit a current parent Room member. */
 const CORNER_REACH_OPERATIONS = new Set<string>([

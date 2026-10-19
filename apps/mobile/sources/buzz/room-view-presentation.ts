@@ -346,6 +346,7 @@ function activityItems(message: RoomViewMessage): AgentActivityItem[] | undefine
     title: activity.title,
     id: `${message.id}:${index}`,
     ...(activity.text ? { text: activity.text } : {}),
+    ...(activity.continues ? { continues: true } : {}),
     ...(activity.operation ? { toolKind: activity.operation } : {}),
     ...(activity.rollup ? { rollup: { ...activity.rollup } } : {}),
     ...(activity.observed ? { observed: activity.observed.map((item) => ({ ...item })) } : {}),

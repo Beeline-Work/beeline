@@ -1,0 +1,17 @@
+{
+  "baseline": [
+    248.43916000000172,
+    41.5138369999986,
+    37.51369200000045,
+    35.76138300000093,
+    32.30388699999821
+  ],
+  "branch": [
+    115.51456300000427,
+    78.28626999999688,
+    99.57896900000196,
+    60.172373000001244,
+    76.88325899999472
+  ],
+  "reason": "Branch run overlapped institutional-history fixture migrations; baseline did not. Retained as a diagnostic; rerun both without competing tests before assessing latency."
+}

@@ -56,7 +56,7 @@ describe('voice providers', () => {
     expect(namedVoiceTarget('gooseberries', agents, 'ruby', 2)).toBeUndefined();
   });
 
-  it('speaks as the existing agent with reasoning off and one ordinary order tool', async () => {
+  it('speaks as the existing agent with reasoning off and ordinary order and quick search tools', async () => {
     const wire = 'data: {"choices":[{"delta":{"content":"I’ll "}}]}\n\ndata: {"choices":[{"delta":{"content":"work on that.","tool_calls":[{"function":{"name":"order"}}]}}]}\n\ndata: [DONE]\n\n';
     const fetcher = vi.fn(async () => new Response(wire));
     const brain = new OpenRouterVoiceBrain('secret', fetcher as typeof fetch);
@@ -68,11 +68,10 @@ describe('voice providers', () => {
     expect(body.reasoning).toEqual({ effort: 'none', exclude: true });
     expect(body.messages[0].content).toContain('You are Ruby');
     expect(body.messages[0].content).toContain('Warm.');
-    expect(body.tools.map((tool: { function: { name: string } }) => tool.function.name)).toEqual(['order']);
-    // Lookups the voice layer cannot see go to the real agent with a short spoken line.
-    expect(body.messages[0].content).toContain('read, check or look up anything you cannot see here (other Rooms, corners, reports, memory, keys');
-    expect(body.messages[0].content).toContain('call order at once and say only a short line such as "Checking."');
-    expect(body.tools[0].function.description).toContain('any read or lookup of something outside this conversation');
+    expect(body.tools.map((tool: { function: { name: string } }) => tool.function.name)).toEqual(['order', 'search_web', 'search_history']);
+    expect(body.messages[0].content).toContain('Greetings, conversation, explanations and repeating words need no tool');
+    expect(body.messages[0].content).toContain('Use search_history');
+    expect(body.messages[0].content).toContain('Use order for real work');
     expect(reply).toEqual({ text: 'I’ll work on that.', order: true });
     expect(text.mock.calls.flat().join('')).toBe(reply.text);
   });
@@ -194,6 +193,64 @@ it('CALL-ERROR-1: late brain headers cannot emit text after timeout', async () =
     await vi.advanceTimersByTimeAsync(1);
     expect(onText).not.toHaveBeenCalled();
   } finally { vi.useRealTimers(); }
+});
+
+describe('quick call search', () => {
+  const agent = { id: 'a', name: 'Ruby', handle: 'ruby', soul: '', voice: 'luna' };
+  const stream = (delta: unknown) => new Response(`data: ${JSON.stringify({ choices: [{ delta }] })}\n\n`);
+  it.each(['search_web', 'search_history'] as const)('announces %s, bounds results and makes exactly one answer call', async name => {
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(stream({ content: 'Let me look.', tool_calls: [{ index: 0, function: { name, arguments: '{"query":"release"}' } }] }))
+      .mockResolvedValueOnce(stream({ content: 'The release is ready.' }));
+    const announce = vi.fn(async () => {});
+    const search = vi.fn(async () => 'x'.repeat(16000));
+    const answer = await new OpenRouterVoiceBrain('test', fetcher).answer(agent,
+      [{ role: 'user', content: 'Find the release' }], vi.fn(), new AbortController().signal, { announce, search });
+    expect(answer).toEqual({ text: 'The release is ready.', order: false });
+    expect(announce).toHaveBeenCalledWith('Let me look.');
+    expect(search.mock.calls[0]?.[0]).toEqual({ name, query: 'release' });
+    expect(fetcher).toHaveBeenCalledTimes(2);
+    const second = JSON.parse(String(fetcher.mock.calls[1]![1]!.body));
+    expect(second.tools).toBeUndefined();
+    expect(second.messages.at(-1).content.length).toBeLessThan(8100);
+  });
+  it.each(['timeout', 'failure'] as const)('turns search %s into an order without speaking an error', async kind => {
+    vi.useFakeTimers();
+    try {
+      const fetcher = vi.fn<typeof fetch>().mockResolvedValue(stream({ content: 'Let me look.', tool_calls: [
+        { function: { name: 'search_web', arguments: '{"query":"Japan"}' } },
+      ] }));
+      let searchSignal!: AbortSignal;
+      const work = new OpenRouterVoiceBrain('test', fetcher).answer(agent, [], vi.fn(), new AbortController().signal, {
+        announce: vi.fn(async () => {}), search: async (_request, signal) => {
+          searchSignal = signal;
+          if (kind === 'failure') throw new Error('Provider failure');
+          return new Promise<string>(() => {});
+        },
+      });
+      await vi.advanceTimersByTimeAsync(2500);
+      expect(await work).toEqual({ text: '', order: true });
+      expect(searchSignal.aborted).toBe(true);
+      expect(fetcher).toHaveBeenCalledOnce();
+    } finally { vi.useRealTimers(); }
+  });
+  it('plain conversation makes exactly one router call and never searches', async () => {
+    const fetcher = vi.fn<typeof fetch>().mockResolvedValue(stream({ content: 'Hello!' }));
+    const search = vi.fn(); const announce = vi.fn();
+    expect(await new OpenRouterVoiceBrain('test', fetcher).answer(agent, [], vi.fn(), new AbortController().signal,
+      { search, announce })).toEqual({ text: 'Hello!', order: false });
+    expect(fetcher).toHaveBeenCalledOnce(); expect(search).not.toHaveBeenCalled(); expect(announce).not.toHaveBeenCalled();
+  });
+});
+
+it('still delegates a failed search when its spoken acknowledgement also fails', async () => {
+  const fetcher = vi.fn<typeof fetch>().mockResolvedValue(new Response('data: ' + JSON.stringify({ choices: [{ delta: {
+    tool_calls: [{ function: { name: 'search_web', arguments: '{"query":"Japan","spoken_line":"Let me look."}' } }],
+  } }] }) + '\n\n'));
+  const answer = await new OpenRouterVoiceBrain('test', fetcher).answer(
+    { id: 'a', name: 'Ruby', handle: 'ruby', soul: '', voice: 'luna' }, [], vi.fn(), new AbortController().signal,
+    { announce: async () => { throw new Error('TTS failed'); }, search: async () => { throw new Error('Search failed'); } });
+  expect(answer).toEqual({ text: '', order: true });
 });
 
 it.each([

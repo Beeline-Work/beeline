@@ -1,0 +1,23 @@
+{
+  "id": "transcript-answers-from-history",
+  "section": "turn.transcript",
+  "summary": "The agent answers from earlier Room messages it was shown.",
+  "place": "room",
+  "turn": {
+    "task": {
+      "body": "@ruby when does the staging database password rotate?",
+      "fromName": "dana",
+      "commandReason": "human_tag"
+    },
+    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
+  },
+  "messages": [
+    "[message id: m1]\npebble [message]: Note: the staging database password rotates every Friday at noon."
+  ],
+  "pass": {
+    "text": {
+      "matches": "Friday",
+      "flags": "i"
+    }
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "id": "corners-orders-exact-address",
+  "section": "turn.corners",
+  "summary": "The agent orders a corner by the exact address from its corner list.",
+  "place": "room",
+  "turn": {
+    "task": {
+      "body": "@ruby tell the agent in the billing-fix corner to stop work until Monday.",
+      "fromName": "dana",
+      "commandReason": "human_tag"
+    },
+    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above.",
+    "corners": [
+      {
+        "cornerId": "c-b1ll-77",
+        "parentRoomId": "room-1",
+        "name": "billing-fix",
+        "createdBy": "dana-id",
+        "archived": false
+      }
+    ]
+  },
+  "pass": {
+    "call": "order",
+    "args": {
+      "address": "c-b1ll-77"
+    }
+  }
+}

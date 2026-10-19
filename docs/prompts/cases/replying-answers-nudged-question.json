@@ -1,0 +1,33 @@
+{
+  "id": "replying-answers-nudged-question",
+  "section": "room.replying",
+  "summary": "A bare nudge is answered with the unanswered human question, not echoed.",
+  "place": "room",
+  "turn": {
+    "task": {
+      "body": "Reminder: someone is waiting for a reply from you.",
+      "commandReason": "system"
+    },
+    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
+  },
+  "messages": [
+    "[message id: m1]\ndana [message]: @ruby what is 17 times 23?"
+  ],
+  "pass": {
+    "all": [
+      {
+        "text": {
+          "matches": "391"
+        }
+      },
+      {
+        "text": {
+          "not": {
+            "matches": "reminder|waiting for a reply",
+            "flags": "i"
+          }
+        }
+      }
+    ]
+  }
+}

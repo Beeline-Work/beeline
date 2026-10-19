@@ -1,0 +1,30 @@
+{
+  "id": "corners-opens-named-corner",
+  "section": "room.corners",
+  "summary": "Ordered to do repository work, the agent opens a corner with a short hyphenated name.",
+  "place": "room",
+  "session": {
+    "shell": {
+      "available": true
+    }
+  },
+  "turn": {
+    "task": {
+      "body": "@ruby please fix the flaky login test in apps/server. Go ahead and start the work.",
+      "fromName": "dana",
+      "commandReason": "human_tag"
+    },
+    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
+  },
+  "pass": {
+    "call": "open_corner",
+    "args": {
+      "name": {
+        "matches": "^[a-z0-9]+(-[a-z0-9]+){0,2}$"
+      }
+    }
+  },
+  "toolResults": {
+    "read": "{\"roomAddress\":\"room-1\",\"messages\":[{\"id\":\"m5\",\"author\":\"dana\",\"text\":\"@ruby please fix the flaky login test in apps/server. Go ahead and start the work.\"}],\"procedure\":\"Write a brief with Intent, Acceptance criteria and Non-goals; the dispatching message is the approval.\"}"
+  }
+}

@@ -1,0 +1,54 @@
+{
+  "id": "finish-orders-then-ends",
+  "section": "core.finish",
+  "summary": "After ordering another agent, the agent ends the turn instead of sleeping or polling.",
+  "place": "room",
+  "session": {
+    "shell": {
+      "available": true
+    }
+  },
+  "turn": {
+    "task": {
+      "body": "@ruby ask Juniper to run the release checklist in the release-check corner and tell me when it is done.",
+      "fromName": "dana",
+      "commandReason": "human_tag"
+    },
+    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above.",
+    "corners": [
+      {
+        "cornerId": "c-rel1",
+        "parentRoomId": "room-1",
+        "name": "release-check",
+        "createdBy": "dana-id",
+        "archived": false
+      }
+    ]
+  },
+  "tools": [
+    "Bash"
+  ],
+  "pass": {
+    "all": [
+      {
+        "call": "order",
+        "args": {
+          "*": {
+            "contains": "juniper"
+          }
+        }
+      },
+      {
+        "noCall": "Bash",
+        "args": {
+          "command": {
+            "matches": "\\bsleep\\b"
+          }
+        }
+      },
+      {
+        "noCall": "wake"
+      }
+    ]
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "id": "squire-drive-starts-drive",
+  "section": "surface.squire-drive",
+  "summary": "A multi-step browser signup starts with operate_drive, not single steps.",
+  "place": "room",
+  "session": {
+    "squireAvailable": true
+  },
+  "turn": {
+    "task": {
+      "body": "@ruby sign me up for a Fly.io account and get an API token.",
+      "fromName": "dana",
+      "commandReason": "human_tag"
+    },
+    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
+  },
+  "tools": [
+    "operate_drive",
+    "operate_click",
+    "operate_navigate"
+  ],
+  "pass": {
+    "all": [
+      {
+        "call": "operate_drive"
+      },
+      {
+        "noCall": "operate_navigate"
+      }
+    ]
+  }
+}

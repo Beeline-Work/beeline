@@ -1,0 +1,29 @@
+{
+  "id": "checkout-names-commit",
+  "section": "turn.checkout",
+  "summary": "A Room agent knows which commit its checkout reads.",
+  "place": "room",
+  "session": {
+    "repository": {
+      "name": "acme/app",
+      "branch": "main"
+    }
+  },
+  "turn": {
+    "checkout": {
+      "branch": "main",
+      "commit": "9c1e2d4"
+    },
+    "task": {
+      "body": "@ruby which commit is your checkout at?",
+      "fromName": "dana",
+      "commandReason": "human_tag"
+    },
+    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
+  },
+  "pass": {
+    "text": {
+      "contains": "9c1e2d4"
+    }
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "id": "repo-less-posts-artifact",
+  "section": "corner.repo-less",
+  "summary": "A repo-less corner delivers a file with post_artifact and no git.",
+  "place": "repo-less-corner",
+  "turn": {
+    "task": {
+      "body": "@ruby write the launch checklist as a markdown file and send it to me.",
+      "fromName": "dana",
+      "commandReason": "human_tag"
+    },
+    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
+  },
+  "tools": [
+    "Bash"
+  ],
+  "pass": {
+    "all": [
+      {
+        "call": "post_artifact"
+      },
+      {
+        "noCall": "Bash",
+        "args": {
+          "command": {
+            "matches": "git (init|commit|push)|gh pr"
+          }
+        }
+      }
+    ]
+  }
+}

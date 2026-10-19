@@ -58,9 +58,22 @@ summary, and human reports (`detail` holds the person's own `@system` text or Re
 issue note) that describe the same failure. Rank the groups by the sum of occurrence_count, with
 human reports first on a tie.
 
+Judge each group: is it a prompt defect? It is one when the agent had the tools
+and facts it needed but acted wrongly because of what its prompt, the Beeline
+skill or a tool description said or left out. A server, tool or client failure is
+not one. No label marks this; decide it yourself. For each prompt defect, name
+the prompt section it concerns (a section id from `apps/body/src/prompt-assembly.ts`,
+or the skill or tool) and draft its saved case in the format of
+`docs/prompts/cases/README.md`: the place, what the agent saw, its tools, and a
+pass rule. Write pass rules on tool calls and their arguments where you can; a
+rule on free text is fragile. The repository is public: describe what the agent
+saw in your own words with invented names. Never quote a report, and never name
+the people, Rooms, Workspaces or emails behind it.
+
 If nothing is new, hand off `nothing_new`. Otherwise hand off `ranked` with
 `problems`: the top groups (at most 4), each with a one-line description in your
-own words, its report count, and its item ids.
+own words, its report count, and its item ids. Mark each prompt defect with
+`promptDefect: true`, its section, and its drafted case.
 
 ## adapters
 
@@ -149,5 +162,14 @@ describes the problem in your own words, lists its item ids, and requires the fi
 pull request body to carry the line `Feedback items: <ids>`. The repository is
 public: the brief and the pull request must never quote a report, and never name
 the people, Rooms or emails behind it. Tag the agent best suited to the work in
-that corner. Hand off `dispatched` with `corners` listing each corner's
+that corner.
+
+For a prompt defect, the brief also carries the drafted case. It requires the
+pull request to add that case as `docs/prompts/cases/<id>.json` and to pass the
+`PROMPT CASES` check. It also requires a replay: once the pull request is open,
+the worker orders one other agent in the Room to replay every saved case on the
+pull request head with its own model (`docs/prompts/cases/README.md`, Replay).
+That agent posts the pass/fail table on the pull request. The new case must
+fail on the old prompt and pass with the fix, and every other case must pass.
+The reviewer does not pass the pull request without that table. Hand off `dispatched` with `corners` listing each corner's
 `cornerId` (from `open_corner`), its name and its item ids.

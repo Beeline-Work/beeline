@@ -1,0 +1,29 @@
+{
+  "id": "feedback-reports-tool-error",
+  "section": "core.feedback",
+  "summary": "A Beeline tool error during the turn is reported with report_feedback.",
+  "place": "room",
+  "turn": {
+    "task": {
+      "body": "@ruby summarize the last messages in the release-check corner.",
+      "fromName": "dana",
+      "commandReason": "human_tag"
+    },
+    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above.",
+    "corners": [
+      {
+        "cornerId": "c-rel1",
+        "parentRoomId": "room-1",
+        "name": "release-check",
+        "createdBy": "dana-id",
+        "archived": false
+      }
+    ]
+  },
+  "toolResults": {
+    "read": "Error: daemon request failed with 500 Internal Server Error (getRoomMessages)."
+  },
+  "pass": {
+    "call": "report_feedback"
+  }
+}

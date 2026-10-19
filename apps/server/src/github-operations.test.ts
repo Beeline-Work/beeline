@@ -67,6 +67,61 @@ describe('GitHub phone operations', () => {
     return { corners, headSha, app, payload };
   }
 
+  it.each(['green on reopen', 'green after reopen', 'prior head green'])('R1: close, push, stale reopen — %s dispatches once with current card totals', async timing => {
+    const { corners, headSha: oldHead, app, payload } = await checksFixture();
+    const corner = corners[0]!;
+    const newHead = '2'.repeat(40);
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
+    const prEvent = (action: string, sha: string) => ({
+      ...payload, action, pull_request: {
+        number: 1, title: 'Fix checks', html_url: 'https://github.com/owner/widgets/pull/1',
+        head: { ref: 'feature/checks-1', sha }, base: { ref: 'main' }, mergeable_state: 'clean',
+      },
+    });
+    await operations.processWebhook('pull_request', prEvent('closed', oldHead));
+    await operations.processWebhook('push', {
+      ...payload, ref: 'refs/heads/feature/checks-1', after: newHead,
+    });
+    // Old-head CI can arrive while the PR association is absent.
+    app.readCommitCheckRollup.mockResolvedValue({ state: timing === 'prior head green' ? 'passed' : 'pending', total: 40, failing: [],
+      checks: [{ name: 'old job', status: timing === 'prior head green' ? 'passed' : 'pending' }] });
+    await operations.processWebhook('check_run', payload);
+    app.readPullRequest.mockResolvedValue({ number: 1, headSha: newHead,
+      url: 'https://github.com/owner/widgets/pull/1', mergeability: 'clean' });
+    const green = { state: 'passed', total: 31, failing: [],
+      checks: Array.from({ length: 31 }, (_, i) => ({ name: `job ${i}`, status: 'passed' })) };
+    app.readCommitCheckRollup.mockResolvedValue(timing !== 'green after reopen' ? green : {
+      ...green, state: 'pending', checks: green.checks.map(c => ({ ...c, status: 'pending' })),
+    });
+    // A delayed reopen payload can still name the pre-push head.
+    await operations.processWebhook('pull_request', prEvent('reopened', oldHead));
+    if (timing === 'green after reopen') {
+      app.readCommitCheckRollup.mockResolvedValue(green);
+      await operations.processWebhook('check_run', { ...payload,
+        check_run: { ...payload.check_run, head_sha: newHead,
+          check_suite: { head_branch: 'feature/checks-1', head_sha: newHead } } });
+    }
+    const lifecycle = (await database.query<{ lifecycle: import('@beeline/api-contract/phone').CornerLifecycleView }>(
+      `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [corner],
+    )).rows[0]!.lifecycle;
+    expect(lifecycle).toMatchObject({ pr: { headSha: newHead }, checks: 'passing',
+      checksSummary: { total: 31, status: 'passing' } });
+    // Exercise the exact formatter used by the visible corner header.
+    const { cornerStatusLine } = await import('../../mobile/sources/buzz/corner-status-line.js');
+    expect(cornerStatusLine(lifecycle, false)).toBe('PR #1 · all 31 tests passed');
+    const facts = () => database.query(`SELECT 1 FROM messages WHERE room_id=$1
+      AND system_event->>'kind'='check-passed' AND system_event->'object'->>'headSha'=$2`, [corner, newHead]);
+    const wakes = () => database.query(`SELECT command.agent_id FROM agent_commands command
+      JOIN messages source ON source.id=command.source_message_id WHERE command.room_id=$1
+      AND source.system_event->>'kind'='check-passed'
+      AND source.system_event->'object'->>'headSha'=$2`, [corner, newHead]);
+    expect((await facts()).rowCount).toBe(1);
+    expect((await wakes()).rows).toEqual([{ agent_id: REVIEWER }]);
+    await operations.processWebhook('pull_request', prEvent('reopened', oldHead));
+    expect((await facts()).rowCount).toBe(1);
+    expect((await wakes()).rows).toEqual([{ agent_id: REVIEWER }]);
+  });
+
   it('does not wake on a superseded head when its completed suite arrives before push and synchronize', async () => {
     const { corners, headSha: oldHead, app, payload } = await checksFixture();
     const corner = corners[0]!;

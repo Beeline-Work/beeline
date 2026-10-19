@@ -1813,7 +1813,17 @@ export class GitHubOperations {
         if (recordedPrNumber && number && recordedPrNumber !== number) continue;
         const targetBranch = text(record(pullRequest?.base)?.ref);
         const webhookBaseSha = text(record(pullRequest?.base)?.sha);
-        const headSha = text(record(pullRequest?.head)?.sha);
+        let headSha = text(record(pullRequest?.head)?.sha);
+        // Reopening may be delivered after a push with the closed PR's old
+        // head. Restore the association from GitHub, not that cached payload.
+        if (body.action === 'reopened' && number) {
+          const token = await this.app.installationToken(Number(target.installation_id), {
+            repositoryIds: [Number(target.repository_id)],
+          });
+          const live = await this.app.readPullRequest(token.token, repository, number);
+          if (live.state === 'closed' || live.merged) continue;
+          headSha = live.headSha;
+        }
         const mergeabilityValue = text(pullRequest?.mergeable_state);
         let mergeability = githubMergeability(mergeabilityValue);
         let differentPr = false;
@@ -1871,8 +1881,8 @@ export class GitHubOperations {
           if (differentPr) continue;
           if (mergeability === 'unknown' || mergeability === 'dirty')
             await this.refreshStaleMergeability(target.corner_id);
-          if (body.action === 'opened' || body.action === 'synchronize')
-            await this.refreshCheckRollup({ ...target, has_pr: true }, repository,
+          if (body.action === 'opened' || body.action === 'synchronize' || body.action === 'reopened')
+            await this.refreshCheckRollup({ ...target, has_pr: true, pr_number: String(number) }, repository,
               { name: 'Pull request checks', status: 'pending', headSha, url }, database);
         }
         if (merged && url) {
@@ -2109,7 +2119,7 @@ export class GitHubOperations {
               : String(check.conclusion ?? '').toUpperCase() === 'CANCELLED'
                 ? 'cancelled'
                 : check.status;
-          const becamePassing = summary.status === 'passing' && (current.checks !== 'passing' || newAttempt);
+          const becamePassing = summary.status === 'passing' && (current.checks !== 'passing' || !sameReportedHead || newAttempt);
           // The first failed job wakes immediately. Completion wakes once
           // more even when the same job still fails, so a promised rerun or
           // log read has a turn to finish it. Replays share the attempt's id.

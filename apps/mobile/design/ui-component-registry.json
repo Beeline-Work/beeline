@@ -9,6 +9,7 @@
       "ActivityTimeline",
       "ToolLedgerLineRow",
       "ToolRunGroupRow",
+      "TurnStepsLine",
       "row"
     ],
     "components/buzz/AgentProfileView.tsx": ["AgentProfileView"],

@@ -1,0 +1,47 @@
+=== 2026-10-19T18:31:15Z sample 0
+    isKeyguardShowing=true
+  mWakefulness=Asleep
+isForeground=true foregroundId=4012 types=0x00000080
+curCapability=--MNFUAT
+{"frames": 23874, "recognized": 12, "ttsSamples": 872196, "call": "f07076a9-1a37-4906-bae0-4ddbd84dbbab", "participants": [{"parked_at": null, "left_at": null}], "lastEvents": [{"at": 1792434633387, "event": "recognized ruby how are you"}, {"at": 1792434648418, "event": "recognized ruby how are you"}, {"at": 1792434663427, "event": "recognized ruby how are you"}]}
+=== 2026-10-19T18:31:30Z sample 1
+    isKeyguardShowing=true
+  mWakefulness=Asleep
+isForeground=true foregroundId=4012 types=0x00000080
+curCapability=--MNFUAT
+{"frames": 25385, "recognized": 13, "ttsSamples": 944879, "call": "f07076a9-1a37-4906-bae0-4ddbd84dbbab", "participants": [{"parked_at": null, "left_at": null}], "lastEvents": [{"at": 1792434648418, "event": "recognized ruby how are you"}, {"at": 1792434663427, "event": "recognized ruby how are you"}, {"at": 1792434678449, "event": "recognized ruby how are you"}]}
+=== 2026-10-19T18:31:45Z sample 2
+    isKeyguardShowing=true
+  mWakefulness=Asleep
+isForeground=true foregroundId=4012 types=0x00000080
+curCapability=--MNFUAT
+{"frames": 26896, "recognized": 14, "ttsSamples": 1017562, "call": "f07076a9-1a37-4906-bae0-4ddbd84dbbab", "participants": [{"parked_at": null, "left_at": null}], "lastEvents": [{"at": 1792434663427, "event": "recognized ruby how are you"}, {"at": 1792434678449, "event": "recognized ruby how are you"}, {"at": 1792434693479, "event": "recognized ruby how are you"}]}
+=== 2026-10-19T18:32:00Z sample 3
+    isKeyguardShowing=true
+  mWakefulness=Asleep
+isForeground=true foregroundId=4012 types=0x00000080
+curCapability=--MNFUAT
+{"frames": 28408, "recognized": 15, "ttsSamples": 1090245, "call": "f07076a9-1a37-4906-bae0-4ddbd84dbbab", "participants": [{"parked_at": null, "left_at": null}], "lastEvents": [{"at": 1792434678449, "event": "recognized ruby how are you"}, {"at": 1792434693479, "event": "recognized ruby how are you"}, {"at": 1792434708508, "event": "recognized ruby how are you"}]}
+=== 2026-10-19T18:32:15Z sample 4
+    isKeyguardShowing=true
+  mWakefulness=Asleep
+isForeground=true foregroundId=4012 types=0x00000080
+curCapability=--MNFUAT
+{"frames": 29933, "recognized": 15, "ttsSamples": 1090245, "call": "f07076a9-1a37-4906-bae0-4ddbd84dbbab", "participants": [{"parked_at": null, "left_at": null}], "lastEvents": [{"at": 1792434678449, "event": "recognized ruby how are you"}, {"at": 1792434693479, "event": "recognized ruby how are you"}, {"at": 1792434708508, "event": "recognized ruby how are you"}]}
+=== 2026-10-19T18:32:30Z sample 5
+    isKeyguardShowing=true
+  mWakefulness=Asleep
+isForeground=true foregroundId=4012 types=0x00000080
+curCapability=--MNFUAT
+{"frames": 31443, "recognized": 15, "ttsSamples": 1090245, "call": "f07076a9-1a37-4906-bae0-4ddbd84dbbab", "participants": [{"parked_at": null, "left_at": null}], "lastEvents": [{"at": 1792434678449, "event": "recognized ruby how are you"}, {"at": 1792434693479, "event": "recognized ruby how are you"}, {"at": 1792434708508, "event": "recognized ruby how are you"}]}
+=== 2026-10-19T18:32:45Z sample 6
+    isKeyguardShowing=true
+  mWakefulness=Asleep
+isForeground=true foregroundId=4012 types=0x00000080
+curCapability=--MNFUAT
+{"frames": 32954, "recognized": 15, "ttsSamples": 1090245, "call": "f07076a9-1a37-4906-bae0-4ddbd84dbbab", "participants": [{"parked_at": null, "left_at": null}], "lastEvents": [{"at": 1792434678449, "event": "recognized ruby how are you"}, {"at": 1792434693479, "event": "recognized ruby how are you"}, {"at": 1792434708508, "event": "recognized ruby how are you"}]}
+=== 2026-10-19T18:33:00Z sample 7
+    isKeyguardShowing=true
+  mWakefulness=Asleep
+curCapability=-------T
+{"frames": 33582, "recognized": 15, "ttsSamples": 1090245, "call": null, "participants": [{"parked_at": null, "left_at": "2026-10-19T18:32:52.182Z"}], "lastEvents": [{"at": 1792434693479, "event": "recognized ruby how are you"}, {"at": 1792434708508, "event": "recognized ruby how are you"}, {"at": 1792434772203, "event": "STT closed"}]}

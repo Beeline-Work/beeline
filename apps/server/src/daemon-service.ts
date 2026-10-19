@@ -5535,11 +5535,16 @@ export class DaemonService {
     return this.writeResult();
   }
   private async report(text: string, agentId: string, command = this.authorizedCommand!, database = this.database, automatic = false, status?: unknown, ask?: string) {
-    const prefix = text.match(/^(done|blocked|failed|needs-decision):\s*\S/)?.[1];
+    const receivedPrefix = text.match(/^([^\s:]{1,64}):/)?.[1];
+    const prefix = text.match(/^(done|blocked|failed|needs[-_]decision):\s*\S/)?.[1]?.replace('_', '-');
     if (!automatic && (!['done', 'blocked', 'failed', 'needs_decision'].includes(String(status)) ||
       String(status).replace('_', '-') !== prefix)) {
-      throw new CommandRefusalError('report requires status done, blocked, failed, or needs_decision matching its text prefix', 400);
+      throw new CommandRefusalError(
+        `report received status ${JSON.stringify(status ?? null)} and text prefix ${JSON.stringify(receivedPrefix ? receivedPrefix + ':' : null)}; ` +
+        'expected status done, blocked, failed, or needs_decision matching a nonempty report (needs-decision: and needs_decision: are both accepted)', 400);
     }
+    // Keep the established display prefix for commander delivery and waiting indexes.
+    text = text.replace(/^needs_decision:/, 'needs-decision:');
     if (prefix === 'done') {
       const corner = (await database.query<{ worker: string; merged: boolean; has_pr: boolean }>(
         `SELECT ${cornerImplementerSql('fact', 'room')} worker,

@@ -28,8 +28,8 @@ export type ConnectorDestination =
   | { readonly kind: 'app-sign-in'; readonly appId: string };
 /**
  * One tap per Connectors row. A connected frontend opens directly; a failed
- * connection starts its own reconnect; everything else opens the info page,
- * which shows the computers that can retry or the error that cannot be retried.
+ * sign-in starts its own reconnect; everything else opens the info page, which
+ * holds every action and shows the computer that can retry or the error.
  */
 export function connectorDestination(row: WorkbenchCompany, apps: readonly WorkbenchApp[] = []): ConnectorDestination {
   if (row.kind === 'sign-in-service') return { kind: 'info' };
@@ -37,8 +37,7 @@ export function connectorDestination(row: WorkbenchCompany, apps: readonly Workb
   if (broken) {
     const target = broken.target;
     if (target.kind === 'connector' || target.kind === 'wallet') return { kind: 'item', target };
-    if (target.kind === 'app') return apps.find(app => app.id === target.appId)?.transport === 'composio'
-      ? { kind: 'app-sign-in', appId: target.appId } : { kind: 'item', target };
+    if (target.kind === 'app' && apps.find(app => app.id === target.appId)?.transport === 'composio') return { kind: 'app-sign-in', appId: target.appId };
     return { kind: 'info' };
   }
   const wallet = row.items.find(item => item.target.kind === 'wallet');

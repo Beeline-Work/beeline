@@ -15,6 +15,9 @@ import { HullActionSheetModal, HullActionSheetRow, HullActionSheetCancel } from 
 import { getWorkbenchSource } from '@/buzz/workbench-source';
 import { useSharedWorkbench } from '@/buzz/workbench-surface';
 import { openCompanyItem, useConnectCompanyApp } from '@/buzz/company-connection-actions';
+import { appNeedsSquire, reconnectWorkbenchApp } from '@/buzz/app-reconnect';
+import { appErrorCopy } from '@/buzz/app-error-copy';
+import type { WorkbenchApp } from '@/buzz/workbench';
 import type { WorkbenchCompany } from '@beeline/api-contract/workbench';
 
 function param(v: string | string[] | undefined) { return Array.isArray(v) ? v[0] : v; }
@@ -33,6 +36,9 @@ export default function ConnectorServiceScreen() {
   const actions = useConnectCompanyApp(scope);
   const [machine, setMachine] = useState<Machine | null>(null);
   const [linkOpen, setLinkOpen] = useState(false);
+  const [appOpen, setAppOpen] = useState<WorkbenchApp | null>(null);
+  const [appBusy, setAppBusy] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const manageMachine = row?.machines.find(item => item.id === machine?.id) ?? machine;
   const reconnectMachine = (helperId: string) => {
@@ -42,6 +48,36 @@ export default function ConnectorServiceScreen() {
   const agents = row?.kind === 'sign-in-service' ? 'Trusty Squire signs up and signs in to websites for your agents. Your computers keep the sign-in sessions.'
     : row?.items.some(item => item.kind === 'connection') ? `Agents use ${row.name} when you ask them to.`
       : `Agents call ${row?.name ?? 'this service'} with your keys, only on the hosts you allow.`;
+  // App connections act here, so the info page is the only page between Connectors and the action.
+  const reconnectApp = async (app: WorkbenchApp) => {
+    setAppOpen(null);
+    if (appNeedsSquire(app)) { router.push({ pathname: '/beeline/settings/workbench/connect', params: { ...scope, connectorId: 'trusty-squire' } } as Href); return; }
+    if (appBusy) return;
+    setAppBusy(app.id); setError(null); setNotice(null);
+    try { setNotice(await reconnectWorkbenchApp(app, scope)); await refresh(); }
+    catch (cause) { setError(appErrorCopy(cause instanceof Error ? cause.message : 'Could not connect app')); }
+    finally { setAppBusy(null); }
+  };
+  const disconnectApp = async (app: WorkbenchApp) => {
+    setAppOpen(null);
+    if (appBusy) return;
+    setAppBusy(app.id); setError(null);
+    try { await getWorkbenchSource().disconnectApp({ workspaceId: scope.workspaceId, appId: app.id }); await refresh(); }
+    catch (cause) { setError(appErrorCopy(cause instanceof Error ? cause.message : 'Could not disconnect app')); }
+    finally { setAppBusy(null); }
+  };
+  const appRow = (item: WorkbenchCompany['items'][number], app: WorkbenchApp) => {
+    const connected = app.status === 'connected';
+    const computer = app.transport === 'composio' ? null : appNeedsSquire(app) ? 'Trusty Squire' : app.helperName ?? 'Your computer';
+    const busy = appBusy === app.id || app.status === 'connecting';
+    return connected
+      ? <SettingsRow appBoard key={item.id} title={item.title} description={item.subtitle} value={item.status ?? 'Connected'} statusGlyph="live"
+        disabled={busy} onPress={() => setAppOpen(app)} testID={`company-item-${item.id}`} />
+      // A failed app shows the computer that retries it, with the retry one tap away.
+      : <SettingsRow appBoard key={item.id} title={item.title} description={[computer, app.errorMessage ? appErrorCopy(app.errorMessage) : item.subtitle].filter(Boolean).join(' · ')}
+        descriptionTone={app.status === 'error' ? 'danger' : undefined} action={busy ? undefined : appNeedsSquire(app) ? 'Connect' : 'Reconnect'}
+        value={busy ? 'Connecting…' : undefined} disabled={busy} onPress={() => void reconnectApp(app)} testID={`company-item-${item.id}`} />;
+  };
   const disconnect = async () => {
     try {
       if (manageMachine) await getWorkbenchSource().disconnectConnector({ workspaceId: scope.workspaceId, connectorId: `squire:${manageMachine.id}` });
@@ -75,12 +111,16 @@ export default function ConnectorServiceScreen() {
           const items = row.items.filter(item => item.kind === kind);
           return items.length ? <View key={kind}>
             <RoomListSectionHeader title={kind === 'connection' ? 'Connections' : kind === 'login' ? 'Logins' : 'Keys'} inset="content" spacing="flush" />
-            {items.map(item => item.target.kind === 'key'
+            {items.map(item => {
+              const target = item.target;
+              const app = target.kind === 'app' ? view.apps.find(entry => entry.id === target.appId) : undefined;
+              return app ? appRow(item, app) : item.target.kind === 'key'
               ? <SettingsRow appBoard key={item.id} title={item.title} description={item.subtitle}
                 value={item.status} valueTone={item.attention ? 'danger' : undefined} testID={`company-item-${item.id}`} />
               : <SettingsRow appBoard key={item.id} title={item.title} description={item.subtitle}
                 value={item.status} valueTone={item.attention ? 'danger' : undefined} chevron="right"
-                onPress={() => item.target.kind === 'link' ? setLinkOpen(true) : openCompanyItem(item.target, scope)} testID={`company-item-${item.id}`} />)}
+                onPress={() => item.target.kind === 'link' ? setLinkOpen(true) : openCompanyItem(item.target, scope)} testID={`company-item-${item.id}`} />;
+            })}
           </View> : null;
         })}
         {keyed ? <Button label="Manage in Trusty Squire" variant="secondary" fullWidth
@@ -91,12 +131,17 @@ export default function ConnectorServiceScreen() {
             disabled={Boolean(actions.busy)} onPress={() => void actions.connect(app)} testID={`company-available-${app.appKey}`} />)}
         </View> : null}
         {loadError ? <Text accessibilityRole="alert" style={styles.error}>Could not refresh connections. Try again.</Text> : null}
+        {notice ? <Text accessibilityLiveRegion="polite" style={styles.note} testID="connector-info-notice">{notice}</Text> : null}
         {error || actions.error ? <Text accessibilityRole="alert" style={styles.error}>{error ?? actions.error}</Text> : null}
       </ScrollView>}
     <HullActionSheetModal visible={Boolean(machine) || linkOpen} title={machine?.name ?? 'Link'} onClose={() => { setMachine(null); setLinkOpen(false); }}>
       {manageMachine?.reconnecting ? <Text style={styles.note}>Reconnecting…</Text> : manageMachine && !manageMachine.online ? <Text style={styles.error} testID="squire-computer-offline">{manageMachine.error ?? `Turn on ${manageMachine.name} to reconnect it.`}</Text>
         : machine && manageMachine && needsFix(manageMachine) ? <HullActionSheetRow label={manageMachine.status === 'not-added' ? 'Set up' : 'Reconnect'} onPress={() => reconnectMachine(machine.id)} /> : <HullActionSheetRow label="Disconnect" destructive onPress={() => void disconnect()} />}
       <HullActionSheetCancel onPress={() => { setMachine(null); setLinkOpen(false); }} />
+    </HullActionSheetModal>
+    <HullActionSheetModal visible={Boolean(appOpen)} title={appOpen?.name} onClose={() => setAppOpen(null)}>
+      {appOpen ? <HullActionSheetRow label="Disconnect" destructive onPress={() => void disconnectApp(appOpen)} /> : null}
+      <HullActionSheetCancel onPress={() => setAppOpen(null)} />
     </HullActionSheetModal>
   </View>;
 }

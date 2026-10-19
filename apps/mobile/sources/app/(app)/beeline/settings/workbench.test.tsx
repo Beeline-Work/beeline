@@ -281,13 +281,13 @@ describe('one tap from a Connectors row', () => {
     expect(appSignIn.open).toHaveBeenCalledWith('https://linear.app/oauth/authorize', { ...scope, appId: 'linear' });
     expect(navigation.push).not.toHaveBeenCalled();
   });
-  it('errored on a computer: opens the app page that shows the computer and its Reconnect', async () => {
+  it('errored on a computer: opens the info page that shows the computer and its Reconnect', async () => {
     serve({ ...companyWorkbench([{ ...companyRow('notion', 'Notion', 'attention'), status: 'Offline', attention: '1 connection needs attention',
       items: [{ id: 'notion', title: 'Notion', subtitle: 'via Trusty Squire', kind: 'connection', target: { kind: 'app', appId: 'notion' }, status: 'Offline', attention: true }] }]),
       apps: [app('notion', 'squire-browser')] });
     const renderer = await render();
     await act(async () => row(renderer, 'notion').props.onPress());
-    expect(navigation.push.mock.calls).toEqual([[{ pathname: '/beeline/settings/workbench/app', params: { ...scope, appId: 'notion' } }]]);
+    expect(navigation.push.mock.calls).toEqual([[{ pathname: '/beeline/settings/workbench/service', params: { ...scope, service: 'notion' } }]]);
   });
   it('errored with no retry: opens the info page that shows the error', async () => {
     serve(companyWorkbench([{ ...companyRow('stripe', 'Stripe', 'attention'), status: 'Expired', attention: '1 connection needs attention',

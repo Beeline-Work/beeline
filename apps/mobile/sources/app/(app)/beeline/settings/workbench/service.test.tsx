@@ -63,7 +63,7 @@ describe('company detail', () => {
     expect(renderer.root.findByProps({ testID: 'connector-info-agents' }).props.children).toBe('Agents call Vercel with your keys, only on the hosts you allow.');
     expect([...renderer.root.findAllByType('SettingsRow'), ...renderer.root.findAllByType('Button')]
       .some((node: any) => /Disconnect/.test(`${node.props.title ?? ''} ${node.props.label ?? ''}`))).toBe(false);
-    expect(renderer.root.findByType('HullActionSheetModal').props.visible).toBe(false);
+    expect(renderer.root.findAllByType('HullActionSheetModal').every((sheet: any) => !sheet.props.visible)).toBe(true);
     await act(async () => renderer.root.findByProps({ testID: 'connector-squire-vault' }).props.onPress());
     expect(browser.open).toHaveBeenCalledWith('https://trustysquire.ai/vault');
     expect(navigation.push).not.toHaveBeenCalled();
@@ -142,4 +142,48 @@ it('shows the error, not a retry, when the computer that would retry is offline'
   expect(renderer.root.findAllByType('HullActionSheetRow')).toHaveLength(0);
   expect(navigation.push).not.toHaveBeenCalled();
   await act(async () => renderer.unmount());
+});
+
+describe('app connections on the info page', () => {
+  const notionRow = (status: 'connected' | 'error') => ({ ...companyRow('notion', 'Notion', status === 'error' ? 'attention' : 'apps'), subtitle: '1 app',
+    items: [{ id: 'notion-app', title: 'Notion', subtitle: 'via Trusty Squire', kind: 'connection' as const, target: { kind: 'app' as const, appId: 'notion' },
+      status: status === 'error' ? 'Offline' : 'Connected', attention: status === 'error' }] });
+  const notionApp = (status: 'connected' | 'error') => ({ id: 'notion', key: 'notion', name: 'Notion', transport: 'squire-browser', status, useCount: 0,
+    helperId: 'laptop', helperName: 'Laptop', ...(status === 'error' ? { errorMessage: 'Notion sign-in expired' } : {}) }) as any;
+  function serveNotion(status: 'connected' | 'error') {
+    const source = new MockWorkbenchSource();
+    source.readWorkbench = async () => ({ ...companyWorkbench([notionRow(status)]), apps: [notionApp(status)] });
+    setWorkbenchSource(source); params.service = 'notion';
+    return source;
+  }
+  it('connected: disconnects from the info page itself, with no app page pushed', async () => {
+    navigation.push.mockClear();
+    const source = serveNotion('connected');
+    const disconnect = vi.spyOn(source, 'disconnectApp').mockResolvedValue(undefined as any);
+    const renderer = await render();
+    const appRow = renderer.root.findByProps({ testID: 'company-item-notion-app' });
+    expect(appRow.props.chevron).toBeUndefined();
+    await act(async () => appRow.props.onPress());
+    expect(navigation.push).not.toHaveBeenCalled();
+    const sheet = renderer.root.findAllByType('HullActionSheetModal').find((node: any) => node.props.title === 'Notion');
+    expect(sheet.props.visible).toBe(true);
+    await act(async () => { sheet.findByType('HullActionSheetRow').props.onPress(); await Promise.resolve(); });
+    expect(disconnect).toHaveBeenCalledWith({ workspaceId: 'ws', appId: 'notion' });
+    expect(navigation.push).not.toHaveBeenCalled();
+    await act(async () => renderer.unmount());
+  });
+  it('errored: shows the computer and retries on it in one tap, with no app page pushed', async () => {
+    navigation.push.mockClear();
+    const source = serveNotion('error');
+    vi.spyOn(source, 'listHelpers').mockResolvedValue([{ id: 'laptop', name: 'Laptop', online: true }] as any);
+    const connect = vi.spyOn(source, 'connectApp').mockResolvedValue({ appId: 'notion' } as any);
+    const renderer = await render();
+    const appRow = renderer.root.findByProps({ testID: 'company-item-notion-app' });
+    expect(appRow.props.action).toBe('Reconnect');
+    expect(appRow.props.description).toMatch(/^Laptop · /);
+    await act(async () => { await appRow.props.onPress(); });
+    expect(connect).toHaveBeenCalledWith({ workspaceId: 'ws', app: 'Notion', helperId: 'laptop', reconnect: true });
+    expect(navigation.push).not.toHaveBeenCalled();
+    await act(async () => renderer.unmount());
+  });
 });

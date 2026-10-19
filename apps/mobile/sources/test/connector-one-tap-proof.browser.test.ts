@@ -22,7 +22,7 @@ function fontsCss(mobile: string) {
     .join('');
 }
 
-const CASES = ['suggest', 'list', 'coinbase', 'openrouter', 'linear', 'notion', 'stripe', 'squire-signin'] as const;
+const CASES = ['suggest', 'list', 'coinbase', 'openrouter', 'github', 'github-actions', 'linear', 'notion', 'stripe', 'squire-signin'] as const;
 
 it.skipIf(!out || !existsSync(CHROME))('captures every Connectors tap case', async () => {
   const mobile = process.cwd();
@@ -38,12 +38,13 @@ it.skipIf(!out || !existsSync(CHROME))('captures every Connectors tap case', asy
         .catch(error => { document.getElementById('result').textContent = 'load error: ' + (error?.stack ?? error); });
       function run(screens) {
         globalThis.__params = { workspaceId: 'ws', viewerId: 'viewer' };
-        globalThis.__pushes = []; globalThis.__signIn = []; globalThis.__empty = which === 'suggest';
+        globalThis.__pushes = []; globalThis.__backs = 0; globalThis.__signIn = []; globalThis.__empty = which === 'suggest';
+        const company = which === 'github-actions' ? 'github' : which;
         const root = createRoot(document.getElementById('root'));
         root.render(<screens.workbench />);
         setTimeout(() => {
           if (which === 'suggest') document.querySelector('[data-testid="connectors-suggest-tailscale"]').click();
-          else if (which !== 'list') document.querySelector('[data-testid="connectors-company-' + which + '"]').click();
+          else if (which !== 'list') document.querySelector('[data-testid="connectors-company-' + company + '"]').click();
           setTimeout(() => {
             const push = globalThis.__pushes[0];
             if (push && screens[push.pathname.split('/').pop()]) {
@@ -52,8 +53,15 @@ it.skipIf(!out || !existsSync(CHROME))('captures every Connectors tap case', asy
               root.render(<Screen />);
             }
             setTimeout(() => {
-              document.getElementById('result').textContent = JSON.stringify({ pushes: globalThis.__pushes, signIn: globalThis.__signIn,
-                text: document.getElementById('root').textContent.slice(0, 600) });
+              // A connected app acts on its info page: its row opens the actions in place, and Back leaves for Connectors.
+              if (which === 'github-actions') {
+                document.querySelector('[data-testid="company-item-github-app"]').click();
+                document.querySelector('[aria-label="Back to Connectors"]').click();
+              }
+              setTimeout(() => {
+                document.getElementById('result').textContent = JSON.stringify({ pushes: globalThis.__pushes, backs: globalThis.__backs, signIn: globalThis.__signIn,
+                  text: document.body.innerText.slice(0, 700) });
+              }, 400);
             }, 1200);
           }, 300);
         }, 1200);
@@ -73,7 +81,7 @@ it.skipIf(!out || !existsSync(CHROME))('captures every Connectors tap case', asy
           'expo-router': `import { useEffect } from 'react';
             export const useLocalSearchParams = () => globalThis.__params;
             export const useFocusEffect = effect => useEffect(() => effect(), [effect]);
-            export const router = { back() {}, replace() {}, push(href) { globalThis.__pushes.push(href); } };`,
+            export const router = { back() { globalThis.__backs += 1; }, replace() {}, push(href) { globalThis.__pushes.push(href); } };`,
           '@/buzz/runtime-config': 'export const getBuzzRuntimeConfig = () => ({ monolithUrl: "https://monolith.test" });',
           '@/auth/auth-session': 'export const authSessionOptions = () => ({});',
           '@/buzz/wallet-workspace': 'export const resolveWalletWorkspaceId = async id => id || "ws";',
@@ -96,10 +104,12 @@ it.skipIf(!out || !existsSync(CHROME))('captures every Connectors tap case', asy
                 attention: '1 computer needs attention', machines: [
                   { id: 'laptop', name: 'Laptop', online: true, status: 'error', error: 'Google reconnect failed', statusText: 'Google sign-in expired' },
                   { id: 'desktop', name: 'Desktop', online: false, status: 'connected', statusText: 'Computer offline' }] },
+              row('github', 'GitHub', 'github.com', 'apps', [{ id: 'github-app', title: 'GitHub', subtitle: 'via Composio', kind: 'connection', target: { kind: 'app', appId: 'github' }, status: 'Connected' }], { subtitle: '1 app' }),
               row('coinbase', 'Coinbase', 'coinbase.com', 'apps', [{ id: 'builtin:wallet', title: 'Wallet', subtitle: 'built in', kind: 'connection', target: { kind: 'wallet' } }], { subtitle: '1 app' }),
               row('openrouter', 'OpenRouter', 'openrouter.ai', 'keys', [key('or-default', 'OpenRouter key', 'openrouter.ai'), key('or-agents', 'Agents', 'openrouter.ai')], { subtitle: '2 keys' }),
             ];
-            const apps = [{ id: 'linear', key: 'linear', name: 'Linear', domain: 'linear.app', transport: 'composio', status: 'error', useCount: 0 },
+            const apps = [{ id: 'github', key: 'github', name: 'GitHub', domain: 'github.com', transport: 'composio', status: 'connected', useCount: 0 },
+              { id: 'linear', key: 'linear', name: 'Linear', domain: 'linear.app', transport: 'composio', status: 'error', useCount: 0 },
               { id: 'notion', key: 'notion', name: 'Notion', domain: 'notion.so', transport: 'squire-browser', status: 'error', helperId: 'laptop', helperName: 'Laptop', errorMessage: 'Notion sign-in expired', useCount: 0 }];
             const wallet = () => ({ address: '0x1234567890abcdef1234567890abcdef12347890', solanaAddress: null, totalUsd: '$100.00',
               coins: [{ symbol: 'USDC', name: 'USD Coin', amount: '100', usd: '$100.00', chain: 'base' }], chains: [], sponsorship: null,

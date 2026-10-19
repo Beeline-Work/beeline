@@ -1,3 +1,4 @@
+import { assembleTurnPrompt, cornerReviewerInstruction } from '../../body/src/prompt-assembly.js';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
@@ -393,6 +394,46 @@ describe('corner message attribution', () => {
     const [review] = await commands(B, C);
     expect(review?.source.body).toContain('Review against brief revision 2');
     expect(review?.source.body).not.toContain('revision 1');
+  });
+
+  it.each(['reviewer', 'worker'] as const)('Reproduction %s: delivered revision 2 instructions are replaced by current revision 3', async (role) => {
+    await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
+    await db.query(`INSERT INTO corner_brief_revisions(corner_id,revision,content,spec,author_id,source_room_id)
+      VALUES($1,2,'Keep the PR open','Keep the PR open',$2,$3)`, [C, A, R]);
+    const headSha = 'e'.repeat(40);
+    let delivered: AgentCommand;
+    if (role === 'reviewer') {
+      await greenHead(29, headSha);
+      delivered = (await commands(B, C))[0]!;
+    } else {
+      const order = await createAgentCommand(db, {
+        roomId: C, agentId: A, sourceMessageId: null, reason: 'order',
+        privatePayload: { kind: 'order', authorId: B, fromRoomId: R,
+          text: 'Under brief revision 2, close the PR.' },
+      });
+      delivered = (await commands(A, C)).find(command => command.id === order!.id)!;
+    }
+    // Delivery precedes the revision: queued-wake cancellation cannot repair this copy.
+    await claim(delivered);
+    await db.query(`INSERT INTO corner_brief_revisions(corner_id,revision,content,spec,author_id,source_room_id)
+      VALUES($1,3,'Keep the PR open','Keep the PR open and implement the fix.',$2,$3)`, [C, A, R]);
+    const restore = await daemon.execute('getCornerRestoreState', { cornerId: C }, delivered.agentId);
+    const prompt = assembleTurnPrompt({
+      surface: 'code-corner',
+      brief: { brief: restore.brief!, fileLines: [], missingRequiredFile: false },
+      ...(role === 'reviewer' ? { reviewerTarget: cornerReviewerInstruction({
+        isReviewer: true, pullRequestNumber: 29, headSha, briefRevision: 2,
+      })! } : {}),
+      task: { body: delivered.source.body, commandReason: delivered.reason },
+    }).text;
+    console.info(`Reproduction ${role === 'reviewer' ? 'R1' : 'R2'}: delivered revision 2; current revision 3; replacement notice=${prompt.includes('Replaced instructions')}`);
+    expect(prompt).toContain('Replaced instructions');
+    expect(prompt).toContain('Read the current brief revision 3 before acting');
+    expect(prompt).toContain('Keep the PR open and implement the fix.');
+    if (role === 'reviewer') {
+      expect(prompt).toContain(`Review PR 29 at ${headSha} against brief revision 3`);
+      expect(prompt).not.toContain(`Review PR 29 at ${headSha} against brief revision 2`);
+    }
   });
 
   it('Reproduction STALE-2: an implementer assignment wake shows the live brief revision, not the queued one', async () => {

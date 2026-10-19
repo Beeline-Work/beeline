@@ -584,6 +584,22 @@ describe('prompt assembly guards', () => {
     }
   });
 
+  it('gives every surface the newer-human-instruction rule the skill used to carry', () => {
+    const skill = [usingBeelineSkillMarkdown, beelineReviewSkillMarkdown, beelineSpecSkillMarkdown, beelineTriageSkillMarkdown]
+      .map((markdown) => markdown('test'))
+      .join('\n');
+    expect(skill).not.toMatch(/follow the newer instruction/i);
+    for (const [name, context] of Object.entries(SESSION_VARIANTS)) {
+      const text = assembleSessionPrompt(context).systemPrompt;
+      expect(text, name).toContain('Any human in the Room can direct you.');
+      expect(text, name).toMatch(/follow the newer instruction/i);
+      expect(text, name).toMatch(/revise the brief (citing that message|with that message as approval)/);
+      expect(text, name).toContain('state in the corner what changed.');
+    }
+    const covered = new Set(Object.values(SESSION_VARIANTS).map((context) => context.surface));
+    expect([...covered].sort()).toEqual([...PROMPT_SURFACES].sort());
+  });
+
   it('documents Connectors discovery and connection in every agent turn', () => {
     for (const [name, context] of Object.entries(SESSION_VARIANTS)) {
       const text = assembleSessionPrompt(context).systemPrompt;

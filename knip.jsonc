@@ -27,6 +27,7 @@
         "scripts/prove-voice-mode.ts",
         "scripts/prove-voice-call-errors.ts",
         "scripts/prove-voice-delivery.ts",
+        "scripts/prove-voice-search.ts",
         "scripts/prove-voice-budget.ts",
         "scripts/prove-voice-multiparty.ts",
         "scripts/prove-multi-human-silence.ts",

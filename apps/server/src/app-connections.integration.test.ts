@@ -298,6 +298,21 @@ describe('connect_app', () => {
     expect((await daemon.execute('readAgentWorkbench', { roomId: ROOM }, HELPER)).apps)
       .toContainEqual(expect.objectContaining({ appId: discovered.appId,
         selectedByOwner: true, connectionReference: 'vault:github' }));
+    await phone.execute('disconnectWorkbenchApp', {
+      workspaceId: WORKSPACE, appId: discovered.appId!,
+    }, OWNER);
+    const rediscovered = await daemon.execute('connectApp', {
+      ...turn, app: 'GitHub', reason: 'read another issue',
+    }, HELPER);
+    expect(rediscovered.appId).toBe(discovered.appId);
+    expect((await daemon.execute('readAgentWorkbench', { roomId: ROOM }, HELPER)).apps)
+      .toContainEqual(expect.objectContaining({ appId: discovered.appId,
+        selectedByOwner: false, connectionReference: 'vault:github' }));
+    await phone.execute('connectWorkbenchApp', { app: 'GitHub', helperAgentId: HELPER,
+      preferredRoute: 'squire-api' }, OWNER);
+    expect((await daemon.execute('readAgentWorkbench', { roomId: ROOM }, HELPER)).apps)
+      .toContainEqual(expect.objectContaining({ appId: discovered.appId,
+        selectedByOwner: true, connectionReference: 'vault:github' }));
   });
 
   it('Reproduction link-route-1: Link signs in with a card and resumes the original request', async () => {
@@ -630,6 +645,57 @@ describe('connect_app', () => {
       }));
     expect((await database.query(`SELECT 1 FROM agent_commands WHERE room_id=$1
       AND agent_id=$2 AND reason='app_connected'`, [CORNER, HELPER])).rowCount).toBe(1);
+  });
+
+  it('owner opens agent-started Registry GitHub sign-in and selects personal authentication', async () => {
+    const githubServer = { ...linearServer, name: 'com.github/github', title: 'GitHub',
+      websiteUrl: 'https://github.com',
+      remotes: [{ type: 'streamable-http', url: 'https://api.githubcopilot.com/mcp/' }] };
+    const registry = fakeRegistry([githubServer]);
+    const daemon = daemonWith(registry.client);
+    const installed = await daemon.execute('connectMcpServer', { ...turn,
+      serverName: githubServer.name, version: githubServer.version,
+      reason: 'connect personal GitHub' }, HELPER);
+    if (installed.status === 'unsupported') throw new Error(installed.reason);
+    await daemon.execute('postConnectorStatus', { agentId: HELPER,
+      connectorId: installed.connectorId, steps: [],
+      signIn: { method: 'oauth', url: 'https://github.com/login/oauth/authorize?state=fixture',
+        attemptId: 'github-owner-sign-in' } }, HELPER);
+    const started = await daemon.execute('connect', { ...turn, service: 'GitHub',
+      reason: 'connect personal GitHub' }, HELPER);
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, registry.client);
+    expect((await daemon.execute('readAgentWorkbench', { roomId: ROOM }, HELPER)).apps)
+      .toContainEqual(expect.objectContaining({ appId: started.appId, selectedByOwner: false }));
+    await phone.execute('beginAppSignIn', { appId: started.appId! }, OWNER);
+    await daemon.execute('installConnector', { agentId: HELPER,
+      connectorId: installed.connectorId }, HELPER);
+    expect((await daemon.execute('readAgentWorkbench', { roomId: ROOM }, HELPER)).apps)
+      .toContainEqual(expect.objectContaining({ appId: started.appId,
+        status: 'connected', selectedByOwner: true }));
+  });
+
+  it('owner completion of agent-started GitHub login selects personal authentication', async () => {
+    const registry = fakeRegistry([]);
+    const provider = fakeComposio('github');
+    provider.supportsOAuth.mockResolvedValue(true);
+    const daemon = daemonWith(registry.client, provider);
+    const started = await daemon.execute('connectApp', { ...turn, app: 'GitHub', reason: 'connect personal GitHub' }, HELPER);
+    const phone = new PhoneService(database, 'http://placeholder', undefined, undefined,
+      undefined, false, database, undefined, undefined, registry.client, provider);
+    await phone.execute('beginAppSignIn', { appId: started.appId! }, OWNER);
+    provider.accountStatus.mockResolvedValueOnce({ status: 'pending' });
+    await expect(phone.execute('completeAppSignIn', {
+      sessionUri: 'session-fixture', appId: started.appId!,
+    }, OWNER)).rejects.toThrow('App sign-in could not be verified');
+    expect((await daemon.execute('readAgentWorkbench', { roomId: ROOM }, HELPER)).apps)
+      .toContainEqual(expect.objectContaining({ appId: started.appId, selectedByOwner: false }));
+    provider.account.mockResolvedValueOnce(false);
+    await phone.execute('beginAppSignIn', { appId: started.appId! }, OWNER);
+    await phone.execute('completeAppSignIn', { sessionUri: 'session-fixture', appId: started.appId! }, OWNER);
+    expect((await daemon.execute('readAgentWorkbench', { roomId: ROOM }, HELPER)).apps)
+      .toContainEqual(expect.objectContaining({ appId: started.appId,
+        status: 'connected', selectedByOwner: true }));
   });
 
   it('refuses YouTube without its custom sign-in instead of issuing a link or a Squire route', async () => {

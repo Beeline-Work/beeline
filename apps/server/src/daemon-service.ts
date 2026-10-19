@@ -6695,12 +6695,19 @@ export class DaemonService {
         [context.owner.pubkey],
       )
     ).rows;
-    const ownerSelectedApps = new Set((await this.database.query<{ app_id: string }>(
-      `SELECT DISTINCT r.app_id FROM workspace_app_routes r
-       JOIN workspace_apps a ON a.id=r.app_id
-       WHERE a.owner_identity_id=$1 AND r.requested_by=a.owner_identity_id`,
-      [context.owner.pubkey],
-    )).rows.map(row => row.app_id));
+    const ownerSelectedApps = new Set(
+      (
+        await this.database.query<{ app_id: string }>(
+          `SELECT a.id AS app_id FROM workspace_apps a
+       JOIN LATERAL (
+         SELECT requested_by FROM workspace_app_routes
+         WHERE app_id=a.id ORDER BY created_at DESC,id DESC LIMIT 1
+       ) r ON r.requested_by=a.owner_identity_id
+       WHERE a.owner_identity_id=$1 AND a.state='active'`,
+          [context.owner.pubkey],
+        )
+      ).rows.map((row) => row.app_id),
+    );
     const registryServers = paired.flatMap((row) =>
       row.registry_server_name && row.registry_version
         ? [
@@ -6749,6 +6756,7 @@ export class DaemonService {
           name: app.name,
           transport: app.transport,
           selectedByOwner: ownerSelectedApps.has(app.appId),
+          ...(app.connectorId ? { connectorId: app.connectorId } : {}),
           ...(app.connectionReference ? { connectionReference: app.connectionReference } : {}),
           status: app.status,
           ...(app.errorMessage ? { errorMessage: app.errorMessage } : {}),
@@ -7783,7 +7791,7 @@ export class DaemonService {
     validateCornerBrief(input.brief);
     const draft = input.brief;
     if (!draft.change?.trim())
-      throw new Error('corner brief revision requires a change description');
+      throw new CommandRefusalError('corner brief revision requires a change description', 400);
     const brief = await this.database.transaction(async (db) => {
       await lockCornerLifecycle(db, input.cornerId);
       const corner = (
@@ -7805,9 +7813,9 @@ export class DaemonService {
       ).rows[0];
       // Any agent that reaches the corner revises it; the approval quote is
       // what authorizes the new scope.
-      if (!corner?.parent_id) throw new Error('corner brief revision denied');
+      if (!corner?.parent_id) throw new CommandRefusalError('corner brief revision denied', 403);
       await this.reach(input.cornerId, agentId, db).catch(() => {
-        throw new Error('corner brief revision denied');
+        throw new CommandRefusalError('corner brief revision denied', 403);
       });
       const commandRoomId = input.roomId ?? input.cornerId;
       const command = await authorizeCommandOutput(
@@ -7816,7 +7824,7 @@ export class DaemonService {
       await assertCornerCommandTarget(db, command.room_id, input.cornerId);
       const current = await currentCornerBrief(db, input.cornerId);
       if ((current?.revision ?? 0) !== input.expectedRevision)
-        throw new Error('corner brief revision changed; read the current assignment');
+        throw new CommandRefusalError('corner brief revision changed; read the current assignment', 409);
       const opening = (
         await db.query<{ source_room_id: string }>(
           `SELECT first.source_room_id FROM (
@@ -7848,7 +7856,7 @@ export class DaemonService {
           excluding: explicitAttachments.map((attachment) => attachment.objectId),
         })),
       ];
-      if (attachments.length > 16) throw new Error('corner brief has too many attachments');
+      if (attachments.length > 16) throw new CommandRefusalError('corner brief has too many attachments', 400);
       const authority = await resolveCornerBriefApproval(
         db,
         sourceRoomIds,

@@ -1700,6 +1700,7 @@ export type AgentWorkbenchView = {
     readonly transport: AppTransport;
     /** The owner explicitly selected this app, rather than an agent discovering a vault key. */
     readonly selectedByOwner?: boolean;
+    readonly connectorId?: string;
     readonly connectionReference?: string;
     readonly status: ConnectAppStatus;
     readonly errorMessage?: string;

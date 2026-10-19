@@ -494,6 +494,7 @@ export async function readOwnerApps(
     }
     views.push({
       appId: row.id,
+      ...(row.connector_id ? { connectorId: row.connector_id } : {}),
       appKey: row.app_key,
       name: row.display_name,
       ...(row.domain ? { domain: row.domain } : {}),

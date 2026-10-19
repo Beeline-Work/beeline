@@ -1154,6 +1154,7 @@ export class MonolithRoomTurnLoop {
         ghBinary,
         inheritedPath: agentEnv.PATH ?? '',
         resourceAuthFile,
+        registryBrokerSocket: this.options.config.registryMcpBrokerSocket,
         ...(squireScope.relay ? { relay: squireScope.relay } : {}),
       });
     }

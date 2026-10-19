@@ -6752,6 +6752,7 @@ export class DaemonService {
           name: app.name,
           transport: app.transport,
           selectedByOwner: ownerSelectedApps.has(app.appId),
+          ...(app.connectorId ? { connectorId: app.connectorId } : {}),
           ...(app.connectionReference ? { connectionReference: app.connectionReference } : {}),
           status: app.status,
           ...(app.errorMessage ? { errorMessage: app.errorMessage } : {}),

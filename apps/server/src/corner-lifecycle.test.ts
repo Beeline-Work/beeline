@@ -2310,7 +2310,7 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
       [cornerId, A])).rowCount;
     const wiredDaemon = new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
       (input, confirmZeroChecks) => github.prChecksStatus(input, confirmZeroChecks), undefined, undefined, undefined, undefined, undefined, undefined,
-      undefined, undefined, undefined, (id: string) => github.landCorner(id));
+      undefined, undefined, undefined, (id: string) => github.landCornerOutcome(id));
     await expect(wiredDaemon.execute('mergeCorner', { cornerId }, A))
       .resolves.toEqual({ status: 'merge-started', headSha: SHA });
     expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
@@ -2337,7 +2337,7 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
     const cornerId = await inReview();
     const wiredDaemon = new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
       (input, confirmZeroChecks) => github.prChecksStatus(input, confirmZeroChecks), undefined, undefined, undefined, undefined, undefined, undefined,
-      undefined, undefined, undefined, (id: string) => github.landCorner(id),
+      undefined, undefined, undefined, (id: string) => github.landCornerOutcome(id),
       (id: string) => github.closeCornerPullRequest(id));
     await expect(wiredDaemon.execute('archiveCorner', { cornerId }, A)).rejects.toThrow(/close_corner_pr/);
     expect((await db.query(`SELECT archived_at FROM rooms WHERE id=$1`, [cornerId])).rows[0]!.archived_at).toBeNull();
@@ -2400,7 +2400,7 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
     const cornerId = await inReview();
     const wiredDaemon = new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
       (input, confirmZeroChecks) => github.prChecksStatus(input, confirmZeroChecks), undefined, undefined, undefined, undefined, undefined, undefined,
-      undefined, undefined, undefined, (id: string) => github.landCorner(id),
+      undefined, undefined, undefined, (id: string) => github.landCornerOutcome(id),
       (id: string) => github.closeCornerPullRequest(id));
     await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id IN ($1,$3) AND identity_id=$2`, [cornerId, B, R]);
     await expect(wiredDaemon.execute('closeCornerPullRequest', { cornerId }, B)).rejects.toThrow(/access denied/);
@@ -2492,7 +2492,7 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
     const cornerId = await inReview();
     const wiredDaemon = new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
       (input, confirmZeroChecks) => github.prChecksStatus(input, confirmZeroChecks), undefined, undefined, undefined, undefined, undefined, undefined,
-      undefined, undefined, undefined, (id: string) => github.landCorner(id),
+      undefined, undefined, undefined, (id: string) => github.landCornerOutcome(id),
       (id: string) => github.closeCornerPullRequest(id), (id: string) => github.readCornerPullRequest(id));
     // B reaches every corner through the parent Room, with no copied row.
     const outsider = '3'.repeat(64);
@@ -2682,7 +2682,7 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
     expect(await cornerMergeGate(db, cornerId, { number: 7, headSha: SHA })).toMatchObject({ approved: true, open: true });
     const wiredDaemon = new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
       (input, confirmZeroChecks) => github.prChecksStatus(input, confirmZeroChecks), undefined, undefined, undefined, undefined, undefined, undefined,
-      undefined, undefined, undefined, (id: string) => github.landCorner(id));
+      undefined, undefined, undefined, (id: string) => github.landCornerOutcome(id));
     await expect(wiredDaemon.execute('mergeCorner', { cornerId }, A))
       .resolves.toEqual({ status: 'merge-started', headSha: SHA });
     expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
@@ -2927,6 +2927,26 @@ describe('unfinished merge claim recovery (R6a–R6f)', () => {
     const visible = (await phone.readCorners(R, H, false, true))?.corners.find(row => row.corner.id === cornerId);
     expect(visible).toMatchObject({ state: 'archived', lifecycle: { outcome: 'landed' } });
     console.info('R1: two confirmed 405 refusals each woke the worker; the same head reached GitHub again and merged once.');
+  });
+
+  it('Reproduction merge-wf-403: merge_corner reports a confirmed 403 refusal, then retries the same head', async () => {
+    const cornerId = await approved();
+    githubApp.readPullRequest.mockResolvedValue(providerPr(cornerId));
+    const reason = 'GitHub pull request merge failed: HTTP 403: refusing to allow a GitHub App to create or update '
+      + 'workflow `.github/workflows/unified-release.yml` without `workflows` permission';
+    githubApp.mergePullRequest.mockRejectedValueOnce(new Error(reason));
+    const wiredDaemon = new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
+      (input, confirmZeroChecks) => github.prChecksStatus(input, confirmZeroChecks), undefined, undefined, undefined, undefined, undefined, undefined,
+      undefined, undefined, undefined, (id: string) => github.landCornerOutcome(id));
+    await expect(wiredDaemon.execute('mergeCorner', { cornerId }, A))
+      .resolves.toEqual({ status: 'blocked', blocker: reason });
+    expect(await claimHead(cornerId)).toBeNull();
+    await expect(wiredDaemon.execute('mergeCorner', { cornerId }, A))
+      .resolves.toEqual({ status: 'merge-started', headSha: SHA });
+    expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(2);
+    await mergedWebhook(cornerId, 7, SHA);
+    expect(await currentState(cornerId)).toBe('landed');
+    console.info('merge-wf-403: the 403 came back as blocked with its reason; the retry on the same head merged.');
   });
 
   it.each(['merged', 'read fails', 'different head', 'different branch'])(
@@ -3517,7 +3537,7 @@ describe("a Workspace owner or admin's yes (order_corner_merge) merges only thro
     githubHead = SHA;
     githubRollupState = 'failed';
 
-    const landing = vi.fn((id: string) => github.landCorner(id));
+    const landing = vi.fn((id: string) => github.landCornerOutcome(id));
     const wiredDaemon = new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
       undefined, undefined, undefined, undefined, undefined, undefined, undefined,
       undefined, undefined, undefined, landing);
@@ -3636,7 +3656,7 @@ describe("a Workspace owner or admin's yes (order_corner_merge) merges only thro
       undefined, // objects
       undefined, // linkWallet
       undefined, // refreshMergeability
-      (id: string) => github.landCorner(id), // landCorner
+      (id: string) => github.landCornerOutcome(id), // landCorner
     );
     await say(cornerId, '@hoots merge this now');
     const direct = (await commands(A, cornerId)).at(-1)!;
@@ -3670,7 +3690,7 @@ describe('the brief gate on landing: only a brief that assigns repository work m
   function wired() {
     return new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
       (input, confirmZeroChecks) => github.prChecksStatus(input, confirmZeroChecks), undefined, undefined, undefined, undefined, undefined, undefined,
-      undefined, undefined, undefined, (id: string) => github.landCorner(id));
+      undefined, undefined, undefined, (id: string) => github.landCornerOutcome(id));
   }
 
   /** A green head with no reviewer configured, waiting for a person's yes. */

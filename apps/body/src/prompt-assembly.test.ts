@@ -185,6 +185,7 @@ describe('local machine identity', () => {
 
 /** Every session variant a turn loop can build, named for its snapshot file. */
 const SESSION_VARIANTS_BASE: Record<string, SessionPromptContext> = {
+  'room-squire': { surface: 'room', agentName: 'Bee', agentCommand: 'claude-agent-acp', squireAvailable: true },
   room: {
     surface: 'room',
     agentName: 'Bee',
@@ -390,6 +391,22 @@ describe('prompt assembly guards', () => {
   it('includes browser driving guidance only with a mounted Squire route', () => {
     expect(assembleSessionPrompt({ surface: 'room', agentName: 'Bee' }).systemPrompt).not.toContain('operate_drive');
     expect(assembleSessionPrompt({ surface: 'room', agentName: 'Bee', squireAvailable: true }).systemPrompt).toContain('operate_drive');
+  });
+
+  it('Reproduction browser-handoff-1: shares human-only browser steps only with Squire', () => {
+    for (const surface of PROMPT_SURFACES) {
+      for (const squireAvailable of [true, false, undefined]) {
+        const { systemPrompt } = assembleSessionPrompt({ surface, agentName: 'Bee', squireAvailable });
+        for (const rule of [
+          'If sign-in/human action (2FA, captcha, passkey) cannot be completed or Squire refuses it',
+          'app_tool(app:beeline:browser_share, tool:start) for that session',
+          'ask the person to take over',
+          'On handback, resume drive in that session',
+        ]) {
+          expect(systemPrompt.includes(rule), `${surface}: ${squireAvailable}: ${rule}`).toBe(squireAvailable === true);
+        }
+      }
+    }
   });
 
   it('keeps every section, the core, and each surface inside its byte budget', () => {

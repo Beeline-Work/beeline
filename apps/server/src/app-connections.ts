@@ -494,6 +494,7 @@ export async function readOwnerApps(
     }
     views.push({
       appId: row.id,
+      ...(row.connector_id ? { connectorId: row.connector_id } : {}),
       appKey: row.app_key,
       name: row.display_name,
       ...(row.domain ? { domain: row.domain } : {}),
@@ -807,9 +808,15 @@ export async function connectApp(
         `UPDATE workspace_connectors
          SET install_agent_id=$2,install_room_id=$3,install_command_id=$4,updated_at=now()
          WHERE id=$1::uuid AND status='installing' AND helper_agent_id=$2`,
-        [existing.connector_id, params.helperAgentId, params.installRoomId, params.installCommandId],
+        [
+          existing.connector_id,
+          params.helperAgentId,
+          params.installRoomId,
+          params.installCommandId,
+        ],
       );
     }
+    await recordExistingOwnerGitHubSelection(db, row, decision, params);
     return { decision, row };
   });
 
@@ -939,6 +946,57 @@ export async function disconnectApp(
   });
 }
 
+/** Record an owner's explicit choice to keep the current GitHub connection. */
+async function recordExistingOwnerGitHubSelection(
+  database: SqlDatabase,
+  row: AppRow | undefined,
+  decision: AppRouteDecision,
+  params: ConnectAppParams,
+): Promise<void> {
+  if (
+    row?.app_key !== 'github' ||
+    decision.kind !== 'keep' ||
+    params.requestedBy !== params.ownerId
+  ) return;
+  await database.query(
+    `INSERT INTO workspace_app_routes(id,app_id,route,transport,reason,requested_by)
+     VALUES ($1,$2,$3,$4,$5,$6)`,
+    [
+      randomUUID(),
+      row.id,
+      row.route,
+      row.transport,
+      'person selected the existing GitHub connection',
+      params.requestedBy,
+    ],
+  );
+}
+
+/** Record a person's selection on the current connection, never a historical lifecycle. */
+export async function recordOwnerGitHubSelection(
+  database: SqlDatabase,
+  appId: string,
+  ownerId: string,
+  transport: 'composio' | 'registry-mcp',
+  connectorId?: string,
+): Promise<void> {
+  const app = (
+    await database.query<{ route: string; transport: string }>(
+      `SELECT route,transport FROM workspace_apps
+     WHERE id=$1::uuid AND owner_identity_id=$2 AND app_key='github'
+       AND state='active' AND transport=$3
+       AND ($4::uuid IS NULL OR connector_id=$4::uuid) FOR UPDATE`,
+      [appId, ownerId, transport, connectorId ?? null],
+    )
+  ).rows[0];
+  if (!app) return;
+  await database.query(
+    `INSERT INTO workspace_app_routes(id,app_id,route,transport,reason,requested_by)
+     VALUES ($1,$2,$3,$4,$5,$6)`,
+    [randomUUID(), appId, app.route, app.transport, 'person selected GitHub sign-in', ownerId],
+  );
+}
+
 /** The phone redeems a verifier session as its authenticated Beeline identity. */
 export async function completeComposioSignIn(
   database: SqlDatabase,
@@ -1000,6 +1058,7 @@ export async function completeComposioSignIn(
       [pending.id, viewerId, completed.accountId],
     );
     if (!updated.rowCount) throw new Error('App sign-in is no longer pending for this person');
+    await recordOwnerGitHubSelection(db, pending.id, viewerId, 'composio');
     await settle?.(db, pending.id);
     return { appId: pending.id };
   });

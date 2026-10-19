@@ -6695,6 +6695,19 @@ export class DaemonService {
         [context.owner.pubkey],
       )
     ).rows;
+    const ownerSelectedApps = new Set(
+      (
+        await this.database.query<{ app_id: string }>(
+          `SELECT a.id AS app_id FROM workspace_apps a
+       JOIN LATERAL (
+         SELECT requested_by FROM workspace_app_routes
+         WHERE app_id=a.id ORDER BY created_at DESC,id DESC LIMIT 1
+       ) r ON r.requested_by=a.owner_identity_id
+       WHERE a.owner_identity_id=$1 AND a.state='active'`,
+          [context.owner.pubkey],
+        )
+      ).rows.map((row) => row.app_id),
+    );
     const registryServers = paired.flatMap((row) =>
       row.registry_server_name && row.registry_version
         ? [
@@ -6742,6 +6755,9 @@ export class DaemonService {
           appKey: app.appKey,
           name: app.name,
           transport: app.transport,
+          selectedByOwner: ownerSelectedApps.has(app.appId),
+          ...(app.connectorId ? { connectorId: app.connectorId } : {}),
+          ...(app.connectionReference ? { connectionReference: app.connectionReference } : {}),
           status: app.status,
           ...(app.errorMessage ? { errorMessage: app.errorMessage } : {}),
         }),

@@ -3,6 +3,9 @@ import { TurnUsageAccumulator } from './turn-usage.js';
 import { CommandExecutionContext, runServerCommandIntake } from './server-command-intake.js';
 import type { InterruptedTurn } from './force-update-journal.js';
 import { SquireTaskRelay } from './squire-task-relay.js';
+import { installRoomGitHubLauncher } from './room-github-auth.js';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { resourceCallFacts } from './resource-mcp-facade.js';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { realpathSync } from 'node:fs';
@@ -135,6 +138,7 @@ import { PromptSectionBaseline } from './prompt-section-baseline.js';
 import type { RoomSupervisor } from './room-supervisor.js';
 
 export const ROOM_PROMPT_BACKSTOP_MS = TURN_BACKSTOP_MS;
+const execFileAsync = promisify(execFile);
 
 type WorkspaceRoster = DaemonOperationMap['getWorkspaceRoster']['output'];
 type RoomRepositoryState = DaemonOperationMap['getRoomRepositoryState']['output'];
@@ -465,7 +469,12 @@ export interface MonolithRoomTurnOptions {
   workspaceId: string;
   cwd: string;
   /** Refresh the server-bound checkout before each admitted Room turn. */
-  refreshCheckout?: () => Promise<{ cwd: string; branch?: string; commit?: string }>;
+  refreshCheckout?: () => Promise<{
+    cwd: string;
+    branch?: string;
+    commit?: string;
+    githubToken?: string;
+  }>;
   runtime: AgentRuntimeRecord;
   config: BodyConfig;
   api: DaemonApiClient;
@@ -511,7 +520,8 @@ export class MonolithRoomTurnLoop {
   private sessionId?: string;
   private sessionCwd?: string;
   private sessionCommit?: string;
-  private turnCheckout?: { branch?: string; commit?: string };
+  private sessionGitHubToken?: string;
+  private turnCheckout?: { branch?: string; commit?: string; githubToken?: string };
   /** The configuration the live session baked in; a change invalidates it. */
   private sessionFingerprint?: string;
   /** Whether CodeGraph preparation succeeded for the live session. */
@@ -872,6 +882,7 @@ export class MonolithRoomTurnLoop {
     this.sessionId = undefined;
     this.sessionCwd = undefined;
     this.sessionCommit = undefined;
+    this.sessionGitHubToken = undefined;
     this.sessionFingerprint = undefined;
     this.sessionCodegraphReady = false;
     this.pinnedProviderOverride = undefined;
@@ -895,6 +906,7 @@ export class MonolithRoomTurnLoop {
     return (
       this.sessionCwd === this.options.cwd &&
       this.sessionCommit === this.turnCheckout?.commit &&
+      this.sessionGitHubToken === this.turnCheckout?.githubToken &&
       (await this.currentSessionFingerprint()) === this.sessionFingerprint
     );
   }
@@ -1128,10 +1140,38 @@ export class MonolithRoomTurnLoop {
     if (assets && this.options.config.agentKind === 'codex' && homeOverlay.CODEX_HOME)
       await prepareCodexCacheTargets(homeOverlay.CODEX_HOME);
     if (assets && homeOverlay.HOME) await preparePackageCacheTargets(homeOverlay.HOME);
-    await Promise.all(Object.values(cacheEnv).map((path) => mkdir(path, { recursive: true, mode: 0o700 })));
+    await Promise.all(
+      Object.values(cacheEnv).map((path) => mkdir(path, { recursive: true, mode: 0o700 })),
+    );
     if (assets && this.options.config.agentPrivateRoot)
       await mkdir(this.options.config.agentPrivateRoot, { recursive: true, mode: 0o700 });
-    const agentEnv: Record<string, string> = { ...this.options.config.agentEnv, ...homeOverlay, ...cacheEnv };
+    const agentEnv: Record<string, string> = {
+      ...this.options.config.agentEnv,
+      ...homeOverlay,
+      ...cacheEnv,
+    };
+    // Keep an explicitly configured credential ahead of the repository App.
+    // Tokens are not part of a persisted fingerprint or prompt.
+    const githubToken =
+      agentEnv.GH_TOKEN || agentEnv.GITHUB_TOKEN || this.turnCheckout?.githubToken;
+    if (githubToken) {
+      agentEnv.GH_TOKEN = githubToken;
+      agentEnv.GITHUB_TOKEN = githubToken;
+    }
+    if (this.turnCheckout?.githubToken && this.options.config.agentHomeRoot) {
+      const ghBinary = await execFileAsync('which', ['gh'], { env: agentEnv })
+        .then((result) => result.stdout.trim())
+        .catch(() => undefined);
+      if (ghBinary)
+        agentEnv.PATH = await installRoomGitHubLauncher({
+          root: this.options.config.agentHomeRoot,
+          ghBinary,
+          inheritedPath: agentEnv.PATH ?? '',
+          resourceAuthFile,
+          registryBrokerSocket: this.options.config.registryMcpBrokerSocket,
+          ...(squireScope.relay ? { relay: squireScope.relay } : {}),
+        });
+    }
 
     const selectedCommand = command;
     this.agentEnv = agentEnv;
@@ -1231,9 +1271,21 @@ export class MonolithRoomTurnLoop {
     // Built before the client: the permission allowlist resolves a harness's
     // own tool-dispatch envelope (grok's `use_tool`) against exactly the
     // servers this session mounts, so it has to know them up front.
-    const shellCapability = roomShellCapability(harnessLabel, { osSandbox: Boolean(this.options.config.bwrapPath) });
+    const shellCapability = roomShellCapability(harnessLabel, {
+      osSandbox: Boolean(this.options.config.bwrapPath),
+    });
     const servers: McpServerWire[] = [
-      ...(shellCapability === 'runs' ? [] : [readOnlyMcpServer(this.options.config, this.options.cwd)]),
+      ...(shellCapability === 'runs'
+        ? []
+        : [
+            readOnlyMcpServer(
+              this.options.config,
+              this.options.cwd,
+              undefined,
+              githubToken,
+              agentEnv.PATH,
+            ),
+          ]),
       beelineAgentMcpServer(this.options.config, this.options.api, {
         roomId: this.options.roomId,
         workspaceId: this.options.workspaceId,
@@ -1395,6 +1447,7 @@ export class MonolithRoomTurnLoop {
     this.sessionId = opened.sessionId;
     this.sessionCwd = this.options.cwd;
     this.sessionCommit = this.turnCheckout?.commit;
+    this.sessionGitHubToken = this.turnCheckout?.githubToken;
     this.sessionFingerprint = fingerprint;
     this.sessionCodegraphReady = codegraphReady;
     if (selection) {

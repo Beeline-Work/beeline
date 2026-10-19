@@ -133,6 +133,7 @@ export type WorkbenchCatalogEntry = {
  * Squire API rows are projections of vault credentials and appear under Keys.
  */
 export type WorkbenchAppView = {
+  readonly connectorId?: string;
   readonly appId: string;
   readonly appKey: string;
   readonly name: string;

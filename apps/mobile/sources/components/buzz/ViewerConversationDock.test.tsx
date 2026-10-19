@@ -31,7 +31,7 @@ vi.mock('./ConversationComposer', () => ({
   ConversationComposer: (props: any) => React.createElement('Composer', props),
 }));
 vi.mock('./TranscriptReference', () => ({
-  ViewerConversationIcon: () => null,
+  ViewerConversationRing: () => null,
   TranscriptReference: ({ children }: any) => React.createElement('Text', {}, children),
 }));
 vi.mock('./MonoMarkdown', () => ({ MonoMarkdown: ({ markdown }: any) => React.createElement('Text', {}, markdown) }));

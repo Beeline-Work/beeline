@@ -1,31 +1,25 @@
-# Viewer dock keyboard and design proof
+# Viewer dock keyboard proof — R1
 
-Reproductions R1 and R2 use the production viewer dock and ConversationComposer on a task-owned Android 36 emulator. The fixture substitutes a local conversation and a static viewer background for a signed-in shared browser session. The clean emulator has no account or private browser card; stream transport and capture are outside this proof.
+This PR currently implements only scope item 1: keyboard offset and transcript height clamp. The toggle glyph, icons, colors, and typography match baseline 6b0d5b889. Design work and R2 remain deferred until the commander supplies the approved design.
 
-The before version is copied from commit 6b0d5b889 into temporary sibling modules. The after version imports the changed production components. Both run in one APK under the same SafeAreaProvider and KeyboardProvider, with a fresh app process for each version to reset the local conversation. Temporary baseline modules are removed after capture.
+## Reproduced
 
-## R1
+Android 36 → open the production viewer dock → tap Message → type “Explain these states”. The baseline input ends at y=2139 behind the IME beginning at y=1517; the composer disappears while typing. See before-keyboard.png.
 
-Open the dock, tap Message, and type “Explain these states”. Compare before-keyboard.png and after-keyboard.png. Send the message, receive the local long reply, focus Message again, and type “Visible above keyboard”. Compare before-transcript-keyboard.png and after-transcript-keyboard.png.
+The clean task-owned emulator has no signed-in shared-browser card. The closest stand-in mounts the production ViewerConversationDock and ConversationComposer under the real KeyboardProvider, over a static viewer background. Sending and the capture payload are local fixture boundaries; no browser transport or real screen capture is claimed.
 
-The IME begins at y=1517 on the 1080×2400 device. The before input ends at y=2139 (covered); the after input ends at y=1461 (visible). With the long reply and keyboard open, the transcript is [42,381][1038,1341], the pill is [32,1365][1049,1486], and both clear the keyboard. Raw UIAutomator trees, IME frames, and the APK hash are retained alongside measurements.json.
+## Demonstrated
 
-## R2
+Repeat the same typing path on the rebuilt keyboard-only version. See after-keyboard.png and after-transcript-keyboard.png. The latter includes a long local reply and the draft “Visible above keyboard”; both transcript and composer remain above the keyboard. Bone captures also exercise a multiline draft.
 
-After sending with the keyboard dismissed, compare before-transcript.png and after-transcript.png. The replacement uses the existing Ionicons chatbubble-outline glyph in both the toggle and viewing reference; a quiet Button removes the inner outlined square. Headings and references use meta text, speakers use bodyStrong, and the card has an opaque raised surface.
+Before images were captured from the baseline modules in the earlier comparison APK. After images are refreshed from the keyboard-only APK, with a fresh process and local conversation. Measurements, APK hashes, raw UIAutomator trees, and IME frames are retained alongside the screenshots. Closed-keyboard images document the existing styling; they do not claim R2 is fixed.
 
 ## Rebuild
 
-From apps/mobile, generate an ignored Android project with:
-`npx expo prebuild --platform android --no-install`.
+From apps/mobile generate the ignored native project with `npx expo prebuild --platform android --no-install`. Set generated app/build.gradle react.entryFile to file("../../scripts/viewer-dock-keyboard-native.tsx"), and disable Expo Updates in the generated manifest.
 
-In its generated app/build.gradle set react.entryFile to file("../../scripts/viewer-dock-keyboard-native.tsx"), and disable Expo Updates in the generated manifest. Build with:
-`./gradlew assembleRelease -PreactNativeArchitectures=x86_64 --no-daemon --max-workers=2 -Dorg.gradle.jvmargs='-Xmx4g -XX:MaxMetaspaceSize=1g'`.
+Build with `./gradlew assembleRelease -PreactNativeArchitectures=x86_64 --no-daemon --max-workers=2 -Dorg.gradle.jvmargs='-Xmx4g -XX:MaxMetaspaceSize=1g'`. Install only on a task-owned emulator launched with `beeline emulator`. Open the dock, focus Message, type, dismiss the keyboard, send, then focus and type again after the local reply arrives.
 
-Install only on a task-owned emulator launched with `beeline emulator`. The committed fixture mounts the after version. It loads the real fonts, sends locally, and delivers a long markdown reply to exercise the capped transcript.
+## Validation
 
-## Regression checks
-
-The dock component tests cover keyboard height on Android and iOS, dismissal while focus remains, no movement for an unfocused browser keyboard, no web movement, and transcript space above the composer. Existing viewer conversation, RoomMessageVariants, browser overflow, and design lint suites also run. The browser overflow screenshots retain their original test scope: the composer is a fixture boundary.
-
-Validation: 176 tests across six targeted suites; root npm run typecheck; npm run dead-code (91 existing findings, zero introduced); native Android release fixture build. Bone theme captures also show the long transcript and a multiline draft above the keyboard. iOS keyboard offsets have component coverage; an iOS device was not exercised.
+176 tests across ViewerConversationDock component/browser, RoomMessageVariants, viewer-conversation, and both design lint suites; root npm run typecheck. Component coverage checks Android/iOS offsets, dismissal while focused, no movement for an unfocused browser keyboard, no web movement, and the transcript height clamp. iOS hardware was not exercised.

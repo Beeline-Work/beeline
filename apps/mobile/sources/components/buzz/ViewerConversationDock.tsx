@@ -6,10 +6,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { AttachmentReference } from '@beeline/buzz-client';
 import type { RoomViewMessage } from '@beeline/api-contract/phone';
 import { currentViewerConversation, subscribeViewerConversation, viewerAgentHandle, viewerContext, viewerContextLabel } from '@/buzz/viewer-conversation';
+import { withAlpha } from '@/buzz/groknight';
 import { useKeyboardState } from 'react-native-keyboard-controller';
 import { MAX_MESSAGE_ATTACHMENTS, pickedPhotoAttachments, type PickedChatAttachment } from '@/buzz/chat-attachment-pick';
 import { COMPOSER_SINGLE_LINE_INPUT_HEIGHT, ConversationComposer, type DictatedSend } from '@/components/buzz/ConversationComposer';
-import { TranscriptReference, ViewerConversationIcon } from './TranscriptReference';
+import { TranscriptReference, ViewerConversationRing } from './TranscriptReference';
 import { AttachmentPickerSheet } from './AttachmentPickerSheet';
 import { MonoMarkdown } from './MonoMarkdown';
 
@@ -211,14 +212,14 @@ export function ViewerConversationDock({
       ) : null}
       <Animated.View style={[styles.pill, { width, bottom }]} testID="viewer-conversation-pill"
       onLayout={(event) => setPillHeight(event.nativeEvent.layout.height)}>
-        <Button label="" variant="quiet" icon={<ViewerConversationIcon />}
+        <Button label="" variant="secondary" icon={<ViewerConversationRing />}
         accessibilityRole="button" accessibilityLabel={open ? 'Collapse conversation' : 'Talk to agent'}
         accessibilityState={{ expanded: open }}
         onPress={() => {
           if (open) setTickerVisible(false);
           setOpen((value) => !value);
         }}
-        style={styles.control}
+        style={[styles.control, open && styles.controlOpen]}
         testID="viewer-conversation-toggle"
       />
         {open ? (
@@ -267,22 +268,23 @@ const styles = StyleSheet.create((theme) => ({
     overflow: 'hidden',
   },
   control: {
-    paddingHorizontal: 0,
     width: 44,
     height: 44,
     borderRadius: theme.buzz.radius,
-    backgroundColor: 'transparent',
+    backgroundColor: theme.buzz.bgBase,
     alignItems: 'center',
     justifyContent: 'center',
   },
+  controlOpen: { borderRightWidth: 1, borderRightColor: theme.buzz.border, borderRadius: 0,
+    backgroundColor: 'transparent' },
   composerWrap: { flex: 1, minWidth: 0 },
   transcript: { overflow: 'hidden', position: 'absolute', left: 16, right: 16, padding: theme.buzz.space.md, borderRadius: 10,
     borderWidth: 1, borderColor: theme.buzz.borderStrong,
-    backgroundColor: theme.buzz.bgRaised },
+    backgroundColor: withAlpha(theme.buzz.bgRaised, 0.8) },
   transcriptScroll: { flexShrink: 1, minHeight: 0 },
-  transcriptHeading: { ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet, marginBottom: theme.buzz.space.sm },
+  transcriptHeading: { ...theme.buzz.type.machine, color: theme.buzz.ledgerQuiet, marginBottom: theme.buzz.space.sm },
   transcriptEntry: { marginTop: 4 },
-  transcriptSpeaker: { ...theme.buzz.type.bodyStrong, color: theme.buzz.accent },
+  transcriptSpeaker: { ...theme.buzz.type.machine, color: theme.buzz.accent },
   transcriptText: { ...theme.buzz.type.body, color: theme.buzz.textPrimary },
   error: { ...theme.buzz.type.body, color: theme.buzz.dialogDanger, marginTop: 4 },
 }));

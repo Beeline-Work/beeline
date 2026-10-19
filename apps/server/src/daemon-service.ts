@@ -2954,12 +2954,12 @@ export class DaemonService {
       };
     }
     const limit = Math.max(1, Math.min(input.limit ?? 100, 200));
-    const after = input.after?.match(/^(\d+),([0-9a-f]{64})$/);
-    if (input.after && !after) throw new Error('invalid inbox cursor');
+    const after = input.after?.match(/^(\d+),([0-9a-f]{64}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$/);
+    if (input.after && !after) throw new Error('invalid inbox cursor; pass the returned next object unchanged as read cursor');
     const beforeInput = name === 'getRoomConversation' ? input.before : undefined;
-    const before = beforeInput?.match(/^(\d+),([0-9a-f]{64})$/);
+    const before = beforeInput?.match(/^(\d+),([0-9a-f]{64}|[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$/);
     if (beforeInput && (!before || after || input.window === 'earliest' || input.window === 'continuity'))
-      throw new Error('invalid conversation before cursor');
+      throw new Error('invalid conversation before cursor; pass the returned next object unchanged as read cursor');
     // A conversation read defaults to the NEWEST page: a turn is prompted from
     // the most recent messages, and the first 200 rows of a long Room are old
     // news. Startup objective recovery is the one caller that wants the other

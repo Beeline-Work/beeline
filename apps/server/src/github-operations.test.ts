@@ -6,6 +6,8 @@ import type { QueryResultRow } from 'pg';
 import { PgliteDatabase } from './test-support.js';
 import { GitHubOperations } from './github-operations.js';
 import { readAgentCommands } from './agent-command.js';
+import { DaemonService } from './daemon-service.js';
+import { LiveHub } from './live.js';
 
 const HUMAN = 'a'.repeat(64);
 const REVIEWER = 'b'.repeat(64);
@@ -120,6 +122,19 @@ describe('GitHub phone operations', () => {
     await operations.processWebhook('pull_request', prEvent('reopened', oldHead));
     expect((await facts()).rowCount).toBe(1);
     expect((await wakes()).rows).toEqual([{ agent_id: REVIEWER }]);
+    const run = (await database.query<{ head_sha: string }>(`SELECT
+      COALESCE(card->'contents'->>'headSha',card->>'headSha') head_sha FROM messages
+      WHERE room_id=$1 AND card->>'runId'=$1::text ORDER BY (card->>'seq')::int DESC LIMIT 1`, [corner])).rows[0];
+    expect(run?.head_sha).toBe(newHead);
+    const daemon = new DaemonService(database, new LiveHub());
+    await expect(daemon.execute('approveCornerMerge', { cornerId: corner, headSha: oldHead }, REVIEWER))
+      .rejects.toThrow(/^STALE_HEAD:/);
+    await expect(daemon.execute('approveCornerMerge', { cornerId: corner, headSha: newHead }, REVIEWER))
+      .resolves.toMatchObject({ status: 'approved', headSha: newHead });
+    expect((await database.query(`SELECT head_sha FROM corner_merge_approvals WHERE corner_id=$1`, [corner])).rows)
+      .toEqual([{ head_sha: newHead }]);
+    await expect(daemon.execute('approveCornerMerge', { cornerId: corner, headSha: oldHead }, REVIEWER))
+      .rejects.toThrow(/^STALE_HEAD:/);
   });
 
   it('does not wake on a superseded head when its completed suite arrives before push and synchronize', async () => {

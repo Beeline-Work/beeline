@@ -58,8 +58,15 @@ export function validateCornerBrief(draft: CornerBriefDraft, repositoryBacked = 
   const intent = draft.spec.match(/^## Intent\s*\n([\s\S]*?)(?=^## |$(?![\s\S]))/mi)?.[1] ?? draft.spec;
   const bugfix = /\b(?:bugfix|bug fix|fix|repair|reported (?:bug|defect)|regression)\b/i.test(intent) &&
     !/\b(?:new feature|refactor|design only)\b|^[\s>"“]*(?:please\s+)?(?:add|create|build|design|feature)\b/i.test(intent);
-  const reproduction = /(?:^|\n)\s*(?:[-*>]\s*)?(?:#{1,3}\s*)?Reproduction(?: [a-z0-9_-]+)?:\s*\S.+/i.test(draft.spec);
-  const standIn = /Reproduction not feasible:\s*\S.+;\s*Stand-in:\s*\S.+/i.test(draft.spec);
+  // Normalize emphasis on labels, preserving the surrounding section boundaries.
+  const proofText = draft.spec.replace(
+    /(\*{1,3}|_{1,3})((?:Reproduction(?: [a-z0-9_-]+| not feasible)?|Stand-in):?)\1/gi,
+    '$2',
+  );
+  const reproduction = /(?:^|\n)\s*(?:[-*>]\s*)?(?:#{1,3}\s*)?Reproduction(?: [a-z0-9_-]+)?:\s*\S.+/i.test(proofText);
+  const standIn = proofText.split(/(?=^#{1,6}[ \t]+)/m).some((section) =>
+    /(?:^|\n)[ \t]*(?:[-*>][ \t]*)?Reproduction not feasible:[ \t]*\S[^\n]*?(?:[ \t;]+|\n[\s\S]*?)Stand-in:[ \t]*\S/i.test(section),
+  );
   return repositoryBacked && draft.repositoryWork !== false && bugfix && !reproduction && !standIn
     ? ['Repository bugfix brief needs Reproduction <id>: real-target steps and failure, or Reproduction not feasible: reason; Stand-in: closest check. Done repeats that check successfully.'] : [];
 }

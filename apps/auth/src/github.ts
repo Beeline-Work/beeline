@@ -396,24 +396,32 @@ export class GitHubAppClient {
       throw new Error('invalid GitHub installation id');
     }
     const hasBody = Boolean(options.repositoryIds?.length) || Boolean(options.permissions);
-    const body = await jsonObject(
-      await fetch(`${this.#config.apiBaseUrl}/app/installations/${installationId}/access_tokens`, {
-        method: 'POST',
-        headers: {
-          ...githubHeaders(await this.appJwt()),
-          ...(hasBody ? { 'content-type': 'application/json' } : {}),
-        },
-        ...(hasBody
-          ? {
-              body: JSON.stringify({
-                ...(options.repositoryIds?.length ? { repository_ids: options.repositoryIds } : {}),
-                ...(options.permissions ? { permissions: options.permissions } : {}),
-              }),
-            }
-          : {}),
-      }),
-      'GitHub installation token',
-    );
+    const request: RequestInit = {
+      method: 'POST',
+      headers: {
+        ...githubHeaders(await this.appJwt()),
+        ...(hasBody ? { 'content-type': 'application/json' } : {}),
+      },
+      ...(hasBody
+        ? {
+            body: JSON.stringify({
+              ...(options.repositoryIds?.length ? { repository_ids: options.repositoryIds } : {}),
+              ...(options.permissions ? { permissions: options.permissions } : {}),
+            }),
+          }
+        : {}),
+    };
+
+    const url = `${this.#config.apiBaseUrl}/app/installations/${installationId}/access_tokens`;
+    const delays = [250, 1_000];
+    let response = await fetch(url, request);
+    for (const delay of delays) {
+      if (![500, 502, 503, 504].includes(response.status)) break;
+      await response.body?.cancel();
+      await new Promise<void>(resolve => setTimeout(resolve, delay));
+      response = await fetch(url, request);
+    }
+    const body = await jsonObject(response, 'GitHub installation token');
     const token = typeof body.token === 'string' ? body.token : '';
     const expiresAt = typeof body.expires_at === 'string' ? body.expires_at : '';
     if (!token || !Number.isFinite(Date.parse(expiresAt))) {

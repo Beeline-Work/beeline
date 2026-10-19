@@ -7,7 +7,10 @@ import {
   githubMergeability,
 } from './github.js';
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+});
 
 it('reads merged PR evidence needed to recover a missed webhook', async () => {
   const sha = 'a'.repeat(40);
@@ -956,4 +959,74 @@ it('Reproduction F1-1: a hung merge aborts within the provider deadline', async 
     expect(observed).toBe('aborted');
     expect(deadline).toHaveBeenCalledWith(15_000);
   } finally { deadline.mockRestore(); }
+});
+
+
+describe('installation token transient failures (Reproduction 7801305644)', () => {
+  async function client() {
+    const { privateKey } = await generateKeyPair('RS256');
+    return new GitHubAppClient({
+      appId: '42', privateKey: await exportPKCS8(privateKey), slug: 'beeline',
+    });
+  }
+
+  it.each([500, 502, 503, 504])('recovers from HTTP %s with the same scoped request', async status => {
+    const app = await client();
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response('{}', { status }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        token: 'recovered-token', expires_at: '2030-01-01T00:00:00Z',
+      }), { status: 201 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const result = app.installationToken(1, {
+      repositoryIds: [2], permissions: { contents: 'read' },
+    }).then(value => ({ value }), error => ({ error }));
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await vi.advanceTimersByTimeAsync(250);
+    expect(await result).toEqual({ value: {
+      token: 'recovered-token', expiresAt: '2030-01-01T00:00:00Z',
+    } });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    for (const call of fetchMock.mock.calls) {
+      expect(call).toEqual([
+        'https://api.github.com/app/installations/1/access_tokens',
+        expect.objectContaining({ method: 'POST', body: JSON.stringify({
+          repository_ids: [2], permissions: { contents: 'read' },
+        }) }),
+      ]);
+    }
+  });
+
+  it('stops after three HTTP 503 responses with the original error type', async () => {
+    const app = await client();
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 503 }));
+    vi.stubGlobal('fetch', fetchMock);
+    const result = app.installationToken(1, { repositoryIds: [2] }).catch(error => error);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await vi.advanceTimersByTimeAsync(250);
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(await result).toBeInstanceOf(GitHubHttpError);
+    expect(await result).toMatchObject({ status: 503 });
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it.each([401, 403, 404, 422, 501])('does not retry HTTP %s', async status => {
+    const app = await client();
+    const fetchMock = vi.fn(async () => new Response('{}', { status }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(app.installationToken(1)).rejects.toMatchObject({ status });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not retry a network exception', async () => {
+    const app = await client();
+    const error = new TypeError('network failed');
+    const fetchMock = vi.fn().mockRejectedValue(error);
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(app.installationToken(1)).rejects.toBe(error);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
 });

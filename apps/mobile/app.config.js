@@ -106,7 +106,7 @@ export default {
             }
         },
         android: {
-            runtimeVersion: runtimeVersionOverride || "39",
+            runtimeVersion: runtimeVersionOverride || "40",
             versionCode: 27,
             adaptiveIcon: {
                 foregroundImage: "./sources/assets/images/icon-adaptive.png",
@@ -120,12 +120,11 @@ export default {
                 "android.permission.ACCESS_NETWORK_STATE",
                 "android.permission.POST_NOTIFICATIONS",
                 "android.permission.RECORD_AUDIO",
+                "android.permission.FOREGROUND_SERVICE",
+                "android.permission.FOREGROUND_SERVICE_MICROPHONE",
                 "android.permission.WAKE_LOCK",
             ],
             blockedPermissions: [
-                // Disabled until the Google Play foreground-service declaration is complete.
-                "android.permission.FOREGROUND_SERVICE",
-                "android.permission.FOREGROUND_SERVICE_MICROPHONE",
                 "android.permission.ACTIVITY_RECOGNITION",
                 // Not using external storage/media access for now — blocks Google Play photo/video permission declaration
                 "android.permission.READ_EXTERNAL_STORAGE",

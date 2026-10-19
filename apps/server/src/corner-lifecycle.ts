@@ -99,7 +99,7 @@ export const CORNER_LIFECYCLE_CONTRACT: CornerLifecycleContract = {
     implement: { does: 'Build and prove the agreed change.',
       role: 'implementer',
       requires: [],
-      on: { pushed: 'checks', rechecked: 'checks', rereview: 'review', pr_closed: 'implement' },
+      on: { pushed: 'checks', rechecked: 'checks', rereview: 'review', merge_refused: 'implement', pr_closed: 'implement' },
     },
     // Green wakes the reviewer (live from the parent Room's
     // `reviewer_agent_id`/`reviewer_fallback_ids`); with no reviewer
@@ -158,7 +158,7 @@ export type CornerEvent =
   /** A yes on this head: a reviewer's PASS wakes the implementer to merge; a person's order is landed by the caller. */
   | { kind: 'approval'; headSha: string; by: 'reviewer' | 'person' }
   | { kind: 'merge-unconfirmed'; number: number; error: string }
-  | { kind: 'merge-refused'; headSha: string; reason: string }
+  | { kind: 'merge-refused'; headSha: string; reason: string; confirmedUnmerged?: boolean }
   | { kind: 'merged'; contents: Record<string, unknown> }
   | { kind: 'pull-request-closed'; number: number }
   | { kind: 'closed' };
@@ -1172,9 +1172,18 @@ async function mergeRefused(
   if (!transition.allows('merge_refused')) return no('not landing');
   if (corner.lifecycle.pr?.headSha !== event.headSha) return no('the head moved');
   await transition.take('merge_refused', { headSha: event.headSha, reason: event.reason });
+  if (event.confirmedUnmerged) {
+    await db.query(
+      `UPDATE corner_facts SET merge_attempt_head=NULL,lifecycle=lifecycle-'mergeRecovery',updated_at=now()
+       WHERE corner_id=$1 AND merge_attempt_head=$2`,
+      [cornerId, event.headSha],
+    );
+  }
   const pullRequest = corner.lifecycle.pr;
   const line = await systemLine(db, {
-    id: createHash('sha256')
+    // Confirmed refusals can recur on one head; each needs its own wake source.
+    // Keep the deterministic receipt for unresolved claims excluded from recovery.
+    id: event.confirmedUnmerged ? undefined : createHash('sha256')
       .update(`beeline:${cornerId}:github:merge-refused:${event.headSha}`)
       .digest('hex'),
     roomId: cornerId,
@@ -1354,9 +1363,9 @@ export async function cornerMergeGate(
 }
 
 /**
- * Claims the one merge attempt for this head, under the run lock and only
+ * Claims one unresolved merge attempt for this head, under the run lock and only
  * while the gate is open on that head. Returns false when the head was
- * already attempted or the corner moved on, so concurrent `merge_corner`
+ * already claimed or the corner moved on, so concurrent `merge_corner`
  * calls and redelivered events never merge a head twice. Stale unfinished claims are
  * recovered only after reading GitHub to establish whether the merge landed.
  */

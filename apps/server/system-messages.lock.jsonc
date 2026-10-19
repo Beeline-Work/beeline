@@ -1,5 +1,6 @@
 // Do not delete, disable or modify this guard or its list without lunchboxfortwo's express command.
 // Workspace ended-line wording approved by lunchboxfortwo in brief revision 1, rule 4 (message 8c3fae7b28a63868a4626d32d35cd9f8963cb18be26cd9d3b306cef8c3d5f590).
+// Merge-refusal notification ID change approved by lunchboxfortwo in Room message 1c880c7a; wording unchanged.
 [
   {
     "id": "src/agent-class-retirement.ts:retireAgentClasses:message-write:137f066b6c9f70c2",
@@ -1473,10 +1474,10 @@
     "occurrences": 1
   },
   {
-    "id": "src/corner-lifecycle.ts:mergeRefused:systemLine:240d42b47e042171",
+    "id": "src/corner-lifecycle.ts:mergeRefused:systemLine:6906be6e586de0ea",
     "file": "apps/server/src/corner-lifecycle.ts",
     "kind": "systemLine",
-    "template": "systemLine(db, {\n    id: createHash('sha256')\n        .update(`beeline:${cornerId}:github:merge-refused:${event.headSha}`)\n        .digest('hex'),\n    roomId: cornerId,\n    authorId: corner.worker_agent_id ?? SYSTEM_IDENTITY_ID,\n    subject: GITHUB_SUBJECT,\n    verb: 'refused to merge',\n    object: {\n        text: pullRequest?.title ?? `pull request #${pullRequest?.number ?? ''}`,\n        ...(pullRequest?.url ? { url: pullRequest.url } : {}),\n        headSha: event.headSha,\n    },\n    consequence: event.reason,\n})",
+    "template": "systemLine(db, {\n    id: event.confirmedUnmerged ? undefined : createHash('sha256')\n        .update(`beeline:${cornerId}:github:merge-refused:${event.headSha}`)\n        .digest('hex'),\n    roomId: cornerId,\n    authorId: corner.worker_agent_id ?? SYSTEM_IDENTITY_ID,\n    subject: GITHUB_SUBJECT,\n    verb: 'refused to merge',\n    object: {\n        text: pullRequest?.title ?? `pull request #${pullRequest?.number ?? ''}`,\n        ...(pullRequest?.url ? { url: pullRequest.url } : {}),\n        headSha: event.headSha,\n    },\n    consequence: event.reason,\n})",
     "literals": [
       "''",
       "'GitHub'",

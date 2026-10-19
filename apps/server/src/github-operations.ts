@@ -983,6 +983,8 @@ export class GitHubOperations {
       await advanceCorner(this.database, cornerId, {
         kind: 'merge-refused',
         headSha: status.headSha,
+        confirmedUnmerged: pr?.merged === false
+          && pr.headSha === status.headSha && pr.headRef === target.feature_branch,
         reason: error instanceof Error ? error.message : String(error),
       });
       this.onRoomChanged?.(cornerId);

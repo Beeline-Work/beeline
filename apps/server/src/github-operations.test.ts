@@ -6,6 +6,11 @@ import type { QueryResultRow } from 'pg';
 import { PgliteDatabase } from './test-support.js';
 import { GitHubOperations } from './github-operations.js';
 import { readAgentCommands } from './agent-command.js';
+import { DaemonService } from './daemon-service.js';
+import { LiveHub } from './live.js';
+import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
+import { transformSync } from 'esbuild';
 
 const HUMAN = 'a'.repeat(64);
 const REVIEWER = 'b'.repeat(64);
@@ -66,6 +71,81 @@ describe('GitHub phone operations', () => {
         check_suite: { head_branch: 'feature/checks-1', head_sha: headSha } } };
     return { corners, headSha, app, payload };
   }
+
+  it.each(['green on reopen', 'green after reopen', 'prior head green'])('R1: close, push, stale reopen — %s dispatches once with current card totals', async timing => {
+    const { corners, headSha: oldHead, app, payload } = await checksFixture();
+    const corner = corners[0]!;
+    const newHead = '2'.repeat(40);
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
+    const prEvent = (action: string, sha: string) => ({
+      ...payload, action, pull_request: {
+        number: 1, title: 'Fix checks', html_url: 'https://github.com/owner/widgets/pull/1',
+        head: { ref: 'feature/checks-1', sha }, base: { ref: 'main' }, mergeable_state: 'clean',
+      },
+    });
+    await operations.processWebhook('pull_request', prEvent('closed', oldHead));
+    await operations.processWebhook('push', {
+      ...payload, ref: 'refs/heads/feature/checks-1', after: newHead,
+    });
+    // Old-head CI can arrive while the PR association is absent.
+    app.readCommitCheckRollup.mockResolvedValue({ state: timing === 'prior head green' ? 'passed' : 'pending', total: 40, failing: [],
+      checks: [{ name: 'old job', status: timing === 'prior head green' ? 'passed' : 'pending' }] });
+    await operations.processWebhook('check_run', payload);
+    app.readPullRequest.mockResolvedValue({ number: 1, headSha: newHead,
+      url: 'https://github.com/owner/widgets/pull/1', mergeability: 'clean' });
+    const green = { state: 'passed', total: 31, failing: [],
+      checks: Array.from({ length: 31 }, (_, i) => ({ name: `job ${i}`, status: 'passed' })) };
+    app.readCommitCheckRollup.mockResolvedValue(timing !== 'green after reopen' ? green : {
+      ...green, state: 'pending', checks: green.checks.map(c => ({ ...c, status: 'pending' })),
+    });
+    // A delayed reopen payload can still name the pre-push head.
+    await operations.processWebhook('pull_request', prEvent('reopened', oldHead));
+    if (timing === 'green after reopen') {
+      app.readCommitCheckRollup.mockResolvedValue(green);
+      await operations.processWebhook('check_run', { ...payload,
+        check_run: { ...payload.check_run, head_sha: newHead,
+          check_suite: { head_branch: 'feature/checks-1', head_sha: newHead } } });
+    }
+    const lifecycle = (await database.query<{ lifecycle: import('@beeline/api-contract/phone').CornerLifecycleView }>(
+      `SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [corner],
+    )).rows[0]!.lifecycle;
+    expect(lifecycle).toMatchObject({ pr: { headSha: newHead }, checks: 'passing',
+      checksSummary: { total: 31, status: 'passing' } });
+    // Exercise the exact formatter used by the visible corner header.
+    // Server CI does not install Expo. Compile the pure formatter without
+    // loading the mobile app's Expo tsconfig through Vite.
+    const formatter = transformSync(readFileSync(new URL('../../mobile/sources/buzz/corner-status-line.ts', import.meta.url), 'utf8'), {
+      loader: 'ts', format: 'cjs', tsconfigRaw: {},
+    });
+    const module = { exports: {} };
+    runInNewContext(formatter.code, { module, exports: module.exports });
+    const { cornerStatusLine } = module.exports as typeof import('../../mobile/sources/buzz/corner-status-line.js');
+    expect(cornerStatusLine(lifecycle, false)).toBe('PR #1 · all 31 tests passed');
+    const facts = () => database.query(`SELECT 1 FROM messages WHERE room_id=$1
+      AND system_event->>'kind'='check-passed' AND system_event->'object'->>'headSha'=$2`, [corner, newHead]);
+    const wakes = () => database.query(`SELECT command.agent_id FROM agent_commands command
+      JOIN messages source ON source.id=command.source_message_id WHERE command.room_id=$1
+      AND source.system_event->>'kind'='check-passed'
+      AND source.system_event->'object'->>'headSha'=$2`, [corner, newHead]);
+    expect((await facts()).rowCount).toBe(1);
+    expect((await wakes()).rows).toEqual([{ agent_id: REVIEWER }]);
+    await operations.processWebhook('pull_request', prEvent('reopened', oldHead));
+    expect((await facts()).rowCount).toBe(1);
+    expect((await wakes()).rows).toEqual([{ agent_id: REVIEWER }]);
+    const run = (await database.query<{ head_sha: string }>(`SELECT
+      COALESCE(card->'contents'->>'headSha',card->>'headSha') head_sha FROM messages
+      WHERE room_id=$1 AND card->>'runId'=$1::text ORDER BY (card->>'seq')::int DESC LIMIT 1`, [corner])).rows[0];
+    expect(run?.head_sha).toBe(newHead);
+    const daemon = new DaemonService(database, new LiveHub());
+    await expect(daemon.execute('approveCornerMerge', { cornerId: corner, headSha: oldHead }, REVIEWER))
+      .rejects.toThrow(/^STALE_HEAD:/);
+    await expect(daemon.execute('approveCornerMerge', { cornerId: corner, headSha: newHead }, REVIEWER))
+      .resolves.toMatchObject({ status: 'approved', headSha: newHead });
+    expect((await database.query(`SELECT head_sha FROM corner_merge_approvals WHERE corner_id=$1`, [corner])).rows)
+      .toEqual([{ head_sha: newHead }]);
+    await expect(daemon.execute('approveCornerMerge', { cornerId: corner, headSha: oldHead }, REVIEWER))
+      .rejects.toThrow(/^STALE_HEAD:/);
+  });
 
   it('does not wake on a superseded head when its completed suite arrives before push and synchronize', async () => {
     const { corners, headSha: oldHead, app, payload } = await checksFixture();

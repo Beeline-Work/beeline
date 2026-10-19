@@ -11,6 +11,7 @@ import { LiveHub } from './live.js';
 import { GitHubOperations } from './github-operations.js';
 import { createAgentCommand, readAgentCommands, noteCornerAgentUnreachable, noteBlockedCornerChecks, type CommandRow } from './agent-command.js';
 import { GITHUB_SUBJECT, systemLine } from './system-line.js';
+import { unreadMessageSql } from './read-cursor.js';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
 import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
 
@@ -87,6 +88,41 @@ it('delivers blocked privately to Ruby and Ruby orders the current worker privat
     .toMatchObject({ private: true, source: { authorId: RUBY, body: 'Use endpoint v2' } });
   expect((await db.query(`SELECT text FROM messages WHERE text IN ($1,$2)`,
     ['blocked: need an endpoint decision', 'Use endpoint v2'])).rowCount).toBe(0);
+});
+it('records each corner order and report as one collapsed card in the corner only', async () => {
+  const opened = await open(), turn = await worker(opened.cornerId);
+  const before = (await db.query(`SELECT count(*)::int n FROM messages WHERE room_id=ANY($1::uuid[])`, [[ROOM, DM]])).rows[0]!.n;
+  const unread = async () => (await db.query<{ n: number }>(
+    `SELECT count(*)::int n FROM messages message WHERE message.room_id=$1 AND ${unreadMessageSql('message')}`,
+    [opened.cornerId, HUMAN])).rows[0]!.n;
+  const unreadBefore = await unread();
+  const reportText = 'blocked: need an endpoint decision\nv1 or v2?';
+  await daemon.execute('report', { status: 'blocked', ...authority(turn), text: reportText }, WORKER);
+  const report = (await commands(DM, RUBY)).find(c => c.reason === 'report')!;
+  expect(report).toMatchObject({ private: true, source: { authorId: WORKER, body: reportText } });
+  await claim(report);
+  await daemon.execute('order', { ...authority(report), address: opened.cornerId, text: 'Use endpoint v2' }, RUBY);
+  expect((await commands(opened.cornerId, WORKER)).find(c => c.reason === 'order'))
+    .toMatchObject({ private: true, source: { authorId: RUBY, body: 'Use endpoint v2' } });
+  const cards = (await db.query<{ id: string; author_id: string; presentation: string; text: string; card: unknown }>(
+    `SELECT id,author_id,presentation,text,card FROM messages WHERE room_id=$1 AND card_type='agent-command' ORDER BY created_at,id`,
+    [opened.cornerId])).rows;
+  expect(cards.map(({ id: _id, ...card }) => card)).toEqual(expect.arrayContaining([
+    { author_id: WORKER, presentation: 'card', text: '@worker reported to @ruby · blocked',
+      card: { kind: 'report', recipient: { id: RUBY, name: 'Ruby', handle: 'ruby' }, status: 'blocked', text: reportText } },
+    { author_id: RUBY, presentation: 'card', text: '@ruby ordered @worker',
+      card: { kind: 'order', recipient: { id: WORKER, name: 'Worker', handle: 'worker' }, text: 'Use endpoint v2' } },
+  ]));
+  expect(cards).toHaveLength(2);
+  // The parent Room and the commander's DM gain nothing; the cards wake nobody.
+  expect((await db.query(`SELECT count(*)::int n FROM messages WHERE room_id=ANY($1::uuid[])`, [[ROOM, DM]])).rows[0]!.n).toBe(before);
+  expect((await db.query(`SELECT 1 FROM agent_commands WHERE source_message_id=ANY($1::text[])`, [cards.map(card => card.id)])).rowCount).toBe(0);
+  expect(await unread()).toBe(unreadBefore);
+  const view = (await phone.readRoom(opened.cornerId, HUMAN))!.messages.filter(m => m.agentCommand);
+  expect(view.map(m => [m.author.pubkey, m.agentCommand])).toEqual(expect.arrayContaining([
+    [WORKER, { kind: 'report', recipient: { id: RUBY, name: 'Ruby', handle: 'ruby' }, status: 'blocked', text: reportText }],
+    [RUBY, { kind: 'order', recipient: { id: WORKER, name: 'Worker', handle: 'worker' }, text: 'Use endpoint v2' }],
+  ]));
 });
 it.each(['needs_decision: choose the product scope', 'needs-decision: choose the product scope', 'needs-decision: choose the product scope @captain'])('R1 delivers decision reports with the display prefix in the original DM: %s', async (inputText) => {
   const text = inputText.replace(/^needs_decision:/, 'needs-decision:');

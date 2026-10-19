@@ -735,6 +735,31 @@ function readChoiceCard(value: unknown): ChoiceCardView | null {
   };
 }
 
+function readAgentCommand(value: unknown): NonNullable<RoomViewMessage['agentCommand']> | null {
+  const item = record(value);
+  const recipient = record(item?.recipient);
+  if (
+    !item ||
+    (item.kind !== 'order' && item.kind !== 'report') ||
+    typeof item.text !== 'string' ||
+    !recipient ||
+    typeof recipient.id !== 'string' ||
+    typeof recipient.name !== 'string'
+  ) {
+    return null;
+  }
+  return {
+    kind: item.kind,
+    recipient: {
+      id: recipient.id,
+      name: recipient.name,
+      ...field('handle', typeof recipient.handle === 'string' ? recipient.handle : undefined),
+    },
+    ...field('status', oneOf(item.status, ['done', 'blocked', 'needs-decision', 'failed'])),
+    text: item.text,
+  };
+}
+
 function readWalletTx(value: unknown): NonNullable<RoomViewMessage['walletTx']> | null {
   const item = record(value);
   if (
@@ -1096,6 +1121,7 @@ export function readRoomViewMessage(value: unknown): RoomViewMessage | null {
     ...field('appSignIn', readAppSignInCard(item.appSignIn)),
     ...field('agentSignIn', readAgentSignInCard(item.agentSignIn)),
     ...field('choice', readChoiceCard(item.choice)),
+    ...field('agentCommand', readAgentCommand(item.agentCommand)),
     ...field('walletTx', readWalletTx(item.walletTx)),
     ...field('walletInsufficient', readWalletInsufficient(item.walletInsufficient)),
     ...field('walletDelegation', readWalletDelegation(item.walletDelegation)),

@@ -835,6 +835,51 @@ export const WalletCards = React.memo(function WalletCards({
   return null;
 });
 
+/**
+ * An agent's order into, or report from, this corner: one collapsed record
+ * card. The header expands it to the full text in place.
+ */
+export const AgentCommandCard = React.memo(function AgentCommandCard({
+  message,
+  stamp,
+}: {
+  message: ChatDisplayMessage;
+  stamp: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const command = message.agentCommand;
+  if (!command) return null;
+  const sender = message.authorIdentity;
+  const title = `${sender?.name || 'Agent'} → ${command.recipient.name || 'Agent'}${
+    command.status ? ` · ${command.status}` : ''
+  }`;
+  return (
+    <TranscriptCard
+      tier="record"
+      identity={
+        <IdentityMark
+          kind={sender?.kind ?? 'agent'}
+          seed={sender?.pubkey ?? command.recipient.id}
+          name={sender?.name ?? 'Agent'}
+          avatarUrl={sender?.avatar}
+          face={sender?.face}
+          size={26}
+        />
+      }
+      title={title}
+      subline={expanded ? undefined : command.text.split('\n', 1)[0]}
+      sublineLines={1}
+      sublineTestID="agent-command-subline"
+      body={expanded ? command.text : undefined}
+      stamp={stamp}
+      onHeaderPress={() => setExpanded((open) => !open)}
+      headerExpanded={expanded}
+      headerTestID="agent-command-header"
+      testID={`agent-command-${command.kind}`}
+    />
+  );
+});
+
 export interface TargetBranchProposalCardProps {
   message: ChatDisplayMessage;
   agent?: AgentPresentation;

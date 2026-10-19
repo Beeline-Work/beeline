@@ -33,7 +33,9 @@ export function visibleChatMessageSql(alias: string): string {
  */
 export function unreadMessageSql(alias: string): string {
   const column = (name: string) => `${alias}.${name}`;
+  // An agent's order or report record is reference, not news: it never counts.
   return `${visibleChatMessageSql(alias)}
+      AND ${column('card_type')} IS DISTINCT FROM 'agent-command'
       AND ${column('author_id')} IS DISTINCT FROM $2`;
 }
 

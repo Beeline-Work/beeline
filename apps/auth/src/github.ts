@@ -871,7 +871,9 @@ export class GitHubAppClient {
   ): Promise<void> {
     const token = await this.installationToken(installationId, {
       repositoryIds: [repositoryId],
-      permissions: { contents: 'write', pull_requests: 'write' },
+      // A squash that rewrites a workflow file needs workflows write, even when
+      // the PR's own diff only matches what main already had.
+      permissions: { contents: 'write', pull_requests: 'write', workflows: 'write' },
     });
     const repositoryPath = fullName
       .split('/')

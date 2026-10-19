@@ -206,6 +206,30 @@ describe('Wallet screens (mock §Screens, pass 4)', () => {
     expect(renderer.root.findByProps({ testID: 'wallet-address-qr-toggle' })).toBeTruthy();
   });
 
+  it('wallet-2593: disconnect revokes signing and offers explicit reconnect', async () => {
+    const source = new MockWalletSource();
+    const revoke = vi.spyOn(source, 'revokeDelegation');
+    const history = await source.readHistory();
+    setWalletSource(source);
+    const renderer = await render(WalletScreen);
+    await act(async () => { await renderer.root.findByProps({ testID: 'wallet-disconnect-row' }).props.onPress(); });
+    expect(revoke).toHaveBeenCalledOnce();
+    expect(renderer.root.findByProps({ testID: 'wallet-connect-row' }).props.title).toBe('Wallet not connected');
+    expect(await source.readHistory()).toEqual(history);
+  });
+
+  it('keeps disconnect available with the server error when revocation fails', async () => {
+    const source = new MockWalletSource();
+    vi.spyOn(source, 'revokeDelegation').mockRejectedValue(new Error('Network unavailable. Try again.'));
+    setWalletSource(source);
+    const renderer = await render(WalletScreen);
+    await act(async () => { await renderer.root.findByProps({ testID: 'wallet-disconnect-row' }).props.onPress(); });
+    const row = renderer.root.findByProps({ testID: 'wallet-disconnect-row' });
+    expect(row.props.description).toContain('Network unavailable');
+    expect(row.props.disabled).toBe(false);
+    expect((await source.readWallet()).delegation.active).toBe(true);
+  });
+
   it('shows no connect row for a standing grant', async () => {
     const source = new MockWalletSource();
     const baseline = await source.readWallet();

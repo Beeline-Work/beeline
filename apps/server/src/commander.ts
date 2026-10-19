@@ -10,6 +10,7 @@ import {
 import { tagsKnownIdentitySql } from './message-mentions.js';
 import { cornerImplementerSql } from './corner-worker.js';
 import { CommandRefusalError } from './command-refusal.js';
+import { systemLine } from './system-line.js';
 export { CommandRefusalError } from './command-refusal.js';
 
 /** A report/lifecycle wake resumes the recipient's original incoming order. */
@@ -165,10 +166,45 @@ export async function sendOrder(
     retainDepth: true,
   });
   if (!queued) throw new CommandRefusalError('order recipient is no longer a member', 403);
+  if (target.parent_id)
+    await recordAgentCommandCard(db, { id: queued.id, cornerId: address, kind: 'order', authorId: agentId, recipientId: worker, text });
   return { id: queued.id, createdAt: Math.floor(Date.now() / 1000),
     effect: 'order', address, agent: worker, visibility: 'private', reportsAssignment: false,
     accepted: true, executionConfirmed: false, receipt: 'Order queued privately; not confirmation of execution.' };
 }
+
+/**
+ * One collapsed record card per order or report in a corner transcript. The
+ * line names only sender, receiver and status; the full text stays in the
+ * card for people to expand. It has no event kind, so it wakes nobody, and
+ * its card type keeps it out of pushes and unread counts.
+ */
+async function recordAgentCommandCard(db: SqlDatabase, input: {
+  id: string; cornerId: string; kind: 'order' | 'report'; authorId: string; recipientId: string;
+  text: string; status?: string;
+}) {
+  const recipient = (await db.query<{ name: string; handle: string | null }>(
+    'SELECT name,handle FROM identities WHERE id=$1', [input.recipientId])).rows[0];
+  await systemLine(db, {
+    id: createHash('sha256').update(`agent-command-card:${input.id}`).digest('hex'),
+    roomId: input.cornerId,
+    authorId: input.authorId,
+    subject: { kind: 'agent', id: input.authorId, name: input.authorId },
+    verb: input.kind === 'order' ? 'ordered' : 'reported to',
+    object: { text: recipient?.name ?? input.recipientId, id: input.recipientId },
+    ...(input.status ? { consequence: input.status } : {}),
+    presentation: 'card',
+    cardType: AGENT_COMMAND_CARD_TYPE,
+    card: {
+      kind: input.kind,
+      recipient: { id: input.recipientId, name: recipient?.name ?? '', ...(recipient?.handle ? { handle: recipient.handle } : {}) },
+      ...(input.status ? { status: input.status } : {}),
+      text: input.text,
+    },
+  });
+}
+
+export const AGENT_COMMAND_CARD_TYPE = 'agent-command';
 
 async function agentHandle(db: SqlDatabase, id: string) {
   return (await db.query<{ handle: string | null }>(`SELECT lower(handle) handle FROM identities WHERE id=$1`, [id]))
@@ -288,6 +324,12 @@ export async function reportToCommander(
       ],
     );
   }
+  // The corner keeps a collapsed record of what its agent reported, so a
+  // person reading a relay can open the full text where it was written.
+  if (!options.automatic && returnRoom !== roomId &&
+    (await db.query('SELECT 1 FROM rooms WHERE id=$1 AND parent_id IS NOT NULL', [roomId])).rowCount)
+    await recordAgentCommandCard(db, { id: reportId, cornerId: roomId, kind: 'report', authorId: agentId,
+      recipientId: recipient, text, status: /^(done|blocked|needs-decision|failed):/.exec(text)?.[1] });
   if (!options.automatic && origin && (await db.query(
     'SELECT 1 FROM corner_facts WHERE corner_id=$1 AND COALESCE(worker_agent_id,owner_agent_id)=$2', [origin,agentId])).rowCount) {
     if (/^(needs-decision|blocked):/.test(text)) {

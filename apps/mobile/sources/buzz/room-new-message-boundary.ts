@@ -63,11 +63,15 @@ export function compactNewMessageCount(count: number): string {
 export function countsAsUnread(
   message: Pick<
     ChatDisplayMessage,
-    'isUser' | 'isAgentActivity' | 'isAgentDraft' | 'isAgentLiveTurn'
+    'isUser' | 'isAgentActivity' | 'isAgentDraft' | 'isAgentLiveTurn' | 'agentCommand'
   >,
 ): boolean {
   return (
-    !message.isUser && !message.isAgentActivity && !message.isAgentDraft && !message.isAgentLiveTurn
+    !message.isUser &&
+    !message.isAgentActivity &&
+    !message.isAgentDraft &&
+    !message.isAgentLiveTurn &&
+    !message.agentCommand
   );
 }
 

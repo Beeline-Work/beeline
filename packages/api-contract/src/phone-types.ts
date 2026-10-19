@@ -323,6 +323,13 @@ export type RoomViewMessage = {
     readonly targetBranch?: string;
   };
   /** A daemon-authored repository lifecycle fact, rendered as an actionable card. */
+  /** An agent's order into, or report from, a corner. The author is the sender. */
+  readonly agentCommand?: {
+    readonly kind: 'order' | 'report';
+    readonly recipient: { readonly id: string; readonly name: string; readonly handle?: string };
+    readonly status?: 'done' | 'blocked' | 'needs-decision' | 'failed';
+    readonly text: string;
+  };
   /** The @System ledger line: every transaction, in and out. */
   readonly walletTx?: {
     readonly direction: 'in' | 'out';

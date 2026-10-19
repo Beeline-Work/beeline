@@ -84,6 +84,8 @@ export type TranscriptCardProps = {
   title: ReactNode;
   wrapTitle?: boolean;
   subline?: ReactNode;
+  /** Cut the subline to this many lines (a collapsed record's first line). */
+  sublineLines?: number;
   sublineTestID?: string;
   stamp?: string;
   identity?: ReactNode;
@@ -226,6 +228,7 @@ export function TranscriptCard({
   title,
   wrapTitle = false,
   subline,
+  sublineLines,
   sublineTestID,
   stamp,
   identity,
@@ -365,8 +368,12 @@ export function TranscriptCard({
             accessibilityHint={
               onHeaderPress
                 ? headerExpanded
-                  ? 'Hides individual rows'
-                  : 'Shows individual rows'
+                  ? rows.length
+                    ? 'Hides individual rows'
+                    : 'Hides the full text'
+                  : rows.length
+                    ? 'Shows individual rows'
+                    : 'Shows the full text'
                 : undefined
             }
             accessibilityRole={onHeaderPress ? 'button' : undefined}
@@ -408,6 +415,8 @@ export function TranscriptCard({
                 <SettlingText
                   active={animateArrival}
                   durationMs={TRANSCRIPT_SETTLE_MS}
+                  ellipsizeMode="tail"
+                  numberOfLines={sublineLines}
                   steadyColor={steady.quiet}
                   style={styles.subline}
                   testID={sublineTestID}

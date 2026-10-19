@@ -1,11 +1,11 @@
 import { afterAll, beforeAll, expect, it, vi } from 'vitest';
-import { AgentVoiceService } from './agent-voice.js';
+import { AgentVoiceService, renderVoiceAudio } from './agent-voice.js';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { VoiceService } from './voice-service.js';
 import { LiveHub } from './live.js';
 import { VOICE_SCHEMA } from './voice-schema.js';
-import { savedAuraVoice } from './voice-providers.js';
+import { AuraSpeech, savedAuraVoice } from './voice-providers.js';
 
 const w = '11111111-1111-4111-8111-111111111111',
   r = '22222222-2222-4222-8222-222222222222';
@@ -146,4 +146,12 @@ it('drops the old provider column and CHECK idempotently while preserving saved 
   expect((await db.query(`SELECT chosen_voices FROM agents WHERE agent_id=$1`, [b])).rows[0]?.chosen_voices)
     .toEqual({});
   expect((await profiles.catalog(w, a, h)).currentVoiceId).toBe('apollo');
+});
+
+it('keeps the eight-second preview cap when Aura text spans requests', async () => {
+  const fetcher = vi.fn<typeof fetch>(async () => new Response(new Uint8Array(24000 * 2 * 9)));
+  const preview = await renderVoiceAudio(new AuraSpeech('test', 'account', fetcher), 'Ready. '.repeat(600), 'luna');
+  const wav = Buffer.from(preview.wavBase64, 'base64');
+  expect(wav.length).toBe(44 + 24000 * 2 * 8);
+  expect(fetcher).toHaveBeenCalledOnce();
 });

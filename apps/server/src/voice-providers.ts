@@ -220,6 +220,29 @@ export class OpenRouterVoiceBrain implements VoiceBrain {
   }
 }
 
+// Aura accepts 2,000 characters: https://developers.deepgram.com/docs/text-to-speech-latency
+// Count UTF-16 units, which bounds code points too, with a 10% margin.
+const AURA_CHUNK_CHARACTERS = 1800;
+function* auraTextChunks(text: string) {
+  const limit = AURA_CHUNK_CHARACTERS;
+  while (text.length > limit) {
+    const window = text.slice(0, limit);
+    let end = 0;
+    for (const match of window.matchAll(/[.!?。！？]["'”’)]*\s+/gu)) end = match.index! + match[0].length;
+    if (!end) {
+      for (const match of window.matchAll(/\s+/gu)) end = match.index! + match[0].length;
+    }
+    if (!end) {
+      end = limit;
+      // A single oversized word may be split, but never inside a surrogate pair.
+      if (/[\uD800-\uDBFF]/u.test(text[end - 1]!)) end--;
+    }
+    yield text.slice(0, end);
+    text = text.slice(end);
+  }
+  yield text;
+}
+
 /** Workers AI returns a streaming body. Raw mono PCM matches the RTC source. */
 export class AuraSpeech implements VoiceSpeech {
   readonly voices = AURA_VOICES;
@@ -227,6 +250,14 @@ export class AuraSpeech implements VoiceSpeech {
     private readonly fetchImpl: typeof fetch = fetch) {}
   async *synthesize(text: string, voice: string, signal: AbortSignal) {
     if (!this.voices.includes(voice as typeof AURA_VOICES[number])) throw new Error('Unknown voice');
+    const buffered = text.length > AURA_CHUNK_CHARACTERS;
+    for (const chunk of auraTextChunks(text)) {
+      signal.throwIfAborted();
+      yield* this.synthesizeChunk(chunk, voice, signal, buffered);
+    }
+  }
+  private async *synthesizeChunk(text: string, voice: string, signal: AbortSignal, buffered: boolean) {
+    const pcm: Uint8Array[] = [];
     const deadline = new VoiceDeadline(signal, 5000, 30000);
     try {
       const response = await deadline.wait(this.fetchImpl(`https://api.cloudflare.com/client/v4/accounts/${this.accountId}/ai/run/@cf/deepgram/aura-2-en`, {
@@ -241,9 +272,16 @@ export class AuraSpeech implements VoiceSpeech {
           const { value, done } = await deadline.wait(reader.read());
           if (done) break;
           if (value.length) deadline.received();
-          yield value;
+          if (buffered) pcm.push(value);
+          else yield value;
         }
       } finally { void reader.cancel().catch(() => {}); }
     } finally { deadline.close(); }
+    // RTC backpressure can exceed 30 seconds for a long chunk. Finish its bounded
+    // provider read before playback so that pacing cannot expire the provider budget.
+    for (const bytes of pcm) {
+      signal.throwIfAborted();
+      yield bytes;
+    }
   }
 }

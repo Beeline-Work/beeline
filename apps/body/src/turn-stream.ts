@@ -1,3 +1,4 @@
+import type { DaemonOperationMap } from '@beeline/api-contract/daemon';
 import type { DaemonApiClient } from './daemon-api-client.js';
 import { sanitizeAgentReply } from './reply-sanitizer.js';
 
@@ -42,13 +43,16 @@ export interface AgentTurnStreamOptions {
 /** Extra fields the durable reply carries on one surface but not the other. */
 export interface DurableReplyFields {
   triggerMessageId?: string;
+  /** A Room reply's tool calls and earlier text runs, in turn order. */
+  steps?: DaemonOperationMap['postRoomMessage']['input']['steps'];
 }
 
 /**
  * What a streamed turn leaves behind in the transcript.
  *
- * The caller selects the prose for its surface: Rooms commit the full draft,
- * while corners separately save earlier runs and settle the final remainder.
+ * The caller selects the prose for its surface: Rooms commit the last run and
+ * carry earlier runs as the reply's steps, while corners separately save
+ * earlier runs and settle the final remainder.
  * Sanitize that selection whole, without slicing any authored text.
  */
 export function durableReplyText(agentText: string): string {

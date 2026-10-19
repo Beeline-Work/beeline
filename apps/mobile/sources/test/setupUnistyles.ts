@@ -24,6 +24,11 @@ vi.mock('expo-haptics', () => ({
   ImpactFeedbackStyle: { Light: 'light', Medium: 'medium', Heavy: 'heavy' },
   NotificationFeedbackType: { Success: 'success', Warning: 'warning', Error: 'error' },
 }));
+// Conversation mode holds the screen awake through this native module.
+vi.mock('expo-keep-awake', () => ({
+  activateKeepAwakeAsync: vi.fn(async () => undefined),
+  deactivateKeepAwake: vi.fn(async () => undefined),
+}));
 vi.mock('@expo/vector-icons', () => ({
   FontAwesome: 'FontAwesome',
   Ionicons: 'Ionicons',

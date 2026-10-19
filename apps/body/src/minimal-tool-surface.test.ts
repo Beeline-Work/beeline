@@ -5,12 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Check } from 'typebox/value';
 import { agentToolsFor, callAgentTool } from './read-only-mcp.js';
 import { harnessNeedsSilentReceipt } from './harness-capabilities.js';
-import {
-  beelineReviewSkillMarkdown,
-  beelineSpecSkillMarkdown,
-  beelineTriageSkillMarkdown,
-  usingBeelineSkillMarkdown,
-} from './beeline-skill.js';
+import { beelineManagedSkills } from './beeline-skill.js';
 import { SESSION_SECTIONS, TURN_SECTIONS } from './prompt-assembly.js';
 
 const names = [
@@ -389,12 +384,9 @@ describe('minimal agent surface', () => {
       'set_wake_delivery',
       'get_wake_delivery',
     ];
-    const skillText = [
-      usingBeelineSkillMarkdown('test'),
-      beelineSpecSkillMarkdown('test'),
-      beelineReviewSkillMarkdown('test'),
-      beelineTriageSkillMarkdown('test'),
-    ].join('\n');
+    const skillText = beelineManagedSkills('test', { isReviewer: true })
+      .map(({ content }) => content)
+      .join('\n');
     // Inspect section render functions as well as the assembled-variant snapshot/budget tests.
     const sections = [...SESSION_SECTIONS, ...TURN_SECTIONS]
       .map((section) => String(section.render))

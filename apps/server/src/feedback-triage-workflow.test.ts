@@ -218,6 +218,12 @@ describe('feedback-triage workflow', () => {
     expect(FEEDBACK_TRIAGE_CONTRACT.handoffs.pull!.requires).toEqual(['problems']);
   });
 
+  it('ends every refusal or did-not-know-how group in a beeline-* skill fix', () => {
+    expect(FEEDBACK_TRIAGE_STEPS).toContain('did a Beeline tool refuse the agent, or did the agent not know\nhow to do something here? Each such group ends in a skill fix.');
+    expect(FEEDBACK_TRIAGE_STEPS).toContain('Mark each skill fix with\n`skillFix` and the skill name.');
+    expect(FEEDBACK_TRIAGE_STEPS).toContain('requires\nthe pull request to change that skill');
+  });
+
   it('matches the readable copies under docs/workflows and passes the workflow validator', () => {
     const docs = (name: string) =>
       readFileSync(new URL(`../../../docs/workflows/${name}`, import.meta.url), 'utf8');

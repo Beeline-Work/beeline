@@ -905,6 +905,8 @@ function projectedMessage(
     }
     case 'choice':
       return { ...base, choice: row.card as NonNullable<RoomViewMessage['choice']> };
+    case 'agent-command':
+      return { ...base, agentCommand: row.card as NonNullable<RoomViewMessage['agentCommand']> };
     case 'wallet-tx':
       return { ...base, walletTx: row.card as NonNullable<RoomViewMessage['walletTx']> };
     case 'wallet-insufficient':

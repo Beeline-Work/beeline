@@ -8,6 +8,7 @@ import {
   AcpRequestTimeoutError,
   promptPayloadNote,
   agentMessageRuns,
+  agentTurnSteps,
   finalAgentMessageText,
   agentStreamSnapshot,
   meaningfulHarnessStderr,
@@ -276,6 +277,80 @@ describe('ACP streaming lane classifier', () => {
         update('agent_message_chunk', { content: { type: 'text', text: 'done.' } }),
       ]),
     ).toEqual(['Inspecting ', 'done.']);
+  });
+
+  it('ends a run when text resumes on a line break after a tool call', () => {
+    // Message 65b1d846: the answer after ToolSearch and close_corner opened on
+    // a paragraph break, and the leading-whitespace join kept the pre-tool
+    // sentence at the top of the reply. A word cannot continue across a line
+    // break, so after a tool call the break opens the next message.
+    const updates = [
+      update('agent_message_chunk', {
+        content: { type: 'text', text: 'Now close the Play declaration corner.' },
+      }),
+      update('tool_call', { toolCallId: 'search', title: 'ToolSearch' }),
+      update('tool_call_update', { toolCallId: 'search', status: 'completed' }),
+      update('tool_call', { toolCallId: 'close', title: 'close_corner' }),
+      update('agent_message_chunk', {
+        content: { type: 'text', text: "\n\n@lunchboxfortwo I've updated the corner." },
+      }),
+    ];
+    expect(finalAgentMessageText(updates)).toBe("\n\n@lunchboxfortwo I've updated the corner.");
+    expect(agentStreamSnapshot(updates).messageText).toBe(
+      "\n\n@lunchboxfortwo I've updated the corner.",
+    );
+    // Other metadata keeps the old reading, and a space still continues.
+    expect(
+      agentMessageRuns([
+        update('agent_message_chunk', { content: { type: 'text', text: 'First line.' } }),
+        update('plan', { entries: [] }),
+        update('agent_message_chunk', { content: { type: 'text', text: '\nSecond line.' } }),
+      ]),
+    ).toEqual(['First line.\nSecond line.']);
+    expect(
+      agentMessageRuns([
+        update('agent_message_chunk', { content: { type: 'text', text: 'I' } }),
+        update('tool_call', { toolCallId: 'read-1', kind: 'read' }),
+        update('agent_message_chunk', { content: { type: 'text', text: ' will read it.' } }),
+      ]),
+    ).toEqual(['I will read it.']);
+  });
+
+  it('takes the last run with text as the answer, never a whitespace-only one', () => {
+    const updates = [
+      update('agent_message_chunk', { content: { type: 'text', text: 'The answer is 42.' } }),
+      update('tool_call', { toolCallId: 'react', title: 'react_to_message' }),
+      update('agent_message_chunk', { content: { type: 'text', text: '\n\n' } }),
+    ];
+    expect(finalAgentMessageText(updates)).toBe('The answer is 42.');
+    expect(agentTurnSteps(updates)).toEqual([
+      { kind: 'tool', call: expect.objectContaining({ title: 'react_to_message' }) },
+    ]);
+  });
+
+  it('lists earlier runs as notes between the tool calls, in stream order', () => {
+    const updates = [
+      update('agent_message_chunk', { content: { type: 'text', text: 'Checking the brief.' } }),
+      update('tool_call', { toolCallId: 'a', title: 'read brief' }),
+      update('tool_call_update', { toolCallId: 'a', status: 'completed' }),
+      update('agent_message_chunk', { content: { type: 'text', text: 'Now the status.' } }),
+      update('tool_call', { toolCallId: 'b', title: 'read status' }),
+      update('tool_call', { toolCallId: 'c', title: 'order' }),
+      update('tool_call_update', { toolCallId: 'b', status: 'completed' }),
+      update('agent_message_chunk', { content: { type: 'text', text: 'Done.' } }),
+    ];
+    expect(
+      agentTurnSteps(updates).map((step) =>
+        step.kind === 'note' ? `note: ${step.text}` : `tool: ${step.call.title}`,
+      ),
+    ).toEqual([
+      'note: Checking the brief.',
+      'tool: read brief',
+      'note: Now the status.',
+      'tool: read status',
+      'tool: order',
+    ]);
+    expect(finalAgentMessageText(updates)).toBe('Done.');
   });
 
   /** Verbatim capture: corner `Loft M0`, 2026-10-03 19:54 EDT — Saiko (Pi,

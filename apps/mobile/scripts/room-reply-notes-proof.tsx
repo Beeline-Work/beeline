@@ -3,18 +3,14 @@ import { View } from 'react-native';
 // @ts-expect-error Standalone proof harness uses the installed react-dom.
 import { createRoot } from 'react-dom/client';
 import type { AgentActivityItem } from '../sources/sync/transport/rig-transport';
-import { ActivityTimeline } from '../sources/components/buzz/ActivityTimeline';
-import {
-  LedgerBylineView,
-  ledgerEntryRhythm,
-  settledAgentProseStyle,
-} from '../sources/components/buzz/Ledger';
-import { MonoMarkdown } from '../sources/components/buzz/MonoMarkdown';
+import { TurnStepsLine } from '../sources/components/buzz/ActivityTimeline';
+import { LedgerEntry } from '../sources/components/buzz/Ledger';
 import { beelineThemes } from '../sources/buzz/groknight';
 
 /**
- * The Room reply with its steps line, from the real `ActivityTimeline` /
- * `ToolRunGroupRow` code. `?scene=collapsed|expanded|answer-first`.
+ * A Room reply as `RoomMessageVariants` composes it: the real `LedgerEntry`
+ * with the reply's `TurnStepsLine` in its `machineNoise` slot, under the
+ * prose. `?scene=collapsed|expanded|answer-first`.
  */
 const scene = new URLSearchParams(location.search).get('scene') ?? 'collapsed';
 const theme = beelineThemes.obsidian;
@@ -69,17 +65,15 @@ const chosen = scenes[scene === 'expanded' ? 'collapsed' : scene]!;
 function Reply() {
   return (
     <View style={{ maxWidth: 420 }}>
-      <ActivityTimeline
+      <LedgerEntry
+        itemId="reply"
+        byline={{ name: 'ruby', role: 'opus 5.5', stamp: '10:42' }}
         chronological
-        handle="ruby"
-        items={chosen.items}
-        role="opus 5.5"
-        stamp="10:42"
-        testID="proof-steps"
+        luminous
+        bodyText={chosen.reply}
+        bodyTestID="reply-text"
+        machineNoise={<TurnStepsLine items={chosen.items} testID="reply-steps" />}
       />
-      <View style={ledgerEntryRhythm({ hasByline: false, chronological: true })}>
-        <MonoMarkdown markdown={chosen.reply} textStyle={settledAgentProseStyle()} />
-      </View>
     </View>
   );
 }
@@ -103,5 +97,3 @@ setTimeout(() => {
     notes,
   });
 }, 900);
-// Keep LedgerBylineView in the bundle for the byline the timeline draws.
-void LedgerBylineView;

@@ -273,6 +273,12 @@ export function reviewerWakeFromFacts(input: {
   };
 }
 
+/** What one `landCornerOutcome` call did on GitHub. */
+export type LandCornerOutcome =
+  | { readonly status: 'not-attempted' }
+  | { readonly status: 'started' }
+  | { readonly status: 'refused'; readonly reason: string };
+
 export class GitHubOperations {
   readonly #key: Buffer;
   constructor(
@@ -923,6 +929,15 @@ export class GitHubOperations {
    * GitHub is read, so every caller reports the same refusal.
    */
   async landCorner(cornerId: string): Promise<boolean> {
+    return (await this.landCornerOutcome(cornerId)).status !== 'not-attempted';
+  }
+
+  /**
+   * `landCorner`, telling a started merge apart from one GitHub refused, so
+   * `merge_corner` can report the refusal instead of `merge-started`.
+   */
+  async landCornerOutcome(cornerId: string): Promise<LandCornerOutcome> {
+    const notAttempted = { status: 'not-attempted' } as const;
     await assertCornerBriefAllowsMerge(this.database, cornerId);
     let status: Awaited<ReturnType<GitHubOperations['prChecksStatus']>>;
     try {
@@ -932,9 +947,9 @@ export class GitHubOperations {
         `[server] corner ${cornerId} merge gate read failed:`,
         error instanceof Error ? error.message : String(error),
       );
-      return false;
+      return notAttempted;
     }
-    if (!status.mergeAllowed) return false;
+    if (!status.mergeAllowed) return notAttempted;
     const target = (
       await this.database.query<CornerWebhookTarget & {
         number: number;
@@ -957,8 +972,8 @@ export class GitHubOperations {
         [cornerId, status.headSha],
       )
     ).rows[0];
-    if (!target) return false;
-    if (!(await claimCornerMergeAttempt(this.database, cornerId, status.headSha))) return false;
+    if (!target) return notAttempted;
+    if (!(await claimCornerMergeAttempt(this.database, cornerId, status.headSha))) return notAttempted;
     try {
       await this.app.mergePullRequest(
         Number(target.installation_id),
@@ -979,17 +994,18 @@ export class GitHubOperations {
       }
       if (pr?.merged && pr.headSha === status.headSha && pr.headRef === target.feature_branch) {
         await this.recordConfirmedCornerMerge(target, target.full_name, target.number, pr);
-        return true;
+        return { status: 'started' };
       }
+      const reason = error instanceof Error ? error.message : String(error);
       await advanceCorner(this.database, cornerId, {
         kind: 'merge-refused',
         headSha: status.headSha,
         confirmedUnmerged: pr?.merged === false
           && pr.headSha === status.headSha && pr.headRef === target.feature_branch,
-        reason: error instanceof Error ? error.message : String(error),
+        reason,
       });
       this.onRoomChanged?.(cornerId);
-      return true;
+      return { status: 'refused', reason };
     }
     if (target.feature_branch) {
       try {
@@ -1007,7 +1023,7 @@ export class GitHubOperations {
         );
       }
     }
-    return true;
+    return { status: 'started' };
   }
 
   /**

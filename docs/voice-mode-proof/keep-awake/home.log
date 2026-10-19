@@ -1,0 +1,16 @@
+tapped Conversation mode at 981 2259
+screen_off_timeout=15000ms; call started, no touches from t=0
+t=0s mWakefulness=Awake windowKeepScreenOn=1 foregroundServices=0 server={"active":true,"participants":["human"]}
+t=5s mWakefulness=Awake windowKeepScreenOn=1 foregroundServices=0 server={"active":true,"participants":["human"]}
+t=9s mWakefulness=Awake windowKeepScreenOn=1 foregroundServices=0 server={"active":true,"participants":["human"]}
+t=13s mWakefulness=Awake windowKeepScreenOn=1 foregroundServices=0 server={"active":true,"participants":["human"]}
+t=17s mWakefulness=Awake windowKeepScreenOn=1 foregroundServices=0 server={"active":true,"participants":["human"]}
+t=21s mWakefulness=Awake windowKeepScreenOn=1 foregroundServices=0 server={"active":true,"participants":["human"]}
+t=25s mWakefulness=Awake windowKeepScreenOn=1 foregroundServices=0 server={"active":true,"participants":["human"]}
+t=29s mWakefulness=Awake windowKeepScreenOn=1 foregroundServices=0 server={"active":true,"participants":["human"]}
+t=34s ACTION home
+t=34s mWakefulness=Awake windowKeepScreenOn=0 foregroundServices=0 server={"active":true,"participants":["human"]}
+t=38s mWakefulness=Awake windowKeepScreenOn=0 foregroundServices=0 server={"active":false,"participants":[]}
+t=42s mWakefulness=Awake windowKeepScreenOn=0 foregroundServices=0 server={"active":false,"participants":[]}
+t=46s mWakefulness=Awake windowKeepScreenOn=0 foregroundServices=0 server={"active":false,"participants":[]}
+t=50s mWakefulness=Asleep windowKeepScreenOn=0 foregroundServices=0 server={"active":false,"participants":[]}

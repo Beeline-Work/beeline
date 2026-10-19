@@ -1205,7 +1205,12 @@ export type PostRoomMessageInput = TurnOutputAuthority &
     readonly replyToMessageId?: string;
     /** Inbox message that started this turn; independent of optional reply threading. */
     readonly triggerMessageId?: string;
-
+    /**
+     * The turn's steps, in order: its tool calls and every text run before
+     * the final one (`kind='note'`). They ride on the reply, so text written
+     * before a tool call is kept without leading the answer.
+     */
+    readonly steps?: readonly DaemonActivityItem[];
   };
 export type PostAgentAttachmentInput = TurnOutputAuthority &
   RoomInput & {

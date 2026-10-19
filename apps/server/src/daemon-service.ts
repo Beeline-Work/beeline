@@ -103,6 +103,7 @@ import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
 import { closeCornerState } from './corner-close.js';
 import { writeCornerTitle } from './corner-title.js';
 import { advanceCorner, lockCornerLifecycle } from './corner-lifecycle.js';
+import type { LandCornerOutcome } from './github-operations.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { SCHEDULE_SCHEDULER_ID } from '@beeline/api-contract/scheduled-prompts';
 import {
@@ -295,6 +296,29 @@ async function settleTurnFailureLine(
   }
 }
 const seconds = (date: Date) => Math.floor(date.getTime() / 1_000);
+
+const MAX_REPLY_STEPS = 200;
+const MAX_REPLY_NOTE_LENGTH = 16_000;
+/**
+ * A reply's steps (`PostRoomMessageInput.steps`) as the JSON its `activity`
+ * column stores, or null when it has none. Only tool rows and notes belong
+ * there; anything else is refused rather than stored.
+ */
+function replySteps(steps: unknown): string | null {
+  if (steps === undefined) return null;
+  if (!Array.isArray(steps) || steps.length > MAX_REPLY_STEPS)
+    throw new Error('reply steps are invalid');
+  for (const step of steps as Record<string, unknown>[]) {
+    if (!step || typeof step !== 'object') throw new Error('reply steps are invalid');
+    if (step.kind !== 'tool' && step.kind !== 'note') throw new Error('reply steps are invalid');
+    if (typeof step.title !== 'string' || step.title.length > 240)
+      throw new Error('reply steps are invalid');
+    if (step.kind === 'note' &&
+      (typeof step.text !== 'string' || !step.text.trim() || step.text.length > MAX_REPLY_NOTE_LENGTH))
+      throw new Error('reply steps are invalid');
+  }
+  return steps.length ? JSON.stringify(steps) : null;
+}
 /** Corner reads and merge writes that also admit a current parent Room member. */
 const CORNER_REACH_OPERATIONS = new Set<string>([
   'getCornerRestoreState',
@@ -369,7 +393,7 @@ export class DaemonService {
     private readonly linkWallet?: import('./link-agent-wallet.js').LinkAgentWallet,
     private readonly refreshMergeability?: (cornerId: string) => Promise<void>,
     /** The merge attempt behind `merge_corner` and `order_corner_merge`. */
-    private readonly landCorner?: (cornerId: string) => Promise<boolean>,
+    private readonly landCorner?: (cornerId: string) => Promise<LandCornerOutcome>,
     /** The GitHub close behind `close_pull_request`. */
     private readonly closePullRequest?: (
       cornerId: string,
@@ -3525,8 +3549,10 @@ export class DaemonService {
       ].filter(Boolean);
       return { status: 'blocked', blocker: blockers.join('; ') || 'the merge gate is closed' };
     }
-    if (!(await this.landCorner(input.cornerId)))
+    const landed = await this.landCorner(input.cornerId);
+    if (landed.status === 'not-attempted')
       return { status: 'blocked', blocker: 'a merge of this head was already attempted, or the head moved' };
+    if (landed.status === 'refused') return { status: 'blocked', blocker: landed.reason };
     return { status: 'merge-started', headSha: corner.head_sha };
   }
 
@@ -3844,6 +3870,7 @@ export class DaemonService {
   ) {
     if (!this.commandTransaction && !atomicCommandWrite) await this.access(input.roomId, agentId);
     if ('relay' in input) throw new CommandRefusalError('relay cards are retired; use order and report', 410);
+    const steps = replySteps(input.steps);
     const messageId = id();
     const parent = input.replyToMessageId
       ? (
@@ -3950,6 +3977,7 @@ export class DaemonService {
             size: row.size,
           })),
         ),
+        steps,
       ];
       if (this.commandTransaction) {
         return (
@@ -3957,13 +3985,13 @@ export class DaemonService {
             `WITH inserted AS (
                INSERT INTO messages(
                  id,room_id,author_id,text,presentation,request_id,legacy_event,
-                 reply_to_message_id,root_message_id,agent_hop_count,attachments,agent_model
-               ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11::jsonb,
+                 reply_to_message_id,root_message_id,agent_hop_count,attachments,activity,agent_model
+               ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11::jsonb,$12::jsonb,
                  (SELECT selected_model FROM agents WHERE agent_id=$3))
                RETURNING *
              ), completed AS (
                UPDATE agent_commands SET state='complete',completed_at=now(),result_message_id=inserted.id
-               FROM inserted WHERE agent_commands.id=$12
+               FROM inserted WHERE agent_commands.id=$13
                  AND agent_commands.private_payload->>'kind' IS DISTINCT FROM 'order'
              ), cleared AS (
                DELETE FROM live_outputs
@@ -3982,8 +4010,8 @@ export class DaemonService {
           `WITH inserted AS (
              INSERT INTO messages(
                id,room_id,author_id,text,presentation,request_id,legacy_event,
-               reply_to_message_id,root_message_id,agent_hop_count,attachments,agent_model
-             ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11::jsonb,
+               reply_to_message_id,root_message_id,agent_hop_count,attachments,activity,agent_model
+             ) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11::jsonb,$12::jsonb,
                (SELECT selected_model FROM agents WHERE agent_id=$3))
              RETURNING *
            )
@@ -4076,9 +4104,9 @@ export class DaemonService {
            ), inserted AS (
              INSERT INTO messages(
                id,room_id,author_id,text,presentation,request_id,legacy_event,
-               reply_to_message_id,root_message_id,agent_hop_count,attachments,agent_model
+               reply_to_message_id,root_message_id,agent_hop_count,attachments,activity,agent_model
              ) SELECT $1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,
-                 writable.agent_depth,attachment_payload.attachments,
+                 writable.agent_depth,attachment_payload.attachments,$12::jsonb,
                  (SELECT selected_model FROM agents WHERE agent_id=$3)
                FROM writable,settled,attachment_payload,recovery_barrier
              RETURNING *
@@ -4152,6 +4180,7 @@ export class DaemonService {
           rootMessageId,
           input.generationId,
           STAR_PROMPT_MILESTONES,
+          steps,
         ],
       );
       if (this.livePaintDiagnostics) databaseAwaitResolvedAt = Date.now();

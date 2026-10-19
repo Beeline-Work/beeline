@@ -186,6 +186,34 @@ describe('groupToolLedgerRuns', () => {
   });
 });
 
+describe('notes in a run', () => {
+  it('a note line is the whole text, the pencil glyph, and no verdict', () => {
+    const [line] = toolLedgerLines([
+      step({ id: 'n', kind: 'note', title: 'Long text', label: 'First.\n\nSecond.' }),
+    ]);
+    expect(line).toMatchObject({ kind: 'note', glyph: '✎', label: 'First.\n\nSecond.' });
+  });
+
+  it('counts notes apart from steps', () => {
+    const [group] = groupToolLedgerRuns(
+      toolLedgerLines([
+        step({ id: 'n1', kind: 'note', label: 'one' }),
+        step({ id: 'a', toolKind: 'read', title: 'Read' }),
+        step({ id: 'n2', kind: 'note', label: 'two' }),
+        step({ id: 'b', toolKind: 'read', title: 'Read' }),
+      ]),
+    );
+    expect(group).toMatchObject({ count: 2, notes: 2, failed: 0 });
+    expect(group!.lines.map((line) => line.id)).toEqual(['n1', 'a', 'n2', 'b']);
+  });
+
+  it('reads `4 steps · 2 notes · 18s`, and `1 note` with no steps', () => {
+    expect(toolGroupSummary(4, 0, 18_000, 2)).toBe('4 steps · 2 notes · 18.0s');
+    expect(toolGroupSummary(4, 1, undefined, 1)).toBe('4 steps · 1 failed · 1 note');
+    expect(toolGroupSummary(0, 0, undefined, 1)).toBe('1 note');
+  });
+});
+
 describe('toolGroupSummary', () => {
   it('reads `6 steps · 2 failed · 48s`', () => {
     expect(toolGroupSummary(6, 2, 48_000)).toBe('6 steps · 2 failed · 48.0s');

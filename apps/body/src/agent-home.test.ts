@@ -39,7 +39,7 @@ import {
   BEELINE_REVIEW_SKILL_NAME,
   BEELINE_SPEC_SKILL_NAME,
   BEELINE_TRIAGE_SKILL_NAME,
-  USING_BEELINE_SKILL_NAME,
+  SITUATIONAL_SKILL_NAMES,
 } from './beeline-skill.js';
 import { OPENROUTER_GLM_5_3_FLASH_ENDPOINTS } from './fixtures/openrouter-endpoints-glm-5.3-flash.js';
 const AGENT_PRIVATE_STATE_ENV = 'BUZZY_AGENT_PRIVATE_DIR';
@@ -813,10 +813,10 @@ describe('operator skills + MCP passthrough', () => {
     // Default share: every validated operator entry rides along.
     expect(readdirSync(skillsDir).sort()).toEqual(['greet', ...BEELINE_DEFAULT_SKILL_NAMES].sort());
     expect(readFileSync(resolve(skillsDir, 'greet', 'SKILL.md'), 'utf8')).toBe('say hi');
-    const managedSkill = resolve(skillsDir, 'using-beeline', 'SKILL.md');
-    expect(lstatSync(resolve(skillsDir, 'using-beeline')).isSymbolicLink()).toBe(false);
+    const managedSkill = resolve(skillsDir, 'beeline-connecting-services', 'SKILL.md');
+    expect(lstatSync(resolve(skillsDir, 'beeline-connecting-services')).isSymbolicLink()).toBe(false);
     const managedSkillText = readFileSync(managedSkill, 'utf8');
-    expect(managedSkillText).toContain('name: using-beeline');
+    expect(managedSkillText).toContain('name: beeline-connecting-services');
     expect(managedSkillText).toContain('inspect its live state with the tools you have');
     expect(managedSkillText).toContain('Memory and Room history are not evidence of current state');
     expect(managedSkillText).toContain('Before asking a person for a code, a status or a file');
@@ -898,7 +898,7 @@ describe('operator skills + MCP passthrough', () => {
         'draw-avatar',
         BEELINE_SPEC_SKILL_NAME,
         BEELINE_TRIAGE_SKILL_NAME,
-        USING_BEELINE_SKILL_NAME,
+        ...SITUATIONAL_SKILL_NAMES,
       ].sort(),
     );
 
@@ -915,7 +915,7 @@ describe('operator skills + MCP passthrough', () => {
         BEELINE_TRIAGE_SKILL_NAME,
         'draw-avatar',
         'greet',
-        USING_BEELINE_SKILL_NAME,
+        ...SITUATIONAL_SKILL_NAMES,
       ].sort(),
     );
 
@@ -1024,7 +1024,7 @@ describe('operator skills + MCP passthrough', () => {
 
     for (const name of [
       '../escape',
-      'using-beeline',
+      'beeline-memory',
       'escaped',
       'hardlinked',
       'fifo-skill',
@@ -1153,7 +1153,7 @@ describe('operator skills + MCP passthrough', () => {
     );
     // No operator skills to link, but the managed skill is still shipped —
     // into the selected harness's tree, and only that one.
-    expect(existsSync(resolve(roomRoot, 'codex', 'skills', 'using-beeline', 'SKILL.md'))).toBe(
+    expect(existsSync(resolve(roomRoot, 'codex', 'skills', 'beeline-connecting-services', 'SKILL.md'))).toBe(
       true,
     );
     for (const dir of AGENT_SKILL_DIRS.filter((candidate) => candidate !== 'codex')) {
@@ -1737,9 +1737,9 @@ describe('skill provision reuse', () => {
         )
       ).rebuilt,
     ).toBe(true);
-    expect(readdirSync(resolve(deletedRoot, 'claude', 'skills')).sort()).toEqual([
-      ...BEELINE_DEFAULT_SKILL_NAMES,
-    ]);
+    expect(readdirSync(resolve(deletedRoot, 'claude', 'skills')).sort()).toEqual(
+      [...BEELINE_DEFAULT_SKILL_NAMES].sort(),
+    );
   });
 
   it('rebuilds when the release stamped into the managed skill moves', async () => {
@@ -1750,7 +1750,7 @@ describe('skill provision reuse', () => {
     await prepareRoomAgentHome({ root, operatorHome, agentKind: 'claude', skillReleaseId: 'r2' });
     expect(lstatSync(resolve(root, 'claude', 'skills')).ino).not.toBe(before);
     expect(
-      readFileSync(resolve(root, 'claude', 'skills', 'using-beeline', 'SKILL.md'), 'utf8'),
+      readFileSync(resolve(root, 'claude', 'skills', 'beeline-connecting-services', 'SKILL.md'), 'utf8'),
     ).toContain('r2');
   });
 

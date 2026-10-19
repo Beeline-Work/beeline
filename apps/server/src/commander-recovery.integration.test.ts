@@ -741,7 +741,7 @@ it('keeps files queued after an explicit report on the corner final reply', asyn
   const reports = (await commands(DM, RUBY)).filter((c) => c.reason === 'report');
   expect(reports).toHaveLength(1);
   expect((await phone.readRoom(opened.cornerId, HUMAN))?.messages.some(message =>
-    message.attachments.some(attachment => attachment.name === 'late.txt'))).toBe(true);
+    message.attachments?.some(attachment => attachment.name === 'late.txt'))).toBe(true);
   expect(
     (
       await db.query(`SELECT 1 FROM agent_pending_attachments WHERE request_id=$1`, [

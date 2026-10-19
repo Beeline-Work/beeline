@@ -211,6 +211,40 @@ function ToolRunGroupRow({
 }
 
 /**
+ * A settled reply's steps line: the turn's tool calls and the text it wrote
+ * before its final answer, folded into one collapsed `ToolRunGroupRow` under
+ * the reply. Renders nothing when the reply carries no steps.
+ */
+export const TurnStepsLine = React.memo(function TurnStepsLine({
+  items,
+  testID,
+}: {
+  items: readonly AgentActivityItem[];
+  testID?: string;
+}) {
+  const runs = useMemo(
+    () => groupToolLedgerRuns(toolLedgerLines(buildTurnActivity(items).steps)),
+    [items],
+  );
+  const [sheetLine, setSheetLine] = useState<ToolLedgerLine | null>(null);
+  if (!runs.length) return null;
+  return (
+    <View testID={testID}>
+      {runs.map((run) => (
+        <ToolRunGroupRow key={run.id} onPressLine={setSheetLine} run={run} />
+      ))}
+      <ToolOutputSheet
+        detail={sheetLine?.detail}
+        onClose={() => setSheetLine(null)}
+        subtitle={sheetLine?.outcome === 'failure' ? sheetLine?.reason : undefined}
+        title={sheetLine?.label ?? 'Output'}
+        visible={Boolean(sheetLine?.detail)}
+      />
+    </View>
+  );
+});
+
+/**
  * The live conversational turn: agent prose, and beneath it the one-line tool
  * ledger — one collapsed disclosure per agent turn, expanding to a line per
  * tool call, with every line that carries output opening the output sheet.

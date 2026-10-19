@@ -10,15 +10,20 @@ import { MonolithRoomTurnLoop } from './monolith-room-turn.js';
 import { identityFromKey, type AgentRuntimeRecord } from './runtime.js';
 import { SessionScheduler } from './session-scheduler.js';
 
-const answer = 'S1 answer begins.\n' + Array.from({ length: 30 }, (_, i) =>
-  `Step ${i + 1}: Keep the full authored answer available after the turn finishes.`,
-).join('\n') + '\nS1 answer ends.';
-const pointer = 'The full answer is in my earlier message.';
+type Update = Record<string, unknown>;
+const text = (value: string): Update => ({
+  sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: value },
+});
+const tool = (id: string, title: string): Update[] => [
+  { sessionUpdate: 'tool_call', toolCallId: id, title, kind: 'other', status: 'pending' },
+  { sessionUpdate: 'tool_call_update', toolCallId: id, status: 'completed' },
+];
 
-// A real ACP stdio peer supplies deterministic model output. Only the server
+// A real ACP stdio peer replays a fixed update stream. Only the server
 // boundary is recorded; the ACP parser, Room loop and publishing lane are real.
-const harnessSource = `
+const harnessSource = (updates: readonly Update[]) => `
 import { createInterface } from 'node:readline';
+const updates = ${JSON.stringify(updates)};
 const send = message => process.stdout.write(JSON.stringify(message) + '\\n');
 createInterface({ input: process.stdin }).on('line', async line => {
   const message = JSON.parse(line), params = message.params;
@@ -26,22 +31,20 @@ createInterface({ input: process.stdin }).on('line', async line => {
   const update = update => send({ jsonrpc: '2.0', method: 'session/update',
     params: { sessionId: params.sessionId, update } });
   if (message.method === 'initialize') reply({ protocolVersion: 1 });
-  else if (message.method === 'session/new') reply({ sessionId: 's1-session' });
+  else if (message.method === 'session/new') reply({ sessionId: 'r1-session' });
   else if (message.method === 'session/prompt') {
-    update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: ${JSON.stringify(answer)} } });
-    update({ sessionUpdate: 'tool_call', toolCallId: 's1-tool', title: 'read status', status: 'in_progress' });
-    update({ sessionUpdate: 'tool_call_update', toolCallId: 's1-tool', status: 'completed' });
-    update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: ${JSON.stringify(pointer)} } });
+    for (const item of updates) update(item);
     reply({ stopReason: 'end_turn' });
   } else if (message.method === 'shutdown') process.exit(0);
   else if (message.id !== undefined) reply({});
 });
 `;
 
-it('R1 stand-in S1: preserves the answer before a tool and its final pointer in one Room reply', async () => {
+/** Run one Room turn against the scripted harness; return every server write. */
+async function roomTurnWrites(updates: readonly Update[]) {
   const root = await mkdtemp(join(tmpdir(), 'beeline-room-publishing-'));
   const script = join(root, 'harness.mjs');
-  await writeFile(script, harnessSource);
+  await writeFile(script, harnessSource(updates));
   const identity = identityFromKey('11'.repeat(32), 'Bee');
   const human = '22'.repeat(32);
   const agent = {
@@ -74,9 +77,9 @@ it('R1 stand-in S1: preserves the answer before a tool and its final pointer in 
       if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
       if (name === 'getRoomInbox') {
         if (++inboxReads === 2) return { items: [{
-          id: 's1-request', authorId: human, createdAt: 1, type: 'message',
-          body: 'Give the answer, use a tool, then point to the answer.', attachments: [],
-        }], cursor: 's1-request' };
+          id: 'r1-request', authorId: human, createdAt: 1, type: 'message',
+          body: 'Do the work and tell me.', attachments: [],
+        }], cursor: 'r1-request' };
         return { items: [], cursor: 'latest' };
       }
       return { id: 'write-id', createdAt: 1 };
@@ -92,7 +95,7 @@ it('R1 stand-in S1: preserves the answer before a tool and its final pointer in 
     signal: abort.signal, pollMs: 5,
     createAcpClient: options => new AcpClient({
       ...options, agentCommand: process.execPath, agentBinary: process.execPath,
-      agentArgs: [script], agentLabel: 's1-scripted-acp',
+      agentArgs: [script], agentLabel: 'r1-scripted-acp',
       oomKills: { prime: async () => undefined, consume: async () => false },
     }),
   });
@@ -101,21 +104,79 @@ it('R1 stand-in S1: preserves the answer before a tool and its final pointer in 
     await vi.waitFor(() => expect(writes).toContainEqual({
       name: 'postAgentTurnReceipt', input: expect.objectContaining({ status: 'complete' }),
     }), { timeout: 10_000 });
-    const published = writes.filter(write => write.name === 'postRoomMessage');
-    expect(published).toHaveLength(1);
-    expect(published[0]!.input).toMatchObject({
-      requestId: 's1-request', triggerMessageId: 's1-request',
-      text: `${answer}\n\n${pointer}`, presentation: 'message',
-    });
-    const drafts = writes.filter(write => write.name === 'postAgentDraft');
-    expect(drafts.some(write => String(write.input.text).includes(answer))).toBe(true);
-    expect(drafts.at(-1)!.input.text).toBe(published[0]!.input.text);
-    expect(writes.filter(write => ['postAgentDraft', 'postRoomMessage', 'retractAgentLiveOutput'].includes(write.name)).at(-1)!.name)
-      .toBe('retractAgentLiveOutput');
+    return writes;
   } finally {
     abort.abort();
     await running.catch(() => undefined);
     await scheduler.dispose();
     await rm(root, { recursive: true, force: true });
   }
+}
+
+const posted = (writes: Awaited<ReturnType<typeof roomTurnWrites>>) => {
+  const replies = writes.filter(write => write.name === 'postRoomMessage');
+  expect(replies).toHaveLength(1);
+  // The draft is retracted after the reply, never left under it.
+  expect(writes.filter(write => ['postAgentDraft', 'postRoomMessage', 'retractAgentLiveOutput'].includes(write.name)).at(-1)!.name)
+    .toBe('retractAgentLiveOutput');
+  return replies[0]!.input as { text: string; steps?: Array<Record<string, unknown>> };
+};
+const shape = (steps: Array<Record<string, unknown>> | undefined) =>
+  (steps ?? []).map(step => (step.kind === 'note' ? `note: ${step.text}` : `tool: ${step.title}`));
+
+// Message 65b1d846 (Room bb91a1c7): Ruby wrote one sentence, loaded a tool
+// with ToolSearch, called close_corner, then wrote the answer. The posted
+// message began with the sentence. Both shapes of the answer's first delta
+// are replayed: with and without the paragraph break Claude can open with.
+const ruby = {
+  narration: 'Now close the Play declaration corner.',
+  answer: "@lunchboxfortwo I've updated the conversation-keep-awake corner to do all three changes in one PR. Its session hasn't started yet.\n\nI closed the Play declaration corner. Nothing went to Google.",
+};
+// Message 51751cde (Room bb91a1c7): Jellybean's sentence ended in a line
+// break, a Skill call followed, then the answer. The posted message carried
+// the sentence and three line breaks before the answer.
+const jellybean = {
+  narration: 'I’ll check the corner’s blocker before deciding whether it needs to resume or stay parked. I’m using the using-beeline skill for that check.',
+  answer: 'Queued the corner to check for completed sign-in and handback, then finish verification if ready. Execution hasn’t started yet.',
+};
+
+it.each([
+  ['65b1d846', [
+    text(ruby.narration), ...tool('t1', 'ToolSearch'), ...tool('t2', 'close_corner'), text(ruby.answer),
+  ], ruby],
+  ['65b1d846, answer opening on a paragraph break', [
+    text(ruby.narration), ...tool('t1', 'ToolSearch'), ...tool('t2', 'close_corner'), text(`\n\n${ruby.answer}`),
+  ], ruby],
+  ['51751cde', [
+    text(`${jellybean.narration}\n`), ...tool('t1', 'Load skill: using-beeline'), text(jellybean.answer),
+  ], jellybean],
+  ['51751cde, answer opening on a paragraph break', [
+    text(jellybean.narration), ...tool('t1', 'Load skill: using-beeline'), text(`\n\n\n${jellybean.answer}`),
+  ], jellybean],
+] as const)('R1 %s: posts only the final answer and keeps the earlier sentence as a note', async (_name, updates, message) => {
+  const reply = posted(await roomTurnWrites(updates));
+  expect(reply.text).toBe(message.answer);
+  expect(shape(reply.steps).filter(step => step.startsWith('note: '))).toEqual([`note: ${message.narration}`]);
+  // The note keeps its place: before the tool calls that followed it.
+  expect(shape(reply.steps)[0]).toBe(`note: ${message.narration}`);
+  expect(shape(reply.steps).filter(step => step.startsWith('tool: '))).toHaveLength(updates.filter(update => update.sessionUpdate === 'tool_call').length);
+});
+
+const answer = 'S1 answer begins.\n' + Array.from({ length: 30 }, (_, i) =>
+  `Step ${i + 1}: Keep the full authored answer available after the turn finishes.`,
+).join('\n') + '\nS1 answer ends.';
+
+it('#2495: an answer written before the last tool call is still the reply', async () => {
+  const reply = posted(await roomTurnWrites([
+    text(answer), ...tool('s1-tool', 'react_to_message'), text('\n\n'),
+  ]));
+  expect(reply.text).toBe(answer);
+  expect(shape(reply.steps)).toEqual(['tool: react_to_message']);
+});
+
+it('#2495: an answer followed by a tool and a short pointer stays whole, as a note', async () => {
+  const pointer = 'The full answer is in my earlier message.';
+  const reply = posted(await roomTurnWrites([text(answer), ...tool('s1-tool', 'read status'), text(pointer)]));
+  expect(reply.text).toBe(pointer);
+  expect(shape(reply.steps)).toEqual([`note: ${answer}`, 'tool: read status']);
 });

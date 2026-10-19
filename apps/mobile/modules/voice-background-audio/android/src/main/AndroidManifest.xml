@@ -1,11 +1,4 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-  <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
-  <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
   <uses-permission android:name="android.permission.WAKE_LOCK" />
-  <application>
-    <service
-      android:name="app.usebeeline.voicebackgroundaudio.VoiceAudioService"
-      android:exported="false"
-      android:foregroundServiceType="microphone" />
-  </application>
+  <!-- VoiceAudioService stays undeclared until Play foreground-service approval. -->
 </manifest>

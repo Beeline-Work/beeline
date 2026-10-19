@@ -83,6 +83,7 @@ function hasTranscriptByline(message: ChatDisplayMessage): boolean {
     message.computerSession ||
     message.choice ||
     message.connectorOffer ||
+    message.agentCommand ||
     message.walletTx ||
     message.walletInsufficient ||
     message.walletDelegation ||

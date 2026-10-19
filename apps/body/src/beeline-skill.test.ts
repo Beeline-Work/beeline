@@ -1,17 +1,23 @@
 import { describe, expect, it } from 'vitest';
 import { PER_ITEM_EVENT_KINDS } from '@beeline/api-contract/phone';
 import {
-  BEELINE_REVIEW_SKILL_NAME,
+  SITUATIONAL_SKILL_NAMES,
+  beelineConnectSkillMarkdown,
+  beelineCornersSkillMarkdown,
+  beelineFilesSkillMarkdown,
+  beelineManagedSkills,
+  beelineMemorySkillMarkdown,
   beelineTriageSkillMarkdown,
-  usingBeelineSkillMarkdown,
   beelineReviewSkillMarkdown,
   beelineSpecSkillMarkdown,
+  beelineWakesSkillMarkdown,
 } from './beeline-skill.js';
-import { assembleSessionPrompt, type SessionPromptContext } from './prompt-assembly.js';
+import { agentToolsFor } from './read-only-mcp.js';
+import { assembleSessionPrompt, PROMPT_SURFACES, type PromptSurface, type SessionPromptContext } from './prompt-assembly.js';
 
 /**
- * The always-on Room rules now live in `prompt-assembly.ts`; the using-beeline
- * skill keeps only the Room mechanics a model looks up on demand.
+ * The always-on rules live in `prompt-assembly.ts`; the situational beeline-*
+ * skills keep only the how-to steps a model looks up on demand.
  */
 function sessionPrompt(
   context: Partial<SessionPromptContext> = {},
@@ -28,17 +34,15 @@ const roomPrompt = (context: Partial<SessionPromptContext> = {}) =>
 const dmPrompt = (context: Partial<SessionPromptContext> = {}) =>
   sessionPrompt({ surface: 'dm', ...context }).systemPrompt;
 
-describe('using-beeline Room guidance', () => {
+describe('Room guidance', () => {
   it('describes Room mentions and the mounted corner action', () => {
-    const markdown = usingBeelineSkillMarkdown('test-release');
-    expect(markdown).toContain('These mechanics apply in Rooms, corners and DMs.');
-    expect(markdown).toContain('beeline-release: test-release');
-    expect(markdown).toContain('beeline-agent');
-    expect(markdown).toContain('beeline-agent scratch_io(action:image)');
-    expect(markdown).toContain('put them in the HTML as a data: URL');
-    expect(markdown).toContain('close_corner_pr(address)');
-    expect(markdown).not.toContain('upgrade_corner_to_code');
-    expect(markdown).not.toContain('no action or corner tools');
+    const files = beelineFilesSkillMarkdown('test-release');
+    expect(files).toContain('beeline-release: test-release');
+    expect(files).toContain('beeline-agent scratch_io(action:image)');
+    expect(files).toContain('put them in the HTML as a data: URL');
+    const corners = beelineCornersSkillMarkdown('test-release');
+    expect(corners).toContain('close_corner_pr(address)');
+    expect(corners).not.toContain('upgrade_corner_to_code');
 
     // Tagging, the corner action, and read-only inspection are always-on rules.
     const room = roomPrompt();
@@ -56,12 +60,12 @@ describe('using-beeline Room guidance', () => {
     expect(room).toContain(
       'read code with CodeGraph when available, then repository_io(action:search/read)',
     );
-    expect(room).toContain('Consult the using-beeline skill for Room mechanics');
+    expect(room).toContain('load the matching beeline-* skill before retrying');
   });
 
   it('routes memory to one store each and states how each store ages out', () => {
-    const markdown = usingBeelineSkillMarkdown('test-release');
-    const memory = markdown.slice(markdown.indexOf('## Memory'), markdown.indexOf('## Connect an app'));
+    const markdown = beelineMemorySkillMarkdown('test-release');
+    const memory = markdown;
     for (const tool of [
       'remember(kind:fact, action:save)',
       'remember(kind:procedure, action:save)',
@@ -91,21 +95,19 @@ describe('using-beeline Room guidance', () => {
   });
 
   it('teaches self-only wake management and event discovery', () => {
-    const markdown = usingBeelineSkillMarkdown('test-release');
+    const markdown = beelineWakesSkillMarkdown('test-release');
     expect(markdown).toContain('wake manages only your own wake sources');
-    expect(markdown).toContain('events discovers the catalog');
-    expect(markdown).toContain('replace_events replaces your own room-kind subscription list');
-    expect(markdown).toContain('wake never posts, orders or reports');
+    expect(markdown).toContain('wake(action:events) lists the catalog');
+    expect(markdown).toContain('wake(action:replace_events, kinds) sets the complete room-kind list');
     for (const kind of PER_ITEM_EVENT_KINDS) expect(markdown).not.toContain(`${kind} `);
     expect(markdown).toContain('no item-specific subscriptions');
   });
 
   it('watches corner lifecycle with committed wakes rather than reminder loops', () => {
-    const markdown = usingBeelineSkillMarkdown('test-release');
-    expect(markdown).toContain('lifecycle watches a reachable corner for opened/merged');
-    expect(markdown).toContain('Chatter and schedules never wake watchers');
-    expect(markdown).toContain('use no_reply_needed when mounted; otherwise end silently');
-    expect(markdown).toContain('No reminder loops');
+    const markdown = beelineWakesSkillMarkdown('test-release');
+    expect(markdown).toContain('wake(action:create, trigger:lifecycle, address) on that corner address');
+    expect(markdown).toContain('no_reply_needed, when mounted, ends the turn');
+    expect(markdown).toContain('no reminder loops');
   });
 
   it('lets a direct message drive member Rooms through the command grammar', () => {
@@ -176,12 +178,12 @@ describe('using-beeline Room guidance', () => {
     );
   });
 
-  it('no longer claims a scratch file is the only way to write one', () => {
-    const markdown = usingBeelineSkillMarkdown('test-release');
+  it('says scratch_io is a fallback only when mounted, with a path when neither write works', () => {
+    const markdown = beelineFilesSkillMarkdown('test-release');
     expect(markdown).not.toContain('this Room has no other way to write one');
-    expect(markdown).toContain(
-      'Create files with native tools; where unavailable, use scratch_io',
-    );
+    expect(markdown).not.toContain('where unavailable, use scratch_io');
+    expect(markdown).toContain('If a native write is refused and scratch_io is mounted');
+    expect(markdown).toContain('do the file work in a repo-less corner');
   });
 
   it('names the bound repository and branch when the Room has one', () => {
@@ -286,8 +288,8 @@ describe('beeline-triage request skill', () => {
   });
 });
 
-describe('using-beeline merge ownership', () => {
-  const markdown = usingBeelineSkillMarkdown('test-release');
+describe('beeline-corners-and-merging merge ownership', () => {
+  const markdown = beelineCornersSkillMarkdown('test-release');
 
   it('leaves merging to the corner session prompt, which owns the merge gate', () => {
     expect(markdown).not.toContain('gh pr merge');
@@ -298,13 +300,13 @@ describe('using-beeline merge ownership', () => {
   });
 });
 
-describe('using-beeline human instructions and holds', () => {
+describe('beeline-corners-and-merging human instructions and holds', () => {
   // Soft prompt only: no hold ledger, no refusal check. Independent same-tier
   // holds cannot collapse because this design adds no holder state; the agent
   // reasons from the conversation.
   it('accepts any human instruction while preserving hold provenance and plain Room replies', () => {
-    const markdown = usingBeelineSkillMarkdown('test-release');
-    expect(markdown).toContain('## Conflicting human instructions');
+    const markdown = beelineCornersSkillMarkdown('test-release');
+    expect(markdown).toContain('## Holds');
     // The rule itself is always-on prompt text; the skill keeps the hold mechanics.
     expect(markdown).not.toContain('Any human in the Room can direct you.');
     expect(roomPrompt()).toContain('Any human in the Room can direct you. Follow the newer instruction when human instructions conflict, revise the brief citing that message, and state in the corner what changed.');
@@ -414,11 +416,11 @@ describe('beeline-spec planning skill', () => {
   });
 });
 
-describe('using-beeline "Tools and the Connectors" section', () => {
-  const markdown = usingBeelineSkillMarkdown('test-release');
+describe('beeline-connecting-services', () => {
+  const markdown = beelineConnectSkillMarkdown('test-release');
 
   it('requires live host inspection before answering about current state', () => {
-    const tools = markdown.split('## Tools and the Connectors\n')[1]?.split('\n## ')[0];
+    const tools = markdown.split("## Before you say you can't\n")[1]?.split('\n## ')[0];
     expect(tools).toContain('inspect its live state with the tools you have');
     expect(tools).toContain('processes, logs, local endpoints or service status');
     expect(tools).toContain('Say what you checked');
@@ -426,7 +428,7 @@ describe('using-beeline "Tools and the Connectors" section', () => {
   });
 
   it('uses available tools before asking for a value while preserving key and grant authority', () => {
-    const tools = markdown.split('## Tools and the Connectors\n')[1]?.split('\n## ')[0];
+    const tools = markdown;
     expect(tools).toContain('Before asking a person for a code, a status or a file');
     expect(tools).toContain(
       'call connect(mode:status) and check whether a tool or connected app you already have can get it, then use it',
@@ -439,7 +441,7 @@ describe('using-beeline "Tools and the Connectors" section', () => {
   });
 
   it('gives the agent the tool/key vocabulary and where to learn what each tool is FOR', () => {
-    expect(markdown).toContain('## Tools and the Connectors');
+    expect(markdown).toContain('## Tools and keys');
     expect(markdown).toContain('A **tool** is something you can use once a human adds it');
     expect(markdown).toContain('a **key** is the credential that tool holds for that human');
     expect(markdown).toContain('beeline-agent connect(mode:status)');
@@ -496,8 +498,8 @@ describe('using-beeline "Tools and the Connectors" section', () => {
   });
 });
 
-describe('using-beeline "Showing a mock" section', () => {
-  const markdown = usingBeelineSkillMarkdown('test-release');
+describe('beeline-files-and-mocks "Showing a mock" section', () => {
+  const markdown = beelineFilesSkillMarkdown('test-release');
 
   it('carries the Showing a mock section with the post_artifact flow', () => {
     expect(markdown).toContain('## Showing a mock');
@@ -518,8 +520,8 @@ describe('using-beeline "Showing a mock" section', () => {
   });
 });
 
-describe('using-beeline "Showing a photograph" section', () => {
-  const markdown = usingBeelineSkillMarkdown('test-release');
+describe('beeline-files-and-mocks "Showing a photograph" section', () => {
+  const markdown = beelineFilesSkillMarkdown('test-release');
 
   it('teaches scratch_io(action:image) next to Showing a mock, and keeps the validator closed', () => {
     expect(markdown).toContain('## Showing a photograph');
@@ -541,9 +543,130 @@ describe('using-beeline "Showing a photograph" section', () => {
 });
 
 it('keeps the command contract aligned with asynchronous ordering and corner-only watches', () => {
-  const text = usingBeelineSkillMarkdown('test-release');
+  const text = beelineManagedSkills('test-release', { isReviewer: true }).map((skill) => skill.content).join('\n');
   // The always-on prompt carries the end-the-turn rule; the skill does not restate it.
   expect(text).not.toContain('After ordering another agent, end the turn');
   expect(roomPrompt()).toContain('After ordering another agent, end the turn; its report wakes a new turn; do not sleep or poll.');
   expect(text).not.toContain('read(address) and watch(address) across member Rooms, corners and DMs');
+});
+
+/**
+ * Skill text against the real tool surface. Every Beeline-owned skill is
+ * installed in every session type (`beelineManagedSkills` does not depend on
+ * the surface), so each tool a skill names must be mounted in all four. A tool
+ * only some variants mount (runner, silent receipt, scratch fallback) may be
+ * named only in a sentence that says "mounted", so the agent checks first.
+ * Institutional memory is on, as in every deployment.
+ */
+const SESSION_FLAGS: Record<PromptSurface, { dm: boolean; corner: boolean; repository: boolean }> = {
+  room: { dm: false, corner: false, repository: false },
+  dm: { dm: true, corner: false, repository: false },
+  'code-corner': { dm: false, corner: true, repository: true },
+  'repo-less-corner': { dm: false, corner: true, repository: false },
+};
+
+function mountedTools(surface: PromptSurface): { always: Set<string>; sometimes: Set<string> } {
+  const { dm, corner, repository } = SESSION_FLAGS[surface];
+  const variants: Set<string>[] = [];
+  for (const runner of [false, true])
+    for (const silent of [false, true])
+      for (const nativeIo of [false, true])
+        variants.push(
+          new Set(agentToolsFor(true, dm, corner, repository, runner, true, silent, nativeIo).map((tool) => tool.name)),
+        );
+  const sometimes = new Set(variants.flatMap((tools) => [...tools]));
+  const always = new Set([...sometimes].filter((name) => variants.every((tools) => tools.has(name))));
+  return { always, sometimes };
+}
+
+const AGENT_TOOLS = new Set(PROMPT_SURFACES.flatMap((surface) => [...mountedTools(surface).sometimes]));
+/** Calls a skill may write that are not beeline-agent tools: other servers' tools, or prose. */
+const NOT_AGENT_TOOLS = new Set(['http', 'use_credential', 'repository_io']);
+
+function skillSentences(markdown: string): string[] {
+  return markdown
+    .replace(/^---\n[\s\S]*?\n---\n/, '')
+    .replace(/<!--[\s\S]*?-->/g, '')
+    .split(/(?<=[.!?])\s+|\n+/);
+}
+
+/** Every way a skill's text names a tool that some session cannot run. */
+function toolProblems(name: string, markdown: string): string[] {
+  const problems: string[] = [];
+  for (const sentence of skillSentences(markdown)) {
+    const named = new Set<string>();
+    for (const match of sentence.matchAll(/\b([a-z][a-z0-9_]*)\(/g)) {
+      if (!AGENT_TOOLS.has(match[1]!) && !NOT_AGENT_TOOLS.has(match[1]!))
+        problems.push(`${name}: ${match[1]}( is not a beeline-agent tool`);
+      else named.add(match[1]!);
+    }
+    for (const tool of AGENT_TOOLS) if (new RegExp(`\\b${tool}\\b`).test(sentence)) named.add(tool);
+    for (const tool of named) {
+      if (!AGENT_TOOLS.has(tool)) continue;
+      for (const surface of PROMPT_SURFACES) {
+        const { always, sometimes } = mountedTools(surface);
+        if (always.has(tool)) continue;
+        if (!sometimes.has(tool)) problems.push(`${name}: ${tool} is never mounted in ${surface}`);
+        else if (!/\bmounted\b/.test(sentence))
+          problems.push(`${name}: ${tool} is not always mounted in ${surface}; say "when mounted": ${sentence.trim()}`);
+      }
+    }
+  }
+  return [...new Set(problems)];
+}
+
+function description(markdown: string): string | undefined {
+  return /^---\n[\s\S]*?^description: (.*)$/m.exec(markdown)?.[1];
+}
+
+describe('situational beeline-* skills', () => {
+  const skills = beelineManagedSkills('test', { isReviewer: true });
+
+  it('installs a few situational skills, each with a short one-line description, and no using-beeline', () => {
+    const names = skills.map((skill) => skill.name);
+    expect(names).toEqual(expect.arrayContaining([...SITUATIONAL_SKILL_NAMES]));
+    expect(SITUATIONAL_SKILL_NAMES.length).toBeGreaterThanOrEqual(4);
+    expect(SITUATIONAL_SKILL_NAMES.length).toBeLessThanOrEqual(6);
+    expect(names).not.toContain('using-beeline');
+    for (const skill of skills) {
+      expect(skill.name).toMatch(/^beeline-/);
+      expect(skill.content).toMatch(new RegExp(`^---\\nname: ${skill.name}\\n`));
+      const line = description(skill.content);
+      expect(line, skill.name).toBeTruthy();
+      if ((SITUATIONAL_SKILL_NAMES as readonly string[]).includes(skill.name))
+        expect(line!.length, skill.name).toBeLessThanOrEqual(120);
+    }
+    expect(new Set(skills.map((skill) => description(skill.content))).size).toBe(skills.length);
+  });
+
+  it('names only tools mounted in every session the skill is installed in', () => {
+    expect(skills.flatMap((skill) => toolProblems(skill.name, skill.content))).toEqual([]);
+  });
+
+  it('catches the old Room sentence that offered scratch_io where it is not mounted', () => {
+    const old = 'Create files with native tools; where unavailable, use scratch_io to write or fetch an image.';
+    expect(toolProblems('old', old)).toContain(
+      `old: scratch_io is not always mounted in room; say "when mounted": ${old}`,
+    );
+    expect(toolProblems('renamed', 'Call post_message(address, text).')).toEqual([
+      'renamed: post_message( is not a beeline-agent tool',
+    ]);
+  });
+
+  it('covers every beeline-agent tool in some skill', () => {
+    const text = skills.map((skill) => skill.content).join('\n');
+    const missing = [...AGENT_TOOLS].filter((tool) => !new RegExp(`\\b${tool}\\b`).test(text));
+    expect(missing).toEqual([]);
+    expect([...AGENT_TOOLS]).toEqual(expect.arrayContaining(['post', 'wake', 'scratch_io', 'no_reply_needed', 'run_granted_command']));
+  });
+
+  it('tells Room, DM and corner agents once to load the matching skill when a tool refuses them', () => {
+    const line =
+      "If a Beeline tool refuses you or you don't know how to do something here, load the matching beeline-* skill before retrying.";
+    for (const surface of PROMPT_SURFACES) {
+      const prompt = sessionPrompt({ surface, worktree: { featureBranch: 'feature/x', targetBranch: 'main' } }).systemPrompt;
+      expect(prompt.split(line).length - 1, surface).toBe(1);
+      for (const name of SITUATIONAL_SKILL_NAMES) expect(prompt, surface).toContain(name);
+    }
+  });
 });

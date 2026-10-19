@@ -315,7 +315,7 @@ describe('GitHub-only account and repository access', () => {
     expect(fetchMock.mock.calls[0]![1]).toMatchObject({
       body: JSON.stringify({
         repository_ids: [9],
-        permissions: { contents: 'write', pull_requests: 'write' },
+        permissions: { contents: 'write', pull_requests: 'write', workflows: 'write' },
       }),
     });
     expect(fetchMock.mock.calls[1]).toEqual([

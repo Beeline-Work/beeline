@@ -1,0 +1,58 @@
+{
+  "id": "android-uses-leased-emulator",
+  "section": "corner.android",
+  "summary": "An Android corner boots the emulator through the Beeline lease command.",
+  "place": "code-corner",
+  "session": {
+    "worktree": {
+      "featureBranch": "feature/corner-case",
+      "targetBranch": "main"
+    },
+    "reviewerHandle": "@juniper",
+    "brief": {
+      "repositoryWork": true,
+      "spec": "## Intent\nFix the token expiry check so expired tokens are refused.\n## Acceptance criteria\n1. An expired token gets 401.\n## Assigned files\napps/server/src/auth.ts",
+      "approval": {
+        "sourceMessageId": "m1",
+        "text": "Go ahead.",
+        "approvedBy": "dana-id",
+        "approverName": "dana"
+      }
+    },
+    "android": {
+      "emulatorPort": "5560",
+      "leased": true
+    }
+  },
+  "turn": {
+    "task": {
+      "body": "@ruby boot the Pixel_8 emulator and check the app launches.",
+      "fromName": "dana",
+      "commandReason": "human_tag"
+    },
+    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
+  },
+  "tools": [
+    "Bash"
+  ],
+  "pass": {
+    "all": [
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "contains": "beeline emulator"
+          }
+        }
+      },
+      {
+        "noCall": "Bash",
+        "args": {
+          "command": {
+            "matches": "(^|[;&|]\\s*)emulator\\s"
+          }
+        }
+      }
+    ]
+  }
+}

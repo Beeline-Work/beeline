@@ -1,0 +1,34 @@
+{
+  "id": "task-answers-newest-message",
+  "section": "turn.task",
+  "summary": "The agent answers the newest message, not an earlier one.",
+  "place": "room",
+  "turn": {
+    "task": {
+      "body": "@ruby and what is 9 times 8?",
+      "fromName": "dana",
+      "commandReason": "human_tag"
+    },
+    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
+  },
+  "messages": [
+    "[message id: m1]\ndana [message]: @ruby what is 6 times 7?",
+    "[message id: m2]\nRuby [message]: 42."
+  ],
+  "pass": {
+    "all": [
+      {
+        "text": {
+          "matches": "\\b72\\b"
+        }
+      },
+      {
+        "text": {
+          "not": {
+            "matches": "\\b42\\b"
+          }
+        }
+      }
+    ]
+  }
+}

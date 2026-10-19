@@ -1,0 +1,114 @@
+# PROMPT CASES replays the saved behavior cases in docs/prompts/cases/
+# against the real model on pull requests that change agent prompt text: the
+# prompt sections, the Beeline skills, the tool descriptions, or the cases and
+# their runner. A case that passed on the target branch and now fails blocks;
+# so does a new or changed case that does not pass. See
+# docs/prompts/cases/README.md.
+#
+# The job uses a job-level `if:` so an unrelated pull request reports it as
+# skipped, never a workflow-level `paths` filter (that would leave the check
+# missing). Fork pull requests get no secrets: the replay is skipped with a
+# warning and the offline case check still runs.
+name: Prompt cases
+
+on:
+  pull_request: {}
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: prompt-cases-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  changes:
+    name: Detect prompt changes
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      prompts: ${{ steps.filter.outputs.prompts }}
+    steps:
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            prompts:
+              - 'apps/body/src/prompt-assembly.ts'
+              - 'apps/body/src/beeline-skill.ts'
+              - 'apps/body/src/minimal-tool-surface.ts'
+              - 'apps/body/src/read-only-mcp.ts'
+              - 'apps/body/src/silent-wake.ts'
+              - 'apps/body/src/harness-capabilities.ts'
+              - 'apps/body/src/transcript-budget.ts'
+              - 'docs/prompts/cases/**'
+              - 'scripts/prompt-cases.ts'
+              - 'scripts/prompt-case-rules.ts'
+              - 'scripts/prompt-case-rules.test.ts'
+              - '.github/workflows/prompt-cases.yml'
+
+  prompt-cases:
+    name: PROMPT CASES
+    needs: changes
+    if: >-
+      always() && (github.event_name == 'workflow_dispatch' ||
+      needs.changes.outputs.prompts == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Build the shared contract the assembler imports
+        run: npx turbo run build --filter=@beeline/api-contract
+      - name: Check the case library offline
+        run: npm run test:prompt-cases
+      - name: Check the model key
+        id: key
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+        run: |
+          set -euo pipefail
+          if [ -n "$OPENROUTER_API_KEY" ]; then
+            echo "replay=true" >> "$GITHUB_OUTPUT"
+          elif [ "$FORK" = true ]; then
+            message="Prompt cases were NOT replayed: a fork pull request gets no OPENROUTER_API_KEY. A maintainer must replay them from a branch in this repository."
+            echo "::warning title=Prompt cases skipped::$message"
+            echo "## Prompt cases skipped" >> "$GITHUB_STEP_SUMMARY"
+            echo "$message" >> "$GITHUB_STEP_SUMMARY"
+            echo "replay=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error title=Prompt cases::Repository secret OPENROUTER_API_KEY is not set, so the saved cases cannot be replayed."
+            exit 1
+          fi
+      - name: Check out the target branch prompt
+        if: steps.key.outputs.replay == 'true' && github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git worktree add --detach "$RUNNER_TEMP/base" "origin/$BASE_REF"
+          # The target checkout reuses this job's installed and built dependencies.
+          ln -s "$GITHUB_WORKSPACE/node_modules" "$RUNNER_TEMP/base/node_modules"
+      - name: Replay the saved cases
+        if: steps.key.outputs.replay == 'true'
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          PROMPT_CASES_MODEL: ${{ vars.PROMPT_CASES_MODEL }}
+          BASELINE: ${{ github.event_name == 'pull_request' && format('{0}/base', runner.temp) || '' }}
+        run: |
+          set -euo pipefail
+          if [ -n "$BASELINE" ]; then
+            npm run prompt-cases -- --baseline-root "$BASELINE"
+          else
+            npm run prompt-cases
+          fi

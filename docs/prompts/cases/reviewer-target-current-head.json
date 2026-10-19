@@ -1,0 +1,71 @@
+{
+  "id": "reviewer-target-current-head",
+  "section": "turn.reviewer-target",
+  "summary": "A reviewer reviews the current green head, not a head named in an older message.",
+  "place": "code-corner",
+  "session": {
+    "worktree": {
+      "featureBranch": "feature/corner-case",
+      "targetBranch": "main"
+    },
+    "reviewerHandle": "@juniper",
+    "brief": {
+      "repositoryWork": true,
+      "spec": "## Intent\nFix the token expiry check so expired tokens are refused.\n## Acceptance criteria\n1. An expired token gets 401.\n## Assigned files\napps/server/src/auth.ts",
+      "approval": {
+        "sourceMessageId": "m1",
+        "text": "Go ahead.",
+        "approvedBy": "dana-id",
+        "approverName": "dana"
+      }
+    },
+    "reviewer": true
+  },
+  "turn": {
+    "reviewerTarget": "Review PR 88 at 5d6e7f8 against brief revision 1 with beeline-review.",
+    "task": {
+      "body": "Checks are green on PR 88.",
+      "commandReason": "corner_review_dispatch"
+    },
+    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
+  },
+  "messages": [
+    "[message id: m1]\njuniper [message]: PR 88 is up at head 1a2b3c4."
+  ],
+  "tools": [
+    "Bash"
+  ],
+  "pass": {
+    "all": [
+      {
+        "noCall": "approve_merge",
+        "args": {
+          "headSha": {
+            "contains": "1a2b3c4"
+          }
+        }
+      },
+      {
+        "noCall": "Bash",
+        "args": {
+          "command": {
+            "contains": "1a2b3c4"
+          }
+        }
+      },
+      {
+        "any": [
+          {
+            "call": "Bash"
+          },
+          {
+            "call": "read"
+          },
+          {
+            "call": "approve_merge"
+          }
+        ]
+      }
+    ]
+  }
+}

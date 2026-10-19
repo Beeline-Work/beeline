@@ -1,0 +1,45 @@
+{
+  "id": "worktree-knows-branch",
+  "section": "corner.worktree",
+  "summary": "A corner agent knows its feature branch and target.",
+  "place": "code-corner",
+  "session": {
+    "worktree": {
+      "featureBranch": "feature/corner-case",
+      "targetBranch": "main"
+    },
+    "reviewerHandle": "@juniper",
+    "brief": {
+      "repositoryWork": true,
+      "spec": "## Intent\nFix the token expiry check so expired tokens are refused.\n## Acceptance criteria\n1. An expired token gets 401.\n## Assigned files\napps/server/src/auth.ts",
+      "approval": {
+        "sourceMessageId": "m1",
+        "text": "Go ahead.",
+        "approvedBy": "dana-id",
+        "approverName": "dana"
+      }
+    }
+  },
+  "turn": {
+    "task": {
+      "body": "@ruby which branch are you on and which branch does the PR target? One line.",
+      "fromName": "dana",
+      "commandReason": "human_tag"
+    },
+    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
+  },
+  "pass": {
+    "all": [
+      {
+        "text": {
+          "contains": "feature/corner-case"
+        }
+      },
+      {
+        "text": {
+          "matches": "\\bmain\\b"
+        }
+      }
+    ]
+  }
+}

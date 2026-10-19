@@ -1,0 +1,27 @@
+{
+  "id": "rename-generated-corner",
+  "section": "turn.rename",
+  "summary": "A human-opened corner with a generated name gets named from the first message that states the work.",
+  "place": "code-corner",
+  "session": {
+    "worktree": {
+      "featureBranch": "feature/corner-case",
+      "targetBranch": "main"
+    }
+  },
+  "turn": {
+    "generatedTitle": "corner-7f3a",
+    "task": {
+      "body": "Please add a dark mode toggle to the settings screen.",
+      "fromName": "dana",
+      "commandReason": "human_tag"
+    },
+    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
+  },
+  "pass": {
+    "call": "revise_corner",
+    "args": {
+      "action": "install_brief"
+    }
+  }
+}

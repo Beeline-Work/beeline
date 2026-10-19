@@ -1,0 +1,52 @@
+{
+  "id": "checks-turn-quiet-on-green",
+  "section": "turn.checks",
+  "summary": "A green checks wake gets no message from the author.",
+  "place": "code-corner",
+  "session": {
+    "worktree": {
+      "featureBranch": "feature/corner-case",
+      "targetBranch": "main"
+    },
+    "reviewerHandle": "@juniper",
+    "brief": {
+      "repositoryWork": true,
+      "spec": "## Intent\nFix the token expiry check so expired tokens are refused.\n## Acceptance criteria\n1. An expired token gets 401.\n## Assigned files\napps/server/src/auth.ts",
+      "approval": {
+        "sourceMessageId": "m1",
+        "text": "Go ahead.",
+        "approvedBy": "dana-id",
+        "approverName": "dana"
+      }
+    }
+  },
+  "turn": {
+    "task": {
+      "body": "Checks passed on PR 88 at head 5d6e7f8.",
+      "commandReason": "corner_check"
+    },
+    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
+  },
+  "tools": [
+    "no_reply_needed"
+  ],
+  "pass": {
+    "all": [
+      {
+        "any": [
+          {
+            "call": "no_reply_needed"
+          },
+          {
+            "text": {
+              "matches": "^\\s*$"
+            }
+          }
+        ]
+      },
+      {
+        "noCall": "post_to_corner"
+      }
+    ]
+  }
+}

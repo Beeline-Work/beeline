@@ -1,0 +1,40 @@
+{
+  "id": "reply-silent-on-empty-schedule",
+  "section": "core.reply",
+  "summary": "A scheduled wake with nothing to do ends without a message.",
+  "place": "room",
+  "turn": {
+    "task": {
+      "body": "Hourly check: answer any unanswered question in this Room.",
+      "commandReason": "schedule"
+    },
+    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
+  },
+  "messages": [
+    "[message id: m1]\ndana [message]: @ruby what port does the API use?",
+    "[message id: m2]\nRuby [message]: Port 8080.",
+    "[message id: m3]\ndana [message]: thanks!"
+  ],
+  "tools": [
+    "no_reply_needed"
+  ],
+  "pass": {
+    "all": [
+      {
+        "any": [
+          {
+            "call": "no_reply_needed"
+          },
+          {
+            "text": {
+              "matches": "^\\s*$"
+            }
+          }
+        ]
+      },
+      {
+        "noCall": "post_to_corner"
+      }
+    ]
+  }
+}

@@ -1,0 +1,32 @@
+{
+  "id": "proactive-offers-fix",
+  "section": "core.proactive",
+  "summary": "A reported problem gets a fix or a concrete next step, not a restatement.",
+  "place": "room",
+  "session": {
+    "shell": {
+      "available": true
+    }
+  },
+  "turn": {
+    "task": {
+      "body": "@ruby the README install link points to /install.sh but the script lives at /scripts/install.sh.",
+      "fromName": "dana",
+      "commandReason": "human_tag"
+    },
+    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
+  },
+  "pass": {
+    "any": [
+      {
+        "call": "open_corner"
+      },
+      {
+        "text": {
+          "matches": "corner|pull request|\\bPR\\b|I can|I'll|want me|shall I",
+          "flags": "i"
+        }
+      }
+    ]
+  }
+}

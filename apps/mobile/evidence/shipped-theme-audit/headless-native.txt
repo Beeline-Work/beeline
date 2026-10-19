@@ -1,0 +1,2 @@
+INSTRUMENTATION_RESULT: result=native notification task dispatch completed without an Activity
+INSTRUMENTATION_CODE: -1

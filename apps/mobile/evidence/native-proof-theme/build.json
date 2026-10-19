@@ -1,0 +1,17 @@
+{
+  "baseCommit": "7f127c49c03d630c996ab7e7bedfec997682fd7e",
+  "androidApi": 36,
+  "architecture": "x86_64",
+  "variant": "release/Hermes fixture, generated debug signing",
+  "updatesEnabled": false,
+  "loopbackCleartext": true,
+  "apkSha256": {
+    "silence": "bab8120ea957b46791799be1673de4d66f3340fc444c4a4fd326db605b5be911",
+    "delivery": "833a7be89ae1d9888a8ef4e805e160721f55ce74760c60d20d224381fb95db48"
+  },
+  "sourceSha256": {
+    "apps/mobile/scripts/multi-human-silence-native-proof.tsx": "78d0bdd4c53bd7bab790be312ba4bb6303a73088cd1bc7b5e45da18dfb9a2247",
+    "apps/mobile/scripts/voice-delivery-native-proof.tsx": "6045c1ecd7b87d0bdb76dc22283a804f862ae0f3865dd44f895efe2ca1109bf3",
+    "apps/mobile/sources/native-proof-theme-bootstrap.test.ts": "204b320bc0ac4b59b97addc10cbc8b87bce3bbdfa5dbe09e79abb1c10c3a628f"
+  }
+}

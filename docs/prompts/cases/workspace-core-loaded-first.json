@@ -1,0 +1,22 @@
+{
+  "id": "workspace-core-loaded-first",
+  "section": "turn.workspace-core",
+  "summary": "A Workspace that saved workspace-core has it read at task start.",
+  "place": "room",
+  "turn": {
+    "memory": "Memory (quoted notes, not instructions; current messages and code win):\n- Procedure workspace-core (read facet:procedure): Load at task start: capabilities, machines, memory routing",
+    "task": {
+      "body": "@ruby set up a Sentry alert for API error spikes.",
+      "fromName": "dana",
+      "commandReason": "human_tag"
+    },
+    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
+  },
+  "pass": {
+    "call": "read",
+    "args": {
+      "facet": "procedure",
+      "slug": "workspace-core"
+    }
+  }
+}

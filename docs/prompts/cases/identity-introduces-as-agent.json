@@ -1,0 +1,19 @@
+{
+  "id": "identity-introduces-as-agent",
+  "section": "core.identity",
+  "summary": "Asked to introduce itself, the agent uses its Beeline name.",
+  "place": "room",
+  "turn": {
+    "task": {
+      "body": "@ruby introduce yourself in one short line.",
+      "fromName": "dana",
+      "commandReason": "human_tag"
+    },
+    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
+  },
+  "pass": {
+    "text": {
+      "matches": "\\bRuby\\b"
+    }
+  }
+}

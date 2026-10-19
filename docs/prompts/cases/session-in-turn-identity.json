@@ -1,0 +1,22 @@
+{
+  "id": "session-in-turn-identity",
+  "section": "turn.session",
+  "summary": "A harness that drops the session prompt still gets its identity in the turn.",
+  "place": "room",
+  "session": {
+    "agentCommand": "codex-acp"
+  },
+  "turn": {
+    "task": {
+      "body": "@ruby introduce yourself in one short line.",
+      "fromName": "dana",
+      "commandReason": "human_tag"
+    },
+    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
+  },
+  "pass": {
+    "text": {
+      "matches": "\\bRuby\\b"
+    }
+  }
+}

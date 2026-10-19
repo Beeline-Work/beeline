@@ -1,0 +1,17 @@
+{
+  "id": "tools-connects-service",
+  "section": "surface.tools",
+  "summary": "A request for a service the agent lacks goes through connect.",
+  "place": "room",
+  "turn": {
+    "task": {
+      "body": "@ruby list my open Linear issues.",
+      "fromName": "dana",
+      "commandReason": "human_tag"
+    },
+    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
+  },
+  "pass": {
+    "call": "connect"
+  }
+}

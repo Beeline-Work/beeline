@@ -143,8 +143,9 @@ describe('feedback-triage workflow', () => {
 
   it('refreshes deployed tool guidance and legacy schedule prompts despite the old completion marker', async () => {
     await backfillFeedbackTriageWorkflow(database);
-    await database.query(`DELETE FROM workflow_backfills WHERE name='feedback-triage-adapter-check-v1'`);
-    await database.query(`INSERT INTO workflow_backfills(name) VALUES('feedback-triage-v7') ON CONFLICT DO NOTHING`);
+    await database.query(`DELETE FROM workflow_backfills WHERE name='feedback-triage-prompt-cases-v1'`);
+    // Production already holds the earlier markers; the new marker still refreshes the procedure.
+    await database.query(`INSERT INTO workflow_backfills(name) VALUES('feedback-triage-v7'),('feedback-triage-adapter-check-v1') ON CONFLICT DO NOTHING`);
     await database.query(`UPDATE agent_schedules SET message=$2 WHERE id=$1`, [UNRELATED_SCHEDULE,
       'Start the feedback-triage workflow with start_workflow, binding triager to yourself, and follow the feedback-triage-steps procedure (load_workspace_skill) at each step.',
     ]);
@@ -161,6 +162,7 @@ describe('feedback-triage workflow', () => {
        WHERE skill.workspace_id=$1 AND skill.slug='feedback-triage-steps'`, [WORKSPACE],
     )).rows[0]!;
     expect(procedure.markdown).toBe(FEEDBACK_TRIAGE_STEPS);
+    expect((await skills()).find((skill) => skill.slug === 'feedback-triage-steps')!.current_version).toBe(2);
     expect(procedure.markdown).toContain('occurrence_count');
     expect(procedure.markdown).not.toContain('notice period');
     expect(procedure.markdown).toContain('effective date');
@@ -200,6 +202,20 @@ describe('feedback-triage workflow', () => {
     await backfillFeedbackTriageWorkflow(database);
     expect((await schedules()).find((row) => row.id === UNRELATED_SCHEDULE)!.message).toBe(prompt);
     console.log('Demonstrated cleanup-feedback: migration preserved an unrelated feedback sweep schedule');
+  });
+
+  it('tells the triager to judge prompt defects itself, save their cases, and carry them into fix corners', () => {
+    // No label: the triager decides, and feedback storage is unchanged.
+    expect(FEEDBACK_TRIAGE_STEPS).toContain('Judge each group: is it a prompt defect?');
+    expect(FEEDBACK_TRIAGE_STEPS).toContain('No label marks this; decide it yourself.');
+    expect(FEEDBACK_TRIAGE_STEPS).toContain('draft its saved case in the format of\n`docs/prompts/cases/README.md`');
+    expect(FEEDBACK_TRIAGE_STEPS).toContain('Mark each prompt defect with\n`promptDefect: true`, its section, and its drafted case.');
+    expect(FEEDBACK_TRIAGE_STEPS).toContain('Never quote a report, and never name\nthe people, Rooms, Workspaces or emails behind it.');
+    expect(FEEDBACK_TRIAGE_STEPS).toContain('For a prompt defect, the brief also carries the drafted case.');
+    expect(FEEDBACK_TRIAGE_STEPS).toContain('add that case as `docs/prompts/cases/<id>.json`');
+    expect(FEEDBACK_TRIAGE_STEPS).toContain('the worker orders one other agent in the Room to replay every saved case on the\npull request head with its own model');
+    expect(FEEDBACK_TRIAGE_STEPS).toContain('The reviewer does not pass the pull request without that table.');
+    expect(FEEDBACK_TRIAGE_CONTRACT.handoffs.pull!.requires).toEqual(['problems']);
   });
 
   it('matches the readable copies under docs/workflows and passes the workflow validator', () => {

@@ -1,0 +1,43 @@
+{
+  "id": "files-reads-attachment",
+  "section": "core.files",
+  "summary": "A file on a message is read with read(facet:attachment), never by fetching a URL.",
+  "place": "room",
+  "session": {
+    "shell": {
+      "available": true
+    }
+  },
+  "turn": {
+    "task": {
+      "body": "@ruby what does the error in my screenshot say?",
+      "fromName": "dana",
+      "commandReason": "human_tag"
+    },
+    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
+  },
+  "messages": [
+    "[message id: m1]\ndana [message]: here is the crash screen\n📎 crash.png (image/png, 84 KB) id=att-1"
+  ],
+  "tools": [
+    "Bash"
+  ],
+  "pass": {
+    "all": [
+      {
+        "call": "read",
+        "args": {
+          "facet": "attachment"
+        }
+      },
+      {
+        "noCall": "Bash",
+        "args": {
+          "command": {
+            "matches": "curl|wget"
+          }
+        }
+      }
+    ]
+  }
+}

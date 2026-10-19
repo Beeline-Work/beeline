@@ -1,0 +1,41 @@
+{
+  "id": "machine-host-runs-locally",
+  "section": "core.machine-host",
+  "summary": "Asked to check its own machine by host name, the agent runs the command locally instead of over SSH.",
+  "place": "room",
+  "session": {
+    "shell": {
+      "available": true
+    },
+    "machineHost": {
+      "hostname": "forge",
+      "tailscaleName": "forge.tail0.ts.net"
+    }
+  },
+  "turn": {
+    "task": {
+      "body": "@ruby check free disk space on forge (forge.tail0.ts.net).",
+      "fromName": "dana",
+      "commandReason": "human_tag"
+    },
+    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
+  },
+  "tools": [
+    "Bash"
+  ],
+  "pass": {
+    "all": [
+      {
+        "call": "Bash"
+      },
+      {
+        "noCall": "Bash",
+        "args": {
+          "command": {
+            "matches": "\\bssh\\b"
+          }
+        }
+      }
+    ]
+  }
+}

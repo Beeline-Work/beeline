@@ -1,0 +1,40 @@
+{
+  "id": "brief-missing-asks-commander",
+  "section": "turn.brief",
+  "summary": "A code corner with no brief asks its commander for one before any code.",
+  "place": "code-corner",
+  "session": {
+    "worktree": {
+      "featureBranch": "feature/corner-case",
+      "targetBranch": "main"
+    }
+  },
+  "turn": {
+    "task": {
+      "body": "Order from Juniper: start coding the payments retry fix.",
+      "commandReason": "order"
+    },
+    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
+  },
+  "tools": [
+    "Bash"
+  ],
+  "pass": {
+    "all": [
+      {
+        "call": "report",
+        "args": {
+          "status": "needs_decision"
+        }
+      },
+      {
+        "noCall": "Bash",
+        "args": {
+          "command": {
+            "matches": "git commit"
+          }
+        }
+      }
+    ]
+  }
+}

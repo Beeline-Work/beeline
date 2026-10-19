@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { CommandRefusalError } from './command-refusal.js';
 import { describe, expect, it, vi } from 'vitest';
 import {
   APP_FILE_MAXIMUM_BYTES, ComposioApps, composioToolkitForApp, resolveAppFiles, YOUTUBE_ANALYTICS_TOOL,
@@ -322,6 +323,51 @@ describe('managed app provider boundary', () => {
       return { transport, calls };
     }
 
+    it.each(['/tmp/video.mp4', './video.mp4', 'C:\\Videos\\clip.mp4', 'file:///tmp/video.mp4', 'storage-key', 'https://'])(
+      'refuses unstaged file string %s without execution', async (videoFile) => {
+        const { transport, calls } = youtubeTransport();
+        const provider = new ComposioApps('fixture-only', transport as typeof fetch);
+        const error = await provider.execute({ accountId: ACCOUNT, userId: PERSON, toolkit: 'youtube',
+          tool: 'YOUTUBE_MULTIPART_UPLOAD_VIDEO', arguments: { videoFile } }).catch(e => e);
+        expect(error).toBeInstanceOf(CommandRefusalError);
+        expect(error.status).toBe(400);
+        expect(error.message).toContain('arguments.videoFile');
+        expect(error.message).toContain('staged Room object');
+        expect(error.message).toContain('beelineObjectId');
+        expect(calls.map(call => call.method)).toEqual(['GET', 'GET']);
+    });
+
+    it('preserves HTTPS file inputs and ordinary URL parameters', async () => {
+      const { transport, calls } = youtubeTransport();
+      const provider = new ComposioApps('fixture-only', transport as typeof fetch);
+      const args = { videoFile: 'https://example.com/video.mp4', title: '/ordinary/string' };
+      await provider.execute({ accountId: ACCOUNT, userId: PERSON, toolkit: 'youtube',
+        tool: 'YOUTUBE_MULTIPART_UPLOAD_VIDEO', arguments: args });
+      expect(calls.at(-1)?.body).toMatchObject({ arguments: args });
+      expect(calls.map(call => call.method)).toEqual(['GET', 'GET', 'POST']);
+    });
+
+    it.each(['anyOf', 'oneOf', 'allOf'])('finds nested array file strings behind %s and redacts refusal messages', async (union) => {
+      const { transport, calls } = youtubeTransport();
+      const original = transport.getMockImplementation()!;
+      transport.mockImplementation(async (url, init) => {
+        if (String(url).includes('/tools/YOUTUBE_MULTIPART_UPLOAD_VIDEO')) return json({
+          ...youtubeDefinition, input_parameters: { type: 'object', properties: {
+            'fixture-only': { type: 'array', items: { [union]: [{ $ref: '#/$defs/FileUploadable' }] } },
+          }, $defs: youtubeDefinition.input_parameters.$defs },
+        });
+        return original(url, init);
+      });
+      const provider = new ComposioApps('fixture-only', transport as typeof fetch);
+      const error = await provider.execute({ accountId: ACCOUNT, userId: PERSON, toolkit: 'youtube',
+        tool: 'YOUTUBE_MULTIPART_UPLOAD_VIDEO', arguments: { 'fixture-only': ['/tmp/video.mp4'] } }).catch(e => e);
+      expect(error).toBeInstanceOf(CommandRefusalError);
+      expect(error.status).toBe(400);
+      expect(error.message).toContain('arguments.[redacted][0]');
+      expect(error.stack).not.toContain('fixture-only');
+      expect(calls.map(call => call.method)).toEqual(['GET']);
+    });
+
     it('stages a Room video through the Files API and executes with the Composio descriptor', async () => {
       const { transport, calls } = youtubeTransport({ id: 'yt-video-1', status: 'private',
         uploaded: { s3key: S3KEY, source: PRESIGNED } });
@@ -448,12 +494,33 @@ describe('managed app provider boundary', () => {
         .rejects.toThrow('beelineObjectId must be a Room object id');
     });
 
+    it.each(['wrong toolkit', 'inactive account'])('keeps %s as a typed refusal', async (failure) => {
+      const { transport, calls } = youtubeTransport();
+      const original = transport.getMockImplementation()!;
+      transport.mockImplementation(async (url, init) => {
+        if (failure === 'inactive account' && String(url).includes('/connected_accounts/'))
+          return json({ id: ACCOUNT, user_id: PERSON, status: 'EXPIRED', toolkit: { slug: 'youtube' } });
+        if (failure === 'wrong toolkit' && String(url).includes('/tools/YOUTUBE_MULTIPART_UPLOAD_VIDEO'))
+          return json({ ...youtubeDefinition, toolkit: { slug: 'slack' } });
+        return original(url, init);
+      });
+      const error = await new ComposioApps('fixture-only', transport as typeof fetch).execute({
+        accountId: ACCOUNT, userId: PERSON, toolkit: 'youtube',
+        tool: 'YOUTUBE_MULTIPART_UPLOAD_VIDEO', arguments: {},
+      }).catch(e => e);
+      expect(error).toBeInstanceOf(CommandRefusalError);
+      expect(error.status).toBe(failure === 'wrong toolkit' ? 400 : 409);
+      expect(error.message).toBe(failure === 'wrong toolkit'
+        ? 'App tool does not belong to this connection' : 'App connection is unavailable');
+      expect(calls.some(call => call.method === 'POST')).toBe(false);
+    });
+
     it('will not execute a Room file reference that was never resolved', async () => {
       const { transport } = youtubeTransport();
       const provider = new ComposioApps('fixture-only', transport as typeof fetch);
       await expect(provider.execute({ accountId: ACCOUNT, userId: PERSON, toolkit: 'youtube',
         tool: 'YOUTUBE_MULTIPART_UPLOAD_VIDEO', arguments: { videoFile: { beelineObjectId: OBJECT } } }))
-        .rejects.toThrow('Room files are unavailable for app tools');
+        .rejects.toMatchObject({ status: 400, message: 'Room files are unavailable for app tools' });
       expect(transport).not.toHaveBeenCalled();
     });
 
@@ -464,7 +531,7 @@ describe('managed app provider boundary', () => {
       await expect(provider.execute({ accountId: ACCOUNT, userId: PERSON, toolkit: 'youtube',
         tool: 'YOUTUBE_MULTIPART_UPLOAD_VIDEO', arguments: args,
         files: await resolveAppFiles(args, async () => video()) }))
-        .rejects.toThrow('A Room file was passed for a parameter that does not take a file');
+        .rejects.toMatchObject({ status: 400, message: 'A Room file was passed for a parameter that does not take a file' });
       expect(calls.map((call) => call.method)).toEqual(['GET', 'GET']);
     });
 

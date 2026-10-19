@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { createServer } from 'node:http';
 import { parse as parseYaml } from 'yaml';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AcpClient } from './acp.js';
@@ -47,6 +48,9 @@ async function twoTurns(
     agentKind?: BodyConfig['agentKind'];
     codegraphCommand?: string;
     repositoryBacked?: boolean;
+    githubToken?: () => string | undefined;
+    personalGitHubToken?: string;
+    externalCommand?: (env: Record<string, string>) => Promise<void>;
     grants?: () => Array<{ kind: 'mcp'; target: string; status: 'approved' }>;
     beforeTurns?: (paths: {
       operatorHome: string;
@@ -85,7 +89,7 @@ async function twoTurns(
     agentArgs: [],
     mcpBinary: '/fake-dev-mcp',
     readonlyMcpCommand: '/fake-beeline-mcp',
-    agentEnv: {},
+    agentEnv: hooks?.personalGitHubToken ? { GITHUB_TOKEN: hooks.personalGitHubToken } : {},
     workspaceRoot: join(root, 'room'),
     autoApprovePermissions: true,
     accessPolicy: 'everyone',
@@ -169,6 +173,7 @@ async function twoTurns(
 
   const mountedInventories: string[][] = [];
   let activations = 0;
+  let sessionEnv: Record<string, string> = {};
   const acp = new AcpClient({ agentBinary: config.agentBinary, agentEnv: {} });
   vi.spyOn(acp, 'isAlive', 'get').mockImplementation(() => alive);
   vi.spyOn(acp, 'start').mockImplementation(async () => {
@@ -202,6 +207,7 @@ async function twoTurns(
   vi.spyOn(acp, 'stop').mockResolvedValue(undefined);
   vi.spyOn(acp, 'sessionPrompt').mockImplementation(async () => {
     if (!alive) throw new Error('AcpClient not started');
+    await hooks?.externalCommand?.(sessionEnv);
     return {
       stopReason: 'end_turn',
       updates: [],
@@ -216,6 +222,9 @@ async function twoTurns(
     roomId: 'room-id',
     workspaceId: 'workspace',
     cwd: config.workspaceRoot,
+    ...(hooks?.githubToken ? { refreshCheckout: async () => ({
+      cwd: config.workspaceRoot, commit: 'same-commit', githubToken: hooks.githubToken!(),
+    }) } : {}),
     runtime,
     config,
     api: commandFixtureApi(api, 'room-id', runtime.agent.publicKey),
@@ -223,7 +232,10 @@ async function twoTurns(
     health: { poll: vi.fn(), failure: vi.fn(), presence: vi.fn() },
     signal: abort.signal,
     pollMs: 5,
-    createAcpClient: () => acp,
+    createAcpClient: (options) => {
+      sessionEnv = options.agentEnv ?? {};
+      return acp;
+    },
   });
   const running = loop.run();
   await vi.waitFor(() => expect(settled()).toBe(asks.length), { timeout: 10_000 });
@@ -243,6 +255,61 @@ async function twoTurns(
 const unchanged: AgentConfiguration = { commands: [], yoloMode: false };
 
 describe('retained Room session', () => {
+  it('authorizes an external issue comment with the Room token and rotates it between turns', async () => {
+    const requests: Array<{ path: string; authorization?: string; body: string }> = [];
+    const server = createServer(async (request, response) => {
+      let body = '';
+      for await (const chunk of request) body += chunk;
+      requests.push({ path: request.url!, authorization: request.headers.authorization, body });
+      response.writeHead(request.headers.authorization === `Bearer ${token}` ? 201 : 403,
+        { 'content-type': 'application/json' });
+      response.end(JSON.stringify({ id: requests.length }));
+    });
+    let token = 'room-token-first';
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const address = server.address() as { port: number };
+    try {
+      const result = await twoTurns([unchanged, unchanged], [], {
+        repositoryBacked: true,
+        githubToken: () => token,
+        betweenTurns: async () => { token = 'room-token-refreshed'; },
+        externalCommand: async (env) => {
+          await execFileAsync(process.execPath, ['--input-type=module', '-e', `
+            const response = await fetch(process.argv[1], {
+              method: 'POST',
+              headers: { authorization: 'Bearer ' + process.env.GH_TOKEN, 'content-type': 'application/json' },
+              body: JSON.stringify({ body: 'Room authentication verification' }),
+            });
+            if (response.status !== 201) process.exit(1);
+          `, `http://127.0.0.1:${address.port}/repos/owner/widgets/issues/1/comments`], { env });
+        },
+      });
+      expect(requests).toEqual(['room-token-first', 'room-token-refreshed'].map((value) => ({
+        path: '/repos/owner/widgets/issues/1/comments', authorization: `Bearer ${value}`,
+        body: JSON.stringify({ body: 'Room authentication verification' }),
+      })));
+      expect(result.activations).toBe(2);
+      expect(JSON.stringify(result.traces)).not.toContain('room-token-');
+      expect(result.sessionPrompts.join('')).not.toContain('room-token-');
+    } finally {
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
+  });
+
+  it('keeps an explicit personal credential ahead of the Room App token', async () => {
+    const used: string[] = [];
+    const { activations } = await twoTurns([unchanged, unchanged], [], {
+      githubToken: () => 'app-token',
+      personalGitHubToken: 'personal-token',
+      externalCommand: async (env) => {
+        used.push(env.GH_TOKEN!);
+        expect(env.GITHUB_TOKEN).toBe('personal-token');
+      },
+    });
+    expect(activations).toBe(1);
+    expect(used).toEqual(['personal-token', 'personal-token']);
+  });
+
   it('answers a follow-up on the process the first turn spawned', async () => {
     const { activations, traces } = await twoTurns([unchanged, unchanged]);
 

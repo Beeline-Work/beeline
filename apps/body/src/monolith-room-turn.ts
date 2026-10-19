@@ -465,7 +465,7 @@ export interface MonolithRoomTurnOptions {
   workspaceId: string;
   cwd: string;
   /** Refresh the server-bound checkout before each admitted Room turn. */
-  refreshCheckout?: () => Promise<{ cwd: string; branch?: string; commit?: string }>;
+  refreshCheckout?: () => Promise<{ cwd: string; branch?: string; commit?: string; githubToken?: string }>;
   runtime: AgentRuntimeRecord;
   config: BodyConfig;
   api: DaemonApiClient;
@@ -511,7 +511,8 @@ export class MonolithRoomTurnLoop {
   private sessionId?: string;
   private sessionCwd?: string;
   private sessionCommit?: string;
-  private turnCheckout?: { branch?: string; commit?: string };
+  private sessionGitHubToken?: string;
+  private turnCheckout?: { branch?: string; commit?: string; githubToken?: string };
   /** The configuration the live session baked in; a change invalidates it. */
   private sessionFingerprint?: string;
   /** Whether CodeGraph preparation succeeded for the live session. */
@@ -872,6 +873,7 @@ export class MonolithRoomTurnLoop {
     this.sessionId = undefined;
     this.sessionCwd = undefined;
     this.sessionCommit = undefined;
+    this.sessionGitHubToken = undefined;
     this.sessionFingerprint = undefined;
     this.sessionCodegraphReady = false;
     this.pinnedProviderOverride = undefined;
@@ -895,6 +897,7 @@ export class MonolithRoomTurnLoop {
     return (
       this.sessionCwd === this.options.cwd &&
       this.sessionCommit === this.turnCheckout?.commit &&
+      this.sessionGitHubToken === this.turnCheckout?.githubToken &&
       (await this.currentSessionFingerprint()) === this.sessionFingerprint
     );
   }
@@ -1132,6 +1135,14 @@ export class MonolithRoomTurnLoop {
     if (assets && this.options.config.agentPrivateRoot)
       await mkdir(this.options.config.agentPrivateRoot, { recursive: true, mode: 0o700 });
     const agentEnv: Record<string, string> = { ...this.options.config.agentEnv, ...homeOverlay, ...cacheEnv };
+    // A configured personal credential wins. Never retry a rejected identity
+    // with the App token. Only the exact server-bound repository token enters
+    // this session; it is not part of a persisted fingerprint or prompt.
+    const githubToken = agentEnv.GH_TOKEN || agentEnv.GITHUB_TOKEN || this.turnCheckout?.githubToken;
+    if (githubToken) {
+      agentEnv.GH_TOKEN = githubToken;
+      agentEnv.GITHUB_TOKEN = githubToken;
+    }
 
     const selectedCommand = command;
     this.agentEnv = agentEnv;
@@ -1233,7 +1244,9 @@ export class MonolithRoomTurnLoop {
     // servers this session mounts, so it has to know them up front.
     const shellCapability = roomShellCapability(harnessLabel, { osSandbox: Boolean(this.options.config.bwrapPath) });
     const servers: McpServerWire[] = [
-      ...(shellCapability === 'runs' ? [] : [readOnlyMcpServer(this.options.config, this.options.cwd)]),
+      ...(shellCapability === 'runs' ? [] : [readOnlyMcpServer(
+        this.options.config, this.options.cwd, undefined, githubToken,
+      )]),
       beelineAgentMcpServer(this.options.config, this.options.api, {
         roomId: this.options.roomId,
         workspaceId: this.options.workspaceId,
@@ -1395,6 +1408,7 @@ export class MonolithRoomTurnLoop {
     this.sessionId = opened.sessionId;
     this.sessionCwd = this.options.cwd;
     this.sessionCommit = this.turnCheckout?.commit;
+    this.sessionGitHubToken = this.turnCheckout?.githubToken;
     this.sessionFingerprint = fingerprint;
     this.sessionCodegraphReady = codegraphReady;
     if (selection) {

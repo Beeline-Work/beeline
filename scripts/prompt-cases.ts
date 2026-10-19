@@ -295,7 +295,9 @@ async function main(): Promise<number> {
   }
   const gradeDir = option('--grade');
   if (gradeDir) {
-    const results = grade(gradeDir, cases);
+    // Without --only, grade the cases that were exported to this directory.
+    const exported = new Set(readdirSync(gradeDir).flatMap((file) => file.match(/^(.+)\.prompt\.md$/)?.[1] ?? []));
+    const results = grade(gradeDir, only ? cases : cases.filter((testCase) => exported.has(testCase.id)));
     const blocking = results.filter((result) => result.outcome !== 'pass');
     summarize([
       `**Prompt case replay:** ${results.length - blocking.length}/${results.length} passed.`,

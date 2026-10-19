@@ -3212,7 +3212,7 @@ async function executeAgentOperation(
     }
     case 'order': {
       const result = await daemonExecute('order', { address: args.address as string, text: args.text as string, agent: args.agent as string | undefined });
-      return `${JSON.stringify(result)}\nAfter ordering another agent, end the turn; its report wakes a new turn; do not sleep or poll.`;
+      return JSON.stringify(result);
     }
     case 'no_reply_needed': {
       await activeCommandContext();

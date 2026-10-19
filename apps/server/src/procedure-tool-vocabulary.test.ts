@@ -11,7 +11,7 @@ it('corrects audited saved instructions without a database write', () => {
     'Retry grant_inbox_consent:true without a human.',
     'Owner must handle this personally unless delegation is authorized.',
   ].join('\n'));
-  expect(result).toContain('Tag to talk. Order to assign work.');
+  expect(result).toContain('Do assigned work yourself');
   expect(result).toContain('tool:read,args:{runId}');
   expect(result).toContain('start dispatches its first state');
   expect(result).toContain('Owner must handle this personally');

@@ -36,7 +36,7 @@ export type Rule =
 export interface PromptCase {
   /** Equals the file name without `.json`. */
   readonly id: string;
-  /** The prompt section whose rule this case defends, e.g. `core.tagging`. */
+  /** The prompt section whose rule this case defends, e.g. `talking`. */
   readonly section: string;
   /** What the agent must do, in plain words. Never quote a report or name a person, Room or Workspace. */
   readonly summary: string;

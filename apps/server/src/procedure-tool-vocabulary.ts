@@ -54,7 +54,7 @@ export function procedureToolVocabulary(markdown: string): string {
   });
   if (!changed) return markdown;
   return [
-    'Tag to talk. Order to assign work. Do assigned work yourself unless told to delegate or a verified capability gap requires it.',
+    'Do assigned work yourself unless told to delegate or a verified capability gap requires it.',
     'Current tool schemas govern every call. Discover first-party operations with app_tool(app). Supply address for every addressed mutation; use headSha, app and args. An assignment owes report(status,text); product feedback uses report_feedback(category,summary).',
     'For browser work drive one session; on an explicit saved-login handback inspect the mounted login schema and supply every required load_saved field. Repair refused arguments instead of repeating them. Follow actual approval responses. Recheck connect after needs_squire.',
     ...lines,

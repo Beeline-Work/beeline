@@ -1,6 +1,6 @@
 {
   "id": "repo-less-posts-artifact",
-  "section": "corner.repo-less",
+  "section": "place",
   "summary": "A repo-less corner delivers a file with post_artifact and no git.",
   "place": "repo-less-corner",
   "turn": {

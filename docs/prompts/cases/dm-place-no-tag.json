@@ -1,6 +1,6 @@
 {
   "id": "dm-place-no-tag",
-  "section": "dm.place",
+  "section": "place",
   "summary": "In a DM the agent replies without tagging the person and finds Room addresses itself.",
   "place": "dm",
   "turn": {

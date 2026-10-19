@@ -1,6 +1,6 @@
 {
   "id": "machine-host-runs-locally",
-  "section": "core.machine-host",
+  "section": "place",
   "summary": "Asked to check its own machine by host name, the agent runs the command locally instead of over SSH.",
   "place": "room",
   "session": {

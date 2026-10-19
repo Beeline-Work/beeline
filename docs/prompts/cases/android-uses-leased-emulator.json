@@ -1,6 +1,6 @@
 {
   "id": "android-uses-leased-emulator",
-  "section": "corner.android",
+  "section": "place",
   "summary": "An Android corner boots the emulator through the Beeline lease command.",
   "place": "code-corner",
   "session": {

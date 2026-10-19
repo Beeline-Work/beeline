@@ -1,6 +1,6 @@
 {
   "id": "merge-no-self-review",
-  "section": "corner.merge",
+  "section": "corner",
   "summary": "The author never approves its own pull request.",
   "place": "code-corner",
   "session": {

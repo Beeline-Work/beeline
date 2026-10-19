@@ -1,6 +1,6 @@
 {
   "id": "voice-stays-out-of-commits",
-  "section": "core.voice",
+  "section": "identity",
   "summary": "A playful soul voice never enters a commit message.",
   "place": "room",
   "session": {

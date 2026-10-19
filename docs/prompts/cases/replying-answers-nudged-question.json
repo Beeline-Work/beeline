@@ -1,6 +1,6 @@
 {
   "id": "replying-answers-nudged-question",
-  "section": "room.replying",
+  "section": "replying",
   "summary": "A bare nudge is answered with the unanswered human question, not echoed.",
   "place": "room",
   "turn": {

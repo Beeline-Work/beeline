@@ -448,6 +448,11 @@ jobs:
           name: release-checkpoint-${{ needs.initialize.outputs.release_id }}-server-built
           path: checkpoint-server-built.json
           if-no-files-found: error
+      # The free starter agent image builds block/buzz, whose Cargo.lock
+      # version 4 the host's system cargo 1.75 cannot parse. Rustup then
+      # follows block/buzz's own rust-toolchain.toml.
+      - uses: dtolnay/rust-toolchain@stable
+        if: contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_server)
       - uses: ./.github/actions/server-leg
         id: promote
         if: contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_server)

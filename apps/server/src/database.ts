@@ -49,7 +49,7 @@ import { cancelArchivedCornerAssignments } from './corner-close.js';
 import { cornerOwedBackfillSql, cornerOwedSchemaSql } from './corner-owed.js';
 import { CORNER_ATTENTION_SCHEMA } from './corner-attention.js';
 import { backfillCornerFollows, cornerFollowsSchemaSql } from './corner-follow.js';
-import { retryMigrationStep, splitMigrationStatements } from './migration-retry.js';
+import { logLockHolders, retryMigrationStep, splitMigrationStatements } from './migration-retry.js';
 import { Pool, type PoolClient, type PoolConfig, type QueryResultRow } from 'pg';
 import { QueryProfiler } from './query-profile.js';
 
@@ -2963,7 +2963,9 @@ export async function migrate(
   options: { deferData?: boolean } = {},
 ): Promise<void> {
   const ddl = (name: string, sql: string) =>
-    retryMigrationStep(name, async () => { await database.query(sql); });
+    retryMigrationStep(name, async () => { await database.query(sql); }, {
+      onLockTimeout: () => logLockHolders(database, name, sql),
+    });
   const ddlScript = async (name: string, sql: string) => {
     const statements = splitMigrationStatements(sql);
     for (const [index, statement] of statements.entries())

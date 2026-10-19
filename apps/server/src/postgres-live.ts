@@ -192,6 +192,9 @@ BEGIN
     WHEN 'workspace_connections' THEN
       payload = jsonb_build_object('table', TG_TABLE_NAME, 'operation', TG_OP,
         'roomId', '', 'ownerId', COALESCE(NEW.owner_identity_id,OLD.owner_identity_id));
+    WHEN 'wallet_bindings' THEN
+      payload = jsonb_build_object('table', TG_TABLE_NAME, 'operation', TG_OP,
+        'roomId', '', 'ownerId', COALESCE(NEW.identity_id,OLD.identity_id));
     WHEN 'free_agent_usage' THEN
       payload = jsonb_build_object('table', TG_TABLE_NAME, 'operation', TG_OP,
         'roomId', '', 'ownerId', COALESCE(NEW.owner_id,OLD.owner_id));
@@ -368,7 +371,7 @@ BEGIN
     'needs_you_marks',
     'agent_grants', 'agent_schedules', 'agent_subscriptions', 'agent_commands',
     'github_installations', 'github_repositories',
-    'workspace_connectors', 'workspace_connections', 'agents', 'agent_avatars', 'free_agent_usage',
+    'workspace_connectors', 'workspace_connections', 'wallet_bindings', 'agents', 'agent_avatars', 'free_agent_usage',
     'registry_mcp_oauth_attempts', 'push_devices',
     'workspace_join_notifications',
     'helper_release_notifications', 'workspaces', 'identities'
@@ -770,11 +773,11 @@ export class PostgresLiveListener {
     const payload = decodePayload(raw);
     if (!payload) return;
     if (payload.ownerId && (payload.table === 'workspace_connectors' ||
-      payload.table === 'workspace_connections' || payload.table === 'agents' ||
+      payload.table === 'workspace_connections' || payload.table === 'wallet_bindings' || payload.table === 'agents' ||
       payload.table === 'agent_avatars' || payload.table === 'avatar_job' || payload.table === 'free_agent_usage')) {
       this.live.publish({ type: 'resource-change', roomId: '', ownerId: payload.ownerId,
         resource: payload.table === 'workspace_connectors' ? 'install'
-          : payload.table === 'workspace_connections' ? 'workbench' : 'agent',
+          : payload.table === 'workspace_connections' || payload.table === 'wallet_bindings' ? 'workbench' : 'agent',
         ...(payload.resourceId ? { resourceId: payload.resourceId } : {}),
         ...(payload.version ? { version: payload.version } : {}) });
       if (payload.squireReportChanged)

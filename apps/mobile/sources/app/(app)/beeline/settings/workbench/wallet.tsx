@@ -61,6 +61,8 @@ export default function WalletScreen() {
   const historyUnavailable = Boolean(historyError);
   const [grantError, setGrantError] = useState<string | null>(null);
   const [granting, setGranting] = useState(false);
+  const [revoking, setRevoking] = useState(false);
+  const [revokeError, setRevokeError] = useState<string | null>(null);
   const [qrOpen, setQrOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const { theme } = useUnistyles();
@@ -112,6 +114,20 @@ export default function WalletScreen() {
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }, [wallet?.address]);
+
+  const disconnect = useCallback(async () => {
+    if (revoking) return;
+    setRevoking(true);
+    setRevokeError(null);
+    try {
+      await getWalletSource().revokeDelegation();
+      await load();
+    } catch (failure) {
+      setRevokeError(phoneOperationFailureReason(failure));
+    } finally {
+      setRevoking(false);
+    }
+  }, [revoking, load]);
 
   const needsGrant = wallet !== null && !wallet.delegation.active;
   const address = wallet?.address ?? '';
@@ -189,6 +205,16 @@ export default function WalletScreen() {
             />
           ) : (
             <>
+              <SettingsRow
+                title="Disconnect wallet"
+                description={revokeError ?? 'Revoke signing permission for all agents. Your funds and transaction history stay in your wallet.'}
+                descriptionTone={revokeError ? 'danger' : undefined}
+                disabled={revoking}
+                onPress={disconnect}
+                value={revoking ? 'Disconnecting…' : undefined}
+                testID="wallet-disconnect-row"
+                tone="action"
+              />
               {/* Address: one row, copy on the trailing axis, QR on demand. */}
               <View style={styles.addressBlock} testID="wallet-address">
                 <View style={styles.addressCopy}>

@@ -10,7 +10,7 @@ import { runBrowserProof, webProofShims } from './browserProof';
  * is not connected; pressing Connect is the grant.
  */
 describe('wallet connect in the desktop web renderer', () => {
-  it('shows Wallet unconnected until Connect grants agents permission to sign', async () => {
+  it.each(['obsidian', 'bone'])('wallet-2593: connects and disconnects Wallet in %s', async (theme) => {
     const mobile = process.cwd();
     const directory = await mkdtemp(path.join(mobile, 'sources/test/wallet-proof-'));
     try {
@@ -26,7 +26,7 @@ describe('wallet connect in the desktop web renderer', () => {
         globalThis.__server = { wallet: true, active: false, ops: [] };
         const text = id => document.querySelector('[data-testid="' + id + '"]')?.textContent ?? null;
         const output = {};
-        const first = createRoot(document.getElementById('root'));
+        let first = createRoot(document.getElementById('root'));
         first.render(<><Workbench /><Wallet /></>);
         setTimeout(() => {
           output.rowBefore = text('connectors-suggest-coinbase');
@@ -37,14 +37,29 @@ describe('wallet connect in the desktop web renderer', () => {
         setTimeout(() => {
           output.ops = globalThis.__server.ops;
           first.unmount();
-          createRoot(document.getElementById('root')).render(<><Workbench /><Wallet /></>);
+          first = createRoot(document.getElementById('root'));
+          first.render(<><Workbench /><Wallet /></>);
         }, 2400);
         setTimeout(() => {
           output.rowAfter = text('connectors-company-coinbase');
           output.addressAfter = !!document.querySelector('[data-testid="wallet-address"]');
           output.connectRowAfter = !!document.querySelector('[data-testid="wallet-connect-row"]');
-          document.getElementById('result').textContent = JSON.stringify(output);
+          output.disconnectCopy = text('wallet-disconnect-row');
+          document.querySelector('[data-testid="wallet-disconnect-row"]').click();
         }, 3600);
+        setTimeout(() => {
+          output.disconnectedPage = text('wallet-screen');
+          output.activeAfterDisconnect = globalThis.__server.active;
+          first.unmount();
+        }, 4400);
+        setTimeout(() => {
+          createRoot(document.getElementById('root')).render(<><Workbench /><Wallet /></>);
+        }, 4600);
+        setTimeout(() => {
+          output.rowDisconnected = text('connectors-suggest-coinbase');
+          output.finalOps = globalThis.__server.ops;
+          document.getElementById('result').textContent = JSON.stringify(output);
+        }, 5800);
         }`,
       );
       const shims = webProofShims(mobile);
@@ -52,9 +67,10 @@ describe('wallet connect in the desktop web renderer', () => {
         entry,
         mobile,
         width: 900,
-        budgetMs: 6000,
+        budgetMs: 8000,
         shims: {
           ...shims,
+          'react-native-unistyles': shims['react-native-unistyles'].replace('beelineThemes.obsidian', `beelineThemes.${theme}`),
           '@expo/vector-icons': 'export const Ionicons = () => null;',
           'expo-web-browser': 'export const openAuthSessionAsync = async () => ({ type: "cancel" });',
           'expo-router': `import { useEffect } from 'react';
@@ -69,7 +85,10 @@ describe('wallet connect in the desktop web renderer', () => {
           '@/auth/buzz-identity-storage': `export const loadBuzzIdentity = async () => ({ publicKey: 'viewer' });
             export const getEffectiveRelayUrl = async () => 'https://monolith.test';`,
           '@/sync/transport/live-connection': `export const sharedLiveConnection = () => ({
-            register: async () => () => undefined,
+            register: async (_, listener) => {
+              const listeners = globalThis.__listeners ??= new Set(); listeners.add(listener);
+              return () => listeners.delete(listener);
+            },
           });`,
           '@/sync/transport/monolith-operation': `import { companyWorkbench, companyRow, companyOption } from '@/test/company-workbench';
             const companies = active => active ? companyWorkbench([{ ...companyRow('coinbase', 'Coinbase', 'apps'), subtitle: '1 app', items: [{ id: 'wallet', title: 'Wallet', subtitle: 'built in', kind: 'connection', target: { kind: 'wallet' } }] }]).companies
@@ -85,6 +104,9 @@ describe('wallet connect in the desktop web renderer', () => {
                 ...(server.wallet ? { wallet: { createdAt: 1, delegationActive: server.active, delegationExpiresAt: null } } : {}) };
               if (operation === 'createWallet') { server.ops.push(operation); server.wallet = true; return wallet(); }
               if (operation === 'grantWalletDelegation') { server.ops.push(operation); server.active = true; return { expiresAt: null }; }
+              if (operation === 'revokeWalletDelegation') { server.ops.push(operation); server.active = false;
+                for (const listener of globalThis.__listeners ?? []) listener({ monolithLive: { type: 'resource-change', resource: 'workbench', roomId: '' } });
+                return; }
               if (operation === 'readWallet') return wallet();
               if (operation === 'readWalletHistory') return { entries: [] };
               return {};
@@ -98,11 +120,16 @@ describe('wallet connect in the desktop web renderer', () => {
       expect(proof.rowBefore).not.toContain('Connected');
       expect(proof.pageBefore).toContain('Wallet not connected');
       expect(proof.addressBefore).toBe(false);
-      expect(proof.ops).toEqual(['createWallet', 'grantWalletDelegation']);
+      expect(proof.ops).toEqual(['createWallet', 'grantWalletDelegation', 'revokeWalletDelegation']);
       expect(proof.rowAfter).toContain('Coinbase');
       expect(proof.rowAfter).toContain('1 app');
       expect(proof.addressAfter).toBe(true);
       expect(proof.connectRowAfter).toBe(false);
+      expect(proof.disconnectCopy).toContain('Revoke signing permission for all agents');
+      expect(proof.activeAfterDisconnect).toBe(false);
+      expect(proof.disconnectedPage).toContain('Wallet not connected');
+      expect(proof.rowDisconnected).toContain('Coinbase wallet');
+      expect(proof.finalOps).toEqual(['createWallet', 'grantWalletDelegation', 'revokeWalletDelegation']);
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

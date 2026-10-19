@@ -1,11 +1,12 @@
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest';
+import { systemLine } from './system-line.js';
 import { cornerOwedSchemaSql } from './corner-owed.js';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { DaemonService } from './daemon-service.js';
 import { PhoneService } from './phone-service.js';
 import { LiveHub } from './live.js';
-import { createAgentCommand, readAgentCommands } from './agent-command.js';
+import { createAgentCommand, readAgentCommands, noteBlockedCornerChecks } from './agent-command.js';
 import {
   recordCornerAttention,
   deliverCornerAttention,
@@ -555,3 +556,90 @@ it.each(['complete', 'failed', 'cancelled', 'unreported', 'unclaimed', 'running'
     console.info(`Demonstrated Reproduction stuck-review-silent: ${outcome} -> list/inspect ${expected}; commander alerts=${outcome === 'running' ? 0 : 1}; repeated tick adds zero`);
   },
 );
+
+it.each(['blocked', 'needs_decision'] as const)('Reproduction waiting-answer: untagged %s stops automatic retries and idle alerts', async status => {
+  await db.query(`UPDATE corner_facts SET lifecycle=jsonb_build_object('checks','failing','pr',jsonb_build_object('headSha','proof-head')) WHERE corner_id=$1`,[C]);
+  await systemLine(db,{roomId:C,authorId:WORKER,subject:{kind:'github',name:'GitHub'},verb:'found failing checks on',kind:'check-failed',object:{text:'Proof PR',headSha:'proof-head'}});
+  const command = (await readAgentCommands(db,C,WORKER)).commands[0]!;
+  await daemon.execute('claimAgentCommand',{roomId:C,commandId:command.id,generationId:'waiting-proof'},WORKER);
+  const authority = {roomId:C,requestId:command.turnRequestId,generationId:'waiting-proof'};
+  await daemon.execute('report',{...authority,status,text:`${status === 'blocked' ? 'blocked' : 'needs-decision'}: Owner must approve the proof.`},WORKER);
+  await daemon.execute('postRoomMessage',{...authority,text:'Waiting for approval.'},WORKER);
+  await daemon.execute('postAgentTurnReceipt',{...authority,agentId:WORKER,status:'complete'},WORKER);
+  const messagesBefore = (await db.query('SELECT id FROM messages')).rows;
+  let wakes = 0;
+  for (let i=0;i<3;i++) {
+    await db.query(`UPDATE agent_commands SET completed_at=now()-interval '3 minutes' WHERE room_id=$1 AND state='complete'`,[C]);
+    await noteBlockedCornerChecks(db);
+    const retry = (await readAgentCommands(db,C,WORKER)).commands[0];
+    if (retry) {
+      wakes++;
+      await daemon.execute('claimAgentCommand',{roomId:C,commandId:retry.id,generationId:`retry-${i}`},WORKER);
+      await daemon.execute('postRoomMessage',{roomId:C,requestId:retry.turnRequestId,generationId:`retry-${i}`,text:'Still waiting.'},WORKER);
+      await daemon.execute('postAgentTurnReceipt',{roomId:C,requestId:retry.turnRequestId,generationId:`retry-${i}`,agentId:WORKER,status:'complete'},WORKER);
+    }
+    await runCornerAttention(db);
+  }
+  const idle = (await db.query("SELECT id FROM corner_attention_flags WHERE kind='idle'")).rowCount;
+  console.info(`Reproduction waiting-answer: worker wakes=${wakes}; idle alerts=${idle}; state=${await state()}`);
+  expect({wakes,idle,state:await state()}).toEqual({wakes:0,idle:0,state:'waiting'});
+  expect((await db.query('SELECT id FROM messages')).rows).toEqual(messagesBefore);
+  for (const reason of ['schedule','subscribed_event','corner_review_dispatch'])
+    expect(await createAgentCommand(db,{roomId:C,agentId:WORKER,sourceMessageId:null,reason})).toBeUndefined();
+  expect((await commanderFlags()).filter(command => command.source.body.includes('idle'))).toHaveLength(0);
+  expect((await phone.readCorners(ROOM,HUMAN))!.corners[0]!.state).toBe('waiting');
+});
+
+it.each(['human message','commander message','commander order','push'] as const)('Reproduction waiting-answer: %s ends waiting once', async answer => {
+  await wake();
+  const command = (await readAgentCommands(db,C,WORKER)).commands[0]!;
+  await daemon.execute('claimAgentCommand',{roomId:C,commandId:command.id,generationId:'answer-proof'},WORKER);
+  const authority = {roomId:C,requestId:command.turnRequestId,generationId:'answer-proof'};
+  await daemon.execute('report',{...authority,status:'blocked',text:'blocked: Owner must approve the proof.'},WORKER);
+  await daemon.execute('postRoomMessage',{...authority,text:'Waiting for approval.'},WORKER);
+  await daemon.execute('postAgentTurnReceipt',{...authority,agentId:WORKER,status:'complete'},WORKER);
+  expect(await state()).toBe('waiting');
+  // A receipt from an automatic turn, including a restart of the same row, is not an answer.
+  await db.query(`INSERT INTO agent_turns(room_id,agent_id,request_id,status) VALUES($1,$2,'automatic-receipt','working')`,[C,WORKER]);
+  await db.query(`UPDATE agent_turns SET started_at=now() WHERE request_id='automatic-receipt'`);
+  expect((await db.query('SELECT 1 FROM corner_report_blockers WHERE corner_id=$1',[C])).rowCount).toBe(1);
+  await db.query(`UPDATE agent_turns SET status='complete' WHERE request_id='automatic-receipt'`);
+  await db.query(cornerOwedSchemaSql());
+  expect(await state()).toBe('waiting');
+  if (answer === 'human message') {
+    await phone.execute('sendRoomMessage',{roomId:C,messageId:'f'.repeat(64),text:'@worker Approved, continue.'},HUMAN);
+  } else if (answer === 'commander message' || answer === 'commander order') {
+    const report = (await commanderFlags()).find(command => command.reason === 'report')!;
+    await daemon.execute('claimAgentCommand',{roomId:ROOM,commandId:report.id,generationId:'commander-answer'},COMMANDER);
+    const commanderAuthority = {roomId:ROOM,requestId:report.turnRequestId,generationId:'commander-answer'};
+    if (answer === 'commander message')
+      await daemon.execute('postCornerMessage',{...commanderAuthority,cornerId:C,text:'@worker Approved, continue.'},COMMANDER);
+    else
+      await daemon.execute('order',{...commanderAuthority,address:C,text:'Approved, continue.'},COMMANDER);
+  } else {
+    await db.query(`UPDATE corner_facts SET lifecycle=jsonb_build_object('pr',jsonb_build_object('headSha','new-head')) WHERE corner_id=$1`,[C]);
+    await createAgentCommand(db,{id:'push-wake',roomId:C,agentId:WORKER,sourceMessageId:null,reason:'corner_check'});
+  }
+  expect((await db.query('SELECT 1 FROM corner_report_blockers WHERE corner_id=$1',[C])).rowCount).toBe(0);
+  expect((await readAgentCommands(db,C,WORKER)).commands).toHaveLength(1);
+  await db.query(cornerOwedSchemaSql());
+  expect((await db.query('SELECT 1 FROM corner_report_blockers WHERE corner_id=$1',[C])).rowCount).toBe(0);
+  expect((await readAgentCommands(db,C,WORKER)).commands).toHaveLength(1);
+  expect(await state()).toBe('working');
+});
+
+
+it('Reproduction waiting-answer: a queued automatic wake is cancelled when the worker reports blocked', async () => {
+  await wake();
+  const command = (await readAgentCommands(db,C,WORKER)).commands[0]!;
+  await daemon.execute('claimAgentCommand',{roomId:C,commandId:command.id,generationId:'queued-proof'},WORKER);
+  const queued = await createAgentCommand(db,{id:'queued-automatic',roomId:C,agentId:WORKER,sourceMessageId:null,reason:'schedule'});
+  expect(queued).toBeDefined();
+  const authority = {roomId:C,requestId:command.turnRequestId,generationId:'queued-proof'};
+  await daemon.execute('report',{...authority,status:'blocked',text:'blocked: Need approval.'},WORKER);
+  await daemon.execute('postRoomMessage',{...authority,text:'Waiting for approval.'},WORKER);
+  await daemon.execute('postAgentTurnReceipt',{...authority,agentId:WORKER,status:'complete'},WORKER);
+  expect((await readAgentCommands(db,C,WORKER)).commands).toHaveLength(0);
+  await expect(daemon.execute('claimAgentCommand',{roomId:C,commandId:queued!.id,generationId:'stale-wake'},WORKER)).rejects.toThrow();
+  expect(await state()).toBe('waiting');
+});

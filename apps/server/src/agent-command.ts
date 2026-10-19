@@ -1,5 +1,5 @@
 import { CornerAccessDatabase } from './corner-access-database.js';
-import { CORNER_CHECKS_BLOCKED_AFTER } from './corner-state.js';
+import { CORNER_CHECKS_BLOCKED_AFTER, cornerReportWaiting } from './corner-state.js';
 import { lockCommanderWakes, refreshWakeDigests } from './commander-wakes.js';
 import { agentMachineOfflineSql } from './machine-offline.js';
 import { commandOrder, reportToCommander } from './commander.js';
@@ -329,6 +329,16 @@ export async function expiredWakeDigestSources(db: SqlDatabase, roomId: string, 
      SELECT id FROM stale_wakes`, [roomId, agentId, ids])).rows.map(row => row.id);
 }
 
+/** Automatic work cannot answer a worker's explicit waiting report. */
+function waitingReportSql(command: string): string {
+  return `(${command}.action NOT IN ('input','resume') OR NOT EXISTS (
+    SELECT 1 FROM corner_report_blockers blocker WHERE blocker.corner_id=${command}.room_id
+  ) OR ${command}.private_payload->>'kind'='order' OR EXISTS (
+    SELECT 1 FROM messages source JOIN identities author ON author.id=source.author_id
+    WHERE source.id=${command}.source_message_id AND author.kind='human' AND source.system_event IS NULL
+  ))`;
+}
+
 /** A digest carries the quiet-corner gate of every absorbed review command. */
 function reviewerQuietSql(command: string): string {
   return `NOT (EXISTS (
@@ -426,6 +436,10 @@ export async function createAgentCommand(
        input.privatePayload?.authorId ?? null, input.privatePayload?.kind === 'order'],
   );
   if (!member.rowCount) return undefined;
+  if ((input.action === undefined || input.action === 'input' || input.action === 'resume') &&
+      input.privatePayload?.kind !== 'order' && !member.rows[0]!.human_input &&
+      await cornerReportWaiting(db, input.roomId))
+    return undefined;
   const opening = member.rows[0]!.opening;
   const lifecycle = input.reason.startsWith('corner_') || input.reason === 'subscribed_event' && Boolean(opening);
   const parent = input.parent ?? (lifecycle ? opening ?? undefined : undefined);
@@ -1118,7 +1132,7 @@ export async function claimAgentCommand(
                (state='pending' OR (state='claimed' AND lease_expires_at<=now()) OR (state='claimed' AND generation_id=$4))
                AND NOT EXISTS(SELECT 1 FROM cancelled_wakes cancelled WHERE cancelled.id=agent_commands.id)
                AND NOT EXISTS(SELECT 1 FROM digest_refresh)
-               AND ${reviewerQuietSql('agent_commands')}
+               AND ${reviewerQuietSql('agent_commands')} AND ${waitingReportSql('agent_commands')}
                AND (${ordinaryWakeSql('agent_commands')} OR (state='claimed' AND generation_id=$4) OR NOT EXISTS (
                  SELECT 1 FROM agent_commands human WHERE human.room_id=$2 AND human.agent_id=$3
                    AND human.reason<>'computer_activity' AND human.action IN ('input','resume')
@@ -1408,7 +1422,7 @@ export async function readAgentCommands(
        AND (requested.state='pending' OR (requested.state='claimed' AND requested.lease_expires_at>now()))
    ))
    AND workflow_latest.card->'cancellation' IS NULL
-   AND ${reviewerQuietSql('c')}
+   AND ${reviewerQuietSql('c')} AND ${waitingReportSql('c')}
    ))
  ORDER BY CASE c.action WHEN 'stop' THEN 0 WHEN 'restart' THEN 1 WHEN 'resume' THEN 2 ELSE 3 END,CASE WHEN ${ordinaryWakeSql('c')} THEN 0 ELSE 1 END,c.created_at,c.id
  LIMIT CASE WHEN $3::text[] IS NULL THEN 100 ELSE NULL END`,
@@ -1635,6 +1649,7 @@ export async function noteBlockedCornerChecks(db: SqlDatabase): Promise<number> 
        WHERE room_id=command.room_id AND agent_id=command.agent_id AND claimed_at IS NOT NULL
          AND action IN ('input','resume') ORDER BY claimed_at DESC,id DESC LIMIT 1) ran ON true
      WHERE command.state='pending' AND command.action='input'
+       AND ${waitingReportSql('command')}
        AND command.agent_id=${cornerImplementerSql('fact', 'corner')}
        AND command.created_at<=now()-interval '${CORNER_CHECKS_BLOCKED_AFTER}'
        AND NOT ${agentMachineOfflineSql('command.agent_id')}
@@ -1697,6 +1712,7 @@ export async function noteBlockedCornerChecks(db: SqlDatabase): Promise<number> 
      ) stuck
      WHERE corner.archived_at IS NULL AND ${cornerImplementerSql('fact', 'corner')} IS NOT NULL
        AND fact.lifecycle->>'checks'='failing'
+       AND NOT EXISTS(SELECT 1 FROM corner_report_blockers WHERE corner_id=fact.corner_id)
        AND fact.lifecycle->'pr'->>'headSha' IS NOT NULL
        AND (stuck.held OR (NOT EXISTS (
          SELECT 1 FROM jsonb_array_elements(
@@ -1729,6 +1745,7 @@ export async function noteBlockedCornerChecks(db: SqlDatabase): Promise<number> 
           AND fact.lifecycle->'pr'->>'headSha'=$2 AND fact.lifecycle->>'checks'='failing'
           AND ${cornerImplementerSql('fact', 'corner')}=$3
           AND fact.lifecycle=$4::jsonb
+          AND NOT EXISTS(SELECT 1 FROM corner_report_blockers WHERE corner_id=fact.corner_id)
           AND (SELECT newest.id FROM agent_commands newest WHERE newest.room_id=$1
             AND newest.agent_id=$3 AND newest.reason='corner_check'
             ORDER BY newest.created_at DESC,newest.id DESC LIMIT 1) IS NOT DISTINCT FROM $5

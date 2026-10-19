@@ -97,7 +97,8 @@ export function webProofShims(mobile: string): Record<string, string> {
     // expo-modules-core (pulled in by expo-web-browser) reads Node's `process`
     // at module scope, which this plain browser bundle never defines.
     'expo-web-browser': 'export const openAuthSessionAsync = async () => ({ type: "cancel" });',
-    'react-native-keyboard-controller': `export { KeyboardAvoidingView } from 'react-native';`,
+    'react-native-keyboard-controller': `export { KeyboardAvoidingView } from 'react-native';
+    export const useKeyboardState = selector => selector({ height: 0, isVisible: false });`,
     'react-native-safe-area-context':
       'export const useSafeAreaInsets = () => ({ top: 0, bottom: 0, left: 0, right: 0 });',
     'react-native-device-info': `export const getDeviceType = () => 'Desktop';`,

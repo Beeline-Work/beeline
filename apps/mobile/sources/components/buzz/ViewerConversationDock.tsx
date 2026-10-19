@@ -7,6 +7,7 @@ import type { AttachmentReference } from '@beeline/buzz-client';
 import type { RoomViewMessage } from '@beeline/api-contract/phone';
 import { currentViewerConversation, subscribeViewerConversation, viewerAgentHandle, viewerContext, viewerContextLabel } from '@/buzz/viewer-conversation';
 import { withAlpha } from '@/buzz/groknight';
+import { useKeyboardState } from 'react-native-keyboard-controller';
 import { MAX_MESSAGE_ATTACHMENTS, pickedPhotoAttachments, type PickedChatAttachment } from '@/buzz/chat-attachment-pick';
 import { COMPOSER_SINGLE_LINE_INPUT_HEIGHT, ConversationComposer, type DictatedSend } from '@/components/buzz/ConversationComposer';
 import { TranscriptReference, ViewerConversationRing } from './TranscriptReference';
@@ -61,7 +62,14 @@ export function ViewerConversationDock({
   const maxPickedAttachments = MAX_MESSAGE_ATTACHMENTS - 1;
   const [availableWidth, setAvailableWidth] = React.useState(366);
   const width = React.useRef(new Animated.Value(44)).current;
-  const bottom = insets.bottom + (kind === 'computer' ? 12 + 42 + 12 : 12);
+  const keyboardHeight = useKeyboardState((state) => state.height);
+  const keyboardLift = Platform.OS !== 'web' && focused && open ? keyboardHeight : 0;
+  const bottom = keyboardLift > 0
+    ? keyboardLift + 12
+    : insets.bottom + (kind === 'computer' ? 12 + 42 + 12 : 12);
+  const transcriptMaxHeight = Math.max(0, Math.min(
+    windowHeight * 0.4, windowHeight - insets.top - bottom - pillHeight - 9 - 12,
+  ));
   const context = viewerContext(kind, title);
   const currentAgent = viewerAgentHandle(kind, agentHandle, conversation?.messages ?? []);
 
@@ -167,7 +175,7 @@ export function ViewerConversationDock({
     onLayout={(event) => setAvailableWidth(event.nativeEvent.layout.width - 24)}>
       {showTranscript ? (
         <View
-      style={[styles.transcript, { bottom: bottom + pillHeight + 9 }, open && { maxHeight: windowHeight * 0.4 }]}
+      style={[styles.transcript, { bottom: bottom + pillHeight + 9 }, { maxHeight: transcriptMaxHeight }]}
       testID="viewer-conversation-transcript"
     >
           <Text style={styles.transcriptHeading}>Recent conversation · {currentAgent ?? 'agent'}</Text>
@@ -270,7 +278,7 @@ const styles = StyleSheet.create((theme) => ({
   controlOpen: { borderRightWidth: 1, borderRightColor: theme.buzz.border, borderRadius: 0,
     backgroundColor: 'transparent' },
   composerWrap: { flex: 1, minWidth: 0 },
-  transcript: { position: 'absolute', left: 16, right: 16, padding: theme.buzz.space.md, borderRadius: 10,
+  transcript: { overflow: 'hidden', position: 'absolute', left: 16, right: 16, padding: theme.buzz.space.md, borderRadius: 10,
     borderWidth: 1, borderColor: theme.buzz.borderStrong,
     backgroundColor: withAlpha(theme.buzz.bgRaised, 0.8) },
   transcriptScroll: { flexShrink: 1, minHeight: 0 },

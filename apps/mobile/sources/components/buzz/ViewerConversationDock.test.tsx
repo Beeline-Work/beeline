@@ -6,6 +6,8 @@ import type { RoomViewMessage } from '@beeline/api-contract/phone';
 import { publishViewerConversation, removeViewerConversation } from '@/buzz/viewer-conversation';
 
 const scrollToEnd = vi.hoisted(() => vi.fn());
+const keyboard = vi.hoisted(() => ({ height: 0 }));
+vi.mock('react-native-keyboard-controller', () => ({ useKeyboardState: (select: any) => select(keyboard) }));
 const dimensions = vi.hoisted(() => ({ width: 390, height: 800 }));
 const keyboardListeners = vi.hoisted(() => new Map<string, Set<() => void>>());
 vi.mock('react-native', () => {
@@ -23,7 +25,7 @@ vi.mock('react-native', () => {
     Animated: { View: host('View'), Value: class {}, timing: () => ({ start() {} }) },
   };
 });
-vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ bottom: 0 }) }));
+vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 24, bottom: 0 }) }));
 vi.mock('./ConversationComposer', () => ({
   COMPOSER_SINGLE_LINE_INPUT_HEIGHT: 26,
   ConversationComposer: (props: any) => React.createElement('Composer', props),
@@ -35,6 +37,7 @@ vi.mock('./TranscriptReference', () => ({
 vi.mock('./MonoMarkdown', () => ({ MonoMarkdown: ({ markdown }: any) => React.createElement('Text', {}, markdown) }));
 vi.mock('./AttachmentPickerSheet', () => ({ AttachmentPickerSheet: () => null }));
 
+import { Platform } from 'react-native';
 import { ViewerConversationDock } from './ViewerConversationDock';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -54,6 +57,8 @@ const transcriptText = () => node('viewer-conversation-transcript').findAllByTyp
   .map((text: any) => text.props.children).flat(Infinity);
 
 beforeEach(() => {
+  (Platform as { OS: string }).OS = 'android';
+  keyboard.height = 0;
   vi.useFakeTimers();
   scrollToEnd.mockClear();
   vi.stubGlobal('requestAnimationFrame', (callback: () => void) => setTimeout(callback, 16));
@@ -196,4 +201,32 @@ it('waits for a native frame before following new transcript content', async () 
   expect(scrollToEnd).not.toHaveBeenCalled();
   act(() => vi.advanceTimersByTime(16));
   expect(scrollToEnd).toHaveBeenCalledWith({ animated: false });
+});
+
+it('R1 lifts the focused dock and bounds the transcript, then restores its resting offset', async () => {
+  const bottom = () => node('viewer-conversation-pill').props.style[1].bottom;
+  toggle();
+  type('Please check this');
+  await act(async () => { await composer().props.onSend(); });
+  expect(bottom()).toBe(12);
+  act(() => { keyboard.height = 420; composer().props.onFocus(); });
+  expect(bottom()).toBe(432);
+  const panelStyle = Object.assign({}, ...node('viewer-conversation-transcript').props.style);
+  expect(panelStyle.bottom).toBe(485);
+  expect(panelStyle.maxHeight).toBe(279);
+  act(() => { keyboard.height = 0; composer().props.onChangeText('Keyboard dismissed'); });
+  expect(bottom()).toBe(12);
+});
+
+it('does not lift an unfocused viewer for the browser keyboard', () => {
+  toggle();
+  act(() => { keyboard.height = 300; composer().props.onChangeText('Draft'); });
+  expect(node('viewer-conversation-pill').props.style[1].bottom).toBe(12);
+});
+
+it.each(['ios', 'web'])('handles keyboard height on %s', (platform) => {
+  (Platform as { OS: string }).OS = platform;
+  toggle();
+  act(() => { keyboard.height = 300; composer().props.onFocus(); });
+  expect(node('viewer-conversation-pill').props.style[1].bottom).toBe(platform === 'web' ? 12 : 312);
 });

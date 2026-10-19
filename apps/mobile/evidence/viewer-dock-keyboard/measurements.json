@@ -1,0 +1,106 @@
+{
+  "before": {
+    "Message": [
+      250,
+      2070,
+      847,
+      2139
+    ],
+    "Send message": [
+      957,
+      2070,
+      1025,
+      2139
+    ],
+    "keyboardFrame": [
+      0,
+      1517,
+      1080,
+      2400
+    ],
+    "transcriptText": [
+      "Recent conversation \u00b7 ruby",
+      "\u00b7 State 36: A long reply about call states and endings remains readable while the artifact stays visible.",
+      "\u00b7 State 37: A long reply about call states and endings remains readable while the artifact stays visible.",
+      "\u00b7 State 38: A long reply about call states and endings remains readable while the artifact stays visible.",
+      "\u00b7 State 39: A long reply about call states and endings remains readable while the artifact stays visible.",
+      "\u00b7 State 40: A long reply about call states and endings remains readable while the artifact stays visible.",
+      "\u00b7 State 41: A long reply about call states and endings remains readable while the artifact stays visible.",
+      "\u00b7 State 42: A long reply about call states and endings remains readable while the artifact stays visible.",
+      "\u00b7 State 43: A long reply about call states and endings remains readable while the artifact stays visible.",
+      "\u00b7 State 44: A long reply about call states and endings remains readable while the artifact stays visible.",
+      "\u00b7 State 45: A long reply about call states and endings remains readable while the artifact stays visible.",
+      "NEWEST LINE",
+      "Message",
+      "Call states and endings (1\u20139)",
+      "Shared browser fixture \u00b7 R1 / R2",
+      "Bone theme",
+      "Before \u00b7 switch version"
+    ],
+    "composerAboveKeyboard": false,
+    "apkSha256": "8aab4e7a9746e3f0eb4e01bcf65d9da4398fe4e0bd21e35894680398048b9492"
+  },
+  "after": {
+    "Message": [
+      250,
+      1392,
+      847,
+      1461
+    ],
+    "Send message": [
+      957,
+      1392,
+      1025,
+      1460
+    ],
+    "keyboardFrame": [
+      0,
+      1517,
+      1080,
+      2400
+    ],
+    "transcriptText": [
+      "Recent conversation \u00b7 ruby",
+      "\u00b7 State 36: A long reply about call states and endings remains readable while the artifact stays visible.",
+      "\u00b7 State 37: A long reply about call states and endings remains readable while the artifact stays visible.",
+      "\u00b7 State 38: A long reply about call states and endings remains readable while the artifact stays visible.",
+      "\u00b7 State 39: A long reply about call states and endings remains readable while the artifact stays visible.",
+      "\u00b7 State 40: A long reply about call states and endings remains readable while the artifact stays visible.",
+      "\u00b7 State 41: A long reply about call states and endings remains readable while the artifact stays visible.",
+      "\u00b7 State 42: A long reply about call states and endings remains readable while the artifact stays visible.",
+      "\u00b7 State 43: A long reply about call states and endings remains readable while the artifact stays visible.",
+      "\u00b7 State 44: A long reply about call states and endings remains readable while the artifact stays visible.",
+      "\u00b7 State 45: A long reply about call states and endings remains readable while the artifact stays visible.",
+      "NEWEST LINE",
+      "Message",
+      "Call states and endings (1\u20139)",
+      "Shared browser fixture \u00b7 R1 / R2",
+      "Bone theme"
+    ],
+    "composerAboveKeyboard": true,
+    "transcriptKeyboardBounds": {
+      "viewer-conversation-transcript": [
+        42,
+        381,
+        1038,
+        1341
+      ],
+      "viewer-conversation-pill": [
+        32,
+        1365,
+        1049,
+        1486
+      ]
+    }
+  },
+  "device": {
+    "os": "Android 36",
+    "screen": [
+      1080,
+      2400
+    ],
+    "apkSha256": "0133667cfc4e1853a86ae20b3d1d40ba3598e7d93d2805c3b663ea4fa0810ecd",
+    "baselineCommit": "6b0d5b889"
+  },
+  "scope": "R1 only; original glyph, icons, colors, typography retained; R2 deferred"
+}

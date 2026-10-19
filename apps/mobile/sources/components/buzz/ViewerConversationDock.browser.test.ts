@@ -7,6 +7,7 @@ const baselineRef = process.env.VIEWER_DOCK_BASELINE_REF;
 describe.skipIf(!existsSync(CHROME))('viewer conversation layout', () => {
   it.each([...(baselineRef ? ['baseline'] : []), 'top', 'newest'])('viewer-dock-overflow: %s', async state => {
     const mobile = process.cwd(), shims = webProofShims(mobile);
+    shims['react-native-keyboard-controller'] = 'export const useKeyboardState = select => select({height: 0});';
     // Delivery and the native composer are fixture boundaries; layout and markdown stay real.
     shims['./ConversationComposer'] = `import React from 'react'; import { Pressable, Text } from 'react-native';
       export const COMPOSER_SINGLE_LINE_INPUT_HEIGHT = 26;

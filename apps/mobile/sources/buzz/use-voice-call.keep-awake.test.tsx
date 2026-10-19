@@ -6,7 +6,8 @@ import { beforeEach, expect, it, vi } from 'vitest';
 import { VOICE_DATA_TOPIC } from '@beeline/api-contract/phone';
 
 const fixture = vi.hoisted(() => ({ room: undefined as any, live: undefined as (() => void) | undefined,
-  fetch: vi.fn(), callId: '11111111-1111-4111-8111-111111111111', awake: new Set<string>(), changes: [] as string[] }));
+  fetch: vi.fn(), callId: '11111111-1111-4111-8111-111111111111', awake: new Set<string>(), changes: [] as string[],
+  appState: new Set<(state: string) => void>() }));
 vi.mock('expo-keep-awake', () => ({
   activateKeepAwakeAsync: async (tag: string) => { fixture.awake.add(tag); fixture.changes.push(`on:${tag}`); },
   deactivateKeepAwake: async (tag: string) => { fixture.awake.delete(tag); fixture.changes.push(`off:${tag}`); },
@@ -14,7 +15,9 @@ vi.mock('expo-keep-awake', () => ({
 vi.mock('./client-error-report', async original => ({ ...await original<object>(), reportClientError: vi.fn(async () => {}) }));
 vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({ subscribeConnected: () => () => {},
   register: async (_filters: unknown, listener: () => void) => { fixture.live = listener; return () => { fixture.live = undefined; }; } }) }));
-vi.mock('react-native', () => ({ Platform: { OS: 'android' } }));
+vi.mock('react-native', () => ({ Platform: { OS: 'android' }, AppState: { addEventListener: (_type: string, listener: (state: string) => void) => {
+  fixture.appState.add(listener); return { remove: () => fixture.appState.delete(listener) };
+} } }));
 vi.mock('livekit-client', () => ({ RoomEvent: { DataReceived: 'data', Disconnected: 'left', ActiveSpeakersChanged: 'levels' }, Track: {} }));
 vi.mock('./voice-transport', () => ({ voiceFetch: (...args: unknown[]) => fixture.fetch(...args), subscribeVoiceResume: () => () => {},
   createVoiceRoom: async () => ({ configureStop: async () => {}, room: fixture.room, closeAudio: async () => {} }) }));
@@ -33,6 +36,9 @@ beforeEach(() => {
 });
 
 /** Lets queued keep-awake changes settle. */
+const leaveCalls = () => fixture.fetch.mock.calls.filter(([url]) => String(url).endsWith('/leave')).length;
+async function appState(state: string) { await act(async () => { for (const listener of [...fixture.appState]) listener(state); }); }
+
 async function settle() { await act(async () => { for (let i = 0; i < 10; i++) await Promise.resolve(); }); }
 const screenOn = () => fixture.awake.has('conversation-mode');
 
@@ -96,6 +102,7 @@ it.each([
     fixture.fetch.mockImplementation(async () => new Response(JSON.stringify({ error: 'gone' }), { status: 500 }));
     await act(async () => fixture.room.emit('left'));
   }],
+  ['app backgrounding', async () => { await appState('background'); }],
   ['component unmount', async (handle: Awaited<ReturnType<typeof joined>>) => { await act(async () => handle.renderer.unmount()); }],
 ])('releases the screen after %s', async (_name, stop) => {
   const handle = await joined();
@@ -137,5 +144,57 @@ it('holds the screen again for a call started right after the previous one ended
     await act(async () => handle.voice.end());
     await settle();
     expect(screenOn()).toBe(false);
+  } finally { await act(async () => handle.renderer.unmount()); }
+});
+
+it('ends the call through the normal hang-up path when the app goes to the background', async () => {
+  const handle = await joined();
+  try {
+    expect(leaveCalls()).toBe(0);
+    await appState('background');
+    await settle();
+    expect(handle.voice.call).toBeNull();
+    expect(leaveCalls()).toBe(1);
+    expect(screenOn()).toBe(false);
+    expect(fixture.appState.size).toBe(0);
+  } finally { await act(async () => handle.renderer.unmount()); }
+});
+
+it('keeps the call through a brief inactive state that returns to active', async () => {
+  const handle = await joined();
+  try {
+    await appState('inactive');
+    await appState('active');
+    await settle();
+    expect(handle.voice.call).not.toBeNull();
+    expect(leaveCalls()).toBe(0);
+    expect(screenOn()).toBe(true);
+  } finally { await act(async () => handle.renderer.unmount()); }
+});
+
+it('cancels a join that is still connecting when the app goes to the background', async () => {
+  let resolveConnect!: () => void;
+  fixture.room.connect = () => new Promise<void>(resolve => { resolveConnect = resolve; });
+  const handle = await mount();
+  try {
+    let joining!: Promise<void>;
+    await act(async () => { joining = handle.voice.join(); });
+    await settle();
+    expect(handle.voice.connecting).toBe(true);
+    await appState('background');
+    await act(async () => { resolveConnect(); await joining; });
+    await settle();
+    expect(handle.voice.call).toBeNull();
+    expect(leaveCalls()).toBe(1);
+    expect(fixture.changes).toEqual([]);
+  } finally { await act(async () => handle.renderer.unmount()); }
+});
+
+it('ignores app state before any call starts', async () => {
+  const handle = await mount();
+  try {
+    expect(fixture.appState.size).toBe(0);
+    await appState('background');
+    expect(leaveCalls()).toBe(0);
   } finally { await act(async () => handle.renderer.unmount()); }
 });

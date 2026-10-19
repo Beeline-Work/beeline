@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import { RoomEvent, Track, type Room } from 'livekit-client';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { VOICE_DATA_TOPIC, type VoiceBudget, type VoiceJoin, type VoiceSignal, type VoiceCall, type RoomViewIdentity } from '@beeline/api-contract/phone';
@@ -104,6 +104,13 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
     queueKeepAwake(activateKeepAwakeAsync);
     return () => queueKeepAwake(deactivateKeepAwake);
   }, [callActive]);
+  // Calls run only in the foreground on phones. `inactive` (iOS control center, system sheets) keeps the call.
+  const callStarted = callActive || connecting;
+  React.useEffect(() => {
+    if (!callStarted || Platform.OS === 'web') return;
+    const subscription = AppState.addEventListener('change', state => { if (state === 'background') void end(); });
+    return () => subscription.remove();
+  }, [callStarted, end]);
 
   const join = React.useCallback(async () => {
     if (session.current || pending.current) return;

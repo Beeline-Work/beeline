@@ -292,7 +292,8 @@ export async function reportToCommander(
     'SELECT 1 FROM corner_facts WHERE corner_id=$1 AND COALESCE(worker_agent_id,owner_agent_id)=$2', [origin,agentId])).rowCount) {
     if (/^(needs-decision|blocked):/.test(text)) {
       await db.query(`UPDATE messages SET card=jsonb_set(card,'{waitingAnswered}','true')
-        WHERE id IN (SELECT message_id FROM corner_report_blockers WHERE corner_id=$1) AND id<>$2`, [origin,reportId]);
+        WHERE presentation='message' AND system_event IS NULL
+          AND id IN (SELECT message_id FROM corner_report_blockers WHERE corner_id=$1) AND id<>$2`, [origin,reportId]);
       await db.query('DELETE FROM corner_report_blockers WHERE corner_id=$1', [origin]);
       await db.query(
       `INSERT INTO corner_report_blockers(corner_id,person_id,report_id,return_room_id,commander_id,message_id)

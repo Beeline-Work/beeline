@@ -308,6 +308,10 @@ ON CONFLICT DO NOTHING;
 CREATE OR REPLACE FUNCTION clear_corner_report_blockers() RETURNS trigger LANGUAGE plpgsql AS $report$
 BEGIN
   IF TG_TABLE_NAME='messages' THEN
+    IF NOT EXISTS(SELECT 1 FROM corner_report_blockers
+      WHERE corner_id=NEW.room_id OR return_room_id=NEW.room_id) THEN
+      RETURN NULL;
+    END IF;
     WITH answered AS (DELETE FROM corner_report_blockers blocker WHERE NEW.presentation='message'
       AND NEW.system_event IS NULL AND NEW.deleted_at IS NULL
       AND (blocker.corner_id=NEW.room_id OR blocker.return_room_id=NEW.room_id)
@@ -320,6 +324,7 @@ BEGIN
     UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{waitingAnswered}','true')
       WHERE id IN (SELECT report_id FROM answered);
   ELSIF TG_TABLE_NAME='agent_commands' THEN
+    IF NEW.private_payload->>'kind' IS DISTINCT FROM 'order' THEN RETURN NULL; END IF;
     WITH answered AS (DELETE FROM corner_report_blockers blocker WHERE blocker.corner_id=NEW.room_id
       AND NEW.private_payload->>'kind'='order'
       AND EXISTS(SELECT 1 FROM agent_commands report WHERE report.id=blocker.report_id

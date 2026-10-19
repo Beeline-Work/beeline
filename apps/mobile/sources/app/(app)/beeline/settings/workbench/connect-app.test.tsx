@@ -104,7 +104,7 @@ vi.mock('@/components/buzz/PulsingText', async () => {
   };
 });
 
-import { companyWorkbench, companyOption } from '@/test/company-workbench';
+import { companyWorkbench, companyOption, companyRow } from '@/test/company-workbench';
 vi.mock('expo-web-browser', () => ({ openAuthSessionAsync: vi.fn() }));
 vi.mock('@/buzz/use-active-community', () => ({ useActiveCommunityId: () => 'workspace-1' }));
 vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({ register: async () => () => undefined }) }));
@@ -162,6 +162,14 @@ describe('server-owned connector search', () => {
     const renderer = await render(); await search(renderer, 'vercel');
     await act(async () => renderer.root.findByType('SettingsRow').props.onPress());
     expect(navigation.push).toHaveBeenCalledWith(expect.objectContaining({ params: expect.objectContaining({ service: 'vercel' }) })); expect(source.appRequests).toHaveLength(0);
+  });
+  it('opens an existing company by the same one-tap rule as its Connectors row', async () => {
+    source.readWorkbench = async () => companyWorkbench([{ ...companyRow('coinbase', 'Coinbase', 'apps'),
+      items: [{ id: 'builtin:wallet', title: 'Wallet', subtitle: 'built in', kind: 'connection', target: { kind: 'wallet' } }] }]);
+    source.searchApps = async () => [{ appKey: 'coinbase', name: 'Coinbase', companyId: 'coinbase' }];
+    const renderer = await render(); await search(renderer, 'coin');
+    await act(async () => renderer.root.findByType('SettingsRow').props.onPress());
+    expect(navigation.push).toHaveBeenCalledWith({ pathname: '/beeline/settings/workbench/wallet', params: { workspaceId: 'workspace-1', viewerId: 'human-dani' } });
   });
   it('preserves selected registry coordinates and the existing sign-in ceremony', async () => {
     const connect = vi.spyOn(source, 'connectApp').mockResolvedValue({ appId: 'new-app', authorizationUrl: 'https://signin.example/auth' });

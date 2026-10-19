@@ -52,6 +52,11 @@ function credentialTitle(label: string, service: string | null, provider: Compan
   const title = humanize(service ?? '');
   return title && title.toLowerCase() !== provider.name.toLowerCase() ? title : provider.id === 'other' ? 'Saved credential' : `${provider.name} key`;
 }
+/** Beeline's own wallet keys kept in the operator's vault. Hidden from lists and counts, never deleted. */
+const PLATFORM_KEY_SERVICES = new Set(['coinbase-cdp']);
+export function isPlatformKey(key: { readonly label: string; readonly service: string | null }): boolean {
+  return PLATFORM_KEY_SERVICES.has((key.service ?? '').trim().toLowerCase()) && /^beeline(?:$|[-_\s])/i.test(key.label.trim());
+}
 function suggestion(app: typeof COMPANY_APPS[number], origin: string): CompanySuggestion {
   const p = resolveCompany({ domain: app.domain });
   return { appKey: app.appKey, appName: app.name, name: app.name, purpose: app.purpose, providerId: p.id,
@@ -92,7 +97,7 @@ export function projectWorkbenchCompanies(view: WorkbenchView, origin: string,
   }
   const seen = new Set<string>();
   for (const key of view.connections) {
-    if (seen.has(key.reference)) continue;
+    if (seen.has(key.reference) || isPlatformKey(key)) continue;
     seen.add(key.reference);
     const provider = resolveCompany({ allowedHosts: key.allowedHosts, loginHosts: key.loginHosts,
       service: key.service, keyName: key.keyName });
@@ -115,9 +120,10 @@ export function projectWorkbenchCompanies(view: WorkbenchView, origin: string,
     const held = appKeys.get(provider.id) ?? new Set<string>(); held.add(app.appKey); appKeys.set(provider.id, held);
   }
   // Built-ins are live connections, never extra company rows or copies of stored keys.
-  const builtin = (providerId: string, id: string, title: string, target: CompanyItem['target'], attention?: string) => {
+  const builtin = (providerId: string, id: string, title: string, target: CompanyItem['target'], attention?: string, appKey?: string) => {
     const provider = COMPANY_REGISTRY.find(p => p.id === providerId)!;
     const row = group(provider);
+    if (appKey) { const held = appKeys.get(provider.id) ?? new Set<string>(); held.add(appKey); appKeys.set(provider.id, held); }
     row.items.push({ id, kind: 'connection', title, subtitle: 'built in', target,
       status: attention, attention: Boolean(attention) });
   };
@@ -126,10 +132,10 @@ export function projectWorkbenchCompanies(view: WorkbenchView, origin: string,
   if (view.googleAccount?.connected || google)
     builtin('google', 'builtin:google', 'Google sign-in', { kind: 'connector', connectorId: 'google' }, google?.status.status === 'error' ? 'Offline' : undefined);
   const tailscale = view.connectors.find(c => c.connectorType === 'tailscale' && ['connected', 'error'].includes(c.status.status));
-  if (tailscale) builtin('tailscale', 'builtin:tailscale', 'Tailscale', { kind: 'connector', connectorId: 'tailscale' }, tailscale.status.status === 'error' ? 'Offline' : undefined);
+  if (tailscale) builtin('tailscale', 'builtin:tailscale', 'Tailscale', { kind: 'connector', connectorId: 'tailscale' }, tailscale.status.status === 'error' ? 'Offline' : undefined, 'tailscale');
   if (view.wallet && (view.wallet.delegationActive || view.wallet.delegationExpiresAt !== null)) builtin('coinbase', 'builtin:wallet', 'Wallet', { kind: 'wallet' },
-    !view.wallet.delegationActive && view.wallet.delegationExpiresAt ? 'Expired' : undefined);
-  if (view.linkAccount?.connected) builtin('link', 'builtin:link', 'Link', { kind: 'link' });
+    !view.wallet.delegationActive && view.wallet.delegationExpiresAt ? 'Expired' : undefined, 'wallet');
+  if (view.linkAccount?.connected) builtin('link', 'builtin:link', 'Link', { kind: 'link' }, undefined, 'link');
   const machines = view.helpers.filter(h => h.squireEligible === true);
   if (machines.length) {
     const provider = COMPANY_REGISTRY.find(p => p.id === 'squire')!;

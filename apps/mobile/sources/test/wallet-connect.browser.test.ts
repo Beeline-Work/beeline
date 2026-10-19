@@ -125,7 +125,7 @@ describe('wallet connect in the desktop web renderer', () => {
       expect(proof.rowAfter).toContain('1 app');
       expect(proof.addressAfter).toBe(true);
       expect(proof.connectRowAfter).toBe(false);
-      expect(proof.disconnectCopy).toContain('Revoke signing permission for all agents');
+      expect(proof.disconnectCopy).toContain('Revoke agent signing');
       expect(proof.activeAfterDisconnect).toBe(false);
       expect(proof.disconnectedPage).toContain('Wallet not connected');
       expect(proof.rowDisconnected).toContain('Coinbase wallet');

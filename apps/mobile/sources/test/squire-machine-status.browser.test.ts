@@ -27,10 +27,8 @@ describe('Reproduction squire-machine-status-2 in Connectors', () => {
           document.querySelector('[data-testid="squire-computer-failed"]').click();
         }, 2600);
         setTimeout(() => {
+          // An online computer that can retry reconnects in one tap, with no sheet first.
           output.sheet = document.body.textContent;
-          const reconnect = document.querySelector('[aria-label="Reconnect"]');
-          output.reconnect = Boolean(reconnect);
-          reconnect?.click();
           output.destination = globalThis.__push;
           document.getElementById('result').textContent = JSON.stringify(output);
         }, 3100);`);
@@ -80,7 +78,6 @@ describe('Reproduction squire-machine-status-2 in Connectors', () => {
       expect(proof.service).toContain('Google sign-in expired');
       expect(proof.service).toContain('Google sign-in needed');
       expect(proof.service).not.toContain('Production API');
-      expect(proof.reconnect).toBe(true);
       expect(proof.sheet).not.toContain('Disconnect');
       expect(proof.destination).toMatchObject({ pathname: '/beeline/settings/workbench/connect',
         params: { connectorId: 'trusty-squire', helperId: 'failed' } });

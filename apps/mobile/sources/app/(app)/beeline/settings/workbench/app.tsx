@@ -11,8 +11,8 @@ import { PageHeader } from '@/components/buzz/PageHeader';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { HullActionSheetModal, HullActionSheetRow, HullActionSheetCancel } from '@/components/buzz/HullActionSheet';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
-import { readSharedWorkbench, useSharedWorkbench } from '@/buzz/workbench-surface';
-import { openAppSignIn } from '@/buzz/app-sign-in';
+import { useSharedWorkbench } from '@/buzz/workbench-surface';
+import { appNeedsSquire, reconnectWorkbenchApp } from '@/buzz/app-reconnect';
 import type { WorkbenchApp } from '@/buzz/workbench';
 import { appBoardColors } from '@/buzz/app-board-style';
 import { appErrorCopy } from '@/buzz/app-error-copy';
@@ -36,8 +36,7 @@ export default function AppDetailScreen() {
   const [error, setError] = useState<string | null>(null);
   const [connectionNotice, setConnectionNotice] = useState<string | null>(null);
   const [statusOpen, setStatusOpen] = useState(false);
-  const needsSquire = app?.transport.startsWith('squire-') &&
-    app.errorMessage === 'Connect Trusty Squire in Connectors first';
+  const needsSquire = app ? appNeedsSquire(app) : false;
 
   const disconnect = async () => {
     if (!app || working) return;
@@ -58,29 +57,8 @@ export default function AppDetailScreen() {
     setWorking(true);
     setError(null);
     setConnectionNotice(null);
-    try {
-      if (app.transport === 'composio') {
-        const started = await getWorkbenchSource().beginAppSignIn({ appId: app.id });
-        await openAppSignIn(started.authorizationUrl, { workspaceId, viewerId, appId: app.id });
-      } else {
-        const source = getWorkbenchSource();
-        const helpers = await source.listHelpers({ workspaceId });
-        const helper = helpers.find(item => item.online && (!app.helperId || item.id === app.helperId));
-        if (!helper) throw new Error(app.helperName
-          ? `Bring ${app.helperName} online, then retry ${app.name}.`
-          : `Connect a helper in Connectors, then retry ${app.name}.`);
-        const started = await source.connectApp({ workspaceId, app: app.name, helperId: helper.id,
-          ...(app.status === 'error' ? { reconnect: true } : {}) });
-        if (started.authorizationUrl) {
-          await openAppSignIn(started.authorizationUrl, { workspaceId, viewerId, appId: started.appId });
-        } else {
-          const updatedView = await readSharedWorkbench({ workspaceId, viewerId }, { refresh: true });
-          const updated = updatedView.apps.find(item => item.id === started.appId);
-          if (updated?.status === 'connecting')
-            setConnectionNotice(`Continue connecting ${app.name} in your chat with ${helper.name}.`);
-        }
-      }
-    } catch (cause) {
+    try { setConnectionNotice(await reconnectWorkbenchApp(app, { workspaceId, viewerId })); }
+    catch (cause) {
       const message = cause instanceof Error ? cause.message : 'Could not connect app';
       setError(appErrorCopy(message));
       setAppOverride(app ? { ...app, status: 'error', errorMessage: message } : null);
@@ -113,6 +91,13 @@ export default function AppDetailScreen() {
           statusGlyph={app.status === 'connected' ? 'live' : app.status === 'connecting' ? 'pulse' : 'failed'}
           valueTone={app.status === 'error' ? 'danger' : undefined}
           trailingPress={{ accessibilityLabel: 'Change connection', onPress: () => setStatusOpen(true) }} />
+            {app.status === 'error' && app.transport !== 'composio' ? (
+              // The computer that will retry, with the retry one tap away.
+              <SettingsRow title={needsSquire ? 'Trusty Squire' : app.helperName ?? 'Your computer'}
+                description={needsSquire ? 'Connect Trusty Squire first' : `Retries ${app.name} on this computer`}
+                action={working ? undefined : needsSquire ? 'Connect' : 'Reconnect'} disabled={working}
+                onPress={() => void reconnect()} testID="app-detail-reconnect" />
+            ) : null}
             <View>
               <RoomListSectionHeader title="WHAT YOUR AGENTS CAN DO" inset="content" spacing="flush" />
               <Text style={styles.permission}>{app.key === 'gmail' ? 'Let agents work with your mail when you ask them to.' :

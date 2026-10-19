@@ -186,7 +186,9 @@ describe('Wallet screens (mock §Screens, pass 4)', () => {
   it('carries the Wallet heading the other Workbench screens draw', async () => {
     const renderer = await render(WalletScreen);
     const header = renderer.root.findByProps({ testID: 'wallet-header' });
-    expect(header.props.title).toBe('Wallet');
+    expect(header.props.title).toBe('Coinbase wallet');
+    expect(renderer.root.findByProps({ testID: 'wallet-permissions' }).props.children).toContain('You review spending before it happens.');
+    expect(renderer.root.findAllByProps({ testID: 'wallet-explainer' })).toHaveLength(0);
     expect(header.props.eyebrow).toBe('Connectors');
     expect(header.props.meta).toBeUndefined();
     expect(header.props.onBack).toBeTypeOf('function');

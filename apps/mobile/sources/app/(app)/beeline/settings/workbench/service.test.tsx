@@ -34,6 +34,7 @@ vi.mock('react-native', async () => { const R = await import('react');
 vi.mock('@/components/buzz/PageHeader', () => ({ PageHeader: (props: any) => React.createElement('PageHeader', props) }));
 vi.mock('@/components/buzz/ServiceMark', () => ({ ServiceMark: (props: any) => React.createElement('ServiceMark', props) }));
 vi.mock('@/components/buzz/SettingsRow', () => ({ SettingsRow: (props: any) => React.createElement('SettingsRow', props) }));
+vi.mock('@/components/buzz/Button', () => ({ Button: (props: any) => React.createElement('Button', props) }));
 vi.mock('@/components/buzz/HullActionSheet', () => ({
   HullActionSheetModal: (props: any) => React.createElement('HullActionSheetModal', props, props.children),
   HullActionSheetRow: (props: any) => React.createElement('HullActionSheetRow', props),
@@ -54,11 +55,27 @@ async function render(): Promise<ReactTestRenderer> {
 }
 
 describe('company detail', () => {
-  it('opens each credential through its existing authorized detail action', async () => {
+  it('shows keys as plain rows and manages them only through the Trusty Squire vault', async () => {
     const renderer = await render(); const key = renderer.root.findByProps({ testID: 'company-item-vercel-key' });
     expect(key.props.title).toBe('Production API');
-    await act(async () => key.props.onPress());
-    expect(navigation.push).toHaveBeenCalledWith({ pathname: '/beeline/settings/workbench/connection', params: { workspaceId: 'ws', viewerId: 'human-dani', connectionId: 'vercel-key' } });
+    expect(key.props.onPress).toBeUndefined(); expect(key.props.chevron).toBeUndefined();
+    expect(renderer.root.findByProps({ testID: 'connector-info-status' }).props.value).toBe('Connected');
+    expect(renderer.root.findByProps({ testID: 'connector-info-agents' }).props.children).toBe('Agents call Vercel with your keys, only on the hosts you allow.');
+    expect([...renderer.root.findAllByType('SettingsRow'), ...renderer.root.findAllByType('Button')]
+      .some((node: any) => /Disconnect/.test(`${node.props.title ?? ''} ${node.props.label ?? ''}`))).toBe(false);
+    expect(renderer.root.findAllByType('HullActionSheetModal').every((sheet: any) => !sheet.props.visible)).toBe(true);
+    await act(async () => renderer.root.findByProps({ testID: 'connector-squire-vault' }).props.onPress());
+    expect(browser.open).toHaveBeenCalledWith('https://trustysquire.ai/vault');
+    expect(navigation.push).not.toHaveBeenCalled();
+  });
+  it('lists only the also-available apps the server still offers', async () => {
+    const source = new MockWorkbenchSource();
+    source.readWorkbench = async () => companyWorkbench([{ ...companyRow('coinbase', 'Coinbase', 'apps'),
+      items: [{ id: 'builtin:wallet', title: 'Wallet', subtitle: 'built in', kind: 'connection', target: { kind: 'wallet' } }], alsoAvailable: [] }]);
+    setWorkbenchSource(source); params.service = 'coinbase';
+    const renderer = await render();
+    expect(renderer.root.findAll((node: any) => String(node.props?.testID ?? '').startsWith('company-available-'))).toHaveLength(0);
+    expect(renderer.root.findAllByProps({ testID: 'connector-squire-vault' })).toHaveLength(0);
   });
   it('shows only eligible computers in the sign-in service, with no key controls', async () => {
     params.service = 'trusty-squire'; const renderer = await render();
@@ -104,10 +121,69 @@ it('Reproduction squire-spinner: an expired online computer offers Reconnect aft
   })) }]);
   setWorkbenchSource(source);
   const renderer = await render();
-  await act(async () => renderer.root.findByProps({ testID: 'squire-computer-machine-one' }).props.onPress());
-  expect(renderer.root.findAllByType('HullActionSheetRow').map((r: any) => r.props.label)).toEqual(['Reconnect']);
-  await act(async () => renderer.root.findByType('HullActionSheetRow').props.onPress());
+  const computer = renderer.root.findByProps({ testID: 'squire-computer-machine-one' });
+  expect(computer.props.action).toBe('Reconnect'); expect(computer.props.description).toBe('Google sign-in expired · Google reconnect failed');
+  await act(async () => computer.props.onPress());
   expect(navigation.push).toHaveBeenCalledWith({ pathname: '/beeline/settings/workbench/connect',
     params: { workspaceId: 'ws', viewerId: 'human-dani', connectorId: 'trusty-squire', helperId: 'machine-one' } });
   await act(async () => renderer.unmount());
+});
+
+it('shows the error, not a retry, when the computer that would retry is offline', async () => {
+  params.service = 'trusty-squire'; navigation.push.mockClear();
+  const source = new MockWorkbenchSource(); const row = squireRow();
+  source.readWorkbench = async () => companyWorkbench([{ ...row, machines: row.machines.map(m => ({ ...m, online: false, status: 'error' as const, statusText: 'Computer offline' })) }]);
+  setWorkbenchSource(source);
+  const renderer = await render();
+  const computer = renderer.root.findByProps({ testID: 'squire-computer-machine-one' });
+  expect(computer.props.action).toBeUndefined(); expect(computer.props.value).toBe('Computer offline');
+  await act(async () => computer.props.onPress());
+  expect(renderer.root.findByProps({ testID: 'squire-computer-offline' }).props.children).toBe('Turn on Laptop to reconnect it.');
+  expect(renderer.root.findAllByType('HullActionSheetRow')).toHaveLength(0);
+  expect(navigation.push).not.toHaveBeenCalled();
+  await act(async () => renderer.unmount());
+});
+
+describe('app connections on the info page', () => {
+  const notionRow = (status: 'connected' | 'error') => ({ ...companyRow('notion', 'Notion', status === 'error' ? 'attention' : 'apps'), subtitle: '1 app',
+    items: [{ id: 'notion-app', title: 'Notion', subtitle: 'via Trusty Squire', kind: 'connection' as const, target: { kind: 'app' as const, appId: 'notion' },
+      status: status === 'error' ? 'Offline' : 'Connected', attention: status === 'error' }] });
+  const notionApp = (status: 'connected' | 'error') => ({ id: 'notion', key: 'notion', name: 'Notion', transport: 'squire-browser', status, useCount: 0,
+    helperId: 'laptop', helperName: 'Laptop', ...(status === 'error' ? { errorMessage: 'Notion sign-in expired' } : {}) }) as any;
+  function serveNotion(status: 'connected' | 'error') {
+    const source = new MockWorkbenchSource();
+    source.readWorkbench = async () => ({ ...companyWorkbench([notionRow(status)]), apps: [notionApp(status)] });
+    setWorkbenchSource(source); params.service = 'notion';
+    return source;
+  }
+  it('connected: disconnects from the info page itself, with no app page pushed', async () => {
+    navigation.push.mockClear();
+    const source = serveNotion('connected');
+    const disconnect = vi.spyOn(source, 'disconnectApp').mockResolvedValue(undefined as any);
+    const renderer = await render();
+    const appRow = renderer.root.findByProps({ testID: 'company-item-notion-app' });
+    expect(appRow.props.chevron).toBeUndefined();
+    await act(async () => appRow.props.onPress());
+    expect(navigation.push).not.toHaveBeenCalled();
+    const sheet = renderer.root.findAllByType('HullActionSheetModal').find((node: any) => node.props.title === 'Notion');
+    expect(sheet.props.visible).toBe(true);
+    await act(async () => { sheet.findByType('HullActionSheetRow').props.onPress(); await Promise.resolve(); });
+    expect(disconnect).toHaveBeenCalledWith({ workspaceId: 'ws', appId: 'notion' });
+    expect(navigation.push).not.toHaveBeenCalled();
+    await act(async () => renderer.unmount());
+  });
+  it('errored: shows the computer and retries on it in one tap, with no app page pushed', async () => {
+    navigation.push.mockClear();
+    const source = serveNotion('error');
+    vi.spyOn(source, 'listHelpers').mockResolvedValue([{ id: 'laptop', name: 'Laptop', online: true }] as any);
+    const connect = vi.spyOn(source, 'connectApp').mockResolvedValue({ appId: 'notion' } as any);
+    const renderer = await render();
+    const appRow = renderer.root.findByProps({ testID: 'company-item-notion-app' });
+    expect(appRow.props.action).toBe('Reconnect');
+    expect(appRow.props.description).toMatch(/^Laptop · /);
+    await act(async () => { await appRow.props.onPress(); });
+    expect(connect).toHaveBeenCalledWith({ workspaceId: 'ws', app: 'Notion', helperId: 'laptop', reconnect: true });
+    expect(navigation.push).not.toHaveBeenCalled();
+    await act(async () => renderer.unmount());
+  });
 });

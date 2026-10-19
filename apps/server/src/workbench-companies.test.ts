@@ -102,6 +102,16 @@ describe('server-owned Connectors company projection', () => {
       expect(row.section).toBe('apps'); expect(row.items[0]?.subtitle).toBe('built in');
     }
   });
+  it('hides Beeline wallet platform keys from lists and counts, and never offers the connected wallet again', () => {
+    const view = { ...base([key('server', 'coinbase-cdp', ['api.cdp.coinbase.com'], 'beeline-server'),
+      key('secret', 'coinbase-cdp', ['api.cdp.coinbase.com'], 'beeline-wallet-secret'),
+      key('mine', 'coinbase-cdp', ['api.cdp.coinbase.com'], 'my-trading')]),
+    wallet: { createdAt: 1, delegationActive: true, delegationExpiresAt: null } };
+    const coinbase = projectWorkbenchCompanies(view, origin).rows.find(r => r.id === 'coinbase')!;
+    expect(coinbase.items.map(i => i.id)).toEqual(['builtin:wallet', 'mine']);
+    expect(coinbase.subtitle).toBe('1 app · 1 key');
+    expect(coinbase.alsoAvailable.some(a => a.appKey === 'wallet')).toBe(false);
+  });
   it('shows failed built-in Google sign-in once in attention, with a usable existing target', () => {
     const view = { ...base(), connectors: [{ connectorId: 'google-uuid', connectorType: 'google-gmail' as const, helperAgentId: 'personal', createdAt: 1,
       status: { connectorId: 'google-uuid', status: 'error' as const, steps: [] } }] };

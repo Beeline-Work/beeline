@@ -184,3 +184,35 @@ After integration: full root typecheck, 243 Body tests, 98 server tests (GitHub
 operations, Workbench routing and brief refusals), nine connector/sign-in/opener
 tests, and workflow-path lint pass. Authenticated Play Review browser proof remains
 pending; this integration does not claim that proof or a release.
+
+## Accepted authenticated browser proof and second main integration
+
+This section supersedes the earlier pending-sign-in notes. On 2026-10-19,
+owner-approved retrieval of the vaulted reviewer link allowed local Chrome to
+open the existing review route on `web.usebeeline.app`. The app authenticated as
+Play Review; Settings displayed `@play-review` and deployed version
+`v0.1.86 · 80b870764d03`. Settings → Your connections showed 52 connections,
+including GitHub with one key. Clicking that GitHub row opened
+`/beeline/settings/workbench/service`, with GitHub details and the existing
+Buzzrouter public discovery key. No settings or connections changed.
+
+Suggested is absent for this reviewer fixture too. The owner accepted this
+signed-in deployed inspection together with the existing R2594 rendered
+regression (Room message e6aa4917, “Ok on 1”). No deployed Suggested click or new
+account is required. This proves the authenticated deployed path inspected,
+not deployment of this branch. Full observation:
+https://github.com/Beeline-Work/beeline/pull/2599#issuecomment-6276507656
+
+The second integration with main preserves its consolidated prompt sections and
+moves this branch's repository guidance and personal GitHub preference into
+those sections. Generated snapshots were refreshed. Main's duplicate-sentence
+regression caught the checkout/merge pointer in both prompt and tool guidance;
+it remains in tool guidance and was removed from the prompt.
+
+Validation: full root typecheck, workflow-path lint, 229 focused Body tests,
+30 additional app-tool/order tests, three prompt-layer tests, nine connector,
+sign-in and desktop-opener tests, and four Node prompt-case-rule tests pass.
+The final prompt/snapshot run passed all 123 assembly/layer tests. The Node
+rule file was initially invoked with Vitest, which reported no Vitest suite;
+its intended Node test runner passed all four tests. R2594 retains the same
+controlled screen, setup responses and desktop opener boundary.

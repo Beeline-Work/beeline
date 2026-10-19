@@ -186,6 +186,13 @@ describe('Room guidance', () => {
     expect(markdown).toContain('do the file work in a repo-less corner');
   });
 
+  it('says Room native writes work inside the sandbox home, not only the memory folder', () => {
+    const markdown = beelineFilesSkillMarkdown('test-release');
+    expect(markdown).not.toContain("everywhere except the harness's own memory folder");
+    expect(markdown).toContain('In a Room, your native write and edit tools work inside the sandbox home the primer names.');
+    expect(markdown).toContain('A path outside that home, a path with `..`, or a symlink that leaves it is refused, and the repository checkout stays read-only.');
+  });
+
   it('names the bound repository and branch when the Room has one', () => {
     expect(roomPrompt({ repository: { name: 'Beeline-Work/beeline', branch: 'main' } })).toContain(
       'The Room is bound to Beeline-Work/beeline (branch main); the read-only checkout is at the session root.',

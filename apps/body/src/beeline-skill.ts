@@ -74,7 +74,7 @@ Files and photos on the current message are already at local paths. For a file o
 
 1. Write it with your native file tools: in a code corner, inside the worktree; elsewhere, inside your writable session home.
 2. If a native write is refused and scratch_io is mounted, call scratch_io(action:write, path, content) instead; in a repo-less corner, scratch_io(action:quota) when mounted shows the space left.
-3. In a Room, native writes can be refused everywhere except the harness's own memory folder, and scratch_io is often not mounted. When neither works, do the file work in a repo-less corner, whose workspace is writable.
+3. In a Room, your native write and edit tools work inside the sandbox home the primer names. A path outside that home, a path with \`..\`, or a symlink that leaves it is refused, and the repository checkout stays read-only. When the work belongs beside a repository, or a home write fails and scratch_io is not mounted, do the file work in a repo-less corner, whose workspace is writable.
 
 ## Posting a file
 

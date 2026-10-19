@@ -6,8 +6,7 @@ import { registerRootComponent } from 'expo';
 import { LogBox, Text, View } from 'react-native';
 import { useFonts } from 'expo-font';
 import { setAppAppearance } from '../sources/unistyles';
-// A bare import merges with setAppAppearance and Metro defers it until a tap.
-require('../sources/unistyles');
+import '../sources/unistyles';
 import { useVoiceCall } from '../sources/buzz/use-voice-call';
 import { VoiceCallCard } from '../sources/components/buzz/VoiceCallCard';
 import { VoiceBar, VoiceAgentStrip } from '../sources/components/buzz/VoiceBar';

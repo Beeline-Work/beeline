@@ -46,13 +46,12 @@ The approved reviewer-bypass connection reports ready. Vault metadata identifies
 `play-review-login-link` with one `value` field restricted to Beeline web hosts.
 The mounted navigation tool accepts a plaintext URL; saved-login slots fill form
 controls, and no sealed-link navigation operation is mounted. No secret was
-retrieved. Required reviewer-bypass browser proof remains outstanding. The next
-step is an approved sealed-link browser route or a commander-approved alternative
-proof. No release or production deployment is assigned or performed.
+retrieved. Required reviewer-bypass browser proof remains outstanding. The supported next step is Play Review sign-in through the shared reviewer
+browser and same-session handback (see below). No release or production deployment is assigned or performed.
 
 Related PR search found no superseding fix for this click handler.
 
-## Revised repository guidance (revision 5, work in progress)
+## Revised repository guidance (revision 5)
 
 On 2026-10-19, a new read-only Squire browser session on the deployed site
 confirmed General → Room settings → Repository None/change → Link/Create →
@@ -122,11 +121,55 @@ Reviewer session `dc6e9578-3447-4c7e-9e72-5d0cb6eb6443` opened the deployed
 site in the existing owner account. It is shared live through the Beeline
 browser-share card for a person to sign in as Play Review and hand back the
 same session. No logout or unsupported sealed-link operation was attempted.
-Successful personal push and authenticated reviewer proof remain outstanding;
-this PR must remain draft.
+Authenticated reviewer proof remains outstanding; this PR must remain draft.
+Personal push proof subsequently passed as recorded below.
 
 Local validation: `npm run corner:prepare`, root `npm run typecheck`, 226 body
 prompt/skill/app-tool/Squire relay tests, 11 released Workbench MCP tests, and
 45 native git/gh wrapper tests passed. Saved behavior cases follow pending PR #2606's format; that replay
 runner is not on this branch. The merged main branch added a Room-with-Squire
 snapshot, which was refreshed to include the repository guidance.
+
+## Personal GitHub write repair and successful API push
+
+On 2026-10-19, the same owner's GitHub settings identified the exact cause of
+that 403: `buzzrouter-public-discovery` is a read-only public discovery token,
+with no repository access and no repository permissions. Its existing use was
+preserved. GitHub sudo verification succeeded through the owner's connected
+email route; no human GitHub challenge remains.
+
+A separate fine-grained personal token, `beeline-work-beeline-contents`, was
+created through Trusty Squire and captured directly into its vault. GitHub's
+final confirmation specified only `Beeline-Work/beeline`, Contents read and
+write, and required Metadata read-only, expiring November 18, 2026. It stated
+that the token was ready immediately; no pending organization approval appeared.
+No secret was returned to the agent or written to this repository.
+
+All requests below used that same explicit sealed personal credential reference,
+with server-side Authorization injection. No request switched to the App route.
+The App remained configured: its independent installation repository listing
+returned `Beeline-Work/beeline` immediately before the personal write proof.
+
+| Request | Result |
+| --- | --- |
+| `GET /user` | 200; login `lunchboxfortwo`, user ID `269599412` |
+| `GET /repos/Beeline-Work/beeline/git/ref/heads/feature/corner-7005eea7f6b8` | 200; base `7ec59909601acba38a5410f2cbb2d6096d8a20ae` |
+| `GET /repos/Beeline-Work/beeline/git/commits/7ec59909601acba38a5410f2cbb2d6096d8a20ae` | 200; tree `544d73a0e8e6f8163e12a9d24990fff2f76080dd` |
+| `POST /repos/Beeline-Work/beeline/git/refs` | 201; created `refs/heads/proof/github-personal-2594-20261019-1718` at the base |
+| `POST /repos/Beeline-Work/beeline/git/commits` | 201; new commit `26a331189ce4ed799199f558b8e8e45c13add08c`, same tree, base as parent |
+| `PATCH /repos/Beeline-Work/beeline/git/refs/heads/proof/github-personal-2594-20261019-1718` with new SHA and `force:false` | 200; advanced proof branch to new commit |
+| `GET /repos/Beeline-Work/beeline/git/ref/heads/proof/github-personal-2594-20261019-1718` | 200; confirmed new commit |
+
+GitHub defaulted both author and committer to `lunchboxfortwo`; neither field
+was supplied in the commit request. The authenticated `/user` response and all
+writes used the same explicit sealed reference. This demonstrates the approved
+personal Git Data API push alternative with both credentials configured. It does
+not demonstrate native git credential injection. Main and the feature branch
+were untouched by the proof. The empty proof commit changes no files.
+
+The GitHub repair browser was closed after vault capture and successful proof.
+The separate shared reviewer session remains open at the deployed Beeline site;
+Play Review sign-in and same-session handback is the only known remaining human
+step. It has not been represented as completed reviewer proof or merge approval.
+`npm run corner:prepare` passed again after the proof; this update changes evidence
+only, so the earlier 291 focused tests and typechecks remain the code validation.

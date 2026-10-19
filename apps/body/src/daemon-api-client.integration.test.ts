@@ -1323,7 +1323,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
             roomId: ROOM,
             messageId: 'b'.repeat(64),
             parentMessageId: 'a'.repeat(64),
-            text: '@bee Use the mounted read-only tool to examine your using-beeline skill, then state who you are according to your Workspace soul and acknowledge the attached image by filename.',
+            text: '@bee Use the mounted read-only tool to examine your beeline-files-and-mocks skill, then state who you are according to your Workspace soul and acknowledge the attached image by filename.',
             wakes: [AGENT],
             attachments: [uploaded],
           }),
@@ -1507,7 +1507,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
           .filter((message) => message.id === sent.messageId || message.id === steer.messageId)
           .map((message) => message.text);
         expect(transcript).toEqual([
-          '@bee Use the mounted read-only tool to examine your using-beeline skill, then state who you are according to your Workspace soul and acknowledge the attached image by filename.',
+          '@bee Use the mounted read-only tool to examine your beeline-files-and-mocks skill, then state who you are according to your Workspace soul and acknowledge the attached image by filename.',
           'Change course now. Ignore the requested introduction and image acknowledgement. Report LIVE-STEER-COBALT and explain briefly that the human steer replaced the original finish.',
         ]);
         console.log(

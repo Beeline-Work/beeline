@@ -4,10 +4,7 @@ import {
   assembleSessionPrompt, assembleTurnPrompt, cornerReviewerInstruction,
   CORNER_CHECKS_NUDGE, CORNER_DELIVERY_NUDGE,
 } from '../../apps/body/src/prompt-assembly.js';
-import {
-  usingBeelineSkillMarkdown, beelineReviewSkillMarkdown,
-  beelineSpecSkillMarkdown, beelineTriageSkillMarkdown,
-} from '../../apps/body/src/beeline-skill.js';
+import { beelineManagedSkills } from '../../apps/body/src/beeline-skill.js';
 
 const prompts: Record<string, string> = {};
 for (const file of readdirSync('docs/prompts').filter((file) => file.endsWith('.md'))) {
@@ -43,8 +40,6 @@ prompts['checks-nudge'] = CORNER_CHECKS_NUDGE;
 prompts['delivery-nudge'] = CORNER_DELIVERY_NUDGE;
 // These are separately loaded files/procedures, not unconditional turn prefixes.
 prompts['project-AGENTS-file'] = readFileSync('AGENTS.md', 'utf8');
-prompts['procedure-using-beeline'] = usingBeelineSkillMarkdown('audit-fixture');
-prompts['procedure-beeline-review'] = beelineReviewSkillMarkdown('audit-fixture');
-prompts['procedure-beeline-spec'] = beelineSpecSkillMarkdown('audit-fixture');
-prompts['procedure-beeline-triage'] = beelineTriageSkillMarkdown('audit-fixture');
+for (const skill of beelineManagedSkills('audit-fixture', { isReviewer: true }))
+  prompts[`procedure-${skill.name}`] = skill.content;
 process.stdout.write(JSON.stringify(prompts, null, 2) + '\n');

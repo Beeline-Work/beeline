@@ -22,12 +22,7 @@ import {
   renderAssignedCornerBrief,
   renderReplyContext,
 } from './prompt-assembly.js';
-import {
-  beelineReviewSkillMarkdown,
-  beelineSpecSkillMarkdown,
-  beelineTriageSkillMarkdown,
-  usingBeelineSkillMarkdown,
-} from './beeline-skill.js';
+import { beelineConnectSkillMarkdown, beelineManagedSkills, beelineReviewSkillMarkdown } from './beeline-skill.js';
 
 const soul = {
   name: 'Bee',
@@ -51,7 +46,8 @@ describe('R2594 repository setup guidance', () => {
       agentCommand: 'claude-agent-acp', shell: { available: false } }).systemPrompt;
     expect(prompt).toContain('Room header → Repository → Link/Create');
     expect(prompt).toContain('organization setup before proposing a personal GitHub connection');
-    const skill = usingBeelineSkillMarkdown('test');
+    expect(prompt).toContain('consult beeline-connecting-services for repository and organization setup');
+    const skill = beelineConnectSkillMarkdown('test');
     expect(skill).toContain('Add repositories, accounts, or organizations');
     expect(skill).toContain('not a removable Connectors entry');
   });
@@ -525,10 +521,9 @@ describe('prompt assembly guards', () => {
         })!,
       ],
       ['reviewer author', CORNER_REVIEWER_AUTHOR_MERGE],
-      ['using-beeline skill', usingBeelineSkillMarkdown('test')],
-      ['beeline-review skill', beelineReviewSkillMarkdown('test')],
-      ['beeline-spec skill', beelineSpecSkillMarkdown('test')],
-      ['beeline-triage skill', beelineTriageSkillMarkdown('test')],
+      ...beelineManagedSkills('test', { isReviewer: true }).map(
+        ({ name, content }): [string, string] => [`${name} skill`, content],
+      ),
     ];
     for (const [name, text] of texts) {
       expect(text, name).not.toContain('gh pr merge');
@@ -602,8 +597,8 @@ describe('prompt assembly guards', () => {
   });
 
   it('gives every surface the newer-human-instruction rule the skill used to carry', () => {
-    const skill = [usingBeelineSkillMarkdown, beelineReviewSkillMarkdown, beelineSpecSkillMarkdown, beelineTriageSkillMarkdown]
-      .map((markdown) => markdown('test'))
+    const skill = beelineManagedSkills('test', { isReviewer: true })
+      .map(({ content }) => content)
       .join('\n');
     expect(skill).not.toMatch(/follow the newer instruction/i);
     for (const [name, context] of Object.entries(SESSION_VARIANTS)) {

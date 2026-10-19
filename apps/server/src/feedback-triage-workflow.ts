@@ -142,10 +142,17 @@ rule on free text is fragile. The repository is public: describe what the agent
 saw in your own words with invented names. Never quote a report, and never name
 the people, Rooms, Workspaces or emails behind it.
 
+Judge each group too: did a Beeline tool refuse the agent, or did the agent not know
+how to do something here? Each such group ends in a skill fix. Name the beeline-*
+skill in \`apps/body/src/beeline-skill.ts\` whose steps were missing or wrong for that
+session type (Room, DM or corner), and say what the steps must say instead. When
+no skill covers the situation, name the skill that should.
+
 If nothing is new, hand off \`nothing_new\`. Otherwise hand off \`ranked\` with
 \`problems\`: the top groups (at most 4), each with a one-line description in your
 own words, its report count, and its item ids. Mark each prompt defect with
-\`promptDefect: true\`, its section, and its drafted case.
+\`promptDefect: true\`, its section, and its drafted case. Mark each skill fix with
+\`skillFix\` and the skill name.
 
 ## adapters
 
@@ -243,7 +250,10 @@ the worker orders one other agent in the Room to replay every saved case on the
 pull request head with its own model (\`docs/prompts/cases/README.md\`, Replay).
 That agent posts the pass/fail table on the pull request. The new case must
 fail on the old prompt and pass with the fix, and every other case must pass.
-The reviewer does not pass the pull request without that table. Hand off \`dispatched\` with \`corners\` listing each corner's
+The reviewer does not pass the pull request without that table.
+For a skill fix, the brief names the skill and the missing or wrong steps, and requires
+the pull request to change that skill and keep \`apps/body/src/beeline-skill.test.ts\`
+and \`apps/body/src/prompt-layers.test.ts\` passing. Hand off \`dispatched\` with \`corners\` listing each corner's
 \`cornerId\` (from \`open_corner\`), its name and its item ids.
 `;
 

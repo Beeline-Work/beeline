@@ -35,6 +35,46 @@ const commands = (agentId = A, roomId = R) =>
   daemon.execute('getAgentCommands', { roomId }, agentId).then((r) => r.commands);
 const send = (text: string, roomId = R) => phone.execute('sendRoomMessage', { roomId, text }, H);
 
+it.each(['ordinary', 'tagged', 'threaded', 'private', 'private-agent', 'corner', 'dm'])(
+  'Reproduction R1: discards final text after no-reply on the %s output path', async path => {
+    const roomId = path === 'corner' ? C : R;
+    if (path === 'dm')
+      await db.query(`UPDATE rooms SET direct_participants=$2::jsonb WHERE id=$1`, [R, JSON.stringify([H, A])]);
+    const queued = await createAgentCommand(db, {
+      roomId, agentId: A, sourceMessageId: null, reason: 'system',
+      ...(path.startsWith('private') ? {
+        privatePayload: { kind: 'order' as const, authorId: path === 'private-agent' ? B : H, fromRoomId: R, text: 'Observe silently' },
+        reason: 'order' as const,
+      } : {}),
+    });
+    const command = (await commands(A, roomId)).find(c => c.id === queued!.id)!;
+    await claim(command);
+    await daemon.execute('postAgentTurnReceipt', {
+      roomId, requestId: command.turnRequestId, generationId: 'g1',
+      status: 'complete', completionKind: 'no-reply',
+    }, A);
+    const text = `R1 unwanted closing sentence${path === 'tagged' ? ' @goosy' : ''}`;
+    const parent = path === 'threaded' ? await send('Thread parent') : undefined;
+    const before = (await phone.readRoom(roomId, H))!.messages.map(m => m.id);
+    // A successful acknowledgement lets an old helper finish without retrying
+    // or converting deliberate silence into a failure notice.
+    await result(command, text, 'g1', parent ? { replyToMessageId: parent.messageId } : {});
+    await result(command, text, 'g1', parent ? { replyToMessageId: parent.messageId } : {});
+    await expect(result(command, text, 'other-generation')).rejects.toThrow('authority rejected');
+    expect((await phone.readRoom(roomId, H))!.messages.map(m => m.id)).toEqual(before);
+    expect((await db.query(`SELECT 1 FROM messages WHERE author_id=$1 AND text=$2`, [A, text])).rowCount).toBe(0);
+    expect((await commands(B)).filter(c => c.source.body.includes(text))).toEqual([]);
+    expect((await db.query(`SELECT completion_kind FROM agent_turns
+      WHERE room_id=$1 AND agent_id=$2 AND request_id=$3`, [roomId, A, command.turnRequestId])).rows)
+      .toEqual([{ completion_kind: 'no-reply' }]);
+    const next = await createAgentCommand(db, { roomId, agentId: A, sourceMessageId: null, reason: 'system' });
+    const nextCommand = (await commands(A, roomId)).find(c => c.id === next!.id)!;
+    await claim(nextCommand, 'next-generation');
+    await result(nextCommand, 'R1 next turn remains visible', 'next-generation');
+    expect((await phone.readRoom(roomId, H))!.messages.some(m => m.text === 'R1 next turn remains visible')).toBe(true);
+  },
+);
+
 it('Reproduction cold-beebee-first-reply: paints every mentioned agent before helper pickup', async () => {
   await send('@hoots @goosy Hello');
   const before = await phone.readRoom(R, H);
@@ -489,6 +529,7 @@ beforeAll(async () => {
 }, 30_000);
 afterAll(async () => closeDatabase?.());
 beforeEach(async () => {
+  await db.query(`UPDATE rooms SET direct_participants=NULL WHERE id=$1`, [R]);
   await db.query(`DELETE FROM agent_connections`);
   await db.query(
     `INSERT INTO live_outputs(room_id,agent_id,turn_id,kind,body)

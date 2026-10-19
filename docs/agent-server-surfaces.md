@@ -1,5 +1,7 @@
 # Server-indexed surfaces and Room reads
 
+- **Deliberate silence survives every harness.** `postAgentTurnReceipt` persists `completionKind: 'no-reply'` on `agent_turns`. `DaemonService` acknowledges and discards later final text for that turn before public insertion or private report routing, including the atomic reply path. The generation and cancellation authority checks still apply. Coverage: `agent-command.integration.test.ts` (`Reproduction R1`).
+
 - **Voice uses existing agent identities and ordinary orders.** `apps/server/src/voice-service.ts` owns membership and dispatch; `voice-room-runtime.ts` speaks command-provenance reports without capping real work. Short-press dictation remains separate. Providers, native runtime requirements and isolated proof commands: [voice mode](voice-mode.md).
 
 - **Computer activity is an observation, never an owed reply.** `computer-session.ts` retains Squire's preview channel, HTML and latest frame while any viewer remains; `ComputerSessionCard` preserves that preview's token when opening the full view. `agent-command.ts` coalesces one pending observation per share behind other work and refreshes its source at claim; Room/corner turn loops accept silence, and `turn-silence-notice.ts` never retries or inscribes an activity failure. Coverage: `computer-session.test.ts`, `server-command-intake.test.ts`, and the Room/corner turn tests.

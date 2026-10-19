@@ -178,7 +178,7 @@ Create an assignment a fresh session can execute without the parent transcript. 
   - \`## Risks\`: what could go wrong, and for whom.
   - \`## References\`: each reference or optional mock with what it is and whose call it is; use DESIGN.md or existing app styles when there is no mock.
   Add implementation guidance under further headings when it helps.
-  For repository bugfixes only, add Reproduction <id>: <real-target steps and observed failure>, or Reproduction not feasible: <reason>; Stand-in: <closest check>; done repeats that reproduction or stand-in successfully.
+  For repository bugfixes only, add Reproduction <id>: <real-target steps and observed failure>, or Reproduction not feasible: <reason>; Stand-in: <closest check>; labels may be bold or italic, and Stand-in: may follow on another line in the same Reproduction section. Done repeats that reproduction or stand-in successfully.
 - files (\`attachments\`): the Room files the worker needs, each with its purpose and whether it is required.
 - \`approval\`: the initiating human message ID or private commander order ID. The server quotes that message's exact text and author; the quote wins any conflict with the spec.
 

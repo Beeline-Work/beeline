@@ -1,5 +1,13 @@
-import { describe, expect, it } from 'vitest';
-import { isDeadlock, retryMigrationStep, retryOnDeadlock, splitMigrationStatements } from './migration-retry.js';
+import { randomUUID } from 'node:crypto';
+import { Pool } from 'pg';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { PostgresDatabase } from './database.js';
+import { isDeadlock, lockedTables, logLockHolders, retryMigrationStep, retryOnDeadlock, splitMigrationStatements } from './migration-retry.js';
+
+// Optional real PostgreSQL proof: loopback only, unique schema, never a shared account.
+const postgresUrl = process.env.BEELINE_MIGRATION_LOCK_TEST_POSTGRES_URL;
+if (postgresUrl && !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(postgresUrl).hostname))
+  throw new Error('migration lock proofs require an isolated loopback PostgreSQL');
 
 const deadlock = () => Object.assign(new Error('deadlock detected'), { code: '40P01' });
 
@@ -88,6 +96,100 @@ FOR EACH ROW EXECUTE FUNCTION sample_fn();`;
         throw Object.assign(new Error(code), { code });
       }, { sleep: async () => undefined })).rejects.toThrow(code);
       expect(calls).toBe(1);
+    }
+  });
+});
+
+describe('lock holder diagnostic', () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const lockTimeout = () => Object.assign(new Error('canceling statement due to lock timeout'), { code: '55P03' });
+  const holder = {
+    relation: 'identities', mode: 'RowExclusiveLock', granted: true, pid: 4242, state: 'idle in transaction',
+    wait_event_type: 'Client', wait_event: 'ClientRead', xact_start: '2026-10-19 19:22:01+00',
+    query_start: '2026-10-19 19:22:02+00', application_name: 'beeline_long_running',
+    query: 'UPDATE identities SET name=$1 WHERE id=$2',
+  };
+
+  function fakeDatabase(fail = false) {
+    const queries: { sql: string; values?: unknown[] }[] = [];
+    const database = {
+      async query(sql: string, values?: unknown[]) {
+        queries.push({ sql, values });
+        if (fail && sql.includes('pg_locks')) throw new Error('permission denied for pg_locks');
+        return { rows: sql.includes('pg_locks') ? [holder] : [] };
+      },
+      async transaction<T>(work: (db: typeof database) => Promise<T>) { return work(database); },
+    };
+    return { database, queries };
+  }
+
+  it('names the tables a migration statement locks', () => {
+    expect(lockedTables('ALTER TABLE identities ADD COLUMN IF NOT EXISTS hidden_from_roster boolean')).toEqual(['identities']);
+    expect(lockedTables('DO $x$ BEGIN LOCK TABLE identities IN SHARE ROW EXCLUSIVE MODE; END $x$')).toContain('identities');
+  });
+
+  it('logs the sessions holding the blocked table on every lock timeout', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const { database, queries } = fakeDatabase();
+    const sql = 'ALTER TABLE identities ADD COLUMN IF NOT EXISTS hidden_from_roster boolean';
+    await expect(retryMigrationStep('server schema 3/567', async () => { throw lockTimeout(); }, {
+      attempts: 2,
+      sleep: async () => undefined,
+      onLockTimeout: () => logLockHolders(database, 'server schema 3/567', sql),
+    })).rejects.toMatchObject({ code: '55P03' });
+    const diagnostics = queries.filter((query) => query.sql.includes('pg_locks'));
+    expect(diagnostics).toHaveLength(2);
+    expect(diagnostics[0]!.values).toEqual([['identities']]);
+    expect(queries.some((query) => /SET LOCAL statement_timeout/.test(query.sql))).toBe(true);
+    const logged = warn.mock.calls.filter(([message]) => message === '[migration] lock holder').map(([, row]) => row);
+    expect(logged).toHaveLength(2);
+    expect(Object.keys(logged[0] as object)).toEqual(expect.arrayContaining([
+      'pid', 'state', 'wait_event', 'xact_start', 'query_start', 'application_name', 'query',
+    ]));
+  });
+
+  it('keeps the original lock timeout when the diagnostic fails', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const { database } = fakeDatabase(true);
+    await expect(retryMigrationStep('schema', async () => { throw lockTimeout(); }, {
+      attempts: 1,
+      onLockTimeout: () => logLockHolders(database, 'schema', 'ALTER TABLE identities ADD COLUMN x int'),
+    })).rejects.toThrow('canceling statement due to lock timeout');
+    expect(warn).toHaveBeenCalledWith('[migration] schema lock holder diagnostic failed: permission denied for pg_locks');
+  });
+
+  it.skipIf(!postgresUrl)('names the second session that holds the table in real PostgreSQL', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const schema = `lock_proof_${randomUUID().replaceAll('-', '')}`;
+    const admin = new Pool({ connectionString: postgresUrl, max: 1 });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    await admin.query(`CREATE TABLE ${schema}.lock_proof (id int)`);
+    const holder = new Pool({ connectionString: postgresUrl, max: 1, application_name: 'lock_proof_holder' });
+    const held = await holder.connect();
+    const database = new PostgresDatabase('', 1, { mode: 'migration', pool: new Pool({
+      connectionString: postgresUrl, max: 1, options: `-c search_path=${schema} -c lock_timeout=200ms`,
+    }) });
+    try {
+      await held.query(`BEGIN; SELECT count(*) FROM ${schema}.lock_proof`);
+      const holderPid = (await held.query<{ pid: number }>('SELECT pg_backend_pid() pid')).rows[0]!.pid;
+      const sql = 'ALTER TABLE lock_proof ADD COLUMN IF NOT EXISTS hidden boolean';
+      await expect(retryMigrationStep('proof 1/1', async () => { await database.query(sql); }, {
+        attempts: 1,
+        onLockTimeout: () => logLockHolders(database, 'proof 1/1', sql),
+      })).rejects.toMatchObject({ code: '55P03' });
+      const logged = warn.mock.calls.filter(([message]) => message === '[migration] lock holder').map(([, row]) => row);
+      expect(logged).toContainEqual(expect.objectContaining({
+        relation: 'lock_proof', granted: true, pid: holderPid, application_name: 'lock_proof_holder',
+        state: 'idle in transaction', query: 'SELECT pg_backend_pid() pid',
+      }));
+    } finally {
+      await held.query('ROLLBACK');
+      held.release();
+      await holder.end();
+      await database.close();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
     }
   });
 });

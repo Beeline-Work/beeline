@@ -2486,6 +2486,13 @@ export async function workbenchStatus(
   if (!apps.length) lines.push('- none');
   for (const app of apps)
     lines.push(`- ${app.name} (app:${app.appKey}, id ${app.appId}) via ${app.transport}: ${app.status}${app.status === 'error' && app.errorMessage ? ` — ${app.errorMessage}` : ''}`);
+  const github = apps.find(app => app.appKey === 'github' && app.status !== 'disconnected');
+  if (github) {
+    const route = github.transport === 'squire-api'
+      ? 'call Squire use_credential (service "github")'
+      : `use app_tool(app:"${github.appId}")`;
+    lines.push('', `GitHub operation identity: prefer this owner's personal GitHub connection (app ${github.appId}, ${github.transport}) over the repository App for supported API operations, including Git Data API pushes; ${route}. Follow its reported status; a denial requires repairing this connection, never switching to the App identity. Consult using-beeline for checkout and merge boundaries.`);
+  }
   if (deps.tailscaleReach) {
     const enabled = Boolean(
       view.catalog?.some(

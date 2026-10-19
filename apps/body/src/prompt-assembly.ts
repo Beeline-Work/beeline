@@ -299,7 +299,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
       'corner.android': 'An agent under its isolated $HOME concluded the host had no emulator, and agents on the shared adb server drove each other\'s emulators.',
       'corner.repo-less': 'A repo-less corner has no repository; the agent delivers files, not commits.',
     },
-    budgetBytes: 1_060,
+    budgetBytes: 1_360,
     layer: 'session',
     surfaces: EVERYWHERE,
     render: ({ surface, machineHost, memoryMaxBytes, repository, shell, worktree, android }) =>
@@ -310,6 +310,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
         surface === 'room' &&
           [
             `This is a Beeline Room. The repository filesystem is read-only here.${repository ? ` The Room is bound to ${repository.name} (branch ${repository.branch}); the read-only checkout is at the session root.` : ''} Web search is available.`,
+            !repository ? 'For coding work without a linked repository, guide Room header → Repository → Link/Create (or create a repository-backed Room). If gh is unavailable, consult using-beeline for repository and organization setup before proposing a personal GitHub connection.' : '',
             shellLine(shell),
             shell?.available === false
               ? 'Read code with CodeGraph when available, then repository_io(action:search/read).'
@@ -343,7 +344,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
       'core.finish': 'An agent read a not-yet-connected tool result as a stopping point and ended the turn with its own work undone.',
       'corner.handover': 'An agent asked to hand the corner on opened a duplicate sibling corner instead of tagging the other agent.',
     },
-    budgetBytes: 900,
+    budgetBytes: 1_100,
     layer: 'session',
     surfaces: EVERYWHERE,
     render: ({ surface }) =>
@@ -415,13 +416,13 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
       'room.replying': 'Several agents share a Room; replies with nothing to act on, and echoed nudges, are noise.',
       'dm.choices': 'A pick in a DM is a preference, never authority, and polls need an electorate.',
     },
-    budgetBytes: 900,
+    budgetBytes: 1_100,
     layer: 'session',
     surfaces: EVERYWHERE,
     render: ({ surface, squireAvailable }) =>
       paragraphs(
         "For a 📎 file, call read(facet:attachment, messageId, attachmentId) and read its path. Never fetch media URLs; on failure, say you couldn't open it.",
-        'For any service or capability request, use connect(mode:discover) if unclear, then connect(mode:ensure, service, reason, continuation).',
+        'For any service or capability request, use connect(mode:discover) if unclear, then connect(mode:ensure, service, reason, continuation). For supported GitHub API work, check connect(mode:status) and prefer personal GitHub over the repository App.',
         squireAvailable === true &&
           'For multi-step browser goals, use Trusty Squire operate_drive {url, goal, facts}. On low_confidence/needs_value, answer or take one flat step, then resume drive. If sign-in/human action (2FA, captcha, passkey) cannot be completed or Squire refuses it, start app_tool(app:beeline:browser_share, tool:start) for that session; ask the person to take over. On handback, resume drive in that session.',
         surface === 'room' && 'Consult the using-beeline skill for Room mechanics (files, artifacts, wakes, reactions, mocks).',

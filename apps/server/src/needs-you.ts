@@ -119,7 +119,7 @@ export function needsYouSentence(text: string): string {
 }
 
 function escapeRegExp(text: string): string {
-  return text.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&');
+  return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 /**

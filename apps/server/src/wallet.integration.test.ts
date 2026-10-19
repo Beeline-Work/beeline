@@ -178,6 +178,47 @@ describe('wallet over the fake CDP seam', () => {
     expect((await readCatalog()).find((entry) => entry.connectorType === 'wallet')?.paired).toBeUndefined();
   });
 
+  it.each(['standing', 'timed'])('wallet-2593: owner disconnect revokes %s signing without deleting the wallet or history', async (kind) => {
+    const wallet = await createdWallet();
+    try {
+      await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE });
+      if (kind === 'timed') await database.query(
+        `UPDATE wallet_bindings SET delegation_standing=false,delegation_expires_at=now()+interval '1 day' WHERE identity_id=$1`, [HUMAN]);
+      const input = { agentId: HELPER, ...harmlessTypedData };
+      expect((await daemonOperation('walletSignTypedData', input)).body.outcome).toBe('signed');
+      const foreignToken = (await auth.exchangeGitHubOidc('outsider')).accessToken;
+      const foreignRevoke = await fetch(`${origin}/v1/phone/operations/revokeWalletDelegation`, {
+        method: 'POST', headers: { authorization: `Bearer ${foreignToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ identityId: HUMAN }),
+      });
+      expect([200, 204]).toContain(foreignRevoke.status);
+      expect(await phoneOperation('readWallet', {})).toMatchObject({ delegation: { active: true } });
+      const sign = vi.spyOn(walletSource(), 'signTypedData');
+      fundChain(wallet.address, 'base', 'usdc', 10);
+      fundChain(wallet.address, 'base', 'eth', 1);
+      expect(await phoneOperation('sendFromWallet', { workspaceId: WORKSPACE, chain: 'base', asset: 'usdc', amount: '1', to: `0x${'a'.repeat(40)}` })).toMatchObject({ outcome: 'sent' });
+      await phoneOperation('readWallet', {});
+      const before = await phoneOperation('readWalletHistory', {});
+      expect(before).toMatchObject({ entries: expect.arrayContaining([expect.objectContaining({ direction: 'out' })]) });
+      // A supplied identity cannot redirect the authenticated owner's revocation.
+      await phoneOperation('revokeWalletDelegation', { identityId: HELPER });
+      await phoneOperation('revokeWalletDelegation', {});
+      expect((await phoneOperation('readWallet', {}))).toMatchObject({ address: wallet.address, delegation: { active: false, expiresAt: null } });
+      expect(await phoneOperation('readWalletHistory', {})).toEqual(before);
+      expect((await phoneOperation('readWorkbench', { workspaceId: WORKSPACE }))).toMatchObject({ wallet: { delegationActive: false, delegationExpiresAt: null } });
+      expect((await daemonOperation('walletSignTypedData', input)).body.outcome).toBe('delegation-expired');
+      expect(sign).not.toHaveBeenCalled();
+      expect((await daemonOperation('walletPay', { agentId: HELPER, chain: 'base', asset: 'usdc', amount: '1', to: '0xabc' })).body.outcome).toBe('delegation-expired');
+      const catalog = (await daemonOperation('readAgentWorkbench', {})).body.catalog as Array<{ connectorType: string; paired?: unknown }>;
+      expect(catalog.find(entry => entry.connectorType === 'wallet')?.paired).toBeUndefined();
+      await phoneOperation('grantWalletDelegation', { workspaceId: WORKSPACE });
+      expect((await daemonOperation('walletSignTypedData', input)).body.outcome).toBe('signed');
+    } finally {
+      fakeState().holdings.clear();
+      fakeState().transactions.clear();
+    }
+  });
+
   it('signs harmless Exchange chainId 1337 data only with live delegation and records a signature audit', async () => {
     const wallet = await createdWallet();
     const source = walletSource();

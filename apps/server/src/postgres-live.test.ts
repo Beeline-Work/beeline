@@ -180,6 +180,23 @@ describe('Postgres live fanout', () => {
       ownerId: AUTHOR, resource: 'workbench' });
   });
 
+  it('wallet-2593: committed wallet revocation invalidates only the owner Workbench', async () => {
+    const live = new LiveHub();
+    const client = new PgliteListenClient(database);
+    const listener = new PostgresLiveListener(database, live, () => client, 1);
+    listeners.push(listener);
+    const received: LiveEvent[] = [];
+    live.subscribeAll(event => received.push(event));
+    void listener.run();
+    await eventually(() => client.listenerCount('notification') === 1);
+    await database.query(`INSERT INTO wallet_bindings(identity_id,workspace_id,cdp_user_id,eoa_address,delegation_standing)
+      VALUES($1,$2,'wallet-test','0xabc',true)`, [AUTHOR, WORKSPACE]);
+    await settle(received);
+    await database.query(`UPDATE wallet_bindings SET delegation_standing=false,delegation_expires_at=NULL WHERE identity_id=$1`, [AUTHOR]);
+    await eventually(() => received.some(event => event.type === 'resource-change' && event.resource === 'workbench'));
+    expect(received).toContainEqual({ type: 'resource-change', roomId: '', ownerId: AUTHOR, resource: 'workbench' });
+  });
+
   it('publishes machine broker reports and sign-in progress to the owner surfaces', async () => {
     const live = new LiveHub();
     const client = new PgliteListenClient(database);

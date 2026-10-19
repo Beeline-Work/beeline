@@ -231,6 +231,7 @@ import {
   readWallet,
   sendFromWallet,
   grantWalletDelegation,
+  revokeWalletDelegation,
   walletBinding,
   walletHistory,
 } from './wallet.js';
@@ -4695,6 +4696,9 @@ export class PhoneService {
           viewerId,
           (input as Input<'grantWalletDelegation'>).workspaceId,
         )) as Output<Name>;
+      case 'revokeWalletDelegation':
+        await revokeWalletDelegation(this.database, viewerId);
+        return undefined as Output<Name>;
       case 'readWalletHistory': {
         // The ledger is keyed on the viewer's identity alone, so the viewer
         // scope IS the authorization — no workspace parameter to project.
@@ -10438,6 +10442,7 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'readWallet',
   'sendFromWallet',
   'grantWalletDelegation',
+  'revokeWalletDelegation',
   'readWalletHistory',
   'deleteAccount',
 ]);

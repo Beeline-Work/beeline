@@ -250,6 +250,14 @@ export async function grantWalletDelegation(
   return { expiresAt: null };
 }
 
+export async function revokeWalletDelegation(database: SqlDatabase, identityId: string): Promise<void> {
+  // Clearing both forms also revokes legacy timed grants. Keep the binding and ledger.
+  await database.query(
+    `UPDATE wallet_bindings SET delegation_expires_at=NULL,delegation_standing=false,updated_at=now() WHERE identity_id=$1`,
+    [identityId],
+  );
+}
+
 /**
  * Agent spending REQUIRES a live delegation. The phone's own send (the
  * human, present) does not — the human is the grantor. An expired grant is

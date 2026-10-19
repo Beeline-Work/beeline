@@ -5,6 +5,14 @@ client sends the agent's actual identity and the active Room or corner; the
 server rejects a different identity. Workbench shows Wallet connected while
 that owner's signing delegation is active. Wallet has no machine connector row.
 
+To disable the connection, open Settings → Connectors → Coinbase → Wallet →
+Open wallet, then choose **Disconnect wallet**. This revokes standing and timed
+signing permission for every agent. It retains the wallet, funds and transaction
+history; connecting again requires the person's explicit grant. The authenticated
+phone operation `revokeWalletDelegation` acts only on the signed-in person's wallet
+and needs no Workspace membership. Already submitted transactions and signatures
+are not undone.
+
 ## Chains
 
 `wallet_balance`, `wallet_quote`, `wallet_chains` and `wallet_history` read

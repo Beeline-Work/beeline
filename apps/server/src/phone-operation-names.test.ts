@@ -58,6 +58,7 @@ const ALL_PHONE_OPERATION_NAMES = {
   getIdentityRecovery: true,
   getManagedIdentity: true,
   grantWalletDelegation: true,
+  revokeWalletDelegation: true,
   leaveRoom: true,
   leaveWorkspace: true,
   listGitHubRepositories: true,

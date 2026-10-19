@@ -10,6 +10,8 @@ import { deleteCornerWakeSources } from './corner-wake-cleanup.js';
  * turn still marked `working`, so a corner that just landed never leaves a
  * stale assignment behind. Shared by every path that archives a corner:
  * `closeCornerState` and the GitHub merge webhook.
+ * Take command locks before the room's archival UPDATE/FOR UPDATE lock:
+ * command output already holds its command when dispatch locks rooms FOR SHARE.
  */
 export async function cancelCornerAgentCommands(database: SqlDatabase, cornerId: string): Promise<void> {
   const active = await database.query<CommandRow>(
@@ -68,8 +70,7 @@ export async function closeCornerState(database: SqlDatabase, cornerId: string) 
   const corner = (
     await database.query<{ parent_id: string; name: string }>(
       `SELECT parent_id,name FROM rooms
-       WHERE id=$1 AND parent_id IS NOT NULL
-       FOR UPDATE`,
+       WHERE id=$1 AND parent_id IS NOT NULL FOR KEY SHARE`,
       [cornerId],
     )
   ).rows[0];
@@ -81,6 +82,7 @@ export async function closeCornerState(database: SqlDatabase, cornerId: string) 
   if (pullRequest.rowCount)
     throw new CommandRefusalError('close the corner pull request with close_corner_pr before closing the corner', 409);
   await cancelCornerAgentCommands(database, cornerId);
+  // Match command output: command locks precede the room's archival write lock.
   await database.query(
     `UPDATE rooms SET archived_at=COALESCE(archived_at,now()),updated_at=now() WHERE id=$1`,
     [cornerId],

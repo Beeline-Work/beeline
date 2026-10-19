@@ -458,7 +458,7 @@ it('demonstrates workspace exhaustion ending the whole call and refusing HTTP jo
   }
 });
 
-it('DELIVERY-2: stable request IDs deduplicate uncertain recording and delivery, and committed orders cannot be revised', async () => {
+it('DELIVERY-2: stable request IDs deduplicate uncertain recording and delivery, and pending orders are amended in place', async () => {
   const room = '78787878-7878-4787-8787-787878787878';
   const id = 'stable-voice-request-delivery-2';
   await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Delivery proof')`, [room,W]);
@@ -475,8 +475,12 @@ it('DELIVERY-2: stable request IDs deduplicate uncertain recording and delivery,
     await service.dispatch(joined.call.id,id,agent.id);
     expect((await db.query(`SELECT * FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2`, [id,agent.id])).rowCount).toBe(1);
     expect((await db.query(`SELECT * FROM voice_orders WHERE source_message_id=$1`, [id])).rowCount).toBe(1);
-    await expect(service.reviseHuman(joined.call.id,room,H,agent,id,'replace the order',owner)).rejects.toThrow('access denied');
-    expect((await db.query<{text:string}>(`SELECT text FROM messages WHERE id=$1`, [id])).rows[0]!.text).toBe('@ruby check my latest report');
+    const before = (await db.query<{id: string}>(`SELECT id FROM agent_commands WHERE source_message_id=$1`, [id])).rows[0]!;
+    await service.reviseHuman(joined.call.id,room,H,agent,id,'check my latest report with seconds',owner);
+    expect((await db.query<{text:string}>(`SELECT text FROM messages WHERE id=$1`, [id])).rows[0]!.text).toBe('@ruby check my latest report with seconds');
+    expect((await db.query<{id: string}>(`SELECT id FROM agent_commands WHERE source_message_id=$1`, [id])).rows).toEqual([before]);
+    const { readAgentCommands } = await import('./agent-command.js');
+    expect((await readAgentCommands(db, room, A)).commands[0]?.source.body).toContain('with seconds');
   } finally { await service.leave(joined.call.id,H); await db.query(`DELETE FROM rooms WHERE id=$1`, [room]); }
 });
 
@@ -504,4 +508,40 @@ it('call history search excludes Rooms another caller cannot read and privately 
     const message = (await db.query<{text:string}>(`SELECT text FROM messages WHERE id=$1`, [source])).rows[0]!;
     expect(message.text).not.toContain('This request came');
   } finally { await service.leave(call.call.id, H); await service.leave(call.call.id, SECOND); }
+});
+
+it('CONVERSATION-1: a claimed amendment fences the old attempt and reuses the command exactly once', async () => {
+  const { readAgentCommands, claimAgentCommand, authorizeCommandOutput } = await import('./agent-command.js');
+  const room = '79797979-7979-4797-8797-797979797979';
+  await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Claimed amendment')`, [room,W]);
+  for (const who of [H,A]) await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [W,room,who]);
+  const joined = await service.join(room,H);
+  try {
+    const agent = (await service.agents(room,H))[0]!;
+    const owner = (await db.query<{runtime_owner: string}>(`SELECT runtime_owner FROM voice_calls WHERE id=$1`, [joined.call.id])).rows[0]!.runtime_owner;
+    const source = await service.recordHuman(joined.call.id,room,H,agent,'build a clock',owner);
+    await service.dispatch(joined.call.id,source,agent.id);
+    const initial = (await readAgentCommands(db,room,A)).commands[0]!;
+    await claimAgentCommand(db,room,A,initial.id,'original-generation');
+    await service.reviseHuman(joined.call.id,room,H,agent,source,'build a clock with seconds',owner);
+    await expect(authorizeCommandOutput(db,room,A,initial.turnRequestId,'original-generation')).rejects.toThrow('authority rejected');
+    const amended = (await readAgentCommands(db,room,A)).commands[0]!;
+    expect(amended.id).toBe(initial.id);
+    expect(amended.turnRequestId).not.toBe(initial.turnRequestId);
+    expect(amended.source.body).toContain('build a clock with seconds');
+    expect(amended.reason).toBe('voice_amendment');
+    await service.reviseHuman(joined.call.id,room,H,agent,source,'build a clock with seconds',owner);
+    expect((await readAgentCommands(db,room,A)).commands[0]?.turnRequestId).toBe(amended.turnRequestId);
+    await claimAgentCommand(db,room,A,amended.id,'new-generation');
+    expect((await authorizeCommandOutput(db,room,A,amended.turnRequestId,'new-generation')).id).toBe(initial.id);
+    expect((await db.query(`SELECT 1 FROM agent_commands WHERE source_message_id=$1`, [source])).rowCount).toBe(1);
+    await new DaemonService(db,live).execute('postRoomMessage', {
+      roomId:room, requestId:amended.turnRequestId, generationId:'new-generation', text:'Old report.',
+    }, A);
+    const completed = (await db.query<{state:string;result_message_id:string}>(`SELECT state,result_message_id FROM agent_commands WHERE id=$1`, [initial.id])).rows[0]!;
+    expect(completed.state).toBe('complete');
+    await service.reviseHuman(joined.call.id,room,H,agent,source,'build a clock with seconds and an alarm',owner);
+    expect((await readAgentCommands(db,room,A)).commands[0]?.id).toBe(initial.id);
+    expect((await db.query<{deleted_at: Date}>(`SELECT deleted_at FROM messages WHERE id=$1`, [completed.result_message_id])).rows[0]?.deleted_at).toBeTruthy();
+  } finally { await service.leave(joined.call.id,H); await db.query(`DELETE FROM rooms WHERE id=$1`, [room]); }
 });

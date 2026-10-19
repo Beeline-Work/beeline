@@ -21,11 +21,12 @@ function Proof() {
   const [picker, setPicker] = useState(false);
   const [pending, setPending] = useState<PickedChatAttachment[]>([]);
   const [value, setValue] = useState('');
+  const [target, aim] = useState('ruby');
   const voice = { call: phase === 'ended' ? null : { id: 'proof' }, connecting: phase === 'connecting',
     agents: [{ kind: 'agent', pubkey: 'ruby', name: 'Ruby', face: null }, { kind: 'agent', pubkey: 'jellybean', name: 'Jellybean', face: null }],
-    speaker: phase === 'speaking' ? 'ruby' : null, target: 'ruby', level: phase === 'silence' ? 0 : 0.4,
+    speaker: phase === 'speaking' ? 'ruby' : null, target, level: phase === 'silence' ? 0 : 0.4,
     muted: false, toggleMute: async () => {}, humans: 2, error: null, quotaExhausted: false, firstAudioMs: null, join: async () => {},
-    aim: () => {}, end: async () => changePhase('ended') } as unknown as VoiceCallState;
+    aim, end: async () => changePhase('ended') } as unknown as VoiceCallState;
   return <View style={{ minHeight: 800, padding: 16, backgroundColor: theme === 'bone' ? '#F3EEE4' : '#14091A' }}>
     <Text style={{ color: theme === 'bone' ? '#171310' : '#f0f0f3', marginBottom: 24 }}>Conversation mode · {phase}</Text>
     <ConversationComposer value={value} height={26} focused={false} disabled={false} voice={voice} canSend={Boolean(value.trim() || pending.length)}
@@ -41,8 +42,21 @@ function Proof() {
 createRoot(document.getElementById('root')!).render(<Proof />);
 async function run() {
   await pause();
+  const selected = () => document.querySelector<HTMLElement>('[aria-label="Speak to Jellybean"]');
+  selected()!.click(); await pause();
+  check('CONVERSATION-2: tap selects Jellybean immediately', !!selected()?.querySelector('[style*="underline"]'));
+  const selectedLabel = Array.from(selected()!.querySelectorAll<HTMLElement>('*')).find(element => element.textContent === 'Jellybean');
+  check('CONVERSATION-2: selection is visible as an underline', !!selectedLabel && getComputedStyle(selectedLabel).textDecorationLine.includes('underline'));
+  const blocks = () => Array.from(byID('voice-waveform')!.querySelectorAll<HTMLElement>('*'))
+    .filter(element => getComputedStyle(element).width === '2px');
+  const initial = blocks();
+  check('CONVERSATION-3: fixed blocks visible in silence', initial.length === 40 && initial.every(element => getComputedStyle(element).height === '2px'));
   for (const phase of ['silence', 'connecting', 'listening', 'speaking']) {
     setPhase(phase); await pause();
+    check(`${phase}: tap stays selected`, !!selected()?.querySelector('[style*="underline"]'));
+    check(`${phase}: blocks stay in place`, blocks().length === 40 && blocks().every((element, index) => element === initial[index]) &&
+      blocks().every(element => getComputedStyle(element.parentElement!).transform === 'none'));
+    if (phase === 'listening') check('CONVERSATION-3: latest level changes heights', blocks().every(element => parseFloat(getComputedStyle(element).height) > 2));
     const strip = byID('conversation-target-strip')!.getBoundingClientRect();
     const field = byID('voice-waveform')!.getBoundingClientRect();
     check(`${phase}: avatars above waveform, no caption`, strip.bottom <= field.top && !byID('conversation-mode-label'));

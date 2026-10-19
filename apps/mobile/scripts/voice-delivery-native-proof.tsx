@@ -37,11 +37,16 @@ const origin='http://10.0.2.2:18097';
 function Call({roomId}:{roomId:string}) {
   const voice=useVoiceCall(roomId,true);
   const [card,setCard]=React.useState<any>();
-  React.useEffect(()=>{ void fetch(origin+'/result').then(r=>r.json()).then(r=>setCard(r.card?.voiceCall)); },[voice.call]);
+  const [requests,setRequests]=React.useState<string[]>([]);
+  React.useEffect(()=>{ void fetch(origin+'/result').then(r=>r.json()).then(r=>setRequests(
+    r.transcript.filter((row:any)=>row.author==='a'.repeat(64)&&row.text.includes('build')).map((row:any)=>row.text)));
+  },[voice.firstAudioMs]);
+  React.useEffect(()=>{ void fetch(origin+'/result').then(r=>r.json()).then(r=>setCard(r.card?.voiceCall)); },[voice.call,voice.humans]);
   React.useEffect(()=>{ void fetch(origin+'/observe',{method:'POST',body:JSON.stringify({at:Date.now(),joined:!!voice.call,humans:voice.humans,error:voice.error,unaddressed:voice.unaddressed,firstAudioMs:voice.firstAudioMs})}); },[voice.call,voice.humans,voice.error,voice.unaddressed,voice.firstAudioMs]);
   return <View style={{flex:1,justifyContent:'space-between',padding:16,paddingTop:64}}>
     <Text style={{color:'#90909B'}}>Android request delivery proof · {voice.call?'Joined':'Left'} · humans {voice.humans}</Text>
     {card ? <VoiceCallCard call={card} joined={!!voice.call} onJoin={()=>void voice.join()}/> : <Button label="Join proof call" onPress={()=>void voice.join()}/>}
+    <View pointerEvents="none" style={{position:'absolute',top:280,left:16,right:16}}>{requests.map((text,index)=><Text key={index} style={{color:'#90909B',fontSize:16}}>{text}</Text>)}</View>
     <Button label="Bone" onPress={()=>setAppAppearance('light')}/>
     <Button label="Obsidian" onPress={()=>setAppAppearance('dark')}/>
     {voice.call && <View><VoiceAgentStrip voice={voice}/><VoiceBar voice={voice}/></View>}

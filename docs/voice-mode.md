@@ -48,11 +48,13 @@ Say an agent's handle or display name at the start of a request to address it;
 matching ignores case and respects word boundaries. Tapping its avatar still
 sets the current target. With two or more humans in the call, start each request
 with an agent's name or an explicit avatar tap to get a reply.
-A name-only segment or deliberate avatar tap holds that human's addressee for
-three seconds, renewed while that human speaks. An unfinished request retains
+A name-only segment holds that human's addressee for three seconds, renewed
+while that human speaks. An avatar tap selects that human's call target until
+another tap or spoken opening name replaces it, including after pauses and replies.
+The selected avatar has a visible outline and underlined name. An unfinished request retains
 its addressee across further segments; an explicit new name replaces it. Other
-humans cannot consume the draft. Delivery, cancel, expiry or departure clears
-the pending address. An expired name alone never dispatches work; an unaddressed
+humans cannot consume the draft. Delivery, cancel, expiry or departure clears the temporary spoken address.
+Departure also clears the persistent tap selection. An expired name alone never dispatches work; an unaddressed
 request asks for the agent's name again.
 With exactly one human, unnamed speech addresses the eligible agent who most
 recently posted a message in that Room or corner. An opening agent name or an
@@ -93,6 +95,9 @@ in both the card and VoiceBar.
 
 `agent-voice.ts` owns library reads, owner saves and bounded previews. The
 client renders validated catalog/write receipts, never a guessed voice choice.
+The composer waveform uses a fixed set of blocks whose heights follow each
+current volume event directly; there is no scrolling history or sample timer.
+
 The existing native WebView hosts short audio previews without adding a native
 dependency or changing the native runtime.
 
@@ -108,12 +113,22 @@ grammar. `voice-request-assembler.ts` owns one unfinished request per human,
 independently of playback. Each request uses a stable source message ID. The final
 external-work decision commits its command before scheduling any acknowledgement
 speech. Interruptions and synthesis failures cannot cancel classification or
-accepted delivery. A speaker can revise their own unfinished request; explicit
-cancel clears it. A failed delivery remains retryable with the same ID: say
+accepted delivery. A speaker can revise their own request until its first voiced reply is accepted
+by the audio transport. Classification and dispatch start immediately at Flux
+EndOfTurn: there is no settling timer. Recognized speech from that same human
+pauses their pending reply and joins the next final into the same message row.
+Other humans can still receive their replies. Explicit cancel clears assembly
+and playback without withdrawing already committed work. A failed delivery remains retryable with the same ID: say
 "try again" to retry the commit without reclassifying or editing its source.
 A delivery whose acknowledgement audio fails shows "Request delivered; voice reply
-unavailable". Committed orders cannot be revised, and retry uses the existing
-transactional order deduplication.
+unavailable". Before first audio, a continuation amends a committed order rather than creating
+another command. Pending commands read the revised source. For a claimed or
+completed command, one transaction cancels the old turn's output authority,
+requeues the same command ID with a new turn request ID and clears any superseded
+report. The helper cancels the old attempt before executing the replacement in
+the same session. Already performed external effects cannot be undone. The
+committed agent remains the request's addressee. Retry retains transactional
+order deduplication.
 [Android delivery proof](voice-mode-proof/request-delivery/README.md) records
 Reproduction DELIVERY-2 and its controlled STT/provider stand-ins. Real agent
 reports are matched to their original command. Their first short paragraph is
@@ -264,3 +279,6 @@ Regression coverage: `agent-voice.test.ts`,
 `AgentVoiceSection.test.tsx`, `voice-profile.test.ts`, `voice-providers.test.ts`, `voice-room-runtime.test.ts`,
 `voice-service.integration.test.ts`, `ConversationComposer.speech.test.tsx`,
 and `chat-list-delta.test.ts`.
+
+[Conversation continuation proof](voice-mode-proof/conversation-continuation/README.md)
+records paused fragments, command amendment, tap persistence and waveform evidence.

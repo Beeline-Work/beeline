@@ -13,7 +13,7 @@ vi.mock('./MicGlyph', () => ({ COMPOSER_GLYPH_SIZE:20, MicGlyph:(props:any)=>Rea
 vi.mock('./BeelineMarkSpinner', () => ({ BeelineMarkSpinner: () => null }));
 vi.mock('./DictationWaveform', () => ({ DictationWaveform: () => React.createElement('Waveform') }));
 vi.mock('./HullDialog', () => ({ HullModal: () => null }));
-import { VoiceBar } from './VoiceBar';
+import { VoiceBar, VoiceAgentStrip } from './VoiceBar';
 
 it('gives a group call one filled stop glyph with the Leave call accessibility label', async () => {
   const end = vi.fn(); let renderer: any;
@@ -115,4 +115,29 @@ it.each([1, 2])('uses the existing warning slot for %s humans and prioritizes ca
   await act(async () => renderer.update(<VoiceBar voice={{ ...voice, endingWarning: 'Ending in 15s' }} />));
   expect(renderer.root.findByProps({ testID: id }).props.children).toBe('Ending in 15s');
   await act(async () => renderer.unmount());
+});
+
+it('Reproduction CONVERSATION-2: tapping a face immediately marks selection and keeps it across level updates', async () => {
+  let renderer: any;
+  let updateLevel!: (level: number) => void;
+  function Probe() {
+    const [target, aim] = React.useState('ruby');
+    const [level, setLevel] = React.useState(0); updateLevel = setLevel;
+    return <VoiceAgentStrip voice={{ agents: [
+      { pubkey: 'ruby', kind: 'agent', name: 'Ruby' }, { pubkey: 'goose', kind: 'agent', name: 'Goosey' },
+    ], target, aim, level, speaker: null } as any} />;
+  }
+  await act(async () => { renderer = create(<Probe />); });
+  const face = (name: string) => renderer.root.findAllByType('Pressable')
+    .find((node: any) => node.props.accessibilityLabel === `Speak to ${name}`);
+  const selectedName = () => renderer.root.findAllByType('Text').find((node: any) =>
+    [node.props.style].flat(Infinity).some((style: any) => style?.textDecorationLine === 'underline'))?.props.children;
+  try {
+    await act(async () => face('Goosey').props.onPress());
+    expect(face('Goosey').props.accessibilityState.selected).toBe(true);
+    expect(face('Ruby').props.accessibilityState.selected).toBe(false);
+    expect(selectedName()).toBe('Goosey');
+    await act(async () => updateLevel(0.8));
+    expect(selectedName()).toBe('Goosey');
+  } finally { await act(async () => renderer.unmount()); }
 });

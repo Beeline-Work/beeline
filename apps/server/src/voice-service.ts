@@ -395,17 +395,44 @@ export class VoiceService {
         WHERE p.call_id=$1 AND c.room_id=$2 AND p.identity_id=$3 AND p.left_at IS NULL AND c.ended_at IS NULL
           AND c.runtime_owner=$4 AND c.runtime_until>now() FOR SHARE OF p,c`, [callId, roomId, humanId, leaseOwner]);
       if (!joined.rowCount) throw new Error('voice call access denied');
-      await db.query(`SELECT id FROM messages WHERE id=$1 FOR UPDATE`, [sourceId]);
+      const existing = (await db.query<{text: string}>(`SELECT text FROM messages
+        WHERE id=$1 AND room_id=$2 AND author_id=$3 AND presentation='message' AND deleted_at IS NULL FOR UPDATE`,
+        [sourceId, roomId, humanId])).rows[0];
+      if (!existing) throw new Error('voice call access denied');
+      if (existing.text === `@${agent.handle} ${text.replace(/@/g, '')}`) return;
+      const committed = (await db.query<{agent_id: string}>(`SELECT agent_id FROM voice_orders WHERE source_message_id=$1`, [sourceId])).rows[0];
+      if (committed && committed.agent_id !== agent.id) throw new Error('A delivered voice request retains its agent');
       const changed = await db.query(`UPDATE messages m SET text=$5
         FROM voice_calls c, voice_participants p
         WHERE m.id=$1 AND m.room_id=$2 AND m.author_id=$3 AND m.deleted_at IS NULL
           AND c.id=$4 AND c.room_id=m.room_id AND c.ended_at IS NULL
           AND c.runtime_owner=$6 AND c.runtime_until>now()
           AND p.call_id=c.id AND p.identity_id=m.author_id AND p.left_at IS NULL
-          AND m.presentation='message' AND NOT EXISTS (SELECT 1 FROM voice_orders o WHERE o.source_message_id=m.id)`,
+          AND m.presentation='message'`,
         [sourceId, roomId, humanId, callId, `@${agent.handle} ${text.replace(/@/g, '')}`, leaseOwner]);
       if (!changed.rowCount) throw new Error('voice call access denied');
+      // The message lock serializes dispatch, claim replacement and transcript edits.
+      // Keep one durable command. Claimed/completed attempts lose their old request
+      // authority before the revised request becomes runnable.
+      const commands = await db.query<{id: string; state: string; turn_request_id: string; result_message_id: string | null}>(
+        `SELECT c.id,c.state,c.turn_request_id,c.result_message_id FROM agent_commands c
+         JOIN voice_orders o ON o.source_message_id=c.source_message_id AND o.agent_id=c.agent_id
+         WHERE c.source_message_id=$1 AND o.call_id=$2 FOR UPDATE OF c`, [sourceId, callId]);
+      for (const command of commands.rows) {
+        if (command.state === 'pending') {
+          await db.query(`UPDATE agent_commands SET reason='voice_amendment' WHERE id=$1`, [command.id]);
+          continue;
+        }
+        await db.query(`UPDATE agent_turns SET status='cancelled',failure_reason='Voice request amended'
+          WHERE room_id=$1 AND agent_id=$2 AND request_id=$3`, [roomId, agent.id, command.turn_request_id]);
+        if (command.result_message_id) await db.query(`UPDATE messages SET deleted_at=now() WHERE id=$1`, [command.result_message_id]);
+        await db.query(`UPDATE agent_commands SET state='pending',reason='voice_amendment',
+          turn_request_id=$2,generation_id=NULL,lease_expires_at=NULL,claimed_at=NULL,completed_at=NULL,result_message_id=NULL
+          WHERE id=$1`, [command.id, randomBytes(32).toString('hex')]);
+        await db.query(`UPDATE voice_orders SET spoken_message_id=NULL WHERE source_message_id=$1`, [sourceId]);
+      }
     });
+    this.live.publish({ type: 'invalidate', roomId, reason: 'message', messageId: sourceId, operation: 'UPDATE' });
   }
 
   async search(callId: string, sourceId: string, agentId: string, request: VoiceSearch, signal: AbortSignal) {

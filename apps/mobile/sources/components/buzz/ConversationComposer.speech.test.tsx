@@ -135,7 +135,7 @@ vi.mock('expo-haptics', () => ({
 import { SPEECH_SILENCE_TIMEOUT_MS } from '@/buzz/speech-input';
 import {
   DictationWaveform as DictationWaveformType,
-  WAVEFORM_SAMPLE_MS,
+  WAVEFORM_BAR_COUNT,
 } from './DictationWaveform';
 import {
   COMPOSER_MAX_INPUT_HEIGHT,
@@ -374,34 +374,28 @@ describe('listening flow', () => {
     expect(send.props.accessibilityHint).toBe('Stops dictation and sends');
   });
 
-  it('Reproduction WL2: documented-range Android speech has visible varying bars', async () => {
-    vi.useFakeTimers();
-    try {
-      const { renderer } = render();
-      await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
-      await act(async () => {});
-      await act(async () => vi.advanceTimersByTime(WAVEFORM_SAMPLE_MS));
-      for (const value of [2, 4, 7]) {
-        await act(async () => fireEvent('volumechange', { value }));
-        await act(async () => vi.advanceTimersByTime(WAVEFORM_SAMPLE_MS));
-      }
-      const waveform = renderer.root
-        .findAllByProps({ testID: 'chat-speech-waveform' })
-        .find((node: any) => node.type === 'View');
-      const heights = waveform.children.map(
-        (bar: any) => bar.props.style.flat(Infinity).find((style: any) => style?.height).height,
-      );
-      // Each bar is added a sample before it glides into view.
-      expect(heights.slice(0, 2)).toEqual([2, 2]);
-      expect(heights[2]).toBeGreaterThan(5);
-      expect(heights[3]).toBeGreaterThan(9);
-      expect(heights[2]).toBeLessThan(heights[3]);
-      expect(heights[3]).toBeLessThan(heights[4]);
-      expect(heights[4]).toBeLessThan(18);
-      console.info('Reproduction WL2 composer mic -> documented-range RMS -2/2/4/7 -> bar heights', heights);
-    } finally {
-      vi.useRealTimers();
+  it('Reproduction CONVERSATION-3: live volume changes fixed blocks without a sample delay', async () => {
+    const { renderer } = render();
+    await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
+    await act(async () => {});
+    const waveform = () => renderer.root.findAllByProps({ testID: 'chat-speech-waveform' })
+      .find((node: any) => node.type === 'View');
+    const heights = () => waveform().children.map((bar: any) =>
+      bar.props.style.flat(Infinity).find((style: any) => style?.height).height);
+    expect(waveform().children).toHaveLength(WAVEFORM_BAR_COUNT);
+    expect([waveform().props.style].flat(Infinity).some((style: any) => style?.transform)).toBe(false);
+    const samples = [heights()[0]];
+    for (const value of [2, 4, 7]) {
+      await act(async () => fireEvent('volumechange', { value }));
+      expect(waveform().children).toHaveLength(WAVEFORM_BAR_COUNT);
+      samples.push(heights()[0]);
     }
+    expect(samples[0]).toBe(2);
+    expect(samples[1]).toBeGreaterThan(samples[0]);
+    expect(samples[2]).toBeGreaterThan(samples[1]);
+    expect(samples[3]).toBeGreaterThan(samples[2]);
+    expect(samples[3]).toBeLessThanOrEqual(18);
+    console.info('CONVERSATION-3: same-render heights', samples);
   });
 
   it('keeps Stop a plain outlined square with no ring or glow while listening', async () => {

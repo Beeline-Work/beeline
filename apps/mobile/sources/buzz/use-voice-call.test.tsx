@@ -220,6 +220,8 @@ it('keeps the second human in the joined call across roster rerenders and follow
     expect(voice.target).toBe('goose');
     await act(async () => voice.aim('ruby'));
     expect(voice.target).toBe('ruby');
+    await act(async () => renderer.update(<Probe roster={[...agents]} />));
+    expect(voice.target).toBe('ruby');
   } finally { await act(async () => renderer.unmount()); }
 });
 

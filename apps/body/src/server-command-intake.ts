@@ -154,7 +154,14 @@ export async function runServerCommandIntake(options: {
   const requeued = new Map<string, AgentCommand>();
   const notify = (commands: readonly AgentCommand[] = []) => {
     for (const command of commands) {
-      if (claimed.has(command.id)) requeued.set(command.id, command);
+      if (claimed.has(command.id)) {
+        requeued.set(command.id, command);
+        // A committed voice amendment replaces this attempt, never adds a
+        // concurrent command. The server has already fenced its old request.
+        const active = context.current;
+        if (command.reason === 'voice_amendment' && active?.id === command.id &&
+            active.turnRequestId !== command.turnRequestId) options.stop(active.turnRequestId);
+      }
       else pending.set(command.id, command);
     }
     wake?.(false);
@@ -237,6 +244,7 @@ export async function runServerCommandIntake(options: {
               // recovery coalescing. Older servers leave the snapshot intact.
               const recoveryContext = claim?.recoveryContext ?? command.recoveryContext;
               if (claim?.source) command = { ...command, source: claim.source };
+              if (claim?.turnRequestId) command = { ...command, turnRequestId: claim.turnRequestId };
               if (claim?.activitySource) command = {
                 ...command, source: { ...command.source, ...claim.activitySource },
               };
@@ -344,7 +352,11 @@ export async function runServerCommandIntake(options: {
             continue;
           }
           busy = Promise.resolve()
-            .then(() => options.run(command))
+            .then(() => {
+              const replacement = requeued.get(command.id);
+              if (replacement?.reason === 'voice_amendment' && replacement.turnRequestId !== command.turnRequestId) return;
+              return options.run(command);
+            })
             .catch((error) => {
               options.onError?.(error);
             })

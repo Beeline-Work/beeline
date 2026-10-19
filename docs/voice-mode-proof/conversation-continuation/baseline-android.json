@@ -1,0 +1,589 @@
+{
+  "reproduction": "CONVERSATION-1",
+  "mode": "baseline",
+  "rowsForPausedRequest": [
+    {
+      "text": "@ruby Ruby build a clock",
+      "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "text": "@ruby and build an alarm",
+      "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    {
+      "text": "@ruby and build a timer",
+      "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
+  "commandsForPausedRequest": 3,
+  "claimedAttempt": null,
+  "firstAudioMs": [
+    206.70345199999974,
+    15.901985000000423,
+    14.963519000000815,
+    18.754515999999057,
+    14.831806000000142
+  ],
+  "medianFirstAudioMs": 15.901985000000423,
+  "result": {
+    "commandDetails": [
+      {
+        "id": "954774568deede978978749710cb6e47d385e6624dd0caea32d412b3829d0581",
+        "turn_request_id": "0e04945c50af3707ec8a5b541e89daf2bfa49e94929f859cfe9f75ec77a03965",
+        "source_message_id": "0e04945c50af3707ec8a5b541e89daf2bfa49e94929f859cfe9f75ec77a03965",
+        "agent_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "state": "pending",
+        "reason": "human_tag"
+      },
+      {
+        "id": "163fc250d57f7e2662b40b24c3cefaff17f92f549f23b3e2caf0a4b1ae018f84",
+        "turn_request_id": "2da7d980b8157ffbb981c0d11cb787904870c0a1009832e435fab56c6c4ecc2c",
+        "source_message_id": "2da7d980b8157ffbb981c0d11cb787904870c0a1009832e435fab56c6c4ecc2c",
+        "agent_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "state": "pending",
+        "reason": "human_tag"
+      },
+      {
+        "id": "89c66fc34b30c3f2a37775b228719427d68b5d96973448cd56a9a5451dc2cb78",
+        "turn_request_id": "8d0d1d73da958cb6023347ce66f29c688b76c8b3243c3883543da2c54c76882d",
+        "source_message_id": "8d0d1d73da958cb6023347ce66f29c688b76c8b3243c3883543da2c54c76882d",
+        "agent_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "state": "pending",
+        "reason": "human_tag"
+      }
+    ],
+    "decisionRequests": 9,
+    "synthesis": [
+      {
+        "text": "Ready.",
+        "at": 1792453483486
+      },
+      {
+        "text": "Ready.",
+        "at": 1792453488873
+      },
+      {
+        "text": "Ready.",
+        "at": 1792453489184
+      },
+      {
+        "text": "Ready.",
+        "at": 1792453489499
+      },
+      {
+        "text": "Ready.",
+        "at": 1792453489814
+      },
+      {
+        "text": "Ready.",
+        "at": 1792453490129
+      },
+      {
+        "text": "Checking.",
+        "at": 1792453495092
+      }
+    ],
+    "deliveries": [
+      {
+        "source": "8d0d1d73da958cb6023347ce66f29c688b76c8b3243c3883543da2c54c76882d",
+        "at": 1792453491533
+      },
+      {
+        "source": "0e04945c50af3707ec8a5b541e89daf2bfa49e94929f859cfe9f75ec77a03965",
+        "at": 1792453492875
+      },
+      {
+        "source": "2da7d980b8157ffbb981c0d11cb787904870c0a1009832e435fab56c6c4ecc2c",
+        "at": 1792453494677
+      }
+    ],
+    "orders": [
+      {
+        "source_message_id": "0e04945c50af3707ec8a5b541e89daf2bfa49e94929f859cfe9f75ec77a03965",
+        "call_id": "b81311da-56ef-4b33-aa35-ad3cc3a43ce4",
+        "agent_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "spoken_message_id": null,
+        "text": "@ruby and build an alarm"
+      },
+      {
+        "source_message_id": "2da7d980b8157ffbb981c0d11cb787904870c0a1009832e435fab56c6c4ecc2c",
+        "call_id": "b81311da-56ef-4b33-aa35-ad3cc3a43ce4",
+        "agent_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "spoken_message_id": null,
+        "text": "@ruby and build a timer"
+      },
+      {
+        "source_message_id": "8d0d1d73da958cb6023347ce66f29c688b76c8b3243c3883543da2c54c76882d",
+        "call_id": "b81311da-56ef-4b33-aa35-ad3cc3a43ce4",
+        "agent_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "spoken_message_id": null,
+        "text": "@ruby Ruby build a clock"
+      }
+    ],
+    "transcript": [
+      {
+        "text": "Voice call started",
+        "author": "972a35ec7a6e572c01c5b0a48cbdc82f6137dd7f35435cf9cc0ec305fdafa248"
+      },
+      {
+        "text": "@ruby Ruby, ready?",
+        "author": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      },
+      {
+        "text": "Ready.",
+        "author": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "text": "@ruby Ruby ready?",
+        "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "text": "Ready.",
+        "author": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "text": "@ruby Ruby ready?",
+        "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "text": "Ready.",
+        "author": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "text": "@ruby Ruby ready?",
+        "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "text": "Ready.",
+        "author": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "text": "@ruby Ruby ready?",
+        "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "text": "Ready.",
+        "author": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "text": "@ruby Ruby ready?",
+        "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "text": "Ready.",
+        "author": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "text": "@ruby Ruby build a clock",
+        "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "text": "@ruby and build an alarm",
+        "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "text": "@ruby and build a timer",
+        "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ],
+    "pid": 13104,
+    "callId": "b81311da-56ef-4b33-aa35-ad3cc3a43ce4",
+    "dispatchAttempts": 3,
+    "frameCounts": {
+      "received": 12
+    },
+    "commands": {
+      "count": 3
+    },
+    "activeCallWork": true,
+    "pendingCommands": 3,
+    "call": {
+      "ended_at": null
+    },
+    "card": {
+      "id": "44de6bea3a767ee607f160552a9aba4504597e193b4701641e3780db0d535367",
+      "text": "Voice call started",
+      "createdAt": 1792453481,
+      "createdAtMs": 1792453481747,
+      "version": 3,
+      "author": {
+        "pubkey": "972a35ec7a6e572c01c5b0a48cbdc82f6137dd7f35435cf9cc0ec305fdafa248",
+        "kind": "human",
+        "name": "System",
+        "handle": "system",
+        "avatar": "http://proof/v1/connectors/logo/system.svg"
+      },
+      "presentation": "card",
+      "systemEvent": {
+        "verb": "started",
+        "subject": {
+          "kind": "system",
+          "name": "Voice call"
+        }
+      },
+      "voiceCall": {
+        "id": "b81311da-56ef-4b33-aa35-ad3cc3a43ce4",
+        "roomId": "375ebf52-b493-4982-bd6d-f3b8fe814a62",
+        "startedAt": 1792453481,
+        "startedAtMs": 1792453481747,
+        "participants": [
+          {
+            "kind": "human",
+            "name": "Alex",
+            "handle": "alex",
+            "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ]
+      }
+    },
+    "humans": 1,
+    "operations": [],
+    "microphoneFrames": [
+      482,
+      708
+    ],
+    "replies": [
+      "Ready.",
+      "Ready.",
+      "Ready.",
+      "Ready.",
+      "Ready.",
+      "Ready.",
+      "Checking.",
+      "Checking.",
+      "Checking."
+    ],
+    "signals": [
+      {
+        "type": "target",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "humans",
+        "count": 1
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 457.1581700000006
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "humans",
+        "count": 2
+      },
+      {
+        "type": "humans",
+        "count": 2
+      },
+      {
+        "type": "target",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      }
+    ],
+    "observations": [
+      {
+        "at": 1792453485271,
+        "joined": false,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792453487322,
+        "joined": false,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792453487731,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792453487962,
+        "joined": true,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792453488167,
+        "nativeAudio": [
+          {
+            "bytesReceived": 1533,
+            "packetsReceived": 28,
+            "totalAudioEnergy": 4.098069450800733e-10
+          }
+        ]
+      },
+      {
+        "at": 1792453488168,
+        "nativeAudio": [
+          {
+            "bytesReceived": 8,
+            "packetsReceived": 3,
+            "totalAudioEnergy": 0
+          }
+        ]
+      },
+      {
+        "at": 1792453488467,
+        "joined": true,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 206.70345199999974
+      },
+      {
+        "at": 1792453488679,
+        "nativeAudio": []
+      },
+      {
+        "at": 1792453488680,
+        "nativeAudio": [
+          {
+            "bytesReceived": 2031,
+            "packetsReceived": 17,
+            "totalAudioEnergy": 0.0007130365528636535
+          }
+        ]
+      },
+      {
+        "at": 1792453488771,
+        "joined": true,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 15.901985000000423
+      },
+      {
+        "at": 1792453489086,
+        "joined": true,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 14.963519000000815
+      },
+      {
+        "at": 1792453489196,
+        "nativeAudio": []
+      },
+      {
+        "at": 1792453489197,
+        "nativeAudio": [
+          {
+            "bytesReceived": 5500,
+            "packetsReceived": 42,
+            "totalAudioEnergy": 0.002761119920754808
+          }
+        ]
+      },
+      {
+        "at": 1792453489402,
+        "joined": true,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 18.754515999999057
+      },
+      {
+        "at": 1792453489716,
+        "nativeAudio": []
+      },
+      {
+        "at": 1792453489717,
+        "joined": true,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 14.831806000000142
+      },
+      {
+        "at": 1792453489718,
+        "nativeAudio": [
+          {
+            "bytesReceived": 8268,
+            "packetsReceived": 68,
+            "totalAudioEnergy": 0.004460311966524195
+          }
+        ]
+      },
+      {
+        "at": 1792453490229,
+        "nativeAudio": []
+      },
+      {
+        "at": 1792453490231,
+        "nativeAudio": [
+          {
+            "bytesReceived": 10345,
+            "packetsReceived": 85,
+            "totalAudioEnergy": 0.005677620650147358
+          }
+        ]
+      },
+      {
+        "at": 1792453490745,
+        "nativeAudio": []
+      },
+      {
+        "at": 1792453490746,
+        "nativeAudio": [
+          {
+            "bytesReceived": 10351,
+            "packetsReceived": 87,
+            "totalAudioEnergy": 0.00567827816676315
+          }
+        ]
+      },
+      {
+        "at": 1792453491262,
+        "nativeAudio": []
+      },
+      {
+        "at": 1792453491263,
+        "nativeAudio": [
+          {
+            "bytesReceived": 10357,
+            "packetsReceived": 89,
+            "totalAudioEnergy": 0.00567827816676315
+          }
+        ]
+      },
+      {
+        "at": 1792453491779,
+        "nativeAudio": []
+      },
+      {
+        "at": 1792453491780,
+        "nativeAudio": [
+          {
+            "bytesReceived": 10369,
+            "packetsReceived": 93,
+            "totalAudioEnergy": 0.00567827816676315
+          }
+        ]
+      },
+      {
+        "at": 1792453492295,
+        "nativeAudio": []
+      },
+      {
+        "at": 1792453492297,
+        "nativeAudio": [
+          {
+            "bytesReceived": 10375,
+            "packetsReceived": 95,
+            "totalAudioEnergy": 0.00567827816676315
+          }
+        ]
+      },
+      {
+        "at": 1792453492812,
+        "nativeAudio": []
+      },
+      {
+        "at": 1792453492813,
+        "nativeAudio": [
+          {
+            "bytesReceived": 10381,
+            "packetsReceived": 97,
+            "totalAudioEnergy": 0.00567827816676315
+          }
+        ]
+      },
+      {
+        "at": 1792453493329,
+        "nativeAudio": []
+      },
+      {
+        "at": 1792453493331,
+        "nativeAudio": [
+          {
+            "bytesReceived": 10387,
+            "packetsReceived": 99,
+            "totalAudioEnergy": 0.00567827816676315
+          }
+        ]
+      },
+      {
+        "at": 1792453493845,
+        "nativeAudio": []
+      },
+      {
+        "at": 1792453493847,
+        "nativeAudio": [
+          {
+            "bytesReceived": 10399,
+            "packetsReceived": 103,
+            "totalAudioEnergy": 0.00567827816676315
+          }
+        ]
+      },
+      {
+        "at": 1792453494362,
+        "nativeAudio": []
+      },
+      {
+        "at": 1792453494364,
+        "nativeAudio": [
+          {
+            "bytesReceived": 10405,
+            "packetsReceived": 105,
+            "totalAudioEnergy": 0.00567827816676315
+          }
+        ]
+      },
+      {
+        "at": 1792453494681,
+        "joined": true,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 443.4376779999984
+      },
+      {
+        "at": 1792453494879,
+        "nativeAudio": []
+      },
+      {
+        "at": 1792453494880,
+        "nativeAudio": [
+          {
+            "bytesReceived": 12406,
+            "packetsReceived": 117,
+            "totalAudioEnergy": 0.006051807585368014
+          }
+        ]
+      }
+    ],
+    "secondMicrophone": [],
+    "participants": [
+      {
+        "identity_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "parked_at": null,
+        "left_at": "2026-10-19T23:44:48.339Z"
+      },
+      {
+        "identity_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "parked_at": null,
+        "left_at": null
+      }
+    ]
+  },
+  "standIn": "Built production Android hook/VoiceBar with native RTC, disposable PGlite, controlled Flux finals and provider SSE/PCM. No physical speech or speaker latency measurement."
+}

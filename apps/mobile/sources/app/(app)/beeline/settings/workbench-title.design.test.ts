@@ -26,7 +26,7 @@ describe('Workbench title hierarchy', () => {
     expect(connect).toContain('title={connectorName}');
     expect(connect).not.toContain('Connect {connectorName}');
     expect(wallet).toContain('eyebrow="Connectors"');
-    expect(wallet).toContain('title="Wallet"');
+    expect(wallet).toContain('title={title}');
     expect(connection).toContain('eyebrow="Connectors"');
     expect(connection).toContain('testID="connection-header"');
     expect(walletSend).toContain('eyebrow="Wallet"');

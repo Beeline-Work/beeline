@@ -2,7 +2,8 @@ import { useState } from 'react';
 import { Platform } from 'react-native';
 import { router, type Href } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
-import type { CompanySuggestion, CompanyItem } from '@beeline/api-contract/workbench';
+import type { CompanySuggestion, CompanyItem, WorkbenchCompany } from '@beeline/api-contract/workbench';
+import type { WorkbenchApp } from './workbench';
 import { authSessionOptions } from '@/auth/auth-session';
 import { openAppSignIn } from './app-sign-in';
 import { appErrorCopy } from './app-error-copy';
@@ -16,10 +17,31 @@ import { useActiveCommunityId } from './use-active-community';
 export function openCompanyItem(target: CompanyItem['target'], scope: WorkbenchScope) {
   const route = target.kind === 'key' ? { pathname: '/beeline/settings/workbench/connection', params: { ...scope, connectionId: target.connectionId } }
     : target.kind === 'app' ? { pathname: '/beeline/settings/workbench/app', params: { ...scope, appId: target.appId } }
-      : target.kind === 'wallet' ? { pathname: '/beeline/settings/workbench/wallet-service', params: { workspaceId: scope.workspaceId } }
+      : target.kind === 'wallet' ? { pathname: '/beeline/settings/workbench/wallet', params: { ...scope } }
         : target.kind === 'connector' ? { pathname: '/beeline/settings/workbench/connect', params: { ...scope, connectorId: target.connectorId } }
           : undefined;
   if (route) router.push(route as Href);
+}
+export type ConnectorDestination =
+  | { readonly kind: 'info' }
+  | { readonly kind: 'item'; readonly target: CompanyItem['target'] }
+  | { readonly kind: 'app-sign-in'; readonly appId: string };
+/**
+ * One tap per Connectors row. A connected frontend opens directly; a failed
+ * sign-in starts its own reconnect; everything else opens the info page, which
+ * holds every action and shows the computer that can retry or the error.
+ */
+export function connectorDestination(row: WorkbenchCompany, apps: readonly WorkbenchApp[] = []): ConnectorDestination {
+  if (row.kind === 'sign-in-service') return { kind: 'info' };
+  const broken = row.items.find(item => item.attention);
+  if (broken) {
+    const target = broken.target;
+    if (target.kind === 'connector' || target.kind === 'wallet') return { kind: 'item', target };
+    if (target.kind === 'app' && apps.find(app => app.id === target.appId)?.transport === 'composio') return { kind: 'app-sign-in', appId: target.appId };
+    return { kind: 'info' };
+  }
+  const wallet = row.items.find(item => item.target.kind === 'wallet');
+  return wallet ? { kind: 'item', target: wallet.target } : { kind: 'info' };
 }
 /** Reuses the existing connection ceremonies; grouping never grants or changes access. */
 export function useConnectCompanyApp(scope: WorkbenchScope) {
@@ -59,5 +81,21 @@ export function useConnectCompanyApp(scope: WorkbenchScope) {
     } catch (cause) { setError(appErrorCopy(cause instanceof Error ? cause.message : 'Connecting failed')); }
     finally { setBusy(null); }
   };
-  return { connect, busy, error };
+  const open = async (row: WorkbenchCompany, apps?: readonly WorkbenchApp[]) => {
+    const destination = connectorDestination(row, apps);
+    if (destination.kind === 'item') { openCompanyItem(destination.target, scope); return; }
+    if (destination.kind === 'info') {
+      router.push({ pathname: '/beeline/settings/workbench/service', params: { ...scope, service: row.id } } as Href);
+      return;
+    }
+    if (busy) return;
+    setBusy(row.id); setError(null);
+    try {
+      const started = await getWorkbenchSource().beginAppSignIn({ appId: destination.appId });
+      await openAppSignIn(started.authorizationUrl, { ...scope, appId: destination.appId });
+      await readSharedWorkbench(scope, { refresh: true });
+    } catch (cause) { setError(appErrorCopy(cause instanceof Error ? cause.message : 'Reconnecting failed')); }
+    finally { setBusy(null); }
+  };
+  return { connect, open, busy, error };
 }

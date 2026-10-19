@@ -47,7 +47,9 @@ function SearchContent({ scope, view, initialQuery = '', onNavigate }: {
     {results.map(item => <SettingsRow appBoard key={item.companyId ?? item.company?.providerId ?? item.appKey}
       title={item.name} description={item.description} leading={<ServiceMark company={item.name} domain={item.domain} mark={item.mark} />}
       chevron="right" disabled={Boolean(actions.busy)} testID={`connect-app-${item.appKey}`} onPress={() => {
-        if (item.companyId) {
+        const row = item.companyId ? view?.companies?.rows.find(company => company.id === item.companyId) : undefined;
+        if (row) { onNavigate?.(); void actions.open(row, view?.apps); }
+        else if (item.companyId) {
           onNavigate?.(); router.push({ pathname: '/beeline/settings/workbench/service', params: { ...scope, service: item.companyId } } as Href);
         } else if (item.company) void actions.connect(item.company);
       }} />)}

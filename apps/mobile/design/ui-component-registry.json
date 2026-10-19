@@ -511,9 +511,6 @@
     "app/(app)/beeline/settings/workbench/service.tsx": {
       "806c88b0385041e36dcb": 1
     },
-    "app/(app)/beeline/settings/workbench/wallet-service.tsx": {
-      "73f7dd92c9a528cb103e": 1
-    },
     "app/(app)/beeline/settings/workbench/wallet.tsx": {
       "105587bdc522c2c96c11": 1,
       "4b881d5b5068f12792ef": 1,

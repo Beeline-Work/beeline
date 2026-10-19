@@ -4,12 +4,12 @@ import { describe, it, expect } from 'vitest';
 import { runBrowserProof, webProofShims } from './browserProof';
 
 /**
- * The real Workbench and Wallet screens in the desktop web renderer. Tapping
- * a connected Wallet opens its page and drops no explainer under the row;
- * the Wallet page carries that explainer instead.
+ * The real Connectors and Wallet screens in the desktop web renderer. One tap
+ * on the connected Coinbase row opens the wallet itself, titled with the
+ * row's name, and the wallet carries the agent-permission text.
  */
 describe('workbench tool tap in the desktop web renderer', () => {
-  it('opens Wallet without an explainer drop-down and shows the explainer on the page', async () => {
+  it('opens the wallet in one tap and shows agent permissions on it', async () => {
     const mobile = process.cwd();
     const directory = await mkdtemp(path.join(mobile, 'sources/test/tool-tap-proof-'));
     try {
@@ -17,10 +17,10 @@ describe('workbench tool tap in the desktop web renderer', () => {
       await writeFile(
         entry,
         `import React from 'react'; import { createRoot } from 'react-dom/client';
-        Promise.all([import('@/app/(app)/beeline/settings/workbench'), import('@/app/(app)/beeline/settings/workbench/wallet-service'), import('@/app/(app)/beeline/settings/workbench/service')])
-          .then(([{ default: Workbench }, { default: Wallet }, { default: Company }]) => run(Workbench, Wallet, Company))
+        Promise.all([import('@/app/(app)/beeline/settings/workbench'), import('@/app/(app)/beeline/settings/workbench/wallet')])
+          .then(([{ default: Workbench }, { default: Wallet }]) => run(Workbench, Wallet))
           .catch(error => { document.getElementById('result').textContent = 'load error: ' + (error?.stack ?? error); });
-        function run(Workbench, Wallet, Company) {
+        function run(Workbench, Wallet) {
         globalThis.__server = { wallet: true, active: true, ops: [] };
         globalThis.__pushes = [];
         const has = id => !!document.querySelector('[data-testid="' + id + '"]');
@@ -31,16 +31,11 @@ describe('workbench tool tap in the desktop web renderer', () => {
         setTimeout(() => {
           output.row = text('connectors-company-coinbase');
           document.querySelector('[data-testid="connectors-company-coinbase"]').click();
-          setTimeout(() => { output.detailsAfterTap = has('connectors-wallet-details'); root.render(<Company />); }, 0);
+          setTimeout(() => { output.detailsAfterTap = has('connectors-wallet-details'); output.pushes = [...globalThis.__pushes]; root.render(<Wallet />); }, 0);
         }, 1200);
         setTimeout(() => {
-          output.detailsLater = has('connectors-wallet-details');
-          document.querySelector('[data-testid="company-item-wallet"]').click();
-          output.pushes = globalThis.__pushes;
-          root.render(<Wallet />);
-        }, 1800);
-        setTimeout(() => {
-          output.explainer = text('wallet-service-screen');
+          output.title = text('wallet-header');
+          output.permissions = text('wallet-permissions');
           document.getElementById('result').textContent = JSON.stringify(output);
         }, 3000);
         }`,
@@ -91,10 +86,10 @@ describe('workbench tool tap in the desktop web renderer', () => {
       console.log('Workbench tool tap desktop web:', result.result);
       const proof = JSON.parse(result.result);
       expect(proof.row).toContain('Coinbase');
-      expect(proof.pushes).toEqual(['/beeline/settings/workbench/service', '/beeline/settings/workbench/wallet-service']);
+      expect(proof.pushes).toEqual(['/beeline/settings/workbench/wallet']);
       expect(proof.detailsAfterTap).toBe(false);
-      expect(proof.detailsLater).toBe(false);
-      expect(proof.explainer).toContain('Your agents can prepare wallet actions');
+      expect(proof.title).toContain('Coinbase');
+      expect(proof.permissions).toContain('Your agents can prepare wallet actions');
     } finally {
       await rm(directory, { recursive: true, force: true });
     }

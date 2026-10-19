@@ -55,7 +55,7 @@ async function render(): Promise<ReactTestRenderer> {
 }
 
 function openStatus(renderer: ReactTestRenderer) {
-  act(() => { renderer.root.findByType('SettingsRow' as never).props.trailingPress.onPress(); });
+  act(() => { renderer.root.findAllByType('SettingsRow' as never).find((row: any) => row.props.trailingPress)!.props.trailingPress.onPress(); });
   return renderer.root.findAllByType('HullActionSheetRow' as never);
 }
 
@@ -96,6 +96,8 @@ describe('App detail', () => {
     await act(async () => { reconnect.props.onPress(); });
     expect(navigation.push).toHaveBeenCalledWith({ pathname: '/beeline/settings/workbench/connect',
       params: { workspaceId: 'ws', viewerId: 'human-dani', connectorId: 'trusty-squire' } });
+    const row = renderer.root.findByProps({ testID: 'app-detail-reconnect' });
+    expect(row.props.title).toBe('Trusty Squire'); expect(row.props.action).toBe('Connect');
   });
 
   it('keeps the last row above the system navigation bar', async () => {

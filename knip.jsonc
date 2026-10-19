@@ -76,6 +76,7 @@
         "scripts/render-waveform-proof.mjs",
         "scripts/room-viewport-proof.tsx",
         "scripts/viewer-dock-overflow-{proof,native}.tsx",
+        "scripts/viewer-dock-keyboard-native.tsx",
         // The native status fixture is bundled through Gradle's entryFile override.
         "scripts/status-band-native-entry.js",
         "scripts/unread-controls-native-proof.tsx",

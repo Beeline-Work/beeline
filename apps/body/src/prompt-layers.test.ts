@@ -42,13 +42,15 @@ const TOOL_SOURCES = [
 
 const repoRoot = resolve(import.meta.dirname, '../../..');
 
+/** Headings and labels that several layers name on purpose. They state no rule, so a shared copy cannot drift. */
+const SHARED_LABELS = new Set(['intent', 'memory']);
+
 function sentences(text: string): string[] {
   return text
     .replace(/[`*]/g, '')
     .split(/(?<=[.!?])\s+|\n+/)
     .map((sentence) => sentence.replace(/^\s*(?:[-#>|]+\s*)+/, '').replace(/\s+/g, ' ').trim())
-    // A rule has at least two words; a lone word is a label or heading, never a rule.
-    .filter((sentence) => /\p{L}+\s+\p{L}/u.test(sentence));
+    .filter((sentence) => /\p{L}/u.test(sentence) && !SHARED_LABELS.has(sentence.toLowerCase()));
 }
 
 /** Every string a source file writes, with template holes as a line break so no sentence spans one. */
@@ -162,7 +164,7 @@ describe('one rule, one layer', () => {
       'Then call report(status) once',
       'Heading that is long enough',
     ]);
-    expect(sentences('Tag to talk.\n## Intent')).toEqual(['Tag to talk.']);
+    expect(sentences('Tag to talk.\n## Intent\nDone.')).toEqual(['Tag to talk.', 'Done.']);
   });
 
   it('rejects a short rule restated in the skill and names both places', () => {

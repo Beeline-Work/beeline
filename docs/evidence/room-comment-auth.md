@@ -48,23 +48,26 @@ For an owner-selected Squire GitHub connection, native `gh` uses its supported
 HTTP Unix socket transport to forward requests through the current task's
 Squire relay and `use_credential`. The personal token stays in Squire. With no
 selected personal connection, native `gh` keeps the repository App environment.
-Other personal transports retain their existing connected tools; the launcher
-directs the caller there rather than substituting a Squire account. The socket
+For managed OAuth and registry MCP, the launcher translates the narrow
+issue-comment API operation to the connected provider tool through the existing
+sealed broker, preserving turn, grant and owner authorization. Refusals do not
+fall back to the repository App. The socket
 path is exercised on Linux; Windows transport behavior is not demonstrated.
 There is no new permission prompt, denial rule, or App connector control.
 
 `room-github-auth.test.ts` runs real native `gh api` to post an issue comment
 through the sealed personal-route fixture, returning comment id 42. It also
 checks the default App route when the key was only discovered. The server
-integration test executes agent discovery followed by the owner's Connectors
-action and verifies the resulting connection selection. These are executable
+integration test executes discovery, owner selection, disconnect, retained-key
+rediscovery and reselection, verifying that historical selection does not
+restore personal precedence after disconnect. These are executable
 route proofs, not live GitHub comments.
 
 GitHub's [configuration reference](https://cli.github.com/manual/gh_config)
 documents the HTTP Unix socket transport; native `gh` keeps argument parsing,
 pagination, JSON filtering and GraphQL handling.
 
-## Live evidence and remaining proof
+## Live evidence and proof limits
 
 On 2026-10-19, `connect ensure github` selected Squire API. Vault metadata
 listed only `buzzrouter-public-discovery`. Its sealed GET `/user/installations`
@@ -74,10 +77,12 @@ installation/repositories` listed `Beeline-Work/beeline`; this proves repository
 selection, not the installation's Issues permission level.
 
 The brief's public App lookup reports `issues:write`. Installation 155845498's
-live grant remains unverified: the earlier browser attempt reached GitHub sudo
-confirmation. No App or installation permissions were changed. Checking the
-grant requires the owner's authenticated installation settings; do not infer
-the installation grant from the App's public configuration.
+direct grant lookup remains unverified: an earlier browser attempt reached
+GitHub sudo confirmation, and the test-phase API lookup returned 404. Public
+App configuration reports Issues write; the successful App comment below
+proves effective write access to the approved target, not an independent
+installation permission inventory. No permissions were changed or expanded;
+no further sudo attempt is required for this proof.
 
 One live authorized comment was then posted on this fix's own draft PR, leaving
 #2594 untouched: [comment 6272750153](https://github.com/Beeline-Work/beeline/pull/2609#issuecomment-6272750153),
@@ -95,8 +100,8 @@ existing corner launcher supplied App authentication. It does not prove that
 the deployed parent Room uses this branch, nor isolate the installation's
 Issues permission from its Pull requests permission (the target is a PR).
 The real Room turn boundary and personal-connection selection are exercised
-separately by the executable regressions above. The production parent-Room turn
-remains untested until an updated helper is available. No helper restart,
+separately by the executable regressions above. The deployed production parent-Room turn remains untested. The later isolated
+native proof below exercises the real Room runtime without updating that helper. No helper restart,
 release, production deployment, or permission expansion was performed.
 
 PR #2599 head `8f68adbe1bd0f7de3b8027931b78a3db4559212f` was inspected.
@@ -105,16 +110,63 @@ its guidance and corner git launcher untouched. Room personal-account command
 routing is implemented here; native personal git push remains outside this fix.
 Squire personal credential injection into native git remains #2599's work.
 
-## Validation
+## Parent-Room-equivalent native proof
 
-- `npm run corner:prepare` passed.
-- Root `npm run typecheck` passed.
-- Room authentication, retention, checkout, inspection mount, permissions and
-  startup suites pass (53 tests).
-- The complete app-connections integration suite passes (74 tests), including
-  owner connection selection, ownership, grants and route authorization.
-- `git diff --check` passed.
-- No-mistakes could not start: initialization reported that the shared
-  `no-mistakes` remote already points to `/tmp/consolidated-nm/repos/2f0d150a1ff5.git`.
-  That existing remote was not replaced; no pipeline review or CI success is
-  claimed.
+The supplied `/tmp/jellybean-2609-final-proof-output.log` records a completed
+proof against pipeline head `79f72e332063c30dc36bba5c9175c5b8bdb7b5b8`.
+The supplied `proof-2609` driver, helper and ACP harness were inspected read-only;
+its `final-source` copies of `monolith-room-turn.ts` and `room-github-auth.ts`
+match this worktree byte-for-byte. The bundle README still names an earlier
+source head; the final run and matching source are the evidence for this head.
+The live write was not repeated during this test phase.
+
+A disposable Docker container provided its own PID 1 systemd, proof user,
+HOME, XDG directories and private user bus. `isolatedNativeProof` passed.
+Transient native services ran real `RoomRuntimeCoordinator` checkout,
+`MonolithRoomTurnLoop`, an actual `AcpClient` child, native `gh` and bubblewrap.
+The original Room loop from `9dce27227` returned `REFUSED gh: HTTP 403` with no
+live write. The patched loop returned `READONLY_PASS PASS`, updating existing
+comment 6272750153 as `beeline-app[bot]`. The final result was
+`{"proof":"room-comment-auth","passed":true,"writes":1}`. Both services exited
+successfully. Exactly one PATCH updated the existing approved PR #2609 comment;
+no new issue or duplicate comment was created. The harness checked that writing
+the Room checkout failed with EROFS or EACCES before attempting the comment.
+
+This is parent-Room-equivalent live-service proof, not deployed behavior.
+Repository contents, server DTOs, command delivery and the token issuer were
+fixtures; a deterministic ACP child executed the operation without a model.
+An ephemeral scoped capability forwarded only the authenticated PATCH to the
+existing host repository App launcher; no provider token was extracted. No
+production helper, deployment, merge, permission expansion or extra approval
+flow was involved.
+
+Verdict: the reported Room authentication failure is reproduced before and
+resolved after the patch in the isolated native proof. Personal Squire,
+managed OAuth and registry MCP routes, disconnect/rediscovery selection and
+existing authorization refusals are covered by executable regressions as the
+authorized stand-in for unprovisioned live personal accounts. They are not
+claimed as live provider coverage. A separate installation permission inventory
+and deployed production behavior remain unverified; neither is represented as
+a passing live scenario.
+
+## Focused test-phase validation
+
+The isolated no-mistakes setup is now repaired: this assigned test phase runs
+inside its active worktree at the exact pipeline head above with dependencies
+available. The earlier shared-remote initialization conflict is historical,
+not a current blocker. This phase did not initialize or control another run;
+review, lint, push, PR and CI phases remain the outer executor's responsibility.
+
+The native-gh authentication suite passes (10 tests), including generated
+launcher execution for all three personal transports and refusal behavior.
+The focused lifecycle and Room turn checks initially failed to collect because
+workspace dependency build outputs had been removed. Restoring those outputs
+with `npm exec -- turbo run build --filter=@beeline/server^... --filter=@beeline/body^...`
+repairs that setup issue; it requires no product change.
+
+After restoring prerequisites, the focused server lifecycle regression passes
+(1 test) and the Room comment/token-rotation and explicit-personal-credential
+regressions pass (2 tests). Together with the native-gh suite, all 13 selected
+tests pass. No full suite, linter or static-analysis check was run in this
+phase. Generated workspace build outputs and task logs were removed afterward;
+prepared dependencies were retained.

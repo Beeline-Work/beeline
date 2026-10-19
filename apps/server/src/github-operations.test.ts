@@ -8,6 +8,9 @@ import { GitHubOperations } from './github-operations.js';
 import { readAgentCommands } from './agent-command.js';
 import { DaemonService } from './daemon-service.js';
 import { LiveHub } from './live.js';
+import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
+import { transformSync } from 'esbuild';
 
 const HUMAN = 'a'.repeat(64);
 const REVIEWER = 'b'.repeat(64);
@@ -109,7 +112,14 @@ describe('GitHub phone operations', () => {
     expect(lifecycle).toMatchObject({ pr: { headSha: newHead }, checks: 'passing',
       checksSummary: { total: 31, status: 'passing' } });
     // Exercise the exact formatter used by the visible corner header.
-    const { cornerStatusLine } = await import('../../mobile/sources/buzz/corner-status-line.js');
+    // Server CI does not install Expo. Compile the pure formatter without
+    // loading the mobile app's Expo tsconfig through Vite.
+    const formatter = transformSync(readFileSync(new URL('../../mobile/sources/buzz/corner-status-line.ts', import.meta.url), 'utf8'), {
+      loader: 'ts', format: 'cjs', tsconfigRaw: {},
+    });
+    const module = { exports: {} };
+    runInNewContext(formatter.code, { module, exports: module.exports });
+    const { cornerStatusLine } = module.exports as typeof import('../../mobile/sources/buzz/corner-status-line.js');
     expect(cornerStatusLine(lifecycle, false)).toBe('PR #1 · all 31 tests passed');
     const facts = () => database.query(`SELECT 1 FROM messages WHERE room_id=$1
       AND system_event->>'kind'='check-passed' AND system_event->'object'->>'headSha'=$2`, [corner, newHead]);

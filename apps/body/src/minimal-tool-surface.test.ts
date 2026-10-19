@@ -29,7 +29,7 @@ const names = [
   'set_corner_hold',
   'close_corner',
   'close_corner_pr',
-  'post_to_corner',
+  'post',
   'post_artifact',
   'request_grant',
   'connect',
@@ -166,17 +166,21 @@ describe('minimal agent surface', () => {
   });
 
   it('posts a public note without dispatching any wake/order/report', async () => {
-    await callAgentTool('post_to_corner', { address: 'target', text: 'Public note' }, 'note');
+    await callAgentTool('post', { address: 'target', text: 'Public note' }, 'note');
     expect(calls.map((call) => call.operation)).toEqual(['postCornerMessage']);
+  });
+  it('defaults post to the active corner', async () => {
+    await callAgentTool('post', { text: 'Active corner note' }, 'default');
+    expect(calls[0]).toMatchObject({ operation: 'postCornerMessage', input: { cornerId: 'corner' } });
   });
   it('requires explicit targets and rejects legacy aliases before side effects', async () => {
     for (const [name, args] of [
-      ['post_to_corner', { text: 'note' }],
-      ['post_to_corner', { cornerId: 'target', text: 'note' }],
+      ['post', { cornerId: 'target', text: 'note' }],
       ['approve_merge', { address: 'target', head: 'a'.repeat(40) }],
       ['read', { address: 'target' }],
       ['read', { facet: 'brief', resource: 'target' }],
       ['list_rooms', {}],
+      ['post_to_corner', { address: 'target', text: 'note' }],
     ] as const) await expect(callAgentTool(name, args, 'invalid')).rejects.toThrow();
     expect(calls).toEqual([]);
   });

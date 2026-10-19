@@ -1,4 +1,5 @@
 import React from 'react';
+import { Ionicons } from '@expo/vector-icons';
 import { Pressable, Text, View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
@@ -8,7 +9,7 @@ export function TranscriptReference({ children, viewer = false, onPress, accessi
   accessibilityLabel?: string; testID?: string;
 }) {
   const contents = viewer ? <View style={styles.viewerLine}>
-    <ViewerConversationRing />
+    <ViewerConversationIcon />
     <Text numberOfLines={1} style={[styles.text, styles.viewerText]}>{children}</Text>
   </View> : <Text numberOfLines={2} style={styles.text}>{children}</Text>;
   return onPress ? <Pressable accessibilityRole="button" accessibilityLabel={accessibilityLabel}
@@ -16,19 +17,16 @@ export function TranscriptReference({ children, viewer = false, onPress, accessi
     : <View style={styles.reference} testID={testID}>{contents}</View>;
 }
 
-/** The same gold circle used by the floating viewer composer. */
-export function ViewerConversationRing() {
-  return <View style={styles.ring} accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
-    <View style={styles.dot} />
-  </View>;
+/** Shared conversation icon for viewer controls and message provenance. */
+export function ViewerConversationIcon() {
+  return <Ionicons name="chatbubble-outline" size={20} color={styles.icon.color}
+    accessibilityElementsHidden importantForAccessibility="no-hide-descendants" />;
 }
 
 const styles = StyleSheet.create((theme) => ({
   reference: { minWidth: 0, marginBottom: theme.buzz.space.xs },
   text: { ...theme.buzz.type.machine, color: theme.buzz.ledgerQuiet },
   viewerLine: { flexDirection: 'row', alignItems: 'center', gap: theme.buzz.space.xs, minWidth: 0 },
-  viewerText: { flexShrink: 1, minWidth: 0 },
-  ring: { width: 14, height: 14, borderWidth: 1, borderColor: theme.buzz.accent,
-    borderRadius: 14 / 2, alignItems: 'center', justifyContent: 'center' },
-  dot: { width: 8, height: 8, borderRadius: 8 / 2, backgroundColor: theme.buzz.accent },
+  viewerText: { ...theme.buzz.type.meta, flexShrink: 1, minWidth: 0 },
+  icon: { color: theme.buzz.accent },
 }));

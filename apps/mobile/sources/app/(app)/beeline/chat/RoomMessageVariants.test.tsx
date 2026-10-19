@@ -563,6 +563,7 @@ describe('Room message variant components', () => {
     expect(steer.attachments).toEqual([null]);
     const reference = render(steer.replyReference).root.findByProps({ testID: 'viewer-context-viewer-send', accessibilityRole: 'button' });
     expect(reference.findByType('Text' as never).props.children).toBe('Viewing Checkout mock');
+    expect(reference.findByType('Ionicons' as never).props.name).toBe('chatbubble-outline');
     act(() => reference.props.onPress());
     expect(openArtifactViewer).toHaveBeenCalledWith(expect.objectContaining({ name: 'mock.html' }), false, undefined);
   });

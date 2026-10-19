@@ -396,7 +396,7 @@ export class GitHubAppClient {
       throw new Error('invalid GitHub installation id');
     }
     const hasBody = Boolean(options.repositoryIds?.length) || Boolean(options.permissions);
-    const request: RequestInit = {
+    const response = await fetch(`${this.#config.apiBaseUrl}/app/installations/${installationId}/access_tokens`, {
       method: 'POST',
       headers: {
         ...githubHeaders(await this.appJwt()),
@@ -410,16 +410,21 @@ export class GitHubAppClient {
             }),
           }
         : {}),
-    };
-
-    const url = `${this.#config.apiBaseUrl}/app/installations/${installationId}/access_tokens`;
-    const delays = [250, 1_000];
-    let response = await fetch(url, request);
-    for (const delay of delays) {
-      if (![500, 502, 503, 504].includes(response.status)) break;
-      await response.body?.cancel();
-      await new Promise<void>(resolve => setTimeout(resolve, delay));
-      response = await fetch(url, request);
+    });
+    if (!response.ok) {
+      try {
+        const requestId = response.headers.get('x-github-request-id') ?? '';
+        const contentType = response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase();
+        const mediaType = contentType === 'application/json' || contentType === 'application/vnd.github+json'
+          ? 'json' : contentType === 'text/html' ? 'html' : contentType ? 'other' : 'missing';
+        // Only bounded correlation metadata; never retain bodies, credentials or request scope.
+        console.warn('[github-installation-token]', {
+          status: response.status,
+          requestId: requestId.length <= 128 && /^[0-9a-f]+(?::[0-9a-f]+)+$/i.test(requestId)
+            ? requestId : 'unavailable',
+          mediaType,
+        });
+      } catch { /* Diagnostics must not replace the original GitHub failure. */ }
     }
     const body = await jsonObject(response, 'GitHub installation token');
     const token = typeof body.token === 'string' ? body.token : '';

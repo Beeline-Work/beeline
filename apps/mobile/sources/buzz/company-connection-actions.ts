@@ -53,6 +53,7 @@ export function useConnectCompanyApp(scope: WorkbenchScope) {
         if (!helper) throw new Error('Connect a computer to use this app');
         const started = await getWorkbenchSource().connectApp({ workspaceId: scope.workspaceId, app: app.appName, helperId: helper.id, registryServerName: app.preferredRoute ? undefined : app.registryServerName, registryVersion: app.preferredRoute ? undefined : app.registryVersion, preferredRoute: app.preferredRoute });
         if (started.authorizationUrl) await openAppSignIn(started.authorizationUrl, { ...scope, appId: started.appId });
+        else openCompanyItem({ kind: 'app', appId: started.appId }, scope);
       }
       await readSharedWorkbench(scope, { refresh: true });
     } catch (cause) { setError(appErrorCopy(cause instanceof Error ? cause.message : 'Connecting failed')); }

@@ -25,7 +25,12 @@
       "body": "Checks passed on PR 88 at head 5d6e7f8.",
       "commandReason": "corner_check"
     },
-    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
+    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above.",
+    "brief": {
+      "fileLines": [
+        "apps/server/src/auth.ts"
+      ]
+    }
   },
   "tools": [
     "no_reply_needed"

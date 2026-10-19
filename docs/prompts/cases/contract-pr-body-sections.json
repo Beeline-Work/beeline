@@ -26,7 +26,12 @@
       "fromName": "dana",
       "commandReason": "human_tag"
     },
-    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
+    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above.",
+    "brief": {
+      "fileLines": [
+        "apps/server/src/auth.ts"
+      ]
+    }
   },
   "tools": [
     "Bash"
@@ -50,5 +55,11 @@
         }
       }
     ]
+  },
+  "messages": [
+    "[message id: m1]\ndana [message]: Reproduction expiry-1: GET /me with an expired token returned 200 before the fix and returns 401 after it, run against the local server with curl."
+  ],
+  "toolResults": {
+    "Bash": "exit=0\nabc1234 Refuse expired tokens"
   }
 }

@@ -27,7 +27,12 @@
       "body": "Checks are green on PR 88.",
       "commandReason": "corner_review_dispatch"
     },
-    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above."
+    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above.",
+    "brief": {
+      "fileLines": [
+        "apps/server/src/auth.ts"
+      ]
+    }
   },
   "messages": [
     "[message id: m1]\njuniper [message]: PR 88 is up at head 1a2b3c4."

@@ -40,7 +40,7 @@ const option = (name: string): string | undefined => {
 
 const SAMPLES = 3;
 const NEED = 2;
-const MAX_STEPS = 4;
+const MAX_STEPS = 6;
 const SILENT_TOOL_NAME = 'no_reply_needed';
 // Fixed so a case's prompt does not change with the runner's own host.
 const FIXED_MEMORY_MAX_BYTES = 32 * 1024 ** 3;
@@ -210,6 +210,22 @@ function replayPrompt(source: PromptSource, testCase: PromptCase): string {
   ].join('\n');
 }
 
+/**
+ * Models wrap the JSON answer in prose or code fences, and sometimes add a
+ * stray closing brace; grade the longest object from the first `{` that parses.
+ */
+function parseAnswer(raw: string): Partial<Transcript> {
+  const start = raw.indexOf('{');
+  for (let end = raw.lastIndexOf('}'); start !== -1 && end > start; end = raw.lastIndexOf('}', end - 1)) {
+    try {
+      return JSON.parse(raw.slice(start, end + 1)) as Partial<Transcript>;
+    } catch {
+      // Try the next shorter candidate.
+    }
+  }
+  throw new Error('no JSON object in the answer');
+}
+
 interface CaseResult {
   readonly id: string;
   readonly section: string;
@@ -231,7 +247,7 @@ function grade(dir: string, cases: readonly PromptCase[]): CaseResult[] {
       .sort();
     const verdicts = samples.map((file) => {
       try {
-        const answer = JSON.parse(readFileSync(join(dir, file), 'utf8')) as Partial<Transcript>;
+        const answer = parseAnswer(readFileSync(join(dir, file), 'utf8'));
         const calls: ToolCall[] = Array.isArray(answer.calls)
           ? answer.calls.map((call) => ({ name: String(call?.name ?? ''), args: (call?.args ?? {}) as Record<string, unknown> }))
           : [];

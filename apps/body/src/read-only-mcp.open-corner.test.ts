@@ -416,12 +416,12 @@ describe('open_corner over the grok wire', () => {
     expect(door.calls.some((call) => call.operation === 'archiveCorner')).toBe(false);
   }, 30_000);
 
-  it('R1: posts to the explicitly addressed corner from a corner turn', async () => {
+  it('R1: defaults post to the active corner from a corner turn', async () => {
     const door = await daemonDoor();
     const { result, error } = await callTool(
       door.origin,
-      {text: 'A note',address:CORNER},
-      { name: 'post_to_corner', cornerId: CORNER },
+      {text: 'A note'},
+      { name: 'post', cornerId: CORNER },
     );
 
     expect(error).toBeUndefined();
@@ -431,12 +431,12 @@ describe('open_corner over the grok wire', () => {
     );
   }, 30_000);
 
-  it('R1: refuses post_to_corner outside a corner when no corner is named', async () => {
+  it('R1: refuses post outside a corner when no corner is named', async () => {
     const door = await daemonDoor();
-    const { result } = await callTool(door.origin, {text: 'A note'}, { name: 'post_to_corner' });
+    const { result } = await callTool(door.origin, {text: 'A note'}, { name: 'post' });
 
     expect(result?.isError).toBe(true);
-    expect(result?.content[0]?.text).toContain('required: address');
+    expect(result?.content[0]?.text).toContain('address is required outside a corner');
     expect(door.calls.some((call) => call.operation === 'postCornerMessage')).toBe(false);
   }, 30_000);
 
@@ -449,7 +449,7 @@ describe('open_corner over the grok wire', () => {
       ['read', { facet:'pr', address: CORNER }],
       ['read', { facet:'corners' }],
       ['read', { facet:'members', address: CORNER }],
-      ['post_to_corner', { address: CORNER, text: 'A note' }],
+      ['post', { address: CORNER, text: 'A note' }],
     ] as const) {
       const { result } = await callTool(door.origin, args, { name });
       expect(result?.isError, name).not.toBe(true);

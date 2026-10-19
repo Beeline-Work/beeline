@@ -1007,15 +1007,15 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
     }
   },
   {
-    "name": "post_to_corner",
+    "name": "post",
     "description": "Post a public message at address. Tag to talk. Order to assign work. Tags wake named members to reply here, with no assignment or report owed; receipt names who woke or why not.",
     "inputSchema": {
       "type": "object",
       "properties": {
         "text": {"type": "string", "minLength": 1, "maxLength": 16000},
-        "address": {"type": "string", "description": "Explicit target corner address."}
+        "address": {"type": "string", "description": "Target Room or corner id; omitted address uses the active corner."}
       },
-      "required": ["address", "text"],
+      "required": ["text"],
       "additionalProperties": false
     }
   },

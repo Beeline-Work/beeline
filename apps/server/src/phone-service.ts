@@ -6098,7 +6098,8 @@ export class PhoneService {
         await database.query<{ created_by: string | null; kind: string }>(
           `SELECT room.created_by,fact.kind
            FROM rooms room JOIN corner_facts fact ON fact.corner_id=room.id
-           WHERE room.id=$1 AND room.parent_id IS NOT NULL FOR UPDATE OF room,fact`,
+           WHERE room.id=$1 AND room.parent_id IS NOT NULL
+           FOR KEY SHARE OF room FOR UPDATE OF fact`,
           [roomId],
         )
       ).rows[0];
@@ -8011,11 +8012,15 @@ export class PhoneService {
       const closingCorners = await database.query<{ id: string }>(
         `SELECT id FROM rooms WHERE parent_id IS NOT NULL AND archived_at IS NULL
            AND id IN (SELECT corner_id FROM corner_facts WHERE owner_agent_id=ANY($1))
-         ORDER BY id FOR UPDATE`,
+         ORDER BY id FOR KEY SHARE`,
         [gone],
       );
-      for (const corner of closingCorners.rows)
+      // Serialize lifecycle changes, then take command locks before the room
+      // archival write, matching closeCornerState and the merge webhook.
+      for (const corner of closingCorners.rows) {
+        await lockCornerLifecycle(database, corner.id);
         await cancelCornerAgentCommands(database, corner.id);
+      }
       await database.query(
         `UPDATE rooms SET archived_at=now(),updated_at=now()
          WHERE id=ANY($1::uuid[])`,

@@ -1358,7 +1358,7 @@ describe('Reproduction R5a: entry paths lock the run before corner rows', () => 
     }
     const lock = recording.calls.findIndex(call => call.sql === 'SELECT pg_advisory_xact_lock(hashtext($1))'
       && call.values?.[0] === workflowRunLockKey(lockId));
-    const rowLock = recording.calls.findIndex(call => /FOR UPDATE/.test(call.sql) && /FROM (corner_facts|rooms)|JOIN corner_facts/.test(call.sql)
+    const rowLock = recording.calls.findIndex(call => /FOR (UPDATE|KEY SHARE)/.test(call.sql) && /FROM (corner_facts|rooms)|JOIN corner_facts/.test(call.sql)
       || /^UPDATE rooms/.test(call.sql));
     expect(rowLock, 'path exercised a corner row lock or update').toBeGreaterThanOrEqual(0);
     expect(lock, 'corner run lock was taken').toBeGreaterThanOrEqual(0);
@@ -2305,6 +2305,9 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
     githubRollupState = 'passed';
     // Nothing merges until the implementer asks.
     expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
+    const assignmentsBefore = (await db.query(`SELECT DISTINCT turn_request_id FROM agent_commands
+      WHERE room_id=$1 AND agent_id=$2 AND action IN ('input','resume') AND state IN ('pending','claimed')`,
+      [cornerId, A])).rowCount;
     const wiredDaemon = new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
       (input, confirmZeroChecks) => github.prChecksStatus(input, confirmZeroChecks), undefined, undefined, undefined, undefined, undefined, undefined,
       undefined, undefined, undefined, (id: string) => github.landCorner(id));
@@ -2316,7 +2319,11 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
     await mergedWebhook(cornerId, 7, SHA);
     expect(await currentState(cornerId)).toBe('landed');
     expect(await projected(cornerId)).toBe('landed');
-    expect(await reasons(cornerId, A)).toEqual([...implementerBefore, 'corner_land']);
+    expect((await reasons(cornerId, A)).filter(reason => reason !== 'corner_close'))
+      .toEqual([...implementerBefore, 'corner_land']);
+    expect((await db.query(`SELECT 1 FROM agent_commands
+      WHERE room_id=$1 AND agent_id=$2 AND action='stop' AND reason='corner_close'`, [cornerId, A])).rowCount)
+      .toBe(assignmentsBefore);
     expect(
       (await db.query(`SELECT 1 FROM rooms WHERE id=$1 AND archived_at IS NOT NULL`, [cornerId])).rowCount,
     ).toBe(1);

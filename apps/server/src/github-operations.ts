@@ -18,6 +18,7 @@ import {
 import { recordPersonMergeYes } from './corner-merge-approval.js';
 import { assertCornerBriefAllowsMerge } from './corner-brief.js';
 import { cancelCornerAgentCommands } from './corner-close.js';
+import { retryOnDeadlock } from './migration-retry.js';
 import { deleteCornerWakeSources } from './corner-wake-cleanup.js';
 import { abandonCornerWorkflowRuns } from './workflow-runs.js';
 import {
@@ -2270,7 +2271,8 @@ export class GitHubOperations {
   ) {
     const mergeKey = `github:pull-request:merged:${pullRequest.url}`;
     let archived = false;
-    await database.transaction(async (database) => {
+    await retryOnDeadlock(() => database.transaction(async (database) => {
+      archived = false;
       await lockCornerLifecycle(database, target.corner_id);
       if (unfinishedClaimHead) {
         const claim = (await unfinishedCornerMergeClaims(database, target.corner_id))[0];
@@ -2307,6 +2309,11 @@ export class GitHubOperations {
               headSha: pullRequest.headSha,
             }
           : undefined);
+      if (!(await database.query(`SELECT 1 FROM rooms WHERE id=$1 AND archived_at IS NULL`,
+        [target.corner_id])).rowCount) return;
+      // Command output locks commands before dispatch takes FOR SHARE on rooms.
+      // Cancel commands before updating rooms, matching that shared lock order.
+      await cancelCornerAgentCommands(database, target.corner_id);
       const changed = await database.query(
         `UPDATE rooms SET archived_at=now(),updated_at=now()
          WHERE id=$1 AND archived_at IS NULL`,
@@ -2314,7 +2321,6 @@ export class GitHubOperations {
       );
       if (!changed.rowCount) return;
       archived = true;
-      await cancelCornerAgentCommands(database, target.corner_id);
       await abandonCornerWorkflowRuns(database, target.corner_id);
       await deleteCornerWakeSources(database, [target.corner_id]);
       await database.query(
@@ -2396,7 +2402,7 @@ export class GitHubOperations {
         kind: 'merged',
         contents: { mergeVerdict: 'merged', pullRequestUrl: pullRequest.url },
       });
-    });
+    }), { attempts: 3, delayMs: attempt => 50 * attempt + Math.floor(Math.random() * 50) });
     if (!archived) return;
     this.onRoomChanged?.(target.corner_id);
     this.onRoomChanged?.(target.parent_id);

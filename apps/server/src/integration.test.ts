@@ -9588,6 +9588,35 @@ describe('monolith integration', () => {
     expect(stored.rows[0]).toEqual({ corners: 1, cards: 1, commands: 1, briefs: 1 });
   });
 
+  it('Reproduction R1: open and revise accept formatted reproduction and multi-line stand-ins', async () => {
+    await database.query(`UPDATE rooms SET repository_key='example/repository',repository_resolution='repository' WHERE id=$1`, [ROOM]);
+    const proofs = [
+      '**Reproduction R1:** steps fail',
+      '## Reproduction\nReproduction not feasible: reason\nStand-in: check',
+      '## Reproduction\nReproduction not feasible: reason Stand-in: check',
+      '',
+    ];
+    for (const [index, proof] of proofs.entries()) {
+      const content = `## Intent\nBug fix.\n${proof}`;
+      const opened = await daemonOperation('createCorner', {
+        roomId: ROOM, requestId: `r1-open-${index}`, name: `Proof-${index}`,
+        objective: 'Check reproduction warnings', repository: 'example/repository',
+        brief: { content },
+      });
+      expect(opened.status).toBe(200);
+      const created = await opened.json() as { cornerId: string; warnings?: string[] };
+      expect(Boolean(created.warnings?.length)).toBe(index === 3);
+      const revised = await daemonOperation('reviseCornerBrief', {
+        roomId: ROOM, requestId: `r1-revise-${index}`, cornerId: created.cornerId,
+        expectedRevision: 1, brief: { content, change: 'Repeat reproduction proof' },
+      });
+      expect(revised.status).toBe(200);
+      const result = await revised.json() as { warnings?: string[] };
+      expect(Boolean(result.warnings?.length)).toBe(index === 3);
+      console.info(`Reproduction R1: format=${index + 1}; open warnings=${created.warnings?.length ?? 0}; revise warnings=${result.warnings?.length ?? 0}`);
+    }
+  });
+
   it('commits a full brief and its Room file before waking the worker, then preserves the bytes', async () => {
     const source = await mkdtemp(join(tmpdir(), 'beeline-brief-source-'));
     await writeFile(join(source, 'approved-mock.txt'), 'approved visual dimensions');

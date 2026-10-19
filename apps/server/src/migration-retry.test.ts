@@ -1,5 +1,13 @@
+import { randomUUID } from 'node:crypto';
+import { Pool } from 'pg';
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { PostgresDatabase } from './database.js';
 import { isDeadlock, lockedTables, logLockHolders, retryMigrationStep, retryOnDeadlock, splitMigrationStatements } from './migration-retry.js';
+
+// Optional real PostgreSQL proof: loopback only, unique schema, never a shared account.
+const postgresUrl = process.env.BEELINE_MIGRATION_LOCK_TEST_POSTGRES_URL;
+if (postgresUrl && !['127.0.0.1', 'localhost', '[::1]'].includes(new URL(postgresUrl).hostname))
+  throw new Error('migration lock proofs require an isolated loopback PostgreSQL');
 
 const deadlock = () => Object.assign(new Error('deadlock detected'), { code: '40P01' });
 
@@ -149,5 +157,39 @@ describe('lock holder diagnostic', () => {
       onLockTimeout: () => logLockHolders(database, 'schema', 'ALTER TABLE identities ADD COLUMN x int'),
     })).rejects.toThrow('canceling statement due to lock timeout');
     expect(warn).toHaveBeenCalledWith('[migration] schema lock holder diagnostic failed: permission denied for pg_locks');
+  });
+
+  it.skipIf(!postgresUrl)('names the second session that holds the table in real PostgreSQL', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const schema = `lock_proof_${randomUUID().replaceAll('-', '')}`;
+    const admin = new Pool({ connectionString: postgresUrl, max: 1 });
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    await admin.query(`CREATE TABLE ${schema}.lock_proof (id int)`);
+    const holder = new Pool({ connectionString: postgresUrl, max: 1, application_name: 'lock_proof_holder' });
+    const held = await holder.connect();
+    const database = new PostgresDatabase('', 1, { mode: 'migration', pool: new Pool({
+      connectionString: postgresUrl, max: 1, options: `-c search_path=${schema} -c lock_timeout=200ms`,
+    }) });
+    try {
+      await held.query(`BEGIN; SELECT count(*) FROM ${schema}.lock_proof`);
+      const holderPid = (await held.query<{ pid: number }>('SELECT pg_backend_pid() pid')).rows[0]!.pid;
+      const sql = 'ALTER TABLE lock_proof ADD COLUMN IF NOT EXISTS hidden boolean';
+      await expect(retryMigrationStep('proof 1/1', async () => { await database.query(sql); }, {
+        attempts: 1,
+        onLockTimeout: () => logLockHolders(database, 'proof 1/1', sql),
+      })).rejects.toMatchObject({ code: '55P03' });
+      const logged = warn.mock.calls.filter(([message]) => message === '[migration] lock holder').map(([, row]) => row);
+      expect(logged).toContainEqual(expect.objectContaining({
+        relation: 'lock_proof', granted: true, pid: holderPid, application_name: 'lock_proof_holder',
+        state: 'idle in transaction', query: 'SELECT pg_backend_pid() pid',
+      }));
+    } finally {
+      await held.query('ROLLBACK');
+      held.release();
+      await holder.end();
+      await database.close();
+      await admin.query(`DROP SCHEMA ${schema} CASCADE`);
+      await admin.end();
+    }
   });
 });

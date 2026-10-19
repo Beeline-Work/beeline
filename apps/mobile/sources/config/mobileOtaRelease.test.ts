@@ -113,6 +113,8 @@ describe('mobile OTA release governor', () => {
     ...ios.map(runtimeVersion => ({ platforms: 'ios', runtimeVersion, group: `ios-${runtimeVersion}` })),
   ] });
   const currentHistory = history(['31', '32', '33', '34', '35', '36', '37', '38'], ['29', '31', '32', '33', '34', '35']);
+  // Release-script runs read the committed pins from app.config.js.
+  const committedPins = { android: '40', ios: '36' };
 
   it('automatically retains the old pin after a pin bump, capped at six targets', () => {
     expect(releaseUpdateTargets(mobileRoot, pins, currentHistory, [])).toEqual([
@@ -169,13 +171,12 @@ describe('mobile OTA release governor', () => {
       '--production-history', snapshot, '--sha', '6e51856d', '--ref', 'main',
       '--ledger', join(directory, 'ledger.json')], { cwd: mobileRoot, encoding: 'utf8' });
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain('release_plan_targets=android@39,android@38,android@36,ios@36,ios@35,ios@34');
+    expect(result.stdout).toContain('release_plan_targets=android@40,android@38,android@36,ios@36,ios@35,ios@34');
     expect(result.stdout).toContain('pin-plus-two rule: dropping older production runtimes android@31, android@32, android@33, android@34, android@35, ios@29, ios@31, ios@32, ios@33');
     expect(result.stdout.match(/EXPO_RUNTIME_OVERRIDE=/g)).toHaveLength(6);
   });
 
   it('R1 keeps android@38 and ios@35 covered through publish planning', () => {
-    const pins = { android: '39', ios: '36' };
     const previous = currentHistory.currentPage.map(({ platforms, ...target }) => ({ ...target, platform: platforms }));
     const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-r1-'));
     const fakeEas = join(directory, 'fake-eas.sh');
@@ -216,7 +217,7 @@ esac
     expect(result.stdout).toContain('ios@35');
     expect(result.stdout).toContain('pin-plus-two rule: dropping older production runtimes android@31');
     expect(ledger.previousProductionTargets).toHaveLength(4);
-    for (const key of ['android@39', 'ios@36']) {
+    for (const key of ['android@40', 'ios@36']) {
       expect(result.stdout).toContain(`${key}: first production release on this runtime; rollback anchor = embedded update of this release's store binary`);
     }
     const noAnchor = spawnSync(process.execPath, [releaseScript, 'publish',
@@ -225,7 +226,7 @@ esac
       env: { ...process.env, EAS_CLI_PATH: fakeEas, OTA_EMBEDDED_ANCHOR_PLATFORMS: '' },
     });
     expect(noAnchor.status).toBe(1);
-    expect(noAnchor.stderr).toContain('no rollback anchor for android@39, ios@36');
+    expect(noAnchor.stderr).toContain('no rollback anchor for android@40, ios@36');
     expect(existsSync(join(directory, 'missing.json'))).toBe(false);
     const override = spawnSync(process.execPath, [releaseScript, 'publish',
       '--production-history', 'ignored.json', '--sha', '6e51856d', '--ref', 'main'], {
@@ -238,7 +239,7 @@ esac
 
   it('uses production-derived targets for an embedded rollback instead of the offline ledger subset', () => {
     const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-computed-rollback-'));
-    const targets = releaseUpdateTargets(mobileRoot, pins, currentHistory);
+    const targets = releaseUpdateTargets(mobileRoot, committedPins, currentHistory);
     const production = { currentPage: targets.map(target => ({
       ...target, platforms: target.platform, group: `current-${target.platform}-${target.runtimeVersion}`,
     })) };

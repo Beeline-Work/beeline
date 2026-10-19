@@ -136,9 +136,9 @@ class VoiceAudioService : Service() {
   override fun onBind(intent: Intent?): IBinder? = null
 
   companion object {
-    // Restore only after declaring foreground services in Google Play, restoring
-    // the service manifest entry and unblocking both permissions in app.config.js.
-    const val BACKGROUND_MICROPHONE_ENABLED = false
+    // Requires the Google Play foreground-service declaration, the service
+    // manifest entry and both permissions allowed in app.config.js.
+    const val BACKGROUND_MICROPHONE_ENABLED = true
     const val ACTION_START = "app.usebeeline.voice.START"
     const val ACTION_STOP = "app.usebeeline.voice.STOP"
     const val ACTION_STOP_REQUESTED = "app.usebeeline.voice.STOP_REQUESTED"

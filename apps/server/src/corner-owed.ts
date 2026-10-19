@@ -199,6 +199,7 @@ function cornerOwedRowsSql(where: string, bulk: boolean, corner?: string, parent
         : ''
     }
     WHERE item.deleted_at IS NULL AND (${where})
+      AND (item.card->>'reportToId' IS NULL OR item.card->>'waitingAnswered' IS DISTINCT FROM 'true')
       AND (item.room_id=owed_corner.id OR EXISTS (
         SELECT 1 FROM memberships source_member WHERE source_member.room_id=(SELECT COALESCE(parent_id,id) FROM rooms WHERE id=item.room_id)
           AND source_member.identity_id=person.id AND source_member.removed_at IS NULL))
@@ -270,18 +271,24 @@ export function cornerOwedSchemaSql(): string {
 CREATE TABLE IF NOT EXISTS corner_report_blockers (
   corner_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
   person_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
-  report_id text NOT NULL REFERENCES agent_commands(id) ON DELETE CASCADE,
+  report_id text REFERENCES agent_commands(id) ON DELETE CASCADE,
   return_room_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
   created_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY(corner_id,person_id)
 );
+ALTER TABLE corner_report_blockers ALTER COLUMN report_id DROP NOT NULL;
+ALTER TABLE corner_report_blockers ADD COLUMN IF NOT EXISTS message_id text REFERENCES messages(id) ON DELETE CASCADE;
+ALTER TABLE corner_report_blockers ADD COLUMN IF NOT EXISTS commander_id text REFERENCES identities(id) ON DELETE CASCADE;
+UPDATE corner_report_blockers blocker SET commander_id=report.agent_id FROM agent_commands report
+  WHERE report.id=blocker.report_id AND blocker.commander_id IS NULL;
 CREATE INDEX IF NOT EXISTS corner_report_blockers_return_room ON corner_report_blockers(return_room_id,person_id);
+CREATE INDEX IF NOT EXISTS corner_report_blockers_message ON corner_report_blockers(message_id);
 CREATE INDEX IF NOT EXISTS corner_private_reports_origin ON agent_commands
   ((private_payload->>'fromRoomId'),(private_payload->>'authorId'),created_at DESC,id DESC)
   WHERE private_payload->>'kind'='report';
 -- Recover unresolved reports already sent before this index existed.
-INSERT INTO corner_report_blockers(corner_id,person_id,report_id,return_room_id,created_at)
-SELECT corner.id,person.id,report.id,report.room_id,report.created_at
+INSERT INTO corner_report_blockers(corner_id,person_id,report_id,return_room_id,created_at,commander_id)
+SELECT corner.id,person.id,report.id,report.room_id,report.created_at,report.agent_id
 FROM rooms corner JOIN corner_facts fact ON fact.corner_id=corner.id
 JOIN LATERAL (SELECT command.* FROM agent_commands command
   WHERE command.private_payload->>'kind'='report'
@@ -289,37 +296,87 @@ JOIN LATERAL (SELECT command.* FROM agent_commands command
     AND command.private_payload->>'authorId'=COALESCE(fact.worker_agent_id,fact.owner_agent_id)
   ORDER BY command.created_at DESC,command.id DESC LIMIT 1) report ON true
 JOIN effective_memberships member ON member.room_id=corner.id AND member.removed_at IS NULL
-JOIN identities person ON person.id=member.identity_id AND person.kind='human'
+JOIN identities person ON person.id=member.identity_id
 CROSS JOIN LATERAL (SELECT report.private_payload->>'text' text,'message'::text presentation,
   corner.id room_id,COALESCE(fact.worker_agent_id,fact.owner_agent_id) author_id) item
 WHERE corner.archived_at IS NULL AND item.text ~ '^(needs-decision|blocked):'
-  AND ${tagsKnownIdentitySql('item', 'person.id', 'person.handle', 'person.kind')}
+  AND (person.id=report.agent_id OR (person.kind='human' AND ${tagsKnownIdentitySql('item', 'person.id', 'person.handle', 'person.kind')}))
+  AND report.private_payload->>'waitingAnswered' IS DISTINCT FROM 'true'
   AND NOT EXISTS(SELECT 1 FROM messages answer WHERE answer.room_id IN (corner.id,report.room_id)
-    AND answer.author_id=person.id AND answer.presentation='message' AND answer.deleted_at IS NULL
+    AND (answer.author_id=report.agent_id OR EXISTS(SELECT 1 FROM identities author
+      JOIN effective_memberships member ON member.identity_id=author.id AND member.room_id=corner.id
+      WHERE author.id=answer.author_id AND author.kind='human' AND member.removed_at IS NULL))
+    AND answer.presentation='message' AND answer.system_event IS NULL AND answer.deleted_at IS NULL
     AND answer.created_at>report.created_at)
-  AND NOT EXISTS(SELECT 1 FROM agent_turns resumed WHERE resumed.room_id=corner.id
-    AND resumed.agent_id=item.author_id AND resumed.started_at>report.created_at)
+  AND NOT EXISTS(SELECT 1 FROM agent_commands answer WHERE answer.room_id=corner.id
+    AND answer.private_payload->>'kind'='order' AND answer.private_payload->>'authorId'=report.agent_id
+    AND answer.created_at>report.created_at)
 ON CONFLICT DO NOTHING;
 CREATE OR REPLACE FUNCTION clear_corner_report_blockers() RETURNS trigger LANGUAGE plpgsql AS $report$
 BEGIN
   IF TG_TABLE_NAME='messages' THEN
-    DELETE FROM corner_report_blockers WHERE person_id=NEW.author_id
-      AND NEW.presentation='message' AND NEW.deleted_at IS NULL
-      AND (corner_id=NEW.room_id OR return_room_id=NEW.room_id) AND created_at<NEW.created_at;
+    IF NOT EXISTS(SELECT 1 FROM corner_report_blockers
+      WHERE corner_id=NEW.room_id OR return_room_id=NEW.room_id) THEN
+      RETURN NULL;
+    END IF;
+    WITH answered AS (DELETE FROM corner_report_blockers blocker WHERE NEW.presentation='message'
+      AND NEW.system_event IS NULL AND NEW.deleted_at IS NULL
+      AND (blocker.corner_id=NEW.room_id OR blocker.return_room_id=NEW.room_id)
+      AND blocker.created_at<NEW.created_at
+      AND EXISTS(SELECT 1 FROM effective_memberships member JOIN identities author ON author.id=member.identity_id
+        WHERE member.room_id=blocker.corner_id AND member.removed_at IS NULL AND author.id=NEW.author_id
+          AND (author.kind='human' OR blocker.commander_id=author.id))
+      RETURNING blocker.report_id,blocker.message_id)
+    , commands AS (UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{waitingAnswered}','true')
+      WHERE id IN (SELECT report_id FROM answered) RETURNING id)
+    UPDATE messages SET card=jsonb_set(card,'{waitingAnswered}','true')
+      WHERE id IN (SELECT message_id FROM answered);
+  ELSIF TG_TABLE_NAME='agent_commands' THEN
+    IF NEW.private_payload->>'kind' IS DISTINCT FROM 'order' THEN RETURN NULL; END IF;
+    WITH answered AS (DELETE FROM corner_report_blockers blocker WHERE blocker.corner_id=NEW.room_id
+      AND NEW.private_payload->>'kind'='order'
+      AND blocker.commander_id=NEW.private_payload->>'authorId' RETURNING blocker.report_id,blocker.message_id)
+    , commands AS (UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{waitingAnswered}','true')
+      WHERE id IN (SELECT report_id FROM answered) RETURNING id)
+    UPDATE messages SET card=jsonb_set(card,'{waitingAnswered}','true')
+      WHERE id IN (SELECT message_id FROM answered);
   ELSE
-    DELETE FROM corner_report_blockers blocker USING corner_facts fact
-      WHERE blocker.corner_id=NEW.room_id AND fact.corner_id=blocker.corner_id
-        AND NEW.agent_id=COALESCE(fact.worker_agent_id,fact.owner_agent_id);
+    IF NEW.lifecycle->'pr'->>'headSha' IS DISTINCT FROM OLD.lifecycle->'pr'->>'headSha'
+      AND NEW.lifecycle->'pr'->>'headSha' IS NOT NULL THEN
+      WITH answered AS (DELETE FROM corner_report_blockers WHERE corner_id=NEW.corner_id RETURNING report_id,message_id)
+      , commands AS (UPDATE agent_commands SET private_payload=jsonb_set(private_payload,'{waitingAnswered}','true')
+        WHERE id IN (SELECT report_id FROM answered) RETURNING id)
+      UPDATE messages SET card=jsonb_set(card,'{waitingAnswered}','true')
+        WHERE id IN (SELECT message_id FROM answered);
+    END IF;
   END IF;
   RETURN NULL;
 END $report$;
 DROP TRIGGER IF EXISTS corner_report_answer ON messages;
 CREATE TRIGGER corner_report_answer AFTER INSERT ON messages FOR EACH ROW EXECUTE FUNCTION clear_corner_report_blockers();
 DROP TRIGGER IF EXISTS corner_report_resume ON agent_turns;
-CREATE TRIGGER corner_report_resume AFTER INSERT ON agent_turns FOR EACH ROW WHEN (NEW.status='working') EXECUTE FUNCTION clear_corner_report_blockers();
 DROP TRIGGER IF EXISTS corner_report_restart ON agent_turns;
-CREATE TRIGGER corner_report_restart AFTER UPDATE OF started_at ON agent_turns FOR EACH ROW
-  WHEN (NEW.status='working' AND NEW.started_at IS DISTINCT FROM OLD.started_at) EXECUTE FUNCTION clear_corner_report_blockers();
+DROP TRIGGER IF EXISTS corner_report_order ON agent_commands;
+CREATE TRIGGER corner_report_order AFTER INSERT ON agent_commands FOR EACH ROW EXECUTE FUNCTION clear_corner_report_blockers();
+DROP TRIGGER IF EXISTS corner_report_push ON corner_facts;
+CREATE TRIGGER corner_report_push AFTER UPDATE OF lifecycle ON corner_facts FOR EACH ROW EXECUTE FUNCTION clear_corner_report_blockers();
+-- A queued automatic wake predating the report is not new input either.
+CREATE OR REPLACE FUNCTION quiet_corner_report_wakes() RETURNS trigger LANGUAGE plpgsql AS $quiet$
+BEGIN
+  WITH cancelled AS (
+    UPDATE agent_commands command SET state='cancelled',completed_at=now(),cancellation_reason='corner_waiting'
+    WHERE command.room_id=NEW.corner_id AND command.state='pending' AND command.action IN ('input','resume')
+      AND command.private_payload->>'kind' IS DISTINCT FROM 'order'
+      AND NOT EXISTS(SELECT 1 FROM messages source JOIN identities author ON author.id=source.author_id
+        WHERE source.id=command.source_message_id AND author.kind='human' AND source.system_event IS NULL)
+    RETURNING command.*)
+  UPDATE agent_turns turn SET status='cancelled',created_at=now()
+    FROM cancelled WHERE turn.room_id=cancelled.room_id AND turn.agent_id=cancelled.agent_id
+      AND turn.request_id=cancelled.turn_request_id AND turn.status='working';
+  RETURN NULL;
+END $quiet$;
+DROP TRIGGER IF EXISTS corner_report_quiet ON corner_report_blockers;
+CREATE TRIGGER corner_report_quiet AFTER INSERT OR UPDATE ON corner_report_blockers FOR EACH ROW EXECUTE FUNCTION quiet_corner_report_wakes();
 CREATE TABLE IF NOT EXISTS corner_owed (
   corner_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
   person_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
@@ -545,6 +602,30 @@ DROP TRIGGER IF EXISTS corner_owed_permission_update ON permission_authority;
 CREATE TRIGGER corner_owed_permission_update AFTER UPDATE OF status ON permission_authority
   FOR EACH ROW WHEN (OLD.status IS DISTINCT FROM NEW.status)
   EXECUTE FUNCTION corner_owed_permission_changed();
+
+-- Human-directed reports keep their visible message and share the same waiting index.
+INSERT INTO corner_report_blockers(corner_id,person_id,message_id,return_room_id,created_at,commander_id)
+SELECT DISTINCT ON (owed.corner_id,owed.person_id)
+  owed.corner_id,owed.person_id,report.id,report.room_id,report.created_at,report.card->>'reportToId'
+FROM corner_owed owed JOIN messages report ON report.id=owed.message_id
+JOIN corner_facts fact ON fact.corner_id=owed.corner_id
+WHERE owed.blocking AND report.card->>'reportToId' IS NOT NULL
+  AND report.card->>'waitingAnswered' IS DISTINCT FROM 'true'
+  AND report.author_id=COALESCE(fact.worker_agent_id,fact.owner_agent_id)
+  AND NOT EXISTS(SELECT 1 FROM messages answer JOIN effective_memberships member
+    ON member.room_id=owed.corner_id AND member.identity_id=answer.author_id AND member.removed_at IS NULL
+    JOIN identities person ON person.id=answer.author_id AND person.kind='human'
+    WHERE answer.room_id IN (owed.corner_id,report.room_id) AND answer.presentation='message'
+      AND answer.system_event IS NULL AND answer.deleted_at IS NULL AND answer.created_at>report.created_at)
+  AND NOT EXISTS(SELECT 1 FROM agent_commands answer WHERE answer.room_id=owed.corner_id
+    AND answer.private_payload->>'kind'='order' AND answer.private_payload->>'authorId'=report.card->>'reportToId'
+    AND answer.created_at>report.created_at)
+ORDER BY owed.corner_id,owed.person_id,report.created_at DESC,report.id DESC
+ON CONFLICT DO NOTHING;
+
+-- Old writers may have queued work before quieting was installed. Reapply it
+-- to restored and existing blockers without changing their waiting timestamps.
+UPDATE corner_report_blockers SET commander_id=commander_id;
 
 -- Existing projection rows from the former automatic escalation policy must
 -- not keep a person waiting after release. History itself stays readable.

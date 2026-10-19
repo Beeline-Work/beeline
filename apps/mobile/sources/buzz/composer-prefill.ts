@@ -50,7 +50,7 @@ export function textTagsAgent(text: string, handle: string, pubkey: string): boo
 
 /**
  * The newest message in the Room, when it is an agent's answer to the viewer:
- * it tags the viewer, or it replies to one of the viewer's messages. Live turn
+ * it tags the viewer, or its reply/request references a viewer message. Live turn
  * rows are transient and never count as the newest message.
  */
 export function answerPrefillCandidate(
@@ -70,13 +70,15 @@ export function answerPrefillCandidate(
   const handle = handleFor(newest)?.replace(/^@/, '');
   if (!handle) return undefined;
   const replyToId = newest.replyToId;
+  const requestId = newest.requestId;
   const answersViewer =
     Boolean(newest.mentionPubkeys?.includes(viewerPubkey)) ||
     Boolean(
-      replyToId &&
+      (replyToId || requestId) &&
       messages.some(
         (message) =>
-          (message.id === replyToId || message.relayId === replyToId) &&
+          ((replyToId && (message.id === replyToId || message.relayId === replyToId)) ||
+            (requestId && (message.id === requestId || message.relayId === requestId))) &&
           message.pubkey === viewerPubkey,
       ),
     );

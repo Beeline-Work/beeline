@@ -9,7 +9,7 @@ import {
 } from './room-session.js';
 
 describe('monolith Room inspection mount', () => {
-  it('does not expose GitHub credentials to a top-level Room session', () => {
+  it('does not copy ambient GitHub credentials into the Room MCP', () => {
     const server = readOnlyMcpServer(
       {
         agentBinary: 'agent',
@@ -25,6 +25,16 @@ describe('monolith Room inspection mount', () => {
 
     expect(server.env).not.toContainEqual(expect.objectContaining({ name: 'GH_TOKEN' }));
     expect(server.env).not.toContainEqual(expect.objectContaining({ name: 'GITHUB_TOKEN' }));
+  });
+
+  it('passes an explicitly selected repository credential to the read-only command surface', () => {
+    const server = readOnlyMcpServer({
+      agentBinary: 'agent', mcpBinary: 'unused', readonlyMcpCommand: '/bin/read-only',
+      agentEnv: {}, workspaceRoot: '/room', autoApprovePermissions: false,
+    }, '/room', undefined, 'repository-token');
+    expect(server.env).toContainEqual({ name: 'GH_TOKEN', value: 'repository-token' });
+    expect(server.env).toContainEqual({ name: 'GITHUB_TOKEN', value: 'repository-token' });
+    expect(server.env).toContainEqual({ name: 'BEELINE_READONLY_ROOT', value: '/room' });
   });
 
   it('mounts only the bounded read-only MCP at the Room root', () => {

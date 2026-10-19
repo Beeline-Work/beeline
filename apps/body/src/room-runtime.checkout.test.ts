@@ -186,3 +186,32 @@ it('shares parent repository and token reads across sibling corners and invalida
     await rm(root, { recursive: true, force: true });
   }
 });
+
+it('carries only the bound GitHub repository token from checkout into a Room turn', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'beeline-room-github-'));
+  try {
+    const identity = identityFromKey('11'.repeat(32), 'Bee');
+    const execute = vi.fn(async (name: string) => name === 'getRoomRepositoryState'
+      ? { resolution: 'repository', key: 'owner/widgets', remote: 'https://github.com/owner/widgets.git' }
+      : { token: 'exact-repository-token', expiresAt: Date.now() + 60_000 });
+    const coordinator = new RoomRuntimeCoordinator({
+      agent: { name: 'Bee', publicKey: identity.publicKey,
+        secretKeyHex: Buffer.from(identity.secretKey).toString('hex') },
+      communityId: 'workspace', rooms: [], supervisorRoot: root,
+      transport: { kind: 'monolith', baseUrl: 'https://server.example', daemonToken: 'token' },
+    } as AgentRuntimeRecord, join(root, 'agent.json'), { workspaceRoot: root } as never,
+    { daemonApi: { execute } as unknown as DaemonApiClient });
+    const checkout = coordinator as unknown as {
+      materializeRoomCheckout(roomId: string): Promise<string>;
+      refreshRoomCheckout(roomId: string): Promise<{ cwd: string; githubToken?: string }>;
+    };
+    // An empty repository has no HEAD yet but still supports issue comments.
+    vi.spyOn(checkout, 'materializeRoomCheckout').mockResolvedValue(join(root, 'rooms', 'parent'));
+    const turn = await checkout.refreshRoomCheckout('parent');
+    expect(turn.githubToken).toBe('exact-repository-token');
+    expect(execute).toHaveBeenCalledWith('getRoomGitHubToken', { roomId: 'parent' });
+    await coordinator.shutdown();
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

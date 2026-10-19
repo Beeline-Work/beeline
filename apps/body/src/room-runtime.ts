@@ -1222,8 +1222,8 @@ export class RoomRuntimeCoordinator {
    * A Room is a repository inspection surface, so its session cwd must be the
    * current server-bound repository rather than a legacy runtime path (or the
    * otherwise-empty per-Room state directory). The daemon consumes the
-   * short-lived GitHub token itself; it is never included in the Room MCP or
-   * harness environment.
+   * short-lived GitHub token for checkout and the Room's external GitHub
+   * operations. Filesystem writes remain governed by the Room sandbox.
    */
   private async materializeRoomCheckout(
     roomId: string,
@@ -1291,16 +1291,19 @@ export class RoomRuntimeCoordinator {
 
   private async refreshRoomCheckout(
     roomId: string,
-  ): Promise<{ cwd: string; branch?: string; commit?: string }> {
+  ): Promise<{ cwd: string; branch?: string; commit?: string; githubToken?: string }> {
     try {
       const repository = await this.parentRepositoryState(roomId);
       if (repository.resolution !== 'repository' || !repository.remote)
         return { cwd: this.roomRoot(roomId) };
       const branch = repository.targetBranch || 'main';
       const cwd = await this.materializeRoomCheckout(roomId, repository);
-      if (cwd === this.roomRoot(roomId)) return { cwd };
+      const githubToken = roomCheckoutRemote(repository.remote).startsWith('https://github.com/')
+        ? (await this.parentRepositoryToken(roomId)).token
+        : undefined;
+      if (cwd === this.roomRoot(roomId)) return { cwd, ...(githubToken ? { githubToken } : {}) };
       const { stdout } = await execFileAsync('git', ['-C', cwd, 'rev-parse', '--verify', 'HEAD']);
-      return { cwd, branch, commit: stdout.trim() };
+      return { cwd, branch, commit: stdout.trim(), ...(githubToken ? { githubToken } : {}) };
     } catch (error) {
       console.warn(`[thin-core] Room ${roomId} checkout refresh unavailable:`, error);
       return { cwd: this.roomRoot(roomId) };

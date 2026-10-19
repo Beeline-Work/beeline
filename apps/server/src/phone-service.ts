@@ -212,6 +212,7 @@ import {
   hasExistingAppRoute,
   OFFICIAL_REGISTRY_APPS,
   readOwnerApps,
+  recordOwnerGitHubSelection,
 } from './app-connections.js';
 import { McpRegistryClient } from './mcp-registry.js';
 import {
@@ -4620,26 +4621,52 @@ export class PhoneService {
       case 'beginAppSignIn':
         await this.viewerWorkbenchWorkspace(viewerId);
         {
-          const integration = FIRST_PARTY_INTEGRATIONS.find(entry => entry.appId === (input as Input<'beginAppSignIn'>).appId);
+          const integration = FIRST_PARTY_INTEGRATIONS.find(
+            (entry) => entry.appId === (input as Input<'beginAppSignIn'>).appId,
+          );
           if (integration) {
             const provider = integration.provider({ linkWallet: this.linkWallet });
             if (!provider) throw new Error(`${integration.name} sign-in is unavailable`);
-            return { authorizationUrl: await provider.begin(viewerId, this.database) } as Output<Name>;
+            return {
+              authorizationUrl: await provider.begin(viewerId, this.database),
+            } as Output<Name>;
           }
         }
         {
-          const card = (await this.database.query<{ card: { connectKind: string; connectorId: string; agentId: string } }>(
-            `SELECT card FROM messages WHERE card_type='app-sign-in' AND card->>'appId'=$1
+          const card = (
+            await this.database.query<{
+              card: { connectKind: string; connectorId: string; agentId: string };
+            }>(
+              `SELECT card FROM messages WHERE card_type='app-sign-in' AND card->>'appId'=$1
               AND card->>'ownerId'=$2 AND card->>'status'='pending' AND card ? 'connectKind'
-              ORDER BY created_at DESC LIMIT 1`, [(input as Input<'beginAppSignIn'>).appId, viewerId])).rows[0]?.card;
+              ORDER BY created_at DESC LIMIT 1`,
+              [(input as Input<'beginAppSignIn'>).appId, viewerId],
+            )
+          ).rows[0]?.card;
           if (card) {
-            const status = card.connectKind === 'trusty-squire'
-              ? await squireWorkStatus(this.database, card.agentId)
-              : (await this.database.query<{ sign_in: { url?: string } | null }>(
-                'SELECT sign_in FROM workspace_connectors WHERE id=$1 AND owner_identity_id=$2',
-                [card.connectorId, viewerId])).rows[0];
+            const status =
+              card.connectKind === 'trusty-squire'
+                ? await squireWorkStatus(this.database, card.agentId)
+                : (
+                    await this.database.query<{ sign_in: { url?: string } | null }>(
+                      'SELECT sign_in FROM workspace_connectors WHERE id=$1 AND owner_identity_id=$2',
+                      [card.connectorId, viewerId],
+                    )
+                  ).rows[0];
             const signIn = status && ('sign_in' in status ? status.sign_in : status.signIn);
-            if (!signIn?.url) throw new Error('This sign-in is no longer pending. Reconnect to retry.');
+            if (!signIn?.url)
+              throw new Error('This sign-in is no longer pending. Reconnect to retry.');
+            if (card.connectKind === 'registry-mcp') {
+              await this.database.transaction((database) =>
+                recordOwnerGitHubSelection(
+                  database,
+                  (input as Input<'beginAppSignIn'>).appId,
+                  viewerId,
+                  'registry-mcp',
+                  card.connectorId,
+                ),
+              );
+            }
             return { authorizationUrl: signIn.url } as Output<Name>;
           }
         }

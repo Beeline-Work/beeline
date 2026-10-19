@@ -91,6 +91,8 @@ export interface SessionPromptContext {
   /** A Room's bound repository and branch (read-only checkout). */
   readonly repository?: { readonly name: string; readonly branch: string };
   readonly shell?: RoomShellState;
+  /** The sandbox home a Room session may write, set only while the OS sandbox wraps it. */
+  readonly writableHome?: string;
   /** The granted Squire route is mounted in this session. */
   readonly squireAvailable?: boolean;
   /** A repository corner's feature and target branches. */
@@ -256,6 +258,12 @@ function shellLine(shell: RoomShellState | undefined): string {
   return `Shell commands are NOT available in this session, so a request that needs one cannot be run; say that plainly instead of retrying.${shell.detail ? ` Relay this to the person: ${shell.detail}` : ''}`;
 }
 
+function writableHomeLine(home: string | undefined): string {
+  return home
+    ? `You can write files only in your home, ${home} (~/), with your own write/edit tools or the shell; post_artifact posts files saved there.`
+    : '';
+}
+
 /** One paragraph per rule group, skipping the groups that do not apply. */
 const paragraphs = (...parts: readonly (string | false | undefined)[]): string =>
   parts.filter(Boolean).join('\n');
@@ -293,7 +301,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     why: {
       'core.machine-host': 'Agents tried to SSH to the machine they were already running on.',
       'core.memory': 'A command can exhaust the session cgroup before the agent can adapt its workload.',
-      'room.place': 'The agent must know it cannot write here, where the checkout is, and whether it has a shell.',
+      'room.place': 'The agent must know it cannot write the checkout, where it can write files, where the checkout is, and whether it has a shell.',
       'dm.place': 'A DM is a driving surface for work across every Room the agent belongs to.',
       'corner.worktree': 'Every agent in a code corner must know its branch and target, whether or not it writes code.',
       'corner.android': 'An agent under its isolated $HOME concluded the host had no emulator, and agents on the shared adb server drove each other\'s emulators.',
@@ -302,7 +310,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     budgetBytes: 1_360,
     layer: 'session',
     surfaces: EVERYWHERE,
-    render: ({ surface, machineHost, memoryMaxBytes, repository, shell, worktree, android }) =>
+    render: ({ surface, machineHost, memoryMaxBytes, repository, shell, writableHome, worktree, android }) =>
       paragraphs(
         machineHost &&
           `Already running on machine ${JSON.stringify(machineHost.hostname)}${machineHost.tailscaleName ? ` (MagicDNS: ${JSON.stringify(machineHost.tailscaleName)})` : ''}. Run commands locally; do not SSH to this machine.`,
@@ -312,6 +320,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
             `This is a Beeline Room. The repository filesystem is read-only here.${repository ? ` The Room is bound to ${repository.name} (branch ${repository.branch}); the read-only checkout is at the session root.` : ''} Web search is available.`,
             !repository ? 'For coding work without a linked repository, guide Room header → Repository → Link/Create (or create a repository-backed Room). If gh is unavailable, consult using-beeline for repository and organization setup before proposing a personal GitHub connection.' : '',
             shellLine(shell),
+            writableHomeLine(writableHome),
             shell?.available === false
               ? 'Read code with CodeGraph when available, then repository_io(action:search/read).'
               : 'If a shell command is refused, say so plainly rather than retrying, and read code with CodeGraph when available, then repository_io(action:search/read).',
@@ -322,6 +331,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
           [
             'This is a private direct message with one person: everything they send is for you, so reply without tagging. The filesystem is read-only. Web search is available.',
             shellLine(shell),
+            writableHomeLine(writableHome),
           ]
             .filter(Boolean)
             .join(' '),

@@ -2726,12 +2726,17 @@ function validateToolInput(tool: ToolDefinition, args: JsonObject): void {
 export async function callAgentTool(name: string, args: JsonObject, toolCallId: string): Promise<string> {
   if (process.env.BEELINE_TURN_CONTEXT_FILE && (await readTurnContextFile()).terminalReason)
     throw new Error('turn has ended; further tool calls are refused');
+  if (name === 'read' && args.cursor !== undefined &&
+      (!args.cursor || typeof args.cursor !== 'object' || Array.isArray(args.cursor)))
+    throw new Error('read: pass the returned next object unchanged as cursor');
   validateToolInput(advertisedAgentTool(name), args);
   const addressed = { ...args, ...(typeof args.address === 'string' ? { cornerId: args.address } : {}) };
   const execute = (operation: string, input = args) => executeAgentOperation(operation, input, toolCallId);
   switch (name) {
     case 'read': {
       const facet = args.facet;
+      const requiredField = facet === 'message' ? 'messageId' : facet === 'attachment' ? 'attachmentId' : facet === 'procedure' ? 'slug' : undefined;
+      if (requiredField && !args[requiredField]) throw new Error(`read: ${requiredField} is required for facet ${facet}`);
       const address = args.address ?? (process.env.BEELINE_DAEMON_CORNER_ID?.trim() || process.env.BEELINE_DAEMON_ROOM_ID);
       const input = { ...args, ...asObject(args.cursor), address, cornerId: address };
       switch (facet) {
@@ -2740,7 +2745,7 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
         case 'members': return execute('list_room_members', input);
         case 'messages':
           // Every message read uses the same bounded cursor contract.
-          return execute('inspect_corner', { ...input, mode: 'transcript' });
+          return execute('inspect_corner', { ...input, from: args.from ?? (asObject(args.cursor).before ? 'newest' : undefined), mode: 'transcript' });
         case 'message': return execute('get_room_message', { ...input, messageId: args.messageId });
         case 'attachment': return execute('download_attachment', input);
         case 'brief': return execute('read_corner_brief', input);

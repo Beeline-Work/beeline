@@ -3875,6 +3875,27 @@ describe('Reproduction IDLE-1: corner status says whether its agent runs or wait
     expect(replied.awaiting).toBeUndefined();
   });
 
+  it('R1 round-trips server-generated UUID and hex message cursors in both directions', async () => {
+    const cornerId = await open('owner/widgets');
+    const uuid = randomUUID();
+    await db.query(
+      `INSERT INTO messages(id,room_id,author_id,text,presentation) VALUES($1,$2,$3,'cursor boundary','message')`,
+      [uuid, cornerId, A],
+    );
+    const page = await daemon.execute('getRoomConversation', { roomId: cornerId, limit: 200 }, A);
+    for (const [index, item] of page.items.entries()) {
+      const forward = await daemon.execute('getRoomConversation', { roomId: cornerId, after: item.cursor }, A);
+      const backward = await daemon.execute('getRoomConversation', { roomId: cornerId, before: item.cursor, window: 'recent' }, A);
+      expect(forward.items.map(row => row.id)).toEqual(page.items.slice(index + 1).map(row => row.id));
+      expect(backward.items.map(row => row.id)).toEqual(page.items.slice(0, index).map(row => row.id));
+    }
+    expect(page.items.some(item => item.id === uuid)).toBe(true);
+    for (const cursor of [uuid, '123,abc', 'invalid']) {
+      await expect(daemon.execute('getRoomConversation', { roomId: cornerId, after: cursor }, A)).rejects.toThrow('pass the returned next object unchanged');
+      await expect(daemon.execute('getRoomConversation', { roomId: cornerId, before: cursor }, A)).rejects.toThrow('pass the returned next object unchanged');
+    }
+  });
+
   it('pages a conversation backward from the newest messages with a before cursor', async () => {
     const cornerId = await open('owner/widgets');
     for (const text of ['one', 'two', 'three', 'four']) await say(cornerId, text);

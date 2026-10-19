@@ -1,6 +1,6 @@
 {
   "id": "prepare-runs-first",
-  "section": "corner.prepare",
+  "section": "corner",
   "summary": "A repository corner whose checkout defines corner:prepare runs it first.",
   "place": "code-corner",
   "session": {

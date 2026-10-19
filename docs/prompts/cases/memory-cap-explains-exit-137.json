@@ -1,6 +1,6 @@
 {
   "id": "memory-cap-explains-exit-137",
-  "section": "core.memory",
+  "section": "place",
   "summary": "A command killed with exit 137 is explained by the session memory cap.",
   "place": "room",
   "session": {

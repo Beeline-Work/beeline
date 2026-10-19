@@ -1,6 +1,6 @@
 {
   "id": "implementer-reviewer-does-not-push",
-  "section": "corner.implementer",
+  "section": "corner",
   "summary": "An agent asked only to read the diff does not commit, push or open a PR.",
   "place": "code-corner",
   "session": {

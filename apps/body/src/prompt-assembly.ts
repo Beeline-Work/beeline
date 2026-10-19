@@ -16,18 +16,19 @@ import type { MachineHost } from './machine-host.js';
  * a render function. `assembleSessionPrompt` and `assembleTurnPrompt` are the
  * only builders; the turn loops pass facts in and send what comes out.
  *
- * Guards (`prompt-assembly.test.ts`): each topic has one owner per surface, no
+ * Guards (`prompt-assembly.test.ts`): no two sections share a topic, no
  * sentence repeats inside an assembled prompt, every section stays inside its
  * budget, harnesses that drop the session prompt still receive every session
  * rule, and the assembled prompt for every surface is snapshotted in
  * `docs/prompts/` so a wording change shows up as a readable diff.
+ * `prompt-layers.test.ts` fails when a sentence is written in more than one of
+ * the prompt, the skills and the tool text.
  *
- * Where new text goes: a rule for every agent on every turn is a core section;
- * a rule for one surface is a surface section; how to call one tool is that
- * tool's description; a long procedure is a skill; one person's preference is
- * a memory item. Adding a section means cutting
- * or shortening another to stay inside `CORE_BUDGET_BYTES` and the surface
- * budgets.
+ * Where new text goes: a rule goes in the session section for its subject,
+ * with its Room, DM or corner wording beside the others; what a tool's inputs
+ * mean is that tool's description; rare mechanics are a skill; one person's
+ * preference is a memory item. Adding a rule means cutting or shortening
+ * another to stay inside `SESSION_BUDGET_BYTES`.
  */
 
 type WorkspaceRoster = DaemonOperationMap['getWorkspaceRoster']['output'];
@@ -59,20 +60,13 @@ const CORNERS: readonly PromptSurface[] = ['code-corner', 'repo-less-corner'];
 const EVERYWHERE: readonly PromptSurface[] = PROMPT_SURFACES;
 
 /**
- * Ceiling for the rules every agent gets on every turn, soul text excluded
- * (≈575 tokens). The first ~350-token target was a guess; ten rules measure
- * ~2.42 KB, including the approved commander-tagging wording. A new core
- * rule has to replace or shorten one.
+ * Ceiling for one surface's whole session prompt, soul text excluded. It is
+ * the sum of the two ceilings it replaced: 2,420 bytes for the rules every
+ * agent gets and 4,970 for one surface's own rules. A code corner on an
+ * Android host with the no-host-gh pull-request path is the largest prompt. A
+ * new rule has to replace or shorten one.
  */
-export const CORE_BUDGET_BYTES = 2_420;
-/**
- * Ceiling for one surface's own rules, on top of the core. A code corner uses
- * ~4.3 KB, plus ~0.35 KB for corner.android on a host with an Android SDK and
- * ~0.15 KB for the no-host-gh pull-request path; the corner setup command
- * (`corner.contract`) includes dispatch authorization and judgment about
- * optional planning; no separate spec or mock approval is required.
- */
-export const SURFACE_BUDGET_BYTES = 4_970;
+export const SESSION_BUDGET_BYTES = 7_390;
 
 /**
  * Whether this session can run shell commands, and why not when it cannot.
@@ -123,12 +117,17 @@ export interface SessionPromptContext {
 
 export interface PromptSection<C> {
   readonly id: string;
-  /** The one topic this section owns; two sections on one surface never share it. */
+  /** The one subject this section owns; no two sections share it. */
   readonly topic: string;
-  /** What breaks without it. A section with no answer here is cut. */
-  readonly why: string;
+  /**
+   * What breaks without each rule group, keyed by the rule group's id. A
+   * session section keeps the ids of the sections merged into it, so every
+   * rule traces back to the failure that added it. A rule with no answer here
+   * is cut.
+   */
+  readonly why: Readonly<Record<string, string>>;
   readonly budgetBytes: number;
-  readonly layer: 'core' | 'surface' | 'turn';
+  readonly layer: 'session' | 'turn';
   readonly surfaces: readonly PromptSurface[];
   readonly when?: (context: C) => boolean;
   readonly render: (context: C) => string;
@@ -216,12 +215,12 @@ function memoryListsWorkspaceCoreProcedure(memory: string | undefined): boolean 
 
 /**
  * The one merge rule for an author session: what to do once the pull request
- * exists, and who merges it (the author through `merge_corner`, after a PASS). It owns the
- * `merge` topic, so no other section may speak about merging on the same surface.
+ * exists, and who merges it (the author through `merge_corner`, after a PASS).
+ * The `corner` section renders it; no other section speaks about merging.
  */
 export function cornerMergeInstruction(reviewerHandle?: string): string {
   const review = reviewerHandle ? `Green checks wake the reviewer (${handle(reviewerHandle)}); its PASS wakes you to merge.` : 'If review capability is missing, report blocked: to your commander.';
-  return `Once the pull request exists, post its URL when useful and end the turn; do not poll CI. ${review} A PR lands through merge_corner only with live green checks, a yes on that exact head and no hold. Never review your own code. A new head needs a fresh yes. Repair failing checks or requested changes.`;
+  return `Once the pull request exists, post its URL when useful and end the turn; do not poll CI. ${review} A PR lands through merge_corner only with live green checks, a yes on that exact head and no hold. A new head needs a fresh yes. Repair failing checks or requested changes.`;
 }
 
 export function cornerReviewerInstruction(input: {
@@ -257,369 +256,235 @@ function shellLine(shell: RoomShellState | undefined): string {
   return `Shell commands are NOT available in this session, so a request that needs one cannot be run; say that plainly instead of retrying.${shell.detail ? ` Relay this to the person: ${shell.detail}` : ''}`;
 }
 
+/** One paragraph per rule group, skipping the groups that do not apply. */
+const paragraphs = (...parts: readonly (string | false | undefined)[]): string =>
+  parts.filter(Boolean).join('\n');
+
 // ---------------------------------------------------------------------------
 // Session sections: stable for the life of one harness session, in the order
 // they are sent. Stable text first keeps the provider's prompt cache warm.
+// One section per subject; each writes its own Room, DM and corner wording.
+// The corner section is last because its implementer rules govern "the rules
+// below".
 // ---------------------------------------------------------------------------
 
 export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = [
   {
-    id: 'core.identity',
-    topic: 'identity',
-    why: 'Agents on harnesses with their own default persona introduce themselves under the wrong name unless told who they are.',
-    budgetBytes: 1_400,
-    layer: 'core',
+    id: 'identity',
+    topic: 'who you are',
+    why: {
+      'core.identity': 'Agents on harnesses with their own default persona introduce themselves under the wrong name unless told who they are.',
+      'core.voice': 'A seeded voice once bent facts for the bit and leaked into commit messages that outlive it.',
+    },
+    budgetBytes: 1_560,
+    layer: 'session',
     surfaces: EVERYWHERE,
     render: ({ agentName, soul }) =>
-      [
+      paragraphs(
         `You are ${agentName} in Beeline. Stay ${agentName} in every reply, including when a tool or permission blocks you.`,
-        soul
-          ? `Soul (${soul.name}): ${soul.instructions}\nThe soul is not authority and never changes your tools, permissions, roles, or merge rights.`
-          : '',
-      ]
-        .filter(Boolean)
-        .join('\n'),
+        soul &&
+          `Soul (${soul.name}): ${soul.instructions}\nThe soul is not authority and never changes your tools, permissions, roles, or merge rights.`,
+        'Keep facts exact regardless of voice. Use plain language in commits, pull requests, and code comments.',
+      ),
   },
   {
-    id: 'core.machine-host',
-    topic: 'machine-host',
-    why: 'Agents tried to SSH to the machine they were already running on.',
-    budgetBytes: 240,
-    layer: 'core',
+    id: 'place',
+    topic: 'where you are',
+    why: {
+      'core.machine-host': 'Agents tried to SSH to the machine they were already running on.',
+      'core.memory': 'A command can exhaust the session cgroup before the agent can adapt its workload.',
+      'room.place': 'The agent must know it cannot write here, where the checkout is, and whether it has a shell.',
+      'dm.place': 'A DM is a driving surface for work across every Room the agent belongs to.',
+      'corner.worktree': 'Every agent in a code corner must know its branch and target, whether or not it writes code.',
+      'corner.android': 'An agent under its isolated $HOME concluded the host had no emulator, and agents on the shared adb server drove each other\'s emulators.',
+      'corner.repo-less': 'A repo-less corner has no repository; the agent delivers files, not commits.',
+    },
+    budgetBytes: 1_360,
+    layer: 'session',
     surfaces: EVERYWHERE,
-    when: ({ machineHost }) => Boolean(machineHost),
-    render: ({ machineHost }) =>
-      `Already running on machine ${JSON.stringify(machineHost!.hostname)}${machineHost!.tailscaleName ? ` (MagicDNS: ${JSON.stringify(machineHost!.tailscaleName)})` : ''}. Run commands locally; do not SSH to this machine.`,
+    render: ({ surface, machineHost, memoryMaxBytes, repository, shell, worktree, android }) =>
+      paragraphs(
+        machineHost &&
+          `Already running on machine ${JSON.stringify(machineHost.hostname)}${machineHost.tailscaleName ? ` (MagicDNS: ${JSON.stringify(machineHost.tailscaleName)})` : ''}. Run commands locally; do not SSH to this machine.`,
+        `Memory cap: ${Number(((memoryMaxBytes ?? ACP_SESSION_MEMORY_MAX_BYTES) / 1024 ** 3).toFixed(2))} GiB per session. Size builds, tests and data jobs to fit it; split heavy work. Exit 137/signal 9 likely means a command hit this cap.`,
+        surface === 'room' &&
+          [
+            `This is a Beeline Room. The repository filesystem is read-only here.${repository ? ` The Room is bound to ${repository.name} (branch ${repository.branch}); the read-only checkout is at the session root.` : ''} Web search is available.`,
+            !repository ? 'For coding work without a linked repository, guide Room header → Repository → Link/Create (or create a repository-backed Room). If gh is unavailable, consult using-beeline for repository and organization setup before proposing a personal GitHub connection.' : '',
+            shellLine(shell),
+            shell?.available === false
+              ? 'Read code with CodeGraph when available, then repository_io(action:search/read).'
+              : 'If a shell command is refused, say so plainly rather than retrying, and read code with CodeGraph when available, then repository_io(action:search/read).',
+          ]
+            .filter(Boolean)
+            .join(' '),
+        surface === 'dm' &&
+          [
+            'This is a private direct message with one person: everything they send is for you, so reply without tagging. The filesystem is read-only. Web search is available.',
+            shellLine(shell),
+          ]
+            .filter(Boolean)
+            .join(' '),
+        surface === 'code-corner' &&
+          `You are in an isolated git worktree on ${worktree?.featureBranch ?? 'the feature branch'}, targeting ${worktree?.targetBranch ?? 'the target branch'}.`,
+        surface === 'code-corner' &&
+          android &&
+          (android.leased
+            ? 'Android: the SDK is $ANDROID_HOME and AVDs are in $ANDROID_AVD_HOME. Boot with `beeline emulator -avd <name> -no-window -gpu swiftshader_indirect`; Beeline leases a port and private writable data for each instance. Use `adb devices` and `adb -s emulator-<port>` to select one. The guest reaches host services at 10.0.2.2.'
+            : `Android: adb and emulator are on PATH; the SDK is $ANDROID_HOME, AVDs are in $ANDROID_AVD_HOME, and /dev/kvm works. Your adb server sees only your own emulator. Boot it with \`emulator -avd <name> -port ${android.emulatorPort} -read-only -no-window -no-snapshot -gpu swiftshader_indirect\`; it reaches host services at 10.0.2.2.`),
+        surface === 'repo-less-corner' &&
+          "This is a repo-less corner with no repository checkout and no GitHub workflow. Work in this corner's writable workspace: create files with your native tools (or use scratch_io when mounted), then send them with post_artifact.\nDo not initialize a repository, create a branch, commit, push, open a pull request, or wait for GitHub checks.",
+      ),
   },
   {
-    id: 'core.voice',
-    topic: 'voice',
-    why: 'A seeded voice once bent facts for the bit and leaked into commit messages that outlive it.',
-    budgetBytes: 320,
-    layer: 'core',
+    id: 'talking',
+    topic: 'talking and assigning work',
+    why: {
+      'core.tagging': 'Every @handle is a wake; stray handles woke agents with nothing to do, and guessed spellings reached nobody.',
+      'core.finish': 'An agent read a not-yet-connected tool result as a stopping point and ended the turn with its own work undone.',
+      'corner.handover': 'An agent asked to hand the corner on opened a duplicate sibling corner instead of tagging the other agent.',
+    },
+    budgetBytes: 1_100,
+    layer: 'session',
     surfaces: EVERYWHERE,
-    render: () =>
-      'Keep facts exact regardless of voice. Use plain language in commits, pull requests, and code comments.',
+    render: ({ surface }) =>
+      paragraphs(
+        'Tag to talk. Order to assign work. @handle invites a reply here, with no assignment or report owed. Copy exact member handles. order(address, agent, text) assigns privately; a Room requires agent. report(status, text) one step up to your commander. Report only to whoever assigned you. If human, tag them when they need to decide or know. Reports begin done:, blocked:, needs-decision: or failed:; human reports appear where they ordered you.',
+        'After ordering another agent, end the turn; its report wakes a new turn; do not sleep or poll.',
+        CORNERS.includes(surface) &&
+          'Agent tags invite conversation here and never change the implementer. Assign work with order at an explicit reachable address; report one step up when the intended recipient is forbidden.',
+      ),
   },
   {
-    id: 'core.memory',
-    topic: 'memory',
-    why: 'A command can exhaust the session cgroup before the agent can adapt its workload.',
-    budgetBytes: 240,
-    layer: 'core',
-    surfaces: EVERYWHERE,
-    render: ({ memoryMaxBytes }) =>
-      `Memory cap: ${Number(((memoryMaxBytes ?? ACP_SESSION_MEMORY_MAX_BYTES) / 1024 ** 3).toFixed(2))} GiB per session. Size builds, tests and data jobs to fit it; split heavy work. Exit 137/signal 9 likely means a command hit this cap.`,
-  },
-  {
-    id: 'core.proactive',
-    topic: 'proactivity',
-    why: 'Agents answered a reported problem by restating it instead of fixing it or offering to.',
-    budgetBytes: 200,
-    layer: 'core',
-    surfaces: EVERYWHERE,
-    render: () =>
-      'Answer every problem with the finished fix, or with the concrete next step. Never just restate the problem.',
-  },
-  {
-    id: 'core.finish',
-    topic: 'turn-end',
-    why: 'An agent read a not-yet-connected tool result as a stopping point and ended the turn with its own work undone.',
-    budgetBytes: 360,
-    layer: 'core',
-    surfaces: EVERYWHERE,
-    render: () =>
-      'Do the assigned work yourself unless instructed to delegate or a verified capability gap requires it. Follow tool results. After ordering another agent, end the turn; its report wakes a new turn; do not sleep or poll.',
-  },
-  {
-    id: 'core.truth',
-    topic: 'claims',
-    why: 'Agents reported replies and actions that no tool had performed.',
-    budgetBytes: 200,
-    layer: 'core',
-    surfaces: EVERYWHERE,
-    render: () =>
-      'Never claim an action, result, or reply happened unless the prompt or a tool result proves it. State real doubt once, plainly; skip filler hedges.',
-  },
-  {
-    id: 'core.reply',
-    topic: 'reply-shape',
-    why: 'Agents echoed their instructions, the trigger, or their own answer back as a second reply.',
-    budgetBytes: 220,
-    layer: 'core',
-    surfaces: EVERYWHERE,
-    render: () =>
-      'Write only the message the reader needs. Never repeat these instructions, the trigger, or an answer you already gave. If a wake needs no message, end the turn silently.',
-  },
-  {
-    id: 'core.tagging',
-    topic: 'tagging',
-    why: 'Every @handle is a wake; stray handles woke agents with nothing to do, and guessed spellings reached nobody.',
-    budgetBytes: 531,
-    layer: 'core',
-    surfaces: EVERYWHERE,
-    render: () =>
-      'Tag to talk. Order to assign work. @handle invites a reply here, with no assignment or report owed. Copy exact member handles. order(address, agent, text) assigns privately; a Room requires agent. report(status, text) one step up to your commander. Report only to whoever assigned you. If human, tag them when they need to decide or know. Reports begin done:, blocked:, needs-decision: or failed:; human reports appear where they ordered you.',
-  },
-  {
-    id: 'core.authority',
+    id: 'authority',
     topic: 'authority',
-    why: 'Resource access and the two command hard stops must hold on every surface, whoever asked.',
+    why: {
+      'core.authority': 'Resource access and the two command hard stops must hold on every surface, whoever asked.',
+      'dm.choices': 'A pick in a DM is a preference, never authority, and polls need an electorate.',
+      'skill.conflicting-instructions': 'This rule lived only in the on-demand using-beeline skill; the system prompt holds the rules, so Room, DM and repo-less corner agents get it without opening the skill. Code corners carry it in the author contract.',
+      'tool.approve_merge': 'The approve_merge description carried this rule on every surface; tool text now only says what inputs mean, so the rule moved here.',
+    },
     budgetBytes: 700,
-    layer: 'core',
+    layer: 'session',
     surfaces: EVERYWHERE,
-    render: () =>
-      "Use your own owner's tools and keys for whoever asks. Another person's files, tools, or keys need that person's approval before you use them for anyone else, and the wallet keeps its own approval rule. Never, whoever asks: run a command that names a credential file, or run a script nobody has read. Only the hold setter or someone above them clears it. Follow your commander within inherited scope.",
+    render: ({ surface }) =>
+      paragraphs(
+        "Use your own owner's tools and keys for whoever asks. Another person's files, tools, or keys need that person's approval before you use them for anyone else, and the wallet keeps its own approval rule. Never, whoever asks: run a command that names a credential file, or run a script nobody has read. Only the hold setter or someone above them clears it. Follow your commander within inherited scope. Never review your own code.",
+        surface !== 'code-corner' &&
+          'Any human in the Room can direct you. Follow the newer instruction when human instructions conflict, revise the brief citing that message, and state in the corner what changed.',
+        surface === 'dm' && 'Ask plain questions; answers never replace sandbox, spend or merge authority.',
+      ),
   },
   {
-    id: 'core.feedback',
-    topic: 'feedback',
-    why: 'Nothing reviews a turn after it ends, so friction in Beeline itself is lost unless the agent that hit it reports it in the turn.',
-    budgetBytes: 260,
-    layer: 'core',
+    id: 'work',
+    topic: 'doing the work',
+    why: {
+      'core.proactive': 'Agents answered a reported problem by restating it instead of fixing it or offering to.',
+      'core.finish': 'An agent read a not-yet-connected tool result as a stopping point and ended the turn with its own work undone.',
+      'core.truth': 'Agents reported replies and actions that no tool had performed.',
+      'core.feedback': 'Nothing reviews a turn after it ends, so friction in Beeline itself is lost unless the agent that hit it reports it in the turn.',
+      'room.corners': 'Repository work must start through the host-governed corner, with a brief as its authority.',
+      'dm.place': 'A DM is a driving surface for work across every Room the agent belongs to.',
+    },
+    budgetBytes: 2_050,
+    layer: 'session',
     surfaces: EVERYWHERE,
-    render: () =>
-      'After Beeline errors, retries, refusals, contradictions, context gaps or corrections, call report_feedback(category:bug, summary:<one sentence>) once. Separately report the assigned outcome. Otherwise skip feedback.',
+    render: ({ surface }) =>
+      paragraphs(
+        'Answer every problem with the finished fix, or with the concrete next step. Never just restate the problem.',
+        'Do the assigned work yourself unless instructed to delegate or a verified capability gap requires it. Follow tool results.',
+        'Never claim an action, result, or reply happened unless the prompt or a tool result proves it. State real doubt once, plainly; skip filler hedges.',
+        'After Beeline errors, retries, refusals, contradictions, context gaps or corrections, call report_feedback(category:bug, summary:<one sentence>) once. Separately report the assigned outcome. Otherwise skip feedback.',
+        surface === 'room' &&
+          [
+            'Repository changes happen only in a corner. Open one when your commander orders repository work.',
+            'Before opening one, consult beeline-triage and beeline-spec, then call open_corner with the target room address, a name of at most three words joined by hyphens (no whitespace), an objective of at most 24 words, and the brief (a spec plus the approving message). The objective only titles the work; the brief is its authority. Use the dispatching message as approval; no separate spec or mock approval is required. When open_corner succeeds the server posts the corner card: do not restate it.',
+            'Use read(facet:messages, address) across member Rooms. wake(action:create, trigger:lifecycle, address:cornerAddress) wakes only on opened or merged; open_corner watches automatically. Schedules and chatter never wake watchers.',
+            'Landing archives a repository corner and cancels its work, including saved runs. The surviving commander owns follow-up at its own address. Repo-less and repositoryWork:false work delivers its artifact/report without a PR.',
+          ].join(' '),
+        surface === 'dm' &&
+          'Use read(facet:addresses) to discover addresses, then open_corner(room, implementer, brief), order and read across member Rooms; wake watches only corner addresses. Do repository work in a corner.',
+      ),
   },
   {
-    id: 'core.files',
-    topic: 'files',
-    why: 'Files on earlier messages are shown only as markers and never pre-downloaded; agents fetched media URLs instead.',
-    budgetBytes: 160,
-    layer: 'core',
+    id: 'tools',
+    topic: 'tools and files',
+    why: {
+      'core.files': 'Files on earlier messages are shown only as markers and never pre-downloaded; agents fetched media URLs instead.',
+      'surface.tools': 'Agents use one server-owned connection path in every turn.',
+      'surface.squire-drive': 'Agents hand-drove browser goals (ts-drive-adoption-scout); Jellybean treated unsupported_credential_type during PR #2599 verification as blocked instead of sharing the browser for human sign-in.',
+      'room.replying': 'Several agents share a Room; replies with nothing to act on, and echoed nudges, are noise.',
+      'dm.choices': 'A pick in a DM is a preference, never authority, and polls need an electorate.',
+    },
+    budgetBytes: 1_100,
+    layer: 'session',
     surfaces: EVERYWHERE,
-    render: () =>
-      "For a 📎 file, call read(facet:attachment, messageId, attachmentId) and read its path. Never fetch media URLs; on failure, say you couldn't open it.",
+    render: ({ surface, squireAvailable }) =>
+      paragraphs(
+        "For a 📎 file, call read(facet:attachment, messageId, attachmentId) and read its path. Never fetch media URLs; on failure, say you couldn't open it.",
+        'For any service or capability request, use connect(mode:discover) if unclear, then connect(mode:ensure, service, reason, continuation). For supported GitHub API work, check connect(mode:status) and prefer personal GitHub over the repository App.',
+        squireAvailable === true &&
+          'For multi-step browser goals, use Trusty Squire operate_drive {url, goal, facts}. On low_confidence/needs_value, answer or take one flat step, then resume drive. If sign-in/human action (2FA, captcha, passkey) cannot be completed or Squire refuses it, start app_tool(app:beeline:browser_share, tool:start) for that session; ask the person to take over. On handback, resume drive in that session.',
+        surface === 'room' && 'Consult the using-beeline skill for Room mechanics (files, artifacts, wakes, reactions, mocks).',
+        surface === 'dm' && 'Consult the using-beeline skill for files, artifacts, and reactions.',
+      ),
   },
   {
-    id: 'surface.tools',
-    topic: 'tools',
-    why: 'Agents use one server-owned connection path in every turn.',
-    budgetBytes: 440,
-    layer: 'surface',
-    surfaces: EVERYWHERE,
-    render: () => 'For any service or capability request, use connect(mode:discover) if unclear, then connect(mode:ensure, service, reason, continuation). For supported GitHub API work, check connect(mode:status) and prefer personal GitHub over the repository App. Consult using-beeline for checkout and merge boundaries.',
-  },
-  {
-    id: 'surface.squire-drive',
-    topic: 'squire-browser',
-    why: 'Agents hand-drove browser goals (ts-drive-adoption-scout); Jellybean treated unsupported_credential_type during PR #2599 verification as blocked instead of sharing the browser for human sign-in.',
-    budgetBytes: 420,
-    layer: 'surface',
-    surfaces: EVERYWHERE,
-    when: ({ squireAvailable }) => squireAvailable === true,
-    render: () =>
-      'For multi-step browser goals, use Trusty Squire operate_drive {url, goal, facts}. On low_confidence/needs_value, answer or take one flat step, then resume drive. If sign-in/human action (2FA, captcha, passkey) cannot be completed or Squire refuses it, start app_tool(app:beeline:browser_share, tool:start) for that session; ask the person to take over. On handback, resume drive in that session.',
-  },
-
-  // --- Room ----------------------------------------------------------------
-  {
-    id: 'room.place',
-    topic: 'place',
-    why: 'The agent must know it cannot write here, where the checkout is, and whether it has a shell.',
-    budgetBytes: 1_000,
-    layer: 'surface',
-    surfaces: ['room'],
-    render: ({ repository, shell }) =>
-      [
-        `This is a Beeline Room. The repository filesystem is read-only here.${repository ? ` The Room is bound to ${repository.name} (branch ${repository.branch}); the read-only checkout is at the session root.` : ''} Web search is available.`,
-        !repository ? 'For coding work without a linked repository, guide Room header → Repository → Link/Create (or create a repository-backed Room). If gh is unavailable, consult using-beeline for repository and organization setup before proposing a personal GitHub connection.' : '',
-        shellLine(shell),
-        shell?.available === false
-          ? 'Read code with CodeGraph when available, then repository_io(action:search/read).'
-          : 'If a shell command is refused, say so plainly rather than retrying, and read code with CodeGraph when available, then repository_io(action:search/read).',
-      ]
-        .filter(Boolean)
-        .join(' '),
-  },
-  {
-    id: 'room.corners',
-    topic: 'repository-work',
-    why: 'Repository work must start through the host-governed corner, with a brief as its authority.',
-    budgetBytes: 1_250,
-    layer: 'surface',
-    surfaces: ['room'],
-    render: () =>
-      [
-        'Repository changes happen only in a corner. Open one when your commander orders repository work.',
-        'Before opening one, consult beeline-triage and beeline-spec, then call open_corner with the target room address, a name of at most three words joined by hyphens (no whitespace), an objective of at most 24 words, and the brief (a spec plus the approving message). The objective only titles the work; the brief is its authority. Use the dispatching message as approval; no separate spec or mock approval is required. When open_corner succeeds the server posts the corner card: do not restate it.',
-        'Use read(facet:messages, address) across member Rooms. wake(action:create, trigger:lifecycle, address:cornerAddress) wakes only on opened or merged; open_corner watches automatically. Schedules and chatter never wake watchers.',
-        'Landing archives a repository corner and cancels its work, including saved runs. The surviving commander owns follow-up at its own address. Repo-less and repositoryWork:false work delivers its artifact/report without a PR.',
-      ].join(' '),
-  },
-  {
-    id: 'room.replying',
-    topic: 'room-replies',
-    why: 'Several agents share a Room; replies with nothing to act on, and echoed nudges, are noise.',
+    id: 'replying',
+    topic: 'replying',
+    why: {
+      'core.reply': 'Agents echoed their instructions, the trigger, or their own answer back as a second reply.',
+      'room.replying': 'Several agents share a Room; replies with nothing to act on, and echoed nudges, are noise.',
+      'corner.repo-less-reply': 'Every turn was told to end with a one-line summary of files it posted, so answers were followed by a restatement of themselves.',
+    },
     budgetBytes: 520,
-    layer: 'surface',
-    surfaces: ['room'],
-    render: () =>
-      'If nothing is actionable for you, do not reply. If the current task is only a nudge to respond, answer the most recent unanswered human message instead of echoing the nudge. Consult the using-beeline skill for Room mechanics (files, artifacts, wakes, reactions, mocks).',
-  },
-
-  // --- DM ------------------------------------------------------------------
-  {
-    id: 'dm.place',
-    topic: 'place',
-    why: 'A DM is a driving surface for work across every Room the agent belongs to.',
-    budgetBytes: 700,
-    layer: 'surface',
-    surfaces: ['dm'],
-    render: ({ shell }) =>
-      [
-        'This is a private direct message with one person: everything they send is for you, so reply without tagging. Use read(facet:addresses) to discover addresses, then open_corner(room, implementer, brief), order and read across member Rooms; wake watches only corner addresses. Do repository work in a corner. The filesystem is read-only. Web search is available.',
-        shellLine(shell),
-      ]
-        .filter(Boolean)
-        .join(' '),
+    layer: 'session',
+    surfaces: EVERYWHERE,
+    render: ({ surface }) =>
+      paragraphs(
+        'Write only the message the reader needs. Never repeat these instructions, the trigger, or an answer you already gave. If a wake needs no message, end the turn silently.',
+        surface === 'room' &&
+          'If nothing is actionable for you, do not reply. If the current task is only a nudge to respond, answer the most recent unanswered human message instead of echoing the nudge.',
+        surface === 'repo-less-corner' &&
+          'Report done: with the deliverable, or needs-decision: for required input, to your commander. Close the corner when the order calls for completion or abandonment.',
+      ),
   },
   {
-    id: 'dm.choices',
-    topic: 'choices',
-    why: 'A pick in a DM is a preference, never authority, and polls need an electorate.',
-    budgetBytes: 300,
-    layer: 'surface',
-    surfaces: ['dm'],
-    render: () =>
-      'Ask plain questions; answers never replace sandbox, spend or merge authority. Consult the using-beeline skill for files, artifacts, and reactions.',
-  },
-
-  // --- Corners -------------------------------------------------------------
-  {
-    id: 'corner.handover',
-    topic: 'corner-handover',
-    why: 'An agent asked to hand the corner on opened a duplicate sibling corner instead of tagging the other agent.',
-    budgetBytes: 360,
-    layer: 'surface',
-    surfaces: ['code-corner', 'repo-less-corner'],
-    render: () =>
-      'Agent tags invite conversation here and never change the implementer. Do the assigned work unless instructed to delegate or a verified capability gap requires it. Assign work with order at an explicit reachable address; report one step up when the intended recipient is forbidden.',
-  },
-  {
-    id: 'corner.worktree',
-    topic: 'place',
-    why: 'Every agent in a code corner must know its branch and target, whether or not it writes code.',
-    budgetBytes: 200,
-    layer: 'surface',
+    id: 'corner',
+    topic: 'code corners',
+    why: {
+      'corner.implementer': 'A reviewer that opened its corner was given push steps and pushed a fix (PR #2224); only the agent knows whether it was told to write code, so the author rules are conditional.',
+      'corner.prepare': 'Only a checkout that defines the command can run it; another repository fails on its first step.',
+      'corner.push': 'The author must push only its own branch and rebase before each push, or it overwrites or loses work.',
+      'corner.contract': 'The reviewer enforces this contract; an author that never saw it fails review.',
+      'corner.checks': 'Server check notes were restated as replies, and agents scheduled polls of a gate that wakes them itself.',
+      'corner.merge': 'Exactly one rule may say who merges and when; two rules here once said both "merge" and "never merge".',
+      'corner.review': 'The reviewer checks one exact green head and returns concise blocking findings.',
+    },
+    budgetBytes: 4_400,
+    layer: 'session',
     surfaces: ['code-corner'],
-    render: ({ worktree }) =>
-      `You are in an isolated git worktree on ${worktree?.featureBranch ?? 'the feature branch'}, targeting ${worktree?.targetBranch ?? 'the target branch'}.`,
-  },
-  {
-    id: 'corner.android',
-    topic: 'android',
-    why: 'An agent under its isolated $HOME concluded the host had no emulator, and agents on the shared adb server drove each other\'s emulators.',
-    budgetBytes: 380,
-    layer: 'surface',
-    surfaces: ['code-corner'],
-    when: ({ android }) => Boolean(android),
-    render: ({ android }) =>
-      android?.leased
-        ? 'Android: the SDK is $ANDROID_HOME and AVDs are in $ANDROID_AVD_HOME. Boot with `beeline emulator -avd <name> -no-window -gpu swiftshader_indirect`; Beeline leases a port and private writable data for each instance. Use `adb devices` and `adb -s emulator-<port>` to select one. The guest reaches host services at 10.0.2.2.'
-        : `Android: adb and emulator are on PATH; the SDK is $ANDROID_HOME, AVDs are in $ANDROID_AVD_HOME, and /dev/kvm works. Your adb server sees only your own emulator. Boot it with \`emulator -avd <name> -port ${android?.emulatorPort} -read-only -no-window -no-snapshot -gpu swiftshader_indirect\`; it reaches host services at 10.0.2.2.`,
-  },
-  {
-    id: 'corner.implementer',
-    topic: 'implementer-condition',
-    why: 'A reviewer that opened its corner was given push steps and pushed a fix (PR #2224); only the agent knows whether it was told to write code, so the author rules are conditional.',
-    budgetBytes: 400,
-    layer: 'surface',
-    surfaces: ['code-corner'],
-    render: ({ reviewer }) =>
-      `Implementer rules: the rules below${reviewer ? ', up to the reviewer rules,' : ''} apply only when the brief or a person in this corner told you to write code or do this corner's work. A hand-over of the work to another agent ends that. Otherwise do not commit, push, or open a pull request.`,
-  },
-  {
-    id: 'corner.prepare',
-    topic: 'corner-prepare',
-    why: 'Only a checkout that defines the command can run it; another repository fails on its first step.',
-    budgetBytes: 60,
-    layer: 'surface',
-    surfaces: ['code-corner'],
-    when: ({ brief, cornerPrepareScript }) =>
-      cornerHasRepositoryWork(brief) && cornerPrepareScript === true,
-    render: () => 'Run npm run corner:prepare first.',
-  },
-  {
-    id: 'corner.push',
-    topic: 'push',
-    why: 'The author must push only its own branch and rebase before each push, or it overwrites or loses work.',
-    budgetBytes: 800,
-    layer: 'surface',
-    surfaces: ['code-corner'],
-    when: ({ brief }) => cornerHasRepositoryWork(brief),
-    render: ({ worktree, githubCli }) =>
-      githubCli === 'rest'
-        ? `Only when the brief calls for repository changes: commit and push only ${worktree?.featureBranch}; never force-push or write to ${worktree?.targetBranch}. Before pushing, run \`git ls-remote --exit-code origin ${worktree?.featureBranch}\`. Exit code 0: rebase on origin/${worktree?.featureBranch}; resolve conflicts autonomously, realigning to that remote branch and redoing the work if needed, then rerun affected tests. Exit code 2: the branch is absent; skip rebase for the first push. Any other non-zero exit is a lookup failure: stop and retry; do not skip rebase or push. Open it with \`gh pr create\` and read it with \`gh pr view\`; this host has no gh, so the Beeline launcher answers both over the GitHub REST API with the app token.`
-        : `Only when the brief calls for repository changes: commit and push only ${worktree?.featureBranch}; never force-push or write to ${worktree?.targetBranch}. Before pushing, run \`git ls-remote --exit-code origin ${worktree?.featureBranch}\`. Exit code 0: rebase on origin/${worktree?.featureBranch}; resolve conflicts autonomously, realigning to that remote branch and redoing the work if needed, then rerun affected tests. Exit code 2: the branch is absent; skip rebase for the first push. Any other non-zero exit is a lookup failure: stop and retry; do not skip rebase or push. Open the pull request with gh.`,
-  },
-  {
-    id: 'corner.contract',
-    topic: 'author-contract',
-    why: 'The reviewer enforces this contract; an author that never saw it fails review.',
-    budgetBytes: 2_600,
-    layer: 'surface',
-    surfaces: ['code-corner'],
-    render: ({ brief }) => cornerHasRepositoryWork(brief) ? CORNER_AUTHOR_CONTRACT : CORNER_RUNTIME_AUTHOR_CONTRACT,
-  },
-  {
-    id: 'corner.checks',
-    topic: 'checks-turns',
-    why: 'Server check notes were restated as replies, and agents scheduled polls of a gate that wakes them itself.',
-    budgetBytes: 900,
-    layer: 'surface',
-    surfaces: ['code-corner'],
-    when: ({ brief }) => cornerHasRepositoryWork(brief),
-    render: () =>
-      'When asked whether the reviewer was woken, call read(facet:checks) and report reviewerWake; do not invent a cause. Never schedule polls of read(facet:checks) or the merge gate; the server wakes you when it changes.',
-  },
-  {
-    id: 'corner.merge',
-    topic: 'merge',
-    why: 'Exactly one rule may say who merges and when; two rules here once said both "merge" and "never merge".',
-    budgetBytes: 520,
-    layer: 'surface',
-    surfaces: ['code-corner'],
-    when: ({ brief }) => cornerHasRepositoryWork(brief),
-    render: ({ reviewerHandle, reviewer }) =>
-      (reviewer ? CORNER_REVIEWER_AUTHOR_MERGE : cornerMergeInstruction(reviewerHandle)) +
-      '',
-  },
-  {
-    id: 'corner.review',
-    topic: 'review',
-    why: 'The reviewer checks one exact green head and returns concise blocking findings.',
-    budgetBytes: 450,
-    layer: 'surface',
-    surfaces: ['code-corner'],
-    when: ({ reviewer }) => reviewer === true,
-    render: () =>
-      `Reviewer rules: ${CORNER_REVIEWER_SESSION_INSTRUCTION} Findings go to the author, not a commit; never push another agent's branch. This wins over the finished-fix rule.`,
-  },
-  {
-    id: 'corner.repo-less',
-    topic: 'place',
-    why: 'A repo-less corner has no repository; the agent delivers files, not commits.',
-    budgetBytes: 1_000,
-    layer: 'surface',
-    surfaces: ['repo-less-corner'],
-    render: () =>
-      [
-        "This is a repo-less corner with no repository checkout and no GitHub workflow. Work in this corner's writable workspace: create files with your native tools (or use scratch_io when mounted), then send them with post_artifact.",
-        'Do not initialize a repository, create a branch, commit, push, open a pull request, or wait for GitHub checks.',
-      ].join('\n'),
-  },
-  {
-    id: 'corner.repo-less-reply',
-    topic: 'reply-target',
-    why: 'Every turn was told to end with a one-line summary of files it posted, so answers were followed by a restatement of themselves.',
-    budgetBytes: 260,
-    layer: 'surface',
-    surfaces: ['repo-less-corner'],
-    render: () =>
-      'Report done: with the deliverable, or needs-decision: for required input, to your commander. Close the corner when the order calls for completion or abandonment.',
+    render: ({ brief, reviewer, reviewerHandle, worktree, githubCli, cornerPrepareScript }) => {
+      const repositoryWork = cornerHasRepositoryWork(brief);
+      const push = `Only when the brief calls for repository changes: commit and push only ${worktree?.featureBranch}; never force-push or write to ${worktree?.targetBranch}. Before pushing, run \`git ls-remote --exit-code origin ${worktree?.featureBranch}\`. Exit code 0: rebase on origin/${worktree?.featureBranch}; resolve conflicts autonomously, realigning to that remote branch and redoing the work if needed, then rerun affected tests. Exit code 2: the branch is absent; skip rebase for the first push. Any other non-zero exit is a lookup failure: stop and retry; do not skip rebase or push.`;
+      return paragraphs(
+        `Implementer rules: the rules below${reviewer ? ', up to the reviewer rules,' : ''} apply only when the brief or a person in this corner told you to write code or do this corner's work. A hand-over of the work to another agent ends that. Otherwise do not commit, push, or open a pull request.`,
+        repositoryWork && cornerPrepareScript === true && 'Run npm run corner:prepare first.',
+        repositoryWork &&
+          (githubCli === 'rest'
+            ? `${push} Open it with \`gh pr create\` and read it with \`gh pr view\`; this host has no gh, so the Beeline launcher answers both over the GitHub REST API with the app token.`
+            : `${push} Open the pull request with gh.`),
+        repositoryWork ? CORNER_AUTHOR_CONTRACT : CORNER_RUNTIME_AUTHOR_CONTRACT,
+        repositoryWork &&
+          'When asked whether the reviewer was woken, call read(facet:checks) and report reviewerWake; do not invent a cause. Never schedule polls of read(facet:checks) or the merge gate; the server wakes you when it changes.',
+        repositoryWork && (reviewer ? CORNER_REVIEWER_AUTHOR_MERGE : cornerMergeInstruction(reviewerHandle)),
+        reviewer &&
+          `Reviewer rules: ${CORNER_REVIEWER_SESSION_INSTRUCTION} Findings go to the author, not a commit; never push another agent's branch. This wins over the finished-fix rule.`,
+      );
+    },
   },
 ];
+
 
 export interface AssembledSessionPrompt {
   /** Sent as the ACP session system prompt. */
@@ -678,7 +543,7 @@ export function renderAssignedCornerBrief(brief: CornerBrief): string {
 
 /**
  * The member list: the only place handle spellings come from. The rule for
- * using them is `core.tagging`; this renders the facts only.
+ * using them is in the `talking` section; this renders the facts only.
  */
 export function roomMentionDirectory(roster: WorkspaceRoster, selfId: string): string {
   const rows: string[] = [];
@@ -776,7 +641,7 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
   {
     id: 'turn.session',
     topic: 'session-delivery',
-    why: 'Codex, Pi, and Grok drop the ACP session prompt; without this they never saw the corner rules.',
+    why: { 'turn.session': 'Codex, Pi, and Grok drop the ACP session prompt; without this they never saw the corner rules.' },
     budgetBytes: 16_000,
     layer: 'turn',
     surfaces: EVERYWHERE,
@@ -785,7 +650,7 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
   {
     id: 'turn.checks',
     topic: 'checks-turns',
-    why: 'Only CI or merge-gate wakes suppress ordinary reporting; user schedules must deliver their task results.',
+    why: { 'turn.checks': 'Only CI or merge-gate wakes suppress ordinary reporting; user schedules must deliver their task results.' },
     budgetBytes: 350,
     layer: 'turn',
     surfaces: ['code-corner'],
@@ -803,7 +668,7 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
   {
     id: 'turn.land',
     topic: 'land-turn',
-    why: "A reviewer's PASS hands the merge to the implementer, who must not merge over an unanswered human question.",
+    why: { 'turn.land': "A reviewer's PASS hands the merge to the implementer, who must not merge over an unanswered human question." },
     budgetBytes: 300,
     layer: 'turn',
     surfaces: ['code-corner'],
@@ -813,7 +678,7 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
   {
     id: 'turn.objective',
     topic: 'objective',
-    why: 'The objective locates the work but must never be mistaken for its authority.',
+    why: { 'turn.objective': 'The objective locates the work but must never be mistaken for its authority.' },
     budgetBytes: 600,
     layer: 'turn',
     surfaces: CORNERS,
@@ -823,7 +688,7 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
   {
     id: 'turn.rename',
     topic: 'corner-rename',
-    why: 'A generated corner name says nothing about the work; only the server knows the name is still generated, so the ask rides only on those turns.',
+    why: { 'turn.rename': 'A generated corner name says nothing about the work; only the server knows the name is still generated, so the ask rides only on those turns.' },
     budgetBytes: 600,
     layer: 'turn',
     surfaces: CORNERS,
@@ -835,7 +700,7 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
   {
     id: 'turn.brief',
     topic: 'brief',
-    why: 'The brief is the product authority for corner work; a corner without one says so once.',
+    why: { 'turn.brief': 'The brief is the product authority for corner work; a corner without one says so once.' },
     budgetBytes: 24_000,
     layer: 'turn',
     surfaces: CORNERS,
@@ -849,7 +714,7 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
   {
     id: 'turn.checkout',
     topic: 'checkout',
-    why: 'A Room checkout is refreshed per turn; the agent must know which commit it reads.',
+    why: { 'turn.checkout': 'A Room checkout is refreshed per turn; the agent must know which commit it reads.' },
     budgetBytes: 200,
     layer: 'turn',
     surfaces: ROOMS,
@@ -861,7 +726,7 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
   {
     id: 'turn.transcript',
     topic: 'transcript',
-    why: 'The conversation so far, with rows this session already saw left out.',
+    why: { 'turn.transcript': 'The conversation so far, with rows this session already saw left out.' },
     budgetBytes: 200_000,
     layer: 'turn',
     surfaces: EVERYWHERE,
@@ -874,7 +739,7 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
   {
     id: 'turn.resume',
     topic: 'resume',
-    why: 'A card answer resumes a paused turn; the agent must know which question was answered.',
+    why: { 'turn.resume': 'A card answer resumes a paused turn; the agent must know which question was answered.' },
     budgetBytes: 600,
     layer: 'turn',
     surfaces: ROOMS,
@@ -883,7 +748,7 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
   {
     id: 'turn.members',
     topic: 'members',
-    why: 'Handle spellings change; only the live roster is a safe source.',
+    why: { 'turn.members': 'Handle spellings change; only the live roster is a safe source.' },
     budgetBytes: 4_000,
     layer: 'turn',
     surfaces: EVERYWHERE,
@@ -892,7 +757,7 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
   {
     id: 'turn.memory',
     topic: 'memory',
-    why: 'Keyword-matched institutional memory, compiled and capped by the server.',
+    why: { 'turn.memory': 'Keyword-matched institutional memory, compiled and capped by the server.' },
     budgetBytes: 1_000,
     layer: 'turn',
     surfaces: EVERYWHERE,
@@ -901,7 +766,7 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
   {
     id: 'turn.workspace-core',
     topic: 'workspace-core',
-    why: 'Most Workspaces never saved a workspace-core procedure; only a Workspace that lists it should be told to load it at task start.',
+    why: { 'turn.workspace-core': 'Most Workspaces never saved a workspace-core procedure; only a Workspace that lists it should be told to load it at task start.' },
     budgetBytes: 120,
     layer: 'turn',
     surfaces: EVERYWHERE,
@@ -911,7 +776,7 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
   {
     id: 'turn.corners',
     topic: 'corners',
-    why: 'Room and corner agents need exact member corner ids for supported relay actions.',
+    why: { 'turn.corners': 'Room and corner agents need exact member corner ids for supported relay actions.' },
     budgetBytes: 8_000,
     layer: 'turn',
     surfaces: ['room', 'code-corner', 'repo-less-corner'],
@@ -935,7 +800,7 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
   {
     id: 'turn.reviewer-target',
     topic: 'reviewer-target',
-    why: 'The reviewer must review the head that is green now, not one named in an older message.',
+    why: { 'turn.reviewer-target': 'The reviewer must review the head that is green now, not one named in an older message.' },
     budgetBytes: 1_200,
     layer: 'turn',
     surfaces: ['code-corner'],
@@ -950,7 +815,7 @@ export const TURN_SECTIONS: readonly PromptSection<TurnPromptContext>[] = [
   {
     id: 'turn.task',
     topic: 'task',
-    why: 'The message this turn answers, said once and last.',
+    why: { 'turn.task': 'The message this turn answers, said once and last.' },
     budgetBytes: 64_000,
     layer: 'turn',
     surfaces: EVERYWHERE,

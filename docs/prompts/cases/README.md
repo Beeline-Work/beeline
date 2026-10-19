@@ -33,7 +33,7 @@ Rooms, Workspaces or emails behind it.
 | Field | Meaning |
 | --- | --- |
 | `id` | The file name without `.json`. |
-| `section` | The prompt section the case defends, for example `core.tagging`. |
+| `section` | The prompt section the case defends, for example `talking`. |
 | `summary` | What the agent must do, in one plain sentence. |
 | `place` | `room`, `dm`, `code-corner` or `repo-less-corner`. |
 | `session` | Extra `SessionPromptContext` fields: `agentName`, `soul`, `machineHost`, `shell`, `brief`, `worktree`, `reviewer`, `agentCommand`, … `brief` takes `spec`, `repositoryWork` and `approval`; the runner fills the ids. |

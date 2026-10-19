@@ -1,6 +1,6 @@
 {
   "id": "repo-less-reports-done",
-  "section": "corner.repo-less-reply",
+  "section": "replying",
   "summary": "Ordered work in a repo-less corner ends with a done: report.",
   "place": "repo-less-corner",
   "turn": {

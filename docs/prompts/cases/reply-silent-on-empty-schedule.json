@@ -1,6 +1,6 @@
 {
   "id": "reply-silent-on-empty-schedule",
-  "section": "core.reply",
+  "section": "replying",
   "summary": "A scheduled wake with nothing to do ends without a message.",
   "place": "room",
   "turn": {

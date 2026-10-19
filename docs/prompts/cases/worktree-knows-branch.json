@@ -1,6 +1,6 @@
 {
   "id": "worktree-knows-branch",
-  "section": "corner.worktree",
+  "section": "place",
   "summary": "A corner agent knows its feature branch and target.",
   "place": "code-corner",
   "session": {

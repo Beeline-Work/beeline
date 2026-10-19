@@ -1,6 +1,6 @@
 {
   "id": "finish-orders-then-ends",
-  "section": "core.finish",
+  "section": "talking",
   "summary": "After ordering another agent, the agent ends the turn instead of sleeping or polling.",
   "place": "room",
   "session": {

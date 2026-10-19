@@ -3,15 +3,13 @@ import { ACP_SESSION_MEMORY_MAX_BYTES } from './acp-resource-scope.js';
 import { describe, expect, it } from 'vitest';
 import type { CornerBrief } from '@beeline/api-contract/daemon';
 import {
-  CORE_BUDGET_BYTES,
   PROMPT_SURFACES,
   SESSION_SECTIONS,
-  SURFACE_BUDGET_BYTES,
+  SESSION_BUDGET_BYTES,
   TURN_SECTIONS,
   assembleSessionPrompt,
   assembleTurnPrompt,
   sessionSections,
-  type PromptSection,
   type PromptSurface,
   type SessionPromptContext,
   type TurnPromptContext,
@@ -340,27 +338,22 @@ function sentences(text: string): string[] {
     .filter((sentence) => sentence.length > 24);
 }
 
-function topicOwners<C>(sections: readonly PromptSection<C>[], surface: PromptSurface) {
+/** Topics written by more than one section; one subject has one section. */
+function repeatedTopics(sections: readonly { readonly id: string; readonly topic: string }[]): string[] {
   const owners = new Map<string, string[]>();
-  for (const section of sections) {
-    if (!section.surfaces.includes(surface)) continue;
-    owners.set(section.topic, [...(owners.get(section.topic) ?? []), section.id]);
-  }
-  return owners;
+  for (const section of sections) owners.set(section.topic, [...(owners.get(section.topic) ?? []), section.id]);
+  return [...owners].filter(([, ids]) => ids.length > 1).map(([topic, ids]) => `${topic}: ${ids.join(', ')}`);
 }
 
 describe('prompt assembly guards', () => {
-  it('gives every topic exactly one owning section on each surface', () => {
-    for (const surface of PROMPT_SURFACES) {
-      for (const sections of [SESSION_SECTIONS, TURN_SECTIONS] as const) {
-        for (const [topic, ids] of topicOwners<unknown>(
-          sections as readonly PromptSection<unknown>[],
-          surface,
-        )) {
-          expect(ids, `${surface}: topic ${topic}`).toHaveLength(1);
-        }
-      }
-    }
+  it('gives every topic exactly one section across all sections', () => {
+    expect(repeatedTopics([...SESSION_SECTIONS, ...TURN_SECTIONS])).toEqual([]);
+  });
+
+  it('fails on a repeated topic', () => {
+    expect(repeatedTopics([...SESSION_SECTIONS, { id: 'copy', topic: SESSION_SECTIONS[0]!.topic }])).toEqual([
+      `${SESSION_SECTIONS[0]!.topic}: ${SESSION_SECTIONS[0]!.id}, copy`,
+    ]);
   });
 
   it('points an agent at workspace-core only when the Workspace lists that procedure', () => {
@@ -391,7 +384,8 @@ describe('prompt assembly guards', () => {
 
   it('says why every section exists', () => {
     for (const section of [...SESSION_SECTIONS, ...TURN_SECTIONS]) {
-      expect(section.why.length, section.id).toBeGreaterThan(20);
+      expect(Object.keys(section.why).length, section.id).toBeGreaterThan(0);
+      for (const [rule, why] of Object.entries(section.why)) expect(why.length, `${section.id}: ${rule}`).toBeGreaterThan(20);
     }
   });
 
@@ -426,26 +420,22 @@ describe('prompt assembly guards', () => {
     }
   });
 
-  it('keeps every section, the core, and each surface inside its byte budget', () => {
+  it('keeps every section and each session prompt inside its byte budget', () => {
     const variants = { ...SESSION_VARIANTS, ...Object.fromEntries(Object.entries(SESSION_VARIANTS).map(([name, context]) => [`${name}-squire`, { ...context, squireAvailable: true }])) };
     for (const [name, context] of Object.entries(variants)) {
       const entries = sessionSections(context);
-      let core = 0;
-      let surface = 0;
+      let rules = 0;
       for (const { section, text } of entries) {
         const bytes = Buffer.byteLength(text);
         expect(bytes, `${name}: ${section.id}`).toBeLessThanOrEqual(section.budgetBytes);
         // The soul is the owner's text, not a Beeline rule, so it does not
-        // count against the core ceiling.
-        const ruleBytes =
-          section.id === 'core.identity' && context.soul
+        // count against the session ceiling.
+        rules +=
+          section.id === 'identity' && context.soul
             ? bytes - Buffer.byteLength(context.soul.instructions)
             : bytes;
-        if (section.layer === 'core') core += ruleBytes;
-        else surface += ruleBytes;
       }
-      expect(core, `${name}: core`).toBeLessThanOrEqual(CORE_BUDGET_BYTES);
-      expect(surface, `${name}: surface`).toBeLessThanOrEqual(SURFACE_BUDGET_BYTES);
+      expect(rules, `${name}: session`).toBeLessThanOrEqual(SESSION_BUDGET_BYTES);
     }
     for (const [name, context] of Object.entries(TURN_VARIANTS)) {
       for (const { id, bytes } of assembleTurnPrompt(context).report) {
@@ -611,6 +601,22 @@ describe('prompt assembly guards', () => {
     }
   });
 
+  it('gives every surface the newer-human-instruction rule the skill used to carry', () => {
+    const skill = [usingBeelineSkillMarkdown, beelineReviewSkillMarkdown, beelineSpecSkillMarkdown, beelineTriageSkillMarkdown]
+      .map((markdown) => markdown('test'))
+      .join('\n');
+    expect(skill).not.toMatch(/follow the newer instruction/i);
+    for (const [name, context] of Object.entries(SESSION_VARIANTS)) {
+      const text = assembleSessionPrompt(context).systemPrompt;
+      expect(text, name).toContain('Any human in the Room can direct you.');
+      expect(text, name).toMatch(/follow the newer instruction/i);
+      expect(text, name).toMatch(/revise the brief (citing that message|with that message as approval)/);
+      expect(text, name).toContain('state in the corner what changed.');
+    }
+    const covered = new Set(Object.values(SESSION_VARIANTS).map((context) => context.surface));
+    expect([...covered].sort()).toEqual([...PROMPT_SURFACES].sort());
+  });
+
   it('documents Connectors discovery and connection in every agent turn', () => {
     for (const [name, context] of Object.entries(SESSION_VARIANTS)) {
       const text = assembleSessionPrompt(context).systemPrompt;
@@ -731,7 +737,7 @@ describe('prompt assembly guards', () => {
     const context = { surface, agentName: 'Bee', agentCommand: 'codex-acp' };
     const entries = sessionSections(context);
     const coordination = entries.filter(({ text }) => text.includes('report(status, text)'));
-    expect(coordination.map(({ section }) => section.id)).toEqual(['core.tagging']);
+    expect(coordination.map(({ section }) => section.id)).toEqual(['talking']);
     const session = assembleSessionPrompt(context);
     const turn = assembleTurnPrompt({ surface, sessionPrefix: session.turnPrefix, task: { body: 'Continue' } });
     expect(turn.text).toContain('report(status, text) one step up to your commander');

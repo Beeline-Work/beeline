@@ -824,7 +824,7 @@ describe('operator skills + MCP passthrough', () => {
     expect(managedSkillText).toContain('The key-ownership and grant rules still apply');
     const reviewSkill = readFileSync(resolve(skillsDir, 'beeline-review', 'SKILL.md'), 'utf8');
     expect(reviewSkill).toContain('On PASS, call `approve_merge` with the exact reviewed head SHA');
-    expect(reviewSkill).toContain('PASS wakes the implementer to land');
+    expect(reviewSkill).not.toContain('PASS wakes the implementer to land');
     expect(reviewSkill).toContain('Follow an explicit commander order to land');
     expect(reviewSkill).not.toContain('gh pr merge');
     expect(reviewSkill).toContain('checks="passed" and checkCount=0');

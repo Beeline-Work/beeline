@@ -25,7 +25,7 @@ person who reported that problem.
     one hour returns success without another occurrence.
   - A refusal comes back to the agent as a plain result and never fails the
     turn.
-  - The `core.feedback` prompt section tells agents to report only when a turn
+  - The `work` prompt section (rule `core.feedback`) tells agents to report only when a turn
     hit friction.
 - **People** have two ways to report:
   - Tag `@system` in a Room, corner, or DM. The composer offers it as

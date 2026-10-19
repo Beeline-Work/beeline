@@ -1,6 +1,6 @@
 {
   "id": "feedback-reports-tool-error",
-  "section": "core.feedback",
+  "section": "work",
   "summary": "A Beeline tool error during the turn is reported with report_feedback.",
   "place": "room",
   "turn": {

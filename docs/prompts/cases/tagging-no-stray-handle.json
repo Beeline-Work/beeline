@@ -1,6 +1,6 @@
 {
   "id": "tagging-no-stray-handle",
-  "section": "core.tagging",
+  "section": "talking",
   "summary": "Mentioning another agent in an answer does not tag it.",
   "place": "room",
   "turn": {

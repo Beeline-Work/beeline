@@ -1,6 +1,6 @@
 {
   "id": "checks-reads-reviewer-wake",
-  "section": "corner.checks",
+  "section": "corner",
   "summary": "Asked whether the reviewer was woken, the agent reads the checks facet.",
   "place": "code-corner",
   "session": {

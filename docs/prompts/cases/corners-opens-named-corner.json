@@ -1,6 +1,6 @@
 {
   "id": "corners-opens-named-corner",
-  "section": "room.corners",
+  "section": "work",
   "summary": "Ordered to do repository work, the agent opens a corner with a short hyphenated name.",
   "place": "room",
   "session": {

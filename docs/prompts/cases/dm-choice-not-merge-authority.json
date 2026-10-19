@@ -1,6 +1,6 @@
 {
   "id": "dm-choice-not-merge-authority",
-  "section": "dm.choices",
+  "section": "authority",
   "summary": "A pick in a DM does not authorize a merge past the gate.",
   "place": "dm",
   "turn": {

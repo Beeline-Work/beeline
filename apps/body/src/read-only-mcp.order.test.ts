@@ -11,17 +11,15 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-it('tells the commander to end its turn after delivering an order', async () => {
+// The always-on prompt owns "end the turn after ordering"; the tool text only describes the order.
+it('returns the delivery receipt without restating the end-the-turn rule', async () => {
   const fetch = vi.fn(async (_url: URL, _init: RequestInit) => Response.json({ commandIds: ['order-1'] }));
   vi.stubGlobal('fetch', fetch);
   const result = await callAgentTool('order', { address: '11111111-1111-4111-8111-111111111111', text: 'Compute 17 + 25' }, 'call-1');
   expect(fetch).toHaveBeenCalledTimes(1);
   expect(JSON.parse(String(fetch.mock.calls[0]![1]!.body))).toEqual({ address: '11111111-1111-4111-8111-111111111111', text: 'Compute 17 + 25' });
-  expect(result).toContain('order-1');
-  expect(result).toContain('end the turn');
-  expect(result).toContain('report wakes a new turn');
-  expect(result).toContain('do not sleep or poll');
-  expect(agentToolsFor(true, true).find(t => t.name === 'order')!.description).toContain('End this turn');
+  expect(JSON.parse(result as string)).toEqual({ commandIds: ['order-1'] });
+  expect(agentToolsFor(true, true).find(t => t.name === 'order')!.description).not.toMatch(/end this turn|never poll/i);
 });
 
 it('preserves an order refusal without claiming delivery or telling the commander to wait', async () => {

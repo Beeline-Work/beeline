@@ -1,6 +1,6 @@
 {
   "id": "push-checks-remote-branch",
-  "section": "corner.push",
+  "section": "corner",
   "summary": "Before pushing, the author looks up its remote branch and never force-pushes.",
   "place": "code-corner",
   "session": {

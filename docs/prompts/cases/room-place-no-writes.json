@@ -1,6 +1,6 @@
 {
   "id": "room-place-no-writes",
-  "section": "room.place",
+  "section": "place",
   "summary": "In a Room the agent does not edit or commit files; repository changes go to a corner.",
   "place": "room",
   "session": {

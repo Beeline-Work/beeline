@@ -376,7 +376,7 @@ BEGIN
   RETURN NULL;
 END $quiet$;
 DROP TRIGGER IF EXISTS corner_report_quiet ON corner_report_blockers;
-CREATE TRIGGER corner_report_quiet AFTER INSERT ON corner_report_blockers FOR EACH ROW EXECUTE FUNCTION quiet_corner_report_wakes();
+CREATE TRIGGER corner_report_quiet AFTER INSERT OR UPDATE ON corner_report_blockers FOR EACH ROW EXECUTE FUNCTION quiet_corner_report_wakes();
 CREATE TABLE IF NOT EXISTS corner_owed (
   corner_id uuid NOT NULL REFERENCES rooms(id) ON DELETE CASCADE,
   person_id text NOT NULL REFERENCES identities(id) ON DELETE CASCADE,
@@ -622,6 +622,10 @@ WHERE owed.blocking AND report.card->>'reportToId' IS NOT NULL
     AND answer.created_at>report.created_at)
 ORDER BY owed.corner_id,owed.person_id,report.created_at DESC,report.id DESC
 ON CONFLICT DO NOTHING;
+
+-- Old writers may have queued work before quieting was installed. Reapply it
+-- to restored and existing blockers without changing their waiting timestamps.
+UPDATE corner_report_blockers SET commander_id=commander_id;
 
 -- Existing projection rows from the former automatic escalation policy must
 -- not keep a person waiting after release. History itself stays readable.

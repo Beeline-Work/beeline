@@ -689,3 +689,38 @@ it.each(['blocked','needs_decision'] as const)('Reproduction waiting-answer: hum
     await db.query(`UPDATE agent_turns SET status='complete' WHERE room_id=$1`,[C]);
   }
 });
+
+it.each([
+  ['agent',false],['agent',true],['human',false],['human',true],
+] as const)('Reproduction waiting-answer: upgrade quiets a legacy retry for %s reports (existing blocker=%s)', async (commander, retained) => {
+  if(commander === 'human')
+    await phone.execute('sendRoomMessage',{roomId:C,messageId:'e'.repeat(64),text:'@worker Continue the proof.'},HUMAN);
+  else await wake();
+  const command = (await readAgentCommands(db,C,WORKER)).commands[0]!;
+  await daemon.execute('claimAgentCommand',{roomId:C,commandId:command.id,generationId:'upgrade-proof'},WORKER);
+  const authority = {roomId:C,requestId:command.turnRequestId,generationId:'upgrade-proof'};
+  await daemon.execute('report',{...authority,status:'blocked',text:'blocked: Owner must approve the proof.'},WORKER);
+  await daemon.execute('postRoomMessage',{...authority,text:'Waiting for approval.'},WORKER);
+  await daemon.execute('postAgentTurnReceipt',{...authority,agentId:WORKER,status:'complete'},WORKER);
+  // Model the pre-upgrade database and a retry queued by its old writer.
+  await db.query('DROP TRIGGER IF EXISTS corner_report_quiet ON corner_report_blockers');
+  if(!retained) await db.query('DELETE FROM corner_report_blockers WHERE corner_id=$1',[C]);
+  await db.query(`INSERT INTO agent_commands(id,room_id,agent_id,source_message_id,turn_request_id,action,reason,root_command_id,root_source_message_id,agent_depth)
+    VALUES('legacy-retry',$1,$2,NULL,'legacy-retry','input','corner_check','legacy-retry','legacy-retry',0)`,[C,WORKER]);
+
+  expect((await phone.readCorners(ROOM,HUMAN))!.corners[0]!.state).toBe('working');
+  const transcript = (await db.query('SELECT id,text FROM messages ORDER BY id')).rows;
+  for(let i=0;i<2;i++) {
+    await db.query(cornerOwedSchemaSql());
+    expect((await db.query("SELECT state FROM agent_commands WHERE id='legacy-retry'")).rows).toEqual([{state:'cancelled'}]);
+    expect((await db.query("SELECT status FROM agent_turns WHERE request_id='legacy-retry' AND status='working'")).rows).toEqual([]);
+    expect((await phone.readCorners(ROOM,HUMAN))!.corners[0]!.state).toBe('waiting');
+    expect((await readAgentCommands(db,C,WORKER)).commands).toHaveLength(0);
+    await runCornerAttention(db);
+    expect((await db.query("SELECT id FROM corner_attention_flags WHERE kind='idle'")).rowCount).toBe(0);
+    expect((await db.query('SELECT id,text FROM messages ORDER BY id')).rows).toEqual(transcript);
+  }
+  await phone.execute('sendRoomMessage',{roomId:C,messageId:'f'.repeat(64),text:'@worker Approved, continue.'},HUMAN);
+  expect((await readAgentCommands(db,C,WORKER)).commands).toHaveLength(1);
+  expect((await phone.readCorners(ROOM,HUMAN))!.corners[0]!.state).toBe('working');
+});

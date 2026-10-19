@@ -307,7 +307,7 @@ describe('using-beeline human instructions and holds', () => {
     expect(markdown).toContain('## Conflicting human instructions');
     // The rule itself is always-on prompt text; the skill keeps the hold mechanics.
     expect(markdown).not.toContain('Any human in the Room can direct you.');
-    expect(roomPrompt()).toContain('Any human in the Room can direct you. Follow the newer instruction when human instructions conflict.');
+    expect(roomPrompt()).toContain('Any human in the Room can direct you. Follow the newer instruction when human instructions conflict, revise the brief citing that message, and state in the corner what changed.');
     expect(markdown).not.toContain('Follow the order from your commander within inherited scope');
     expect(markdown).toContain('report one step up');
     expect(markdown).toMatch(/higher-tier instruction overrides a lower-tier hold/i);

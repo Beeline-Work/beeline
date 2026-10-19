@@ -1,6 +1,6 @@
 {
   "id": "tools-connects-service",
-  "section": "surface.tools",
+  "section": "tools",
   "summary": "A request for a service the agent lacks goes through connect.",
   "place": "room",
   "turn": {

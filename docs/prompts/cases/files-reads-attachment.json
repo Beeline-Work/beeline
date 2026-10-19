@@ -1,6 +1,6 @@
 {
   "id": "files-reads-attachment",
-  "section": "core.files",
+  "section": "tools",
   "summary": "A file on a message is read with read(facet:attachment), never by fetching a URL.",
   "place": "room",
   "session": {

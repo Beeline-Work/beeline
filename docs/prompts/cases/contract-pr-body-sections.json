@@ -1,6 +1,6 @@
 {
   "id": "contract-pr-body-sections",
-  "section": "corner.contract",
+  "section": "corner",
   "summary": "The pull request body carries the Reproduced and Demonstrated sections.",
   "place": "code-corner",
   "session": {

@@ -41,7 +41,7 @@ test('a case passes at need of total samples and stops sampling once settled', (
 test('parsePromptCase refuses malformed cases', () => {
   const valid = {
     id: 'x',
-    section: 'core.tagging',
+    section: 'talking',
     summary: 'Tags exactly.',
     place: 'room',
     turn: { task: { body: 'hi' } },

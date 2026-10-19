@@ -1,6 +1,6 @@
 {
   "id": "squire-drive-starts-drive",
-  "section": "surface.squire-drive",
+  "section": "tools",
   "summary": "A multi-step browser signup starts with operate_drive, not single steps.",
   "place": "room",
   "session": {

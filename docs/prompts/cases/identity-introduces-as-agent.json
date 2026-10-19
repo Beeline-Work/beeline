@@ -1,6 +1,6 @@
 {
   "id": "identity-introduces-as-agent",
-  "section": "core.identity",
+  "section": "identity",
   "summary": "Asked to introduce itself, the agent uses its Beeline name.",
   "place": "room",
   "turn": {

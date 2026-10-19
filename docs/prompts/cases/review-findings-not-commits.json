@@ -1,6 +1,6 @@
 {
   "id": "review-findings-not-commits",
-  "section": "corner.review",
+  "section": "corner",
   "summary": "A reviewer sends findings to the author and never pushes the author branch.",
   "place": "code-corner",
   "session": {

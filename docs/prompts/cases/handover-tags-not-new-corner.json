@@ -1,6 +1,6 @@
 {
   "id": "handover-tags-not-new-corner",
-  "section": "corner.handover",
+  "section": "talking",
   "summary": "Asked to hand the corner on, the agent orders or tags the other agent instead of opening a sibling corner.",
   "place": "code-corner",
   "session": {

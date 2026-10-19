@@ -395,10 +395,10 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     id: 'surface.tools',
     topic: 'tools',
     why: 'Agents use one server-owned connection path in every turn.',
-    budgetBytes: 240,
+    budgetBytes: 440,
     layer: 'surface',
     surfaces: EVERYWHERE,
-    render: () => 'For any service or capability request, use connect(mode:discover) if unclear, then connect(mode:ensure, service, reason, continuation).',
+    render: () => 'For any service or capability request, use connect(mode:discover) if unclear, then connect(mode:ensure, service, reason, continuation). For supported GitHub API work, check connect(mode:status) and prefer personal GitHub over the repository App. Consult using-beeline for checkout and merge boundaries.',
   },
   {
     id: 'surface.squire-drive',

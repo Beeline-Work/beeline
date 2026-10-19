@@ -30,7 +30,7 @@ Command (from `apps/mobile`):
 ./node_modules/.bin/vitest run 'sources/app/(app)/beeline/settings/workbench.github-connect.test.tsx' sources/buzz/app-sign-in.test.ts sources/utils/open-external-url.test.ts
 ```
 
-Eight tests pass. The screen interaction mocks native rendering primitives and
+Nine tests pass. The screen interaction mocks native rendering primitives and
 server responses; it executes the actual screen, connection hook, app sign-in
 storage and desktop external-link dispatch. It does not authorize GitHub access.
 
@@ -52,7 +52,7 @@ proof. No release or production deployment is assigned or performed.
 
 Related PR search found no superseding fix for this click handler.
 
-## Revised repository guidance (revision 3, work in progress)
+## Revised repository guidance (revision 5, work in progress)
 
 On 2026-10-19, a new read-only Squire browser session on the deployed site
 confirmed General → Room settings → Repository None/change → Link/Create →
@@ -69,14 +69,64 @@ guidance and the missing-organization installation action. See
 General. The saved case is in the format of pending PR #2606; its runner is not
 on this branch yet.
 
-Personal credential inspection through Squire's sealed HTTP boundary returned
-GitHub `/user` identity `lunchboxfortwo` and repository permissions including
-`push: true` for `Beeline-Work/beeline`. No personal push was attempted. The
-current corner git launcher still refreshes the Beeline App token. Squire's
-mounted personal credential route provides HTTP requests, not credential
-injection into native git; personal push precedence remains unimplemented.
-Revision 3's actual agent-chat and successful personal-push criteria remain
-outstanding. This PR must remain draft and must not be approved as complete.
+An actual deployed General conversation now supplies criterion 4's verbal
+guidance proof. Request `dd1731771bfb17af334754216d40c35f4f75c6a04fff326c5785a6c6817df5d1`
+asks for a login fix with no linked repository and unavailable gh. Response
+`1b8f1cdd1b9c21992115e249a175f5a3c3a26352cd588e0ac104438a7542430e`
+guides organization installation approval, linking the repository from Room
+settings, and checking installation repository access. The same browser showed
+“THIS ROOM ISN’T LINKED TO A REPO”, a repository picker, and “Add repositories,
+accounts, or organizations”. No repository was selected. The typing tool timed
+out after entering a partial draft; the observed draft was submitted once, and
+the stored request ends at “con”. Its complete missing-repository request and
+“Do not open a corner, change any code” instructions are present. This is
+deployed behavior, not a claim that the branch's more specific menu guidance
+has shipped.
 
-Local validation: `npm run corner:prepare`, root `npm run typecheck`, and 154
-body prompt/skill tests passed.
+Personal GitHub API precedence is now explicit in the always-on tool guidance,
+the using-beeline skill, and in
+the `connect(mode:status)` result for an existing personal GitHub app. The hint
+names its owner-scoped app and transport, prefers supported personal API
+operations including Git Data pushes, and forbids App fallback after denial.
+App-only checkout remains on the existing path. Tests cover personal status,
+App-only access, managed-tool permission refusal, and the actual Squire relay
+path preserving both a successful and a refused Git Data update without retry.
+Owner authorization denial is also tested before any upstream vault call.
+Managed routes name the exact connected app ID; sealed routes name
+`use_credential(service:"github")`.
+
+The saved personal API-push case passed three of three local model samples:
+each checked connection status and chose the personal app ID for the
+non-force reference update. The App-only case passed three of three samples
+without requesting a personal connection. These are simulated tool-choice
+replays, not real pushes. See `credential-routing-replay.json`. Claude rejects
+top-level schema composition, so the local replay used a provider-compatible
+projection that omits those schema fields; production runtime validation is
+unchanged. The unmodified pending #2606 runner remains unverified here, and its
+owner was notified about this provider boundary.
+
+The owner approved API push proof in brief revision 4. On 2026-10-19, sealed
+personal GitHub `/user` authenticated as `lunchboxfortwo`; reading this corner's
+feature ref and its Git commit returned HTTP 200. Independently, the native App
+route's `gh api /installation/repositories --jq '.repositories[].full_name'`
+returned only `Beeline-Work/beeline`, confirming both routes were configured.
+The personal `POST /repos/Beeline-Work/beeline/git/refs` request for
+`refs/heads/proof/github-personal-2594-20261019-mvfhq0wa`, at commit
+`8f68adbe1bd0f7de3b8027931b78a3db4559212f`, returned HTTP 403. No branch was
+successfully created or pushed, and no App fallback was attempted. A working
+personal push remains unproven. Repository push permission on the user does
+not establish permission on the particular token; GitHub documents
+[Contents write permission for this operation](https://docs.github.com/en/rest/git/refs#create-a-reference).
+
+Reviewer session `dc6e9578-3447-4c7e-9e72-5d0cb6eb6443` opened the deployed
+site in the existing owner account. It is shared live through the Beeline
+browser-share card for a person to sign in as Play Review and hand back the
+same session. No logout or unsupported sealed-link operation was attempted.
+Successful personal push and authenticated reviewer proof remain outstanding;
+this PR must remain draft.
+
+Local validation: `npm run corner:prepare`, root `npm run typecheck`, 226 body
+prompt/skill/app-tool/Squire relay tests, 11 released Workbench MCP tests, and
+45 native git/gh wrapper tests passed. Saved behavior cases follow pending PR #2606's format; that replay
+runner is not on this branch. The merged main branch added a Room-with-Squire
+snapshot, which was refreshed to include the repository guidance.

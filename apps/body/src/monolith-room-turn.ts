@@ -269,8 +269,11 @@ function isSandboxHomeEdit(request: AcpPermissionRequest, sandboxHome?: string):
   try {
     const root = resolve(sandboxHome);
     const realRoot = realpathSync(root);
-    return paths.every(path => isAbsolute(path) && strictlyInside(root, resolve(path)) &&
-      strictlyInside(realRoot, realWriteTarget(path)));
+    // Only an already-normal path: `resolve` folds `..` before symlinks are
+    // followed, so `home/link/../x` would be judged by a different directory
+    // than the one the filesystem writes through.
+    return paths.every(path => isAbsolute(path) && path === resolve(path) &&
+      strictlyInside(root, path) && strictlyInside(realRoot, realWriteTarget(path)));
   } catch {
     return false;
   }

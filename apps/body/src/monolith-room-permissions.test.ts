@@ -458,6 +458,8 @@ describe('native writes inside the sandbox home', () => {
     await writeFile(join(home, 'notes.md'), 'old');
     await symlink(outside, join(home, 'escape'));
     await symlink(join(outside, 'missing.txt'), join(home, 'dangling.txt'));
+    await mkdir(join(outside, 'sub'));
+    await symlink(join(outside, 'sub'), join(home, 'link'));
     return { root, home, checkout, outside };
   }
 
@@ -494,6 +496,11 @@ describe('native writes inside the sandbox home', () => {
       join(home, '..', 'mock.html'),
       join(home, 'escape', 'mock.html'),
       join(home, 'dangling.txt'),
+      // Unnormalized on purpose: the filesystem follows link to outside/sub
+      // and then `..` to outside, not back to home.
+      `${home}/link/../escaped.txt`,
+      `${home}/./mock.html`,
+      `${home}//mock.html`,
       home,
       'mock.html',
       '~/mock.html',

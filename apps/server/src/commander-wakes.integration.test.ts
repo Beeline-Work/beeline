@@ -99,11 +99,11 @@ it('Reproduction FR-report: rejects corner progress disguised as done before a P
 });
 it('requires a status that matches the report prefix', async () => {
   await expect(daemon.execute('report', { ...authority(order), status: 'done', text: 'Delivered without a prefix' }, RUBY))
-    .rejects.toThrow('matching its text prefix');
+    .rejects.toThrow('received status "done" and text prefix null');
   await expect(daemon.execute('report', { ...authority(order), text: 'done: delivered' } as never, RUBY))
-    .rejects.toThrow('requires status');
+    .rejects.toThrow('received status null and text prefix "done:"');
   await expect(daemon.execute('report', { ...authority(order), status: 'done', text: 'blocked: missing input' }, RUBY))
-    .rejects.toThrow('matching its text prefix');
+    .rejects.toThrow('received status "done" and text prefix "blocked:"');
 });
 it('Reproduction report-schema: stores and delivers a complete multi-paragraph report', async () => {
   const opened = await open(), turn = await worker(opened.cornerId);

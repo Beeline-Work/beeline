@@ -691,7 +691,8 @@ async function checksReported(
   if (event.result === 'failing') plan = { outcome: 'failing' };
   // A yes given while checks ran (a PASS or a person's order) needs no review.
   else if (await approvedCurrentHead(db, cornerId, corner)) plan = { outcome: 'passing', approved: true };
-  else if (!corner.configured_reviewer_id) plan = { outcome: 'no_reviewer' };
+  else if (!reviewerList({ reviewer_agent_id: corner.configured_reviewer_id,
+    reviewer_fallback_ids: corner.reviewer_fallback_ids }).some(id => id !== corner.worker_agent_id)) plan = { outcome: 'no_reviewer' };
   else {
     const reviewerAgentId = await reachableReviewer(db, cornerId, corner, event.sourceMessageId, headSha);
     if (!reviewerAgentId)
@@ -838,7 +839,8 @@ async function ensureReviewDispatch(
     return OK;
   if (transition.run.headSha !== pr.headSha || await approvedCurrentHead(db, cornerId, corner))
     return OK;
-  if (!corner.configured_reviewer_id) {
+  if (!reviewerList({ reviewer_agent_id: corner.configured_reviewer_id,
+    reviewer_fallback_ids: corner.reviewer_fallback_ids }).some(id => id !== corner.worker_agent_id)) {
     return noteMissingReviewer(db, cornerId, corner, pr.headSha);
   }
   const outstanding = await db.query<{ id: string; state: string }>(
@@ -849,6 +851,7 @@ async function ensureReviewDispatch(
        AND turn.agent_id=command.agent_id AND turn.request_id=command.turn_request_id
      WHERE command.room_id=$1 AND command.action='input'
        AND command.agent_id=ANY(ARRAY[parent.reviewer_agent_id]||parent.reviewer_fallback_ids)
+       AND command.agent_id IS DISTINCT FROM $3
        AND (command.state IN ('pending','claimed')
             OR (command.state='complete' AND turn.status='complete'))
        AND command.created_at>=(
@@ -856,7 +859,7 @@ async function ensureReviewDispatch(
            AND card->>'runId'=$1::text ORDER BY (card->>'seq')::int DESC LIMIT 1)
      ORDER BY (command.state IN ('pending','claimed')) DESC,command.created_at DESC,command.id DESC
      LIMIT 1`,
-    [cornerId, CORNER_LIFECYCLE_CARD_TYPE],
+    [cornerId, CORNER_LIFECYCLE_CARD_TYPE, corner.worker_agent_id],
   );
   const reviewed = outstanding.rows[0];
   if (reviewed?.state === 'pending' || reviewed?.state === 'claimed') return OK;
@@ -994,6 +997,8 @@ async function reachableReviewer(
   headSha: string | null,
 ): Promise<string | undefined> {
   if (!corner.configured_reviewer_id) return undefined;
+  if (corner.configured_reviewer_id === corner.worker_agent_id && !corner.reviewer_fallback_ids.length)
+    return undefined;
   if (corner.reviewer_fallback_ids.length)
     return dispatchableListReviewer(db, cornerId, corner, sourceMessageId, headSha);
   if (!corner.reviewer_parent_member) {
@@ -1028,7 +1033,7 @@ async function dispatchableListReviewer(
   const list = reviewerList({
     reviewer_agent_id: corner.configured_reviewer_id,
     reviewer_fallback_ids: corner.reviewer_fallback_ids,
-  });
+  }).filter(id => id !== corner.worker_agent_id);
   const reviewerAgentId = failed
     ? await nextHealthyAgent(db, corner.parent_id, list, failed)
     : await firstHealthyAgent(db, corner.parent_id, list);

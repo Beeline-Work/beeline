@@ -37,10 +37,10 @@ it('returns owner and host through Room, corner and workspace member operations'
     const result = await service.execute('listRoomMembers', { roomId }, JELLYBEAN);
     expect(result.members.find(member => member.id === JELLYBEAN)).toEqual({
       id: JELLYBEAN, kind: 'agent', name: 'Jellybean', handle: 'jellybean', role: 'member',
-      owner, machine: 'squire', online: true,
+      owner, machine: 'squire', online: true, model: null,
     });
     expect(result.members.find(member => member.id === RUBY)).toEqual({
-      id: RUBY, kind: 'agent', name: 'Ruby', handle: 'ruby', role: 'member', owner, machine: 'squire',
+      id: RUBY, kind: 'agent', name: 'Ruby', handle: 'ruby', role: 'member', owner, machine: 'squire', model: null,
     });
     expect(result.members.find(member => member.id === NEW)).toMatchObject({ owner, machine: null });
     expect(result.members.find(member => member.id === OWNER)).toEqual({
@@ -54,4 +54,34 @@ it('returns owner and host through Room, corner and workspace member operations'
   await database.query(`UPDATE live_outputs SET body='{"status":"offline"}' WHERE agent_id=$1`, [JELLYBEAN]);
   const offline = await service.execute('listRoomMembers', { roomId: ROOM }, JELLYBEAN);
   expect(offline.members.find(member => member.id === JELLYBEAN)).toMatchObject({ machine: 'squire', online: false });
+});
+
+it('returns provider quota, billing and parent reviewer roles only to Room members', async () => {
+  const usage = { updatedAt: 1000, windows: [{ rateLimitType: 'weekly', status: 'allowed', utilization: 0.25, updatedAt: 1000, resetsAt: 2000 }], plan: 'pro' };
+  await database.query(`UPDATE agents SET selected_model='test-model',usage_snapshot=$2::jsonb WHERE agent_id=$1`, [JELLYBEAN, JSON.stringify(usage)]);
+  await database.query(`UPDATE agents SET usage_snapshot=$2::jsonb WHERE agent_id=$1`, [RUBY, JSON.stringify({ updatedAt: 1000, windows: [], spend: { today: 0, remaining: 12 } })]);
+  await database.query(`UPDATE rooms SET reviewer_agent_id=$2,reviewer_fallback_ids=ARRAY[$3] WHERE id=$1`, [ROOM, RUBY, JELLYBEAN]);
+  for (const roomId of [ROOM, CORNER]) {
+    const result = await service.execute('listRoomMembers', { roomId }, JELLYBEAN);
+    expect(result.members.find(m => m.id === JELLYBEAN)).toMatchObject({ model: 'test-model', billing: 'subscription', reviewer: 'fallback', remainingAllowance: { updatedAt: 1000, windows: [{ rateLimitType: 'weekly', remaining: 0.75, resetsAt: 2000 }] } });
+    expect(result.members.find(m => m.id === RUBY)).toMatchObject({ billing: 'pay-per-use', reviewer: 'primary', remainingAllowance: { usd: 12 } });
+    expect(result.members.find(m => m.id === NEW)).not.toHaveProperty('remainingAllowance');
+  }
+  const roster = await service.execute('getWorkspaceRoster', { workspaceId: WORKSPACE, agentId: JELLYBEAN }, JELLYBEAN);
+  expect(roster.members.find(m => m.identityId === JELLYBEAN)).not.toHaveProperty('remainingAllowance');
+  await database.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [ROOM, NEW]);
+  try {
+    await expect(service.execute('listRoomMembers', { roomId: ROOM }, NEW)).rejects.toThrow();
+    await expect(service.execute('listRoomMembers', { roomId: CORNER }, NEW)).rejects.toThrow();
+  } finally {
+    await database.query(`UPDATE memberships SET removed_at=NULL WHERE room_id=$1 AND identity_id=$2`, [ROOM, NEW]);
+  }
+});
+
+it('includes a known free token allowance without inventing billing', async () => {
+  await database.query(`INSERT INTO free_agents(agent_id,workspace_id,owner_id,sealed_keys) VALUES($1,$2,$3,'fixture')`, [NEW, WORKSPACE, OWNER]);
+  await database.query(`INSERT INTO free_agent_usage(owner_id,day,tokens) VALUES($1,(now() AT TIME ZONE 'UTC')::date,123000)`, [OWNER]);
+  const result = await service.execute('listRoomMembers', { roomId: ROOM }, JELLYBEAN);
+  expect(result.members.find(m => m.id === NEW)).toMatchObject({ remainingAllowance: { tokens: { remaining: 2877000 } } });
+  expect(result.members.find(m => m.id === NEW)).not.toHaveProperty('billing');
 });

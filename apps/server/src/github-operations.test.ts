@@ -77,6 +77,11 @@ describe('GitHub phone operations', () => {
   it.each(['green on reopen', 'green after reopen', 'prior head green'])('R1: close, push, stale reopen — %s dispatches once with current card totals', async timing => {
     const { corners, headSha: oldHead, app, payload } = await checksFixture();
     const corner = corners[0]!;
+    // Reopen dispatch requires a reviewer distinct from the implementer.
+    const implementer = 'c'.repeat(64);
+    await database.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Implementer')`, [implementer]);
+    await database.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [implementer, HUMAN]);
+    await database.query(`UPDATE corner_facts SET owner_agent_id=$2 WHERE corner_id=$1`, [corner, implementer]);
     const newHead = '2'.repeat(40);
     const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
     const prEvent = (action: string, sha: string) => ({

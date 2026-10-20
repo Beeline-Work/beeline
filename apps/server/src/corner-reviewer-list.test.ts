@@ -159,6 +159,14 @@ describe('updateRoom reviewer list', () => {
     expect(await row()).toEqual({ reviewer_agent_id: null, reviewer_fallback_ids: [] });
   });
 
+  it('drops empty fallback entries on write and migration', async () => {
+    await setReviewers(REVIEWER_A, '', REVIEWER_B);
+    await db.query(`UPDATE rooms SET reviewer_fallback_ids=array_append(reviewer_fallback_ids,'') WHERE id=$1`, [R]);
+    await migrate(db);
+    const row = await db.query(`SELECT reviewer_fallback_ids FROM rooms WHERE id=$1`, [R]);
+    expect(row.rows[0]?.reviewer_fallback_ids).toEqual([REVIEWER_B]);
+  });
+
   it('refuses a fallback that is not an agent member of the Room, or a repeated one', async () => {
     await expect(setReviewers(REVIEWER_A, H)).rejects.toThrow('reviewer agent Room membership required');
     await expect(
@@ -185,17 +193,33 @@ describe('check-passed dispatch with a reviewer list', () => {
     expect(await reviews(REVIEWER_B)).toHaveLength(0);
   });
 
-  it('skips an unhealthy agent, but includes the corner\'s own opener when it is healthy', async () => {
+  it('skips the implementer and unhealthy agents for a healthy fallback', async () => {
     await reportPresence(REVIEWER_A, 'offline');
-    // The server does not exclude the corner's opener from its own parent
-    // Room's reviewer list; a healthy opener first on the list is dispatched
-    // like any other agent.
     await reportPresence(OWNER_AGENT, 'online');
     await setReviewers(OWNER_AGENT, REVIEWER_A, REVIEWER_B);
     await greenCheck();
-    expect(await reviews(OWNER_AGENT)).toHaveLength(1);
+    expect(await reviews(OWNER_AGENT)).toHaveLength(0);
     expect(await reviews(REVIEWER_A)).toHaveLength(0);
-    expect(await reviews(REVIEWER_B)).toHaveLength(0);
+    expect(await reviews(REVIEWER_B)).toHaveLength(1);
+  });
+
+  it('excludes the current implementer after a handoff, while allowing the opener to review', async () => {
+    await db.query(`UPDATE corner_facts SET worker_agent_id=$2 WHERE corner_id=$1`, [C, REVIEWER_A]);
+    await reportPresence(OWNER_AGENT, 'online');
+    await setReviewers(REVIEWER_A, OWNER_AGENT);
+    await greenCheck();
+    expect(await reviews(REVIEWER_A)).toHaveLength(0);
+    expect(await reviews(OWNER_AGENT)).toHaveLength(1);
+  });
+
+  it('hands review back without dispatching to its sole implementer reviewer', async () => {
+    await reportPresence(OWNER_AGENT, 'online');
+    await setReviewers(OWNER_AGENT);
+    await greenCheck();
+    expect(await reviews(OWNER_AGENT)).toHaveLength(0);
+    const handback = await db.query(`SELECT private_payload FROM agent_commands
+      WHERE room_id=$1 AND agent_id=$2 AND reason='corner_review_needed'`, [C, OWNER_AGENT]);
+    expect(handback.rowCount).toBeGreaterThan(0);
   });
 
   it('reports the gap privately when nobody on the list is healthy, once per episode', async () => {

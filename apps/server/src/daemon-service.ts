@@ -8095,7 +8095,7 @@ export class DaemonService {
        ORDER BY identity.kind,identity.name`,
       [roomId],
     );
-    return { members: await agentMemberMetadata(this.database, rows.rows) };
+    return { members: await agentMemberMetadata(this.database, rows.rows, roomId) };
   }
 
   /** A public message; tags use the same conversation wake rule as final replies. */

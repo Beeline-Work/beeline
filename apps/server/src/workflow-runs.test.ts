@@ -987,6 +987,39 @@ describe('handoff', () => {
     }
   });
 
+  it.each([false, true])('demonstrates tray-choice-clarity with readable workflow choices and unchanged routing (legacy: %s)', async legacy => {
+    const command = await commandFor(IMPLEMENTER, await rootMessage(OWNER));
+    const contract = { ...FEEDBACK_TRIAGE_CONTRACT, name: 'tray-proof', start: 'approve',
+      handoffs: Object.fromEntries(Object.entries(FEEDBACK_TRIAGE_CONTRACT.handoffs)
+        .filter(([name]) => ['approve', 'dispatch', 'done', 'failed'].includes(name))),
+    };
+    await saveWorkflow(database, command, { contract });
+    if (legacy) {
+      const historical = { ...contract, handoffs: Object.fromEntries(Object.entries(contract.handoffs)
+        .map(([name, { does: _does, ...state }]) => [name, state])) };
+      await database.query(`UPDATE workspace_skill_versions SET markdown=$1
+        WHERE skill_id IN (SELECT id FROM workspace_skills WHERE slug='tray-proof')`, [JSON.stringify(historical)]);
+    }
+    const { runId } = await startWorkflow(database, command, {
+      name: 'tray-proof', roleBindings: { triager: IMPLEMENTER },
+    });
+    await database.query(`INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'owner')`, [WORKSPACE, OWNER]);
+    const phone = new PhoneService(database, 'https://beeline.test');
+    const tray = await phone.execute('readNeedsYou', { workspaceId: WORKSPACE }, OWNER) as {
+      items: { messageId: string; text: string; approval?: { actions?: { kind: string; choiceId?: string; optionId?: string; label: string; detail?: string }[] } }[];
+    };
+    const item = tray.items.find(item => item.text === (legacy ? 'Choose the next step for tray proof' : contract.handoffs.approve!.does))!;
+    expect(item).toBeDefined();
+    expect(item.approval?.actions?.map(action => [action.kind, action.label, action.detail])).toEqual([
+      ['choice', 'dispatch', legacy ? 'Continue to dispatch' : 'Open a fix corner for each approved problem.'],
+      ['choice', 'skip', legacy ? 'Continue to done' : 'The sweep finished.'],
+    ]);
+    const skip = item.approval!.actions![1]!;
+    await phone.execute('answerChoice', { choiceId: skip.choiceId, optionId: skip.optionId }, OWNER);
+    expect((await getWorkflowRun(database, ROOM, runId)).state).toBe('done');
+    console.log('Demonstrated tray-choice-clarity: readable gate → two explicit choices → skip finishes the run via its original option ID');
+  });
+
   it('posts a choice card for a gate instead of waking an agent directly', async () => {
     const { runId } = await startedRun(OWNER);
     let command = await commandFor(IMPLEMENTER);
@@ -1010,6 +1043,13 @@ describe('handoff', () => {
     );
     expect(choice.rows).toHaveLength(1);
     expect(choice.rows[0]!.options).toHaveLength(2);
+    const posted = (await database.query<{ card: { prompt: string; options: { label: string; consequence: string }[] } }>(
+      `SELECT card FROM messages WHERE card_type='choice' AND card->>'runId'=$1`, [runId],
+    )).rows[0]!.card;
+    expect(posted.prompt).not.toBe('corner: human_approve');
+    expect(posted.options.map(option => option.label)).toEqual(['approved', 'rejected']);
+    expect(posted.options.every(option => !option.consequence.startsWith('go to '))).toBe(true);
+
   });
 
   it("applies a person's gate answer as the transition and wakes the next state's agent with its run and attempt", async () => {

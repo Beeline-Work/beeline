@@ -628,6 +628,15 @@ describe('PhoneService Needs-you tray', () => {
         ],
       },
     });
+    // Reproduction tray-choice-clarity: historical workflow cards need no new
+    // metadata to distinguish their explicit outcomes from tray dismissal.
+    await database.query(`UPDATE messages SET card=card || '{"runId":"workflow-run"}'::jsonb WHERE id=$1`, [id]);
+    const [workflowItem] = (await read()).items;
+    expect(workflowItem?.approval?.actions).toEqual(item?.approval?.actions?.slice(0, 2));
+    // Dismissal hides the row without deciding the workflow choice.
+    await phone.execute('clearNeedsYou', { workspaceId: WORKSPACE, messageId: id }, VIEWER);
+    expect(await approvals()).toEqual([]);
+    expect((await database.query<{ status: string }>(`SELECT status FROM room_choices WHERE message_id=$1`, [id])).rows[0]?.status).toBe('open');
     // Addressed to the reader only.
     expect(await approvals(PEER)).toEqual([]);
     await database.query(`UPDATE room_choices SET status='answered'`);

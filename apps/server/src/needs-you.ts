@@ -166,6 +166,7 @@ type ApprovalCard = {
   prompt?: string;
   options?: { optionId?: string; label?: string; consequence?: string }[];
   choiceId?: string;
+  runId?: string;
   permissionId?: string;
   requestId?: string;
   approvalUrl?: string;
@@ -673,7 +674,9 @@ function approvalView(
       const actions: NeedsYouActionView[] = (card.options ?? []).flatMap(option =>
         option.optionId && option.label ? [{ kind: 'choice' as const, choiceId: card.choiceId!,
           optionId: option.optionId, label: option.label, detail: option.consequence }] : []);
-      actions.push({ kind: 'skip-choice', choiceId: card.choiceId, label: 'Skip' });
+      // A workflow default is already one of its explicit outcomes. Skipping
+      // would apply that outcome, whereas dismissing only hides the tray row.
+      if (!card.runId) actions.push({ kind: 'skip-choice', choiceId: card.choiceId, label: 'Skip' });
       return { ...result, actions };
     }
     case 'connector':

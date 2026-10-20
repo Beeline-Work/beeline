@@ -428,7 +428,8 @@ jobs:
       # apps/body/src/acp.ts's `inheritProcessEnv` doc comment) — `env`'s
       # fallback PATH when none is set is the POSIX default (`/bin:/usr/bin`),
       # not wherever setup-node installed this job's node.
-      - run: sudo ln -sf "$(command -v node)" /usr/bin/node
+      - if: runner.environment == 'github-hosted'
+        run: sudo ln -sf "$(command -v node)" /usr/bin/node
       # Several git-backed fixtures commit as the daemon/operator without
       # setting an identity themselves (they're proving something else).
       - run: |
@@ -440,7 +441,13 @@ jobs:
       # bwrap sandbox gate on `detectBwrapSandbox()`'s live viability probe
       # and skip cleanly if this runner's kernel refuses unprivileged user
       # namespaces (common under AppArmor hardening).
-      - run: sudo apt-get update && sudo apt-get install -y bubblewrap
+      - if: runner.environment == 'github-hosted'
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+      - name: Require preinstalled Body runner dependencies
+        if: runner.environment == 'self-hosted'
+        run: |
+          command -v bwrap
+          env -i /usr/bin/env node --version
       - run: npm ci
       # apps/body imports these workspaces from their built dist, not
       # their TS source (package.json "main"/"exports" point at dist/).
@@ -960,6 +967,7 @@ jobs:
           ghcr.io/beeline-work/ci-actionlint:1.7.7@sha256:887a259a5a534f3c4f36cb02dca341673c6089431057242cdc931e9f133147e9
           -config-file .github/actionlint.yaml
       - name: Install ShellCheck
+        if: runner.environment == 'github-hosted'
         run: sudo apt-get update && sudo apt-get install -y shellcheck
       - name: Lint tracked shell scripts
         run: npm run lint:shell

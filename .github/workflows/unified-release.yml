@@ -694,7 +694,8 @@ jobs:
         if: contains(fromJSON('["pending","built"]'), needs.initialize.outputs.stage_helper)
         run: |
           set -euo pipefail
-          npm install --global npm@^11.15.0
+          npm install --global --prefix "$RUNNER_TEMP/helper-npm" npm@^11.15.0
+          export PATH="$RUNNER_TEMP/helper-npm/bin:$PATH"
           npm ci
           npm run build -w @beeline/nostr
           npm run build -w @beeline/api-contract

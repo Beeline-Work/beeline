@@ -224,7 +224,7 @@ jobs:
       # The webview Tauri renders into is the system one: WebKitGTK here,
       # WKWebView on macOS, WebView2 on Windows. Only Linux needs it installed.
       - name: Install the Linux webview toolchain
-        if: runner.os == 'Linux'
+        if: runner.os == 'Linux' && runner.environment == 'github-hosted'
         run: |
           sudo apt-get update
           sudo apt-get install -y \

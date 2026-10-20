@@ -125,9 +125,14 @@ try {
         if (!composer) throw new Error('Send-text requires the visible Room composer');
         sendComposer = composer;
         tap(composer);
+        await pause(300);
+        adb('shell', 'input', 'keycombination', 'KEYCODE_CTRL_LEFT', 'KEYCODE_A');
+        adb('shell', 'input', 'keyevent', 'KEYCODE_DEL');
         targetId = randomBytes(32).toString('hex');
         adb('shell', 'input', 'text', `Rig%s${targetId.slice(0, 16)}`);
+        await pause(300);
         adb('shell', 'input', 'keyevent', '4');
+        await pause(500);
         // Sending starts animated status rows that prevent UI Automator idle.
         // Reuse the established controls; native text paint still proves every send.
         point = sendButton ?? pointFor(dump(), 'content-desc', 'Send message');

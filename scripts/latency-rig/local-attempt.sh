@@ -26,8 +26,8 @@ export GRADLE_USER_HOME="$lock_dir/gradle"
 flock -n 9 || { echo 'Another Speedy rig attempt is running' >&2; exit 2; }
 export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=6144}"
 export JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS:--Dorg.gradle.workers.max=2}"
-export LATENCY_RIG_DATABASE_URL='postgresql://localhost/beeline_latency_rig_speedy_nightly?host=%2Fvar%2Frun%2Fpostgresql'
-if ! psql "$LATENCY_RIG_DATABASE_URL" -Atqc 'SELECT 1' >/dev/null 2>&1; then createdb beeline_latency_rig_speedy_nightly; fi
+fixture_database="beeline_latency_rig_speedy_$(date +%s)_$$"
+export LATENCY_RIG_DATABASE_URL="postgresql://localhost/$fixture_database?host=%2Fvar%2Frun%2Fpostgresql"
 export LATENCY_RIG_REVIEW_SECRET
 LATENCY_RIG_REVIEW_SECRET="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(24).toString("hex"))')"
 export LATENCY_RIG_SERVER_PORT=18880 LATENCY_RIG_PORT=18881
@@ -43,12 +43,21 @@ for (const port of [18880, 18881]) await new Promise((resolve, reject) => {
 });
 JS
 rm -f "$output/report.json" "$output/report.md" "$output/samples.ndjson"
-bash scripts/latency-rig/run-local.sh >"$output/server.log" 2>&1 &
-server_pid=$!
-cleanup() { kill "$server_pid" 2>/dev/null || true; wait "$server_pid" 2>/dev/null || true; }
+# Each attempt starts with the same fixture, including no prior send leases.
+createdb --host=/var/run/postgresql "$fixture_database"
+server_pid=""
+cleanup() {
+  if [[ -n "$server_pid" ]]; then
+    kill "$server_pid" 2>/dev/null || true
+    wait "$server_pid" 2>/dev/null || true
+  fi
+  dropdb --host=/var/run/postgresql --if-exists "$fixture_database" || echo "Fixture cleanup failed: $fixture_database" >&2
+}
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
+bash scripts/latency-rig/run-local.sh >"$output/server.log" 2>&1 &
+server_pid=$!
 for _ in {1..180}; do
   kill -0 "$server_pid" 2>/dev/null || { echo 'Local server exited before readiness' >&2; exit 1; }
   if curl -fsS http://127.0.0.1:18881/healthz >/dev/null 2>&1; then break; fi
@@ -59,6 +68,8 @@ curl -fsS http://127.0.0.1:18881/healthz >/dev/null
 npx turbo run build --filter=@beeline/buzz-client... --filter=@beeline/nostr... --filter=@beeline/api-contract... >"$output/sdk-build.log" 2>&1
 bash scripts/latency-rig/build-local.sh >"$output/build.log" 2>&1
 adb -s "$device" install -r apps/mobile/android/app/build/outputs/apk/release/app-release.apk
+# This explicitly owned disposable app must not restore another attempt's cache.
+adb -s "$device" shell pm clear app.usebeeline >/dev/null
 adb -s "$device" shell pm grant app.usebeeline android.permission.POST_NOTIFICATIONS
 adb -s "$device" shell am start -a android.intent.action.VIEW \
   -d "beeline://review/$LATENCY_RIG_REVIEW_SECRET" app.usebeeline/.MainActivity >/dev/null

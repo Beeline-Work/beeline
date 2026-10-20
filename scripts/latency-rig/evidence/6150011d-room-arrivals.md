@@ -57,8 +57,10 @@ warm-open sample. Send-text was not reached. There is no complete nightly pass.
 Additional push tracing found received target rows in cache within 13 ms, but
 the Room route mounted about 300 ms later. Temporarily disabling Android system
 animations did not eliminate that hold. Those diagnostic runs are excluded;
-original animation settings have been restored. The forwarding activity's
-NoDisplay theme is under measurement and is not yet established as a fix.
+original animation settings have been restored. The forwarding activity's NoDisplay pilot also failed and was removed.
+The current candidate preserves the initial cached transcript, publishes missing-row
+responses before session setup consumes them, and tests a warm-push-only native
+handoff flag. Its complete matrix remains under measurement.
 
 ## Nightly installation and delivery
 

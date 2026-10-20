@@ -40,7 +40,7 @@ export LATENCY_RIG_BACKEND="$PUBLIC_ORIGIN"
 
 cd "$repo_dir"
 if ! psql "$database_url" -Atqc 'SELECT 1' >/dev/null 2>&1; then
-  createdb beeline_latency_rig
+  createdb --host=/var/run/postgresql beeline_latency_rig
 fi
 npx turbo run build --filter=@beeline/server...
 npm run migrate -w @beeline/server
@@ -49,8 +49,13 @@ node scripts/latency-rig/seed-local.mjs
 server_pid=""
 proxy_pid=""
 cleanup() {
-  [[ -z "$proxy_pid" ]] || kill "$proxy_pid" 2>/dev/null || true
-  [[ -z "$server_pid" ]] || kill "$server_pid" 2>/dev/null || true
+  local fixture_proxy="$proxy_pid" fixture_server="$server_pid"
+  proxy_pid=""
+  server_pid=""
+  [[ -z "$fixture_proxy" ]] || kill "$fixture_proxy" 2>/dev/null || true
+  [[ -z "$fixture_server" ]] || kill "$fixture_server" 2>/dev/null || true
+  [[ -z "$fixture_proxy" ]] || wait "$fixture_proxy" 2>/dev/null || true
+  [[ -z "$fixture_server" ]] || wait "$fixture_server" 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
 NODE_OPTIONS="${NODE_OPTIONS:-} --require $repo_dir/scripts/latency-rig/pg-probe.cjs" \

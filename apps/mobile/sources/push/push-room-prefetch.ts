@@ -6,6 +6,8 @@ import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { clientResetGeneration, subscribeClientReset } from '@/sync/client-reset';
 import { readPushedMonolithRoom } from '@/sync/transport/room-view-client';
 import { markRoomOpen } from '@/buzz/room-open-trace';
+import { currentSurfaceStamp } from '@/buzz/surface-clock';
+import { reconcileRoomView } from '@/buzz/room-view-presentation';
 
 type PendingRoom = {
   responseId: string;
@@ -45,7 +47,8 @@ export function prefetchPushRoom(responseId: string, roomId: string, messageId?:
     return readPushedMonolithRoom(roomId);
   };
   const view = viewer.then(async (pubkey) => {
-    const cached = pubkey ? await mobileSurfaceCache.read(surfaceAddress(config.monolithUrl, pubkey, `/room/${roomId}`), isRoomView).catch(() => null) : null;
+    const address = pubkey ? surfaceAddress(config.monolithUrl, pubkey, `/room/${roomId}`) : null;
+    const cached = address ? await mobileSurfaceCache.read(address, isRoomView).catch(() => null) : null;
     const list = pubkey && cached?.room.workspaceId ? mobileSurfaceCache.peek(surfaceAddress(
       config.monolithUrl, pubkey, '/workspace/:id/chats', { workspaceId: cached.room.workspaceId },
     ), isChatListView) : null;
@@ -54,7 +57,20 @@ export function prefetchPushRoom(responseId: string, roomId: string, messageId?:
     // starts its read now, rather than waiting for navigation or a handshake.
     const received = Boolean(cached && (!newestId || cached.messages.some((message) => message.id === newestId)));
     markRoomOpen('prefetch-cache', `${received ? 'received' : 'missing'}:${cached?.messages.at(-1)?.id ?? 'empty'}`);
-    return received ? afterPaint.then(read) : read();
+    if (received) return afterPaint.then(read);
+    if (!address) return read();
+    // An opening read can finish before the Room's asynchronous session setup.
+    // Publish its authorized response now so that setup sees the fresh rows.
+    const stamp = currentSurfaceStamp();
+    const view = await read();
+    if (generation !== clientResetGeneration() ||
+        config.monolithUrl !== getBuzzRuntimeConfig().monolithUrl ||
+        pubkey !== await loadBuzzViewerPubkey())
+      throw new Error('The opening Room was read for another account or server.');
+    const response = mobileSurfaceCache.publish(address,
+      reconcileRoomView(mobileSurfaceCache.peek(address, isRoomView), view), isRoomView, stamp);
+    void mobileSurfaceCache.persist(address, response, isRoomView).catch(() => undefined);
+    return response;
   });
   void view.then(() => markRoomOpen('prefetch-end'), () => markRoomOpen('prefetch-error'));
   // The route may never mount (for example, if the tap is superseded). Its

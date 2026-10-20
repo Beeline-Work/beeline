@@ -41,6 +41,10 @@ class PushNotificationActivity : Activity() {
     val pushTap = intent?.hasExtra("google.message_id") == true ||
       intent?.hasExtra("notificationResponse") == true ||
       intent?.hasExtra("textInputNotificationResponse") == true
+    // A warm push only forwards to the existing task; there is no UI to animate.
+    if (pushTap && PushRoutingState.mainActivityIsLive) {
+      destination.addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION)
+    }
     if (pushTap && !PushRoutingState.mainActivityIsLive) {
       destination.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK)
     }

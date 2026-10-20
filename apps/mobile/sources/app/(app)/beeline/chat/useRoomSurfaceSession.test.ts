@@ -114,6 +114,8 @@ vi.mock('@/buzz/surface-storage', () => ({
     peek: vi.fn((path: string) => path.startsWith('/room/') ? controls.cached : null),
     read: vi.fn(async () => controls.cached),
     write: vi.fn(async () => undefined),
+    publish: vi.fn((_address: unknown, view: RoomView) => { controls.cached = view; return view; }),
+    persist: vi.fn(async () => undefined),
     remove: vi.fn(async () => undefined),
   },
   surfaceAddress: vi.fn((_relay: string, _viewer: string, path: string) => path),
@@ -1003,6 +1005,7 @@ describe('useRoomSurfaceSession', () => {
   });
 
   it.each([1, 5])('paints %i received messages on the first frame before any network read', async (count) => {
+    controls.hotViewer = true;
     const { queued } = stubFrameScheduler();
     controls.cached = { ...roomView('room-a'), messages: Array.from({ length: count }, (_, n) => ({
       id: `received-${n}`, text: `received ${n}`, createdAt: 10 + n,
@@ -1013,6 +1016,8 @@ describe('useRoomSurfaceSession', () => {
     await act(async () => { renderer = create(React.createElement(Harness, {
       channelId: 'room-a', capture: (result: UseRoomSurfaceSessionResult) => { current = result; },
     })); });
+    expect(renderer.root.findAllByType('message-row').at(-1)?.props.children).toBe(`received ${count - 1}`);
+    expect(controls.roomReads).toBe(0);
     await flushMicrotasks();
     await act(async () => { queued.splice(0).forEach((frame) => frame(0)); });
     expect(current.roomSurface?.messages.at(-1)?.id).toBe(`received-${count - 1}`);

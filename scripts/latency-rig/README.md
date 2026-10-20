@@ -277,8 +277,11 @@ typical runs within the session's 31.41 GiB memory cap.
 loopback ports 18880/18881, seeds the disposable PostgreSQL fixture, signs in
 through the local review link after backend readiness, captures the six fixed
 cases, joins HTTP/SQL spans, and writes report JSON/Markdown. It owns and stops
-its fixture server. An occupied port or missing sign-in fails instead of using
-another service. The caller owns emulator cleanup. The nightly subset is:
+its fixture server and a uniquely named disposable PostgreSQL database, removed
+on exit. Each attempt clears the fixture app on the explicitly owned emulator,
+so prior send leases and phone caches cannot change the next attempt's workload.
+An occupied port or missing sign-in fails instead of using another service.
+The caller owns emulator cleanup. The nightly subset is:
 
 - Room list and push, with one and five unseen messages (four cases).
 - Existing warm Room open with no unseen messages.

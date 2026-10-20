@@ -35,9 +35,9 @@
 # already runs, so those filters stay a subset of the mobile module (a
 # skipped suite fails closed). PRODUCTION-CORPUS REPLAY has its own cached,
 # production-scale database because plan/timing evidence cannot come from
-# the tiny suite tables. SERVER INTEGRATION takes the verdict from hosted,
+# the tiny suite tables. SERVER INTEGRATION takes the verdict from self-hosted,
 # bounded shards of the large PGlite-backed integration file; SERVER SUITE
-# takes the verdict from hosted shards of the remaining tests and the isolated
+# takes the verdict from self-hosted shards of the remaining tests and the isolated
 # claim latency budget.
 #
 # `gh workflow run checks.yml -f suite=<name>` runs one gate on demand
@@ -83,7 +83,7 @@ jobs:
   changes:
     name: Detect changes
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, beeline-ci]
     timeout-minutes: 5
     outputs:
       body: ${{ steps.decide.outputs.body }}
@@ -319,7 +319,7 @@ jobs:
   typecheck:
     name: TYPECHECK
     if: github.event_name == 'pull_request' || inputs.suite == 'all' || inputs.suite == 'typecheck'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, beeline-ci]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -365,7 +365,7 @@ jobs:
   shared-package-tests:
     name: SHARED PACKAGE TESTS
     if: github.event_name == 'pull_request' || inputs.suite == 'all' || inputs.suite == 'shared-package-tests'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, beeline-ci]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -383,7 +383,7 @@ jobs:
   dead-code:
     name: DEAD CODE
     if: github.event_name == 'pull_request' || inputs.suite == 'all' || inputs.suite == 'dead-code'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, beeline-ci]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -413,7 +413,7 @@ jobs:
         (github.event_name == 'pull_request' && needs.changes.outputs.body == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'body-suite'))
       )
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, beeline-ci]
     timeout-minutes: 20
     env:
       # A hermetic suite must not react to whatever this happens to be on the
@@ -477,6 +477,10 @@ jobs:
     runs-on: [self-hosted, macOS, X64, ios-builder]
     timeout-minutes: 35
     steps:
+      - name: Record Mac runner hardware
+        run: |
+          sysctl -n machdep.cpu.brand_string
+          uname -m
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
@@ -519,7 +523,7 @@ jobs:
         (github.event_name == 'pull_request' && needs.changes.outputs.pushGateway == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'push-gateway-suite'))
       )
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, beeline-ci]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -552,7 +556,7 @@ jobs:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4, 5, 6, 7, 8]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, beeline-ci]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -576,7 +580,7 @@ jobs:
         (github.event_name == 'pull_request' && needs.changes.outputs.serverSuite == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'server-suite'))
       )
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, beeline-ci]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -599,10 +603,10 @@ jobs:
         (github.event_name == 'pull_request' && needs.changes.outputs.serverSuite == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'server-suite'))
       )
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, beeline-ci]
     timeout-minutes: 5
     steps:
-      - name: Require every hosted shard and the claim latency budget to pass
+      - name: Require every shard and the claim latency budget to pass
         env:
           SHARDS_RESULT: ${{ needs.server-suite-shard.result }}
           CLAIM_RESULT: ${{ needs.server-claim-latency.result }}
@@ -622,12 +626,12 @@ jobs:
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'server-integration'))
       )
     # One process running all 175 cases exceeded 34 GiB RSS locally. Split
-    # by exact test name so each hosted runner executes at most 22 cases.
+    # by exact test name so each runner executes at most 22 cases.
     strategy:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4, 5, 6, 7, 8]
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, beeline-ci]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -649,10 +653,10 @@ jobs:
         (github.event_name == 'pull_request' && needs.changes.outputs.serverIntegration == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'server-integration'))
       )
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, beeline-prod-host]
     timeout-minutes: 5
     steps:
-      - name: Require every hosted shard to pass
+      - name: Require every shard to pass
         env:
           SHARDS_RESULT: ${{ needs.server-integration-shard.result }}
         run: |
@@ -668,7 +672,7 @@ jobs:
         (github.event_name == 'pull_request' && needs.changes.outputs.mobileSuite == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'mobile-suite'))
       )
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, beeline-ci]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -708,7 +712,7 @@ jobs:
         (github.event_name == 'pull_request' && needs.changes.outputs.mobileExportReachability == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'mobile-export-reachability'))
       )
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, beeline-ci]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -742,7 +746,7 @@ jobs:
     if: >-
       !cancelled() && github.event_name == 'pull_request' &&
       needs.changes.outputs.productionCorpusReplay == 'true'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, beeline-ci]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -807,7 +811,7 @@ jobs:
     if: >-
       !cancelled() && github.event_name == 'pull_request' &&
       needs.changes.outputs.frameBudget == 'true'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, beeline-ci]
     timeout-minutes: 5
     steps:
       - name: Take the verdict from the suite that ran it
@@ -849,7 +853,7 @@ jobs:
     if: >-
       !cancelled() && github.event_name == 'pull_request' &&
       needs.changes.outputs.stateUpgrade == 'true'
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, beeline-ci]
     timeout-minutes: 5
     steps:
       - name: Take the verdict from the suite that ran it
@@ -904,7 +908,7 @@ jobs:
         (github.event_name == 'pull_request' && needs.changes.outputs.nativeFingerprint == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'native-fingerprint'))
       )
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, beeline-ci]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -936,7 +940,7 @@ jobs:
         (github.event_name == 'pull_request' && needs.changes.outputs.readme == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'readme-parity'))
       )
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, beeline-ci]
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
@@ -958,7 +962,7 @@ jobs:
         (github.event_name == 'pull_request' && needs.changes.outputs.appLinkAssociations == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'app-link-associations'))
       )
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, beeline-ci]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -981,7 +985,7 @@ jobs:
         (github.event_name == 'pull_request' && needs.changes.outputs.workflows == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'actionlint'))
       )
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, beeline-ci]
     timeout-minutes: 5
     permissions:
       contents: read
@@ -1031,7 +1035,7 @@ jobs:
         (github.event_name == 'pull_request' && needs.changes.outputs.authImage == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'auth-image'))
       )
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, beeline-ci]
     timeout-minutes: 30
     permissions:
       contents: read

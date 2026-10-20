@@ -196,7 +196,7 @@ jobs:
         include:
           # A universal binary, so one download covers Apple silicon and Intel.
           - label: macos-universal
-            os: macos-latest
+            os: [self-hosted, macOS, X64, ios-builder]
             target: universal-apple-darwin
             rust-targets: aarch64-apple-darwin,x86_64-apple-darwin
           # 22.04 rather than latest: the .deb and the AppImage inherit the
@@ -391,6 +391,17 @@ jobs:
         continue-on-error: true
         timeout-minutes: 3
         run: bash scripts/desktop-notification-proof-macos.sh
+
+      - name: Prove the macOS artifact contains both architectures
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          bundle="apps/mobile/src-tauri/target/${{ matrix.target }}/release/bundle"
+          app=$(find "$bundle" -type d -name '*.app' -print -quit)
+          test -n "$app"
+          executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")
+          lipo -verify_arch x86_64 arm64 "$app/Contents/MacOS/$executable"
+          lipo -archs "$app/Contents/MacOS/$executable" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Capture Windows native notification
         if: github.event_name == 'pull_request' && runner.os == 'Windows'

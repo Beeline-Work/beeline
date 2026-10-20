@@ -1,84 +1,77 @@
-# R1: warm Room open with newly arrived rows
+# R1: warm Room open with newly arrived rows (brief revision 2)
 
-Measured locally on 2026-10-19. This evidence does not establish acceptance on
-the dedicated `beeline-android-rig` runner.
+Measured locally on squire on 2026-10-19. Revision 2 replaces the proposed
+GitHub runner and server alert endpoint with an agent-owned local schedule.
+There is no new GitHub nightly workflow, webhook or token.
 
-## Environment
+## Environment and reproduction
 
-Main source: e2665c7dfc62ed9ac1de9ef4b18838dd76f9c6de. Fix source: e31187ac4
-plus the local-only native frame probe. Android 35 x86_64 leased disposable
-emulator on squire; no physical-device CPU calibration. Disposable PostgreSQL
-fixture: 200 Rooms, 300 corners, 10k older activities, 30-row window. Host proxy:
-100 ms RTT, zero configured jitter, 10 Mbps, local HTTP. Never production data.
+Main source: e2665c7dfc62ed9ac1de9ef4b18838dd76f9c6de, with the native rig probe
+applied before application changes. Android 35 x86_64, disposable Beeline-leased
+se_api35 emulator, 2560 MiB RAM and four cores. Local PostgreSQL fixture:
+200 Rooms, 300 corners, 10k older activities and a 30-row window. Proxy:
+100 ms RTT, zero configured jitter, 10 Mbps, local HTTP. No production data.
 
-R1: open the fixture Room, return to its Room list, insert one or five unique
-messages, then tap its row or invoke the Android push-tap Activity with FCM tap
-extras. The push case excludes FCM delivery and notification-shade latency.
-Warm navigation and installation work settle before capture. Each gate requires
-20 samples per case and p95 strictly below 450 ms.
+R1: warm the fixture Room, return using native Back to its Room list, insert
+one or five unique messages, then tap the Room or invoke its Android push-tap
+Activity with FCM tap extras. Push timing excludes delivery and notification
+shade latency. The timer starts at native touch-up or Activity entry and ends
+at frame commitment with the newest message visible above the composer in the
+same native navigation Screen. It never ends at the first cached paint.
 
-## Initial diagnostic baseline before application changes
+The rig-only Expo plugin rejects non-emulator host URLs and is absent from
+ordinary builds. A shell-permission receiver arms one expected unique message.
+Its draw listener checks a full TextView line above the composer and records a
+hardware frame-commit callback. This measures frame submission rather than
+physical display scanout. UI inspection occurs before the timed action;
+accessibility polling and JavaScript callbacks do not stop the timer.
 
-These are **JavaScript callback times**, not verified native paint results:
+## Complete main baseline
 
 | Entry / unseen | Samples | p50 ms | p95 ms |
 | --- | ---: | ---: | ---: |
-| Room list / 1 | 20 | 979 | 1191 |
-| Room list / 5 | 20 | 1239 | 1346 |
-| Push / 1 | 20 | 1262 | 1851 |
-| Push / 5 | 20 | 1306 | 1742 |
+| Room list / 1 | 20 | 1012 | 1349 |
+| Room list / 5 | 20 | 1480 | 1973 |
+| Push / 1 | 20 | 678 | 718 |
+| Push / 5 | 20 | 746 | 809 |
 
-The original marker matched the newest message id, but subsequent native
-inspection found that its text could remain clipped above the composer. A JS
-callback after response application cannot establish visible paint. An
-accessibility observer also perturbed the timings; its pilot percentiles are
-not acceptance evidence. An early frame-probe pilot also matched a Room-list
-preview; the corrected probe requires the composer and target in the same
-native navigation Screen. None of these pilots is used to claim a passing fix.
+All four cases fail the strict 450 ms page-load budget. Machine-readable results
+are in `6150011d-rev2-baseline.json`. Earlier JavaScript-only, clipped-text,
+preview-matching and interrupted harness pilots are excluded.
 
-## Native measurement
+## First cache-fix attempt
 
-The rig-only Expo plugin is absent in ordinary builds and rejects non-emulator
-host URLs. A shell-permission receiver arms one expected unique message. Timing
-starts at native touch-up or push Activity entry. An existing draw must contain
-a full TextView line above the composer in its own navigation Screen, then the
-hardware frame-commit callback
-records completion. This observes rendered frame submission, not physical
-scanout. No polling of the UI or JavaScript callback ends the measurement.
-
-Completed native fix measurements:
-
-| Entry / unseen | Samples | p50 ms | p95 ms | Local verdict |
+| Entry / unseen | Samples | p50 ms | p95 ms | Verdict |
 | --- | ---: | ---: | ---: | --- |
-| Room list / 1 | 20 | 341 | 763 | fails 450 ms |
-| Room list / 5 | 20 | 298 | 364 | passes 450 ms |
-| Push / 1 | 0 | — | — | no visible Room; failed capture |
-| Push / 5 | 0 | — | — | not reached |
+| Room list / 1 | 20 | 291 | 411 | pass |
+| Room list / 5 | 20 | 323 | 504 | fail |
+| Push / 1 | 20 | 686 | 1791 | fail |
+| Push / 5 | 20 | 813 | 1471 | fail |
 
-The corrected main probe completed 16 Room-list/one-message samples with median
-1765 ms, then stopped because a Workspace overlay intercepted the next tap.
-That interrupted run is not a complete baseline and its partial p95 must not be
-presented as a 20-sample acceptance result. The driver now dismisses that overlay
-before arming a Room-list tap. Neither the early preview-matching samples nor
-the interrupted tap is substituted for a successful Room paint.
+All outliers remain in these results. Host load is recorded every ten seconds.
+The full nightly attempt stopped at warm-open: its probe reused a prior push
+mark for the same target. The parser now requires matching entry case and an
+arming timestamp, with a regression test. No invalid mark was accepted as a
+warm-open sample. Send-text was not reached. There is no complete nightly pass.
 
-Both synthetic push trials (including the original ACTION_MAIN intent) failed
-to display the Room, although JS markers reported the fresh response applied.
-The native probe correctly produced no paint result. This is an unresolved
-local user-path/capture failure, not a passing push benchmark. The four-case
-before/after matrix and dedicated-device acceptance remain incomplete.
+Additional push tracing found received target rows in cache within 13 ms, but
+the Room route mounted about 300 ms later. Temporarily disabling Android system
+animations did not eliminate that hold. Those diagnostic runs are excluded;
+original animation settings have been restored. The forwarding activity's
+NoDisplay theme is under measurement and is not yet established as a fix.
 
-The release/Hermes APKs used local throwaway signing; the incremental native
-probe rebuilds used the generated local Android debug signer without changing
-the release build type. No build ran during measured samples. Companion JSON
-records counts, partial statistics and the probe source hash.
+## Nightly installation and delivery
 
-## Independent blockers
+The standalone comparison and local attempt scripts are committed with tests.
+The fixed nightly subset is the four arrival cases, warm Room open and send-text,
+20 samples each. Missing, failed or skipped cases fail closed. The agent reruns
+the full subset once before alerting and preserves the last passing baseline.
 
-The owner's personal GitHub connection returned HTTP 403 for workflow dispatch
-and runner inventory. Repository/workflow/run reads succeeded. Historical
-Oct 13 workflow records have skipped device jobs; workflow success alone is
-not evidence that the device ran. The runner's capture executable and online
-state remain unverified. The scheduled workflow fails closed on missing capture
-and the hosted watchdog reports a skipped night, but real Room delivery needs
-the normal server release containing the restricted OIDC alert endpoint.
+The README contains the installation procedure and the nightly wake prompt.
+A durable schedule must belong to the parent Room because schedules in archived
+corners stop. A parent-Room order for Speedy has been requested from Ruby;
+installation has no receipt yet. No operational nightly guarantee is claimed.
+
+The personal GitHub connection returned HTTP 403 when patching PR #2636's body.
+The draft PR's older description is stale until corrected through an authorized
+connection. This does not prevent local emulator work or comparison tests.

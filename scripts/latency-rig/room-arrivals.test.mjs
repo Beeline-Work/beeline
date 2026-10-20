@@ -60,3 +60,11 @@ test('send-text native frame is an interaction, while warm Room open remains a r
   });
   assert.equal(nativeArrivalMoment(mark('warm'), 'warm').kind, 'route');
 });
+
+const { findNativeArrival } = await import('./room-arrivals.mjs');
+test('a warm open cannot reuse the preceding push or an earlier warm frame', () => {
+  const mark = (name, start) => `LATENCY_VISIBLE ${JSON.stringify({ case: name, needle: 'same-target', startMs: start, paintMs: start + 50 })}`;
+  const output = [mark('push-unseen-5', 100), mark('warm', 200), mark('warm', 300)].join('\n');
+  assert.equal(findNativeArrival(output, 'warm', 'same-target', 250), mark('warm', 300));
+  assert.equal(findNativeArrival(output, 'warm', 'same-target', 350), '');
+});

@@ -42,3 +42,15 @@ export function nativeArrivalMoment(output, name) {
   return { kind: name === 'send-text' ? 'tap' : 'route', name: name === 'send-text' ? 'send-text' : '/beeline/chat/[channelId]', variant: name === 'send-text' ? 'warm' : name,
     startMs: mark.startMs, paintMs: mark.paintMs };
 }
+
+/** Repeated warm opens reuse a target; only this arm's case may finish it. */
+export function findNativeArrival(output, name, needle, armedAtMs) {
+  return output.split('\n').find((line) => {
+    const match = /LATENCY_VISIBLE (\{[^\r\n]*\})/.exec(line);
+    if (!match) return false;
+    try {
+      const mark = JSON.parse(match[1]);
+      return mark.case === name && mark.needle === needle && mark.startMs >= armedAtMs;
+    } catch { return false; }
+  }) ?? '';
+}

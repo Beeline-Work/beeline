@@ -8,7 +8,7 @@ import os from 'node:os';
 import { pointFor, requireRoomList } from './capture-ui.mjs';
 import { openSync, closeSync } from 'node:fs';
 import { once } from 'node:events';
-import { extractArrivalMoments, nativeArrivalMoment, validateArrivalCases } from './room-arrivals.mjs';
+import { extractArrivalMoments, nativeArrivalMoment, findNativeArrival, validateArrivalCases } from './room-arrivals.mjs';
 const databaseUrl = process.env.LATENCY_RIG_DATABASE_URL;
 const target = new URL(databaseUrl);
 if (!['localhost', '127.0.0.1', '::1'].includes(target.hostname) ||
@@ -134,6 +134,7 @@ try {
         const roomPoint = requireRoomList(xml);
         if (scenario.entry === 'room-list') point = roomPoint;
       }
+      const armedAtMs = Number(adb('shell', 'date', '+%s%3N').trim());
       adb('shell', 'am', 'broadcast', '-a', 'app.usebeeline.LATENCY_RIG_EXPECT', '-n', 'app.usebeeline/.LatencyRigReceiver',
         '--es', 'needle', targetId.slice(0, 16), '--es', 'case', scenario.name, '--es', 'entry', scenario.entry);
       await writeFile(`${output}/pending-attempt.json`, JSON.stringify({ name: scenario.name, unseen: scenario.unseen, targetId }, null, 2));
@@ -143,12 +144,13 @@ try {
         '--es', 'channelId', fixture.id, '--es', 'roomId', fixture.id,
         '--es', 'workspaceId', fixture.workspace_id, '--es', 'messageId', targetId);
       let nativeOutput = '';
+      let line = '';
       for (let probe = 0; probe < 50; probe++) {
         await pause(200);
         nativeOutput = adb('logcat', '-d', '-s', 'LATENCY_NATIVE:W');
-        if (nativeOutput.includes(targetId.slice(0, 16))) break;
+        line = findNativeArrival(nativeOutput, scenario.name, targetId.slice(0, 16), armedAtMs);
+        if (line) break;
       }
-      const line = nativeOutput.split('\n').find((line) => line.includes(targetId.slice(0, 16))) || '';
       await writeFile(`${output}/native-${scenario.name}-${sample}.txt`, line);
       const moment = nativeArrivalMoment(line, scenario.name);
       await pause(2000);

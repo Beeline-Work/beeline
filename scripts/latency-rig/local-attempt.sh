@@ -35,7 +35,6 @@ for (const port of [18880, 18881]) await new Promise((resolve, reject) => {
 });
 JS
 rm -f "$output/report.json" "$output/report.md" "$output/samples.ndjson"
-bash scripts/latency-rig/build-local.sh >"$output/build.log" 2>&1
 bash scripts/latency-rig/run-local.sh >"$output/server.log" 2>&1 &
 server_pid=$!
 cleanup() { kill "$server_pid" 2>/dev/null || true; wait "$server_pid" 2>/dev/null || true; }
@@ -48,6 +47,9 @@ for _ in {1..180}; do
   sleep 1
 done
 curl -fsS http://127.0.0.1:18881/healthz >/dev/null
+# Build all mobile SDK entry points before Metro on a fresh checkout.
+npx turbo run build --filter=@beeline/buzz-client... --filter=@beeline/nostr... --filter=@beeline/api-contract... >"$output/sdk-build.log" 2>&1
+bash scripts/latency-rig/build-local.sh >"$output/build.log" 2>&1
 adb -s "$device" install -r apps/mobile/android/app/build/outputs/apk/release/app-release.apk
 adb -s "$device" shell pm grant app.usebeeline android.permission.POST_NOTIFICATIONS
 adb -s "$device" shell am start -a android.intent.action.VIEW \

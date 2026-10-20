@@ -33,6 +33,7 @@ export function prefetchPushRoom(responseId: string, roomId: string, messageId?:
   if (!config.monolithEnabled) return;
   if (pending?.responseId === responseId && pending.roomId === roomId) return;
   markRoomOpen('prefetch-start');
+  markRoomOpen('prefetch-target', messageId ?? 'unspecified');
   const generation = clientResetGeneration();
   const viewer = loadBuzzViewerPubkey().catch(() => null);
   let releaseRead!: () => void;
@@ -40,6 +41,7 @@ export function prefetchPushRoom(responseId: string, roomId: string, messageId?:
   const read = () => {
     if (generation !== clientResetGeneration() || config.monolithUrl !== getBuzzRuntimeConfig().monolithUrl)
       throw new Error('The Room open belongs to another account or server.');
+    markRoomOpen('prefetch-network-start');
     return readPushedMonolithRoom(roomId);
   };
   const view = viewer.then(async (pubkey) => {
@@ -50,8 +52,9 @@ export function prefetchPushRoom(responseId: string, roomId: string, messageId?:
     const newestId = messageId ?? list?.chats.find((chat) => chat.room.id === roomId)?.latestMessage?.id;
     // A received row paints from the scoped response first. A missing row
     // starts its read now, rather than waiting for navigation or a handshake.
-    return cached && (!newestId || cached.messages.some((message) => message.id === newestId))
-      ? afterPaint.then(read) : read();
+    const received = Boolean(cached && (!newestId || cached.messages.some((message) => message.id === newestId)));
+    markRoomOpen('prefetch-cache', `${received ? 'received' : 'missing'}:${cached?.messages.at(-1)?.id ?? 'empty'}`);
+    return received ? afterPaint.then(read) : read();
   });
   void view.then(() => markRoomOpen('prefetch-end'), () => markRoomOpen('prefetch-error'));
   // The route may never mount (for example, if the tap is superseded). Its

@@ -1,3 +1,4 @@
+import { markRoomOpen } from '@/buzz/room-open-trace';
 import { AppState } from 'react-native';
 import { useEffect, useRef, useState } from 'react';
 import { SurfaceRefreshScheduler, isChatListView, isRoomView, type ChatListView, type SurfaceCacheAddress } from '@beeline/buzz-client';
@@ -170,6 +171,7 @@ class ChatListStore {
     const live = 'monolithLive' in event ? (event as MonolithSurfaceEvent).monolithLive : undefined;
     if (live && 'roomId' in live) this.heard.add(live.roomId);
     if (live?.type === 'message-delta') {
+      markRoomOpen('list-message-delta', live.message.id);
       const address = surfaceAddress(this.key.relayUrl, this.key.viewerPubkey, `/room/${live.roomId}`);
       const message = live.version === undefined ? live.message : { ...live.message, version: live.version };
       const apply = () => {

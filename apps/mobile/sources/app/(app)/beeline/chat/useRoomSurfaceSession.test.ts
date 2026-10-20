@@ -11,6 +11,8 @@ type TestSurfaceEvent = NostrEvent | MonolithSurfaceEvent;
 
 const controls = vi.hoisted(() => ({
   cached: null as RoomView | null,
+  hotViewer: false,
+  viewerRead: null as Promise<string | null> | null,
   schedulers: [] as Array<{
     fetch(): Promise<RoomView>;
     apply(view: RoomView): void;
@@ -96,7 +98,8 @@ vi.mock('@/auth/buzz-identity-storage', () => ({
       controls.identityPromise ??
       Promise.resolve({ publicKey: 'viewer', secretKey: new Uint8Array(32) }),
   ),
-  loadBuzzViewerPubkey: vi.fn(async () => controls.viewerPubkey),
+  loadBuzzViewerPubkey: vi.fn(async () => controls.viewerRead ?? controls.viewerPubkey),
+  peekBuzzViewerContext: () => controls.hotViewer ? { relayUrl: 'https://relay.test', viewerPubkey: controls.viewerPubkey! } : null,
   getEffectiveRelayUrl: vi.fn(async () => 'https://relay.test'),
 }));
 
@@ -107,7 +110,7 @@ vi.mock('@/buzz/community-storage', () => ({
 
 vi.mock('@/buzz/surface-storage', () => ({
   mobileSurfaceCache: {
-    peek: vi.fn(() => null),
+    peek: vi.fn((path: string) => path.startsWith('/room/') ? controls.cached : null),
     read: vi.fn(async () => controls.cached),
     write: vi.fn(async () => undefined),
     remove: vi.fn(async () => undefined),
@@ -366,6 +369,8 @@ beforeEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
   controls.cached = null;
+  controls.hotViewer = false;
+  controls.viewerRead = null;
   controls.schedulers.length = 0;
   controls.subscriptions.length = 0;
   controls.transportCount = 0;
@@ -969,6 +974,21 @@ describe('useRoomSurfaceSession', () => {
     expect(controls.transportCount).toBe(1);
     expect(receivers.length).toBeGreaterThan(0);
     expect(receivers.every((receiver) => receiver === globalThis)).toBe(true);
+    await act(async () => renderer.unmount());
+  });
+
+  it('renders the hot target before the asynchronous session has even read its identity', async () => {
+    controls.hotViewer = true;
+    controls.viewerRead = new Promise(() => undefined);
+    controls.cached = { ...roomView('room-a'), messages: [{ id: 'target', text: 'Newest received row', createdAt: 10,
+      author: { pubkey: 'author', kind: 'human', name: 'Author' }, presentation: 'message' }] };
+    const { queued } = stubFrameScheduler();
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(React.createElement(Harness, { channelId: 'room-a', capture: () => undefined })); });
+    expect(renderer.root.findAllByType('message-row').at(-1)?.props.children).toBe('Newest received row');
+    await act(async () => { queued.splice(0).forEach((frame) => frame(0)); });
+    expect(controls.transportCount).toBe(0);
+    expect(controls.roomReads).toBe(0);
     await act(async () => renderer.unmount());
   });
 

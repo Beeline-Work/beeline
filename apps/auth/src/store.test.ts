@@ -81,6 +81,44 @@ describe('durable transactional identity-link store', () => {
     await expect(store.consumeTicketForPhone('f'.repeat(64), 'community', now)).resolves.toEqual({
       status: 'used',
     });
+    await store.createTicket('a'.repeat(64), {
+      challenge: 'challenge',
+      community: 'community',
+      issuer: 'https://accounts.google.com',
+      audience: 'google-client',
+      subject: '42',
+      createdAt: now,
+      expiresAt: new Date(now.getTime() + 60_000),
+      attemptCount: 0,
+      consumedAt: null,
+      boundPubkey: null,
+      providerDisplayName: 'Google Person',
+      providerAvatar: 'https://example.com/photo',
+    });
+    await expect(store.consumeTicketForPhone('a'.repeat(64), 'community', now)).resolves.toEqual({
+      status: 'wrong_provider',
+    });
+    await expect(
+      store.consumeTicketForPhone(
+        'a'.repeat(64),
+        'other-community',
+        now,
+        'https://accounts.google.com',
+      ),
+    ).resolves.toEqual({ status: 'wrong_provider' });
+    await expect(
+      store.consumeTicketForPhone('a'.repeat(64), 'community', now, 'https://accounts.google.com'),
+    ).resolves.toMatchObject({
+      status: 'exchanged',
+      ticket: {
+        subject: '42',
+        providerDisplayName: 'Google Person',
+        providerAvatar: 'https://example.com/photo',
+      },
+    });
+    await expect(
+      store.consumeTicketForPhone('a'.repeat(64), 'community', now, 'https://accounts.google.com'),
+    ).resolves.toEqual({ status: 'used' });
     await database.close();
   }, 30_000);
 

@@ -22,7 +22,7 @@ Connect the coding agent you already run to a Room in the Beeline app. Tag it li
 npx usebeeline connect
 ```
 
-Sign in with GitHub in the [iOS](https://apps.apple.com/app/id6803948500) or [Android](https://play.google.com/store/apps/details?id=app.usebeeline) app. Enter its pairing code on your agent's machine.
+Sign in to Beeline in the [iOS](https://apps.apple.com/app/id6803948500) or [Android](https://play.google.com/store/apps/details?id=app.usebeeline) app. Enter its pairing code on your agent's machine.
 Requires Node 20.11+ and Linux x64 or macOS. [Setup details](https://github.com/Beeline-Work/beeline/blob/main/docs/getting-started.md#install).
 
 ## One message

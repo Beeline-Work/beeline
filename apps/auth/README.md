@@ -1,8 +1,7 @@
 # `@beeline/auth`
 
-This is Beeline's narrow OAuth/OIDC-to-Nostr-public-key binding service. GitHub
-is the shipped sign-in; the Google OIDC routes remain available but are hidden
-from the app. It owns the Authorization Code + PKCE ceremony and a durable one-use binding
+This is Beeline's narrow OAuth/OIDC-to-Nostr-public-key binding service. GitHub and Google are the supported sign-in providers. Google remains behind
+a server rollout flag and subject allowlist until device acceptance is complete. It owns the Authorization Code + PKCE ceremony and a durable one-use binding
 transaction. It does not issue transport credentials, grant roles or membership,
 or accept a Nostr secret key.
 
@@ -210,3 +209,17 @@ both ports with `adb reverse` for browser-based auth fixture tests.
 This mode deliberately
 uses a non-`__Host-` browser cookie because the loopback fixture is HTTP; the
 production default remains `Secure` and `__Host-` prefixed.
+
+## Google sign-in rollout
+
+`BEELINE_GOOGLE_SIGN_IN=1` and a non-empty comma-separated
+`BEELINE_GOOGLE_SIGN_IN_SUBJECTS` allowlist enable Google test sign-ins.
+Both default off. `/auth/capabilities` exposes the Google button only while
+this test rollout is configured; `/v1/auth/google/exchange` also checks the
+verified Google subject against the allowlist before consuming its ticket.
+The browser requests `openid email profile`; only verified email supplies the
+initial handle. The OAuth client, nonce, PKCE, issuer, audience and one-use
+ticket remain server verified. `/auth/oidc/completion` recovers dropped
+redirects through the state-bound recovery secret on native, web and desktop.
+Profiles are initialized once and are preserved on subsequent sign-ins.
+Accounts are never linked by email.

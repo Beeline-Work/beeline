@@ -137,6 +137,11 @@ export default {
             googleServicesFile: "./google-services.json",
             intentFilters: [
                 {
+                    action: 'VIEW',
+                    data: [{ scheme: 'beeline', host: 'beeline', pathPrefix: '/google-callback' }],
+                    category: ['BROWSABLE', 'DEFAULT'],
+                },
+                {
                     "action": "VIEW",
                     "autoVerify": true,
                     "data": [

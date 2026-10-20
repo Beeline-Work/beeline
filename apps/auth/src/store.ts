@@ -91,6 +91,7 @@ const MIGRATIONS = [
   `ALTER TABLE beeline_bind_tickets ADD COLUMN IF NOT EXISTS recovery_eligible BOOLEAN NOT NULL DEFAULT FALSE`,
   `ALTER TABLE beeline_bind_tickets ADD COLUMN IF NOT EXISTS provider_login TEXT`,
   `ALTER TABLE beeline_bind_tickets ADD COLUMN IF NOT EXISTS provider_display_name TEXT`,
+  `ALTER TABLE beeline_bind_tickets ADD COLUMN IF NOT EXISTS provider_avatar TEXT`,
   `CREATE TABLE IF NOT EXISTS beeline_identity_links (
     community TEXT NOT NULL,
     issuer TEXT NOT NULL,
@@ -375,6 +376,7 @@ interface TicketRow extends QueryResultRow {
   recovery_eligible: boolean;
   provider_login: string | null;
   provider_display_name: string | null;
+  provider_avatar: string | null;
 }
 
 export interface BindTicket {
@@ -390,6 +392,7 @@ export interface BindTicket {
   boundPubkey: string | null;
   providerLogin?: string | null;
   providerDisplayName?: string | null;
+  providerAvatar?: string | null;
 }
 
 export interface ManagedIdentity {
@@ -608,6 +611,7 @@ function ticketFromRow(row: TicketRow): BindTicket {
     boundPubkey: row.bound_pubkey,
     providerLogin: row.provider_login,
     providerDisplayName: row.provider_display_name,
+    providerAvatar: row.provider_avatar,
   };
 }
 
@@ -902,8 +906,8 @@ export class AuthStore {
     await this.database.query(
       `INSERT INTO beeline_bind_tickets
         (ticket_hash, challenge, community, issuer, audience, subject, created_at, expires_at,
-         provider_login, provider_display_name)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+         provider_login, provider_display_name, provider_avatar)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
       [
         ticketHash,
         ticket.challenge,
@@ -915,6 +919,7 @@ export class AuthStore {
         ticket.expiresAt,
         ticket.providerLogin ?? null,
         ticket.providerDisplayName ?? null,
+        ticket.providerAvatar ?? null,
       ],
     );
   }
@@ -937,8 +942,8 @@ export class AuthStore {
       const inserted = await transaction.query<QueryResultRow>(
         `INSERT INTO beeline_bind_tickets
           (ticket_hash, challenge, community, issuer, audience, subject, created_at, expires_at,
-           provider_login, provider_display_name)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+           provider_login, provider_display_name, provider_avatar)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
          ON CONFLICT (ticket_hash) DO NOTHING
          RETURNING ticket_hash`,
         [
@@ -952,6 +957,7 @@ export class AuthStore {
           ticket.expiresAt,
           ticket.providerLogin ?? null,
           ticket.providerDisplayName ?? null,
+          ticket.providerAvatar ?? null,
         ],
       );
       return inserted.rowCount === 1;
@@ -976,7 +982,7 @@ export class AuthStore {
 
   async findTicket(ticketHash: string): Promise<BindTicket | null> {
     const result = await this.database.query<TicketRow>(
-      `SELECT challenge, community, issuer, audience, subject, created_at, expires_at, attempt_count, consumed_at, bound_pubkey, recovery_eligible, provider_login, provider_display_name
+      `SELECT challenge, community, issuer, audience, subject, created_at, expires_at, attempt_count, consumed_at, bound_pubkey, recovery_eligible, provider_login, provider_display_name, provider_avatar
        FROM beeline_bind_tickets WHERE ticket_hash = $1`,
       [ticketHash],
     );
@@ -1000,12 +1006,13 @@ export class AuthStore {
     ticketHash: string,
     community: string,
     now: Date,
+    issuer = 'https://github.com',
   ): Promise<PhoneTicketExchangeResult> {
     return this.database.transaction(async (transaction) => {
       const selected = await transaction.query<TicketRow>(
         `SELECT challenge, community, issuer, audience, subject, created_at, expires_at,
                 attempt_count, consumed_at, bound_pubkey, recovery_eligible,
-                provider_login, provider_display_name
+                provider_login, provider_display_name, provider_avatar
          FROM beeline_bind_tickets WHERE ticket_hash = $1 FOR UPDATE`,
         [ticketHash],
       );
@@ -1014,7 +1021,7 @@ export class AuthStore {
       const ticket = ticketFromRow(row);
       if (ticket.consumedAt) return { status: 'used' };
       if (ticket.expiresAt.getTime() < now.getTime()) return { status: 'expired' };
-      if (ticket.community !== community || ticket.issuer !== 'https://github.com') {
+      if (ticket.community !== community || ticket.issuer !== issuer) {
         return { status: 'wrong_provider' };
       }
       await transaction.query(
@@ -1028,7 +1035,7 @@ export class AuthStore {
   async consumeTicketAndLink(ticketHash: string, pubkey: string, now: Date): Promise<BindResult> {
     return this.database.transaction(async (transaction) => {
       const selected = await transaction.query<TicketRow>(
-        `SELECT challenge, community, issuer, audience, subject, created_at, expires_at, attempt_count, consumed_at, bound_pubkey, recovery_eligible, provider_login, provider_display_name
+        `SELECT challenge, community, issuer, audience, subject, created_at, expires_at, attempt_count, consumed_at, bound_pubkey, recovery_eligible, provider_login, provider_display_name, provider_avatar
          FROM beeline_bind_tickets WHERE ticket_hash = $1 FOR UPDATE`,
         [ticketHash],
       );
@@ -1099,7 +1106,7 @@ export class AuthStore {
   ): Promise<RecoverBindResult> {
     return this.database.transaction(async (transaction) => {
       const selected = await transaction.query<TicketRow>(
-        `SELECT challenge, community, issuer, audience, subject, created_at, expires_at, attempt_count, consumed_at, bound_pubkey, recovery_eligible, provider_login, provider_display_name
+        `SELECT challenge, community, issuer, audience, subject, created_at, expires_at, attempt_count, consumed_at, bound_pubkey, recovery_eligible, provider_login, provider_display_name, provider_avatar
          FROM beeline_bind_tickets WHERE ticket_hash = $1 FOR UPDATE`,
         [ticketHash],
       );

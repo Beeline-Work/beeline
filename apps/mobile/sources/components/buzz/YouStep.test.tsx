@@ -46,6 +46,10 @@ vi.mock('./Button', async () => {
     Button: (props: any) => ReactModule.createElement('Button', props),
   };
 });
+vi.mock('./HullDialog', async () => {
+  const ReactModule = await import('react');
+  return { HullDialogInput: (props: any) => ReactModule.createElement('TextInput', props) };
+});
 vi.mock('./IdentityMark', async () => {
   const ReactModule = await import('react');
   return { IdentityMark: (props: any) => ReactModule.createElement('IdentityMark', props) };
@@ -191,6 +195,17 @@ describe('YouStep', () => {
       expect(rest).toEqual(restBefore);
       expect(style).not.toHaveProperty('transform');
     });
+  });
+
+  it('lets a Google user edit their imported name and handle before entering', async () => {
+    const { tree, onConfirm } = await render({ provider: 'google', editableIdentity: true, name: 'Alex Chen', handle: 'alex.chen' });
+    expect(host(tree, 'onboarding-you-source').props.children).toBe('From Google · change either later in Settings');
+    await act(async () => {
+      host(tree, 'onboarding-you-name-input').props.onChangeText('Chosen Name');
+      host(tree, 'onboarding-you-handle-input').props.onChangeText('chosen.handle');
+    });
+    await press(host(tree, 'onboarding-face-confirm'));
+    expect(onConfirm).toHaveBeenCalledWith({ face: defaultFaceForSeed(SEED), name: 'Chosen Name', handle: 'chosen.handle' });
   });
 
   it('gates the button until a face is chosen', async () => {

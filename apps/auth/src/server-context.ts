@@ -105,6 +105,7 @@ export type GitHubRoomTokenAuthorityResult =
 export interface AuthServerOptions {
   store: AuthStore;
   oidc: OidcClient;
+  googleSignInEnabled?: boolean;
   /** GitHub is the shipped sign-in and repository-access provider. */
   github?: {
     oauth: GitHubOAuthClient;
@@ -501,6 +502,7 @@ export function createAuthRouteContext(options: AuthServerOptions) {
   const nativeRedirectUris = new Set([
     GITHUB_SIGN_IN_DEEP_LINK,
     GITHUB_INSTALLATION_DEEP_LINK,
+    'beeline://beeline/google-callback',
     LEGACY_GITHUB_SIGN_IN_DEEP_LINK,
     LEGACY_GITHUB_INSTALLATION_DEEP_LINK,
     ...(options.nativeRedirectUris ?? []),
@@ -864,6 +866,7 @@ export function createAuthRouteContext(options: AuthServerOptions) {
       subject: string;
       login?: string;
       displayName?: string;
+      avatar?: string;
     },
     reply: FastifyReply,
   ) => {
@@ -886,6 +889,7 @@ export function createAuthRouteContext(options: AuthServerOptions) {
       boundPubkey: null,
       providerLogin: identity.login?.toLowerCase() ?? null,
       providerDisplayName: identity.displayName?.trim() || identity.login || null,
+      providerAvatar: identity.avatar ?? null,
     };
     if (flow.appRecoveryHash) {
       const created = await options.store.createRecoveryTicket(

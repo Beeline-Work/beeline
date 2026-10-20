@@ -45,6 +45,7 @@ export function subscribeToOnboardingNotices(listener: OnboardingNoticeListener)
 
 /** The You step (handle + face): the sign-in's last step, once the identity exists. */
 export interface OnboardingFaceStep {
+  provider?: 'google' | 'github';
   seed: string;
   face: string | null;
   /** The name on record, used if the handle read is unavailable. */

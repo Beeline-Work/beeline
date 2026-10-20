@@ -9,6 +9,63 @@ async function rsaJwk(kid: string): Promise<JWK> {
 }
 
 describe('OIDC provider hardening', () => {
+  it('accepts both Google issuers, keeps verified profile fields, and rejects another issuer', async () => {
+    const pair = await generateKeyPair('RS256');
+    const jwk = { ...(await exportJWK(pair.publicKey)), kid: 'google', alg: 'RS256' };
+    const client = new OidcClient(
+      {
+        issuer: 'https://accounts.google.com',
+        authorizationEndpoint: 'https://accounts.google.com/o/oauth2/v2/auth',
+        tokenEndpoint: 'https://oauth2.googleapis.com/token',
+        jwksUri: 'https://www.googleapis.com/oauth2/v3/certs',
+        clientId: 'client',
+      },
+      { fetch: async () => new Response(JSON.stringify({ keys: [jwk] })) },
+    );
+    const authorization = new URL(
+      client.authorizationUrl({
+        state: 'state',
+        nonce: 'nonce',
+        codeChallenge: 'challenge',
+        redirectUri: 'https://auth.example/callback',
+      }),
+    );
+    expect(authorization.searchParams.get('scope')).toBe('openid email profile');
+    const token = (issuer: string, nonce = 'nonce', audience = 'client') =>
+      new SignJWT({
+        nonce,
+        name: 'Google Person',
+        email: 'Alex.Chen@gmail.com',
+        email_verified: true,
+        picture: 'https://example.com/photo',
+      })
+        .setProtectedHeader({ alg: 'RS256', kid: 'google' })
+        .setIssuer(issuer)
+        .setAudience(audience)
+        .setSubject('google-sub')
+        .setIssuedAt()
+        .setExpirationTime('5m')
+        .sign(pair.privateKey);
+    for (const issuer of ['https://accounts.google.com', 'accounts.google.com']) {
+      await expect(client.verifyIdToken(await token(issuer), 'nonce')).resolves.toEqual({
+        issuer: 'https://accounts.google.com',
+        audience: 'client',
+        subject: 'google-sub',
+        name: 'Google Person',
+        email: 'Alex.Chen@gmail.com',
+        picture: 'https://example.com/photo',
+      });
+    }
+    await expect(
+      client.verifyIdToken(await token('https://attacker.example'), 'nonce'),
+    ).rejects.toThrow();
+    await expect(
+      client.verifyIdToken(await token('accounts.google.com', 'wrong'), 'nonce'),
+    ).rejects.toThrow();
+    await expect(
+      client.verifyIdToken(await token('accounts.google.com', 'nonce', 'other'), 'nonce'),
+    ).rejects.toThrow();
+  });
   it('normalizes issuer URLs without weakening their origin', () => {
     expect(normalizeIssuer('https://ACCOUNTS.EXAMPLE:443/')).toBe('https://accounts.example');
     expect(() => normalizeIssuer('http://accounts.example')).toThrow('must use https');

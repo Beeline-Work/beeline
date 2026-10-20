@@ -44,6 +44,11 @@ describe('mounted monolith auth', () => {
         if (!mountedForVerification) throw new Error('monolith auth is not ready');
         return mountedForVerification.verifyGitHubTicket(ticket);
       }),
+      () => new Date(),
+      async (ticket) => {
+        if (!mountedForVerification) throw new Error('monolith auth is not ready');
+        return mountedForVerification.verifyGoogleTicket(ticket);
+      },
     );
     const githubOauth = {
       config: { clientId: 'github-client', clientSecret: 'github-secret' },
@@ -88,6 +93,8 @@ describe('mounted monolith auth', () => {
           tokenAuth.createDaemonExchange(agentId, transaction),
         env: {
           NODE_ENV: 'test',
+          BEELINE_GOOGLE_SIGN_IN: '1',
+          BEELINE_GOOGLE_SIGN_IN_SUBJECTS: 'google-owner',
           BUZZY_AUTH_TENANTS_JSON: JSON.stringify([tenant]),
           BUZZY_AUTH_OIDC_ISSUER: 'https://accounts.example',
           BUZZY_AUTH_OIDC_AUTHORIZATION_ENDPOINT: 'https://accounts.example/authorize',
@@ -128,6 +135,70 @@ describe('mounted monolith auth', () => {
     if (server) await new Promise<void>((resolve) => server.close(() => resolve()));
     if (mount) await mount.close();
     if (database) await database.close();
+  });
+
+  it('E1/E3/E14/E16: the Google HTTP exchange creates a session and preserves the returning profile', async () => {
+    const exchange = async (subject = 'google-owner') => {
+      const ticket = randomBytes(32).toString('base64url');
+      await store.createTicket(createHash('sha256').update(ticket).digest('hex'), {
+        challenge: 'challenge',
+        community: tenant.community,
+        issuer: 'https://accounts.google.com',
+        audience: 'test-client',
+        subject,
+        createdAt: new Date(),
+        expiresAt: new Date(Date.now() + 120_000),
+        attemptCount: 0,
+        consumedAt: null,
+        boundPubkey: null,
+        providerLogin: 'alex.chen@gmail.com',
+        providerDisplayName: 'Alex Chen',
+        providerAvatar: 'https://example.com/alex',
+      });
+      const response = await fetch(`${origin}/v1/auth/google/exchange`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ oidcToken: ticket }),
+      });
+      return { response, ticket };
+    };
+    const { response, ticket } = await exchange();
+    expect(response.status).toBe(200);
+    const session = (await response.json()) as { identityId: string; accessToken: string };
+    expect(session.accessToken).toBeTruthy();
+    expect(
+      (
+        await database.query(
+          'SELECT name,handle,avatar,github_subject FROM identities WHERE id=$1',
+          [session.identityId],
+        )
+      ).rows[0],
+    ).toEqual({
+      name: 'Alex Chen',
+      handle: 'alex.chen',
+      avatar: 'https://example.com/alex',
+      github_subject: null,
+    });
+    await database.query('UPDATE identities SET name=$2 WHERE id=$1', [
+      session.identityId,
+      'Edited',
+    ]);
+    const returning = await exchange();
+    expect(returning.response.status).toBe(200);
+    expect(((await returning.response.json()) as { identityId: string }).identityId).toBe(
+      session.identityId,
+    );
+    expect(
+      (await database.query('SELECT name FROM identities WHERE id=$1', [session.identityId]))
+        .rows[0]!.name,
+    ).toBe('Edited');
+    const replay = await fetch(`${origin}/v1/auth/google/exchange`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ oidcToken: ticket }),
+    });
+    expect(replay.status).toBe(401);
+    expect((await exchange('not-allowlisted')).response.status).toBe(401);
   });
 
   async function issueTicket(subject = '42', login = 'octocat'): Promise<string> {

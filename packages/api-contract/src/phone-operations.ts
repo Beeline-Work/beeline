@@ -728,6 +728,12 @@ export type IdentityRecoveryResult = {
   readonly candidates: readonly { readonly personId: string; readonly handle?: string }[];
 };
 export type ManagedIdentityResult = {
+  readonly providers?: readonly {
+    readonly provider: 'google' | 'github';
+    readonly login?: string;
+    readonly reconnect: boolean;
+  }[];
+
   readonly personId: string;
   readonly name: string;
   readonly handle?: string;

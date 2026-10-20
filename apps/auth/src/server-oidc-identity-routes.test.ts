@@ -31,6 +31,24 @@ describe('OIDC and identity HTTP routes', () => {
     expect(response.json()).toEqual({ github: true, oidc: true });
   });
 
+  it('E22: recovers only a live Google completion in its own tenant and burns it on cancel', async () => {
+    const recoveryToken = 'g'.repeat(43);
+    const hash = createHash('sha256').update(recoveryToken).digest('hex');
+    const poll = (host = alphaTenant.host) => app.inject({ method: 'POST', url: '/auth/oidc/completion', headers: { host }, payload: { recoveryToken } });
+    expect((await poll()).statusCode).toBe(202);
+    await store.createTicket(hash, {
+      challenge: 'challenge', community: alphaTenant.community, issuer: 'https://accounts.google.com',
+      audience: 'google-client', subject: 'google-subject', createdAt: new Date(), expiresAt: new Date(Date.now() + 60_000),
+      attemptCount: 0, consumedAt: null, boundPubkey: null,
+    });
+    expect((await poll(betaTenant.host)).statusCode).toBe(202);
+    const completed = await poll();
+    expect(completed.statusCode).toBe(200);
+    expect(completed.json()).toMatchObject({ ticket: recoveryToken, provider: 'https://accounts.google.com', subject: 'google-subject' });
+    expect((await app.inject({ method: 'POST', url: '/auth/oidc/completion/cancel', headers: { host: alphaTenant.host }, payload: { recoveryToken } })).statusCode).toBe(204);
+    expect((await poll()).statusCode).toBe(410);
+  });
+
   it('exchanges a native GitHub bind ticket for a phone proof exactly once', async () => {
     const ticket = 'x'.repeat(43);
     const now = new Date();

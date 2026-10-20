@@ -231,11 +231,6 @@ export class MonolithSession {
     } catch { return null; }
   }
 
-  /** Current account only when this process has already authenticated it. */
-  peekIdentityId(): string | null {
-    return this.access?.identityId ?? null;
-  }
-
   async identityId(): Promise<string | null> {
     return this.access?.identityId ?? (await this.secureStorage()).getItemAsync(IDENTITY_KEY);
   }

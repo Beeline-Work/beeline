@@ -39,18 +39,6 @@ const tokens = (generation: number) => ({
 describe('monolith phone session', () => {
   beforeEach(() => secure.clear());
 
-  it('offers a synchronous cache identity only after authentication and clears it on sign-out', async () => {
-    secure.set('buzzy.monolith.identity.v1', 'old-stored-identity');
-    const fetcher = vi.fn(async () => new Response(JSON.stringify(tokens(1))));
-    const session = new MonolithSession('https://server.example', fetcher as typeof fetch);
-    expect(session.peekIdentityId()).toBeNull();
-    expect(fetcher).not.toHaveBeenCalled();
-    await session.exchangeGitHubTicket('ticket');
-    expect(session.peekIdentityId()).toBe(tokens(1).identityId);
-    await session.clear();
-    expect(session.peekIdentityId()).toBeNull();
-  });
-
   it.each([200, 401])('drops an old refresh HTTP %i after another identity signs in', async status => {
     secure.set('buzzy.monolith.refresh.v1', 'old-refresh');
     secure.set('buzzy.monolith.identity.v1', 'a'.repeat(64));

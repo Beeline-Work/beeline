@@ -255,6 +255,8 @@ describe('mounted monolith auth', () => {
   });
 
   it('completes repo-card installation through the OAuth callback and rejects replay or forged state', async () => {
+    vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING', '1');
+    vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING_GITHUB_IDS', '42');
     const start = await mountedRequest(
       `/auth/github/start?app_redirect=${encodeURIComponent('beeline://beeline/github-callback')}&app_state=${'r'.repeat(43)}`,
     );

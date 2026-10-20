@@ -1153,7 +1153,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
   },
   {
     "name": "app_tool",
-    "description": "Discover operation schemas with app and no tool; execute with tool and args. app is a connected app id, or beeline:workflow, beeline:wallet, beeline:browser_share, beeline:corner_app, or beeline:onboarding. First-party routes preserve each operation’s original authority. Discover before use.",
+    "description": "Discover operation schemas with app and no tool; execute with tool and args. app is a connected app id, or beeline:workflow, beeline:wallet, beeline:browser_share, beeline:corner_app. First-party routes preserve each operation’s original authority. Discover before use.",
     "inputSchema": {
       "type": "object",
       "properties": {

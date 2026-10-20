@@ -1,7 +1,8 @@
+import { DaemonService } from './daemon-service.js';
 import { createECDH } from 'node:crypto';
 import { getPublicKey } from '@beeline/nostr';
 import { AGENT_MENTION_NOTICE_GRACE_MS } from '@beeline/api-contract/agent-access';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createAgentCommand } from './agent-command.js';
 import {
   claimAgentConnection,
@@ -138,6 +139,7 @@ describe('free starter agents', () => {
     );
   });
   afterEach(async () => {
+    vi.unstubAllEnvs();
     await settle();
     await db.close();
   });
@@ -160,6 +162,22 @@ describe('free starter agents', () => {
         [workspaceId],
       )
     ).rows[0]!;
+
+  it('adds the repository guide only to an eligible runtime and removes it immediately when OFF', async () => {
+    const { id, roomId } = await phone.execute('createWorkspace', { name: 'Flag test' }, OWNER) as { id:string;roomId:string };
+    const agent = await freeAgentOf(id);
+    const daemon = new DaemonService(db, live);
+    const read = () => daemon.execute('getAgentConfiguration', { roomId }, agent.agent_id);
+    expect((await read()).soul?.instructions).not.toContain('beeline:onboarding');
+    vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING','1');
+    expect((await read()).soul?.instructions).not.toContain('beeline:onboarding');
+    await db.query(`UPDATE identities SET github_subject='296966200' WHERE id=$1`,[OWNER]);
+    expect((await read()).soul?.instructions).toContain('beeline:onboarding');
+    vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING','0');
+    expect((await read()).soul?.instructions).not.toContain('beeline:onboarding');
+    const stored=(await db.query<{soul:{instructions:string}}>(`SELECT soul FROM agents WHERE agent_id=$1`,[agent.agent_id])).rows[0]!;
+    expect(stored.soul.instructions).not.toContain('beeline:onboarding');
+  });
 
   it('posts the exact hello and notifies the owner without a model turn or Machine boot', async () => {
     const { id, roomId } = await phone.execute('createWorkspace', { name: 'Fresh' }, OWNER) as { id: string; roomId: string };
@@ -195,8 +213,8 @@ describe('free starter agents', () => {
     const hello = (await db.query<{ id: string; text: string }>(
       `SELECT id,text FROM messages WHERE room_id=$1 AND author_id=$2 AND card_type IS NULL`, [roomId, agent.agent_id],
     )).rows;
-    const expected = `@lunchboxfortwo Hi, I'm Beebee, your free agent in Beeline. I run on my own small cloud computer, so I can write files, run commands, research and draft things for you. Choose or create a repository on the card below, and I’ll suggest a starting task. If you don't want me here, open Members and remove me from the Workspace.`;
-    expect((await phone.readRoom(roomId, OWNER))?.messages.some(message => message.onboarding?.kind === 'repository')).toBe(true);
+    const expected = `@lunchboxfortwo Hi, I'm Beebee, your free agent in Beeline. I run on my own small cloud computer, so I can write files, run commands, research and draft things for you. Try "@beebee draft a welcome note for this Workspace" to start. If you don't want me here, open Members and remove me from the Workspace.`;
+    expect((await phone.readRoom(roomId, OWNER))?.messages.some(message => message.onboarding?.kind === 'repository')).toBe(false);
     expect(hello).toHaveLength(1);
     expect(hello[0]!.text).toBe(expected);
     expect(FREE_AGENT_HELLO.replace('<owner>', 'lunchboxfortwo').replace('<handle>', 'beebee')).toBe(expected);

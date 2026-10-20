@@ -1,3 +1,4 @@
+import { useRepositoryOnboarding } from '@/buzz/onboarding-rollout';
 import { IdentityMark } from '@/components/buzz/IdentityMark';
 import type { RoomViewIdentity } from '@beeline/api-contract/phone';
 import React, { useState } from 'react';
@@ -10,7 +11,12 @@ import { openAccountAuthSession, subscribeToAuthUrls } from '@/auth/desktop-auth
 import { githubInstallationRedirectUri, runGitHubInstallationSession } from '@/auth/github-auth-session';
 
 /** Reuses the shared ask-card anatomy; selections remain authoritative on the server. */
-export function RepositoryOnboardingCard({ card, viewerId, author }: { card: Card; viewerId: string; author?: RoomViewIdentity }) {
+type Props = { card: Card; viewerId: string; author?: RoomViewIdentity };
+export function RepositoryOnboardingCard(props: Props) {
+  const enabled = useRepositoryOnboarding();
+  return enabled ? <EnabledRepositoryOnboardingCard {...props} /> : null;
+}
+function EnabledRepositoryOnboardingCard({ card, viewerId, author }: Props) {
   const [picker, setPicker] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);

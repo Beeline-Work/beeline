@@ -7,7 +7,7 @@ name: GitHub sign-up to a merged starter PR and repository switch
 - launchApp:
     clearState: true
 - assertVisible:
-    id: onboarding-github-scope
+    id: onboarding-github-sign-in
 - tapOn:
     id: onboarding-github-sign-in
 - evalScript: ${output.humanActions += 1}
@@ -18,6 +18,12 @@ name: GitHub sign-up to a merged starter PR and repository switch
       notVisible:
         id: onboarding-face-confirm|choice-create|room-list|confirm-community-join
     commands:
+      - runFlow:
+          when:
+            visible: 'Connect your GitHub repositories'
+          commands:
+            - tapOn: 'Continue with GitHub'
+            - evalScript: ${output.humanActions += 1}
       - runFlow:
           when:
             visible: 'Install.*Authorize|Install & Authorize|Install'

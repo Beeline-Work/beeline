@@ -1,3 +1,4 @@
+import { useRepositoryOnboarding } from '@/buzz/onboarding-rollout';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { HullDialogActions, HullDialogInput } from '@/components/buzz/HullDialog';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
@@ -128,6 +129,7 @@ const INPUT_BORDER_WIDTH = 1;
 const INPUT_FOCUSED_BORDER_WIDTH = 2;
 
 export default function BuzzOnboarding() {
+  const repositoryOnboarding = useRepositoryOnboarding();
   useLatencyRouteFrame('/beeline/onboarding', true, true);
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
@@ -171,7 +173,8 @@ export default function BuzzOnboarding() {
    * in Settings.
    */
   const enterAfterMonolithSignIn = async (identityId: string | undefined) => {
-    await monolithPhoneOperation('listGitHubRepositories', { refresh: true });
+    if ((await monolithPhoneOperation('getAuthCapabilities', {}).catch(() => null))?.repositoryOnboarding)
+      await monolithPhoneOperation('listGitHubRepositories', { refresh: true });
     const seed = identityId || (await monolithSession.identityId().catch(() => null)) || '';
     const hosted = await monolithPhoneOperation('getManagedIdentity', {}).catch(() => null);
     if (hosted?.face) {
@@ -382,7 +385,7 @@ export default function BuzzOnboarding() {
               });
             return;
           }
-          setStatus('binding');
+          if (repositoryOnboarding) setStatus('binding');
         const identityId = await monolithSession.exchangeGitHubTicket(challenge.ticket);
           await clearPendingGitHubSignInState();
           if (alive) await enterAfterMonolithSignIn(identityId);
@@ -489,7 +492,7 @@ export default function BuzzOnboarding() {
             ),
           subscribeToUrls: subscribeToAuthUrls,
         });
-        setStatus('binding');
+        if (repositoryOnboarding) setStatus('binding');
         const identityId = await monolithSession.exchangeGitHubTicket(challenge.ticket);
         await clearPendingGitHubSignInState();
         await enterAfterMonolithSignIn(identityId);
@@ -1043,7 +1046,7 @@ export default function BuzzOnboarding() {
           />
         ) : !showAdvanced && canSignIn ? (
           <View>
-          <Text style={styles.subtitle} testID="onboarding-github-scope">Sign in and install Beeline on your personal GitHub account. Choose All repositories so Beeline can work on repos you create later.</Text>
+          {repositoryOnboarding ? <Text style={styles.subtitle} testID="onboarding-github-scope">Sign in and install Beeline on your personal GitHub account. Choose All repositories so Beeline can work on repos you create later.</Text> : null}
           <Button
             label={signInLabel}
             labelStyle={Platform.OS === 'android' ? styles.signInLabel : undefined}

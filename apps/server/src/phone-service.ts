@@ -1,3 +1,4 @@
+import { onboardingEnabledForViewer } from './onboarding-rollout.js';
 import { postRepositoryOnboarding } from './repository-onboarding.js';
 import { readRepositoryOnboardingCard } from '@beeline/api-contract/phone';
 import { CommandRefusalError } from './command-refusal.js';
@@ -1110,6 +1111,7 @@ export class PhoneService {
     viewerId?: string,
   ): Promise<RoomLiveDelta | null> {
     if (committed.row.room_id !== roomId) return null;
+    if (committed.row.card_type === 'repository-onboarding' && (!viewerId || !await onboardingEnabledForViewer(this.database, viewerId))) return null;
     const message = (await this.decorateCornerOpenCards(roomId, [
       projectedMessage(committed.row, this.publicOrigin, viewerId),
     ]))[0]!;
@@ -1301,6 +1303,7 @@ export class PhoneService {
           }
         : null;
     for (const viewer of row.authorized_viewers) {
+      if (row.card_type === 'repository-onboarding' && !await onboardingEnabledForViewer(this.database, viewer)) continue;
       const message = { ...projectedMessage(row, this.publicOrigin, viewer),
         ...(base.daemonFact ? { daemonFact: base.daemonFact } : {}) };
       deltas.set(viewer, {
@@ -2222,7 +2225,7 @@ export class PhoneService {
             enrichment?.attachmentFacts ?? { expired: new Set<string>(), artifacts: new Map() },
           )
         : measured('media', this.attachmentFacts(messages, toolRows, briefing)),
-      measured('app-metadata', this.decorateMessageCards(roomId, messages)),
+      measured('app-metadata', this.decorateMessageCards(roomId, messages, viewerId)),
     ]);
     const projectionStartedAt = performance.now();
     const view: RoomView = {
@@ -2487,7 +2490,7 @@ export class PhoneService {
     const rows = loaded.rows.map((row) => reviveDates(row, ['created_at','deleted_at']));
     const attachmentFacts = await this.enrichHistoryRows(rows, viewerId);
     const messages = rows.map((row) => projectedMessage(row, this.publicOrigin, viewerId));
-    const appMessages = await this.decorateMessageCards(roomId, messages);
+    const appMessages = await this.decorateMessageCards(roomId, messages, viewerId);
     return { roomId, messages: decorateAttachments(appMessages, attachmentFacts) };
   }
 
@@ -2531,7 +2534,7 @@ export class PhoneService {
     const rows = loaded.rows.map((row) => reviveDates(row, ['created_at','deleted_at']));
     const attachmentFacts = await this.enrichHistoryRows(rows, viewerId);
     const messages = rows.map((row) => projectedMessage(row, this.publicOrigin, viewerId));
-    const appMessages = await this.decorateMessageCards(roomId, messages);
+    const appMessages = await this.decorateMessageCards(roomId, messages, viewerId);
     return { roomId, messages: decorateAttachments(appMessages, attachmentFacts) };
   }
 
@@ -2578,7 +2581,7 @@ export class PhoneService {
     const messages = page
       .reverse()
       .map((row) => projectedMessage(row, this.publicOrigin, viewerId));
-    const appMessages = await this.decorateMessageCards(roomId, messages);
+    const appMessages = await this.decorateMessageCards(roomId, messages, viewerId);
     return {
       roomId,
       messages: decorateAttachments(appMessages, attachmentFacts),
@@ -4506,7 +4509,7 @@ export class PhoneService {
           input as Input<'approveCornerMerge'>,
         )) as Output<Name>;
       case 'getAuthCapabilities':
-        return { github: Boolean(this.github) } as Output<Name>;
+        return { github: Boolean(this.github), ...(await onboardingEnabledForViewer(this.database, viewerId) ? { repositoryOnboarding: true } : {}) } as Output<Name>;
       case 'getIdentityRecovery':
         return (await this.identityRecovery(viewerId)) as Output<Name>;
       case 'getManagedIdentity':
@@ -7161,7 +7164,7 @@ export class PhoneService {
         workspaceJoined: joined.rowCount > 0,
       });
       const roomId = await firstAccessibleRoomId(database, row.workspace_id, viewerId);
-      if (roomId && this.freeAgents && !(await database.query(
+      if (roomId && this.freeAgents && await onboardingEnabledForViewer(database, viewerId) && !(await database.query(
         `SELECT 1 FROM free_agents WHERE workspace_id=$1`, [row.workspace_id])).rowCount) {
         await this.freeAgents.createInWorkspace(database, { workspaceId: row.workspace_id, creatorId: viewerId, roomId });
       }
@@ -7500,6 +7503,7 @@ export class PhoneService {
     });
   }
   private async actOnRepositoryCard(input: Input<'actOnRepositoryCard'>, viewerId: string): Promise<Output<'actOnRepositoryCard'>> {
+    if (!await onboardingEnabledForViewer(this.database, viewerId)) throw new Error('repository onboarding unavailable');
     if (['create', 'link'].includes(input.action)) await this.requireRoomWorkspaceManager(input.roomId, viewerId);
     else {
       if (!(await this.hasRoomAccess(input.roomId, viewerId))) throw new Error('room access denied');
@@ -8870,7 +8874,9 @@ export class PhoneService {
     });
   }
 
-  private async decorateMessageCards(roomId: string, messages: RoomViewMessage[]): Promise<RoomViewMessage[]> {
+  private async decorateMessageCards(roomId: string, messages: RoomViewMessage[], viewerId: string): Promise<RoomViewMessage[]> {
+    if (messages.some(message => message.onboarding) && !await onboardingEnabledForViewer(this.database, viewerId))
+      messages = messages.filter(message => !message.onboarding);
     return this.decorateCornerOpenCards(roomId, await this.decorateAppSignInCards(messages));
   }
 

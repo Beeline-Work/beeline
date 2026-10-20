@@ -1058,6 +1058,7 @@ export type CornerRestoreResult = {
   readonly awaiting?: 'reply';
 };
 export type RoomRepositoryStateResult = {
+  readonly repositoryOnboarding?: boolean;
   readonly key?: string;
   readonly remote?: string;
   readonly targetBranch?: string;

@@ -1,3 +1,5 @@
+import { onboardingEnabledForViewer } from './onboarding-rollout.js';
+import { FREE_AGENT_REPOSITORY_GUIDE } from './free-agents.js';
 import { transientGitHubError, githubRetryDelay } from '@beeline/auth/github';
 import { captureServerError } from './sentry.js';
 import { postRepositoryOnboarding } from './repository-onboarding.js';
@@ -1363,11 +1365,13 @@ export class DaemonService {
           input as Input<'reviseCornerBrief'>,
           authenticatedAgentId,
         )) as Output<Name>;
-      case 'getRoomRepositoryState':
-        return (await this.repository(
+      case 'getRoomRepositoryState': {
+        const owner = (await this.database.query<{ owner_id: string }>(`SELECT owner_id FROM agents WHERE agent_id=$1`, [authenticatedAgentId])).rows[0]?.owner_id;
+        return { ...(await this.repository(
           (input as Input<'getRoomRepositoryState'>).roomId,
           authenticatedAgentId,
-        )) as Output<Name>;
+        )), ...(owner && await onboardingEnabledForViewer(this.database, owner) ? { repositoryOnboarding: true } : {}) } as Output<Name>;
+      }
       case 'noteEmptyRoomRepository': {
         const roomId = (input as Input<'noteEmptyRoomRepository'>).roomId;
         const repository = await this.repository(roomId, authenticatedAgentId);
@@ -1763,7 +1767,7 @@ export class DaemonService {
         const requester = await this.grantRequester();
         const owner = requester.kind === 'human' ? requester.id : (await this.database.query<{ owner_id: string }>(
           `SELECT owner_id FROM agents WHERE agent_id=$1`, [authenticatedAgentId])).rows[0]?.owner_id;
-        if (!owner) throw new Error('repository card requester not found');
+        if (!owner || !await onboardingEnabledForViewer(this.database, owner)) throw new Error('repository onboarding unavailable');
         if (!['repository', 'starters'].includes(request.kind)) throw new Error('invalid repository card kind');
         if (request.kind === 'repository') await this.github?.refresh(owner);
         const card = await postRepositoryOnboarding(this.database, this.github, {
@@ -3800,6 +3804,13 @@ export class DaemonService {
           target: `registry-mcp:${route.registry_server_name}`,
         }))
       : [];
+    if (row?.soul) {
+      const owner = (await this.database.query<{ owner_id: string }>(
+        `SELECT a.owner_id FROM agents a JOIN free_agents f ON f.agent_id=a.agent_id WHERE a.agent_id=$1`, [agentId],
+      )).rows[0]?.owner_id;
+      if (owner && await onboardingEnabledForViewer(this.database, owner))
+        row.soul = { ...row.soul, instructions: `${row.soul.instructions}\n\n${FREE_AGENT_REPOSITORY_GUIDE}` };
+    }
     const isReviewer =
       Boolean(roomId) && (await isCornerReviewer(this.database, roomId!, agentId));
     return {

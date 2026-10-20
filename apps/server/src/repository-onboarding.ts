@@ -1,3 +1,4 @@
+import { onboardingEnabledForViewer } from './onboarding-rollout.js';
 import { randomBytes } from 'node:crypto';
 import type { RepositoryOnboardingCard, RepositoryStarter } from '@beeline/api-contract/phone';
 import type { SqlDatabase } from './database.js';
@@ -47,6 +48,7 @@ export function repositoryStarters(signals: RepositorySignals): RepositoryStarte
 
 export async function postRepositoryOnboarding(database: SqlDatabase, github: GitHubOperations | undefined,
   input: { roomId: string; agentId: string; requesterId: string; kind: 'repository' | 'starters' }): Promise<RepositoryOnboardingCard> {
+  if (!await onboardingEnabledForViewer(database, input.requesterId)) throw new Error('repository onboarding unavailable');
   const room = (await database.query<{ repository_name: string | null; name: string; can_link: boolean }>(
     `SELECT r.repository_name,i.name,(w.role IN ('owner','admin')) can_link FROM rooms r
      JOIN memberships m ON m.room_id=r.id AND m.identity_id=$2 AND m.removed_at IS NULL

@@ -18,9 +18,13 @@ const github = { onboardingSignals: vi.fn(async () => signals), refresh: vi.fn(a
 } as unknown as GitHubOperations;
 
 beforeAll(async () => {
+  vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING', '1');
+  vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING_GITHUB_IDS', '296966200,123');
   db = new PgliteDatabase();
+
   await migrate(db);
   await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Test','tester'),($2,'agent','Beebee','beebee'),($3,'human','Other','other')`, [H,A,OTHER]);
+  await db.query(`UPDATE identities SET github_subject=CASE WHEN id=$1 THEN '296966200' ELSE '123' END WHERE id IN ($1,$2)`, [H,OTHER]);
   await db.query(`INSERT INTO workspaces(id,name) VALUES($1,'Onboarding test')`, [W]);
   await db.query(`INSERT INTO rooms(id,workspace_id,name,created_by) VALUES($1,$2,'general',$3)`, [R,W,H]);
   await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2)`, [A,H]);
@@ -104,4 +108,15 @@ it('lets an invited Room member start work without granting repository-managemen
   expect(card.canLink).toBe(false);
   await phone.execute('actOnRepositoryCard',{roomId:R,cardId:card.id,action:'starter',starterId:'readme'},OTHER);
   expect((await db.query(`SELECT id FROM messages WHERE room_id=$1 AND author_id=$2 AND text LIKE '%Make the README useful%'`,[R,OTHER])).rowCount).toBe(1);
+});
+
+it('turns off cards and actions without changing the existing Room or calling GitHub', async () => {
+  const card = await postRepositoryOnboarding(db, github, { roomId:R, agentId:A, requesterId:H, kind:'repository' });
+  vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING', '0');
+  try {
+    expect((await phone.execute('getAuthCapabilities', {}, H))).not.toHaveProperty('repositoryOnboarding');
+    expect((await phone.readRoom(R,H))?.messages.some(m => m.onboarding)).toBe(false);
+    await expect(postRepositoryOnboarding(db, github, { roomId:R, agentId:A, requesterId:H, kind:'repository' })).rejects.toThrow('unavailable');
+    await expect(phone.execute('actOnRepositoryCard', {roomId:R,cardId:card.id,action:'create'},H)).rejects.toThrow('unavailable');
+  } finally { vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING', '1'); }
 });

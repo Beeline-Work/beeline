@@ -1,3 +1,9 @@
+/** Server-side rollout; never derive eligibility from a client-supplied subject. */
+export function repositoryOnboardingEnabled(subject: string | null | undefined, env: Readonly<Record<string, string | undefined>>): boolean {
+  return env.BEELINE_REPOSITORY_ONBOARDING === '1' && !!subject &&
+    (env.BEELINE_REPOSITORY_ONBOARDING_GITHUB_IDS ?? '296966200').split(',').map(id => id.trim()).includes(subject);
+}
+
 /** Server-owned cards for choosing a Room repository and starting real work. */
 export type OnboardingRepository = {
   readonly id: number;

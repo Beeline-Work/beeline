@@ -1228,6 +1228,7 @@ export function createAuthRouteContext(options: AuthServerOptions) {
     noStore,
     managedIdentityJson,
     nativeReturnPage,
+    githubInstallReturnPage,
     githubInstallConnectedPage,
     githubInstallErrorPage,
     githubAppSetupFormPage,

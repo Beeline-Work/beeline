@@ -2,7 +2,7 @@
 
 This is a feature, not a defect report. The acceptance target is the approved A–F mock: install and authorize GitHub, explicitly join/create a Workspace, create/link a Room repository, choose a history-based starter, merge its PR through the normal gate, then switch repositories.
 
-Use an isolated Android emulator with the candidate app installed and a browser already signed into a **dedicated test GitHub account**. Never use lunchboxfortwo's repositories. The test account needs its own All repositories Beeline App installation; the App must have OAuth during installation enabled with its first callback pointing at the candidate auth server. The owner handles any GitHub security-key confirmation. No release pipeline changes are involved.
+Use an isolated Android emulator with the candidate app installed and a browser already signed into a **dedicated test GitHub account**. Never use lunchboxfortwo's repositories. Run against production after the flagged implementation is released. The test account receives its own All repositories Beeline App installation during each run; OAuth during installation stays enabled with the existing production callback. The owner handles any GitHub security-key confirmation through the live browser card. No release pipeline changes are involved.
 
 Run `npm run prove:onboarding` with:
 
@@ -19,3 +19,11 @@ The flow gives the dedicated Workspace owner’s explicit merge yes in the task 
 Live App settings and the dedicated account are external prerequisites. A locally passing service test is a stand-in for wiring and retry behavior, not a substitute for the three real Android runs.
 
 Repository changes keep the existing Workspace owner/admin authority. A joined ordinary member can select a starter for a linked repository; they cannot change the Room's binding. The server returns `canLink` on the card, so the phone shows this limit instead of offering a control that will refuse. Removed free agents stay removed when another member joins.
+
+## Revision 2 rollout
+
+The feature defaults OFF. Set `BEELINE_REPOSITORY_ONBOARDING=1` on the server to enable it only for GitHub user ids in `BEELINE_REPOSITORY_ONBOARDING_GITHUB_IDS` (default: `296966200`, the approved `methoxine-debug` account). Neither a supplied login nor a supplied user id enables the feature. No all-users switch is included.
+
+An unknown first-time user initially sees the existing sign-in UI. OAuth verifies their GitHub id before any Beeline identity is created. Only an eligible account receives the Beeline install pre-screen; installation authorization must verify personal All repositories access before the native ticket is issued. A signed, expiring browser eligibility cookie permits direct install-first routing on later attempts; the callback still verifies the returned GitHub account. Non-allowlisted accounts retain the old path even while the rollout flag is on.
+
+Review and merge the flagged implementation first; Ruby owns the release. Live acceptance runs on production only after that release and a new commander order. Before each run, uninstall the App from the test account and unlink its Beeline identity, retaining a log of each reset. Use the verified `methoxine-debug` Squire session without signing it out. Record the initial OAuth identification action when present; the target of four actions is not a claimed result.

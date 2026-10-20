@@ -1,3 +1,4 @@
+import { useRepositoryOnboarding } from '@/buzz/onboarding-rollout';
 import * as Crypto from 'expo-crypto';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { saveActiveCommunityId } from '@/buzz/community-storage';
@@ -36,6 +37,7 @@ function first(value: string | string[] | undefined): string | undefined {
  */
 export default function WorkspaceChoice() {
   useLatencyRouteFrame('/beeline/community');
+  const enabled = useRepositoryOnboarding();
   const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const requestedMode = first(useLocalSearchParams<{ mode?: string | string[] }>().mode);
@@ -165,13 +167,13 @@ export default function WorkspaceChoice() {
           </Text>
 
           <View style={styles.choices}>
-            <HullDialogInput accessibilityLabel="Workspace name" testID="choice-workspace-name"
+            {enabled ? <HullDialogInput accessibilityLabel="Workspace name" testID="choice-workspace-name"
               maxLength={80} editable={!creating} value={workspaceName} onChangeText={setDraftName}
-              onSubmitEditing={() => void createWorkspace()} />
+              onSubmitEditing={() => void createWorkspace()} /> : null}
             <ChoiceCard
-              description={creating ? "Creating your Workspace…" : workspaceName}
+              description={enabled ? (creating ? "Creating your Workspace…" : workspaceName) : "New workspace for your team"}
               glyph={<RoomGlyph color={theme.buzz.accent} size={20} />}
-              onPress={() => void createWorkspace()}
+              onPress={() => enabled ? void createWorkspace() : router.push('/beeline/create-workspace' as Href)}
               testID="choice-create"
               title={`Create a ${WORKSPACE_LABEL}`}
             />

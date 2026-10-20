@@ -719,7 +719,7 @@ export type RoomRepositoryResult = {
   readonly githubEventsEnabled: boolean;
   readonly source: 'config';
 };
-export type AuthCapabilitiesResult = { readonly github: boolean };
+export type AuthCapabilitiesResult = { readonly github: boolean; readonly repositoryOnboarding?: boolean };
 export type BeginBrowserAuthInput = { readonly redirectUri: string; readonly state: string };
 export type BrowserAuthStartResult = { readonly url: string };
 export type CompleteBrowserAuthInput = { readonly challenge: string; readonly proof: string };

@@ -12,7 +12,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 
 const TOKEN = `inv_${'b'.repeat(64)}`;
 const controls = vi.hoisted(() => ({
-  operation: vi.fn(async () => ({ id: '11111111-2222-4333-8444-555555555555', roomId: 'general' })),
+  enabled: true,
+  operation: vi.fn(async (..._args: any[]) => ({ repositoryOnboarding: controls.enabled, id: '11111111-2222-4333-8444-555555555555', roomId: 'general' })),
   enter: vi.fn(),
   push: vi.fn(),
   replace: vi.fn(),
@@ -129,6 +130,7 @@ const find = (renderer: ReactTestRenderer, testID: string) =>
 describe('the create-or-join choice', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    controls.enabled = true;
     controls.params = {};
     controls.workspaces.mockResolvedValue({ workspaces: [], viewer: {} });
   });
@@ -183,10 +185,19 @@ describe('the create-or-join choice', () => {
     controls.workspaces.mockResolvedValue({ workspaces: [], viewer: { name: 'Ada' } });
     const renderer = await render();
     expect(find(renderer, 'choice-workspace-name')[0]!.props.value).toBe("Ada's team");
-    expect(controls.operation).not.toHaveBeenCalled();
+    expect(controls.operation.mock.calls.every(call => call[0] === 'getAuthCapabilities')).toBe(true);
     await act(async () => find(renderer, 'choice-create')[0]!.props.onPress());
     expect(controls.operation).toHaveBeenCalledWith('createWorkspace', { workspaceId: '11111111-2222-4333-8444-555555555555', name: "Ada's team" });
     expect(controls.enter).toHaveBeenCalledWith('11111111-2222-4333-8444-555555555555', 'general');
+  });
+
+  it('keeps the existing create page and copy when the server leaves rollout OFF', async () => {
+    controls.enabled = false;
+    const renderer = await render();
+    expect(find(renderer, 'choice-workspace-name')).toHaveLength(0);
+    await act(async () => find(renderer, 'choice-create')[0]!.props.onPress());
+    expect(controls.push).toHaveBeenCalledWith('/beeline/create-workspace');
+    expect(controls.enter).not.toHaveBeenCalled();
   });
 
   it('previews a pasted invite link, and refuses something that is not one', async () => {

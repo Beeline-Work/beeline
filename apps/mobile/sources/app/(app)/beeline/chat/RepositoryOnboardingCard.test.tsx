@@ -1,9 +1,10 @@
+vi.mock('@/buzz/onboarding-rollout', () => ({ useRepositoryOnboarding: () => mocks.enabled }));
 import React from 'react';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create } from 'react-test-renderer';
 import { expect, it, vi } from 'vitest';
 import type { RepositoryOnboardingCard as Card } from '@beeline/api-contract/phone';
-const mocks = vi.hoisted(() => ({ operation: vi.fn(async () => ({})) }));
+const mocks = vi.hoisted(() => ({ enabled: true, operation: vi.fn(async () => ({})) }));
 vi.mock('@/components/buzz/IdentityMark', () => ({ IdentityMark: () => null }));
 vi.mock('react-native', () => ({ AppState: {}, Platform: { OS: 'android' } }));
 vi.mock('@/components/buzz/TranscriptCard', () => ({ TranscriptCard: (props: any) => React.createElement('TranscriptCard', props) }));
@@ -35,4 +36,13 @@ it('does not offer actions to another viewer or repeat a settled task', async ()
   expect(rendered.root.findByType('TranscriptCard').props.actions).toEqual([]);
   await act(async () => { rendered.update(<RepositoryOnboardingCard card={{...card,kind:'starters',status:'settled',starters:[{id:'readme',title:'README',evidence:'Empty repo',task:'Document it'}]}} viewerId={H} />); });
   expect(rendered.root.findByType('TranscriptCard').props.choices[0].onPress).toBeUndefined();
+});
+
+it('does not render a cached card when server eligibility is OFF', async () => {
+  mocks.enabled = false;
+  try {
+    let renderer: any;
+    await act(async () => { renderer = create(<RepositoryOnboardingCard card={card} viewerId={H} />); });
+    expect(renderer.toJSON()).toBeNull();
+  } finally { mocks.enabled = true; }
 });

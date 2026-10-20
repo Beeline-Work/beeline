@@ -1,3 +1,4 @@
+import { onboardingEnabledForViewer } from './onboarding-rollout.js';
 import type { RepositorySignals } from './repository-onboarding.js';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import {
@@ -409,7 +410,7 @@ export class GitHubOperations {
   }
 
   async beginInstallation(viewerId: string, input: Input<'beginGitHubInstallation'>) {
-    const state = `repository_install_${randomBytes(32).toString('base64url')}`;
+    const state = `${await onboardingEnabledForViewer(this.database, viewerId) ? 'repository_install_' : ''}${randomBytes(32).toString('base64url')}`;
     await this.database.query(
       `INSERT INTO github_auth_flows(state_hash,identity_id,redirect_uri,purpose,expires_at) VALUES($1,$2,$3,'installation',now()+interval '15 minutes')`,
       [hash(state), viewerId, input.redirectUri],
@@ -430,6 +431,7 @@ export class GitHubOperations {
         )
       ).rows[0];
       if (!flow) throw new Error('GitHub installation flow not found or expired');
+      if (state.startsWith('repository_install_') && !await onboardingEnabledForViewer(database, flow.identity_id)) throw new Error('repository onboarding unavailable');
       let installationIds: number[];
       if (installationId !== undefined) {
         installationIds = [installationId];

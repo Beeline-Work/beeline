@@ -48,15 +48,25 @@ export function HeaderMetaRow({
 export function CornerHeaderAgentText({
   name,
   stateWord,
+  waitingReason,
+  onReasonPress,
   style,
 }: {
   name: string;
   stateWord?: string;
+  waitingReason?: 'approve' | 'connect' | 'question';
+  onReasonPress?: () => void;
   style?: StyleProp<TextStyle>;
 }) {
   return (
     <Text numberOfLines={1} style={[styles.metaCaps, style]}>
       {stateWord ? `${name.toUpperCase()} · ${stateWord}` : name.toUpperCase()}
+      {stateWord === 'waiting' && waitingReason ? (
+        <>
+          {waitingReason === 'question' ? ' on a ' : ' to '}
+          <Text accessibilityRole="link" onPress={onReasonPress}>{waitingReason}</Text>
+        </>
+      ) : null}
     </Text>
   );
 }

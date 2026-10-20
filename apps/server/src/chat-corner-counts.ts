@@ -2,7 +2,7 @@ import { CORNER_CHECKS_BLOCKED_AFTER, deriveCornerState, type DerivedCornerState
 import { cornerOwedLookupSql } from './corner-owed.js';
 import { followsCornerSql } from './corner-follow.js';
 import { visibleChatMessageSql } from './read-cursor.js';
-import type { ChatListCorner, CornerLifecycleView } from '@beeline/api-contract/phone';
+import type { ChatListCorner, CornerLifecycleView, CornerStateReason } from '@beeline/api-contract/phone';
 import { cornerImplementerSql } from './corner-worker.js';
 
 /** Open corners a Room row lists beyond the viewer's own; every Mine corner is listed. */
@@ -20,6 +20,7 @@ export type CornerStateRow = {
   reviewer_active?: boolean;
   blocking?: boolean;
   waiting_item_id?: string | null;
+  waiting_reason?: CornerStateReason | null;
   waiting_person_id?: string | null;
   waiting_since?: Date | null;
   /** `cornerOwedLookupSql`'s facts for this corner and viewer. */
@@ -39,7 +40,9 @@ export function cornerRowState(row: CornerStateRow): DerivedCornerState {
       ? { run: { state: row.workflow_state, outcome: row.workflow_outcome ?? undefined } }
       : {}),
     lifecycle: row.lifecycle ?? undefined,
-    owed: row.blocking ?? row.owed ?? false,
+    owed: row.blocking ?? false,
+    ...(row.waiting_item_id && row.waiting_reason
+      ? { blocker: { reason: row.waiting_reason, itemId: row.waiting_item_id } } : {}),
   });
 }
 
@@ -57,7 +60,7 @@ export function cornerFactsSql(viewerExpr: string): {
   return {
     columns: `f.lifecycle,f.workflow_state,f.workflow_outcome,
       activity.worker_active,activity.reviewer_active,
-      blocker.item_id IS NOT NULL blocking,blocker.item_id waiting_item_id,
+      blocker.item_id IS NOT NULL blocking,blocker.item_id waiting_item_id,blocker.reason waiting_reason,
       blocker.person_id waiting_person_id,blocker.created_at waiting_since,
       turn.status latest_turn_status,turn.created_at latest_turn_created_at,
       lm.created_at latest_created_at,
@@ -122,24 +125,28 @@ function reviewCommandActiveSql(command: string): string {
 /** Indexed unanswered requests and active human holds; ordinary mentions are not blockers. */
 export function cornerBlockerSql(sourcePredicate = 'true'): string {
   return `LEFT JOIN LATERAL (
-    SELECT item_id,person_id,created_at FROM (
-      SELECT owed.message_id item_id,owed.person_id,owed.created_at
+    SELECT item_id,person_id,created_at,reason FROM (
+      SELECT owed.message_id item_id,owed.person_id,owed.created_at,
+        CASE WHEN item.card_type IN ('squire-approval','permission','grant-request') THEN 'approve'
+          WHEN item.card_type IN ('connector-offer','app-sign-in','agent-sign-in') THEN 'connect'
+          ELSE 'question' END reason
       FROM corner_owed owed
+      JOIN messages item ON item.id=owed.message_id
       JOIN memberships current_member ON current_member.room_id=c.parent_id
         AND current_member.identity_id=owed.person_id AND current_member.removed_at IS NULL
       WHERE owed.corner_id=c.id AND owed.blocking
         AND (owed.expires_at IS NULL OR owed.expires_at>now())
       UNION ALL
-      SELECT COALESCE(report.message_id,report.report_id),report.person_id,report.created_at FROM corner_report_blockers report
+      SELECT COALESCE(report.message_id,report.report_id),report.person_id,report.created_at,'question' FROM corner_report_blockers report
       JOIN effective_memberships member ON member.room_id=c.id AND member.identity_id=report.person_id AND member.removed_at IS NULL
       WHERE report.corner_id=c.id
       UNION ALL
-      SELECT hold.id::text,hold.actor_id,hold.set_at FROM corner_merge_holds hold
+      SELECT hold.id::text,hold.actor_id,hold.set_at,'approve' FROM corner_merge_holds hold
       JOIN identities holder ON holder.id=hold.actor_id AND holder.kind='human'
       JOIN effective_memberships holder_member ON holder_member.room_id=c.id
         AND holder_member.identity_id=hold.actor_id AND holder_member.removed_at IS NULL
       WHERE hold.corner_id=c.id AND hold.released_at IS NULL
-    ) blockers WHERE ${sourcePredicate} ORDER BY created_at DESC,item_id DESC,person_id LIMIT 1
+    ) blockers WHERE ${sourcePredicate} ORDER BY created_at ASC,item_id ASC,person_id LIMIT 1
   ) blocker ON true`;
 }
 
@@ -203,7 +210,7 @@ export function chatCornerCounts(
 ): Map<string, ChatCornerSummary> {
   const counts = new Map<string, ChatCornerSummary>();
   for (const row of rows) {
-    const { state } = cornerRowState(row);
+    const { state, reason, itemId } = cornerRowState(row);
     if (state === 'archived') continue;
     const count = counts.get(row.parent_id) ?? {
       cornerCount: 0,
@@ -225,6 +232,8 @@ export function chatCornerCounts(
       id: row.id,
       name: row.name,
       state,
+      ...(reason ? { reason } : {}),
+      ...(itemId ? { itemId } : {}),
       ...(mine ? { mine: true } : {}),
       ...(waitingSince !== undefined ? { waitingSince } : {}),
       // Owed to the viewer and not seen since: only this opens their dropdown.

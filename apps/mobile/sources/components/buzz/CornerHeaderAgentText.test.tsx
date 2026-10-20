@@ -92,3 +92,22 @@ it('names the corner opener when GitHub check lines carry another agent as autho
   expect(loaded).toBe('NIGLET · review');
   expect(loading).toBe('NIGLET · review');
 });
+
+it.each(['approve', 'connect', 'question'] as const)(
+  'R1: renders the shipped %s reason as a link to its item', (reason) => {
+    const jump = vi.fn();
+    let tree: ReturnType<typeof create>;
+    act(() => {
+      tree = create(<CornerHeaderAgentText name="Jellybean" stateWord="waiting"
+        waitingReason={reason} onReasonPress={jump} />);
+    });
+    const link = tree!.root.findAllByType('Text' as never).find(
+      (node: any) => node.props.accessibilityRole === 'link',
+    );
+    expect(link?.props.children).toBe(reason);
+    act(() => link!.props.onPress());
+    expect(jump).toHaveBeenCalledOnce();
+    const root = tree!.root.findAllByType('Text' as never)[0]!;
+    expect(root.props.children[0]).toBe('JELLYBEAN · waiting');
+  },
+);

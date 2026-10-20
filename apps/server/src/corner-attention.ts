@@ -129,9 +129,10 @@ function attentionSql(where: string): string {
       AND watch.agent_id=${worker} AND jsonb_array_length(watch.kinds)>0)
     OR EXISTS(SELECT 1 FROM effective_memberships membership WHERE membership.room_id=c.id
       AND membership.identity_id=${worker} AND membership.removed_at IS NULL
-      AND jsonb_array_length(membership.event_subscriptions)>0)) worker_wait
+      AND jsonb_array_length(membership.event_subscriptions)>0)
+    OR EXISTS(SELECT 1 FROM corner_report_blockers quiet WHERE quiet.corner_id=c.id)) worker_wait
     FROM rooms c JOIN corner_facts f ON f.corner_id=c.id
-    ${cornerWorkSql()} ${cornerBlockerSql()}
+    ${cornerWorkSql()} ${cornerBlockerSql('true', true)}
     JOIN corner_attention_spans span ON span.corner_id=c.id
     WHERE c.parent_id IS NOT NULL AND c.archived_at IS NULL AND ${where}`;
 }

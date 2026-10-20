@@ -69,6 +69,8 @@ export function cornerDisplayState(item: CornerDisplayItem): CornerDisplayState 
   const { state } = item;
   const visual: CornerVisualState =
     state === 'working' ? 'working' : state === 'review' ? 'needs-you' : 'idle';
+  const headerSuffix = item.lifecycle.checks === 'failing' || item.lifecycle.checksSummary?.status === 'failing'
+    ? 'checks failed' as const : undefined;
   const detail = cornerStatusLine(item.lifecycle, state === 'archived');
   return {
     status: state,
@@ -79,6 +81,7 @@ export function cornerDisplayState(item: CornerDisplayItem): CornerDisplayState 
     ...(detail ? { detail } : {}),
     ...(item.lifecycle.pr?.url ? { prUrl: item.lifecycle.pr.url } : {}),
     terminal: state === 'archived',
+    ...(headerSuffix ? { headerSuffix } : {}),
 
     tone: state === 'waiting' ? 'brass' : state === 'archived' ? 'ghost' : 'quiet',
   };

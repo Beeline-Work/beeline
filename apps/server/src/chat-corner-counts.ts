@@ -122,8 +122,8 @@ function reviewCommandActiveSql(command: string): string {
         AND ended.status<>'working')))`;
 }
 
-/** Indexed unanswered requests and active human holds; ordinary mentions are not blockers. */
-export function cornerBlockerSql(sourcePredicate = 'true'): string {
+/** Human-facing blockers only. Display picks the oldest; reminders retain newest-first selection. */
+export function cornerBlockerSql(sourcePredicate = 'true', newestFirst = false): string {
   return `LEFT JOIN LATERAL (
     SELECT item_id,person_id,created_at,reason FROM (
       SELECT owed.message_id item_id,owed.person_id,owed.created_at,
@@ -138,6 +138,7 @@ export function cornerBlockerSql(sourcePredicate = 'true'): string {
         AND (owed.expires_at IS NULL OR owed.expires_at>now())
       UNION ALL
       SELECT COALESCE(report.message_id,report.report_id),report.person_id,report.created_at,'question' FROM corner_report_blockers report
+      JOIN identities recipient ON recipient.id=report.person_id AND recipient.kind='human'
       JOIN effective_memberships member ON member.room_id=c.id AND member.identity_id=report.person_id AND member.removed_at IS NULL
       WHERE report.corner_id=c.id
       UNION ALL
@@ -146,7 +147,7 @@ export function cornerBlockerSql(sourcePredicate = 'true'): string {
       JOIN effective_memberships holder_member ON holder_member.room_id=c.id
         AND holder_member.identity_id=hold.actor_id AND holder_member.removed_at IS NULL
       WHERE hold.corner_id=c.id AND hold.released_at IS NULL
-    ) blockers WHERE ${sourcePredicate} ORDER BY created_at ASC,item_id ASC,person_id LIMIT 1
+    ) blockers WHERE ${sourcePredicate} ORDER BY created_at ${newestFirst ? 'DESC' : 'ASC'},item_id ${newestFirst ? 'DESC' : 'ASC'},person_id LIMIT 1
   ) blocker ON true`;
 }
 

@@ -1,5 +1,4 @@
 import React, { useState } from 'react';
-import { Ionicons } from '@expo/vector-icons';
 import { ScrollView, Text, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { router, useLocalSearchParams } from 'expo-router';
@@ -8,8 +7,8 @@ import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import { useIsDesktop } from '@/utils/responsive';
 import { useActiveCommunityId } from '@/buzz/use-active-community';
 import { useSharedWorkbench } from '@/buzz/workbench-surface';
-import { connectorDestination, useConnectCompanyApp } from '@/buzz/company-connection-actions';
-import { Button } from '@/components/buzz/Button';
+import { connectionViewState, useConnectCompanyApp } from '@/buzz/company-connection-actions';
+import { HullDialogInput } from '@/components/buzz/HullDialog';
 import { PageHeader } from '@/components/buzz/PageHeader';
 import { SettingsRow } from '@/components/buzz/SettingsRow';
 import { ServiceMark } from '@/components/buzz/ServiceMark';
@@ -40,8 +39,9 @@ export default function WorkbenchScreen() {
     {(!index && error) || (view && !index) ? <NetworkUnavailableState onRetry={() => void refresh()} testID="workbench-network-unavailable" /> : !index ?
       <View style={styles.centered}><SurfaceGlyphLoader testID="workbench-loader" /></View> :
       <ScrollView style={styles.content} contentContainerStyle={[styles.contentInner, { paddingBottom: insets.bottom + theme.buzz.space.xxl }]} testID="workbench-scroll">
-        <Button label="Search apps, keys, and websites" variant="secondary" fullWidth icon={<Ionicons name="search-outline" size={18} color={theme.buzz.appQuiet} />}
-          labelStyle={{ flexGrow: 1, textAlign: 'left' }} onPress={() => setSearchOpen(true)} testID="connectors-search" />
+        <HullDialogInput accessibilityLabel="Search apps, keys, and websites" placeholder="Search apps, keys, and websites"
+          value="" editable={false} variant="boxed" placeholderTextColor={theme.buzz.textDisabled}
+          testID="connectors-search" onPress={() => setSearchOpen(true)} />
         {!index.hasConnections ? <View>
           <Text style={styles.note}>No connections yet. Choose a service to get started.</Text>
           <RoomListSectionHeader title="Suggested" inset="content" spacing="flush" />
@@ -53,10 +53,14 @@ export default function WorkbenchScreen() {
           return rows.length ? <View key={section} testID={`connectors-${section}`}>
             <RoomListSectionHeader title={title} inset="content" spacing="flush" />
             {rows.map(row => {
-              const reconnects = Boolean(row.attention) && connectorDestination(row, view?.apps).kind !== 'info';
-              return <SettingsRow appBoard key={row.id} title={row.name} description={reconnects && row.status ? `${row.status} · ${row.subtitle}` : row.subtitle}
-                leading={<ServiceMark company={row.name} domain={row.domain} mark={row.logo} />} value={reconnects ? 'Reconnect' : row.status}
-                valueTone={row.attention ? 'danger' : undefined} statusGlyph={row.attention ? 'failed' : row.kind === 'sign-in-service' && row.status === 'Ready' ? 'live' : undefined}
+              const state = connectionViewState(row);
+              return <SettingsRow appBoard key={row.id} title={row.name}
+                description={state === 'error' && row.status ? `${row.status} · ${row.subtitle}` : row.subtitle}
+                leading={<ServiceMark company={row.name} domain={row.domain} mark={row.logo} />}
+                action={state === 'connect' ? 'Connect' : undefined}
+                value={state === 'error' ? row.status : state === 'connected' && row.kind === 'sign-in-service' ? row.status : undefined}
+                valueTone={state === 'error' ? 'danger' : undefined}
+                statusGlyph={state === 'error' ? 'failed' : row.kind === 'sign-in-service' && row.status === 'Ready' ? 'live' : undefined}
                 chevron="right" disabled={actions.busy === row.id} onPress={() => void actions.open(row, view?.apps)} testID={`connectors-company-${row.id}`} />;
             })}
           </View> : null;

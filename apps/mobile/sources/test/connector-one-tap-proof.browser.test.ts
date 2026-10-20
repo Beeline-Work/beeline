@@ -94,10 +94,10 @@ it.skipIf(!out || !existsSync(CHROME))('captures every Connectors tap case', asy
               subtitle: '', items, machines: [], alsoAvailable: [], ...extra });
             const key = (id, title, subtitle, extra = {}) => ({ id, title, subtitle, kind: 'key', target: { kind: 'key', connectionId: id }, ...extra });
             const rows = [
-              row('linear', 'Linear', 'linear.app', 'attention', [{ id: 'linear', title: 'Linear', subtitle: 'via Composio', kind: 'connection', target: { kind: 'app', appId: 'linear' }, status: 'Offline', attention: true }],
-                { subtitle: '1 app', status: 'Offline', attention: '1 connection needs attention' }),
-              row('notion', 'Notion', 'notion.so', 'attention', [{ id: 'notion', title: 'Notion', subtitle: 'via Trusty Squire', kind: 'connection', target: { kind: 'app', appId: 'notion' }, status: 'Offline', attention: true }],
-                { subtitle: '1 app', status: 'Offline', attention: '1 connection needs attention' }),
+              row('linear', 'Linear', 'linear.app', 'attention', [{ id: 'linear', title: 'Linear', subtitle: 'via Composio', kind: 'connection', target: { kind: 'app', appId: 'linear' }, state: 'connect', attention: true }],
+                { subtitle: '1 app', state: 'connect', attention: '1 connection needs attention' }),
+              row('notion', 'Notion', 'notion.so', 'attention', [{ id: 'notion', title: 'Notion', subtitle: 'via Trusty Squire', kind: 'connection', target: { kind: 'app', appId: 'notion' }, state: 'connect', attention: true }],
+                { subtitle: '1 app', state: 'connect', attention: '1 connection needs attention' }),
               row('stripe', 'Stripe', 'stripe.com', 'attention', [key('stripe-key', 'Stripe key', 'stripe.com', { status: 'Expired', attention: true })],
                 { subtitle: '1 key', status: 'Expired', attention: '1 connection needs attention' }),
               { ...row('squire-signin', 'Trusty Squire', 'trustysquire.ai', 'attention', []), kind: 'sign-in-service', subtitle: '2 computers', status: 'Sign-in unavailable',
@@ -105,7 +105,7 @@ it.skipIf(!out || !existsSync(CHROME))('captures every Connectors tap case', asy
                   { id: 'laptop', name: 'Laptop', online: true, status: 'error', error: 'Google reconnect failed', statusText: 'Google sign-in expired' },
                   { id: 'desktop', name: 'Desktop', online: false, status: 'connected', statusText: 'Computer offline' }] },
               row('github', 'GitHub', 'github.com', 'apps', [{ id: 'github-app', title: 'GitHub', subtitle: 'via Composio', kind: 'connection', target: { kind: 'app', appId: 'github' }, status: 'Connected' }], { subtitle: '1 app' }),
-              row('coinbase', 'Coinbase', 'coinbase.com', 'apps', [{ id: 'builtin:wallet', title: 'Wallet', subtitle: 'built in', kind: 'connection', target: { kind: 'wallet' } }], { subtitle: '1 app' }),
+              row('coinbase', 'Coinbase', 'coinbase.com', 'apps', [{ id: 'builtin:wallet', title: 'Coinbase wallet', subtitle: 'built in', kind: 'connection', target: { kind: 'wallet' } }], { subtitle: '1 app' }),
               row('openrouter', 'OpenRouter', 'openrouter.ai', 'keys', [key('or-default', 'OpenRouter key', 'openrouter.ai'), key('or-agents', 'Agents', 'openrouter.ai')], { subtitle: '2 keys' }),
             ];
             const apps = [{ id: 'github', key: 'github', name: 'GitHub', domain: 'github.com', transport: 'composio', status: 'connected', useCount: 0 },

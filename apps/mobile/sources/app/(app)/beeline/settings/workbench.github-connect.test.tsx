@@ -11,7 +11,8 @@ const source = vi.hoisted(() => ({
 }));
 const refresh = vi.hoisted(() => vi.fn(async () => ({})));
 vi.mock('expo-router', () => ({ router: navigation, useLocalSearchParams: () => ({ workspaceId: 'ws-1', viewerId: 'viewer-1' }) }));
-vi.mock('react-native', () => ({ Platform: { OS: 'web' }, View: 'View', Text: 'Text', ScrollView: 'ScrollView', Linking: { openURL: vi.fn() } }));
+vi.mock('react-native', () => ({ Platform: { OS: 'web' }, View: 'View', Text: 'Text', ScrollView: 'ScrollView', Pressable: 'Pressable', Linking: { openURL: vi.fn() } }));
+vi.mock('@/components/buzz/HullDialog', () => ({ HullDialogInput: 'HullDialogInput' }));
 vi.mock('react-native-safe-area-context', () => ({ useSafeAreaInsets: () => ({ top: 0, bottom: 0 }) }));
 vi.mock('expo-web-browser', () => ({ openAuthSessionAsync: vi.fn() }));
 vi.mock('@/utils/responsive', () => ({ useIsDesktop: () => true }));

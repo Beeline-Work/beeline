@@ -363,6 +363,48 @@ describe('Hull dialog family', () => {
     );
   });
 
+  it('renders the boxed search field in regular weight and placeholder colour', () => {
+    const renderer = render(
+      <HullDialogInput
+        editable={false}
+        placeholder="Search apps, keys, and websites"
+        testID="connectors-search-field"
+        value=""
+        variant="boxed"
+      />,
+    );
+    const input = hostByTestID(renderer, 'connectors-search-field', 'TextInput');
+    expect(input.props.placeholderTextColor).toBe(hull.textDisabled);
+    expect(input.props.editable).toBe(false);
+    const styles = Array.isArray(input.props.style) ? input.props.style.flat() : [input.props.style];
+    expect(styles).toContainEqual(expect.objectContaining({ fontWeight: 'normal' }));
+    const box = renderer.root
+      .findAllByType('View' as any)
+      .find((node: any) =>
+        node.props.style?.some?.((style: any) => style?.borderRadius === hull.radius && style?.borderColor === hull.borderStrong),
+      );
+    expect(box).toBeTruthy();
+  });
+
+  it('opens from a boxed field tap without a screen-level Pressable', () => {
+    const onPress = vi.fn();
+    const renderer = render(
+      <HullDialogInput
+        accessibilityLabel="Search apps, keys, and websites"
+        onPress={onPress}
+        placeholder="Search apps, keys, and websites"
+        testID="connectors-search"
+        value=""
+        variant="boxed"
+      />,
+    );
+    const button = hostByTestID(renderer, 'connectors-search', 'Pressable');
+    expect(button.props.accessibilityRole).toBe('button');
+    expect(hostByTestID(renderer, 'connectors-search', 'TextInput')).toBeUndefined();
+    act(() => button.props.onPress());
+    expect(onPress).toHaveBeenCalledTimes(1);
+  });
+
   it('renders a bottom sheet with grip, metadata, destructive-only red, disabled state, and quiet cancel', () => {
     const onClose = vi.fn();
     const archive = vi.fn();

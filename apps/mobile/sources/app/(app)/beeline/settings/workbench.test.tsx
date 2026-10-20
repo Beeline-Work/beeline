@@ -107,6 +107,12 @@ vi.mock('@/components/buzz/SettingsRow', async () => {
     SettingsRow: (props: any) => ReactModule.createElement('SettingsRow', props),
   };
 });
+vi.mock('@/components/buzz/HullDialog', async () => {
+  const ReactModule = await import('react');
+  return {
+    HullDialogInput: (props: any) => ReactModule.createElement('HullDialogInput', props),
+  };
+});
 vi.mock('@/components/buzz/HullActionSheet', async () => {
   const ReactModule = await import('react');
   const host = (name: string) => (props: any) => ReactModule.createElement(name, props, props.children);
@@ -193,6 +199,19 @@ describe('Connectors server-owned settings screen', () => {
     expect(renderer.root.findByProps({ testID: 'connectors-search' })).toBeTruthy();
     expect(renderer.root.findAllByProps({ testID: 'connectors-suggest-squire' })).toHaveLength(0);
   });
+  it('renders the search hint as a quiet boxed field and opens the existing search', async () => {
+    const renderer = await render();
+    const hint = renderer.root.findByType('HullDialogInput');
+    expect(hint.props.testID).toBe('connectors-search');
+    expect(hint.props.variant).toBe('boxed');
+    expect(hint.props.editable).toBe(false);
+    expect(hint.props.placeholder).toBe('Search apps, keys, and websites');
+    expect(hint.props.value).toBe('');
+    expect(hint.props.placeholderTextColor).toBeTruthy();
+    expect(hint.props.placeholderTextColor).not.toMatch(/#f0f0f3|#171310/i);
+    await act(async () => hint.props.onPress());
+    expect(renderer.root.findByProps({ testID: 'connectors-search-sheet' }).props.visible).toBe(true);
+  });
   it('only shows suggestions in the body for an empty account', async () => {
     const source = new MockWorkbenchSource();
     source.readWorkbench = async () => companyWorkbench([], [companyOption('trusty-squire', 'Trusty Squire', 'squire')]);
@@ -251,7 +270,7 @@ describe('one tap from a Connectors row', () => {
   const row = (renderer: ReactTestRenderer, id: string) => renderer.root.findByProps({ testID: `connectors-company-${id}` });
   it('connected with a frontend: opens the wallet itself in one push', async () => {
     serve(companyWorkbench([{ ...companyRow('coinbase', 'Coinbase', 'apps'),
-      items: [{ id: 'builtin:wallet', title: 'Wallet', subtitle: 'built in', kind: 'connection', target: { kind: 'wallet' } }] }]));
+      items: [{ id: 'builtin:wallet', title: 'Coinbase wallet', subtitle: 'built in', kind: 'connection', target: { kind: 'wallet' } }] }]));
     const renderer = await render();
     await act(async () => row(renderer, 'coinbase').props.onPress());
     expect(navigation.push.mock.calls).toEqual([[{ pathname: '/beeline/settings/workbench/wallet', params: scope }]]);
@@ -270,20 +289,21 @@ describe('one tap from a Connectors row', () => {
     expect(navigation.push.mock.calls).toEqual([[{ pathname: '/beeline/settings/workbench/connect', params: { ...scope, connectorId: 'tailscale' } }]]);
   });
   it('errored sign-in: opens the provider sign-in directly, with no page first', async () => {
-    const source = serve({ ...companyWorkbench([{ ...companyRow('linear', 'Linear', 'attention'), status: 'Offline', attention: '1 connection needs attention',
-      items: [{ id: 'linear', title: 'Linear', subtitle: 'via Composio', kind: 'connection', target: { kind: 'app', appId: 'linear' }, status: 'Offline', attention: true }] }]),
+    const source = serve({ ...companyWorkbench([{ ...companyRow('linear', 'Linear', 'attention'), state: 'connect', attention: '1 connection needs attention',
+      items: [{ id: 'linear', title: 'Linear', subtitle: 'via Composio', kind: 'connection', target: { kind: 'app', appId: 'linear' }, state: 'connect', attention: true }] }]),
       apps: [app('linear', 'composio')] });
     const begin = vi.spyOn(source, 'beginAppSignIn').mockResolvedValue({ authorizationUrl: 'https://linear.app/oauth/authorize' } as any);
     const renderer = await render();
-    expect(row(renderer, 'linear').props.value).toBe('Reconnect');
+    expect(row(renderer, 'linear').props.action).toBe('Connect');
+    expect(row(renderer, 'linear').props.value).toBeUndefined();
     await act(async () => { await row(renderer, 'linear').props.onPress(); });
     expect(begin).toHaveBeenCalledWith({ appId: 'linear' });
     expect(appSignIn.open).toHaveBeenCalledWith('https://linear.app/oauth/authorize', { ...scope, appId: 'linear' });
     expect(navigation.push).not.toHaveBeenCalled();
   });
-  it('errored on a computer: opens the info page that shows the computer and its Reconnect', async () => {
-    serve({ ...companyWorkbench([{ ...companyRow('notion', 'Notion', 'attention'), status: 'Offline', attention: '1 connection needs attention',
-      items: [{ id: 'notion', title: 'Notion', subtitle: 'via Trusty Squire', kind: 'connection', target: { kind: 'app', appId: 'notion' }, status: 'Offline', attention: true }] }]),
+  it('errored on a computer: opens the info page that shows the computer and its Connect', async () => {
+    serve({ ...companyWorkbench([{ ...companyRow('notion', 'Notion', 'attention'), state: 'connect', attention: '1 connection needs attention',
+      items: [{ id: 'notion', title: 'Notion', subtitle: 'via Trusty Squire', kind: 'connection', target: { kind: 'app', appId: 'notion' }, state: 'connect', attention: true }] }]),
       apps: [app('notion', 'squire-browser')] });
     const renderer = await render();
     await act(async () => row(renderer, 'notion').props.onPress());

@@ -153,6 +153,7 @@ export const RoomRosterSheet = React.memo(function RoomRosterSheet({
             title={MEMBERS_LABEL}
             count={members.length}
             testID="room-roster-members-head"
+            surface="sheet"
             actionAccessibilityLabel="Add members"
             actionTestID="room-roster-add-members"
             onAction={canAddMembers ? onAddMembers : undefined}

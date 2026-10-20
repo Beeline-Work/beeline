@@ -70,7 +70,7 @@ export function DirectMessagePickerSheet({
         style={styles.listViewport}
         testID="direct-message-picker-list"
       >
-        {people.length > 0 && <RoomListSectionHeader title="People" count={people.length} />}
+        {people.length > 0 && <RoomListSectionHeader title="People" count={people.length} surface="sheet" />}
         {people.map((member) => (
           <MemberRow
             busy={busyPubkey === member.peerPubkey}
@@ -87,7 +87,7 @@ export function DirectMessagePickerSheet({
               : 'No other members in this Workspace yet.'}
           </Text>
         )}
-        {agents.length > 0 && <RoomListSectionHeader title="Agents" count={agents.length} />}
+        {agents.length > 0 && <RoomListSectionHeader title="Agents" count={agents.length} surface="sheet" />}
         {agents.map((member) => (
           <MemberRow
             busy={busyPubkey === member.peerPubkey}

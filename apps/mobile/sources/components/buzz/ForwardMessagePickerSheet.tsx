@@ -95,7 +95,7 @@ export function ForwardMessagePickerSheet({
             if (!sectionTargets.length) return null;
             return (
               <React.Fragment key={section.group}>
-                <RoomListSectionHeader title={section.label} />
+                <RoomListSectionHeader title={section.label} surface="sheet" />
                 {sectionTargets.map((target) => (
                   <HullActionSheetRow
                     chevron="right"

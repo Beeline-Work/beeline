@@ -10,6 +10,7 @@ export function RoomListSectionHeader({
   title,
   inset = 'screen',
   spacing = 'section',
+  surface = 'screen',
   count,
   actionAccessibilityLabel,
   actionTestID,
@@ -22,6 +23,11 @@ export function RoomListSectionHeader({
   inset?: 'screen' | 'content' | 'row';
   /** Flush when the surrounding section already supplies its vertical gap. */
   spacing?: 'section' | 'flush';
+  /**
+   * `sheet` drops the screen fill so the header takes the sheet's own surface
+   * instead of a pale band. Not for sticky headers: rows would show through.
+   */
+  surface?: 'screen' | 'sheet';
   testID?: string;
   actionDisabled?: boolean;
   count?: number;
@@ -35,6 +41,7 @@ export function RoomListSectionHeader({
         styles.sectionHeader,
         inset === 'content' && styles.contentInset,
         inset === 'row' && styles.rowInset,
+        surface === 'sheet' && styles.sheetSurface,
         spacing === 'flush' && styles.flushSpacing,
       ]}
     >
@@ -73,6 +80,7 @@ const styles = StyleSheet.create((theme) => {
     },
     contentInset: { paddingHorizontal: 0 },
     rowInset: { paddingHorizontal: hull.space.sm },
+    sheetSurface: { paddingTop: hull.space.md, backgroundColor: 'transparent' },
     flushSpacing: { paddingTop: 0 },
     sectionHeaderText: {
       ...Typography.default('semiBold'),

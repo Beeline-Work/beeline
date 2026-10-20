@@ -11,7 +11,7 @@ import { PhoneService } from './phone-service.js';
 import { createBeelineServer } from './server.js';
 import { createAgentCommand, claimAgentCommand } from './agent-command.js';
 
-it('Reproduction R1: corner brief refusals do not reach Sentry; unexpected faults still report', async () => {
+it('Reproduction R1 / ask-refusal: corner brief and ask refusals do not reach Sentry; unexpected faults still report', async () => {
   const envelopes: string[] = [];
   const collector = createServer(async (request, response) => {
     const chunks: Buffer[] = [];
@@ -52,6 +52,19 @@ it('Reproduction R1: corner brief refusals do not reach Sentry; unexpected fault
       });
       return { status: response.status, body: await response.json() };
     };
+    for (const ask of ['x'.repeat(141), '**Choose now?**', 'First? Second?', 'First\nSecond', 42, '']) {
+      for (const operation of ['report', 'askRoomChoice']) {
+        const refused = await post(operation, { ...turn, status: 'needs_decision', text: 'needs-decision: Choose now',
+          prompt: 'Choose now?', options: [{ label: 'Yes', consequence: 'Continue' }, { label: 'No', consequence: 'Stop' }], ask });
+        expect(refused.status).toBe(400);
+        expect(refused.body.error).toMatch(/^ask /);
+      }
+    }
+    await Sentry.flush(2000);
+    expect(envelopes.some(envelope => envelope.includes('"exception"'))).toBe(false);
+    expect((await post('askRoomChoice', { ...turn, ask: 'x'.repeat(140), prompt: 'Choose now?',
+      options: [{ label: 'Yes', consequence: 'Continue' }, { label: 'No', consequence: 'Stop' }] })).status).toBe(200);
+    console.info('Demonstrated ask-refusal: malformed asks return 400 without Sentry events; the 140-character boundary is accepted');
     const brief = { spec: 'Keep the approved scope', approval: { sourceMessageId: source }, change: 'Clarify the scope' };
     const opened = await post('createCorner', { ...turn, name: 'Refusal-proof', objective: 'Prove revision refusals', brief });
     expect(opened.status).toBe(200);

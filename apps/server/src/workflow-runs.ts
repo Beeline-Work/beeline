@@ -736,6 +736,7 @@ async function postWorkflowGate(
     roomId: input.roomId,
     agentId: askerAgentId,
     workflowRunId: input.runId,
+    workflowOwnerId: (await loadRunStart(db, input.roomId, input.runId)).card.ownerId,
     mode: 'question',
     prompt: (input.state.does?.replace(/\s+/g, ' ').trim() ||
       `Choose the next step for ${input.contract.name.replace(/[-_]/g, ' ')}`).slice(0, 120),

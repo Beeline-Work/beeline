@@ -107,7 +107,7 @@ function runRelease(args: string[], env: Record<string, string> = {}) {
 }
 
 describe('mobile OTA release governor', () => {
-  const pins = { android: '39', ios: '36' };
+  const pins = { android: '40', ios: '36' };
   const history = (android: string[], ios: string[]) => ({ currentPage: [
     ...android.map(runtimeVersion => ({ platforms: 'android', runtimeVersion, group: `android-${runtimeVersion}` })),
     ...ios.map(runtimeVersion => ({ platforms: 'ios', runtimeVersion, group: `ios-${runtimeVersion}` })),
@@ -116,7 +116,7 @@ describe('mobile OTA release governor', () => {
 
   it('automatically retains the old pin after a pin bump, capped at six targets', () => {
     expect(releaseUpdateTargets(mobileRoot, pins, currentHistory, [])).toEqual([
-      { platform: 'android', runtimeVersion: '39' },
+      { platform: 'android', runtimeVersion: '40' },
       { platform: 'android', runtimeVersion: '38' },
       { platform: 'android', runtimeVersion: '36' },
       { platform: 'ios', runtimeVersion: '36' },
@@ -135,9 +135,9 @@ describe('mobile OTA release governor', () => {
   });
 
   it('excludes explicit retirements before filling the two slots and ignores future runtimes', () => {
-    const targets = releaseUpdateTargets(mobileRoot, pins, history(['37', '38', '36', '40'], ['35', '34', '37']));
+    const targets = releaseUpdateTargets(mobileRoot, pins, history(['37', '38', '36', '41'], ['35', '34', '37']));
     expect(targets.map(t => `${t.platform}@${t.runtimeVersion}`)).toEqual([
-      'android@39', 'android@38', 'android@36', 'ios@36', 'ios@35', 'ios@34',
+      'android@40', 'android@38', 'android@36', 'ios@36', 'ios@35', 'ios@34',
     ]);
     expect(RETIRED_COMPAT_RUNTIMES.find(t => t.runtimeVersion === '37')?.evidence).toContain('owner decision');
   });
@@ -145,7 +145,7 @@ describe('mobile OTA release governor', () => {
   it('uses the union of production history and the shipped-native ledger with fewer than two shipped runtimes', () => {
     const shipped = [{ platform: 'android', runtimeVersion: '38', evidence: 'store binary' }];
     expect(releaseUpdateTargets(mobileRoot, pins, history(['36'], ['35']), shipped, [])).toEqual([
-      { platform: 'android', runtimeVersion: '39' },
+      { platform: 'android', runtimeVersion: '40' },
       { platform: 'android', runtimeVersion: '38' },
       { platform: 'android', runtimeVersion: '36' },
       { platform: 'ios', runtimeVersion: '36' },
@@ -169,13 +169,13 @@ describe('mobile OTA release governor', () => {
       '--production-history', snapshot, '--sha', '6e51856d', '--ref', 'main',
       '--ledger', join(directory, 'ledger.json')], { cwd: mobileRoot, encoding: 'utf8' });
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain('release_plan_targets=android@39,android@38,android@36,ios@36,ios@35,ios@34');
+    expect(result.stdout).toContain('release_plan_targets=android@40,android@38,android@36,ios@36,ios@35,ios@34');
     expect(result.stdout).toContain('pin-plus-two rule: dropping older production runtimes android@31, android@32, android@33, android@34, android@35, ios@29, ios@31, ios@32, ios@33');
     expect(result.stdout.match(/EXPO_RUNTIME_OVERRIDE=/g)).toHaveLength(6);
   });
 
   it('R1 keeps android@38 and ios@35 covered through publish planning', () => {
-    const pins = { android: '39', ios: '36' };
+    const pins = { android: '40', ios: '36' };
     const previous = currentHistory.currentPage.map(({ platforms, ...target }) => ({ ...target, platform: platforms }));
     const directory = mkdtempSync(join(tmpdir(), 'beeline-ota-r1-'));
     const fakeEas = join(directory, 'fake-eas.sh');
@@ -216,7 +216,7 @@ esac
     expect(result.stdout).toContain('ios@35');
     expect(result.stdout).toContain('pin-plus-two rule: dropping older production runtimes android@31');
     expect(ledger.previousProductionTargets).toHaveLength(4);
-    for (const key of ['android@39', 'ios@36']) {
+    for (const key of ['android@40', 'ios@36']) {
       expect(result.stdout).toContain(`${key}: first production release on this runtime; rollback anchor = embedded update of this release's store binary`);
     }
     const noAnchor = spawnSync(process.execPath, [releaseScript, 'publish',
@@ -225,7 +225,7 @@ esac
       env: { ...process.env, EAS_CLI_PATH: fakeEas, OTA_EMBEDDED_ANCHOR_PLATFORMS: '' },
     });
     expect(noAnchor.status).toBe(1);
-    expect(noAnchor.stderr).toContain('no rollback anchor for android@39, ios@36');
+    expect(noAnchor.stderr).toContain('no rollback anchor for android@40, ios@36');
     expect(existsSync(join(directory, 'missing.json'))).toBe(false);
     const override = spawnSync(process.execPath, [releaseScript, 'publish',
       '--production-history', 'ignored.json', '--sha', '6e51856d', '--ref', 'main'], {

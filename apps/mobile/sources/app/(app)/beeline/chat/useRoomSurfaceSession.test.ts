@@ -6,11 +6,16 @@ import type { ChatListView, NostrEvent, RoomView } from '@beeline/buzz-client';
 import { visibleLiveOverlays } from '@beeline/buzz-client';
 import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 import { prefetchPushRoom } from '@/push/push-room-prefetch';
+import { mobileSurfaceCache } from '@/buzz/surface-storage';
+import { loadBuzzIdentity, loadBuzzViewerPubkey } from '@/auth/buzz-identity-storage';
 
 type TestSurfaceEvent = NostrEvent | MonolithSurfaceEvent;
 
 const controls = vi.hoisted(() => ({
   cached: null as RoomView | null,
+  hotViewer: false,
+  cacheListeners: new Set<() => void>(),
+  viewerRead: null as Promise<string | null> | null,
   schedulers: [] as Array<{
     fetch(): Promise<RoomView>;
     apply(view: RoomView): void;
@@ -36,6 +41,7 @@ const controls = vi.hoisted(() => ({
   reopenChat: vi.fn(async (_roomId: string) => undefined),
   identityPromise: null as Promise<{ publicKey: string; secretKey: Uint8Array } | null> | null,
   ensureClientPromise: null as Promise<void> | null,
+  outboxRestore: null as Promise<void> | null,
   viewerPubkey: 'viewer' as string | null,
   outboxFail: vi.fn(async (_eventId: string) => undefined),
   outboxGet: vi.fn((_eventId: string) => ({ status: 'pending' as const })),
@@ -96,7 +102,8 @@ vi.mock('@/auth/buzz-identity-storage', () => ({
       controls.identityPromise ??
       Promise.resolve({ publicKey: 'viewer', secretKey: new Uint8Array(32) }),
   ),
-  loadBuzzViewerPubkey: vi.fn(async () => controls.viewerPubkey),
+  loadBuzzViewerPubkey: vi.fn(async () => controls.viewerRead ?? controls.viewerPubkey),
+  peekBuzzViewerContext: () => controls.hotViewer ? { relayUrl: 'https://relay.test', viewerPubkey: controls.viewerPubkey! } : null,
   getEffectiveRelayUrl: vi.fn(async () => 'https://relay.test'),
 }));
 
@@ -107,13 +114,20 @@ vi.mock('@/buzz/community-storage', () => ({
 
 vi.mock('@/buzz/surface-storage', () => ({
   mobileSurfaceCache: {
+    peek: vi.fn((path: string) => path.startsWith('/room/') ? controls.cached : null),
     read: vi.fn(async () => controls.cached),
     write: vi.fn(async () => undefined),
+    publish: vi.fn((_address: unknown, view: RoomView) => { controls.cached = view; return view; }),
+    subscribe: vi.fn((_address: unknown, listener: () => void) => {
+      controls.cacheListeners.add(listener);
+      return () => { controls.cacheListeners.delete(listener); };
+    }),
+    persist: vi.fn(async () => undefined),
     remove: vi.fn(async () => undefined),
   },
   surfaceAddress: vi.fn((_relay: string, _viewer: string, path: string) => path),
   createRoomOutbox: vi.fn(() => ({
-    restore: vi.fn(async () => undefined),
+    restore: vi.fn(async () => { await controls.outboxRestore; }),
     list: vi.fn(() => []),
     reconcile: vi.fn(async () => undefined),
     fail: controls.outboxFail,
@@ -286,14 +300,16 @@ function Harness({
   notificationResponseId,
   isFocused = true,
   capture,
+  onResetTranscript,
 }: {
   channelId: string;
   notificationResponseId?: string;
   isFocused?: boolean;
   capture(result: UseRoomSurfaceSessionResult): void;
+  onResetTranscript?: () => void;
 }) {
   const bindingsRef = React.useRef<RoomSurfaceSessionBindings>({
-    resetTranscript: vi.fn(),
+    resetTranscript: onResetTranscript ?? vi.fn(),
     restoreOutboxMessages: vi.fn(),
     dismissOptimisticMessage: vi.fn(),
     observeRoomSurface: vi.fn(),
@@ -308,7 +324,7 @@ function Harness({
   return React.createElement('room-surface', {
     roomId: result.roomSurface?.room.id,
     error: result.hydrationError,
-  });
+  }, ...(result.roomSurface?.messages ?? []).map((message) => React.createElement('message-row', { key: message.id }, message.text)));
 }
 
 function stubFrameScheduler(): {
@@ -365,6 +381,9 @@ beforeEach(() => {
   vi.useRealTimers();
   vi.unstubAllGlobals();
   controls.cached = null;
+  controls.hotViewer = false;
+  controls.cacheListeners.clear();
+  controls.viewerRead = null;
   controls.schedulers.length = 0;
   controls.subscriptions.length = 0;
   controls.transportCount = 0;
@@ -375,6 +394,7 @@ beforeEach(() => {
   controls.readMarks.length = 0;
   controls.identityPromise = null;
   controls.ensureClientPromise = null;
+  controls.outboxRestore = null;
   controls.viewerPubkey = 'viewer';
   controls.roomResponse = null;
   controls.roomReads = 0;
@@ -971,6 +991,114 @@ describe('useRoomSurfaceSession', () => {
     await act(async () => renderer.unmount());
   });
 
+  it('renders the hot target before the asynchronous session has even read its identity', async () => {
+    controls.hotViewer = true;
+    controls.viewerRead = new Promise(() => undefined);
+    controls.cached = { ...roomView('room-a'), messages: [{ id: 'target', text: 'Newest received row', createdAt: 10,
+      author: { pubkey: 'author', kind: 'human', name: 'Author' }, presentation: 'message' }] };
+    const { queued } = stubFrameScheduler();
+    const reset = vi.fn();
+    const props = { channelId: 'room-a', capture: () => undefined, onResetTranscript: reset };
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(React.createElement(Harness, props)); });
+    expect(renderer.root.findAllByType('message-row').at(-1)?.props.children).toBe('Newest received row');
+    expect(reset).not.toHaveBeenCalled();
+    expect(loadBuzzViewerPubkey).not.toHaveBeenCalled();
+    await act(async () => { queued.splice(0).forEach((frame) => frame(0)); });
+    expect(controls.transportCount).toBe(0);
+    expect(controls.roomReads).toBe(0);
+    await act(async () => renderer.update(React.createElement(Harness, { ...props, isFocused: false })));
+    await act(async () => renderer.update(React.createElement(Harness, props)));
+    expect(reset).toHaveBeenCalledOnce();
+    await act(async () => renderer.unmount());
+  });
+
+  it('paints an opening reply while cached-frame callbacks and identity setup are still pending', async () => {
+    controls.hotViewer = true;
+    controls.viewerRead = new Promise(() => undefined);
+    controls.cached = roomView('room-a');
+    stubFrameScheduler();
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(React.createElement(Harness, {
+      channelId: 'room-a', capture: () => undefined,
+    })); });
+    await act(async () => {
+      controls.cached = { ...roomView('room-a'), messages: [{ id: 'arrived', text: 'Arrived during opening', createdAt: 10,
+        author: { pubkey: 'author', kind: 'human', name: 'Author' }, presentation: 'message' }] };
+      controls.cacheListeners.forEach((listener) => listener());
+    });
+    expect(renderer.root.findAllByType('message-row').at(-1)?.props.children).toBe('Arrived during opening');
+    expect(loadBuzzViewerPubkey).not.toHaveBeenCalled();
+    expect(controls.roomReads).toBe(0);
+    await act(async () => renderer.unmount());
+    expect(controls.cacheListeners.size).toBe(0);
+  });
+
+  it('paints a missing-row publish after disk read while identity and then outbox remain pending', async () => {
+    controls.hotViewer = true;
+    controls.cached = roomView('room-a');
+    let resolveIdentity!: (identity: { publicKey: string; secretKey: Uint8Array }) => void;
+    controls.identityPromise = new Promise((resolve) => { resolveIdentity = resolve; });
+    controls.outboxRestore = new Promise(() => undefined);
+    const { queued } = stubFrameScheduler();
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(React.createElement(Harness, {
+      channelId: 'room-a', notificationResponseId: 'late-opening-reply', capture: () => undefined,
+    })); });
+    await act(async () => {
+      queued.splice(0).forEach((frame) => frame(0));
+      queued.splice(0).forEach((frame) => frame(0));
+    });
+    await flushMicrotasks();
+    expect(mobileSurfaceCache.read).toHaveBeenCalled();
+    expect(loadBuzzIdentity).toHaveBeenCalled();
+    const publish = async (text: string) => {
+      await act(async () => {
+        controls.cached = { ...roomView('room-a'), messages: [{ id: text, text, createdAt: 10,
+          author: { pubkey: 'author', kind: 'human', name: 'Author' }, presentation: 'message' }] };
+        controls.cacheListeners.forEach((listener) => listener());
+      });
+      expect(renderer.root.findAllByType('message-row').at(-1)?.props.children).toBe(text);
+    };
+    try {
+      await publish('Reply after disk read, identity pending');
+      expect(controls.transportCount).toBe(0);
+      await act(async () => resolveIdentity({ publicKey: 'viewer', secretKey: new Uint8Array(32) }));
+      await flushMicrotasks();
+      expect(controls.transportCount).toBe(1);
+      expect(controls.schedulers).toHaveLength(0);
+      await publish('Reply while outbox restore is pending');
+      expect(controls.roomReads).toBe(0);
+    } finally {
+      await act(async () => renderer.unmount());
+    }
+    expect(controls.cacheListeners.size).toBe(0);
+  });
+
+  it.each([1, 5])('paints %i received messages on the first frame before any network read', async (count) => {
+    controls.hotViewer = true;
+    const { queued } = stubFrameScheduler();
+    controls.cached = { ...roomView('room-a'), messages: Array.from({ length: count }, (_, n) => ({
+      id: `received-${n}`, text: `received ${n}`, createdAt: 10 + n,
+      author: { pubkey: 'author', kind: 'human' as const, name: 'Author' }, presentation: 'message' as const,
+    })) };
+    let current!: UseRoomSurfaceSessionResult;
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(React.createElement(Harness, {
+      channelId: 'room-a', capture: (result: UseRoomSurfaceSessionResult) => { current = result; },
+    })); });
+    expect(renderer.root.findAllByType('message-row').at(-1)?.props.children).toBe(`received ${count - 1}`);
+    expect(controls.roomReads).toBe(0);
+    await flushMicrotasks();
+    await act(async () => { queued.splice(0).forEach((frame) => frame(0)); });
+    expect(current.roomSurface?.messages.at(-1)?.id).toBe(`received-${count - 1}`);
+    expect(renderer.root.findAllByType('message-row').at(-1)?.props.children).toBe(`received ${count - 1}`);
+    expect(controls.transportCount).toBe(0);
+    expect(controls.roomReads).toBe(0);
+    expect(controls.subscriptions).toHaveLength(0);
+    await act(async () => renderer.unmount());
+  });
+
   it('paints cached newest row before authorization occupies the session', async () => {
     const { queued, receivers } = stubFrameScheduler();
     let resolveAuth!: (identity: { publicKey: string; secretKey: Uint8Array }) => void;
@@ -1507,6 +1635,7 @@ describe('useRoomSurfaceSession', () => {
     expect(controls.schedulers[0]!.followUpCalls).toBe(1);
     await act(async () => renderer.unmount());
     controls.ensureClientPromise = null;
+  controls.outboxRestore = null;
     vi.useRealTimers();
   });
 

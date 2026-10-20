@@ -54,11 +54,18 @@ function observePage(durationMs: number, failed: boolean): void {
   if (!failed && ++successfulPagesSinceReport < SUCCESS_SAMPLE_RATE) return;
   if (!failed) successfulPagesSinceReport = 0;
   const network = roomReadNetwork;
-  void import('./room-page-observation').then(({ reportRoomPageObservation }) =>
-    network
-      ? reportRoomPageObservation(durationMs, failed, network)
-      : reportRoomPageObservation(durationMs, failed),
-  () => undefined);
+  const send = () => {
+    void import('./room-page-observation').then(({ reportRoomPageObservation }) =>
+      network
+        ? reportRoomPageObservation(durationMs, failed, network)
+        : reportRoomPageObservation(durationMs, failed),
+    () => undefined);
+  };
+  // A JS ready marker can precede native buffer commitment. Keep the
+  // observation itself out of the measured Room's first frame.
+  if (!failed && typeof requestAnimationFrame === 'function') {
+    requestAnimationFrame(() => requestAnimationFrame(send));
+  } else send();
 }
 
 /** The first mark of an open. Everything after it belongs to the same run. */

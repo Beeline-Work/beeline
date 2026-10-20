@@ -40,7 +40,7 @@ export LATENCY_RIG_BACKEND="$PUBLIC_ORIGIN"
 
 cd "$repo_dir"
 if ! psql "$database_url" -Atqc 'SELECT 1' >/dev/null 2>&1; then
-  createdb beeline_latency_rig
+  createdb --host=/var/run/postgresql beeline_latency_rig
 fi
 npx turbo run build --filter=@beeline/server...
 npm run migrate -w @beeline/server
@@ -49,20 +49,34 @@ node scripts/latency-rig/seed-local.mjs
 server_pid=""
 proxy_pid=""
 cleanup() {
-  [[ -z "$proxy_pid" ]] || kill "$proxy_pid" 2>/dev/null || true
-  [[ -z "$server_pid" ]] || kill "$server_pid" 2>/dev/null || true
+  local fixture_proxy="$proxy_pid" fixture_server="$server_pid"
+  proxy_pid=""
+  server_pid=""
+  [[ -z "$fixture_proxy" ]] || kill "$fixture_proxy" 2>/dev/null || true
+  [[ -z "$fixture_server" ]] || kill "$fixture_server" 2>/dev/null || true
+  [[ -z "$fixture_proxy" ]] || wait "$fixture_proxy" 2>/dev/null || true
+  [[ -z "$fixture_server" ]] || wait "$fixture_server" 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
-NODE_OPTIONS="--require $repo_dir/scripts/latency-rig/pg-probe.cjs" \
+NODE_OPTIONS="${NODE_OPTIONS:-} --require $repo_dir/scripts/latency-rig/pg-probe.cjs" \
   node --import tsx apps/server/src/index.ts &
 server_pid=$!
-for _ in {1..60}; do
-  if curl -fsS "$PUBLIC_ORIGIN/healthz" >/dev/null; then break; fi
-  sleep 1
-done
+# Readiness must belong to our child, never an unrelated local service.
+wait_for_owned_port() {
+  local fixture_pid="$1" fixture_port="$2" fixture_listeners
+  for _ in {1..60}; do
+    kill -0 "$fixture_pid" 2>/dev/null || return 1
+    fixture_listeners="$(lsof -t -nP -iTCP:"$fixture_port" -sTCP:LISTEN 2>/dev/null || true)"
+    if [[ "$fixture_listeners" == "$fixture_pid" ]]; then return 0; fi
+    sleep 1
+  done
+  return 1
+}
+wait_for_owned_port "$server_pid" "$PORT"
 curl -fsS "$PUBLIC_ORIGIN/healthz" >/dev/null
 node scripts/latency-rig/proxy.mjs &
 proxy_pid=$!
+wait_for_owned_port "$proxy_pid" "${LATENCY_RIG_PORT:-8081}"
 echo "Local rig ready. Point the release app at http://10.0.2.2:${LATENCY_RIG_PORT:-8081}."
 echo 'Use the local-only review link on the device; never use a production Workspace.'
-wait "$server_pid"
+wait -n "$server_pid" "$proxy_pid"

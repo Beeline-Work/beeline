@@ -1,8 +1,7 @@
+import { prefetchRoomOpen } from '@/push/push-room-prefetch';
 import { markRoomOpen } from '@/buzz/room-open-trace';
 
-/** Deck tap: navigate. Never evaluate chrome here — a pending `import()`
- *  occupies the JS thread on the tap itself. The Room's one read belongs to
- *  the chat session, which waits for its live socket first. */
+/** Start a missing-row read at the tap without waiting for it to navigate. */
 export function dispatchRoomOpenTap(
   roomId: string,
   next: {
@@ -10,5 +9,6 @@ export function dispatchRoomOpenTap(
   },
 ): void {
   markRoomOpen('nav-dispatch', roomId);
+  prefetchRoomOpen(roomId);
   next.navigate(roomId);
 }

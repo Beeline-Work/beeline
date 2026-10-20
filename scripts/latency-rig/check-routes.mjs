@@ -4,6 +4,8 @@ import { readdir, readFile } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
+import { validateArrivalCases } from './room-arrivals.mjs';
+
 const root = fileURLToPath(new URL('../../apps/mobile/sources/app/', import.meta.url));
 const budgetPath = new URL('./routes.json', import.meta.url);
 const interactionsPath = new URL('./interactions.json', import.meta.url);
@@ -47,6 +49,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
   const paths = (await files(root)).map((file) => relative(root, file).split(sep).join('/'));
   const routes = JSON.parse(await readFile(budgetPath, 'utf8'));
   const interactions = JSON.parse(await readFile(interactionsPath, 'utf8'));
+  validateArrivalCases(JSON.parse(await readFile(new URL('./room-arrival-cases.json', import.meta.url), 'utf8')));
   const checked = await checkRoutes(paths, routes);
   if (!Array.isArray(interactions) || interactions.length === 0 ||
       interactions.some((name) => typeof name !== 'string' || !name) ||

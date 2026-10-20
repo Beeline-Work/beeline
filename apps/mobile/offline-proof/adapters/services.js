@@ -74,6 +74,7 @@ export function recoverServer() {
 }
 const noop = () => {};
 const asyncNoop = async () => {};
+export const peekBuzzViewerContext = () => null;
 export const loadBuzzIdentity = async () => ({
   publicKey: '1111111111111111111111111111111111111111111111111111111111111111',
   secretKey: new Uint8Array(32),

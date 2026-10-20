@@ -1,6 +1,7 @@
+import { markRoomOpen } from '@/buzz/room-open-trace';
 import { AppState } from 'react-native';
 import { useEffect, useRef, useState } from 'react';
-import { SurfaceRefreshScheduler, isChatListView, type ChatListView, type SurfaceCacheAddress } from '@beeline/buzz-client';
+import { SurfaceRefreshScheduler, isChatListView, isRoomView, type ChatListView, type SurfaceCacheAddress } from '@beeline/buzz-client';
 import { loadBuzzIdentity } from '@/auth/buzz-identity-storage';
 import { subscribeClientReset } from '@/sync/client-reset';
 import { isDraftFrame } from '@/sync/transport/live-frames';
@@ -10,6 +11,7 @@ import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { applyChatListDelta, chatListDeltaNeedsRead, chatWatchFiltersKey, keepUnavailableChatFacts, roomsMissedByLive, withCornerFacts, withoutCornerFacts } from './chat-list-delta';
 import { applyChatListCorners, cornerStoreClock, getRoomCornerSummary } from './room-corner-store';
 import { mobileSurfaceCache, surfaceAddress } from './surface-storage';
+import { reconcileRoomMessageDelta } from './room-view-presentation';
 import { currentSurfaceStamp } from './surface-clock';
 
 export type ChatListKey = { readonly relayUrl: string; readonly viewerPubkey: string; readonly workspaceId: string };
@@ -168,6 +170,26 @@ class ChatListStore {
     if (this.closed) return;
     const live = 'monolithLive' in event ? (event as MonolithSurfaceEvent).monolithLive : undefined;
     if (live && 'roomId' in live) this.heard.add(live.roomId);
+    if (live?.type === 'message-delta') {
+      markRoomOpen('list-message-delta', live.message.id);
+      const address = surfaceAddress(this.key.relayUrl, this.key.viewerPubkey, `/room/${live.roomId}`);
+      const message = live.version === undefined ? live.message : { ...live.message, version: live.version };
+      const apply = () => {
+        const room = mobileSurfaceCache.peek(address, isRoomView);
+        if (!room) return false;
+        // The list already received this committed row. The next Room visit
+        // must paint it from the same scoped response before its covering read.
+        mobileSurfaceCache.publish(address, reconcileRoomMessageDelta(room, message), isRoomView);
+        return true;
+      };
+      if (!apply()) {
+        // The response may have left the bounded hot cache but still be on
+        // the phone. The registry coalesces concurrent local restores.
+        void mobileSurfaceCache.read(address, isRoomView).then((room) => {
+          if (room) apply();
+        }).catch(() => undefined);
+      }
+    }
     if (live?.type === 'message-delta' || live?.type === 'turn-delta' || live?.type === 'corner-status') {
       if (this.reading) this.deltasDuringRead.push(live);
       const held = this.current();

@@ -167,7 +167,7 @@ it('reports the owner-wide free allowance with its UTC reset and keeps it privat
     [owner],
   );
   const profile = await phone.readAgent(workspace, agent, owner);
-  expect(profile?.usage?.free).toMatchObject({ used: 123000, limit: 1000000 });
+  expect(profile?.usage?.free).toMatchObject({ used: 123000, limit: 3000000 });
   expect(new Date(profile!.usage!.free!.resetsAt * 1000).toISOString()).toMatch(/T00:00:00.000Z$/);
   expect((await phone.readWorkspaceMembers(workspace, owner))?.agents[0]?.usage?.free).toEqual(
     profile?.usage?.free,
@@ -175,7 +175,7 @@ it('reports the owner-wide free allowance with its UTC reset and keeps it privat
   expect((await phone.readAgent(workspace, agent, other))?.usage).toBeUndefined();
   const own = await daemon.execute('getAgentUsage', { agentId: agent }, agent);
   expect(usageSummary(own ?? undefined)).toMatch(
-    /^Usage: 123K of 1M free tokens today \(shared with your other free agents\), resets/,
+    /^Usage: 123K of 3M free tokens today \(shared with your other free agents\), resets/,
   );
   expect(JSON.stringify(own)).not.toContain('$');
   await db.query(
@@ -188,7 +188,7 @@ it('reports the owner-wide free allowance with its UTC reset and keeps it privat
     windows: [],
     free: {
       used: 123000,
-      limit: 1000000,
+      limit: 3000000,
       resetsAt: expect.any(Number),
       paused: true,
     },

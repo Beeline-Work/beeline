@@ -3,7 +3,7 @@ import { assignSeededAgentIdentity, resolveFace, uniqueAgentHandle } from '@beel
 import { createAgentCommand } from './agent-command.js';
 import type { SqlDatabase } from './database.js';
 import type { FreeAgentMachines } from './fly-machines.js';
-import { DEFAULT_FREE_AGENT_LIMITS, freeAgentBudgetReached, freeAgentLimitsFromEnv, type FreeAgentLimits } from './free-agent-limits.js';
+import { DEFAULT_FREE_AGENT_LIMITS, freeAgentDailyTokenCapFromEnv, freeAgentBudgetReached, freeAgentLimitsFromEnv, type FreeAgentLimits } from './free-agent-limits.js';
 import { joinRooms } from './membership-join.js';
 import { lockIdentityHandleWorkspaces } from './workspace-handles.js';
 
@@ -119,7 +119,7 @@ export function freeAgentConfigFromEnv(
     model: env.BEELINE_FREE_AGENT_MODEL || 'deepseek/deepseek-v4.1-flash',
     idleSeconds: number('BEELINE_FREE_AGENT_IDLE_SECONDS', 60),
     maxPerOwner: number('BEELINE_FREE_AGENT_MAX_PER_OWNER', 3),
-    dailyTokenCap: number('BEELINE_FREE_AGENT_DAILY_TOKENS', 1_000_000),
+    dailyTokenCap: freeAgentDailyTokenCapFromEnv(env),
     lifetimeTokenCap: number('BEELINE_FREE_AGENT_LIFETIME_TOKENS', 0),
     sealSecret,
     publicOrigin: env.BEELINE_FREE_AGENT_SERVER_ORIGIN || publicOrigin,

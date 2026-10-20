@@ -108,3 +108,59 @@ test('export lists real skills but reveals bodies only through requested file re
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test('at-most-once rejects repeats and calls after terminal silence', () => {
+  const rule: Rule = { atMostOnce: 'no_reply_needed', terminal: true };
+  const silent = { name: 'no_reply_needed', args: {} };
+  assert.equal(evaluateRule(rule, { calls: [], text: '' }).pass, true);
+  assert.equal(evaluateRule(rule, { calls: [silent], text: '' }).pass, true);
+  assert.equal(evaluateRule(rule, { calls: [silent, silent], text: '' }).pass, false);
+  assert.equal(evaluateRule(rule, { calls: [silent, turn.calls[0]!], text: '' }).pass, false);
+  assert.equal(evaluateRule({ atMostOnce: 'order', args: { address: 'c-2' } }, turn).pass, true);
+});
+
+test('ordered calls require every first match before the next action', () => {
+  const read = { name: 'read', args: { facet: 'pr' } };
+  const open = { name: 'open_corner', args: {} };
+  const rule: Rule = { ordered: [{ call: 'read', args: { facet: 'pr' } }, { call: 'open_corner' }] };
+  for (const calls of [[read, open], [read, turn.calls[1]!, open]]) {
+    assert.equal(evaluateRule(rule, { calls, text: '' }).pass, true);
+  }
+  for (const calls of [[], [read], [open, read], [open, read, open]]) {
+    assert.equal(evaluateRule(rule, { calls, text: '' }).pass, false);
+  }
+  const base = { id: 'x', section: 'talking', summary: 'Ordered calls.', place: 'room', turn: { task: { body: 'hi' } } };
+  for (const pass of [{ ordered: [] }, { ordered: [{ noCall: 'read' }, { call: 'open_corner' }] }, { atMostOnce: 'read', terminal: 'yes' }]) {
+    assert.throws(() => parsePromptCase({ ...base, pass }, 'x', []));
+  }
+});
+
+test('paired memory export changes only the note and grades variants separately', async () => {
+  const { mkdtempSync, readFileSync, writeFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { execFileSync } = await import('node:child_process');
+  const dir = mkdtempSync(join(tmpdir(), 'prompt-memory-'));
+  const run = (...args: string[]) => execFileSync(process.execPath, ['--import', 'tsx', 'scripts/prompt-cases.ts', '--only', 'memory-rule-01', ...args], { encoding: 'utf8', stdio: 'pipe' });
+  try {
+    run('--memory', 'both', '--export', dir);
+    const withNote = readFileSync(join(dir, 'with', 'memory-rule-01.prompt.md'), 'utf8');
+    const withoutNote = readFileSync(join(dir, 'without', 'memory-rule-01.prompt.md'), 'utf8');
+    const note = JSON.parse(readFileSync('docs/prompts/cases/memory-rule-01.json', 'utf8')).turn.memory;
+    assert.ok(withNote.includes(note));
+    assert.ok(!withoutNote.includes(note));
+    assert.equal(withNote.replace(note + '\n\n', ''), withoutNote);
+    assert.equal(readFileSync(join(dir, 'with', 'memory-rule-01.skills.json'), 'utf8'), readFileSync(join(dir, 'without', 'memory-rule-01.skills.json'), 'utf8'));
+    writeFileSync(join(dir, 'with', 'memory-rule-01.1.json'), JSON.stringify({ calls: [], text: '' }));
+    writeFileSync(join(dir, 'without', 'memory-rule-01.1.json'), JSON.stringify({ calls: [], text: 'Unnecessary update.' }));
+    assert.throws(() => run('--memory', 'both', '--grade', dir), (error: unknown) => {
+      assert.ok(error && typeof error === 'object' && 'stdout' in error);
+      assert.match(String(error.stdout), /memory-rule-01 \(with note\).*PASS/);
+      assert.match(String(error.stdout), /memory-rule-01 \(without note\).*NEEDS SAMPLES/);
+      return true;
+    });
+    assert.throws(() => run('--memory', 'invalid'));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

@@ -51,6 +51,18 @@
             "matches": "apply_patch|git commit|sed -i"
           }
         }
+      },
+      {
+        "text": {
+          "matches": "query normalization",
+          "flags": "i"
+        }
+      },
+      {
+        "text": {
+          "matches": "empty.result",
+          "flags": "i"
+        }
       }
     ]
   },

@@ -42,6 +42,10 @@
       },
       {
         "noCall": "post_artifact"
+      },
+      {
+        "atMostOnce": "no_reply_needed",
+        "terminal": true
       }
     ]
   },

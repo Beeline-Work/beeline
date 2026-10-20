@@ -25,7 +25,14 @@ export type Matcher =
   | { readonly matches: string; readonly flags?: string }
   | { readonly not: Matcher };
 
+export interface CallPattern {
+  readonly call: string;
+  readonly args?: Readonly<Record<string, Matcher>>;
+}
+
 export type Rule =
+  | { readonly atMostOnce: string; readonly args?: Readonly<Record<string, Matcher>>; readonly terminal?: boolean }
+  | { readonly ordered: readonly CallPattern[] }
   | { readonly skill: string; readonly beforeRetry?: string }
   | { readonly call: string; readonly args?: Readonly<Record<string, Matcher>> }
   | { readonly noCall: string; readonly args?: Readonly<Record<string, Matcher>> }
@@ -100,6 +107,22 @@ function checkRule(rule: unknown, where: string): void {
     only('skill', 'beforeRetry');
     if (typeof rule.skill !== 'string' || !rule.skill) throw new Error(`${where}.skill must be a skill name`);
     if (rule.beforeRetry !== undefined && typeof rule.beforeRetry !== 'string') throw new Error(`${where}.beforeRetry must be a tool name`);
+    return;
+  }
+  if ('ordered' in rule) {
+    only('ordered');
+    if (!Array.isArray(rule.ordered) || rule.ordered.length < 2) throw new Error(`${where}.ordered needs at least two call patterns`);
+    rule.ordered.forEach((child, index) => {
+      if (!isObject(child) || !('call' in child)) throw new Error(`${where}.ordered requires call patterns`);
+      checkRule(child, `${where}.ordered[${index}]`);
+    });
+    return;
+  }
+  if ('atMostOnce' in rule) {
+    only('atMostOnce', 'args', 'terminal');
+    if (typeof rule.atMostOnce !== 'string' || !rule.atMostOnce) throw new Error(`${where}.atMostOnce must name a tool`);
+    if (rule.terminal !== undefined && typeof rule.terminal !== 'boolean') throw new Error(`${where}.terminal must be boolean`);
+    checkRule({ call: rule.atMostOnce, ...(rule.args === undefined ? {} : { args: rule.args }) }, where);
     return;
   }
   if ('call' in rule || 'noCall' in rule) {
@@ -212,6 +235,17 @@ export function skillPath(name: string): string {
 }
 
 export function evaluateRule(rule: Rule, transcript: Transcript): Verdict {
+  if ('atMostOnce' in rule) {
+    const indices = transcript.calls.flatMap((call, index) => callMatches(call, rule.atMostOnce, rule.args) ? [index] : []);
+    const pass = indices.length <= 1 && (!rule.terminal || !indices.length || indices[0] === transcript.calls.length - 1);
+    return { pass, reason: pass ? 'call limit held' : `expected at most one ${rule.atMostOnce}${rule.terminal ? ' as the final call' : ''}` };
+  }
+  if ('ordered' in rule) {
+    // Compare first matches: a premature action cannot be repaired by repeating it.
+    const indices = rule.ordered.map((pattern) => transcript.calls.findIndex((call) => callMatches(call, pattern.call, pattern.args)));
+    const pass = indices.every((index, position) => index >= 0 && (position === 0 || index > indices[position - 1]!));
+    return { pass, reason: pass ? 'calls occurred in order' : `expected first matching calls in order: ${rule.ordered.map((pattern) => pattern.call).join(' -> ')}` };
+  }
   if ('skill' in rule) {
     const loaded = transcript.calls.findIndex((call) =>
       callMatches(call, 'Read', { file_path: skillPath(rule.skill) }));

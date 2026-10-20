@@ -281,6 +281,8 @@ export type LandCornerOutcome =
 
 export class GitHubOperations {
   readonly #key: Buffer;
+  readonly #roomTokens = new Map<string, { token: string; expiresAt: number }>();
+  readonly #roomTokenMints = new Map<string, Promise<{ token: string; expiresAt: number }>>();
   constructor(
     private readonly database: SqlDatabase,
     private readonly oauth: GitHubOAuthClient,
@@ -589,10 +591,29 @@ export class GitHubOperations {
       )
     ).rows[0];
     if (!row) throw new Error('GitHub repository installation not found');
-    const value = await this.app.installationToken(Number(row.github_installation_id), {
-      repositoryIds: [Number(row.repository_id)],
-    });
-    return { token: value.token, expiresAt: new Date(value.expiresAt).getTime() };
+    const now = Date.now();
+    for (const [key, value] of this.#roomTokens) {
+      if (value.expiresAt - now <= 5 * 60_000) this.#roomTokens.delete(key);
+    }
+    const key = `${row.github_installation_id}:${row.repository_id}`;
+    const cached = this.#roomTokens.get(key);
+    if (cached) return { ...cached };
+    const pending = this.#roomTokenMints.get(key);
+    if (pending) return { ...await pending };
+    const mint = (async () => {
+      const value = await this.app.installationToken(Number(row.github_installation_id), {
+        repositoryIds: [Number(row.repository_id)],
+      });
+      const token = { token: value.token, expiresAt: new Date(value.expiresAt).getTime() };
+      if (token.expiresAt - Date.now() > 5 * 60_000) this.#roomTokens.set(key, token);
+      return token;
+    })();
+    this.#roomTokenMints.set(key, mint);
+    try {
+      return { ...await mint };
+    } finally {
+      this.#roomTokenMints.delete(key);
+    }
   }
 
   /**

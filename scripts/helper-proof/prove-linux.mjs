@@ -88,7 +88,7 @@ try {
       );
       fixture.loseLegacyExchangeReply();
       console.log(
-        await entry('/bin/sh', ['/workspace/relay-stack/web/install.sh'], {
+        await entry('/bin/sh', ['/workspace/web/install.sh'], {
           env: { ...env, BEELINE_INSTALL_BASE_URL: origin },
         }),
       );

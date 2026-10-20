@@ -8,7 +8,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { validateRequiredAssociations } from './app-associations.mjs';
 
 const REPOSITORY_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const DEFAULT_SOURCE_ROOT = join(REPOSITORY_ROOT, 'relay-stack', 'web');
+const DEFAULT_SOURCE_ROOT = join(REPOSITORY_ROOT, 'web');
 const REQUIRED_STATIC_PATHS = [
   'index.html',
   'privacy/index.html',
@@ -147,7 +147,7 @@ export async function buildPagesSite({
   bundleRoot = resolve(bundleRoot);
   outputRoot = resolve(outputRoot);
   if (outputRoot === sourceRoot || outputRoot.startsWith(`${sourceRoot}/`)) {
-    fail('Pages output must be outside relay-stack/web');
+    fail('Pages output must be outside web');
   }
 
   for (const path of REQUIRED_STATIC_PATHS) await requireRegularFile(join(sourceRoot, path));

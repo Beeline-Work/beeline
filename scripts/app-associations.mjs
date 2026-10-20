@@ -4,13 +4,13 @@ import { fileURLToPath } from 'node:url';
 export const ASSOCIATION_FILES = {
   apple: {
     repositoryUrl: new URL(
-      '../relay-stack/web/.well-known/apple-app-site-association',
+      '../web/.well-known/apple-app-site-association',
       import.meta.url,
     ),
     liveUrl: 'https://usebeeline.app/.well-known/apple-app-site-association',
   },
   android: {
-    repositoryUrl: new URL('../relay-stack/web/.well-known/assetlinks.json', import.meta.url),
+    repositoryUrl: new URL('../web/.well-known/assetlinks.json', import.meta.url),
     liveUrl: 'https://usebeeline.app/.well-known/assetlinks.json',
   },
 };

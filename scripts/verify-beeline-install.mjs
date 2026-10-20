@@ -10,7 +10,7 @@ import { dirname, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
-const webRoot = resolve(repoRoot, 'relay-stack', 'web');
+const webRoot = resolve(repoRoot, 'web');
 
 async function expectedReadonlyTools() {
   // The bundled MCP server asserts that its registration matches this policy

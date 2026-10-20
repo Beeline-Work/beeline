@@ -9,8 +9,8 @@
 // paths the workflows and composite actions name — in `run:` commands and path
 // filters alike — and fail on any that matches no tracked file. A reference is
 // resolved against the repository root and against every workspace directory,
-// because workflows spell the same file both ways (`-w @beeline/push-gateway
-// -- --run src/…test.ts` and `apps/push-gateway/src/…test.ts` in a filter).
+// because workflows spell the same file both ways (`-w @beeline/server
+// -- --run src/…test.ts` and `apps/server/src/…test.ts` in a filter).
 import { execFileSync } from 'node:child_process';
 import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';

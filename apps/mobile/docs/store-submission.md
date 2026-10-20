@@ -77,7 +77,7 @@ sideload keystore is not involved either way.
 
 ### App link fingerprints for the `app.usebeeline` record
 
-Both `assetlinks.json` copies (`relay-stack/web/.well-known/assetlinks.json`
+Both `assetlinks.json` copies (`web/.well-known/assetlinks.json`
 and `apps/mobile/public/.well-known/assetlinks.json`) currently carry only the
 sideload signing certificate. The Play App Signing certificate for the new
 `app.usebeeline` record does not exist until the first AAB is uploaded, so its
@@ -225,7 +225,7 @@ push exists yet, so listing text there is entered in App Store Connect by hand.
 
 - Approve the listing copy and `store/` graphics in this repository.
 - Deploy and open `https://usebeeline.app/privacy` from the tracked
-  `relay-stack/web/privacy/index.html` page.
+  `web/privacy/index.html` page.
 - Enter the answers in `store/questionnaires/` into the current Play Console
   and App Store Connect forms, then re-check any changed form language.
 - Confirm the PostHog build environment choice. The app sends no analytics

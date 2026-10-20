@@ -21,4 +21,4 @@ Preparation, twelve rule/harness tests, 65-case validation and root typecheck pa
 
 Rule 10 is a weakness on both main and head, not a reproduced regression. Credential-file and browser-guard failures are provider refusals, not prompt regressions; they remain counted failures. Three samples are noisy. Raw replies and exclusions remain auditable; off-model attempts are excluded by identity, while genuine requested-model refusals, malformed replies and timeouts remain failures.
 
-Keep the hold. No approval or merge: landing requires lunchboxfortwo's explicit yes relayed by Ruby, live green checks and approval on the exact head.
+Keep the hold. No approval or merge: landing requires lunchboxfortwo's explicit yes forwarded by Ruby, live green checks and approval on the exact head.

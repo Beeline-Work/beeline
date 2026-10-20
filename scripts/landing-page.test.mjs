@@ -4,10 +4,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { selectPlatform } from '../relay-stack/web/desktop-download.mjs';
+import { selectPlatform } from '../web/desktop-download.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const WEB = path.join(ROOT, 'relay-stack', 'web');
+const WEB = path.join(ROOT, 'web');
 const html = fs.readFileSync(path.join(WEB, 'index.html'), 'utf8');
 const termsHtml = fs.readFileSync(path.join(WEB, 'terms', 'index.html'), 'utf8');
 

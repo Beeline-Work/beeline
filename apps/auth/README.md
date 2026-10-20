@@ -3,7 +3,7 @@
 This is Beeline's narrow OAuth/OIDC-to-Nostr-public-key binding service. GitHub
 is the shipped sign-in; the Google OIDC routes remain available but are hidden
 from the app. It owns the Authorization Code + PKCE ceremony and a durable one-use binding
-transaction. It does not issue relay credentials, grant roles or membership,
+transaction. It does not issue transport credentials, grant roles or membership,
 or accept a Nostr secret key.
 
 ## Protocol
@@ -60,8 +60,8 @@ token that can authorize `/events`, `/query`, WebSockets, or Room state.
 ## Deployment shape
 
 Run this as a small sidecar on the existing Beeline network with the existing
-PostgreSQL service. `relay-front` routes `/auth/` to it while preserving the original `Host`.
-All other relay traffic remains on the existing relay service.
+PostgreSQL service. Production serves auth routes from the Beeline server.
+The standalone entry retains compatibility configuration for existing tenants.
 
 GitHub follows the same bind-ticket transaction through `/auth/github/start`
 and `/auth/github/callback`. After binding, `/auth/github/install/start` opens
@@ -79,7 +79,7 @@ metadata read; events `star`, `issues`, `pull_request`, `push`, `check_run`, `ch
 organization permissions are intentionally excluded. Secrets and environments are requested for new
 Apps but are optional for existing Apps; their absence does not cause configuration drift or block existing features. The auth
 sidecar mints exact-repository, one-hour installation tokens for Room-member
-daemons after re-checking current relay membership and the Room's admin-authored
+daemons after re-checking current signed membership and the Room's admin-authored
 repository binding. Daemons never receive the App private key. Body installs a
 corner-local Git credential helper and `gh` wrapper that refresh this scoped
 token for every invocation; ambient host credentials remain masked.
@@ -93,9 +93,9 @@ Required configuration:
 
 - `DATABASE_URL`
 - `BUZZY_AUTH_TENANTS_JSON`, for example
-  `[{"host":"relay.example","community":"stable-identity-namespace","roomCommunityIds":["relay-community-uuid-a","relay-community-uuid-b"],"origin":"https://relay.example"}]`.
+  `[{"host":"auth.example","community":"stable-identity-namespace","roomCommunityIds":["community-uuid-a","community-uuid-b"],"origin":"https://auth.example"}]`.
   `community` namespaces durable identity links and may intentionally remain the old host across
-  aliases. `roomCommunityIds` is the non-empty allowlist of server-stamped relay tenant UUIDs from
+  aliases. `roomCommunityIds` is the non-empty allowlist of server-stamped tenant UUIDs from
   `channels.community_id` whose Rooms this auth tenant serves. Do not use the client-authored
   `community` tag from a Room create event for this list.
 - `BUZZY_AUTH_OIDC_ISSUER`
@@ -195,7 +195,7 @@ service for clone, fetch, push, pull-request operations, repository settings,
 rename, preview, and CI reads; the App private key stays here.
 
 Monolith production uses `https://server.usebeeline.app/auth/github/callback`.
-`usebeeline.app` is the static Pages origin, not an auth tenant. Retired relay
+`usebeeline.app` is the static Pages origin, not an auth tenant. Retired service
 domains must not be restored to production tenant configuration.
 
 HTTP OIDC endpoints are accepted only for local emulators when
@@ -206,7 +206,7 @@ HTTP OIDC endpoints are accepted only for local emulators when
 `npm run dev:emulator -w @beeline/auth` runs the same auto-approving OIDC shape
 used by the hermetic suite plus an in-memory auth service. It listens on
 `127.0.0.1:8790` (provider) and `127.0.0.1:8789` (auth). For Android, reverse
-both ports with `adb reverse`, and build Metro with
-`EXPO_PUBLIC_BUZZY_RELAY_URL=http://127.0.0.1:8789`. This mode deliberately
+both ports with `adb reverse` for browser-based auth fixture tests.
+This mode deliberately
 uses a non-`__Host-` browser cookie because the loopback fixture is HTTP; the
 production default remains `Secure` and `__Host-` prefixed.

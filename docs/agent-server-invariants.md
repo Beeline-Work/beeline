@@ -19,7 +19,7 @@ Paths and commands below are relative to the repository root. Read these invaria
 
 ## Feature contracts
 
-- Sentry capture, authenticated Telegram relay, configuration and post-release proof: [error monitoring](error-monitoring.md). Keep Telegram outbound-only and exclude relay failures from recursive capture.
+- Sentry capture, authenticated Telegram forwarder, configuration and post-release proof: [error monitoring](error-monitoring.md). Keep Telegram outbound-only and exclude forwarder failures from recursive capture.
 
 - Private operator dashboard cohorts, fixture exclusions and metric provenance: [dashboard API](operator-dashboard-api.md); aggregate queries and regressions live in `operator-dashboard.ts` and `operator-dashboard.test.ts`.
 

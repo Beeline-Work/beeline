@@ -1,511 +1,130 @@
-/**
- * @beeline/buzz-client — channel-scoped Buzz transport for the mobile RigTransport adapter.
- *
- * Speaks only to real Buzz (WS + HTTP bridge). No UI, no mock relay.
- */
-
+/** Signing, shared contracts, and server-backed mobile client utilities. */
 export type {
   Identity,
-  AgentIdentity,
   Agent,
-  CreateAgentOptions,
-  AgentPairingCode,
-  RedeemAgentPairingResult,
   RepositoryBinding,
   RoomRepository,
   RoomRepositoryInput,
-  AgentSoulInput,
-  AgentSoulProfile,
   AgentModelConfigOption,
-  AgentModelCatalog,
   AgentModelConfigInput,
-  AgentModelConfig,
-  AgentCommandInfo,
-  AgentCommandList,
   PersonProfile,
-  PersonProfileInput,
-  MediaBlob,
   AttachmentReference,
-  WebSocketLike,
-  WebSocketConstructor,
-  PublishResult,
   ChannelMember,
-  ChannelMetadata,
   DirectMessage,
   Community,
-  CommunityRole,
   CommunityMember,
-  CommunityInvite,
-  CommunityInviteRecord,
-  CreateInviteOptions,
-  RedeemInviteResult,
-  SessionEvent,
-  SessionEventHandler,
-  Unsubscribe,
-  ChannelFilterOpts,
-  MessageSubmitOpts,
-  BuzzClientConfig,
 } from './types.js';
-
+export { createIdentity, loadIdentityFromNsec, identityNpub, identityNsec } from './identity.js';
+export { KIND_AGENT_DRAFT } from './kinds.js';
 export {
-  CORNER_REMOTE_STATE_KIND,
-  CORNER_REMOTE_STATE_TAG,
-  cornerRemoteStateKey,
-  parseCornerRemoteState,
-  parseCornerRemoteStateContent,
-  type CornerCheckState,
-  type CornerPullRequestFact,
-  type CornerRemoteState,
-  type CornerRemoteStateName,
-  type CornerMergeability,
-} from './corner-remote-state.js';
+  type ParsedPermissionRequest,
+  type PermissionGrantEnvelopeV1,
+  type PermissionScope,
+  buildPermissionDecision,
+  buildPermissionExecution,
+  buildPermissionRevocation,
+  defaultPermissionGrantEnvelope,
+  parsePermissionDecision,
+  parsePermissionExecution,
+  parsePermissionRequest,
+  parsePermissionRevocation,
+  foldPermissionLedger,
+  permissionActionId,
+  verifyPermissionAction,
+  type PermissionConcreteAction,
+  type PermissionFreshReader,
+} from './permission-request.js';
+export { buildAgentAccessConfig, type AgentAccessPolicyV1 } from './agent-access-config.js';
 export {
-  DEFAULT_RELAY_HOST,
-  DEFAULT_RELAY_SCHEME,
-  DEFAULT_RELAY_BASE_URL,
-  DEFAULT_RELAY_WS_URL,
-  PRODUCTION_RELAY_HOSTS,
-  isProductionRelayHost,
-} from './relay-config.js';
-
-export {
-  createIdentity,
-  createAgentIdentity,
-  loadIdentityFromNsec,
-  loadAgentIdentityFromNsec,
-  loadIdentityFromSecret,
-  loadAgentIdentityFromSecret,
-  identityNpub,
-  identityNsec,
-  encodeNpub,
-  encodeNsec,
-  decodeNpub,
-  decodeNsec,
-  getPublicKey,
-} from './identity.js';
-
-export {
-  KIND_STREAM_MESSAGE,
-  KIND_PUT_USER,
-  KIND_REMOVE_USER,
-  KIND_EDIT_METADATA,
-  KIND_CREATE_GROUP,
-  KIND_DELETE_GROUP,
-  KIND_CHANNEL_METADATA,
-  KIND_CHANNEL_ADMINS,
-  KIND_CHANNEL_MEMBERS,
-  KIND_COMMUNITY_INVITE,
-  KIND_AGENT_SOUL,
-  KIND_PERSON_PROFILE,
-  KIND_AGENT_PRESENCE,
-  KIND_AGENT_DRAFT,
-  KIND_AGENT_MODEL_CATALOG,
-  KIND_AGENT_MODEL_CONFIG,
-  KIND_AGENT_ACCESS_CONFIG,
-  KIND_AUTH,
-  TAG_AGENT_ACTIVITY,
-  TAG_AGENT_PRESENCE,
-  TAG_AGENT_DRAFT,
-  TAG_AGENT_THOUGHT,
-  TAG_AGENT,
-  TAG_AGENT_PAIRING,
-  TAG_AGENT_SOUL,
-  TAG_AGENT_MODEL_CATALOG,
-  TAG_AGENT_MODEL_CONFIG,
-  TAG_PERSON_PROFILE,
-  TAG_PERMISSION_REQUEST,
-  TAG_PERMISSION_DECISION,
-  TAG_PERMISSION_REVOCATION,
-  TAG_PERMISSION_EXECUTION,
-  TAG_AGENT_ACCESS_CONFIG,
-  TAG_PARENT,
-  TAG_COMMUNITY,
-  TAG_COMMUNITY_INVITE,
-  TAG_DIRECT_MESSAGE,
-  TAG_ROOM_LIFECYCLE,
-} from './kinds.js';
-
-export * from './permission-request.js';
-export * from './agent-access-config.js';
-export * from './scheduled-turn.js';
-export { syncAgentDeclaration } from './agent.js';
-
-export {
-  AGENT_PRESENCE_HEARTBEAT_MS,
   AGENT_PRESENCE_STALE_MS,
   AGENT_PRESENCE_DORMANT_MS,
-  isAgentPresenceOnline,
   resolveAgentPresenceTier,
-  resolveAgentRosterStanding,
   newerAgentPresence,
-  agentPresenceKey,
 } from './agent-presence.js';
-export type {
-  AgentPresence,
-  AgentPresenceStatus,
-  AgentPresenceTier,
-  AgentRosterStanding,
-  RoomMembershipStanding,
-} from './agent-presence.js';
-
-export { agentDraftKey, agentThoughtKey } from './agent-live.js';
-
+export type { AgentPresence, AgentPresenceTier } from './agent-presence.js';
+export { asRelayPublishError } from './relay-error.js';
 export {
-  deriveCornerLifecycle,
-  type CornerLifecycle,
-  type CornerLifecycleView,
-} from './corner-product-state.js';
-
-export {
-  tagValue,
-  tagValues,
-  channelIdOf,
-  parseMembersEvent,
-  parseMetadataEvent,
-  sortEventsChronological,
-} from './parse.js';
-
-export { publishEvent, queryEvents, requestQueryEvents, relayReachable } from './http.js';
-export type { AuthenticatedHttpBridgeOptions, HttpBridgeOptions } from './http.js';
-export {
-  RelayPublishError,
-  asRelayPublishError,
-  isRetryableRelayPublishError,
-  relayPublishErrorFromResponse,
-} from './relay-error.js';
-export type { RelayPublishErrorKind } from './relay-error.js';
-export { buildReplyCommand } from './reply-command.js';
-export type { ReplyCommandOptions } from './reply-command.js';
-export { isArchivedChannelError } from './archived-channel.js';
-
-export {
-  OIDC_BIND_PROTOCOL,
-  OIDC_BIND_KIND,
-  OIDC_BIND_MARKER,
-  MOBILE_APP_SCHEMES,
   OidcBindError,
-  startOidcBind,
   startGitHubBind,
-  getAuthCapabilities,
   parseOidcBindCallback,
   buildOidcBindEvent,
   finishOidcBind,
   recoverOidcBind,
   lookupRecovery,
   lookupManagedIdentity,
-  adoptGitHubHandle,
 } from './oidc-bind.js';
-export type {
-  OidcBindChallenge,
-  OidcBindStart,
-  OidcBindResult,
-  OidcRecoveryResult,
-  OidcIdentityLink,
-  AuthCapabilities,
-} from './oidc-bind.js';
-export {
-  startGitHubInstallation,
-  listGitHubRepositories,
-  createGitHubRepository,
-  getGitHubRepositoryAccess,
-  getGitHubRoomInstallationToken,
-  getGitHubRoomEvents,
-} from './github-auth.js';
-export type {
-  GitHubRepositoryAccess,
-  GitHubInstallationAccess,
-  GitHubRepositoryAccessResult,
-  GitHubRoomInstallationToken,
-  GitHubRoomEvent,
-  GitHubRoomEventsResult,
-} from './github-auth.js';
-export { fetchIdentityPredecessors, resolveCurrentIdentityPubkey } from './identity-succession.js';
-
-export { RelayWs, wsUrlFromHttp, wsQueryEvents } from './ws.js';
-export type { Filter, RelayWsOptions } from './ws.js';
-
-export { query } from './query.js';
-export type { QueryFunnelContext } from './query.js';
-
-export {
-  createChannel,
-  createSubchannel,
-  setMemberRole,
-  removeMember,
-  removeRoomMember,
-  leaveRoom,
-  listMembers,
-  isMember,
-  getChannelRole,
-  waitUntilMember,
-  waitUntilMemberRole,
-  waitUntilNotMember,
-  waitUntilRoomArchived,
-  waitUntilRoomDeleted,
-  archiveRoom,
-  deleteRoom,
-  renameChannel,
-  setChannelVisibility,
-  listChannelsForPubkey,
-  getChannelMetadata,
-  listSubchannels,
-  getParentChannelId,
-  getChannelCreator,
-  getChannelCommunityId,
-  getChannelRepositoryBinding,
-  sendMessage,
-  backfillMessages,
-  isMembershipProjectionTimeout,
-  MembershipProjectionTimeoutError,
-  MembershipWriteAbsentError,
-} from './channel.js';
+export type { OidcBindChallenge, OidcBindStart } from './oidc-bind.js';
+export type { GitHubInstallationAccess } from './github-auth.js';
+export { fetchIdentityPredecessors } from './identity-succession.js';
+export { isMember, getChannelCreator } from './channel.js';
 export type { ChannelOpsContext, ChannelRole } from './channel.js';
-
 export {
-  directMessageChannelId,
-  parseDirectMessage,
-  getDirectMessage,
-  listDirectMessages,
-  resolveDirectMessage,
-} from './direct-message.js';
-
-export {
-  repositoryRoomId,
-  findRepositoryRoom,
-  resolveRepositoryRoom,
-  resolveRepositoryRoomForHuman,
-  ensureRepositoryRoomAdmin,
-  type RepositoryRoomResult,
-} from './repo-room.js';
-
-export {
-  createCommunity,
-  getCommunity,
-  setCommunityAvatar,
-  renameCommunity,
-  setCommunityVisibility,
-  listCommunities,
-  migrateSuccessorMemberships,
-  communityChannels,
-  communityMembers,
-  inheritRolesThroughSuccession,
-  attachCommunityMemberToChannel,
-  createInvite,
-  listCommunityInvites,
-  revokeCommunityInvite,
-  redeemInvite,
-  inviteTokenHash,
-  parseCommunityInvite,
-  findCommunityInvite,
-  DEFAULT_INVITE_TTL_SECONDS,
-} from './community.js';
-
-export {
-  isRoomUnmigratable,
-  markRoomUnmigratable,
   seedUnmigratableRooms,
   unmigratableRooms,
-  resetUnmigratableRooms,
-  unmigratableRoomKey,
   type UnmigratableRoom,
 } from './unmigratable-rooms.js';
-
-export {
-  abandonAgentPairing,
-  attachAgentToChannel,
-  createAgent,
-  createAgentPairingCode,
-  redeemAgentPairingCode,
-  setAgentSoul,
-  parseAgentSoul,
-  listAgents,
-  removeAgent,
-  isAgentIdentity,
-  hasAgentIdentityMarker,
-  isAgentIdentityEvent,
-  parseAgent,
-} from './agent.js';
-
-export {
-  ALLOWED_AGENT_MODEL_CONFIG_CATEGORIES,
-  isAllowedAgentModelConfigCategory,
-  parseAgentModelCatalog,
-  publishAgentModelCatalog,
-  getAgentModelCatalog,
-  parseAgentModelConfig,
-  setAgentModelConfig,
-  getAgentModelConfig,
-} from './agent-model-config.js';
-
-export {
-  MAX_AGENT_COMMANDS,
-  agentCommandsKey,
-  parseAgentCommandEntries,
-  parseAgentCommands,
-  publishAgentCommands,
-  getAgentCommands,
-} from './agent-commands.js';
-
-export {
-  parseRoomRepository,
-  setRoomRepository,
-  getRoomRepository,
-  readRoomRepositoryConfig,
-  resolveRoomRepository,
-  resolveRoomRepositoryState,
-  setRoomTargetBranch,
-  setRoomGitHubEvents,
-  normalizeTargetBranchName,
-  normalizeRoomRepositoryContent,
-  type RoomRepositoryAuthorResolution,
-  type RoomRepositoryResolution,
-} from './room-repository.js';
-
-export {
-  canonicalizeGitRemote,
-  repositoryKeyForRemote,
-  repositoryNameFromCanonicalRemote,
-  parseGitRemoteInput,
-} from './git-url.js';
-
+export { isAllowedAgentModelConfigCategory } from './agent-model-config.js';
+export { resolveRoomRepository, type RoomRepositoryAuthorResolution } from './room-repository.js';
 export {
   AGENT_NAME_MAX_LENGTH,
-  DEFAULT_AGENT_IDENTITY_NAME,
-  DEFAULT_BODY_IDENTITY_NAME,
-  deriveAgentDisplayName,
   fallbackAgentName,
   fallbackPersonName,
   isReasonableAgentName,
-  isSingleWordAgentName,
   normalizePersonName,
-  normalizePersonHandle,
-  PERSON_NAME_MAX_LENGTH,
-  PERSON_HANDLE_MAX_LENGTH,
   resolveAgentName,
   agentHandle,
   personHandle,
 } from './display-name.js';
-
-export { summarizeGitFailure } from './git-failure.js';
-
-export {
-  BEELINE_SLASH_COMMANDS,
-  beelineSlashCommandList,
-  isBeelineSlashCommand,
-  matchSlashCommand,
-} from './slash-command.js';
-export type { BeelineSlashCommand, SlashCommandInput } from './slash-command.js';
-
-export {
-  parsePersonProfile,
-  parseGlobalPersonProfile,
-  KIND_NOSTR_PROFILE,
-  getGlobalPersonProfile,
-  getPersonProfile,
-  listPersonProfiles,
-  setGlobalPersonProfile,
-  setPersonProfile,
-} from './person-profile.js';
-
-export {
-  parseNip05Identifier,
-  normalizeNip05Identifier,
-  normalizeManagedHandle,
-  parseManagedIdentity,
-  verifyNip05,
-} from './nip05.js';
+export { normalizeManagedHandle } from './nip05.js';
+export type { Nip05VerificationStatus, ManagedIdentity } from './nip05.js';
+export { type WritePermissionDecision } from './write-permission.js';
+export { MESSAGE_REACTION_EMOJIS, RoomViewClient, RoomViewHttpError } from './room-view.js';
 export type {
-  ParsedNip05,
-  Nip05VerificationStatus,
-  Nip05VerificationResult,
-  ManagedIdentity,
-} from './nip05.js';
-
-export { buildMediaUploadAuthorization, uploadMedia } from './media.js';
-
-export {
-  ATTACHMENT_MARKER,
-  ATTACHMENT_METADATA_TAG,
-  ATTACHMENT_FILENAME_TAG,
-  normalizeAttachmentReference,
-  buildAttachmentTag,
-  buildAttachmentTags,
-  parseAttachmentTags,
-} from './attachment.js';
-
-export {
-  WRITE_PERMISSION_REQUEST_TAG,
-  WRITE_PERMISSION_RESPONSE_TAG,
-  type WritePermissionDecision,
-} from './write-permission.js';
-
-export {
-  ROOM_VIEW_MESSAGE_LIMIT,
-  ROOM_VIEW_BRIEFING_LIMIT,
-  ROOM_VIEW_WORKSPACE_LIMIT,
-  ROOM_VIEW_CHAT_LIMIT,
-  ROOM_VIEW_MEMBER_LIMIT,
-  ROOM_VIEW_AGENT_LIMIT,
-  WORKSPACE_MEMBER_PAGE_SIZE,
-  ROOM_VIEW_REQUEST_TIMEOUT_MS,
-  MESSAGE_REACTION_EMOJIS,
-  RoomViewClient,
-  RoomViewHttpError,
-} from './room-view.js';
-export type {
-  AgentPairingAbandonView,
-  AgentPairingClaimView,
   AgentDetailView,
-  AgentHistoryEntry,
   ChatListItem,
   ChatListView,
   ChatListWorkspace,
   CornerListItem,
   CornerListView,
-  InviteView,
   RoomHistoryView,
-  RoomRepositoryView,
-  RoomViewer,
   RoomView,
   RoomViewAgentTurn,
-  RoomViewPendingAgentCommand,
-  RoomViewActivity,
   RoomViewClientOptions,
-  RoomViewHeader,
   RoomViewIdentity,
   RoomViewMember,
   RoomViewMessage,
   MessageReactionEmoji,
   MessageReactionView,
-  SurfaceWatchFilter,
   WorkspaceListView,
-  WorkspaceMemberListQuery,
   WorkspaceMemberListView,
   WorkspaceView,
 } from './room-view.js';
 export type { KnownMessageReference } from './reply-proof.js';
 export { SurfaceRefreshScheduler } from './surface-refresh.js';
-export type { SurfaceRefreshOptions } from './surface-refresh.js';
 export { LiveOverlayDecoder, applyLiveOverlay, visibleLiveOverlays } from './live-overlay.js';
 export type { LiveOverlay } from './live-overlay.js';
-export { replaceRoomTail, addRoomPage, composeRoomRows } from './room-response-partitions.js';
-export type { RoomResponsePartitions } from './room-response-partitions.js';
+export { addRoomPage } from './room-response-partitions.js';
 export { SurfaceResponseCache, surfaceCacheKey } from './surface-cache.js';
-export type { SurfaceCacheStorage, SurfaceCacheAddress } from './surface-cache.js';
-export { RETIRED_AGENT_NOTICES, isRetiredAgentNotice } from './retired-agent-notices.js';
+export type { SurfaceCacheAddress } from './surface-cache.js';
+export { isRetiredAgentNotice } from './retired-agent-notices.js';
 export { SignedEventOutbox } from './signed-event-outbox.js';
-export type { SignedOutboxRecord, SignedOutboxStorage } from './signed-event-outbox.js';
+export type { SignedOutboxRecord } from './signed-event-outbox.js';
 export {
-  isRoomViewMessage,
   isRoomView,
-  isRoomHistoryView,
   isWorkspaceListView,
   isWorkspaceMemberListView,
   isWorkspaceView,
   isChatListView,
   isCornerListView,
   isAgentDetailView,
-  isInviteView,
 } from './surface-guards.js';
+export type { BuzzClient } from './client.js';
+export { isRoomHistoryView } from './surface-guards.js';
 
-export { BuzzClient, createBuzzClient } from './client.js';
+export * from './identity.js';
+export * from './permission-request.js';
+export * from './agent-access-config.js';
+
+export { RelayPublishError } from './relay-error.js';
+export { BEELINE_SLASH_COMMANDS } from './slash-command.js';
+export { buildReplyCommand } from './reply-command.js';

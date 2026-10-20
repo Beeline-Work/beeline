@@ -3,15 +3,17 @@ import { authEndpoint, OidcBindError, requestAuthJson } from './auth-json.js';
 import type { Identity } from './types.js';
 import { parseManagedIdentity, type ManagedIdentity } from './nip05.js';
 
-export { OidcBindError } from './auth-json.js';
-
 export const OIDC_BIND_PROTOCOL = 1 as const;
+
 export const OIDC_BIND_KIND = 24_250 as const;
+
 export const OIDC_BIND_MARKER = 'beeline-oidc-bind-v1' as const;
+
 // Exact native identities from apps/mobile/app.config.js. Keep this closed set in sync.
 export const MOBILE_APP_SCHEMES = ['beeline'] as const;
 
 const MOBILE_APP_PROTOCOLS = new Set<string>(MOBILE_APP_SCHEMES.map((scheme) => `${scheme}:`));
+
 const GITHUB_SIGN_IN_DEEP_LINKS = MOBILE_APP_SCHEMES.flatMap((scheme) => [
   `${scheme}://beeline/github-callback`,
   // Accept callbacks from browser sessions opened by an older app build.
@@ -19,6 +21,7 @@ const GITHUB_SIGN_IN_DEEP_LINKS = MOBILE_APP_SCHEMES.flatMap((scheme) => [
 ]);
 
 const TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
+
 const HEX_KEY_RE = /^[0-9a-f]{64}$/;
 
 export interface OidcBindChallenge {
@@ -39,11 +42,6 @@ export interface OidcBindStart {
   authorizationUrl: string;
   redirectUri: string;
   state: string;
-}
-
-export interface AuthCapabilities {
-  github: boolean;
-  oidc: boolean;
 }
 
 export interface OidcBindResult {
@@ -201,13 +199,6 @@ function startProviderBind(
   url.searchParams.set('app_redirect', input.redirectUri);
   url.searchParams.set('app_state', input.state);
   return { authorizationUrl: url.toString(), redirectUri: input.redirectUri, state: input.state };
-}
-
-export function startOidcBind(
-  baseUrl: string,
-  input: { redirectUri: string; state: string },
-): OidcBindStart {
-  return startProviderBind(baseUrl, input, 'oidc');
 }
 
 /** GitHub OAuth enters the exact same one-use npub bind protocol as OIDC. */
@@ -440,29 +431,6 @@ export async function lookupManagedIdentity(
   return managed;
 }
 
-/** Consume the single rename to the verified GitHub login after an in-place link. */
-export async function adoptGitHubHandle(
-  baseUrl: string,
-  identity: Pick<Identity, 'secretKey' | 'publicKey'>,
-): Promise<ManagedIdentity> {
-  if (!HEX_KEY_RE.test(identity.publicKey))
-    throw new OidcBindError('invalid_identity', 'invalid public key');
-  const { body, status } = await requestAuthJson(
-    baseUrl,
-    `/auth/identity/${identity.publicKey}/github-handle`,
-    { method: 'POST', identity, body: { confirm_rename: true } },
-  );
-  const managed = parseManagedIdentity(body.identity);
-  if (body.renamed !== true || !managed) {
-    throw new OidcBindError(
-      'invalid_response',
-      'auth service returned an invalid handle rename',
-      status,
-    );
-  }
-  return managed;
-}
-
 /** Authenticated, tenant-scoped link lookup for a key already held on this device. */
 export async function lookupRecovery(
   baseUrl: string,
@@ -511,17 +479,4 @@ export async function lookupRecovery(
   });
 }
 
-/** Discover which sign-in surface the deployed auth sidecar has enabled. */
-export async function getAuthCapabilities(baseUrl: string): Promise<AuthCapabilities> {
-  const { body, status } = await requestAuthJson(baseUrl, '/auth/capabilities', {
-    headers: { accept: 'application/json' },
-  });
-  if (typeof body.github !== 'boolean' || typeof body.oidc !== 'boolean') {
-    throw new OidcBindError(
-      'invalid_response',
-      'auth service returned invalid capabilities',
-      status,
-    );
-  }
-  return { github: body.github, oidc: body.oidc };
-}
+export { OidcBindError } from './auth-json.js';

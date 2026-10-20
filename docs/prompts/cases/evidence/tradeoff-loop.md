@@ -134,4 +134,4 @@ Main → selection: Room (789→802), DM (599→612), repository author (1061→
 
 This is an optimization, not a defect report. The proof path is assembled prompt → fresh Opus 5.5 replay → whole-suite grading. A live browser UI test does not exercise that path. Preparation, 65-case validation, twelve rule/harness tests, 169 assembly/layering/skill tests and root typecheck pass. CI never calls a model. Changes are prompt/skill text, cases, authorized replay harness support and evidence; no server, runtime or UI behavior changes.
 
-Speedy independently reran baseline and selection with model-identity enforcement; the reference results above replace the author’s exact scores as the basis for the decision. Keep the hold: landing requires lunchboxfortwo's explicit yes relayed by Ruby, alongside live green checks and exact-head approval.
+Speedy independently reran baseline and selection with model-identity enforcement; the reference results above replace the author’s exact scores as the basis for the decision. Keep the hold: landing requires lunchboxfortwo's explicit yes forwarded by Ruby, alongside live green checks and exact-head approval.

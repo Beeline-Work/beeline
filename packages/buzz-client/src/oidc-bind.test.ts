@@ -8,13 +8,10 @@ import {
   buildOidcBindEvent,
   finishOidcBind,
   recoverOidcBind,
-  getAuthCapabilities,
-  adoptGitHubHandle,
   lookupManagedIdentity,
   lookupRecovery,
   parseOidcBindCallback,
   startGitHubBind,
-  startOidcBind,
   type OidcBindChallenge,
 } from './oidc-bind.js';
 
@@ -135,142 +132,6 @@ afterEach(() => {
 });
 
 describe('OIDC device-key bind protocol', () => {
-  it.each([
-    {
-      provider: 'GitHub',
-      start: startGitHubBind,
-      redirectUri: 'beeline://beeline/github-callback',
-      startPath: '/auth/github/start',
-    },
-    {
-      provider: 'OIDC',
-      start: startOidcBind,
-      redirectUri: 'https://relay.example/auth/oidc/mobile-callback',
-      startPath: '/auth/oidc/start',
-    },
-  ])(
-    'starts the full $provider flow under React Native URL semantics',
-    ({ start, redirectUri, startPath }) => {
-      const reactNativeDeepLink = new ReactNativeURLFixture('beeline://beeline/github-callback');
-      expect(reactNativeDeepLink.toString()).toBe('beeline://beeline/github-callback/');
-      expect(reactNativeDeepLink).toMatchObject({ origin: '', host: '', pathname: '/' });
-      expect(
-        new ReactNativeURLFixture('https://relay.example/auth/oidc/mobile-callback').pathname,
-      ).toBe('/auth/oidc/mobile-callback/');
-      const completionUrl = callbackUrl();
-      vi.stubGlobal('URL', ReactNativeURLFixture);
-
-      const result = start('https://relay.example', {
-        redirectUri,
-        state: 's'.repeat(43),
-      });
-      const authorizationUrl = new StandardURL(result.authorizationUrl);
-      expect(authorizationUrl.pathname).toBe(startPath);
-      expect(authorizationUrl.searchParams.get('app_redirect')).toBe(redirectUri);
-      expect(result.redirectUri).toBe(redirectUri);
-      expect(parseOidcBindCallback(completionUrl, 's'.repeat(43))).toEqual(challenge);
-    },
-  );
-
-  it('builds a native-only start URL with random app state', () => {
-    const result = startOidcBind('https://relay.example', {
-      redirectUri: 'https://relay.example/auth/oidc/mobile-callback',
-      state: 's'.repeat(43),
-    });
-    const url = new URL(result.authorizationUrl);
-    expect(url.origin + url.pathname).toBe('https://relay.example/auth/oidc/start');
-    expect(url.searchParams.get('app_redirect')).toBe(
-      'https://relay.example/auth/oidc/mobile-callback',
-    );
-    expect(url.searchParams.get('app_state')).toBe('s'.repeat(43));
-    expect(() =>
-      startOidcBind('https://relay.example', {
-        redirectUri: 'beeline://beeline/oidc-callback',
-        state: 's'.repeat(43),
-      }),
-    ).toThrow('allowed associated link or app deep link');
-    expect(
-      startOidcBind('http://127.0.0.1:8789', {
-        redirectUri: 'beeline://beeline/oidc-callback',
-        state: 's'.repeat(43),
-      }).redirectUri,
-    ).toBe('beeline://beeline/oidc-callback');
-  });
-
-  it('allows one trailing slash without widening the redirect allowlist', () => {
-    for (const [start, redirectUri] of [
-      [startGitHubBind, 'beeline://beeline/github-callback/'],
-      [startOidcBind, 'https://relay.example/auth/oidc/mobile-callback/'],
-    ] as const) {
-      const result = start('https://relay.example', {
-        redirectUri,
-        state: 's'.repeat(43),
-      });
-      expect(new StandardURL(result.authorizationUrl).searchParams.get('app_redirect')).toBe(
-        redirectUri,
-      );
-      expect(result.redirectUri).toBe(redirectUri);
-    }
-
-    for (const [start, redirectUri] of [
-      [startGitHubBind, 'beeline://beeline/github-callback//'],
-      [startGitHubBind, 'beeline://buzz/other'],
-      [startGitHubBind, 'beeline://other/github-callback'],
-      [startGitHubBind, 'beeline://beeline/github-callback?next=evil'],
-      [startGitHubBind, 'beeline://beeline/github-callback#evil'],
-      [startOidcBind, 'https://relay.example/auth/oidc/mobile-callback//'],
-      [startOidcBind, 'https://other.example/auth/oidc/mobile-callback'],
-      [startOidcBind, 'https://relay.example/auth/oidc/other'],
-      [startOidcBind, 'https://relay.example/auth/oidc/mobile-callback?next=evil'],
-      [startOidcBind, 'https://relay.example/auth/oidc/mobile-callback#evil'],
-    ] as const) {
-      expect(() =>
-        start('https://relay.example', { redirectUri, state: 's'.repeat(43) }),
-      ).toThrowError(expect.objectContaining({ code: 'invalid_redirect' }));
-    }
-
-    expect(() =>
-      startOidcBind('http://127.0.0.1:8789', {
-        redirectUri: 'beeline://user@buzz/oidc-callback',
-        state: 's'.repeat(43),
-      }),
-    ).toThrowError(expect.objectContaining({ code: 'invalid_redirect' }));
-  });
-
-  it('accepts only the Beeline callback scheme', () => {
-    for (const scheme of MOBILE_APP_SCHEMES) {
-      const redirectUri = `${scheme}://beeline/github-callback`;
-      expect(
-        startGitHubBind('https://relay.example', {
-          redirectUri,
-          state: 's'.repeat(43),
-        }).redirectUri,
-      ).toBe(redirectUri);
-
-      expect(
-        startOidcBind('http://127.0.0.1:8789', {
-          redirectUri: `${scheme}://beeline/oidc-callback`,
-          state: 's'.repeat(43),
-        }).redirectUri,
-      ).toBe(`${scheme}://beeline/oidc-callback`);
-    }
-
-    for (const scheme of ['buzzy', 'buzzy-dev', 'buzzy-preview', 'buzzy-nightly', 'other']) {
-      expect(() =>
-        startGitHubBind('https://relay.example', {
-          redirectUri: `${scheme}://buzz/github-callback`,
-          state: 's'.repeat(43),
-        }),
-      ).toThrowError(expect.objectContaining({ code: 'invalid_redirect' }));
-      expect(() =>
-        startOidcBind('http://127.0.0.1:8789', {
-          redirectUri: `${scheme}://buzz/oidc-callback`,
-          state: 's'.repeat(43),
-        }),
-      ).toThrowError(expect.objectContaining({ code: 'invalid_redirect' }));
-    }
-  });
-
   it('accepts the previous GitHub callback path during the app transition', () => {
     expect(
       startGitHubBind('https://relay.example', {
@@ -441,75 +302,6 @@ describe('OIDC device-key bind protocol', () => {
     expect((init.headers as Record<string, string>).authorization).not.toContain(
       identity.secretKey,
     );
-  });
-
-  it('reads and adopts the authenticated hosted identity on the same key', async () => {
-    const hosted = {
-      handle: 'ada-labs',
-      display_name: 'Ada',
-      source: 'key',
-      github_login: 'ada',
-      github_rename_available: true,
-    };
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({ identity: hosted }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        }),
-      )
-      .mockResolvedValueOnce(
-        new Response(
-          JSON.stringify({
-            renamed: true,
-            identity: {
-              ...hosted,
-              handle: 'ada',
-              source: 'github',
-              github_rename_available: false,
-            },
-          }),
-          { status: 200, headers: { 'content-type': 'application/json' } },
-        ),
-      );
-    vi.stubGlobal('fetch', fetchMock);
-
-    await expect(lookupManagedIdentity('https://relay.example', identity)).resolves.toMatchObject({
-      handle: 'ada-labs',
-      githubLogin: 'ada',
-      githubRenameAvailable: true,
-    });
-    await expect(adoptGitHubHandle('https://relay.example', identity)).resolves.toMatchObject({
-      handle: 'ada',
-      githubRenameAvailable: false,
-    });
-
-    const [lookupUrl, lookupInit] = fetchMock.mock.calls[0] as [string, RequestInit];
-    const [renameUrl, renameInit] = fetchMock.mock.calls[1] as [string, RequestInit];
-    expect(lookupUrl).toBe(`https://relay.example/auth/identity/${identity.publicKey}`);
-    expect(renameUrl).toBe(
-      `https://relay.example/auth/identity/${identity.publicKey}/github-handle`,
-    );
-    expect((lookupInit.headers as Record<string, string>).authorization).toMatch(/^Nostr /);
-    expect((renameInit.headers as Record<string, string>).authorization).toMatch(/^Nostr /);
-    expect(JSON.parse(String(renameInit.body))).toEqual({ confirm_rename: true });
-  });
-
-  it('reads the deployed provider gate without requiring a device identity', async () => {
-    vi.stubGlobal(
-      'fetch',
-      vi.fn().mockResolvedValueOnce(
-        new Response(JSON.stringify({ github: false, oidc: true }), {
-          status: 200,
-          headers: { 'content-type': 'application/json' },
-        }),
-      ),
-    );
-    await expect(getAuthCapabilities('https://relay.example')).resolves.toEqual({
-      github: false,
-      oidc: true,
-    });
   });
 
   it('exposes typed protocol errors', () => {

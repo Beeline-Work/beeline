@@ -320,22 +320,15 @@ async function createSchema() {
   const targetUrl = required('FLY_PG_URL');
   const serverModule = await import('/app/apps/server/dist/database.js');
   const authModule = await import('/app/apps/auth/dist/store.js');
-  const pushModule = await import('/app/apps/push-gateway/dist/database.js');
   const serverDatabase = new serverModule.PostgresDatabase(targetUrl, 1);
   const authDatabase = new authModule.PostgresDatabase(targetUrl);
   const authStore = new authModule.AuthStore(authDatabase);
-  const pushStore = new pushModule.PostgresMaterializerStore(targetUrl);
   try {
     await serverModule.migrate(serverDatabase);
     await authStore.migrate();
-    await pushStore.connect();
-    await pushStore.migrateReservations();
-    await pushStore.migrateRoomReadMarks();
-    await pushStore.migrateAgentPairingClaims();
-    await pushStore.deleteSnapshotContract();
-    console.log('server, auth, and push-gateway schema migrations complete');
+    console.log('server and auth schema migrations complete');
   } finally {
-    await Promise.allSettled([serverDatabase.close(), authStore.close(), pushStore.close()]);
+    await Promise.allSettled([serverDatabase.close(), authStore.close()]);
   }
 }
 

@@ -1,3 +1,4 @@
+import { LEGACY_STORAGE_SCHEMA } from './migrations/legacy-storage.js';
 import { SERVICE_REVIEW_EFFECTIVE_AT, SERVICE_REVIEW_READ_SCHEMA } from './service-review.js';
 import { CORNER_PERSON_STATE_SCHEMA, migrateCornerPersonState } from './corner-person-state.js';
 import { deleteArchivedCornerWakeSources } from './migrations/archived-corner-wakes.js';
@@ -722,7 +723,7 @@ CREATE TABLE IF NOT EXISTS daemon_tokens (
 );
 CREATE INDEX IF NOT EXISTS daemon_tokens_agent_idx ON daemon_tokens(agent_id);
 
--- Forward recovery of an imported relay identity; token history permanently closes this seam.
+-- Forward recovery of an imported helper identity; token history permanently closes this seam.
 CREATE TABLE IF NOT EXISTS legacy_daemon_migrations (
   agent_id text PRIMARY KEY REFERENCES identities(id) ON DELETE CASCADE,
   proof_id text NOT NULL,
@@ -2972,6 +2973,7 @@ export async function migrate(
       await ddl(`${name} ${index + 1}/${statements.length}`, statement);
   };
   await ddlScript('server schema', SCHEMA);
+  await ddlScript('historical storage schema', LEGACY_STORAGE_SCHEMA);
   await retryMigrationStep('webhook retention index', () => createIndexConcurrently(
     database, 'github_webhook_deliveries_received_idx',
     `CREATE INDEX CONCURRENTLY github_webhook_deliveries_received_idx

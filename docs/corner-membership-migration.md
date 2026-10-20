@@ -30,7 +30,7 @@ The old image still requires legacy rows for people/corners created during a mix
 
 ## Reader audit
 
-All corner-capable `memberships` reads were reviewed. Ordinary reads use `effective_memberships`. Queries that lock a membership row keep the physical table and join through `COALESCE(surface.parent_id,surface.id)` (or the corner's known parent), so revocation serializes with dispatch and decisions. Workspace-only, DM-only and top-level lifecycle paths keep physical memberships. The relay/indexer package has a separate Nostr membership model and does not query this server table.
+All corner-capable `memberships` reads were reviewed. Ordinary reads use `effective_memberships`. Queries that lock a membership row keep the physical table and join through `COALESCE(surface.parent_id,surface.id)` (or the corner's known parent), so revocation serializes with dispatch and decisions. Workspace-only, DM-only and top-level lifecycle paths keep physical memberships.
 
 The inventory below records every changed query location, including authorization embedded in writer statements. Direct state writes moved to `setRoomEventSubscriptions`, corner archival cleanup and reviewer configuration. Removed writers were Room joins, Room creation/member projection, both corner-creation paths, reviewer repair/reconciliation, the Play Review proof fixture and the old inherited-membership backfill. `ensureAgentMembership` checks inherited access for a corner instead of inserting a row.
 

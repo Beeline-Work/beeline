@@ -7,11 +7,6 @@ export function tagValue(event: NostrEvent, name: string): string | undefined {
   return event.tags.find((t) => t[0] === name)?.[1];
 }
 
-/** All values for repeated tags of `name`. */
-export function tagValues(event: NostrEvent, name: string): string[] {
-  return event.tags.filter((t) => t[0] === name && t[1]).map((t) => t[1]!);
-}
-
 /** Channel UUID from the `h` tag (Buzz requires UUID; non-UUIDs are dropped). */
 export function channelIdOf(event: NostrEvent): string | undefined {
   return tagValue(event, 'h');
@@ -32,41 +27,6 @@ export function parseMembersEvent(event: NostrEvent): ChannelMember[] {
     }
   }
   return members;
-}
-
-/** Best-effort metadata parse from kind:39000. */
-export function parseMetadataEvent(event: NostrEvent): ChannelMetadata {
-  const channelId = tagValue(event, 'd') ?? tagValue(event, 'h') ?? '';
-  const name = tagValue(event, 'name');
-  const about = tagValue(event, 'about') ?? (event.content || undefined);
-  const archivedRaw = tagValue(event, 'archived');
-  const archived =
-    archivedRaw === 'true' || archivedRaw === '1'
-      ? true
-      : archivedRaw === 'false' || archivedRaw === '0'
-        ? false
-        : undefined;
-  const visibilityRaw = tagValue(event, 'visibility');
-  const visibility =
-    event.tags.some((tag) => tag[0] === 'private') ||
-    visibilityRaw === 'private' ||
-    visibilityRaw === 'invite-only'
-      ? 'invite-only'
-      : visibilityRaw === 'open' || visibilityRaw === 'public'
-        ? 'public'
-        : 'public';
-  const parentChannelId = tagValue(event, TAG_PARENT);
-  const communityId = tagValue(event, TAG_COMMUNITY);
-  return {
-    channelId,
-    ...(name !== undefined ? { name } : {}),
-    ...(about !== undefined ? { about } : {}),
-    ...(archived !== undefined ? { archived } : {}),
-    ...(visibility !== undefined ? { visibility } : {}),
-    ...(parentChannelId !== undefined ? { parentChannelId } : {}),
-    ...(communityId !== undefined ? { communityId } : {}),
-    raw: event,
-  };
 }
 
 /** Sort events oldest-first by created_at, then id for stability. */

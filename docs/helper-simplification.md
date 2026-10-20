@@ -40,12 +40,12 @@ migration the installed CLI itself is independent of a broken body. Existing
 stopped markers survive update; `start --agent <key>` and `start --all` express
 which agents to re-enable.
 
-An old relay record proves possession of its existing identity to the server's
+An old helper record proves possession of its existing identity to the server's
 one-time migration route. Current owner and Workspace memberships authorize
 the exchange; revoked, expired or unknown authority does not. Identity, home,
 policy and work survive. Interrupted delivery can redeliver the same still
 authorized credential, including after the exchange's initial delivery window,
-without minting a second token or reviving a revoked one. No relay serving or
+without minting a second token or reviving a revoked one. No legacy transport or
 manual transport deletion is part of recovery. Deploy the server migration
 seam before expecting old agents to serve; a temporarily unavailable seam
 retries independently.
@@ -101,7 +101,7 @@ container afterward.
 | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1. Current bundle, dead helper | Exit-79 suppressed unit recovered by real npx update; installed repeat converges without a new generation; installed update and both installed/npx start recover disabled and stopped services.                                                                                                                                                                                                                                         |
 | 2. Old topology                | Real anchor directory, broken forwarding, pinned ExecStart, active old per-agent instances and the caller's own legacy handoff; flat/mixed layout, aliases and recorded Node covered by `self-update-layout.test.ts`; old launchd labels by `launchd.test.ts`.                                                                                                                                                 |
-| 3. Legacy relay                | Signed migration with deliberately lost credential reply; preserved identity/home/policy; unknown identity and revoked sign-in fail by name while the sibling answers. HTTP authority/replay/removal tests: `legacy-daemon-migration.test.ts` in the server.                                                                                                                                                   |
+| 3. Legacy helper                | Signed migration with deliberately lost credential reply; preserved identity/home/policy; unknown identity and revoked sign-in fail by name while the sibling answers. HTTP authority/replay/removal tests: `legacy-daemon-migration.test.ts` in the server.                                                                                                                                                   |
 | 4. Empty and explicit stop     | Both fixture agents stopped while the machine remains alive; update preserves stops; start restores them in the same generation. Empty machine, new pairing and start racing a draining stop: `machine-helper.test.ts`.                                                                                                                                                                                        |
 | 5. Crash containment           | Native SIGKILL and watchdog recovery; revoked agent restored by its runtime revision without a machine restart. Three ordinary failures followed by success with a live sibling: `machine-helper.test.ts`; continued Room retries: `room-supervisor.test.ts`.                                                                                                                                                  |
 | 6. Actual readiness            | Native replies plus live generation acknowledgment; malformed and unknown agents cannot pass convergence. Invalid acknowledgment rejection and stale/recycled PID behavior: machine control/status and runtime regression tests.                                                                                                                                                                               |

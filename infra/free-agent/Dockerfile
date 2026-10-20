@@ -21,7 +21,7 @@ RUN test "$PI_VERSION" != latest && test "$PI_ACP_VERSION" != latest \
   && npm cache clean --force
 COPY infra/free-agent/prepare-image.mjs /opt/beeline/
 RUN node /opt/beeline/prepare-image.mjs
-COPY relay-stack/web/install.sh infra/free-agent/entrypoint.sh /opt/beeline/
+COPY web/install.sh infra/free-agent/entrypoint.sh /opt/beeline/
 COPY --from=helper-build /root/.local/ /root/.local/
 ARG BEELINE_RELEASE_VERSION
 ARG BEELINE_RELEASE_SHA

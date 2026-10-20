@@ -28,8 +28,6 @@ import {
 } from '@beeline/api-contract/phone';
 import type { Identity } from './types.js';
 
-export * from '@beeline/api-contract/phone';
-
 const AGENT_PAIRING_ROOM_ROLLBACK_CAPABILITY = 'pairing-room-rollback';
 
 export type RoomViewClientOptions = {
@@ -193,3 +191,5 @@ export class RoomViewClient {
     }
   }
 }
+
+export * from '@beeline/api-contract/phone';

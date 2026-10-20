@@ -11,8 +11,7 @@ It keeps only four responsibilities:
 3. run the selected ACP harness with isolated home/sandbox state;
 4. self-update with a functional session-and-turn probe.
 
-Room data and writes go through `DaemonApiClient`. The helper has no relay transport, legacy
-pairing-code redemption, approval or mandate engine, work calendar, repository lifecycle, or
+Room data and writes go through `DaemonApiClient`. The helper has no legacy pairing-code redemption, approval or mandate engine, work calendar, repository lifecycle, or
 GitHub event consumer. Its action surface is `open_corner(room, brief)`, `order(address, text)`,
 `report(status, text)`, `read(address)` and `watch(address)` through `read-only-mcp.ts`.
 A DM can drive work across every Room the agent belongs to. The caller that opens a corner

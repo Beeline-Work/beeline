@@ -6,7 +6,7 @@ import vm from 'node:vm';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const html = fs.readFileSync(path.join(ROOT, 'relay-stack', 'web', 'index.html'), 'utf8');
+const html = fs.readFileSync(path.join(ROOT, 'web', 'index.html'), 'utf8');
 
 class FakeClassList {
   #classes = new Set();

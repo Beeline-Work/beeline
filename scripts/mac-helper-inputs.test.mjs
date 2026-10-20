@@ -5,7 +5,7 @@ import { hashMacHelperInputs, MAC_HELPER_INPUTS } from './mac-helper-inputs.mjs'
 test('Mac payload provenance includes its source and toolchain, while release identity is regenerated', () => {
   for (const path of [
     'apps/body/', 'packages/nostr/', 'packages/api-contract/', 'packages/buzz-client/',
-    'apps/gate/', 'package-lock.json', 'tsconfig.base.json',
+    'package-lock.json', 'tsconfig.base.json',
     'scripts/build-beeline-bundle.mjs', 'scripts/beeline-archive.mjs',
     '.github/workflows/unified-release.yml',
   ]) assert.ok(MAC_HELPER_INPUTS.includes(path), path);

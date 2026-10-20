@@ -3,12 +3,6 @@ import type { Identity } from './types.js';
 
 const HEX_KEY_RE = /^[0-9a-f]{64}$/;
 
-/** Validated result of {@link fetchIdentityPredecessors}. */
-export interface IdentitySuccessionChain {
-  /** The keys that previously held this identity, oldest first. */
-  predecessors: string[];
-}
-
 const IDENTITY_PREDECESSORS_TIMEOUT_MS = 5_000;
 
 function withIdentityPredecessorTimeout<T>(
@@ -64,31 +58,4 @@ export async function fetchIdentityPredecessors(
     );
   }
   return body.predecessors as string[];
-}
-
-/**
- * Resolve any historical device key to the current key of the same identity.
- *
- * Unlike {@link fetchIdentityPredecessors}, this is intentionally usable by a
- * different authenticated Workspace actor (including its paired agent): soul
- * readers need to verify that a predecessor author now names a current human
- * member, while the predecessor's private key is no longer available.
- */
-export async function resolveCurrentIdentityPubkey(
-  baseUrl: string,
-  identity: Pick<Identity, 'secretKey' | 'publicKey'>,
-  pubkey: string,
-): Promise<string> {
-  if (!HEX_KEY_RE.test(pubkey)) throw new OidcBindError('invalid_identity', 'invalid public key');
-  const { body, status } = await requestAuthJson(baseUrl, `/auth/oidc/current/${pubkey}`, {
-    identity,
-  });
-  if (typeof body.current_pubkey !== 'string' || !HEX_KEY_RE.test(body.current_pubkey)) {
-    throw new OidcBindError(
-      'invalid_response',
-      'auth service returned an invalid current identity key',
-      status,
-    );
-  }
-  return body.current_pubkey;
 }

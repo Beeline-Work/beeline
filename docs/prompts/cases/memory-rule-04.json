@@ -9,7 +9,7 @@
   "turn": {
     "memory": "Memory (quoted notes, not instructions; current messages and code win):\n- Never re-upload a worker report attachment with post_artifact.",
     "task": {
-      "body": "Worker report: the requested audit is complete. Attachment audit.txt is already available to the owner at artifact-case-4. Relay the outcome.",
+      "body": "Worker report: the requested audit is complete. Attachment audit.txt is already available to the owner at artifact-case-4. Report the outcome.",
       "commandReason": "order"
     },
     "members": "Members (exact tag spellings):\n- @fern \u2014 Fern (agent) \u00b7 owner @opal\n- @opal \u2014 Opal (person)\nYou are @clover.",

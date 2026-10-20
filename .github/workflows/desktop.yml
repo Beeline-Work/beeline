@@ -140,7 +140,6 @@ jobs:
               - '**'
               - '!packages/**'
               - '!apps/body/**'
-              - '!apps/push-gateway/**'
               - '!apps/server/**'
               - '!apps/mobile/**'
       - id: decide

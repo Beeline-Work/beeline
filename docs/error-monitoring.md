@@ -1,6 +1,6 @@
 # Beeline error monitoring
 
-Sentry owns errors; the Beeline server relays new issues and regressions to the
+Sentry owns errors; the Beeline server forwards new issues and regressions to the
 Squire Monitor Telegram chat. Firstmate selected that destination on 2026-10-16.
 The bot is outbound-only here: never call `setWebhook`, `deleteWebhook`, or
 `getUpdates`, because Squire owns its inbound update delivery.
@@ -45,7 +45,7 @@ activates them. Merging alone does not deploy this receiver.
 
 - Server: startup failures, unexpected HTTP failures, failed background jobs,
   and uncaught exceptions. Request status mapping and background retries stay
-  unchanged. Relay delivery failures return 503 without reporting another
+  unchanged. Forwarder delivery failures return 503 without reporting another
   Sentry issue, preventing a notification feedback loop.
 - Helper: CLI fatal errors, hosted-agent failures, and the existing
   keep-running unhandled-rejection guard. Fatal exceptions drain through the
@@ -67,7 +67,7 @@ redacts common credential/URL/email/home-path patterns, strips request/user/
 context/extra data, and removes stack locals and source lines. Error messages
 still need care at their source: never throw conversation text or credentials.
 
-The relay accepts legacy `event` and modern `data.event`/`data.issue` payloads.
+The forwarder accepts legacy `event` and modern `data.event`/`data.issue` payloads.
 It posts `🔴 Beeline <level>: <title> <Sentry link>` as plain text, limits title
 size, restricts links to this organization, and bounds Telegram requests to five
 seconds. A Telegram rejection or timeout returns 503 for upstream retry.
@@ -77,7 +77,7 @@ logging the bot token, chat ID, webhook token, or issue text.
 ## Verification and release handoff
 
 Targeted automated checks cover actual server/helper SDK envelopes against a
-local HTTP collector, fatal exit(1), privacy filtering, relay authentication,
+local HTTP collector, fatal exit(1), privacy filtering, forwarder authentication,
 legacy/modern formatting, Telegram acknowledgement/failure, unchanged helper
 rejection recovery, and mobile diagnostic/boundary recovery. The native
 fingerprint check confirms unchanged Android/iOS runtimes.
@@ -86,7 +86,7 @@ fingerprint check confirms unchanged Android/iOS runtimes.
 production test issues have been created or resolved yet. After the server,
 helper bundle and mobile OTA are delivered:
 
-1. Verify an unauthenticated POST to the production relay returns 401. Do not
+1. Verify an unauthenticated POST to the production forwarder returns 401. Do not
    put its private query URL in shell history, logs, evidence, or this document.
 2. On a production server machine, run a one-off Node process that imports
    `./apps/server/dist/sentry.js`, throws/catches an Error titled

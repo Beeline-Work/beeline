@@ -51,5 +51,5 @@ analytics service-provider processing.
 - Local secret identity: `apps/mobile/sources/auth/buzz-identity-storage.ts`
 - GitHub identity and encrypted token storage: `apps/auth/src/github-operations.ts`, `apps/auth/src/store.ts`
 - Message/file handling: `packages/buzz-client/src/attachment.ts`, `apps/mobile/sources/buzz/chat-attachment.ts`
-- Android FCM registration: `apps/mobile/sources/push/buzz-push-registration.ts`, `apps/push-gateway/src/registry.ts`
+- Android FCM registration: `apps/mobile/sources/push/buzz-push-registration.ts`, `apps/server/src/firebase-push.ts`
 - Analytics gate and events: `apps/mobile/sources/track/tracking.ts`, `apps/mobile/sources/track/index.ts`

@@ -7888,8 +7888,7 @@ export class DaemonService {
     return { cornerId, ...(warnings.length ? { warnings } : {}), ...(watch ? { watch: { roomId: commandRoomId, kinds: watch.kinds } } : {}) };
   }
   private async reviseCornerBrief(input: Input<'reviseCornerBrief'>, agentId: string) {
-    validateCornerBrief(input.brief);
-    const draft = input.brief;
+    let draft = input.brief;
     if (!draft.change?.trim())
       throw new CommandRefusalError('corner brief revision requires a change description', 400);
     const brief = await this.database.transaction(async (db) => {
@@ -7911,12 +7910,13 @@ export class DaemonService {
           [input.cornerId],
         )
       ).rows[0];
-      // Any agent that reaches the corner revises it; the approval quote is
-      // what authorizes the new scope.
+      // The commander approves directly; other reachable agents need a cited approval.
       if (!corner?.parent_id) throw new CommandRefusalError('corner brief revision denied', 403);
       await this.reach(input.cornerId, agentId, db).catch(() => {
         throw new CommandRefusalError('corner brief revision denied', 403);
       });
+      if (corner.created_by === agentId) draft = { ...draft, approval: undefined };
+      validateCornerBrief(draft);
       const commandRoomId = input.roomId ?? input.cornerId;
       const command = await authorizeCommandOutput(
         db, commandRoomId, agentId, input.requestId, input.generationId,

@@ -800,7 +800,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
         },
         "brief": {
           "type": "object",
-          "required": ["spec", "approval"],
+          "required": ["spec"],
           "properties": {
             "repositoryWork": {
               "type": "boolean",
@@ -817,7 +817,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
               "required": ["sourceMessageId"],
               "properties": {"sourceMessageId": {"type": "string"}},
               "additionalProperties": false,
-              "description": "The human message or active private commander order dispatching this work or authorizing its revision. The server quotes it; separate spec approval is not required."
+              "description": "Optional for the corner commander revising directly. Other agents must cite a human message or private commander order authorizing the revision. The server records the approver."
             },
             "attachments": {
               "type": "array",

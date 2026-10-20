@@ -396,12 +396,12 @@ describe('minimal agent surface', () => {
   });
 });
 
-it('OPEN-1: opening approval is optional while revision approval remains required', () => {
+it('OPEN-1: opening and commander revision approval are optional in the schema', () => {
   const tools = agentToolsFor(true, false, true);
   const opening = tools.find((tool) => tool.name === 'open_corner')!;
   expect(Check(opening.inputSchema, { room: '11111111-1111-4111-8111-111111111111', name: 'widget', objective: 'Build widget',
     implementer: 'worker', brief: { spec: 'Build widget' } })).toBe(true);
   const revision = tools.find((tool) => tool.name === 'revise_corner')!;
   expect(Check(revision.inputSchema, { action: 'brief', address: 'target', expectedRevision: 1,
-    change: 'Adjust scope', brief: { spec: 'Adjust widget' } })).toBe(false);
+    change: 'Adjust scope', brief: { spec: 'Adjust widget' } })).toBe(true);
 });

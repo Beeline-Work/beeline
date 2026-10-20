@@ -106,7 +106,7 @@ export function beelineCornersSkillMarkdown(releaseId: string): string {
 
 1. Run beeline-triage, then write the brief with beeline-spec.
 2. Call open_corner(room, implementer, brief). You become the corner's commander.
-3. To change scope, read the current brief with read(facet:brief, address), then call revise_corner(action:brief, address) with the complete replacement spec, expectedRevision, the approving message and change. To rename, call revise_corner(action:metadata, address, name).
+3. To change scope, read the current brief with read(facet:brief, address), then call revise_corner(action:brief, address) with the complete replacement spec, expectedRevision and change. The corner commander needs no approval citation; other agents must cite a human message or commander order. To rename, call revise_corner(action:metadata, address, name).
 4. To assign the work, call order(address, agent, text). A commander may order the configured reviewer at the child corner address by naming it as agent.
 5. To post a public note in another member Room or corner, call post(address, text).
 
@@ -336,7 +336,7 @@ Create an assignment a fresh session can execute without the parent transcript. 
   Add implementation guidance under further headings when it helps.
   For repository bugfixes only, add Reproduction <id>: <real-target steps and observed failure>, or Reproduction not feasible: <reason>; Stand-in: <closest check>; labels may be bold or italic, and Stand-in: may follow on another line in the same Reproduction section. Done repeats that reproduction or stand-in successfully.
 - files (\`attachments\`): the Room files the worker needs, each with its purpose and whether it is required.
-- \`approval\`: optional when opening; the initiating human message ID or private commander order ID. Without it or with an agent message, the server records the opening agent as agent-initiated. Revisions still require human or commander approval. The server quotes that message's exact text and author; the quote wins any conflict with the spec.
+- \`approval\`: optional when opening; the initiating human message ID or private commander order ID. Without it or with an agent message, the server records the opening agent as agent-initiated. The corner commander may revise directly without a citation; other agents still require a human message or commander order. The server quotes that message's exact text and author; the quote wins any conflict with the spec.
 
 Do not infer approval from silence, assent to different prose, or the mere existence of a plan. Keep agent recommendations labelled as recommendations. Do not promote a plausible UX detail, algorithm, failure message, or extra test into a user story merely because it sounds helpful.
 

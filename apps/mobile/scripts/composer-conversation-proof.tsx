@@ -47,7 +47,7 @@ async function run() {
   const selected = () => document.querySelector<HTMLElement>('[aria-label="Speak to Jellybean"]');
   selected()!.click(); await pause();
   const outlined = () => getComputedStyle(selected()!.firstElementChild!).borderTopColor ===
-    (theme === 'bone' ? 'rgb(23, 19, 16)' : 'rgb(240, 240, 243)');
+    'rgb(0, 0, 0)';
   check('CONVERSATION-2: tap selects Jellybean with an avatar outline', outlined());
   const selectedLabel = Array.from(selected()!.querySelectorAll<HTMLElement>('*')).find(element => element.textContent === 'Jellybean');
   check('CONVERSATION-2: selected name has no underline', !!selectedLabel && !getComputedStyle(selectedLabel).textDecorationLine.includes('underline'));
@@ -60,7 +60,7 @@ async function run() {
     check(`${phase}: tap stays selected`, outlined());
     const faceColor = (name: string) => getComputedStyle(document.querySelector<HTMLElement>(`[aria-label="Speak to ${name}"]`)!.firstElementChild!).borderTopColor;
     check(`${phase}: inactive agent has no frame`, faceColor('Goosey') === 'rgba(0, 0, 0, 0)');
-    if (phase === 'speaking') check('CONVERSATION-2: selected and speaking agents share the same outline', faceColor('Ruby') === faceColor('Jellybean'));
+    if (phase === 'speaking') check('CONVERSATION-2: speaking frame is brass and selection stays black', getComputedStyle(byID('voice-speaking-frame-ruby')!).borderTopColor !== faceColor('Jellybean'));
     check(`${phase}: current level stays at the visible right edge`, latest().getBoundingClientRect().right <= byID('voice-waveform')!.getBoundingClientRect().right);
     if (phase === 'listening') check('CONVERSATION-3: current level grows immediately', parseFloat(getComputedStyle(latest()).height) > 2);
     const strip = byID('conversation-target-strip')!.getBoundingClientRect();

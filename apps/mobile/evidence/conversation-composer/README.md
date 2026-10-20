@@ -15,9 +15,9 @@ visible newest edge. A level update changes that bar in the same synchronous
 render, before any history sample or timer advances. History keeps its existing
 glide and 120 ms spacing, without attack/release smoothing. It then ends the call and sends a staged document with the next message,
 reusing the upload. Both themes print RESULT PASS. Screenshots show Ruby speaking
-while Jellybean remains selected. Both use the same outline style; inactive
-Goosey has no frame. There are no frame-color distinctions between selection and
-speech.
+while Jellybean remains selected. Jellybean has a black selection frame; Ruby has a pulsing brass speaking frame.
+Inactive Goosey has no frame. Speaking takes precedence when the selected agent speaks.
+The production HullLivePulse respects reduced motion and app backgrounding.
 
 Reproductions CONVERSATION-2 (tap selection) and CONVERSATION-3 (live waveform)
 are also covered by the native component and speech-event tests. The browser

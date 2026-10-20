@@ -8,6 +8,7 @@ vi.mock('react-native', () => {
   return { View: host('View'), Text: host('Text'), ScrollView: host('ScrollView'), Pressable: host('Pressable'),
     AccessibilityInfo: { isReduceMotionEnabled: async () => false, addEventListener: () => ({ remove() {} }) } };
 });
+vi.mock('./MonoHull', () => ({ HullLivePulse: (props: any) => React.createElement('LivePulse', props, props.children) }));
 vi.mock('./IdentityMark', () => ({ IdentityMark: () => null }));
 vi.mock('./MicGlyph', () => ({ COMPOSER_GLYPH_SIZE:20, MicGlyph:(props:any)=>React.createElement('MicGlyph',props), StopGlyph: (props: any) => React.createElement('StopGlyph', props) }));
 vi.mock('./BeelineMarkSpinner', () => ({ BeelineMarkSpinner: () => null }));
@@ -148,7 +149,12 @@ it('Reproduction CONVERSATION-2: tapping a face immediately marks selection and 
     expect(outline('Ruby')).toBe('transparent');
     expect(underlined()).toBe(false);
     await act(async () => updateSpeaker('ruby'));
-    expect(outline('Ruby')).toBe(outline('Goosey'));
+    expect(outline('Goosey')).toBe('#000000');
+    expect(renderer.root.findAllByType('LivePulse')).toHaveLength(1);
+    expect(renderer.root.findByProps({ testID: 'voice-speaking-frame-ruby' })).toBeTruthy();
+    await act(async () => updateSpeaker('goose'));
+    expect(outline('Goosey')).toBe('transparent');
+    expect(renderer.root.findByProps({ testID: 'voice-speaking-frame-goose' })).toBeTruthy();
     expect(face('Goosey').props.accessibilityState.selected).toBe(true);
     await act(async () => updateSpeaker(null));
     expect(outline('Ruby')).toBe('transparent');

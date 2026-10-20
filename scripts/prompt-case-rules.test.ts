@@ -1,5 +1,6 @@
 // Run with: node --import tsx --test scripts/prompt-case-rules.test.ts
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { caseOutcome, evaluateRule, parsePromptCase, type Rule, type Transcript } from './prompt-case-rules.js';
 
@@ -11,6 +12,20 @@ const turn: Transcript = {
   text: 'Asked @juniper to run it.',
 };
 const pass = (rule: Rule) => evaluateRule(rule, turn).pass;
+
+test('repo-less Room case accepts header navigation and rejects referrals to another Room', () => {
+  const saved = JSON.parse(readFileSync(new URL('../docs/prompts/cases/room-no-repo-guides-link.json', import.meta.url), 'utf8'));
+  const guidance = 'This Room has no linked repository; use Room header → Repository → Link or Create.';
+  assert.equal(evaluateRule(saved.pass, { calls: [], text: guidance }).pass, true);
+  for (const referral of [
+    'Point me at the Room with the linked repository.',
+    'Go to a Room with a linked repository.',
+    'Use another Room.',
+    'Create a repository-backed Room.',
+  ]) {
+    assert.equal(evaluateRule(saved.pass, { calls: [], text: `${guidance} ${referral}` }).pass, false, referral);
+  }
+});
 
 test('call and noCall match tool names and argument matchers', () => {
   assert.equal(pass({ call: 'order', args: { address: 'c-1' } }), true);

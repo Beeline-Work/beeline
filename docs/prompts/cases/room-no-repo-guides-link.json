@@ -39,7 +39,7 @@
       {
         "text": {
           "not": {
-            "matches": "(another|different|other)\\s+Room|(?:point|direct|send).{0,50}Room.{0,40}(?:linked|repository)|(?:go|switch|move|find|use).{0,30}Room.{0,40}(?:linked|repository)|create\\s+(?:a\\s+)?repository-backed\\s+Room|point.{0,50}repository-backed\\s+Room",
+            "matches": "(another|different|other)\\s+Room|(?:point|direct|send).{0,50}Room\\b(?!\\s+header).{0,40}(?:linked|repository)|(?:go|switch|move|find|use).{0,30}Room\\b(?!\\s+header).{0,40}(?:linked|repository)|create\\s+(?:a\\s+)?repository-backed\\s+Room|point.{0,50}repository-backed\\s+Room",
             "flags": "is"
           }
         }

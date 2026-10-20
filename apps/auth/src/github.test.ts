@@ -7,7 +7,10 @@ import {
   githubMergeability,
 } from './github.js';
 
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
 
 it('reads merged PR evidence needed to recover a missed webhook', async () => {
   const sha = 'a'.repeat(40);
@@ -956,4 +959,80 @@ it('Reproduction F1-1: a hung merge aborts within the provider deadline', async 
     expect(observed).toBe('aborted');
     expect(deadline).toHaveBeenCalledWith(15_000);
   } finally { deadline.mockRestore(); }
+});
+
+
+describe('installation token diagnostics (Reproduction 7801305644)', () => {
+  const requestId = 'ABCD:1234:5678:9ABC:DEF01234';
+  async function client() {
+    const { privateKey } = await generateKeyPair('RS256');
+    return new GitHubAppClient({
+      appId: '42', privateKey: await exportPKCS8(privateKey), slug: 'beeline',
+    });
+  }
+
+  it.each([
+    [500, 'text/html; charset=utf-8', '<html>private upstream response</html>', 'html'],
+    [503, 'application/json', '{"message":"private upstream response"}', 'json'],
+    [401, 'text/plain', 'private upstream response', 'other'],
+  ])('retains safe metadata for HTTP %s without retrying', async (status, contentType, body, mediaType) => {
+    const app = await client();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const fetchMock = vi.fn(async () => new Response(body, { status, headers: {
+      'content-type': contentType, 'x-github-request-id': requestId,
+    } }));
+    vi.stubGlobal('fetch', fetchMock);
+    const error = await app.installationToken(1, {
+      repositoryIds: [2], permissions: { contents: 'read' },
+    }).catch(error => error);
+    expect(error).toBeInstanceOf(GitHubHttpError);
+    expect(error).toMatchObject({ status, message: `GitHub installation token failed: HTTP ${status}` });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls).toEqual([['[github-installation-token]', {
+      status, requestId, mediaType,
+    }]]);
+  });
+
+  it.each([undefined, 'Bearer ghp_private', 'ABCD:1234\nprivate', 'A'.repeat(129)])(
+    'suppresses absent or unrecognized request IDs: %s', async header => {
+      const app = await client();
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+      // A response-like object allows testing hostile header text rejected by real Headers.
+      const response = new Response('private', { status: 500 });
+      vi.spyOn(response.headers, 'get').mockImplementation(name =>
+        name === 'x-github-request-id' ? header ?? null : 'private-content-type');
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(response));
+      await expect(app.installationToken(1)).rejects.toMatchObject({ status: 500 });
+      expect(warn.mock.calls).toEqual([['[github-installation-token]', {
+        status: 500, requestId: 'unavailable', mediaType: 'other',
+      }]]);
+    },
+  );
+
+  it('does not log a successful token or a network exception', async () => {
+    const app = await client();
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const networkError = new TypeError('network failed');
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        token: 'private-token', expires_at: '2030-01-01T00:00:00Z',
+      }), { status: 201 }))
+      .mockRejectedValueOnce(networkError);
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(app.installationToken(1)).resolves.toMatchObject({ token: 'private-token' });
+    await expect(app.installationToken(1)).rejects.toBe(networkError);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('preserves the HTTP failure if diagnostics fail', async () => {
+    const app = await client();
+    vi.spyOn(console, 'warn').mockImplementation(() => { throw new Error('logging failed'); });
+    const fetchMock = vi.fn(async () => new Response('private', { status: 500 }));
+    vi.stubGlobal('fetch', fetchMock);
+    await expect(app.installationToken(1)).rejects.toMatchObject({
+      status: 500, message: 'GitHub installation token failed: HTTP 500',
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
 });

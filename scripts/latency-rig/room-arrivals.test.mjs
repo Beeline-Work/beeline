@@ -74,3 +74,9 @@ test('a warm open cannot reuse the preceding push or an earlier warm frame', () 
   assert.equal(findNativeArrival(output, 'warm', 'same-target', 250), mark('warm', 300));
   assert.equal(findNativeArrival(output, 'warm', 'same-target', 350), '');
 });
+
+
+test('profiled native frames cannot become acceptance samples', () => {
+  const mark = { probe: 'native-frame-commit-v1', case: 'push-unseen-1', startMs: 100, paintMs: 200, profiled: true };
+  assert.throws(() => nativeArrivalMoment(`LATENCY_VISIBLE ${JSON.stringify(mark)}`, 'push-unseen-1'), /Profiled/);
+});

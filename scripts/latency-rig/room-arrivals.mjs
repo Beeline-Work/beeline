@@ -37,6 +37,7 @@ export function nativeArrivalMoment(output, name) {
   const match = /LATENCY_VISIBLE (\{[^\r\n]*\})/.exec(output);
   if (!match) throw new Error(`Newest message never became visible: ${name}`);
   const mark = JSON.parse(match[1]);
+  if (mark.profiled) throw new Error('Profiled samples cannot establish a latency verdict');
   if (mark.probe !== 'native-frame-commit-v1' || mark.case !== name || !Number.isFinite(mark.startMs) || !Number.isFinite(mark.paintMs) || mark.paintMs < mark.startMs)
     throw new Error('Invalid native visibility timestamps');
   return { kind: name === 'send-text' ? 'tap' : 'route', name: name === 'send-text' ? 'send-text' : '/beeline/chat/[channelId]', variant: name === 'send-text' ? 'warm' : name,

@@ -218,6 +218,13 @@ uncertain clocks or clock jumps fail closed. Native paint durations use one
 device clock and remain independent of this conversion. Uncalibrated reports
 cannot pass request contracts or advance the nightly baseline.
 
+For a focused Hermes diagnosis, the same shell-protected fixture receiver
+accepts `app.usebeeline.LATENCY_RIG_PROFILE` with `action=start` or `action=stop`.
+Stop dumps `latency-profile.json` into the fixture app's external files directory.
+These actions exist only in the emulator-only probe APK. Every frame captured
+while profiling is marked; the arrival parser rejects it as acceptance evidence.
+Run the normal unprofiled matrix again after any resulting fix.
+
 The driver records the first open separately in `first-open.json` without a
 cold-start verdict, then warms navigation and allows installation work to settle
 for 30 seconds before collecting the warm-session matrix.

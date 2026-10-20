@@ -12,10 +12,15 @@ import java.lang.ref.WeakReference;
 public final class LatencyRigProbe {
   private static WeakReference<View> root = new WeakReference<>(null);
   private static Pending pending;
+  private static boolean profiling;
+  public static synchronized void setProfiling(boolean enabled) {
+    profiling = enabled;
+    if (enabled && pending != null) pending.profiled = true;
+  }
   private static final class Pending {
     final String needle, name, entry;
     long startNanos, startMs;
-    boolean submitted;
+    boolean submitted, profiled;
     Pending(String n, String c, String e) { needle=n; name=c; entry=e; }
   }
   public static synchronized void expect(String needle, String name, String entry) {
@@ -26,6 +31,7 @@ public final class LatencyRigProbe {
   public static synchronized void begin(String entry) {
     Pending p = pending;
     if (p == null || p.startNanos != 0 || !p.entry.equals(entry)) return;
+    p.profiled = profiling;
     p.startMs = System.currentTimeMillis();
     p.startNanos = SystemClock.elapsedRealtimeNanos();
     View view = root.get();
@@ -49,7 +55,7 @@ public final class LatencyRigProbe {
       try {
         JSONObject mark = new JSONObject();
         mark.put("probe", "native-frame-commit-v1"); mark.put("case", p.name); mark.put("needle", p.needle);
-        mark.put("startMs", p.startMs); mark.put("paintMs", paintMs);
+        mark.put("startMs", p.startMs); mark.put("paintMs", paintMs); mark.put("profiled", p.profiled);
         Log.w("LATENCY_NATIVE", "LATENCY_VISIBLE " + mark.toString());
       } catch (Exception error) { throw new RuntimeException(error); }
       synchronized (LatencyRigProbe.class) { if (pending == p) pending = null; }

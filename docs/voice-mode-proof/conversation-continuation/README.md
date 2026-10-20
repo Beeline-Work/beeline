@@ -40,8 +40,10 @@ exercise the server and transport. These screenshots do not constitute human
 approval of mobile UI changes; the PR remains draft pending that approval.
 
 CONVERSATION-2: tap Goosey's production avatar, wait four seconds, then make an
-unnamed request. Goosey receives it and remains visibly selected, with an outline
-and underlined name ([selection screenshot](fixed-selected.png)). Server tests
+unnamed request. Goosey receives it and remains visibly selected in the historical Android proof
+([selection screenshot](fixed-selected.png)). That older binary predates revision 6;
+its name underline is superseded. The refreshed composer previews show selection
+by avatar outline only, with no underlined name. Server tests
 also cover persistence across replies and multi-human targeting; component tests
 cover immediate selection across rerenders.
 

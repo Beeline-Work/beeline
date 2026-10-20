@@ -130,14 +130,20 @@ it('Reproduction CONVERSATION-2: tapping a face immediately marks selection and 
   await act(async () => { renderer = create(<Probe />); });
   const face = (name: string) => renderer.root.findAllByType('Pressable')
     .find((node: any) => node.props.accessibilityLabel === `Speak to ${name}`);
-  const selectedName = () => renderer.root.findAllByType('Text').find((node: any) =>
-    [node.props.style].flat(Infinity).some((style: any) => style?.textDecorationLine === 'underline'))?.props.children;
+  const outline = (name: string) => face(name).findAllByType('View')[0].props.style
+    .flat(Infinity).filter((style: any) => style?.borderColor).at(-1)?.borderColor;
+  const underlined = () => renderer.root.findAllByType('Text').some((node: any) =>
+    [node.props.style].flat(Infinity).some((style: any) => style?.textDecorationLine === 'underline'));
   try {
     await act(async () => face('Goosey').props.onPress());
     expect(face('Goosey').props.accessibilityState.selected).toBe(true);
     expect(face('Ruby').props.accessibilityState.selected).toBe(false);
-    expect(selectedName()).toBe('Goosey');
+    expect(outline('Goosey')).not.toBe('transparent');
+    expect(outline('Ruby')).toBe('transparent');
+    expect(underlined()).toBe(false);
     await act(async () => updateLevel(0.8));
-    expect(selectedName()).toBe('Goosey');
+    expect(outline('Goosey')).not.toBe('transparent');
+    expect(outline('Ruby')).toBe('transparent');
+    expect(underlined()).toBe(false);
   } finally { await act(async () => renderer.unmount()); }
 });

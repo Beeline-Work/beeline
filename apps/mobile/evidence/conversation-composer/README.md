@@ -9,7 +9,7 @@ npx vitest run sources/components/buzz/ConversationComposer.conversation.browser
 ```
 
 The proof checks connected silence, connection pending, listening and agent speech;
-all controls remain available. It taps Jellybean, verifies the visible underline
+all controls remain available. It taps Jellybean, verifies the selected avatar outline without an underlined name
 and persistent selected state across those phases, and checks that the existing scrolling waveform retains a live bar at its
 visible newest edge. A level update changes that bar in the same synchronous
 render, before any history sample or timer advances. History keeps its existing

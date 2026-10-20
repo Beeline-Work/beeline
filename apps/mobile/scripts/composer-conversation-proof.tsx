@@ -46,16 +46,18 @@ async function run() {
   await pause();
   const selected = () => document.querySelector<HTMLElement>('[aria-label="Speak to Jellybean"]');
   selected()!.click(); await pause();
-  check('CONVERSATION-2: tap selects Jellybean immediately', !!selected()?.querySelector('[style*="underline"]'));
+  const outlined = () => getComputedStyle(selected()!.firstElementChild!).borderTopColor ===
+    (theme === 'bone' ? 'rgb(23, 19, 16)' : 'rgb(240, 240, 243)');
+  check('CONVERSATION-2: tap selects Jellybean with an avatar outline', outlined());
   const selectedLabel = Array.from(selected()!.querySelectorAll<HTMLElement>('*')).find(element => element.textContent === 'Jellybean');
-  check('CONVERSATION-2: selection is visible as an underline', !!selectedLabel && getComputedStyle(selectedLabel).textDecorationLine.includes('underline'));
+  check('CONVERSATION-2: selected name has no underline', !!selectedLabel && !getComputedStyle(selectedLabel).textDecorationLine.includes('underline'));
   const latest = () => byID('waveform-live-level')!;
   check('CONVERSATION-3: visible newest bar is quiet in silence', getComputedStyle(latest()).height === '2px');
   for (const phase of ['silence', 'connecting', 'listening', 'speaking']) {
     flushSync(() => setPhase(phase));
     if (phase === 'listening') check('CONVERSATION-3: volume changes the visible newest bar before timers advance', parseFloat(getComputedStyle(latest()).height) > 2);
     await pause();
-    check(`${phase}: tap stays selected`, !!selected()?.querySelector('[style*="underline"]'));
+    check(`${phase}: tap stays selected`, outlined());
     check(`${phase}: current level stays at the visible right edge`, latest().getBoundingClientRect().right <= byID('voice-waveform')!.getBoundingClientRect().right);
     if (phase === 'listening') check('CONVERSATION-3: current level grows immediately', parseFloat(getComputedStyle(latest()).height) > 2);
     const strip = byID('conversation-target-strip')!.getBoundingClientRect();

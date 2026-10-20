@@ -43,6 +43,14 @@
             "flags": "is"
           }
         }
+      },
+      {
+        "text": {
+          "not": {
+            "matches": "(?:repository|Room).{0,60}(?:filesystem|checkout).{0,30}read.only",
+            "flags": "is"
+          }
+        }
       }
     ]
   }

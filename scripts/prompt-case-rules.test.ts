@@ -23,6 +23,7 @@ test('repo-less Room case accepts header navigation and rejects referrals to ano
     'Go to a Room with a linked repository.',
     'Use another Room.',
     'Create a repository-backed Room.',
+    "The Room's repository filesystem is read-only.",
   ]) {
     assert.equal(evaluateRule(saved.pass, { calls: [], text: `${guidance} ${referral}` }).pass, false, referral);
   }

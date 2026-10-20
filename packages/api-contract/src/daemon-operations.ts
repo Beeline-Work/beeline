@@ -756,6 +756,18 @@ export type AgentRoomInput = AgentInput & RoomInput;
 export type AgentConfigurationInput = AgentInput & { readonly roomId?: string };
 export type CornerInput = { readonly cornerId: string };
 export type AgentMemberMetadata = {
+  readonly model?: string | null;
+  /** Absent when the provider has not reported its billing or quota. */
+  readonly billing?: 'subscription' | 'pay-per-use';
+  readonly remainingAllowance?: {
+    readonly updatedAt: number;
+    /** Remaining fraction (0–1) per provider window; timestamps are Unix seconds. */
+    readonly windows: readonly { readonly rateLimitType: string; readonly remaining: number; readonly resetsAt?: number }[];
+    readonly usd?: number;
+    readonly credits?: number;
+    readonly tokens?: { readonly remaining: number; readonly resetsAt: number };
+  };
+  readonly reviewer?: 'primary' | 'fallback';
   readonly owner?: { readonly id: string; readonly handle: string | null; readonly name: string };
   readonly machine?: string | null;
   readonly online?: boolean;

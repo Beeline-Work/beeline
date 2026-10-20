@@ -3297,6 +3297,12 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
           : '') +
         `, converted ${classes.runs} workflow run(s)`,
     );
+  await dataStep('empty reviewer fallbacks', () => boundedMigrationUpdate(database,
+    'empty reviewer fallbacks',
+    `UPDATE rooms SET reviewer_fallback_ids=array_remove(reviewer_fallback_ids,'')
+     WHERE id IN (SELECT id FROM rooms WHERE ''=ANY(reviewer_fallback_ids) ORDER BY id LIMIT $1)`,
+    [],
+  ));
   const reviewers = await dataStep('corner reviewers', () =>
     reconcileConfiguredCornerReviewers(database));
   console.log(

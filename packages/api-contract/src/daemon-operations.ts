@@ -297,7 +297,7 @@ export type DaemonOperationMap = {
     RoomInput,
     { readonly commandProtocol: 1; readonly commands: readonly AgentCommand[] }
   >;
-  claimAgentCommand: Operation<CommandClaimInput, WriteResult & { readonly turnRequestId?: string; readonly recoveryContext?: string; readonly coalescedContext?: string; readonly source?: RoomInboxResult['items'][number]; readonly activitySource?: { readonly body: string; readonly systemEvent: SystemEvent } }>;
+  claimAgentCommand: Operation<CommandClaimInput, WriteResult & { readonly recoveryContext?: string; readonly coalescedContext?: string; readonly source?: RoomInboxResult['items'][number]; readonly activitySource?: { readonly body: string; readonly systemEvent: SystemEvent } }>;
   acknowledgeAgentCommand: Operation<CommandClaimInput, WriteResult>;
   getDaemonBootstrap: Operation<DaemonBootstrapInput, DaemonBootstrapResult>;
   getWorkspaceRoster: Operation<WorkspaceRosterInput, WorkspaceRosterResult>;

@@ -11,7 +11,7 @@ import { migrate } from '../apps/server/src/database.js';
 import { LiveHub } from '../apps/server/src/live.js';
 import { VoiceRoomRuntime } from '../apps/server/src/voice-room-runtime.js';
 import { VoiceService } from '../apps/server/src/voice-service.js';
-import { claimAgentCommand, authorizeCommandOutput } from '../apps/server/src/agent-command.js';
+import { claimAgentCommand } from '../apps/server/src/agent-command.js';
 import { DaemonService } from '../apps/server/src/daemon-service.js';
 import { AuraSpeech, OpenRouterVoiceBrain } from '../apps/server/src/voice-providers.js';
 import type { FluxEvent } from '../apps/server/src/voice-providers.js';
@@ -137,15 +137,6 @@ const server = createServer((req,res)=> { void (async()=>{
       words: text.split(' ').map((word: string, i: number) => ({word, start: i * .3, end: (i+1) * .3, confidence: .99}))});
   }
   else if(req.url==='/solo-proof') { await service.leave(first.call.id,partner); await client.disconnect(); }
-  else if(req.url==='/claim-proof') {
-    const command = (await db.query<{id:string;turn_request_id:string;agent_id:string}>(`SELECT id,turn_request_id,agent_id FROM agent_commands WHERE state='pending' ORDER BY created_at LIMIT 1`)).rows[0]!;
-    await claimAgentCommand(db,R,command.agent_id,command.id,'continuation-proof');
-    value = command;
-  }
-  else if(req.url==='/stale-proof') {
-    try { await authorizeCommandOutput(db,R,body.agentId,body.requestId,'continuation-proof'); value={fenced:false}; }
-    catch { value={fenced:true}; }
-  }
   else if(req.url==='/report') {
     const command = (await db.query<{id:string; agent_id:string; source_message_id:string; turn_request_id:string}>(
       `SELECT c.id,c.agent_id,c.source_message_id,c.turn_request_id FROM agent_commands c JOIN voice_orders o

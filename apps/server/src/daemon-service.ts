@@ -1093,13 +1093,13 @@ export class DaemonService {
           const activity = row.reason === 'computer_activity' ? (await db.query<{
             text: string; system_event: NonNullable<import('@beeline/api-contract/daemon').AgentCommand['source']['systemEvent']>;
           }>(`SELECT text,system_event FROM messages WHERE id=$1`, [row.source_message_id])).rows[0] : undefined;
-          const source = (row.coalesced_context !== null && row.coalesced_context !== undefined) || row.reason === 'voice_amendment'
+          const source = row.coalesced_context !== null && row.coalesced_context !== undefined
             ? (await readAgentCommands(db, scopedRoom!, authenticatedAgentId, [row.id])).commands[0]?.source
             : undefined;
           return { row, activity, source };
         });
         this.live.publish({ type: 'invalidate', roomId: scopedRoom!, reason: 'turn', agentId: authenticatedAgentId });
-        return { ...this.writeResult(), turnRequestId: claimed.row.turn_request_id,
+        return { ...this.writeResult(),
           ...(claimed.row.recovery_context ? { recoveryContext: claimed.row.recovery_context } : {}),
           ...(claimed.row.coalesced_context !== null && claimed.row.coalesced_context !== undefined
             ? { coalescedContext: claimed.row.coalesced_context } : {}),

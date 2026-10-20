@@ -6,12 +6,12 @@
     "apps/mobile/scripts/voice-delivery-native-proof.tsx": "c5b29177147237e291b429c9fd254d892293d973a7733cacd66b7ec9927f9821",
     "apps/mobile/sources/components/buzz/VoiceBar.tsx": "51c362afec8fb88f07334db4809c975a0a2736a41fdc316bc9c4b8a221b94202",
     "apps/mobile/sources/components/buzz/DictationWaveform.tsx": "9eae434027a7dbcf95c56815208c1794e4e9c5bf22251b802e6560b7ad020e98",
-    "apps/server/src/voice-room-runtime.ts": "11615cbed5bd4bc6672a4e9a4cb0f3315f696eac02813dcad054927254e1f34d",
-    "apps/server/src/voice-request-assembler.ts": "0689911778220a18ad5ce590a1b82457f9378f4664951d796e5abc599b716993",
-    "apps/server/src/voice-service.ts": "3f28844681bbf4d905cec1e2aee08c4c9af33cc6ca99acfb57ab47662deaa281",
-    "apps/body/src/server-command-intake.ts": "fa8a385f3fb50b9e618f3c0b277645b7cacd7ee4a472e4847c32b7939bc57f35",
-    "scripts/prove-voice-delivery.ts": "e911302d047c946a8e8e326b59a73fef4a6e309a778f87ae2195e67518fac41a",
-    "scripts/prove-voice-continuation-android.py": "dd778cf952dcddf7b13b62729ea563e19c443b6c574f6cd48aa839e95f9d955d"
+    "apps/server/src/voice-room-runtime.ts": "1cc7ab01a7d2fd0021da1ce65985e8b7c79fcc1487a249c94c3f8c5988073420",
+    "apps/server/src/voice-request-assembler.ts": "c1300a66ecc152f97bc780ac5c4961b19df1a6cda629b2398e64978126371a40",
+    "apps/server/src/voice-service.ts": "cf4f98be9bcbee202d91086285891cf5415c95dbdea4787ec17f124928cde63c",
+    "apps/body/src/server-command-intake.ts": "401171e73a965f6da1e3f782342bfebb0d003c1704f8f3435de77006d6778ab2",
+    "scripts/prove-voice-delivery.ts": "3ca9cb0a5e11653d83d615d944d457aefd432b497f3cf467a5c25156473374fd",
+    "scripts/prove-voice-continuation-android.py": "419e49f03302fc44630ecad743140e9b93968351499380fc27d7bbdc9acb1fc6"
   },
-  "boundary": "Release Hermes app, native WebRTC, LiveKit v1.9.12, disposable database, controlled Flux finals and provider SSE/PCM; actual command dispatch, claim, replacement, report and PhoneService reads."
+  "boundary": "Revision 4 server; release Hermes app predating the mobile mock gate, native WebRTC, LiveKit v1.9.12, disposable database, controlled Flux finals and provider SSE/PCM; actual command dispatch, claim, report and PhoneService reads. No command amendment."
 }

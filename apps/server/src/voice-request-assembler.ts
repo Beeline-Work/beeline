@@ -7,13 +7,11 @@ export interface VoiceRequest {
   text: string;
   agent?: VoiceAgent;
   source: Promise<string>;
-  delivery?: Promise<void>;
-  revisionPending?: boolean;
   classification: AbortController;
   state: 'assembling' | 'classifying' | 'delivering' | 'retryable' | 'replying' | 'finished';
 }
 
-/** One request per human remains editable until its first voiced reply. */
+/** One request per human remains editable until its first voiced reply is ready to publish. */
 export class VoiceRequestAssembler {
   private readonly requests = new Map<string, VoiceRequest>();
   private readonly failed = new Map<string, Map<string, VoiceRequest>>();
@@ -47,7 +45,7 @@ export class VoiceRequestAssembler {
   }
   pause(human: string) {
     const request = this.requests.get(human);
-    if (request && request.state !== 'finished' && request.state !== 'retryable') {
+    if (request && ['assembling', 'classifying', 'replying'].includes(request.state)) {
       request.state = 'assembling';
       request.classification.abort();
     }
@@ -55,7 +53,6 @@ export class VoiceRequestAssembler {
   humans() { return [...new Set([...this.requests.keys(), ...this.addresses.keys(), ...this.failed.keys()])]; }
   retainFailure(human: string, request: VoiceRequest) {
     request.state = 'retryable';
-    request.delivery = undefined;
     let failed = this.failed.get(human);
     if (!failed) this.failed.set(human, failed = new Map());
     failed.set(request.id, request);
@@ -68,14 +65,13 @@ export class VoiceRequestAssembler {
   current(human: string) { return this.requests.get(human); }
   begin(human: string, text: string): { request: VoiceRequest; previous?: VoiceRequest } {
     const previous = this.requests.get(human);
-    const continuation = previous && previous.state !== 'finished' ? previous : undefined;
+    const continuation = previous && ['assembling', 'classifying', 'replying'].includes(previous.state) ? previous : undefined;
     continuation?.classification.abort();
     const request: VoiceRequest = {
       id: continuation?.id ?? randomBytes(32).toString('hex'),
       text: continuation ? `${continuation.text} ${text}` : text,
       agent: continuation?.agent,
       source: continuation?.source ?? Promise.resolve(''),
-      delivery: continuation?.delivery,
       classification: new AbortController(), state: 'assembling',
     };
     this.requests.set(human, request);

@@ -21,18 +21,23 @@ Baseline runtime `e2665c7dfc62ed9ac1de9ef4b18838dd76f9c6de`, same Android binary
 
 ## Demonstrated
 
-Repeat CONVERSATION-1 against the fixed runtime and same built app. Claim the
-first command before continuing speech. There is one human row:
+Repeat CONVERSATION-1 against the revision 4 runtime and the same built app.
+The brain completes three decisions, one for each joined version. Each new
+fragment aborts the superseded synthesis. Before the controlled speech gate opens,
+there is one human row and **no command**:
 
 > @ruby Ruby build a clock and build an alarm and build a timer
 
-The command keeps its ID. Amendment atomically cancels the claimed attempt's
-output authority and requeues the same command with a fresh turn request ID.
-The old attempt is refused. The replacement is claimed and reports through
-DaemonService; its provenance-bound report reaches the transcript and native
-RTP audio. No acknowledgement bytes are produced before the controlled gate
-opens. See [fixed observations](fixed-android.json) and
+Opening the gate prepares the first voiced frame. Assembly closes, exactly one
+command commits, and only then does that frame publish. The command is claimed
+and reports through DaemonService; its provenance-bound report reaches the
+transcript and native RTP audio. Nothing amends, cancels or replaces a committed
+command. See [fixed observations](fixed-android.json) and
 [fixed screenshot](fixed-joined.png).
+
+The Android binary predates the revision 4 mobile mock gate. It is used here to
+exercise the server and transport. These screenshots do not constitute human
+approval of mobile UI changes; the PR remains draft pending that approval.
 
 CONVERSATION-2: tap Goosey's production avatar, wait four seconds, then make an
 unnamed request. Goosey receives it and remains visibly selected, with an outline
@@ -45,12 +50,11 @@ same render, without advancing a timer. The browser proof verifies stable block
 nodes and no translation in both themes; [composer evidence](../../../apps/mobile/evidence/conversation-composer/README.md)
 contains the screenshots. The 120 ms sample queue and smoothing are removed.
 
-The helper intake regression demonstrates that an amendment cancels the old
-attempt and runs its replacement serially under the same command ID. Claim
-receipts refresh the authoritative turn request and source if amendment wins
-between snapshot and claim. Service coverage also exercises completed attempts,
-idempotent amendment retries and refusal of superseded outputs. Already performed
-external effects are not rolled back.
+Server regressions cover both direct answers and work decisions completing
+between fragments, same-human partial speech, independent replies to another
+human, dispatch before failed/empty acknowledgement, stable-source retries, and
+refusal to edit an already committed order. A continuation during the dispatch
+round trip starts a new source; it cannot alter the accepted command.
 
 ## Latency
 
@@ -58,11 +62,12 @@ No settling timer is added. The existing controlled finished-sentence regression
 still expects 76 ms from Flux final to first accepted voiced audio, or 1076 ms
 including its simulated 1000 ms Flux end-of-turn boundary, unchanged from baseline.
 
-Five actual Android/RTC turns per runtime measured median final-to-first-server-
-audio at **15.9 ms before** and **18.4 ms after**, including cold samples of
-206.7 ms and 209.8 ms respectively. This small sample observed a 2.5 ms median
-difference; it does not measure live provider or physical speaker latency.
-All samples are retained in the observation JSON files.
+Five actual Android/RTC turns per runtime retain their samples in the observation
+JSON. These controlled-provider timings do not measure live provider or physical
+speaker latency. The fixed samples are refreshed for revision 4; the baseline
+median is 15.9 ms; the revision 4 median is 21.6 ms. This small
+CPU-sensitive sample differs by 5.7 ms; the deterministic finished-turn
+regression remains unchanged at 76 ms. No fixed wait is introduced.
 
 ## Repeat
 

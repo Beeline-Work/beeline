@@ -111,24 +111,22 @@ conversation uses `openai/gpt-6-luna` through OpenRouter with reasoning disabled
 External work is dispatched through `routeHumanMessage`, the existing command
 grammar. `voice-request-assembler.ts` owns one unfinished request per human,
 independently of playback. Each request uses a stable source message ID. The final
-external-work decision commits its command before scheduling any acknowledgement
-speech. Interruptions and synthesis failures cannot cancel classification or
-accepted delivery. A speaker can revise their own request until its first voiced reply is accepted
-by the audio transport. Classification and dispatch start immediately at Flux
-EndOfTurn: there is no settling timer. Recognized speech from that same human
-pauses their pending reply and joins the next final into the same message row.
-Other humans can still receive their replies. Explicit cancel clears assembly
-and playback without withdrawing already committed work. A failed delivery remains retryable with the same ID: say
-"try again" to retry the commit without reclassifying or editing its source.
+external-work decision commits its command immediately before its first reply audio,
+then plays the acknowledgement. The brain starts immediately at Flux EndOfTurn:
+there is no settling timer. Until the first voiced frame is ready to publish,
+recognized speech from that human aborts the pending brain/synthesis generation.
+The next final joins the same message row and reruns the brain on the complete
+request. Other humans can still receive their replies.
+
+For orders, the runtime prepares the first voiced acknowledgement frame, closes
+assembly, commits the dispatch, then publishes that frame. A synthesis failure or
+empty acknowledgement still commits the order. There is no amendment or
+cancellation of committed commands. Speech during the dispatch round trip starts
+a new request. Explicit cancel clears assembly and playback without withdrawing
+already committed work. A failed delivery remains retryable with the same ID:
+say "try again" to retry the commit without reclassifying or editing its source.
 A delivery whose acknowledgement audio fails shows "Request delivered; voice reply
-unavailable". Before first audio, a continuation amends a committed order rather than creating
-another command. Pending commands read the revised source. For a claimed or
-completed command, one transaction cancels the old turn's output authority,
-requeues the same command ID with a new turn request ID and clears any superseded
-report. The helper cancels the old attempt before executing the replacement in
-the same session. Already performed external effects cannot be undone. The
-committed agent remains the request's addressee. Retry retains transactional
-order deduplication.
+unavailable". Transactional deduplication protects uncertain dispatch retries.
 [Android delivery proof](voice-mode-proof/request-delivery/README.md) records
 Reproduction DELIVERY-2 and its controlled STT/provider stand-ins. Real agent
 reports are matched to their original command. Their first short paragraph is
@@ -281,4 +279,4 @@ Regression coverage: `agent-voice.test.ts`,
 and `chat-list-delta.test.ts`.
 
 [Conversation continuation proof](voice-mode-proof/conversation-continuation/README.md)
-records paused fragments, command amendment, tap persistence and waveform evidence.
+records paused fragments, dispatch at the playback boundary, tap persistence and waveform evidence.

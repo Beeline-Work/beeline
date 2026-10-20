@@ -607,7 +607,7 @@ export class VoiceRoomRuntime {
         selected = await this.retry(() => this.service.lastActiveAgent(this.roomId, agents)) ?? selected;
       const changedTarget = previous?.agent && this.targets.get(human) !== previous.agent.id
         ? agents.find(agent => agent.id === this.targets.get(human)) : undefined;
-      const agent = request.delivery ? request.agent : retry ? request.agent : named ?? tapped ?? changedTarget ?? request.agent ?? openingVoiceName(request.text, agents) ??
+      const agent = retry ? request.agent : named ?? tapped ?? changedTarget ?? request.agent ?? openingVoiceName(request.text, agents) ??
         (humans === 1 ? namedVoiceTarget(request.text, agents, selected, humans) : undefined);
       if (generation.signal.aborted || this.closed) { resolveSource?.(sourceId); return; }
       if (!agent) {
@@ -624,14 +624,9 @@ export class VoiceRoomRuntime {
         resolveSource(''); return;
       }
       if (!retry) {
-        if (previous?.delivery) await previous.delivery;
         if (sourceId) await this.retry(() => this.service.reviseHuman(this.callId, this.roomId, human, agent, sourceId, request.text, this.leaseOwner));
         else sourceId = await this.retry(() => this.service.recordHuman(this.callId, this.roomId, human, agent, request.text, this.leaseOwner, request.id));
         resolveSource(sourceId);
-      }
-      if (retry && request.revisionPending) {
-        await this.retry(() => this.service.reviseHuman(this.callId, this.roomId, human, agent, sourceId, request.text, this.leaseOwner));
-        request.revisionPending = false;
       }
       timing('human_committed');
       if (generation.signal.aborted || this.closed || !sourceId) return;
@@ -651,7 +646,7 @@ export class VoiceRoomRuntime {
       // Deltas cannot announce work before the final decision has committed it.
       let streamed = false;
       let firstAudio = false;
-      const reply = request.delivery ? { order: true, text: "Checking. I’ll tell you when I have it." } : retry ? { order: true, text: "Checking. I’ll tell you when I have it." } :
+      const reply = retry ? { order: true, text: "Checking. I’ll tell you when I have it." } :
         await this.service.config.brain.answer(agent, history, delta => { if (delta) { streamed = true; timing('brain_first_token'); } }, generation.signal, {
           search: (search, signal) => this.service.search(this.callId, sourceId, agent.id, search, signal),
           announce: async text => {
@@ -662,9 +657,9 @@ export class VoiceRoomRuntime {
               await this.safeSignal({ type: 'speaker', agentId: agent.id });
               await this.play(text, agent, controller.signal, () => {
                 if (firstAudio) return;
-                firstAudio = true; this.assembler.finish(human, request); timing('first_voiced_audio_published');
+                firstAudio = true; timing('first_voiced_audio_published');
                 this.task(() => this.signal({ type: 'latency', firstAudioMs: performance.now() - startedAt }));
-              }, undefined, timing, members);
+              }, () => { this.assembler.finish(human, request); }, timing, members);
             } finally {
               if (this.speaking === controller) {
                 this.speaking = undefined;
@@ -676,15 +671,22 @@ export class VoiceRoomRuntime {
         });
       timing('brain_complete');
       if (generation.signal.aborted || this.closed) return;
-      if (reply.order) {
-        request.state = 'delivering';
-        try {
-          request.delivery ??= this.retry(() => this.service.dispatch(this.callId, sourceId, agent.id));
-          await request.delivery;
-        } catch (error) { this.assembler.retainFailure(human, request); throw error; }
-        delivered = true;
-        timing('delivery_committed');
-      }
+      let committed = false;
+      const commitReply = async () => {
+        if (committed) return;
+        if (generation.signal.aborted || this.closed || this.humanSpeaking.has(human))
+          throw new DOMException('Interrupted', 'AbortError');
+        // Close assembly before the dispatch round trip. Later speech is a new request.
+        this.assembler.finish(human, request);
+        committed = true;
+        if (reply.order) {
+          request.state = 'delivering';
+          try { await this.retry(() => this.service.dispatch(this.callId, sourceId, agent.id)); }
+          catch (error) { this.assembler.retainFailure(human, request); throw error; }
+          delivered = true;
+          timing('delivery_committed');
+        }
+      };
       if (generation.signal.aborted || this.closed) return;
       request.state = 'replying';
       const answer = reply.text || (reply.order ? "Checking. I’ll tell you when I have it." : '');
@@ -692,31 +694,40 @@ export class VoiceRoomRuntime {
       history.push({ role: 'assistant', content: answer });
       if (firstAudio) this.history.set(key, history.slice(-16));
       // A different speaker may have taken the audio lane during classification.
-      if (this.humanSpeaking.has(human) || controller.signal.aborted || this.closed || (this.speaking && !this.speaking.signal.aborted) || playbackVersion !== this.playbackVersion) return;
+      if (this.humanSpeaking.has(human) || controller.signal.aborted || this.closed || (this.speaking && !this.speaking.signal.aborted) || playbackVersion !== this.playbackVersion) {
+        // Another speaker can suppress acknowledgement audio, never accepted work.
+        if (reply.order && !generation.signal.aborted && !this.closed && !this.humanSpeaking.has(human)) await commitReply();
+        return;
+      }
       this.speaking = controller; this.speakingHuman = human;
       this.speechIdle = new Promise<void>(resolve => { finishSpeech = resolve; });
       await this.safeSignal({ type: 'speaker', agentId: agent.id });
-      if (controller.signal.aborted || this.closed) return;
+      if (controller.signal.aborted || this.closed) {
+        if (reply.order && !generation.signal.aborted && !this.closed && !this.humanSpeaking.has(human)) await commitReply();
+        return;
+      }
       const stream = new MarkdownSpeechStream(members);
       const phrases = streamed ? [...stream.push(answer), stream.finish()] : [answer];
-      for (const phrase of phrases) {
-        if (!phrase.trim()) continue;
-        if (controller.signal.aborted || this.closed) throw new DOMException('Interrupted', 'AbortError');
-        await this.play(phrase, agent, controller.signal, () => {
-          if (firstAudio) return;
-          firstAudio = true; this.assembler.finish(human, request); timing('first_voiced_audio_published');
-          this.task(() => this.signal({ type: 'latency', firstAudioMs: performance.now() - startedAt }));
-          this.history.set(key, history!.slice(-16));
-          recordAnswer();
-        }, undefined, timing, members);
+      try {
+        for (const phrase of phrases) {
+          if (!phrase.trim()) continue;
+          if (controller.signal.aborted || this.closed) throw new DOMException('Interrupted', 'AbortError');
+          await this.play(phrase, agent, controller.signal, () => {
+            if (firstAudio) return;
+            firstAudio = true; timing('first_voiced_audio_published');
+            this.task(() => this.signal({ type: 'latency', firstAudioMs: performance.now() - startedAt }));
+            this.history.set(key, history!.slice(-16));
+            recordAnswer();
+          }, commitReply, timing, members);
+        }
+      } catch (error) {
+        if (reply.order && !generation.signal.aborted && !this.closed && !this.humanSpeaking.has(human)) await commitReply();
+        throw error;
       }
+      // Empty or failed synthesis must not drop an accepted work request.
+      if (reply.order && !committed) await commitReply();
     } catch (error) {
       rejectSource?.(error);
-      if (previous && request.delivery && !delivered) {
-        request.source = priorSource;
-        request.revisionPending = true;
-        this.assembler.retainFailure(human, request);
-      }
       if (!delivered && request.state !== 'replying' && request.state !== 'retryable' && !(generation.signal.aborted && error instanceof Error && error.name === 'AbortError'))
         this.assembler.finish(human, request);
       if (delivered && !(error instanceof Error && error.name === 'AbortError')) throw new DeliveredVoicePlaybackError(error);
@@ -797,7 +808,7 @@ export class VoiceRoomRuntime {
   }
 
   private async play(text: string, agent: VoiceAgent, signal: AbortSignal, onFirstAudio?: () => void,
-    onFirstVoicedFrame?: () => void, timing?: (stage: string) => void, members?: SpeechMember[]) {
+    onFirstVoicedFrame?: () => void | Promise<void>, timing?: (stage: string) => void, members?: SpeechMember[]) {
     text = markdownToSpeech(text, members);
     if (!text) return;
     let pending = Buffer.alloc(0); let first = true; let firstByte = true; let firstPublished = true;
@@ -825,7 +836,8 @@ export class VoiceRoomRuntime {
           this.markCallActivity();
           this.touch();
           const voiced = first && samples.some(sample => Math.abs(sample) > 150);
-          if (voiced) { first = false; onFirstVoicedFrame?.(); }
+          if (voiced) { first = false; await onFirstVoicedFrame?.(); }
+          if (signal.aborted || this.closed) throw new DOMException('Interrupted', 'AbortError');
           await this.audio.captureFrame(new AudioFrame(samples, VOICE_SAMPLE_RATE, 1, samples.length));
           if (firstPublished) { firstPublished = false; timing?.('first_audio_published'); }
           if (!signal.aborted && !this.closed && voiced) onFirstAudio?.();
@@ -837,7 +849,8 @@ export class VoiceRoomRuntime {
         this.markCallActivity();
         this.touch();
         const voiced = first && samples.some(sample => Math.abs(sample) > 150);
-        if (voiced) { first = false; onFirstVoicedFrame?.(); }
+        if (voiced) { first = false; await onFirstVoicedFrame?.(); }
+        if (signal.aborted || this.closed) throw new DOMException('Interrupted', 'AbortError');
         await this.audio.captureFrame(new AudioFrame(samples, VOICE_SAMPLE_RATE, 1, samples.length));
         if (firstPublished) { firstPublished = false; timing?.('first_audio_published'); }
         if (!signal.aborted && !this.closed && voiced) onFirstAudio?.();

@@ -77,8 +77,9 @@ before_commands = before['commands']['count']
 initial_energy = energy(before)
 request('/speech-gate', {'hold': True})
 segment('Ruby build a clock')
-until(lambda value: value['commands']['count'] == before_commands + 1, 'first decision commits immediately')
-claimed = request('/claim-proof', {}) if args.mode == 'fixed' else None
+until(lambda value: value['decisionRequests'] == before['decisionRequests'] + 1, 'first brain decision completes immediately')
+if args.mode == 'baseline':
+    until(lambda value: value['commands']['count'] == before_commands + 1, 'baseline dispatch commits immediately')
 time.sleep(1.2)
 segment('and build an alarm')
 time.sleep(1.8)
@@ -87,19 +88,20 @@ time.sleep(.4)
 assembled = request('/result')
 rows = human_rows(assembled)[before_rows:]
 if args.mode == 'fixed':
-    assert assembled['commands']['count'] == before_commands + 1, assembled['commandDetails']
+    assert assembled['commands']['count'] == before_commands, assembled['commandDetails']
+    assert assembled['decisionRequests'] == before['decisionRequests'] + 3
     assert len(rows) == 1 and rows[0]['text'] == '@ruby Ruby build a clock and build an alarm and build a timer', rows
-    assert assembled['commandDetails'][-1]['id'] == claimed['id']
-    assert request('/stale-proof', {'agentId': claimed['agent_id'], 'requestId': claimed['turn_request_id']})['fenced']
 else:
     assert len(rows) == 3 and assembled['commands']['count'] == before_commands + 3, rows
 assert len(assembled['synthesis']) == len(before['synthesis']), 'No new speech bytes before the gate opens'
 request('/speech-gate', {'hold': False})
 until(lambda value: energy(value) > initial_energy + .00001, 'Android receives actual reply audio')
+committed = request('/result')
+assert committed['commands']['count'] == before_commands + (1 if args.mode == 'fixed' else 3)
 (output / (args.mode + '-joined.png')).write_bytes(adb('exec-out', 'screencap', '-p'))
 if args.mode == 'fixed':
     request('/report', {})
-    until(lambda value: any(row['text'] == 'The work is done.' for row in value['transcript']), 'replacement command reports')
+    until(lambda value: any(row['text'] == 'The work is done.' for row in value['transcript']), 'committed command reports')
     tap('Speak to Goosey')
     time.sleep(4)
     segment('build one more clock')
@@ -107,8 +109,8 @@ if args.mode == 'fixed':
     assert targeted['commandDetails'][-1]['agent_id'] == 'c' * 64
     (output / 'fixed-selected.png').write_bytes(adb('exec-out', 'screencap', '-p'))
 record = {'reproduction': 'CONVERSATION-1', 'mode': args.mode,
-    'rowsForPausedRequest': rows, 'commandsForPausedRequest': assembled['commands']['count'] - before_commands,
-    'claimedAttempt': claimed, 'firstAudioMs': latencies, 'medianFirstAudioMs': statistics.median(latencies),
+    'rowsForPausedRequest': rows, 'commandsForPausedRequest': committed['commands']['count'] - before_commands,
+    'decisionsForPausedRequest': assembled['decisionRequests'] - before['decisionRequests'], 'firstAudioMs': latencies, 'medianFirstAudioMs': statistics.median(latencies),
     'result': request('/result'),
     'standIn': 'Built production Android hook/VoiceBar with native RTC, disposable PGlite, controlled Flux finals and provider SSE/PCM. No physical speech or speaker latency measurement.'}
 (output / (args.mode + '-android.json')).write_text(json.dumps(record, indent=2) + '\n')

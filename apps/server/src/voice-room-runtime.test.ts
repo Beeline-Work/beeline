@@ -673,7 +673,7 @@ it('Reproduction voice-name-1: switches transcript, reply and voice together and
     db: { query: vi.fn(async () => ({ rowCount: 1, rows: [] })) }, runtimeClosed: vi.fn() } as unknown as VoiceService;
   const runtime = await VoiceRoomRuntime.connect(service, 'call', 'room');
   // Exercise the turn boundary with transport/provider doubles, including actual playback selection.
-  const play = vi.spyOn(runtime as any, 'play').mockImplementation(async (_text, _agent, _signal, firstAudio: any) => { firstAudio?.(); });
+  const play = vi.spyOn(runtime as any, 'play').mockImplementation(async (_text, _agent, _signal, firstAudio: any, boundary: any) => { await boundary?.(); firstAudio?.(); });
   answer.mockImplementation(async (_agent?: any, _history?: any, delta?: any) => {
     delta?.('Here is my answer.'); return { text: 'Here is my answer.' };
   });
@@ -957,7 +957,7 @@ it('a continuation can change the authorized target without creating another sou
   } finally { await runtime.close(); }
 });
 
-it.each([2, 960])('commits before first capture (%d bytes), and amends a continuation before capture completes', async size => {
+it.each([2, 960])('commits before first capture (%d bytes), with independent later requests', async size => {
   const { service } = conversationService(1);
   service.speech.mockResolvedValue({ synthesize: async function* () { yield Buffer.alloc(size, 1); } } as any);
   service.config.brain.answer.mockImplementation(async () => ({ text: 'I will do it.', order: true }));
@@ -971,9 +971,9 @@ it.each([2, 960])('commits before first capture (%d bytes), and amends a continu
     expect(state.room.localParticipant.publishData.mock.calls.map(([bytes]: any[]) => JSON.parse(new TextDecoder().decode(bytes))).some(signal => signal.type === 'latency')).toBe(false);
     const second = runtime.utterance('human', 'continued');
     await second; capture.resolve(); await first;
-    expect(service.recordHuman).toHaveBeenCalledOnce();
-    expect(service.reviseHuman).toHaveBeenCalledOnce();
-    expect(service.dispatch).toHaveBeenCalledOnce();
+    expect(service.recordHuman).toHaveBeenCalledTimes(2);
+    expect(service.reviseHuman).not.toHaveBeenCalled();
+    expect(service.dispatch).toHaveBeenCalledTimes(2);
     expect(service.recordAnswer).not.toHaveBeenCalled();
   } finally { await runtime.close(); }
 });
@@ -1011,7 +1011,7 @@ it('respects an avatar target change during a pre-audio continuation', async () 
   } finally { await runtime.close(); }
 });
 
-it('serializes a continuation behind an in-flight dispatch and amends its one source', async () => {
+it('dispatches an audible order before playback ends and keeps it across barge-in', async () => {
   const { service } = conversationService(1);
   service.config.brain.answer.mockImplementationOnce(async () => ({ text: 'I will do it.', order: true }));
   const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
@@ -1021,12 +1021,12 @@ it('serializes a continuation behind an in-flight dispatch and amends its one so
     const first = runtime.utterance('human', 'Ruby build it').catch(() => {});
     await vi.waitFor(() => expect(service.dispatch).toHaveBeenCalledOnce());
     const second = runtime.utterance('human', 'Ruby another question');
-    dispatch.resolve(); await second;
-    expect(service.recordHuman).toHaveBeenCalledOnce();
-    expect(service.reviseHuman).toHaveBeenCalledOnce();
+    await second;
+    expect(service.recordHuman).toHaveBeenCalledTimes(2);
+    expect(service.reviseHuman).not.toHaveBeenCalled();
     dispatch.resolve(); await first;
     expect(service.dispatch).toHaveBeenCalledOnce();
-    expect(service.recordAnswer).not.toHaveBeenCalled();
+    expect(service.recordAnswer).toHaveBeenCalledOnce();
   } finally { await runtime.close(); }
 });
 
@@ -1064,7 +1064,7 @@ it('Reproduction DELIVERY-2: dispatch retry reuses the accepted source without r
   const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
   try {
     await expect(runtime.utterance('human', 'Ruby build it')).rejects.toThrow('commit acknowledgement lost');
-    expect(speech.synthesize).not.toHaveBeenCalled();
+    expect(state.audio.captureFrame).not.toHaveBeenCalled();
     await runtime.utterance('human', 'try again');
     expect(service.dispatch.mock.calls).toEqual([['call', 'source', 'ruby'], ['call', 'source', 'ruby']]);
     expect(service.config.brain.answer).toHaveBeenCalledOnce();
@@ -2078,10 +2078,10 @@ it('Reproduction CONVERSATION-2: a solo tap survives silence and completed turns
   } finally { await runtime.close(); vi.useRealTimers(); }
 });
 
-it('Reproduction CONVERSATION-1: joins 1200/1800ms fragments after dispatch but before audible acknowledgement', async () => {
+it.each([false, true])('Reproduction CONVERSATION-1: joins 1200/1800ms fragments after brain completion before audio (order=%s)', async order => {
   vi.useFakeTimers();
   const { service, speech } = conversationService(1);
-  service.config.brain.answer.mockResolvedValue({ order: true, text: 'Checking.' });
+  service.config.brain.answer.mockResolvedValue({ order, text: 'Here is the reply.' });
   let attempts = 0;
   speech.synthesize.mockImplementation(async function* (_text: string, _voice: string, signal: AbortSignal) {
     if (++attempts < 3) await new Promise<void>((_resolve, reject) => signal.addEventListener('abort',
@@ -2092,18 +2092,18 @@ it('Reproduction CONVERSATION-1: joins 1200/1800ms fragments after dispatch but 
   try {
     const first = runtime.utterance('human', 'Ruby please build').catch(() => {});
     await vi.advanceTimersByTimeAsync(1200);
-    expect(service.dispatch).toHaveBeenCalledOnce();
+    expect(service.dispatch).not.toHaveBeenCalled();
     expect(state.audio.captureFrame).not.toHaveBeenCalled();
     const second = runtime.utterance('human', 'a small clock').catch(() => {});
     await vi.advanceTimersByTimeAsync(1800);
-    expect(service.dispatch).toHaveBeenCalledOnce();
+    expect(service.dispatch).not.toHaveBeenCalled();
     const third = runtime.utterance('human', 'with seconds');
     await vi.advanceTimersByTimeAsync(0);
     await Promise.all([first, second, third]);
     expect(service.recordHuman).toHaveBeenCalledOnce();
     expect(service.reviseHuman.mock.calls.at(-1)?.[5]).toBe('Ruby please build a small clock with seconds');
-    expect(service.dispatch).toHaveBeenCalledOnce();
-    expect(service.config.brain.answer).toHaveBeenCalledOnce();
+    expect(service.dispatch).toHaveBeenCalledTimes(order ? 1 : 0);
+    expect(service.config.brain.answer).toHaveBeenCalledTimes(3);
     expect(state.audio.captureFrame).toHaveBeenCalledOnce();
   } finally { await runtime.close(); vi.useRealTimers(); }
 });
@@ -2112,7 +2112,9 @@ it('CONVERSATION-1: same-human partial speech pauses pre-audio playback without 
   const { service, speech } = conversationService(2);
   let receive!: (event: any) => void;
   service.config.stt.mockImplementation(async callback => { receive = callback; return { send() {}, close() {} }; });
-  service.config.brain.answer.mockResolvedValueOnce({ order: true, text: 'Checking.' });
+  service.config.brain.answer.mockResolvedValueOnce({ order: true, text: 'Checking.' })
+    .mockResolvedValueOnce({ order: false, text: 'Hello.' })
+    .mockResolvedValueOnce({ order: true, text: 'Checking.' });
   speech.synthesize.mockImplementationOnce(async function* (_text, _voice, signal) {
     await new Promise<void>((_resolve, reject) => signal.addEventListener('abort',
       () => reject(new DOMException('Interrupted', 'AbortError')), { once: true }));
@@ -2134,28 +2136,29 @@ it('CONVERSATION-1: same-human partial speech pauses pre-audio playback without 
     receive({ event: 'EndOfTurn', turn_index: 1, transcript: 'with seconds', sequence_id: 2 });
     await vi.waitFor(() => expect(service.reviseHuman).toHaveBeenCalledOnce());
     expect(service.reviseHuman.mock.calls[0]?.[5]).toBe('Ruby build a clock with seconds');
-    expect(service.dispatch).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(service.dispatch).toHaveBeenCalledOnce());
+    expect(service.config.brain.answer).toHaveBeenCalledTimes(3);
   } finally { await runtime.close(); }
 });
 
-it('CONVERSATION-1: retry after a continuation races failed dispatch keeps the committed source ID', async () => {
-  const { service } = conversationService(1);
-  service.config.brain.answer.mockResolvedValue({ order: true, text: 'Checking.' });
-  const commit = deferred<void>();
-  service.dispatch.mockImplementationOnce(() => commit.promise);
+it('DELIVERY-2: another human interrupting pre-audio synthesis cannot drop the order', async () => {
+  const { service, speech } = conversationService(2);
+  service.config.brain.answer.mockResolvedValueOnce({ order: true, text: 'Checking.' });
+  speech.synthesize.mockImplementationOnce(async function* (_text, _voice, signal) {
+    await new Promise<void>((_resolve, reject) => signal.addEventListener('abort',
+      () => reject(new DOMException('Interrupted', 'AbortError')), { once: true }));
+    yield new Uint8Array([200, 1]);
+  });
   const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
   try {
-    const first = runtime.utterance('human', 'Ruby build it').catch(() => {});
-    await vi.waitFor(() => expect(service.dispatch).toHaveBeenCalledOnce());
-    const next = runtime.utterance('human', 'with seconds').catch(() => {});
-    await new Promise(resolve => setImmediate(resolve));
-    commit.reject(new Error('delivery failed'));
-    await Promise.all([first, next]);
-    await runtime.utterance('human', 'try again');
-    expect(service.dispatch).toHaveBeenCalledTimes(2);
-    expect(service.dispatch.mock.calls.map(call => call[1])).toEqual(['source', 'source']);
-    expect(service.reviseHuman.mock.calls[0]?.[5]).toBe('Ruby build it with seconds');
-    expect(service.recordHuman).toHaveBeenCalledOnce();
-    expect(service.config.brain.answer).toHaveBeenCalledOnce();
+    const first = runtime.utterance('human', 'Ruby build a clock').catch(error => {
+      if (error.name !== 'AbortError') throw error;
+    });
+    await vi.waitFor(() => expect(speech.synthesize).toHaveBeenCalledOnce());
+    await runtime.utterance('sam', 'Goosey hello');
+    await first;
+    expect(service.dispatch).toHaveBeenCalledOnce();
+    expect(service.reviseHuman).not.toHaveBeenCalled();
+    expect(service.recordHuman).toHaveBeenCalledTimes(2);
   } finally { await runtime.close(); }
 });

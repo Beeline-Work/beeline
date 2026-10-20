@@ -24,7 +24,7 @@ it('expires names and taps after three seconds, renews only the speaking human, 
   } finally { assembler.close(); vi.useRealTimers(); }
 });
 
-it('revises only the same human through delivery, then gives an audible follow-up a new ID', () => {
+it('revises only the same human until the playback boundary, then gives an audible follow-up a new ID', () => {
   const assembler = new VoiceRequestAssembler();
   const first = assembler.begin('alex', 'Ruby check').request;
   first.agent = ruby; first.state = 'classifying';
@@ -36,13 +36,11 @@ it('revises only the same human through delivery, then gives an audible follow-u
   expect(revised.text).toBe('Ruby check my latest report');
   expect(first.classification.signal.aborted).toBe(true);
   expect(other.classification.signal.aborted).toBe(false);
-  revised.state = 'delivering';
-  revised.delivery = Promise.resolve();
-  const amended = assembler.begin('alex', 'with seconds').request;
-  expect(amended.id).toBe(first.id);
-  expect(amended.delivery).toBe(revised.delivery);
-  expect(amended.text).toBe('Ruby check my latest report with seconds');
-  assembler.finish('alex', amended);
+  revised.state = 'replying';
+  const merged = assembler.begin('alex', 'with seconds').request;
+  expect(merged.id).toBe(first.id);
+  expect(merged.text).toBe('Ruby check my latest report with seconds');
+  assembler.finish('alex', merged);
   const next = assembler.begin('alex', 'Ruby next request').request;
   expect(next.id).not.toBe(first.id);
   assembler.finish('alex', revised);

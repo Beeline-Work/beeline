@@ -1,3 +1,5 @@
+import { transientGitHubError, githubRetryDelay } from '@beeline/auth/github';
+import { captureServerError } from './sentry.js';
 import { agentUsage, saveAgentUsage } from './agent-usage.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
 import { setRoomEventSubscriptions } from './corner-person-state.js';
@@ -595,6 +597,24 @@ export class DaemonService {
                 query: typeof candidate.query === 'string' ? candidate.query : '',
               })
             : undefined;
+      // Read GitHub before opening the command transaction; retries must not hold its lock.
+      // Authority is checked again by the normal transaction after this provider read.
+      let reportCheckRead: { value?: Output<'getPrChecksStatus'>; error?: unknown } | undefined;
+      if (name === 'report' && candidate.status === 'done' && /^done:\s*\S/.test(String(candidate.text ?? ''))) {
+        await authorizeCommandOutput(this.database, scopedRoom, authenticatedAgentId,
+          candidate.requestId ?? candidate.turnId, candidate.generationId);
+        const corner = (await this.database.query<{ worker: string; merged: boolean; has_pr: boolean }>(
+          `SELECT ${cornerImplementerSql('fact', 'room')} worker,
+            fact.lifecycle->'pr'->>'number' IS NOT NULL has_pr,
+            (fact.lifecycle->>'lifecycle'='landed' OR fact.lifecycle->'pr'->>'mergeCommitSha' IS NOT NULL) merged
+           FROM rooms room JOIN corner_facts fact ON fact.corner_id=room.id WHERE room.id=$1`,
+          [scopedRoom])).rows[0];
+        if (corner?.worker === authenticatedAgentId && corner.has_pr && !corner.merged &&
+          (await currentCornerBrief(this.database, scopedRoom))?.repositoryWork !== false && this.prChecksStatus) {
+          try { reportCheckRead = { value: await this.prChecksStatus({ cornerId: scopedRoom }) }; }
+          catch (error) { reportCheckRead = { error }; }
+        }
+      }
       const committedTasks: Parameters<AfterCommit>[0][] = [];
       const output = await this.database.transaction(async (db) => {
         if (name === 'createCorner' || name === 'reviseCornerBrief')
@@ -744,7 +764,11 @@ export class DaemonService {
           command,
           this.livePaintDiagnostics,
           this.liveDiagnosticServerInstance,
-          this.prChecksStatus,
+          name === 'report' ? async () => {
+            if (reportCheckRead && 'error' in reportCheckRead) throw reportCheckRead.error;
+            // A PR added after preflight is unknown until the next live read.
+            return reportCheckRead?.value ?? { mergeAllowed: false } as Output<'getPrChecksStatus'>;
+          } : this.prChecksStatus,
           undefined,
           this.institutionalMemoryShadow,
           this.mcpRegistry,
@@ -5607,8 +5631,27 @@ export class DaemonService {
       if (corner?.worker === agentId && !corner.merged) {
         const brief = await currentCornerBrief(database, command.room_id);
         if (brief?.repositoryWork !== false) {
-          const gate = corner.has_pr ? await this.prChecksStatus?.({ cornerId: command.room_id }) : undefined;
-          if (!gate?.mergeAllowed) throw new CommandRefusalError(
+          let gate: Output<'getPrChecksStatus'> | undefined;
+          let checksUnavailable = false;
+          try { gate = corner.has_pr ? await this.prChecksStatus?.({ cornerId: command.room_id }) : undefined; }
+          catch (error) {
+            if (!transientGitHubError(error)) throw error;
+            checksUnavailable = true;
+            // Preserve the report independently of GitHub availability. No merge consent is written.
+            await database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(
+              jsonb_set(jsonb_set(lifecycle,'{checks}','"unknown"'::jsonb),'{checksSummary}',
+                jsonb_build_object('total',0,'failing','[]'::jsonb,'checks','[]'::jsonb,
+                  'updatedAt',floor(extract(epoch FROM clock_timestamp()))) ||
+                  COALESCE(lifecycle->'checksSummary','{}'::jsonb) || '{"status":"pending"}'::jsonb),
+              '{checkRefreshRetry}',jsonb_build_object('headSha',lifecycle->'pr'->>'headSha',
+                'failedAt',extract(epoch FROM clock_timestamp()),
+                'after',extract(epoch FROM clock_timestamp())+$2::double precision)),updated_at=now()
+              WHERE corner_id=$1 AND lifecycle->'pr'->>'headSha' IS NOT NULL`,
+              [command.room_id, githubRetryDelay(error, 60_000) / 1000]);
+            const capture = async () => captureServerError(error, { operation: 'report-check-read' });
+            if (this.afterCommit) this.afterCommit(capture); else await capture();
+          }
+          if (!checksUnavailable && !gate?.mergeAllowed) throw new CommandRefusalError(
             'done requires a merge-ready or merged PR; post progress in the corner instead (non-PR deliverables require repositoryWork false)', 409);
         }
       }

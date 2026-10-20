@@ -651,7 +651,8 @@ describe('Corner header reads the parent Room record (3.6)', () => {
     const screen = await mountList();
     const header = await mountHeader({ cornerId: 'corner-1' });
     expect(headerText(header)).toBe('RUBY · waiting');
-    server.status(1, [corner('corner-1', 'review', 'checks-failed')]);
+    const review = corner('corner-1', 'review');
+    server.status(1, [{ ...review, lifecycle: { ...review.lifecycle, checks: 'failing' } }]);
     await settle();
     expect(painted(screen)).toEqual(['corner-1:review']);
     expect(headerText(header)).toBe('RUBY · review · checks failed');

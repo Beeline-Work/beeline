@@ -111,7 +111,7 @@ it('Reproduction MD-TTS-1: conversational streamed replies and delayed reports s
     expect(service.recordAnswer).toHaveBeenCalledWith('room', 'agent', answer);
     reports = [{ source_message_id: 'source', id: 'report', text: '**Done**: [result](https://example.com/a_(b)/details)', agent_id: 'agent', human_id: 'human' }];
     await runtime.refresh();
-    await vi.waitFor(() => expect(spoken.at(-1)).toBe('Done: result The rest is in the chat.'));
+    await vi.waitFor(() => expect(spoken.at(-1)).toBe('Done: result'));
     console.log('MD-TTS-1 synthesis:', spoken);
   } finally { await runtime.close(); }
 });
@@ -353,6 +353,8 @@ it('claims a report once before playback and never replays an interrupted openin
 it('waits for an utterance that starts while a report claim is in flight', async () => {
   const { service, speech } = conversationService(1);
   let offered = false;
+  let playbackStarted!: () => void;
+  const firstPlayback = new Promise<void>(resolve => { playbackStarted = resolve; });
   let releaseClaim!: () => void;
   const report = { source_message_id: 'order', id: 'report', text: 'Completed work.', agent_id: 'ruby', human_id: 'human' };
   service.db.query.mockImplementation(async (sql: string) => {
@@ -362,13 +364,16 @@ it('waits for an utterance that starts while a report claim is in flight', async
   });
   const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
   let releasePlayback!: () => void;
-  state.audio.waitForPlayout.mockImplementationOnce(() => new Promise<void>(resolve => { releasePlayback = resolve; }));
+  state.audio.waitForPlayout.mockImplementationOnce(() => new Promise<void>(resolve => { releasePlayback = resolve; playbackStarted(); }));
   try {
     (runtime as any).targets.set('human', report.agent_id);
     offered = true; await runtime.refresh();
     await vi.waitFor(() => expect(releaseClaim).toBeDefined());
     const utterance = runtime.utterance('human', 'Ruby hello');
-    await vi.waitFor(() => expect(speech.synthesize).toHaveBeenCalledOnce());
+    // Synchronize on the held playout itself, not a short polling window
+    // that can expire under the full CI shard's event-loop load.
+    await firstPlayback;
+    expect(speech.synthesize).toHaveBeenCalledOnce();
     releaseClaim();
     await new Promise(resolve => setImmediate(resolve));
     expect(speech.synthesize).toHaveBeenCalledOnce();
@@ -2019,8 +2024,8 @@ it('shortens only spoken reports, preserving sentence boundaries and the source 
   expect(spokenReport(text)).toBe('The build is ready. The rest is in the chat.');
   expect(text).toContain('Full details remain here.');
   expect(spokenReport('x'.repeat(2000))).toBe('The rest is in the chat.');
-  expect(spokenReport('短い文。' + '長い'.repeat(100))).toBe('短い文。 The rest is in the chat.');
-  expect(spokenReport('Short sentence. ' + 'more '.repeat(80) + '.')).toBe('Short sentence. The rest is in the chat.');
+  expect(spokenReport('短い文。' + '長い'.repeat(600))).toBe('短い文。 The rest is in the chat.');
+  expect(spokenReport('Short sentence. ' + 'more '.repeat(400) + '.')).toBe('Short sentence. The rest is in the chat.');
 });
 
 it.each(['stay', 'turn', 'leave'] as const)('reports wait for human quiet and recheck the caller: %s', async action => {
@@ -2208,4 +2213,58 @@ it('DELIVERY-2: another human interrupting pre-audio synthesis cannot drop the o
     expect(service.reviseHuman).not.toHaveBeenCalled();
     expect(service.recordHuman).toHaveBeenCalledTimes(2);
   } finally { await runtime.close(); }
+});
+
+it('Reproduction SPOKEN-150: measures report refresh to first audio with controlled synthesis and RTC', async () => {
+  const elapsed: number[] = [];
+  for (let sample = 0; sample < 7; sample++) {
+    const { service, speech } = conversationService(1);
+    let offered = false, claimed = false;
+    const text = 'History helps us understand how people lived and why their choices still matter so much. '.repeat(8).trim();
+    const report = { source_message_id: 'order', id: 'report', text, agent_id: 'ruby', human_id: 'human' };
+    service.db.query.mockImplementation(async (sql: string) => {
+      if (sql.startsWith('SELECT DISTINCT ON')) return { rowCount: offered && !claimed ? 1 : 0, rows: offered && !claimed ? [report] : [] };
+      if (sql.startsWith('UPDATE voice_orders')) claimed = true;
+      return { rowCount: 1, rows: [] };
+    });
+    const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+    try {
+      (runtime as any).targets.set('human', 'ruby');
+      let first = 0;
+      state.audio.captureFrame.mockImplementation(async () => { first ||= performance.now(); });
+      offered = true;
+      const started = performance.now();
+      await runtime.refresh();
+      await (runtime as any).reportQueue;
+      expect(first).toBeGreaterThan(started);
+      expect(speech.synthesize.mock.calls.map(call => call[0]).join('')).toBe(text);
+      elapsed.push(first - started);
+      if (sample === 0) console.log('SPOKEN-150 synthesized:', speech.synthesize.mock.calls.map(call => call[0]).join(''));
+    } finally { await runtime.close(); }
+  }
+  elapsed.sort((a, b) => a - b);
+  console.log(`SPOKEN-150 refresh-to-first-audio p50=${elapsed[3]!.toFixed(3)}ms samples=${elapsed.map(n => n.toFixed(3)).join(',')}; controlled provider and RTC, no live network or phone speaker measurement.`);
+});
+
+
+it('speaks a 120-word answer whole without a chat suffix', () => {
+  const text = 'History helps us understand how people lived and why their choices still matter so much. '.repeat(8).trim();
+  expect(text.split(/\s+/)).toHaveLength(120);
+  expect(spokenReport(text)).toBe(text);
+  expect(spokenReport('All done.')).toBe('All done.');
+  expect(spokenReport('')).toBe('');
+});
+
+it('cuts a 400-word paragraph after the last sentence within 150 words', () => {
+  const sentence = 'People shaped history through choices that changed their daily lives.';
+  const text = Array(40).fill(sentence).join(' ');
+  expect(text.split(/\s+/)).toHaveLength(400);
+  expect(spokenReport(text)).toBe(Array(15).fill(sentence).join(' ') + ' The rest is in the chat.');
+});
+
+it('scales the character and CJK limits by six', () => {
+  expect(spokenReport('短い文。'.repeat(80))).toBe('短い文。'.repeat(80));
+  expect(spokenReport('短い文。'.repeat(81))).toBe('短い文。'.repeat(80) + ' The rest is in the chat.');
+  expect(spokenReport('x'.repeat(1079) + '.')).toBe('x'.repeat(1079) + '.');
+  expect(spokenReport('x'.repeat(1080) + '.')).toBe('The rest is in the chat.');
 });

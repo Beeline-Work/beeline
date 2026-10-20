@@ -24,7 +24,7 @@ export function validateCornerBrief(draft: CornerBriefDraft, repositoryBacked = 
     throw new Error(
       `corner brief spec must contain 1–${CORNER_BRIEF_SPEC_MAX_LENGTH} characters of Markdown`,
     );
-  if (!draft.approval || !boundedText(draft.approval.sourceMessageId, 256))
+  if (draft.approval !== undefined && !boundedText(draft.approval?.sourceMessageId, 256))
     throw new Error('corner brief approval must name a human Room message');
   if (
     draft.change !== undefined &&
@@ -188,7 +188,7 @@ export function cornerBriefRevisionHash(
       JSON.stringify({
         spec: draft.spec.trim(),
         ...(draft.repositoryWork !== undefined ? { repositoryWork: draft.repositoryWork } : {}),
-        approval: draft.approval.sourceMessageId,
+        approval: draft.approval?.sourceMessageId,
         attachments: attachments.map((attachment) => ({
           objectId: attachment.objectId,
           title: attachment.title,
@@ -208,7 +208,7 @@ export function cornerBriefRevisionHash(
  * the same object, so old and new revisions read alike.
  */
 type StoredCornerBriefApproval = {
-  kind: 'initiating-command' | 'explicit-human-answer' | 'commander-order';
+  kind: 'agent-initiated' | 'initiating-command' | 'explicit-human-answer' | 'commander-order';
   sourceMessageId: string;
   /** The approving message's exact text when the revision was written. */
   snapshot: string;
@@ -302,13 +302,16 @@ export async function resolveCornerBriefApproval(
   attachments: readonly CornerBriefAttachment[],
   initiatingMessageId?: string,
   revision?: { cornerId: string; agentId: string },
+  opening?: { agentId: string; roomId: string },
 ): Promise<{
   approvalBasis: StoredCornerBriefApproval;
   revisionHash: string;
   sourceRoomId: string;
 }> {
   validateCornerBrief(draft);
-  let sourceMessageId = draft.approval.sourceMessageId;
+  if (revision && !draft.approval)
+    throw new CommandRefusalError('corner brief approval must name a human message or commander order', 403);
+  let sourceMessageId = draft.approval?.sourceMessageId ?? '';
   const initiating = sourceMessageId === initiatingMessageId;
   let message: ApprovingMessage | undefined = (
     await db.query<ApprovingMessage>(
@@ -339,7 +342,7 @@ export async function resolveCornerBriefApproval(
   if (revision && message?.kind === 'human' && !(await humanRoomMember(db, revision.cornerId, message.room_id, message.author_id)))
     message = undefined;
   if (revision && (!message || message.kind !== 'human' && !commanderOrder)) {
-    const later = await laterCornerApproval(db, revision, draft.approval.sourceMessageId);
+    const later = await laterCornerApproval(db, revision, sourceMessageId);
     if (later && 'stored' in later) {
       const revisionHash = cornerBriefRevisionHash(draft, attachments);
       const { repositoryWork: _previous, ...stored } = later.stored;
@@ -354,12 +357,21 @@ export async function resolveCornerBriefApproval(
       };
     }
     if (later) {
-      sourceMessageId = draft.approval.sourceMessageId;
+      sourceMessageId = draft.approval!.sourceMessageId;
       ({ message, commanderOrder } = later);
     }
   }
   if (revision && (!message || message.kind !== 'human' && !commanderOrder))
     throw new CommandRefusalError('corner brief approval must name a human message or commander order; the human author must be a current Room member', 403);
+  if (opening && !revision && (!message || message.kind !== 'human' && !commanderOrder)) {
+    const revisionHash = cornerBriefRevisionHash(draft, attachments);
+    return {
+      approvalBasis: { kind: 'agent-initiated', sourceMessageId,
+        snapshot: 'Agent-initiated corner', approvedBy: opening.agentId, briefHash: revisionHash,
+        ...(draft.repositoryWork !== undefined ? { repositoryWork: draft.repositoryWork } : {}) },
+      revisionHash, sourceRoomId: opening.roomId,
+    };
+  }
   if (!message || message.kind !== 'human' && !commanderOrder)
     throw new CommandRefusalError('corner brief approval must name a human message or commander order', 403);
   const revisionHash = cornerBriefRevisionHash(draft, attachments);

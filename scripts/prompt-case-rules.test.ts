@@ -1,5 +1,7 @@
 // Run with: node --import tsx --test scripts/prompt-case-rules.test.ts
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { test } from 'node:test';
 import { caseOutcome, evaluateRule, parsePromptCase, type Rule, type Transcript } from './prompt-case-rules.js';
 
@@ -11,6 +13,30 @@ const turn: Transcript = {
   text: 'Asked @juniper to run it.',
 };
 const pass = (rule: Rule) => evaluateRule(rule, turn).pass;
+
+test('repo-less Room case accepts header navigation and rejects referrals to another Room', () => {
+  const saved = JSON.parse(readFileSync(join(__dirname, '../docs/prompts/cases/room-no-repo-guides-link.json'), 'utf8'));
+  const guidance = 'This Room has no linked repository; use Room header → Repository → Link or Create.';
+  assert.equal(evaluateRule(saved.pass, { calls: [], text: guidance }).pass, true);
+  for (const accepted of [
+    'I cannot write it here directly, because this Room has no linked repository.',
+    'That is because this Room has no linked repository.',
+    'I never send you to another Room.',
+    "I'll never shuffle you off to another Room.",
+  ]) {
+    assert.equal(evaluateRule(saved.pass, { calls: [], text: `${guidance} ${accepted}` }).pass, true, accepted);
+  }
+  for (const referral of [
+    'Point me at the Room with the linked repository.',
+    'Go to a Room with a linked repository.',
+    'Use another Room.',
+    'Please switch to a different Room.',
+    'Create a repository-backed Room.',
+    "The Room's repository filesystem is read-only.",
+  ]) {
+    assert.equal(evaluateRule(saved.pass, { calls: [], text: `${guidance} ${referral}` }).pass, false, referral);
+  }
+});
 
 test('shipped status allows parenthesized references and rejects work numbers outside them', async () => {
   const { readFileSync } = await import('node:fs');

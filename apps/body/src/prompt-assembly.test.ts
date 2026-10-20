@@ -44,7 +44,12 @@ describe('R2594 repository setup guidance', () => {
   it('guides repository setup in a Room with no repository and unavailable shell', () => {
     const prompt = assembleSessionPrompt({ surface: 'room', agentName: 'Bee',
       agentCommand: 'claude-agent-acp', shell: { available: false } }).systemPrompt;
-    expect(prompt).toContain('Room header → Repository → Link/Create');
+    expect(prompt).toContain('This Beeline Room has no linked repository.');
+    expect(prompt).not.toContain('The repository filesystem is read-only here.');
+    expect(prompt).toContain('in your first reply');
+    expect(prompt).toContain('Room header → Repository → Link or Create');
+    expect(prompt).toContain('Never send them to another Room.');
+    expect(prompt).toContain('mention linking for ongoing code work');
     expect(prompt).toContain('organization setup before proposing a personal GitHub connection');
     expect(prompt).toContain('consult beeline-connecting-services for repository and organization setup');
     const skill = beelineConnectSkillMarkdown('test');
@@ -54,7 +59,9 @@ describe('R2594 repository setup guidance', () => {
   it('does not ask a repository-backed Room to link its repository again', () => {
     const prompt = assembleSessionPrompt({ surface: 'room', agentName: 'Bee',
       agentCommand: 'claude-agent-acp', repository: { name: 'owner/widgets', branch: 'main' } }).systemPrompt;
-    expect(prompt).not.toContain('For coding work without a linked repository');
+    expect(prompt).toContain('The repository filesystem is read-only here. The Room is bound to owner/widgets (branch main); the read-only checkout is at the session root.');
+    expect(prompt).not.toContain('Room header → Repository');
+    expect(prompt).not.toContain('no linked repository');
   });
 });
 
@@ -591,7 +598,7 @@ describe('prompt assembly guards', () => {
     expect(promptRules.CORNER_AUTHOR_CONTRACT).toContain(nudge);
     expect(promptRules.CORNER_RUNTIME_AUTHOR_CONTRACT).toContain(nudge);
     const room = assembleSessionPrompt(SESSION_VARIANTS.room!).systemPrompt;
-    expect(room).toContain('Use the dispatching message as approval; no separate spec or mock approval is required.');
+    expect(room).toContain('Opening requires no human approval. Include a dispatching message when available; otherwise the server records the opening agent as agent-initiated. Revisions retain their approval rule.');
   });
 
   it('keeps corner help requests with the commander', () => {

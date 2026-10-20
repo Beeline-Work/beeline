@@ -53,7 +53,7 @@ describe('Room guidance', () => {
     expect(room).toContain('If nothing is actionable for you, do not reply.');
     // The Room asks for the corner's NAME as well as its objective (C89).
     expect(room).toContain(
-      'call open_corner with the target room address, a name of at most three words joined by hyphens (no whitespace), an objective of at most 24 words, and the brief (a spec plus the approving message)',
+      'call open_corner with the target room address, a name of at most three words joined by hyphens (no whitespace), an objective of at most 24 words, and the brief (a spec plus optional opening context)',
     );
     expect(room).toContain('Before opening one, consult beeline-triage and beeline-spec');
     expect(room).toContain('If a shell command is refused, say so plainly');
@@ -207,7 +207,9 @@ describe('Room guidance', () => {
 
   it('delivers the same Room capabilities through compatibility-only harnesses', () => {
     const context = sessionPrompt({ agentCommand: 'codex-acp' });
-    expect(context.systemPrompt).toContain('read-only');
+    expect(context.systemPrompt).toContain('This Beeline Room has no linked repository.');
+    expect(context.systemPrompt).toContain('Room header → Repository → Link or Create');
+    expect(context.systemPrompt).not.toContain('The repository filesystem is read-only here.');
     expect(context.systemPrompt).toContain('Tag to talk. Order to assign work.');
     expect(context.systemPrompt).toContain('call open_corner');
     expect(context.systemPrompt).toContain(
@@ -259,7 +261,7 @@ describe('beeline-triage request skill', () => {
 
   it('dispatches under existing authorization and adds only evidence-backed warnings', () => {
     expect(markdown).toContain(
-      'pass the complete brief to open_corner with the dispatching message as approval',
+      'pass the complete brief to open_corner; approval is optional for opening',
     );
     expect(markdown).toContain('no separate outline post or human approval is required');
     expect(markdown).toContain('Triage warning — warranted:');
@@ -406,7 +408,7 @@ describe('beeline-spec planning skill', () => {
       '`## Risks`',
       '`## References`',
       '`attachments`',
-      '`approval`: the initiating human message ID or private commander order ID',
+      '`approval`: optional when opening; the initiating human message ID or private commander order ID',
     ])
       expect(markdown).toContain(part);
     expect(markdown).not.toMatch(/intentVerbatim|buildSpec|approvalBasis|criteria\[\]/);

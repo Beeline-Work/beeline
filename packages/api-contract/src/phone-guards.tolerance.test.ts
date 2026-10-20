@@ -876,3 +876,15 @@ describe('agent profile recent work', () => {
     ).toEqual([work]);
   });
 });
+
+it.each(['approve', 'connect', 'question'] as const)(
+  'R1 preserves optional %s reason and item link in the corner contract', (reason) => {
+    const corner = { corner: header, lifecycle: { lifecycle: 'open', checks: 'unknown' },
+      state: 'waiting', reason, itemId: 'blocking-message' };
+    const decoded = readCornerListView({ room: header, corners: [corner], viewer, watchFilters: [] });
+    expect(decoded?.corners[0]).toMatchObject({ state: 'waiting', reason, itemId: 'blocking-message' });
+    const legacy = readCornerListView({ room: header, corners: [{ ...corner, reason: undefined, itemId: undefined }], viewer, watchFilters: [] });
+    expect(legacy?.corners[0]?.state).toBe('waiting');
+    expect(legacy?.corners[0]?.reason).toBeUndefined();
+  },
+);

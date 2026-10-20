@@ -32,7 +32,7 @@ describe('chat corner counts', () => {
     const result = chatCornerCounts([
       { ...row(), follows_viewer: true },
       { ...row({}, 'working'), follows_viewer: true },
-      { ...row(), owed: true, owed_viewer: true },
+      { ...row(), blocking: true, owed: true, owed_viewer: true },
       row({ reason: 'question' }),
     ]);
     expect(result.get('room')?.openCorners.map((corner) => corner.mine)).toEqual([
@@ -64,9 +64,9 @@ describe('chat corner counts', () => {
   it('reads idle with nothing owed and flags only unseen asks for the viewer', () => {
     const result = chatCornerCounts([
       { ...row(), follows_viewer: true, owed: false, owed_viewer: false, attention: false },
-      { ...row(), owed: true, owed_viewer: true, attention: true },
-      { ...row(), owed: true, owed_viewer: true, attention: false },
-      { ...row({}, 'working'), owed: true, owed_viewer: true, attention: true },
+      { ...row(), blocking: true, owed: true, owed_viewer: true, attention: true },
+      { ...row(), blocking: true, owed: true, owed_viewer: true, attention: false },
+      { ...row({}, 'working'), blocking: true, owed: true, owed_viewer: true, attention: true },
     ]);
     expect(result.get('room')).toMatchObject({ cornerCount: 4, waitingCornerCount: 2 });
     expect(

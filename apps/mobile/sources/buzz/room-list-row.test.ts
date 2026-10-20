@@ -244,7 +244,7 @@ describe('Room row presentation', () => {
       roomRowPresentation({ corners: [corner('waiting', undefined, 'question')] }, NO_NAMES).zone,
     ).toBe('needs-you');
     expect(
-      roomRowPresentation({ corners: [corner('waiting', undefined, 'failed')] }, NO_NAMES).zone,
+      roomRowPresentation({ corners: [corner('waiting', undefined, 'question')] }, NO_NAMES).zone,
     ).toBe('needs-you');
     // working: an agent turn is live in a corner.
     expect(roomRowPresentation({ corners: [corner('working')] }, NO_NAMES).zone).toBe('working');
@@ -399,10 +399,10 @@ describe('Room row presentation', () => {
         .pills[0],
     ).toEqual({ kind: 'status', label: 'REPLY' });
     expect(
-      roomRowPresentation({ corners: [corner('waiting', undefined, 'failed')] }, NO_NAMES).pills[0],
+      roomRowPresentation({ corners: [corner('waiting', undefined, 'question')] }, NO_NAMES).pills[0],
     ).toEqual({
       kind: 'status',
-      label: 'RETRY',
+      label: 'REPLY',
     });
     // A fresh ask waits on a reply too.
     expect(
@@ -468,7 +468,7 @@ describe('Room row presentation', () => {
         corners: [
           corner('working'),
           corner('waiting', undefined, 'question'),
-          corner('waiting', undefined, 'failed'),
+          corner('waiting', undefined, 'question'),
           corner('archived'),
           corner('archived'),
         ],
@@ -588,7 +588,7 @@ describe('Room row presentation', () => {
         { id: 'live-new', corners: [{ ...corner('working'), lastActivityAt: TODAY_S }] },
         {
           id: 'review-new',
-          corners: [{ ...corner('waiting', undefined, 'failed'), lastActivityAt: 9 }],
+          corners: [{ ...corner('waiting', undefined, 'question'), lastActivityAt: 9 }],
         },
         { id: 'quiet-new', latestMessageAt: TODAY_S + 5 },
       ],

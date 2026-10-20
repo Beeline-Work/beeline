@@ -4,6 +4,10 @@
   "summary": "In a Room the agent does not edit or commit files; repository changes go to a corner.",
   "place": "room",
   "session": {
+    "repository": {
+      "name": "acme/app",
+      "branch": "main"
+    },
     "shell": {
       "available": true
     }

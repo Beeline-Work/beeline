@@ -5,7 +5,7 @@ import { describe, expect, it } from 'vitest';
 import { CHROME, runBrowserProof, webProofShims } from '@/test/browserProof';
 const baselineRef = process.env.VIEWER_DOCK_BASELINE_REF;
 describe.skipIf(!existsSync(CHROME))('viewer conversation layout', () => {
-  it.each([...(baselineRef ? ['baseline'] : []), 'top', 'newest'])('viewer-dock-overflow: %s', async state => {
+  it.each([...(baselineRef ? ['baseline'] : []), 'top', 'newest', 'slow-reply'])('viewer-dock-overflow: %s', async state => {
     const mobile = process.cwd(), shims = webProofShims(mobile);
     shims['react-native-keyboard-controller'] = 'export const useKeyboardState = select => select({height: 0});';
     // Delivery and the native composer are fixture boundaries; layout and markdown stay real.

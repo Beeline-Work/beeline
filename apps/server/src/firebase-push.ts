@@ -88,6 +88,8 @@ export function pushMessageData(message: PushDeliveryMessage): Record<string, st
       channelId: message.type === 'message' ? message.channelId : roomId,
       ...(message.type === 'message' && message.cornerId ? { cornerId: message.cornerId } : {}),
       ...(message.type === 'message' ? { messageId: message.messageId } : {}),
+      ...(message.type === 'message' && message.cornerState
+        ? { cornerState: JSON.stringify(message.cornerState) } : {}),
       ...(message.type === 'message' ? pushActionData(message.action) : {}),
       ...(message.collapseId ? { collapseId: message.collapseId } : {}),
     };

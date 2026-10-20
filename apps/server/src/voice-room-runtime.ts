@@ -69,13 +69,13 @@ async function retryVoice<T>(work: () => Promise<T>, signal?: AbortSignal): Prom
   }
 }
 
-/** About ten seconds at conversational pace, preserving whole sentences. */
+/** About a minute at conversational pace, preserving whole sentences. */
 export function spokenReport(text: string): string {
   const plain = markdownToSpeech(text);
   const first = markdownToSpeech(text.trim().split(/\n\s*\n/)[0] ?? '');
   const words = (value: string) => value.match(/\S+/g)?.length ?? 0;
-  const short = (value: string) => words(value) <= 25 && value.length <= 180 &&
-    (value.match(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/gu)?.length ?? 0) <= 40;
+  const short = (value: string) => words(value) <= 150 && value.length <= 1080 &&
+    (value.match(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/gu)?.length ?? 0) <= 240;
   let opening = first;
   if (!short(first)) {
     opening = '';
@@ -84,7 +84,8 @@ export function spokenReport(text: string): string {
       opening += sentence;
     }
   }
-  return [opening.trim(), 'The rest is in the chat.'].filter(Boolean).join(' ');
+  const spoken = opening.trim();
+  return [spoken, spoken !== plain.trim() ? 'The rest is in the chat.' : ''].filter(Boolean).join(' ');
 }
 
 /** One lease-bound call runtime. Real agents continue outside this audio turn. */

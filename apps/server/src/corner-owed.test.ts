@@ -408,7 +408,7 @@ describe('corner_owed', () => {
     await step(owedToViewer);
   });
 
-  it('reads chat-list owed facts from corner_owed without reading messages', async () => {
+  it('reads chat-list owed facts from corner_owed with only an item-id lookup for the reason', async () => {
     const queries: { sql: string; values: unknown[] }[] = [];
     const spy = new PhoneService(
       {
@@ -439,9 +439,12 @@ describe('corner_owed', () => {
     expect(scans).toContainEqual({ relation: 'corner_owed', alias: 'owed_item' });
     // The combined deck enrichment also reads the unread cursor and DM peer
     // activity. Review activity additionally looks up its dispatched source
-    // by message id; owed facts still come from corner_owed.
+    // by message id. The waiting reason reads the indexed blocker message by
+    // its primary key too; owed facts still come from corner_owed.
     const messageScans = scans.filter((scan) => scan.relation === 'messages');
     expect(messageScans.filter((scan) => scan.alias === 'source')).toHaveLength(1);
-    expect(messageScans.filter((scan) => scan.alias !== 'source')).toHaveLength(3);
+    expect(messageScans.filter((scan) => scan.alias === 'item')).toHaveLength(1);
+    expect(corners!.sql).toContain('JOIN messages item ON item.id=owed.message_id');
+    expect(messageScans.filter((scan) => !['source', 'item'].includes(scan.alias))).toHaveLength(3);
   });
 });

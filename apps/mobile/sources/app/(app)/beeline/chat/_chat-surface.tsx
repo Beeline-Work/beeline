@@ -6191,6 +6191,12 @@ export function BuzzChatSurface({
                   <CornerHeaderAgentText
                     name={cornerOwnerDisplay?.name ?? 'Agent'}
                     stateWord={cornerHeaderWord}
+                    state={cornerHeaderDisplay?.status}
+                    headerSuffix={cornerHeaderDisplay?.headerSuffix}
+                    waitingReason={cornerHeaderSource?.reason}
+                    onReasonPress={cornerHeaderSource?.itemId ? () => {
+                      requestMessageJump(scrollController, cornerHeaderSource.itemId!, jumpToTranscriptMessage);
+                    } : undefined}
                     style={[
                       styles.cornerHeaderAgent,
                       cornerHeaderDisplay?.status === 'working'

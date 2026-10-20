@@ -61,7 +61,13 @@ async function run() {
     const faceColor = (name: string) => getComputedStyle(document.querySelector<HTMLElement>(`[aria-label="Speak to ${name}"]`)!.firstElementChild!).borderTopColor;
     check(`${phase}: inactive agent has no frame`, faceColor('Goosey') === 'rgba(0, 0, 0, 0)');
     if (phase === 'speaking') check('CONVERSATION-2: speaking frame is brass and selection stays black', getComputedStyle(byID('voice-speaking-frame-ruby')!).borderTopColor !== faceColor('Jellybean'));
-    check(`${phase}: current level stays at the visible right edge`, latest().getBoundingClientRect().right <= byID('voice-waveform')!.getBoundingClientRect().right);
+    if (phase === 'connecting') {
+      check('connecting: startup glyph replaces waveform until audio is ready', !!byID('voice-startup-loader') && !latest());
+      check('connecting: mute is disabled until ready', byID('chat-mic')!.getAttribute('aria-disabled') === 'true');
+    } else {
+      check(`${phase}: startup glyph clears when ready`, !byID('voice-startup-loader'));
+      check(`${phase}: current level stays at the visible right edge`, latest().getBoundingClientRect().right <= byID('voice-waveform')!.getBoundingClientRect().right);
+    }
     if (phase === 'listening') check('CONVERSATION-3: current level grows immediately', parseFloat(getComputedStyle(latest()).height) > 2);
     const strip = byID('conversation-target-strip')!.getBoundingClientRect();
     const field = byID('voice-waveform')!.getBoundingClientRect();

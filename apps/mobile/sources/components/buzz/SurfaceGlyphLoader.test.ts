@@ -22,6 +22,7 @@ type LoadingSurface = {
  * Paths are relative to `apps/mobile/sources`.
  */
 const LOADING_SURFACES: readonly LoadingSurface[] = [
+  { id: 'voice-startup', file: 'components/buzz/VoiceBar.tsx', treatment: 'glyph' },
   { id: 'thinking', file: 'components/buzz/TurnProgressLine.tsx', treatment: 'glyph' },
   { id: 'activity-working', file: 'components/buzz/ActivityTimeline.tsx', treatment: 'glyph' },
   { id: 'room-corner-entry', file: 'app/(app)/beeline/chat/_chat-surface.tsx', treatment: 'glyph' },

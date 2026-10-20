@@ -48,7 +48,7 @@ describe('canonical tool contracts', () => {
     expect(Check(schema('open_corner'),{...input,brief:{...input.brief,spec:''}})).toBe(false);
     const revision = {address:'child',action:'brief',brief:input.brief,expectedRevision:2,change:'Approved correction'};
     expect(Check(schema('revise_corner'),revision)).toBe(true);
-    expect(Check(schema('revise_corner'),{...revision,brief:{spec:'Build the widget'}})).toBe(false);
+    expect(Check(schema('revise_corner'),{...revision,brief:{spec:'Build the widget'}})).toBe(true);
     expect(Check(schema('revise_corner'),{address:revision.address,action:revision.action,brief:revision.brief,change:revision.change})).toBe(false);
     expect(Check(schema('revise_corner'),{address:'child',action:'metadata',name:'widget',brief:input.brief})).toBe(false);
     expect(Check(schema('revise_corner'),{address:'child',action:'install_brief',name:'widget',brief:input.brief})).toBe(true);

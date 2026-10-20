@@ -556,7 +556,7 @@ it('commits terminal failure when the commander has left', async () => {
     ).rows[0],
   ).toMatchObject({ status: 'failed' });
 });
-it('the commander revises from its DM using the stored approval after a check wake', async () => {
+it('the commander revises from its DM with direct attribution after a check wake', async () => {
   const opened = await open();
   const head = '9'.repeat(40);
   await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
@@ -593,11 +593,18 @@ it('the commander revises from its DM using the stored approval after a check wa
   expect(
     (
       await db.query(
-        `SELECT approval_basis->>'snapshot' snapshot FROM corner_brief_revisions WHERE corner_id=$1 AND revision=2`,
+        `SELECT approval_basis FROM corner_brief_revisions WHERE corner_id=$1 AND revision=2`,
         [opened.cornerId],
       )
     ).rows[0],
-  ).toMatchObject({ snapshot: stored.approval!.text });
+  ).toMatchObject({
+    approval_basis: {
+      kind: 'commander-direct',
+      approvedBy: RUBY,
+      sourceMessageId: '',
+      snapshot: 'Commander revised the corner brief directly',
+    },
+  });
 });
 
 it('discovers only reachable member addresses and corners from a DM', async () => {

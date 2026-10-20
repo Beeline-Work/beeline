@@ -208,7 +208,7 @@ export function cornerBriefRevisionHash(
  * the same object, so old and new revisions read alike.
  */
 type StoredCornerBriefApproval = {
-  kind: 'agent-initiated' | 'initiating-command' | 'explicit-human-answer' | 'commander-order';
+  kind: 'agent-initiated' | 'initiating-command' | 'explicit-human-answer' | 'commander-order' | 'commander-direct';
   sourceMessageId: string;
   /** The approving message's exact text when the revision was written. */
   snapshot: string;
@@ -308,6 +308,24 @@ export async function resolveCornerBriefApproval(
   revisionHash: string;
   sourceRoomId: string;
 }> {
+  if (revision) {
+    const commander = (await db.query<{ parent_id: string }>(
+      `SELECT parent_id FROM rooms WHERE id=$1 AND created_by=$2`,
+      [revision.cornerId, revision.agentId],
+    )).rows[0];
+    if (commander) {
+      const directDraft = { ...draft, approval: undefined };
+      validateCornerBrief(directDraft);
+      const revisionHash = cornerBriefRevisionHash(directDraft, attachments);
+      return {
+        approvalBasis: { kind: 'commander-direct', sourceMessageId: '',
+          snapshot: 'Commander revised the corner brief directly', approvedBy: revision.agentId,
+          briefHash: revisionHash,
+          ...(draft.repositoryWork !== undefined ? { repositoryWork: draft.repositoryWork } : {}) },
+        revisionHash, sourceRoomId: commander.parent_id,
+      };
+    }
+  }
   validateCornerBrief(draft);
   if (revision && !draft.approval)
     throw new CommandRefusalError('corner brief approval must name a human message or commander order', 403);
@@ -475,10 +493,10 @@ export function projectCornerBrief(cornerId: string, row: CornerBriefRow): Corne
     revision: row.revision,
     spec: row.spec ?? foldCornerBriefSpec(row),
     ...(basis?.repositoryWork !== undefined ? { repositoryWork: basis.repositoryWork } : {}),
-    ...(basis?.sourceMessageId && basis.approvedBy
+    ...((basis?.sourceMessageId || basis?.kind === 'commander-direct') && basis.approvedBy
       ? {
           approval: {
-            sourceMessageId: basis.sourceMessageId,
+            sourceMessageId: basis.sourceMessageId ?? '',
             text: basis.snapshot ?? '',
             approvedBy: basis.approvedBy,
             approverName: row.approver_name ?? basis.approvedBy,

@@ -445,6 +445,10 @@ describe('monolith integration', () => {
     );
     expect(sibling.rows[0]?.parent_id).toBe(ROOM);
 
+    // Cited-approval cases use a non-commander reviser. The opening agent
+    // otherwise now approves its own revision directly, regardless of citation.
+    await database.query(`UPDATE rooms SET created_by=$2 WHERE id=$1`, [cornerId, HUMAN]);
+
     // RO3a: reuse the human approval that dispatched this sibling corner.
     const revision = await daemonCall('reviseCornerBrief', {
       ...(await turnIn(ROOM)),

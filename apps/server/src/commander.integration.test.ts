@@ -342,6 +342,22 @@ it('revises a reachable corner brief from a DM with the same active-order author
       approval: { sourceMessageId: order.sourceMessageId }, change: 'Clarify the endpoint' } }, RUBY);
   expect(revision.revision).toBe(2);
 });
+it.each([undefined, { sourceMessageId: 'irrelevant-approval' }, { sourceMessageId: '' }])('Reproduction commander-direct: commander revises without a cited approval (%j)', async approval => {
+  const opened = await open();
+  const revised = await daemon.execute('reviseCornerBrief', { ...authority(order), cornerId: opened.cornerId,
+    expectedRevision: 1, brief: { spec: 'Build the clarified widget', change: 'Clarify scope', ...(approval ? { approval } : {}) },
+  }, RUBY);
+  expect(revised.revision).toBe(2);
+  const restored = await daemon.execute('getCornerRestoreState', { cornerId: opened.cornerId }, RUBY);
+  expect(restored.brief?.approval).toMatchObject({ approvedBy: RUBY, approverName: 'Ruby' });
+  const turn = await worker(opened.cornerId);
+  await expect(daemon.execute('reviseCornerBrief', { ...authority(turn), cornerId: opened.cornerId,
+    expectedRevision: 2, brief: { spec: 'Worker changes scope', change: 'No cited approval' },
+  }, WORKER)).rejects.toMatchObject({ status: 403 });
+  expect((await db.query(`SELECT approval_basis FROM corner_brief_revisions WHERE corner_id=$1 AND revision=2`,
+    [opened.cornerId])).rows[0]).toMatchObject({ approval_basis: { kind: 'commander-direct', approvedBy: RUBY } });
+});
+
 describe('a worker records a later waiver in its corner brief', () => {
   const STRANGER = 'd'.repeat(64), OUTSIDER = 'e'.repeat(64);
   const revise = async (turn: AgentCommand, cornerId: string, expectedRevision: number, sourceMessageId: string) => {
@@ -1239,12 +1255,13 @@ it('OPEN-1: refuses a non-member opening without approval', async () => {
   }, RUBY)).rejects.toThrow('daemon room access denied');
 });
 
-it('OPEN-1: an agent-initiated opening does not authorize a later revision', async () => {
+it('OPEN-1: an agent-initiated opening does not authorize a worker revision', async () => {
   const opened = await daemon.execute('createCorner', { ...authority(order), targetRoomId: ROOM,
     name: 'Agent-widget', objective: 'Build the widget', implementer: 'worker',
     brief: { spec: 'Build the widget', repositoryWork: false },
   }, RUBY);
-  await expect(daemon.execute('reviseCornerBrief', { ...authority(order), cornerId: opened.cornerId,
+  const turn = await worker(opened.cornerId);
+  await expect(daemon.execute('reviseCornerBrief', { ...authority(turn), cornerId: opened.cornerId,
     expectedRevision: 1, brief: { spec: 'Change the widget', change: 'Adjust scope' },
-  }, RUBY)).rejects.toThrow('corner brief approval must name a human message or commander order');
+  }, WORKER)).rejects.toThrow('corner brief approval must name a human message or commander order');
 });

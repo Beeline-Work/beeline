@@ -2,7 +2,7 @@ import { agentUsage, saveAgentUsage } from './agent-usage.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
 import { setRoomEventSubscriptions } from './corner-person-state.js';
 import { agentMemberMetadata } from './agent-member-metadata.js';
-import { normalizeTrayAsk } from '@beeline/api-contract/phone';
+import { normalizeAgentAsk } from './tray-approval-ask.js';
 import { assertCornerCommandTarget, commandAddress, sendOrder, reportToCommander, hasOrderContinuation, CommandRefusalError } from './commander.js';
 import { createAgentSubscription, listAgentSubscriptions, deleteAgentSubscription,
   listServiceSubscriptionEvents, subscriptionPromptBody } from './agent-subscriptions.js';
@@ -1143,7 +1143,7 @@ export class DaemonService {
           candidate.agent === undefined ? undefined : String(candidate.agent)) as Output<Name>;
       case 'report': {
         const ask = candidate.ask === undefined
-          ? undefined : normalizeTrayAsk(candidate.ask);
+          ? undefined : normalizeAgentAsk(candidate.ask);
         return await this.report(String(candidate.text), authenticatedAgentId, this.authorizedCommand!, this.database, false, candidate.status, ask) as Output<Name>;
       }
       case 'read': {
@@ -5606,9 +5606,8 @@ export class DaemonService {
       if (corner?.worker === agentId && !corner.merged) {
         const brief = await currentCornerBrief(database, command.room_id);
         if (brief?.repositoryWork !== false) {
-          const gate = corner.has_pr ? await this.prChecksStatus?.({ cornerId: command.room_id }) : undefined;
-          if (!gate?.mergeAllowed) throw new CommandRefusalError(
-            'done requires a merge-ready or merged PR; post progress in the corner instead (non-PR deliverables require repositoryWork false)', 409);
+          if (!corner.has_pr) throw new CommandRefusalError(
+            'done requires an opened or merged PR; post progress in the corner instead (non-PR deliverables require repositoryWork false)', 409);
         }
       }
     }
@@ -6249,7 +6248,7 @@ export class DaemonService {
       roomId: input.roomId,
       agentId,
       mode: 'question',
-      ask: input.ask === undefined ? undefined : normalizeTrayAsk(input.ask),
+      ask: input.ask === undefined ? undefined : normalizeAgentAsk(input.ask),
       prompt: input.prompt,
       constraint: input.constraint,
       options: input.options,

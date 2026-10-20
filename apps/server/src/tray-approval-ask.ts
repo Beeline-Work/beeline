@@ -1,4 +1,5 @@
-import { AGENT_SIGN_IN_SERVICE_LABELS, shortenAsk, type AgentSignInHarness } from '@beeline/api-contract/phone';
+import { CommandRefusalError } from './command-refusal.js';
+import { AGENT_SIGN_IN_SERVICE_LABELS, normalizeTrayAsk, shortenAsk, type AgentSignInHarness } from '@beeline/api-contract/phone';
 
 /** Explicit asks are stored with approval cards; full ceremony text stays intact. */
 export function approvalAsk(type: string | undefined, card: Record<string, unknown>): string | undefined {
@@ -20,3 +21,11 @@ export function approvalAsk(type: string | undefined, card: Record<string, unkno
   }
 }
 
+/** Invalid tool asks are caller refusals, not server faults. */
+export function normalizeAgentAsk(value: unknown): string {
+  try {
+    return normalizeTrayAsk(value);
+  } catch (error) {
+    throw new CommandRefusalError(error instanceof Error ? error.message : 'ask is invalid', 400);
+  }
+}

@@ -21,11 +21,12 @@ const DM = '33333333-3333-4333-8333-333333333333';
 let db: PgliteDatabase, daemon: DaemonService, phone: PhoneService;
 let order: AgentCommand;
 let ready = false;
+let held = false;
 const checks = vi.fn(async () => ({ stage: 'waiting_for_yes' as const, checks: 'passed' as const, checkCount: 1,
   checkStates: { passed: 1, pending: 0, failed: 0, unlisted: 0, pendingNames: [], failedNames: [] },
   pullRequest: 'https://github.com/owner/widgets/pull/42', headSha: '9'.repeat(40), approved: ready,
   reviewer: '@reviewer', reviewerExists: true, reviewerWake: { status: 'dispatched' as const, detail: '' },
-  held: false, holds: [], mergeAllowed: ready }));
+  held, holds: [], mergeAllowed: ready && !held }));
 beforeAll(async () => {
   db = new PgliteDatabase();
   await migrate(db);
@@ -38,7 +39,7 @@ beforeAll(async () => {
 }, 30_000);
 afterAll(async () => db.close());
 beforeEach(async () => {
-  ready = false; checks.mockClear();
+  ready = false; held = false; checks.mockClear();
   await db.query('UPDATE agents SET wake_batch_minutes=0');
   await db.query(`DELETE FROM agent_commands`);
   await db.query(`DELETE FROM workspaces`);
@@ -116,13 +117,24 @@ it('Reproduction report-schema: stores and delivers a complete multi-paragraph r
   )).rows[0]?.text).toBe(text);
   console.info(`Demonstrated report-schema: server stored and commander received all ${text.length} characters including the final paragraph`);
 });
+it.each([false, true])('Reproduction report-step: delivers a finished PR step while merging is blocked (held: %s)', async hold => {
+  const opened = await open(), turn = await worker(opened.cornerId);
+  await db.query(`UPDATE corner_facts SET lifecycle=jsonb_build_object('pr',jsonb_build_object('number',42,'headSha',$2::text)) WHERE corner_id=$1`, [opened.cornerId, '9'.repeat(40)]);
+  held = hold;
+  expect((await checks()).mergeAllowed).toBe(false);
+  checks.mockClear();
+  await daemon.execute('report', { ...authority(turn), status: 'done', text: 'done: assigned PR step finished; awaiting review' }, WORKER);
+  expect((await commands(DM, RUBY)).find(c => c.reason === 'report')?.source.body)
+    .toBe('done: assigned PR step finished; awaiting review');
+  expect(checks).not.toHaveBeenCalled();
+});
 it('accepts done with live merge-ready checks, and batches its commander wake', async () => {
   const opened = await open(), turn = await worker(opened.cornerId);
   await batch();
   ready = true;
   await db.query(`UPDATE corner_facts SET lifecycle=jsonb_build_object('pr',jsonb_build_object('number',42,'headSha',$2::text)) WHERE corner_id=$1`, [opened.cornerId, '9'.repeat(40)]);
   await daemon.execute('report', { ...authority(turn), status: 'done', text: 'done: ready to merge' }, WORKER);
-  expect(checks).toHaveBeenCalledWith({ cornerId: opened.cornerId });
+  expect(checks).not.toHaveBeenCalled();
   expect((await commands(DM, RUBY)).some(c => c.reason === 'report')).toBe(false);
   await expireWindow();
   expect((await commands(DM, RUBY)).find(c => c.reason === 'report')?.source.body).toBe('done: ready to merge');

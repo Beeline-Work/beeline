@@ -885,7 +885,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
       "type": "object",
       "required": ["status", "text"],
       "properties": {
-        "ask": {"type": "string", "minLength": 1, "maxLength": 140},
+        "ask": {"type": "string", "minLength": 1, "maxLength": 140, "description": "Optional plain text ask: one sentence on one line, at most 140 characters."},
         "status": {"type": "string", "enum": ["done", "blocked", "failed", "needs_decision"]},
         "text": {"type": "string", "minLength": 1, "maxLength": 16000}
       },

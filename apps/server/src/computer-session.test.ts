@@ -947,11 +947,19 @@ describe('computer session handoff', () => {
   }, 120_000);
 
   /**
-   * Drives a real two-finger touchscreen pinch into the served viewer with
-   * Chrome DevTools Protocol and returns the viewer surface width before and
-   * after. This is the page-level gesture path shared by both live viewers.
+   * Drives a real touchscreen into the served viewer with Chrome DevTools
+   * Protocol. It runs a two-finger pinch-out, a pinch-in, a second pinch-out,
+   * a one-finger pan and then a tap, recording the viewer surface box at each
+   * phase so a test can prove the gesture zooms and pans. It returns the
+   * surface rect and remote size at tap time so the test can check the mapped
+   * tap coordinate.
    */
-  async function gestureViewer(pageUrl: string, touchPinch: { x: number; y: number }[]) {
+  async function gestureViewer(pageUrl: string, options: {
+    pinch: { x: number; y: number }[];
+    /** Remote viewport size the viewer maps against, when it is not a canvas. */
+    remote?: { width: number; height: number };
+    onPhase?: (name: string) => void;
+  }) {
     const profile = await mkdtemp(join(process.cwd(), '.pinch-e2e-'));
     const chrome = spawn(chromeBinary, [
       '--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage',
@@ -981,20 +989,20 @@ describe('computer session handoff', () => {
         pending.set(id, (message) => message.error ? reject(new Error(JSON.stringify(message.error))) : resolve(message.result ?? {}));
         socket.send(JSON.stringify({ id, method, params }));
       });
-      const evaluate = async (expression: string) => {
+      const evaluate = async <T>(expression: string) => {
         const result = await command('Runtime.evaluate', { expression, returnByValue: true });
-        return (result as { result?: { value?: unknown } }).result?.value;
+        return (result as { result?: { value?: T } }).result?.value;
       };
       await command('Runtime.enable');
       await command('Page.enable');
       await command('Emulation.setDeviceMetricsOverride', { width: 390, height: 800, deviceScaleFactor: 2, mobile: true });
       await command('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
       await command('Emulation.setEmulatedMedia', { features: [{ name: 'pointer', value: 'coarse' }, { name: 'any-pointer', value: 'coarse' }] });
+      const settle = () => new Promise((resolve) => setTimeout(resolve, 300));
       const reload = async () => {
         await command('Page.reload');
         await new Promise((resolve) => setTimeout(resolve, 1_500));
       };
-      const surfaceWidth = () => evaluate(`document.getElementById('canvas')?.style.width || document.getElementById('screen').style.width`);
       const touch = async (type: string, points: Record<string, number>[]) => {
         await command('Input.dispatchTouchEvent', { type, touchPoints: points });
         await new Promise((resolve) => setTimeout(resolve, 30));
@@ -1007,19 +1015,59 @@ describe('computer session handoff', () => {
           })));
         }
         await touch('touchEnd', []);
-        await new Promise((resolve) => setTimeout(resolve, 300));
+        await settle();
       };
+      const drag = async (from: { x: number; y: number }, to: { x: number; y: number }) => {
+        await touch('touchStart', [{ x: from.x, y: from.y, id: 0 }]);
+        for (let index = 1; index <= 6; index++) {
+          await touch('touchMove', [{ x: from.x + (to.x - from.x) * index / 6, y: from.y + (to.y - from.y) * index / 6, id: 0 }]);
+        }
+        await touch('touchEnd', []);
+        await settle();
+      };
+      const tap = async (point: { x: number; y: number }) => {
+        await touch('touchStart', [{ x: point.x, y: point.y, id: 0 }]);
+        await touch('touchEnd', []);
+        await settle();
+      };
+      const surfaceBox = () => evaluate<{ width: string; left: string; top: string }>(
+        `(() => { const el = document.getElementById('canvas') || document.getElementById('screen');
+          return { width: el.style.width, left: el.style.left, top: el.style.top }; })()`);
+      const surfaceRect = () => evaluate<{ left: number; top: number; width: number; height: number }>(
+        `(() => { const el = document.getElementById('canvas') || document.getElementById('screen');
+          const r = el.getBoundingClientRect(); return { left: r.left, top: r.top, width: r.width, height: r.height }; })()`);
+      const phase = (name: string) => options.onPhase?.(name);
       await reload();
-      const before = await surfaceWidth();
-      await spread(touchPinch, 10);
-      const after = await surfaceWidth();
-      const scale = await evaluate('visualViewport.scale');
+      const before = await surfaceBox();
+      phase('start');
+      await spread(options.pinch, 10);
+      const afterPinchOut = await surfaceBox();
+      phase('pinch-out');
+      await spread(options.pinch, -8);
+      const afterPinchIn = await surfaceBox();
+      phase('pinch-in');
+      await spread(options.pinch, 14);
+      const afterPinchOutAgain = await surfaceBox();
+      phase('pinch-out-2');
+      const origin = options.pinch[0]!;
+      await drag({ x: origin.x, y: origin.y }, { x: origin.x - 80, y: origin.y - 60 });
+      const afterPan = await surfaceBox();
+      phase('pan');
+      const tapPoint = { x: 200, y: 350 };
+      const tapRect = await surfaceRect();
+      const tapRemote = options.remote ?? await evaluate<{ width: number; height: number }>(
+        `(() => { const c = document.getElementById('canvas'); return { width: c.width, height: c.height }; })()`);
+      phase('before-tap');
+      await tap(tapPoint);
+      phase('tap');
+      const scale = await evaluate<number>('visualViewport.scale');
       // The viewer must own the gesture: no document page-zoom and no native
       // pinch target, or the host WebView cancels the second finger.
-      const viewport = await evaluate(`document.querySelector('meta[name="viewport"]')?.content ?? ''`);
-      const bodyTouchAction = await evaluate(`getComputedStyle(document.body).touchAction`);
+      const viewport = await evaluate<string>(`document.querySelector('meta[name="viewport"]')?.content ?? ''`);
+      const bodyTouchAction = await evaluate<string>(`getComputedStyle(document.body).touchAction`);
       socket.close();
-      return { before, after, scale, viewport, bodyTouchAction };
+      return { before, afterPinchOut, afterPinchIn, afterPinchOutAgain, afterPan,
+        tapPoint, tapRect, tapRemote, scale, viewport, bodyTouchAction };
     } finally {
       if (chrome.exitCode === null && chrome.signalCode === null) {
         chrome.kill('SIGTERM');
@@ -1029,13 +1077,75 @@ describe('computer session handoff', () => {
     }
   }
 
+  /** True when a viewer message would reach the remote as real input. */
+  function isForwardedInput(raw: string): boolean {
+    try {
+      const message = JSON.parse(raw) as { type?: string; method?: string };
+      if (message.type === 'touch' || message.type === 'wheel') return true;
+      return typeof message.method === 'string' && message.method.startsWith('Input.');
+    } catch { return false; }
+  }
+
+  /** The remote coordinate a forwarded tap targeted, in either viewer's wire shape. */
+  function forwardedTapPoint(raw: string): { x: number; y: number } | undefined {
+    try {
+      const message = JSON.parse(raw) as { type?: string; phase?: string; x?: number; y?: number;
+        method?: string; params?: { type?: string; x?: number; y?: number } };
+      if (message.type === 'touch' && message.phase === 'start'
+        && typeof message.x === 'number' && typeof message.y === 'number') return { x: message.x, y: message.y };
+      if (message.method === 'Input.dispatchMouseEvent' && message.params?.type === 'mousePressed'
+        && typeof message.params.x === 'number' && typeof message.params.y === 'number')
+        return { x: message.params.x, y: message.params.y };
+      return undefined;
+    } catch { return undefined; }
+  }
+
+  /** Shared assertions for both served-viewer touch proofs. */
+  function expectViewerGesture(
+    gesture: Awaited<ReturnType<typeof gestureViewer>>,
+    forwarded: string[],
+    inputCounts: Record<string, number>,
+  ): void {
+    // The viewer owns the gesture: no document page-zoom and no native pinch target.
+    expect(gesture.scale).toBe(1);
+    expect(gesture.viewport).toContain('maximum-scale=1');
+    expect(gesture.viewport).toContain('user-scalable=no');
+    expect(gesture.bodyTouchAction).toBe('none');
+    // Pinch-out, pinch-in and a second pinch-out each change the viewer zoom.
+    expect(gesture.afterPinchOut.width).not.toBe(gesture.before.width);
+    expect(gesture.afterPinchIn.width).not.toBe(gesture.afterPinchOut.width);
+    expect(gesture.afterPinchOutAgain.width).not.toBe(gesture.afterPinchIn.width);
+    // A one-finger drag after zoom pans the surface.
+    expect(`${gesture.afterPan.left},${gesture.afterPan.top}`)
+      .not.toBe(`${gesture.afterPinchOutAgain.left},${gesture.afterPinchOutAgain.top}`);
+    // Criterion 2: no real input reaches the remote during pinch-out, pinch-in
+    // or pan. The tap's own input is counted so the zeroes are not vacuous.
+    expect(inputCounts['pinch-out']).toBe(inputCounts['start']);
+    expect(inputCounts['pinch-in']).toBe(inputCounts['pinch-out']);
+    expect(inputCounts['pan']).toBe(inputCounts['pinch-out-2']);
+    expect(inputCounts['tap']).toBeGreaterThan(inputCounts['before-tap']!);
+    // The detector catches both wire shapes, including the body viewer's CDP
+    // Input.* messages, so a leaked pinch would fail the zero counts above.
+    expect(isForwardedInput(JSON.stringify({ type: 'touch', phase: 'move', x: 1, y: 2 }))).toBe(true);
+    expect(isForwardedInput(JSON.stringify({ type: 'wheel', delta_x: 1, delta_y: 2 }))).toBe(true);
+    expect(isForwardedInput(JSON.stringify({ id: 1, method: 'Input.dispatchMouseEvent',
+      params: { type: 'mouseWheel', x: 1, y: 2 } }))).toBe(true);
+    expect(isForwardedInput(JSON.stringify({ type: 'takeover' }))).toBe(false);
+    // Tap-to-click after zoom maps the screen point through the zoomed/panned rect.
+    const taps = forwarded.map(forwardedTapPoint).filter((point): point is { x: number; y: number } => Boolean(point));
+    expect(taps).toHaveLength(1);
+    const scale = gesture.tapRemote.width / gesture.tapRect.width;
+    expect(taps[0]!.x).toBeCloseTo((gesture.tapPoint.x - gesture.tapRect.left) * scale, 0);
+    expect(taps[0]!.y).toBeCloseTo((gesture.tapPoint.y - gesture.tapRect.top) * scale, 0);
+  }
+
   it('locks the body viewer document so a native host cannot page-zoom it', () => {
     const html = computerViewerHtml('lock-id');
     expect(html).toContain('maximum-scale=1,user-scalable=no');
     expect(html).toContain('touch-action:none;overscroll-behavior:none');
   });
 
-  it.skipIf(!existsSync(chromeBinary))('pinches the body-hosted viewer without forwarding the gesture', async () => {
+  it.skipIf(!existsSync(chromeBinary))('pinches, pans and maps a tap in the body-hosted viewer without forwarding the gesture', async () => {
     const share = await createComputerSession(database, live, {
       roomId: ROOM, agentId: AGENT, sessionId: 'body-pinch', upstreamUrl: 'body:', title: 'Body viewer',
     });
@@ -1046,31 +1156,31 @@ describe('computer session handoff', () => {
     source.on('message', (data) => forwarded.push(data.toString()));
     source.send(JSON.stringify({ method: 'Page.screencastFrame',
       params: { data: '/9j/2Q==', sessionId: 1, metadata: { deviceWidth: 800, deviceHeight: 600 } } }));
+    const inputCounts: Record<string, number> = {};
     try {
-      const gesture = await gestureViewer(`${origin}/s/${share.id}?access=${access}&embedded=1`, [
-        { x: 150, y: 400, id: 0 }, { x: 250, y: 400, id: 1 },
-      ]);
-      expect(gesture.before).toBeTruthy();
-      expect(gesture.after).not.toBe(gesture.before);
-      expect(gesture.scale).toBe(1);
-      expect(gesture.viewport).toContain('maximum-scale=1');
-      expect(gesture.viewport).toContain('user-scalable=no');
-      expect(gesture.bodyTouchAction).toBe('none');
-      expect(forwarded.filter((message) => /"type":"(touch|wheel)"/.test(message))).toEqual([]);
+      const gesture = await gestureViewer(`${origin}/s/${share.id}?access=${access}&embedded=1`, {
+        pinch: [{ x: 150, y: 400 }, { x: 250, y: 400 }],
+        remote: { width: 800, height: 600 },
+        onPhase: (name) => { inputCounts[name] = forwarded.filter(isForwardedInput).length; },
+      });
+      expectViewerGesture(gesture, forwarded, inputCounts);
     } finally {
       source.close();
       await endComputerSession(database, live, (await getComputerSession(database, share.id))!);
     }
   }, 120_000);
 
-  it.skipIf(!existsSync(chromeBinary))('pinches the Squire bridge viewer without forwarding the gesture', async () => {
+  it.skipIf(!existsSync(chromeBinary))('pinches, pans and maps a tap in the Squire bridge viewer without forwarding the gesture', async () => {
     const squire = createServer((_request, response) => {
       response.writeHead(200, { 'content-type': 'text/html' });
       response.end(`<!doctype html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
         html,body{margin:0;width:100%;height:100%}#screen{width:100vw;height:100vh}</style></head><body>
         <div id="bar"><button id="focus"></button></div>
         <div id="screen"><canvas id="canvas" width="800" height="600"></canvas></div>
-        <script>const socket = new WebSocket(new URL("stream", location.href));</script></body>`);
+        <script>const socket = new WebSocket(new URL("stream", location.href));
+        function send(message){if(socket.readyState===WebSocket.OPEN)socket.send(JSON.stringify(message));}
+        function point(event){const canvas=document.getElementById('canvas');const r=canvas.getBoundingClientRect();
+          const scale=r.width/canvas.width;return {x:(event.clientX-r.left)/scale,y:(event.clientY-r.top)/scale};}</script></body>`);
     });
     const streams = new WebSocketServer({ noServer: true });
     const forwarded: string[] = [];
@@ -1082,17 +1192,13 @@ describe('computer session handoff', () => {
       upstreamUrl: `http://127.0.0.1:${(squire.address() as AddressInfo).port}/s/${'s'.repeat(43)}/`,
     }, testSquire);
     const access = await computerViewToken(database, share.id, HUMAN);
+    const inputCounts: Record<string, number> = {};
     try {
-      const gesture = await gestureViewer(`${origin}/s/${share.id}/?access=${access}&embedded=1`, [
-        { x: 150, y: 250, id: 0 }, { x: 250, y: 250, id: 1 },
-      ]);
-      expect(gesture.before).toBeTruthy();
-      expect(gesture.after).not.toBe(gesture.before);
-      expect(gesture.scale).toBe(1);
-      expect(gesture.viewport).toContain('maximum-scale=1');
-      expect(gesture.viewport).toContain('user-scalable=no');
-      expect(gesture.bodyTouchAction).toBe('none');
-      expect(forwarded.filter((message) => /"type":"(touch|wheel)"/.test(message))).toEqual([]);
+      const gesture = await gestureViewer(`${origin}/s/${share.id}/?access=${access}&embedded=1`, {
+        pinch: [{ x: 150, y: 250 }, { x: 250, y: 250 }],
+        onPhase: (name) => { inputCounts[name] = forwarded.filter(isForwardedInput).length; },
+      });
+      expectViewerGesture(gesture, forwarded, inputCounts);
     } finally {
       for (const client of streams.clients) client.close();
       await new Promise<void>((resolve) => streams.close(() => resolve()));

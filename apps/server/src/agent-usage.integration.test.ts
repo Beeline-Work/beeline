@@ -3,6 +3,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { readAgentDetailView, readWorkspaceMemberListView } from '@beeline/api-contract/phone';
 import { usageSummary } from '@beeline/api-contract/daemon';
 import { parseAcpUsage } from '../../body/src/acp.js';
+import { quotaAxiUsage } from '../../body/src/harness-quota.js';
+import { QUOTA_AXI_CODEX_CURSOR_REPORT } from '../../body/src/harness-quota.fixtures.js';
 import { DaemonService } from './daemon-service.js';
 import { PhoneService } from './phone-service.js';
 import { LiveHub } from './live.js';
@@ -231,5 +233,30 @@ it('shows a 402 refusal with no key figures as reached on the profile, in Member
   expect(members?.agents.find((a) => a.identity.pubkey === sibling)?.usage?.spend).toEqual({ rejected: true });
   expect(usageSummary((await daemon.execute('getAgentUsage', { agentId: sibling }, sibling)) ?? undefined)).toContain(
     'key limit reached (OpenRouter refused the last call)',
+  );
+});
+
+it('Reproduction R2: carries a quota-axi Codex read to the owner profile, Members and the agent', async () => {
+  const codex = 'e'.repeat(64);
+  await db.query(`INSERT INTO identities(id,kind,name) VALUES($1,'agent','Codex')`, [codex]);
+  await db.query(`INSERT INTO agents(agent_id,owner_id,harness) VALUES($1,$2,'codex')`, [codex, owner]);
+  await db.query(`INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'member')`, [workspace, codex]);
+  const quota = quotaAxiUsage(QUOTA_AXI_CODEX_CURSOR_REPORT, 'codex', Date.now() / 1000)!;
+  await daemon.execute('postAgentUsage', { agentId: codex, usage: quota }, codex);
+  // codex-acp's own context-only update afterwards keeps the plan read.
+  const context = parseAcpUsage({ sessionUpdate: 'usage_update', used: 12967, size: 475000 })!;
+  await daemon.execute('postAgentUsage', { agentId: codex, usage: context }, codex);
+  const profile = readAgentDetailView(await phone.readAgent(workspace, codex, owner));
+  expect(profile?.usage).toMatchObject({
+    windows: [{ rateLimitType: 'weekly', utilization: 0.47, label: 'week' }],
+    plan: 'pro',
+    credits: { remaining: 62174.920478 },
+    context: { used: 12967, size: 475000 },
+  });
+  const members = readWorkspaceMemberListView(await phone.readWorkspaceMembers(workspace, owner));
+  expect(members?.agents.find((a) => a.identity.pubkey === codex)?.usage?.plan).toBe('pro');
+  expect((await phone.readAgent(workspace, codex, other))?.usage).toBeUndefined();
+  expect(usageSummary((await daemon.execute('getAgentUsage', { agentId: codex }, codex)) ?? undefined)).toMatch(
+    /^Usage: pro plan weekly 47% .*62,174 credits left, context 13K of 475K tokens/,
   );
 });

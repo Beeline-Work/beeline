@@ -102,6 +102,13 @@ export async function saveAgentUsage(
               : {}),
           // OpenRouter reports the whole key at once, so the latest read replaces the last.
           ...(usage.spend ? { spend: usage.spend } : previous?.spend ? { spend: previous.spend } : {}),
+          // quota-axi reads the whole plan at once, so the latest read replaces the last.
+          ...(usage.plan ? { plan: usage.plan } : previous?.plan ? { plan: previous.plan } : {}),
+          ...(usage.credits
+            ? { credits: usage.credits }
+            : previous?.credits
+              ? { credits: previous.credits }
+              : {}),
         }),
       ],
     );

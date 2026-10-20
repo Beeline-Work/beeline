@@ -41,14 +41,9 @@ describe('server-owned corner display state', () => {
     });
   });
 
-  it('keeps the two failure explanations in the header only', () => {
-    expect(cornerHeaderStateLabel(cornerDisplayState(item('waiting', 'failed')))).toBe(
-      'waiting · failed',
-    );
-    expect(cornerHeaderStateLabel(cornerDisplayState(item('review', 'checks-failed')))).toBe(
-      'review · checks failed',
-    );
-    expect(cornerDisplayState(item('waiting', 'question')).word).toBe('waiting');
+  it.each(['approve', 'connect', 'question'] as const)('keeps %s off the list label', (reason) => {
+    expect(cornerDisplayState(item('waiting', reason)).word).toBe('waiting');
+    expect(cornerHeaderStateLabel(cornerDisplayState(item('waiting', reason)))).toBe('waiting');
   });
 
   it('uses lifecycle only for PR/check narration', () => {

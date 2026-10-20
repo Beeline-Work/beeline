@@ -4,6 +4,10 @@
   "summary": "Ordered to do repository work, the agent opens a corner with a short hyphenated name.",
   "place": "room",
   "session": {
+    "repository": {
+      "name": "acme/app",
+      "branch": "main"
+    },
     "shell": {
       "available": true
     }

@@ -80,25 +80,22 @@ it.each([
   expect(error.name).toBe('CornerVerdictRejectedError');
 });
 
-it('Reproduction SENTRY-D: agent-message approval refuses creation without Sentry capture', async () => {
+it('Reproduction OPEN-1 / SENTRY-D: agent-message opening succeeds without Sentry capture', async () => {
   const source = '1'.repeat(64), invalidApproval = '2'.repeat(64);
   await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$3,$4,'Open work'),($2,$3,$5,'Agent suggestion')`, [source, invalidApproval, parent, owner, agent]);
   const command = await createAgentCommand(db, { roomId: parent, agentId: agent, sourceMessageId: source, reason: 'human_tag' });
   await daemon.execute('claimAgentCommand', { roomId: parent, commandId: command!.id, generationId: 'proof' }, agent);
   const input = { roomId: parent, requestId: command!.turn_request_id, generationId: 'proof',
-    name: 'Invalid-approval', objective: 'Refuse unapproved work',
+    name: 'Agent-initiated', objective: 'Open agent-initiated work',
     brief: { spec: 'Do the assigned work', approval: { sourceMessageId: invalidApproval } } };
-  const before = (await db.query('SELECT id FROM rooms WHERE parent_id=$1', [parent])).rows;
   vi.mocked(captureServerError).mockClear();
-  const error = await daemon.execute('createCorner', input, agent).catch(error => error);
-  expect(error.message).toBe('corner brief approval must name a human message or commander order');
-  expect(error).toBeInstanceOf(CommandRefusalError);
-  expect(error.status).toBe(403);
   const response = await fetch(`${origin}/v1/daemon/operations/createCorner`, {
     method: 'POST', headers: { authorization: 'Bearer bdt_refusal_fixture_123456789', 'content-type': 'application/json' }, body: JSON.stringify(input),
   });
-  expect(response.status).toBe(403);
-  expect(await response.json()).toEqual({ error: error.message });
+  expect(response.status).toBe(200);
+  const opened = await response.json() as { cornerId: string };
+  expect((await db.query('SELECT approval_basis FROM corner_brief_revisions WHERE corner_id=$1', [opened.cornerId])).rows[0])
+    .toMatchObject({ approval_basis: { kind: 'agent-initiated', approvedBy: agent, sourceMessageId: invalidApproval } });
   expect(captureServerError).not.toHaveBeenCalled();
-  expect((await db.query('SELECT id FROM rooms WHERE parent_id=$1', [parent])).rows).toEqual(before);
+  expect((await db.query('SELECT parent_id FROM rooms WHERE id=$1', [opened.cornerId])).rows[0]).toMatchObject({ parent_id: parent });
 });

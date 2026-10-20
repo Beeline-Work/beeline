@@ -7,6 +7,7 @@ import {
   directMessageTitle,
   roomTitle,
   type ChatTitleIdentity,
+  type DerivedCornerState,
   type PushActionPayload,
   type ReadClear,
 } from '@beeline/api-contract/phone';
@@ -16,6 +17,7 @@ import { apnsReadClearBatch } from './apns-push.js';
 import { firebaseReadClearBatch } from './firebase-push.js';
 import { TERMINAL_PUSH_CLAIMS_SQL } from './push-claim-cleanup.js';
 import type { ObjectService } from './object-service.js';
+import { cornerFactsSql, cornerRowState, type CornerStateRow } from './chat-corner-counts.js';
 import { addressedToPersonSql } from './corner-owed.js';
 import { SERVER_LEASE_EXPIRY_MS } from './connection-presence.js';
 
@@ -67,6 +69,8 @@ export interface PushSender {
           roomId: string;
           channelId: string;
           cornerId?: string;
+          /** Canonical server projection; transport serializers never derive it. */
+          cornerState?: DerivedCornerState;
           target: 'message' | 'corner';
           type: 'message';
           /** The in-app title: `#room`, `#room/corner` or `@peer`. */
@@ -507,6 +511,18 @@ export class PushDeliveryLoop {
         direct_attention,room_name,corner_name,dm_peer
       FROM unclaimed ORDER BY created_at,message_id LIMIT 100
     `);
+    const cornerIds = [...new Set(candidates.rows.flatMap((row) => row.corner_id ? [row.corner_id] : []))];
+    const cornerStates = new Map<string, DerivedCornerState>();
+    if (cornerIds.length) {
+      // State is viewer-independent. Use the same indexed facts as phone reads,
+      // once per distinct corner in this bounded delivery batch.
+      const facts = cornerFactsSql('NULL::text');
+      const rows = await this.database.query<CornerStateRow & { id: string }>(
+        `SELECT c.id,c.archived_at,${facts.columns} FROM rooms c ${facts.joins}
+         WHERE c.id=ANY($1::uuid[])`, [cornerIds],
+      );
+      for (const row of rows.rows) cornerStates.set(row.id, cornerRowState(row));
+    }
     let delivered = 0;
     type ClaimedDelivery = {
       candidate: (typeof candidates.rows)[number];
@@ -626,7 +642,9 @@ export class PushDeliveryLoop {
                 workspaceId: candidate.workspace_id,
                 roomId: candidate.room_id!,
                 channelId: candidate.channel_id!,
-                ...(candidate.corner_id ? { cornerId: candidate.corner_id } : {}),
+                ...(candidate.corner_id
+                  ? { cornerId: candidate.corner_id, cornerState: cornerStates.get(candidate.corner_id) }
+                  : {}),
                 target: candidate.target,
                 type: 'message' as const,
                 text: candidate.text,

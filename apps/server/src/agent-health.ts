@@ -118,7 +118,7 @@ export function reviewerList(room: {
   if (!room.reviewer_agent_id) return [];
   return [
     room.reviewer_agent_id,
-    ...(room.reviewer_fallback_ids ?? []).filter((id) => id !== room.reviewer_agent_id),
+    ...(room.reviewer_fallback_ids ?? []).filter((id) => id.trim().length > 0 && id !== room.reviewer_agent_id),
   ];
 }
 

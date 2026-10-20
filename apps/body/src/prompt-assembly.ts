@@ -184,7 +184,7 @@ export function cornerHasRepositoryWork(brief?: CornerBrief): boolean {
 
 export const CORNER_RUNTIME_AUTHOR_CONTRACT = `Work in this corner; report blockers or decisions one step up, never recruit Room agents. The current brief's spec, approving order, non-goals and inherited human constraints bound the work; its objective is navigation only. Meet every story and criterion, respect risks and use the file manifest. Before code/build, read the current brief. Any human in the Room can direct you. If a newer human instruction contradicts an earlier one, follow the newer instruction, revise the brief with that message as approval, and state in the corner what changed. Dispatch authorizes work without separate spec/mock approval; produce either first when requested. Deliver artifacts with post_artifact and report without requiring a PR. Claim another agent's progress only from durable commands, the current prompt or tool evidence. No unrequested features or refactors.`;
 
-export const CORNER_AUTHOR_CONTRACT = `Work in this corner; report blockers or decisions one step up, never recruit Room agents. Report status done/blocked/failed/needs_decision must match its text prefix; progress stays here. Worker done requires an opened/merged PR or repositoryWork:false. It reports the finished ordered step; review and holds still govern merging.
+export const CORNER_AUTHOR_CONTRACT = `Work in this corner; report blockers or decisions one step up, never recruit Room agents. Report status done/blocked/failed/needs_decision must match its text prefix; progress stays here. Worker done requires an opened PR or repositoryWork:false.
 The current brief's stories, criteria, approving order, non-goals and inherited human constraints bound the work; its objective is navigation only. Meet every story, respect risks and use the file manifest. Before code/build, read the current brief. Any human in the Room can direct you. If a newer human instruction contradicts an earlier one, follow the newer instruction, revise the brief with that message as approval, and state in the corner what changed. Dispatch authorizes work without separate spec/mock approval; produce either first when requested.
 For repository bugfixes, the brief records a real-target Reproduction <id>, or why it is not feasible and the closest stand-in; done means that same reproduction or stand-in passes.
 Follow beeline-triage. Before the PR, demonstrate the user path with the built app or affected service; if unavailable, exercise that exact path with the narrowest script. Inner-function tests, logs and code reads do not prove a visible result. The PR body needs ## Reproduced and ## Demonstrated: steps, wrong and passing results under the same Reproduction <id>; explain any unavailable real-target proof and its stand-in. For features, say "not a defect report".
@@ -326,6 +326,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
             !repository ? 'For coding work without a linked repository, guide Room header → Repository → Link/Create (or create a repository-backed Room). If gh is unavailable, consult beeline-connecting-services for repository and organization setup before proposing a personal GitHub connection.' : '',
             shellLine(shell),
             writableHomeLine(writableHome),
+            'To act outside the sandbox, ask with request_grant(kind:command, target, reason) and run the approved command with run_granted_command in a surface that permits it; never call a host blocker unfixable before asking.',
             shell?.available === false
               ? 'Read code with CodeGraph when available, then repository_io(action:search/read).'
               : 'If a shell command is refused, say so plainly rather than retrying, and read code with CodeGraph when available, then repository_io(action:search/read).',
@@ -356,6 +357,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     topic: 'talking and assigning work',
     why: {
       'core.tagging': 'Every @handle is a wake; stray handles woke agents with nothing to do, and guessed spellings reached nobody.',
+      'corner.context': 'People outside a corner need the original problem and decision, not just its internal references.',
       'core.finish': 'An agent read a not-yet-connected tool result as a stopping point and ended the turn with its own work undone.',
       'corner.handover': 'An agent asked to hand the corner on opened a duplicate sibling corner instead of tagging the other agent.',
     },
@@ -365,6 +367,8 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     render: ({ surface }) =>
       paragraphs(
         'Tag to talk. Order to assign work. @handle invites a reply here, with no assignment or report owed. Copy exact member handles. order(address, agent, text) assigns privately; a Room requires agent. report(status, text) one step up to your commander. Report only to whoever assigned you. If human, tag them when they need to decide or know. Reports begin done:, blocked:, needs-decision: or failed:; human reports appear where they ordered you.',
+        CORNERS.includes(surface) &&
+          'Outside this corner, tell people the original problem, blocker, and needed decision in plain words.',
         'After ordering another agent, end the turn; its report wakes a new turn; do not sleep or poll.',
         CORNERS.includes(surface) &&
           'Agent tags invite conversation here and never change the implementer. Assign work with order at an explicit reachable address; report one step up when the intended recipient is forbidden.',

@@ -4025,8 +4025,6 @@ describe('monolith integration', () => {
   });
 
   it('outlines every day of a history longer than twenty thousand days', async () => {
-    // The synchronous PGlite load can outlast HTTP's default idle socket timeout.
-    server.keepAliveTimeout = 60_000;
     const created = await daemonOperation('createCorner', {
       roomId: ROOM,
       requestId: 'long-history-outline',
@@ -4038,13 +4036,20 @@ describe('monolith integration', () => {
     const before = (await (
       await request(`/v1/phone/rooms/${cornerId}/outline?tz=UTC`)
     ).json()) as RoomHistoryOutline;
-    await database.query(
-      `INSERT INTO messages(id,room_id,author_id,text,created_at)
-       SELECT lpad(to_hex(day),64,'0'),$1,$2,'Day ' || day,
-              '1980-01-01T12:00:00Z'::timestamptz + (day - 1) * interval '1 day'
-       FROM generate_series(1,20001) AS day`,
-      [cornerId, HUMAN],
-    );
+    // This is a history-read fixture, not a test of per-message search,
+    // follow or owed-item writes. Skip user triggers during the bulk seed;
+    // foreign-key constraints remain active, and all hooks resume before HTTP.
+    await database.transaction(async (fixture) => {
+      await fixture.query('ALTER TABLE messages DISABLE TRIGGER USER');
+      await fixture.query(
+        `INSERT INTO messages(id,room_id,author_id,text,created_at)
+         SELECT lpad(to_hex(day),64,'0'),$1,$2,'Day ' || day,
+                '1980-01-01T12:00:00Z'::timestamptz + (day - 1) * interval '1 day'
+         FROM generate_series(1,20001) AS day`,
+        [cornerId, HUMAN],
+      );
+      await fixture.query('ALTER TABLE messages ENABLE TRIGGER USER');
+    });
     const outline = (await (
       await request(`/v1/phone/rooms/${cornerId}/outline?tz=UTC`)
     ).json()) as RoomHistoryOutline;
@@ -4062,7 +4067,7 @@ describe('monolith integration', () => {
         authorHandle: 'owner',
       },
     });
-  }, 60_000);
+  });
 
   it('restarts history from the current tail when a cached cursor was deleted', async () => {
     const created = await daemonOperation('createCorner', {

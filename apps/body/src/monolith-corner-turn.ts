@@ -609,6 +609,11 @@ export class MonolithCornerTurnLoop {
       (url, siteUrl) => {
         options.api.execute('forgetSquireSignIn', { url, ...(siteUrl ? { siteUrl } : {}) }).catch(() => {});
       },
+      async (service) => {
+        const view = await this.options.api.execute('readAgentWorkbench', { roomId: options.cornerId });
+        return view.apps?.find(app => app.appKey === service.trim().toLowerCase() &&
+          app.transport === 'squire-api' && app.status === 'connected')?.connectionReference;
+      },
     );
     this.options = { ...options, api: this.commandContext.bind(options.api) };
     options.grantRunner?.register(options.cornerId, {

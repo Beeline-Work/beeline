@@ -58,6 +58,23 @@ describe('R2594 repository setup guidance', () => {
   });
 });
 
+describe('R-PROMPT-GRANTS recovery and outside context', () => {
+  it('shows grant recovery in the assembled Room prompt', () => {
+    const prompt = assembleSessionPrompt({ surface: 'room', agentName: 'Bee',
+      agentCommand: 'claude-agent-acp', shell: { available: true } }).systemPrompt;
+    expect(prompt).toContain('request_grant(kind:command, target, reason)');
+    expect(prompt).toContain('run_granted_command in a surface that permits it');
+    expect(prompt).toContain('never call a host blocker unfixable before asking');
+  });
+  it('gives every corner one rule for posts outside it', () => {
+    for (const surface of ['code-corner', 'repo-less-corner'] as const) {
+      const prompt = assembleSessionPrompt({ surface, agentName: 'Bee',
+        agentCommand: 'claude-agent-acp' }).systemPrompt;
+      expect(prompt.match(/original problem, blocker, and needed decision/g)).toHaveLength(1);
+    }
+  });
+});
+
 describe('RW1 writable home in the Room primer', () => {
   const home = '/srv/beeline/agents/a/rooms/r/agent-home/user';
   it('names the sandbox home and post_artifact only when the sandbox wraps the session', () => {

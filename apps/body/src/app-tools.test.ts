@@ -205,6 +205,16 @@ describe('server-mediated connected app tools', () => {
     expect(JSON.stringify(calls)).not.toMatch(/accessToken|refreshToken|composio|apiKey/i);
   });
 
+  it('returns Squire API discovery guidance without executing a provider tool', async () => {
+    const route = { tools: [], transport: 'squire-api', service: 'github',
+      next: 'Call GitHub API with Trusty Squire use_credential.',
+      credentials: [{ reference: 'vault:github', allowedHosts: ['api.github.com'] }] };
+    answer = () => Response.json(route);
+    expect(JSON.parse(await callAgentTool('app_tool', { app: appId }, 'call-1')))
+      .toEqual(route);
+    expect(calls.map(call => call.name)).toEqual(['listAppTools']);
+  });
+
   it('reports a missing app without trying another provider path', async () => {
     answer = () => Response.json({ error: 'app_unavailable' }, { status: 404 });
     await expect(callAgentTool('app_tool', { app: appId }, 'call-1'))
@@ -251,6 +261,16 @@ describe('server-mediated connected app tools', () => {
     expect(text).toContain(transport === 'squire-api'
       ? 'call Squire use_credential (service "github")' : `use app_tool(app:"${appId}")`);
     if (status === 'error') expect(text).toContain('Permission denied');
+  });
+
+  it('Reproduction CRED-1: status names the connected vault reference for API calls', async () => {
+    const text = await workbenchStatus({ roomId: 'room-1', execute: async () => ({
+      apps: [{ appId, appKey: 'github', name: 'GitHub', transport: 'squire-api',
+        status: 'connected', connectionReference: 'vault://github/work' }],
+    }) });
+    expect(text).toContain('use_credential(reference:"vault://github/work")');
+    expect(text).toContain('call Squire use_credential (reference "vault://github/work")');
+    expect(text).not.toContain('service "github"');
   });
 
   it('R2594: does not invent a personal credential when only repository App access is available', async () => {

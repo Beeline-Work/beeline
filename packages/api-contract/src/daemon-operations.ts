@@ -598,12 +598,19 @@ export type DaemonOperationMap = {
   findConnectors: Operation<RoomInput & { readonly query: string }, {
     readonly matches: readonly ConnectorSearchMatch[]; readonly unavailableSources: readonly string[];
   }>;
-  /** Discover server-mediated tools for one connected app; no credentials are returned. */
+  /** Discover tools or route guidance for a connected app; only credential metadata is returned. */
   listAppTools: Operation<TurnOutputAuthority & AgentInput & RoomInput & { readonly appId: string;
     readonly query?: string }, { readonly tools: readonly {
       readonly slug: string; readonly name: string; readonly description: string;
       readonly inputParameters: unknown;
-    }[] }>;
+    }[];
+    readonly transport?: AppTransport;
+    readonly next?: string;
+    readonly service?: string;
+    readonly credentials?: readonly {
+      readonly reference: string; readonly allowedHosts: readonly string[];
+    }[];
+  }>;
   /** Execute against the exact person's account after a fresh per-call permission decision. */
   executeAppTool: Operation<TurnOutputAuthority & AgentInput & RoomInput & { readonly appId: string;
     readonly tool: string; readonly arguments: Record<string, unknown> },
@@ -756,6 +763,18 @@ export type AgentRoomInput = AgentInput & RoomInput;
 export type AgentConfigurationInput = AgentInput & { readonly roomId?: string };
 export type CornerInput = { readonly cornerId: string };
 export type AgentMemberMetadata = {
+  readonly model?: string | null;
+  /** Absent when the provider has not reported its billing or quota. */
+  readonly billing?: 'subscription' | 'pay-per-use';
+  readonly remainingAllowance?: {
+    readonly updatedAt: number;
+    /** Remaining fraction (0–1) per provider window; timestamps are Unix seconds. */
+    readonly windows: readonly { readonly rateLimitType: string; readonly remaining: number; readonly resetsAt?: number }[];
+    readonly usd?: number;
+    readonly credits?: number;
+    readonly tokens?: { readonly remaining: number; readonly resetsAt: number };
+  };
+  readonly reviewer?: 'primary' | 'fallback';
   readonly owner?: { readonly id: string; readonly handle: string | null; readonly name: string };
   readonly machine?: string | null;
   readonly online?: boolean;
@@ -1139,6 +1158,8 @@ export type ConnectAppResult = {
   /** What serves the app now. */
   readonly transport?: AppTransport;
   readonly connectorId?: string;
+  /** Exact selected vault reference for a Squire route; metadata only. */
+  readonly connectionReference?: string;
   /** The provider sign-in page Squire should open (never pasted into chat). */
   readonly authorizationUrl?: string;
   /** Server-owned next step, in one or two sentences. */

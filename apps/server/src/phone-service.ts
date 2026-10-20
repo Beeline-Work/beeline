@@ -6606,7 +6606,9 @@ export class PhoneService {
       await this.renameCorner(input.roomId, input.name, viewerId);
       return;
     }
-    const fallbackIds = input.reviewerFallbackIds;
+    const fallbackIds = Array.isArray(input.reviewerFallbackIds)
+      ? input.reviewerFallbackIds.filter(id => id !== '')
+      : input.reviewerFallbackIds;
     if (
       fallbackIds !== undefined &&
       (!Array.isArray(fallbackIds) ||

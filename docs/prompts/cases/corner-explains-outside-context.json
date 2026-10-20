@@ -1,0 +1,48 @@
+{
+  "id": "corner-explains-outside-context",
+  "section": "talking",
+  "summary": "Outside a corner, explain the original problem, blocker and decision.",
+  "place": "code-corner",
+  "turn": {
+    "task": {
+      "body": "Send a blocker update to Dana in room-demo about this corner.",
+      "commandReason": "order",
+      "fromName": "juniper"
+    }
+  },
+  "messages": [
+    "Task: restore spoken replies. Device playback proof needs microphone access. Decision: approve microphone access or accept desktop playback proof. Dana has not read this corner."
+  ],
+  "pass": {
+    "all": [
+      {
+        "call": "post",
+        "args": {
+          "address": "room-demo",
+          "text": {
+            "matches": "spoken|voice|audio",
+            "flags": "i"
+          }
+        }
+      },
+      {
+        "call": "post",
+        "args": {
+          "text": {
+            "matches": "microphone",
+            "flags": "i"
+          }
+        }
+      },
+      {
+        "call": "post",
+        "args": {
+          "text": {
+            "matches": "desktop|approve|grant",
+            "flags": "i"
+          }
+        }
+      }
+    ]
+  }
+}

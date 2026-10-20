@@ -288,7 +288,7 @@ type ConnectionFact = {
  * Every vault key of this owner that belongs to the app. The Workbench is the
  * PERSON's, across Workspaces, and so is the Squire vault behind it.
  */
-async function appConnections(
+export async function appConnections(
   database: SqlDatabase,
   ownerId: string,
   appKey: string,
@@ -572,6 +572,7 @@ type ConnectAppOutcome = {
   readonly connectorId?: string;
   readonly authorizationUrl?: string;
   readonly derived?: AppConnectionStatus;
+  readonly connectionReference?: string;
   readonly next: string;
 };
 
@@ -581,12 +582,13 @@ export function connectedAppUse(app: {
   readonly name: string;
   readonly appKey?: string;
   readonly domain: string;
+  readonly connectionReference?: string;
 }): string {
   if (app.transport === 'composio') return `Use the server app tools for ${app.name}.`;
   if (app.transport === 'registry-mcp') return `Use the mounted ${app.name} MCP tools.`;
   if (app.transport === 'squire-browser')
     return `Use Trusty Squire operate_* tools on ${app.domain}.`;
-  return `Call ${app.name}'s API with Trusty Squire use_credential (service "${app.appKey}").`;
+  return `Call ${app.name}'s API with Trusty Squire use_credential (${app.connectionReference ? `reference ${JSON.stringify(app.connectionReference)}` : `service "${app.appKey}"`}).`;
 }
 
 function nextStep(
@@ -887,6 +889,7 @@ export async function connectApp(
     ...(status === 'needs_sign_in' && (authorizationUrl || derived.signInUrl)
       ? { authorizationUrl: authorizationUrl ?? derived.signInUrl }
       : {}),
+    ...(derived.connectionReference ? { connectionReference: derived.connectionReference } : {}),
     derived: derived.status,
   };
   const next = nextStep(base, derived, versionNote);

@@ -161,6 +161,8 @@ export class SquireTaskRelay {
      * redirect to an identity provider still names the app.
      */
     private readonly onSignedOut: (url: string, siteUrl?: string) => void = () => {},
+    /** Resolve from the same server Workbench projection that connect status reads. */
+    private readonly connectedCredential?: (service: string) => Promise<string | undefined>,
   ) {
     this.shareRenewals = new SquireShareRenewals(
       (id, client) => !this.closed && squireSessionOwner(id)?.client === client,
@@ -485,7 +487,31 @@ export class SquireTaskRelay {
       callClient = task.client;
     }
     try {
-      const result = await callClient.requestMcp(input.method, input.params ?? {});
+      let params = input.params ?? {};
+      const args = params.arguments as Record<string, unknown> | undefined;
+      if (safeToolName === 'use_credential' && this.connectedCredential &&
+          typeof args?.service === 'string' && !args.reference && !args.name) {
+        const reference = await this.connectedCredential(args.service);
+        if (reference) {
+          const { service: _service, ...rest } = args;
+          params = { ...params, arguments: { ...rest, reference } };
+        } else {
+          const inventory = await callClient.requestMcp('tools/call', {
+            name: 'list_credentials', arguments: { service: args.service, fields: 'summary' },
+          }) as { isError?: boolean; content?: { type?: string; text?: string }[] };
+          if (inventory.isError) return inventory;
+          const body = inventory.content?.find(item => item.type === 'text')?.text;
+          const matches = (body ? JSON.parse(body).credentials ?? [] : []) as { reference: string; label?: string }[];
+          if (matches.length > 1) return { isError: true, content: [{ type: 'text', text: JSON.stringify({
+            error: { code: 'ambiguous_service', message: 'No connected credential is selected. Retry use_credential with a reference.',
+              credentials: matches.map(item => ({ reference: item.reference, label: item.label ?? item.reference })) },
+          }) }] };
+        }
+        if (this.closed || this.task !== task || this.active?.taskId !== active?.taskId ||
+            this.active?.requestId !== active?.requestId)
+          throw new Error('Squire task ended while resolving the credential');
+      }
+      const result = await callClient.requestMcp(input.method, params);
       if (this.closed || this.task !== task || (active && (this.active?.taskId !== active.taskId ||
           this.active?.requestId !== active.requestId)))
         throw new Error('Squire task ended while the call was running');

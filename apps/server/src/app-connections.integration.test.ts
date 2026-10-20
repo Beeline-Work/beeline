@@ -842,7 +842,7 @@ describe('connect_app', () => {
         const message = otherOwner
           ? "GitHub is another person's squire-api app; only their own agents can use it."
           : 'GitHub is connected through squire-api, not app tools. ' +
-            'Call GitHub\'s API with Trusty Squire use_credential (service "github").';
+            'Call GitHub\'s API with Trusty Squire use_credential (reference "vault:github").';
         for (const operation of ['listAppTools', 'executeAppTool']) {
           const response = await fetch(`${origin}/v1/daemon/operations/${operation}`, {
             method: 'POST',
@@ -855,7 +855,7 @@ describe('connect_app', () => {
           if (!otherOwner && operation === 'listAppTools') {
             expect(response.status).toBe(200);
             expect(result).toEqual({ tools: [], transport: 'squire-api', service: 'github',
-              next: 'Call GitHub\'s API with Trusty Squire use_credential (service "github").',
+              next: 'Call GitHub\'s API with Trusty Squire use_credential (reference "vault:github").',
               credentials: [{ reference: 'vault:github', allowedHosts: ['api.github.com'] }] });
           } else {
             expect(response.status).toBe(otherOwner ? 403 : 400);

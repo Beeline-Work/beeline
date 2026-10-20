@@ -192,8 +192,8 @@ import {
   AppSignInCard,
   ConnectorReceiptCard,
   ChoiceCard,
-  AgentCommandCard,
   agentBylineLabel,
+  agentCommandTranscriptMessage,
   OrdinaryLedgerMessage,
   TargetBranchProposalCard,
   WritePermissionCard,
@@ -3363,56 +3363,95 @@ describe('Room message variant components', () => {
     expect(card.root.findAllByProps({ testID: 'grant-g-2-script' })).toHaveLength(0);
   });
 
-  it('shows an agent report as a collapsed record card that expands to the full text', () => {
+  it('renders an agent report as ordinary transcript with the recipient leading as a mention', () => {
     const text = 'needs-decision: PR #2599 is ready for review\nChecks are green.\nMerge it?';
-    const renderer = render(
-      <AgentCommandCard
-        message={message({
-          authorIdentity: { pubkey: 'jelly', kind: 'agent', name: 'Jellybean' },
-          agentCommand: {
-            kind: 'report',
-            recipient: { id: 'ruby', name: 'Ruby', handle: 'ruby' },
-            status: 'needs-decision',
-            text,
-          },
-        })}
-        stamp="2m"
-      />,
-    );
-    const header = () => renderer.root.findByProps({ testID: 'agent-command-header' });
-    const subline = () => renderer.root.findAllByProps({ testID: 'agent-command-subline' });
-    const shown = () => JSON.stringify(renderer.toJSON());
-    expect(shown()).toContain('Jellybean → Ruby · needs-decision');
-    expect(subline()[0]!.props.numberOfLines).toBe(1);
-    expect(subline()[0]!.props.children).toBe('needs-decision: PR #2599 is ready for review');
-    expect(shown()).not.toContain('Merge it?');
-    expect(header().props.accessibilityState).toEqual({ expanded: false });
-    act(() => header().props.onPress());
-    expect(shown()).toContain('Merge it?');
-    expect(subline()).toHaveLength(0);
-    expect(header().props.accessibilityState).toEqual({ expanded: true });
-    act(() => header().props.onPress());
-    expect(shown()).not.toContain('Merge it?');
-    expect(subline().length).toBeGreaterThan(0);
+    const row = message({
+      id: 'agent-report',
+      authorIdentity: { pubkey: 'jelly', kind: 'agent', name: 'Jellybean', handle: 'jellybean' },
+      agentCommand: {
+        kind: 'report',
+        recipient: { id: 'ruby', name: 'Ruby', handle: 'ruby' },
+        status: 'needs-decision',
+        text,
+      },
+    });
+    const transcript = agentCommandTranscriptMessage(row, [
+      { pubkey: 'ruby', handle: 'ruby' },
+    ]);
+    expect(transcript.agentCommand).toBeUndefined();
+    expect(transcript.text).toBe(`@ruby ${text}`);
+    const onMessageActions = vi.fn();
+    const renderer = render(<OrdinaryLedgerMessage
+      message={transcript}
+      participantsHydrated
+      viewerPubkey="viewer"
+      speakerWorking={false}
+      continued={false}
+      participantHandles={[{ pubkey: 'ruby', handle: 'ruby' }]}
+      channelIndex={{ rooms: [], corners: [] }}
+      deliveryFailed={false}
+      onChannelReference={vi.fn()}
+      onReply={vi.fn()}
+      onCopy={vi.fn()}
+      onMessageActions={onMessageActions}
+      onRetry={vi.fn()}
+      onDismiss={vi.fn()}
+    />);
+    const entry = ledgerEntryRender.mock.lastCall?.[0];
+    expect(entry.byline.name).toBe('Jellybean');
+    expect(entry.bodyText).toBe(`@ruby ${text}`);
+    expect(entry.mentionHandles).toContain('ruby');
+    expect(renderer.root.findAll((node: ReactTestInstance) =>
+      String(node.props.testID ?? '').startsWith('agent-command'))).toHaveLength(0);
+    expect(JSON.stringify(renderer.toJSON())).not.toContain('Jellybean → Ruby');
+    const longPress = renderer.root.findByProps({ testID: 'copy-message-agent-report' });
+    act(() => longPress.props.onLongPress());
+    expect(onMessageActions).toHaveBeenCalledWith(transcript);
   });
 
-  it('titles an agent order sender → receiver without a status', () => {
-    const renderer = render(
-      <AgentCommandCard
-        message={message({
-          authorIdentity: { pubkey: 'ruby', kind: 'agent', name: 'Ruby' },
-          agentCommand: {
-            kind: 'order',
-            recipient: { id: 'jelly', name: 'Jellybean' },
-            text: 'Use endpoint v2',
-          },
-        })}
-        stamp="now"
-      />,
+  it('leads an agent order with the recipient handle that mention parsing highlights', () => {
+    const row = message({
+      authorIdentity: { pubkey: 'ruby', kind: 'agent', name: 'Ruby', handle: 'ruby' },
+      agentCommand: {
+        kind: 'order',
+        recipient: { id: 'jelly', name: 'Jelly Bean' },
+        text: 'Use endpoint v2',
+      },
+    });
+    const transcript = agentCommandTranscriptMessage(row, [
+      { pubkey: 'jelly', handle: 'jellybean' },
+    ]);
+    expect(transcript.text).toBe('@jellybean Use endpoint v2');
+    expect(transcript.agentCommand).toBeUndefined();
+    expect(
+      agentCommandTranscriptMessage(row, []).text,
+    ).toBe('@Jelly Bean Use endpoint v2');
+    const renderer = render(<OrdinaryLedgerMessage
+      message={transcript}
+      participantsHydrated
+      viewerPubkey="viewer"
+      speakerWorking={false}
+      continued={false}
+      participantHandles={[{ pubkey: 'jelly', handle: 'jellybean' }]}
+      channelIndex={{ rooms: [], corners: [] }}
+      deliveryFailed={false}
+      onChannelReference={vi.fn()}
+      onReply={vi.fn()}
+      onCopy={vi.fn()}
+      onRetry={vi.fn()}
+      onDismiss={vi.fn()}
+    />);
+    const entry = ledgerEntryRender.mock.lastCall?.[0];
+    expect(entry.byline.name).toBe('Ruby');
+    expect(entry.bodyText).toBe('@jellybean Use endpoint v2');
+    expect(entry.mentionHandles).toContain('jellybean');
+    expect(renderer.root.findAll((node: ReactTestInstance) =>
+      String(node.props.testID ?? '').startsWith('agent-command'))).toHaveLength(0);
+    expect(conversationSource).toContain(
+      'item = agentCommandTranscriptMessage(item, roomParticipants);',
     );
-    expect(renderer.root.findByProps({ testID: 'agent-command-order' })).toBeTruthy();
-    expect(JSON.stringify(renderer.toJSON())).toContain('Ruby → Jellybean');
-    expect(JSON.stringify(renderer.toJSON())).not.toContain('Ruby → Jellybean ·');
+    expect(conversationSource).not.toContain('AgentCommandCard');
+    expect(conversationSource).not.toContain('agent-command-');
   });
 
   it('paints choice options as plates with Skip in the footer, never TranscriptCard rows', () => {

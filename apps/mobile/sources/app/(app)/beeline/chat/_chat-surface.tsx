@@ -329,7 +329,7 @@ import {
   AppSignInCard,
   ChoiceCard,
   WalletCards,
-  AgentCommandCard,
+  agentCommandTranscriptMessage,
   OrdinaryLedgerMessage,
   TargetBranchProposalCard,
   WritePermissionCard,
@@ -5616,6 +5616,9 @@ export function BuzzChatSurface({
         referencedMessage?: ChatDisplayMessage;
       },
     ) => {
+      // An agent's order or report is ordinary transcript: the recipient leads
+      // the text as an @mention and the row keeps its own author's byline.
+      item = agentCommandTranscriptMessage(item, roomParticipants);
       if (item.roomUpdate) {
         return (
           <LedgerRoomUpdate
@@ -5766,10 +5769,6 @@ export function BuzzChatSurface({
             onOpenWorkbench={openWorkbench}
           />
         );
-      }
-
-      if (item.agentCommand) {
-        return <AgentCommandCard message={item} stamp={ledgerStamp(item.timestamp)} />;
       }
 
       if (item.walletTx || item.walletInsufficient || item.walletDelegation) {

@@ -104,7 +104,6 @@
         "scripts/direct-message-picker-proof.tsx",
         "scripts/dm-sheet-proof.tsx",
         "scripts/beeline-mark-proof.tsx",
-        "scripts/agent-command-card-proof.tsx",
         "scripts/identity-mark-system-proof.tsx",
         "scripts/system-lines-proof.tsx",
         "scripts/harness-start-failure-proof.tsx",

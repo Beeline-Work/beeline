@@ -207,7 +207,9 @@ describe('Room guidance', () => {
 
   it('delivers the same Room capabilities through compatibility-only harnesses', () => {
     const context = sessionPrompt({ agentCommand: 'codex-acp' });
-    expect(context.systemPrompt).toContain('read-only');
+    expect(context.systemPrompt).toContain('This Beeline Room has no linked repository.');
+    expect(context.systemPrompt).toContain('Room header → Repository → Link or Create');
+    expect(context.systemPrompt).not.toContain('The repository filesystem is read-only here.');
     expect(context.systemPrompt).toContain('Tag to talk. Order to assign work.');
     expect(context.systemPrompt).toContain('call open_corner');
     expect(context.systemPrompt).toContain(

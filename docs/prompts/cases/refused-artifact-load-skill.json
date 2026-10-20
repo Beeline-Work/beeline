@@ -1,0 +1,9 @@
+{
+  "id": "refused-artifact-load-skill",
+  "section": "tools",
+  "summary": "A refused artifact upload loads the file skill before retrying.",
+  "place": "room",
+  "turn": { "task": { "body": "@ruby share the generated report as an attachment.", "fromName": "dana", "commandReason": "human_tag" } },
+  "messages": ["Ruby called post_artifact(path:/tmp/demo-report.html): refused: path outside allowed artifact roots."],
+  "pass": { "skill": "beeline-files-and-mocks", "beforeRetry": "post_artifact" }
+}

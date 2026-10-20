@@ -16,11 +16,14 @@
 import { appendFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import type * as Skills from '../apps/body/src/beeline-skill.js';
 import type * as Assembly from '../apps/body/src/prompt-assembly.js';
 import type * as ToolSurface from '../apps/body/src/minimal-tool-surface.js';
 import {
   NATIVE_TOOL_NAMES,
   caseOutcome,
+  skillPath,
+  validateRuleSkills,
   evaluateRule,
   parsePromptCase,
   type PromptCase,
@@ -50,11 +53,12 @@ type ToolDefinition = ToolSurface.ToolDefinition;
 interface PromptSource {
   readonly assembly: typeof Assembly;
   readonly tools: typeof ToolSurface;
+  readonly skills: typeof Skills;
 }
 
 async function loadSource(root: string): Promise<PromptSource> {
   const load = (file: string) => import(pathToFileURL(join(root, 'apps', 'body', 'src', file)).href);
-  return { assembly: await load('prompt-assembly.ts'), tools: await load('minimal-tool-surface.ts') };
+  return { assembly: await load('prompt-assembly.ts'), tools: await load('minimal-tool-surface.ts'), skills: await load('beeline-skill.ts') };
 }
 
 const NATIVE_TOOLS: Record<(typeof NATIVE_TOOL_NAMES)[number], ToolDefinition> = {
@@ -95,6 +99,7 @@ function toolsFor(source: PromptSource, testCase: PromptCase): ToolDefinition[] 
   return [
     ...source.tools.minimalTools(testCase.place.endsWith('corner')),
     source.tools.RUNNER_TOOL,
+    { name: 'Read', description: 'Read a file by its absolute path, including a listed skill.', inputSchema: { type: 'object', properties: { file_path: { type: 'string' } }, required: ['file_path'] } },
     ...(extras.includes(SILENT_TOOL_NAME) ? [source.tools.SILENT_TOOL] : []),
     ...NATIVE_TOOL_NAMES.filter((name) => extras.includes(name)).map((name) => NATIVE_TOOLS[name]),
   ];
@@ -159,6 +164,7 @@ function check(source: PromptSource, cases: readonly PromptCase[]): string[] {
       continue;
     }
     try {
+      validateRuleSkills(testCase.pass, skillsFor(source, testCase).map((skill) => skill.name));
       const prompt = assemble(source, testCase);
       if (!prompt.sections.includes(testCase.section)) {
         problems.push(`case ${testCase.id}: its prompt does not render section ${testCase.section}`);
@@ -170,6 +176,10 @@ function check(source: PromptSource, cases: readonly PromptCase[]): string[] {
   return problems;
 }
 
+function skillsFor(source: PromptSource, testCase: PromptCase) {
+  return source.skills.beelineManagedSkills('source', { isReviewer: testCase.session?.reviewer === true });
+}
+
 /**
  * One self-contained replay prompt. The replaying agent hands it to a fresh
  * session of its own model, which answers with the calls and text it would
@@ -177,6 +187,7 @@ function check(source: PromptSource, cases: readonly PromptCase[]): string[] {
  */
 function replayPrompt(source: PromptSource, testCase: PromptCase): string {
   const prompt = assemble(source, testCase);
+  const skills = skillsFor(source, testCase);
   const tools = toolsFor(source, testCase).map((tool) => ({ name: tool.name, description: tool.description, input_schema: tool.inputSchema }));
   return [
     `# Prompt case replay: ${testCase.id}`,
@@ -186,6 +197,7 @@ function replayPrompt(source: PromptSource, testCase: PromptCase): string {
       ? `Tool calls return these stub results by tool name: ${JSON.stringify(testCase.toolResults)}. Any other call returns {"ok":true}.`
       : 'Every tool call returns {"ok":true}.',
     `Continue for up to ${MAX_STEPS} rounds of tool calls, as you would after those results.`,
+    'Skill reads do not return the default stub. When you call Read for a listed skill, stop this answer at that call and wait for its file content. The replay controller will provide that result and resume this same simulated turn. Do not guess unread skill content.',
     'Reply with only one JSON object and nothing else:',
     '{"calls":[{"name":"<tool name>","args":{...}}],"text":"<everything you would post as your reply, or an empty string>"}',
     '',
@@ -200,6 +212,11 @@ function replayPrompt(source: PromptSource, testCase: PromptCase): string {
     '````json',
     JSON.stringify(tools),
     '````',
+    '',
+    '## Available skills',
+    '',
+    'The harness lists these skills. To load one, call Read with its file_path.',
+    ...skills.map((skill) => `- ${skill.name}: ${skill.content.match(/^description: (.+)$/m)?.[1] ?? ''} (file: ${skillPath(skill.name)})`),
     '',
     '## Turn',
     '',
@@ -273,7 +290,7 @@ function summarize(lines: string[]): void {
 }
 
 async function main(): Promise<number> {
-  const head = await loadSource(repoRoot);
+  const head = await loadSource(resolve(option('--source') ?? repoRoot));
   const only = option('--only')?.split(',').map((id) => id.trim()).filter(Boolean);
   const all = loadCases();
   const problems = check(head, all);
@@ -289,7 +306,12 @@ async function main(): Promise<number> {
   const exportDir = option('--export');
   if (exportDir) {
     mkdirSync(exportDir, { recursive: true });
-    for (const testCase of cases) writeFileSync(join(exportDir, `${testCase.id}.prompt.md`), replayPrompt(head, testCase));
+    for (const testCase of cases) {
+      writeFileSync(join(exportDir, `${testCase.id}.prompt.md`), replayPrompt(head, testCase));
+      writeFileSync(join(exportDir, `${testCase.id}.skills.json`), JSON.stringify(Object.fromEntries(
+        skillsFor(head, testCase).map((skill) => [skillPath(skill.name), skill.content]),
+      ), null, 2));
+    }
     console.log(`Wrote ${cases.length} replay prompts to ${exportDir}. Save each answer as <id>.1.json there, then run --grade ${exportDir}.`);
     return 0;
   }

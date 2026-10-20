@@ -119,7 +119,6 @@ export {
   isAgentDetailView,
 } from './surface-guards.js';
 export type { BuzzClient } from './client.js';
-export { isRoomHistoryView } from './surface-guards.js';
 
 export * from './identity.js';
 export * from './permission-request.js';

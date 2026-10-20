@@ -260,7 +260,7 @@ function shellLine(shell: RoomShellState | undefined): string {
   if (shell.available) {
     return 'Shell commands are available in this session: run one with your own shell tool when the work needs it, and cite the output that supports your answer.';
   }
-  return `Shell commands are NOT available in this session, so a request that needs one cannot be run; say that plainly instead of retrying.${shell.detail ? ` Relay this to the person: ${shell.detail}` : ''}`;
+  return `Shell commands are NOT available in this session, so a request that needs one cannot be run; say that plainly instead of retrying.${shell.detail ? ` Tell the person: ${shell.detail}` : ''}`;
 }
 
 function writableHomeLine(home: string | undefined): string {

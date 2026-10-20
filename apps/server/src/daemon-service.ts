@@ -6941,7 +6941,7 @@ export class DaemonService {
     } else outcome = await this.connectAppFrontDoor({ ...input, app: service }, agentId);
     const result: Output<'connect'> = { ...outcome, status: outcome.status === 'connected' ? 'ready'
       : outcome.status === 'needs_sign_in' ? 'needs_sign_in' : outcome.status === 'unavailable' ? 'unavailable' : 'error',
-      next: outcome.status === 'connected' ? `${outcome.app} is ready.`
+      next: outcome.status === 'connected' ? outcome.next
         : outcome.status === 'unavailable' || outcome.status === 'error' || outcome.transport === 'composio' || firstPartyIntegration(service) ? outcome.next
         : 'The server is connecting this app. Its completion will resume the request.' };
     delete (result as { authorizationUrl?: string }).authorizationUrl;
@@ -7102,6 +7102,7 @@ export class DaemonService {
       ...(outcome.route ? { route: outcome.route } : {}),
       ...(outcome.transport ? { transport: outcome.transport } : {}),
       ...(outcome.connectorId ? { connectorId: outcome.connectorId } : {}),
+      ...(outcome.connectionReference ? { connectionReference: outcome.connectionReference } : {}),
       ...(outcome.authorizationUrl && outcome.transport !== 'composio'
         ? { authorizationUrl: outcome.authorizationUrl } : {}),
     };
@@ -7134,9 +7135,13 @@ export class DaemonService {
       // Only managed-OAuth apps run through app tools; name the route that serves this one.
       if (row.owner_identity_id !== row.agent_owner_id)
         throw new CommandRefusalError(`${row.display_name} is another person's ${row.transport} app; only their own agents can use it.`, 403);
+      const app = row.transport === 'squire-api'
+        ? (await readOwnerApps(this.database, row.owner_identity_id, this.composio))
+          .find(app => app.appId === row.id) : undefined;
       throw new CommandRefusalError(`${row.display_name} is connected through ${row.transport}, not app tools. ${
         connectedAppUse({ transport: row.transport, name: row.display_name,
-          appKey: row.app_key, domain: row.domain ?? row.display_name })}`, 400);
+          appKey: row.app_key, domain: row.domain ?? row.display_name,
+          connectionReference: app?.connectionReference })}`, 400);
     }
     return row;
   }

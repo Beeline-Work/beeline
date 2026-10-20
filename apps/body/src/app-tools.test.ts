@@ -253,6 +253,16 @@ describe('server-mediated connected app tools', () => {
     if (status === 'error') expect(text).toContain('Permission denied');
   });
 
+  it('Reproduction CRED-1: status names the connected vault reference for API calls', async () => {
+    const text = await workbenchStatus({ roomId: 'room-1', execute: async () => ({
+      apps: [{ appId, appKey: 'github', name: 'GitHub', transport: 'squire-api',
+        status: 'connected', connectionReference: 'vault://github/work' }],
+    }) });
+    expect(text).toContain('use_credential(reference:"vault://github/work")');
+    expect(text).toContain('call Squire use_credential (reference "vault://github/work")');
+    expect(text).not.toContain('service "github"');
+  });
+
   it('R2594: does not invent a personal credential when only repository App access is available', async () => {
     const text = await workbenchStatus({ roomId: 'room-1', execute: async () => ({ apps: [] }) });
     expect(text).not.toContain('GitHub operation identity:');

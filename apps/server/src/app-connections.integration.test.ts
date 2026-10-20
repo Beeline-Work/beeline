@@ -709,6 +709,28 @@ describe('connect_app', () => {
     expect(await routes()).toEqual([]);
   });
 
+  it('Reproduction CRED-1: connect and status agree on the selected reference among two GitHub keys', async () => {
+    await connectSquire();
+    await applyVaultList(database,
+      { machine_id: 'machine-one', workspace_id: WORKSPACE, owner_identity_id: OWNER }, [
+        { reference: 'vault:github-work', service: 'github', label: 'Work projects',
+          fieldNames: ['token'], allowedHosts: ['api.github.com'], createdAt: 1, stale: false, state: 'active' },
+        { reference: 'vault:github-public', service: 'github', label: 'Public projects',
+          fieldNames: ['token'], allowedHosts: ['api.github.com'], createdAt: 2, stale: false, state: 'error' },
+      ]);
+    const daemon = daemonWith(fakeRegistry([]).client, fakeComposio());
+    const connected = await daemon.execute('connect', { ...turn, service: 'github',
+      reason: 'List repositories', squireAvailable: true }, HELPER);
+    expect(connected).toMatchObject({ status: 'ready', connectionReference: 'vault:github-work' });
+    expect(connected.next).toContain('reference "vault:github-work"');
+    const view = await daemon.execute('readAgentWorkbench', { roomId: ROOM }, HELPER);
+    expect(view.apps).toContainEqual(expect.objectContaining({ appKey: 'github',
+      status: 'connected', connectionReference: 'vault:github-work' }));
+    await expect(daemon.execute('listAppTools', { ...turn, appId: connected.appId! }, HELPER))
+      .rejects.toThrow('use_credential (reference "vault:github-work")');
+    console.log('Reproduction CRED-1: connect and status select vault:github-work among two GitHub keys');
+  });
+
   it('uses a connected owner app from a Room and corner where only the agent is a member', async () => {
     const provider = fakeComposio();
     const daemon = daemonWith(fakeRegistry([]).client, provider);

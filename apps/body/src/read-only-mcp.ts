@@ -2427,7 +2427,7 @@ export async function workbenchStatus(
       label: string;
       state: string;
     }>;
-    apps?: Array<{ appId: string; appKey: string; name: string; transport: string;
+    apps?: Array<{ appId: string; appKey: string; name: string; transport: string; connectionReference?: string;
       status: string; errorMessage?: string }>;
     firstPartyIntegrations?: Array<{ key: string; name: string; status: string }>;
     machine?: { machineId: string; name: string;
@@ -2485,11 +2485,11 @@ export async function workbenchStatus(
   const apps = view.apps ?? [];
   if (!apps.length) lines.push('- none');
   for (const app of apps)
-    lines.push(`- ${app.name} (app:${app.appKey}, id ${app.appId}) via ${app.transport}: ${app.status}${app.status === 'error' && app.errorMessage ? ` — ${app.errorMessage}` : ''}`);
+    lines.push(`- ${app.name} (app:${app.appKey}, id ${app.appId}) via ${app.transport}: ${app.status}${app.transport === 'squire-api' && app.connectionReference ? `; use_credential(reference:${JSON.stringify(app.connectionReference)})` : ''}${app.status === 'error' && app.errorMessage ? ` — ${app.errorMessage}` : ''}`);
   const github = apps.find(app => app.appKey === 'github' && app.status !== 'disconnected');
   if (github) {
     const route = github.transport === 'squire-api'
-      ? 'call Squire use_credential (service "github")'
+      ? `call Squire use_credential (${github.connectionReference ? `reference ${JSON.stringify(github.connectionReference)}` : 'service "github"'})`
       : `use app_tool(app:"${github.appId}")`;
     lines.push('', `GitHub operation identity: prefer this owner's personal GitHub connection (app ${github.appId}, ${github.transport}) over the repository App for supported API operations, including Git Data API pushes; ${route}. Follow its reported status; a denial requires repairing this connection, never switching to the App identity. Consult beeline-connecting-services for checkout and merge boundaries.`);
   }

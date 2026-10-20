@@ -1,6 +1,8 @@
 /** Reproduction 2026-10-20: built HTTP entry, phone sign-in, authorization and viewer. */
 import assert from 'node:assert/strict';
 import type { AddressInfo } from 'node:net';
+import { resolve } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { WebSocket } from 'ws';
 import { readRoomViewMessage } from '@beeline/api-contract/phone';
 import { PgliteDatabase } from '../apps/server/src/test-support.js';
@@ -8,14 +10,15 @@ import { PgliteDatabase } from '../apps/server/src/test-support.js';
 const HUMAN = 'a'.repeat(64), AGENT = 'b'.repeat(64);
 const WORKSPACE = '11111111-1111-4111-8111-111111111111';
 const ROOM = '22222222-2222-4222-8222-222222222222';
+const built = (file: string) => pathToFileURL(resolve('apps/server/dist', file)).href;
 async function main() {
-const { migrate } = await import('../apps/server/dist/database.js');
-const { TokenAuth } = await import('../apps/server/dist/auth.js');
-const { PhoneService } = await import('../apps/server/dist/phone-service.js');
-const { DaemonService } = await import('../apps/server/dist/daemon-service.js');
-const { LiveHub } = await import('../apps/server/dist/live.js');
-const { createBeelineServer } = await import('../apps/server/dist/server.js');
-const { createComputerSession, getComputerSession, endComputerSession } = await import('../apps/server/dist/computer-session.js');
+const { migrate } = await import(built('database.js')) as typeof import('../apps/server/src/database.js');
+const { TokenAuth } = await import(built('auth.js')) as typeof import('../apps/server/src/auth.js');
+const { PhoneService } = await import(built('phone-service.js')) as typeof import('../apps/server/src/phone-service.js');
+const { DaemonService } = await import(built('daemon-service.js')) as typeof import('../apps/server/src/daemon-service.js');
+const { LiveHub } = await import(built('live.js')) as typeof import('../apps/server/src/live.js');
+const { createBeelineServer } = await import(built('server.js')) as typeof import('../apps/server/src/server.js');
+const { createComputerSession, getComputerSession, endComputerSession } = await import(built('computer-session.js')) as typeof import('../apps/server/src/computer-session.js');
 const database = new PgliteDatabase();
 const live = new LiveHub();
 const auth = new TokenAuth(database, async () => ({ subject: 'browser-proof', login: 'proof', name: 'Proof' }));

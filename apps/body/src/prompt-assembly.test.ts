@@ -591,7 +591,7 @@ describe('prompt assembly guards', () => {
     expect(promptRules.CORNER_AUTHOR_CONTRACT).toContain(nudge);
     expect(promptRules.CORNER_RUNTIME_AUTHOR_CONTRACT).toContain(nudge);
     const room = assembleSessionPrompt(SESSION_VARIANTS.room!).systemPrompt;
-    expect(room).toContain('Use the dispatching message as approval; no separate spec or mock approval is required.');
+    expect(room).toContain('Opening requires no human approval. Include a dispatching message when available; otherwise the server records the opening agent as agent-initiated. Revisions retain their approval rule.');
   });
 
   it('keeps corner help requests with the commander', () => {

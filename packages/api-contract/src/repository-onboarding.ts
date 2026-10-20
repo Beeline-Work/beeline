@@ -20,6 +20,7 @@ export type RepositoryOnboardingCard = {
   readonly kind: 'repository' | 'starters';
   readonly state: 'install_missing' | 'no_repo_linked' | 'repo_linked';
   readonly status: 'open' | 'settled';
+  readonly canLink: boolean;
   readonly repository?: string;
   readonly defaultName: string;
   readonly installationId?: number;
@@ -46,7 +47,7 @@ export function readRepositoryOnboardingCard(value: unknown): RepositoryOnboardi
   if (!key(v.id) || !uuid(v.roomId) || !key(v.agentId) || !key(v.requesterId) ||
       !['repository', 'starters'].includes(String(v.kind)) ||
       !['install_missing', 'no_repo_linked', 'repo_linked'].includes(String(v.state)) ||
-      !['open', 'settled'].includes(String(v.status)) || !text(v.defaultName) ||
+      !['open', 'settled'].includes(String(v.status)) || typeof v.canLink !== 'boolean' || !text(v.defaultName) ||
       (v.repository !== undefined && !text(v.repository)) ||
       (v.installationId !== undefined && !positive(v.installationId)) ||
       (v.selected !== undefined && !text(v.selected)) ||

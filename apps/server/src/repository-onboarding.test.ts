@@ -97,3 +97,11 @@ it('creates and links a private repository once when the same tap is retried', a
   expect(github.createRepository).toHaveBeenCalledTimes(1);
   expect((await phone.readRoom(R,H))?.repository?.name).toBe(`tester/${card.defaultName}`);
 });
+
+it('lets an invited Room member start work without granting repository-management rights', async () => {
+  await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`,[W,R,OTHER]);
+  const card=await postRepositoryOnboarding(db,github,{roomId:R,agentId:A,requesterId:OTHER,kind:'starters'});
+  expect(card.canLink).toBe(false);
+  await phone.execute('actOnRepositoryCard',{roomId:R,cardId:card.id,action:'starter',starterId:'readme'},OTHER);
+  expect((await db.query(`SELECT id FROM messages WHERE room_id=$1 AND author_id=$2 AND text LIKE '%Make the README useful%'`,[R,OTHER])).rowCount).toBe(1);
+});

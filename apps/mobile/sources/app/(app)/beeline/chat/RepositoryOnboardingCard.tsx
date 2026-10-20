@@ -45,7 +45,7 @@ export function RepositoryOnboardingCard({ card, viewerId, author }: { card: Car
     : picker ? card.repositories.map(repository => ({ id: String(repository.id), letter: repository.current ? '✓' : '→',
       label: repository.fullName, consequence: repository.current ? 'Current · open PRs stay open' : 'Use this repository',
       selected: repository.current, ...(canAct && !repository.current ? { onPress: () => void act('link', { repositoryId: repository.id }) } : {}) })) : [];
-  const actions: TranscriptCardAction[] = card.kind === 'repository' && card.status === 'open' && card.requesterId === viewerId ? [
+  const actions: TranscriptCardAction[] = card.kind === 'repository' && card.canLink && card.status === 'open' && card.requesterId === viewerId ? [
     ...(card.installationId ? [{ label: 'Create new repo', primary: true, loading: busy,
       disabled: !canAct, onPress: () => void act('create'), testID: 'repo-card-create' }] : [{ label: 'Install Beeline', primary: true,
       loading: busy, disabled: !canAct, onPress: () => void act('install'), testID: 'repo-card-install' }]),
@@ -57,7 +57,7 @@ export function RepositoryOnboardingCard({ card, viewerId, author }: { card: Car
     testID={`repository-onboarding-${card.kind}`}
     title={card.kind === 'starters' ? 'Pick a starting task' : card.repository ? 'Switch repository' : 'Choose a repository'}
     subline={card.repository ?? 'Create a private repo or link one you already own.'}
-    body={card.kind === 'repository' ? `New repo: ${card.defaultName}` : undefined}
+    body={card.kind === 'repository' ? card.canLink ? `New repo: ${card.defaultName}` : 'Ask a Workspace owner or admin to choose a repository for this Room.' : undefined}
     choices={choices} actions={actions}
     footerNote={error ?? (busy ? 'Working…' : card.selected ? `Selected · ${card.selected}` : picker && !card.repositories.length ? 'No repositories found. Install Beeline, then try again.' : undefined)}
     footerNoteTone={error ? 'failed' : 'quiet'} />;

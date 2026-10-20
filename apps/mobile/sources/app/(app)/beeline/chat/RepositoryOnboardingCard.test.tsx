@@ -14,7 +14,7 @@ vi.mock('@/auth/github-auth-session', () => ({ githubInstallationRedirectUri: ()
 import { RepositoryOnboardingCard } from './RepositoryOnboardingCard';
 const H='a'.repeat(64);
 const card: Card = { id:'b'.repeat(64), roomId:'11111111-1111-4111-8111-111111111111', agentId:'c'.repeat(64), requesterId:H,
-  kind:'repository', state:'repo_linked', status:'open', repository:'test/current', defaultName:'new-project-123456', installationId:77,
+  kind:'repository', canLink:true, state:'repo_linked', status:'open', repository:'test/current', defaultName:'new-project-123456', installationId:77,
   repositories:[{ id:42, fullName:'test/current', installationId:77, defaultBranch:'main', current:true }, { id:43, fullName:'test/other', installationId:77, defaultBranch:'main', current:false }], starters:[] };
 it('marks the current repo and sends the other repository id to the server', async () => {
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT=true;

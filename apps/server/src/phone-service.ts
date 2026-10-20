@@ -7500,7 +7500,11 @@ export class PhoneService {
     });
   }
   private async actOnRepositoryCard(input: Input<'actOnRepositoryCard'>, viewerId: string): Promise<Output<'actOnRepositoryCard'>> {
-    await this.requireRoomWorkspaceManager(input.roomId, viewerId);
+    if (['create', 'link'].includes(input.action)) await this.requireRoomWorkspaceManager(input.roomId, viewerId);
+    else {
+      if (!(await this.hasRoomAccess(input.roomId, viewerId))) throw new Error('room access denied');
+      await this.requireTopLevelChatMember(input.roomId, viewerId);
+    }
     let followup: { roomId: string; agentId: string; requesterId: string; kind: 'repository' | 'starters' } | undefined;
     // Serialize taps and make a retried response return the committed selection.
     const result = await this.database.transaction(async database => {

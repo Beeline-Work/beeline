@@ -47,8 +47,8 @@ export function repositoryStarters(signals: RepositorySignals): RepositoryStarte
 
 export async function postRepositoryOnboarding(database: SqlDatabase, github: GitHubOperations | undefined,
   input: { roomId: string; agentId: string; requesterId: string; kind: 'repository' | 'starters' }): Promise<RepositoryOnboardingCard> {
-  const room = (await database.query<{ repository_name: string | null; name: string }>(
-    `SELECT r.repository_name,i.name FROM rooms r
+  const room = (await database.query<{ repository_name: string | null; name: string; can_link: boolean }>(
+    `SELECT r.repository_name,i.name,(w.role IN ('owner','admin')) can_link FROM rooms r
      JOIN memberships m ON m.room_id=r.id AND m.identity_id=$2 AND m.removed_at IS NULL
      JOIN memberships w ON w.workspace_id=r.workspace_id AND w.room_id IS NULL AND w.identity_id=$3 AND w.removed_at IS NULL
      JOIN identities i ON i.id=$2
@@ -65,7 +65,7 @@ export async function postRepositoryOnboarding(database: SqlDatabase, github: Gi
   const kind = input.kind === 'starters' && room.repository_name ? 'starters' : 'repository';
   if (kind === 'starters' && !github) throw new Error('GitHub is not configured');
   const card: RepositoryOnboardingCard = {
-    id, ...input, kind, status: 'open',
+    id, ...input, kind, status: 'open', canLink: room.can_link,
     state: room.repository_name ? 'repo_linked' : installation ? 'no_repo_linked' : 'install_missing',
     ...(room.repository_name ? { repository: room.repository_name } : {}),
     defaultName: `new-project-${id.slice(0, 6)}`,

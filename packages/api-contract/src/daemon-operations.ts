@@ -1146,6 +1146,8 @@ export type ConnectAppResult = {
   /** What serves the app now. */
   readonly transport?: AppTransport;
   readonly connectorId?: string;
+  /** Exact selected vault reference for a Squire route; metadata only. */
+  readonly connectionReference?: string;
   /** The provider sign-in page Squire should open (never pasted into chat). */
   readonly authorizationUrl?: string;
   /** Server-owned next step, in one or two sentences. */

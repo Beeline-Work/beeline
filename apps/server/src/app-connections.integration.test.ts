@@ -709,6 +709,31 @@ describe('connect_app', () => {
     expect(await routes()).toEqual([]);
   });
 
+  it('Reproduction CRED-1: connect and status agree on the selected reference among two GitHub keys', async () => {
+    await connectSquire();
+    await applyVaultList(database,
+      { machine_id: 'machine-one', workspace_id: WORKSPACE, owner_identity_id: OWNER }, [
+        { reference: 'vault:github-work', service: 'github', label: 'Work projects',
+          fieldNames: ['token'], allowedHosts: ['api.github.com'], createdAt: 1, stale: false, state: 'active' },
+        { reference: 'vault:github-public', service: 'github', label: 'Public projects',
+          fieldNames: ['token'], allowedHosts: ['api.github.com'], createdAt: 2, stale: false, state: 'error' },
+      ]);
+    const daemon = daemonWith(fakeRegistry([]).client, fakeComposio());
+    const connected = await daemon.execute('connect', { ...turn, service: 'github',
+      reason: 'List repositories', squireAvailable: true }, HELPER);
+    expect(connected).toMatchObject({ status: 'ready', connectionReference: 'vault:github-work' });
+    expect(connected.next).toContain('reference "vault:github-work"');
+    const view = await daemon.execute('readAgentWorkbench', { roomId: ROOM }, HELPER);
+    expect(view.apps).toContainEqual(expect.objectContaining({ appKey: 'github',
+      status: 'connected', connectionReference: 'vault:github-work' }));
+    const discovered = await daemon.execute('listAppTools', { ...turn, appId: connected.appId! }, HELPER);
+    expect(discovered.next).toContain('use_credential (reference "vault:github-work")');
+    await expect(daemon.execute('executeAppTool', { ...turn, appId: connected.appId!,
+      tool: 'LIST_REPOS', arguments: {} }, HELPER))
+      .rejects.toThrow('use_credential (reference "vault:github-work")');
+    console.log('Reproduction CRED-1: connect and status select vault:github-work among two GitHub keys');
+  });
+
   it('uses a connected owner app from a Room and corner where only the agent is a member', async () => {
     const provider = fakeComposio();
     const daemon = daemonWith(fakeRegistry([]).client, provider);
@@ -817,7 +842,7 @@ describe('connect_app', () => {
         const message = otherOwner
           ? "GitHub is another person's squire-api app; only their own agents can use it."
           : 'GitHub is connected through squire-api, not app tools. ' +
-            'Call GitHub\'s API with Trusty Squire use_credential (service "github").';
+            'Call GitHub\'s API with Trusty Squire use_credential (reference "vault:github").';
         for (const operation of ['listAppTools', 'executeAppTool']) {
           const response = await fetch(`${origin}/v1/daemon/operations/${operation}`, {
             method: 'POST',
@@ -830,7 +855,7 @@ describe('connect_app', () => {
           if (!otherOwner && operation === 'listAppTools') {
             expect(response.status).toBe(200);
             expect(result).toEqual({ tools: [], transport: 'squire-api', service: 'github',
-              next: 'Call GitHub\'s API with Trusty Squire use_credential (service "github").',
+              next: 'Call GitHub\'s API with Trusty Squire use_credential (reference "vault:github").',
               credentials: [{ reference: 'vault:github', allowedHosts: ['api.github.com'] }] });
           } else {
             expect(response.status).toBe(otherOwner ? 403 : 400);

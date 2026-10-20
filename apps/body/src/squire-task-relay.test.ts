@@ -30,6 +30,7 @@ function fixture(
   respond?: (method: string, params: { name?: string }) => Promise<unknown>,
   onApprovalDecided?: (decision: unknown) => void,
   onShareRenewed?: (lease: SquireShareLease) => Promise<boolean>,
+  connectedCredential?: (service: string) => Promise<string | undefined>,
 ) {
   let spawns = 0;
   let exits = 0;
@@ -50,7 +51,7 @@ function fixture(
       }),
       close: () => { exits++; },
     } as unknown as StdioSquireMcpClient;
-  }, onApprovalDecided, undefined, onShareRenewed);
+  }, onApprovalDecided, undefined, onShareRenewed, undefined, connectedCredential);
   relays.push(relay);
   return { relay, stats: () => ({ spawns, exits }),
     die: () => callbacks?.onExit(2000 + spawns, 1),
@@ -75,6 +76,68 @@ async function request(
 }
 
 describe('helper-owned Squire task relay', () => {
+  it.each([true, false])('Reproduction CRED-1: service lookup with two keys, connected=%s', async connected => {
+    const credentials = [
+      { reference: 'github-public', service: 'github', label: 'Public projects' },
+      { reference: 'github-work', service: 'github', label: 'Work projects' },
+    ];
+    const upstream = vi.fn(async (_method: string, params: { name?: string; arguments?: Record<string, unknown> }) => {
+      if (params.name === 'list_credentials')
+        return { content: [{ type: 'text', text: JSON.stringify({ credentials }) }] };
+      return params.arguments?.reference === 'github-work'
+        ? { content: [{ type: 'text', text: 'HTTP 200: repository list' }] }
+        : { isError: true, content: [{ type: 'text', text: 'ambiguous service' }] };
+    });
+    const { relay } = fixture(undefined, undefined, upstream, undefined, undefined,
+      async () => connected ? 'github-work' : undefined);
+    relay.activate(command('root', 'turn-one'), 'generation');
+    const result = await request(relay, 'root', 'turn-one', 'tools/call', {
+      name: 'use_credential', arguments: { service: 'github', http: {
+        method: 'GET', url: 'https://api.github.com/user/repos',
+      } },
+    });
+    if (connected) {
+      expect(JSON.stringify(result.body)).toContain('HTTP 200: repository list');
+      expect(upstream).toHaveBeenCalledWith('tools/call', expect.objectContaining({
+        arguments: expect.objectContaining({ reference: 'github-work' }),
+      }));
+    } else {
+      for (const item of credentials) {
+        expect(JSON.stringify(result.body)).toContain(item.reference);
+        expect(JSON.stringify(result.body)).toContain(item.label);
+      }
+      expect(upstream.mock.calls.some(([, params]) => params.name === 'use_credential')).toBe(false);
+    }
+  });
+
+  it('preserves an explicit reference and does not consult service selection', async () => {
+    const selected = vi.fn(async () => 'github-work');
+    const upstream = vi.fn(async () => ({ content: [{ type: 'text', text: 'ok' }] }));
+    const { relay } = fixture(undefined, undefined, upstream, undefined, undefined, selected);
+    relay.activate(command('root', 'turn-one'), 'generation');
+    const params = { name: 'use_credential', arguments: { reference: 'github-public',
+      service: 'github', http: { method: 'GET', url: 'https://api.github.com/user/repos' } } };
+    await request(relay, 'root', 'turn-one', 'tools/call', params);
+    expect(selected).not.toHaveBeenCalled();
+    expect(upstream).toHaveBeenCalledTimes(1);
+    expect(upstream).toHaveBeenCalledWith('tools/call', params);
+  });
+
+  it('authorizes before looking up a connected credential or reading vault metadata', async () => {
+    const selected = vi.fn(async () => 'github-work');
+    const upstream = vi.fn();
+    const { relay } = fixture(undefined, async () => false, upstream, undefined, undefined, selected);
+    relay.activate(command('root', 'turn-one'), 'generation');
+    const response = await request(relay, 'root', 'turn-one', 'tools/call', {
+      name: 'use_credential', arguments: { service: 'github', http: {
+        method: 'GET', url: 'https://api.github.com/user/repos',
+      } },
+    });
+    expect(response.status).toBe(400);
+    expect(selected).not.toHaveBeenCalled();
+    expect(upstream).not.toHaveBeenCalled();
+  });
+
   it.each([200, 403])('R2594: forwards the personal Git Data API push and preserves HTTP %s without an App retry', async status => {
     const authorize = vi.fn(async () => true);
     const proxyResult = { content: [{ type: 'text', text: JSON.stringify({ response: { status } }) }] };

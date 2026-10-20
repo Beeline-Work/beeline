@@ -9,8 +9,6 @@ const IOS_VOLUME_MIN = -2;
 const IOS_VOLUME_MAX = 10;
 const ANDROID_RMS_MIN_DB = -2;
 const ANDROID_RMS_MAX_DB = 10;
-const ATTACK_WEIGHT = 0.7;
-const RELEASE_WEIGHT = 0.5;
 
 /** Fixed display range in dBFS; no per-take gain or peak normalization. */
 export function waveformLevelFromDb(db: number): number {
@@ -35,9 +33,4 @@ export function dictationWaveformLevel(value: number, platform: string): number 
   const max = platform === 'android' ? ANDROID_RMS_MAX_DB : IOS_VOLUME_MAX;
   const db = SOURCE_FLOOR_DB + (value - min) / (max - min) * (SOURCE_CEILING_DB - SOURCE_FLOOR_DB);
   return waveformLevelFromDb(db);
-}
-
-/** One 120 ms display sample: responsive attack, brief release. */
-export function smoothWaveformLevel(previous: number, next: number): number {
-  return previous + (next - previous) * (next > previous ? ATTACK_WEIGHT : RELEASE_WEIGHT);
 }

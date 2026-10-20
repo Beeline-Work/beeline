@@ -38,7 +38,11 @@ describe('native voice proof startup after Metro inline requires', () => {
     const card = { startedAt: 1, participants: [] };
     let stateIndex = 0;
     const react = {
-      useState: () => [['fixture-room', card, 1][stateIndex++], () => {}],
+      useState: (initial?: unknown) => {
+        const index = stateIndex++;
+        // Supply loaded room/card fixtures; later hooks keep their own initial state.
+        return [index === 0 ? 'fixture-room' : index === 1 ? card : initial, () => {}];
+      },
       useEffect: () => {},
     };
     const jsx = (type: unknown, props: unknown) => ({ type, props });

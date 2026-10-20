@@ -406,6 +406,7 @@ export class VoiceService {
         [sourceId, roomId, humanId, callId, `@${agent.handle} ${text.replace(/@/g, '')}`, leaseOwner]);
       if (!changed.rowCount) throw new Error('voice call access denied');
     });
+    this.live.publish({ type: 'invalidate', roomId, reason: 'message', messageId: sourceId, operation: 'UPDATE' });
   }
 
   async search(callId: string, sourceId: string, agentId: string, request: VoiceSearch, signal: AbortSignal) {

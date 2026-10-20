@@ -1,0 +1,713 @@
+{
+  "reproduction": "CONVERSATION-1",
+  "mode": "fixed",
+  "rowsForPausedRequest": [
+    {
+      "text": "@ruby Ruby build a clock and build an alarm and build a timer",
+      "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ],
+  "commandsForPausedRequest": 1,
+  "decisionsForPausedRequest": 3,
+  "firstAudioMs": [
+    270.9670189999988,
+    21.76542800000061,
+    21.564847999999984,
+    16.445781000000352,
+    15.714803999999276
+  ],
+  "medianFirstAudioMs": 21.564847999999984,
+  "result": {
+    "commandDetails": [
+      {
+        "id": "494cbd6b0cec96a60021027af58d2d181a6ae7cd4661f023734224576a375a0d",
+        "turn_request_id": "fb46e4efc9de8f059194b8b2f8cc8f8406a8dc354d986f1045a5b2e90edabfda",
+        "source_message_id": "fb46e4efc9de8f059194b8b2f8cc8f8406a8dc354d986f1045a5b2e90edabfda",
+        "agent_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "state": "complete",
+        "reason": "human_tag"
+      },
+      {
+        "id": "d77bb9bb21c33b661e7db7942cfe4943e7a3743d042286e29a90d57950479923",
+        "turn_request_id": "f36c9586d1a2310e21f250629c86e9e10e8cbb168f32c1a5f02ef8de58ef9f58",
+        "source_message_id": "f36c9586d1a2310e21f250629c86e9e10e8cbb168f32c1a5f02ef8de58ef9f58",
+        "agent_id": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "state": "pending",
+        "reason": "human_tag"
+      }
+    ],
+    "decisionRequests": 10,
+    "synthesis": [
+      {
+        "text": "Ready.",
+        "at": 1792454349550
+      },
+      {
+        "text": "Ready.",
+        "at": 1792454353580
+      },
+      {
+        "text": "Ready.",
+        "at": 1792454353906
+      },
+      {
+        "text": "Ready.",
+        "at": 1792454354233
+      },
+      {
+        "text": "Ready.",
+        "at": 1792454354548
+      },
+      {
+        "text": "Ready.",
+        "at": 1792454354889
+      },
+      {
+        "text": "Checking.",
+        "at": 1792454359759
+      },
+      {
+        "text": "The work is done. The rest is in the chat.",
+        "at": 1792454360845
+      },
+      {
+        "text": "Checking.",
+        "at": 1792454364946
+      }
+    ],
+    "deliveries": [
+      {
+        "source": "fb46e4efc9de8f059194b8b2f8cc8f8406a8dc354d986f1045a5b2e90edabfda",
+        "at": 1792454359780
+      },
+      {
+        "source": "f36c9586d1a2310e21f250629c86e9e10e8cbb168f32c1a5f02ef8de58ef9f58",
+        "at": 1792454364958
+      }
+    ],
+    "orders": [
+      {
+        "source_message_id": "f36c9586d1a2310e21f250629c86e9e10e8cbb168f32c1a5f02ef8de58ef9f58",
+        "call_id": "8c6f60f9-ec29-4798-a7ac-1124f9ccbf36",
+        "agent_id": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "spoken_message_id": null,
+        "text": "@goose build one more clock"
+      },
+      {
+        "source_message_id": "fb46e4efc9de8f059194b8b2f8cc8f8406a8dc354d986f1045a5b2e90edabfda",
+        "call_id": "8c6f60f9-ec29-4798-a7ac-1124f9ccbf36",
+        "agent_id": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "spoken_message_id": "185021dad32a7f93093d723e5ec3478e1ee83645f277dfc147d9223fc3558bc1",
+        "text": "@ruby Ruby build a clock and build an alarm and build a timer"
+      }
+    ],
+    "transcript": [
+      {
+        "text": "Voice call started",
+        "author": "972a35ec7a6e572c01c5b0a48cbdc82f6137dd7f35435cf9cc0ec305fdafa248"
+      },
+      {
+        "text": "@ruby Ruby, ready?",
+        "author": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+      },
+      {
+        "text": "Ready.",
+        "author": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "text": "@ruby Ruby ready?",
+        "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "text": "Ready.",
+        "author": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "text": "@ruby Ruby ready?",
+        "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "text": "Ready.",
+        "author": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "text": "@ruby Ruby ready?",
+        "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "text": "Ready.",
+        "author": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "text": "@ruby Ruby ready?",
+        "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "text": "Ready.",
+        "author": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "text": "@ruby Ruby ready?",
+        "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "text": "Ready.",
+        "author": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "text": "@ruby Ruby build a clock and build an alarm and build a timer",
+        "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      },
+      {
+        "text": "The work is done.",
+        "author": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "text": "@goose build one more clock",
+        "author": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      }
+    ],
+    "pid": 20950,
+    "callId": "8c6f60f9-ec29-4798-a7ac-1124f9ccbf36",
+    "dispatchAttempts": 2,
+    "frameCounts": {
+      "received": 11
+    },
+    "commands": {
+      "count": 2
+    },
+    "activeCallWork": true,
+    "pendingCommands": 1,
+    "call": {
+      "ended_at": null
+    },
+    "card": {
+      "id": "225b15aeba6bc0b4219bffc6753e3930b8448648e9471bda28970a162ea88e78",
+      "text": "Voice call started",
+      "createdAt": 1792454347,
+      "createdAtMs": 1792454347916,
+      "version": 3,
+      "author": {
+        "pubkey": "972a35ec7a6e572c01c5b0a48cbdc82f6137dd7f35435cf9cc0ec305fdafa248",
+        "kind": "human",
+        "name": "System",
+        "handle": "system",
+        "avatar": "http://proof/v1/connectors/logo/system.svg"
+      },
+      "presentation": "card",
+      "systemEvent": {
+        "verb": "started",
+        "subject": {
+          "kind": "system",
+          "name": "Voice call"
+        }
+      },
+      "voiceCall": {
+        "id": "8c6f60f9-ec29-4798-a7ac-1124f9ccbf36",
+        "roomId": "375ebf52-b493-4982-bd6d-f3b8fe814a62",
+        "startedAt": 1792454347,
+        "startedAtMs": 1792454347916,
+        "participants": [
+          {
+            "kind": "human",
+            "name": "Alex",
+            "handle": "alex",
+            "pubkey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ]
+      }
+    },
+    "humans": 1,
+    "operations": [],
+    "microphoneFrames": [
+      325,
+      1200
+    ],
+    "replies": [
+      "Ready.",
+      "Ready.",
+      "Ready.",
+      "Ready.",
+      "Ready.",
+      "Ready.",
+      "Checking.",
+      "Checking.",
+      "Checking.",
+      "Checking."
+    ],
+    "signals": [
+      {
+        "type": "target",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "humans",
+        "count": 1
+      },
+      {
+        "type": "speaker",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "latency",
+        "firstAudioMs": 404.566233
+      },
+      {
+        "type": "speaker",
+        "agentId": null
+      },
+      {
+        "type": "humans",
+        "count": 2
+      },
+      {
+        "type": "target",
+        "agentId": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      },
+      {
+        "type": "humans",
+        "count": 2
+      }
+    ],
+    "observations": [
+      {
+        "at": 1792454350834,
+        "joined": false,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792454352199,
+        "joined": false,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792454352489,
+        "joined": true,
+        "humans": 2,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792454352684,
+        "joined": true,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": null
+      },
+      {
+        "at": 1792454352910,
+        "nativeAudio": []
+      },
+      {
+        "at": 1792454352912,
+        "nativeAudio": [
+          {
+            "bytesReceived": 6,
+            "packetsReceived": 2,
+            "totalAudioEnergy": 0
+          }
+        ]
+      },
+      {
+        "at": 1792454353347,
+        "joined": true,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 270.9670189999988
+      },
+      {
+        "at": 1792454353427,
+        "nativeAudio": []
+      },
+      {
+        "at": 1792454353428,
+        "nativeAudio": [
+          {
+            "bytesReceived": 1362,
+            "packetsReceived": 9,
+            "totalAudioEnergy": 0.0001391990505249949
+          }
+        ]
+      },
+      {
+        "at": 1792454353669,
+        "joined": true,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 21.76542800000061
+      },
+      {
+        "at": 1792454353944,
+        "nativeAudio": []
+      },
+      {
+        "at": 1792454353946,
+        "nativeAudio": [
+          {
+            "bytesReceived": 4119,
+            "packetsReceived": 34,
+            "totalAudioEnergy": 0.0020073779146295365
+          }
+        ]
+      },
+      {
+        "at": 1792454353999,
+        "joined": true,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 21.564847999999984
+      },
+      {
+        "at": 1792454354311,
+        "joined": true,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 16.445781000000352
+      },
+      {
+        "at": 1792454354461,
+        "nativeAudio": []
+      },
+      {
+        "at": 1792454354461,
+        "nativeAudio": [
+          {
+            "bytesReceived": 7575,
+            "packetsReceived": 58,
+            "totalAudioEnergy": 0.0028609712549962103
+          }
+        ]
+      },
+      {
+        "at": 1792454354651,
+        "joined": true,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 15.714803999999276
+      },
+      {
+        "at": 1792454354977,
+        "nativeAudio": []
+      },
+      {
+        "at": 1792454354978,
+        "nativeAudio": [
+          {
+            "bytesReceived": 10363,
+            "packetsReceived": 86,
+            "totalAudioEnergy": 0.004171861384935553
+          }
+        ]
+      },
+      {
+        "at": 1792454355494,
+        "nativeAudio": []
+      },
+      {
+        "at": 1792454355496,
+        "nativeAudio": [
+          {
+            "bytesReceived": 10378,
+            "packetsReceived": 89,
+            "totalAudioEnergy": 0.004191652145165337
+          }
+        ]
+      },
+      {
+        "at": 1792454356011,
+        "nativeAudio": []
+      },
+      {
+        "at": 1792454356013,
+        "nativeAudio": [
+          {
+            "bytesReceived": 10384,
+            "packetsReceived": 91,
+            "totalAudioEnergy": 0.004191652145165337
+          }
+        ]
+      },
+      {
+        "at": 1792454356527,
+        "nativeAudio": []
+      },
+      {
+        "at": 1792454356529,
+        "nativeAudio": [
+          {
+            "bytesReceived": 10390,
+            "packetsReceived": 93,
+            "totalAudioEnergy": 0.004191652145165337
+          }
+        ]
+      },
+      {
+        "at": 1792454357044,
+        "nativeAudio": []
+      },
+      {
+        "at": 1792454357045,
+        "nativeAudio": [
+          {
+            "bytesReceived": 10396,
+            "packetsReceived": 95,
+            "totalAudioEnergy": 0.004191652145165337
+          }
+        ]
+      },
+      {
+        "at": 1792454357561,
+        "nativeAudio": []
+      },
+      {
+        "at": 1792454357562,
+        "nativeAudio": [
+          {
+            "bytesReceived": 10408,
+            "packetsReceived": 99,
+            "totalAudioEnergy": 0.004191652145165337
+          }
+        ]
+      },
+      {
+        "at": 1792454358077,
+        "nativeAudio": []
+      },
+      {
+        "at": 1792454358078,
+        "nativeAudio": [
+          {
+            "bytesReceived": 10414,
+            "packetsReceived": 101,
+            "totalAudioEnergy": 0.004191652145165337
+          }
+        ]
+      },
+      {
+        "at": 1792454358594,
+        "nativeAudio": []
+      },
+      {
+        "at": 1792454358595,
+        "nativeAudio": [
+          {
+            "bytesReceived": 10420,
+            "packetsReceived": 103,
+            "totalAudioEnergy": 0.004191652145165337
+          }
+        ]
+      },
+      {
+        "at": 1792454359110,
+        "nativeAudio": []
+      },
+      {
+        "at": 1792454359112,
+        "nativeAudio": [
+          {
+            "bytesReceived": 10426,
+            "packetsReceived": 105,
+            "totalAudioEnergy": 0.004191652145165337
+          }
+        ]
+      },
+      {
+        "at": 1792454359543,
+        "joined": true,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 489.8612970000013
+      },
+      {
+        "at": 1792454359627,
+        "nativeAudio": []
+      },
+      {
+        "at": 1792454359628,
+        "nativeAudio": [
+          {
+            "bytesReceived": 11782,
+            "packetsReceived": 112,
+            "totalAudioEnergy": 0.004191652145165337
+          }
+        ]
+      },
+      {
+        "at": 1792454360144,
+        "nativeAudio": []
+      },
+      {
+        "at": 1792454360145,
+        "nativeAudio": [
+          {
+            "bytesReceived": 12502,
+            "packetsReceived": 124,
+            "totalAudioEnergy": 0.00524180933085689
+          }
+        ]
+      },
+      {
+        "at": 1792454360661,
+        "nativeAudio": []
+      },
+      {
+        "at": 1792454360661,
+        "nativeAudio": [
+          {
+            "bytesReceived": 13363,
+            "packetsReceived": 129,
+            "totalAudioEnergy": 0.0052418808980515715
+          }
+        ]
+      },
+      {
+        "at": 1792454361177,
+        "nativeAudio": []
+      },
+      {
+        "at": 1792454361178,
+        "nativeAudio": [
+          {
+            "bytesReceived": 14578,
+            "packetsReceived": 143,
+            "totalAudioEnergy": 0.006291452134322014
+          }
+        ]
+      },
+      {
+        "at": 1792454361694,
+        "nativeAudio": []
+      },
+      {
+        "at": 1792454361695,
+        "nativeAudio": [
+          {
+            "bytesReceived": 14584,
+            "packetsReceived": 145,
+            "totalAudioEnergy": 0.006292109650937806
+          }
+        ]
+      },
+      {
+        "at": 1792454362210,
+        "nativeAudio": []
+      },
+      {
+        "at": 1792454362212,
+        "nativeAudio": [
+          {
+            "bytesReceived": 14596,
+            "packetsReceived": 149,
+            "totalAudioEnergy": 0.006292109650937806
+          }
+        ]
+      },
+      {
+        "at": 1792454362727,
+        "nativeAudio": []
+      },
+      {
+        "at": 1792454362728,
+        "nativeAudio": [
+          {
+            "bytesReceived": 14602,
+            "packetsReceived": 151,
+            "totalAudioEnergy": 0.006292109650937806
+          }
+        ]
+      },
+      {
+        "at": 1792454363244,
+        "nativeAudio": []
+      },
+      {
+        "at": 1792454363246,
+        "nativeAudio": [
+          {
+            "bytesReceived": 14608,
+            "packetsReceived": 153,
+            "totalAudioEnergy": 0.006292109650937806
+          }
+        ]
+      },
+      {
+        "at": 1792454363761,
+        "nativeAudio": []
+      },
+      {
+        "at": 1792454363762,
+        "nativeAudio": [
+          {
+            "bytesReceived": 14614,
+            "packetsReceived": 155,
+            "totalAudioEnergy": 0.006292109650937806
+          }
+        ]
+      },
+      {
+        "at": 1792454364277,
+        "nativeAudio": []
+      },
+      {
+        "at": 1792454364280,
+        "nativeAudio": [
+          {
+            "bytesReceived": 14624,
+            "packetsReceived": 158,
+            "totalAudioEnergy": 0.006292109650937806
+          }
+        ]
+      },
+      {
+        "at": 1792454364722,
+        "joined": true,
+        "humans": 1,
+        "error": null,
+        "unaddressed": 0,
+        "firstAudioMs": 45.45426299999963
+      },
+      {
+        "at": 1792454364794,
+        "nativeAudio": []
+      },
+      {
+        "at": 1792454364795,
+        "nativeAudio": [
+          {
+            "bytesReceived": 15735,
+            "packetsReceived": 165,
+            "totalAudioEnergy": 0.006292109650937806
+          }
+        ]
+      }
+    ],
+    "secondMicrophone": [],
+    "participants": [
+      {
+        "identity_id": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "parked_at": null,
+        "left_at": "2026-10-19T23:59:12.875Z"
+      },
+      {
+        "identity_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "parked_at": null,
+        "left_at": null
+      }
+    ]
+  },
+  "standIn": "Built production Android hook/VoiceBar with native RTC, disposable PGlite, controlled Flux finals and provider SSE/PCM. No physical speech or speaker latency measurement."
+}

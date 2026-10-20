@@ -57,6 +57,7 @@ import {
 } from './host-mcp-route.js';
 import { openRouterRoutingInput } from './openrouter-routing.js';
 import { agentOpenRouterKey, readOpenRouterKeyUsage } from './openrouter-key-usage.js';
+import { HarnessQuotaReader, quotaAxiProvider } from './harness-quota.js';
 import { agentCommandCatalogPublisher } from './agent-command-catalog.js';
 import {
   attachmentImageBlocks,
@@ -595,6 +596,8 @@ export class MonolithRoomTurnLoop {
   /** This agent's own OpenRouter key when its model routes there. */
   private openRouterKey?: string;
   private openRouterSpendPublish: Promise<unknown> = Promise.resolve();
+  /** Plan quota read through quota-axi, throttled per agent across loops. */
+  private harnessQuota?: HarnessQuotaReader;
   private sharedAssetsActive = false;
   private isolatedCategories: SharedAssetCategory[] = [];
   /**
@@ -910,8 +913,22 @@ export class MonolithRoomTurnLoop {
       .catch((error) => console.error('[agent-usage] OpenRouter key read failed', error));
   }
 
+  /** After a turn, refresh the owner's view of this agent's plan quota. */
+  private publishHarnessQuota(): void {
+    this.harnessQuota ??= new HarnessQuotaReader({
+      agentId: this.agent.publicKey,
+      post: (usage) =>
+        this.options.api.execute('postAgentUsage', { agentId: this.agent.publicKey, usage }),
+    });
+    void this.harnessQuota.publish(
+      quotaAxiProvider(this.options.config.agentKind, Boolean(this.openRouterKey)),
+      this.agentEnv,
+    );
+  }
+
   private async captureTurnMetrics() {
     this.publishOpenRouterSpend();
+    this.publishHarnessQuota();
     const { model: _model, ...usage } = this.turnUsage.usage ?? {};
     const promptBytes = this.client?.lastPromptBytes;
     return {

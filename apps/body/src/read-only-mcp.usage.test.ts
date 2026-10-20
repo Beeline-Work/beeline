@@ -55,7 +55,7 @@ describe('read facet usage', () => {
     const result = await read();
     expect(result.old).toBe(true);
     expect(result.usage.windows).toHaveLength(2);
-    expect(result.summary).toMatch(/^Usage: Claude 5-hour 42% .*weekly 83% .*context 612K of 1M tokens/);
+    expect(result.summary).toMatch(/^Usage: 5-hour 42% .*weekly 83% .*context 612K of 1M tokens/);
   });
 
   it('gives free agents tokens and paused state, never money', async () => {

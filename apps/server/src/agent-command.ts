@@ -266,6 +266,8 @@ function commandRecoveryCtes(roomSql: string, agentSql: string, claimSql = 'NULL
     SELECT command.*,row_number() OVER (ORDER BY command.created_at DESC,command.id DESC) position
     FROM recovery_scope command
     WHERE command.private_payload IS NULL AND command.coalesced_context IS NULL
+      AND NOT EXISTS(SELECT 1 FROM voice_orders voice
+        WHERE voice.source_message_id=command.source_message_id AND voice.agent_id=command.agent_id)
       AND command.wake_after IS NULL
       AND command.reason<>'computer_activity' AND (command.state='pending' OR (command.state='claimed' AND command.lease_expires_at<=now()))
   ), return_head AS MATERIALIZED (
@@ -1450,7 +1452,7 @@ export async function readAgentCommands(
       source: {
         id: r.private_payload ? r.id : r.source_message_id ?? r.id,
         authorId: r.private_payload?.authorId ?? r.author_id,
-        body: (r.private_payload?.text ?? (r.reason === 'watched_corner' ? `Watched corner ${r.watched_corner_name} (${r.watched_corner_id}): ${r.system_event?.kind}${r.system_event?.kind === 'merged' && r.watched_merge_commit ? ` · merge commit ${r.watched_merge_commit}` : ''}\n` : '') + subscriptionPromptBody(r.text, r.system_event ?? null)) + (r.voice_origin ? '\nThis request came from a live voice call. Start your report with one short spoken line, then a blank line, then the full report.' : '') + checkFailureLogBody(r.system_event ?? null) + reportedHeadBody(r.system_event ?? null) + mergeCardDetail(r.merge_card) + workflowWakeDetail(r.wake_card_type, r.wake_card, r.workflow_state, r.workflow_outcomes, r.workflow_status) + (r.receipt_hint ? `\nReceipt hint for this state: ${r.receipt_hint}. Attach an optional receipt when you call handoff.` : ''),
+        body: (r.private_payload?.text ?? (r.reason === 'watched_corner' ? `Watched corner ${r.watched_corner_name} (${r.watched_corner_id}): ${r.system_event?.kind}${r.system_event?.kind === 'merged' && r.watched_merge_commit ? ` · merge commit ${r.watched_merge_commit}` : ''}\n` : '') + subscriptionPromptBody(r.text, r.system_event ?? null)) + (r.voice_origin ? '\nThis is a separate request from a live voice call. Answer this request in this turn, even if it appeared as background context while you were busy. Start your report with one short spoken line, then a blank line, then the full report.' : '') + checkFailureLogBody(r.system_event ?? null) + reportedHeadBody(r.system_event ?? null) + mergeCardDetail(r.merge_card) + workflowWakeDetail(r.wake_card_type, r.wake_card, r.workflow_state, r.workflow_outcomes, r.workflow_status) + (r.receipt_hint ? `\nReceipt hint for this state: ${r.receipt_hint}. Attach an optional receipt when you call handoff.` : ''),
         attachments: r.coalesced_attachments ?? r.private_payload?.attachments ?? r.attachments ?? [],
         createdAt: Math.floor(r.created_at.getTime() / 1000),
         type: r.private_payload ? 'private' : r.presentation,

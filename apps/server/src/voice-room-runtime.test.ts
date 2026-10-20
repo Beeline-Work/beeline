@@ -529,6 +529,7 @@ function phantomHarness(answer = 'Hey there is the answer.') {
 
 it.each([0.6, 0.3, 0.95])('Reproduction keep-turn-1: records and replies to a final at confidence %s', async confidence => {
   const harness = phantomHarness();
+  const logs = vi.spyOn(console, 'info');
   const runtime = await VoiceRoomRuntime.connect(harness.service as unknown as VoiceService, 'call', 'room');
   state.streams = [new ReadableStream()];
   try {
@@ -542,7 +543,9 @@ it.each([0.6, 0.3, 0.95])('Reproduction keep-turn-1: records and replies to a fi
     harness.finishPlayback();
     await vi.waitFor(() => expect(harness.service.recordAnswer).toHaveBeenCalledOnce());
     expect(harness.service.config.brain.answer).toHaveBeenCalledOnce();
-  } finally { await runtime.close(); }
+    expect(logs).toHaveBeenCalledWith('[voice-speech-shadow]', expect.stringContaining(text));
+    expect(logs).toHaveBeenCalledWith('[voice-router-decision]', expect.stringContaining('answer'));
+  } finally { await runtime.close(); logs.mockRestore(); }
 });
 
 it('dispatches a low-confidence final without interrupting playback when voiceInterrupt is false', async () => {
@@ -790,6 +793,7 @@ it('finished-sentence timing adds no wait before commit or first audio', async (
 
 it('Reproduction CONTINUATION-1: resumes during thinking without creating another message', async () => {
   const { service } = conversationService(1);
+  const logs = vi.spyOn(console, 'info');
   const releases: Array<() => void> = [];
   service.config.brain.answer.mockImplementation(async (_agent, _history, _onText, signal) => {
     await new Promise<void>((resolve, reject) => {
@@ -808,8 +812,10 @@ it('Reproduction CONTINUATION-1: resumes during thinking without creating anothe
     expect(service.recordHuman).toHaveBeenCalledOnce();
     expect(service.config.brain.answer.mock.calls[1]?.[1].filter(message => message.role === 'user').at(-1)?.content).toBe('Ruby I can talk for hours. That does not exist today.');
     expect(service.recordAnswer).toHaveBeenCalledOnce();
+    const cancelled = logs.mock.calls.filter(([tag]) => tag === '[voice-draft-cancelled]').map(([, data]) => JSON.parse(String(data)));
+    expect(cancelled).toEqual([expect.objectContaining({ reason: 'superseded', traceId: expect.any(String), elapsedMs: expect.any(Number) })]);
     console.log('CONTINUATION-1: one message, combined request, one reply');
-  } finally { await runtime.close(); }
+  } finally { await runtime.close(); logs.mockRestore(); }
 });
 
 function deferred<T>() {
@@ -2207,5 +2213,22 @@ it('DELIVERY-2: another human interrupting pre-audio synthesis cannot drop the o
     expect(service.dispatch).toHaveBeenCalledOnce();
     expect(service.reviseHuman).not.toHaveBeenCalled();
     expect(service.recordHuman).toHaveBeenCalledTimes(2);
+  } finally { await runtime.close(); }
+});
+
+
+it('VOICE-ROUTER-1: pending call work reaches the brain without an invented report', async () => {
+  const { service } = conversationService(1);
+  const original = service.db.query.getMockImplementation()!;
+  service.db.query.mockImplementation(async (sql, params) => sql.includes('SELECT source.text FROM voice_orders')
+    ? { rowCount: 1, rows: [{ text: '@ruby check whether the release went out' }] as any }
+    : original(sql, params));
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  try {
+    await runtime.utterance('human', 'Ruby, are you still working on it?');
+    const history = service.config.brain.answer.mock.calls.at(-1)![1] as any;
+    expect(history.find((row: any) => row.content.startsWith('Call work still pending')).content).toContain('Call work still pending; no report or progress is available');
+    expect(history.find((row: any) => row.content.startsWith('Call work still pending')).content).toContain('check whether the release went out');
+    expect(history.some((row: any) => row.role === 'user' && row.content.includes('are you still working on it?'))).toBe(true);
   } finally { await runtime.close(); }
 });

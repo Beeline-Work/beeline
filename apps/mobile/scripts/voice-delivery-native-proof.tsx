@@ -13,6 +13,11 @@ import { VoiceCallCard } from '../sources/components/buzz/VoiceCallCard';
 import { VoiceBar, VoiceAgentStrip } from '../sources/components/buzz/VoiceBar';
 import { Button } from '../sources/components/buzz/Button';
 LogBox.ignoreAllLogs();
+import Constants from 'expo-constants';
+if (Constants.expoConfig) {
+  Constants.expoConfig.extra ??= {};
+  Constants.expoConfig.extra.app = { buzzyMonolithUrl: 'http://10.0.2.2:18097' };
+}
 import { monolithSession } from '../sources/auth/monolith-session';
 monolithSession.fetch = (input, init = {}, options = {}) => (options.fetchImpl ?? fetch)(input, init);
 // Observe actual inbound RTP on the native client, without changing the transport.
@@ -20,6 +25,8 @@ import { Room, RoomEvent } from 'livekit-client';
 const emit = Room.prototype.emit;
 (Room.prototype as any).emit = function (event: string, ...args: any[]) {
   const track = args[0];
+  if ([RoomEvent.LocalTrackPublished, RoomEvent.AudioPlaybackStatusChanged, RoomEvent.Connected].includes(event as any))
+    void fetch('http://10.0.2.2:18097/observe', {method:'POST',body:JSON.stringify({at:Date.now(),event,canPlaybackAudio:this.canPlaybackAudio})});
   if (event === RoomEvent.TrackSubscribed && track.kind === 'audio') {
     const timer = setInterval(() => {
       void track.getRTCStatsReport().then((stats: any) => {
@@ -27,7 +34,7 @@ const emit = Room.prototype.emit;
         stats?.forEach((row: any) => { if (row.type === 'inbound-rtp') audio.push({ bytesReceived: row.bytesReceived, packetsReceived: row.packetsReceived, totalAudioEnergy: row.totalAudioEnergy }); });
         return fetch('http://10.0.2.2:18097/observe', { method: 'POST', body: JSON.stringify({ at: Date.now(), nativeAudio: audio }) });
       }).catch(() => {});
-    }, 500);
+    }, 50);
     this.once(RoomEvent.Disconnected, () => clearInterval(timer));
   }
   return emit.apply(this, [event, ...args] as any);
@@ -45,7 +52,7 @@ function Call({roomId}:{roomId:string}) {
   React.useEffect(()=>{ void fetch(origin+'/observe',{method:'POST',body:JSON.stringify({at:Date.now(),joined:!!voice.call,humans:voice.humans,error:voice.error,unaddressed:voice.unaddressed,firstAudioMs:voice.firstAudioMs})}); },[voice.call,voice.humans,voice.error,voice.unaddressed,voice.firstAudioMs]);
   return <View style={{flex:1,justifyContent:'space-between',padding:16,paddingTop:64}}>
     <Text style={{color:'#90909B'}}>Android request delivery proof · {voice.call?'Joined':'Left'} · humans {voice.humans}</Text>
-    {card ? <VoiceCallCard call={card} joined={!!voice.call} onJoin={()=>void voice.join()}/> : <Button label="Join proof call" onPress={()=>void voice.join()}/>}
+    {card ? <VoiceCallCard call={card} joined={!!voice.call} onJoin={()=>{void fetch(origin+'/observe',{method:'POST',body:JSON.stringify({at:Date.now(),event:'tap'})});void voice.join();}}/> : <Button label="Join proof call" onPress={()=>{void fetch(origin+'/observe',{method:'POST',body:JSON.stringify({at:Date.now(),event:'tap'})});void voice.join();}}/>}
     <View pointerEvents="none" style={{position:'absolute',top:280,left:16,right:16}}>{requests.map((text,index)=><Text key={index} style={{color:'#90909B',fontSize:16}}>{text}</Text>)}</View>
     <Button label="Bone" onPress={()=>setAppAppearance('light')}/>
     <Button label="Obsidian" onPress={()=>setAppAppearance('dark')}/>

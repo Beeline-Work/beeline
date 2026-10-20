@@ -313,6 +313,9 @@ export class VoiceRoomRuntime {
       // ends. Missing confidence must not make a short playback noise valid.
       const acknowledgment = /^(hey|yeah|yes|yep|okay|ok|uh|huh|hmm)$/.test(speechWords(event.transcript).join(' '));
       // Confidence gates interruption evidence, never a finished recognized turn.
+      if (event.event === 'EndOfTurn' && speechWords(event.transcript).length && !confirmedVoiceSpeech(event))
+        console.info('[voice-speech-shadow]', JSON.stringify({ callId: this.callId, turnIndex: event.turn_index,
+          transcript: event.transcript, words: event.words ?? [] }));
       const recognized = event.event === 'EndOfTurn'
         ? speechWords(event.transcript).length > 0 : confirmedVoiceSpeech(event);
       if (!recognized || voicePlaybackEcho(event.transcript, context) ||
@@ -573,9 +576,13 @@ export class VoiceRoomRuntime {
     if (retry) request.classification = new AbortController();
     const generation = request.classification;
     const controller = new AbortController();
-    const pausePlayback = () => controller.abort();
+    const pausePlayback = () => {
+      console.info('[voice-draft-cancelled]', JSON.stringify({ traceId, callId: this.callId,
+        reason: generation.signal.reason ?? 'superseded', elapsedMs: performance.now() - startedAt }));
+      controller.abort();
+    };
     generation.signal.addEventListener('abort', pausePlayback, { once: true });
-    const stop = () => { generation.abort(); controller.abort(); };
+    const stop = () => { generation.abort('call closed'); controller.abort(); };
     this.shutdown.signal.addEventListener('abort', stop, { once: true });
     let resolveSource!: (id: string) => void;
     let rejectSource!: (error: unknown) => void;
@@ -643,15 +650,27 @@ export class VoiceRoomRuntime {
         history = rows.rows.reverse().map(row => ({ role: row.author_id === agent.id ? 'assistant' : 'user', content: row.text }));
       }
       if (generation.signal.aborted || this.closed) return;
+      const pending = await this.retry(() => this.service.db.query<{ text: string }>(
+        `SELECT source.text FROM voice_orders o JOIN messages source ON source.id=o.source_message_id
+         JOIN agent_commands c ON c.source_message_id=o.source_message_id AND c.agent_id=o.agent_id
+         WHERE o.call_id=$1 AND o.agent_id=$2 AND source.author_id=$3 AND c.state IN ('pending','claimed')
+         ORDER BY c.created_at`, [this.callId, agent.id, human]));
+      const brainHistory = [...history];
+      if (pending.rows.length) brainHistory.push({ role: 'user', content:
+        'Call work still pending; no report or progress is available for these requests: ' + JSON.stringify(pending.rows.map(row => row.text)) });
       history.push({ role: 'user', content: request.text });
+      brainHistory.push({ role: 'user', content: request.text });
       request.state = 'classifying';
       timing('brain_request');
       // Deltas cannot announce work before the final decision has committed it.
       let streamed = false;
       let firstAudio = false;
       const reply = retry ? { order: true, text: "Checking. I’ll tell you when I have it." } :
-        await this.service.config.brain.answer(agent, history, delta => { if (delta) { streamed = true; timing('brain_first_token'); } }, generation.signal, {
-          search: (search, signal) => this.service.search(this.callId, sourceId, agent.id, search, signal),
+        await this.service.config.brain.answer(agent, brainHistory, delta => { if (delta) { streamed = true; timing('brain_first_token'); } }, generation.signal, {
+          search: (search, signal) => {
+            console.info('[voice-router-decision]', JSON.stringify({ traceId, callId: this.callId, decision: search.name }));
+            return this.service.search(this.callId, sourceId, agent.id, search, signal);
+          },
           announce: async text => {
             if (!text || this.humanSpeaking.has(human) || generation.signal.aborted || this.closed || this.speaking || playbackVersion !== this.playbackVersion) return;
             this.speaking = controller; this.speakingHuman = human;
@@ -673,6 +692,7 @@ export class VoiceRoomRuntime {
           },
         });
       timing('brain_complete');
+      console.info('[voice-router-decision]', JSON.stringify({ traceId, callId: this.callId, decision: reply.order ? 'order' : 'answer' }));
       if (generation.signal.aborted || this.closed) return;
       let committed = false;
       const commitReply = async () => {

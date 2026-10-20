@@ -1,0 +1,1341 @@
+{
+  "mode": "baseline",
+  "device": "emulator-5554",
+  "tapToMicLiveMs": 1965,
+  "tapToAudioPlayableMs": 1904,
+  "tapToFirstAgentAudioMs": 2380,
+  "firstServerAudioMs": [
+    26.420376000001852,
+    21.5996410000007,
+    22.247071000005235,
+    25.352825000001758,
+    28.47156299999915
+  ],
+  "medianFirstServerAudioMs": 25.352825000001758,
+  "observations": [
+    {
+      "at": 1792517884315,
+      "joined": false,
+      "humans": 1,
+      "error": null,
+      "unaddressed": 0,
+      "firstAudioMs": null
+    },
+    {
+      "at": 1792517931725,
+      "event": "tap"
+    },
+    {
+      "at": 1792517932410,
+      "event": "audioPlaybackChanged",
+      "canPlaybackAudio": false
+    },
+    {
+      "at": 1792517932422,
+      "joined": false,
+      "humans": 2,
+      "error": null,
+      "unaddressed": 0,
+      "firstAudioMs": null
+    },
+    {
+      "at": 1792517933624,
+      "event": "connected",
+      "canPlaybackAudio": false
+    },
+    {
+      "at": 1792517933629,
+      "event": "audioPlaybackChanged",
+      "canPlaybackAudio": true
+    },
+    {
+      "at": 1792517933690,
+      "event": "localTrackPublished",
+      "canPlaybackAudio": true
+    },
+    {
+      "at": 1792517933718,
+      "nativeAudio": [
+        {
+          "bytesReceived": 55,
+          "packetsReceived": 5,
+          "totalAudioEnergy": 0
+        }
+      ]
+    },
+    {
+      "at": 1792517933718,
+      "nativeAudio": []
+    },
+    {
+      "at": 1792517933719,
+      "joined": true,
+      "humans": 2,
+      "error": null,
+      "unaddressed": 0,
+      "firstAudioMs": null
+    },
+    {
+      "at": 1792517933828,
+      "nativeAudio": [
+        {
+          "bytesReceived": 680,
+          "packetsReceived": 11,
+          "totalAudioEnergy": 6.519655944455712e-11
+        }
+      ]
+    },
+    {
+      "at": 1792517933832,
+      "nativeAudio": [
+        {
+          "bytesReceived": 6,
+          "packetsReceived": 2,
+          "totalAudioEnergy": 0
+        }
+      ]
+    },
+    {
+      "at": 1792517933875,
+      "nativeAudio": [
+        {
+          "bytesReceived": 680,
+          "packetsReceived": 11,
+          "totalAudioEnergy": 6.519655944455712e-11
+        }
+      ]
+    },
+    {
+      "at": 1792517933875,
+      "nativeAudio": [
+        {
+          "bytesReceived": 6,
+          "packetsReceived": 2,
+          "totalAudioEnergy": 0
+        }
+      ]
+    },
+    {
+      "at": 1792517934050,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1201,
+          "packetsReceived": 16,
+          "totalAudioEnergy": 2.514724435718632e-10
+        }
+      ]
+    },
+    {
+      "at": 1792517934050,
+      "joined": true,
+      "humans": 2,
+      "error": null,
+      "unaddressed": 0,
+      "firstAudioMs": 26.420376000001852
+    },
+    {
+      "at": 1792517934049,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1109,
+          "packetsReceived": 6,
+          "totalAudioEnergy": 0
+        }
+      ]
+    },
+    {
+      "at": 1792517934105,
+      "nativeAudio": [
+        {
+          "bytesReceived": 2591,
+          "packetsReceived": 12,
+          "totalAudioEnergy": 0.00013932380879838916
+        }
+      ]
+    },
+    {
+      "at": 1792517934106,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1201,
+          "packetsReceived": 16,
+          "totalAudioEnergy": 3.166690030164205e-10
+        }
+      ]
+    },
+    {
+      "at": 1792517934160,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1201,
+          "packetsReceived": 16,
+          "totalAudioEnergy": 3.818655624609778e-10
+        }
+      ]
+    },
+    {
+      "at": 1792517934161,
+      "nativeAudio": [
+        {
+          "bytesReceived": 3085,
+          "packetsReceived": 14,
+          "totalAudioEnergy": 0.0004644126959946307
+        }
+      ]
+    },
+    {
+      "at": 1792517934226,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1201,
+          "packetsReceived": 16,
+          "totalAudioEnergy": 4.3774832769916974e-10
+        }
+      ]
+    },
+    {
+      "at": 1792517934226,
+      "nativeAudio": [
+        {
+          "bytesReceived": 4073,
+          "packetsReceived": 18,
+          "totalAudioEnergy": 0.0007004979039823058
+        }
+      ]
+    },
+    {
+      "at": 1792517934292,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1201,
+          "packetsReceived": 16,
+          "totalAudioEnergy": 5.029448871437268e-10
+        }
+      ]
+    },
+    {
+      "at": 1792517934293,
+      "nativeAudio": [
+        {
+          "bytesReceived": 4460,
+          "packetsReceived": 21,
+          "totalAudioEnergy": 0.0009715653132021439
+        }
+      ]
+    },
+    {
+      "at": 1792517934360,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1259,
+          "packetsReceived": 18,
+          "totalAudioEnergy": 5.681414465882838e-10
+        }
+      ]
+    },
+    {
+      "at": 1792517934359,
+      "nativeAudio": [
+        {
+          "bytesReceived": 4493,
+          "packetsReceived": 24,
+          "totalAudioEnergy": 0.00127602809528003
+        }
+      ]
+    },
+    {
+      "at": 1792517934426,
+      "nativeAudio": [
+        {
+          "bytesReceived": 4537,
+          "packetsReceived": 28,
+          "totalAudioEnergy": 0.0014173757543042853
+        }
+      ]
+    },
+    {
+      "at": 1792517934426,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1259,
+          "packetsReceived": 18,
+          "totalAudioEnergy": 6.333380060328407e-10
+        }
+      ]
+    },
+    {
+      "at": 1792517934493,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1259,
+          "packetsReceived": 18,
+          "totalAudioEnergy": 6.985345654773976e-10
+        }
+      ]
+    },
+    {
+      "at": 1792517934494,
+      "nativeAudio": [
+        {
+          "bytesReceived": 4546,
+          "packetsReceived": 29,
+          "totalAudioEnergy": 0.0014363870710383175
+        }
+      ]
+    },
+    {
+      "at": 1792517934559,
+      "nativeAudio": [
+        {
+          "bytesReceived": 4546,
+          "packetsReceived": 29,
+          "totalAudioEnergy": 0.0014374055344347834
+        }
+      ]
+    },
+    {
+      "at": 1792517934559,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1259,
+          "packetsReceived": 18,
+          "totalAudioEnergy": 7.544173307155893e-10
+        }
+      ]
+    },
+    {
+      "at": 1792517934626,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1259,
+          "packetsReceived": 18,
+          "totalAudioEnergy": 8.196138901601462e-10
+        }
+      ]
+    },
+    {
+      "at": 1792517934629,
+      "nativeAudio": [
+        {
+          "bytesReceived": 4546,
+          "packetsReceived": 29,
+          "totalAudioEnergy": 0.0014382745393756197
+        }
+      ]
+    },
+    {
+      "at": 1792517934696,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1259,
+          "packetsReceived": 18,
+          "totalAudioEnergy": 8.848104496047031e-10
+        }
+      ]
+    },
+    {
+      "at": 1792517934696,
+      "nativeAudio": [
+        {
+          "bytesReceived": 4546,
+          "packetsReceived": 29,
+          "totalAudioEnergy": 0.0014383455384288544
+        }
+      ]
+    },
+    {
+      "at": 1792517934763,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1315,
+          "packetsReceived": 19,
+          "totalAudioEnergy": 9.500070090492603e-10
+        }
+      ]
+    },
+    {
+      "at": 1792517934762,
+      "nativeAudio": [
+        {
+          "bytesReceived": 4546,
+          "packetsReceived": 29,
+          "totalAudioEnergy": 0.0014383688042867815
+        }
+      ]
+    },
+    {
+      "at": 1792517934826,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1317,
+          "packetsReceived": 20,
+          "totalAudioEnergy": 1.015203568493818e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517934825,
+      "nativeAudio": [
+        {
+          "bytesReceived": 4546,
+          "packetsReceived": 29,
+          "totalAudioEnergy": 0.0014383724180389332
+        }
+      ]
+    },
+    {
+      "at": 1792517934846,
+      "joined": true,
+      "humans": 2,
+      "error": null,
+      "unaddressed": 0,
+      "firstAudioMs": 21.5996410000007
+    },
+    {
+      "at": 1792517934893,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1317,
+          "packetsReceived": 20,
+          "totalAudioEnergy": 1.0710863337320103e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517934893,
+      "nativeAudio": [
+        {
+          "bytesReceived": 5402,
+          "packetsReceived": 32,
+          "totalAudioEnergy": 0.001438372641569994
+        }
+      ]
+    },
+    {
+      "at": 1792517934961,
+      "nativeAudio": [
+        {
+          "bytesReceived": 6143,
+          "packetsReceived": 35,
+          "totalAudioEnergy": 0.0015775718411156962
+        }
+      ]
+    },
+    {
+      "at": 1792517934962,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1317,
+          "packetsReceived": 20,
+          "totalAudioEnergy": 1.136282893176568e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517935028,
+      "nativeAudio": [
+        {
+          "bytesReceived": 7131,
+          "packetsReceived": 39,
+          "totalAudioEnergy": 0.001902369625674018
+        }
+      ]
+    },
+    {
+      "at": 1792517935028,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1317,
+          "packetsReceived": 20,
+          "totalAudioEnergy": 1.2014794526211256e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517935093,
+      "nativeAudio": [
+        {
+          "bytesReceived": 7872,
+          "packetsReceived": 42,
+          "totalAudioEnergy": 0.0021763420352482036
+        }
+      ]
+    },
+    {
+      "at": 1792517935094,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1317,
+          "packetsReceived": 20,
+          "totalAudioEnergy": 1.2666760120656832e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517935162,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1317,
+          "packetsReceived": 20,
+          "totalAudioEnergy": 1.3318725715102409e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517935163,
+      "nativeAudio": [
+        {
+          "bytesReceived": 8613,
+          "packetsReceived": 45,
+          "totalAudioEnergy": 0.0024410188125147266
+        }
+      ]
+    },
+    {
+      "at": 1792517935226,
+      "nativeAudio": [
+        {
+          "bytesReceived": 9011,
+          "packetsReceived": 49,
+          "totalAudioEnergy": 0.002666117329149661
+        }
+      ]
+    },
+    {
+      "at": 1792517935226,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1375,
+          "packetsReceived": 22,
+          "totalAudioEnergy": 1.3877553367484331e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517935295,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1375,
+          "packetsReceived": 22,
+          "totalAudioEnergy": 1.4529518961929908e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517935295,
+      "nativeAudio": [
+        {
+          "bytesReceived": 9044,
+          "packetsReceived": 52,
+          "totalAudioEnergy": 0.002952645320083063
+        }
+      ]
+    },
+    {
+      "at": 1792517935359,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1375,
+          "packetsReceived": 22,
+          "totalAudioEnergy": 1.5181484556375484e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517935363,
+      "nativeAudio": [
+        {
+          "bytesReceived": 9077,
+          "packetsReceived": 55,
+          "totalAudioEnergy": 0.0032571081021609493
+        }
+      ]
+    },
+    {
+      "at": 1792517935429,
+      "nativeAudio": [
+        {
+          "bytesReceived": 9086,
+          "packetsReceived": 56,
+          "totalAudioEnergy": 0.003276119418894983
+        }
+      ]
+    },
+    {
+      "at": 1792517935429,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1375,
+          "packetsReceived": 22,
+          "totalAudioEnergy": 1.583345015082106e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517935492,
+      "nativeAudio": [
+        {
+          "bytesReceived": 9086,
+          "packetsReceived": 56,
+          "totalAudioEnergy": 0.0032874922601555216
+        }
+      ]
+    },
+    {
+      "at": 1792517935495,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1375,
+          "packetsReceived": 22,
+          "totalAudioEnergy": 1.6485415745266637e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517935560,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1375,
+          "packetsReceived": 22,
+          "totalAudioEnergy": 1.704424339764856e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517935562,
+      "nativeAudio": [
+        {
+          "bytesReceived": 9086,
+          "packetsReceived": 56,
+          "totalAudioEnergy": 0.003288510723551989
+        }
+      ]
+    },
+    {
+      "at": 1792517935627,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1433,
+          "packetsReceived": 24,
+          "totalAudioEnergy": 1.7696208992094137e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517935627,
+      "nativeAudio": [
+        {
+          "bytesReceived": 9086,
+          "packetsReceived": 56,
+          "totalAudioEnergy": 0.0032889009249602646
+        }
+      ]
+    },
+    {
+      "at": 1792517935692,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1433,
+          "packetsReceived": 24,
+          "totalAudioEnergy": 1.8348174586539713e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517935695,
+      "nativeAudio": [
+        {
+          "bytesReceived": 9086,
+          "packetsReceived": 56,
+          "totalAudioEnergy": 0.003288962377374438
+        }
+      ]
+    },
+    {
+      "at": 1792517935763,
+      "nativeAudio": [
+        {
+          "bytesReceived": 9086,
+          "packetsReceived": 56,
+          "totalAudioEnergy": 0.0032889665499542435
+        }
+      ]
+    },
+    {
+      "at": 1792517935763,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1433,
+          "packetsReceived": 24,
+          "totalAudioEnergy": 1.900014018098528e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517935786,
+      "joined": true,
+      "humans": 2,
+      "error": null,
+      "unaddressed": 0,
+      "firstAudioMs": 22.247071000005235
+    },
+    {
+      "at": 1792517935826,
+      "nativeAudio": [
+        {
+          "bytesReceived": 9946,
+          "packetsReceived": 60,
+          "totalAudioEnergy": 0.003288968487223439
+        }
+      ]
+    },
+    {
+      "at": 1792517935827,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1433,
+          "packetsReceived": 24,
+          "totalAudioEnergy": 1.9652105775430843e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517935894,
+      "nativeAudio": [
+        {
+          "bytesReceived": 10687,
+          "packetsReceived": 63,
+          "totalAudioEnergy": 0.0032889687107544997
+        }
+      ]
+    },
+    {
+      "at": 1792517935897,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1433,
+          "packetsReceived": 24,
+          "totalAudioEnergy": 2.0210933427812754e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517935959,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1433,
+          "packetsReceived": 24,
+          "totalAudioEnergy": 2.0862899022258316e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517935962,
+      "nativeAudio": [
+        {
+          "bytesReceived": 11428,
+          "packetsReceived": 66,
+          "totalAudioEnergy": 0.003567616365606454
+        }
+      ]
+    },
+    {
+      "at": 1792517936026,
+      "nativeAudio": [
+        {
+          "bytesReceived": 12416,
+          "packetsReceived": 70,
+          "totalAudioEnergy": 0.003875680288959053
+        }
+      ]
+    },
+    {
+      "at": 1792517936029,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1491,
+          "packetsReceived": 26,
+          "totalAudioEnergy": 2.1514864616703878e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517936094,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1491,
+          "packetsReceived": 26,
+          "totalAudioEnergy": 2.4122726994486155e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517936096,
+      "nativeAudio": [
+        {
+          "bytesReceived": 13157,
+          "packetsReceived": 73,
+          "totalAudioEnergy": 0.004141181802702549
+        }
+      ]
+    },
+    {
+      "at": 1792517936161,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1491,
+          "packetsReceived": 26,
+          "totalAudioEnergy": 2.5892347893695554e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517936163,
+      "nativeAudio": [
+        {
+          "bytesReceived": 13544,
+          "packetsReceived": 76,
+          "totalAudioEnergy": 0.0044345127938277525
+        }
+      ]
+    },
+    {
+      "at": 1792517936229,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1491,
+          "packetsReceived": 26,
+          "totalAudioEnergy": 2.6451175546077464e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517936229,
+      "nativeAudio": [
+        {
+          "bytesReceived": 13588,
+          "packetsReceived": 80,
+          "totalAudioEnergy": 0.004695480892751655
+        }
+      ]
+    },
+    {
+      "at": 1792517936292,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1491,
+          "packetsReceived": 26,
+          "totalAudioEnergy": 2.8500210271477823e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517936294,
+      "nativeAudio": [
+        {
+          "bytesReceived": 13621,
+          "packetsReceived": 83,
+          "totalAudioEnergy": 0.0047144922094856856
+        }
+      ]
+    },
+    {
+      "at": 1792517936362,
+      "nativeAudio": [
+        {
+          "bytesReceived": 13630,
+          "packetsReceived": 84,
+          "totalAudioEnergy": 0.004725865050746222
+        }
+      ]
+    },
+    {
+      "at": 1792517936363,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1491,
+          "packetsReceived": 26,
+          "totalAudioEnergy": 3.082865882306914e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517936427,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1547,
+          "packetsReceived": 27,
+          "totalAudioEnergy": 3.082865882306914e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517936427,
+      "nativeAudio": [
+        {
+          "bytesReceived": 13630,
+          "packetsReceived": 84,
+          "totalAudioEnergy": 0.004725865050746222
+        }
+      ]
+    },
+    {
+      "at": 1792517936492,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1549,
+          "packetsReceived": 28,
+          "totalAudioEnergy": 3.1480624417514703e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517936495,
+      "nativeAudio": [
+        {
+          "bytesReceived": 13630,
+          "packetsReceived": 84,
+          "totalAudioEnergy": 0.004727053258042101
+        }
+      ]
+    },
+    {
+      "at": 1792517936559,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1549,
+          "packetsReceived": 28,
+          "totalAudioEnergy": 3.250514178021487e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517936561,
+      "nativeAudio": [
+        {
+          "bytesReceived": 13630,
+          "packetsReceived": 84,
+          "totalAudioEnergy": 0.004727324429160419
+        }
+      ]
+    },
+    {
+      "at": 1792517936630,
+      "nativeAudio": [
+        {
+          "bytesReceived": 13630,
+          "packetsReceived": 84,
+          "totalAudioEnergy": 0.004727338148379283
+        }
+      ]
+    },
+    {
+      "at": 1792517936630,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1549,
+          "packetsReceived": 28,
+          "totalAudioEnergy": 3.3157107374660434e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517936695,
+      "nativeAudio": [
+        {
+          "bytesReceived": 13630,
+          "packetsReceived": 84,
+          "totalAudioEnergy": 0.004727341203303782
+        }
+      ]
+    },
+    {
+      "at": 1792517936696,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1549,
+          "packetsReceived": 28,
+          "totalAudioEnergy": 3.3809072969105996e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517936722,
+      "joined": true,
+      "humans": 2,
+      "error": null,
+      "unaddressed": 0,
+      "firstAudioMs": 25.352825000001758
+    },
+    {
+      "at": 1792517936760,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1549,
+          "packetsReceived": 28,
+          "totalAudioEnergy": 3.4367900621487906e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517936761,
+      "nativeAudio": [
+        {
+          "bytesReceived": 14202,
+          "packetsReceived": 87,
+          "totalAudioEnergy": 0.004727341426834846
+        }
+      ]
+    },
+    {
+      "at": 1792517936829,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1549,
+          "packetsReceived": 28,
+          "totalAudioEnergy": 3.5578693868315386e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517936830,
+      "nativeAudio": [
+        {
+          "bytesReceived": 15231,
+          "packetsReceived": 91,
+          "totalAudioEnergy": 0.004912940272633703
+        }
+      ]
+    },
+    {
+      "at": 1792517936893,
+      "nativeAudio": [
+        {
+          "bytesReceived": 15972,
+          "packetsReceived": 94,
+          "totalAudioEnergy": 0.005237738057192023
+        }
+      ]
+    },
+    {
+      "at": 1792517936894,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1607,
+          "packetsReceived": 30,
+          "totalAudioEnergy": 3.818655624609768e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517936961,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1607,
+          "packetsReceived": 30,
+          "totalAudioEnergy": 3.9397349492925165e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517936962,
+      "nativeAudio": [
+        {
+          "bytesReceived": 16713,
+          "packetsReceived": 97,
+          "totalAudioEnergy": 0.005503239570935519
+        }
+      ]
+    },
+    {
+      "at": 1792517937027,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1607,
+          "packetsReceived": 30,
+          "totalAudioEnergy": 4.004931508737073e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517937028,
+      "nativeAudio": [
+        {
+          "bytesReceived": 17701,
+          "packetsReceived": 101,
+          "totalAudioEnergy": 0.0057672797783094205
+        }
+      ]
+    },
+    {
+      "at": 1792517937093,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1607,
+          "packetsReceived": 30,
+          "totalAudioEnergy": 4.060814273975264e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517937096,
+      "nativeAudio": [
+        {
+          "bytesReceived": 18088,
+          "packetsReceived": 104,
+          "totalAudioEnergy": 0.005991929891636084
+        }
+      ]
+    },
+    {
+      "at": 1792517937160,
+      "nativeAudio": [
+        {
+          "bytesReceived": 18121,
+          "packetsReceived": 107,
+          "totalAudioEnergy": 0.006284286678514891
+        }
+      ]
+    },
+    {
+      "at": 1792517937161,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1607,
+          "packetsReceived": 30,
+          "totalAudioEnergy": 4.12601083341982e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517937225,
+      "nativeAudio": [
+        {
+          "bytesReceived": 18165,
+          "packetsReceived": 111,
+          "totalAudioEnergy": 0.006547970679829369
+        }
+      ]
+    },
+    {
+      "at": 1792517937226,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1607,
+          "packetsReceived": 30,
+          "totalAudioEnergy": 4.191207392864376e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517937296,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1665,
+          "packetsReceived": 32,
+          "totalAudioEnergy": 4.42405224802351e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517937297,
+      "nativeAudio": [
+        {
+          "bytesReceived": 18174,
+          "packetsReceived": 112,
+          "totalAudioEnergy": 0.0065669819965634
+        }
+      ]
+    },
+    {
+      "at": 1792517937360,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1665,
+          "packetsReceived": 32,
+          "totalAudioEnergy": 4.628955720563548e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517937362,
+      "nativeAudio": [
+        {
+          "bytesReceived": 18174,
+          "packetsReceived": 112,
+          "totalAudioEnergy": 0.006575808679332772
+        }
+      ]
+    },
+    {
+      "at": 1792517937426,
+      "nativeAudio": [
+        {
+          "bytesReceived": 18174,
+          "packetsReceived": 112,
+          "totalAudioEnergy": 0.006576827142729239
+        }
+      ]
+    },
+    {
+      "at": 1792517937428,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1665,
+          "packetsReceived": 32,
+          "totalAudioEnergy": 4.684838485801739e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517937494,
+      "nativeAudio": [
+        {
+          "bytesReceived": 18174,
+          "packetsReceived": 112,
+          "totalAudioEnergy": 0.006577057742959995
+        }
+      ]
+    },
+    {
+      "at": 1792517937494,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1665,
+          "packetsReceived": 32,
+          "totalAudioEnergy": 4.7500350452462955e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517937559,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1665,
+          "packetsReceived": 32,
+          "totalAudioEnergy": 4.7500350452462955e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517937560,
+      "nativeAudio": [
+        {
+          "bytesReceived": 18174,
+          "packetsReceived": 112,
+          "totalAudioEnergy": 0.006577057742959995
+        }
+      ]
+    },
+    {
+      "at": 1792517937626,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1665,
+          "packetsReceived": 32,
+          "totalAudioEnergy": 4.815231604690852e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517937627,
+      "nativeAudio": [
+        {
+          "bytesReceived": 18174,
+          "packetsReceived": 112,
+          "totalAudioEnergy": 0.006577109648735106
+        }
+      ]
+    },
+    {
+      "at": 1792517937664,
+      "joined": true,
+      "humans": 2,
+      "error": null,
+      "unaddressed": 0,
+      "firstAudioMs": 28.47156299999915
+    },
+    {
+      "at": 1792517937693,
+      "nativeAudio": [
+        {
+          "bytesReceived": 18744,
+          "packetsReceived": 115,
+          "totalAudioEnergy": 0.006577113821314908
+        }
+      ]
+    },
+    {
+      "at": 1792517937695,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1721,
+          "packetsReceived": 33,
+          "totalAudioEnergy": 4.880428164135408e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517937760,
+      "nativeAudio": [
+        {
+          "bytesReceived": 19528,
+          "packetsReceived": 118,
+          "totalAudioEnergy": 0.006577115199756452
+        }
+      ]
+    },
+    {
+      "at": 1792517937761,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1723,
+          "packetsReceived": 34,
+          "totalAudioEnergy": 4.945624723579964e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517937827,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1723,
+          "packetsReceived": 34,
+          "totalAudioEnergy": 5.001507488818155e-09
+        }
+      ]
+    },
+    {
+      "at": 1792517937829,
+      "nativeAudio": [
+        {
+          "bytesReceived": 20516,
+          "packetsReceived": 122,
+          "totalAudioEnergy": 0.006577115423287516
+        }
+      ]
+    },
+    {
+      "at": 1792517937893,
+      "nativeAudio": [
+        {
+          "bytesReceived": 21257,
+          "packetsReceived": 125,
+          "totalAudioEnergy": 0.006901913207845836
+        }
+      ]
+    },
+    {
+      "at": 1792517937896,
+      "nativeAudio": [
+        {
+          "bytesReceived": 1723,
+          "packetsReceived": 34,
+          "totalAudioEnergy": 5.066704048262711e-09
+        }
+      ]
+    }
+  ],
+  "audioEnergyThreshold": 1e-05,
+  "measurementNote": "First received synthetic agent PCM above 0.00001 cumulative energy; excludes near-zero partner microphone noise. Controlled providers, real native RTC."
+}

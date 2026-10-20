@@ -1,0 +1,942 @@
+[
+  {
+    "case": 0,
+    "run": 1,
+    "line": "Ah, i a c k. Your joke.",
+    "decision": "answer",
+    "text": "Fair. Here’s a better one: Why don’t skeletons fight each other? They don’t have the guts.",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "Tell me a joke."
+      },
+      {
+        "role": "assistant",
+        "content": "I told my calendar I needed a day off. It said it was booked."
+      }
+    ]
+  },
+  {
+    "case": 2,
+    "run": 1,
+    "line": "why did you forward this…",
+    "decision": "answer",
+    "text": "I’m still working on it. The reason for the hand-off wasn’t recorded. I can answer you directly: Serbia is a landlocked country in southeastern Europe, in the Balkans. Its capital is Belgrade, a historic city where the Sava meets the Danube. Serbia was part of Yugoslavia and became an independent state in 2006. Serbian is the official language, and the country has a rich mix of cultural influences, including Orthodox Christian, Ottoman, and Central European traditions.",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "Tell me about Serbia."
+      },
+      {
+        "role": "assistant",
+        "content": "Checking. I’ll tell you when I have it."
+      },
+      {
+        "role": "user",
+        "content": "Call work still pending; no report or progress is available for these requests: [\"Tell me about Serbia.\"]"
+      }
+    ]
+  },
+  {
+    "case": 1,
+    "run": 1,
+    "line": "You had to",
+    "decision": "answer",
+    "text": "What did the calendar say to the clock? “Your days are numbered.”",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "Tell me a joke."
+      },
+      {
+        "role": "assistant",
+        "content": "I told my calendar I needed a day off. It said it was booked."
+      }
+    ]
+  },
+  {
+    "case": 3,
+    "run": 1,
+    "line": "Tell me about the Ottoman Empire.",
+    "decision": "answer",
+    "text": "The Ottoman Empire was a major state that lasted from about 1299 to 1922. It began in northwestern Anatolia and, over the centuries, expanded across southeastern Europe, the Middle East, and North Africa.\n\nIts capital moved from Bursa to Edirne and then, after the conquest of Constantinople in 1453, to the city now called Istanbul. At its height in the 16th century, under rulers such as Suleiman the Magnificent, it was a powerful empire with a diverse population and a sophisticated system of government.\n\nThe empire weakened over several centuries, lost much of its territory, and entered World War I on the side of the Central Powers. After their defeat, the empire was dissolved. The Republic of Turkey was founded in 1923, following the end of Ottoman rule.",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "We are chatting about history and Beeline."
+      },
+      {
+        "role": "assistant",
+        "content": "What would you like to know?"
+      }
+    ]
+  },
+  {
+    "case": 4,
+    "run": 1,
+    "line": "Tell me about the history of Turkey.",
+    "decision": "answer",
+    "text": "Turkey’s history spans several civilizations and empires. The land that is now Turkey was home to ancient peoples including the Hittites, Greeks, and Romans. Constantinople—today’s Istanbul—became the capital of the Byzantine Empire and a major center of Christianity.\n\nIn the 11th century, Turkic peoples began settling in Anatolia. The Ottoman Empire grew from a small principality into a vast empire, capturing Constantinople in 1453 and ruling much of southeastern Europe, western Asia, and North Africa for centuries.\n\nAfter the Ottoman Empire’s defeat in World War I, Mustafa Kemal Atatürk led the Turkish War of Independence. In 1923, the Republic of Turkey was founded, with Ankara as its capital. Atatürk introduced sweeping reforms to build a secular, modern republic.\n\nSince then, Turkey has experienced periods of political change, military intervention, and economic growth. Today it is a republic linking Europe and Asia, with a rich mix of historical",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "We are chatting about history and Beeline."
+      },
+      {
+        "role": "assistant",
+        "content": "What would you like to know?"
+      }
+    ]
+  },
+  {
+    "case": 5,
+    "run": 1,
+    "line": "tell me about the history of Serbia",
+    "decision": "answer",
+    "text": "Serbia’s history sits at the crossroads of the Balkans, shaped by empires, migration, and the struggle for independence.\n\nMedieval Serbia became a powerful kingdom under the Nemanjić dynasty in the 12th and 13th centuries. Its ruler Stefan Dušan built a large empire in the 14th century, but Serbian power weakened after his death. In 1389, Serbian forces fought the Ottomans at the Battle of Kosovo. The battle became central to Serbian national memory, though Ottoman rule over the region was established gradually over the following decades.\n\nSerbia remained under Ottoman rule for centuries. Uprisings in the early 1800s began its path toward autonomy and, eventually, independence, recognized in 1878. It became a kingdom in 1882.\n\nIn the 20th century, Serbia was part of the Kingdom of Serbs, Croats and Slovenes, later called Yugoslavia. After World War II, it became",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "We are chatting about history and Beeline."
+      },
+      {
+        "role": "assistant",
+        "content": "What would you like to know?"
+      }
+    ]
+  },
+  {
+    "case": 6,
+    "run": 1,
+    "line": "check whether the release went out",
+    "decision": "order",
+    "text": "",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "We are chatting about history and Beeline."
+      },
+      {
+        "role": "assistant",
+        "content": "What would you like to know?"
+      }
+    ]
+  },
+  {
+    "case": 7,
+    "run": 1,
+    "line": "merge the PR",
+    "decision": "order",
+    "text": "",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "We are chatting about history and Beeline."
+      },
+      {
+        "role": "assistant",
+        "content": "What would you like to know?"
+      }
+    ]
+  },
+  {
+    "case": 8,
+    "run": 1,
+    "line": "open a corner to fix X",
+    "decision": "order",
+    "text": "",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "We are chatting about history and Beeline."
+      },
+      {
+        "role": "assistant",
+        "content": "What would you like to know?"
+      }
+    ]
+  },
+  {
+    "case": 9,
+    "run": 1,
+    "line": "Are you still working on the release check?",
+    "decision": "answer",
+    "text": "Yes, I’m still working on the release check.",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "Check whether the release went out."
+      },
+      {
+        "role": "assistant",
+        "content": "Checking. I’ll tell you when I have it."
+      },
+      {
+        "role": "user",
+        "content": "Call work still pending; no report or progress is available for these requests: [\"Check whether the release went out.\"]"
+      }
+    ]
+  },
+  {
+    "case": 0,
+    "run": 2,
+    "line": "Ah, i a c k. Your joke.",
+    "decision": "answer",
+    "text": "Fair—that one was pretty weak. Let me try again: Why don’t skeletons fight each other? They don’t have the guts.",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "Tell me a joke."
+      },
+      {
+        "role": "assistant",
+        "content": "I told my calendar I needed a day off. It said it was booked."
+      }
+    ]
+  },
+  {
+    "case": 2,
+    "run": 2,
+    "line": "why did you forward this…",
+    "decision": "answer",
+    "text": "The reason for the handoff wasn’t recorded. I can answer you directly: Serbia is a landlocked country in southeastern Europe, in the Balkans. Its capital is Belgrade, one of Europe’s oldest continuously inhabited cities. Serbia has a rich mix of Roman, Byzantine, Ottoman, and Central European influences; Serbian is the official language, and the country uses the dinar. Its landscape ranges from the Danube and Sava rivers to the mountains in the south.",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "Tell me about Serbia."
+      },
+      {
+        "role": "assistant",
+        "content": "Checking. I’ll tell you when I have it."
+      },
+      {
+        "role": "user",
+        "content": "Call work still pending; no report or progress is available for these requests: [\"Tell me about Serbia.\"]"
+      }
+    ]
+  },
+  {
+    "case": 1,
+    "run": 2,
+    "line": "You had to",
+    "decision": "answer",
+    "text": "You had to… what? Sorry, I only caught the start—could you finish that?",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "Tell me a joke."
+      },
+      {
+        "role": "assistant",
+        "content": "I told my calendar I needed a day off. It said it was booked."
+      }
+    ]
+  },
+  {
+    "case": 3,
+    "run": 2,
+    "line": "Tell me about the Ottoman Empire.",
+    "decision": "answer",
+    "text": "The Ottoman Empire was a major state that lasted from about 1299 to 1922. It began in northwestern Anatolia and grew to span parts of southeastern Europe, western Asia, and North Africa. At its height in the 16th century, under Sultan Suleiman the Magnificent, it was a powerful center of trade, government, and culture.\n\nIts capital moved from Bursa to Edirne and then, after the conquest of Constantinople in 1453, to the city renamed Istanbul. The empire was religiously diverse, with Muslims, Christians, and Jews living under Ottoman rule, though their rights and obligations were not always equal.\n\nAfter centuries of change and decline, the empire dissolved following World War I. The Republic of Turkey was established in 1923.",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "We are chatting about history and Beeline."
+      },
+      {
+        "role": "assistant",
+        "content": "What would you like to know?"
+      }
+    ]
+  },
+  {
+    "case": 1,
+    "run": 3,
+    "line": "You had to",
+    "decision": "answer",
+    "text": "I had to… what? Could you finish that thought?",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "Tell me a joke."
+      },
+      {
+        "role": "assistant",
+        "content": "I told my calendar I needed a day off. It said it was booked."
+      }
+    ]
+  },
+  {
+    "case": 4,
+    "run": 2,
+    "line": "Tell me about the history of Turkey.",
+    "decision": "answer",
+    "text": "Turkey’s history stretches from ancient Anatolian civilizations to the modern republic. Anatolia was home to peoples such as the Hittites, and later became part of the Greek, Roman, and Byzantine worlds.\n\nIn the 11th century, Turkic peoples began settling in Anatolia. The Seljuk Turks established a major state there, followed by the Ottoman Empire, founded around the end of the 13th century. The Ottomans grew into a vast empire spanning parts of Europe, Asia, and Africa; they conquered Constantinople in 1453.\n\nAfter the empire’s defeat in World War I, a nationalist movement led by Mustafa Kemal Atatürk established the Republic of Turkey in 1923. Atatürk introduced major reforms, including secular laws and a new alphabet. Since then, Turkey has experienced periods of multiparty democracy, military intervention, rapid social change, and ongoing debate over the balance between secularism, religion, and political power.",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "We are chatting about history and Beeline."
+      },
+      {
+        "role": "assistant",
+        "content": "What would you like to know?"
+      }
+    ]
+  },
+  {
+    "case": 3,
+    "run": 3,
+    "line": "Tell me about the Ottoman Empire.",
+    "decision": "answer",
+    "text": "The Ottoman Empire was a major state that lasted from around 1299 until 1922. It began in Anatolia, grew to include much of southeastern Europe, the Middle East, and North Africa, and reached its height under Suleiman the Magnificent in the 16th century. Its capital was Constantinople, now Istanbul, which the Ottomans captured in 1453. After centuries of change and decline, the empire dissolved following World War I, and the Republic of Turkey was founded in 1923.",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "We are chatting about history and Beeline."
+      },
+      {
+        "role": "assistant",
+        "content": "What would you like to know?"
+      }
+    ]
+  },
+  {
+    "case": 5,
+    "run": 2,
+    "line": "tell me about the history of Serbia",
+    "decision": "answer",
+    "text": "Serbia’s history sits at the crossroads of the Balkans, so it’s been shaped by empires, migration, and struggles for independence.\n\nMedieval Serbia grew into a powerful kingdom under the Nemanjić dynasty, especially in the 13th and 14th centuries. It reached its height under Stefan Dušan, who was crowned emperor in 1346. After the Serbian army’s defeat by the Ottoman Empire at the Battle of Kosovo in 1389, Ottoman rule expanded, and Serbia was eventually incorporated into the empire.\n\nSerbian uprisings in the early 19th century began the drive toward independence. Serbia gained international recognition as an independent state in 1878 and became a kingdom in 1882. In the 20th century, it played a central role in the First World War and later became part of Yugoslavia. After Yugoslavia broke apart in the 1990s, Serbia formed a state union with Montenegro, which dissolved in",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "We are chatting about history and Beeline."
+      },
+      {
+        "role": "assistant",
+        "content": "What would you like to know?"
+      }
+    ]
+  },
+  {
+    "case": 4,
+    "run": 3,
+    "line": "Tell me about the history of Turkey.",
+    "decision": "answer",
+    "text": "Turkey’s history stretches from ancient Anatolian civilizations to the modern republic.\n\nAnatolia—the land that makes up most of today’s Turkey—was home to peoples including the Hittites, Greeks, and Romans. Constantinople, now Istanbul, became the capital of the Byzantine Empire in the fourth century CE.\n\nTurkic peoples began settling in Anatolia from Central Asia in the eleventh century. The Ottoman Empire grew from a small principality into a major power, capturing Constantinople in 1453 and ruling a vast region across Europe, Asia, and Africa for centuries.\n\nAfter the Ottoman Empire’s defeat in World War I, a national movement led by Mustafa Kemal Atatürk established the Republic of Turkey in 1923. Atatürk introduced sweeping reforms, including a new legal system and alphabet. Since then, Turkey has experienced periods of political change and military intervention, and has developed into a major regional country.",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "We are chatting about history and Beeline."
+      },
+      {
+        "role": "assistant",
+        "content": "What would you like to know?"
+      }
+    ]
+  },
+  {
+    "case": 1,
+    "run": 4,
+    "line": "You had to",
+    "decision": "answer",
+    "text": "I had to what? Could you finish the thought?",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "Tell me a joke."
+      },
+      {
+        "role": "assistant",
+        "content": "I told my calendar I needed a day off. It said it was booked."
+      }
+    ]
+  },
+  {
+    "case": 3,
+    "run": 4,
+    "line": "Tell me about the Ottoman Empire.",
+    "decision": "answer",
+    "text": "The Ottoman Empire was a major state that lasted from around 1299 to 1922. It began in northwestern Anatolia and grew to span parts of southeastern Europe, the Middle East, and North Africa. At its height in the 16th century, under Süleyman the Magnificent, it was a powerful empire with a rich, diverse society and a sophisticated government. It ended after its defeat in World War I; the Republic of Turkey was established in 1923.",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "We are chatting about history and Beeline."
+      },
+      {
+        "role": "assistant",
+        "content": "What would you like to know?"
+      }
+    ]
+  },
+  {
+    "case": 6,
+    "run": 2,
+    "line": "check whether the release went out",
+    "decision": "order",
+    "text": "",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "We are chatting about history and Beeline."
+      },
+      {
+        "role": "assistant",
+        "content": "What would you like to know?"
+      }
+    ]
+  },
+  {
+    "case": 5,
+    "run": 3,
+    "line": "tell me about the history of Serbia",
+    "decision": "answer",
+    "text": "Serbia’s history sits at the crossroads of the Balkans and the Danube, shaped by empires, migration, and a long struggle for independence.\n\nIn the medieval period, Serbian states grew in the region. The Nemanjić dynasty unified much of them in the 12th and 13th centuries, and Serbia became a powerful kingdom—and later an empire under Stefan Dušan in the 14th century. The Ottoman Empire defeated Serbian forces at the Battle of Kosovo in 1389, a formative event in Serbian history and memory. Ottoman rule then expanded, though parts of the region remained contested.\n\nSerbia began restoring its autonomy through uprisings in the early 1800s and became internationally recognized as an independent state in 1878. It expanded after the Balkan Wars, then played a central role in the First World War: the assassination of Archduke Franz Ferdinand in Sarajevo in 1914 was carried out by a Bosnian Serb nationalist, and",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "We are chatting about history and Beeline."
+      },
+      {
+        "role": "assistant",
+        "content": "What would you like to know?"
+      }
+    ]
+  },
+  {
+    "case": 7,
+    "run": 2,
+    "line": "merge the PR",
+    "decision": "order",
+    "text": "I’ll check on that now.",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "We are chatting about history and Beeline."
+      },
+      {
+        "role": "assistant",
+        "content": "What would you like to know?"
+      }
+    ]
+  },
+  {
+    "case": 4,
+    "run": 4,
+    "line": "Tell me about the history of Turkey.",
+    "decision": "answer",
+    "text": "Turkey’s history spans several civilizations and empires. The area was home to ancient peoples such as the Hittites, and later became a major center of Greek and Roman life. Constantinople—today’s Istanbul—was the capital of the Byzantine Empire for more than a thousand years.\n\nIn 1453, the Ottoman Empire conquered Constantinople and made it its capital. At its height, the empire ruled lands across southeastern Europe, the Middle East, and North Africa. It entered World War I on the losing side, and the empire collapsed afterward.\n\nIn 1923, Mustafa Kemal Atatürk founded the Republic of Turkey. His government introduced major reforms, including replacing the sultanate with a republic and reshaping education, law, and public life. Since then, Turkey has experienced periods of multiparty politics, military intervention, rapid urbanization, and growing regional influence.",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "We are chatting about history and Beeline."
+      },
+      {
+        "role": "assistant",
+        "content": "What would you like to know?"
+      }
+    ]
+  },
+  {
+    "case": 8,
+    "run": 2,
+    "line": "open a corner to fix X",
+    "decision": "order",
+    "text": "",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "We are chatting about history and Beeline."
+      },
+      {
+        "role": "assistant",
+        "content": "What would you like to know?"
+      }
+    ]
+  },
+  {
+    "case": 7,
+    "run": 3,
+    "line": "merge the PR",
+    "decision": "order",
+    "text": "I’ll take care of that.",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "We are chatting about history and Beeline."
+      },
+      {
+        "role": "assistant",
+        "content": "What would you like to know?"
+      }
+    ]
+  },
+  {
+    "case": 1,
+    "run": 5,
+    "line": "You had to",
+    "decision": "answer",
+    "text": "I’m not sure what you mean—what did I have to do?",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "Tell me a joke."
+      },
+      {
+        "role": "assistant",
+        "content": "I told my calendar I needed a day off. It said it was booked."
+      }
+    ]
+  },
+  {
+    "case": 9,
+    "run": 2,
+    "line": "Are you still working on the release check?",
+    "decision": "answer",
+    "text": "Yes, I’m still working on the release check. I don’t have a report yet.",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "Check whether the release went out."
+      },
+      {
+        "role": "assistant",
+        "content": "Checking. I’ll tell you when I have it."
+      },
+      {
+        "role": "user",
+        "content": "Call work still pending; no report or progress is available for these requests: [\"Check whether the release went out.\"]"
+      }
+    ]
+  },
+  {
+    "case": 4,
+    "run": 5,
+    "line": "Tell me about the history of Turkey.",
+    "decision": "answer",
+    "text": "Turkey’s history spans several civilizations and empires. Anatolia—the peninsula that makes up most of modern Turkey—was home to ancient peoples including the Hittites, Greeks, and Romans. Constantinople, now Istanbul, became the capital of the Eastern Roman, or Byzantine, Empire.\n\nTurkic peoples migrated into Anatolia from Central Asia from the 11th century onward. The Seljuk Turks established a major power there, followed by the Ottoman Empire, founded around 1299. The Ottomans grew into a vast empire spanning parts of Europe, Asia, and Africa, and conquered Constantinople in 1453. The empire lasted until after the First World War.\n\nIn 1923, after the Ottoman Empire’s collapse and the Turkish War of Independence, Mustafa Kemal Atatürk founded the Republic of Turkey. He led sweeping reforms to create a secular nation-state. Since then, Turkey has experienced periods of multiparty democracy, military intervention, and political change, while",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "We are chatting about history and Beeline."
+      },
+      {
+        "role": "assistant",
+        "content": "What would you like to know?"
+      }
+    ]
+  },
+  {
+    "case": 3,
+    "run": 5,
+    "line": "Tell me about the Ottoman Empire.",
+    "decision": "answer",
+    "text": "The Ottoman Empire was a major state that lasted from about 1299 to 1922. It began in northwestern Anatolia and grew to span parts of Europe, Asia, and Africa. At its height in the 16th century, under Sultan Suleiman the Magnificent, it controlled much of the eastern Mediterranean, including Constantinople—today’s Istanbul, which it captured in 1453.\n\nThe empire was Muslim-led and highly diverse, with many languages, religions, and peoples. Over time, military defeats, internal challenges, and nationalist movements weakened it. After World War I, the empire dissolved, and the Republic of Turkey was established in 1923.",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "We are chatting about history and Beeline."
+      },
+      {
+        "role": "assistant",
+        "content": "What would you like to know?"
+      }
+    ]
+  },
+  {
+    "case": 0,
+    "run": 3,
+    "line": "Ah, i a c k. Your joke.",
+    "decision": "answer",
+    "text": "Was that “Ick, your joke,” or did you mean something else?",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "Tell me a joke."
+      },
+      {
+        "role": "assistant",
+        "content": "I told my calendar I needed a day off. It said it was booked."
+      }
+    ]
+  },
+  {
+    "case": 8,
+    "run": 3,
+    "line": "open a corner to fix X",
+    "decision": "order",
+    "text": "",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "We are chatting about history and Beeline."
+      },
+      {
+        "role": "assistant",
+        "content": "What would you like to know?"
+      }
+    ]
+  },
+  {
+    "case": 6,
+    "run": 3,
+    "line": "check whether the release went out",
+    "decision": "order",
+    "text": "",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "We are chatting about history and Beeline."
+      },
+      {
+        "role": "assistant",
+        "content": "What would you like to know?"
+      }
+    ]
+  },
+  {
+    "case": 2,
+    "run": 3,
+    "line": "why did you forward this…",
+    "decision": "answer",
+    "text": "The reason wasn’t recorded. I can answer you directly: Serbia is a landlocked country in southeastern Europe, in the Balkans. Its capital is Belgrade, a historic city at the meeting of the Danube and Sava rivers. Serbia has a rich mix of Roman, Byzantine, Ottoman, and Slavic influences, and Serbian is its official language.",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "Tell me about Serbia."
+      },
+      {
+        "role": "assistant",
+        "content": "Checking. I’ll tell you when I have it."
+      },
+      {
+        "role": "user",
+        "content": "Call work still pending; no report or progress is available for these requests: [\"Tell me about Serbia.\"]"
+      }
+    ]
+  },
+  {
+    "case": 0,
+    "run": 4,
+    "line": "Ah, i a c k. Your joke.",
+    "decision": "answer",
+    "text": "Fair enough. I’ll take another swing: Why don’t skeletons fight each other? They don’t have the guts.",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "Tell me a joke."
+      },
+      {
+        "role": "assistant",
+        "content": "I told my calendar I needed a day off. It said it was booked."
+      }
+    ]
+  },
+  {
+    "case": 7,
+    "run": 4,
+    "line": "merge the PR",
+    "decision": "order",
+    "text": "I’ll check on that.",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "We are chatting about history and Beeline."
+      },
+      {
+        "role": "assistant",
+        "content": "What would you like to know?"
+      }
+    ]
+  },
+  {
+    "case": 5,
+    "run": 4,
+    "line": "tell me about the history of Serbia",
+    "decision": "answer",
+    "text": "Serbia’s history sits at the crossroads of the Balkans, so it’s been shaped by empires, migration, and its position between east and west.\n\nMedieval Serbia grew into a powerful kingdom under the Nemanjić dynasty, especially in the 1200s and 1300s. It became an empire under Stefan Dušan, but after his death it fragmented. The 1389 Battle of Kosovo became a lasting symbol in Serbian history and culture.\n\nThe Ottoman Empire gradually conquered Serbian lands. Serbia remained under Ottoman rule for centuries, though the northern region of Vojvodina was often contested with the Habsburgs. In the early 1800s, Serbian uprisings began a long process of gaining autonomy and then independence, recognized internationally in 1878.\n\nSerbia became a kingdom and played a central role in the Balkan Wars and the First World War. After the war, it joined with other South Slavic peoples to form Yugoslavia.",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "We are chatting about history and Beeline."
+      },
+      {
+        "role": "assistant",
+        "content": "What would you like to know?"
+      }
+    ]
+  },
+  {
+    "case": 8,
+    "run": 4,
+    "line": "open a corner to fix X",
+    "decision": "order",
+    "text": "",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "We are chatting about history and Beeline."
+      },
+      {
+        "role": "assistant",
+        "content": "What would you like to know?"
+      }
+    ]
+  },
+  {
+    "case": 9,
+    "run": 3,
+    "line": "Are you still working on the release check?",
+    "decision": "answer",
+    "text": "Yes, I’m still working on it.",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "Check whether the release went out."
+      },
+      {
+        "role": "assistant",
+        "content": "Checking. I’ll tell you when I have it."
+      },
+      {
+        "role": "user",
+        "content": "Call work still pending; no report or progress is available for these requests: [\"Check whether the release went out.\"]"
+      }
+    ]
+  },
+  {
+    "case": 7,
+    "run": 5,
+    "line": "merge the PR",
+    "decision": "order",
+    "text": "I’ll check the work queue.",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "We are chatting about history and Beeline."
+      },
+      {
+        "role": "assistant",
+        "content": "What would you like to know?"
+      }
+    ]
+  },
+  {
+    "case": 5,
+    "run": 5,
+    "line": "tell me about the history of Serbia",
+    "decision": "answer",
+    "text": "Serbia’s history sits at the crossroads of empires and cultures.\n\nIn the early Middle Ages, Slavic peoples settled the region, and Serbian principalities gradually emerged. The medieval Serbian state grew especially powerful under the Nemanjić dynasty. Stefan Dušan, who ruled in the 14th century, expanded it into a major Balkan empire.\n\nThe Ottoman Empire conquered Serbia in the 15th century. Serbian resistance and uprisings eventually helped restore an autonomous principality in the 19th century, which became an independent kingdom in 1882.\n\nSerbia fought in the Balkan Wars and World War I, suffering enormous losses. After the war, it became a central part of the Kingdom of Serbs, Croats and Slovenes, later called Yugoslavia. After World War II, Serbia was one of six republics in socialist Yugoslavia.\n\nAs Yugoslavia broke apart in the 1990s, Serbia was involved in the conflicts that followed. It",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "We are chatting about history and Beeline."
+      },
+      {
+        "role": "assistant",
+        "content": "What would you like to know?"
+      }
+    ]
+  },
+  {
+    "case": 6,
+    "run": 4,
+    "line": "check whether the release went out",
+    "decision": "order",
+    "text": "",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "We are chatting about history and Beeline."
+      },
+      {
+        "role": "assistant",
+        "content": "What would you like to know?"
+      }
+    ]
+  },
+  {
+    "case": 2,
+    "run": 4,
+    "line": "why did you forward this…",
+    "decision": "answer",
+    "text": "The reason wasn’t recorded—I shouldn’t have forwarded that. Serbia is a landlocked country in southeastern Europe, in the western Balkans. Its capital is Belgrade, at the confluence of the Danube and Sava rivers. Serbia has a rich history shaped by Roman, Byzantine, Ottoman, and Austro-Hungarian influences, and Serbian is its official language.",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "Tell me about Serbia."
+      },
+      {
+        "role": "assistant",
+        "content": "Checking. I’ll tell you when I have it."
+      },
+      {
+        "role": "user",
+        "content": "Call work still pending; no report or progress is available for these requests: [\"Tell me about Serbia.\"]"
+      }
+    ]
+  },
+  {
+    "case": 8,
+    "run": 5,
+    "line": "open a corner to fix X",
+    "decision": "order",
+    "text": "",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "We are chatting about history and Beeline."
+      },
+      {
+        "role": "assistant",
+        "content": "What would you like to know?"
+      }
+    ]
+  },
+  {
+    "case": 0,
+    "run": 5,
+    "line": "Ah, i a c k. Your joke.",
+    "decision": "answer",
+    "text": "Fair enough. Here’s a better one: Why don’t skeletons fight each other? They don’t have the guts.",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "Tell me a joke."
+      },
+      {
+        "role": "assistant",
+        "content": "I told my calendar I needed a day off. It said it was booked."
+      }
+    ]
+  },
+  {
+    "case": 9,
+    "run": 4,
+    "line": "Are you still working on the release check?",
+    "decision": "answer",
+    "text": "Yes, I’m still working on it.",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "Check whether the release went out."
+      },
+      {
+        "role": "assistant",
+        "content": "Checking. I’ll tell you when I have it."
+      },
+      {
+        "role": "user",
+        "content": "Call work still pending; no report or progress is available for these requests: [\"Check whether the release went out.\"]"
+      }
+    ]
+  },
+  {
+    "case": 6,
+    "run": 5,
+    "line": "check whether the release went out",
+    "decision": "order",
+    "text": "",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "We are chatting about history and Beeline."
+      },
+      {
+        "role": "assistant",
+        "content": "What would you like to know?"
+      }
+    ]
+  },
+  {
+    "case": 2,
+    "run": 5,
+    "line": "why did you forward this…",
+    "decision": "answer",
+    "text": "The reason wasn’t recorded. I can answer you directly: Serbia is a landlocked country in southeastern Europe, in the Balkans, with Belgrade as its capital. It has a long history shaped by Roman, Byzantine, Ottoman, and Austro-Hungarian influences. Serbian is the official language, and the country is known for its Orthodox monasteries, lively music and food culture, and the Danube River.",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "Tell me about Serbia."
+      },
+      {
+        "role": "assistant",
+        "content": "Checking. I’ll tell you when I have it."
+      },
+      {
+        "role": "user",
+        "content": "Call work still pending; no report or progress is available for these requests: [\"Tell me about Serbia.\"]"
+      }
+    ]
+  },
+  {
+    "case": 9,
+    "run": 5,
+    "line": "Are you still working on the release check?",
+    "decision": "answer",
+    "text": "Yes, I’m still working on the release check.",
+    "status": 200,
+    "history": [
+      {
+        "role": "user",
+        "content": "Check whether the release went out."
+      },
+      {
+        "role": "assistant",
+        "content": "Checking. I’ll tell you when I have it."
+      },
+      {
+        "role": "user",
+        "content": "Call work still pending; no report or progress is available for these requests: [\"Check whether the release went out.\"]"
+      }
+    ]
+  }
+]

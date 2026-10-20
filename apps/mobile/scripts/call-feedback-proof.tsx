@@ -37,7 +37,7 @@ async function run() {
   fixture.emit('levels');
   await pause(800);
   const agent = lastBarHeight();
-  check(`audible agent keeps waveform priority (${loud} → ${agent})`, agent < quiet);
+  check(`remote agent never overrides the local mic (${loud} → ${agent})`, agent === loud);
   check('call remains joined without leaving', Boolean(voice!.call));
 }
 run().catch(error => lines.push(`FAIL ${String(error)}`)).finally(() => {

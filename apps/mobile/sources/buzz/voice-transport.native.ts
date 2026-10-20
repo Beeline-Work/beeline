@@ -1,7 +1,7 @@
 import { getBuzzRuntimeConfig } from './runtime-config';
 import { monolithSession } from '@/auth/monolith-session';
-import { Room } from 'livekit-client';
-import { Linking, NativeModules, PermissionsAndroid, Platform, TurboModuleRegistry } from 'react-native';
+import { Room, RoomEvent, Track } from 'livekit-client';
+import { Linking, NativeEventEmitter, NativeModules, PermissionsAndroid, Platform, TurboModuleRegistry } from 'react-native';
 
 let reportedIOSCapabilityFailure = false;
 let reportedAndroidCapabilityFailure = false;
@@ -159,4 +159,25 @@ export function subscribeVoiceResume(roomId: string, resume: () => void): () => 
 export async function voiceFetch(input: string, init: RequestInit): Promise<Response> {
   const { fetch } = await import('expo/fetch');
   return monolithSession.fetch(input, init, { fetchImpl: fetch as typeof globalThis.fetch });
+}
+
+/** Read captured microphone frames locally, without the server's speaker cadence. */
+export function subscribeVoiceMicrophone(room: Room, onLevel: (level: number) => void): () => void {
+  const native = NativeModules.LivekitReactNativeModule;
+  let release = () => {};
+  const update = () => {
+    release(); release = () => {}; onLevel(0);
+    const track = room.localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
+    if (!track || track.isMuted) return;
+    const media = track.mediaStreamTrack as unknown as { id: string; _peerConnectionId?: number };
+    const connection = media._peerConnectionId ?? -1;
+    const id = native.createVolumeProcessor(connection, media.id) as string;
+    const listener = new NativeEventEmitter(native).addListener('LK_VOLUME_PROCESSED', (event: { id: string; volume: number }) => {
+      if (event.id === id) onLevel(event.volume);
+    });
+    release = () => { listener.remove(); native.deleteVolumeProcessor(id, connection, media.id); };
+  };
+  const events = [RoomEvent.LocalTrackPublished, RoomEvent.LocalTrackUnpublished, RoomEvent.TrackMuted, RoomEvent.TrackUnmuted];
+  events.forEach(event => room.on(event, update)); update();
+  return () => { events.forEach(event => room.off(event, update)); release(); release = () => {}; };
 }

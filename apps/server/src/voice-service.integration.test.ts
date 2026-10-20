@@ -500,8 +500,39 @@ it('call history search excludes Rooms another caller cannot read and privately 
     await service.dispatch(call.call.id, source, A);
     const { readAgentCommands } = await import('./agent-command.js');
     const commands = await readAgentCommands(db, room, A);
-    expect(commands.commands[0]?.source.body).toContain('This request came from a live voice call.');
+    expect(commands.commands[0]?.source.body).toContain('This is a separate request from a live voice call.');
     const message = (await db.query<{text:string}>(`SELECT text FROM messages WHERE id=$1`, [source])).rows[0]!;
     expect(message.text).not.toContain('This request came');
   } finally { await service.leave(call.call.id, H); await service.leave(call.call.id, SECOND); }
+});
+
+
+it('VOICE-ROUTER-1: hand-offs arriving mid-turn remain separate requests after overdue recovery', async () => {
+  const room = '67676767-6767-4767-8767-676767676767';
+  await db.query(`INSERT INTO rooms(id,workspace_id,name) VALUES($1,$2,'Busy voice proof')`, [room,W]);
+  for (const who of [H,A]) await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [W,room,who]);
+  const joined = await service.join(room,H);
+  try {
+    const agent = (await service.agents(room,H))[0]!;
+    const owner = (await db.query<{runtime_owner:string}>(`SELECT runtime_owner FROM voice_calls WHERE id=$1`, [joined.call.id])).rows[0]!.runtime_owner;
+    const handoff = async (text: string) => {
+      const source = await service.recordHuman(joined.call.id,room,H,agent,text,owner);
+      await service.dispatch(joined.call.id,source,agent.id);
+      return source;
+    };
+    const first = await handoff('check whether the release went out');
+    const daemon = new DaemonService(db,live);
+    const commands = () => daemon.execute('getAgentCommands',{roomId:room},A).then(page=>page.commands);
+    const active = (await commands())[0]!;
+    await daemon.execute('claimAgentCommand',{roomId:room,commandId:active.id,generationId:'voice-busy'},A);
+    const second = await handoff('merge the PR');
+    const third = await handoff('open a corner to fix X');
+    await db.query(`UPDATE agent_commands SET created_at=created_at-interval '2 minutes' WHERE room_id=$1`,[room]);
+    await db.query(`UPDATE agent_commands SET state='complete',completed_at=now()-interval '2 minutes' WHERE source_message_id=$1`,[first]);
+    const queued = await commands();
+    expect(queued.map(command=>command.source.id)).toEqual(expect.arrayContaining([second,third]));
+    expect(queued.every(command=>!command.recoveryContext)).toBe(true);
+    expect(queued.every(command=>command.source.body.includes('Answer this request in this turn'))).toBe(true);
+    expect((await db.query(`SELECT state FROM agent_commands WHERE source_message_id=$1`,[first])).rows[0]).toEqual({state:'complete'});
+  } finally { await service.leave(joined.call.id,H); await db.query('DELETE FROM rooms WHERE id=$1',[room]); }
 });

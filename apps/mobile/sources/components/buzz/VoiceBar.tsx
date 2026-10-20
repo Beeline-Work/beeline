@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import { HullLivePulse } from './MonoHull';
+import { HullLivePulse, PixelLoader } from './MonoHull';
 import { IdentityMark } from './IdentityMark';
 import { DictationWaveform } from './DictationWaveform';
 import { COMPOSER_GLYPH_SIZE, MicGlyph, StopGlyph } from './MicGlyph';
@@ -33,7 +33,7 @@ export function VoiceBar({ voice, testIDPrefix = 'chat' }: {
     <View style={styles.controls} testID="voice-bar">
       <View style={styles.waveform} accessibilityLabel={voice.muted ? 'Microphone muted' : voice.speaker
         ? `${voice.agents.find(a => a.pubkey === voice.speaker)?.name ?? 'Agent'} speaking` : 'Listening'} testID="voice-waveform">
-        {warning ? <Text accessibilityLiveRegion="polite" numberOfLines={1}
+        {voice.connecting ? <PixelLoader compact /> : warning ? <Text accessibilityLiveRegion="polite" numberOfLines={1}
           style={styles.warning} testID="conversation-tip">{warning}</Text>
           : voice.error ? <Text accessibilityRole="alert" style={styles.error}
             testID={voice.quotaExhausted ? 'voice-quota-error' : 'voice-connection-error'}>{voice.error}</Text>

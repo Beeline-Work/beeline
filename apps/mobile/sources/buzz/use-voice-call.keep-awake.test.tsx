@@ -18,9 +18,9 @@ vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () =>
 vi.mock('react-native', () => ({ Platform: { OS: 'android' }, AppState: { addEventListener: (_type: string, listener: (state: string) => void) => {
   fixture.appState.add(listener); return { remove: () => fixture.appState.delete(listener) };
 } } }));
-vi.mock('livekit-client', () => ({ RoomEvent: { DataReceived: 'data', Disconnected: 'left', ActiveSpeakersChanged: 'levels' }, Track: {} }));
-vi.mock('./voice-transport', () => ({ voiceFetch: (...args: unknown[]) => fixture.fetch(...args), subscribeVoiceResume: () => () => {},
-  createVoiceRoom: async () => ({ configureStop: async () => {}, room: fixture.room, closeAudio: async () => {} }) }));
+vi.mock('livekit-client', () => ({ RoomEvent: { DataReceived: 'data', Disconnected: 'left', ActiveSpeakersChanged: 'levels', AudioPlaybackStatusChanged: 'audio-ready' }, Track: {} }));
+vi.mock('./voice-transport', () => ({ subscribeVoiceMicrophone: (room: any, onLevel: (level: number) => void) => { room.on('levels', () => onLevel(room.localParticipant.audioLevel ?? 0)); return () => {}; }, voiceFetch: (...args: unknown[]) => fixture.fetch(...args), subscribeVoiceResume: () => () => {},
+  createVoiceRoom: async () => { fixture.room.startAudio ??= async () => {}; fixture.room.canPlaybackAudio ??= true; return ({ configureStop: async () => {}, room: fixture.room, closeAudio: async () => {} }); } }));
 vi.mock('./runtime-config', () => ({ getBuzzRuntimeConfig: () => ({ monolithUrl: 'http://proof' }) }));
 import { useVoiceCall } from './use-voice-call';
 

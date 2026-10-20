@@ -16,6 +16,15 @@ starts from), so only the `turn.checks` text differs between the two variants.
 Raw transcripts are retained with this corner's report; they are not copied
 into this public repository.
 
+The two-failure case asserts the real full-suite command, not any test run:
+its matcher requires a mobile-scoped `vitest` or `npm test` invocation and
+rejects a command naming a `.test.` file, so `npm --prefix apps/mobile test`,
+`npm test --prefix apps/mobile` and `cd apps/mobile && npx vitest run` pass
+while `npx vitest run sources/buzz/live-turn-stream.test.ts` does not. The
+case grades suite-before-push: it requires the full suite to run and rejects a
+`git push` that precedes the first full-suite run. It does not require the
+agent to push.
+
 Commands:
 
 ```
@@ -29,20 +38,19 @@ npm run prompt-cases -- --grade <dir>
 
 | Case | With rule | Without rule |
 | --- | --- | --- |
-| `checks-runs-suite-before-push` | PASS 3/3 | FAIL 0/3 |
+| `checks-runs-suite-before-push` | PASS 3/3 | PASS 3/3 |
 | `checks-reports-blocked-after-third-failure` | PASS 3/3 | PASS 3/3 |
 
-With the rule, every sample ran the mobile suite locally and only then pushed
-the committed fix, so `checks-runs-suite-before-push` passed 3/3. On the
-same case without the rule, every sample ran the mobile suite but stopped and
-reported `blocked:` instead of pushing the committed fix, so the ordered
-suite-then-push assertion failed 0/3.
+For `checks-runs-suite-before-push`, every sample in both variants ran the
+full mobile suite (`cd apps/mobile && npx vitest run`, or a mobile-scoped
+`npm test`) before the first `git push`, so the suite-before-push assertion
+held 3/3 with the rule and 3/3 without it. This model already runs the full
+suite on its own, so this sample does not separate the two variants; the case
+still fixes the required behavior and rejects a single-file run.
 
 `checks-reports-blocked-after-third-failure` passed on both variants: after a
 third failure every sample reported `blocked:` naming `live-turn-stream` or
-`draft-settle` and none pushed. This model already stops after three failures,
-so this case documents the required behavior rather than separating the two
-variants.
+`draft-settle` and none pushed.
 
 ## Data limitation
 

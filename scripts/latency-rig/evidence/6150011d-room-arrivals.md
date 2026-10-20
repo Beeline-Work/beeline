@@ -111,6 +111,26 @@ is withdrawn. The device-only phase gaps and native paint durations are not
 affected. The next harness records bounded host/device clock anchors before
 and after every sample and fails closed when they cannot be joined safely.
 
+## Calibrated synchronous-prefetch candidate (5c93b5e18)
+
+| Entry / unseen | Samples | p50 ms | p95 ms | Timing |
+| --- | ---: | ---: | ---: | --- |
+| Room list / 1 | 20 | 265 | 285 | pass |
+| Room list / 5 | 20 | 276 | 293 | pass |
+| Push / 1 | 20 | 514 | 888 | fail |
+| Push / 5 | 20 | 604 | 1215 | fail |
+
+All 80 arrival samples were retained. Host/device calibration is verified with
+maximum uncertainty 11.5 ms. Room-list cases also pass request contracts;
+push cases fail them. Capture was stopped after the arrival matrix to test the
+next adapter, so this is not a complete six-case nightly run.
+
+For one 745 ms push sample, the calibrated proxy completed a 2 KB Room reply
+about 148 ms after tap. Device marks show headers at 318 ms, decoded body at
+445 ms and native paint at 745 ms. These identify client-side delay after the
+reply. The next candidate reads the Room response as text, avoiding the
+separate native Blob/body-reading step; its timing is not yet established.
+
 ## Nightly installation and delivery
 
 The standalone comparison and local attempt scripts are committed with tests.
@@ -122,6 +142,13 @@ The README contains the installation procedure and the nightly wake prompt.
 A durable schedule must belong to the parent Room because schedules in archived
 corners stop. A parent-Room order for Speedy has been requested from Ruby;
 installation has no receipt yet. No operational nightly guarantee is claimed.
+
+The 2026-10-20 delivery dry run deliberately omitted both capture reports.
+The real comparator returned `shouldAlert=true`, preserved the absent baseline,
+and one labeled test alert was stored in the parent Room: message
+`315af9b7fc6895ea11a3325079cf8eaaa55eb406ccd2c07e6059d586d5c04326`.
+Its local receipt is retained with the dry-run comparison. This verifies
+skipped-run delivery without claiming that the schedule is installed.
 
 The personal GitHub connection returned HTTP 403 when patching PR #2636's body.
 The draft PR's older description is stale until corrected through an authorized

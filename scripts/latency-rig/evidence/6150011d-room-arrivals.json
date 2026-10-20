@@ -179,5 +179,39 @@
     ]
   },
   "requestEvidenceValid": false,
-  "requestEvidenceIssue": "Historical raw requestPass flags joined uncalibrated host/device clocks and are not acceptance proof. Native monotonic paint durations remain valid."
+  "requestEvidenceIssue": "Historical raw requestPass flags joined uncalibrated host/device clocks and are not acceptance proof. Native monotonic paint durations remain valid.",
+  "calibratedSynchronousPrefetch": {
+    "source": "5c93b5e18e67635d23ba5475a2867011cd9eb6b4",
+    "capture": "rev2-synchronous-prefetch",
+    "maxClockUncertaintyMs": 11.5,
+    "nightlyComplete": false,
+    "results": {
+      "room-list-unseen-1": {
+        "samples": 20,
+        "p50Ms": 265,
+        "p95Ms": 285
+      },
+      "room-list-unseen-5": {
+        "samples": 20,
+        "p50Ms": 276,
+        "p95Ms": 293
+      },
+      "push-unseen-1": {
+        "samples": 20,
+        "p50Ms": 514,
+        "p95Ms": 888
+      },
+      "push-unseen-5": {
+        "samples": 20,
+        "p50Ms": 604,
+        "p95Ms": 1215
+      }
+    }
+  },
+  "deliveryDryRun": {
+    "messageId": "315af9b7fc6895ea11a3325079cf8eaaa55eb406ccd2c07e6059d586d5c04326",
+    "shouldAlert": true,
+    "baselineAdvanced": false,
+    "deliberatelySkipped": true
+  }
 }

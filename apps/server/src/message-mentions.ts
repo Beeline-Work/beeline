@@ -41,6 +41,8 @@ export function hasChannelMention(text: string): boolean {
  */
 const FENCED_CODE = /```[\s\S]*?(?:```|$)/g;
 const INLINE_CODE = /`[^`\n]*`/g;
+// Only matching double quotes on one line suppress a tag; unmatched quotes hide nothing.
+const DOUBLE_QUOTES = /"[^"\n]*"|“[^”\n]*”/g;
 const FENCED_CODE_SQL = "'```.*?(```|$)'";
 const INLINE_CODE_SQL = "'`[^`\\n]*`'";
 
@@ -73,9 +75,10 @@ function codePointAt(text: string, offset: number): string | undefined {
   return [...text.slice(offset)][0];
 }
 
-/** Exact @handles written as standalone tokens outside code. */
+/** Exact @handles written as standalone tokens outside code and quotes. */
 export function typedMentionHandles(message: string): Set<string> {
-  const text = withoutCode(message.replace(FORWARD_CAPTION, ''));
+  const text = withoutCode(message.replace(FORWARD_CAPTION, ''))
+    .replace(DOUBLE_QUOTES, (span) => ' '.repeat(span.length));
   const handles = new Set<string>();
   for (const match of text.matchAll(MENTION_TOKEN)) {
     const offset = match.index ?? 0;
@@ -195,11 +198,12 @@ function handleWrittenIn(textExpr: string, handleExpr: string): string {
 
 /**
  * The text a tag is read from: everything but a forward's attribution line and
- * code. Each code run becomes one space, which is still a token boundary.
+ * code, paired double quotes and blockquote lines. Removed spans become token boundaries.
  */
 function withoutForwardCaptionSql(textExpr: string): string {
-  return `regexp_replace(regexp_replace(regexp_replace(${textExpr},${FORWARD_CAPTION_SQL},''),
-    ${FENCED_CODE_SQL},' ','g'),${INLINE_CODE_SQL},' ','g')`;
+  return `regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(${textExpr},${FORWARD_CAPTION_SQL},''),
+    ${FENCED_CODE_SQL},' ','g'),${INLINE_CODE_SQL},' ','g'),
+    '"[^"\\n]*"|“[^”\\n]*”',' ','g'), '^[ \\t\\r]*>[^\\n]*','','gn')`;
 }
 
 /** `handleWrittenIn`, pinned to the reserved `@channel` token, case-insensitive. */

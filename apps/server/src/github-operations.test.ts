@@ -1,6 +1,6 @@
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { generateKeyPair, exportPKCS8 } from 'jose';
-import { GitHubAppClient, GitHubHttpError, GitHubOAuthClient } from '@beeline/auth/github';
+import { GitHubAppClient, GitHubHttpError, GitHubOAuthClient, retryGitHubRead } from '@beeline/auth/github';
 import { migrate, type QueryResult, type SqlDatabase } from './database.js';
 import type { QueryResultRow } from 'pg';
 import { PgliteDatabase } from './test-support.js';
@@ -15,6 +15,11 @@ import { runInNewContext } from 'node:vm';
 import { transformSync } from 'esbuild';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
+
+// The fixture mocks provider responses; apply the same retry boundary as the shared client.
+function retryingCheckClient(app: { readCommitCheckRollup: (...args: unknown[]) => Promise<unknown> }): GitHubAppClient {
+  return { ...app, readCommitCheckRollup: (...args: unknown[]) => retryGitHubRead(() => app.readCommitCheckRollup(...args)) } as unknown as GitHubAppClient;
+}
 
 function checkStatusLine(lifecycle: unknown): string | undefined {
   const formatter = transformSync(readFileSync(new URL('../../mobile/sources/buzz/corner-status-line.ts', import.meta.url), 'utf8'), {
@@ -89,7 +94,7 @@ describe('GitHub phone operations', () => {
   it('R-GH-RETRY: a webhook with 502 then 200 updates the visible checks', async () => {
     const { corners, app, payload } = await checksFixture();
     app.readCommitCheckRollup.mockRejectedValueOnce(new GitHubHttpError('Checks', 502));
-    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, retryingCheckClient(app), 'secret');
     await operations.processWebhook('check_run', payload);
     expect(app.readCommitCheckRollup).toHaveBeenCalledTimes(2);
     const { lifecycle } = (await database.query<{ lifecycle: { checks: string; checksSummary: { total: number } } }>(
@@ -103,7 +108,7 @@ describe('GitHub phone operations', () => {
     const { corners, headSha, app, payload } = await checksFixture();
     const error = new GitHubHttpError('Checks', 503);
     app.readCommitCheckRollup.mockRejectedValue(error);
-    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, retryingCheckClient(app), 'secret');
     await expect(operations.processWebhook('check_run', payload)).rejects.toBe(error);
     expect(app.readCommitCheckRollup).toHaveBeenCalledTimes(4);
     const stored = (await database.query<{ lifecycle: Record<string, unknown> }>(
@@ -114,9 +119,9 @@ describe('GitHub phone operations', () => {
     await expect(operations.prChecksStatus({ cornerId: corners[0]! })).rejects.toBe(error);
     expect(app.mergePullRequest).not.toHaveBeenCalled();
     app.readCommitCheckRollup.mockResolvedValue({ state: 'passed', total: 1, failing: [], checks: [] });
-    const restarted = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
+    const restarted = new GitHubOperations(database, {} as GitHubOAuthClient, retryingCheckClient(app), 'secret');
     await restarted.refreshQueuedChecks();
-    expect(app.readCommitCheckRollup).toHaveBeenCalledTimes(5);
+    expect(app.readCommitCheckRollup).toHaveBeenCalledTimes(8);
     await database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checkRefreshRetry,after}','0') WHERE corner_id=$1`, [corners[0]]);
     await restarted.refreshQueuedChecks();
     const recovered = (await database.query<{ lifecycle: Record<string, unknown> }>(
@@ -124,13 +129,13 @@ describe('GitHub phone operations', () => {
     )).rows[0]!.lifecycle;
     expect(recovered.checks).toBe('passing');
     expect(recovered.checkRefreshRetry).toBeUndefined();
-  }, 20_000);
+  }, 30_000);
 
   it.each([new TypeError('fetch failed'), Object.assign(new Error('socket reset'), { code: 'ECONNRESET' }), new GitHubHttpError('Checks', 504)])(
     'R-GH-RETRY: retries transient transport failure %s', async error => {
       const { app, payload } = await checksFixture();
       app.readCommitCheckRollup.mockRejectedValueOnce(error);
-      const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
+      const operations = new GitHubOperations(database, {} as GitHubOAuthClient, retryingCheckClient(app), 'secret');
       await operations.processWebhook('check_run', payload);
       expect(app.readCommitCheckRollup).toHaveBeenCalledTimes(2);
     },
@@ -139,7 +144,7 @@ describe('GitHub phone operations', () => {
   it('R-GH-RETRY: a queued refresh reports only the final failure and stops on permanent 4xx', async () => {
     const { corners, app, payload } = await checksFixture();
     app.readCommitCheckRollup.mockRejectedValue(new GitHubHttpError('Checks', 429, '120'));
-    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, retryingCheckClient(app), 'secret');
     await expect(operations.processWebhook('check_run', payload)).rejects.toMatchObject({ status: 429 });
     await database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(lifecycle,'{checkRefreshRetry,after}','0') WHERE corner_id=$1`, [corners[0]]);
     vi.mocked(captureServerError).mockClear();
@@ -153,12 +158,12 @@ describe('GitHub phone operations', () => {
     await operations.refreshQueuedChecks();
     expect(app.readCommitCheckRollup).toHaveBeenCalledTimes(6);
     expect(captureServerError).toHaveBeenCalledTimes(2);
-  }, 20_000);
+  }, 30_000);
 
   it('R-GH-RETRY: long Retry-After queues without sleeping or retrying early', async () => {
     const { corners, app, payload } = await checksFixture();
     app.readCommitCheckRollup.mockRejectedValue(new GitHubHttpError('Checks', 429, '120'));
-    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, retryingCheckClient(app), 'secret');
     const started = Date.now() / 1000;
     await expect(operations.processWebhook('check_run', payload)).rejects.toMatchObject({ status: 429 });
     await operations.refreshQueuedChecks();
@@ -172,7 +177,7 @@ describe('GitHub phone operations', () => {
   it('R-GH-RETRY: a queued old head is ignored after a push', async () => {
     const { corners, app, payload } = await checksFixture();
     app.readCommitCheckRollup.mockRejectedValue(new GitHubHttpError('Checks', 429, '120'));
-    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, retryingCheckClient(app), 'secret');
     await expect(operations.processWebhook('check_run', payload)).rejects.toMatchObject({ status: 429 });
     await database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(
       jsonb_set(lifecycle,'{checkRefreshRetry,after}','0'),'{pr,headSha}',to_jsonb($2::text)) WHERE corner_id=$1`,
@@ -184,7 +189,7 @@ describe('GitHub phone operations', () => {
   it.each([401, 403, 404, 422])('R-GH-RETRY: HTTP %s fails once without queueing', async status => {
     const { corners, app, payload } = await checksFixture();
     app.readCommitCheckRollup.mockRejectedValue(new GitHubHttpError('Checks', status));
-    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app as unknown as GitHubAppClient, 'secret');
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient, retryingCheckClient(app), 'secret');
     await expect(operations.processWebhook('check_run', payload)).rejects.toMatchObject({ status });
     expect(app.readCommitCheckRollup).toHaveBeenCalledTimes(1);
     const row = (await database.query<{ retry: unknown }>(

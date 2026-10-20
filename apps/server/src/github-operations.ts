@@ -6,6 +6,9 @@ import {
   GitHubHttpError,
   GitHubCredentialRejectedError,
   githubMergeability,
+  transientGitHubError,
+  githubRetryDelay,
+  retryGitHubRead,
 } from '@beeline/auth/github';
 import type { CornerLifecycleView, PhoneOperationMap } from '@beeline/api-contract/phone';
 import type { CornerPullRequestResult } from '@beeline/api-contract/daemon';
@@ -279,33 +282,6 @@ export type LandCornerOutcome =
   | { readonly status: 'not-attempted' }
   | { readonly status: 'started' }
   | { readonly status: 'refused'; readonly reason: string };
-
-function transientGitHubError(error: unknown): boolean {
-  if (error instanceof GitHubHttpError) return error.status === 429 || (error.status >= 500 && error.status < 600);
-  if (error instanceof TypeError || (error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name))) return true;
-  const code = (error as { code?: string; cause?: { code?: string } } | null);
-  return ['ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN', 'ECONNREFUSED', 'UND_ERR_SOCKET'].includes(code?.code ?? code?.cause?.code ?? '');
-}
-
-function githubRetryDelay(error: unknown, fallback: number): number {
-  const value = error instanceof GitHubHttpError ? error.retryAfter : undefined;
-  if (!value) return fallback;
-  const seconds = Number(value);
-  const delay = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(value) - Date.now();
-  return Number.isFinite(delay) ? Math.max(fallback, delay) : fallback;
-}
-
-async function retryGitHubRead<T>(read: () => Promise<T>): Promise<T> {
-  for (let attempt = 0; ; attempt++) {
-    try { return await read(); } catch (error) {
-      if (!transientGitHubError(error) || attempt === 3) throw error;
-      const delay = githubRetryDelay(error, 1000 * 2 ** attempt);
-      // Long rate limits belong to the durable queue, not a sleeping webhook.
-      if (delay > 30_000) throw error;
-      await new Promise(resolve => setTimeout(resolve, delay));
-    }
-  }
-}
 
 export class GitHubOperations {
   readonly #key: Buffer;
@@ -2110,7 +2086,7 @@ export class GitHubOperations {
         const token = await retryGitHubRead(() => this.app.installationToken(Number(target.installation_id), {
           repositoryIds: [Number(target.repository_id)],
         }));
-        const rollup = await retryGitHubRead(() => this.app.readCommitCheckRollup(token.token, repository, checkHeadSha));
+        const rollup = await this.app.readCommitCheckRollup(token.token, repository, checkHeadSha);
         // A push can move GitHub's PR head before either its push or synchronize
         // webhook reaches us. The stored head alone cannot authorize a verdict.
         // A cancelled job (GitHub cancelled it before a runner picked it up:

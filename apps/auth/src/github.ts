@@ -31,6 +31,33 @@ export class GitHubHttpError extends Error {
   }
 }
 
+export function transientGitHubError(error: unknown): boolean {
+  if (error instanceof GitHubHttpError) return error.status === 429 || (error.status >= 500 && error.status < 600);
+  if (error instanceof TypeError || (error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name))) return true;
+  const code = (error as { code?: string; cause?: { code?: string } } | null);
+  return ['ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN', 'ECONNREFUSED', 'UND_ERR_SOCKET'].includes(code?.code ?? code?.cause?.code ?? '');
+}
+
+export function githubRetryDelay(error: unknown, fallback: number): number {
+  const value = error instanceof GitHubHttpError ? error.retryAfter : undefined;
+  if (!value) return fallback;
+  const seconds = Number(value);
+  const delay = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(value) - Date.now();
+  return Number.isFinite(delay) ? Math.max(fallback, delay) : fallback;
+}
+
+export async function retryGitHubRead<T>(read: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try { return await read(); } catch (error) {
+      if (!transientGitHubError(error) || attempt === 3) throw error;
+      const delay = githubRetryDelay(error, 1000 * 2 ** attempt);
+      // Long rate limits belong to the durable queue, not a sleeping webhook.
+      if (delay > 30_000) throw error;
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+}
+
 /** A listed workflow whose file or runs are gone is not dispatchable; auth/permission failures are not this. */
 function isMissingGitHubResource(error: unknown): boolean {
   return error instanceof GitHubHttpError && error.status === 404;
@@ -715,8 +742,13 @@ export class GitHubAppClient {
     });
   }
 
+  /** Retry transient provider failures once for every caller of the shared check read. */
+  async readCommitCheckRollup(accessToken: string, fullName: string, headSha: string): Promise<GitHubCheckRollup> {
+    return retryGitHubRead(() => this.readCommitCheckRollupOnce(accessToken, fullName, headSha));
+  }
+
   /** GitHub's own combined verdict for every check run and commit-status context on a head. */
-  async readCommitCheckRollup(
+  private async readCommitCheckRollupOnce(
     accessToken: string,
     fullName: string,
     headSha: string,

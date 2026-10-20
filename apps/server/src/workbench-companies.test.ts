@@ -97,10 +97,13 @@ describe('server-owned Connectors company projection', () => {
       connectors: [{ connectorId: 'tailscale-uuid', connectorType: 'tailscale' as const, helperAgentId: 'personal', createdAt: 1,
         status: { connectorId: 'tailscale-uuid', status: 'connected' as const, steps: [] } }] };
     const result = projectWorkbenchCompanies(view, origin);
-    for (const id of ['google', 'tailscale', 'coinbase', 'link']) {
+    const titles = { google: 'Google sign-in', tailscale: 'Tailscale', coinbase: 'Coinbase wallet', link: 'Link' } as const;
+    for (const [id, title] of Object.entries(titles)) {
       const row = result.rows.find(r => r.id === id)!;
       expect(row.section).toBe('apps'); expect(row.items[0]?.subtitle).toBe('built in');
+      expect(row.items[0]?.title).toBe(title);
     }
+    expect(result.rows.find(r => r.id === 'coinbase')!.alsoAvailable.some(a => a.appKey === 'wallet')).toBe(false);
   });
   it('hides Beeline wallet platform keys from lists and counts, and never offers the connected wallet again', () => {
     const view = { ...base([key('server', 'coinbase-cdp', ['api.cdp.coinbase.com'], 'beeline-server'),

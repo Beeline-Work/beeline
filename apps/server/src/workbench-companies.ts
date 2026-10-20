@@ -133,7 +133,7 @@ export function projectWorkbenchCompanies(view: WorkbenchView, origin: string,
     builtin('google', 'builtin:google', 'Google sign-in', { kind: 'connector', connectorId: 'google' }, google?.status.status === 'error' ? 'Offline' : undefined);
   const tailscale = view.connectors.find(c => c.connectorType === 'tailscale' && ['connected', 'error'].includes(c.status.status));
   if (tailscale) builtin('tailscale', 'builtin:tailscale', 'Tailscale', { kind: 'connector', connectorId: 'tailscale' }, tailscale.status.status === 'error' ? 'Offline' : undefined, 'tailscale');
-  if (view.wallet && (view.wallet.delegationActive || view.wallet.delegationExpiresAt !== null)) builtin('coinbase', 'builtin:wallet', 'Wallet', { kind: 'wallet' },
+  if (view.wallet && (view.wallet.delegationActive || view.wallet.delegationExpiresAt !== null)) builtin('coinbase', 'builtin:wallet', 'Coinbase wallet', { kind: 'wallet' },
     !view.wallet.delegationActive && view.wallet.delegationExpiresAt ? 'Expired' : undefined, 'wallet');
   if (view.linkAccount?.connected) builtin('link', 'builtin:link', 'Link', { kind: 'link' }, undefined, 'link');
   const machines = view.helpers.filter(h => h.squireEligible === true);

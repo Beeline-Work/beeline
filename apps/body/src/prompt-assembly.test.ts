@@ -336,6 +336,10 @@ const TURN_VARIANTS: Record<string, TurnPromptContext> = {
     members,
     task: { reactionTargetId: 'm3', body: '@bee go' },
   },
+  'code-corner-checks': {
+    surface: 'code-corner',
+    task: { body: 'GitHub found failing checks on PR 42 at head bbbb222.', commandReason: 'corner_check' },
+  },
 };
 
 const codexOf = (context: SessionPromptContext): SessionPromptContext => ({
@@ -811,6 +815,18 @@ describe('corner role prompts (PR #2224: a reviewer that opened its corner pushe
     expect(review).toContain('Checks are green on PR #7 at abc.');
     expect(review).not.toContain('push a fix');
     expect(CORNER_CHECKS_NUDGE).toContain('If checks="failed" and you write code in this corner, fix the failure and push.');
+  });
+
+  it('tells the author to run a repeatedly failing suite locally before pushing, then report blocked', () => {
+    const turn = (kind: 'check-failed' | 'check-passed') =>
+      assembleTurnPrompt({
+        surface: 'code-corner',
+        task: { body: 'GitHub found failing checks on abc', outsideEvent: { kind, payload: {} } as never },
+      }).text;
+    const failed = turn('check-failed');
+    expect(failed).toContain('After two failed CI runs on the same suite, run that suite locally before pushing again');
+    expect(failed).toContain('after a third, report blocked: naming the failing tests');
+    expect(turn('check-passed')).not.toContain('run that suite locally');
   });
 
   it('describes the author when the reviewer opened the corner itself', () => {

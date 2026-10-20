@@ -304,6 +304,8 @@ describe('readWorkflowRun', () => {
 
   it('preserves the prompt and visit-window fallback for gate cards without a run id', async () => {
     const runId = await triageRun();
+    // Historical cards used workflow/state prompts before they carried run IDs.
+    await database.query(`UPDATE room_choices SET prompt='feedback-triage: approve' WHERE room_id=$1`, [CORNER]);
     const changed = await database.query(`UPDATE messages SET card=card-'runId'-'attempt' WHERE card_type='choice' AND room_id=$1 RETURNING id`, [CORNER]);
     expect(changed.rows).toHaveLength(1);
     const detail = await phone.execute('readWorkflowRun', { roomId: CORNER, runId }, OWNER);

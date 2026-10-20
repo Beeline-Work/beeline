@@ -3493,6 +3493,9 @@ describe('workflow cleanup migration', () => {
     await database.query(`DELETE FROM workflow_backfills WHERE name='workflow-storage-v1'`);
     await database.query(`UPDATE messages SET card=card-'runStatus' || '{"active":true}'::jsonb WHERE id=ANY($1::text[])`, [[ended, live]]);
     await database.query(`UPDATE messages SET card=card-'seq' WHERE card_type='workflow-handoff' AND card->>'runId'=$1`, [live]);
+    // This fixture predates readable gate prompts as well as attempt metadata.
+    await database.query(`UPDATE room_choices SET prompt='gated: sign_off'
+      WHERE message_id IN (SELECT id FROM messages WHERE card->>'runId'=$1)`, [live]);
     await database.query(`UPDATE messages SET card=card-'attempt' WHERE id IN (SELECT message_id FROM room_choices) AND card->>'runId'=$1`, [live]);
     const oldId = randomUUID();
     await database.query(`UPDATE agent_schedules SET id=$2,workflow_run=workflow_run-'timer'-'attempt'

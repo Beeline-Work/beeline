@@ -501,6 +501,7 @@ it('call history search excludes Rooms another caller cannot read and privately 
     const { readAgentCommands } = await import('./agent-command.js');
     const commands = await readAgentCommands(db, room, A);
     expect(commands.commands[0]?.source.body).toContain('This request came from a live voice call.');
+    expect(commands.commands[0]?.source.body).toContain('one line for a status, a few sentences for a real answer, at most about 150 words');
     const message = (await db.query<{text:string}>(`SELECT text FROM messages WHERE id=$1`, [source])).rows[0]!;
     expect(message.text).not.toContain('This request came');
   } finally { await service.leave(call.call.id, H); await service.leave(call.call.id, SECOND); }

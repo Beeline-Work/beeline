@@ -132,6 +132,15 @@ describe('server-owned Connectors company projection', () => {
     expect(classifyConnectionState({ status: 'error', computerOffline: true })).toEqual({ state: 'error', label: 'Computer offline' });
     expect(classifyConnectionState({ status: 'connected' })).toEqual({ state: 'connected' });
   });
+  it('shows Error with Computer offline when the hosting computer is offline, even if the app is stored connected', () => {
+    expect(classifyConnectionState({ status: 'connected', computerOffline: true })).toEqual({ state: 'error', label: 'Computer offline' });
+    const notion = { ...app('notion', 'Notion', 'notion.so', 'squire-browser'), helperId: 'travel' };
+    const view = { ...base([], [notion]), helpers: [{ id: 'travel', name: 'Travel computer', online: false, squireEligible: false }] };
+    const row = projectWorkbenchCompanies(view, origin).rows.find(r => r.id === 'notion')!;
+    expect(row.state).toBe('error');
+    expect(row.status).toBe('Computer offline');
+    expect(row.items).toEqual([expect.objectContaining({ id: 'notion', state: 'error', status: 'Computer offline', attention: true })]);
+  });
   it('company top-row status is the worst app state and never Offline', () => {
     expect(worstConnectionState(['connected', 'connect', 'error'])).toBe('error');
     expect(worstConnectionState(['connected', 'connect'])).toBe('connect');

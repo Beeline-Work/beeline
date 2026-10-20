@@ -69,9 +69,11 @@ export function classifyConnectionState(input: {
   readonly neverAuthorised?: boolean;
   readonly computerOffline?: boolean;
 }): { readonly state: ConnectorViewState; readonly label?: string } {
+  // A verified offline hosting computer overrides a stored connected status.
+  if (input.computerOffline) return { state: 'error', label: 'Computer offline' };
   if (input.status === 'connected' || input.status === 'active') return { state: 'connected' };
   const message = input.errorMessage?.trim() || undefined;
-  if (input.computerOffline || COMPUTER_OFFLINE.test(message ?? '')) {
+  if (COMPUTER_OFFLINE.test(message ?? '')) {
     return { state: 'error', label: message && !/^offline$/i.test(message) ? message : 'Computer offline' };
   }
   if (message && PROVIDER_REFUSAL.test(message)) return { state: 'error', label: message };

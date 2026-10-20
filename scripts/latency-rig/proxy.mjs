@@ -27,7 +27,7 @@ if (!output) throw new Error('LATENCY_RIG_PROXY_LOG is required');
 const log = createWriteStream(output, { flags: 'a', mode: 0o600 });
 const emit = (record) => { log.write(`${JSON.stringify(record)}\n`); };
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
-const halfRtt = () => rttMs / 2 + (Math.random() * 2 - 1) * jitterMs / 2;
+const halfRtt = () => Math.max(0, rttMs / 2 + (Math.random() * 2 - 1) * jitterMs / 2);
 const bytesDelay = (bytes) => bytes * 8 / (mbps * 1_000_000) * 1000;
 const client = backend.protocol === 'https:' ? httpsRequest : httpRequest;
 const socketTarget = `${backend.protocol === 'https:' ? 'wss:' : 'ws:'}//${backend.host}`;

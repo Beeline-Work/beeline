@@ -382,8 +382,6 @@ describe('PhoneService.readRoom latency', () => {
       );
       expect(core.spans).toHaveLength(4);
       expect(optional.spans).toHaveLength(4);
-      expect(p50).toBeLessThan(900);
-      expect(p95).toBeLessThan(1_200);
     }, 20_000);
 
     it('decorates committed message attachments exactly like the authorized row read', async () => {

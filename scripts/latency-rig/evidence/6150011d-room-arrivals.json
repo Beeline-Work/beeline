@@ -1,0 +1,36 @@
+{
+  "reproduction": "R1",
+  "device": "uncalibrated Android 35 x86_64 disposable emulator",
+  "baselineSource": "e2665c7dfc62ed9ac1de9ef4b18838dd76f9c6de",
+  "fixApplicationSource": "e31187ac4",
+  "probeSha256": "e3e4e81ed74ea4a31dcb32640d926280499eec14d4c437473eaff1440608747c",
+  "nativeBaselinePartial": {
+    "room-list-unseen-1": {
+      "samples": 16,
+      "p50Ms": 1765,
+      "p95Ms": 3132,
+      "completeCase": false
+    }
+  },
+  "nativeFix": {
+    "room-list-unseen-1": {
+      "samples": 20,
+      "p50Ms": 341,
+      "p95Ms": 763,
+      "completeCase": true
+    },
+    "room-list-unseen-5": {
+      "samples": 20,
+      "p50Ms": 298,
+      "p95Ms": 364,
+      "completeCase": true
+    }
+  },
+  "acceptancePassed": false,
+  "limitations": [
+    "Baseline stopped after 16 completed samples because a Workspace overlay intercepted the next tap.",
+    "Room-list one-message fix p95 exceeds 450 ms.",
+    "Synthetic push entry never displayed the Room; no valid push paint samples.",
+    "Dedicated runner access and capture executable unverified after personal GitHub HTTP 403."
+  ]
+}

@@ -209,6 +209,10 @@ node scripts/latency-rig/analyze.mjs \
   --out latency-rig-output/arrivals/report.md --check
 ```
 
+For a diagnostic capture of only one entry path, set `LATENCY_RIG_ENTRY=push`
+or `room-list`. A subset still fails full-matrix coverage; it is not a passing
+nightly run. The driver dismisses a Workspace overlay before arming list taps.
+
 The driver records the first open separately in `first-open.json` without a
 cold-start verdict, then warms navigation and allows installation work to settle
 for 30 seconds before collecting the warm-session matrix.

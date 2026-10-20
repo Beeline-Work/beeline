@@ -46,7 +46,32 @@ hardware frame-commit callback
 records completion. This observes rendered frame submission, not physical
 scanout. No polling of the UI or JavaScript callback ends the measurement.
 
-Native results pending; see the current PR for the latest verification state.
+Completed native fix measurements:
+
+| Entry / unseen | Samples | p50 ms | p95 ms | Local verdict |
+| --- | ---: | ---: | ---: | --- |
+| Room list / 1 | 20 | 341 | 763 | fails 450 ms |
+| Room list / 5 | 20 | 298 | 364 | passes 450 ms |
+| Push / 1 | 0 | — | — | no visible Room; failed capture |
+| Push / 5 | 0 | — | — | not reached |
+
+The corrected main probe completed 16 Room-list/one-message samples with median
+1765 ms, then stopped because a Workspace overlay intercepted the next tap.
+That interrupted run is not a complete baseline and its partial p95 must not be
+presented as a 20-sample acceptance result. The driver now dismisses that overlay
+before arming a Room-list tap. Neither the early preview-matching samples nor
+the interrupted tap is substituted for a successful Room paint.
+
+Both synthetic push trials (including the original ACTION_MAIN intent) failed
+to display the Room, although JS markers reported the fresh response applied.
+The native probe correctly produced no paint result. This is an unresolved
+local user-path/capture failure, not a passing push benchmark. The four-case
+before/after matrix and dedicated-device acceptance remain incomplete.
+
+The release/Hermes APKs used local throwaway signing; the incremental native
+probe rebuilds used the generated local Android debug signer without changing
+the release build type. No build ran during measured samples. Companion JSON
+records counts, partial statistics and the probe source hash.
 
 ## Independent blockers
 

@@ -67,7 +67,9 @@ try {
   captureFd = openSync(`${output}/logcat.txt`, 'w', 0o600);
   capture = spawn('adb', ['-s', device, 'logcat', '-v', 'epoch'], { stdio: ['ignore', captureFd, 'ignore'] });
   await pause(100);
-  for (const scenario of cases) {
+  const entry = process.env.LATENCY_RIG_ENTRY;
+  if (entry && !['room-list', 'push'].includes(entry)) throw new Error('LATENCY_RIG_ENTRY must be room-list or push');
+  for (const scenario of cases.filter((item) => !entry || item.entry === entry)) {
     for (let sample = 0; sample < count; sample++) {
       open('beeline/channels');
       await pause(1000);
@@ -80,8 +82,18 @@ try {
       await pause(300);
       let point;
       if (scenario.entry === 'room-list') {
-        adb('shell', 'uiautomator', 'dump', '/sdcard/latency-rig.xml');
-        const xml = adb('shell', 'cat', '/sdcard/latency-rig.xml');
+        let xml;
+        for (let precondition = 0; precondition < 3; precondition++) {
+          adb('shell', 'uiautomator', 'dump', '/sdcard/latency-rig.xml');
+          xml = adb('shell', 'cat', '/sdcard/latency-rig.xml');
+          const overlay = xml.match(/<node[^>]*content-desc="Close Workspace switcher"[^>]*>/)?.[0];
+          if (!overlay) break;
+          const area = overlay.match(/bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/);
+          if (!area) throw new Error('Cannot dismiss fixture Workspace overlay');
+          adb('shell', 'input', 'tap', String(Math.round((Number(area[1]) + Number(area[3])) / 2)),
+            String(Math.round((Number(area[2]) + Number(area[4])) / 2)));
+        }
+        if (xml.includes('content-desc="Close Workspace switcher"')) throw new Error('Workspace overlay still covers the Room-list entry');
         const node = xml.match(/<node[^>]*text="#?Rig room 001"[^>]*>/)?.[0];
         const bounds = node?.match(/bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/);
         if (!bounds) throw new Error('Room-list fixture row not visible; select Latency Rig 200 Workspace first');
@@ -91,7 +103,7 @@ try {
         '--es', 'needle', targetId.slice(0, 16), '--es', 'case', scenario.name, '--es', 'entry', scenario.entry);
       await writeFile(`${output}/pending-attempt.json`, JSON.stringify({ name: scenario.name, unseen: scenario.unseen, targetId }, null, 2));
       if (point) adb('shell', 'input', 'tap', ...point.map(String));
-      else adb('shell', 'am', 'start', '-n', 'app.usebeeline/.PushNotificationActivity',
+      else adb('shell', 'am', 'start', '-a', 'android.intent.action.MAIN', '-n', 'app.usebeeline/.PushNotificationActivity',
         '--es', 'google.message_id', targetId, '--es', 'type', 'room-message',
         '--es', 'channelId', fixture.id, '--es', 'roomId', fixture.id,
         '--es', 'workspaceId', fixture.workspace_id, '--es', 'messageId', targetId);

@@ -279,8 +279,8 @@ import {
 } from '@/buzz/corner-navigation';
 import { isNearChatBottom } from '@/buzz/chat-scroll';
 import {
-  activityMessageReplyTarget,
   agentActivityReplyExcerpt,
+  beginReplyTarget,
   prepareMessageReply,
   type MessageReplyDisplayTarget,
   type MessageReplyTarget,
@@ -3624,41 +3624,35 @@ export function BuzzChatSurface({
 
   const beginReply = useCallback(
     (message: ChatDisplayMessage) => {
-      const target = message.isAgentActivity
-        ? activityMessageReplyTarget(
-            message,
-            chronologicalMessagesRef.current,
-            replyTargetForMessage(message),
-          )
-        : {
-            ...replyTargetForMessage(message),
-            ...(message.reference ? { reference: message.reference } : {}),
-          };
-      const install = () => {
-        setReplyTarget(target);
-        if (target.isAgent && target.authorHandle && target.authorPubkey) {
-          applyComposerPrefill(
-            planReplyPrefill({
-              draft: inputTextRef.current,
-              prefill: composerPrefillRef.current,
-              handle: target.authorHandle,
-              pubkey: target.authorPubkey,
-              sourceMessageId: target.messageId,
-            }),
-            { handle: target.authorHandle, pubkey: target.authorPubkey },
-          );
-        }
-        setDismissedMentionKey(null);
-        void Haptics.selectionAsync();
-        // A reply started from a message the reader scrolled up to read keeps
-        // that same scroll offset by default while the keyboard/reply banner
-        // shrink the viewport, which reads as the transcript jumping to
-        // center the replied-to message. The reply reference in the composer
-        // is enough context, so land back on the end of the log instead.
-        scrollController.request({ kind: 'newest' });
-        scheduleAnimationFrame(() => composerRef.current?.focus());
-      };
-      if (message.isAgentActivity || target.reference?.channelId === decodedId) install();
+      const target = beginReplyTarget(
+        message,
+        chronologicalMessagesRef.current,
+        replyTargetForMessage(message),
+        decodedId,
+      );
+      if (!target) return;
+      setReplyTarget(target);
+      if (target.isAgent && target.authorHandle && target.authorPubkey) {
+        applyComposerPrefill(
+          planReplyPrefill({
+            draft: inputTextRef.current,
+            prefill: composerPrefillRef.current,
+            handle: target.authorHandle,
+            pubkey: target.authorPubkey,
+            sourceMessageId: target.messageId,
+          }),
+          { handle: target.authorHandle, pubkey: target.authorPubkey },
+        );
+      }
+      setDismissedMentionKey(null);
+      void Haptics.selectionAsync();
+      // A reply started from a message the reader scrolled up to read keeps
+      // that same scroll offset by default while the keyboard/reply banner
+      // shrink the viewport, which reads as the transcript jumping to
+      // center the replied-to message. The reply reference in the composer
+      // is enough context, so land back on the end of the log instead.
+      scrollController.request({ kind: 'newest' });
+      scheduleAnimationFrame(() => composerRef.current?.focus());
     },
     // Read through the ref: a transcript dependency here would hand every
     // row a new renderer on each live message.

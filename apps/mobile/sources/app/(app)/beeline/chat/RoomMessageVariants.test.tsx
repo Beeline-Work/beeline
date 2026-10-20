@@ -13,6 +13,7 @@ import {
 } from '@/buzz/room-view-presentation';
 import { selectComposerAckPresentation } from '@/buzz/room-indicators';
 import { formatForwardedMessage } from '@/buzz/message-forward';
+import { beginReplyTarget } from '@/buzz/message-reply';
 import { LifecycleCard } from '@/components/buzz/LifecycleCard';
 import { lifecycleFixtures } from '../../../../../scripts/lifecycle-card-fixtures';
 import { LifecycleRow } from '@/components/buzz/LifecycleRow';
@@ -3378,7 +3379,7 @@ describe('Room message variant components', () => {
     const transcript = agentCommandTranscriptMessage(row, [
       { pubkey: 'ruby', handle: 'ruby' },
     ]);
-    expect(transcript.agentCommand).toBeUndefined();
+    expect(transcript.agentCommand).toEqual(row.agentCommand);
     expect(transcript.text).toBe(`@ruby ${text}`);
     const onMessageActions = vi.fn();
     const renderer = render(<OrdinaryLedgerMessage
@@ -3422,7 +3423,7 @@ describe('Room message variant components', () => {
       { pubkey: 'jelly', handle: 'jellybean' },
     ]);
     expect(transcript.text).toBe('@jellybean Use endpoint v2');
-    expect(transcript.agentCommand).toBeUndefined();
+    expect(transcript.agentCommand).toEqual(row.agentCommand);
     expect(
       agentCommandTranscriptMessage(row, []).text,
     ).toBe('@Jelly Bean Use endpoint v2');
@@ -3452,6 +3453,62 @@ describe('Room message variant components', () => {
     );
     expect(conversationSource).not.toContain('AgentCommandCard');
     expect(conversationSource).not.toContain('agent-command-');
+  });
+
+  it('chooses Reply on an agent order and report and builds the composer target', () => {
+    for (const kind of ['order', 'report'] as const) {
+      const record = message({
+        id: `agent-${kind}`,
+        text: kind === 'order' ? 'ordered @worker' : 'reported to commander',
+        pubkey: 'speedy',
+        isAgentAuthor: true,
+        authorIdentity: { pubkey: 'speedy', kind: 'agent', name: 'Speedy', handle: 'speedy' },
+        agentCommand: {
+          kind,
+          recipient: { id: 'ruby', name: 'Ruby', handle: 'ruby' },
+          text: kind === 'order' ? 'Do the work' : 'done: work is complete',
+        },
+      });
+      let target: ReturnType<typeof beginReplyTarget> = null;
+      const renderer = render(<OrdinaryLedgerMessage
+        message={record}
+        participantsHydrated
+        viewerPubkey="viewer"
+        speakerWorking={false}
+        continued={false}
+        participantHandles={[{ pubkey: 'ruby', handle: 'ruby' }]}
+        channelIndex={{ rooms: [], corners: [] }}
+        deliveryFailed={false}
+        onChannelReference={vi.fn()}
+        onReply={(chosen) => {
+          target = beginReplyTarget(chosen, [], {
+            messageId: chosen.relayId ?? chosen.id,
+            authorName: chosen.authorIdentity!.name,
+            authorHandle: chosen.authorIdentity!.handle,
+            authorPubkey: chosen.pubkey,
+            isAgent: true,
+            preview: chosen.text,
+          }, 'corner-id');
+        }}
+        onCopy={vi.fn()}
+        onRetry={vi.fn()}
+        onDismiss={vi.fn()}
+      />);
+      act(() => renderer.root.findByType('Swipeable').props.onSwipeableOpen('right'));
+      expect(target).toEqual({
+        messageId: `agent-${kind}`,
+        authorName: 'Speedy',
+        authorHandle: 'speedy',
+        authorPubkey: 'speedy',
+        isAgent: true,
+        preview: kind === 'order' ? 'ordered @worker' : 'reported to commander',
+        reference: {
+          channelId: 'corner-id',
+          eventId: `agent-${kind}`,
+          rootId: `agent-${kind}`,
+        },
+      });
+    }
   });
 
   it('paints choice options as plates with Skip in the footer, never TranscriptCard rows', () => {

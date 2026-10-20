@@ -853,12 +853,12 @@ export function agentCommandTranscriptMessage(
     command.recipient.handle ??
     command.recipient.name
   ).replace(/^@/, '');
-  const transcript: ChatDisplayMessage = {
+  // Keep agentCommand on the row: the text is display-only, but Reply needs
+  // the marker to give this card row the same-Room parent proof it lacks.
+  return {
     ...message,
     text: `@${handle} ${command.text}`,
   };
-  delete transcript.agentCommand;
-  return transcript;
 }
 
 export interface TargetBranchProposalCardProps {

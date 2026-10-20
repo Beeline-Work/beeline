@@ -429,7 +429,6 @@ jobs:
           npm run build -w @beeline/buzz-client
           npm run build -w @beeline/body
           npm run build -w @beeline/auth
-          npm run build -w @beeline/push-gateway
           npm run build -w @beeline/server
       - uses: ./.github/actions/server-leg
         if: needs.initialize.outputs.stage_server == 'pending'
@@ -603,12 +602,12 @@ jobs:
         with:
           name: daemon-${{ matrix.platform }}-${{ needs.initialize.outputs.release_id }}
           path: |
-            relay-stack/web/dl/beeline-${{ matrix.platform }}.tar.gz
-            relay-stack/web/dl/beeline-${{ matrix.platform }}.tar.gz.sha256
-            relay-stack/web/dl/manifest.json
-            relay-stack/web/dl/mac-helper-inputs.json
-            relay-stack/web/dl/beeline-bootstrap.mjs
-            relay-stack/web/dl/beeline-bootstrap.mjs.sha256
+            web/dl/beeline-${{ matrix.platform }}.tar.gz
+            web/dl/beeline-${{ matrix.platform }}.tar.gz.sha256
+            web/dl/manifest.json
+            web/dl/mac-helper-inputs.json
+            web/dl/beeline-bootstrap.mjs
+            web/dl/beeline-bootstrap.mjs.sha256
           if-no-files-found: error
           retention-days: 7
 
@@ -700,7 +699,6 @@ jobs:
           npm run build -w @beeline/nostr
           npm run build -w @beeline/api-contract
           npm run build -w @beeline/buzz-client
-          npm run build -w @beeline/gate
           npm run build -w @beeline/body
           npm run build -w usebeeline
           version="${{ needs.initialize.outputs.release_version }}"

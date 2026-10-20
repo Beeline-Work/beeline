@@ -31,9 +31,7 @@ beeline/
 ├── apps/
 │   ├── auth/          GitHub identity and repository install ceremony
 │   ├── body/          The daemon: harness sessions, Room turns, corners, self-update
-│   ├── gate/          Relay, repository, and provisioning primitives
 │   ├── mobile/        The phone app
-│   ├── push-gateway/  Server-indexed Room surfaces and push delivery
 │   └── server/        The monolith: Workspaces, Rooms, membership, grants
 └── packages/
     ├── api-contract/  Shared vocabulary — faces, grants, system events

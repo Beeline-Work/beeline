@@ -174,7 +174,7 @@ describe('Room guidance', () => {
       },
     });
     expect(blocked).toContain(
-      'say that plainly instead of retrying. Relay this to the person: A shell cannot run here because',
+      'say that plainly instead of retrying. Tell the person: A shell cannot run here because',
     );
   });
 

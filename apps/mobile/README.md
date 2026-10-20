@@ -166,23 +166,17 @@ Then, from this directory, run:
 npm run e2e
 ```
 
-`e2e` keeps using `emulator-5554`; it does not create another emulator. The command
-builds a production APK with an 8 GiB Gradle heap, provisions a fresh local-stack
-Workspace and Room with [`../../scripts/provision-smoke.ts`](../../scripts/provision-smoke.ts),
-installs the APK, and passes the ephemeral identity/Room IDs to
-[`e2e/smoke.yaml`](./e2e/smoke.yaml). The flow imports that identity, enters its
-Workspace, opens the Room, verifies Android back returns to the list within one
-second, then sends through the monolith API and observes the resulting live reply.
+`e2e` uses the selected Android device and verifies its running update before
+opening the app. Set `BEELINE_REVIEW_SECRET` for an existing review identity;
+`scripts/maestro-room.mjs` reads its Workspace and Room through the authenticated
+monolith API. The flow signs in through the existing review link and opens that
+Room's transcript. It creates no fixture accounts, Rooms or messages.
 
 For a source-only flow iteration after a successful build, reuse the current APK:
 
 ```sh
 MAESTRO_SKIP_BUILD=1 npm run e2e
 ```
-
-The stable smoke flow covers the current Corner session: it opens a working Corner,
-checks the header and roster-backed agent state, sends a steer through the monolith API,
-observes the live agent reply, and verifies back navigation to the parent Room.
 
 ## Expo web (headless-verifiable surface)
 

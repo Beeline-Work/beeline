@@ -16,18 +16,9 @@ readonly EXPECTED_UPDATE_ID="${EXPECTED_ANDROID_UPDATE_ID:-}"
 readonly EXPECTED_UPDATE_CHANNEL="${EXPECTED_UPDATE_CHANNEL:-beta}"
 readonly UPDATE_IDENTITY_TIMEOUT="${MAESTRO_UPDATE_IDENTITY_TIMEOUT_SECONDS:-10}"
 
-# A local relay commonly has two addresses: a loopback endpoint for the host
-# fixtures and Android's 10.0.2.2 endpoint for the installed app.  Build the
-# app against the latter when the caller supplies it, while the fixture keeps
-# using RELAY_URL.  This must be exported before e2e:build: Expo evaluates the
-# config again from Gradle, not just during prebuild.
-reply_fixture_pid=""
 disabled_deep_link_packages=()
 cleanup() {
   local status=$?
-  if [[ -n "$reply_fixture_pid" ]]; then
-    kill "$reply_fixture_pid" 2>/dev/null || true
-  fi
   local package
   for package in "${disabled_deep_link_packages[@]}"; do
     adb -s "$DEVICE" shell pm enable --user 0 "$package" </dev/null >/dev/null 2>&1 || true
@@ -181,68 +172,19 @@ if [[ "$FLOW" != "$MOBILE_DIR/e2e/ota-canary.yaml" ]]; then
   adb -s "$DEVICE" shell input keyevent BACK >/dev/null
 fi
 
-# scripts/provision-smoke.ts and publish-smoke-replies.ts live at the repo
-# root but import the workspace SDKs; Node resolves upward from each script's
-# real path and never reaches apps/mobile/node_modules. One explicit bridge
-# gives them the SDK links plus their hoisted runtime dependencies (@noble/*,
-# nostr-tools) — proven as the release-runner user against a checkout with no
-# root node_modules.
-export NODE_PATH="$MOBILE_DIR/node_modules${NODE_PATH:+:$NODE_PATH}"
-
-seed_output="$(cd "$REPO_DIR" && npx tsx scripts/provision-smoke.ts)"
-printf '%s\n' "$seed_output"
-
-read_seed_value() {
-  local key="$1"
-  local value
-  value="$(printf '%s\n' "$seed_output" | sed -n "s/^${key}=//p" | tail -n 1)"
-  if [[ -z "$value" ]]; then
-    echo "Provisioning did not emit $key." >&2
-    exit 1
-  fi
-  printf '%s' "$value"
-}
-
-SMOKE_NSEC="$(read_seed_value MAESTRO_SMOKE_NSEC)"
-readonly SMOKE_NSEC
-SMOKE_HANDLE="$(read_seed_value MAESTRO_SMOKE_HANDLE)"
-readonly SMOKE_HANDLE
-SMOKE_WORKSPACE_ID="$(read_seed_value MAESTRO_SMOKE_WORKSPACE_ID)"
-readonly SMOKE_WORKSPACE_ID
-SMOKE_SWITCH_WORKSPACE_ID="$(read_seed_value MAESTRO_SMOKE_SWITCH_WORKSPACE_ID)"
-readonly SMOKE_SWITCH_WORKSPACE_ID
-SMOKE_SWITCH_ROOM_ID="$(read_seed_value MAESTRO_SMOKE_SWITCH_ROOM_ID)"
-readonly SMOKE_SWITCH_ROOM_ID
-SMOKE_ROOM_ID="$(read_seed_value MAESTRO_SMOKE_ROOM_ID)"
+# Read an existing review Room; this harness creates no fixture identities or Rooms.
+if [[ -z "${BEELINE_REVIEW_SECRET:-}" ]]; then
+  echo "Maestro environment error: BEELINE_REVIEW_SECRET is required for monolith review sign-in." >&2
+  exit 2
+fi
+SMOKE_ROOM_ID="$(cd "$REPO_DIR" && node scripts/maestro-room.mjs)"
 readonly SMOKE_ROOM_ID
-SMOKE_AGENT_NSEC="$(read_seed_value MAESTRO_SMOKE_AGENT_NSEC)"
-readonly SMOKE_AGENT_NSEC
-SMOKE_CORNER_ID="$(read_seed_value MAESTRO_SMOKE_CORNER_ID)"
-readonly SMOKE_CORNER_ID
-SMOKE_LATEST_MESSAGE_ID="$(read_seed_value MAESTRO_SMOKE_LATEST_MESSAGE_ID)"
-readonly SMOKE_LATEST_MESSAGE_ID
-
-# A separate registered agent waits for the device's actual Room and corner
-# messages after server materialization, then responds. This verifies the
-# monolith write-to-live-read path without requiring a local Body daemon.
-(cd "$REPO_DIR" && npx tsx scripts/publish-smoke-replies.ts "$SMOKE_AGENT_NSEC" "$SMOKE_ROOM_ID" "$SMOKE_CORNER_ID") &
-reply_fixture_pid=$!
 
 maestro test --device "$DEVICE" \
-  --env "SMOKE_NSEC=$SMOKE_NSEC" \
-  --env "SMOKE_HANDLE=$SMOKE_HANDLE" \
-  --env "SMOKE_WORKSPACE_ID=$SMOKE_WORKSPACE_ID" \
-  --env "SMOKE_SWITCH_WORKSPACE_ID=$SMOKE_SWITCH_WORKSPACE_ID" \
-  --env "SMOKE_SWITCH_ROOM_ID=$SMOKE_SWITCH_ROOM_ID" \
+  --env "BEELINE_REVIEW_SECRET=$BEELINE_REVIEW_SECRET" \
   --env "SMOKE_ROOM_ID=$SMOKE_ROOM_ID" \
-  --env "SMOKE_CORNER_ID=$SMOKE_CORNER_ID" \
-  --env "SMOKE_LATEST_MESSAGE_ID=$SMOKE_LATEST_MESSAGE_ID" \
   --env "EXPECTED_ANDROID_UPDATE_ID=${EXPECTED_ANDROID_UPDATE_ID:-}" \
   --env "EXPECTED_UPDATE_GROUP_ID=${EXPECTED_UPDATE_GROUP_ID:-}" \
   "$FLOW"
-
-# The fixture queries relay-backed history after the device mention arrives.
-# Waiting makes duplicate-event detection part of this on-device check.
-wait "$reply_fixture_pid"
 
 echo "Maestro smoke passed on $DEVICE."

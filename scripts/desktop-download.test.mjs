@@ -8,10 +8,10 @@ import {
   initializePlatformDownloads,
   selectDesktopInstaller,
   selectPlatform,
-} from '../relay-stack/web/desktop-download.mjs';
+} from '../web/desktop-download.mjs';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
-const html = fs.readFileSync(path.join(ROOT, 'relay-stack/web/index.html'), 'utf8');
+const html = fs.readFileSync(path.join(ROOT, 'web/index.html'), 'utf8');
 const desktopWorkflow = fs.readFileSync(path.join(ROOT, '.github/workflows/desktop.yml'), 'utf8');
 const releaseWorkflow = fs.readFileSync(path.join(ROOT, '.github/workflows/unified-release.yml'), 'utf8');
 

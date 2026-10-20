@@ -28,7 +28,7 @@
  * with <anchor>/beeline-cli.mjs tolerated as the legacy-flat fallback.
  *
  * EVERY consumer of `<prefix>/lib/beeline`, so the two halves cannot drift:
- *   1. relay-stack/web/install.sh      creates/maintains the anchor + stable
+ *   1. web/install.sh      creates/maintains the anchor + stable
  *                                      <prefix>/bin forwarders; converges
  *                                      legacy and mid-migration hosts.
  *   2. scripts/build-beeline-bundle.mjs  the IN-BUNDLE CLI and read-only MCP
@@ -194,7 +194,7 @@ export function defaultBeelineInstallLayout(
 }
 
 /**
- * Locate the installed bundle the way `relay-stack/web/install.sh` laid it
+ * Locate the installed bundle the way `web/install.sh` laid it
  * out — used when `BEELINE_LIB_DIR` itself is absent, e.g. `npx usebeeline
  * update` runs from a throwaway npm cache, never through the installed
  * `beeline` wrapper that exports it. Honors the installer's own env var

@@ -54,4 +54,4 @@ This is an optimization, not a defect report. The exact path is exported assembl
 
 Preparation completed. Prompt case validation passes (52 cases, seven rule tests). Assembly, layering and skill tests pass (169 tests), with generated prompt examples refreshed. Root typecheck passes on the final variant. No server, runtime behavior or UI logic changed.
 
-Ruby should order Speedy to independently rerun the final variant and baseline on Claude. Keep the human hold: merge requires lunchboxfortwo's explicit yes relayed by Ruby, along with the live check and head approval gate.
+Ruby should order Speedy to independently rerun the final variant and baseline on Claude. Keep the human hold: merge requires lunchboxfortwo's explicit yes forwarded by Ruby, along with the live check and head approval gate.

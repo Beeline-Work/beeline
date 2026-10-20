@@ -1,6 +1,6 @@
 # Service-review provider proof
 
-The corrected `relay-stack/web/subprocessors/index.html` was rendered in Chromium
+The corrected `web/subprocessors/index.html` was rendered in Chromium
 at 390×1100 and 1280×1000. The rendered DOM identifies the review model provider
 as `Anthropic`, contains no generic staff-selected provider category, and reports
 no horizontal document overflow at either size.

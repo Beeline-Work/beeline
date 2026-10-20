@@ -7,4 +7,3 @@ env:
 # invoking Maestro. Start the product flow without repeating that proven gate.
 - pressKey: back
 - runFlow: smoke.yaml
-- runFlow: workspace-switch.yaml

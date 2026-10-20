@@ -8,7 +8,7 @@ import test from 'node:test';
 import { buildPagesSite } from './pages-site.mjs';
 
 const REPOSITORY_ROOT = path.resolve(import.meta.dirname, '..');
-const WEB_ROOT = path.join(REPOSITORY_ROOT, 'relay-stack', 'web');
+const WEB_ROOT = path.join(REPOSITORY_ROOT, 'web');
 const SHA = 'a'.repeat(40);
 
 function fixtureBundle(root) {

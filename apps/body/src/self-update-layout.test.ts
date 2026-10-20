@@ -8,7 +8,7 @@ import { build as esbuild } from 'esbuild';
  * Two layers:
  *   - unit tests over beelineInstallLayout normalization, identity reads,
  *     legacy-flat migration, and repairInstallForwarders;
- *   - one SHELL-level end-to-end test that runs the real relay-stack/web/
+ *   - one SHELL-level end-to-end test that runs the real web/
  *     install.sh against stub bundles, applies updates through the real
  *     SelfUpdateManager swap, and invokes `<prefix>/bin/beeline --version`
  *     from a fresh process every time — the exact shape of the reported
@@ -162,7 +162,7 @@ async function serveBundles(bundles: Map<string, StubBundle>): Promise<{
   manifestUrl: string;
   close(): Promise<void>;
 }> {
-  // Route names exactly as relay-stack/web/install.sh fetches them.
+  // Route names exactly as web/install.sh fetches them.
   const platform = hostPlatformKey();
   const first = [...bundles.values()][0]!;
   const recovery = (await esbuild({ entryPoints: [resolve(repoRoot, 'apps/body/src/recovery-cli.ts')], bundle: true, platform: 'node', format: 'esm', write: false })).outputFiles[0]!.text;
@@ -580,7 +580,7 @@ describe('<prefix>/lib/beeline anchor contract', () => {
       const wrapperBlock = source.slice(source.indexOf("resolve(staging, 'bin', 'beeline')"));
       expect(wrapperBlock).not.toContain('lib_dir=$(CDPATH= cd');
 
-      const installer = await readFile(join(repoRoot, 'relay-stack/web/install.sh'), 'utf8');
+      const installer = await readFile(join(repoRoot, 'web/install.sh'), 'utf8');
       expect(installer).toContain('beeline-bootstrap.mjs');
       expect(installer).toContain('installer_operation=update');
       expect(installer).not.toContain('releases_root=');
@@ -782,7 +782,7 @@ describe('install.sh over-install swings the active anchor', () => {
 });
 
 /**
- * Run the real relay-stack/web/install.sh against a local bundle server.
+ * Run the real web/install.sh against a local bundle server.
  * Async spawn (never spawnSync): the installer curls the artifacts from THIS
  * process's HTTP server, which cannot answer while the event loop is blocked.
  */
@@ -793,7 +793,7 @@ function runInstaller(opts: {
   libAnchor: string;
 }): Promise<{ status: number; stdout: string; stderr: string }> {
   return new Promise((resolveInstall) => {
-    const child = spawn('sh', [join(repoRoot, 'relay-stack', 'web', 'install.sh')], {
+    const child = spawn('sh', [join(repoRoot, 'web', 'install.sh')], {
       env: {
         ...process.env,
         HOME: opts.home,

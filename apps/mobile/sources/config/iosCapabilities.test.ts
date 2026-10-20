@@ -47,7 +47,7 @@ describe('production iOS capabilities', () => {
     const relayAssociation = JSON.parse(
       readFileSync(
         new URL(
-          '../../../../relay-stack/web/.well-known/apple-app-site-association',
+          '../../../../web/.well-known/apple-app-site-association',
           import.meta.url,
         ),
         'utf8',

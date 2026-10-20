@@ -23,7 +23,7 @@ import { writeBeelineArchive } from './beeline-archive.mjs';
 const UPSTREAM_REF = process.env.BEELINE_BUZZ_REF ?? '07a3c768d619db31fee3f0590f9433cdd1213e8f';
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const toolsRoot = resolve(repoRoot, '.beeline-tools');
-const outputRoot = resolve(repoRoot, 'relay-stack', 'web', 'dl');
+const outputRoot = resolve(repoRoot, 'web', 'dl');
 const supportedPlatforms = new Set(['linux-x64', 'darwin-arm64', 'darwin-x64']);
 
 function fail(message) {
@@ -204,7 +204,6 @@ async function main() {
   run('npm', ['run', 'build', '-w', '@beeline/nostr']);
   run('npm', ['run', 'build', '-w', '@beeline/api-contract']);
   run('npm', ['run', 'build', '-w', '@beeline/buzz-client']);
-  run('npm', ['run', 'build', '-w', '@beeline/gate']);
   run('npm', ['run', 'build', '-w', '@beeline/body']);
 
   if (!carryDir) {

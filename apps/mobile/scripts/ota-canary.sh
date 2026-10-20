@@ -358,7 +358,7 @@ smoke_status=$?
 set -e
 if (( smoke_status != 0 )); then
   # A provisioning-bootstrap death (e.g. the runner checkout missing the
-  # workspace prerequisites scripts/provision-smoke.ts imports) is an
+  # review sign-in preflight dependencies) is an
   # environment failure and must park self-describingly, not exit as a
   # generic smoke failure. Anything else keeps the genuine smoke-failure
   # exit code.

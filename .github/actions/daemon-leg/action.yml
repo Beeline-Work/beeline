@@ -73,7 +73,7 @@ runs:
         fi
         node scripts/merge-beeline-bundles.mjs \
           --output-dir "$RUNNER_TEMP/daemon-release" \
-          --input-dir relay-stack/web/dl \
+          --input-dir web/dl \
           --input-dir "$arm64_dir" \
           --input-dir "$x64_dir"
         if [ -f "$arm64_dir/mac-helper-inputs.json" ]; then

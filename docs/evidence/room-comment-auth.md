@@ -46,7 +46,7 @@ Connectors records that choice in the existing audit ledger; no UI was added.
 
 For an owner-selected Squire GitHub connection, native `gh` uses its supported
 HTTP Unix socket transport to forward requests through the current task's
-Squire relay and `use_credential`. The personal token stays in Squire. With no
+Squire forwarder and `use_credential`. The personal token stays in Squire. With no
 selected personal connection, native `gh` keeps the repository App environment.
 For managed OAuth and registry MCP, the launcher translates the narrow
 issue-comment API operation to the connected provider tool through the existing

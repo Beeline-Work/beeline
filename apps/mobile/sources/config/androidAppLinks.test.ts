@@ -24,7 +24,7 @@ describe('Android verified invite links', () => {
   it('trusts the rotated sideload certificate for both packages and preserves store certificates', () => {
     const relayAssetLinks = JSON.parse(
       readFileSync(
-        new URL('../../../../relay-stack/web/.well-known/assetlinks.json', import.meta.url),
+        new URL('../../../../web/.well-known/assetlinks.json', import.meta.url),
         'utf8',
       ),
     ) as AssetLinks;

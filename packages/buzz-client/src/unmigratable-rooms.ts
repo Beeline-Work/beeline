@@ -28,10 +28,6 @@ export function markRoomUnmigratable(channelId: string, pubkey: string, atMs = D
   verdicts.set(unmigratableRoomKey(channelId, pubkey), atMs);
 }
 
-export function isRoomUnmigratable(channelId: string, pubkey: string): boolean {
-  return verdicts.has(unmigratableRoomKey(channelId, pubkey));
-}
-
 /** Seed from durable storage at process start (idempotent; keeps earliest stamp). */
 export function seedUnmigratableRooms(entries: readonly UnmigratableRoom[]): void {
   for (const entry of entries) {
@@ -46,9 +42,4 @@ export function unmigratableRooms(): UnmigratableRoom[] {
     const separator = key.indexOf(':');
     return { channelId: key.slice(0, separator), pubkey: key.slice(separator + 1) };
   });
-}
-
-/** Reset the session cache (tests / explicit revalidation). */
-export function resetUnmigratableRooms(): void {
-  verdicts.clear();
 }

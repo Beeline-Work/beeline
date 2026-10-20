@@ -13,23 +13,6 @@ export type AgentPresenceStatus = 'online' | 'offline';
 
 export type AgentPresenceTier = 'online' | 'offline' | 'dormant';
 
-/**
- * The `d` of an agent's presence record for one Room.
- *
- * Presence is a parameterized-replaceable kind:30078 event, and the relay
- * indexes those by `d` — a `#h` filter over kind 30078 matches NOTHING, even
- * though the record does carry an `h` tag. Every reader that got this right
- * had spelled the key out by hand; the one that reached for `#h` (the
- * Workspace-wide agents directory, which fans across every Room) therefore
- * found no presence for any agent, ever, and showed a serving daemon with a
- * four-second-old `online` availability record as OFFLINE.
- *
- * One builder so the publisher and every reader cannot drift again.
- */
-export function agentPresenceKey(channelId: string): string {
-  return `${TAG_AGENT_PRESENCE}:${channelId}`;
-}
-
 export type AgentPresence = {
   agentPubkey: string;
   status: AgentPresenceStatus;

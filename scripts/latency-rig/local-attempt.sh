@@ -24,8 +24,8 @@ mkdir -p "$lock_dir"
 exec 9>"$lock_dir/capture.lock"
 export GRADLE_USER_HOME="$lock_dir/gradle"
 flock -n 9 || { echo 'Another Speedy rig attempt is running' >&2; exit 2; }
-export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=6144}"
-export JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS:--Dorg.gradle.workers.max=2}"
+export NODE_OPTIONS="${NODE_OPTIONS:-} --max-old-space-size=4096"
+export JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS:-} -Dorg.gradle.workers.max=2"
 fixture_database="beeline_latency_rig_speedy_$(date +%s)_$$"
 export LATENCY_RIG_DATABASE_URL="postgresql://localhost/$fixture_database?host=%2Fvar%2Frun%2Fpostgresql"
 export LATENCY_RIG_REVIEW_SECRET
@@ -33,6 +33,10 @@ LATENCY_RIG_REVIEW_SECRET="$(node -e 'process.stdout.write(require("node:crypto"
 export LATENCY_RIG_SERVER_PORT="${LATENCY_RIG_SERVER_PORT:-18880}" LATENCY_RIG_PORT="${LATENCY_RIG_PORT:-18881}"
 export LATENCY_RIG_PROXY_LOG="$output/proxy.ndjson" LATENCY_RIG_SQL_LOG="$output/sql.ndjson"
 export EXPO_PUBLIC_BUZZY_MONOLITH_URL="http://10.0.2.2:$LATENCY_RIG_PORT"
+export BEELINE_ANDROID_NATIVE_LATENCY_PROBE=1
+export LATENCY_RIG_RTT_MS=100 LATENCY_RIG_JITTER_MS=0 LATENCY_RIG_MBPS=10
+export LATENCY_RIG_REQUEST_FAILURE_RATE=0 LATENCY_RIG_ROOM_SAMPLES=20
+unset LATENCY_RIG_ENTRY LATENCY_RIG_TLS_CERT LATENCY_RIG_TLS_KEY
 # Fail rather than attaching to another lane's service.
 node --input-type=module <<'JS'
 import net from 'node:net';
@@ -69,6 +73,13 @@ done
 curl -fsS "http://127.0.0.1:$LATENCY_RIG_PORT/healthz" >/dev/null
 # Build all mobile SDK entry points before Metro on a fresh checkout.
 npx turbo run build --filter=@beeline/buzz-client... --filter=@beeline/nostr... --filter=@beeline/api-contract... >"$output/sdk-build.log" 2>&1
+mkdir -p "$GRADLE_USER_HOME/init.d"
+cat > "$GRADLE_USER_HOME/gradle.properties" <<'PROPERTIES'
+org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g
+org.gradle.workers.max=2
+kotlin.compiler.execution.strategy=in-process
+PROPERTIES
+cp scripts/latency-rig/android-build.init.gradle "$GRADLE_USER_HOME/init.d/latency-rig.gradle"
 bash scripts/latency-rig/build-local.sh >"$output/build.log" 2>&1
 adb -s "$device" install -r apps/mobile/android/app/build/outputs/apk/release/app-release.apk
 # This explicitly owned disposable app must not restore another attempt's cache.

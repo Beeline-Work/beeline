@@ -269,9 +269,26 @@ Launch an owned private emulator with `beeline emulator -avd se_api35 -no-window
 serial through its own launcher/child process, then select it explicitly with
 `LATENCY_RIG_DEVICE`; never select another lane's device merely because it is
 online. Preserve these device settings and the fixed local network shape night
-over night. Do not build during capture. The scripts cap Node's heap at 6 GiB and Gradle workers at two. A private Gradle
-home keeps teardown from stopping another lane's daemon. These limits keep
-typical runs within the session's 31.41 GiB memory cap.
+over night. Do not build during capture. The local attempt caps Node and Gradle
+heaps at 4 GiB, Gradle and Metro workers at two, and compiles Kotlin in-process.
+Its fixture-only Gradle init script omits Android release dependency lint;
+ordinary CI and release builds use their existing checks. A private Gradle home
+keeps teardown from stopping another lane's daemon. These settings bound the
+fixture build within the session's 31.41 GiB memory cap.
+
+If public Maven is unavailable, prepare an isolated snapshot of already downloaded
+dependencies before starting the attempt. [Gradle's read-only cache](https://docs.gradle.org/current/userguide/dependency_caching.html#sub:shared-readonly-cache)
+can then reuse them while preserving the private writable Gradle home. On squire:
+
+```sh
+mkdir -p "$rig_state/dependency-snapshot"
+rsync -a --exclude='*.lock' --exclude=gc.properties --chmod=Du=rwx,Dgo=,Fu=r,Fgo= \
+  /home/lunchbox/.gradle/caches/modules-2 "$rig_state/dependency-snapshot/"
+export GRADLE_RO_DEP_CACHE="$rig_state/dependency-snapshot"
+```
+
+Keep that snapshot unchanged while builds read it; never point the read-only cache
+at a live Gradle installation's writable cache.
 
 `local-attempt.sh` builds a local release/Hermes APK, starts `run-local.sh` on
 loopback ports 18880/18881 by default, seeds the disposable PostgreSQL fixture, signs in

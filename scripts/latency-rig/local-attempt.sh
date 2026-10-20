@@ -30,13 +30,16 @@ fixture_database="beeline_latency_rig_speedy_$(date +%s)_$$"
 export LATENCY_RIG_DATABASE_URL="postgresql://localhost/$fixture_database?host=%2Fvar%2Frun%2Fpostgresql"
 export LATENCY_RIG_REVIEW_SECRET
 LATENCY_RIG_REVIEW_SECRET="$(node -e 'process.stdout.write(require("node:crypto").randomBytes(24).toString("hex"))')"
-export LATENCY_RIG_SERVER_PORT=18880 LATENCY_RIG_PORT=18881
+export LATENCY_RIG_SERVER_PORT="${LATENCY_RIG_SERVER_PORT:-18880}" LATENCY_RIG_PORT="${LATENCY_RIG_PORT:-18881}"
 export LATENCY_RIG_PROXY_LOG="$output/proxy.ndjson" LATENCY_RIG_SQL_LOG="$output/sql.ndjson"
-export EXPO_PUBLIC_BUZZY_MONOLITH_URL=http://10.0.2.2:18881
+export EXPO_PUBLIC_BUZZY_MONOLITH_URL="http://10.0.2.2:$LATENCY_RIG_PORT"
 # Fail rather than attaching to another lane's service.
 node --input-type=module <<'JS'
 import net from 'node:net';
-for (const port of [18880, 18881]) await new Promise((resolve, reject) => {
+const ports = [process.env.LATENCY_RIG_SERVER_PORT, process.env.LATENCY_RIG_PORT].map(Number);
+if (ports.some((port) => !Number.isInteger(port) || port < 1024 || port > 65535) || ports[0] === ports[1])
+  throw new Error('Choose two distinct unprivileged loopback ports');
+for (const port of ports) await new Promise((resolve, reject) => {
   const server = net.createServer();
   server.once('error', reject);
   server.listen(port, '127.0.0.1', () => server.close(resolve));
@@ -60,10 +63,10 @@ bash scripts/latency-rig/run-local.sh >"$output/server.log" 2>&1 &
 server_pid=$!
 for _ in {1..180}; do
   kill -0 "$server_pid" 2>/dev/null || { echo 'Local server exited before readiness' >&2; exit 1; }
-  if curl -fsS http://127.0.0.1:18881/healthz >/dev/null 2>&1; then break; fi
+  if curl -fsS "http://127.0.0.1:$LATENCY_RIG_PORT/healthz" >/dev/null 2>&1; then break; fi
   sleep 1
 done
-curl -fsS http://127.0.0.1:18881/healthz >/dev/null
+curl -fsS "http://127.0.0.1:$LATENCY_RIG_PORT/healthz" >/dev/null
 # Build all mobile SDK entry points before Metro on a fresh checkout.
 npx turbo run build --filter=@beeline/buzz-client... --filter=@beeline/nostr... --filter=@beeline/api-contract... >"$output/sdk-build.log" 2>&1
 bash scripts/latency-rig/build-local.sh >"$output/build.log" 2>&1

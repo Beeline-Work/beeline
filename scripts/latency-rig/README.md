@@ -274,14 +274,17 @@ home keeps teardown from stopping another lane's daemon. These limits keep
 typical runs within the session's 31.41 GiB memory cap.
 
 `local-attempt.sh` builds a local release/Hermes APK, starts `run-local.sh` on
-loopback ports 18880/18881, seeds the disposable PostgreSQL fixture, signs in
+loopback ports 18880/18881 by default, seeds the disposable PostgreSQL fixture, signs in
 through the local review link after backend readiness, captures the six fixed
 cases, joins HTTP/SQL spans, and writes report JSON/Markdown. It owns and stops
 its fixture server and a uniquely named disposable PostgreSQL database, removed
 on exit. Each attempt clears the fixture app on the explicitly owned emulator,
 so prior send leases and phone caches cannot change the next attempt's workload.
 An occupied port or missing sign-in fails instead of using another service.
-The caller owns emulator cleanup. The nightly subset is:
+The caller owns emulator cleanup. Set `LATENCY_RIG_SERVER_PORT` and
+`LATENCY_RIG_PORT` to another unused unprivileged pair when the defaults are
+occupied; the APK is built for that proxy port. Readiness checks require `lsof`
+and verify that each listener is the child started by this attempt. The nightly subset is:
 
 - Room list and push, with one and five unseen messages (four cases).
 - Existing warm Room open with no unseen messages.
@@ -334,7 +337,8 @@ parent Room, owned by Speedy:
 > Nightly setup and execution. Fetch origin/main into the private detached
 > latency-rig-speedy checkout; read the current scripts, install dependencies
 > if needed, and use an owned Beeline-leased se_api35 emulator (2560 MiB, 4 cores).
-> Run local-attempt.sh, then nightly-local.mjs with last-pass.json, new report,
+> Choose an unused local port pair if needed. Run local-attempt.sh, then
+> nightly-local.mjs with last-pass.json, new report,
 > full commit range and recorded host load. On any failure/skip rerun exactly
 > once before deciding. Advance the baseline only on pass. If shouldAlert is
 > true and last-alert.json does not name this UTC night, post its text and

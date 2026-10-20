@@ -176,6 +176,10 @@ export function markdown(report, metadata = {}) {
   for (const row of report.rows) lines.push(
     `| ${row.kind} | ${row.name} | ${row.variant} | ${row.samples} | ${ms(row.p50Ms)} | ${ms(row.p95Ms)} | ${ms(row.p99Ms)} | <${row.budgetMs} ms | ${row.maxPrepaintHttpCount}/${row.maxPrepaintHttpDepth} (≤${row.maxRequests}/≤${row.maxDepth}) | ${row.maxWsFrames}/${row.maxWsMessages} | ${row.maxHttpBytes + row.maxWsBytes} | ${row.maxSqlStatements}/${row.maxSqlDepth}/${row.maxSqlPoolWaitMs} ms | ${row.timingPass && row.requestPass ? 'PASS' : 'FAIL'} |`,
   );
+  const censored = report.rows.filter((row) => row.timedOutSamples > 0);
+  if (censored.length) lines.push('',
+    'Timeout values are five-second censoring caps, not observed paint times. Any timeout fails the verdict.',
+    `Timed-out samples: ${censored.map((row) => `${row.variant}: ${row.timedOutSamples}/${row.samples}`).join(', ')}`);
   for (const route of report.missingRouteVariants)
     lines.push(`| route | ${route.path} | ${route.variant} | 0 | — | — | — | <450 ms | ${route.variant === 'cold' ? `≤${route.coldHttpMax}/≤${route.coldDepthMax}` : '0/0'} | — | — | — | UNMEASURED |`);
   for (const name of report.missingInteractions)

@@ -19,7 +19,7 @@ test('cached frame cannot end newest unseen message timing', () => {
   assert.throws(() => extractArrivalMoments(log, [{ ...attempts[0], startMs: 1700000002200 }]), /never painted/);
 });
 
-const { summarize } = await import('./analyze.mjs');
+const { summarize, markdown } = await import('./analyze.mjs');
 test('analysis fails closed for missing or undersampled arrivals and enforces 450 ms', () => {
   const samples = cases.flatMap((item) => Array.from({ length: 20 }, () => ({
     kind: 'route', name: '/beeline/chat/[channelId]', variant: item.name,
@@ -94,4 +94,5 @@ test('a censored five-second arrival fails even when p95 hides the timeout', () 
   const row = report.rows.find((row) => row.variant === cases[0].name);
   assert.equal(row.p95Ms, 100);
   assert.equal(row.timedOutSamples, 1);
+  assert.match(markdown(report), /censoring caps, not observed paint times/);
 });

@@ -171,9 +171,10 @@ an imprecise upper bound. Exact physical bytes, negotiated compression, and
 packet loss need an on-device packet capture. The report generator refuses
 to fill unmeasured routes with static estimates.
 
-The per-PR contract check validates route coverage and the deterministic
-budget evaluator. Nightly timing uses the squire emulator and parent-Room
-schedule documented below. A full launch report still requires all route and
+Run `node scripts/latency-rig/check-routes.mjs` and
+`node --test scripts/latency-rig/*.test.mjs` to validate route coverage and the
+deterministic budget evaluator. The rig has no GitHub Actions workflow.
+Nightly timing uses the squire emulator and parent-Room schedule documented below. A full launch report still requires all route and
 interaction marks; the
 nightly subset does not establish that broader budget. Missing required subset
 cases fail closed.

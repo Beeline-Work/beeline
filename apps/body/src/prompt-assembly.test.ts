@@ -65,6 +65,23 @@ describe('R2594 repository setup guidance', () => {
   });
 });
 
+describe('R-PROMPT-GRANTS recovery and outside context', () => {
+  it('shows grant recovery in the assembled Room prompt', () => {
+    const prompt = assembleSessionPrompt({ surface: 'room', agentName: 'Bee',
+      agentCommand: 'claude-agent-acp', shell: { available: true } }).systemPrompt;
+    expect(prompt).toContain('request_grant(kind:command, target, reason)');
+    expect(prompt).toContain('run_granted_command in a surface that permits it');
+    expect(prompt).toContain('never call a host blocker unfixable before asking');
+  });
+  it('gives every corner one rule for posts outside it', () => {
+    for (const surface of ['code-corner', 'repo-less-corner'] as const) {
+      const prompt = assembleSessionPrompt({ surface, agentName: 'Bee',
+        agentCommand: 'claude-agent-acp' }).systemPrompt;
+      expect(prompt.match(/original problem, blocker, and needed decision/g)).toHaveLength(1);
+    }
+  });
+});
+
 describe('RW1 writable home in the Room primer', () => {
   const home = '/srv/beeline/agents/a/rooms/r/agent-home/user';
   it('names the sandbox home and post_artifact only when the sandbox wraps the session', () => {
@@ -342,6 +359,10 @@ const TURN_VARIANTS: Record<string, TurnPromptContext> = {
     },
     members,
     task: { reactionTargetId: 'm3', body: '@bee go' },
+  },
+  'code-corner-checks': {
+    surface: 'code-corner',
+    task: { body: 'GitHub found failing checks on PR 42 at head bbbb222.', commandReason: 'corner_check' },
   },
 };
 
@@ -818,6 +839,18 @@ describe('corner role prompts (PR #2224: a reviewer that opened its corner pushe
     expect(review).toContain('Checks are green on PR #7 at abc.');
     expect(review).not.toContain('push a fix');
     expect(CORNER_CHECKS_NUDGE).toContain('If checks="failed" and you write code in this corner, fix the failure and push.');
+  });
+
+  it('tells the author to run a repeatedly failing suite locally before pushing, then report blocked', () => {
+    const turn = (kind: 'check-failed' | 'check-passed') =>
+      assembleTurnPrompt({
+        surface: 'code-corner',
+        task: { body: 'GitHub found failing checks on abc', outsideEvent: { kind, payload: {} } as never },
+      }).text;
+    const failed = turn('check-failed');
+    expect(failed).toContain('After two failed CI runs on the same suite, run that suite locally before pushing again');
+    expect(failed).toContain('after a third, report blocked: naming the failing tests');
+    expect(turn('check-passed')).not.toContain('run that suite locally');
   });
 
   it('describes the author when the reviewer opened the corner itself', () => {

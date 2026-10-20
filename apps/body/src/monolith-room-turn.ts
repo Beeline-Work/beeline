@@ -97,7 +97,7 @@ import {
   siblingAgentMaskPaths,
   wrapAgentCommand,
 } from './bwrap-sandbox.js';
-import { harnessIdentityLabel } from './cursor-acp-bridge.js';
+import { harnessIdentityLabel, sessionNewMcpServers } from './cursor-acp-bridge.js';
 import type { BodyConfig } from './config.js';
 import { type DaemonApiClient } from './daemon-api-client.js';
 import {
@@ -690,6 +690,11 @@ export class MonolithRoomTurnLoop {
       (url, siteUrl) => {
         options.api.execute('forgetSquireSignIn', { url, ...(siteUrl ? { siteUrl } : {}) })
           .catch((error: unknown) => console.error('[thin-core] Squire sign-in removal failed:', redactTurnError(error)));
+      },
+      async (service) => {
+        const view = await this.options.api.execute('readAgentWorkbench', { roomId: options.roomId });
+        return view.apps?.find(app => app.appKey === service.trim().toLowerCase() &&
+          app.transport === 'squire-api' && app.status === 'connected')?.connectionReference;
       },
     );
     this.options = { ...options, api: this.commandContext.bind(options.api) };
@@ -1403,6 +1408,7 @@ export class MonolithRoomTurnLoop {
       resourceAuthFile,
       squireScope,
     );
+    const sessionServers = sessionNewMcpServers<McpServerWire>(harnessLabel, servers, grantedRouteServers);
     // Pi ACP ignores session/new MCP servers. The installer selects native
     // mcp.json or the generated bridge for this executable and isolated home.
     await installPiMcpBridge({
@@ -1514,10 +1520,10 @@ export class MonolithRoomTurnLoop {
       agentCommand: harnessLabel,
       resumeSessionId: this.warmTranscript.resumeSessionId(conversationFingerprint),
       cwd: this.options.cwd,
-      mcpServers: servers,
+      mcpServers: sessionServers,
       mode: 'readonly',
       create: () => this.client!.sessionNew({
-        cwd: this.options.cwd, mcpServers: servers, mode: 'readonly', systemPrompt: session.systemPrompt,
+        cwd: this.options.cwd, mcpServers: sessionServers, mode: 'readonly', systemPrompt: session.systemPrompt,
       }),
       onResumeFailure: error => console.warn('[body] native conversation unavailable; starting cold:', error),
     });

@@ -519,13 +519,54 @@ function phantomHarness(answer = 'Hey there is the answer.') {
   let sequence = 0;
   return { service, speech, timeline, messages, note,
     finishPlayback() { for (const finish of playing) finish(); },
-    emit(event: string, transcript: string, turn: number, words?: { confidence: number }[]) {
+    emit(event: string, transcript: string, turn: number, words?: { confidence: number; start?: number; end?: number }[]) {
       note(`STT ${event} turn=${turn} text=${JSON.stringify(transcript)}`);
       receive({ event, transcript, turn_index: turn, sequence_id: sequence++, ...(words ? {
         words: words.map((word, i) => ({ word: transcript.split(' ')[i], start: i * 0.2, end: (i + 1) * 0.2, ...word })),
       } : {}) });
     } };
 }
+
+it.each([0.6, 0.3, 0.95])('Reproduction keep-turn-1: records and replies to a final at confidence %s', async confidence => {
+  const harness = phantomHarness();
+  const runtime = await VoiceRoomRuntime.connect(harness.service as unknown as VoiceService, 'call', 'room');
+  state.streams = [new ReadableStream()];
+  try {
+    state.room.emit('track', { kind: 1 }, {}, { identity: 'human' });
+    await vi.waitFor(() => expect(harness.service.config.stt).toHaveBeenCalledOnce());
+    const text = 'can you check the build';
+    harness.emit('EndOfTurn', text, 0, text.split(' ').map((_, i) => ({ confidence, start: confidence === 0.6 ? i * 0.2 : 0, end: confidence === 0.6 ? (i + 1) * 0.2 : 0.08 })));
+    await vi.waitFor(() => expect(harness.service.recordHuman).toHaveBeenCalledOnce());
+    expect(harness.messages).toEqual(['@ronnie ' + text]);
+    await vi.waitFor(() => expect(harness.speech.synthesize).toHaveBeenCalledOnce());
+    harness.finishPlayback();
+    await vi.waitFor(() => expect(harness.service.recordAnswer).toHaveBeenCalledOnce());
+    expect(harness.service.config.brain.answer).toHaveBeenCalledOnce();
+  } finally { await runtime.close(); }
+});
+
+it('dispatches a low-confidence final without interrupting playback when voiceInterrupt is false', async () => {
+  const harness = phantomHarness();
+  const runtime = await VoiceRoomRuntime.connect(harness.service as unknown as VoiceService, 'call', 'room');
+  const utterance = vi.spyOn(runtime, 'utterance');
+  state.streams = [new ReadableStream()];
+  try {
+    state.room.emit('track', { kind: 1 }, {}, { identity: 'human' });
+    await vi.waitFor(() => expect(harness.service.config.stt).toHaveBeenCalledOnce());
+    harness.emit('EndOfTurn', 'Explain the answer', 0);
+    await vi.waitFor(() => expect(harness.speech.synthesize).toHaveBeenCalledOnce());
+    const signal = harness.speech.synthesize.mock.calls[0]![2];
+    const words = [{ confidence: 0.3, start: 0, end: 0.08 }];
+    harness.emit('Update', 'budget', 1, words);
+    await new Promise<void>(resolve => setImmediate(resolve));
+    expect(signal.aborted).toBe(false);
+    harness.emit('EndOfTurn', 'budget', 1, words);
+    await vi.waitFor(() => expect(utterance).toHaveBeenCalledWith('human', 'budget', expect.any(Number), false, false));
+    await vi.waitFor(() => expect(harness.service.recordHuman).toHaveBeenCalledTimes(2));
+    expect(signal.aborted).toBe(false);
+    expect(harness.timeline.filter(line => line.endsWith('barge-in cancel'))).toHaveLength(0);
+  } finally { await runtime.close(); }
+});
 
 it('Reproduction phantom-1: never sends Hey or Yeah from a noisy turn during TTS; stop still interrupts', async () => {
   const harness = phantomHarness();
@@ -724,6 +765,8 @@ it('finished-sentence timing adds no wait before commit or first audio', async (
   vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'performance'] });
   const delay = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
   const { service, speech } = conversationService(1);
+  let receive!: (event: any) => void;
+  service.config.stt.mockImplementation(async (callback: any) => { receive = callback; return { send() {}, close() {} }; });
   let committed = 0, audible = 0;
   service.agents.mockImplementation(async () => { await delay(3); return roster; });
   service.recordHuman.mockImplementation(async () => { await delay(5); committed = performance.now(); return 'source'; });
@@ -734,10 +777,14 @@ it('finished-sentence timing adds no wait before commit or first audio', async (
   state.room.localParticipant.publishData.mockImplementation(async () => { await delay(1); });
   state.audio.captureFrame.mockImplementation(async () => { await delay(1); audible = performance.now(); });
   try {
-    const finished = (async () => { await delay(1000); await runtime.utterance('human', 'Ruby this sentence is finished.'); })();
-    await vi.advanceTimersByTimeAsync(1200); await finished;
+    state.streams = [new ReadableStream()];
+    state.room.emit('track', { kind: 1 }, {}, { identity: 'human' });
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(receive).toBeDefined();
+    receive({ event: 'EndOfTurn', transcript: 'Ruby this sentence is finished.', turn_index: 0, sequence_id: 0 });
+    await vi.advanceTimersByTimeAsync(200);
     expect({ committed, audible }).toEqual({ committed: 1011, audible: 1076 });
-    console.log('FINISHED-SENTENCE timing fixture:', JSON.stringify({ speechEndToCommitMs: committed, speechEndToFirstAudioMs: audible, eotThreshold: 0.7, eotTimeoutMs: 1000, providerAndTransport: 'controlled doubles' }));
+    console.log('FINISHED-SENTENCE timing fixture:', JSON.stringify({ endOfTurnToCommitMs: committed - 1000, endOfTurnToFirstAudioMs: audible - 1000, eotThreshold: 0.7, eotTimeoutMs: 1000, providerAndTransport: 'controlled doubles' }));
   } finally { await runtime.close(); vi.useRealTimers(); }
 });
 

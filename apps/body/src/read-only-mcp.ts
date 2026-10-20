@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { beelineManagedSkills, runningBeelineReleaseId } from './beeline-skill.js';
 import { builtinBeelineApp } from '@beeline/api-contract/workbench';
 import { Check } from 'typebox/value';
 import { CAPABILITY_ROUTES, REPOSITORY_ROUTES, SCRATCH_ROUTES, minimalTools, repositoryTools, scratchTools, CAPABILITY_TOOLS, RUNNER_TOOL, SILENT_TOOL } from './minimal-tool-surface.js';
@@ -2427,7 +2428,7 @@ export async function workbenchStatus(
       label: string;
       state: string;
     }>;
-    apps?: Array<{ appId: string; appKey: string; name: string; transport: string;
+    apps?: Array<{ appId: string; appKey: string; name: string; transport: string; connectionReference?: string;
       status: string; errorMessage?: string }>;
     firstPartyIntegrations?: Array<{ key: string; name: string; status: string }>;
     machine?: { machineId: string; name: string;
@@ -2485,11 +2486,11 @@ export async function workbenchStatus(
   const apps = view.apps ?? [];
   if (!apps.length) lines.push('- none');
   for (const app of apps)
-    lines.push(`- ${app.name} (app:${app.appKey}, id ${app.appId}) via ${app.transport}: ${app.status}${app.status === 'error' && app.errorMessage ? ` — ${app.errorMessage}` : ''}`);
+    lines.push(`- ${app.name} (app:${app.appKey}, id ${app.appId}) via ${app.transport}: ${app.status}${app.transport === 'squire-api' && app.connectionReference ? `; use_credential(reference:${JSON.stringify(app.connectionReference)})` : ''}${app.status === 'error' && app.errorMessage ? ` — ${app.errorMessage}` : ''}`);
   const github = apps.find(app => app.appKey === 'github' && app.status !== 'disconnected');
   if (github) {
     const route = github.transport === 'squire-api'
-      ? 'call Squire use_credential (service "github")'
+      ? `call Squire use_credential (${github.connectionReference ? `reference ${JSON.stringify(github.connectionReference)}` : 'service "github"'})`
       : `use app_tool(app:"${github.appId}")`;
     lines.push('', `GitHub operation identity: prefer this owner's personal GitHub connection (app ${github.appId}, ${github.transport}) over the repository App for supported API operations, including Git Data API pushes; ${route}. Follow its reported status; a denial requires repairing this connection, never switching to the App identity. Consult beeline-connecting-services for checkout and merge boundaries.`);
   }
@@ -2673,9 +2674,12 @@ export async function runGrantedCommand(
   const output = typeof result.output === 'string' && result.output ? result.output : '(no output)';
   const refused =
     result.writeRefused === true
-      ? '\nThis Room is read-only outside your scratch directory. Open a corner with open_corner to change files.'
+      ? '\nThis Room is read-only outside your scratch directory. Open a corner with open_corner to change files; for host work there, ask with request_grant(kind:command, target, reason), then use run_granted_command.'
       : '';
-  return `ran under grant ${grantId}: ${verdict}\n${output}${refused}`;
+  const recovery = result.sandboxFailure === true
+    ? '\nFor host work, open a corner and ask with request_grant(kind:command, target, reason), then use run_granted_command.'
+    : '';
+  return `ran under grant ${grantId}: ${verdict}\n${output}${refused}${recovery}`;
 }
 
 /** The small-object pass-through: the server validates and streams the
@@ -2930,14 +2934,24 @@ async function executeAgentOperation(
     }
     case 'download_attachment':
       return downloadAttachment(args);
-    case 'load_workspace_skill':
-      return JSON.stringify(
-        await daemonExecute('loadWorkspaceSkill', {
+    case 'load_workspace_skill': {
+      // Workspace procedures retain precedence over shipped skills with the same slug.
+      try {
+        return JSON.stringify(await daemonExecute('loadWorkspaceSkill', {
           agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID'),
           roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
           slug: args.slug,
-        }),
-      );
+        }));
+      } catch (error) {
+        // Only a missing procedure falls back; authorization and service failures stay visible.
+        if (!(error instanceof Error) || !error.message.startsWith('daemon operation loadWorkspaceSkill failed (404:'))
+          throw error;
+        const skill = beelineManagedSkills(runningBeelineReleaseId(), { isReviewer: true })
+          .find((candidate) => candidate.name === args.slug);
+        if (!skill) throw error;
+        return JSON.stringify({ slug: skill.name, markdown: skill.content, source: 'built-in' });
+      }
+    }
     case 'save_skill':
       return JSON.stringify(
         await daemonExecute('saveSkill', {

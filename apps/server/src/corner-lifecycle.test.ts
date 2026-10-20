@@ -2285,7 +2285,7 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
     // not by hiding the configuration.
     expect(await cornerMergeGate(db, cornerId, { number: 7, headSha: SHA }))
       .toMatchObject({ reviewerExists: true, approved: false, open: false });
-    expect(await currentState(cornerId)).toBe('checks');
+    expect(await currentState(cornerId)).toBe('review');
     expect((await db.query(`SELECT text FROM messages WHERE room_id=$1 AND text LIKE '%could not be reached%'`, [cornerId])).rows)
       .toHaveLength(0);
     expect(await github.prChecksStatus({ cornerId })).toMatchObject({ reviewerExists: true, mergeAllowed: false });
@@ -2655,41 +2655,23 @@ describe('the implementer merges when the gate opens (AC-5)', () => {
     }
   });
 
-  it('Reproduction R2199: a reviewer that opened its own corner is woken to review it, and its PASS merges it', async () => {
+  it('Reproduction SR-1: a sole implementer reviewer receives the existing missing-reviewer handback', async () => {
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: A }, H);
     const cornerId = await open('owner/widgets');
     await greenHead(cornerId, 7, SHA);
-    // The server does not referee whether the configured reviewer is also
-    // this corner's opener; with nobody else configured, green checks wake
-    // that same agent to review its own head (prompt discipline, not a
-    // server gate, is what would stop it approving its own code).
     expect(await currentState(cornerId)).toBe('review');
-    expect(await projected(cornerId)).toBe('review');
     expect(await cards(cornerId)).toContainEqual(
-      expect.objectContaining({ fromState: 'checks', outcome: 'passing', toState: 'review' }),
+      expect.objectContaining({ fromState: 'checks', outcome: 'no_reviewer', toState: 'review' }),
     );
-    const [review] = await commands(A, cornerId);
-    expect(review).toBeDefined();
-    await claim(review!);
+    const pending = await commands(A, cornerId);
+    expect(pending.some(command => command.reason === 'corner_review_needed')).toBe(true);
+    expect(pending.some(command => command.reason === 'subscribed_event' || command.reason === 'corner_review_dispatch')).toBe(false);
     githubHead = SHA;
     githubRollupState = 'passed';
     expect(await github.prChecksStatus({ cornerId })).toMatchObject({
       stage: 'waiting_for_yes', approved: false, mergeAllowed: false,
     });
-    await approve(cornerId, SHA, A);
-    await result(review!, `approved ${SHA}`);
-    expect((await db.query(`SELECT 1 FROM corner_merge_approvals WHERE corner_id=$1`, [cornerId])).rowCount).toBe(1);
-    expect(await cornerMergeGate(db, cornerId, { number: 7, headSha: SHA })).toMatchObject({ approved: true, open: true });
-    const wiredDaemon = new DaemonService(db, new LiveHub(), undefined, undefined, false, undefined, false, undefined,
-      (input, confirmZeroChecks) => github.prChecksStatus(input, confirmZeroChecks), undefined, undefined, undefined, undefined, undefined, undefined,
-      undefined, undefined, undefined, (id: string) => github.landCornerOutcome(id));
-    await expect(wiredDaemon.execute('mergeCorner', { cornerId }, A))
-      .resolves.toEqual({ status: 'merge-started', headSha: SHA });
-    expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
-    expect(githubApp.mergePullRequest).toHaveBeenCalledWith(77, 101, 'owner/widgets', 7, SHA);
-    await mergedWebhook(cornerId, 7, SHA);
-    expect(await currentState(cornerId)).toBe('landed');
-    console.info('Reproduction R2199: self-reviewer green head wakes the same agent to review; its PASS opens the gate and merge_corner lands it.');
+    expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
   });
 });
 

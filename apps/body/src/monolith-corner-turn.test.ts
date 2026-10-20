@@ -845,6 +845,118 @@ describe('corner close-request delivery', () => {
     expect(onCloseRequested).toHaveBeenCalledOnce();
   });
 
+  it.each([
+    ['cursor', 1],
+    ['claude', 0],
+  ] as const)('hands a %s corner session/new the granted squire route %i time(s)', async (agentKind, squireMounts) => {
+    // Cursor reads MCP servers only from session/new; Claude reads granted
+    // routes from its isolated home config, so it must not get squire twice.
+    const root = await mkdtemp(join(tmpdir(), 'beeline-corner-squire-'));
+    roots.push(root);
+    const workspace = join(root, 'rooms', 'corner-id', 'scratch');
+    const scratchRoot = join(workspace, 'agent-home');
+    await mkdir(scratchRoot, { recursive: true });
+    const runtime = {
+      agentId: '11'.repeat(32),
+      agent: stored('11'.repeat(32), 'Bee'),
+      rooms: [],
+      supervisorRoot: root,
+      transport: {
+        kind: 'monolith',
+        baseUrl: 'https://server.example',
+        daemonToken: 'daemon-token',
+      },
+      agentBinary: '/fake-agent',
+      agentKind,
+      agentCommand: '/fake-agent',
+      agentArgs: [],
+      mcpBinary: '/fake-dev-mcp',
+    } as unknown as AgentRuntimeRecord;
+    const config: BodyConfig = {
+      agentBinary: '/fake-agent',
+      agentKind,
+      agentCommand: '/fake-agent',
+      agentArgs: [],
+      mcpBinary: '/fake-dev-mcp',
+      readonlyMcpCommand: '/fake-beeline-mcp',
+      agentEnv: {},
+      agentHomeRoot: scratchRoot,
+      workspaceRoot: workspace,
+      operatorHome: join(root, 'operator-home'),
+      autoApprovePermissions: true,
+    };
+    const execute = vi.fn(async (name: string) => {
+      if (name === 'getAgentConfiguration') return { commands: [] };
+      if (name === 'listAgentGrants') {
+        return { grants: [{ grantId: 'g-1', kind: 'mcp', target: 'squire', status: 'approved' }] };
+      }
+      if (name === 'getWorkspaceRoster') {
+        return {
+          members: [
+            { identityId: runtime.agent.publicKey, kind: 'agent', name: 'Bee', role: 'member' },
+          ],
+        };
+      }
+      if (name === 'getRoomConversation') return { items: [], cursor: 'latest' };
+      if (name === 'getRoomInbox') return { items: [], cursor: 'latest' };
+      if (name === 'getCornerCloseRequests') {
+        return { items: [], cursor: 'latest', closeRequested: true };
+      }
+      return { id: 'write-id', createdAt: 1 };
+    });
+    const api = {
+      execute,
+      connection: () => ({
+        baseUrl: 'https://server.example',
+        daemonToken: 'daemon-token',
+        agentId: runtime.agent.publicKey,
+      }),
+    } as unknown as DaemonApiClient;
+    const acp = new AcpClient({ agentBinary: '/fake-agent', agentEnv: {} });
+    vi.spyOn(acp, 'isAlive', 'get').mockReturnValue(true);
+    vi.spyOn(acp, 'start').mockResolvedValue(undefined);
+    let sessionInput: Parameters<AcpClient['sessionNew']>[0] | undefined;
+    vi.spyOn(acp, 'sessionNew').mockImplementation(async (input) => {
+      sessionInput = input;
+      return { sessionId: 'corner-session', raw: {} };
+    });
+    vi.spyOn(acp, 'sessionPrompt').mockResolvedValue({
+      stopReason: 'end_turn',
+      updates: [],
+      agentText: 'Called OpenRouter.',
+      toolCalls: [],
+    });
+    const scheduler = new SessionScheduler({ maxLiveSessions: 2 });
+    let loop!: MonolithCornerTurnLoop;
+    loop = new MonolithCornerTurnLoop({
+      cornerId: 'corner-id',
+      parentRoomId: 'room-id',
+      workspaceId: 'workspace',
+      objective: 'Call OpenRouter with the vaulted key',
+      worktreePath: workspace,
+      runtime,
+      config,
+      api: commandFixtureApi(
+        closePushAfterReceipt(api, () => loop),
+        'corner-id',
+        runtime.agent.publicKey,
+        'Call OpenRouter with the vaulted key',
+      ),
+      scheduler,
+      pollMs: 1,
+      onPoll: vi.fn(),
+      onFailure: vi.fn(),
+      onCloseRequested: vi.fn(async () => undefined),
+      createAcpClient: () => acp,
+    });
+    await loop.run();
+    await scheduler.dispose();
+
+    const names = sessionInput?.mcpServers.map((server) => server.name) ?? [];
+    expect(names).toContain('beeline-agent');
+    expect(names.filter((name) => name === 'squire')).toHaveLength(squireMounts);
+  });
+
   it.each([true, false])('Reproduction runtime-brief-5: repositoryWork=%s delivers a turn without an inappropriate nudge', async (repositoryWork) => {
     // The socket completion arrives after the turn's terminal receipt; no
     // idle timer or close-request read is involved.

@@ -104,6 +104,22 @@ export function harnessIdentityLabel(agent: { kind?: string; command?: string })
   return agent.command ?? '';
 }
 
+/**
+ * The `session/new` server list for one harness. Cursor reads MCP servers
+ * only from this list (the bridge rewrites its mcp.json from it), so it also
+ * needs the granted host routes. Every other harness already reads those
+ * from its isolated home config, and gets the Beeline servers only.
+ */
+export function sessionNewMcpServers<T extends { name: string }>(
+  harnessLabel: string,
+  servers: readonly T[],
+  grantedRouteServers: readonly T[],
+): T[] {
+  if (harnessLabel !== CURSOR_ACP_BRIDGE_LABEL) return [...servers];
+  const names = new Set(servers.map((server) => server.name));
+  return [...servers, ...grantedRouteServers.filter((server) => !names.has(server.name))];
+}
+
 export function cursorAcpBridgeLaunch(): { command: string; args: string[] } {
   const meta = import.meta.url;
   if (meta === 'beeline:bundle' || meta.startsWith('beeline:')) {

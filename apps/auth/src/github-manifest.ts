@@ -30,8 +30,8 @@ import { createHash, timingSafeEqual } from 'node:crypto';
  * - starring write, an account permission: the user-token star from the
  *   in-app GitHub star card (`apps/server/src/github-star-prompt.ts`)
  *
- * Administration and organization permissions are
- * deliberately absent. Keep this list pinned by the manifest tests: changing
+ * Administration write matches the live App grant and permits repository creation.
+ * Organization permissions remain absent. Keep this list pinned by the manifest tests: changing
  * it changes the approval request for every installed account.
  */
 
@@ -47,6 +47,7 @@ export const REQUIRED_GITHUB_APP_EVENTS = [
 ] as const;
 
 export const REQUIRED_GITHUB_APP_PERMISSIONS: Readonly<Record<string, string>> = Object.freeze({
+  administration: 'write',
   contents: 'write',
   pull_requests: 'write',
   issues: 'write',
@@ -211,7 +212,7 @@ export type GitHubAppDrift =
     };
 
 // New Apps request these grants, but existing Apps keep working without them.
-const OPTIONAL_EXISTING_APP_PERMISSIONS = new Set(['secrets', 'environments']);
+const OPTIONAL_EXISTING_APP_PERMISSIONS = new Set(['secrets', 'environments', 'discussions']);
 
 /** Compare a live GET /app answer against the existing-feature requirements. */
 export function gitHubAppDrift(live: GitHubLiveAppConfig): GitHubAppDrift {

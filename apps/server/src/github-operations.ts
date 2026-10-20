@@ -409,7 +409,7 @@ export class GitHubOperations {
   }
 
   async beginInstallation(viewerId: string, input: Input<'beginGitHubInstallation'>) {
-    const state = randomBytes(32).toString('base64url');
+    const state = `repository_install_${randomBytes(32).toString('base64url')}`;
     await this.database.query(
       `INSERT INTO github_auth_flows(state_hash,identity_id,redirect_uri,purpose,expires_at) VALUES($1,$2,$3,'installation',now()+interval '15 minutes')`,
       [hash(state), viewerId, input.redirectUri],
@@ -421,7 +421,7 @@ export class GitHubOperations {
     return { url: this.app.installationUrl(state) };
   }
 
-  async completeInstallation(state: string, installationId: number) {
+  async completeInstallation(state: string, installationId?: number) {
     return this.database.transaction(async (database) => {
       const flow = (
         await database.query<{ identity_id: string; redirect_uri: string }>(
@@ -430,8 +430,21 @@ export class GitHubOperations {
         )
       ).rows[0];
       if (!flow) throw new Error('GitHub installation flow not found or expired');
-      await this.assertInstallationAccess(flow.identity_id, installationId, database);
-      await this.syncInstallation(flow.identity_id, installationId, database);
+      let installationIds: number[];
+      if (installationId !== undefined) {
+        installationIds = [installationId];
+      } else {
+        // OAuth-during-install returns an authorization code; the installation id
+        // is not required. Discover grants with the original flow owner's token.
+        const credential = await this.userCredential(flow.identity_id, database);
+        if (!credential?.token) throw new Error('GitHub installation access denied');
+        installationIds = [...(await this.listAdministeredInstallations(credential.token) ?? [])];
+        if (!installationIds.length) throw new Error('GitHub installation access denied');
+      }
+      for (const id of installationIds) {
+        await this.assertInstallationAccess(flow.identity_id, id, database);
+        await this.syncInstallation(flow.identity_id, id, database);
+      }
       await database.query(`UPDATE github_auth_flows SET consumed_at=now() WHERE state_hash=$1`, [
         hash(state),
       ]);

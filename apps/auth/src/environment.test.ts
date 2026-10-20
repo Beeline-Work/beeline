@@ -51,3 +51,21 @@ describe('OIDC environment migration', () => {
     expect(() => oidcClientFromEnvironment(env)).toThrow('BEELINE_AUTH_OIDC_CLIENT_SECRET is required in production');
   });
 });
+
+
+describe('insecure OIDC development opt-in', () => {
+  it.each([
+    [{ BEELINE_AUTH_ALLOW_INSECURE_OIDC: 'true' }, true],
+    [{ BUZZY_AUTH_ALLOW_INSECURE_OIDC: 'true' }, true],
+    [{ BEELINE_AUTH_ALLOW_INSECURE_OIDC: 'false', BUZZY_AUTH_ALLOW_INSECURE_OIDC: 'true' }, false],
+    [{ BEELINE_AUTH_ALLOW_INSECURE_OIDC: '', BUZZY_AUTH_ALLOW_INSECURE_OIDC: 'true' }, false],
+  ])('resolves the new name before the legacy fallback (%j)', (flags, expected) => {
+    const client = oidcClientFromEnvironment({ ...environment('BEELINE_AUTH_OIDC_'), NODE_ENV: 'test', ...flags });
+    expect(client.config.allowInsecure).toBe(expected);
+  });
+
+  it('never enables insecure OIDC in production with either name', () => {
+    const client = oidcClientFromEnvironment({ ...environment('BEELINE_AUTH_OIDC_'), BEELINE_AUTH_ALLOW_INSECURE_OIDC: 'true', BUZZY_AUTH_ALLOW_INSECURE_OIDC: 'true' });
+    expect(client.config.allowInsecure).toBe(false);
+  });
+});

@@ -44,7 +44,7 @@ export function oidcClientFromEnvironment(env: NodeJS.ProcessEnv): OidcClient {
     oidcEnv[name] = env[name] ?? env[`BUZZY_AUTH_OIDC_${suffix}`];
   }
   const allowInsecure =
-    env.NODE_ENV !== 'production' && env.BUZZY_AUTH_ALLOW_INSECURE_OIDC === 'true';
+    env.NODE_ENV !== 'production' && (env.BEELINE_AUTH_ALLOW_INSECURE_OIDC ?? env.BUZZY_AUTH_ALLOW_INSECURE_OIDC) === 'true';
   const oidc = new OidcClient({
     issuer: required(oidcEnv, 'BEELINE_AUTH_OIDC_ISSUER'),
     authorizationEndpoint: required(oidcEnv, 'BEELINE_AUTH_OIDC_AUTHORIZATION_ENDPOINT'),

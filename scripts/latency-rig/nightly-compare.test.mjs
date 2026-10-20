@@ -10,6 +10,9 @@ test('strict 20 percent regression and strict page budget', () => {
   assert.equal(compareNightly(report(450), report(449)).pass, false);
   assert.equal(compareNightly(report(449), null).pass, true);
   assert.equal(compareNightly(null, report(100)).pass, false);
+  assert.equal(compareNightly({ rows: [null] }, report(100)).pass, false);
+  assert.equal(compareNightly(report(100), { rows: {} }).pass, false);
+  assert.equal(compareNightly({ complete: true, rows: [{ ...row(100), budgetMs: undefined }] }, null).pass, false);
   assert.equal(compareNightly({ ...report(100), complete: false }, report(100)).pass, false);
   assert.equal(compareNightly({ complete: true, rows: [{ ...row(100), samples: 19 }] }, report(100)).pass, false);
 });

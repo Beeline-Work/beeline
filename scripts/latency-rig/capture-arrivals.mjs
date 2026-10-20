@@ -4,6 +4,8 @@ import { execFileSync, spawn } from 'node:child_process';
 import { randomBytes, createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import pg from 'pg';
+import os from 'node:os';
+import { pointFor, requireRoomList } from './capture-ui.mjs';
 import { openSync, closeSync } from 'node:fs';
 import { once } from 'node:events';
 import { extractArrivalMoments, nativeArrivalMoment, validateArrivalCases } from './room-arrivals.mjs';
@@ -23,10 +25,17 @@ const cases = JSON.parse(await readFile(new URL('./room-arrival-cases.json', imp
 validateArrivalCases(cases);
 const adb = (...args) => execFileSync('adb', ['-s', device, ...args], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+const dump = () => { adb('shell', 'uiautomator', 'dump', '/sdcard/latency-rig.xml'); return adb('shell', 'cat', '/sdcard/latency-rig.xml'); };
+const tap = (point) => adb('shell', 'input', 'tap', ...point.map(String));
 const open = (route) => adb('shell', 'am', 'start', '-W', '-a', 'android.intent.action.VIEW', '-d', `beeline://${route}`, 'app.usebeeline/.MainActivity');
 const db = new pg.Client({ connectionString: databaseUrl });
 await db.connect();
 const attempts = [];
+const hostLoad = [];
+const recordLoad = () => hostLoad.push({ atMs: Date.now(), load: os.loadavg(), freeMemory: os.freemem(), totalMemory: os.totalmem(), cpus: os.availableParallelism() });
+recordLoad();
+const loadTimer = setInterval(recordLoad, 10_000);
+loadTimer.unref();
 let capture;
 let captureFd;
 try {
@@ -38,6 +47,15 @@ try {
   let processAlreadyRunning = false;
   try { processAlreadyRunning = Boolean(adb('shell', 'pidof', 'app.usebeeline').trim()); } catch {}
   const latest = (await db.query('SELECT id FROM messages WHERE room_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1', [fixture.id])).rows[0];
+  let listReady = false;
+  for (let ready = 0; ready < 30; ready++) {
+    const xml = dump();
+    if (pointFor(xml, 'content-desc', 'all conversations')) { listReady = true; break; }
+    if (pointFor(xml, 'content-desc', 'Message')) adb('shell', 'input', 'keyevent', '4');
+    if (xml.includes('Continue with GitHub')) throw new Error('Sign in to the local fixture before capture');
+    await pause(500);
+  }
+  if (!listReady) throw new Error('Room list did not become ready before warmup');
   adb('logcat', '-c');
   const firstOpenStart = Number(adb('shell', 'date', '+%s%3N').trim());
   // A warm visit populates the same cache used on each subsequent open.
@@ -56,7 +74,7 @@ try {
       measured: false, reason: error.message }, null, 2));
   }
   for (let warmup = 0; warmup < 2; warmup++) {
-    open('beeline/channels');
+    adb('shell', 'input', 'keyevent', '4');
     await pause(1000);
     open(`beeline/chat/${fixture.id}`);
     await pause(2000);
@@ -69,11 +87,15 @@ try {
   await pause(100);
   const entry = process.env.LATENCY_RIG_ENTRY;
   if (entry && !['room-list', 'push'].includes(entry)) throw new Error('LATENCY_RIG_ENTRY must be room-list or push');
-  for (const scenario of cases.filter((item) => !entry || item.entry === entry)) {
+  const scenarios = [...cases];
+  if (process.env.LATENCY_RIG_NIGHTLY === '1') scenarios.push(
+    { name: 'warm', entry: 'room-list', unseen: 0 },
+    { name: 'send-text', entry: 'send-text', unseen: 0 });
+  for (const scenario of scenarios.filter((item) => !entry || item.entry === entry)) {
     for (let sample = 0; sample < count; sample++) {
-      open('beeline/channels');
+      if (scenario.entry !== 'send-text') adb('shell', 'input', 'keyevent', '4');
       await pause(1000);
-      let targetId;
+      let targetId = (await db.query('SELECT id FROM messages WHERE room_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1', [fixture.id])).rows[0]?.id;
       for (let n = 0; n < scenario.unseen; n++) {
         targetId = randomBytes(32).toString('hex');
         await db.query('INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)',
@@ -81,28 +103,30 @@ try {
       }
       await pause(300);
       let point;
-      if (scenario.entry === 'room-list') {
+      if (scenario.entry === 'send-text') {
+        const composer = pointFor(dump(), 'content-desc', 'Message');
+        if (!composer) throw new Error('Send-text requires the visible Room composer');
+        tap(composer);
+        targetId = randomBytes(32).toString('hex');
+        adb('shell', 'input', 'text', `Rig%s${targetId.slice(0, 16)}`);
+        adb('shell', 'input', 'keyevent', '4');
+        point = pointFor(dump(), 'content-desc', 'Send message');
+        if (!point) throw new Error('Send-text fixture has no enabled send button');
+      } else {
         let xml;
         for (let precondition = 0; precondition < 3; precondition++) {
-          adb('shell', 'uiautomator', 'dump', '/sdcard/latency-rig.xml');
-          xml = adb('shell', 'cat', '/sdcard/latency-rig.xml');
-          const overlay = xml.match(/<node[^>]*content-desc="Close Workspace switcher"[^>]*>/)?.[0];
-          if (!overlay) break;
-          const area = overlay.match(/bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/);
-          if (!area) throw new Error('Cannot dismiss fixture Workspace overlay');
-          adb('shell', 'input', 'tap', String(Math.round((Number(area[1]) + Number(area[3])) / 2)),
-            String(Math.round((Number(area[2]) + Number(area[4])) / 2)));
+          xml = dump();
+          const close = pointFor(xml, 'content-desc', 'Close Workspace switcher');
+          if (!close) break;
+          tap(close);
         }
-        if (xml.includes('content-desc="Close Workspace switcher"')) throw new Error('Workspace overlay still covers the Room-list entry');
-        const node = xml.match(/<node[^>]*text="#?Rig room 001"[^>]*>/)?.[0];
-        const bounds = node?.match(/bounds="\[(\d+),(\d+)\]\[(\d+),(\d+)\]"/);
-        if (!bounds) throw new Error('Room-list fixture row not visible; select Latency Rig 200 Workspace first');
-        point = [Math.round((Number(bounds[1]) + Number(bounds[3])) / 2), Math.round((Number(bounds[2]) + Number(bounds[4])) / 2)];
+        const roomPoint = requireRoomList(xml);
+        if (scenario.entry === 'room-list') point = roomPoint;
       }
       adb('shell', 'am', 'broadcast', '-a', 'app.usebeeline.LATENCY_RIG_EXPECT', '-n', 'app.usebeeline/.LatencyRigReceiver',
         '--es', 'needle', targetId.slice(0, 16), '--es', 'case', scenario.name, '--es', 'entry', scenario.entry);
       await writeFile(`${output}/pending-attempt.json`, JSON.stringify({ name: scenario.name, unseen: scenario.unseen, targetId }, null, 2));
-      if (point) adb('shell', 'input', 'tap', ...point.map(String));
+      if (point) tap(point);
       else adb('shell', 'am', 'start', '-a', 'android.intent.action.MAIN', '-n', 'app.usebeeline/.PushNotificationActivity',
         '--es', 'google.message_id', targetId, '--es', 'type', 'room-message',
         '--es', 'channelId', fixture.id, '--es', 'roomId', fixture.id,
@@ -131,6 +155,9 @@ try {
   const moments = attempts.map(({ targetId, ...moment }) => moment);
   await writeFile(`${output}/moments.ndjson`, moments.map((item) => JSON.stringify(item)).join('\n') + '\n');
 } finally {
+  clearInterval(loadTimer);
+  recordLoad();
+  await writeFile(`${output}/host-load.json`, JSON.stringify(hostLoad, null, 2));
   if (capture) { capture.kill('SIGTERM'); await once(capture, 'close'); }
   if (captureFd !== undefined) closeSync(captureFd);
   await db.end();

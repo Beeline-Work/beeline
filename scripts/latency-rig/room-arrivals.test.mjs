@@ -52,3 +52,11 @@ test('native capture requires a target-visible result, not a successful test-run
   assert.equal(nativeArrivalMoment('LATENCY_VISIBLE {"probe":"native-frame-commit-v1","case":"push-unseen-1","startMs":100,"paintMs":240}', 'push-unseen-1').paintMs, 240);
   assert.throws(() => nativeArrivalMoment('LATENCY_VISIBLE {"probe":"native-frame-commit-v1","case":"push-unseen-1","startMs":200,"paintMs":100}', 'push-unseen-1'));
 });
+
+test('send-text native frame is an interaction, while warm Room open remains a route', () => {
+  const mark = (name) => `LATENCY_VISIBLE ${JSON.stringify({ probe: 'native-frame-commit-v1', case: name, startMs: 100, paintMs: 120 })}`;
+  assert.deepEqual(nativeArrivalMoment(mark('send-text'), 'send-text'), {
+    kind: 'tap', name: 'send-text', variant: 'warm', startMs: 100, paintMs: 120,
+  });
+  assert.equal(nativeArrivalMoment(mark('warm'), 'warm').kind, 'route');
+});

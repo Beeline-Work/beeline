@@ -20,7 +20,7 @@ public final class LatencyRigProbe {
   }
   public static synchronized void expect(String needle, String name, String entry) {
     if (needle == null || !needle.matches("[a-f0-9]{16}") || name == null ||
-        !("room-list".equals(entry) || "push".equals(entry))) throw new IllegalArgumentException("Invalid fixture probe");
+        !("room-list".equals(entry) || "push".equals(entry) || "send-text".equals(entry))) throw new IllegalArgumentException("Invalid fixture probe");
     pending = new Pending(needle, name, entry);
   }
   public static synchronized void begin(String entry) {

@@ -53,7 +53,7 @@ cleanup() {
   [[ -z "$server_pid" ]] || kill "$server_pid" 2>/dev/null || true
 }
 trap cleanup EXIT INT TERM
-NODE_OPTIONS="--require $repo_dir/scripts/latency-rig/pg-probe.cjs" \
+NODE_OPTIONS="${NODE_OPTIONS:-} --require $repo_dir/scripts/latency-rig/pg-probe.cjs" \
   node --import tsx apps/server/src/index.ts &
 server_pid=$!
 for _ in {1..60}; do

@@ -39,6 +39,6 @@ export function nativeArrivalMoment(output, name) {
   const mark = JSON.parse(match[1]);
   if (mark.probe !== 'native-frame-commit-v1' || mark.case !== name || !Number.isFinite(mark.startMs) || !Number.isFinite(mark.paintMs) || mark.paintMs < mark.startMs)
     throw new Error('Invalid native visibility timestamps');
-  return { kind: 'route', name: '/beeline/chat/[channelId]', variant: name,
+  return { kind: name === 'send-text' ? 'tap' : 'route', name: name === 'send-text' ? 'send-text' : '/beeline/chat/[channelId]', variant: name === 'send-text' ? 'warm' : name,
     startMs: mark.startMs, paintMs: mark.paintMs };
 }

@@ -20,7 +20,10 @@ module.exports = function withLatencyRigNativeProbe(config) {
     edit(path.join(java, 'MainActivity.kt'), 'super.onCreate(null)', 'super.onCreate(null)\n    LatencyRigProbe.attach(this)');
     edit(path.join(java, 'MainActivity.kt'), 'class MainActivity : ReactActivity() {', `class MainActivity : ReactActivity() {
   override fun dispatchTouchEvent(event: android.view.MotionEvent): Boolean {
-    if (event.actionMasked == android.view.MotionEvent.ACTION_UP) LatencyRigProbe.begin("room-list")
+    if (event.actionMasked == android.view.MotionEvent.ACTION_UP) {
+      LatencyRigProbe.begin("room-list")
+      LatencyRigProbe.begin("send-text")
+    }
     return super.dispatchTouchEvent(event)
   }`);
     edit(path.join(java, 'PushNotificationActivity.kt'), 'super.onCreate(savedInstanceState)', 'super.onCreate(savedInstanceState)\n    LatencyRigProbe.begin("push")');

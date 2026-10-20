@@ -246,20 +246,96 @@ The `--nightly` analyzer subset requires the four arrival cases, the existing
 warm Room-open route, and send-text. Cold opens remain outside this nightly
 gate. Every case requires 20 samples in the nightly comparison.
 
-The nightly workflow is scheduled at 03:00 UTC on `main`. Its report job runs
-on GitHub-hosted Linux, compares with the most recent retained passing artifact
-from this workflow on main, and saves a new baseline only on a passing verdict.
-A separate 06:00 UTC hosted watchdog notices absent, queued, failed, or unfinished
-runs, cancels an overdue run, and posts the skipped/failing-night alert. Neither
-job adds a per-PR device gate. The runner capture executable must emit the
-four arrival variants, the warm Room route, and send-text, each with 20 samples;
-an old or partial executable fails coverage rather than reporting success.
+The nightly run is a **Speedy-owned Beeline schedule in the parent Room**
+`bb91a1c7-7cad-4fde-aafc-94fccb651ac8`, at 03:00 America/New_York on squire.
+It does not use the legacy GitHub on-demand device job, a webhook, or a new
+token. Create it from that Room: the wake tool only schedules its current place,
+and schedules belonging to archived corners do not run. Schedule installation
+and its returned id must be recorded after creating it; a documented prompt
+alone is not an installed schedule.
 
-Room delivery uses `/v1/latency-rig/alert` with a short-lived GitHub Actions OIDC
-identity, not a saved phone token. The server pins GitHub's issuer, rig audience,
-immutable repository and owner ids, main ref, and the two exact workflow files.
-It writes only to Room `bb91a1c7-7cad-4fde-aafc-94fccb651ac8`. A deterministic
-UTC-night message id deduplicates normal and watchdog alerts. The endpoint must
-be deployed through the ordinary server release before the scheduled alert can
-be demonstrated against production. Merging alone does not deploy it.
-See [GitHub's OIDC claims](https://docs.github.com/en/actions/reference/security/oidc).
+### Nightly setup and execution
+
+Use persistent private state `${XDG_STATE_HOME:-$HOME/.local/state}/beeline/latency-rig-speedy`
+(mode 0700), outside repository scans. Keep a detached `checkout` there, backed
+by the existing Beeline repository. Fetch `origin/main` and check out its exact
+SHA before every night. Never run the benchmark from an old feature checkout,
+never change a main branch, and never discard unrelated changes. Install root
+and mobile dependencies when the measured head changes. Read the current rig
+scripts before running them. Use the repository's `build-local.sh` signing;
+production signing is unnecessary.
+
+Launch an owned private emulator with `beeline emulator -avd se_api35 -no-window
+-gpu swiftshader_indirect -no-snapshot -memory 2560 -cores 4`. Identify its leased
+serial through its own launcher/child process, then select it explicitly with
+`LATENCY_RIG_DEVICE`; never select another lane's device merely because it is
+online. Preserve these device settings and the fixed local network shape night
+over night. Do not build during capture. The scripts cap Node's heap at 6 GiB
+and Gradle workers at two, below the session's 31.41 GiB memory cap.
+
+`local-attempt.sh` builds a local release/Hermes APK, starts `run-local.sh` on
+loopback ports 18880/18881, seeds the disposable PostgreSQL fixture, signs in
+through the local review link after backend readiness, captures the six fixed
+cases, joins HTTP/SQL spans, and writes report JSON/Markdown. It owns and stops
+its fixture server. An occupied port or missing sign-in fails instead of using
+another service. The caller owns emulator cleanup. The nightly subset is:
+
+- Room list and push, with one and five unseen messages (four cases).
+- Existing warm Room open with no unseen messages.
+- Existing send-text interaction, ending at its optimistic row's native frame.
+
+Each case has 20 samples. Cold opening is recorded separately and never gates
+this subset. Host load and free memory are sampled every ten seconds into
+`capture/host-load.json`, including failed captures. Typical nightly work is a
+release build plus 120 samples; it does not run every application route.
+
+From the detached main checkout, with `rig_state` set to the private state path:
+
+```sh
+head_sha="$(git rev-parse HEAD)"
+node scripts/latency-rig/commit-range.mjs "$PWD" "$head_sha" "$rig_state/commits.json"
+# A capture failure is an input to comparison, not a reason to abandon the wake.
+bash scripts/latency-rig/local-attempt.sh "$rig_state/attempt-1"
+node scripts/latency-rig/nightly-local.mjs \
+  --current "$rig_state/attempt-1/report.json" --baseline "$rig_state/last-pass.json" \
+  --commits "$rig_state/commits.json" --head "$head_sha" \
+  --load "$rig_state/attempt-1/capture/host-load.json" --out "$rig_state/nightly.json"
+```
+
+The agent inspects `nightly.json` even when a command exits nonzero. Exit 2 and
+`needsRerun` mean run `local-attempt.sh` **once more**, into `attempt-2`, then call
+the comparison with the original arguments plus `--rerun attempt-2/report.json`
+and that attempt's host-load path. Do not mix samples between attempts or drop
+outliers. A passing rerun resolves load noise; a failed/missing rerun sets
+`shouldAlert`. A passing report atomically replaces `last-pass.json`; failures
+and skips preserve it. Malformed data, stale commits and an incomplete PR range
+fail closed. The comparator takes report, baseline and commit-range files; it
+needs no GitHub API.
+
+When `shouldAlert` is true, Speedy posts **one** message containing `text` to the
+parent Room, attaching the report and host-load evidence. It names all PRs in
+the complete first-parent range since the last passing run, excluding that run.
+With no passing baseline, say that the range is unavailable rather than invent
+PRs. Persist `{night, messageId}` to `last-alert.json` only after the post receipt;
+check that record before any retry so one failed night produces one alert. Passes
+are silent. A skipped setup also gets one rerun and then one failure alert.
+Stop only the emulator and fixture processes owned by this wake.
+
+### Schedule prompt
+
+Install the following with `wake(action:create, trigger:schedule,
+cadence:{kind:cron, expression:"0 3 * * *", timeZone:"America/New_York"})` in the
+parent Room, owned by Speedy:
+
+> Run the nightly squire emulator latency rig under scripts/latency-rig/README.md
+> Nightly setup and execution. Fetch origin/main into the private detached
+> latency-rig-speedy checkout; read the current scripts, install dependencies
+> if needed, and use an owned Beeline-leased se_api35 emulator (2560 MiB, 4 cores).
+> Run local-attempt.sh, then nightly-local.mjs with last-pass.json, new report,
+> full commit range and recorded host load. On any failure/skip rerun exactly
+> once before deciding. Advance the baseline only on pass. If shouldAlert is
+> true and last-alert.json does not name this UTC night, post its text and
+> evidence once to Room bb91a1c7-7cad-4fde-aafc-94fccb651ac8, naming PRs since the
+> last pass; save the post receipt. Report skipped setup too. Never use a GitHub
+> runner, webhook or new token. Preserve all samples and clean up only this
+> wake's emulator/server. On pass, remain silent.

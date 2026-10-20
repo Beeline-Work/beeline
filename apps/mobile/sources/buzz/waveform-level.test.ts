@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dictationWaveformLevel, smoothWaveformLevel, voiceWaveformLevel, waveformLevelFromDb } from './waveform-level';
+import { dictationWaveformLevel, voiceWaveformLevel, waveformLevelFromDb } from './waveform-level';
 
 describe('waveform volume mapping', () => {
   it.each([
@@ -38,11 +38,9 @@ describe('waveform volume mapping', () => {
     }
   });
 
-  it('rejects invalid readings and releases smoothly to silence', () => {
+  it('rejects invalid readings', () => {
     for (const value of [NaN, Infinity, -Infinity]) expect(waveformLevelFromDb(value)).toBe(0);
     expect(voiceWaveformLevel(0)).toBe(0);
     expect(voiceWaveformLevel(-1)).toBe(0);
-    expect(smoothWaveformLevel(0, 1)).toBeCloseTo(0.7);
-    expect(smoothWaveformLevel(1, 0)).toBe(0.5);
   });
 });

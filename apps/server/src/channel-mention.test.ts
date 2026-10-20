@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
-import { resolveCurrentMemberMentions, taggedIdentityIdsSql } from './message-mentions.js';
+import { resolveCurrentMemberMentions, taggedIdentityIdsSql, tagsKnownIdentitySql, typedMentionHandles } from './message-mentions.js';
 import { PushDeliveryLoop } from './background.js';
 
 const AUTHOR = 'a'.repeat(64);
@@ -232,5 +232,49 @@ describe('@channel push delivery', () => {
     } finally {
       await database.close();
     }
+  });
+});
+
+
+describe('quoted mention TS/SQL agreement', () => {
+  it('reads the same quote and code corpus through both SQL delivery paths', async () => {
+    const database = await fixture();
+    const corpus: [string, boolean][] = [
+      ['"@bee"', false], ['“@bee”', false], ['"@bee', true], ['“@bee', true],
+      ['"@bee”', true], ['"first\n@bee"', true], ['“first\n@bee”', true],
+      ['"quoted" @bee', true], ['“quoted” @bee', true],
+      ['"@bee" and “@bee”', false], ["'@bee'", true], ['**@bee**', true],
+      ['> @bee', false], ['   > @bee', false], ['old\n  > @bee\nfresh', false],
+      ['> quoted\n@bee', true], ['`@bee`', false], ['```\n@bee\n```', false],
+      ['```\n@bee', false], ['`stray @bee', true], ['`code` @bee', true],
+      ['“`code` @bee”', false], ['"@channel"', false], ['“@channel”', false],
+      ['> @channel', false], ['@bee', true], ['@channel', true],
+      ['"start ```\ncode\n``` @bee"', true],
+      ['“start ```\ncode\n``` @bee”', true],
+      ['> before ```\ncode\n``` @bee', true],
+      ['before ```\ncode\n``` > @bee', false],
+      ['```one``` @bee ```two```', true],
+      ['```one``` ```@bee', false],
+      ['`` before ```\n@bee\n``` @bee', true],
+      ['"start ```\ncode\n``` @channel"', true],
+      ['“start ```\ncode\n``` @channel”', true],
+      ['before ```\ncode\n``` > @channel', false],
+      ['```\ncode\n``` "@bee"', false],
+      ['word@bee', false], ['@bee.other', false], ['@bee.', true],
+    ];
+    try {
+      for (const [text, expected] of corpus) {
+        const handles = typedMentionHandles(text);
+        expect(handles.has('bee') || handles.has('channel'), text).toBe(expected);
+        const row = (await database.query<{ ids: string[]; known: boolean }>(
+          `SELECT ${taggedIdentityIdsSql('m')} ids,
+            ${tagsKnownIdentitySql('m', '$3', "'bee'", "'human'")} known
+           FROM (SELECT $1::text text,$2::uuid room_id,$4::text author_id,'message'::text presentation) m`,
+          [text, ROOM, BEE, AUTHOR],
+        )).rows[0]!;
+        expect(row.ids.includes(BEE), text).toBe(expected);
+        expect(row.known, text).toBe(expected);
+      }
+    } finally { await database.close(); }
   });
 });

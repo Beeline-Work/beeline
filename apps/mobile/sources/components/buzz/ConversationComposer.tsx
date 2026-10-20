@@ -500,7 +500,8 @@ function ConversationComposerContent({
         style={[styles.inputRow, viewerPill && styles.viewerPillRow, multiline && styles.composerMultiline]}
         testID={`${testIDPrefix}-composer-input-row`}
       >
-        {/* ＋ never changes: a file staged while dictating goes with the take. */}
+        {/* Room attachments remain available while dictating. */}
+        {!viewerPill && (
         <TouchableOpacity
           accessibilityLabel="Attach photo or document"
           accessibilityRole="button"
@@ -515,6 +516,7 @@ function ConversationComposerContent({
             testID={`${testIDPrefix}-attach-glyph`}
           />
         </TouchableOpacity>
+        )}
         <View style={styles.inputWrapper}>
           {Platform.OS !== 'web' ? (
             <Text

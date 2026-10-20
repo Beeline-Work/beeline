@@ -16,16 +16,18 @@ export type CompanySuggestion = {
   readonly alternativeRoutes?: readonly ('composio' | 'squire-api')[];
   readonly flow: 'app' | 'squire' | 'tailscale' | 'wallet' | 'link';
 };
+/** Server-owned Connectors attention. The phone renders this; it does not reclassify. */
+export type ConnectorViewState = 'connected' | 'connect' | 'error';
 export type CompanyItem = {
   readonly id: string; readonly title: string; readonly subtitle: string;
   readonly kind: 'key' | 'login' | 'connection'; readonly target: ConnectionTarget;
-  readonly status?: string; readonly attention?: boolean;
+  readonly state?: ConnectorViewState; readonly status?: string; readonly attention?: boolean;
 };
 export type WorkbenchCompany = {
   readonly id: string; readonly name: string; readonly domain?: string;
   readonly kind: 'company' | 'sign-in-service' | 'other'; readonly logo: CompanyLogo;
   readonly section: 'attention' | 'signin' | 'apps' | 'keys';
-  readonly subtitle: string; readonly status?: string; readonly attention?: string;
+  readonly subtitle: string; readonly state?: ConnectorViewState; readonly status?: string; readonly attention?: string;
   readonly items: readonly CompanyItem[];
   readonly machines: readonly { readonly id: string; readonly name: string;
     readonly online: boolean; readonly status: 'connected' | 'error' | 'not-added'; readonly error?: string; readonly signedInAs?: string; readonly reconnecting?: boolean; readonly statusText?: string }[];

@@ -3213,13 +3213,13 @@ describe('the gate stays shut (AC-8)', () => {
     const order = (await commands(A, R)).at(-1)!;
     await claim(order);
     await daemon.execute('order', { roomId: R, requestId: order.turnRequestId, generationId: 'g1',
-      text: 'The holder said: release the hold', address: cornerId }, A);
-    const steer = (await commands(A, cornerId)).at(-1)!;
+      text: 'The holder said: release the hold', address: cornerId, agent: B }, A);
+    const steer = (await commands(B, cornerId)).at(-1)!;
     expect(steer.reason).toBe('order');
     await claim(steer);
     expect(await implementersMerge()).toBe(0);
     await daemon.execute('setCornerHold', { cornerId, roomId: cornerId, requestId: steer.turnRequestId,
-      generationId: 'g1', releaseHoldId: holdId }, A);
+      generationId: 'g1', releaseHoldId: holdId }, B);
     expect((await db.query(`SELECT released_by FROM corner_merge_holds WHERE id=$1`, [holdId])).rows[0]).toEqual({ released_by: H });
     expect(await cornerMergeGate(db, cornerId, { number: 7, headSha: SHA })).toMatchObject({ held: false, approved: false, open: false });
   });
@@ -3282,10 +3282,10 @@ describe('the gate stays shut (AC-8)', () => {
     await say(dm, '@hoots approved');
     const approval = (await commands(A, dm)).at(-1)!;
     await claim(approval);
-    await daemon.execute('order', { roomId: dm, requestId: approval.turnRequestId, generationId: 'g1', address: cornerId, text: 'Release the approved hold', agent: A }, A);
-    const first = (await commands(A, cornerId)).at(-1)!;
+    await daemon.execute('order', { roomId: dm, requestId: approval.turnRequestId, generationId: 'g1', address: cornerId, text: 'Release the approved hold', agent: B }, A);
+    const first = (await commands(B, cornerId)).at(-1)!;
     await claim(first);
-    await daemon.execute('order', { roomId: cornerId, requestId: first.turnRequestId, generationId: 'g1', address: cornerId, text: 'Release the approved hold', agent: A }, A);
+    await daemon.execute('order', { roomId: cornerId, requestId: first.turnRequestId, generationId: 'g1', address: cornerId, text: 'Release the approved hold', agent: A }, B);
     const second = (await commands(A, cornerId)).at(-1)!;
     await claim(second);
     await daemon.execute('setCornerHold', { cornerId, roomId: cornerId, requestId: second.turnRequestId, generationId: 'g1', releaseHoldId: holdId }, A);

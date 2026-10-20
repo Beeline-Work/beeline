@@ -343,7 +343,7 @@ describe('one composer', () => {
     const row = f.renderer.root.findByProps({ testID: 'chat-composer-input-row' }).props.style;
     expect(row).toEqual([expect.objectContaining({ paddingVertical: 8, paddingHorizontal: 8 }), { minHeight: 44 }, { alignItems: 'flex-end' }]);
     expect(f.renderer.root.findByType('TextInput').props.style[1].height).toBe(72);
-    expect(f.renderer.root.findByProps({ testID: 'chat-attach-button' }).props.style.height).toBe(26);
+    expect(f.renderer.root.findAllByProps({ testID: 'chat-attach-button' })).toHaveLength(0);
     expect(f.renderer.root.findByProps({ testID: 'chat-send' }).props.style.height).toBe(26);
   });
 
@@ -541,4 +541,11 @@ describe('conversation placeholder', () => {
       isDirectMessage={isDirectMessage} hasAgentMembers={hasAgentMembers} />));
     expect(f.renderer.root.findAllByType('TextInput')[0].props.placeholder).toBe(placeholder);
   });
+});
+
+it('retains the Room file attachment control', () => {
+  const f = render('');
+  const onAttach = f.renderer.root.findByType(ConversationComposer).props.onAttach;
+  act(() => f.renderer.root.findByProps({ testID: 'chat-attach-button' }).props.onPress());
+  expect(onAttach).toHaveBeenCalledOnce();
 });

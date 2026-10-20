@@ -389,6 +389,8 @@ Use your judgment about how much planning work needs. This loop can help for a l
 
 ## Dispatch and revision
 
+Include "no progress reports" in the brief and any implementing order.
+
 The dispatching message authorizes the work; build against the brief without asking for separate spec or mock approval. Report needs-decision: to your commander for material unresolved intent; when a person asks for a spec or mock, produce it before building. Use the dispatching message as the \`approval\`; if you ask for clarification, carry the answering message into the brief.
 
 Pass the brief as \`open_corner.brief\`. Read the current revision before revising and use \`revise_corner(action:brief)\` with the complete replacement spec, the approving message, and a concise change description. Preserve unaffected intent quotes, user stories, and references. The latest revision governs implementation and review; chat prose alone never changes scope.
@@ -414,7 +416,7 @@ Run these checks before opening a corner.
 - Keep the corner objective complete and within 24 words.
 - Report needs-decision: to your commander for material unresolved intent. When a person asks for a spec or mock, produce it before building.
 - Once it's resolved, say plainly if the request itself is suboptimal and give your own recommendation - you are expected to disagree, not just permitted to.
-- On a judgment call you're still not sure of, order a reachable child or sibling corner for one adversarial second opinion (corners cannot order DMs or ancestor addresses); have the chosen agent report back; a Room order wakes only the one agent you name; skip this only when you are the only agent in the Room.
+- On a judgment call you're still not sure of, order a reachable child or sibling corner for one adversarial second opinion (corners cannot order DMs or ancestor corners); have the chosen agent report back; a Room order wakes only the one agent you name; skip this only when you are the only agent in the Room.
 
 ## 2. Is work warranted?
 

@@ -1009,10 +1009,12 @@ export function createBeelineServer(options: ServerOptions): Server {
           if (sentRows.size <= SENT_ROW_LIMIT) break;
           if (!row.reads) sentRows.delete(candidate);
         }
-        return sent.fingerprint !== fingerprint;
+        return sent.fingerprint !== fingerprint ||
+          (order !== undefined && 'sequence' in order &&
+            (sent.order === undefined || !('sequence' in sent.order) || order.epoch !== sent.order.epoch));
       };
       const sendDraft = (event: Extract<LiveEvent, { type: 'draft' | 'thought' }>,
-        sequence?: number) => {
+        sequence?: number, epoch?: string) => {
         const key = `${event.roomId}:${event.agentId}:${event.turnId}:${event.type}`;
         const previous = draftWire.get(key);
         if (previous?.text === event.text) return;
@@ -1026,6 +1028,7 @@ export function createBeelineServer(options: ServerOptions): Server {
             revision, offset: previous.text.length,
             chunk,
             ...(sequence !== undefined ? { sequence } : {}),
+            ...(epoch !== undefined ? { epoch } : {}),
             ...(event.latestChunk !== undefined && event.latestChunk !== chunk
               ? { latestChunk: event.latestChunk } : {}),
           }));
@@ -1033,7 +1036,8 @@ export function createBeelineServer(options: ServerOptions): Server {
         }
         draftWire.set(key, { text: event.text, revision: 0 });
         sendLive(JSON.stringify({ ...event, revision: 0,
-          ...(sequence !== undefined ? { sequence } : {}) }));
+          ...(sequence !== undefined ? { sequence } : {}),
+          ...(epoch !== undefined ? { epoch } : {}) }));
       };
       socketSubscriptions.set(client, () => releases.size);
       let socketTasks = 0;
@@ -1189,9 +1193,13 @@ export function createBeelineServer(options: ServerOptions): Server {
                 ? { epoch: cursor.epoch, base: cursor.base,
                     seen: cursor.seen.filter((value): value is number => typeof value === 'number') }
                 : undefined;
+              let latestEpoch: string | undefined;
               const forwardEvent = (event: LiveEvent, sequence?: number, epoch?: string) => {
-                  const sendFrame = (payload: Record<string, unknown>) => sendLive(JSON.stringify({
+                  if (epoch !== undefined) latestEpoch = epoch;
+                  const currentEpoch = () => epoch === undefined || epoch === latestEpoch;
+                  const sendFrame = (payload: Record<string, unknown>) => currentEpoch() && sendLive(JSON.stringify({
                     ...payload, ...(sequence !== undefined ? { sequence } : {}),
+                    ...(epoch !== undefined ? { epoch } : {}),
                   }));
                   if (
                     event.type === 'invalidate' &&
@@ -1202,7 +1210,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                   if (event.type === 'draft') streamed.add(event.agentId);
                   if (event.type !== 'invalidate') {
                     if (client.readyState !== client.OPEN) return;
-                    if (event.type === 'draft' || event.type === 'thought') sendDraft(event, sequence);
+                    if (event.type === 'draft' || event.type === 'thought') sendDraft(event, sequence, epoch);
                     else {
                       if (event.type === 'retract')
                         draftWire.delete(`${event.roomId}:${event.agentId}:${event.turnId}:${event.kind}`);
@@ -1234,7 +1242,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                       beginRowRead(statusKey);
                       void readCornerStatusForViewer(event, roomId, principal.identityId)
                         .then((status) => {
-                          if (client.readyState !== client.OPEN) return;
+                          if (client.readyState !== client.OPEN || !currentEpoch()) return;
                           if (!status) { sendFrame(wireEvent); return; }
                           if (!admitRow(statusKey,
                             sequence !== undefined ? { epoch, sequence } : undefined,
@@ -1306,6 +1314,7 @@ export function createBeelineServer(options: ServerOptions): Server {
                       }
                       const publicDelta = { ...result.delta,
                         ...(workflowRuns ? { workflowRuns } : {}) };
+                      if (!currentEpoch()) return;
                       // Never roll a row back after a newer projection.
                       if (!admitRow(rowKey,
                         publicDelta.type === 'message-delta' && publicDelta.version !== undefined

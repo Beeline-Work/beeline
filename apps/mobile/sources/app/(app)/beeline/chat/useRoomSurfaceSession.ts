@@ -21,6 +21,7 @@ import {
 import {
   loadBuzzIdentity,
   loadBuzzViewerPubkey,
+  peekBuzzViewerContext,
   getEffectiveRelayUrl,
 } from '@/auth/buzz-identity-storage';
 import { markRoomOpen, markRoomOpenWeight } from '@/buzz/room-open-trace';
@@ -293,12 +294,21 @@ export function useRoomSurfaceSession({
   isFocused = true,
   bindingsRef,
 }: UseRoomSurfaceSessionOptions): UseRoomSurfaceSessionResult {
+  const [openingCache] = useState(() => {
+    const viewer = peekBuzzViewerContext();
+    if (!viewer) return null;
+    const view = mobileSurfaceCache.peek(surfaceAddress(viewer.relayUrl, viewer.viewerPubkey, `/room/${channelId}`), isRoomView);
+    return view ? { ...viewer, view, scope: identityScope(viewer.relayUrl, viewer.viewerPubkey) } : null;
+  });
+  useEffect(() => {
+    if (openingCache) queueNewestFrameMark(openingCache.view.messages.at(-1)?.id);
+  }, [openingCache]);
   const [transport, setTransport] = useState<BuzzRigTransport | null>(null);
   const [roomClient, setRoomClient] = useState<RoomViewClient | null>(null);
-  const [roomSurface, setRoomSurface] = useState<RoomView | null>(null);
+  const [roomSurface, setRoomSurface] = useState<RoomView | null>(openingCache?.view ?? null);
   const scheduleCacheWriteRef = useRef<(() => void) | undefined>(undefined);
-  const [identityRecordScope, setIdentityRecordScope] = useState<string | null>(null);
-  const messageRecordScopeRef = useRef<string | null>(null);
+  const [identityRecordScope, setIdentityRecordScope] = useState<string | null>(openingCache?.scope ?? null);
+  const messageRecordScopeRef = useRef<string | null>(openingCache?.scope ?? null);
   const roomReadStampRef = useRef(0);
   const identityVersion = useIdentityRecords();
   const turnRecords = useRoomTurnRecords(identityRecordScope, channelId);
@@ -387,7 +397,7 @@ export function useRoomSurfaceSession({
   }, []);
   const [firstUnreadMessageId, setFirstUnreadMessageId] = useState<string | null>(null);
   const [liveOverlays, setLiveOverlays] = useState<readonly LiveOverlay[]>([]);
-  const [userPubkey, setUserPubkey] = useState('');
+  const [userPubkey, setUserPubkey] = useState(openingCache?.viewerPubkey ?? '');
   const [heartbeatPresences, setAgentPresences] = useState<Record<string, RoomAgentPresence>>({});
   const [presenceResolved, setPresenceResolved] = useState(false);
   const [presenceReconnectGrace, setPresenceReconnectGrace] = useState<Record<string, number>>({});
@@ -402,7 +412,8 @@ export function useRoomSurfaceSession({
   roomClientRef.current = roomClient;
   const liveOverlaysRef = useRef(liveOverlays);
   const schedulerRef = useRef<SurfaceRefreshScheduler<RoomView> | null>(null);
-  const reconciledViewRef = useRef<RoomView | null>(null);
+  const reconciledViewRef = useRef<RoomView | null>(openingCache?.view ?? null);
+  const sessionStartedRef = useRef(false);
   const agentPresencesRef = useRef(heartbeatPresences);
   const reconnectGraceRef = useRef(presenceReconnectGrace);
   const pendingPaintTracesRef = useRef<readonly ReceivedLiveTrace[]>([]);
@@ -605,18 +616,28 @@ export function useRoomSurfaceSession({
     let cacheAddress: ReturnType<typeof surfaceAddress> | undefined;
     let cacheWriteTimer: ReturnType<typeof setTimeout> | undefined;
 
-    agentPresencesRef.current = {};
-    reconnectGraceRef.current = {};
-    setAgentPresences({});
-    setPresenceReconnectGrace({});
-    setPresenceResolved(false);
-    liveOverlaysRef.current = [];
-    setLiveOverlays([]);
-    reconciledViewRef.current = null;
-    setFailedIds(new Set());
+    const openingViewer = peekBuzzViewerContext();
+    const openingFrame = !sessionStartedRef.current && openingCache &&
+      openingCache.view.room.id === channelId &&
+      openingCache.viewerPubkey === openingViewer?.viewerPubkey &&
+      openingCache.relayUrl === openingViewer?.relayUrl;
+    sessionStartedRef.current = true;
+    // Initial state already describes this cached response. Resetting it here
+    // commits another Room render before its first frame can be submitted.
+    if (!openingFrame) {
+      agentPresencesRef.current = {};
+      reconnectGraceRef.current = {};
+      setAgentPresences({});
+      setPresenceReconnectGrace({});
+      setPresenceResolved(false);
+      liveOverlaysRef.current = [];
+      setLiveOverlays([]);
+      reconciledViewRef.current = null;
+      setFailedIds(new Set());
+    }
     setHydrationFailed(false);
     setHydrationError(null);
-    bindingsRef.current.resetTranscript();
+    if (!openingFrame) bindingsRef.current.resetTranscript();
 
     // Seconds, but not WHOLE seconds. A draft's first snapshot is the anchor
     // its row keeps for the rest of the turn (C107), and two turns starting a
@@ -1065,9 +1086,32 @@ export function useRoomSurfaceSession({
       unsubscribe = stop;
     };
 
+    let stopOpeningResponse = () => {};
+    if (openingFrame && openingViewer) {
+      const address = surfaceAddress(openingViewer.relayUrl, openingViewer.viewerPubkey, `/room/${channelId}`);
+      const paintOpeningResponse = () => {
+        const viewer = peekBuzzViewerContext();
+        if (cancelled || viewer?.viewerPubkey !== openingViewer.viewerPubkey ||
+            viewer.relayUrl !== openingViewer.relayUrl) return;
+        const view = mobileSurfaceCache.peek(address, isRoomView);
+        if (view && view !== reconciledViewRef.current) {
+          paintView(view, false);
+          queueNewestFrameMark(view.messages.at(-1)?.id);
+        }
+      };
+      // A missing-row reply may arrive while the cached frame is committing.
+      // Observe the authorized response now instead of holding it behind setup.
+      stopOpeningResponse = mobileSurfaceCache.subscribe(address, paintOpeningResponse);
+      paintOpeningResponse();
+    }
+
     let transportForEffect: BuzzRigTransport | undefined;
     void (async () => {
       try {
+        if (openingFrame) {
+          await yieldToPaint();
+          if (cancelled) return;
+        }
         markRoomOpen('session-effect', channelId);
         markRoomOpen('identity-start');
         const viewerPubkey = await loadBuzzViewerPubkey();
@@ -1099,7 +1143,7 @@ export function useRoomSurfaceSession({
           queueNewestFrameMark(cachedNewest);
         }
         markRoomOpen('occupancy-yield-start');
-        await yieldToPaint();
+        if (!openingFrame || cached !== openingCache.view) await yieldToPaint();
         markRoomOpen('occupancy-yield-end');
         if (cancelled) return;
 
@@ -1150,9 +1194,8 @@ export function useRoomSurfaceSession({
         if (paintedCache) enrichView(paintedCache, identity.publicKey, relayUrl, false);
         if (cancelled) return;
 
-        let openingPrefetch = notificationResponseId
-          ? takePrefetchedPushRoom(notificationResponseId, channelId)
-          : null;
+        let openingPrefetch = takePrefetchedPushRoom(notificationResponseId ?? `room-open:${channelId}`, channelId);
+        const openReadBeforeWatch = Boolean(notificationResponseId || openingPrefetch);
         scheduler = new SurfaceRefreshScheduler({
           fetch: async () => {
             const traces = pendingReadTraces;
@@ -1202,7 +1245,11 @@ export function useRoomSurfaceSession({
               relayUrl,
               true,
             );
-            if (notificationResponseId && !watchStarted) {
+            // Disk completion does not mean the tap-time response has arrived.
+            // Keep painting cache publishes through identity/outbox setup until
+            // the opening read is actually applied (cleanup also unsubscribes).
+            stopOpeningResponse();
+            if (openReadBeforeWatch && !watchStarted) {
               watchStarted = true;
               readRacedAhead = true;
               // A push needs its fresh Room answer on screen first. Installing
@@ -1275,7 +1322,7 @@ export function useRoomSurfaceSession({
                     : `Could not load this conversation. ${String(error)}`,
               );
             }
-            if (notificationResponseId && !terminal && !watchStarted) {
+            if (openReadBeforeWatch && !terminal && !watchStarted) {
               watchStarted = true;
               readRacedAhead = true;
               markRoomOpen('watch-install');
@@ -1284,7 +1331,7 @@ export function useRoomSurfaceSession({
           },
         });
         schedulerRef.current = scheduler;
-        if (notificationResponseId) {
+        if (openReadBeforeWatch) {
           scheduler.refreshNow();
           await scheduler.startAfter(Promise.resolve());
         } else {
@@ -1307,6 +1354,7 @@ export function useRoomSurfaceSession({
     })();
 
     return () => {
+      stopOpeningResponse();
       if (cacheWriteTimer) {
         clearTimeout(cacheWriteTimer);
         const view = reconciledViewRef.current;

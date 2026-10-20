@@ -1,0 +1,20 @@
+// Resource profile for disposable emulator APKs built by local-attempt.sh.
+def endpoint = new URI(System.getenv('EXPO_PUBLIC_BUZZY_MONOLITH_URL') ?: 'https://invalid')
+if (System.getenv('BEELINE_ANDROID_NATIVE_LATENCY_PROBE') != '1' ||
+    endpoint.host != '10.0.2.2' || !(endpoint.scheme in ['http', 'https']) || endpoint.port < 1) {
+  throw new GradleException('Latency build settings require the disposable emulator proxy')
+}
+// Select the APK task instead of every library's publishing tasks.
+gradle.startParameter.setTaskNames(gradle.startParameter.taskNames.collect { name ->
+  name == 'assembleRelease' ? ':app:assembleRelease' : name
+})
+allprojects { project ->
+  project.tasks.configureEach { task ->
+    if (task.name in ['lintVitalAnalyzeRelease', 'lintVitalReportRelease', 'lintVitalRelease']) {
+      task.enabled = false
+    }
+  }
+  project.plugins.withId('com.facebook.react') {
+    project.extensions.getByName('react').extraPackagerArgs.addAll(['--max-workers', '2'])
+  }
+}

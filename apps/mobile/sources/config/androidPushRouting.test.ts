@@ -113,10 +113,15 @@ async function generatedSources(packageName: string): Promise<Record<string, str
 function forwardedIntentFlags(activitySource: string): {
   always: string[];
   whenColdPush: string[];
+  whenWarmPush: string[];
 } {
-  const model = { always: [] as string[], whenColdPush: [] as string[] };
+  const model = { always: [] as string[], whenColdPush: [] as string[], whenWarmPush: [] as string[] };
   let state: keyof typeof model = 'always';
   for (const line of activitySource.split('\n').map((entry) => entry.trim())) {
+    if (line.includes('if (pushTap && PushRoutingState.mainActivityIsLive)')) {
+      state = 'whenWarmPush';
+      continue;
+    }
     if (line.includes('if (pushTap && !PushRoutingState.mainActivityIsLive)')) {
       state = 'whenColdPush';
       continue;
@@ -206,6 +211,19 @@ describe('Android push routing generated sources', () => {
     }
   });
 
+  it('delivers foreground FCM extras through Expo without starting MainActivity again', async () => {
+    const sources = await generatedSources('app.usebeeline');
+    const activity = sources['PushNotificationActivity.kt'];
+    const foreground = activity.slice(activity.indexOf('val foregroundExtras'), activity.indexOf('val destination'));
+    expect(foreground).toContain('containsKey("google.message_id") == true && PushRoutingState.mainActivityIsStarted');
+    expect(foreground).toContain('NotificationManager.onNotificationResponseFromExtras(foregroundExtras)');
+    expect(foreground).toContain('finish()');
+    expect(foreground).toContain('return');
+    expect(foreground).not.toContain('startActivity');
+    expect(sources['PushRoutingLifecycleProvider.kt']).toContain('startedMainActivities.incrementAndGet()');
+    expect(sources['PushRoutingLifecycleProvider.kt']).toContain('startedMainActivities.decrementAndGet()');
+  });
+
   it('clears the task only when no live MainActivity can take the fresh intent', async () => {
     const sources = await generatedSources('app.usebeeline');
 
@@ -216,6 +234,7 @@ describe('Android push routing generated sources', () => {
     // clearing the task is what builds MainActivity from THIS intent instead.
     expect(forwardedIntentFlags(sources['PushNotificationActivity.kt'])).toEqual({
       always: ['FLAG_ACTIVITY_NEW_TASK'],
+      whenWarmPush: ['FLAG_ACTIVITY_NO_ANIMATION'],
       whenColdPush: ['FLAG_ACTIVITY_CLEAR_TASK'],
     });
     expect(sources['PushNotificationActivity.kt']).toContain(

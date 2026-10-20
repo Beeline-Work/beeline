@@ -857,7 +857,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
   },
   {
     "name": "order",
-    "description": "Privately assign one agent at address. A Room requires agent; a corner selects its implementer unless its commander names the configured reviewer. From a corner, DMs, parent Room and ancestor corners are forbidden: report to your commander. Receipt confirms acceptance, not completion.",
+    "description": "Privately assign one agent besides yourself. A Room requires agent; a corner defaults to its implementer. Corners may name any parent-Room agent in the corner or parent Room; DMs, other Rooms and ancestor corners are forbidden. Reports return to the sender. Receipt confirms acceptance, not completion.",
     "inputSchema": {
       "type": "object",
       "required": ["address", "text"],
@@ -865,7 +865,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
         "address": {
           "type": "string",
           "format": "uuid",
-          "description": "Corner address only; membership in the corner or its parent Room is required."
+          "description": "Room or corner address; current membership is required."
         },
         "agent": {
           "type": "string",

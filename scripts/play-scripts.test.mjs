@@ -188,3 +188,105 @@ test('without PLAY_DRY_RUN every script demands ACCESS_TOKEN before calling anyt
     assert.match(result.stderr, /ACCESS_TOKEN env var is required/, script);
   }
 });
+
+// api() retry tests: stub curl with a fake on PATH that serves a scripted
+// status sequence from PLAY_TEST_RESPONSES, then call api() directly.
+function runApi(t, responses, extraEnv = {}) {
+  const dir = tempDir(t);
+  const bin = path.join(dir, 'bin');
+  fs.mkdirSync(bin);
+  fs.writeFileSync(
+    path.join(bin, 'curl'),
+    `#!/usr/bin/env bash
+echo "$PLAY_TEST_RESPONSES" > "${dir}/responses"
+n=$(ls "${dir}" | grep -c '^call-') || true
+n=$((n+1))
+echo "$n" > "${dir}/call-$n"
+line=$(awk -v n="$n" 'NR==n {print; exit}' "${dir}/responses")
+echo "$line"
+# emulate curl -w "\\n%{http_code}" so api() can split body from status
+prev=""
+fmt=""
+for a in "$@"; do
+  if [[ "$prev" == "-w" || "$prev" == "--write-out" ]]; then fmt="$a"; fi
+  prev="$a"
+done
+if [[ -n "$fmt" && "$fmt" == *http_code* ]]; then
+  printf '\n%s' "$line"
+fi
+`,
+  );
+  fs.chmodSync(path.join(bin, 'curl'), 0o755);
+  const result = spawnSync(
+    'bash',
+    ['-c', `source ${path.join(REPO, 'scripts', 'play-api.sh')}; api "$@"`, 'api', 'GET', `${API}/edits/1/tracks/internal`],
+    {
+      encoding: 'utf8',
+      env: {
+        PATH: `${bin}:${process.env.PATH}`,
+        PACKAGE_NAME: PACKAGE,
+        ACCESS_TOKEN: 'test-token',
+        PLAY_TEST_RESPONSES: responses.join('\n'),
+        ...extraEnv,
+      },
+    },
+  );
+  const calls = fs.readdirSync(dir).filter((f) => f.startsWith('call-')).length;
+  return { result, calls };
+}
+
+test('api() retries a 503 and returns the eventual 200 body', (t) => {
+  const { result, calls } = runApi(t, [503, 503, 200], { PLAY_RETRY_DELAYS: '0 0 0' });
+  assert.equal(result.status, 0, `${result.stderr}`);
+  assert.equal(result.stdout.trim(), '200');
+  assert.equal(calls, 3);
+  assert.match(result.stderr, /retrying in 0s \(retry 1 of 3\)/);
+  assert.match(result.stderr, /retrying in 0s \(retry 2 of 3\)/);
+});
+
+test('api() fails after 3 retries with the ::error:: line when the 503 persists', (t) => {
+  const { result, calls } = runApi(t, [503, 503, 503, 503], { PLAY_RETRY_DELAYS: '0 0 0' });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /::error::API call failed: GET .* → HTTP 503/);
+  assert.match(result.stderr, /retry 3 of 3/);
+  assert.equal(result.stdout.trim(), '');
+  assert.equal(calls, 4);
+});
+
+test('api() retries a 429 the same way', (t) => {
+  const { result, calls } = runApi(t, [429, 200], { PLAY_RETRY_DELAYS: '0' });
+  assert.equal(result.status, 0, `${result.stderr}`);
+  assert.equal(result.stdout.trim(), '200');
+  assert.equal(calls, 2);
+});
+
+test('api() fails at once on a non-retryable 403 with no retry', (t) => {
+  const { result, calls } = runApi(t, [403], { PLAY_RETRY_DELAYS: '0' });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /::error::API call failed: GET .* → HTTP 403/);
+  assert.doesNotMatch(result.stderr, /retrying/);
+  assert.equal(result.stdout.trim(), '');
+  assert.equal(calls, 1);
+});
+
+// Bundle-upload case from the brief: a retried non-idempotent POST may meet
+// "version code already used" (Play returns 409) when the first attempt landed
+// server-side despite the 5xx. 409 is not retryable, so api() fails at once
+// with the error output; the caller stops before commit_edit and the
+// uncommitted edit is discarded — no duplicate artifact is published.
+test("api() fails at once when a retried upload hits 'version code already used' (409)", (t) => {
+  const { result, calls } = runApi(t, [503, 409], { PLAY_RETRY_DELAYS: '0' });
+  assert.equal(result.status, 1);
+  assert.match(result.stderr, /::error::API call failed: GET .* → HTTP 409/);
+  assert.doesNotMatch(result.stderr, /retry 2 of 3/);
+  assert.equal(result.stdout.trim(), '');
+  assert.equal(calls, 2);
+});
+
+test('api() succeeds on the first 200 without touching the retry path', (t) => {
+  const { result, calls } = runApi(t, [200], { PLAY_RETRY_DELAYS: '0' });
+  assert.equal(result.status, 0);
+  assert.equal(result.stdout.trim(), '200');
+  assert.doesNotMatch(result.stderr, /retrying/);
+  assert.equal(calls, 1);
+});

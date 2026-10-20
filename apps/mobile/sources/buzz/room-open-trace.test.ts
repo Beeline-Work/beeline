@@ -56,6 +56,31 @@ describe('room open trace', () => {
     expect(reportPage).toHaveBeenLastCalledWith(expect.any(Number), true);
     restore();
   });
+  it('keeps the observation request behind the native-frame margin', async () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      frames.push(callback);
+      return frames.length;
+    });
+    const { mod, restore } = await withEnv(undefined, false);
+    try {
+      for (let index = 0; index < 8; index++) {
+        mod.markRoomOpen('nav-dispatch');
+        mod.markRoomOpen('newest-frame');
+      }
+      await vi.dynamicImportSettled();
+      expect(reportPage).not.toHaveBeenCalled();
+      frames.shift()!(0);
+      await vi.dynamicImportSettled();
+      expect(reportPage).not.toHaveBeenCalled();
+      frames.shift()!(16);
+      await vi.dynamicImportSettled();
+      expect(reportPage).toHaveBeenCalledExactlyOnceWith(expect.any(Number), false);
+    } finally {
+      restore();
+      vi.unstubAllGlobals();
+    }
+  });
   it('attaches only the matching successful Room read to the existing observation', async () => {
     const { mod, restore } = await withEnv(undefined, false);
     for (let i = 0; i < 7; i++) {

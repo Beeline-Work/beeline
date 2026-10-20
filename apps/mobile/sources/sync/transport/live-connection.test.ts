@@ -311,6 +311,30 @@ describe('LiveConnection', () => {
     connection.dispose();
   });
 
+  it('Reproduction 5b25dbcb: restarts corner ordering and resume cursor on an in-place epoch change', async () => {
+    const { connection } = createConnection();
+    await connection.register([{ '#h': [ROOM_A] }], () => undefined);
+    sockets[0]!.open();
+    sockets[0]!.emit({ type: 'subscribed', roomId: ROOM_A, epoch: 'old', cursor: 20 });
+    const status = (epoch: string, sequence: number, state: string) => ({
+      type: 'corner-status', roomId: ROOM_A, epoch, sequence, cornerCount: 1,
+      openCorners: [], corners: [{ corner: { id: 'corner-1' }, state }],
+    });
+    sockets[0]!.emit(status('old', 21, 'working'));
+    sockets[0]!.emit(status('new', 1, 'idle'));
+    expect(getRoomCorners(ROOM_A).rows?.[0]?.state).toBe('idle');
+    sockets[0]!.emit(status('new', 1, 'working'));
+    expect(getRoomCorners(ROOM_A).rows?.[0]?.state).toBe('idle');
+    connection.reconnect();
+    await vi.waitFor(() => expect(sockets).toHaveLength(2));
+    sockets[1]!.open();
+    expect(sockets[1]!.sent.map((text) => JSON.parse(text))).toContainEqual({
+      type: 'subscribe', roomIds: [ROOM_A],
+      cursors: { [ROOM_A]: { epoch: 'new', base: 1, seen: [] } },
+    });
+    connection.dispose();
+  });
+
   it('writes every corner status into the corner store and delivers no older sequence', async () => {
     const { connection, changeIdentity } = createConnection();
     const heard: unknown[] = [];

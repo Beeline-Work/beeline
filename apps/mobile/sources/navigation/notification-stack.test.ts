@@ -9,7 +9,7 @@ import {
 import {
   createNotificationNavigator,
   findStackFor,
-  type NotificationResetAction,
+  type NotificationNavigationAction,
 } from './notification-stack';
 
 const ROUTE_NAMES = [
@@ -63,18 +63,21 @@ function deepInWorkspaceA(): State {
 /** A root navigator ref over one app stack, applying dispatches with the real stack router. */
 function appNavigation(initial: State) {
   let stack = initial;
+  const actions: NotificationNavigationAction[] = [];
   const ref = {
     getRootState: () => ({
       key: 'drawer',
       routeNames: ['(app)'],
       routes: [{ key: 'app', name: '(app)', state: stack }],
     }),
-    dispatch: (action: NotificationResetAction) => {
+    dispatch: (action: NotificationNavigationAction) => {
+      actions.push(action);
       expect(action.target).toBe(stack.key);
       stack = apply(stack, action);
     },
   };
   return {
+    actions,
     navigator: createNotificationNavigator(ref),
     get stack() {
       return stack;
@@ -165,6 +168,24 @@ describe('back from a notification (Reproduction R-NAV-1)', () => {
 });
 
 describe('createNotificationNavigator', () => {
+  it('pushes onto the exact mounted ancestry and preserves the Room-list Back destination', () => {
+    const app = appNavigation(stackRouter.getRehydratedState({
+      routes: [{ name: 'beeline/channels', params: { communityId: 'ws-b' } }],
+    } as never, options));
+    const roomList = app.stack.routes[0];
+    const navigatorKey = app.stack.key;
+
+    navigateToBuzzTargetFromNotification(app.navigator, roomB, 'warm-push');
+
+    expect(app.actions[0]?.type).toBe('PUSH');
+    expect(app.stack.key).toBe(navigatorKey);
+    expect(app.stack.routes[0]).toBe(roomList);
+    expect(app.stack.routes.map((route) => route.name)).toEqual(['beeline/channels', 'beeline/chat/[channelId]']);
+    expect(app.stack.routes[1]?.params).toMatchObject({ channelId: 'room-b1', notificationMessageId: 'msg-1' });
+    app.systemBack();
+    expect(app.stack.routes).toEqual([roomList]);
+  });
+
   it('keeps a mounted screen only in the slot it already occupies', () => {
     const app = appNavigation(
       stackRouter.getRehydratedState(
@@ -178,16 +199,18 @@ describe('createNotificationNavigator', () => {
       ),
     );
     const [roomList, corner] = app.stack.routes;
+    const navigatorKey = app.stack.key;
 
     navigateToBuzzTargetFromNotification(app.navigator, cornerB, 'r1');
 
     // The Room list stays mounted; the corner moved up a slot, so it is a new screen.
-    expect(app.stack.routes[0]!.key).toBe(roomList!.key);
+    expect(app.stack.key).toBe(navigatorKey);
+    expect(app.stack.routes[0]).toBe(roomList);
     expect(app.stack.routes[2]!.key).not.toBe(corner!.key);
   });
 
   it('opens the app group when its stack is not mounted yet', () => {
-    const dispatched: NotificationResetAction[] = [];
+    const dispatched: NotificationNavigationAction[] = [];
     createNotificationNavigator({
       getRootState: () => ({ key: 'drawer', routeNames: ['(app)'], routes: [{ key: 'app', name: '(app)' }] }),
       dispatch: (action) => dispatched.push(action),
@@ -195,7 +218,9 @@ describe('createNotificationNavigator', () => {
 
     expect(dispatched).toHaveLength(1);
     expect(dispatched[0]!.target).toBeUndefined();
-    expect(dispatched[0]!.payload.routes).toEqual([
+    const action = dispatched[0]!;
+    if (action.type !== 'RESET') throw new Error('The unmounted app must reset');
+    expect(action.payload.routes).toEqual([
       { name: '(app)', state: { index: 1, routes: notificationStackRoutes(roomB, 'r1') } },
     ]);
   });

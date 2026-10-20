@@ -279,8 +279,8 @@ import {
 } from '@/buzz/corner-navigation';
 import { isNearChatBottom } from '@/buzz/chat-scroll';
 import {
-  activityMessageReplyTarget,
   agentActivityReplyExcerpt,
+  beginReplyTarget,
   prepareMessageReply,
   type MessageReplyDisplayTarget,
   type MessageReplyTarget,
@@ -329,7 +329,7 @@ import {
   AppSignInCard,
   ChoiceCard,
   WalletCards,
-  AgentCommandCard,
+  agentCommandTranscriptMessage,
   OrdinaryLedgerMessage,
   TargetBranchProposalCard,
   WritePermissionCard,
@@ -3624,16 +3624,13 @@ export function BuzzChatSurface({
 
   const beginReply = useCallback(
     (message: ChatDisplayMessage) => {
-      const target = message.isAgentActivity
-        ? activityMessageReplyTarget(
-            message,
-            chronologicalMessagesRef.current,
-            replyTargetForMessage(message),
-          )
-        : {
-            ...replyTargetForMessage(message),
-            ...(message.reference ? { reference: message.reference } : {}),
-          };
+      const target = beginReplyTarget(
+        message,
+        chronologicalMessagesRef.current,
+        replyTargetForMessage(message),
+        decodedId,
+      );
+      if (!target) return;
       const install = () => {
         setReplyTarget(target);
         if (target.isAgent && target.authorHandle && target.authorPubkey) {
@@ -3658,7 +3655,7 @@ export function BuzzChatSurface({
         scrollController.request({ kind: 'newest' });
         scheduleAnimationFrame(() => composerRef.current?.focus());
       };
-      if (message.isAgentActivity || target.reference?.channelId === decodedId) install();
+      install();
     },
     // Read through the ref: a transcript dependency here would hand every
     // row a new renderer on each live message.
@@ -5616,6 +5613,9 @@ export function BuzzChatSurface({
         referencedMessage?: ChatDisplayMessage;
       },
     ) => {
+      // An agent's order or report is ordinary transcript: the recipient leads
+      // the text as an @mention and the row keeps its own author's byline.
+      item = agentCommandTranscriptMessage(item, roomParticipants);
       if (item.roomUpdate) {
         return (
           <LedgerRoomUpdate
@@ -5766,10 +5766,6 @@ export function BuzzChatSurface({
             onOpenWorkbench={openWorkbench}
           />
         );
-      }
-
-      if (item.agentCommand) {
-        return <AgentCommandCard message={item} stamp={ledgerStamp(item.timestamp)} />;
       }
 
       if (item.walletTx || item.walletInsufficient || item.walletDelegation) {

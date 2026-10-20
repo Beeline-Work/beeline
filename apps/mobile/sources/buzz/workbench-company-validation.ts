@@ -22,9 +22,11 @@ export function isWorkbenchCompanyIndex(v: unknown): v is WorkbenchCompanyIndex 
   return record(v) && v.version === 1 && typeof v.hasConnections === 'boolean' && record(v.summary) && string(v.summary.value) && optionalString(v.summary.attention)
     && list(v.suggestions, suggestion) && list(v.rows, r => record(r) && string(r.id) && string(r.name) && string(r.subtitle) && optionalString(r.domain)
       && ['company', 'sign-in-service', 'other'].includes(String(r.kind)) && ['attention', 'signin', 'apps', 'keys'].includes(String(r.section)) && logo(r.logo)
+      && (r.state === undefined || ['connected', 'connect', 'error'].includes(String(r.state)))
       && optionalString(r.status) && optionalString(r.attention) && list(r.alsoAvailable, suggestion)
       && list(r.items, i => record(i) && string(i.id) && string(i.title) && string(i.subtitle) && ['key', 'login', 'connection'].includes(String(i.kind))
-        && target(i.target) && optionalString(i.status) && optionalBoolean(i.attention))
+        && target(i.target) && (i.state === undefined || ['connected', 'connect', 'error'].includes(String(i.state)))
+        && optionalString(i.status) && optionalBoolean(i.attention))
       && list(r.machines, m => record(m) && string(m.id) && string(m.name) && typeof m.online === 'boolean'
         && ['connected', 'error', 'not-added'].includes(String(m.status)) && optionalString(m.error) && optionalString(m.signedInAs) && optionalBoolean(m.reconnecting) && optionalString(m.statusText)));
 }

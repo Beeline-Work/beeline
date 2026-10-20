@@ -40,7 +40,7 @@ import {
   MonolithRequestTimeoutError,
   MONOLITH_REQUEST_TIMEOUT_MS,
 } from '@/auth/monolith-session';
-import { recordRoomReadNetworkTiming } from '@/buzz/room-open-trace';
+import { markRoomOpen, recordRoomReadNetworkTiming } from '@/buzz/room-open-trace';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { liveFrameEpoch } from './live-frame-epoch';
 import { stampRoomMessageRows } from '@/buzz/room-message-records';
@@ -59,7 +59,10 @@ const readsInFlight = new Map<string, { promise: Promise<unknown>; epoch: number
 function shareRead<T>(key: string, start: () => Promise<T>): Promise<T> {
   const epoch = liveFrameEpoch();
   const shared = readsInFlight.get(key);
-  if (shared && shared.epoch === epoch) return shared.promise as Promise<T>;
+  if (shared && shared.epoch === epoch) {
+    if (/^\/v1\/phone\/rooms\/[^/?]+$/.test(key)) markRoomOpen('wire-shared');
+    return shared.promise as Promise<T>;
+  }
   const promise = start();
   const entry = { promise, epoch };
   readsInFlight.set(key, entry);
@@ -278,6 +281,7 @@ class MonolithRoomViewClient {
     try {
       const response = await this.request(path, method, body, controller.signal, headers);
       const value = await untilAborted(response.json() as Promise<unknown>, controller.signal);
+      if (/^\/v1\/phone\/rooms\/[^/?]+$/.test(path)) markRoomOpen('wire-body');
       const projected = guard(value);
       if (projected === null) throw new RoomViewHttpError(502, 'invalid_surface_response');
       return projected;

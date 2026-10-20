@@ -836,49 +836,30 @@ export const WalletCards = React.memo(function WalletCards({
 });
 
 /**
- * An agent's order into, or report from, this corner: one collapsed record
- * card. The header expands it to the full text in place.
+ * An agent's order into, or report from, a corner reads as ordinary transcript.
+ * The recipient becomes the first word as a plain @mention; the byline still
+ * names the agent that wrote it, and every other message action stays available.
+ * The record card that used to wrap these rows is gone.
  */
-export const AgentCommandCard = React.memo(function AgentCommandCard({
-  message,
-  stamp,
-}: {
-  message: ChatDisplayMessage;
-  stamp: string;
-}) {
-  const [expanded, setExpanded] = useState(false);
+export function agentCommandTranscriptMessage(
+  message: ChatDisplayMessage,
+  participants: readonly { pubkey: string; handle: string }[],
+): ChatDisplayMessage {
   const command = message.agentCommand;
-  if (!command) return null;
-  const sender = message.authorIdentity;
-  const title = `${sender?.name || 'Agent'} → ${command.recipient.name || 'Agent'}${
-    command.status ? ` · ${command.status}` : ''
-  }`;
-  return (
-    <TranscriptCard
-      tier="record"
-      identity={
-        <IdentityMark
-          kind={sender?.kind ?? 'agent'}
-          seed={sender?.pubkey ?? command.recipient.id}
-          name={sender?.name ?? 'Agent'}
-          avatarUrl={sender?.avatar}
-          face={sender?.face}
-          size={26}
-        />
-      }
-      title={title}
-      subline={expanded ? undefined : command.text.split('\n', 1)[0]}
-      sublineLines={1}
-      sublineTestID="agent-command-subline"
-      body={expanded ? command.text : undefined}
-      stamp={stamp}
-      onHeaderPress={() => setExpanded((open) => !open)}
-      headerExpanded={expanded}
-      headerTestID="agent-command-header"
-      testID={`agent-command-${command.kind}`}
-    />
-  );
-});
+  if (!command) return message;
+  const participant = participants.find((candidate) => candidate.pubkey === command.recipient.id);
+  const handle = (
+    participant?.handle ??
+    command.recipient.handle ??
+    command.recipient.name
+  ).replace(/^@/, '');
+  // Keep agentCommand on the row: the text is display-only, but Reply needs
+  // the marker to give this card row the same-Room parent proof it lacks.
+  return {
+    ...message,
+    text: `@${handle} ${command.text}`,
+  };
+}
 
 export interface TargetBranchProposalCardProps {
   message: ChatDisplayMessage;

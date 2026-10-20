@@ -2,7 +2,7 @@ import React from 'react';
 import { isRoomView } from '@beeline/buzz-client';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create } from 'react-test-renderer';
-import { afterEach, beforeAll, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, expect, it, vi } from 'vitest';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
@@ -98,11 +98,18 @@ vi.setConfig({ testTimeout: 20000 });
 beforeAll(() => {
   (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
 });
+beforeEach(() => {
+  // This Node-rendered page includes the prompt's post-paint frame scheduler.
+  vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) =>
+    setTimeout(() => callback(performance.now()), 16));
+  vi.stubGlobal('cancelAnimationFrame', clearTimeout);
+});
 afterEach(async () => {
   if (renderer) {
     await act(async () => renderer.unmount());
     renderer = null;
   }
+  vi.unstubAllGlobals();
 });
 function text(node: any): string {
   if (typeof node === 'string') return node;

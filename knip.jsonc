@@ -79,6 +79,8 @@
         "scripts/room-viewport-proof.tsx",
         "scripts/viewer-dock-overflow-{proof,native}.tsx",
         "scripts/viewer-dock-keyboard-native.tsx",
+        // Gradle bundles the viewer composer screenshot fixture via entryFile.
+        "scripts/viewer-composer-polish-native.tsx",
         // The native status fixture is bundled through Gradle's entryFile override.
         "scripts/status-band-native-entry.js",
         "scripts/unread-controls-native-proof.tsx",
@@ -104,7 +106,6 @@
         "scripts/direct-message-picker-proof.tsx",
         "scripts/dm-sheet-proof.tsx",
         "scripts/beeline-mark-proof.tsx",
-        "scripts/agent-command-card-proof.tsx",
         "scripts/identity-mark-system-proof.tsx",
         "scripts/system-lines-proof.tsx",
         "scripts/harness-start-failure-proof.tsx",
@@ -184,6 +185,7 @@
         "scripts/workflow-run-proof.tsx",
         "scripts/member-picker-nav-inset-proof.tsx",
         "scripts/new-room-nav-gap-proof.tsx",
+        "scripts/agent-profile-usage-native-proof.tsx",
       ],
       "project": [
         "sources/**/*.{js,ts,tsx}",

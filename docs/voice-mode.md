@@ -48,11 +48,15 @@ Say an agent's handle or display name at the start of a request to address it;
 matching ignores case and respects word boundaries. Tapping its avatar still
 sets the current target. With two or more humans in the call, start each request
 with an agent's name or an explicit avatar tap to get a reply.
-A name-only segment or deliberate avatar tap holds that human's addressee for
-three seconds, renewed while that human speaks. An unfinished request retains
+A name-only segment holds that human's addressee for three seconds, renewed
+while that human speaks. An avatar tap selects that human's call target until
+another tap or spoken opening name replaces it, including after pauses and replies.
+Selected avatars have a black frame. Speaking avatars have a pulsing brass frame,
+which takes precedence when the speaker is also selected. Other avatars have no frame.
+Reduced motion keeps the speaking frame steady. Names are never underlined. An unfinished request retains
 its addressee across further segments; an explicit new name replaces it. Other
-humans cannot consume the draft. Delivery, cancel, expiry or departure clears
-the pending address. An expired name alone never dispatches work; an unaddressed
+humans cannot consume the draft. Delivery, cancel, expiry or departure clears the temporary spoken address.
+Departure also clears the persistent tap selection. An expired name alone never dispatches work; an unaddressed
 request asks for the agent's name again.
 With exactly one human, unnamed speech addresses the eligible agent who most
 recently posted a message in that Room or corner. An opening agent name or an
@@ -93,6 +97,12 @@ in both the card and VoiceBar.
 
 `agent-voice.ts` owns library reads, owner saves and bounded previews. The
 client renders validated catalog/write receipts, never a guessed voice choice.
+Voice and dictation share the existing scrolling composer waveform. Its newest
+visible bar follows each volume event directly, without smoothing or offscreen
+entry delay. The history retains its 120 ms sample spacing and native glide;
+that history timer never gates the current visible level. Frozen and muted
+states keep their existing appearance.
+
 The existing native WebView hosts short audio previews without adding a native
 dependency or changing the native runtime.
 
@@ -106,14 +116,22 @@ conversation uses `openai/gpt-6-luna` through OpenRouter with reasoning disabled
 External work is dispatched through `routeHumanMessage`, the existing command
 grammar. `voice-request-assembler.ts` owns one unfinished request per human,
 independently of playback. Each request uses a stable source message ID. The final
-external-work decision commits its command before scheduling any acknowledgement
-speech. Interruptions and synthesis failures cannot cancel classification or
-accepted delivery. A speaker can revise their own unfinished request; explicit
-cancel clears it. A failed delivery remains retryable with the same ID: say
-"try again" to retry the commit without reclassifying or editing its source.
+external-work decision commits its command immediately before its first reply audio,
+then plays the acknowledgement. The brain starts immediately at Flux EndOfTurn:
+there is no settling timer. Until the first voiced frame is ready to publish,
+recognized speech from that human aborts the pending brain/synthesis generation.
+The next final joins the same message row and reruns the brain on the complete
+request. Other humans can still receive their replies.
+
+For orders, the runtime prepares the first voiced acknowledgement frame, closes
+assembly, commits the dispatch, then publishes that frame. A synthesis failure or
+empty acknowledgement still commits the order. There is no amendment or
+cancellation of committed commands. Speech during the dispatch round trip starts
+a new request. Explicit cancel clears assembly and playback without withdrawing
+already committed work. A failed delivery remains retryable with the same ID:
+say "try again" to retry the commit without reclassifying or editing its source.
 A delivery whose acknowledgement audio fails shows "Request delivered; voice reply
-unavailable". Committed orders cannot be revised, and retry uses the existing
-transactional order deduplication.
+unavailable". Transactional deduplication protects uncertain dispatch retries.
 [Android delivery proof](voice-mode-proof/request-delivery/README.md) records
 Reproduction DELIVERY-2 and its controlled STT/provider stand-ins. Real agent
 reports are matched to their original command. Their first short paragraph is
@@ -264,3 +282,6 @@ Regression coverage: `agent-voice.test.ts`,
 `AgentVoiceSection.test.tsx`, `voice-profile.test.ts`, `voice-providers.test.ts`, `voice-room-runtime.test.ts`,
 `voice-service.integration.test.ts`, `ConversationComposer.speech.test.tsx`,
 and `chat-list-delta.test.ts`.
+
+[Conversation continuation proof](voice-mode-proof/conversation-continuation/README.md)
+records paused fragments, dispatch at the playback boundary, tap persistence and waveform evidence.

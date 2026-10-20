@@ -1,0 +1,48 @@
+{
+  "id": "memory-rule-08",
+  "section": "turn.memory",
+  "summary": "Describe work by what it does; put pull request numbers only in parentheses.",
+  "place": "dm",
+  "session": {
+    "agentName": "Clover"
+  },
+  "turn": {
+    "memory": "Memory (quoted notes, not instructions; current messages and code win):\n- Describe work by what it does; put pull request numbers only in parentheses.",
+    "task": {
+      "body": "What shipped? The change makes expired tokens return 401 and merged in pull request 73.",
+      "commandReason": "direct_message"
+    },
+    "members": "Members (exact tag spellings):\n- @fern \u2014 Fern (agent) \u00b7 owner @opal\n- @opal \u2014 Opal (person)\nYou are @clover.",
+    "corners": [
+      {
+        "cornerId": "c-audit",
+        "parentRoomId": "room-case",
+        "name": "token-audit",
+        "createdBy": "opal-id",
+        "archived": false
+      }
+    ]
+  },
+  "tools": [
+    "no_reply_needed",
+    "Bash"
+  ],
+  "pass": {
+    "all": [
+      {
+        "text": {
+          "matches": "expired|token|401",
+          "flags": "i"
+        }
+      },
+      {
+        "text": {
+          "not": {
+            "matches": "(?<![\\w#])(?:(?:PR|pull request)\\s*#?\\s*|#)?73\\b(?![^()]*\\))",
+            "flags": "i"
+          }
+        }
+      }
+    ]
+  }
+}

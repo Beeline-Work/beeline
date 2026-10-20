@@ -60,7 +60,7 @@ test('fails missing screens and route/interaction timing or network budgets', ()
 });
 
 test('tap budget requires one write, no completed RTT before feedback and no follow-up GET', () => {
-  const passing = { kind: 'tap', name: 'send-text', variant: 'warm', startMs: 0,
+  const passing = { kind: 'tap', name: 'send-text', variant: 'warm', clockDomain: 'host', startMs: 0,
     paintMs: 30, http: [{ method: 'POST', startMs: 10, endMs: 110 }] };
   assert.equal(summarize([passing], [], ['send-text']).requestPass, true);
   const late = { ...passing, paintMs: 120, http: [
@@ -68,6 +68,16 @@ test('tap budget requires one write, no completed RTT before feedback and no fol
     { method: 'GET', startMs: 111, endMs: 140 },
   ] };
   assert.equal(summarize([late], [], ['send-text']).requestPass, false);
+});
+
+test('uncalibrated clocks cannot pass requests and boundary uncertainty cannot hide a prepaint read', () => {
+  const raw = { kind: 'route', name: 'room', variant: 'warm', startMs: 100, paintMs: 200 };
+  assert.equal(summarize([raw]).requestPass, false);
+  const uncertain = { ...raw, clockDomain: 'host', clockUncertaintyMs: 8,
+    http: [{ startMs: 205, endMs: 300, method: 'GET' }] };
+  assert.equal(summarizeSample(uncertain).prepaintHttpCount, 1);
+  assert.equal(summarize([uncertain]).requestPass, false);
+  assert.throws(() => summarizeSample({ ...uncertain, clockUncertaintyMs: 26 }), /uncertain/);
 });
 
 test('route inventory excludes tests, layouts and components', async () => {

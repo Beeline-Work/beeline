@@ -699,7 +699,7 @@ function isHandoffState(state: WorkflowReadState | undefined): state is Workflow
   return Boolean(state) && state!.kind === undefined;
 }
 
-/** The gate card's question, also used to locate pre-run-id historical cards. */
+/** The historical gate question, retained to locate pre-run-id cards. */
 export function workflowGatePrompt(contract: Pick<WorkflowReadContract, 'name'>, stateName: string): string {
   return `${contract.name}: ${stateName}`.slice(0, 120);
 }
@@ -737,13 +737,15 @@ async function postWorkflowGate(
     agentId: askerAgentId,
     workflowRunId: input.runId,
     mode: 'question',
-    prompt: workflowGatePrompt(input.contract, input.stateName),
+    prompt: (input.state.does?.replace(/\s+/g, ' ').trim() ||
+      `Choose the next step for ${input.contract.name.replace(/[-_]/g, ' ')}`).slice(0, 120),
     ...(input.state.default && input.state.timeoutSeconds
       ? { constraint: `No answer in ${durationText(input.state.timeoutSeconds)} applies ${input.state.default}` }
       : {}),
     options: Object.entries(input.state.on).map(([outcome, target]) => ({
       label: outcome,
-      consequence: `go to ${target}`.slice(0, 80),
+      consequence: (input.contract.handoffs[target]?.does?.replace(/\s+/g, ' ').trim() ||
+        `Continue to ${target.replace(/[-_]/g, ' ')}`).slice(0, 80),
     })),
   });
   await db.query(

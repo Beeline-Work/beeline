@@ -4,6 +4,7 @@ import {
   activityMessageReplyTarget,
   activityReplyParent,
   agentActivityReplyExcerpt,
+  beginReplyTarget,
   prepareMessageReply,
 } from './message-reply';
 
@@ -132,6 +133,57 @@ describe('message replies', () => {
     };
 
     expect(activityReplyParent(activity, [latestAgentMessage, activity])).toBe(latestAgentMessage);
+  });
+
+  it.each(['order', 'report'] as const)(
+    'chooses Reply on an agent %s record and builds the composer target',
+    (kind) => {
+      const record = {
+        id: `${kind}-record`,
+        text: 'ordered @worker',
+        isUser: false,
+        timestamp: 11,
+        pubkey: 'speedy-agent-id',
+        isAgentAuthor: true,
+        authorIdentity: {
+          pubkey: 'speedy-agent-id',
+          kind: 'agent' as const,
+          name: 'Speedy',
+          handle: 'speedy',
+        },
+        agentCommand: {
+          kind,
+          recipient: { id: 'ruby-agent-id', name: 'Ruby', handle: 'ruby' },
+          text: kind === 'order' ? 'Do the work' : 'done: work is complete',
+        },
+      };
+      const display = {
+        messageId: record.id,
+        authorName: 'Speedy',
+        authorHandle: 'speedy',
+        authorPubkey: 'speedy-agent-id',
+        isAgent: true,
+        preview: record.text,
+      };
+
+      expect(beginReplyTarget(record, [], display, 'corner-id')).toEqual(display);
+    },
+  );
+
+  it('refuses a reply target when a non-activity row has no same-Room proof', () => {
+    expect(
+      beginReplyTarget(
+        { id: 'plain', text: 'hello', isUser: false, timestamp: 12 },
+        [],
+        {
+          messageId: 'plain',
+          authorName: 'Someone',
+          isAgent: false,
+          preview: 'hello',
+        },
+        'corner-id',
+      ),
+    ).toBeNull();
   });
 
   it('sends an addressed message without copying working tool activity into the body', () => {

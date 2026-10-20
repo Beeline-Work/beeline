@@ -1,3 +1,4 @@
+import { markRoomOpen } from '@/buzz/room-open-trace';
 import {
   getBuzzNotificationTargetFromData,
   navigateToBuzzTargetFromNotification,
@@ -107,11 +108,13 @@ async function dispatchNotificationResponse(
   entry: NotificationEntryPath,
   active: () => boolean,
 ): Promise<void> {
+  markRoomOpen('push-entry-dispatch');
   const id = readIdentifier(response);
   if (id && entries.consumedResponses && (await entries.consumedResponses.has(id))) {
     entries.log?.(`[PUSH ROUTING] Skipping leftover ${entry} notification response: ${id}`);
     return;
   }
+  markRoomOpen('push-entry-deduped');
   if (!active()) return;
   await entries.route(response, entry);
 }
@@ -121,6 +124,7 @@ export function startNotificationResponseEntries(entries: NotificationResponseEn
   let active = true;
   const stillActive = () => active;
   const subscription = entries.addResponseListener((response) => {
+    markRoomOpen('push-entry-event');
     const entry = entries.getAppState() === 'active' ? 'foreground' : 'background';
     void dispatchNotificationResponse(entries, response, entry, stillActive).catch((error) =>
       entries.log?.('Failed to route notification response:', error),
@@ -160,7 +164,7 @@ export type NotificationResponseRouting = {
   clearLastResponse: () => Promise<void>;
   resolveTarget: (target: BuzzNotificationTarget) => Promise<BuzzNotificationTarget>;
   /** Optional read started before landing; it never gates navigation. */
-  prefetchRoom?: (responseId: string, roomId: string) => void;
+  prefetchRoom?: (responseId: string, roomId: string, messageId?: string) => void;
   /** Same durable ids the entry adapter consults; a leftover replay is not a new tap. */
   consumedResponses?: ConsumedNotificationResponseStore;
   log?: (message: string) => void;
@@ -191,6 +195,7 @@ export async function routeBuzzNotificationResponse(
   response: TappedNotificationResponse | null | undefined,
   routing: NotificationResponseRouting,
 ): Promise<BuzzNotificationTarget | null> {
+  markRoomOpen('push-route-entry');
   const log = routing.log ?? ((message: string) => console.log(message));
   if (!response) {
     log('[PUSH ROUTING] Notification response is null');
@@ -238,7 +243,9 @@ export async function routeBuzzNotificationResponse(
       !buzzTarget.cornerId;
     if (responseId && directRoom && buzzTarget?.channelId) {
       try {
-        routing.prefetchRoom?.(responseId, buzzTarget.channelId);
+        const messageId = buzzTarget.messageId ?? buzzTarget.eventId;
+        if (messageId) routing.prefetchRoom?.(responseId, buzzTarget.channelId, messageId);
+        else routing.prefetchRoom?.(responseId, buzzTarget.channelId);
       } catch (error) {
         log(`Could not prefetch pushed Room: ${String(error)}`);
       }

@@ -8,10 +8,10 @@ export interface VoiceRequest {
   agent?: VoiceAgent;
   source: Promise<string>;
   classification: AbortController;
-  state: 'assembling' | 'classifying' | 'delivering' | 'retryable' | 'finished';
+  state: 'assembling' | 'classifying' | 'delivering' | 'retryable' | 'replying' | 'finished';
 }
 
-/** Per-human drafts outlive playback, but never outlive their addressee window. */
+/** One request per human remains editable until its first voiced reply is ready to publish. */
 export class VoiceRequestAssembler {
   private readonly requests = new Map<string, VoiceRequest>();
   private readonly failed = new Map<string, Map<string, VoiceRequest>>();
@@ -45,7 +45,7 @@ export class VoiceRequestAssembler {
   }
   pause(human: string) {
     const request = this.requests.get(human);
-    if (request && ['assembling', 'classifying'].includes(request.state)) {
+    if (request && ['assembling', 'classifying', 'replying'].includes(request.state)) {
       request.state = 'assembling';
       request.classification.abort();
     }
@@ -65,7 +65,7 @@ export class VoiceRequestAssembler {
   current(human: string) { return this.requests.get(human); }
   begin(human: string, text: string): { request: VoiceRequest; previous?: VoiceRequest } {
     const previous = this.requests.get(human);
-    const continuation = previous && ['assembling', 'classifying'].includes(previous.state) ? previous : undefined;
+    const continuation = previous && ['assembling', 'classifying', 'replying'].includes(previous.state) ? previous : undefined;
     continuation?.classification.abort();
     const request: VoiceRequest = {
       id: continuation?.id ?? randomBytes(32).toString('hex'),
@@ -88,7 +88,7 @@ export class VoiceRequestAssembler {
   }
   cancel(human: string) {
     const request = this.requests.get(human);
-    if (request && request.state !== 'delivering') {
+    if (request) {
       request.classification.abort(); this.requests.delete(human);
     }
     this.failed.delete(human);

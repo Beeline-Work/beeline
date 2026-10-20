@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 /** Join device paint marks with local proxy and SQL spans by a bounded run window. */
 import { readFile, writeFile } from 'node:fs/promises';
+import { hostClockMoment } from './device-clock.mjs';
 
 const args = process.argv.slice(2);
 const option = (name) => {
@@ -15,13 +16,14 @@ const momentsPath = option('--moments');
 const outPath = option('--out');
 if (!momentsPath || !outPath)
   throw new Error('usage: join.mjs --moments moments.ndjson --proxy proxy.ndjson [--sql sql.ndjson] --out samples.ndjson');
-const moments = await records(momentsPath);
+const moments = (await records(momentsPath)).map(hostClockMoment);
 const proxy = await records(option('--proxy'));
 const sql = await records(option('--sql'));
 const samples = moments.map((moment, index) => {
-  if (index && moment.startMs < moments[index - 1].endMs)
+  const uncertainty = moment.clockUncertaintyMs ?? 0;
+  if (index && moment.startMs - uncertainty < moments[index - 1].endMs + (moments[index - 1].clockUncertaintyMs ?? 0))
     throw new Error('overlapping moment windows cannot be attributed by time; capture serially or provide trace IDs');
-  const within = (span) => span.startMs >= moment.startMs && span.startMs < moment.endMs;
+  const within = (span) => span.startMs >= moment.startMs - uncertainty && span.startMs < moment.endMs + uncertainty;
   const matchedProxy = proxy.filter(within);
   const traceIds = new Set(matchedProxy.map((span) => span.traceId).filter(Boolean));
   return {

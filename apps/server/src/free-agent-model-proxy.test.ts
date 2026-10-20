@@ -15,6 +15,7 @@ import {
 import { freeAgentConfigFromEnv, tokenHash } from './free-agents.js';
 import { DEFAULT_FREE_AGENT_LIMITS, FREE_AGENT_BUDGET_MESSAGE, freeAgentLimitsFromEnv } from './free-agent-limits.js';
 import { PgliteDatabase } from './test-support.js';
+import { projectAgentUsage } from './agent-usage.js';
 import { PhoneService } from './phone-service.js';
 
 const OWNER = 'a'.repeat(64);
@@ -327,7 +328,7 @@ describe('free agent model proxy', () => {
 
   it('has no lifetime cap by default: an account past 3M lifetime tokens still spends within its daily cap', async () => {
     expect(freeAgentConfigFromEnv(ENABLED_ENV, 'https://beeline.example')).toMatchObject({
-      dailyTokenCap: 1_000_000,
+      dailyTokenCap: 3_000_000,
       lifetimeTokenCap: 0,
     });
     await db.query(
@@ -407,10 +408,31 @@ describe('free agent model proxy', () => {
     expect(await freeAgentAllowance(db, OWNER, new Date())).toEqual({ today: 0, lifetime: 0 });
   });
 
-  it('renders the default daily allowance as 1M tokens', () => {
+  it('renders the default daily allowance as 3M tokens', () => {
     const defaults = freeAgentConfigFromEnv(ENABLED_ENV, 'https://beeline.example')!;
-    expect(defaults.dailyTokenCap).toBe(1_000_000);
-    expect(allowanceMessage('daily', defaults)).toContain('(1M tokens)');
+    expect(defaults.dailyTokenCap).toBe(3_000_000);
+    expect(allowanceMessage('daily', defaults)).toContain('(3M tokens)');
+  });
+
+  it.each(['750000', 'invalid', '0', '-1', 'Infinity', ''])('keeps configured cap and meter aligned for %s', (value) => {
+    vi.stubEnv('BEELINE_FREE_AGENT_DAILY_TOKENS', value);
+    try {
+      const defaults = freeAgentConfigFromEnv({ ...ENABLED_ENV, BEELINE_FREE_AGENT_DAILY_TOKENS: value }, 'https://beeline.example')!;
+      expect(defaults.dailyTokenCap).toBe(value === '750000' ? 750_000 : 3_000_000);
+      expect(projectAgentUsage({ usage_free: true })?.free?.limit).toBe(defaults.dailyTokenCap);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('serves requests past 1M and returns the 3M cap message at the default limit', async () => {
+    config = freeAgentConfigFromEnv(ENABLED_ENV, 'https://beeline.example')!;
+    await db.query(`INSERT INTO free_agent_usage(owner_id,day,tokens) VALUES($1,(now() AT TIME ZONE 'UTC')::date,1000000)`, [OWNER]);
+    expect((await (await call({ messages: [{ role: 'user', content: 'hi' }] })).json()).choices[0].message.content).toBe('done');
+    await db.query(`UPDATE free_agent_usage SET tokens=3000000 WHERE owner_id=$1`, [OWNER]);
+    const response = await call({ messages: [{ role: 'user', content: 'hi' }] });
+    expect((await response.json()).choices[0].message.content).toContain('(3M tokens)');
+    expect(upstream).toHaveLength(1);
   });
 
   it('refunds tokens and dollars when the upstream connection fails', async () => {

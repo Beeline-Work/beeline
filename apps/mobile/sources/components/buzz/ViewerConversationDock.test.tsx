@@ -31,11 +31,9 @@ vi.mock('./ConversationComposer', () => ({
   ConversationComposer: (props: any) => React.createElement('Composer', props),
 }));
 vi.mock('./TranscriptReference', () => ({
-  ViewerConversationRing: () => null,
   TranscriptReference: ({ children }: any) => React.createElement('Text', {}, children),
 }));
 vi.mock('./MonoMarkdown', () => ({ MonoMarkdown: ({ markdown }: any) => React.createElement('Text', {}, markdown) }));
-vi.mock('./AttachmentPickerSheet', () => ({ AttachmentPickerSheet: () => null }));
 
 import { Platform } from 'react-native';
 import { ViewerConversationDock } from './ViewerConversationDock';
@@ -81,7 +79,7 @@ it('keeps an unsent draft in the composer without revealing the transcript', () 
   expect(send).not.toHaveBeenCalled();
 });
 
-it('keeps the pill and sent transcript expanded until the gold circle is tapped', async () => {
+it('keeps the pill and sent transcript expanded until the conversation toggle is tapped', async () => {
   toggle();
   type('Please simplify checkout');
   await act(async () => { expect(await composer().props.onSend()).toBe(true); });
@@ -229,4 +227,27 @@ it.each(['ios', 'web'])('handles keyboard height on %s', (platform) => {
   toggle();
   act(() => { keyboard.height = 300; composer().props.onFocus(); });
   expect(node('viewer-conversation-pill').props.style[1].bottom).toBe(platform === 'web' ? 12 : 312);
+});
+
+it.each(['artifact', 'computer'] as const)('offers no file picker in the %s viewer', (kind) => {
+  act(() => renderer.update(<ViewerConversationDock kind={kind} title="Checkout" roomId="viewer-test" />));
+  toggle();
+  expect(composer().props.onAttach).toBeUndefined();
+  expect(composer().props.attachments).toBeUndefined();
+});
+
+it('uses one outer border and the shared bubble in both toggle states', () => {
+  const pill = node('viewer-conversation-pill').props.style[0];
+  expect(pill.borderWidth).toBe(1);
+  const closed = node('viewer-conversation-toggle');
+  expect(closed.props.style[0].borderWidth).toBe(0);
+  expect(closed.props.style[0].height + 2 * pill.borderWidth).toBe(44);
+  expect(closed.props.style[0].width + 2 * pill.borderWidth).toBe(44);
+  const closedColor = closed.props.icon.props.color;
+  expect(closed.props.icon.props.size).toBeUndefined();
+  toggle();
+  const opened = node('viewer-conversation-toggle');
+  expect(opened.props.style[1].borderRightWidth).toBe(1);
+  expect(opened.props.style[1].borderRightColor).toBe(pill.borderColor);
+  expect(opened.props.icon.props.color).not.toBe(closedColor);
 });

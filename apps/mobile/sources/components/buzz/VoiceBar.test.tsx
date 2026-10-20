@@ -8,12 +8,13 @@ vi.mock('react-native', () => {
   return { View: host('View'), Text: host('Text'), ScrollView: host('ScrollView'), Pressable: host('Pressable'),
     AccessibilityInfo: { isReduceMotionEnabled: async () => false, addEventListener: () => ({ remove() {} }) } };
 });
+vi.mock('./MonoHull', () => ({ HullLivePulse: (props: any) => React.createElement('LivePulse', props, props.children) }));
 vi.mock('./IdentityMark', () => ({ IdentityMark: () => null }));
 vi.mock('./MicGlyph', () => ({ COMPOSER_GLYPH_SIZE:20, MicGlyph:(props:any)=>React.createElement('MicGlyph',props), StopGlyph: (props: any) => React.createElement('StopGlyph', props) }));
 vi.mock('./BeelineMarkSpinner', () => ({ BeelineMarkSpinner: () => null }));
 vi.mock('./DictationWaveform', () => ({ DictationWaveform: () => React.createElement('Waveform') }));
 vi.mock('./HullDialog', () => ({ HullModal: () => null }));
-import { VoiceBar } from './VoiceBar';
+import { VoiceBar, VoiceAgentStrip } from './VoiceBar';
 
 it('gives a group call one filled stop glyph with the Leave call accessibility label', async () => {
   const end = vi.fn(); let renderer: any;
@@ -115,4 +116,48 @@ it.each([1, 2])('uses the existing warning slot for %s humans and prioritizes ca
   await act(async () => renderer.update(<VoiceBar voice={{ ...voice, endingWarning: 'Ending in 15s' }} />));
   expect(renderer.root.findByProps({ testID: id }).props.children).toBe('Ending in 15s');
   await act(async () => renderer.unmount());
+});
+
+it('Reproduction CONVERSATION-2: tapping a face immediately marks selection and keeps it across level updates', async () => {
+  let renderer: any;
+  let updateLevel!: (level: number) => void;
+  let updateSpeaker!: (speaker: string | null) => void;
+  function Probe() {
+    const [target, aim] = React.useState('ruby');
+    const [speaker, setSpeaker] = React.useState<string | null>(null); updateSpeaker = setSpeaker;
+    const [level, setLevel] = React.useState(0); updateLevel = setLevel;
+    return <VoiceAgentStrip voice={{ agents: [
+      { pubkey: 'ruby', kind: 'agent', name: 'Ruby' }, { pubkey: 'goose', kind: 'agent', name: 'Goosey' },
+    ], target, aim, level, speaker } as any} />;
+  }
+  await act(async () => { renderer = create(<Probe />); });
+  const face = (name: string) => renderer.root.findAllByType('Pressable')
+    .find((node: any) => node.props.accessibilityLabel === `Speak to ${name}`);
+  const outline = (name: string) => face(name).findAllByType('View')[0].props.style
+    .flat(Infinity).filter((style: any) => style?.borderColor).at(-1)?.borderColor;
+  const underlined = () => renderer.root.findAllByType('Text').some((node: any) =>
+    [node.props.style].flat(Infinity).some((style: any) => style?.textDecorationLine === 'underline'));
+  try {
+    await act(async () => face('Goosey').props.onPress());
+    expect(face('Goosey').props.accessibilityState.selected).toBe(true);
+    expect(face('Ruby').props.accessibilityState.selected).toBe(false);
+    expect(outline('Goosey')).not.toBe('transparent');
+    expect(outline('Ruby')).toBe('transparent');
+    expect(underlined()).toBe(false);
+    await act(async () => updateLevel(0.8));
+    expect(outline('Goosey')).not.toBe('transparent');
+    expect(outline('Ruby')).toBe('transparent');
+    expect(underlined()).toBe(false);
+    await act(async () => updateSpeaker('ruby'));
+    expect(outline('Goosey')).toBe('#000000');
+    expect(renderer.root.findAllByType('LivePulse')).toHaveLength(1);
+    expect(renderer.root.findByProps({ testID: 'voice-speaking-frame-ruby' })).toBeTruthy();
+    await act(async () => updateSpeaker('goose'));
+    expect(outline('Goosey')).toBe('transparent');
+    expect(renderer.root.findByProps({ testID: 'voice-speaking-frame-goose' })).toBeTruthy();
+    expect(face('Goosey').props.accessibilityState.selected).toBe(true);
+    await act(async () => updateSpeaker(null));
+    expect(outline('Ruby')).toBe('transparent');
+    expect(outline('Goosey')).not.toBe('transparent');
+  } finally { await act(async () => renderer.unmount()); }
 });

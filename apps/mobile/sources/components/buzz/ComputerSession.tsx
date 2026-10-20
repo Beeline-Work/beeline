@@ -109,7 +109,8 @@ function ComputerStream({ session, preview = false, onEnded, onFirstFrame, onAcc
       if (event.nativeEvent.statusCode === 401 || event.nativeEvent.statusCode === 403) onAccessRejected?.();
       if (event.nativeEvent.statusCode === 410) onEnded?.();
     }}
-    scrollEnabled={false} automaticallyAdjustContentInsets={false} contentInsetAdjustmentBehavior="never" style={styles.stream} testID={preview ? 'computer-session-preview-webview' : 'computer-session-view-webview'} />
+    scrollEnabled={false} setBuiltInZoomControls={false} setDisplayZoomControls={false}
+    automaticallyAdjustContentInsets={false} contentInsetAdjustmentBehavior="never" style={styles.stream} testID={preview ? 'computer-session-preview-webview' : 'computer-session-view-webview'} />
     );
   return (
     <View style={styles.ended}><Text style={styles.endedText}>Opening browser…</Text></View>

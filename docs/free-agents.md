@@ -103,7 +103,7 @@ fit the cap, and each reply is bounded to the estimated room left. Actual
 usage can exceed the prompt estimate; settlement corrects the balance. On completion it settles to the reported usage.
 A refused call is
 refunded. An interrupted reply without usage releases its token reservation;
-reported usage is still charged. The default allowance is 1M tokens a day. There is no lifetime cap unless
+reported usage is still charged. The default allowance is 3M tokens a day. There is no lifetime cap unless
 `BEELINE_FREE_AGENT_LIFETIME_TOKENS` is
 set. A charge
 counts uncached prompt tokens plus completion tokens plus `ceil(cached × weight)`.
@@ -185,7 +185,7 @@ discards the session. The leader reaper cancels overdue claimed commands after
 the cap plus 60 seconds of grace and stops their Machine even if it is still
 reporting activity. The existing idle, reaper and deletion intervals are unchanged.
 
-At 80% of the daily allowance, settlement writes one private owner/free-agent
+At 80% of the daily allowance (2.4M tokens with the default 3M cap), settlement writes one private owner/free-agent
 DM warning per owner per UTC day, with the midnight UTC reset and a Members ->
 Add agent link. Delivery does not call a model. The warning records
 `allowance_warning` and `nudge_shown`; pairing a non-free agent in the same

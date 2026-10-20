@@ -11,16 +11,20 @@
  *                        docs/prompts/cases/README.md).
  *   --grade <dir>        grade the recorded answers `<id>.<n>.json` against
  *                        each case's pass rule and print a pass/fail table.
+ *   --memory <mode>     with (default), without, or both; both uses separate subdirectories.
  *   --only <id,id>       limit export or grading to these cases.
  */
 import { appendFileSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import type * as Skills from '../apps/body/src/beeline-skill.js';
 import type * as Assembly from '../apps/body/src/prompt-assembly.js';
 import type * as ToolSurface from '../apps/body/src/minimal-tool-surface.js';
 import {
   NATIVE_TOOL_NAMES,
   caseOutcome,
+  skillPath,
+  validateRuleSkills,
   evaluateRule,
   parsePromptCase,
   type PromptCase,
@@ -50,11 +54,12 @@ type ToolDefinition = ToolSurface.ToolDefinition;
 interface PromptSource {
   readonly assembly: typeof Assembly;
   readonly tools: typeof ToolSurface;
+  readonly skills: typeof Skills;
 }
 
 async function loadSource(root: string): Promise<PromptSource> {
   const load = (file: string) => import(pathToFileURL(join(root, 'apps', 'body', 'src', file)).href);
-  return { assembly: await load('prompt-assembly.ts'), tools: await load('minimal-tool-surface.ts') };
+  return { assembly: await load('prompt-assembly.ts'), tools: await load('minimal-tool-surface.ts'), skills: await load('beeline-skill.ts') };
 }
 
 const NATIVE_TOOLS: Record<(typeof NATIVE_TOOL_NAMES)[number], ToolDefinition> = {
@@ -95,6 +100,7 @@ function toolsFor(source: PromptSource, testCase: PromptCase): ToolDefinition[] 
   return [
     ...source.tools.minimalTools(testCase.place.endsWith('corner')),
     source.tools.RUNNER_TOOL,
+    { name: 'Read', description: 'Read a file by its absolute path, including a listed skill.', inputSchema: { type: 'object', properties: { file_path: { type: 'string' } }, required: ['file_path'] } },
     ...(extras.includes(SILENT_TOOL_NAME) ? [source.tools.SILENT_TOOL] : []),
     ...NATIVE_TOOL_NAMES.filter((name) => extras.includes(name)).map((name) => NATIVE_TOOLS[name]),
   ];
@@ -112,7 +118,7 @@ function briefFrom(value: unknown): Assembly.SessionPromptContext['brief'] {
   } as unknown as Assembly.SessionPromptContext['brief'];
 }
 
-function assemble(source: PromptSource, testCase: PromptCase) {
+function assemble(source: PromptSource, testCase: PromptCase, withMemory = true) {
   const brief = briefFrom(testCase.session?.brief);
   const session = source.assembly.assembleSessionPrompt({
     agentName: 'Ruby',
@@ -125,6 +131,7 @@ function assemble(source: PromptSource, testCase: PromptCase) {
   const turnBrief = testCase.turn.brief as { fileLines?: string[]; missingRequiredFile?: boolean } | undefined;
   const turn = source.assembly.assembleTurnPrompt({
     ...testCase.turn,
+    memory: withMemory ? testCase.turn.memory : undefined,
     surface: testCase.place,
     sessionPrefix: session.turnPrefix,
     brief: brief
@@ -159,9 +166,14 @@ function check(source: PromptSource, cases: readonly PromptCase[]): string[] {
       continue;
     }
     try {
-      const prompt = assemble(source, testCase);
-      if (!prompt.sections.includes(testCase.section)) {
-        problems.push(`case ${testCase.id}: its prompt does not render section ${testCase.section}`);
+      validateRuleSkills(testCase.pass, skillsFor(source, testCase).map((skill) => skill.name));
+      for (const withMemory of [true, false]) {
+        const prompt = assemble(source, testCase, withMemory);
+        // Memory can enable other sections, such as workspace-core.
+        // The no-note variant must assemble but need not render those sections.
+        if (withMemory && !prompt.sections.includes(testCase.section)) {
+          problems.push(`case ${testCase.id}: its prompt does not render section ${testCase.section}`);
+        }
       }
     } catch (error) {
       problems.push(`case ${testCase.id}: ${(error as Error).message}`);
@@ -170,13 +182,18 @@ function check(source: PromptSource, cases: readonly PromptCase[]): string[] {
   return problems;
 }
 
+function skillsFor(source: PromptSource, testCase: PromptCase) {
+  return source.skills.beelineManagedSkills('source', { isReviewer: testCase.session?.reviewer === true });
+}
+
 /**
  * One self-contained replay prompt. The replaying agent hands it to a fresh
  * session of its own model, which answers with the calls and text it would
  * produce on that turn.
  */
-function replayPrompt(source: PromptSource, testCase: PromptCase): string {
-  const prompt = assemble(source, testCase);
+function replayPrompt(source: PromptSource, testCase: PromptCase, withMemory = true): string {
+  const prompt = assemble(source, testCase, withMemory);
+  const skills = skillsFor(source, testCase);
   const tools = toolsFor(source, testCase).map((tool) => ({ name: tool.name, description: tool.description, input_schema: tool.inputSchema }));
   return [
     `# Prompt case replay: ${testCase.id}`,
@@ -186,6 +203,7 @@ function replayPrompt(source: PromptSource, testCase: PromptCase): string {
       ? `Tool calls return these stub results by tool name: ${JSON.stringify(testCase.toolResults)}. Any other call returns {"ok":true}.`
       : 'Every tool call returns {"ok":true}.',
     `Continue for up to ${MAX_STEPS} rounds of tool calls, as you would after those results.`,
+    'Skill reads do not return the default stub. When you call Read for a listed skill, stop this answer at that call and wait for its file content. The replay controller will provide that result and resume this same simulated turn. Do not guess unread skill content.',
     'Reply with only one JSON object and nothing else:',
     '{"calls":[{"name":"<tool name>","args":{...}}],"text":"<everything you would post as your reply, or an empty string>"}',
     '',
@@ -200,6 +218,11 @@ function replayPrompt(source: PromptSource, testCase: PromptCase): string {
     '````json',
     JSON.stringify(tools),
     '````',
+    '',
+    '## Available skills',
+    '',
+    'The harness lists these skills. To load one, call Read with its file_path.',
+    ...skills.map((skill) => `- ${skill.name}: ${skill.content.match(/^description: (.+)$/m)?.[1] ?? ''} (file: ${skillPath(skill.name)})`),
     '',
     '## Turn',
     '',
@@ -273,7 +296,10 @@ function summarize(lines: string[]): void {
 }
 
 async function main(): Promise<number> {
-  const head = await loadSource(repoRoot);
+  const memoryMode = option('--memory') ?? 'with';
+  if (!['with', 'without', 'both'].includes(memoryMode)) throw new Error('--memory must be with, without, or both');
+  const variants = memoryMode === 'both' ? ['with', 'without'] : [memoryMode];
+  const head = await loadSource(resolve(option('--source') ?? repoRoot));
   const only = option('--only')?.split(',').map((id) => id.trim()).filter(Boolean);
   const all = loadCases();
   const problems = check(head, all);
@@ -288,16 +314,28 @@ async function main(): Promise<number> {
   }
   const exportDir = option('--export');
   if (exportDir) {
-    mkdirSync(exportDir, { recursive: true });
-    for (const testCase of cases) writeFileSync(join(exportDir, `${testCase.id}.prompt.md`), replayPrompt(head, testCase));
-    console.log(`Wrote ${cases.length} replay prompts to ${exportDir}. Save each answer as <id>.1.json there, then run --grade ${exportDir}.`);
+    for (const variant of variants) {
+      const targetDir = memoryMode === 'both' ? join(exportDir, variant) : exportDir;
+      mkdirSync(targetDir, { recursive: true });
+      for (const testCase of cases) {
+        writeFileSync(join(targetDir, `${testCase.id}.prompt.md`), replayPrompt(head, testCase, variant === 'with'));
+        writeFileSync(join(targetDir, `${testCase.id}.skills.json`), JSON.stringify(Object.fromEntries(
+          skillsFor(head, testCase).map((skill) => [skillPath(skill.name), skill.content]),
+        ), null, 2));
+      }
+    }
+    console.log(`Wrote ${cases.length * variants.length} replay prompts to ${exportDir}. Save each answer as <id>.1.json there, then run --memory ${memoryMode} --grade ${exportDir}.`);
     return 0;
   }
   const gradeDir = option('--grade');
   if (gradeDir) {
-    // Without --only, grade the cases that were exported to this directory.
-    const exported = new Set(readdirSync(gradeDir).flatMap((file) => file.match(/^(.+)\.prompt\.md$/)?.[1] ?? []));
-    const results = grade(gradeDir, only ? cases : cases.filter((testCase) => exported.has(testCase.id)));
+    const results = variants.flatMap((variant) => {
+      const targetDir = memoryMode === 'both' ? join(gradeDir, variant) : gradeDir;
+      // Without --only, grade only cases exported to this variant directory.
+      const exported = new Set(readdirSync(targetDir).flatMap((file) => file.match(/^(.+)\.prompt\.md$/)?.[1] ?? []));
+      return grade(targetDir, only ? cases : cases.filter((testCase) => exported.has(testCase.id)))
+        .map((result) => ({ ...result, id: memoryMode === 'both' ? `${result.id} (${variant} note)` : result.id }));
+    });
     const blocking = results.filter((result) => result.outcome !== 'pass');
     summarize([
       `**Prompt case replay:** ${results.length - blocking.length}/${results.length} passed.`,

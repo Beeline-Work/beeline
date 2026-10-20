@@ -55,6 +55,20 @@ describe('free agent owner warning', () => {
     expect((await db.query(`SELECT * FROM free_agent_events WHERE kind='allowance_warning'`)).rowCount).toBe(2);
   });
 
+  it('warns at 2.4M settled tokens with the default 3M allowance', async () => {
+    const config = freeAgentConfigFromEnv({
+      BEELINE_FREE_AGENTS: '1', BEELINE_FREE_AGENT_SEAL_KEY: 'seal', FLY_FREE_AGENT_IMAGE: 'image',
+    }, 'https://server.test')!;
+    await usage(DAY, 2_399_999);
+    await warnFreeAgentOwner(db, AGENT, OWNER, DAY, config.dailyTokenCap);
+    expect((await db.query(`SELECT * FROM messages`)).rowCount).toBe(0);
+    await usage(DAY, 2_400_000);
+    await warnFreeAgentOwner(db, AGENT, OWNER, DAY, config.dailyTokenCap);
+    const phone = new PhoneService(db, 'https://server.test');
+    const room = (await db.query<{ room_id: string }>(`SELECT room_id FROM messages`)).rows[0]!;
+    expect(JSON.stringify(await phone.readRoom(room.room_id, OWNER))).toContain("I've used 80%");
+  });
+
   it('records a non-free agent connected within 24 hours once, excludes old warnings', async () => {
     await usage(DAY, 800);
     await warn();

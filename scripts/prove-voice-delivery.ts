@@ -33,6 +33,8 @@ const operations: string[] = [];
 const microphoneFrames: number[] = [];
 let speechMs = 100;
 let fault = '';
+let holdSpeech = false;
+const speechWaiters = new Set<() => void>();
 let releaseDecision: (() => void) | undefined;
 let decisionGate: Promise<void> | undefined;
 let decisionRequests = 0;
@@ -59,6 +61,12 @@ const service = new VoiceService(db,live,{url:'ws://127.0.0.1:17890',apiKey:'dev
       ...(work ? { tool_calls: [{function:{name:'order'}}] } : {}) } }] })+'\n\n');
   }),
   speech:new AuraSpeech('local-proof','local-account', async (_url, init) => {
+    if (holdSpeech) await new Promise<void>((resolve, reject) => {
+      const finish = () => { speechWaiters.delete(finish); init?.signal?.removeEventListener('abort', abort); resolve(); };
+      const abort = () => { speechWaiters.delete(finish); reject(new DOMException('Interrupted', 'AbortError')); };
+      if (init?.signal?.aborted) abort();
+      else { speechWaiters.add(finish); init?.signal?.addEventListener('abort', abort, { once: true }); }
+    });
     synthesis.push({text: JSON.parse(String(init!.body)).text, at: Date.now()});
     if (fault === 'tts-fail') { fault = ''; throw new Error('Injected TTS failure'); }
     const pcm = Buffer.alloc(speechMs * 48);
@@ -110,7 +118,11 @@ const server = createServer((req,res)=> { void (async()=>{
   let value: unknown = {};
   const url=new URL(req.url!,'http://localhost');
   console.log(req.method,url.pathname);
-  if(req.url==='/brain-gate') {
+  if(req.url==='/speech-gate') {
+    holdSpeech = !!body.hold;
+    if (!holdSpeech) for (const finish of [...speechWaiters]) finish();
+  }
+  else if(req.url==='/brain-gate') {
     if (body.hold) decisionGate = new Promise<void>(resolve => { releaseDecision = resolve; });
     else { releaseDecision?.(); decisionGate = undefined; }
   }
@@ -124,15 +136,16 @@ const server = createServer((req,res)=> { void (async()=>{
     inputs[index]!({event: 'EndOfTurn', transcript: text, turn_index: turn, sequence_id: turn,
       words: text.split(' ').map((word: string, i: number) => ({word, start: i * .3, end: (i+1) * .3, confidence: .99}))});
   }
+  else if(req.url==='/solo-proof') { await service.leave(first.call.id,partner); await client.disconnect(); }
   else if(req.url==='/report') {
-    const command = (await db.query<{id:string; agent_id:string; source_message_id:string}>(
-      `SELECT c.id,c.agent_id,c.source_message_id FROM agent_commands c JOIN voice_orders o
+    const command = (await db.query<{id:string; agent_id:string; source_message_id:string; turn_request_id:string}>(
+      `SELECT c.id,c.agent_id,c.source_message_id,c.turn_request_id FROM agent_commands c JOIN voice_orders o
         ON o.source_message_id=c.source_message_id AND o.agent_id=c.agent_id
         WHERE o.call_id=$1 AND o.spoken_message_id IS NULL ORDER BY c.created_at LIMIT 1`, [first.call.id])).rows[0]!;
     const generation = `delivery-proof-${command.id}`;
     await claimAgentCommand(db,R,command.agent_id,command.id,generation);
     await new DaemonService(db,live).execute('postRoomMessage', {
-      roomId:R, requestId:command.source_message_id, generationId:generation, text:'The work is done.',
+      roomId:R, requestId:command.turn_request_id, generationId:generation, text:'The work is done.',
     }, command.agent_id);
     await runtime.refresh();
   }
@@ -147,7 +160,7 @@ const server = createServer((req,res)=> { void (async()=>{
   else if(url.pathname.includes('/history')) value=await phone.readHistory(R,H);
 
   else if(req.url==='/observe') { observations.push(body); value={}; }
-  else if(req.url==='/result') value={decisionRequests,synthesis,deliveries,orders:(await db.query(`SELECT o.*,m.text FROM voice_orders o JOIN messages m ON m.id=o.source_message_id`)).rows,transcript:(await phone.readRoom(R,H))?.messages.map(m=>({text:m.text,author:m.author.pubkey})),pid:process.pid,callId:runtime.callId,dispatchAttempts,frameCounts,commands:(await db.query(`SELECT count(*)::int count FROM agent_commands WHERE room_id=$1`,[R])).rows[0],activeCallWork:await service.hasCallWork(first.call.id),pendingCommands:(await db.query<{count:number}>(`SELECT count(*)::int count FROM agent_commands WHERE state IN ('pending','claimed')`)).rows[0]!.count,call:(await db.query(`SELECT ended_at FROM voice_calls WHERE id=$1`,[first.call.id])).rows[0],card:(await new PhoneService(db,'http://proof').readRoom(R,H))?.messages.find(m=>m.voiceCall),humans:await service.humanCount(first.call.id),operations,microphoneFrames,replies,signals,observations,
+  else if(req.url==='/result') value={commandDetails:(await db.query(`SELECT id,turn_request_id,source_message_id,agent_id,state,reason FROM agent_commands WHERE room_id=$1`,[R])).rows,decisionRequests,synthesis,deliveries,orders:(await db.query(`SELECT o.*,m.text FROM voice_orders o JOIN messages m ON m.id=o.source_message_id`)).rows,transcript:(await phone.readRoom(R,H))?.messages.map(m=>({text:m.text,author:m.author.pubkey})),pid:process.pid,callId:runtime.callId,dispatchAttempts,frameCounts,commands:(await db.query(`SELECT count(*)::int count FROM agent_commands WHERE room_id=$1`,[R])).rows[0],activeCallWork:await service.hasCallWork(first.call.id),pendingCommands:(await db.query<{count:number}>(`SELECT count(*)::int count FROM agent_commands WHERE state IN ('pending','claimed')`)).rows[0]!.count,call:(await db.query(`SELECT ended_at FROM voice_calls WHERE id=$1`,[first.call.id])).rows[0],card:(await new PhoneService(db,'http://proof').readRoom(R,H))?.messages.find(m=>m.voiceCall),humans:await service.humanCount(first.call.id),operations,microphoneFrames,replies,signals,observations,
     secondMicrophone:[...(client.remoteParticipants.get(SECOND)?.trackPublications.values() ?? [])].map(p=>({muted:p.muted,kind:p.kind})),
     participants:(await db.query(`SELECT identity_id,parked_at,left_at FROM voice_participants WHERE call_id=$1`,[first.call.id])).rows};
   else if(req.url==='/say') { speechMs=body.speechMs??100; const current=await service.current(R,H); if(!current)throw new Error('No active call'); const row=(await db.query<any>('SELECT * FROM voice_calls WHERE id=$1',[current.id])).rows[0]; await (await service.ensureRuntime(row))!.utterance(H,body.text??'How are you doing today?'); speechMs=100; }

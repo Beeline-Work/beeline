@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Platform } from 'react-native';
 import { router, type Href } from 'expo-router';
 import * as WebBrowser from 'expo-web-browser';
-import type { CompanySuggestion, CompanyItem, WorkbenchCompany } from '@beeline/api-contract/workbench';
+import type { CompanySuggestion, CompanyItem, ConnectorViewState, WorkbenchCompany } from '@beeline/api-contract/workbench';
 import type { WorkbenchApp } from './workbench';
 import { authSessionOptions } from '@/auth/auth-session';
 import { openAppSignIn } from './app-sign-in';
@@ -13,6 +13,15 @@ import { getWalletSource } from './wallet-source';
 import { publishSharedWallet } from './wallet-surface';
 import { resolveWalletWorkspaceId } from './wallet-workspace';
 import { useActiveCommunityId } from './use-active-community';
+
+/** Render the server classifier; fall back only for an older projection. */
+export function connectionViewState(row: {
+  readonly state?: ConnectorViewState; readonly attention?: string | boolean; readonly status?: string;
+}): ConnectorViewState {
+  if (row.state === 'connected' || row.state === 'connect' || row.state === 'error') return row.state;
+  if (!row.attention) return 'connected';
+  return row.status && row.status !== 'Connect' && row.status !== 'Connecting' ? 'error' : 'connect';
+}
 
 export function openCompanyItem(target: CompanyItem['target'], scope: WorkbenchScope) {
   const route = target.kind === 'key' ? { pathname: '/beeline/settings/workbench/connection', params: { ...scope, connectionId: target.connectionId } }

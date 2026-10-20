@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 // @ts-expect-error Standalone proof uses installed react-dom.
 import { createRoot } from 'react-dom/client';
+// @ts-expect-error Standalone proof uses installed react-dom.
+import { flushSync } from 'react-dom';
 import { View, Text } from 'react-native';
 import { ConversationComposer } from '../sources/components/buzz/ConversationComposer';
 import { AttachmentPickerSheet } from '../sources/components/buzz/AttachmentPickerSheet';
@@ -21,11 +23,12 @@ function Proof() {
   const [picker, setPicker] = useState(false);
   const [pending, setPending] = useState<PickedChatAttachment[]>([]);
   const [value, setValue] = useState('');
+  const [target, aim] = useState('ruby');
   const voice = { call: phase === 'ended' ? null : { id: 'proof' }, connecting: phase === 'connecting',
-    agents: [{ kind: 'agent', pubkey: 'ruby', name: 'Ruby', face: null }, { kind: 'agent', pubkey: 'jellybean', name: 'Jellybean', face: null }],
-    speaker: phase === 'speaking' ? 'ruby' : null, target: 'ruby', level: phase === 'silence' ? 0 : 0.4,
+    agents: [{ kind: 'agent', pubkey: 'ruby', name: 'Ruby', face: null }, { kind: 'agent', pubkey: 'jellybean', name: 'Jellybean', face: null }, { kind: 'agent', pubkey: 'goose', name: 'Goosey', face: null }],
+    speaker: phase === 'speaking' ? 'ruby' : null, target, level: phase === 'silence' ? 0 : 0.4,
     muted: false, toggleMute: async () => {}, humans: 2, error: null, quotaExhausted: false, firstAudioMs: null, join: async () => {},
-    aim: () => {}, end: async () => changePhase('ended') } as unknown as VoiceCallState;
+    aim, end: async () => changePhase('ended') } as unknown as VoiceCallState;
   return <View style={{ minHeight: 800, padding: 16, backgroundColor: theme === 'bone' ? '#F3EEE4' : '#14091A' }}>
     <Text style={{ color: theme === 'bone' ? '#171310' : '#f0f0f3', marginBottom: 24 }}>Conversation mode · {phase}</Text>
     <ConversationComposer value={value} height={26} focused={false} disabled={false} voice={voice} canSend={Boolean(value.trim() || pending.length)}
@@ -41,8 +44,25 @@ function Proof() {
 createRoot(document.getElementById('root')!).render(<Proof />);
 async function run() {
   await pause();
+  const selected = () => document.querySelector<HTMLElement>('[aria-label="Speak to Jellybean"]');
+  selected()!.click(); await pause();
+  const outlined = () => getComputedStyle(selected()!.firstElementChild!).borderTopColor ===
+    'rgb(0, 0, 0)';
+  check('CONVERSATION-2: tap selects Jellybean with an avatar outline', outlined());
+  const selectedLabel = Array.from(selected()!.querySelectorAll<HTMLElement>('*')).find(element => element.textContent === 'Jellybean');
+  check('CONVERSATION-2: selected name has no underline', !!selectedLabel && !getComputedStyle(selectedLabel).textDecorationLine.includes('underline'));
+  const latest = () => byID('waveform-live-level')!;
+  check('CONVERSATION-3: visible newest bar is quiet in silence', getComputedStyle(latest()).height === '2px');
   for (const phase of ['silence', 'connecting', 'listening', 'speaking']) {
-    setPhase(phase); await pause();
+    flushSync(() => setPhase(phase));
+    if (phase === 'listening') check('CONVERSATION-3: volume changes the visible newest bar before timers advance', parseFloat(getComputedStyle(latest()).height) > 2);
+    await pause();
+    check(`${phase}: tap stays selected`, outlined());
+    const faceColor = (name: string) => getComputedStyle(document.querySelector<HTMLElement>(`[aria-label="Speak to ${name}"]`)!.firstElementChild!).borderTopColor;
+    check(`${phase}: inactive agent has no frame`, faceColor('Goosey') === 'rgba(0, 0, 0, 0)');
+    if (phase === 'speaking') check('CONVERSATION-2: speaking frame is brass and selection stays black', getComputedStyle(byID('voice-speaking-frame-ruby')!).borderTopColor !== faceColor('Jellybean'));
+    check(`${phase}: current level stays at the visible right edge`, latest().getBoundingClientRect().right <= byID('voice-waveform')!.getBoundingClientRect().right);
+    if (phase === 'listening') check('CONVERSATION-3: current level grows immediately', parseFloat(getComputedStyle(latest()).height) > 2);
     const strip = byID('conversation-target-strip')!.getBoundingClientRect();
     const field = byID('voice-waveform')!.getBoundingClientRect();
     check(`${phase}: avatars above waveform, no caption`, strip.bottom <= field.top && !byID('conversation-mode-label'));

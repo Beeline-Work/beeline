@@ -106,7 +106,7 @@ export default {
             }
         },
         android: {
-            runtimeVersion: runtimeVersionOverride || "39",
+            runtimeVersion: runtimeVersionOverride || "40",
             versionCode: 27,
             adaptiveIcon: {
                 foregroundImage: "./sources/assets/images/icon-adaptive.png",
@@ -179,6 +179,7 @@ export default {
             favicon: "./sources/assets/images/favicon.png"
         },
         plugins: [
+            ...(process.env.BEELINE_ANDROID_NATIVE_LATENCY_PROBE === "1" ? [require("./plugins/withLatencyRigNativeProbe.js")] : []),
             "@livekit/react-native-expo-plugin",
             "@config-plugins/react-native-webrtc",
             require("./plugins/withEinkCompatibility.js"),

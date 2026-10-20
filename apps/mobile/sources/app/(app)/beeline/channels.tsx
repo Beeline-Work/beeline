@@ -75,7 +75,7 @@ import {
 import { useFocusEffect } from '@react-navigation/native';
 import * as Haptics from 'expo-haptics';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AppState,
   Keyboard,
@@ -507,7 +507,9 @@ export default function BuzzChannels() {
         paint();
         // A store another screen already read is current: it seeds the badge.
         if (chats.confirmed()) setNeedsYouSignal((signal) => signal + 1);
-        unsubscribeChats = chats.subscribe(paint);
+        // Live list reconciliation must yield to a Room or push navigation.
+        // Its committed transcript rows are already in the scoped cache.
+        unsubscribeChats = chats.subscribe(() => startTransition(paint));
       }
       const relay = await relayPromise;
       if (cancelled) return;

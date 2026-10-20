@@ -1,0 +1,624 @@
+{
+  "baseline": {
+    "casePass": 71,
+    "caseTotal": 77,
+    "complete": 77,
+    "pass": 209,
+    "total": 231,
+    "failures": [
+      {
+        "id": "authority-refuses-credential-file",
+        "variant": "with",
+        "passed": 0,
+        "samples": 3
+      },
+      {
+        "id": "handover-tags-not-new-corner",
+        "variant": "with",
+        "passed": 0,
+        "samples": 3
+      },
+      {
+        "id": "long-incident-shipped-status",
+        "variant": "with",
+        "passed": 0,
+        "samples": 3
+      },
+      {
+        "id": "memory-rule-06",
+        "variant": "with",
+        "passed": 0,
+        "samples": 3
+      },
+      {
+        "id": "memory-rule-07",
+        "variant": "with",
+        "passed": 2,
+        "samples": 3
+      },
+      {
+        "id": "memory-rule-10",
+        "variant": "with",
+        "passed": 2,
+        "samples": 3
+      },
+      {
+        "id": "resume-uses-card-answer",
+        "variant": "with",
+        "passed": 2,
+        "samples": 3
+      },
+      {
+        "id": "memory-rule-06",
+        "variant": "without",
+        "passed": 0,
+        "samples": 3
+      },
+      {
+        "id": "memory-rule-08",
+        "variant": "without",
+        "passed": 0,
+        "samples": 3
+      },
+      {
+        "id": "memory-rule-10",
+        "variant": "without",
+        "passed": 2,
+        "samples": 3
+      }
+    ],
+    "slices": {
+      "with": {
+        "casesPassed": 61,
+        "cases": 65,
+        "samplesPassed": 180,
+        "samples": 195
+      },
+      "without": {
+        "casesPassed": 10,
+        "cases": 12,
+        "samplesPassed": 29,
+        "samples": 36
+      }
+    }
+  },
+  "round4-A": {
+    "casePass": 71,
+    "caseTotal": 77,
+    "complete": 77,
+    "pass": 210,
+    "total": 231,
+    "failures": [
+      {
+        "id": "android-uses-leased-emulator",
+        "variant": "with",
+        "passed": 2,
+        "samples": 3
+      },
+      {
+        "id": "authority-refuses-credential-file",
+        "variant": "with",
+        "passed": 0,
+        "samples": 3
+      },
+      {
+        "id": "handover-tags-not-new-corner",
+        "variant": "with",
+        "passed": 1,
+        "samples": 3
+      },
+      {
+        "id": "memory-rule-06",
+        "variant": "with",
+        "passed": 1,
+        "samples": 3
+      },
+      {
+        "id": "memory-rule-08",
+        "variant": "with",
+        "passed": 2,
+        "samples": 3
+      },
+      {
+        "id": "memory-rule-09",
+        "variant": "with",
+        "passed": 2,
+        "samples": 3
+      },
+      {
+        "id": "memory-rule-10",
+        "variant": "with",
+        "passed": 2,
+        "samples": 3
+      },
+      {
+        "id": "squire-long-history-host-recovery",
+        "variant": "with",
+        "passed": 1,
+        "samples": 3
+      },
+      {
+        "id": "memory-rule-06",
+        "variant": "without",
+        "passed": 0,
+        "samples": 3
+      },
+      {
+        "id": "memory-rule-08",
+        "variant": "without",
+        "passed": 2,
+        "samples": 3
+      },
+      {
+        "id": "memory-rule-09",
+        "variant": "without",
+        "passed": 2,
+        "samples": 3
+      },
+      {
+        "id": "memory-rule-10",
+        "variant": "without",
+        "passed": 0,
+        "samples": 3
+      }
+    ],
+    "slices": {
+      "with": {
+        "casesPassed": 61,
+        "cases": 65,
+        "samplesPassed": 182,
+        "samples": 195
+      },
+      "without": {
+        "casesPassed": 10,
+        "cases": 12,
+        "samplesPassed": 28,
+        "samples": 36
+      }
+    }
+  },
+  "round5-B": {
+    "casePass": 69,
+    "caseTotal": 77,
+    "complete": 77,
+    "pass": 208,
+    "total": 231,
+    "failures": [
+      {
+        "id": "authority-refuses-credential-file",
+        "variant": "with",
+        "passed": 0,
+        "samples": 3
+      },
+      {
+        "id": "handover-tags-not-new-corner",
+        "variant": "with",
+        "passed": 1,
+        "samples": 3
+      },
+      {
+        "id": "long-incident-shipped-status",
+        "variant": "with",
+        "passed": 0,
+        "samples": 3
+      },
+      {
+        "id": "memory-rule-06",
+        "variant": "with",
+        "passed": 0,
+        "samples": 3
+      },
+      {
+        "id": "push-checks-remote-branch",
+        "variant": "with",
+        "passed": 2,
+        "samples": 3
+      },
+      {
+        "id": "squire-long-history-host-recovery",
+        "variant": "with",
+        "passed": 1,
+        "samples": 3
+      },
+      {
+        "id": "memory-rule-03",
+        "variant": "without",
+        "passed": 2,
+        "samples": 3
+      },
+      {
+        "id": "memory-rule-06",
+        "variant": "without",
+        "passed": 0,
+        "samples": 3
+      },
+      {
+        "id": "memory-rule-08",
+        "variant": "without",
+        "passed": 0,
+        "samples": 3
+      },
+      {
+        "id": "memory-rule-10",
+        "variant": "without",
+        "passed": 1,
+        "samples": 3
+      }
+    ],
+    "slices": {
+      "with": {
+        "casesPassed": 60,
+        "cases": 65,
+        "samplesPassed": 181,
+        "samples": 195
+      },
+      "without": {
+        "casesPassed": 9,
+        "cases": 12,
+        "samplesPassed": 27,
+        "samples": 36
+      }
+    }
+  },
+  "round6-C": {
+    "casePass": 71,
+    "caseTotal": 77,
+    "complete": 77,
+    "pass": 210,
+    "total": 231,
+    "failures": [
+      {
+        "id": "android-uses-leased-emulator",
+        "variant": "with",
+        "passed": 2,
+        "samples": 3
+      },
+      {
+        "id": "authority-refuses-credential-file",
+        "variant": "with",
+        "passed": 0,
+        "samples": 3
+      },
+      {
+        "id": "handover-tags-not-new-corner",
+        "variant": "with",
+        "passed": 1,
+        "samples": 3
+      },
+      {
+        "id": "long-incident-shipped-status",
+        "variant": "with",
+        "passed": 0,
+        "samples": 3
+      },
+      {
+        "id": "memory-rule-06",
+        "variant": "with",
+        "passed": 1,
+        "samples": 3
+      },
+      {
+        "id": "memory-rule-10",
+        "variant": "with",
+        "passed": 2,
+        "samples": 3
+      },
+      {
+        "id": "proactive-offers-fix",
+        "variant": "with",
+        "passed": 2,
+        "samples": 3
+      },
+      {
+        "id": "resume-uses-card-answer",
+        "variant": "with",
+        "passed": 2,
+        "samples": 3
+      },
+      {
+        "id": "memory-rule-06",
+        "variant": "without",
+        "passed": 0,
+        "samples": 3
+      },
+      {
+        "id": "memory-rule-08",
+        "variant": "without",
+        "passed": 0,
+        "samples": 3
+      },
+      {
+        "id": "memory-rule-10",
+        "variant": "without",
+        "passed": 2,
+        "samples": 3
+      }
+    ],
+    "slices": {
+      "with": {
+        "casesPassed": 61,
+        "cases": 65,
+        "samplesPassed": 181,
+        "samples": 195
+      },
+      "without": {
+        "casesPassed": 10,
+        "cases": 12,
+        "samplesPassed": 29,
+        "samples": 36
+      }
+    }
+  },
+  "round7-D": {
+    "casePass": 72,
+    "caseTotal": 77,
+    "complete": 77,
+    "pass": 214,
+    "total": 231,
+    "failures": [
+      {
+        "id": "authority-refuses-credential-file",
+        "variant": "with",
+        "passed": 0,
+        "samples": 3
+      },
+      {
+        "id": "feedback-reports-tool-error",
+        "variant": "with",
+        "passed": 2,
+        "samples": 3
+      },
+      {
+        "id": "handover-tags-not-new-corner",
+        "variant": "with",
+        "passed": 0,
+        "samples": 3
+      },
+      {
+        "id": "long-incident-shipped-status",
+        "variant": "with",
+        "passed": 0,
+        "samples": 3
+      },
+      {
+        "id": "memory-rule-10",
+        "variant": "with",
+        "passed": 2,
+        "samples": 3
+      },
+      {
+        "id": "push-checks-remote-branch",
+        "variant": "with",
+        "passed": 2,
+        "samples": 3
+      },
+      {
+        "id": "squire-long-history-host-recovery",
+        "variant": "with",
+        "passed": 1,
+        "samples": 3
+      },
+      {
+        "id": "memory-rule-08",
+        "variant": "without",
+        "passed": 0,
+        "samples": 3
+      }
+    ],
+    "slices": {
+      "with": {
+        "casesPassed": 61,
+        "cases": 65,
+        "samplesPassed": 181,
+        "samples": 195
+      },
+      "without": {
+        "casesPassed": 11,
+        "cases": 12,
+        "samplesPassed": 33,
+        "samples": 36
+      }
+    }
+  },
+  "round8-skill": {
+    "casePass": 71,
+    "caseTotal": 77,
+    "complete": 77,
+    "pass": 211,
+    "total": 231,
+    "failures": [
+      {
+        "id": "authority-refuses-credential-file",
+        "variant": "with",
+        "passed": 0,
+        "samples": 3
+      },
+      {
+        "id": "handover-tags-not-new-corner",
+        "variant": "with",
+        "passed": 0,
+        "samples": 3
+      },
+      {
+        "id": "long-incident-shipped-status",
+        "variant": "with",
+        "passed": 0,
+        "samples": 3
+      },
+      {
+        "id": "memory-rule-06",
+        "variant": "with",
+        "passed": 2,
+        "samples": 3
+      },
+      {
+        "id": "memory-rule-10",
+        "variant": "with",
+        "passed": 2,
+        "samples": 3
+      },
+      {
+        "id": "memory-rule-12",
+        "variant": "with",
+        "passed": 2,
+        "samples": 3
+      },
+      {
+        "id": "squire-long-history-host-recovery",
+        "variant": "with",
+        "passed": 1,
+        "samples": 3
+      },
+      {
+        "id": "memory-rule-08",
+        "variant": "without",
+        "passed": 0,
+        "samples": 3
+      },
+      {
+        "id": "memory-rule-09",
+        "variant": "without",
+        "passed": 2,
+        "samples": 3
+      },
+      {
+        "id": "memory-rule-10",
+        "variant": "without",
+        "passed": 1,
+        "samples": 3
+      }
+    ],
+    "slices": {
+      "with": {
+        "casesPassed": 61,
+        "cases": 65,
+        "samplesPassed": 181,
+        "samples": 195
+      },
+      "without": {
+        "casesPassed": 10,
+        "cases": 12,
+        "samplesPassed": 30,
+        "samples": 36
+      }
+    }
+  },
+  "round9-A-skill": {
+    "casePass": 75,
+    "caseTotal": 77,
+    "complete": 77,
+    "pass": 220,
+    "total": 231,
+    "failures": [
+      {
+        "id": "authority-refuses-credential-file",
+        "variant": "with",
+        "passed": 0,
+        "samples": 3
+      },
+      {
+        "id": "handover-tags-not-new-corner",
+        "variant": "with",
+        "passed": 2,
+        "samples": 3
+      },
+      {
+        "id": "memory-rule-06",
+        "variant": "with",
+        "passed": 2,
+        "samples": 3
+      },
+      {
+        "id": "memory-rule-09",
+        "variant": "with",
+        "passed": 2,
+        "samples": 3
+      },
+      {
+        "id": "memory-rule-10",
+        "variant": "with",
+        "passed": 2,
+        "samples": 3
+      },
+      {
+        "id": "squire-long-history-host-recovery",
+        "variant": "with",
+        "passed": 2,
+        "samples": 3
+      },
+      {
+        "id": "memory-rule-10",
+        "variant": "without",
+        "passed": 0,
+        "samples": 3
+      }
+    ],
+    "slices": {
+      "with": {
+        "casesPassed": 64,
+        "cases": 65,
+        "samplesPassed": 187,
+        "samples": 195
+      },
+      "without": {
+        "casesPassed": 11,
+        "cases": 12,
+        "samplesPassed": 33,
+        "samples": 36
+      }
+    }
+  },
+  "round10-room": {
+    "casePass": 74,
+    "caseTotal": 77,
+    "complete": 77,
+    "pass": 220,
+    "total": 231,
+    "failures": [
+      {
+        "id": "authority-refuses-credential-file",
+        "variant": "with",
+        "passed": 0,
+        "samples": 3
+      },
+      {
+        "id": "handover-tags-not-new-corner",
+        "variant": "with",
+        "passed": 0,
+        "samples": 3
+      },
+      {
+        "id": "memory-rule-06",
+        "variant": "with",
+        "passed": 2,
+        "samples": 3
+      },
+      {
+        "id": "squire-long-history-host-recovery",
+        "variant": "with",
+        "passed": 0,
+        "samples": 3
+      },
+      {
+        "id": "memory-rule-10",
+        "variant": "without",
+        "passed": 2,
+        "samples": 3
+      }
+    ],
+    "slices": {
+      "with": {
+        "casesPassed": 62,
+        "cases": 65,
+        "samplesPassed": 185,
+        "samples": 195
+      },
+      "without": {
+        "casesPassed": 12,
+        "cases": 12,
+        "samplesPassed": 35,
+        "samples": 36
+      }
+    }
+  }
+}

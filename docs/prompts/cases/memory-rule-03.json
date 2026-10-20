@@ -31,7 +31,7 @@
     "all": [
       {
         "text": {
-          "matches": "merged|401|expired",
+          "matches": "merge|401|expired",
           "flags": "i"
         }
       },

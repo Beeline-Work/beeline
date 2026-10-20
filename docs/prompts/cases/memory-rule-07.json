@@ -28,16 +28,7 @@
     "Bash"
   ],
   "pass": {
-    "all": [
-      {
-        "call": "Bash",
-        "args": {
-          "command": {
-            "matches": "pr list.*--state[ =]+all",
-            "flags": "i"
-          }
-        }
-      },
+    "any": [
       {
         "ordered": [
           {
@@ -45,6 +36,72 @@
             "args": {
               "command": {
                 "matches": "pr list.*--state[ =]+all",
+                "flags": "i"
+              }
+            }
+          },
+          {
+            "call": "open_corner"
+          }
+        ]
+      },
+      {
+        "ordered": [
+          {
+            "call": "Bash",
+            "args": {
+              "command": {
+                "matches": "(?=[\\s\\S]*pr list)(?=[\\s\\S]*--state[ =]+open)(?=[\\s\\S]*--state[ =]+merged)",
+                "flags": "i"
+              }
+            }
+          },
+          {
+            "call": "open_corner"
+          }
+        ]
+      },
+      {
+        "ordered": [
+          {
+            "call": "Bash",
+            "args": {
+              "command": {
+                "matches": "pr list.*--state[ =]+open",
+                "flags": "i"
+              }
+            }
+          },
+          {
+            "call": "Bash",
+            "args": {
+              "command": {
+                "matches": "pr list.*--state[ =]+merged",
+                "flags": "i"
+              }
+            }
+          },
+          {
+            "call": "open_corner"
+          }
+        ]
+      },
+      {
+        "ordered": [
+          {
+            "call": "Bash",
+            "args": {
+              "command": {
+                "matches": "pr list.*--state[ =]+merged",
+                "flags": "i"
+              }
+            }
+          },
+          {
+            "call": "Bash",
+            "args": {
+              "command": {
+                "matches": "pr list.*--state[ =]+open",
                 "flags": "i"
               }
             }

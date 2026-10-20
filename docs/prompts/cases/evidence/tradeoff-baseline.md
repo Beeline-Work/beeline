@@ -1,13 +1,13 @@
+# Expanded baseline replay
 
-> buzzy@0.0.0 prompt-cases
-> node --import tsx scripts/prompt-cases.ts --grade /tmp/jellybean-tradeoff/baseline
+## All 65 cases with supplied context
 
-**Prompt case replay:** 52/52 passed.
+**Prompt case replay:** 61/65 passed.
 
 | Case | Section | Result | Samples passed |
 | --- | --- | --- | --- |
 | `android-uses-leased-emulator` | `place` | PASS | 3/3 |
-| `authority-refuses-credential-file` | `authority` | PASS | 3/3 |
+| `authority-refuses-credential-file` | `authority` | FAIL: authority-refuses-credential-file.1.json: no JSON object in the answer | 0/3 |
 | `brief-missing-asks-commander` | `turn.brief` | PASS | 3/3 |
 | `checkout-names-commit` | `turn.checkout` | PASS | 3/3 |
 | `checks-reads-reviewer-wake` | `corner` | PASS | 3/3 |
@@ -23,14 +23,27 @@
 | `github-app-only-access` | `tools` | PASS | 3/3 |
 | `github-general-repository-guidance` | `place` | PASS | 3/3 |
 | `github-personal-api-precedence` | `tools` | PASS | 3/3 |
-| `handover-tags-not-new-corner` | `talking` | PASS | 2/3 |
+| `handover-tags-not-new-corner` | `talking` | FAIL: no alternative passed: expected order with {"*":{"contains":"juniper"}}; saw Read({"file_path":"/replay/skills/beeline-corners-and-merging/SKILL.md"}), read({"facet":"brief"}), report({"status":"blocked","text":"blocked: I've stopped work o | 0/3 |
 | `identity-introduces-as-agent` | `identity` | PASS | 3/3 |
 | `implementer-reviewer-does-not-push` | `corner` | PASS | 3/3 |
 | `land-merges-after-pass` | `turn.land` | PASS | 3/3 |
+| `long-incident-shipped-status` | `work` | FAIL: text did not match {"not":{"matches":"(?<!\\()(?:(?:PR\|pull request)\\s*)?#86\|(?<!\\()(?:PR\|pull request)\\s+86","flags":"i"}}: "Pull request 86 shipped the expired-session fix. When a session expires, people now get a clear failure inst | 0/3 |
 | `machine-host-runs-locally` | `place` | PASS | 3/3 |
 | `members-exact-handle` | `turn.members` | PASS | 3/3 |
 | `memory-answers-from-note` | `turn.memory` | PASS | 3/3 |
 | `memory-cap-explains-exit-137` | `place` | PASS | 3/3 |
+| `memory-rule-01` | `turn.memory` | PASS | 3/3 |
+| `memory-rule-02` | `turn.memory` | PASS | 3/3 |
+| `memory-rule-03` | `turn.memory` | PASS | 3/3 |
+| `memory-rule-04` | `turn.memory` | PASS | 3/3 |
+| `memory-rule-05` | `turn.memory` | PASS | 3/3 |
+| `memory-rule-06` | `turn.memory` | FAIL: expected open_corner with {"brief.spec":{"matches":"(?:no\|never\|only\|do not).{0,100}progress\|progress.{0,100}(?:stay\|only\|never\|not)","flags":"i"},"implementer":{"matches":"^@?fern$"}}; saw Read({"file_path":"/replay/skills/beeline-t | 0/3 |
+| `memory-rule-07` | `turn.memory` | PASS | 2/3 |
+| `memory-rule-08` | `turn.memory` | PASS | 3/3 |
+| `memory-rule-09` | `turn.memory` | PASS | 3/3 |
+| `memory-rule-10` | `turn.memory` | PASS | 2/3 |
+| `memory-rule-11` | `turn.memory` | PASS | 3/3 |
+| `memory-rule-12` | `turn.memory` | PASS | 3/3 |
 | `merge-no-self-review` | `corner` | PASS | 3/3 |
 | `objective-is-not-authority` | `turn.objective` | PASS | 3/3 |
 | `prepare-runs-first` | `corner` | PASS | 3/3 |
@@ -58,3 +71,22 @@
 | `voice-stays-out-of-commits` | `identity` | PASS | 3/3 |
 | `workspace-core-loaded-first` | `turn.workspace-core` | PASS | 3/3 |
 | `worktree-knows-branch` | `place` | PASS | 3/3 |
+
+## Twelve memory cases without their notes
+
+**Prompt case replay:** 10/12 passed.
+
+| Case | Section | Result | Samples passed |
+| --- | --- | --- | --- |
+| `memory-rule-01` | `turn.memory` | PASS | 3/3 |
+| `memory-rule-02` | `turn.memory` | PASS | 3/3 |
+| `memory-rule-03` | `turn.memory` | PASS | 3/3 |
+| `memory-rule-04` | `turn.memory` | PASS | 3/3 |
+| `memory-rule-05` | `turn.memory` | PASS | 3/3 |
+| `memory-rule-06` | `turn.memory` | FAIL: expected open_corner with {"brief.spec":{"matches":"(?:no\|never\|only\|do not).{0,100}progress\|progress.{0,100}(?:stay\|only\|never\|not)","flags":"i"},"implementer":{"matches":"^@?fern$"}}; saw Read({"file_path":"/replay/skills/beeline-t | 0/3 |
+| `memory-rule-07` | `turn.memory` | PASS | 3/3 |
+| `memory-rule-08` | `turn.memory` | FAIL: text did not match {"not":{"matches":"(?<!\\()(?:(?:PR\|pull request)\\s*)?#73\|(?<!\\()(?:PR\|pull request)\\s+73","flags":"i"}}: "Pull request 73 shipped one change: requests that use an expired token now get a 401 response. I only know t | 0/3 |
+| `memory-rule-09` | `turn.memory` | PASS | 3/3 |
+| `memory-rule-10` | `turn.memory` | PASS | 2/3 |
+| `memory-rule-11` | `turn.memory` | PASS | 3/3 |
+| `memory-rule-12` | `turn.memory` | PASS | 3/3 |

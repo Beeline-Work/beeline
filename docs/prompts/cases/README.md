@@ -56,6 +56,8 @@ keep them to plain checks such as "no `@` tag".
 - `{"noCall": "Bash", "args": {"command": {"matches": "\\bssh\\b"}}}`: no call matches.
 - `{"text": {"not": {"matches": "@juniper"}}}`: the agent's text, all steps joined.
 - `{"skill": "beeline-files-and-mocks", "beforeRetry": "post_artifact"}`: reads the listed skill file before the first retry (or loads it without retrying). Skill names must exist in the session's installed skills.
+- `{"ordered": [{"call": "Bash"}, {"call": "open_corner"}]}`: the first matching calls occur in that order; a premature action cannot be repaired by repeating it.
+- `{"atMostOnce": "no_reply_needed", "terminal": true}`: at most one matching call, and it must be the final call if present.
 - `{"all": [...]}`, `{"any": [...]}`, `{"not": rule}`.
 
 An argument path may be dotted (`http.url`); `*` means all arguments as JSON.
@@ -110,3 +112,8 @@ The cases and grading rules come from this checkout; assembly, tool descriptions
 and Beeline skills come from `--source`. Record that checkout's exact commit and
 model with the table. A case-library-only PR may record failures without changing
 the prompt; future prompt fixes must raise that baseline.
+
+Memory comparisons use `--memory with` (the default), `--memory without`, or
+`--memory both`. The paired mode exports and grades separate `with/` and
+`without/` directories. Keep both variants in the comparison when measuring
+whether an always-loaded rule can replace a remembered note.

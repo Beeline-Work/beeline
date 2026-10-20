@@ -141,11 +141,11 @@ describe('share_browser Squire refusal', () => {
         type: 'text', text: JSON.stringify({ url: `https://squire.test/s/${'a'.repeat(43)}/`, expires_at: expiresAt }),
       }] } });
       posted.push(JSON.parse(String(init.body)) as Record<string, unknown>);
-      return Response.json({ id: 'card-1', url: 'https://server.test/s/card-1/' });
+      return Response.json({ id: 'share-1', messageId: 'card-1', url: 'https://server.test/s/share-1/', beelineUrl: 'https://web.usebeeline.app/beeline/browser-share?id=share-1' });
     });
 
     const result = JSON.parse(await callAgentTool('app_tool', { app:'beeline:browser_share', tool:'start', args:{ source: 'squire', sessionId: 'session-1' } }, 'call-1') as string);
-    expect(result).toMatchObject({ cardId: 'card-1', status: 'live' });
+    expect(result).toMatchObject({ cardId: 'card-1', shareId: 'share-1', url: 'https://web.usebeeline.app/beeline/browser-share?id=share-1', status: 'live' });
     expect(posted[0]).toMatchObject({ sessionId: 'session-1', expiresAt: Date.parse(expiresAt) });
   });
 });

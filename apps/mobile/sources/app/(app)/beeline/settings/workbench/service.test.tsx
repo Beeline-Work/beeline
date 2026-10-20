@@ -189,6 +189,53 @@ describe('app connections on the info page', () => {
     expect(navigation.push).not.toHaveBeenCalled();
     await act(async () => renderer.unmount());
   });
+  it('top-row Connect retries the app that needs it through the same path', async () => {
+    navigation.push.mockClear();
+    const source = serveNotion('error');
+    vi.spyOn(source, 'listHelpers').mockResolvedValue([{ id: 'laptop', name: 'Laptop', online: true }] as any);
+    const connect = vi.spyOn(source, 'connectApp').mockResolvedValue({ appId: 'notion' } as any);
+    const renderer = await render();
+    const top = renderer.root.findByProps({ testID: 'connector-info-status' });
+    expect(top.props.action).toBe('Connect');
+    await act(async () => { await top.props.onPress(); });
+    expect(connect).toHaveBeenCalledWith({ workspaceId: 'ws', app: 'Notion', helperId: 'laptop', reconnect: true });
+    expect(navigation.push).not.toHaveBeenCalled();
+    await act(async () => renderer.unmount());
+  });
+});
+
+describe('built-in connections that need sign-in', () => {
+  function serveBuiltin(providerId: string, name: string, item: { id: string; title: string; target: any }) {
+    const source = new MockWorkbenchSource();
+    source.readWorkbench = async () => companyWorkbench([{ ...companyRow(providerId, name, 'attention'), state: 'connect' as const, attention: '1 connection needs attention',
+      items: [{ ...item, subtitle: 'built in', kind: 'connection' as const, state: 'connect' as const, attention: true }], alsoAvailable: [] }]);
+    setWorkbenchSource(source); params.service = providerId;
+  }
+  const cases = [
+    { providerId: 'google', name: 'Google', item: { id: 'builtin:google', title: 'Google sign-in', target: { kind: 'connector', connectorId: 'google' } },
+      route: { pathname: '/beeline/settings/workbench/connect', params: { workspaceId: 'ws', viewerId: 'human-dani', connectorId: 'google' } } },
+    { providerId: 'tailscale', name: 'Tailscale', item: { id: 'builtin:tailscale', title: 'Tailscale', target: { kind: 'connector', connectorId: 'tailscale' } },
+      route: { pathname: '/beeline/settings/workbench/connect', params: { workspaceId: 'ws', viewerId: 'human-dani', connectorId: 'tailscale' } } },
+    { providerId: 'coinbase', name: 'Coinbase', item: { id: 'builtin:wallet', title: 'Coinbase wallet', target: { kind: 'wallet' } },
+      route: { pathname: '/beeline/settings/workbench/wallet', params: { workspaceId: 'ws', viewerId: 'human-dani' } } },
+  ];
+  for (const { providerId, name, item, route } of cases) {
+    it(`${item.title}: row and top-row Connect both open its existing connection page`, async () => {
+      navigation.push.mockClear(); serveBuiltin(providerId, name, item);
+      const renderer = await render();
+      const row = renderer.root.findByProps({ testID: `company-item-${item.id}` });
+      expect(row.props.action).toBe('Connect');
+      expect(row.props.value).toBeUndefined();
+      await act(async () => row.props.onPress());
+      expect(navigation.push).toHaveBeenLastCalledWith(route);
+      const top = renderer.root.findByProps({ testID: 'connector-info-status' });
+      expect(top.props.action).toBe('Connect');
+      await act(async () => top.props.onPress());
+      expect(navigation.push).toHaveBeenCalledTimes(2);
+      expect(navigation.push).toHaveBeenLastCalledWith(route);
+      await act(async () => renderer.unmount());
+    });
+  }
 });
 
 describe('three-state connection status', () => {

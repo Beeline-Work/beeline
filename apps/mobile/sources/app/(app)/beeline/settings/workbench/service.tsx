@@ -85,6 +85,24 @@ export default function ConnectorServiceScreen() {
       action={busy ? undefined : 'Connect'} value={busy ? 'Connecting…' : undefined} disabled={busy}
       onPress={() => void reconnectApp(app)} testID={`company-item-${item.id}`} />;
   };
+  // Connect reuses each item's existing path: app reconnect, or its connector/wallet page.
+  const connectItem = (item: WorkbenchCompany['items'][number]) => {
+    const target = item.target;
+    const app = target.kind === 'app' ? view?.apps.find(entry => entry.id === target.appId) : undefined;
+    if (app) void reconnectApp(app);
+    else if (target.kind === 'link') setLinkOpen(true);
+    else openCompanyItem(target, scope);
+  };
+  const connectTop = () => {
+    if (!row) return;
+    if (row.kind === 'sign-in-service') {
+      const fix = row.machines.find(item => item.online && !item.reconnecting && needsFix(item));
+      router.push({ pathname: '/beeline/settings/workbench/connect', params: { ...scope, connectorId: 'trusty-squire', ...(fix ? { helperId: fix.id } : {}) } } as Href);
+      return;
+    }
+    const item = row.items.find(entry => connectionViewState(entry) === 'connect');
+    if (item) connectItem(item);
+  };
   const disconnect = async () => {
     try {
       if (manageMachine) await getWorkbenchSource().disconnectConnector({ workspaceId: scope.workspaceId, connectorId: `squire:${manageMachine.id}` });
@@ -101,7 +119,7 @@ export default function ConnectorServiceScreen() {
           value={topState === 'error' ? row.status ?? 'Needs attention'
             : topState === 'connect' ? undefined
               : row.kind === 'sign-in-service' ? row.status : 'Connected'}
-          action={topState === 'connect' ? 'Connect' : undefined}
+          action={topState === 'connect' ? 'Connect' : undefined} onPress={topState === 'connect' ? connectTop : undefined}
           valueTone={topState === 'error' ? 'danger' : undefined}
           statusGlyph={topState === 'error' ? 'failed' : topState === 'connected' ? 'live' : undefined} testID="connector-info-status" />
         <Text style={styles.note} testID="connector-info-agents">{agents}</Text>
@@ -128,6 +146,9 @@ export default function ConnectorServiceScreen() {
               return app ? appRow(item, app) : item.target.kind === 'key'
               ? <SettingsRow appBoard key={item.id} title={item.title} description={item.subtitle}
                 value={item.status} valueTone={item.attention ? 'danger' : undefined} testID={`company-item-${item.id}`} />
+              : connectionViewState(item) === 'connect'
+              ? <SettingsRow appBoard key={item.id} title={item.title} description={item.subtitle}
+                action="Connect" onPress={() => connectItem(item)} testID={`company-item-${item.id}`} />
               : <SettingsRow appBoard key={item.id} title={item.title} description={item.subtitle}
                 value={item.status} valueTone={item.attention ? 'danger' : undefined} chevron="right"
                 onPress={() => item.target.kind === 'link' ? setLinkOpen(true) : openCompanyItem(item.target, scope)} testID={`company-item-${item.id}`} />;

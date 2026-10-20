@@ -2933,6 +2933,12 @@ describe('run owner', () => {
 
   it('is the person whose message led an agent to create the schedule, never the hidden scheduler', async () => {
     await saveWorkflow(database, await commandFor(WORKER_A), { contract: describedWorkflow(GATED) });
+    const parent = '20000000-0000-4000-8000-000000000099';
+    await database.query(`INSERT INTO rooms(id,workspace_id,name,created_by) VALUES($1,$2,'Parent',$3)`, [parent, WORKSPACE, OWNER]);
+    await database.query(`UPDATE memberships SET room_id=$1 WHERE room_id=$2`, [parent, ROOM]);
+    await database.query(`INSERT INTO memberships(workspace_id,identity_id,role) VALUES($1,$2,'owner')`, [WORKSPACE, OWNER]);
+    await database.query(`UPDATE rooms SET parent_id=$1 WHERE id=$2`, [parent, ROOM]);
+    await database.query(`INSERT INTO corner_facts(corner_id,owner_agent_id,worker_agent_id,objective) VALUES($1,$2,$2,'Scheduled gate proof')`, [ROOM, WORKER_A]);
     const asked = await rootMessage(OWNER, '@wa run gated every day');
     const creating = await commandFor(WORKER_A, asked);
     const { DaemonService } = await import('./daemon-service.js');
@@ -2949,8 +2955,20 @@ describe('run owner', () => {
     )).rows[0]!;
     const tick = (await database.query<{ author_id: string }>(`SELECT author_id FROM messages WHERE id=$1`, [scheduled.source_message_id])).rows[0]!;
     expect(tick.author_id).toBe(SCHEDULE_SCHEDULER_ID);
-    const { runId } = await startWorkflow(database, scheduled, { name: 'gated', roleBindings: { worker: WORKER_A, approver: APPROVER } });
+    const { runId } = await startWorkflow(database, scheduled, { name: 'gated', roleBindings: { worker: WORKER_A, approver: WORKER_A } });
     expect((await runCards(runId))[0]!.card).toMatchObject({ ownerId: OWNER, startKind: 'schedule' });
+    await handoff(database, scheduled, { runId, outcome: 'done', contents: { note: 'ok' },
+      attempt: (await getWorkflowRun(database, ROOM, runId)).attempt });
+    await database.query(`UPDATE agent_commands SET state='complete' WHERE room_id=$1`, [ROOM]);
+    const gate = (await database.query<{ id: string; card: { requester: { pubkey: string } } }>(
+      `SELECT id,card FROM messages WHERE card_type='choice' AND card->>'runId'=$1`, [runId],
+    )).rows[0]!;
+    expect(gate.card.requester.pubkey).toBe(OWNER);
+    const phone = new PhoneService(database, 'http://test');
+    expect((await phone.readCorners(parent, OWNER))!.corners.find(item => item.corner.id === ROOM)?.state).toBe('waiting');
+    const tray = await phone.execute('readNeedsYou', { workspaceId: WORKSPACE }, OWNER);
+    expect(tray.items.some(item => item.messageId === gate.id)).toBe(true);
+    console.info('Demonstrated scheduled-gate: self-created schedule → gate addressed to owner → waiting corner and Needs You card');
   });
 
   it('is null for an older agent-made schedule with no recorded owner, so notices go to admins', async () => {

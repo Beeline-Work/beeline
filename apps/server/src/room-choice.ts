@@ -297,6 +297,8 @@ export async function postRoomChoice(
     ttlSeconds?: unknown;
     /** Internal workflow gate exemption; never accepted from ask_choice callers. */
     workflowRunId?: string;
+    /** Internal run owner; never accepted from ask_choice callers. */
+    workflowOwnerId?: string | null;
     /** The asking turn, so the card counts toward that turn's one push per recipient. */
     requestId?: string;
   },
@@ -345,7 +347,9 @@ export async function postRoomChoice(
   ).rows[0];
   if (open && !input.workflowRunId) throw new Error('choice conflict: you already have an open choice in this Room');
   const agent = await loadIdentity(database, input.agentId);
-  const requesterRow = agent.kind === 'agent' ? (await database.query<IdentityRow>(
+  const requesterRow = input.workflowRunId && input.workflowOwnerId
+    ? await loadIdentity(database, input.workflowOwnerId)
+    : agent.kind === 'agent' ? (await database.query<IdentityRow>(
       `SELECT identity.id,identity.kind,identity.name,identity.handle,identity.avatar,identity.face_id
        FROM agent_commands command
        JOIN messages message ON message.id=command.source_message_id

@@ -1,4 +1,4 @@
-import { normalizeTrayAsk } from '@beeline/api-contract/phone';
+import { normalizeAgentAsk } from './tray-approval-ask.js';
 import { createHash, randomBytes } from 'node:crypto';
 import type { SqlDatabase } from './database.js';
 import {
@@ -229,7 +229,7 @@ export async function reportToCommander(
       'report must begin done:, blocked:, needs-decision: or failed:',
       400,
     );
-  const ask = options.ask === undefined ? undefined : normalizeTrayAsk(options.ask);
+  const ask = options.ask === undefined ? undefined : normalizeAgentAsk(options.ask);
   if (command?.coalesced_context !== null && command?.coalesced_context !== undefined && !options.digestSource) {
     const sources = (await db.query<CommandRow>(
       `SELECT * FROM agent_commands WHERE room_id=$1 AND agent_id=$2

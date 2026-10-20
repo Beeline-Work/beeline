@@ -58,7 +58,10 @@ export function isPlatformKey(key: { readonly label: string; readonly service: s
   return PLATFORM_KEY_SERVICES.has((key.service ?? '').trim().toLowerCase()) && /^beeline(?:$|[-_\s])/i.test(key.label.trim());
 }
 const STATE_RANK: Record<ConnectorViewState, number> = { connected: 0, connect: 1, error: 2 };
-const PROVIDER_REFUSAL = /App provider request failed \(\d{3}\)|provider refused/i;
+// Only refusals a reconnect cannot fix: 403 forbidden, 410 gone, 451 legal block. 401, 429, 5xx and other codes stay Connect.
+const PROVIDER_REFUSAL = /App provider request failed \((?:403|410|451)\)|provider refused/i;
+// Authentication failures are fixable by a reconnect, even when a refusal code wraps them.
+const AUTH_FIXABLE = /expired|revoked|sign[- ]?in|re-?auth|unauthori[sz]ed|token|credential|log ?in/i;
 const APP_REMOVED = /removed upstream|was removed|app removed/i;
 const COMPUTER_OFFLINE = /computer offline|helper (is )?offline|machine offline/i;
 
@@ -76,7 +79,7 @@ export function classifyConnectionState(input: {
   if (COMPUTER_OFFLINE.test(message ?? '')) {
     return { state: 'error', label: message && !/^offline$/i.test(message) ? message : 'Computer offline' };
   }
-  if (message && PROVIDER_REFUSAL.test(message)) return { state: 'error', label: message };
+  if (message && PROVIDER_REFUSAL.test(message) && !AUTH_FIXABLE.test(message)) return { state: 'error', label: message };
   if (message && APP_REMOVED.test(message)) return { state: 'error', label: message };
   if (input.neverAuthorised) return { state: 'connect' };
   return { state: 'connect' };

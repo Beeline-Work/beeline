@@ -141,6 +141,18 @@ describe('server-owned Connectors company projection', () => {
     expect(row.status).toBe('Computer offline');
     expect(row.items).toEqual([expect.objectContaining({ id: 'notion', state: 'error', status: 'Computer offline', attention: true })]);
   });
+  it('keeps an expired sign-in wrapped in a provider HTTP error in Connect', () => {
+    for (const errorMessage of ['App provider request failed (401): Sign-in expired', 'App provider request failed (401)',
+      'App provider request failed (403): Token revoked', 'App provider request failed (429)', 'App provider request failed (500)']) {
+      expect(classifyConnectionState({ status: 'error', errorMessage })).toEqual({ state: 'connect' });
+    }
+    const gmail = { ...app('gmail', 'Gmail', 'mail.google.com'), status: 'error' as const,
+      errorMessage: 'App provider request failed (401): Sign-in expired' };
+    const google = projectWorkbenchCompanies(base([], [gmail]), origin).rows.find(r => r.id === 'google')!;
+    expect(google.state).toBe('connect');
+    expect(google.items).toEqual([expect.objectContaining({ id: 'gmail', state: 'connect', attention: true })]);
+    expect(google.items[0]?.status).toBeUndefined();
+  });
   it('company top-row status is the worst app state and never Offline', () => {
     expect(worstConnectionState(['connected', 'connect', 'error'])).toBe('error');
     expect(worstConnectionState(['connected', 'connect'])).toBe('connect');

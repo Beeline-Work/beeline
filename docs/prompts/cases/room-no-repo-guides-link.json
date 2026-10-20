@@ -1,0 +1,57 @@
+{
+  "id": "room-no-repo-guides-link",
+  "section": "place",
+  "summary": "Code work in a Room without a repository gets the Link or Create path in the first reply.",
+  "place": "room",
+  "session": {
+    "agentCommand": "pi-acp",
+    "shell": {
+      "available": true
+    }
+  },
+  "turn": {
+    "task": {
+      "body": "@ruby can you write code here in this Room?",
+      "fromName": "dana",
+      "commandReason": "human_tag"
+    }
+  },
+  "pass": {
+    "all": [
+      {
+        "text": {
+          "matches": "Room.{0,30}header",
+          "flags": "is"
+        }
+      },
+      {
+        "text": {
+          "matches": "Repository",
+          "flags": "i"
+        }
+      },
+      {
+        "text": {
+          "matches": "\\b(Link|Create)\\b",
+          "flags": "i"
+        }
+      },
+      {
+        "text": {
+          "not": {
+            "matches": "(?<!\\b(?:never|not|won't|don't)\\s)\\b(?:go|switch|move|use|try|open|find|send)\\b.{0,20}\\b(?:another|different|other)\\s+Room|\\b(?:point|direct|send)\\b.{0,50}Room\\b(?!\\s+header).{0,40}(?:linked|repository)|\\b(?:go|switch|move|find|use)\\b.{0,30}Room\\b(?!\\s+header).{0,40}(?:linked|repository)|create\\s+(?:a\\s+)?repository-backed\\s+Room|point.{0,50}repository-backed\\s+Room",
+            "flags": "is"
+          }
+        }
+      },
+      {
+        "text": {
+          "not": {
+            "matches": "(?:repository|Room).{0,60}(?:filesystem|checkout).{0,30}read.only",
+            "flags": "is"
+          }
+        }
+      }
+    ]
+  }
+}

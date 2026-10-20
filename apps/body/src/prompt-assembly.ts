@@ -306,7 +306,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     why: {
       'core.machine-host': 'Agents tried to SSH to the machine they were already running on.',
       'core.memory': 'A command can exhaust the session cgroup before the agent can adapt its workload.',
-      'room.place': 'The agent must know it cannot write the checkout, where it can write files, where the checkout is, and whether it has a shell.',
+      'room.place': 'A repo-less Room agent implied a checkout existed and sent the person elsewhere instead of showing Link or Create.',
       'dm.place': 'A DM is a driving surface for work across every Room the agent belongs to.',
       'corner.worktree': 'Every agent in a code corner must know its branch and target, whether or not it writes code.',
       'corner.android': 'An agent under its isolated $HOME concluded the host had no emulator, and agents on the shared adb server drove each other\'s emulators.',
@@ -322,8 +322,10 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
         `Memory cap: ${Number(((memoryMaxBytes ?? ACP_SESSION_MEMORY_MAX_BYTES) / 1024 ** 3).toFixed(2))} GiB per session. Size builds, tests and data jobs to fit it; split heavy work. Exit 137/signal 9 likely means a command hit this cap.`,
         surface === 'room' &&
           [
-            `This is a Beeline Room. The repository filesystem is read-only here.${repository ? ` The Room is bound to ${repository.name} (branch ${repository.branch}); the read-only checkout is at the session root.` : ''} Web search is available.`,
-            !repository ? 'For coding work without a linked repository, guide Room header → Repository → Link/Create (or create a repository-backed Room). If gh is unavailable, consult beeline-connecting-services for repository and organization setup before proposing a personal GitHub connection.' : '',
+            repository
+              ? `This is a Beeline Room. The repository filesystem is read-only here. The Room is bound to ${repository.name} (branch ${repository.branch}); the read-only checkout is at the session root. Web search is available.`
+              : 'This Beeline Room has no linked repository. Web search is available.',
+            !repository ? 'When code work comes up, say in your first reply: this Room has no linked repository; use Room header → Repository → Link or Create. Never send them to another Room. For quick snippets or single files, deliver an attachment; mention linking for ongoing code work. If gh is unavailable, consult beeline-connecting-services for repository and organization setup before proposing a personal GitHub connection.' : '',
             shellLine(shell),
             writableHomeLine(writableHome),
             'To act outside the sandbox, ask with request_grant(kind:command, target, reason) and run the approved command with run_granted_command in a surface that permits it; never call a host blocker unfixable before asking.',

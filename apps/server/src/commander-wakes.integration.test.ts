@@ -2,17 +2,19 @@ import { flushDueCommanderWakes } from './commander-wakes.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
 import { advanceCorner } from './corner-lifecycle.js';
 import { randomUUID, randomBytes } from 'node:crypto';
-import { beforeAll, beforeEach, afterAll, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, afterAll, afterEach, expect, it, vi } from 'vitest';
 import { migrate } from './database.js';
 import { PgliteDatabase } from './test-support.js';
 import { DaemonService } from './daemon-service.js';
 import { PhoneService } from './phone-service.js';
 import { LiveHub } from './live.js';
+import { captureServerError } from './sentry.js';
+vi.mock('./sentry.js', () => ({ captureServerError: vi.fn() }));
 import { GitHubOperations } from './github-operations.js';
 import { readAgentCommands, createAgentCommand, type CommandRow } from './agent-command.js';
 import { GITHUB_SUBJECT, systemLine } from './system-line.js';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
-import type { GitHubAppClient, GitHubOAuthClient } from '@beeline/auth/github';
+import type { GitHubOAuthClient } from '@beeline/auth/github';
 
 const HUMAN = 'a'.repeat(64), RUBY = 'b'.repeat(64), WORKER = 'c'.repeat(64);
 const WS = '11111111-1111-4111-8111-111111111111';
@@ -38,8 +40,9 @@ beforeAll(async () => {
   phone = new PhoneService(db, 'http://test');
 }, 30_000);
 afterAll(async () => db.close());
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 beforeEach(async () => {
-  ready = false; held = false; checks.mockClear();
+  ready = false; held = false; checks.mockClear(); vi.mocked(captureServerError).mockClear();
   await db.query('UPDATE agents SET wake_batch_minutes=0');
   await db.query(`DELETE FROM agent_commands`);
   await db.query(`DELETE FROM workspaces`);
@@ -128,6 +131,20 @@ it.each([false, true])('Reproduction report-step: delivers a finished PR step wh
     .toBe('done: assigned PR step finished; awaiting review');
   expect(checks).not.toHaveBeenCalled();
 });
+it('R-GH-RETRY-REPORT: a GitHub outage cannot refuse or delay a finished-step report', async () => {
+  const opened = await open(), turn = await worker(opened.cornerId);
+  await db.query(`UPDATE corner_facts SET lifecycle=jsonb_build_object('pr',jsonb_build_object('number',42,'headSha',$2::text)) WHERE corner_id=$1`, [opened.cornerId, '9'.repeat(40)]);
+  const fetchMock = vi.fn().mockImplementation(async () => new Response('upstream unavailable', { status: 502 }));
+  vi.stubGlobal('fetch', fetchMock);
+  checks.mockClear();
+  const text = 'done: implementation and verification finished';
+  await daemon.execute('report', { ...authority(turn), status: 'done', text }, WORKER);
+  expect(checks).not.toHaveBeenCalled();
+  expect(fetchMock).not.toHaveBeenCalled();
+  expect(captureServerError).not.toHaveBeenCalled();
+  expect((await commands(DM, RUBY)).find(c => c.reason === 'report')?.source.body).toBe(text);
+});
+
 it('accepts done with live merge-ready checks, and batches its commander wake', async () => {
   const opened = await open(), turn = await worker(opened.cornerId);
   await batch();

@@ -46,7 +46,9 @@ describe('beeline-agent ask_choice and open_poll', () => {
       const names = tools.map(tool => tool.name);
       expect(names).not.toContain('ask_choice');
       expect(names).not.toContain('open_poll');
-      expect((tools.find(tool => tool.name === 'report')!.inputSchema.required ?? [])).not.toContain('ask');
+      const schema = tools.find(tool => tool.name === 'report')!.inputSchema;
+      expect(schema.required ?? []).not.toContain('ask');
+      expect(schema.properties?.ask).toMatchObject({ maxLength: 140, description: expect.stringContaining('one sentence on one line') });
     }
   });
 

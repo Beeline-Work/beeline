@@ -1207,3 +1207,44 @@ it('Reproduction R1: exact original posts do not wake the quoted member', async 
     }
   } finally { await db.query(`UPDATE identities SET handle='ruby' WHERE id=$1`, [RUBY]); }
 });
+
+// Reproduction OPEN-1: use the same public daemon operation as open_corner.
+it.each([undefined, 'agent-context'])('OPEN-1: opens without human approval (%s)', async (sourceMessageId) => {
+  if (sourceMessageId) await db.query(
+    `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Investigate the widget')`,
+    [sourceMessageId, ROOM, WORKER]);
+  const opened = await daemon.execute('createCorner', { ...authority(order), targetRoomId: ROOM,
+    name: 'Agent-widget', objective: 'Build the widget', implementer: 'worker',
+    brief: { spec: 'Build the widget', repositoryWork: false,
+      ...(sourceMessageId ? { approval: { sourceMessageId } } : {}) },
+  }, RUBY);
+  expect((await db.query(`SELECT approval_basis FROM corner_brief_revisions WHERE corner_id=$1`,
+    [opened.cornerId])).rows[0]).toMatchObject({ approval_basis: {
+      kind: 'agent-initiated', approvedBy: RUBY, snapshot: 'Agent-initiated corner',
+  } });
+  expect((await commands(opened.cornerId, WORKER))[0]).toBeDefined();
+});
+it('OPEN-1: preserves human approval text and attribution', async () => {
+  const opened = await open();
+  expect((await db.query(`SELECT approval_basis FROM corner_brief_revisions WHERE corner_id=$1`,
+    [opened.cornerId])).rows[0]).toMatchObject({ approval_basis: {
+      approvedBy: HUMAN, snapshot: 'Build the widget in the target Room',
+  } });
+});
+it('OPEN-1: refuses a non-member opening without approval', async () => {
+  await db.query(`DELETE FROM memberships WHERE room_id=$1 AND identity_id=$2`, [ROOM, RUBY]);
+  await expect(daemon.execute('createCorner', { ...authority(order), targetRoomId: ROOM,
+    name: 'Agent-widget', objective: 'Build the widget', implementer: 'worker',
+    brief: { spec: 'Build the widget', repositoryWork: false },
+  }, RUBY)).rejects.toThrow('daemon room access denied');
+});
+
+it('OPEN-1: an agent-initiated opening does not authorize a later revision', async () => {
+  const opened = await daemon.execute('createCorner', { ...authority(order), targetRoomId: ROOM,
+    name: 'Agent-widget', objective: 'Build the widget', implementer: 'worker',
+    brief: { spec: 'Build the widget', repositoryWork: false },
+  }, RUBY);
+  await expect(daemon.execute('reviseCornerBrief', { ...authority(order), cornerId: opened.cornerId,
+    expectedRevision: 1, brief: { spec: 'Change the widget', change: 'Adjust scope' },
+  }, RUBY)).rejects.toThrow('corner brief approval must name a human message or commander order');
+});

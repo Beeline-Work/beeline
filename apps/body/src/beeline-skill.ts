@@ -336,7 +336,7 @@ Create an assignment a fresh session can execute without the parent transcript. 
   Add implementation guidance under further headings when it helps.
   For repository bugfixes only, add Reproduction <id>: <real-target steps and observed failure>, or Reproduction not feasible: <reason>; Stand-in: <closest check>; labels may be bold or italic, and Stand-in: may follow on another line in the same Reproduction section. Done repeats that reproduction or stand-in successfully.
 - files (\`attachments\`): the Room files the worker needs, each with its purpose and whether it is required.
-- \`approval\`: the initiating human message ID or private commander order ID. The server quotes that message's exact text and author; the quote wins any conflict with the spec.
+- \`approval\`: optional when opening; the initiating human message ID or private commander order ID. Without it or with an agent message, the server records the opening agent as agent-initiated. Revisions still require human or commander approval. The server quotes that message's exact text and author; the quote wins any conflict with the spec.
 
 Do not infer approval from silence, assent to different prose, or the mere existence of a plan. Keep agent recommendations labelled as recommendations. Do not promote a plausible UX detail, algorithm, failure message, or extra test into a user story merely because it sounds helpful.
 
@@ -391,7 +391,7 @@ Use your judgment about how much planning work needs. This loop can help for a l
 
 Include "no progress reports" in the brief and any implementing order.
 
-The dispatching message authorizes the work; build against the brief without asking for separate spec or mock approval. Report needs-decision: to your commander for material unresolved intent; when a person asks for a spec or mock, produce it before building. Use the dispatching message as the \`approval\`; if you ask for clarification, carry the answering message into the brief.
+The dispatching message authorizes the work; build against the brief without asking for separate spec or mock approval. Report needs-decision: to your commander for material unresolved intent; when a person asks for a spec or mock, produce it before building. Include a dispatching message as \`approval\` when available; opening on agent judgment needs no human approval. Revisions retain their approval requirement.
 
 Pass the brief as \`open_corner.brief\`. Read the current revision before revising and use \`revise_corner(action:brief)\` with the complete replacement spec, the approving message, and a concise change description. Preserve unaffected intent quotes, user stories, and references. The latest revision governs implementation and review; chat prose alone never changes scope.
 `;
@@ -434,7 +434,7 @@ Run these checks before opening a corner.
 
 ## Output
 
-When dispatching work, pass the complete brief to open_corner with the dispatching message as approval; no separate outline post or human approval is required. Add applicable warnings to the brief:
+When dispatching work, pass the complete brief to open_corner; approval is optional for opening; no separate outline post or human approval is required. Add applicable warnings to the brief:
 
 \`Triage warning — warranted: <evidence-backed reason>\`
 \`Triage warning — desirable: <evidence-backed reason>\`

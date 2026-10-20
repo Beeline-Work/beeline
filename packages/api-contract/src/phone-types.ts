@@ -86,7 +86,7 @@ export type CornerLifecycleView = {
 /** The server-owned corner state vocabulary. Clients render this field; they
  * never derive a second state from lifecycle, PR, check, or turn facts. */
 export type CornerState = 'working' | 'waiting' | 'idle' | 'review' | 'archived';
-export type CornerStateReason = 'failed' | 'checks-failed' | 'question';
+export type CornerStateReason = 'approve' | 'connect' | 'question';
 
 export const ROOM_VIEW_MESSAGE_LIMIT = 30;
 /** Kept separate from the conversation window for settled corner tool activity.
@@ -793,6 +793,8 @@ export type ChatListCorner = {
   readonly id: string;
   readonly name: string;
   readonly state: Exclude<CornerState, 'archived'>;
+  readonly reason?: CornerStateReason;
+  readonly itemId?: string;
   /** The server's Mine rule, the same on every surface: the viewer follows
    * this corner (opened, requested, posted, steered or was tagged in it), it
    * owes them something, or they commissioned it. */
@@ -1142,6 +1144,7 @@ export type CornerListItem = {
    * latest child turn receipt rather than the corner metadata timestamp. */
   readonly stateAt?: number;
   readonly reason?: CornerStateReason;
+  readonly itemId?: string;
   /** Unix seconds the corner was closed. Present only on archived corners, and
    * the key the archived list is ordered by: closure recency, not creation. */
   readonly closedAt?: number;

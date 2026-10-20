@@ -1255,6 +1255,8 @@ function readChatCorner(value: unknown): ChatListCorner | null {
     name: item.name,
     state,
     ...field('mine', item.mine === true ? (true as const) : undefined),
+    ...field('reason', oneOf(item.reason, ['approve', 'connect', 'question'])),
+    ...field('itemId', nonempty(item.itemId) ? item.itemId : undefined),
     ...field('waitingSince', integer(item.waitingSince) ? item.waitingSince : undefined),
     ...field('attention', item.attention === true ? (true as const) : undefined),
   };
@@ -1440,7 +1442,8 @@ function readCorner(value: unknown): CornerListItem | null {
     state: item.state,
     ...field('stateAt', integer(item.stateAt) ? item.stateAt : undefined),
     ...field('closedAt', integer(item.closedAt) ? item.closedAt : undefined),
-    ...field('reason', oneOf(item.reason, ['failed', 'checks-failed', 'question'])),
+    ...field('reason', oneOf(item.reason, ['approve', 'connect', 'question'])),
+    ...field('itemId', nonempty(item.itemId) ? item.itemId : undefined),
     ...field('initiator', initiator && initiator.kind === 'human' ? initiator : undefined),
     ...field('mine', item.mine === true ? (true as const) : undefined),
     ...field('agent', readIdentityOnly(item.agent)),

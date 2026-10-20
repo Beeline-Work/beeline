@@ -717,7 +717,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
   },
   {
     "name": "open_corner",
-    "description": "Create one unit of work in a member Room; the complete brief and server-validated approving message/order bound its scope. Use a name of at most 3 hyphenated words and an objective of at most 24 words. Objective is navigation. Opening wakes its worker and watches automatically.",
+    "description": "Create one unit of work in a member Room; the complete brief bounds its scope. Human approval is not required to open. Use a name of at most 3 hyphenated words and an objective of at most 24 words. Objective is navigation. Opening wakes its worker and watches automatically.",
     "inputSchema": {
       "type": "object",
       "required": ["room", "brief", "implementer"],
@@ -741,7 +741,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
         },
         "brief": {
           "type": "object",
-          "required": ["spec", "approval"],
+          "required": ["spec"],
           "properties": {
             "repositoryWork": {
               "type": "boolean",
@@ -758,7 +758,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
               "required": ["sourceMessageId"],
               "properties": {"sourceMessageId": {"type": "string"}},
               "additionalProperties": false,
-              "description": "The human message or active private commander order dispatching this work or authorizing its revision. The server quotes it; separate spec approval is not required."
+              "description": "Optional message or active private commander order dispatching this work. Without human or commander context, the server records the opening agent as agent-initiated."
             },
             "attachments": {
               "type": "array",
@@ -890,7 +890,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
       "type": "object",
       "required": ["status", "text"],
       "properties": {
-        "ask": {"type": "string", "minLength": 1, "maxLength": 140},
+        "ask": {"type": "string", "minLength": 1, "maxLength": 140, "description": "Optional plain text ask: one sentence on one line, at most 140 characters."},
         "status": {"type": "string", "enum": ["done", "blocked", "failed", "needs_decision"]},
         "text": {"type": "string", "minLength": 1, "maxLength": 16000}
       },

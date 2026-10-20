@@ -24,11 +24,13 @@ export type CornerStateFacts = {
    * A workflow stage or an ordinary tag alone never establishes a blocker.
    */
   readonly owed?: boolean;
+  readonly blocker?: { readonly reason: CornerStateReason; readonly itemId: string };
 };
 
 export type DerivedCornerState = {
   readonly state: CornerState;
   readonly reason?: CornerStateReason;
+  readonly itemId?: string;
 };
 
 /**
@@ -78,7 +80,7 @@ export function deriveCornerState(facts: CornerStateFacts): DerivedCornerState {
     return { state: 'archived' };
   if (facts.turnRunning || facts.workerQueued) return { state: 'working' };
   if (facts.reviewerActive) return { state: 'review' };
-  if (facts.owed === true) return { state: 'waiting' };
+  if (facts.blocker || facts.owed === true) return { state: 'waiting', ...facts.blocker };
   if (facts.lifecycle?.checks === 'pending' || facts.lifecycle?.checksSummary?.status === 'pending' ||
       facts.lifecycle?.checksSummary?.checks.some(check => check.status === 'pending'))
     return { state: 'review' };

@@ -23,6 +23,7 @@ export type CornerDisplayItem = {
   readonly state: CornerState;
   readonly stateAt?: number;
   readonly reason?: CornerStateReason;
+  readonly itemId?: string;
   /** PR/check narration; never an input to the displayed state. The transcript's
    *  check card reads its current-head check states from it (`withCornerChecks`). */
   readonly lifecycle: CornerLifecycleView;
@@ -68,23 +69,20 @@ export function cornerDisplayState(item: CornerDisplayItem): CornerDisplayState 
   const { state } = item;
   const visual: CornerVisualState =
     state === 'working' ? 'working' : state === 'review' ? 'needs-you' : 'idle';
-  const headerSuffix =
-    item.reason === 'failed'
-      ? 'failed'
-      : item.reason === 'checks-failed'
-        ? 'checks failed'
-        : undefined;
+  const headerSuffix = item.lifecycle.checks === 'failing' || item.lifecycle.checksSummary?.status === 'failing'
+    ? 'checks failed' as const : undefined;
   const detail = cornerStatusLine(item.lifecycle, state === 'archived');
   return {
     status: state,
     visual,
-    needsYou: state === 'review' || item.reason === 'question' || item.reason === 'failed',
+    needsYou: state === 'review' || state === 'waiting',
     glyph: state === 'working' ? '◌' : state === 'review' ? '●' : '○',
     word: state,
     ...(detail ? { detail } : {}),
     ...(item.lifecycle.pr?.url ? { prUrl: item.lifecycle.pr.url } : {}),
     terminal: state === 'archived',
     ...(headerSuffix ? { headerSuffix } : {}),
+
     tone: state === 'waiting' ? 'brass' : state === 'archived' ? 'ghost' : 'quiet',
   };
 }

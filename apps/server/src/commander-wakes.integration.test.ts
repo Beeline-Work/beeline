@@ -14,7 +14,7 @@ import { GitHubOperations } from './github-operations.js';
 import { readAgentCommands, createAgentCommand, type CommandRow } from './agent-command.js';
 import { GITHUB_SUBJECT, systemLine } from './system-line.js';
 import type { AgentCommand } from '@beeline/api-contract/daemon';
-import { GitHubAppClient, type GitHubOAuthClient } from '@beeline/auth/github';
+import type { GitHubOAuthClient } from '@beeline/auth/github';
 
 const HUMAN = 'a'.repeat(64), RUBY = 'b'.repeat(64), WORKER = 'c'.repeat(64);
 const WS = '11111111-1111-4111-8111-111111111111';
@@ -23,11 +23,12 @@ const DM = '33333333-3333-4333-8333-333333333333';
 let db: PgliteDatabase, daemon: DaemonService, phone: PhoneService;
 let order: AgentCommand;
 let ready = false;
+let held = false;
 const checks = vi.fn(async () => ({ stage: 'waiting_for_yes' as const, checks: 'passed' as const, checkCount: 1,
   checkStates: { passed: 1, pending: 0, failed: 0, unlisted: 0, pendingNames: [], failedNames: [] },
   pullRequest: 'https://github.com/owner/widgets/pull/42', headSha: '9'.repeat(40), approved: ready,
   reviewer: '@reviewer', reviewerExists: true, reviewerWake: { status: 'dispatched' as const, detail: '' },
-  held: false, holds: [], mergeAllowed: ready }));
+  held, holds: [], mergeAllowed: ready && !held }));
 beforeAll(async () => {
   db = new PgliteDatabase();
   await migrate(db);
@@ -41,7 +42,7 @@ beforeAll(async () => {
 afterAll(async () => db.close());
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 beforeEach(async () => {
-  ready = false; checks.mockClear(); vi.mocked(captureServerError).mockClear();
+  ready = false; held = false; checks.mockClear(); vi.mocked(captureServerError).mockClear();
   await db.query('UPDATE agents SET wake_batch_minutes=0');
   await db.query(`DELETE FROM agent_commands`);
   await db.query(`DELETE FROM workspaces`);
@@ -119,42 +120,30 @@ it('Reproduction report-schema: stores and delivers a complete multi-paragraph r
   )).rows[0]?.text).toBe(text);
   console.info(`Demonstrated report-schema: server stored and commander received all ${text.length} characters including the final paragraph`);
 });
-it.each(['recovers', 'exhausts'])('R-GH-RETRY-REPORT: shared client %s and the completed report is stored', async outcome => {
+it.each([false, true])('Reproduction report-step: delivers a finished PR step while merging is blocked (held: %s)', async hold => {
+  const opened = await open(), turn = await worker(opened.cornerId);
+  await db.query(`UPDATE corner_facts SET lifecycle=jsonb_build_object('pr',jsonb_build_object('number',42,'headSha',$2::text)) WHERE corner_id=$1`, [opened.cornerId, '9'.repeat(40)]);
+  held = hold;
+  expect((await checks()).mergeAllowed).toBe(false);
+  checks.mockClear();
+  await daemon.execute('report', { ...authority(turn), status: 'done', text: 'done: assigned PR step finished; awaiting review' }, WORKER);
+  expect((await commands(DM, RUBY)).find(c => c.reason === 'report')?.source.body)
+    .toBe('done: assigned PR step finished; awaiting review');
+  expect(checks).not.toHaveBeenCalled();
+});
+it('R-GH-RETRY-REPORT: a GitHub outage cannot refuse or delay a finished-step report', async () => {
   const opened = await open(), turn = await worker(opened.cornerId);
   await db.query(`UPDATE corner_facts SET lifecycle=jsonb_build_object('pr',jsonb_build_object('number',42,'headSha',$2::text)) WHERE corner_id=$1`, [opened.cornerId, '9'.repeat(40)]);
   const fetchMock = vi.fn().mockImplementation(async () => new Response('upstream unavailable', { status: 502 }));
-  if (outcome === 'recovers') fetchMock.mockResolvedValueOnce(new Response('upstream unavailable', { status: 502 }))
-    .mockImplementation(async () => new Response(JSON.stringify({ data: { repository: { object: {
-      oid: '9'.repeat(40), statusCheckRollup: { state: 'SUCCESS', contexts: { totalCount: 1, nodes: [] } },
-    } } } })));
   vi.stubGlobal('fetch', fetchMock);
-  const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
-  let transactionDepth = 0;
-  const transaction = db.transaction.bind(db);
-  vi.spyOn(db, 'transaction').mockImplementation(async run => transaction(async tx => {
-    transactionDepth++;
-    try { return await run(tx); } finally { transactionDepth--; }
-  }));
-  ready = true;
-  const gate = await checks();
-  checks.mockImplementationOnce(async () => {
-    expect(transactionDepth).toBe(0);
-    await app.readCommitCheckRollup('room-token', 'owner/widgets', '9'.repeat(40));
-    return gate;
-  });
+  checks.mockClear();
   const text = 'done: implementation and verification finished';
   await daemon.execute('report', { ...authority(turn), status: 'done', text }, WORKER);
-  expect(fetchMock).toHaveBeenCalledTimes(outcome === 'recovers' ? 2 : 4);
+  expect(checks).not.toHaveBeenCalled();
+  expect(fetchMock).not.toHaveBeenCalled();
+  expect(captureServerError).not.toHaveBeenCalled();
   expect((await commands(DM, RUBY)).find(c => c.reason === 'report')?.source.body).toBe(text);
-  const lifecycle = (await db.query<{ lifecycle: Record<string, unknown> }>(`SELECT lifecycle FROM corner_facts WHERE corner_id=$1`, [opened.cornerId])).rows[0]!.lifecycle;
-  if (outcome === 'exhausts') {
-    expect(lifecycle).toMatchObject({ checks: 'unknown', checkRefreshRetry: { headSha: '9'.repeat(40) } });
-    expect(captureServerError).toHaveBeenCalledTimes(1);
-    expect((await db.query(`SELECT 1 FROM corner_merge_approvals WHERE corner_id=$1`, [opened.cornerId])).rowCount).toBe(0);
-  } else {
-    expect(captureServerError).not.toHaveBeenCalled();
-  }
-}, 20_000);
+});
 
 it('accepts done with live merge-ready checks, and batches its commander wake', async () => {
   const opened = await open(), turn = await worker(opened.cornerId);
@@ -162,7 +151,7 @@ it('accepts done with live merge-ready checks, and batches its commander wake', 
   ready = true;
   await db.query(`UPDATE corner_facts SET lifecycle=jsonb_build_object('pr',jsonb_build_object('number',42,'headSha',$2::text)) WHERE corner_id=$1`, [opened.cornerId, '9'.repeat(40)]);
   await daemon.execute('report', { ...authority(turn), status: 'done', text: 'done: ready to merge' }, WORKER);
-  expect(checks).toHaveBeenCalledWith({ cornerId: opened.cornerId });
+  expect(checks).not.toHaveBeenCalled();
   expect((await commands(DM, RUBY)).some(c => c.reason === 'report')).toBe(false);
   await expireWindow();
   expect((await commands(DM, RUBY)).find(c => c.reason === 'report')?.source.body).toBe('done: ready to merge');

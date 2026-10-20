@@ -396,8 +396,8 @@ export async function serveComputerSession(
     channel.html = html;
     // The Squire page uses a relative "stream" URL. This small host bridge
     // reconciles one close with our session row and notifies the artifact view.
-    const coverStyle = `<style>
-      html,body{background:#1b1320!important}
+    const coverStyle = `<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"><style>
+      html,body{background:#1b1320!important;touch-action:none!important;overscroll-behavior:none!important}
       #screen{display:block!important;position:relative!important;overflow:hidden!important;align-items:unset!important;justify-content:unset!important;touch-action:none!important}
       canvas{display:block!important;position:absolute!important;max-width:none!important;max-height:none!important;object-fit:fill!important;touch-action:none!important}
       #bar{position:fixed!important;z-index:2;right:12px;bottom:max(12px,env(safe-area-inset-bottom))!important;padding:0!important;background:transparent!important}
@@ -488,7 +488,10 @@ export async function serveComputerSession(
       'content-security-policy': "default-src 'none'; img-src data:; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'self' wss: ws:; base-uri 'none'; form-action 'none'",
       'referrer-policy': 'no-referrer', 'x-content-type-options': 'nosniff',
     });
-    response.end(securedHtml.replace('</head>', `${coverStyle}</head>`).replace('</body>', `${bridge}</body>`));
+    // The viewer owns every gesture: a page-level zoom would move the whole
+    // layout and cancel the two-finger pointer stream before the bridge sees it.
+    const withoutUpstreamViewport = securedHtml.replace(/<meta[^>]*name\s*=\s*["']?viewport["']?[^>]*>/gi, '');
+    response.end(withoutUpstreamViewport.replace('</head>', `${coverStyle}</head>`).replace('</body>', `${bridge}</body>`));
     return;
   }
   response.writeHead(200, {
@@ -503,8 +506,8 @@ export async function serveComputerSession(
 
 /** Viewer for an agent-owned CDP tab; Squire serves its own canvas viewer through the proxy. */
 export function computerViewerHtml(id: string): string {
-  return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><title>Browser · Beeline</title><style>
-  html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#1b1320;color:#f6edf4;font-family:system-ui,sans-serif}
+  return `<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"><title>Browser · Beeline</title><style>
+  html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#1b1320;color:#f6edf4;font-family:system-ui,sans-serif;touch-action:none;overscroll-behavior:none}
   #stage{position:absolute;inset:0;overflow:hidden;background:#1b1320}
   #screen{position:absolute;display:block;max-width:none;object-fit:fill;touch-action:none}
   #ended{display:none;position:absolute;inset:0;place-items:center;font-size:16px}

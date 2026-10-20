@@ -17,9 +17,11 @@ it.skipIf(!existsSync(CHROME))('R1: active call survives DNS failure without ren
         const fixture = globalThis.__voiceResume = { offline: false, ready: false, resumed: false, mic: false,
           emit: (event, ...args) => listeners.get(event)?.(...args) };
         const room = { on(event, listener) { listeners.set(event, listener); }, connect: async () => {}, disconnect: async () => {},
+          canPlaybackAudio: true, startAudio: async () => {},
           remoteParticipants: new Map(), localParticipant: { audioLevel: 0, publishData: async () => {},
             setMicrophoneEnabled: async enabled => { fixture.mic = enabled; } } };
         export const subscribeVoiceResume = () => () => {};
+        export const subscribeVoiceMicrophone = () => () => {};
         export const voiceFetch = async url => {
           if (url.includes('/state') && fixture.offline) throw new Error('fetch failed: java.net.UnknownHostException: Unable to resolve host "server.usebeeline.app": No address associated with hostname');
           return new Response(JSON.stringify(url.includes('/state') || url.endsWith('/idle')

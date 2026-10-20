@@ -64,6 +64,7 @@ vi.mock('react-native-svg', () => {
 });
 vi.mock('./IdentityMark', () => ({ IdentityMark: () => null }));
 vi.mock('./BeelineMarkSpinner', () => ({ BeelineMarkSpinner: () => null }));
+vi.mock('./BeelineGlyphPaint', () => ({ BeelineGlyphPaint: () => null }));
 import type { VoiceCallState } from '@/buzz/use-voice-call';
 import {
   COMPOSER_MAX_INPUT_HEIGHT,

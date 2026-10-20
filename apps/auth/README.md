@@ -93,6 +93,9 @@ The `BEELINE_AUTH_OIDC_*` settings take precedence over their legacy
 the new names are deployed and Google sign-in is verified; remove the old Fly
 values and fallback only after that verification.
 
+`BEELINE_AUTH_ALLOW_INSECURE_OIDC` likewise falls back to
+`BUZZY_AUTH_ALLOW_INSECURE_OIDC` and is always ignored in production.
+
 Required configuration:
 
 - `DATABASE_URL`
@@ -203,7 +206,7 @@ Monolith production uses `https://server.usebeeline.app/auth/github/callback`.
 domains must not be restored to production tenant configuration.
 
 HTTP OIDC endpoints are accepted only for local emulators when
-`BUZZY_AUTH_ALLOW_INSECURE_OIDC=true` and `NODE_ENV` is not `production`.
+`BEELINE_AUTH_ALLOW_INSECURE_OIDC=true` and `NODE_ENV` is not `production`.
 
 ## Local device emulator
 

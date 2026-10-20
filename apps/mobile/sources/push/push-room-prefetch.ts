@@ -1,7 +1,7 @@
 import { isRoomView, isChatListView } from '@beeline/buzz-client';
 import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import type { RoomView } from '@beeline/api-contract/phone';
-import { loadBuzzViewerPubkey } from '@/auth/buzz-identity-storage';
+import { loadBuzzViewerPubkey, peekBuzzViewerContext } from '@/auth/buzz-identity-storage';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { clientResetGeneration, subscribeClientReset } from '@/sync/client-reset';
 import { readPushedMonolithRoom } from '@/sync/transport/room-view-client';
@@ -37,7 +37,9 @@ export function prefetchPushRoom(responseId: string, roomId: string, messageId?:
   markRoomOpen('prefetch-start');
   markRoomOpen('prefetch-target', messageId ?? 'unspecified');
   const generation = clientResetGeneration();
-  const viewer = loadBuzzViewerPubkey().catch(() => null);
+  const warmViewer = peekBuzzViewerContext();
+  const hotViewer = warmViewer?.relayUrl === config.monolithUrl ? warmViewer.viewerPubkey : null;
+  const viewer = hotViewer ? Promise.resolve(hotViewer) : loadBuzzViewerPubkey().catch(() => null);
   let releaseRead!: () => void;
   const afterPaint = new Promise<void>((resolve) => { releaseRead = resolve; });
   const read = () => {
@@ -46,9 +48,8 @@ export function prefetchPushRoom(responseId: string, roomId: string, messageId?:
     markRoomOpen('prefetch-network-start');
     return readPushedMonolithRoom(roomId);
   };
-  const view = viewer.then(async (pubkey) => {
+  const openCached = async (pubkey: string | null, cached: RoomView | null): Promise<RoomView> => {
     const address = pubkey ? surfaceAddress(config.monolithUrl, pubkey, `/room/${roomId}`) : null;
-    const cached = address ? await mobileSurfaceCache.read(address, isRoomView).catch(() => null) : null;
     const list = pubkey && cached?.room.workspaceId ? mobileSurfaceCache.peek(surfaceAddress(
       config.monolithUrl, pubkey, '/workspace/:id/chats', { workspaceId: cached.room.workspaceId },
     ), isChatListView) : null;
@@ -71,7 +72,18 @@ export function prefetchPushRoom(responseId: string, roomId: string, messageId?:
       reconcileRoomView(mobileSurfaceCache.peek(address, isRoomView), view), isRoomView, stamp);
     void mobileSurfaceCache.persist(address, response, isRoomView).catch(() => undefined);
     return response;
-  });
+  };
+  const hotAddress = hotViewer ? surfaceAddress(config.monolithUrl, hotViewer, `/room/${roomId}`) : null;
+  const hotCache = hotAddress ? mobileSurfaceCache.peek(hotAddress, isRoomView) : null;
+  // A warm authorized cache can decide whether to fetch on the tap's stack,
+  // before navigation renders. Cold storage retains its asynchronous path.
+  const view = hotViewer && hotCache
+    ? openCached(hotViewer, hotCache)
+    : viewer.then(async (pubkey) => {
+      const address = pubkey ? surfaceAddress(config.monolithUrl, pubkey, `/room/${roomId}`) : null;
+      const cached = address ? await mobileSurfaceCache.read(address, isRoomView).catch(() => null) : null;
+      return openCached(pubkey, cached);
+    });
   void view.then(() => markRoomOpen('prefetch-end'), () => markRoomOpen('prefetch-error'));
   // The route may never mount (for example, if the tap is superseded). Its
   // read must not produce an unhandled rejection in that case.

@@ -18,7 +18,7 @@ for (const line of lines) {
   }
   if (mark.phase === 'newest-frame' && open) {
     const paintMs = open.startMs + mark.t - open.markT;
-    moments.push({ kind: 'route', name: '/beeline/chat/[channelId]', variant,
+    moments.push({ kind: 'route', name: '/beeline/chat/[channelId]', variant, clockDomain: 'device',
       startMs: open.startMs, paintMs, endMs: Math.max(atMs, paintMs) + 100 });
     open = undefined;
   }

@@ -177,5 +177,7 @@
         "requestPass": false
       }
     ]
-  }
+  },
+  "requestEvidenceValid": false,
+  "requestEvidenceIssue": "Historical raw requestPass flags joined uncalibrated host/device clocks and are not acceptance proof. Native monotonic paint durations remain valid."
 }

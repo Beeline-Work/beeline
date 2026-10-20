@@ -3,6 +3,7 @@
 import { readFile, writeFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
 import { validateArrivalCases } from './room-arrivals.mjs';
+import { MAX_CLOCK_UNCERTAINTY_MS } from './device-clock.mjs';
 
 export const BUDGET_MS = Object.freeze({ route: 450, tap: 150 });
 
@@ -46,6 +47,9 @@ export function summarizeSample(sample) {
     throw new Error('sample needs kind, name and variant');
   const startMs = finite(sample.startMs, 'sample.startMs');
   const paintMs = finite(sample.paintMs, 'sample.paintMs');
+  const clockUncertaintyMs = finite(sample.clockUncertaintyMs ?? 0, 'sample.clockUncertaintyMs');
+  if (clockUncertaintyMs > MAX_CLOCK_UNCERTAINTY_MS) throw new Error('Device clock is too uncertain');
+  const clockCalibrated = sample.clockDomain === 'host';
   if (paintMs < startMs) throw new Error('paint precedes action');
   if (sample.canonicalMs !== undefined && finite(sample.canonicalMs, 'canonicalMs') < startMs)
     throw new Error('canonical settlement precedes action');
@@ -59,7 +63,7 @@ export function summarizeSample(sample) {
       if (span.bytes !== undefined) finite(span.bytes, `${kind}[${index}].bytes`);
       if (span.poolWaitMs !== undefined) finite(span.poolWaitMs, `${kind}[${index}].poolWaitMs`);
     }
-  const prepaint = http.filter((span) => span.startMs >= startMs && span.startMs < paintMs);
+  const prepaint = http.filter((span) => span.startMs >= startMs - clockUncertaintyMs && span.startMs < paintMs + clockUncertaintyMs);
   const writes = http.filter((span) => span.method && !['GET', 'HEAD', 'OPTIONS'].includes(span.method));
   const followupReads = http.filter((span) => span.method === 'GET' &&
     writes.some((write) => span.startMs >= write.endMs));
@@ -67,11 +71,12 @@ export function summarizeSample(sample) {
   return {
     kind: sample.kind, name: sample.name, variant: sample.variant,
     fixture: sample.fixture ?? '',
+    clockCalibrated, clockUncertaintyMs,
     paintMs: paintMs - startMs,
     canonicalMs: sample.canonicalMs === undefined ? null : finite(sample.canonicalMs, 'canonicalMs') - startMs,
     prepaintHttpCount: prepaint.length,
     prepaintHttpDepth: serialDepth(prepaint),
-    prepaintCompletedRoundTrips: prepaint.filter((span) => span.endMs <= paintMs).length,
+    prepaintCompletedRoundTrips: prepaint.filter((span) => span.endMs <= paintMs + clockUncertaintyMs).length,
     writeCount: writes.length, followupReadCount: followupReads.length,
     httpCount: http.length,
     httpRequestBytes: http.reduce((sum, span) => sum + (span.requestBytes ?? 0), 0),
@@ -115,6 +120,8 @@ export function summarize(samples, routes = [], interactions = [], arrivalCases 
       p50Ms: percentile(items.map((item) => item.paintMs), .5), p95Ms: p95,
       p99Ms: percentile(items.map((item) => item.paintMs), .99),
       worstMs: maxObserved('paintMs'),
+      clockCalibrated: items.every((item) => item.clockCalibrated),
+      maxClockUncertaintyMs: maxObserved('clockUncertaintyMs'),
       maxPrepaintHttpCount: maxObserved('prepaintHttpCount'),
       maxPrepaintHttpDepth: maxObserved('prepaintHttpDepth'),
       maxPrepaintCompletedRoundTrips: maxObserved('prepaintCompletedRoundTrips'),
@@ -126,7 +133,7 @@ export function summarize(samples, routes = [], interactions = [], arrivalCases 
       maxSqlPoolWaitMs: maxObserved('sqlPoolWaitMs'),
       budgetMs: arrival?.budgetMs ?? BUDGET_MS[first.kind], maxRequests, maxDepth,
       timingPass: p95 < (arrival?.budgetMs ?? BUDGET_MS[first.kind]),
-      requestPass: maxObserved('prepaintHttpCount') <= maxRequests &&
+      requestPass: items.every((item) => item.clockCalibrated) && maxObserved('prepaintHttpCount') <= maxRequests &&
         maxObserved('prepaintHttpDepth') <= maxDepth &&
         (first.kind !== 'tap' || items.every((item) => item.writeCount === 1 &&
           item.followupReadCount === 0 && item.prepaintCompletedRoundTrips === 0)),
@@ -144,10 +151,12 @@ export function summarize(samples, routes = [], interactions = [], arrivalCases 
     row.kind === 'route' && row.name === '/beeline/chat/[channelId]' && row.variant === item.name && row.samples >= 20)).map((item) => item.name);
   const undersampledCases = rows.filter((row) => row.samples < minimumSamples)
     .map(({ kind, name, variant, samples }) => ({ kind, name, variant, samples, minimumSamples }));
+  const clockCalibrated = rows.length > 0 && rows.every((row) => row.clockCalibrated);
   return { rows, missingArrivalCases, missingRoutes, missingRouteVariants, missingInteractions, undersampledCases,
+    clockCalibrated, maxClockUncertaintyMs: Math.max(0, ...rows.map((row) => row.maxClockUncertaintyMs)),
     complete: missingRouteVariants.length === 0 && missingInteractions.length === 0 && missingArrivalCases.length === 0 && undersampledCases.length === 0,
     timingPass: rows.every((row) => row.timingPass),
-    requestPass: rows.every((row) => row.requestPass) };
+    requestPass: clockCalibrated && rows.every((row) => row.requestPass) };
 }
 
 export function markdown(report, metadata = {}) {
@@ -157,6 +166,7 @@ export function markdown(report, metadata = {}) {
     `- Commit: ${metadata.commit ?? 'unknown'}`,
     `- Device: ${metadata.device ?? 'unknown'}`,
     `- Network: ${metadata.network ?? 'unknown'}`,
+    `- Clock calibration: ${report.clockCalibrated ? 'verified' : 'UNVERIFIED'}; maximum uncertainty ${report.maxClockUncertaintyMs} ms`,
     `- Samples: ${report.rows.reduce((sum, row) => sum + row.samples, 0)}`, '',
     ...(metadata.note ? [metadata.note, ''] : []),
     '| Kind | Screen or action | Variant | n | p50 | p95 | p99 | Budget | Prepaint HTTP max/depth | WS frames/messages | Payload bytes max | SQL max/depth/wait | Result |',

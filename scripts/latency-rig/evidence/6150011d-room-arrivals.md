@@ -64,6 +64,11 @@ handoff flag.
 
 ## First complete candidate matrix (262b39de1)
 
+The request verdicts in these historical tables are raw analyzer output, **not
+accepted proof**: device and host epochs were not calibrated before joining.
+Native paint durations remain valid because their start and end share the same
+device monotonic timer. A calibrated capture is required for request contracts.
+
 The actual local-attempt wrapper built, installed and signed in to a fresh
 fixture, then captured all 120 samples. Android system animation settings were
 unchanged. Every case has 20 samples; none were discarded.
@@ -96,11 +101,15 @@ navigation ancestry. No causal conclusion is claimed from those gaps alone.
 
 All 120 samples completed; the analyzer exits 1. A warm valid token now reaches
 the JS fetch call without yielding to navigation. Exact mounted ancestry uses
-a normal stack push. The remaining trace still shows native networking and
-body-decoding delays: one missing-row sample dispatched in JS at +9 ms, reached
-the proxy at +391 ms, received its wire response by +515 ms, and completed body
-decoding at +960 ms. A Room-only Expo native fetch candidate is under test;
-this run does not contain that change.
+a normal stack push. A device-only trace shows a body-decoding gap from +427 ms
+to +960 ms. A Room-only Expo native fetch candidate is under test; this run does
+not contain that change.
+
+An earlier claim about the proxy arrival delay compared uncalibrated clocks.
+Android was about 384 ms behind the host when checked. That cross-clock claim
+is withdrawn. The device-only phase gaps and native paint durations are not
+affected. The next harness records bounded host/device clock anchors before
+and after every sample and fails closed when they cannot be joined safely.
 
 ## Nightly installation and delivery
 

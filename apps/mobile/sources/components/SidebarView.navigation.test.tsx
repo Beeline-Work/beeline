@@ -203,6 +203,8 @@ vi.mock('@/utils/isTauri', () => ({ isTauri: () => desktopShell.current }));
 vi.mock('@/utils/platform', () => ({ isDesktopPlatform: () => true }));
 vi.mock('@/auth/buzz-identity-storage', () => ({
   getEffectiveRelayUrl: vi.fn(async () => 'http://server.test'),
+  loadBuzzViewerPubkey: vi.fn(async () => 'viewer'),
+  peekBuzzViewerContext: () => null,
   loadBuzzIdentity: vi.fn(async () => ({ publicKey: 'viewer' })),
 }));
 vi.mock('@/buzz/community-storage', () => ({

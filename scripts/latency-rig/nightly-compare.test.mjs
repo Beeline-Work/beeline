@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { compareNightly, mergedPrs } from './nightly-compare.mjs';
 const row = (p95Ms) => ({ kind: 'route', name: 'room', variant: 'warm', samples: 20, p95Ms,
   budgetMs: 450, timingPass: p95Ms < 450, requestPass: true });
-const report = (p95Ms) => ({ complete: true, rows: [row(p95Ms)] });
+const report = (p95Ms) => ({ complete: true, clockCalibrated: true, maxClockUncertaintyMs: 8, rows: [row(p95Ms)] });
 test('strict 20 percent regression and strict page budget', () => {
   assert.equal(compareNightly(report(120), report(100)).pass, true);
   assert.equal(compareNightly(report(120.01), report(100)).pass, false);
@@ -15,6 +15,11 @@ test('strict 20 percent regression and strict page budget', () => {
   assert.equal(compareNightly({ complete: true, rows: [{ ...row(100), budgetMs: undefined }] }, null).pass, false);
   assert.equal(compareNightly({ ...report(100), complete: false }, report(100)).pass, false);
   assert.equal(compareNightly({ complete: true, rows: [{ ...row(100), samples: 19 }] }, report(100)).pass, false);
+});
+test('uncalibrated or excessively uncertain reports and baselines never pass', () => {
+  assert.equal(compareNightly({ ...report(100), clockCalibrated: undefined }, null).pass, false);
+  assert.equal(compareNightly({ ...report(100), maxClockUncertaintyMs: 26 }, null).pass, false);
+  assert.equal(compareNightly(report(100), { ...report(100), clockCalibrated: false }).pass, false);
 });
 test('PR range includes head, excludes last pass, and spans failed nights', () => {
   const commits = [

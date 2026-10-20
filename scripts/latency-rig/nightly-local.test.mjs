@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { assessNight } from './nightly-local.mjs';
 const row = (p95Ms) => ({ kind: 'route', name: 'room', variant: 'warm', samples: 20,
   budgetMs: 450, p95Ms, timingPass: p95Ms < 450, requestPass: true });
-const report = (p95Ms, commit = 'head') => ({ commit, complete: true, rows: [row(p95Ms)] });
+const report = (p95Ms, commit = 'head') => ({ commit, complete: true, clockCalibrated: true, maxClockUncertaintyMs: 8, rows: [row(p95Ms)] });
 const commits = [{ sha: 'head', subject: 'new (#12)' }, { sha: 'bad', subject: 'failed night (#11)' }, { sha: 'base', subject: 'old (#10)' }];
 const input = { night: '2026-10-20', head: 'head', commits, baseline: report(100, 'base') };
 test('one rerun precedes an alert, including skipped captures', () => {

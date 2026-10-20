@@ -5,6 +5,7 @@ import { randomBytes, createHash } from 'node:crypto';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import pg from 'pg';
 import os from 'node:os';
+import { calibrateDeviceClock } from './device-clock.mjs';
 import { pointFor, requireRoomList } from './capture-ui.mjs';
 import { openSync, closeSync } from 'node:fs';
 import { once } from 'node:events';
@@ -150,7 +151,9 @@ try {
         const roomPoint = requireRoomList(xml);
         if (scenario.entry === 'room-list') point = roomPoint;
       }
-      const armedAtMs = Number(adb('shell', 'date', '+%s%3N').trim());
+      const readDeviceMs = () => Number(adb('shell', 'date', '+%s%3N').trim());
+      const clockBefore = calibrateDeviceClock(readDeviceMs);
+      const armedAtMs = clockBefore.deviceMs;
       adb('shell', 'am', 'broadcast', '-a', 'app.usebeeline.LATENCY_RIG_EXPECT', '-n', 'app.usebeeline/.LatencyRigReceiver',
         '--es', 'needle', targetId.slice(0, 16), '--es', 'case', scenario.name, '--es', 'entry', scenario.entry);
       await writeFile(`${output}/pending-attempt.json`, JSON.stringify({ name: scenario.name, unseen: scenario.unseen, targetId }, null, 2));
@@ -170,8 +173,10 @@ try {
       await writeFile(`${output}/native-${scenario.name}-${sample}.txt`, line);
       const moment = nativeArrivalMoment(line, scenario.name);
       await pause(2000);
-      const endMs = Number(adb('shell', 'date', '+%s%3N').trim());
-      attempts.push({ ...moment, targetId, endMs });
+      const clockAfter = calibrateDeviceClock(readDeviceMs);
+      const endMs = clockAfter.deviceMs;
+      attempts.push({ ...moment, targetId, endMs, clockDomain: 'device',
+        clockSync: { before: clockBefore, after: clockAfter } });
       await writeFile(`${output}/attempts.json`, JSON.stringify(attempts, null, 2));
       console.log(`${scenario.name} ${sample + 1}/${count}`);
     }

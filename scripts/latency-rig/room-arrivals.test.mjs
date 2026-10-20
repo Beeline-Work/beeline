@@ -34,9 +34,9 @@ test('analysis fails closed for missing or undersampled arrivals and enforces 45
 test('nightly keeps the warm open-room and send-text cases without a cold-start gate', () => {
   const route = { path: '/beeline/chat/[channelId]', coldHttpMax: 1, coldDepthMax: 1, variants: ['warm'] };
   const samples = [...cases.map((item) => item.name), 'warm'].flatMap((variant) =>
-    Array.from({ length: 20 }, () => ({ kind: 'route', name: route.path, variant, startMs: 0, paintMs: 100 })));
+    Array.from({ length: 20 }, () => ({ kind: 'route', name: route.path, variant, clockDomain: 'host', startMs: 0, paintMs: 100 })));
   samples.push(...Array.from({ length: 20 }, () => ({ kind: 'tap', name: 'send-text', variant: 'warm',
-    startMs: 0, paintMs: 100, http: [{ method: 'POST', startMs: 1, endMs: 150 }] })));
+    clockDomain: 'host', startMs: 0, paintMs: 100, http: [{ method: 'POST', startMs: 1, endMs: 150 }] })));
   const report = summarize(samples, [route], ['send-text'], cases);
   assert.equal(report.complete, true);
   assert.equal(report.timingPass, true);

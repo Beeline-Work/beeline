@@ -1,7 +1,14 @@
 /** Compare each measured case with the last passing run; never advance on failure. */
+import { MAX_CLOCK_UNCERTAINTY_MS } from './device-clock.mjs';
+
 export function compareNightly(current, baseline) {
   if (!Array.isArray(current?.rows) || !current.rows.length || current.rows.some((row) => !row || typeof row !== 'object')) return { pass: false, failures: ['Capture skipped or produced no measured cases'] };
   const failures = [];
+  const calibrated = (report) => report.clockCalibrated === true &&
+    Number.isFinite(report.maxClockUncertaintyMs) && report.maxClockUncertaintyMs >= 0 &&
+    report.maxClockUncertaintyMs <= MAX_CLOCK_UNCERTAINTY_MS;
+  if (!calibrated(current)) failures.push('Capture lacks verified device/host clock calibration');
+  if (baseline && !calibrated(baseline)) failures.push('Passing baseline lacks verified device/host clock calibration');
   if (baseline && (!Array.isArray(baseline.rows) || !baseline.rows.length))
     return { pass: false, failures: ['Passing baseline is invalid'] };
   for (const row of current.rows) {

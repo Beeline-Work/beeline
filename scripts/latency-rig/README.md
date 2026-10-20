@@ -212,6 +212,12 @@ For a diagnostic capture of only one entry path, set `LATENCY_RIG_ENTRY=push`
 or `room-list`. A subset still fails full-matrix coverage; it is not a passing
 nightly run. The driver dismisses a Workspace overlay before arming list taps.
 
+The capture brackets every sample with host/device clock anchors. `join.mjs`
+converts device epochs to the host clock before attributing HTTP/SQL spans;
+uncertain clocks or clock jumps fail closed. Native paint durations use one
+device clock and remain independent of this conversion. Uncalibrated reports
+cannot pass request contracts or advance the nightly baseline.
+
 The driver records the first open separately in `first-open.json` without a
 cold-start verdict, then warms navigation and allows installation work to settle
 for 30 seconds before collecting the warm-session matrix.

@@ -10,6 +10,7 @@ const fixture = vi.hoisted(() => ({
 }));
 vi.mock('@/auth/buzz-identity-storage', () => ({
   loadBuzzViewerPubkey: async () => fixture.viewer,
+  peekBuzzViewerContext: () => fixture.viewer ? { relayUrl: fixture.monolithUrl, viewerPubkey: fixture.viewer } : null,
 }));
 vi.mock('@/buzz/surface-storage', () => ({
   mobileSurfaceCache: {
@@ -91,7 +92,7 @@ describe('received versus missing pushed rows', () => {
   it('starts a missing-target read at the tap without waiting for the session', async () => {
     fixture.cached = { room: { id: 'room-a' }, members: [], messages: [{ id: 'old' }] } as unknown as RoomView;
     prefetchPushRoom('missing', 'room-a', 'target');
-    await vi.waitFor(() => expect(fixture.reads).toEqual(['room-a']));
+    expect(fixture.reads).toEqual(['room-a']);
     await takePrefetchedPushRoom('missing', 'room-a');
   });
 });

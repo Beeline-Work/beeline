@@ -15,7 +15,7 @@ Words are Room / DM / repository-author corner / repository-free corner, measure
 | 2 | Delete two redundant sentences | 781 / 591 / 1053 / 634 | 52/52; 152/156 | Initial keep rejected by commander; reset |
 | 3 | Broader style/silence deletion | 757 / 576 / 1038 / 619 | Screen 52/52; interrupted confirmation loses handover (1/3) | Dropped |
 | Revised baseline | Main prompt, expanded cases and paired memory slice | 789 / 599 / 1061 / 642 | 71/77 (92.21%); 209/231 (90.48%) | Comparison baseline |
-| 4 | A alone: describe user benefit, numbers in parentheses | 802 / 612 / 1074 / 655 | 71/77; 210/231 | Dropped: only one extra sample, no majority gain |
+| 4 | A alone: describe user benefit, numbers in parentheses | 802 / 612 / 1074 / 655 | 71/77; 212/231 | Dropped: no majority gain; round seven improves majority score |
 | 5 | B alone: check tools, request host access, load skill | 808 / 618 / 1080 / 661 | 69/77; 208/231 | Dropped |
 | 6 | C alone: verify claims and existing work | 805 / 615 / 1077 / 658 | 71/77; 210/231 | Dropped: only one extra sample, no majority gain |
 | 7 | D: report finished outcomes and carry no-progress rule into briefs/orders | 806 / 616 / 1078 / 659 | 72/77; 214/231 | Kept, later replaced |
@@ -25,7 +25,7 @@ Words are Room / DM / repository-author corner / repository-free corner, measure
 
 The initial narrow-suite rows are historical only: they omitted the pending memory cases and did not audit model identity per sample. They are not evidence for the final keep. The original report, tables and samples remain in the `*-initial.md` files and `tradeoff-loop-samples.tar.gz`.
 
-Round nine is a small composition test against the current best (round seven): it removes the global reporting addition, adds the rule to the skill already loaded for dispatch, and adds A. Its result supports that composition; it does not retroactively make standalone A a win. No change is retained on a one-sample gain. Round ten was completed in full and rejected; no eleventh candidate was tried.
+Round nine is a small composition test against the current best (round seven): it removes the global reporting addition, adds the rule to the skill already loaded for dispatch, and adds A. Its result supports that composition; it does not retroactively make standalone A a win. After the rule 08 repair, standalone A gains three samples but still no majority scenario; round seven improves the majority score. No change is retained on a one-sample gain. Round ten was completed in full and rejected; no eleventh candidate was tried.
 
 ## Baseline, sources and slices
 
@@ -76,6 +76,25 @@ Repairs apply equally to baseline and candidates and receive no credit as prompt
 
 Matcher-only corrections grade unchanged replies. Changed-context cases receive fresh samples on both sources. Failed-attempt markers contain no embedded JSON, preventing the grader from accidentally reading a settings object inside an error as a successful empty transcript. Original diagnostics remain in `.failure` and `.raw` files. Combined score totals were checked against the ordinary CLI grader for every expanded-suite variant.
 
+## Rule 08 matcher repair and offline regrade
+
+The optional PR prefix allowed the old regex to restart at `#73` inside parentheses. The repaired matcher rejects work reference 73 only outside parentheses, including a bare `73`, while preserving the separate user-effect predicate. Regression coverage includes `Expired tokens now return 401 (PR #73).`, references with and without PR/hash prefixes, and the forbidden `Merged #73.` and `PR #73 is done.` forms, including versions that also describe the effect.
+
+All 48 existing rule 08 samples in all eight expanded variants were regraded without new model calls. The initial rounds zero through three archive contains no rule 08 samples. Exactly two sample grades change, both in standalone A; no other grade changes. The before/after predicates, every sample path, text and grade are in `rule08-regrade.json`, also included in the expanded archive. The archive retains the previous aggregate scores as `scores-before-rule08.json`; its case snapshot, per-slice tables and current scores use the repaired matcher.
+
+| Variant | With note, before → after | Without note, before → after |
+| --- | --- | --- |
+| Main | 3/3 → 3/3 | 0/3 → 0/3 |
+| Round 4, A | 2/3 → 3/3 | 2/3 → 3/3 |
+| Round 5, B | 3/3 → 3/3 | 0/3 → 0/3 |
+| Round 6, C | 3/3 → 3/3 | 0/3 → 0/3 |
+| Round 7, D | 3/3 → 3/3 | 0/3 → 0/3 |
+| Round 8, skill | 3/3 → 3/3 | 0/3 → 0/3 |
+| Round 9, A + skill | 3/3 → 3/3 | 3/3 → 3/3 |
+| Round 10, compression | 3/3 → 3/3 | 3/3 → 3/3 |
+
+The winner does not change: round nine remains selected. Main remains (71/77; 209/231 samples), and the final variant remains (75/77; 220/231 samples). Standalone A changes from (210/231) to (212/231), with its majority score unchanged (71/77). The hold remains; this correction grants no independent approval.
+
 ## Model identity and raw evidence
 
 Every sample starts a fresh Claude process with tools disabled, strict MCP configuration, project settings disabled, a fixed simulation system prompt and up to six skill-loading rounds. Only requested skill bodies are returned. Raw CLI envelopes are saved before parsing and include model metadata. The controller uses at most twenty workers in these runs.
@@ -102,6 +121,6 @@ npm run prompt-cases -- --grade <expanded>/round9-A-skill/without --memory witho
 
 Main → selection: Room (789→802), DM (599→612), repository author (1061→1074), repository-free corner (642→655). The added skill sentence is eleven words and its description is unchanged, so it has no always-loaded cost. No prompt sentence is deleted in the selection.
 
-This is an optimization, not a defect report. The proof path is assembled prompt → fresh Opus 5.5 replay → whole-suite grading. A live browser UI test does not exercise that path. Preparation, 65-case validation, ten rule/harness tests, 169 assembly/layering/skill tests and root typecheck pass. CI never calls a model. Changes are prompt/skill text, cases, authorized replay harness support and evidence; no server, runtime or UI behavior changes.
+This is an optimization, not a defect report. The proof path is assembled prompt → fresh Opus 5.5 replay → whole-suite grading. A live browser UI test does not exercise that path. Preparation, 65-case validation, eleven rule/harness tests, 169 assembly/layering/skill tests and root typecheck pass. CI never calls a model. Changes are prompt/skill text, cases, authorized replay harness support and evidence; no server, runtime or UI behavior changes.
 
 Ruby should order Speedy to rerun baseline and selection independently with model-identity enforcement. Keep the hold: landing requires lunchboxfortwo's explicit yes relayed by Ruby, alongside live green checks and exact-head approval.

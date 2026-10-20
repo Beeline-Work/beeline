@@ -86,7 +86,7 @@
     "casePass": 71,
     "caseTotal": 77,
     "complete": 77,
-    "pass": 210,
+    "pass": 212,
     "total": 231,
     "failures": [
       {
@@ -114,12 +114,6 @@
         "samples": 3
       },
       {
-        "id": "memory-rule-08",
-        "variant": "with",
-        "passed": 2,
-        "samples": 3
-      },
-      {
         "id": "memory-rule-09",
         "variant": "with",
         "passed": 2,
@@ -144,12 +138,6 @@
         "samples": 3
       },
       {
-        "id": "memory-rule-08",
-        "variant": "without",
-        "passed": 2,
-        "samples": 3
-      },
-      {
         "id": "memory-rule-09",
         "variant": "without",
         "passed": 2,
@@ -166,13 +154,13 @@
       "with": {
         "casesPassed": 61,
         "cases": 65,
-        "samplesPassed": 182,
+        "samplesPassed": 183,
         "samples": 195
       },
       "without": {
         "casesPassed": 10,
         "cases": 12,
-        "samplesPassed": 28,
+        "samplesPassed": 29,
         "samples": 36
       }
     }

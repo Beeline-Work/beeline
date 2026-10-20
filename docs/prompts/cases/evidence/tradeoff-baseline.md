@@ -85,7 +85,7 @@
 | `memory-rule-05` | `turn.memory` | PASS | 3/3 |
 | `memory-rule-06` | `turn.memory` | FAIL: expected open_corner with {"brief.spec":{"matches":"(?:no\|never\|only\|do not).{0,100}progress\|progress.{0,100}(?:stay\|only\|never\|not)","flags":"i"},"implementer":{"matches":"^@?fern$"}}; saw Read({"file_path":"/replay/skills/beeline-t | 0/3 |
 | `memory-rule-07` | `turn.memory` | PASS | 3/3 |
-| `memory-rule-08` | `turn.memory` | FAIL: text did not match {"not":{"matches":"(?<!\\()(?:(?:PR\|pull request)\\s*)?#73\|(?<!\\()(?:PR\|pull request)\\s+73","flags":"i"}}: "Pull request 73 shipped one change: requests that use an expired token now get a 401 response. I only know t | 0/3 |
+| `memory-rule-08` | `turn.memory` | FAIL: text did not match {"not":{"matches":"(?<![\\w#])(?:(?:PR\|pull request)\\s*#?\\s*\|#)?73\\b(?![^()]*\\))","flags":"i"}}: "Pull request 73 shipped one change: requests that use an expired token now get a 401 response. I only know this from  | 0/3 |
 | `memory-rule-09` | `turn.memory` | PASS | 3/3 |
 | `memory-rule-10` | `turn.memory` | PASS | 2/3 |
 | `memory-rule-11` | `turn.memory` | PASS | 3/3 |

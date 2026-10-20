@@ -12,6 +12,22 @@ const turn: Transcript = {
 };
 const pass = (rule: Rule) => evaluateRule(rule, turn).pass;
 
+test('rule 08 allows parenthesized references but rejects numbers naming the work', async () => {
+  const { readFileSync } = await import('node:fs');
+  const rule = JSON.parse(readFileSync('docs/prompts/cases/memory-rule-08.json', 'utf8')).pass as Rule;
+  const grade = (text: string) => evaluateRule(rule, { calls: [], text }).pass;
+  for (const reference of ['PR #73', '#73', 'PR 73', '73', '401, merged in pull request 73']) {
+    assert.equal(grade(`Expired tokens now return 401 (${reference}).`), true, reference);
+  }
+  for (const text of ['Merged #73.', 'PR #73 is done.',
+    'Expired tokens now return 401. Merged #73.',
+    'Expired tokens now return 401. PR #73 is done.',
+    'Expired tokens now return 401. 73 is done.',
+    'Expired tokens now return 401 (#73). PR #73 is done.']) {
+    assert.equal(grade(text), false, text);
+  }
+});
+
 test('call and noCall match tool names and argument matchers', () => {
   assert.equal(pass({ call: 'order', args: { address: 'c-1' } }), true);
   assert.equal(pass({ call: 'order', args: { address: 'c-2' } }), false);

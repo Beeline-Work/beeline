@@ -38,7 +38,7 @@
       {
         "text": {
           "not": {
-            "matches": "(?<!\\()(?:(?:PR|pull request)\\s*)?#73|(?<!\\()(?:PR|pull request)\\s+73",
+            "matches": "(?<![\\w#])(?:(?:PR|pull request)\\s*#?\\s*|#)?73\\b(?![^()]*\\))",
             "flags": "i"
           }
         }

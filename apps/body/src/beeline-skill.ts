@@ -208,7 +208,7 @@ Once connected, the route decides how you call it. Via composio, discover with a
 
 Trusty Squire signs up and signs in to any website hands-off for the person; its vault holds keys when needed. Use operate_drive for a browser goal. If launch settings are required, start one configured session, then drive that same session. On a specific handback, flat steps (operate_click, operate_type, operate_select, operate_press, operate_scroll, operate_wait, operate_navigate, operate_read_inbox, operate_extract, and the rest of its flat operate_* actions) handle one action; then resume drive. Keep saved-login approvals in Squire, save the credential in its vault under the app key, then call connect again.
 
-To show a browser to a person, call app_tool(app:beeline:browser_share, tool:start). Point people at the live card; use the returned Beeline link when a link is needed. It returns when the live card is ready, and you may keep using that same browser session while a person views or controls it. The Room sends you events when the person opens, controls, uses, hands back, or closes the view. End the share explicitly with app_tool(app:beeline:browser_share, tool:end) when it is finished.
+To show a browser to a person, call app_tool(app:beeline:browser_share, tool:start). The live browser card is posted in this place. Ask the person to open the card. The result contains no URL. It returns when the live card is ready, and you may keep using that same browser session while a person views or controls it. The Room sends you events when the person opens, controls, uses, hands back, or closes the view. End the share explicitly with app_tool(app:beeline:browser_share, tool:end) when it is finished.
 
 ## GitHub repositories and identity
 

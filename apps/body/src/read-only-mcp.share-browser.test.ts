@@ -3,6 +3,9 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { callAgentTool } from './read-only-mcp.js';
 
+vi.mock('./browser-share.js', () => ({ findChromiumPage: vi.fn(async () => ({ id: 'page-1', title: 'Browser' })) }));
+vi.mock('./browser-share-host.js', () => ({ startHostedBrowserShare: vi.fn(async () => undefined) }));
+
 const SECRET = 'sk-live-FAKESECRET0123456789';
 
 function squireError(code: string, message: string) {
@@ -31,6 +34,7 @@ describe('share_browser Squire refusal', () => {
     vi.stubEnv('BEELINE_SQUIRE_RELAY_TOKEN', 'test-token');
     vi.stubEnv('BEELINE_DAEMON_BASE_URL', 'http://beeline.test');
     vi.stubEnv('BEELINE_DAEMON_TOKEN', 'daemon-token');
+    vi.stubEnv('BEELINE_BROWSER_SHARE_HOST_SOCKET', '/tmp/browser-share-test.sock');
   });
 
   afterEach(() => {
@@ -133,6 +137,17 @@ describe('share_browser Squire refusal', () => {
     expect((await share())?.message).toBe('Squire share timed out after 30 seconds');
   });
 
+  it('returns only a posted-card instruction and identifiers for Chromium shares', async () => {
+    vi.stubGlobal('fetch', async () => Response.json({ id: 'share-1', messageId: 'card-1',
+      url: 'https://server.test/s/share-1/', beelineUrl: 'https://web.usebeeline.app/beeline/browser-share?id=share-1' }));
+    const output = await callAgentTool('app_tool', { app: 'beeline:browser_share', tool: 'start',
+      args: { source: 'chromium' } }, 'call-1') as string;
+    expect(JSON.parse(output)).toEqual({ cardId: 'card-1', shareId: 'share-1', sessionId: 'page-1',
+      status: 'live', message: 'The live browser card is posted in this place. Ask the person to open the card.' });
+    expect(output).not.toContain('/s/');
+    expect(output).not.toMatch(/https?:\/\//);
+  });
+
   it('sends the share expiry with the card', async () => {
     const expiresAt = new Date(Date.now() + 15 * 60_000).toISOString();
     const posted: Array<Record<string, unknown>> = [];
@@ -145,7 +160,11 @@ describe('share_browser Squire refusal', () => {
     });
 
     const result = JSON.parse(await callAgentTool('app_tool', { app:'beeline:browser_share', tool:'start', args:{ source: 'squire', sessionId: 'session-1' } }, 'call-1') as string);
-    expect(result).toMatchObject({ cardId: 'card-1', shareId: 'share-1', url: 'https://web.usebeeline.app/beeline/browser-share?id=share-1', status: 'live' });
+    expect(result).toMatchObject({ cardId: 'card-1', shareId: 'share-1', message: 'The live browser card is posted in this place. Ask the person to open the card.', status: 'live' });
+    expect(result).not.toHaveProperty('url');
+    expect(result).not.toHaveProperty('beelineUrl');
+    expect(JSON.stringify(result)).not.toContain('/s/');
+    expect(JSON.stringify(result)).not.toMatch(/https?:\/\//);
     expect(posted[0]).toMatchObject({ sessionId: 'session-1', expiresAt: Date.parse(expiresAt) });
   });
 });

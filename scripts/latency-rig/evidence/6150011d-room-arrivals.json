@@ -1,7 +1,7 @@
 {
   "briefRevision": 2,
   "reproduction": "R1",
-  "status": "incomplete; push fix and complete nightly proof pending",
+  "status": "incomplete; full candidate matrix measured, push and existing nightly contracts fail",
   "baseline": {
     "source": "e2665c7dfc62ed9ac1de9ef4b18838dd76f9c6de",
     "protocol": "native frame commit; canonical Room-list Back; 20 samples each",
@@ -52,8 +52,69 @@
   },
   "firstFixCapture": "rev2-fixed-nightly-workspace",
   "limitations": [
-    "Warm-open and send-text cases did not complete; no complete nightly pass.",
+    "All 120 samples completed on latest candidate; no complete nightly pass.",
     "Diagnostic animation-disabled runs excluded; original Android animation settings restored.",
     "No durable nightly schedule receipt yet."
-  ]
+  ],
+  "latestCandidate": {
+    "source": "262b39de1",
+    "capture": "rev2-nightly-wrapper-attempt-5",
+    "complete": true,
+    "results": [
+      {
+        "name": "/beeline/chat/[channelId]",
+        "variant": "push-unseen-1",
+        "samples": 20,
+        "p50Ms": 596,
+        "p95Ms": 987,
+        "timingPass": false,
+        "requestPass": false
+      },
+      {
+        "name": "/beeline/chat/[channelId]",
+        "variant": "push-unseen-5",
+        "samples": 20,
+        "p50Ms": 852,
+        "p95Ms": 1246,
+        "timingPass": false,
+        "requestPass": false
+      },
+      {
+        "name": "/beeline/chat/[channelId]",
+        "variant": "room-list-unseen-1",
+        "samples": 20,
+        "p50Ms": 264,
+        "p95Ms": 285,
+        "timingPass": true,
+        "requestPass": true
+      },
+      {
+        "name": "/beeline/chat/[channelId]",
+        "variant": "room-list-unseen-5",
+        "samples": 20,
+        "p50Ms": 276,
+        "p95Ms": 302,
+        "timingPass": true,
+        "requestPass": true
+      },
+      {
+        "name": "/beeline/chat/[channelId]",
+        "variant": "warm",
+        "samples": 20,
+        "p50Ms": 280,
+        "p95Ms": 317,
+        "timingPass": true,
+        "requestPass": false
+      },
+      {
+        "name": "send-text",
+        "variant": "warm",
+        "samples": 20,
+        "p50Ms": 153,
+        "p95Ms": 279,
+        "timingPass": false,
+        "requestPass": false
+      }
+    ]
+  }
 }

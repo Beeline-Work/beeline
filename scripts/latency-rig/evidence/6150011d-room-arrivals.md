@@ -1,6 +1,6 @@
 # R1: warm Room open with newly arrived rows (brief revision 2)
 
-Measured locally on squire on 2026-10-19. Revision 2 replaces the proposed
+Measured locally on squire on 2026-10-19 and 2026-10-20. Revision 2 replaces the proposed
 GitHub runner and server alert endpoint with an agent-owned local schedule.
 There is no new GitHub nightly workflow, webhook or token.
 
@@ -60,7 +60,28 @@ animations did not eliminate that hold. Those diagnostic runs are excluded;
 original animation settings have been restored. The forwarding activity's NoDisplay pilot also failed and was removed.
 The current candidate preserves the initial cached transcript, publishes missing-row
 responses before session setup consumes them, and tests a warm-push-only native
-handoff flag. Its complete matrix remains under measurement.
+handoff flag.
+
+## Complete candidate matrix (262b39de1)
+
+The actual local-attempt wrapper built, installed and signed in to a fresh
+fixture, then captured all 120 samples. Android system animation settings were
+unchanged. Every case has 20 samples; none were discarded.
+
+| Entry / unseen | p50 ms | p95 ms | Timing | Request contract |
+| --- | ---: | ---: | --- | --- |
+| Room list / 1 | 264 | 285 | pass | pass |
+| Room list / 5 | 276 | 302 | pass | pass |
+| Push / 1 | 596 | 987 | fail | fail |
+| Push / 5 | 852 | 1246 | fail | fail |
+| Warm Room open | 280 | 317 | pass | fail |
+| Send text | 153 | 279 | fail | fail |
+
+The analyzer exits 1: this is a complete failing run, not a nightly pass.
+The revised send harness completed all 20 sends. Push traces show delays before
+the HTTP request reaches the proxy and after its response. Further diagnostic
+marks distinguish authorization, native request dispatch, body decoding and
+navigation ancestry. No causal conclusion is claimed from those gaps alone.
 
 ## Nightly installation and delivery
 

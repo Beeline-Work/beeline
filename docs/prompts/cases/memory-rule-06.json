@@ -35,15 +35,20 @@
           "brief.spec": {
             "matches": "(?:no|never|only|do not).{0,100}progress|progress.{0,100}(?:stay|only|never|not)",
             "flags": "i"
+          },
+          "implementer": {
+            "matches": "^@?fern$"
           }
         }
       },
       {
-        "call": "order",
+        "noCall": "order",
         "args": {
           "text": {
-            "matches": "(?:no|never|only|do not).{0,100}progress|progress.{0,100}(?:stay|only|never|not)",
-            "flags": "i"
+            "not": {
+              "matches": "(?:no|never|only|do not).{0,100}progress|progress.{0,100}(?:stay|only|never|not)",
+              "flags": "i"
+            }
           }
         }
       }

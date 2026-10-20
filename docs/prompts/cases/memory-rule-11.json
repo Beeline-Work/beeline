@@ -33,7 +33,9 @@
         "call": "order",
         "args": {
           "address": "c-audit",
-          "agent": "@fern"
+          "agent": {
+            "matches": "^@?fern$"
+          }
         }
       },
       {

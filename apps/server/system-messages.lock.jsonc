@@ -4,6 +4,7 @@
 // Agent order/report record card in corners ("@worker reported to @ruby · blocked") approved by lunchboxfortwo in brief revision 1 (message 9e84105213578731c324d5ef563a955f64c27f985f1508bee4c74a3539384968); callers of reportToCommander and sendOrder become wrappers.
 // Workflow gate question and consequences clarified under lunchboxfortwo's approved brief revision 1 (message 245b54cdd618d160125d5c6679c7eddc25fa53be56e78b39073a45bf5ccce6c6).
 // Ask normalizer in DaemonService.askRoomChoice and run-owner addressing in postWorkflowGate approved by lunchboxfortwo for PR #2660 (message da6d4a94fec1a6c13558d01d5a74d50559a10f38582cb06308ca50eaec2141db); wording unchanged.
+// Onboarding producers approved by lunchboxfortwo, DM bdf39511 (yes), relayed by Ruby; snapshot only.
 [
   {
     "id": "src/agent-class-retirement.ts:retireAgentClasses:message-write:137f066b6c9f70c2",
@@ -2412,6 +2413,17 @@
     "occurrences": 1
   },
   {
+    "id": "src/daemon-service.ts:DaemonService.execute:wrapper:6a32799b9e879dae",
+    "file": "apps/server/src/daemon-service.ts",
+    "kind": "wrapper",
+    "template": "postRepositoryOnboarding(this.database, this.github, {\n    roomId: request.roomId, agentId: authenticatedAgentId, requesterId: owner, kind: request.kind,\n})",
+    "literals": [
+      "'human'",
+      "'postRepositoryOnboarding'"
+    ],
+    "occurrences": 1
+  },
+  {
     "id": "src/daemon-service.ts:DaemonService.execute:wrapper:6dad2d335db0bf8c",
     "file": "apps/server/src/daemon-service.ts",
     "kind": "wrapper",
@@ -3134,6 +3146,27 @@
     "occurrences": 1
   },
   {
+    "id": "src/free-agents.ts:FreeAgentService.createInWorkspace:wrapper:8627c24c4fb3aba4",
+    "file": "apps/server/src/free-agents.ts",
+    "kind": "wrapper",
+    "template": "createFreeAgentInWorkspace(database, this.config, input)",
+    "literals": [],
+    "occurrences": 1
+  },
+  {
+    "id": "src/free-agents.ts:createFreeAgentInWorkspace:wrapper:c16d0ca4e2689d52",
+    "file": "apps/server/src/free-agents.ts",
+    "kind": "wrapper",
+    "template": "postRepositoryOnboarding(database, undefined, { roomId: input.roomId, agentId: agent.publicKey, requesterId: input.creatorId, kind: 'repository' })",
+    "literals": [
+      "'compressed'",
+      "'hex'",
+      "'repository'",
+      "'secp256k1'"
+    ],
+    "occurrences": 1
+  },
+  {
     "id": "src/github-operations.ts:GitHubOperations.mergeCorner:systemLine:a3631ff7edcd4615",
     "file": "apps/server/src/github-operations.ts",
     "kind": "systemLine",
@@ -3543,6 +3576,42 @@
     "kind": "wrapper",
     "template": "grantWalletDelegation(this.database, viewerId, offer.workspace_id)",
     "literals": [],
+    "occurrences": 1
+  },
+  {
+    "id": "src/phone-service.ts:PhoneService.actOnRepositoryCard:message-write:6a1dab03f525692c",
+    "file": "apps/server/src/phone-service.ts",
+    "kind": "message-write",
+    "template": "UPDATE messages card=jsonb_set ( card , '{status}' , '\"settled\"' )",
+    "literals": [],
+    "occurrences": 1
+  },
+  {
+    "id": "src/phone-service.ts:PhoneService.actOnRepositoryCard:message-write:8c4b32537f1c840b",
+    "file": "apps/server/src/phone-service.ts",
+    "kind": "message-write",
+    "template": "UPDATE messages card=card | | JSON.stringify({ status: followup ? 'open' : 'settled', selected }) :: jsonb",
+    "literals": [
+      "'create'",
+      "'open'",
+      "'refresh'",
+      "'repository'",
+      "'settled'",
+      "'starter'",
+      "'starters'"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/phone-service.ts:PhoneService.actOnRepositoryCard:wrapper:77a5efeaaf01435e",
+    "file": "apps/server/src/phone-service.ts",
+    "kind": "wrapper",
+    "template": "postRepositoryOnboarding(db, this.github, followup!)",
+    "literals": [
+      "'refresh'",
+      "'repository'",
+      "'starters'"
+    ],
     "occurrences": 1
   },
   {
@@ -4212,6 +4281,69 @@
       "'linear'",
       "'received'",
       "'system'"
+    ],
+    "occurrences": 1
+  },
+  {
+    "id": "src/repository-onboarding.ts:postRepositoryOnboarding:message-write:6a1dab03f525692c",
+    "file": "apps/server/src/repository-onboarding.ts",
+    "kind": "message-write",
+    "template": "UPDATE messages card=jsonb_set ( card , '{status}' , '\"settled\"' )",
+    "literals": [],
+    "occurrences": 1
+  },
+  {
+    "id": "src/repository-onboarding.ts:postRepositoryOnboarding:systemLine:61f52e2e89ec5b7b",
+    "file": "apps/server/src/repository-onboarding.ts",
+    "kind": "systemLine",
+    "template": "systemLine(database, { id, roomId: input.roomId, authorId: input.agentId,\n    subject: { id: input.agentId, kind: 'agent', name: room.name },\n    verb: kind === 'starters' ? 'suggested work' : 'offered a repository',\n    object: room.repository_name ?? 'Choose or create a repository', presentation: 'card',\n    cardType: 'repository-onboarding', card: card as unknown as Record<string, unknown> })",
+    "literals": [
+      "''",
+      "', '",
+      "'/'",
+      "'Choose or create a repository'",
+      "'Fix the red CI'",
+      "'GET'",
+      "'admin'",
+      "'agent'",
+      "'branches?per_page=100'",
+      "'ci'",
+      "'hex'",
+      "'install_missing'",
+      "'issues?state=open&sort=created&direction=asc&per_page=50'",
+      "'no_repo_linked'",
+      "'number'",
+      "'object'",
+      "'offered a repository'",
+      "'open'",
+      "'owner'",
+      "'repo_linked'",
+      "'repository'",
+      "'repository-onboarding'",
+      "'starters'",
+      "'string'",
+      "'suggested work'",
+      "'tests'",
+      "'wip'",
+      "`${row.github_installation_id}:${row.repository_id}`",
+      "`${stem}.spec.`",
+      "`${stem}.test.`",
+      "`/test_${stem}.py`",
+      "`Add tests for ${hot[0]}`",
+      "`Changed in ${hot[1]} sampled commits; no matching test filename found`",
+      "`Failing: ${signals.failingChecks.join(', ')}`",
+      "`Finish ${wip}`",
+      "`Fix issue #${bug.number}`",
+      "`Inspect ${hot[0]} and the existing test setup. Find coverage gaps and add useful tests; a filename search is not proof of missing coverage.`",
+      "`Inspect branch ${wip}, its commits and any open PR. Finish the smallest clearly intended unfinished change without overwriting existing work.`",
+      "`Open branch: ${wip}`",
+      "`Read issue #${bug.number}: ${bug.title}. Reproduce it and implement the smallest fix.`",
+      "`Reproduce and fix the failing checks: ${signals.failingChecks.join(', ')}. Keep the fix narrow.`",
+      "`commits/${encodeURIComponent(sha)}`",
+      "`commits?sha=${encodeURIComponent(room.repository_target_branch)}&per_page=30`",
+      "`git/trees/${encodeURIComponent(room.repository_target_branch)}?recursive=1`",
+      "`issue-${bug.number}`",
+      "`new-project-${id.slice(0, 6)}`"
     ],
     "occurrences": 1
   },

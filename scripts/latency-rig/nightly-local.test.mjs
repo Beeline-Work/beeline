@@ -65,7 +65,13 @@ test('CLI retains the last pass on skipped runs, advances only on pass, and reco
     assert.match(JSON.parse(await readFile(output)).text, /New report could not be read/);
     assert.equal(await readFile(base, 'utf8'), original);
     await writeFile(current, JSON.stringify(report(100, head)));
-    assert.equal(run().status, 0);
+    const passing = run();
+    assert.equal(passing.status, 0);
+    assert.match(passing.stdout, /route\/room\/warm: PASS n=20 .*p95=100ms target<450ms/);
     assert.equal(JSON.parse(await readFile(base)).commit, head);
+    await writeFile(current, JSON.stringify(report(450, head)));
+    const failing = run('--rerun', current);
+    assert.equal(failing.status, 1);
+    assert.match(failing.stdout, /route\/room\/warm: FAIL n=20 .*p95=450ms target<450ms/);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });

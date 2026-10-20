@@ -273,6 +273,33 @@ alone is not an installed schedule.
 
 ### Nightly setup and execution
 
+The parent Room owns schedule installation after merge; this corner creates no
+schedule. From the prepared, dependency-installed detached `origin/main`
+checkout on squire, with `LATENCY_RIG_DEVICE` selecting this run's owned emulator,
+the exact repo-root command is:
+
+```sh
+bash scripts/latency-rig/nightly-run.sh
+```
+
+Schedule at **03:00 America/New_York**. Reserve a four-hour window including
+checkout/dependency/emulator setup; this is an operating allowance, not a measured
+build-duration promise. Each of at most two capture/build attempts is capped at
+90 minutes, with a further 60-second termination grace each. The script prints
+the exact output path: `${XDG_STATE_HOME:-$HOME/.local/state}/beeline/latency-rig-speedy/night-<UTC-date>-<unique>/nightly.json`.
+That directory also contains both attempts and the commit range. Each reported
+case prints a summary line with n, p50, p95, target and PASS/FAIL.
+
+Exit zero means complete calibrated coverage, 20 samples per case, valid request
+contracts, route p95 strictly below 450 ms and tap p95 strictly below 150 ms,
+and no case more than 20% slower than the last passing baseline. A failed/skipped
+first attempt gets exactly one retry. Any final failure exits nonzero, preserves
+the baseline and sets `shouldAlert` in the verdict when comparison succeeds.
+The parent agent must also report setup/command errors that prevent a verdict;
+it posts one alert per failed night and remains silent on pass. The command does
+not install a schedule or send messages. Fetch and detach latest `origin/main`
+before invoking it, as described below.
+
 Use persistent private state `${XDG_STATE_HOME:-$HOME/.local/state}/beeline/latency-rig-speedy`
 (mode 0700), outside repository scans. Keep a detached `checkout` there, backed
 by the existing Beeline repository. Fetch `origin/main` and check out its exact

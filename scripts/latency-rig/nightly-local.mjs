@@ -76,6 +76,11 @@ async function main() {
     await rename(temp, baselinePath);
   }
   console.log(result.text);
+  for (const row of result.passingReport?.rows ?? (args.includes('--rerun') ? rerun?.rows : current?.rows) ?? []) {
+    const key = `${row.kind}/${row.name}/${row.variant}`;
+    const failures = result.failures.filter((failure) => failure.startsWith(`${key}:`));
+    console.log(`${key}: ${failures.length ? 'FAIL' : 'PASS'} n=${row.samples} p50=${row.p50Ms ?? 'unknown'}ms p95=${row.p95Ms}ms target<${row.budgetMs}ms${failures.length ? `; ${failures.join('; ')}` : ''}`);
+  }
   if (!result.pass) process.exitCode = result.needsRerun ? 2 : 1;
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main();

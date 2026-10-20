@@ -473,6 +473,9 @@ async function main() {
           reconcileConfiguredCornerReviewers(jobsDatabase));
         reconciledCornerReviewers = result.ok;
       }
+      if (githubJobs) {
+        await backgroundJobs.run('github-check-refresh', () => githubJobs.refreshQueuedChecks());
+      }
       if (githubJobs && !reconciledMergeability) {
         const result = await backgroundJobs.run('github-mergeability', () =>
           githubJobs.refreshStaleMergeability());

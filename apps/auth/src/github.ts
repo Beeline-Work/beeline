@@ -25,6 +25,7 @@ export class GitHubHttpError extends Error {
   constructor(
     label: string,
     readonly status: number,
+    readonly retryAfter?: string | null,
   ) {
     super(`${label} failed: HTTP ${status}`);
   }
@@ -57,11 +58,11 @@ async function jsonResponseObject(
   try {
     body = await response.json();
   } catch {
-    if (!response.ok) throw new GitHubHttpError(label, response.status);
+    if (!response.ok) throw new GitHubHttpError(label, response.status, response.headers.get('retry-after'));
     throw new Error(`${label} returned invalid JSON`);
   }
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
-    if (!response.ok) throw new GitHubHttpError(label, response.status);
+    if (!response.ok) throw new GitHubHttpError(label, response.status, response.headers.get('retry-after'));
     throw new Error(`${label} returned invalid JSON`);
   }
   return body as Record<string, unknown>;
@@ -69,7 +70,7 @@ async function jsonResponseObject(
 
 async function jsonObject(response: Response, label: string): Promise<Record<string, unknown>> {
   const body = await jsonResponseObject(response, label);
-  if (!response.ok) throw new GitHubHttpError(label, response.status);
+  if (!response.ok) throw new GitHubHttpError(label, response.status, response.headers.get('retry-after'));
   return body;
 }
 
@@ -82,7 +83,7 @@ async function jsonArray(response: Response, label: string): Promise<Record<stri
     throw new Error(`${label} returned invalid JSON`);
   }
   if (!response.ok || !Array.isArray(body)) {
-    throw new GitHubHttpError(label, response.status);
+    throw new GitHubHttpError(label, response.status, response.headers.get('retry-after'));
   }
   for (const entry of body) {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {

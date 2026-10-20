@@ -18,6 +18,7 @@ import {
 import { recordPersonMergeYes } from './corner-merge-approval.js';
 import { assertCornerBriefAllowsMerge } from './corner-brief.js';
 import { cancelCornerAgentCommands } from './corner-close.js';
+import { captureServerError } from './sentry.js';
 import { retryOnDeadlock } from './migration-retry.js';
 import { deleteCornerWakeSources } from './corner-wake-cleanup.js';
 import { abandonCornerWorkflowRuns } from './workflow-runs.js';
@@ -278,6 +279,33 @@ export type LandCornerOutcome =
   | { readonly status: 'not-attempted' }
   | { readonly status: 'started' }
   | { readonly status: 'refused'; readonly reason: string };
+
+function transientGitHubError(error: unknown): boolean {
+  if (error instanceof GitHubHttpError) return error.status === 429 || (error.status >= 500 && error.status < 600);
+  if (error instanceof TypeError || (error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name))) return true;
+  const code = (error as { code?: string; cause?: { code?: string } } | null);
+  return ['ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN', 'ECONNREFUSED', 'UND_ERR_SOCKET'].includes(code?.code ?? code?.cause?.code ?? '');
+}
+
+function githubRetryDelay(error: unknown, fallback: number): number {
+  const value = error instanceof GitHubHttpError ? error.retryAfter : undefined;
+  if (!value) return fallback;
+  const seconds = Number(value);
+  const delay = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(value) - Date.now();
+  return Number.isFinite(delay) ? Math.max(fallback, delay) : fallback;
+}
+
+async function retryGitHubRead<T>(read: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try { return await read(); } catch (error) {
+      if (!transientGitHubError(error) || attempt === 3) throw error;
+      const delay = githubRetryDelay(error, 1000 * 2 ** attempt);
+      // Long rate limits belong to the durable queue, not a sleeping webhook.
+      if (delay > 30_000) throw error;
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
+  }
+}
 
 export class GitHubOperations {
   readonly #key: Buffer;
@@ -2022,20 +2050,67 @@ export class GitHubOperations {
     }
   }
 
+  /** Drain persisted failed refreshes without needing another GitHub webhook. */
+  async refreshQueuedChecks(): Promise<void> {
+    const rows = await this.database.query<CornerWebhookTarget & {
+      repository: string; pr_number: string; head_sha: string;
+    }>(`SELECT fact.corner_id,corner.parent_id,corner.name corner_name,
+        fact.owner_agent_id author_id,github.full_name repository,
+        github.repository_id,github.installation_id,
+        fact.lifecycle->'pr'->>'number' pr_number,
+        fact.lifecycle->'checkRefreshRetry'->>'headSha' head_sha
+      FROM corner_facts fact JOIN rooms corner ON corner.id=fact.corner_id
+      JOIN rooms parent ON parent.id=corner.parent_id
+      JOIN github_repositories github ON github.installation_id=parent.github_installation_id
+        AND github.active AND lower(github.full_name)=lower(regexp_replace(regexp_replace(
+          COALESCE(parent.repository_remote,parent.repository_key,''),
+          '^(git://|https://)github.com/','','i'), '\\.git$','','i'))
+      WHERE corner.archived_at IS NULL AND parent.archived_at IS NULL
+        AND fact.lifecycle->'checkRefreshRetry'->>'headSha'=fact.lifecycle->'pr'->>'headSha'
+        AND (fact.lifecycle->'checkRefreshRetry'->>'after')::double precision
+          <= extract(epoch FROM clock_timestamp())
+      ORDER BY fact.updated_at LIMIT 20`);
+    for (const target of rows.rows) {
+      // Lease the item in one committed statement; no lock spans a provider read.
+      const claimed = await this.database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(
+          lifecycle,'{checkRefreshRetry,after}',to_jsonb(extract(epoch FROM clock_timestamp())+300))
+        WHERE corner_id=$1 AND lifecycle->'checkRefreshRetry'->>'headSha'=$2
+          AND lifecycle->'pr'->>'headSha'=$2
+          AND (lifecycle->'checkRefreshRetry'->>'after')::double precision
+            <= extract(epoch FROM clock_timestamp()) RETURNING corner_id`,
+        [target.corner_id, target.head_sha]);
+      if (!claimed.rowCount) continue;
+      try {
+        await this.refreshCheckRollup({ ...target, has_pr: true }, target.repository,
+          { name: 'Pull request checks', status: 'pending', headSha: target.head_sha }, this.database);
+      } catch (error) {
+        if (!transientGitHubError(error)) {
+          await this.database.query(`UPDATE corner_facts SET lifecycle=lifecycle-'checkRefreshRetry'
+            WHERE corner_id=$1 AND lifecycle->'checkRefreshRetry'->>'headSha'=$2`,
+            [target.corner_id, target.head_sha]);
+        }
+        captureServerError(error, { background_job: 'github-check-refresh' });
+        console.error('[github] queued check refresh failed:', error);
+      }
+    }
+  }
+
   private async refreshCheckRollup(
     target: CornerWebhookTarget & { has_pr?: boolean; pr_number?: string | null }, repository: string,
     check: NonNullable<ReturnType<typeof checkFact>>, database: SqlDatabase,
   ) {
     const checkHeadSha = check.headSha!;
+    let fetchStartedAt = 0;
+    try {
         // Use the database clock across server instances, with subsecond precision
         // to order overlapping fetches while keeping updatedAt in epoch seconds.
-        const fetchStartedAt = (await database.query<{ started_at: number }>(
+        fetchStartedAt = (await database.query<{ started_at: number }>(
           `SELECT extract(epoch FROM clock_timestamp())::double precision started_at`,
         )).rows[0]!.started_at;
-        const token = await this.app.installationToken(Number(target.installation_id), {
+        const token = await retryGitHubRead(() => this.app.installationToken(Number(target.installation_id), {
           repositoryIds: [Number(target.repository_id)],
-        });
-        const rollup = await this.app.readCommitCheckRollup(token.token, repository, checkHeadSha);
+        }));
+        const rollup = await retryGitHubRead(() => this.app.readCommitCheckRollup(token.token, repository, checkHeadSha));
         // A push can move GitHub's PR head before either its push or synchronize
         // webhook reaches us. The stored head alone cannot authorize a verdict.
         // A cancelled job (GitHub cancelled it before a runner picked it up:
@@ -2056,7 +2131,7 @@ export class GitHubOperations {
         );
         const interruptedOnly = failedChecks.length === 0 && interruptedNames.size > 0;
         const livePr = target.pr_number && (rollup.state === 'passed' || rollup.state === 'failed' || failedChecks.length > 0)
-          ? await this.app.readPullRequest(token.token, repository, Number(target.pr_number))
+          ? await retryGitHubRead(() => this.app.readPullRequest(token.token, repository, Number(target.pr_number)))
           : undefined;
         if (livePr && livePr.headSha !== checkHeadSha) return;
         const beforeFetch = await this.lifecycle(target.corner_id, database);
@@ -2103,6 +2178,9 @@ export class GitHubOperations {
           if (fetchStartedAt < latestFetch) return;
           // An empty rollup is only "no checks" once GitHub says so; a null
           // rollup (state pending) is the race before workflows register.
+          await database.query(`UPDATE corner_facts SET lifecycle=lifecycle-'checkRefreshRetry'
+            WHERE corner_id=$1 AND COALESCE((lifecycle->'checkRefreshRetry'->>'failedAt')::double precision,0)<=$2`,
+            [target.corner_id, fetchStartedAt]);
           const summary = {
             status:
               failedChecks.length ? ('failing' as const) : rollup.total === 0 && rollup.state !== 'pending' ? ('unknown' as const) : rollup.state === 'passed'
@@ -2218,7 +2296,22 @@ export class GitHubOperations {
           if (summary.status === 'failing' && !becameFailing)
             await reconcileCornerMergeBlockers(database, target.corner_id);
         });
-        await this.refreshStaleMergeability(target.corner_id);
+    } catch (error) {
+      if (transientGitHubError(error)) {
+        await database.query(`UPDATE corner_facts SET lifecycle=jsonb_set(
+            jsonb_set(jsonb_set(lifecycle,'{checks}','"pending"'::jsonb),
+              '{checksSummary}',jsonb_build_object('total',0,'failing','[]'::jsonb,
+                'checks','[]'::jsonb,'updatedAt',floor(extract(epoch FROM clock_timestamp()))) ||
+                COALESCE(lifecycle->'checksSummary','{}'::jsonb) || '{"status":"pending"}'::jsonb),'{checkRefreshRetry}',
+            jsonb_build_object('headSha',$2::text,'failedAt',extract(epoch FROM clock_timestamp()),
+              'after',extract(epoch FROM clock_timestamp())+$3::double precision)),updated_at=now()
+          WHERE corner_id=$1 AND lifecycle->'pr'->>'headSha'=$2
+            AND COALESCE((lifecycle->'checksSummary'->>'fetchStartedAt')::double precision,0)<=$4`,
+          [target.corner_id, checkHeadSha, githubRetryDelay(error, 60_000) / 1000, fetchStartedAt]);
+      }
+      throw error;
+    }
+    await this.refreshStaleMergeability(target.corner_id);
   }
 
   private async lifecycle(

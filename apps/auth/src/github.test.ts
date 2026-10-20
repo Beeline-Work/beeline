@@ -12,6 +12,15 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+it.each(['120', 'Wed, 21 Oct 2026 12:00:00 GMT'])('preserves Retry-After %s on a failed rollup response', async retryAfter => {
+  vi.stubGlobal('fetch', vi.fn(async () => new Response('upstream unavailable', {
+    status: 503, headers: { 'retry-after': retryAfter },
+  })));
+  const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
+  await expect(app.readCommitCheckRollup('room-token', 'owner/widgets', 'a'.repeat(40)))
+    .rejects.toMatchObject({ status: 503, retryAfter });
+});
+
 it('reads merged PR evidence needed to recover a missed webhook', async () => {
   const sha = 'a'.repeat(40);
   vi.stubGlobal(

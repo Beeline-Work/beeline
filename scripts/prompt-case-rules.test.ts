@@ -21,6 +21,8 @@ test('repo-less Room case accepts header navigation and rejects referrals to ano
   for (const accepted of [
     'I cannot write it here directly, because this Room has no linked repository.',
     'That is because this Room has no linked repository.',
+    'I never send you to another Room.',
+    "I'll never shuffle you off to another Room.",
   ]) {
     assert.equal(evaluateRule(saved.pass, { calls: [], text: `${guidance} ${accepted}` }).pass, true, accepted);
   }
@@ -28,6 +30,7 @@ test('repo-less Room case accepts header navigation and rejects referrals to ano
     'Point me at the Room with the linked repository.',
     'Go to a Room with a linked repository.',
     'Use another Room.',
+    'Please switch to a different Room.',
     'Create a repository-backed Room.',
     "The Room's repository filesystem is read-only.",
   ]) {

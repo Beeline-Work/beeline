@@ -92,7 +92,7 @@ import {
   siblingAgentMaskPaths,
   wrapAgentCommand,
 } from './bwrap-sandbox.js';
-import { harnessIdentityLabel } from './cursor-acp-bridge.js';
+import { harnessIdentityLabel, sessionNewMcpServers } from './cursor-acp-bridge.js';
 import {
   approvedDeviceGrant,
   deviceGrantResumePrompt,
@@ -1327,6 +1327,7 @@ export class MonolithCornerTurnLoop {
       resourceAuthFile,
       squireScope,
     );
+    const sessionServers = sessionNewMcpServers<McpServerWire>(harnessLabel, servers, grantedRouteServers);
     // Pi ACP ignores session/new MCP servers. The installer selects native
     // mcp.json or the generated bridge for this executable and isolated home.
     await installPiMcpBridge({
@@ -1368,10 +1369,10 @@ export class MonolithCornerTurnLoop {
       agentCommand: harnessLabel,
       resumeSessionId: this.warmTranscript.resumeSessionId(conversationFingerprint),
       cwd: this.options.worktreePath,
-      mcpServers: servers,
+      mcpServers: sessionServers,
       mode: 'edit',
       create: () => this.client!.sessionNew({
-        cwd: this.options.worktreePath, mcpServers: servers, mode: 'edit', systemPrompt: session.systemPrompt,
+        cwd: this.options.worktreePath, mcpServers: sessionServers, mode: 'edit', systemPrompt: session.systemPrompt,
       }),
       onResumeFailure: error => console.warn('[body] native conversation unavailable; starting cold:', error),
     });

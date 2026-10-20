@@ -137,13 +137,15 @@ A delivery whose acknowledgement audio fails shows "Request delivered; voice rep
 unavailable". Transactional deduplication protects uncertain dispatch retries.
 [Android delivery proof](voice-mode-proof/request-delivery/README.md) records
 Reproduction DELIVERY-2 and its controlled STT/provider stand-ins. Real agent
-reports are matched to their original command. Their first short paragraph is
-spoken, followed by “The rest is in the chat.” Long openings stop at the last
-whole sentence within about ten seconds; chat retains the complete report.
+reports are matched to their original command. Their first paragraph is spoken
+when it fits within 150 words, 1,080 characters and 240 CJK characters. Long openings stop at the last whole sentence within
+those limits, about one minute. “The rest is in the chat.” is appended only
+when content was dropped; chat retains the complete report.
 A report waits while anyone speaks, then rechecks that its requester is still
 present and still targeting that agent. A failed recheck permanently handles the
-report without speech. Call-origin commands privately ask agents to put a short
-spoken line before their full report. Agent work has no voice timeout and
+report without speech. Call-origin commands privately ask agents to put a spoken
+answer sized to the question before their full report: one line for a status, a few sentences for a real
+answer, at most about 150 words. Agent work has no voice timeout and
 continues independently of playback.
 
 Quick web facts use the router's `search_web`; chat-history questions use

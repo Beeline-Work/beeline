@@ -25,8 +25,36 @@ export class GitHubHttpError extends Error {
   constructor(
     label: string,
     readonly status: number,
+    readonly retryAfter?: string | null,
   ) {
     super(`${label} failed: HTTP ${status}`);
+  }
+}
+
+export function transientGitHubError(error: unknown): boolean {
+  if (error instanceof GitHubHttpError) return error.status === 429 || (error.status >= 500 && error.status < 600);
+  if (error instanceof TypeError || (error instanceof Error && ['TimeoutError', 'AbortError'].includes(error.name))) return true;
+  const code = (error as { code?: string; cause?: { code?: string } } | null);
+  return ['ECONNRESET', 'ETIMEDOUT', 'EAI_AGAIN', 'ECONNREFUSED', 'UND_ERR_SOCKET'].includes(code?.code ?? code?.cause?.code ?? '');
+}
+
+export function githubRetryDelay(error: unknown, fallback: number): number {
+  const value = error instanceof GitHubHttpError ? error.retryAfter : undefined;
+  if (!value) return fallback;
+  const seconds = Number(value);
+  const delay = Number.isFinite(seconds) ? seconds * 1000 : Date.parse(value) - Date.now();
+  return Number.isFinite(delay) ? Math.max(fallback, delay) : fallback;
+}
+
+export async function retryGitHubRead<T>(read: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try { return await read(); } catch (error) {
+      if (!transientGitHubError(error) || attempt === 3) throw error;
+      const delay = githubRetryDelay(error, 1000 * 2 ** attempt);
+      // Long rate limits belong to the durable queue, not a sleeping webhook.
+      if (delay > 30_000) throw error;
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
   }
 }
 
@@ -57,11 +85,11 @@ async function jsonResponseObject(
   try {
     body = await response.json();
   } catch {
-    if (!response.ok) throw new GitHubHttpError(label, response.status);
+    if (!response.ok) throw new GitHubHttpError(label, response.status, response.headers.get('retry-after'));
     throw new Error(`${label} returned invalid JSON`);
   }
   if (!body || typeof body !== 'object' || Array.isArray(body)) {
-    if (!response.ok) throw new GitHubHttpError(label, response.status);
+    if (!response.ok) throw new GitHubHttpError(label, response.status, response.headers.get('retry-after'));
     throw new Error(`${label} returned invalid JSON`);
   }
   return body as Record<string, unknown>;
@@ -69,7 +97,7 @@ async function jsonResponseObject(
 
 async function jsonObject(response: Response, label: string): Promise<Record<string, unknown>> {
   const body = await jsonResponseObject(response, label);
-  if (!response.ok) throw new GitHubHttpError(label, response.status);
+  if (!response.ok) throw new GitHubHttpError(label, response.status, response.headers.get('retry-after'));
   return body;
 }
 
@@ -82,7 +110,7 @@ async function jsonArray(response: Response, label: string): Promise<Record<stri
     throw new Error(`${label} returned invalid JSON`);
   }
   if (!response.ok || !Array.isArray(body)) {
-    throw new GitHubHttpError(label, response.status);
+    throw new GitHubHttpError(label, response.status, response.headers.get('retry-after'));
   }
   for (const entry of body) {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) {
@@ -714,8 +742,13 @@ export class GitHubAppClient {
     });
   }
 
+  /** Retry transient provider failures once for every caller of the shared check read. */
+  async readCommitCheckRollup(accessToken: string, fullName: string, headSha: string): Promise<GitHubCheckRollup> {
+    return retryGitHubRead(() => this.readCommitCheckRollupOnce(accessToken, fullName, headSha));
+  }
+
   /** GitHub's own combined verdict for every check run and commit-status context on a head. */
-  async readCommitCheckRollup(
+  private async readCommitCheckRollupOnce(
     accessToken: string,
     fullName: string,
     headSha: string,

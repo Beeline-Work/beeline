@@ -1,203 +1,95 @@
-# R1: warm Room open with newly arrived rows (brief revision 2)
+# R1: Room opening with newly arrived messages
 
-Measured locally on squire on 2026-10-19 and 2026-10-20. Revision 2 replaces the proposed
-GitHub runner and server alert endpoint with an agent-owned local schedule.
-There is no new GitHub nightly workflow, webhook or token.
+Measured on squire on 2026-10-20. Main application: `6d908054c0dd404885ec2daa08115c9ef5ed10c2`.
+Tested application: `9729c3ac2480ba6a8634be7ecde2e97d176b4bad`. Later evidence commits do not change application code.
 
-## Environment and reproduction
+## Reproduced and demonstrated
 
-Main source: e2665c7dfc62ed9ac1de9ef4b18838dd76f9c6de, with the native rig probe
-applied before application changes. Android 35 x86_64, disposable Beeline-leased
-se_api35 emulator, 2560 MiB RAM and four cores. Local PostgreSQL fixture:
-200 Rooms, 300 corners, 10k older activities and a 30-row window. Proxy:
-100 ms RTT, zero configured jitter, 10 Mbps, local HTTP. No production data.
+R1: warm the fixture Room, return with native Back to its Room list, insert one
+or five unique messages, then tap the Room row or invoke the Android FCM-extras
+notification Activity. Stop at native frame commitment with the expected newest
+message's full text line visible above the composer in the same navigation Screen.
+A list preview cannot stop the timer. All cases retain 20 samples per revision.
 
-R1: warm the fixture Room, return using native Back to its Room list, insert
-one or five unique messages, then tap the Room or invoke its Android push-tap
-Activity with FCM tap extras. Push timing excludes delivery and notification
-shade latency. The timer starts at native touch-up or Activity entry and ends
-at frame commitment with the newest message visible above the composer in the
-same native navigation Screen. It never ends at the first cached paint.
+| Case | n per revision | Main p50 / p95 ms | Fix p50 / p95 ms | Fix prepaint HTTP |
+|---|---:|---:|---:|---:|
+| Room list / 1 | 20 | 1120 / 5000 (capped; 5 timeouts) | 257 / 281 | 0 |
+| Room list / 5 | 20 | 1123 / 1423 | 268 / 313 | 0 |
+| Push / 1 | 20 | 716 / 856 | 255 / 288 | 0 |
+| Push / 5 | 20 | 810 / 850 | 263 / 275 | 0 |
 
-The rig-only Expo plugin rejects non-emulator host URLs and is absent from
-ordinary builds. A shell-permission receiver arms one expected unique message.
-Its draw listener checks a full TextView line above the composer and records a
-hardware frame-commit callback. This measures frame submission rather than
-physical display scanout. UI inspection occurs before the timed action;
-accessibility polling and JavaScript callbacks do not stop the timer.
+All final arrival cases pass timing and request contracts. No final sample timed
+out. Main list / 1 has five failed targets at the five-second cap; 5000 is a
+censoring value, not an observed paint time. No samples or outliers were dropped.
+Both main push cases displayed their newest target in all 40 samples.
 
-## Complete main baseline
+## Environment and measurement
 
-| Entry / unseen | Samples | p50 ms | p95 ms |
-| --- | ---: | ---: | ---: |
-| Room list / 1 | 20 | 1012 | 1349 |
-| Room list / 5 | 20 | 1480 | 1973 |
-| Push / 1 | 20 | 678 | 718 |
-| Push / 5 | 20 | 746 | 809 |
+Android 35 x86_64, owned Beeline-leased se_api35 emulator, 2560 MiB RAM, four
+cores. Local disposable PostgreSQL fixture: 200 Rooms, 300 corners, 10k older
+activities and a 30-row window. HTTP proxy: 100 ms RTT, zero jitter, 10 Mbps.
+Main has only the measurement harness and native probe applied; its mobile
+application sources are unchanged. Capture occurs after builds and warmup.
 
-All four cases fail the strict 450 ms page-load budget. Machine-readable results
-are in `6150011d-rev2-baseline.json`. Earlier JavaScript-only, clipped-text,
-preview-matching and interrupted harness pilots are excluded.
+The same corrected WebSocket shaping is used on both revisions: propagation
+latency overlaps between messages; only byte serialization queues. Earlier
+captures serially charged half an RTT per message and are not comparable.
+The real-proxy burst regression passes on the correction and fails on the old
+implementation with its 1.5-second deadline.
 
-## First cache-fix attempt
+Device/host calibration is verified, with final maximum uncertainty
+10.5 ms. Native durations use one device clock. Host one-minute
+load ranges: main 1.14–9.42; fix
+0.93–10.15, on 20 logical CPUs.
 
-| Entry / unseen | Samples | p50 ms | p95 ms | Verdict |
-| --- | ---: | ---: | ---: | --- |
-| Room list / 1 | 20 | 291 | 411 | pass |
-| Room list / 5 | 20 | 323 | 504 | fail |
-| Push / 1 | 20 | 686 | 1791 | fail |
-| Push / 5 | 20 | 813 | 1471 | fail |
+This is a warm-session synthetic FCM-extras tap from the Room list, through the
+real Activity/Expo response path. It excludes FCM delivery and notification-shade
+latency. Native frame submission is measured, rather than physical scanout.
+First-open observations are informational and do not gate this matrix. This is
+an emulator result, not a physical-phone calibration.
 
-All outliers remain in these results. Host load is recorded every ten seconds.
-The full nightly attempt stopped at warm-open: its probe reused a prior push
-mark for the same target. The parser now requires matching entry case and an
-arming timestamp, with a regression test. No invalid mark was accepted as a
-warm-open sample. Send-text was not reached. There is no complete nightly pass.
+## Cause and fix
 
-Additional push tracing found received target rows in cache within 13 ms, but
-the Room route mounted about 300 ms later. Temporarily disabling Android system
-animations did not eliminate that hold. Those diagnostic runs are excluded;
-original animation settings have been restored. The forwarding activity's NoDisplay pilot also failed and was removed.
-The current candidate preserves the initial cached transcript, publishes missing-row
-responses before session setup consumes them, and tests a warm-push-only native
-handoff flag.
+The old 763 ms list sample applied its cached target at +271 ms, reached list
+layout at +624 ms, and committed the target frame at +763 ms. Its Room network
+read began at +802 ms. The delay was in app session/cache setup and layout,
+rather than a Room-read wait. That older capture has no host-load record, so it
+cannot establish a host-load cause. Later Hermes profiling shows React/native
+view reconciliation dominating the sampled slow intervals rather than GC.
 
-## First complete candidate matrix (262b39de1)
+Received committed rows now update the scoped off-screen Room cache and enter
+the Room's first React state. Missing rows start their read at the tap. Opening
+responses publish before asynchronous session setup; account/server generation
+checks still guard them. Live Room-list updates yield to navigation. Warm FCM
+responses use the existing listener without restarting MainActivity. Existing
+Room landing positions are preserved.
 
-The request verdicts in these historical tables are raw analyzer output, **not
-accepted proof**: device and host epochs were not calibrated before joining.
-Native paint durations remain valid because their start and end share the same
-device monotonic timer. A calibrated capture is required for request contracts.
+The optional star-prompt read and the sampled page-load observation now run
+behind native paint. Earlier successful timing candidates still had occasional
+ancillary requests before pixel commitment; the final matrix has none.
 
-The actual local-attempt wrapper built, installed and signed in to a fresh
-fixture, then captured all 120 samples. Android system animation settings were
-unchanged. Every case has 20 samples; none were discarded.
+## Validation and nightly handoff
 
-| Entry / unseen | p50 ms | p95 ms | Timing | Request contract |
-| --- | ---: | ---: | --- | --- |
-| Room list / 1 | 264 | 285 | pass | pass |
-| Room list / 5 | 276 | 302 | pass | pass |
-| Push / 1 | 596 | 987 | fail | fail |
-| Push / 5 | 852 | 1246 | fail | fail |
-| Warm Room open | 280 | 317 | pass | fail |
-| Send text | 153 | 279 | fail | fail |
+Root typecheck, dead-code baseline and workflow-path checks pass. There are 36
+latency-rig tests, including real-proxy burst delivery, coverage, censoring,
+clock calibration, strict budget/regression thresholds, skipped captures and
+complete first-parent PR ranges. Focused Room/push/list tests pass; the final
+trace/prompt group has 18 passing tests, including browser functionality and
+no-request-before-frame assertions.
 
-The analyzer exits 1: this is a complete failing run, not a nightly pass.
-The revised send harness completed all 20 sends. Push traces show delays before
-the HTTP request reaches the proxy and after its response. Further diagnostic
-marks distinguish authorization, native request dispatch, body decoding and
-navigation ancestry. No causal conclusion is claimed from those gaps alone.
+No latency-rig GitHub Actions workflow, dedicated runner, hosted watchdog,
+OIDC alert endpoint or new token remains. Nightly execution uses the local rig
+and `nightly-local.mjs`, with a single full rerun before an alert and baseline
+advancement only on pass. The fixed nightly subset is the four arrivals plus
+warm Room opening and send-text, 20 samples each.
 
-## Warm dispatch and native push candidate (daf09db85)
+The prior complete six-case capture (81c44746ab9b3574224c0467c99fd5d89805b079) reported send-text p95
+232 ms against 150 ms and failed its request contract. That existing interaction
+failure remains visible to monitoring; no passing global nightly baseline is
+claimed by this arrival-only acceptance run.
 
-| Entry / unseen | Samples | p50 ms | p95 ms | Timing | Request contract |
-| --- | ---: | ---: | ---: | --- | --- |
-| Room list / 1 | 20 | 261 | 282 | pass | pass |
-| Room list / 5 | 20 | 275 | 300 | pass | pass |
-| Push / 1 | 20 | 381 | 1028 | fail | fail |
-| Push / 5 | 20 | 829 | 1251 | fail | fail |
-| Warm Room open | 20 | 286 | 303 | pass | fail |
-| Send text | 20 | 157 | 179 | fail | fail |
-
-All 120 samples completed; the analyzer exits 1. A warm valid token now reaches
-the JS fetch call without yielding to navigation. Exact mounted ancestry uses
-a normal stack push. A device-only trace shows a body-decoding gap from +427 ms
-to +960 ms. A Room-only Expo native fetch candidate is under test; this run does
-not contain that change.
-
-An earlier claim about the proxy arrival delay compared uncalibrated clocks.
-Android was about 384 ms behind the host when checked. That cross-clock claim
-is withdrawn. The device-only phase gaps and native paint durations are not
-affected. The next harness records bounded host/device clock anchors before
-and after every sample and fails closed when they cannot be joined safely.
-
-## Calibrated synchronous-prefetch candidate (5c93b5e18)
-
-| Entry / unseen | Samples | p50 ms | p95 ms | Timing |
-| --- | ---: | ---: | ---: | --- |
-| Room list / 1 | 20 | 265 | 285 | pass |
-| Room list / 5 | 20 | 276 | 293 | pass |
-| Push / 1 | 20 | 514 | 888 | fail |
-| Push / 5 | 20 | 604 | 1215 | fail |
-
-All 80 arrival samples were retained. Host/device calibration is verified with
-maximum uncertainty 11.5 ms. Room-list cases also pass request contracts;
-push cases fail them. Capture was stopped after the arrival matrix to test the
-next adapter, so this is not a complete six-case nightly run.
-
-For one 745 ms push sample, the calibrated proxy completed a 2 KB Room reply
-about 148 ms after tap. Device marks show headers at 318 ms, decoded body at
-445 ms and native paint at 745 ms. These identify client-side delay after the
-reply. The next candidate reads the Room response as text, avoiding the
-separate native Blob/body-reading step; its timing is not yet established.
-
-## Text-response candidate (742622a87)
-
-| Entry / unseen | Samples | p50 ms | p95 ms | Timing |
-| --- | ---: | ---: | ---: | --- |
-| Room list / 1 | 20 | 261 | 301 | pass |
-| Room list / 5 | 20 | 274 | 300 | pass |
-| Push / 1 | 20 | 470 | 905 | fail |
-| Push / 5 | 20 | 568 | 969 | fail |
-
-All 80 arrival samples were retained; the extra nightly cases were stopped to
-validate the next candidate. Text-response decoding now completes with headers.
-An 820 ms push trace decoded the reply at about 332 ms but did not start the
-session/cache read until about 535 ms, after the cached-frame wait. A scoped
-opening-response subscription is the next candidate; no passing timing is
-claimed for it yet.
-
-## Opening-response candidate (706150b5e)
-
-| Entry / unseen | Samples | p50 ms | p95 ms | Timing |
-| --- | ---: | ---: | ---: | --- |
-| Room list / 1 | 20 | 265 | 285 | pass |
-| Room list / 5 | 20 | 274 | 297 | pass |
-| Push / 1 | 20 | 456 | 780 | fail |
-| Push / 5 | 20 | 515 | 1337 | fail |
-
-All 80 arrival samples were retained. This capture was stopped before the
-extra nightly cases to test the native handoff. Fresh responses now reach
-layout before session setup, but one 781 ms push sample spent its first
-213 ms between native Activity entry and the JS notification listener.
-The next candidate routes foreground FCM extras through Expo's existing
-NotificationManager while MainActivity is started; background and cold taps
-retain task forwarding. Its device timing is not yet measured.
-
-## Foreground FCM candidate (e817d36fd)
-
-| Entry / unseen | Samples | p50 ms | p95 ms | Timing |
-| --- | ---: | ---: | ---: | --- |
-| Room list / 1 | 20 | 257 | 282 | pass |
-| Room list / 5 | 20 | 275 | 299 | pass |
-| Push / 1 | 20 | 385 | 791 | fail |
-| Push / 5 | 20 | 479 | 1308 | fail |
-
-All 80 arrival samples were retained. The direct foreground branch ran, but
-it did not remove the gap before prefetch. Existing markers cannot distinguish
-native event delivery from the JS duplicate/voice checks; new native and JS
-boundary markers are diagnostic only. The next run isolates the two push cases
-and cannot satisfy full-matrix or nightly coverage.
-
-## Nightly installation and delivery
-
-The standalone comparison and local attempt scripts are committed with tests.
-The fixed nightly subset is the four arrival cases, warm Room open and send-text,
-20 samples each. Missing, failed or skipped cases fail closed. The agent reruns
-the full subset once before alerting and preserves the last passing baseline.
-
-The README contains the installation procedure and the nightly wake prompt.
-A durable schedule must belong to the parent Room because schedules in archived
-corners stop. A parent-Room order for Speedy has been requested from Ruby;
-installation has no receipt yet. No operational nightly guarantee is claimed.
-
-The 2026-10-20 delivery dry run deliberately omitted both capture reports.
-The real comparator returned `shouldAlert=true`, preserved the absent baseline,
-and one labeled test alert was stored in the parent Room: message
-`315af9b7fc6895ea11a3325079cf8eaaa55eb406ccd2c07e6059d586d5c04326`.
-Its local receipt is retained with the dry-run comparison. This verifies
-skipped-run delivery without claiming that the schedule is installed.
-
-The personal GitHub connection returned HTTP 403 when patching PR #2636's body.
-The draft PR's older description is stale until corrected through an authorized
-connection. This does not prevent local emulator work or comparison tests.
+Ruby's recorded handoff is to order Speedy in the parent Room after merge and
+install the 03:00 America/New_York schedule from reviewed main. No installed
+schedule is claimed before that handoff. A deliberately skipped capture/rerun
+already produced exactly one labeled dry-run alert in the parent Room, verified
+by reading message `315af9b7fc6895ea11a3325079cf8eaaa55eb406ccd2c07e6059d586d5c04326`.

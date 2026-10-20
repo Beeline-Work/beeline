@@ -613,7 +613,8 @@ describe('prompt assembly guards', () => {
     const author = assembleSessionPrompt(SESSION_VARIANTS['code-corner-reviewed']!).systemPrompt;
     expect(author).not.toMatch(/^Commit and push/m);
     expect(author).toContain('Only when the brief calls for repository changes');
-    expect(author).toContain('Only repository assignments commit/push/open a PR; other work delivers with post_artifact and reports');
+    expect(author).toContain('Work outside the repository delivers with post_artifact and reports.');
+    expect(author).not.toContain('Only repository assignments commit');
     expect(promptRules.CORNER_DELIVERY_NUDGE).toContain('Only when you write code in this corner and the brief calls for repository changes');
   });
 
@@ -793,8 +794,11 @@ describe('corner role prompts (PR #2224: a reviewer that opened its corner pushe
       const condition = text.indexOf('Implementer rules:');
       expect(condition, name).toBeGreaterThan(-1);
       expect(text, name).toContain(
-        "apply only when the brief or a person in this corner told you to write code or do this corner's work. A hand-over of the work to another agent ends that.",
+        'Implementer rules: any agent in this corner may commit, push and open a pull request.',
       );
+      expect(text, name).toContain('apply whenever you write code in this corner.');
+      expect(text, name).not.toContain('A hand-over of the work to another agent ends that');
+      expect(text, name).not.toContain('Otherwise do not commit, push');
       for (const rule of ['Run npm run corner:prepare first.', 'commit and push only', '## Reproduced', 'Once the pull request exists'])
         expect(text.indexOf(rule), `${name}: ${rule}`).toBeGreaterThan(condition);
       expect(text.indexOf('You are in an isolated git worktree'), name).toBeLessThan(condition);
@@ -805,7 +809,7 @@ describe('corner role prompts (PR #2224: a reviewer that opened its corner pushe
     for (const name of ['code-corner-reviewed', 'code-corner-no-reviewer'])
       expect(prompt(name), name).not.toContain('Reviewer rules:');
     const reviewer = prompt('code-corner-reviewer');
-    expect(reviewer).toContain('the rules below, up to the reviewer rules, apply only when');
+    expect(reviewer).toContain('The rules below, up to the reviewer rules, apply whenever you write code');
     expect(reviewer.indexOf('Reviewer rules:')).toBeGreaterThan(
       reviewer.indexOf('Never merge any other pull request.'),
     );

@@ -6,9 +6,6 @@ import { AppState, Platform } from 'react-native';
 import type { RepositoryOnboardingAction, RepositoryOnboardingCard as Card } from '@beeline/api-contract/phone';
 import { TranscriptCard, type TranscriptCardAction, type TranscriptCardChoice } from '@/components/buzz/TranscriptCard';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
-import { authSessionOptions } from '@/auth/auth-session';
-import { openAccountAuthSession, subscribeToAuthUrls } from '@/auth/desktop-auth-session';
-import { githubInstallationRedirectUri, runGitHubInstallationSession } from '@/auth/github-auth-session';
 
 /** Reuses the shared ask-card anatomy; selections remain authoritative on the server. */
 type Props = { card: Card; viewerId: string; author?: RoomViewIdentity };
@@ -28,6 +25,10 @@ function EnabledRepositoryOnboardingCard({ card, viewerId, author }: Props) {
     const request = { roomId: card.roomId, cardId: card.id, action, ...extra };
     try {
       if (action === 'install' || action === 'organization') {
+        const [{ authSessionOptions }, { openAccountAuthSession, subscribeToAuthUrls },
+          { githubInstallationRedirectUri, runGitHubInstallationSession }] = await Promise.all([
+          import('@/auth/auth-session'), import('@/auth/desktop-auth-session'), import('@/auth/github-auth-session'),
+        ]);
         await runGitHubInstallationSession({
           returnPath: `/beeline/chat/${card.roomId}`,
           startInstallation: async () => {

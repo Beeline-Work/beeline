@@ -182,6 +182,8 @@ async function main() {
       if (!mountedAuth) throw new Error('monolith auth is not ready');
       return mountedAuth.verifyGitHubTicket(ticket);
     }),
+    () => new Date(),
+    (ticket) => mountedAuth.verifyGoogleTicket(ticket),
   );
   const processGitHubWebhook = async (event: string, payload: unknown, deliveryId?: string) => {
     if (!github) throw new Error('GitHub webhook processor is unavailable');

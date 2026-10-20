@@ -10,8 +10,19 @@ import { mobileSurfaceCache, surfaceAddress } from './surface-storage';
 export const isManagedIdentity = (value: unknown): value is ManagedIdentityResult => {
   if (!value || typeof value !== 'object') return false;
   const result = value as Partial<ManagedIdentityResult>;
-  return typeof result.personId === 'string' && typeof result.name === 'string' &&
-    typeof result.pushLevel === 'string';
+  return (
+    typeof result.personId === 'string' && typeof result.name === 'string' &&
+    typeof result.pushLevel === 'string' &&
+    (result.providers === undefined ||
+      (Array.isArray(result.providers) &&
+        result.providers.every(
+          (link) =>
+            link &&
+            (link.provider === 'github' || link.provider === 'google') &&
+            typeof link.reconnect === 'boolean' &&
+            (link.login === undefined || typeof link.login === 'string'),
+        )))
+  );
 };
 
 async function scope() {

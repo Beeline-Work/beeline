@@ -385,7 +385,9 @@ export default function BuzzIdentitySettings() {
   const displayFace = face ?? (monolithEnabled ? managedProjection?.face : null) ?? null;
   const managedHandle = (monolithEnabled ? managedProjection?.handle : legacyManagedIdentity?.handle) ??
     (displayName ? personHandle(displayName, profilePubkey ?? '') : '');
-  const githubLogin = legacyManagedIdentity?.githubLogin ?? managedHandle;
+  const githubLogin = monolithEnabled
+    ? managedProjection?.providers?.find((link) => link.provider === 'github')?.login
+    : legacyManagedIdentity?.githubLogin;
   const pushSupported = pushPermission !== null && pushPermission.status !== 'unsupported';
   const [appearance, setAppearance] = useLocalSettingMutable('appearance');
   const [uiSize, setUiSize] = useLocalSettingMutable('uiSize');
@@ -440,7 +442,7 @@ export default function BuzzIdentitySettings() {
             onAvatarPress={
               monolithEnabled && profilePubkey ? () => setFacePickerOpen(true) : undefined
             }
-            onHandlePress={managedHandle ? openGitHubProfile : undefined}
+            onHandlePress={githubLogin ? openGitHubProfile : undefined}
             role={workspaceRole ?? undefined}
           />
         </View>
@@ -510,6 +512,17 @@ export default function BuzzIdentitySettings() {
 
         <View style={styles.section} testID="account-settings">
           <RoomListSectionHeader title="Account" inset="content" />
+          {monolithEnabled
+            ? managedProjection?.providers?.map((link) => (
+                <SettingsRow
+                  key={link.provider}
+                  title={link.provider === 'google' ? 'Google' : 'GitHub'}
+                  description={link.login}
+                  value={link.reconnect ? 'Reconnect needed' : 'Linked'}
+                  testID={`settings-provider-${link.provider}`}
+                />
+              ))
+            : null}
           <View testID="legal-settings">
             <SettingsRow
               accessibilityLabel={"Privacy Policy"}

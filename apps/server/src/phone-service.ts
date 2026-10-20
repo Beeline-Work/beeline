@@ -8251,6 +8251,16 @@ export class PhoneService {
       throw new Error('invalid person handle');
     return this.database.transaction(async (database) => {
       if (input.handle !== undefined) {
+        if (['channel', 'system', 'play-review', 'review', 'scheduler'].includes(input.handle))
+          throw new Error('invalid reserved handle');
+        await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
+          'workspace-handle-allocation',
+        ]);
+        const taken = await database.query(
+          `SELECT 1 FROM identities WHERE kind='human' AND id<>$1 AND lower(handle)=lower($2)`,
+          [viewerId, input.handle],
+        );
+        if (taken.rowCount) throw new Error('managed handle is already claimed');
         const workspaceIds = await lockIdentityHandleWorkspaces(database, viewerId);
         await reassignCollidingAgentHandles(database, viewerId, input.handle, workspaceIds);
       }
@@ -8424,7 +8434,24 @@ export class PhoneService {
         [viewerId],
       )
     ).rows[0]?.push_level;
+    const links = await this.database.query<{
+      provider: 'google' | 'github';
+      provider_login: string | null;
+      reconnect: boolean;
+    }>(
+      `SELECT link.provider,link.provider_login,
+         (link.provider='github' AND (token.subject IS NULL OR token.stale_at IS NOT NULL)) AS reconnect
+       FROM identity_external_links link LEFT JOIN github_user_tokens token
+         ON link.provider='github' AND token.subject=link.subject
+       WHERE link.identity_id=$1 AND link.provider IN ('google','github') ORDER BY link.provider`,
+      [viewerId],
+    );
     return {
+      providers: links.rows.map((link) => ({
+        provider: link.provider,
+        reconnect: link.reconnect,
+        ...(link.provider_login ? { login: link.provider_login } : {}),
+      })),
       personId: id.pubkey,
       name: id.name,
       ...(id.handle ? { handle: id.handle } : {}),
@@ -8434,7 +8461,12 @@ export class PhoneService {
     };
   }
   private async claimManagedHandle(viewerId: string, handle: string) {
+    if (['channel', 'system', 'play-review', 'review', 'scheduler'].includes(handle))
+      throw new Error('invalid reserved handle');
     await this.database.transaction(async (database) => {
+      await database.query(`SELECT pg_advisory_xact_lock(hashtext($1))`, [
+        'workspace-handle-allocation',
+      ]);
       const workspaceIds = await lockIdentityHandleWorkspaces(database, viewerId);
       await reassignCollidingAgentHandles(database, viewerId, handle, workspaceIds);
       const claimed = await database.query(

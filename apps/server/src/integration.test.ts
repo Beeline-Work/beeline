@@ -5726,6 +5726,7 @@ describe('monolith integration', () => {
       name: 'Owner',
       handle: 'owner',
       pushLevel: 'attention',
+      providers: [{ provider: 'github', login: 'owner', reconnect: true }],
     });
 
     const profile = await operation('updatePersonProfile', {
@@ -5769,6 +5770,9 @@ describe('monolith integration', () => {
       ['d'.repeat(64)],
     );
     expect((await operation('claimManagedHandle', { handle: 'already-taken' })).status).toBe(409);
+    expect((await operation('updatePersonProfile', { handle: 'already-taken' })).status).toBe(409);
+    expect((await operation('claimManagedHandle', { handle: 'channel' })).status).toBe(400);
+    expect((await operation('updatePersonProfile', { handle: 'system' })).status).toBe(400);
     await expect((await operation('adoptGitHubHandle')).json()).resolves.toMatchObject({
       personId: HUMAN,
       handle: 'owner',
@@ -5797,7 +5801,7 @@ describe('monolith integration', () => {
     expect(link.rows[0]?.audience).toBe('github');
   });
 
-  it('moves colliding agents when people join or refresh GitHub handles', async () => {
+  it('moves colliding agents on join and preserves a human handle when their GitHub login changes', async () => {
     const directMember = 'd'.repeat(64);
     await database.query(
       `INSERT INTO identities(id,kind,name,handle) VALUES($1,'human','Direct member','bee')`,
@@ -5848,14 +5852,14 @@ describe('monolith integration', () => {
           HUMAN,
         ])
       ).rows[0]?.handle,
-    ).toBe('bee_3');
+    ).toBe('owner');
     expect(
       (
         await database.query<{ handle: string }>(`SELECT handle FROM identities WHERE id=$1`, [
           AGENT,
         ])
       ).rows[0]?.handle,
-    ).toBe('bee_4');
+    ).toBe('bee_3');
   });
 
   it('recovers a GitHub identity conflict and exposes the predecessor over HTTP', async () => {

@@ -170,8 +170,19 @@ export class MonolithSession {
   }
 
   async exchangeGitHubTicket(ticket: string): Promise<string> {
+    return this.exchangeProviderTicket('github', ticket);
+  }
+
+  async exchangeGoogleTicket(ticket: string): Promise<string> {
+    return this.exchangeProviderTicket('google', ticket);
+  }
+
+  private async exchangeProviderTicket(
+    provider: 'github' | 'google',
+    ticket: string,
+  ): Promise<string> {
     const revision = this.credentialRevision;
-    const response = await this.fetchImpl(`${this.baseUrl}/v1/auth/github/exchange`, {
+    const response = await this.fetchImpl(`${this.baseUrl}/v1/auth/${provider}/exchange`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ oidcToken: ticket }),

@@ -28,7 +28,7 @@ import {
   compactRoomView,
   wantsCompactView,
 } from './compact-room-view.js';
-import { bearer, type TokenAuth } from './auth.js';
+import { bearer, GoogleSignInError, type TokenAuth } from './auth.js';
 import {
   AGENT_OWNER_AUTHORITY_MESSAGE,
   CONNECTOR_OFFER_AUTHORITY_MESSAGE,
@@ -1938,6 +1938,17 @@ a:focus-visible { outline: 3px solid #c8a8e8; outline-offset: 4px; }
     else {
       response.writeHead(204);
       response.end();
+    }
+    return;
+  }
+  if (method === 'POST' && url.pathname === '/v1/auth/google/exchange') {
+    const input = await body(request);
+    if (typeof input.oidcToken !== 'string') throw new Error('oidcToken is required');
+    try {
+      json(response, 200, await options.auth.exchangeGoogleOidc(input.oidcToken));
+    } catch (error) {
+      if (!(error instanceof GoogleSignInError)) throw error;
+      json(response, 401, { error: 'google_sign_in_failed' });
     }
     return;
   }

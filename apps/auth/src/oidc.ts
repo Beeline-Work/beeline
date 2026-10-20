@@ -25,6 +25,9 @@ export interface OidcIdentity {
   issuer: string;
   audience: string;
   subject: string;
+  name?: string;
+  picture?: string;
+  email?: string;
 }
 
 export interface JwksCacheOptions {
@@ -195,7 +198,7 @@ export class OidcClient {
     url.searchParams.set('response_type', 'code');
     url.searchParams.set('client_id', this.config.clientId);
     url.searchParams.set('redirect_uri', input.redirectUri);
-    url.searchParams.set('scope', 'openid');
+    url.searchParams.set('scope', 'openid email profile');
     // Android authentication runs in Chrome Custom Tabs, which retains the browser's
     // cookies. Start account selection explicitly so a new device bind never resumes
     // a prior account's in-browser continuation.
@@ -246,7 +249,9 @@ export class OidcClient {
     const key = await this.#jwks.key(header.kid);
     const verified = await jwtVerify(token, key, {
       algorithms: ['RS256'],
-      issuer: this.config.issuer,
+      issuer: this.config.issuer === 'https://accounts.google.com'
+          ? ['https://accounts.google.com', 'accounts.google.com']
+          : this.config.issuer,
       audience: this.config.clientId,
       clockTolerance: 5,
       maxTokenAge: '1h',
@@ -257,6 +262,17 @@ export class OidcClient {
       issuer: this.config.issuer,
       audience: this.config.clientId,
       subject: verified.payload.sub!,
+      ...(verified.payload.email_verified === true && typeof verified.payload.email === 'string'
+        ? { email: verified.payload.email.slice(0, 320) }
+        : {}),
+      ...(typeof verified.payload.name === 'string' && verified.payload.name.trim()
+        ? { name: verified.payload.name.trim().slice(0, 256) }
+        : {}),
+      ...(typeof verified.payload.picture === 'string' &&
+      verified.payload.picture.length <= 2048 &&
+      verified.payload.picture.startsWith('https://')
+        ? { picture: verified.payload.picture }
+        : {}),
     };
   }
 

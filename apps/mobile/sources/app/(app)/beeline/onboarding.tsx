@@ -1,3 +1,4 @@
+import { clearPendingGoogleSignIn, resumeGoogleSignIn, runGoogleSignIn } from '@/auth/google-auth-session';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { HullDialogActions, HullDialogInput } from '@/components/buzz/HullDialog';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
@@ -139,8 +140,23 @@ export default function BuzzOnboarding() {
   const [status, setStatus] = useState<OnboardingStatus>('checking_device');
   const [notice, setNotice] = useState<OnboardingNotice | null>(canSignIn ? null : WEB_NOTICE);
   const [loadingAction, setLoadingAction] = useState<
-    'github' | 'bind' | 'recover' | 'import' | 'name' | 'create' | 'enter' | null
+    'google' | 'github' | 'bind' | 'recover' | 'import' | 'name' | 'create' | 'enter' | null
   >(null);
+  const [googleEnabled, setGoogleEnabled] = useState(false);
+  useEffect(() => {
+    const runtime = getBuzzRuntimeConfig();
+    if (!runtime.monolithEnabled) return;
+    let alive = true;
+    void fetch(`${runtime.monolithUrl}/auth/capabilities`, { signal: AbortSignal.timeout(5_000) })
+      .then((response) => (response.ok ? response.json() : null))
+      .then((capabilities) => {
+        if (alive) setGoogleEnabled(capabilities?.google === true);
+      })
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, []);
   const [newKey, setNewKey] = useState<NewKeyDraft | null>(null);
   const [newKeyRevealed, setNewKeyRevealed] = useState(false);
   const [newKeyCopied, setNewKeyCopied] = useState(false);
@@ -182,6 +198,7 @@ export default function BuzzOnboarding() {
       face: null,
       name: hosted?.name ?? '',
       handle: hosted?.handle,
+      provider: hosted?.providers?.some((link) => link.provider === 'google') ? 'google' : 'github',
     });
   };
 
@@ -358,6 +375,13 @@ export default function BuzzOnboarding() {
         // arrived: it must neither spend the one-use ticket a second time nor
         // race the press into the app past the ceremony it is about to publish.
         if (isSignInInFlight()) return;
+        const googleTicket = await resumeGoogleSignIn(initialUrl);
+        if (googleTicket) {
+          const identityId = await monolithSession.exchangeGoogleTicket(googleTicket);
+          await clearPendingGoogleSignIn();
+          if (alive) await enterAfterMonolithSignIn(identityId);
+          return;
+        }
         const savedIdentityId = await monolithSession.identityId();
         const challenge =
           (await resumeInitialGitHubSignIn(() => Promise.resolve(initialUrl), undefined, {
@@ -461,6 +485,39 @@ export default function BuzzOnboarding() {
       alive = false;
     };
   }, [canSignIn]);
+
+  const handleGoogleSignIn = async () => {
+    if (!canSignIn || !googleEnabled || loading) return;
+    setLoadingAction('google');
+    setStatus('opening_browser');
+    clearOnboardingNotice();
+    setNotice(null);
+    markSignInInFlight(true);
+    try {
+      const ticket = await runGoogleSignIn({
+        state: randomState(),
+        recoveryToken: randomState(),
+        openAuthSession: (url, redirect) =>
+          openAccountAuthSession(url, redirect, authSessionOptions(Platform.OS, redirect)),
+        subscribeToUrls: subscribeToAuthUrls,
+      });
+      const identityId = await monolithSession.exchangeGoogleTicket(ticket);
+      await clearPendingGoogleSignIn();
+      await enterAfterMonolithSignIn(identityId);
+    } catch (error) {
+      const next = noticeForAuthError(
+        error instanceof OidcBindError
+          ? error
+          : new OidcBindError('exchange_failed', 'Google sign-in could not finish. Try again.'),
+      );
+      setStatus(next.status);
+      setNotice(next);
+      publishOnboardingNotice(next);
+    } finally {
+      markSignInInFlight(false);
+      setLoadingAction(null);
+    }
+  };
 
   const handleSignIn = async () => {
     if (!canSignIn) return;
@@ -765,7 +822,12 @@ export default function BuzzOnboarding() {
           currentFace={faceStep.face}
           handle={faceStep.handle}
           name={faceStep.name}
-          onConfirm={async ({ face }) => {
+          editableIdentity
+          provider={faceStep.provider}
+          onConfirm={async ({ face, name, handle }) => {
+            if (name !== undefined) await monolithPhoneOperation('updatePersonProfile', { name });
+            if (handle !== undefined)
+              await monolithPhoneOperation('claimManagedHandle', { handle });
             await monolithPhoneOperation('updateIdentityFace', { faceId: face });
           }}
           onEntered={() => {
@@ -1039,16 +1101,32 @@ export default function BuzzOnboarding() {
             disabled={loading}
           />
         ) : !showAdvanced && canSignIn ? (
-          <Button
+          <>
+            <View>
+              <Button
             label={signInLabel}
             labelStyle={Platform.OS === 'android' ? styles.signInLabel : undefined}
-            testID="onboarding-github-sign-in"
+                variant="secondary"
+                testID="onboarding-github-sign-in"
             loading={
               loadingAction === 'github' || loadingAction === 'bind' || status === 'checking_device'
             }
             onPress={() => void handleSignIn()}
             disabled={loading || status === 'checking_device' || status === 'binding'}
-          />
+              />
+              {googleEnabled ? <Text style={styles.recommended}>Recommended</Text> : null}
+            </View>
+            {googleEnabled ? (
+              <Button
+                label="Continue with Google"
+                variant="secondary"
+                testID="onboarding-google-sign-in"
+                loading={loadingAction === 'google'}
+                disabled={loading || status === 'checking_device' || status === 'binding'}
+                onPress={() => void handleGoogleSignIn()}
+              />
+            ) : null}
+          </>
         ) : null}
         {!monolithEnabled && (
           <Button
@@ -1070,6 +1148,16 @@ export default function BuzzOnboarding() {
 const styles = StyleSheet.create((theme) => {
   const groknight = theme.buzz;
   return {
+    recommended: {
+      ...theme.buzz.type.sectionHead,
+      color: theme.buzz.bgBase,
+      backgroundColor: theme.buzz.accent,
+      position: 'absolute',
+      top: -theme.buzz.space.sm,
+      right: theme.buzz.space.sm,
+      paddingHorizontal: theme.buzz.space.xs,
+      borderRadius: theme.buzz.radius,
+    },
     container: {
       flex: 1,
       paddingHorizontal: 24,

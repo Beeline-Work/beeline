@@ -857,7 +857,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
   },
   {
     "name": "order",
-    "description": "Privately assign one other member agent. A Room requires agent; a corner defaults to its implementer. Corners may name any parent-Room agent in the corner or parent Room; DMs, other Rooms and ancestor corners are forbidden. Reports return to the sender. Receipt confirms acceptance, not completion.",
+    "description": "Privately assign one agent besides yourself. A Room requires agent; a corner defaults to its implementer. Corners may name any parent-Room agent in the corner or parent Room; DMs, other Rooms and ancestor corners are forbidden. Reports return to the sender. Receipt confirms acceptance, not completion.",
     "inputSchema": {
       "type": "object",
       "required": ["address", "text"],

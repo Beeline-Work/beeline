@@ -585,15 +585,11 @@ describe('a person-opened corner in a repository Room', () => {
     expect((await db.query(`SELECT owner_agent_id,worker_agent_id,kind FROM corner_facts WHERE corner_id=$1`, [cornerId]))
       .rows[0]).toEqual({ owner_agent_id: null, worker_agent_id: null, kind: 'human' });
 
-    // The first agent a person tags owns the corner; a later tag is conversation and moves nothing.
+    // The first agent a person tags owns the corner; a later tag moves only the implementer.
     await say(cornerId, '@hoots fix the widget');
     expect((await db.query(`SELECT owner_agent_id,worker_agent_id FROM corner_facts WHERE corner_id=$1`, [cornerId]))
       .rows[0]).toEqual({ owner_agent_id: A, worker_agent_id: A });
-    await say(cornerId, '@goosy what do you think?');
-    expect((await db.query(`SELECT owner_agent_id,worker_agent_id FROM corner_facts WHERE corner_id=$1`, [cornerId]))
-      .rows[0]).toEqual({ owner_agent_id: A, worker_agent_id: A });
-    // A later hand-off moves only the implementer; the owner stays.
-    await handTo(cornerId, 'goosy');
+    await say(cornerId, '@goosy take this over');
     expect((await db.query(`SELECT owner_agent_id,worker_agent_id FROM corner_facts WHERE corner_id=$1`, [cornerId]))
       .rows[0]).toEqual({ owner_agent_id: A, worker_agent_id: B });
 
@@ -732,14 +728,6 @@ describe('the run lock (a push transition can race a close or another push)', ()
     expect(new Set(seqs).size).toBe(seqs.length);
   });
 });
-
-/** The corner's work moves to the named agent; a tag no longer does this, so the row is set directly. */
-async function handTo(cornerId: string, handle: string) {
-  await db.query(
-    `UPDATE corner_facts SET worker_agent_id=(SELECT id FROM identities WHERE handle=$2) WHERE corner_id=$1`,
-    [cornerId, handle],
-  );
-}
 
 /** Review repair orders originate in the Room; corner turns cannot order themselves. */
 async function orderRepairsFromRoom(review: AgentCommand, cornerId: string, text: string) {
@@ -1981,7 +1969,7 @@ describe('Reproduction R1: checks wakes act on stale CI state', () => {
   });
 });
 
-describe('a corner is handed to another agent (lifecycle wakes follow the implementer)', () => {
+describe('a person hands the corner to another agent (the implementer follows the tag)', () => {
   // A third agent, a member of the corner only: the reviewer stays B, so the
   // tagged implementer is never the reviewer. `beforeEach` drops the corner
   // rows, so it is re-added per test and its identities row is idempotent.
@@ -2008,9 +1996,9 @@ describe('a corner is handed to another agent (lifecycle wakes follow the implem
       )
     ).rows[0]!.worker_agent_id;
 
-  it('a hand-off moves the failing-check wake off the opener, leaving owner_agent_id alone', async () => {
+  it('a tag in the corner moves the failing-check wake off the opener, leaving owner_agent_id alone', async () => {
     const cornerId = await open('owner/widgets');
-    await handTo(cornerId, 'goosy');
+    await say(cornerId, '@goosy take this one');
     expect(await workerOf(cornerId)).toBe(B);
     expect(
       (
@@ -2025,11 +2013,11 @@ describe('a corner is handed to another agent (lifecycle wakes follow the implem
     expect((await reasons(cornerId, A)).filter((reason) => reason === 'corner_check')).toHaveLength(0);
   });
 
-  it('a refused merge wakes the handed-to implementer, not the opener', async () => {
+  it('a refused merge wakes the tagged implementer, not the opener', async () => {
     const cornerId = await open('owner/widgets');
     await taggableMember(cornerId);
     await phone.execute('updateRoom', { roomId: R, reviewerAgentId: B }, H);
-    await handTo(cornerId, 'sol');
+    await say(cornerId, '@sol take this one');
     await greenHead(cornerId, 7, SHA);
     const [review] = await commands(B, cornerId);
     await claim(review!);
@@ -2045,9 +2033,9 @@ describe('a corner is handed to another agent (lifecycle wakes follow the implem
     expect((await reasons(cornerId, A)).filter((reason) => reason === 'corner_merge_refused')).toHaveLength(0);
   });
 
-  it('a merge conflict wakes the handed-to implementer', async () => {
+  it('a merge conflict wakes the tagged implementer', async () => {
     const cornerId = await open('owner/widgets');
-    await handTo(cornerId, 'goosy');
+    await say(cornerId, '@goosy take this one');
     await db.query(
       `UPDATE corner_facts SET lifecycle=lifecycle||$2::jsonb WHERE corner_id=$1`,
       [
@@ -2073,9 +2061,9 @@ describe('a corner is handed to another agent (lifecycle wakes follow the implem
     expect((await reasons(cornerId, A)).filter((reason) => reason === 'corner_merge_conflict')).toHaveLength(0);
   });
 
-  it('blocker reconciliation wakes the handed-to implementer', async () => {
+  it('blocker reconciliation wakes the tagged implementer', async () => {
     const cornerId = await open('owner/widgets');
-    await handTo(cornerId, 'goosy');
+    await say(cornerId, '@goosy take this one');
     await pushToCorner(cornerId, SHA);
     await db.query(`UPDATE corner_facts SET lifecycle=$2::jsonb WHERE corner_id=$1`, [
       cornerId,
@@ -2097,15 +2085,6 @@ describe('a corner is handed to another agent (lifecycle wakes follow the implem
     expect(await workerOf(cornerId)).toBeNull();
   });
 
-  it('a person tag in the corner does not take the work from its opener', async () => {
-    const cornerId = await open('owner/widgets');
-    await say(cornerId, '@goosy it seems there is one other reason');
-    expect(await workerOf(cornerId)).toBeNull();
-    await redHead(cornerId, 3, SHA);
-    expect((await reasons(cornerId, A)).filter((reason) => reason === 'corner_check')).toHaveLength(1);
-    expect((await reasons(cornerId, B)).filter((reason) => reason === 'corner_check')).toHaveLength(0);
-  });
-
   it('a tag in the parent Room does not move a corner implementer', async () => {
     const cornerId = await open('owner/widgets');
     await say(R, '@goosy take this one');
@@ -2123,7 +2102,7 @@ describe('a corner is handed to another agent (lifecycle wakes follow the implem
       implementer: await workerOf(cornerId),
       goosyCommands: (await commands(B, cornerId)).map((c) => c.reason),
     });
-    expect(await workerOf(cornerId)).toBeNull();
+    expect(await workerOf(cornerId)).toBe(A);
     expect((await commands(B, cornerId)).some((c) => c.reason === 'agent_tag')).toBe(true);
   });
 
@@ -2135,7 +2114,7 @@ describe('a corner is handed to another agent (lifecycle wakes follow the implem
     await claim(command);
     await result(command, 'Blocked on the API shape. @goosy can you confirm it?');
     // The tag asks a peer for input; the implementer stays with Hoots.
-    expect(await workerOf(cornerId)).toBeNull();
+    expect(await workerOf(cornerId)).toBe(A);
   });
 
   it('an agent-to-agent tag with no person behind it does not move the implementer', async () => {
@@ -2170,8 +2149,8 @@ describe('a corner is handed to another agent (lifecycle wakes follow the implem
     const command = (await commands(A, cornerId)).find((c) => c.reason === 'human_tag')!;
     await claim(command);
     await result(command, '@goosy take this one');
-    // The opener Hoots keeps the role; the reviewer Goosy never takes it.
-    expect(await workerOf(cornerId)).toBeNull();
+    // The person's tag put Hoots in the role; the reviewer Goosy never takes it.
+    expect(await workerOf(cornerId)).toBe(A);
   });
 
   it('a corner nobody redirected still wakes its opener', async () => {

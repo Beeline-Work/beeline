@@ -88,6 +88,11 @@ GitHub ships dark until **all six** `BEELINE_GITHUB_*` values below are present.
 `github: false`, GitHub routes stay unavailable, and the existing Google OIDC
 sign-in remains the visible, unchanged mobile path.
 
+The `BEELINE_AUTH_OIDC_*` settings take precedence over their legacy
+`BUZZY_AUTH_OIDC_*` equivalents. Legacy names remain a temporary fallback until
+the new names are deployed and Google sign-in is verified; remove the old Fly
+values and fallback only after that verification.
+
 Required configuration:
 
 - `DATABASE_URL`
@@ -97,12 +102,12 @@ Required configuration:
   aliases. `roomCommunityIds` is the non-empty allowlist of server-stamped tenant UUIDs from
   `channels.community_id` whose Rooms this auth tenant serves. Do not use the client-authored
   `community` tag from a Room create event for this list.
-- `BUZZY_AUTH_OIDC_ISSUER`
-- `BUZZY_AUTH_OIDC_AUTHORIZATION_ENDPOINT`
-- `BUZZY_AUTH_OIDC_TOKEN_ENDPOINT`
-- `BUZZY_AUTH_OIDC_JWKS_URI`
-- `BUZZY_AUTH_OIDC_CLIENT_ID`
-- `BUZZY_AUTH_OIDC_CLIENT_SECRET` (mandatory when `NODE_ENV=production`)
+- `BEELINE_AUTH_OIDC_ISSUER`
+- `BEELINE_AUTH_OIDC_AUTHORIZATION_ENDPOINT`
+- `BEELINE_AUTH_OIDC_TOKEN_ENDPOINT`
+- `BEELINE_AUTH_OIDC_JWKS_URI`
+- `BEELINE_AUTH_OIDC_CLIENT_ID`
+- `BEELINE_AUTH_OIDC_CLIENT_SECRET` (mandatory when `NODE_ENV=production`)
 - `BEELINE_GITHUB_CLIENT_ID`
 - `BEELINE_GITHUB_CLIENT_SECRET`
 - `BEELINE_GITHUB_APP_ID`

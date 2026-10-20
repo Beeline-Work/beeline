@@ -460,11 +460,11 @@ describe('daemon API client against the local monolith', () => {
             origin: 'https://server.usebeeline.app',
           },
         ]),
-        BUZZY_AUTH_OIDC_ISSUER: 'https://accounts.example',
-        BUZZY_AUTH_OIDC_AUTHORIZATION_ENDPOINT: 'https://accounts.example/authorize',
-        BUZZY_AUTH_OIDC_TOKEN_ENDPOINT: 'https://accounts.example/token',
-        BUZZY_AUTH_OIDC_JWKS_URI: 'https://accounts.example/jwks',
-        BUZZY_AUTH_OIDC_CLIENT_ID: 'test-client',
+        BEELINE_AUTH_OIDC_ISSUER: 'https://accounts.example',
+        BEELINE_AUTH_OIDC_AUTHORIZATION_ENDPOINT: 'https://accounts.example/authorize',
+        BEELINE_AUTH_OIDC_TOKEN_ENDPOINT: 'https://accounts.example/token',
+        BEELINE_AUTH_OIDC_JWKS_URI: 'https://accounts.example/jwks',
+        BEELINE_AUTH_OIDC_CLIENT_ID: 'test-client',
       },
     });
     connectionPresence = new ConnectionPresence(database, live, 1_000);

@@ -38,19 +38,24 @@ export function authTenantsFromEnvironment(env: NodeJS.ProcessEnv): AuthTenant[]
 }
 
 export function oidcClientFromEnvironment(env: NodeJS.ProcessEnv): OidcClient {
+  const oidcEnv = { ...env };
+  for (const suffix of ['ISSUER', 'AUTHORIZATION_ENDPOINT', 'TOKEN_ENDPOINT', 'JWKS_URI', 'CLIENT_ID', 'CLIENT_SECRET']) {
+    const name = `BEELINE_AUTH_OIDC_${suffix}`;
+    oidcEnv[name] = env[name] ?? env[`BUZZY_AUTH_OIDC_${suffix}`];
+  }
   const allowInsecure =
     env.NODE_ENV !== 'production' && env.BUZZY_AUTH_ALLOW_INSECURE_OIDC === 'true';
   const oidc = new OidcClient({
-    issuer: required(env, 'BUZZY_AUTH_OIDC_ISSUER'),
-    authorizationEndpoint: required(env, 'BUZZY_AUTH_OIDC_AUTHORIZATION_ENDPOINT'),
-    tokenEndpoint: required(env, 'BUZZY_AUTH_OIDC_TOKEN_ENDPOINT'),
-    jwksUri: required(env, 'BUZZY_AUTH_OIDC_JWKS_URI'),
-    clientId: required(env, 'BUZZY_AUTH_OIDC_CLIENT_ID'),
-    clientSecret: env.BUZZY_AUTH_OIDC_CLIENT_SECRET,
+    issuer: required(oidcEnv, 'BEELINE_AUTH_OIDC_ISSUER'),
+    authorizationEndpoint: required(oidcEnv, 'BEELINE_AUTH_OIDC_AUTHORIZATION_ENDPOINT'),
+    tokenEndpoint: required(oidcEnv, 'BEELINE_AUTH_OIDC_TOKEN_ENDPOINT'),
+    jwksUri: required(oidcEnv, 'BEELINE_AUTH_OIDC_JWKS_URI'),
+    clientId: required(oidcEnv, 'BEELINE_AUTH_OIDC_CLIENT_ID'),
+    clientSecret: oidcEnv.BEELINE_AUTH_OIDC_CLIENT_SECRET,
     allowInsecure,
   });
   if (env.NODE_ENV === 'production' && !oidc.config.clientSecret) {
-    throw new Error('BUZZY_AUTH_OIDC_CLIENT_SECRET is required in production');
+    throw new Error('BEELINE_AUTH_OIDC_CLIENT_SECRET is required in production');
   }
   return oidc;
 }

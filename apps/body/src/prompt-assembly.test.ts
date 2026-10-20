@@ -661,7 +661,7 @@ describe('prompt assembly guards', () => {
   it('carries the proactivity and finish-the-work rules on every surface', () => {
     for (const [name, context] of Object.entries(SESSION_VARIANTS)) {
       const text = assembleSessionPrompt(context).systemPrompt;
-      expect(text, name).toContain('Never just restate the problem.');
+      expect(text, name).toContain('Answer every problem with the finished fix, or with the concrete next step.');
       expect(text, name).toContain('Do the assigned work yourself unless instructed to delegate or a verified capability gap requires it.');
     }
   });

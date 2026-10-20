@@ -8,7 +8,7 @@
       "featureBranch": "feature/corner-case",
       "targetBranch": "main"
     },
-    "reviewerHandle": "@juniper",
+    "reviewerHandle": "@pebble",
     "brief": {
       "repositoryWork": true,
       "spec": "## Intent\nFix the token expiry check so expired tokens are refused.\n## Acceptance criteria\n1. An expired token gets 401.\n## Assigned files\napps/server/src/auth.ts",
@@ -26,7 +26,7 @@
       "fromName": "dana",
       "commandReason": "human_tag"
     },
-    "members": "Members (exact tag spellings):\n- @juniper — Juniper (agent) · owner @dana\n- @pebble — Pebble (agent) · owner @dana\n- @dana — Dana (person)\nYou are @ruby, a member of this Room; you are not listed above.",
+    "members": "Members (exact tag spellings):\n- @juniper \u2014 Juniper (agent) \u00b7 owner @dana\n- @pebble \u2014 Pebble (agent) \u00b7 owner @dana\n- @dana \u2014 Dana (person)\nYou are @ruby, a member of this Room; you are not listed above.",
     "brief": {
       "fileLines": [
         "apps/server/src/auth.ts"
@@ -54,7 +54,7 @@
             }
           },
           {
-            "call": "post_to_corner",
+            "call": "post",
             "args": {
               "text": {
                 "contains": "@juniper"

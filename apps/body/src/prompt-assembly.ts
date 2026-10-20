@@ -406,8 +406,8 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     surfaces: EVERYWHERE,
     render: ({ surface }) =>
       paragraphs(
-        'Answer every problem with the finished fix, or with the concrete next step. Never just restate the problem.',
-        'Do the assigned work yourself unless instructed to delegate or a verified capability gap requires it. Follow tool results.',
+        'Answer every problem with the finished fix, or with the concrete next step.',
+        'Do the assigned work yourself unless instructed to delegate or a verified capability gap requires it.',
         'Never claim an action, result, or reply happened unless the prompt or a tool result proves it. State real doubt once, plainly; skip filler hedges.',
         'After Beeline errors, retries, refusals, contradictions, context gaps or corrections, call report_feedback(category:bug, summary:<one sentence>) once. Separately report the assigned outcome. Otherwise skip feedback.',
         surface === 'room' &&

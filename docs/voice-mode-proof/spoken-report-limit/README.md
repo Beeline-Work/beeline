@@ -37,3 +37,17 @@ Additional regressions cover a complete 120-word first paragraph, a 400-word
 paragraph ending at the last sentence within 150 words, a short opening plus
 detail, a one-line status, empty speech, and the sixfold character/CJK caps.
 The service integration test verifies the call-origin command's new instruction.
+
+## CI browser proof repair
+
+The unrelated mobile suite failed the existing viewer-dock proof because it
+sampled automatic scroll position after a fixed 500 ms. The proof now waits
+up to three seconds for the reply and bottom position to settle for 150 ms.
+It still requires every existing layout assertion and does not drive the
+initial scroll itself. Production dock code is unchanged.
+
+A new `slow-reply` case delivers after 800 ms: the old fixed-delay proof fails,
+and the repaired proof passes. Temporarily disabling the production automatic
+scroll callbacks also makes the repaired proof fail, confirming that waiting
+does not bypass the behavior under test. Restoring those callbacks passes all
+three cases. The frame-budget and storage-upgrade tests also pass locally.

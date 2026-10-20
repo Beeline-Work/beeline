@@ -399,7 +399,7 @@ jobs:
           app=$(find "$bundle" -type d -name '*.app' -print -quit)
           test -n "$app"
           executable=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$app/Contents/Info.plist")
-          lipo -verify_arch x86_64 arm64 "$app/Contents/MacOS/$executable"
+          lipo "$app/Contents/MacOS/$executable" -verify_arch x86_64 arm64
           lipo -archs "$app/Contents/MacOS/$executable" >> "$GITHUB_STEP_SUMMARY"
 
       - name: Capture Windows native notification

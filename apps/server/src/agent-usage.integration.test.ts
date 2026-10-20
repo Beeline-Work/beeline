@@ -183,7 +183,17 @@ it('reports the owner-wide free allowance with its UTC reset and keeps it privat
   );
   const paused = await daemon.execute('getAgentUsage', { agentId: agent }, agent);
   expect(paused?.free).toMatchObject({ used: 123000, paused: true });
-  expect(JSON.stringify(paused)).not.toMatch(/\$|usd|25/);
+  // Check the complete public shape: timestamps can legitimately contain "25".
+  expect(paused).toEqual({
+    updatedAt: expect.any(Number),
+    windows: [],
+    free: {
+      used: 123000,
+      limit: 1000000,
+      resetsAt: expect.any(Number),
+      paused: true,
+    },
+  });
   expect(usageSummary(paused ?? undefined)).toMatch(/^Usage: free tokens paused until \d\d:\d\d\.$/);
   expect((await phone.readAgent(workspace, agent, owner))?.usage?.free?.paused).toBe(true);
 });

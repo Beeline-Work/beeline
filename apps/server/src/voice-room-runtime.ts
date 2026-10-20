@@ -312,7 +312,10 @@ export class VoiceRoomRuntime {
       // Retain a turn's echo context through its final, even after playout
       // ends. Missing confidence must not make a short playback noise valid.
       const acknowledgment = /^(hey|yeah|yes|yep|okay|ok|uh|huh|hmm)$/.test(speechWords(event.transcript).join(' '));
-      if (!confirmedVoiceSpeech(event) || voicePlaybackEcho(event.transcript, context) ||
+      // Confidence gates interruption evidence, never a finished recognized turn.
+      const recognized = event.event === 'EndOfTurn'
+        ? speechWords(event.transcript).length > 0 : confirmedVoiceSpeech(event);
+      if (!recognized || voicePlaybackEcho(event.transcript, context) ||
           (context && acknowledgment && !event.words?.length)) {
         if (event.event === 'EndOfTurn') this.turnIndices.set(human, event.turn_index);
         return;
@@ -333,7 +336,7 @@ export class VoiceRoomRuntime {
       if (event.event === 'EndOfTurn' && event.transcript.trim() && !stop) {
         this.turnIndices.set(human, event.turn_index);
         const interrupts = voiceInterrupt(event);
-        this.task(() => this.utterance(human, event.transcript, performance.now(), interrupts), human);
+        this.task(() => this.utterance(human, event.transcript, performance.now(), interrupts, confirmedVoiceSpeech(event)), human);
         return;
       }
       // With several humans, anyone may interrupt, but only with real speech.
@@ -549,7 +552,7 @@ export class VoiceRoomRuntime {
     return refresh;
   }
 
-  async utterance(human: string, fragment: string, startedAt = performance.now(), interrupts = true) {
+  async utterance(human: string, fragment: string, startedAt = performance.now(), interrupts = true, confirmedSpeech = true) {
     this.markCallActivity();
     if (!interrupts && !this.assembler.current(human) && this.speaking && await this.retry(() => this.service.humanCount(this.callId)) > 1 &&
         !voiceNameOnly(fragment, await this.retry(() => this.service.agents(this.roomId, human)))) return;
@@ -596,7 +599,7 @@ export class VoiceRoomRuntime {
         ? this.retry(() => this.service.memberNames(this.roomId)).catch(() => []) : Promise.resolve([]);
       const agents = await this.retry(() => this.service.agents(this.roomId, human));
       const humans = await this.retry(() => this.service.humanCount(this.callId));
-      if (humans === 1 && !interrupts) { this.interruptPlayback(); playbackVersion = this.playbackVersion; }
+      if (humans === 1 && !interrupts && confirmedSpeech) { this.interruptPlayback(); playbackVersion = this.playbackVersion; }
       const members: SpeechMember[] = [...agents.map(agent => ({ handle: agent.handle, name: agent.name })), ...await roomMembers];
       let sourceId = retry ? await request.source : previous ? await priorSource : '';
       const named = openingVoiceName(fragment, agents);

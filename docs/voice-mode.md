@@ -88,7 +88,10 @@ Noise-only Flux starts cannot interrupt it: barge-in waits for recognized speech
 and uses word confidence when available. Recent playback fragments are excluded
 from input to prevent echo from starting another reply. Flux's
 [word confidence fields](https://developers.deepgram.com/reference/speech-to-text/listen-flux)
-provide the recognition evidence. An interrupted real-work report stays in the
+provide the recognition evidence for non-final events. A finished turn with recognized
+words bypasses confidence and duration filtering; echo and stop-command handling
+still apply. Low-confidence or very short finals do not override the word-count/duration
+barge-in gate in single-human calls. An interrupted real-work report stays in the
 transcript and does not replay its opening on subsequent refreshes.
 
 A second human uses Join on the Room call card. While connecting, the card says

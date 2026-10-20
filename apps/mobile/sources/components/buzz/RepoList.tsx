@@ -88,7 +88,7 @@ export function RepoList({
         renderSectionHeader={({ section }) =>
           section.owner ? (
             <RoomListSectionHeader
-              title={section.owner ?? ''} inset="content"
+              title={section.owner ?? ''} inset="content" surface="sheet"
               testID={`${testIDPrefix}-group-${section.owner.toLowerCase()}`}
             />
           ) : null

@@ -212,7 +212,7 @@ export function useRoomRepositoryChoice({
   return {
     listOpen,
     row,
-    control: control ? <View style={styles.inset}>{control}</View> : null,
+    control: control ? <View style={styles.controlInset}>{control}</View> : null,
     list,
     footer,
   };
@@ -222,6 +222,8 @@ const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
     inset: { paddingHorizontal: HULL_SHEET_INSET, paddingTop: hull.space.xs },
+    // The open control is the Repository row itself, on the rows' own inset.
+    controlInset: { paddingHorizontal: HULL_SHEET_INSET },
     actions: {
       flexDirection: 'row',
       justifyContent: 'flex-end',

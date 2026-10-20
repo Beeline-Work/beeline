@@ -209,7 +209,7 @@ export function RepositoryChoice({
   };
 
   const createRow = () => (
-    <View style={[styles.repoRow, takenRepo && styles.takenRow]} testID={`${p}-repo-create`}>
+    <View style={styles.repoRow} testID={`${p}-repo-create`}>
       <View style={styles.twoLine}>
         <View style={styles.ownerLineRow}>
           <TouchableOpacity
@@ -325,16 +325,22 @@ export function RepositoryChoice({
         onLayout={(event) => setHeadHeight(event.nativeEvent.layout.height)}
         testID={`${p}-repo-head`}
       >
-        <Text style={styles.fieldLabel}>Repository</Text>
+        <View style={styles.labelLine}>
+          <Text style={styles.fieldLabel}>Repository</Text>
+        </View>
         <View style={styles.segments} testID={`${p}-repo-mode`}>
-          {MODES.map(({ mode: option, label }) => (
+          {MODES.map(({ mode: option, label }, index) => (
             <TouchableOpacity
               accessibilityRole="button"
               accessibilityState={{ selected: mode === option, disabled: busy }}
               disabled={busy}
               key={option}
               onPress={() => onChooseMode(option)}
-              style={[styles.segment, mode === option && styles.segmentSelected]}
+              style={[
+                styles.segment,
+                index > 0 && styles.segmentDivided,
+                mode === option && styles.segmentSelected,
+              ]}
               testID={`${p}-repo-mode-${option}`}
             >
               <Text style={[styles.segmentText, mode === option && styles.segmentTextSelected]}>
@@ -367,11 +373,14 @@ export function RepositoryChoice({
 const styles = StyleSheet.create((theme) => {
   const hull = theme.buzz;
   return {
+    // Open, the label keeps the place and the type of the closed sheet row
+    // (HullActionSheetRow); the switch and picker sit inside that row.
+    labelLine: { minHeight: 52 - 2 * hull.space.sm, justifyContent: 'center' },
     fieldLabel: {
       ...Typography.default(),
-      ...hull.type.meta,
-      color: hull.textMuted,
-      marginBottom: hull.space.xs,
+      ...hull.type.body,
+      fontFamily: hull.proseRegular,
+      color: hull.textPrimary,
     },
     hint: {
       ...Typography.default(),
@@ -399,43 +408,50 @@ const styles = StyleSheet.create((theme) => {
       ...hull.type.meta,
       color: hull.buttonPrimaryFill,
     },
-    repoBlock: { paddingBottom: hull.space.xs },
+    repoBlock: {
+      paddingVertical: hull.space.sm,
+      borderTopWidth: StyleSheet.hairlineWidth,
+      borderTopColor: hull.border,
+    },
+    // A quiet switch on the sheet's own surface: no track fill. The selected
+    // segment is marked the way the owner menu marks its pick; in dark the
+    // outline carries it, since bgHighlight sits close to the sheet.
     segments: {
       flexDirection: 'row',
-      padding: hull.space.xs,
-      gap: 0,
-      backgroundColor: hull.bgBase,
+      marginTop: hull.space.xs,
       borderWidth: 1,
       borderColor: hull.border,
       borderRadius: hull.radius,
+      overflow: 'hidden',
     },
     segment: {
       flex: 1,
-      minHeight: 36,
+      minHeight: 34,
       alignItems: 'center',
       justifyContent: 'center',
-      borderRadius: hull.radius,
+      borderWidth: 1,
+      borderColor: 'transparent',
     },
-    segmentSelected: { backgroundColor: hull.buttonPrimaryFill },
+    segmentDivided: { borderLeftColor: hull.border },
+    segmentSelected: {
+      backgroundColor: hull.bgHighlight,
+      borderColor: hull.borderStrong,
+      borderLeftColor: hull.borderStrong,
+    },
     segmentText: { ...Typography.default(), ...hull.type.meta, color: hull.textSecondary },
     segmentTextSelected: {
       ...Typography.default('semiBold'),
-      color: hull.buttonPrimaryText,
+      color: hull.textPrimary,
     },
     // The owner menu hangs above the row it changes and covers the switch.
     slot: { position: 'relative', zIndex: 2, marginTop: hull.space.sm },
+    // Unboxed: the picker is part of the open row, not a field inside it.
     repoRow: {
-      paddingTop: hull.space.sm,
-      paddingBottom: hull.space.sm,
-      paddingHorizontal: hull.space.md,
+      paddingVertical: hull.space.xs,
       flexDirection: 'row',
       alignItems: 'center',
       gap: hull.space.sm,
-      borderWidth: 1,
-      borderColor: hull.border,
-      borderRadius: hull.radius,
     },
-    takenRow: { borderColor: hull.warning },
     twoLine: { flex: 1, minWidth: 0, gap: hull.space.xs },
     ownerLineRow: { flexDirection: 'row', alignItems: 'center' },
     ownerLine: { ...Typography.default(), ...hull.type.meta, color: hull.textSecondary },

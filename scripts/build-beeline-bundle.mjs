@@ -259,6 +259,20 @@ async function main() {
       '--external:typebox/*',
       `--outfile=${resolve(staging, 'lib', 'beeline', 'pi-mcp-adapter.mjs')}`,
     ]);
+    // Plan quota for Codex, Cursor, Grok and OpenCode Go agents. The helper
+    // runs this pinned copy beside beeline-cli.mjs (see harness-quota.ts).
+    run('npx', [
+      '--no-install',
+      'esbuild',
+      resolve(repoRoot, 'node_modules/quota-axi/dist/bin/quota-axi.js'),
+      '--bundle',
+      '--minify',
+      '--platform=node',
+      '--format=esm',
+      '--target=node20',
+      "--banner:js=import { createRequire as __cr } from 'module'; const require = __cr(import.meta.url);",
+      `--outfile=${resolve(staging, 'lib', 'beeline', 'quota-axi.mjs')}`,
+    ]);
 
     // Compatibility-only entrypoints for helpers installed before 6c3cca0c:
     // their updater verifies these paths while staging a release. Remove after

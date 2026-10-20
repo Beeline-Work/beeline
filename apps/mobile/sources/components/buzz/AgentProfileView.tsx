@@ -313,7 +313,7 @@ export function AgentProfileView({
                   />
                 ))
               ) : (
-                <Text style={styles.copy} testID="agent-profile-no-work">
+                <Text style={[styles.copy, styles.rowCopy]} testID="agent-profile-no-work">
                   No merged work to show yet.
                 </Text>
               )}
@@ -376,7 +376,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   placeholder: { color: theme.buzz.textMuted },
   copy: { ...Typography.default(), ...theme.buzz.type.body, color: theme.buzz.textSecondary },
-  // Soul text starts on the same edge as the section headers and row titles.
+  // Soul and empty-work text start on the same edge as the section headers and row titles.
   rowCopy: { paddingHorizontal: theme.buzz.space.sm },
   meta: { ...Typography.default(), ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet },
   accent: { ...Typography.default(), ...theme.buzz.type.meta, color: theme.buzz.accent },

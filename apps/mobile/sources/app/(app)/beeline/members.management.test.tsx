@@ -3,6 +3,7 @@ vi.mock('expo-haptics', () => ({ ImpactFeedbackStyle: { Light: 'Light' }, impact
 import { HumanProfile } from './human-profile';
 import AgentProfileRoute from './agent-profile';
 import * as React from 'react';
+import { StyleSheet } from 'react-native';
 // @ts-expect-error react-test-renderer has no declarations in this workspace.
 import { act, create as createRenderer, type ReactTestRenderer } from 'react-test-renderer';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -1518,6 +1519,10 @@ describe('Members workspace management', () => {
       state.agent.soul.instructions,
     );
     expect(renderer.root.findByProps({ testID: 'agent-profile-no-work' })).toBeDefined();
+    // Reproduction R1: the empty text starts on the RECENT WORK header's edge.
+    expect(
+      StyleSheet.flatten(renderer.root.findByProps({ testID: 'agent-profile-no-work' }).props.style),
+    ).toMatchObject({ paddingHorizontal: unistylesTheme.buzz.space.sm });
     await press(renderer, 'agent-profile-message');
     expect(client.resolveDirectMessage).toHaveBeenCalledWith(WORKSPACE, AGENT);
   });

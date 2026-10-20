@@ -7,7 +7,10 @@ vi.mock('react-native-unistyles', () => ({
 vi.mock('@/constants/Typography', () => ({ Typography: { default: () => ({}) } }));
 vi.mock('./RoomListSectionHeader', () => ({ RoomListSectionHeader: 'RoomListSectionHeader' }));
 
-import { usageCell } from './AgentUsageSection';
+import * as React from 'react';
+// @ts-expect-error react-test-renderer has no declarations in this workspace.
+import { act, create } from 'react-test-renderer';
+import { AgentUsageSection, usageCell } from './AgentUsageSection';
 
 const now = Date.now() / 1000;
 const win = (t: string, u: number, status: 'allowed' | 'rejected' = 'allowed') => ({
@@ -80,5 +83,40 @@ describe('Usage cell (mock r7)', () => {
       note: "Pi doesn't report usage to Beeline · Context 88K of 200K",
       old: false,
     });
+  });
+
+  it('shows a quota-axi plan read: provider windows, credits left and the plan', () => {
+    const codex = usageCell({
+      updatedAt: now,
+      windows: [{ ...win('weekly', 0.47), label: 'week' }],
+      plan: 'pro',
+      credits: { remaining: 62174.92 },
+      context: { used: 82_372, size: 475_000 },
+    }, 'codex', now);
+    expect(codex.columns.map((c) => [c.label, c.value])).toEqual([
+      ['Weekly', '47%'],
+      ['Credits', '62,174 left'],
+    ]);
+    expect(codex.note).toMatch(/^Context 82K of 475K · Codex · pro plan · updated /);
+    const cursor = usageCell({
+      updatedAt: now,
+      windows: [{ ...win('included_usage', 0.12), label: 'included usage' }, { ...win('grok_bot', 0), label: 'Grok Bot' }],
+      plan: 'Ultra',
+    }, 'cursor', now);
+    expect(cursor.columns.map((c) => c.label)).toEqual(['Included', 'Grok Bot']);
+    expect(cursor.note).toMatch(/^Cursor · Ultra plan · updated /);
+  });
+
+  it('Reproduction R2: keeps the section for a harness that never reported usage', () => {
+    for (const [harness, name] of [['codex', 'Codex'], ['cursor', 'Cursor']]) {
+      let renderer: any;
+      act(() => {
+        renderer = create(<AgentUsageSection harness={harness} />);
+      });
+      expect(renderer.root.findByProps({ testID: 'agent-usage' })).toBeDefined();
+      expect(renderer.root.findByProps({ testID: 'agent-usage-note' }).props.children).toBe(
+        `${name} doesn't report usage to Beeline`,
+      );
+    }
   });
 });

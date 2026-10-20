@@ -85,10 +85,14 @@ export function usageCell(
       old,
     };
   }
-  if (usage.windows.length) {
+  if (usage.windows.length || usage.credits) {
+    const credits: UsageColumn[] = usage.credits
+      ? [{ label: 'Credits', value: `${Math.floor(usage.credits.remaining).toLocaleString('en-US')} left` }]
+      : [];
+    const plan = usage.plan ? `${usage.plan} plan` : undefined;
     return {
-      columns: usage.windows.map((w): UsageColumn => {
-        const label = usageWindowLabel(w.rateLimitType);
+      columns: [...usage.windows.map((w): UsageColumn => {
+        const label = usageWindowLabel(w.rateLimitType, w.label);
         if (w.status === 'rejected')
           return {
             label,
@@ -105,8 +109,8 @@ export function usageCell(
           ...(w.resetsAt ? { foot: `↻ ${usageTime(w.resetsAt)}` } : {}),
           tone: fraction >= 0.8 ? 'warning' : undefined,
         };
-      }),
-      note: [context, `${usageHarness(harness)} · ${stamp}`].filter(Boolean).join(' · '),
+      }), ...credits],
+      note: [context, usageHarness(harness), plan, stamp].filter(Boolean).join(' · '),
       old,
     };
   }
@@ -117,10 +121,12 @@ export function usageCell(
   };
 }
 
-/** Owner-only USAGE section: one cell, one column per window (mock r7). */
+/**
+ * Owner-only USAGE section: one cell, one column per window (mock r7). A
+ * harness that never reported anything still gets the section and its note.
+ */
 export function AgentUsageSection({ usage, harness }: { usage?: AgentUsage; harness?: string }) {
-  if (!usage || (!usage.free && !usage.spend && !usage.windows.length && !usage.context)) return null;
-  const { columns, note, old } = usageCell(usage, harness);
+  const { columns, note, old } = usageCell(usage ?? { updatedAt: 0, windows: [] }, harness);
   return (
     <View style={styles.section} testID="agent-usage">
       <RoomListSectionHeader title="Usage" inset="row" spacing="flush" />
@@ -130,7 +136,7 @@ export function AgentUsageSection({ usage, harness }: { usage?: AgentUsage; harn
             {columns.map((c) => (
               <View
                 key={c.label}
-                style={styles.column}
+                style={[styles.column, columns.length > 3 && styles.halfColumn]}
                 testID={`agent-usage-${c.label}`}
                 {...(c.fill !== undefined
                   ? {
@@ -182,8 +188,10 @@ const styles = StyleSheet.create((theme) => ({
     borderBottomWidth: StyleSheet.hairlineWidth,
     borderBottomColor: theme.buzz.border,
   },
-  columns: { flexDirection: 'row', gap: theme.buzz.space.md },
+  columns: { flexDirection: 'row', flexWrap: 'wrap', gap: theme.buzz.space.md },
   column: { flex: 1, minWidth: 0, gap: theme.buzz.space.xs },
+  // Four or more windows (Cursor) wrap two to a row so reset times stay whole.
+  halfColumn: { flexBasis: '40%' },
   label: { ...Typography.default(), ...theme.buzz.type.meta, color: theme.buzz.textMuted },
   value: { ...Typography.default(), ...theme.buzz.type.body, color: theme.buzz.textPrimary },
   track: {

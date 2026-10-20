@@ -185,6 +185,7 @@
         "scripts/workflow-run-proof.tsx",
         "scripts/member-picker-nav-inset-proof.tsx",
         "scripts/new-room-nav-gap-proof.tsx",
+        "scripts/agent-profile-usage-native-proof.tsx",
       ],
       "project": [
         "sources/**/*.{js,ts,tsx}",

@@ -5,6 +5,8 @@ export type UsageWindow = {
   utilization?: number;
   resetsAt?: number;
   updatedAt: number;
+  /** The provider's own name for a window it reports without a known type. */
+  label?: string;
 };
 /** Spend on the agent's own OpenRouter key, in US dollars, shared by every agent on that key. */
 export type UsageSpend = {
@@ -24,6 +26,10 @@ export type AgentUsage = {
   /** Beeline's free allowance: tokens only, shared by the owner's free agents. */
   free?: { used: number; limit: number; resetsAt: number; paused?: boolean };
   spend?: UsageSpend;
+  /** The provider's plan name, as quota-axi reports it. */
+  plan?: string;
+  /** Prepaid credits left on the plan (Codex). */
+  credits?: { remaining: number };
 };
 
 /** A provider snapshot this old means the agent has been idle since. */
@@ -54,11 +60,18 @@ export function readUsageWindow(value: unknown, updatedAt: number): UsageWindow 
     ...(typeof v.utilization === 'number' ? { utilization: v.utilization } : {}),
     ...(typeof v.resetsAt === 'number' ? { resetsAt: v.resetsAt } : {}),
     updatedAt,
+    ...(usageText(v.label) ? { label: usageText(v.label) } : {}),
   };
 }
 
 
 const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n >= 0;
+/** A short provider-supplied name, or undefined. */
+function usageText(value: unknown): string | undefined {
+  if (typeof value !== 'string') return;
+  const text = value.replace(/\s+/g, ' ').trim();
+  return text && text.length <= 40 ? text : undefined;
+}
 
 function readSpend(value: unknown): UsageSpend | undefined | null {
   if (value === undefined) return undefined;
@@ -105,6 +118,9 @@ export function readAgentUsage(value: unknown): AgentUsage | undefined {
   if (f && f.paused !== undefined && typeof f.paused !== 'boolean') return;
   const spend = readSpend(v.spend);
   if (spend === null) return;
+  const credits = v.credits as Record<string, unknown> | undefined;
+  if (credits !== undefined && (!credits || !finite(credits.remaining))) return;
+  const plan = usageText(v.plan);
   return {
     updatedAt: v.updatedAt,
     windows,
@@ -120,6 +136,8 @@ export function readAgentUsage(value: unknown): AgentUsage | undefined {
         }
       : {}),
     ...(spend ? { spend } : {}),
+    ...(plan ? { plan } : {}),
+    ...(credits ? { credits: { remaining: credits.remaining as number } } : {}),
   };
 }
 
@@ -128,9 +146,14 @@ export const USAGE_WINDOW_LABELS: Record<string, string> = Object.assign(Object.
   seven_day: 'Weekly',
   seven_day_opus: 'Opus weekly',
   seven_day_sonnet: 'Sonnet weekly',
+  weekly: 'Weekly',
+  included_usage: 'Included',
+  auto_usage: 'Auto',
+  api_usage: 'API',
 });
-export function usageWindowLabel(rateLimitType: string): string {
-  return USAGE_WINDOW_LABELS[rateLimitType] ?? rateLimitType.replaceAll('_', ' ');
+export function usageWindowLabel(rateLimitType: string, label?: string): string {
+  const named = label ? label[0]!.toUpperCase() + label.slice(1) : undefined;
+  return USAGE_WINDOW_LABELS[rateLimitType] ?? named ?? rateLimitType.replaceAll('_', ' ');
 }
 export function usageTokens(n: number): string {
   return n >= 1_000_000
@@ -183,12 +206,13 @@ export function usageSummary(usage?: AgentUsage, now = Date.now() / 1000): strin
   }
   if (usage?.windows.length) {
     const windows = usage.windows.map((w) => {
-      const label = usageWindowLabel(w.rateLimitType).toLowerCase();
+      const label = usageWindowLabel(w.rateLimitType, w.label).toLowerCase();
       if (w.status === 'rejected')
         return `${label} limit reached${w.resetsAt ? ` (back ${reset(w.resetsAt)})` : ''}`;
       return `${label} ${Math.round((w.utilization ?? 0) * 100)}%${w.resetsAt ? ` (resets ${reset(w.resetsAt)})` : ''}`;
     });
-    return `Usage: Claude ${[...windows, ...(context ? [context] : [])].join(', ')}, ${asOf(usage)}.`;
+    const credits = usage.credits ? `${Math.floor(usage.credits.remaining).toLocaleString('en-US')} credits left` : undefined;
+    return `Usage: ${usage.plan ? `${usage.plan} plan ` : ''}${[...windows, ...(credits ? [credits] : []), ...(context ? [context] : [])].join(', ')}, ${asOf(usage)}.`;
   }
   return `Usage: unknown (harness reports none).${context ? ` Current ${context}.` : ''}`;
 }

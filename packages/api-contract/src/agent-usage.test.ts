@@ -24,7 +24,7 @@ describe('usage projection', () => {
       context: { used: 612_000, size: 1_000_000 },
     })!;
     const text = usageSummary(usage, now);
-    expect(text).toMatch(/^Usage: Claude 5-hour limit reached \(back \d\d:\d\d\), weekly 83% \(resets \w{3} \d\d:\d\d\), context 612K of 1M tokens, as of \d\d:\d\d \(old/);
+    expect(text).toMatch(/^Usage: 5-hour limit reached \(back \d\d:\d\d\), weekly 83% \(resets \w{3} \d\d:\d\d\), context 612K of 1M tokens, as of \d\d:\d\d \(old/);
     expect(usageIsOld(usage, now)).toBe(true);
   });
   it('keeps money out of free-agent results, including the paused state', () => {
@@ -46,5 +46,17 @@ describe('usage projection', () => {
     const refused = readAgentUsage({ updatedAt: now, windows: [], spend: { rejected: true } })!;
     expect(usageSummary(refused, now)).toMatch(/^Usage: on the shared OpenRouter key, key limit reached \(OpenRouter refused the last call\), as of/);
     expect(readAgentUsage({ updatedAt: now, windows: [], spend: {} })).toBeUndefined();
+  });
+  it('keeps a plan, credits left and provider window labels', () => {
+    const usage = readAgentUsage({
+      updatedAt: now,
+      windows: [{ rateLimitType: 'grok_bot', label: 'Grok Bot', updatedAt: now, status: 'allowed', utilization: 0.1 }],
+      plan: 'pro',
+      credits: { remaining: 62174.92 },
+    })!;
+    expect(usage).toMatchObject({ plan: 'pro', credits: { remaining: 62174.92 } });
+    expect(usage.windows[0]!.label).toBe('Grok Bot');
+    expect(usageSummary(usage, now)).toMatch(/^Usage: pro plan grok bot 10%.*, 62,174 credits left, as of/);
+    expect(readAgentUsage({ updatedAt: now, windows: [], credits: { remaining: -1 } })).toBeUndefined();
   });
 });

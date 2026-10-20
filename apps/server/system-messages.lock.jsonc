@@ -2,6 +2,7 @@
 // Workspace ended-line wording approved by lunchboxfortwo in brief revision 1, rule 4 (message 8c3fae7b28a63868a4626d32d35cd9f8963cb18be26cd9d3b306cef8c3d5f590).
 // Merge-refusal notification ID change approved by lunchboxfortwo in Room message 1c880c7a; wording unchanged.
 // Agent order/report record card in corners ("@worker reported to @ruby · blocked") approved by lunchboxfortwo in brief revision 1 (message 9e84105213578731c324d5ef563a955f64c27f985f1508bee4c74a3539384968); callers of reportToCommander and sendOrder become wrappers.
+// Workflow gate question and consequences clarified under lunchboxfortwo's approved brief revision 1 (message 245b54cdd618d160125d5c6679c7eddc25fa53be56e78b39073a45bf5ccce6c6).
 [
   {
     "id": "src/agent-class-retirement.ts:retireAgentClasses:message-write:137f066b6c9f70c2",
@@ -5245,18 +5246,19 @@
     "occurrences": 1
   },
   {
-    "id": "src/workflow-runs.ts:postWorkflowGate:wrapper:5e56abc178554238",
+    "id": "src/workflow-runs.ts:postWorkflowGate:wrapper:ad6547e0e4d4c881",
     "file": "apps/server/src/workflow-runs.ts",
     "kind": "wrapper",
-    "template": "postRoomChoice(db, {\n    roomId: input.roomId,\n    agentId: askerAgentId,\n    workflowRunId: input.runId,\n    mode: 'question',\n    prompt: workflowGatePrompt(input.contract, input.stateName),\n    ...(input.state.default && input.state.timeoutSeconds\n        ? { constraint: `No answer in ${durationText(input.state.timeoutSeconds)} applies ${input.state.default}` }\n        : {}),\n    options: Object.entries(input.state.on).map(([outcome, target]) => ({\n        label: outcome,\n        consequence: `go to ${target}`.slice(0, 80),\n    })),\n})",
+    "template": "postRoomChoice(db, {\n    roomId: input.roomId,\n    agentId: askerAgentId,\n    workflowRunId: input.runId,\n    mode: 'question',\n    prompt: (input.state.does?.replace(/\\s+/g, ' ').trim() ||\n        `Choose the next step for ${input.contract.name.replace(/[-_]/g, ' ')}`).slice(0, 120),\n    ...(input.state.default && input.state.timeoutSeconds\n        ? { constraint: `No answer in ${durationText(input.state.timeoutSeconds)} applies ${input.state.default}` }\n        : {}),\n    options: Object.entries(input.state.on).map(([outcome, target]) => ({\n        label: outcome,\n        consequence: (input.contract.handoffs[target]?.does?.replace(/\\s+/g, ' ').trim() ||\n            `Continue to ${target.replace(/[-_]/g, ' ')}`).slice(0, 80),\n    })),\n})",
     "literals": [
+      "' '",
       "'question'",
-      "`${contract.name}: ${stateName}`",
       "`${seconds / 3600} h`",
       "`${seconds / 60} min`",
       "`${seconds} s`",
-      "`No answer in ${durationText(input.state.timeoutSeconds)} applies ${input.state.default}`",
-      "`go to ${target}`"
+      "`Choose the next step for ${input.contract.name.replace(/[-_]/g, ' ')}`",
+      "`Continue to ${target.replace(/[-_]/g, ' ')}`",
+      "`No answer in ${durationText(input.state.timeoutSeconds)} applies ${input.state.default}`"
     ],
     "occurrences": 1
   },

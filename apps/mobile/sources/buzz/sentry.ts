@@ -1,5 +1,8 @@
+import { installWebChunkRecovery, recoverWebChunk } from './web-chunk-recovery';
 import * as Sentry from '@sentry/react-native';
 import { privateErrorEvent } from '@beeline/api-contract/error-reporting';
+
+installWebChunkRecovery();
 
 if (process.env.EXPO_PUBLIC_SENTRY_DSN && !__DEV__) {
   try { Sentry.init({
@@ -22,7 +25,12 @@ if (process.env.EXPO_PUBLIC_SENTRY_DSN && !__DEV__) {
     enableCaptureFailedRequests: false,
     attachScreenshot: false,
     attachViewHierarchy: false,
-    beforeSend: privateErrorEvent,
+    beforeSend(event, hint) {
+      if (recoverWebChunk(hint?.originalException) || event.exception?.values?.some((exception) =>
+        exception.stacktrace?.frames?.some((frame) => recoverWebChunk({ filename: frame.filename, name: exception.type, message: exception.value })),
+      )) return null;
+      return privateErrorEvent(event);
+    },
     initialScope: { tags: { surface: 'mobile' } },
   }); } catch { /* Diagnostics must never prevent the app from rendering. */ }
 }

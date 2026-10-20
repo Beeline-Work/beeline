@@ -1,3 +1,4 @@
+import { CommandRefusalError } from './command-refusal.js';
 import { agentUsageColumns, projectAgentUsage, type AgentUsageRow } from './agent-usage.js';
 import { prepareCornerCompatibility } from './corner-person-state.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
@@ -5194,7 +5195,7 @@ export class PhoneService {
           [input.messageId, input.roomId, viewerId],
         )
       ).rows[0];
-      if (!row) throw new Error('message is not available for reaction');
+      if (!row) throw new CommandRefusalError('message is not available for reaction', 404);
       const reactions = { ...(row.reactions ?? {}) };
       const reactors = new Set(reactions[input.emoji] ?? []);
       if (reactors.has(viewerId)) reactors.delete(viewerId);
@@ -5243,7 +5244,7 @@ export class PhoneService {
       );
       database = new CornerAccessDatabase(database);
       const row = deleted.rows[0];
-      if (!row) throw new Error('message is not available for deletion');
+      if (!row) throw new CommandRefusalError('message is not available for deletion', 404);
       // The deleted row keeps its place and time and reads as a system line
       // naming who deleted it; nothing new is posted to the Room.
       await database.query(
@@ -5300,7 +5301,7 @@ export class PhoneService {
           [input.messageId, input.roomId, viewerId],
         )
       ).rows[0];
-      if (!source) throw new Error('message is not available for bookmarking');
+      if (!source) throw new CommandRefusalError('message is not available for bookmarking', 404);
       await database.query(
         `INSERT INTO message_bookmarks(
            identity_id,workspace_id,room_id,message_id,source_room_name,source_room_kind,
@@ -5390,7 +5391,7 @@ export class PhoneService {
            reminder_dismissed_at=COALESCE(needs_you_marks.reminder_dismissed_at,EXCLUDED.reminder_dismissed_at)`,
       [viewerId, input.messageId, input.workspaceId, input.dismissReminder === true],
     );
-    if (!cleared.rowCount) throw new Error('message is not available');
+    if (!cleared.rowCount) throw new CommandRefusalError('message is not available', 404);
   }
 
   private async clearNeedsYouSection(

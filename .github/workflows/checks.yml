@@ -80,7 +80,7 @@ jobs:
   changes:
     name: Detect changes
     if: github.event_name == 'pull_request'
-    runs-on: [self-hosted, beeline-ci]
+    runs-on: [self-hosted, chad-do]
     timeout-minutes: 5
     outputs:
       body: ${{ steps.decide.outputs.body }}
@@ -306,7 +306,7 @@ jobs:
   typecheck:
     name: TYPECHECK
     if: github.event_name == 'pull_request' || inputs.suite == 'all' || inputs.suite == 'typecheck'
-    runs-on: [self-hosted, beeline-ci]
+    runs-on: [self-hosted, chad-do]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -352,7 +352,7 @@ jobs:
   shared-package-tests:
     name: SHARED PACKAGE TESTS
     if: github.event_name == 'pull_request' || inputs.suite == 'all' || inputs.suite == 'shared-package-tests'
-    runs-on: [self-hosted, beeline-ci]
+    runs-on: [self-hosted, chad-do]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -370,7 +370,7 @@ jobs:
   dead-code:
     name: DEAD CODE
     if: github.event_name == 'pull_request' || inputs.suite == 'all' || inputs.suite == 'dead-code'
-    runs-on: [self-hosted, beeline-ci]
+    runs-on: [self-hosted, chad-do]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -400,7 +400,7 @@ jobs:
         (github.event_name == 'pull_request' && needs.changes.outputs.body == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'body-suite'))
       )
-    runs-on: [self-hosted, beeline-ci]
+    runs-on: [self-hosted, chad-do]
     timeout-minutes: 20
     env:
       # A hermetic suite must not react to whatever this happens to be on the
@@ -520,7 +520,7 @@ jobs:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4, 5, 6, 7, 8]
-    runs-on: [self-hosted, beeline-ci]
+    runs-on: [self-hosted, chad-do]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -544,7 +544,7 @@ jobs:
         (github.event_name == 'pull_request' && needs.changes.outputs.serverSuite == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'server-suite'))
       )
-    runs-on: [self-hosted, beeline-ci]
+    runs-on: [self-hosted, chad-do]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -567,7 +567,7 @@ jobs:
         (github.event_name == 'pull_request' && needs.changes.outputs.serverSuite == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'server-suite'))
       )
-    runs-on: [self-hosted, beeline-ci]
+    runs-on: [self-hosted, chad-do]
     timeout-minutes: 5
     steps:
       - name: Require every shard and the claim latency budget to pass
@@ -595,7 +595,7 @@ jobs:
       fail-fast: false
       matrix:
         shard: [1, 2, 3, 4, 5, 6, 7, 8]
-    runs-on: [self-hosted, beeline-ci]
+    runs-on: [self-hosted, chad-do]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -617,7 +617,7 @@ jobs:
         (github.event_name == 'pull_request' && needs.changes.outputs.serverIntegration == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'server-integration'))
       )
-    runs-on: [self-hosted, beeline-prod-host]
+    runs-on: [self-hosted, chad-do]
     timeout-minutes: 5
     steps:
       - name: Require every shard to pass
@@ -636,7 +636,7 @@ jobs:
         (github.event_name == 'pull_request' && needs.changes.outputs.mobileSuite == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'mobile-suite'))
       )
-    runs-on: [self-hosted, beeline-ci]
+    runs-on: [self-hosted, chad-do]
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -676,7 +676,7 @@ jobs:
         (github.event_name == 'pull_request' && needs.changes.outputs.mobileExportReachability == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'mobile-export-reachability'))
       )
-    runs-on: [self-hosted, beeline-ci]
+    runs-on: [self-hosted, chad-do]
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
@@ -712,7 +712,7 @@ jobs:
       needs.changes.outputs.productionCorpusReplay == 'true'
     # Match the single-runner on-demand lane: latency evidence must not share
     # the capped worker pool with parallel integration suites and builds.
-    runs-on: [self-hosted, beeline-prod-host]
+    runs-on: [self-hosted, chad-do]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -742,7 +742,7 @@ jobs:
   production-corpus-replay-on-demand:
     name: PRODUCTION-CORPUS REPLAY (on demand)
     if: github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'production-corpus-replay')
-    runs-on: [self-hosted, beeline-prod-host]
+    runs-on: [self-hosted, chad-do]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -775,7 +775,7 @@ jobs:
     if: >-
       !cancelled() && github.event_name == 'pull_request' &&
       needs.changes.outputs.frameBudget == 'true'
-    runs-on: [self-hosted, beeline-ci]
+    runs-on: [self-hosted, chad-do]
     timeout-minutes: 5
     steps:
       - name: Take the verdict from the suite that ran it
@@ -793,7 +793,7 @@ jobs:
   frame-budget-on-demand:
     name: FRAME-BUDGET (on demand)
     if: github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'frame-budget')
-    runs-on: [self-hosted, beeline-prod-host]
+    runs-on: [self-hosted, chad-do]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -817,7 +817,7 @@ jobs:
     if: >-
       !cancelled() && github.event_name == 'pull_request' &&
       needs.changes.outputs.stateUpgrade == 'true'
-    runs-on: [self-hosted, beeline-ci]
+    runs-on: [self-hosted, chad-do]
     timeout-minutes: 5
     steps:
       - name: Take the verdict from the suite that ran it
@@ -835,7 +835,7 @@ jobs:
   state-upgrade-on-demand:
     name: STATE-UPGRADE (on demand)
     if: github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'state-upgrade')
-    runs-on: [self-hosted, beeline-prod-host]
+    runs-on: [self-hosted, chad-do]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -871,7 +871,7 @@ jobs:
         (github.event_name == 'pull_request' && needs.changes.outputs.nativeFingerprint == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'native-fingerprint'))
       )
-    runs-on: [self-hosted, beeline-ci]
+    runs-on: [self-hosted, chad-do]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
@@ -903,7 +903,7 @@ jobs:
         (github.event_name == 'pull_request' && needs.changes.outputs.readme == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'readme-parity'))
       )
-    runs-on: [self-hosted, beeline-ci]
+    runs-on: [self-hosted, chad-do]
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
@@ -925,7 +925,7 @@ jobs:
         (github.event_name == 'pull_request' && needs.changes.outputs.appLinkAssociations == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'app-link-associations'))
       )
-    runs-on: [self-hosted, beeline-ci]
+    runs-on: [self-hosted, chad-do]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -948,7 +948,7 @@ jobs:
         (github.event_name == 'pull_request' && needs.changes.outputs.workflows == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'actionlint'))
       )
-    runs-on: [self-hosted, beeline-ci]
+    runs-on: [self-hosted, chad-do]
     timeout-minutes: 5
     permissions:
       contents: read
@@ -999,7 +999,7 @@ jobs:
         (github.event_name == 'pull_request' && needs.changes.outputs.authImage == 'true') ||
         (github.event_name == 'workflow_dispatch' && (inputs.suite == 'all' || inputs.suite == 'auth-image'))
       )
-    runs-on: [self-hosted, beeline-ci]
+    runs-on: [self-hosted, chad-do]
     timeout-minutes: 30
     permissions:
       contents: read

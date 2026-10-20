@@ -68,20 +68,84 @@ it('refuses a Room order naming a non-member, a human or the sender', async () =
   expect(await orderWakes()).toEqual([]);
 });
 
-it('keeps corner and agent DM orders unchanged', async () => {
+it('allows named corner peers and preserves agent DM orders', async () => {
   const opened = await daemon.execute('createCorner', { ...authority(), targetRoomId: ROOM, name: 'Widget',
     objective: 'Build the widget', implementer: 'candy',
     brief: { spec: 'Build the widget', repositoryWork: false, approval: { sourceMessageId: order.sourceMessageId } } }, JELLYBEAN);
   await db.query(`DELETE FROM agent_commands WHERE room_id=$1`, [opened.cornerId]);
   await daemon.execute('order', { ...authority(), address: opened.cornerId, text: 'Use the new endpoint' }, JELLYBEAN);
   expect(await orderWakes()).toEqual([{ agent_id: CANDY, room_id: opened.cornerId }]);
-  await expect(daemon.execute('order', { ...authority(), address: opened.cornerId, agent: 'baby', text: 'Wrong worker' }, JELLYBEAN))
-    .rejects.toThrow("agent must be this corner's implementer");
+  await daemon.execute('order', { ...authority(), address: opened.cornerId, agent: 'baby', text: 'Replay the path' }, JELLYBEAN);
+  expect((await orderWakes()).some(row => row.agent_id === BABY)).toBe(true);
 
   const agentDM = randomUUID();
   await db.query(`INSERT INTO rooms(id,workspace_id,name,direct_participants) VALUES($1,$2,'Jellybean and Earth',jsonb_build_array($3::text,$4::text))`, [agentDM, WS, JELLYBEAN, EARTH]);
   for (const agent of [JELLYBEAN, EARTH]) await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,$2,$3,'member')`, [WS, agentDM, agent]);
   await daemon.execute('order', { ...authority(), address: agentDM, text: 'Research the endpoint' }, JELLYBEAN);
   expect((await orderWakes()).filter(row => row.room_id === agentDM)).toEqual([{ agent_id: EARTH, room_id: agentDM }]);
-  expect((await orderWakes()).some(row => row.agent_id === BABY)).toBe(false);
+  expect((await orderWakes()).filter(row => row.agent_id === BABY)).toEqual([{ agent_id: BABY, room_id: opened.cornerId }]);
+});
+
+it.each(['corner', 'parent Room'])('Reproduction corner-peer-orders: %s order reports to its sender', async target => {
+  const opened = await daemon.execute('createCorner', { ...authority(), targetRoomId: ROOM, name: 'peer-orders',
+    objective: 'Prove peer orders', implementer: 'candy',
+    brief: { spec: 'Prove peer orders', repositoryWork: false, approval: { sourceMessageId: order.sourceMessageId } } }, JELLYBEAN);
+  const incoming = (await daemon.execute('getAgentCommands', { roomId: opened.cornerId }, CANDY)).commands[0]!;
+  await daemon.execute('claimAgentCommand', { roomId: opened.cornerId, commandId: incoming.id, generationId: 'peer' }, CANDY);
+  const address = target === 'corner' ? opened.cornerId : ROOM;
+  const receipt = await daemon.execute('order', { roomId: opened.cornerId, requestId: incoming.turnRequestId,
+    generationId: 'peer', address, agent: 'baby', text: 'Replay the user path' }, CANDY);
+  const assigned = (await daemon.execute('getAgentCommands', { roomId: address }, BABY)).commands.find(c => c.id === receipt.id)!;
+  expect(assigned).toMatchObject({ private: true, source: { authorId: CANDY, body: 'Replay the user path' } });
+  await daemon.execute('claimAgentCommand', { roomId: address, commandId: assigned.id, generationId: 'reply' }, BABY);
+  await daemon.execute('report', { roomId: address, requestId: assigned.turnRequestId, generationId: 'reply',
+    status: 'done', text: 'done: replay passed' }, BABY);
+  const replies = (await daemon.execute('getAgentCommands', { roomId: opened.cornerId }, CANDY)).commands;
+  expect(replies.find(c => c.reason === 'report')).toMatchObject({ private: true,
+    source: { authorId: BABY, body: 'done: replay passed' } });
+  expect((await db.query(`SELECT 1 FROM agent_commands WHERE reason='report' AND agent_id=$1`, [JELLYBEAN])).rowCount).toBe(0);
+  expect((await db.query(`SELECT worker_agent_id FROM corner_facts WHERE corner_id=$1`, [opened.cornerId])).rows[0]?.worker_agent_id).not.toBe(BABY);
+  console.info(`Demonstrated corner-peer-orders: Candy → ${target} Baby → Candy privately; commander Jellybean received no report`);
+});
+
+async function cornerTurn() {
+  const opened = await daemon.execute('createCorner', { ...authority(), targetRoomId: ROOM, name: 'peer-guards',
+    objective: 'Prove peer guards', implementer: 'candy',
+    brief: { spec: 'Prove peer guards', repositoryWork: false, approval: { sourceMessageId: order.sourceMessageId } } }, JELLYBEAN);
+  const command = (await daemon.execute('getAgentCommands', { roomId: opened.cornerId }, CANDY)).commands[0]!;
+  await daemon.execute('claimAgentCommand', { roomId: opened.cornerId, commandId: command.id, generationId: 'guard' }, CANDY);
+  return command;
+}
+
+it('rejects corner self-orders, humans, outsiders and removed members without queueing', async () => {
+  const incoming = await cornerTurn();
+  await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [ROOM, EARTH]);
+  const before = await orderWakes();
+  for (const agent of ['candy', CANDY, 'owner', 'nobody', 'earth'])
+    await expect(daemon.execute('order', { roomId: incoming.roomId, requestId: incoming.turnRequestId,
+      generationId: 'guard', address: incoming.roomId, agent, text: 'Do it' }, CANDY)).rejects.toThrow(/itself|agent member/);
+  await expect(daemon.execute('order', { roomId: incoming.roomId, requestId: incoming.turnRequestId,
+    generationId: 'guard', address: incoming.roomId, text: 'Default worker is me' }, CANDY)).rejects.toThrow('itself');
+  expect(await orderWakes()).toEqual(before);
+});
+
+it.each(['corner', 'parent Room'])('stops a corner → %s → corner order loop at the existing depth bound', async target => {
+  let command = await cornerTurn();
+  const corner = command.roomId;
+  const depths: number[] = [];
+  for (let hop = 0; hop < 6; hop++) {
+    const recipient = command.agentId === CANDY ? BABY : CANDY;
+    const address = recipient === BABY && target === 'parent Room' ? ROOM : corner;
+    const result = await daemon.execute('order', { roomId: command.roomId, requestId: command.turnRequestId,
+      generationId: 'guard', address, agent: recipient, text: `Loop hop ${hop}` }, command.agentId);
+    depths.push((await db.query<{ agent_depth: number }>(`SELECT agent_depth FROM agent_commands WHERE id=$1`, [result.id])).rows[0]!.agent_depth);
+    command = (await daemon.execute('getAgentCommands', { roomId: address }, recipient)).commands.find(c => c.id === result.id)!;
+    await daemon.execute('claimAgentCommand', { roomId: address, commandId: command.id, generationId: 'guard' }, recipient);
+  }
+  expect(depths).toEqual([1, 1, 2, 2, 3, 3]);
+  const before = await orderWakes();
+  await expect(daemon.execute('order', { roomId: command.roomId, requestId: command.turnRequestId,
+    generationId: 'guard', address: target === 'corner' ? corner : ROOM, agent: BABY, text: 'One hop too many' }, CANDY))
+    .rejects.toThrow('agent order chain depth limit reached');
+  expect(await orderWakes()).toEqual(before);
 });

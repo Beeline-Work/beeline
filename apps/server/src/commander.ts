@@ -4,6 +4,7 @@ import type { SqlDatabase } from './database.js';
 import {
   createAgentCommand,
   repairReviewerCornerMembership,
+  nextAgentDepth,
   type CommandRow,
   type PrivateCommandPayload,
 } from './agent-command.js';
@@ -57,9 +58,9 @@ export async function commandAddress(
   return row;
 }
 
-/** Corner turns may target reachable addresses except ancestors, DMs and agent addresses. */
+/** Corner turns reject DMs and ancestors, with a direct-parent exception for orders. */
 export async function assertCornerCommandTarget(
-  db: SqlDatabase, sourceRoomId: string, targetRoomId: string,
+  db: SqlDatabase, sourceRoomId: string, targetRoomId: string, allowParentOrder = false,
 ) {
   const dm = await db.query(
     `SELECT 1 FROM rooms source WHERE source.id=$1 AND source.parent_id IS NOT NULL
@@ -81,8 +82,9 @@ export async function assertCornerCommandTarget(
        LEFT JOIN corner_facts fact ON fact.corner_id=room.id
        CROSS JOIN LATERAL (VALUES (room.parent_id),(fact.opened_from_corner_id)) parent(id)
        WHERE parent.id IS NOT NULL
-     ) SELECT 1 FROM ancestors WHERE id<>$1 AND id::text=lower($2) LIMIT 1`,
-    [sourceRoomId, targetRoomId],
+     ) SELECT 1 FROM ancestors WHERE id<>$1 AND id::text=lower($2)
+       AND NOT ($3::boolean AND id=(SELECT parent_id FROM rooms WHERE id=$1)) LIMIT 1`,
+    [sourceRoomId, targetRoomId, allowParentOrder],
   );
   if (blocked.rowCount)
     throw new CommandRefusalError(
@@ -106,25 +108,26 @@ export async function sendOrder(
     throw new CommandRefusalError('order text must be 1 to 16000 characters', 400);
   const named = agent?.trim().replace(/^@/, '');
   if (agent !== undefined && !named) throw new CommandRefusalError('order agent must name one agent', 400);
-  await assertCornerCommandTarget(db, command.room_id, address);
+  await assertCornerCommandTarget(db, command.room_id, address, true);
+  const source = (await db.query<{ parent_id: string | null }>(
+    `SELECT parent_id FROM rooms WHERE id=$1`, [command.room_id])).rows[0];
   const target = await commandAddress(db, address, agentId);
+  if (source?.parent_id && !target.parent_id && target.id !== source.parent_id)
+    throw new CommandRefusalError("Corners can only order their own parent Room", 403);
   let worker: string | undefined;
   if (target.parent_id) {
     if (!target.worker) throw new CommandRefusalError('address has no working agent', 409);
     worker = target.worker;
-    if (named && named !== target.worker && named.toLowerCase() !== (await agentHandle(db, target.worker))) {
-      const reviewer = (await db.query<{ id: string; handle: string | null }>(
-        `SELECT reviewer.id,lower(reviewer.handle) handle FROM rooms corner
-         JOIN rooms parent ON parent.id=corner.parent_id
-         JOIN identities reviewer ON reviewer.id=parent.reviewer_agent_id OR reviewer.id=ANY(parent.reviewer_fallback_ids)
-         WHERE corner.id=$1 AND (reviewer.id=$2 OR lower(reviewer.handle)=$3)`, [address, named, named.toLowerCase()],
+    if (named) {
+      const member = (await db.query<{ id: string }>(
+        `SELECT identity.id FROM effective_memberships member JOIN identities identity
+           ON identity.id=member.identity_id AND identity.kind='agent'
+         WHERE member.room_id=$1 AND member.removed_at IS NULL
+           AND (identity.id=$2 OR lower(identity.handle)=$3)`, [address, named, named.toLowerCase()],
       )).rows[0];
-      const commander = await commanderReportAddress(db, address);
-      if (!reviewer || (named !== reviewer.id && named.toLowerCase() !== reviewer.handle) || commander.recipient !== agentId)
-        throw new CommandRefusalError("agent must be this corner's implementer, or its configured reviewer ordered by the commander; use report(status:needs_decision,text) to ask your commander", 400);
-      if (!await repairReviewerCornerMembership(db, address, reviewer.id))
-        throw new CommandRefusalError('configured reviewer is no longer a member; report blocked to your commander', 403);
-      worker = reviewer.id;
+      if (!member || !await repairReviewerCornerMembership(db, address, member.id))
+        throw new CommandRefusalError('order agent must be an agent member of this corner or its parent Room', 403);
+      worker = member.id;
     }
   } else {
     const direct = (
@@ -153,6 +156,11 @@ export async function sendOrder(
       throw new CommandRefusalError('order must name exactly one agent: pass agent with its handle or id', 400);
     worker = matches[0]!.id;
   }
+  if (worker === agentId) throw new CommandRefusalError('an agent cannot order itself', 400);
+  // Peer recruitment consumes the existing depth budget; worker handoffs retain it.
+  const peerOrder = Boolean(source?.parent_id && (!target.parent_id || worker !== target.worker));
+  if (peerOrder && nextAgentDepth(command.agent_depth) === undefined)
+    throw new CommandRefusalError('agent order chain depth limit reached', 400);
   const queued = await createAgentCommand(db, {
     id: createHash('sha256')
       .update(`order:${command.id}:${address}:${worker}:${text}`)
@@ -163,7 +171,7 @@ export async function sendOrder(
     privatePayload: { text, authorId: agentId, fromRoomId: command.room_id, kind: 'order' },
     reason: 'order',
     parent: command,
-    retainDepth: true,
+    retainDepth: !peerOrder,
   });
   if (!queued) throw new CommandRefusalError('order recipient is no longer a member', 403);
   if (target.parent_id)
@@ -205,11 +213,6 @@ async function recordAgentCommandCard(db: SqlDatabase, input: {
 }
 
 export const AGENT_COMMAND_CARD_TYPE = 'agent-command';
-
-async function agentHandle(db: SqlDatabase, id: string) {
-  return (await db.query<{ handle: string | null }>(`SELECT lower(handle) handle FROM identities WHERE id=$1`, [id]))
-    .rows[0]?.handle;
-}
 
 /** Derive the return route from the open command or the current order; no work ledger. */
 export async function reportToCommander(

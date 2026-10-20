@@ -178,11 +178,13 @@ describe('createNotificationNavigator', () => {
       ),
     );
     const [roomList, corner] = app.stack.routes;
+    const navigatorKey = app.stack.key;
 
     navigateToBuzzTargetFromNotification(app.navigator, cornerB, 'r1');
 
     // The Room list stays mounted; the corner moved up a slot, so it is a new screen.
-    expect(app.stack.routes[0]!.key).toBe(roomList!.key);
+    expect(app.stack.key).toBe(navigatorKey);
+    expect(app.stack.routes[0]).toBe(roomList);
     expect(app.stack.routes[2]!.key).not.toBe(corner!.key);
   });
 

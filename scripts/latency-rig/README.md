@@ -172,13 +172,12 @@ packet loss need an on-device packet capture. The report generator refuses
 to fill unmeasured routes with static estimates.
 
 The per-PR contract check validates route coverage and the deterministic
-budget evaluator. Device timing belongs in the dedicated rig workflow,
-which runs the fixed nightly subset below on schedule or on demand. It requires
-a runner labeled `beeline-android-rig` with `LATENCY_RIG_CAPTURE_COMMAND` set
-to an executable that writes fresh `samples.ndjson` for this checkout, plus
-device and network descriptions. A full launch report still requires all route
-and interaction marks; the nightly subset does not establish that broader
-budget. Missing required subset cases fail closed.
+budget evaluator. Nightly timing uses the squire emulator and parent-Room
+schedule documented below. The legacy GitHub device job remains on demand;
+there is no registered runner established for it, and nightly runs do not use
+it. A full launch report still requires all route and interaction marks; the
+nightly subset does not establish that broader budget. Missing required subset
+cases fail closed.
 
 ## Room opens with newly arrived messages
 

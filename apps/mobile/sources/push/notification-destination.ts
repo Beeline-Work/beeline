@@ -1,7 +1,7 @@
 import { RoomViewHttpError } from '@/sync/transport/room-view-client';
 import { RoomViewClient } from '@/sync/transport/room-view-client';
 import { loadBuzzIdentity, getEffectiveRelayUrl } from '@/auth/buzz-identity-storage';
-import { saveActiveCommunityId } from '@/buzz/community-storage';
+import { loadActiveCommunityId, saveActiveCommunityId } from '@/buzz/community-storage';
 import {
   resolveBuzzNotificationTarget,
   type BuzzNotificationTarget,
@@ -15,7 +15,9 @@ export async function resolveBuzzNotificationDestination(
   return resolveBuzzNotificationTarget(target, {
     activateWorkspace: async (workspaceId) => {
       identity ??= await loadBuzzIdentity();
-      if (identity) await saveActiveCommunityId(identity.publicKey, workspaceId);
+      if (identity && (await loadActiveCommunityId(identity.publicKey)) !== workspaceId) {
+        await saveActiveCommunityId(identity.publicKey, workspaceId);
+      }
     },
     readRoom: async (roomId) => {
       identity ??= await loadBuzzIdentity();

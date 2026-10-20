@@ -15,7 +15,7 @@ type StackState = { key: string; routeNames?: string[]; routes: StackRoute[] };
 /** React Navigation's `CommonActions.reset` action, optionally aimed at one navigator. */
 export type NotificationResetAction = {
   type: 'RESET';
-  payload: { index: number; routes: object[] };
+  payload: { index: number; routes: object[]; stale?: false; routeNames?: string[] };
   target?: string;
 };
 
@@ -63,13 +63,23 @@ function screenIdentity(name: string, params: object | undefined): string {
 function keepMountedInPlace(
   routes: NotificationStackRoute[],
   existing: readonly StackRoute[],
-): Array<NotificationStackRoute & { key?: string }> {
+): Array<StackRoute | NotificationStackRoute> {
   return routes.map((route, index) => {
     const current = existing[index];
-    return current &&
-      screenIdentity(current.name, current.params) === screenIdentity(route.name, route.params)
-      ? { ...route, key: current.key }
-      : route;
+    if (!current || screenIdentity(current.name, current.params) !== screenIdentity(route.name, route.params)) {
+      return route;
+    }
+    const previousParams = (current.params ?? {}) as Record<string, unknown>;
+    const nextParams = (route.params ?? {}) as Record<string, unknown>;
+    // A push keeps its unchanged Room-list ancestor just as a normal push
+    // would. Replacing its route object makes the mounted list render again.
+    if (
+      Object.keys(previousParams).length === Object.keys(nextParams).length &&
+      Object.keys(nextParams).every((key) => Object.is(previousParams[key], nextParams[key]))
+    ) {
+      return current;
+    }
+    return { ...route, key: current.key };
   });
 }
 
@@ -80,7 +90,13 @@ export function createNotificationNavigator(ref: NotificationNavigationRef): Not
       if (stack) {
         ref.dispatch({
           type: 'RESET',
-          payload: { index: routes.length - 1, routes: keepMountedInPlace(routes, stack.routes) },
+          payload: {
+            ...stack,
+            stale: false,
+            routeNames: stack.routeNames!,
+            index: routes.length - 1,
+            routes: keepMountedInPlace(routes, stack.routes),
+          },
           target: stack.key,
         });
         return;

@@ -1,3 +1,4 @@
+import * as serverSentry from './sentry.js';
 import { createAgentCommand, claimAgentCommand } from './agent-command.js';
 import { createHash, createHmac } from 'node:crypto';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
@@ -2713,6 +2714,24 @@ describe('monolith integration', () => {
   });
 
   it('lets a Room member agent add an idempotent supported reaction that renders by identity', async () => {
+    // Reproduction reaction-target-7801448616: exercise both public HTTP paths.
+    const capture = vi.spyOn(serverSentry, 'captureServerError');
+    const missing = '0'.repeat(64);
+    expect((await daemonOperation('reactToRoomMessage', {
+      roomId: ROOM, messageId: missing, emoji: '🎉',
+    })).status).toBe(404);
+    expect((await operation('reactToMessage', {
+      roomId: ROOM, messageId: missing, emoji: '🎉',
+    })).status).toBe(404);
+    for (const [name, input] of [
+      ['deleteRoomMessage', { roomId: ROOM, messageId: missing }],
+      ['setMessageBookmark', { roomId: ROOM, messageId: missing, bookmarked: true }],
+      ['clearNeedsYou', { workspaceId: WORKSPACE, messageId: missing }],
+    ] as const) {
+      expect((await operation(name, input)).status).toBe(404);
+    }
+    expect(capture).not.toHaveBeenCalled();
+    capture.mockRestore();
     const messageId = '7'.repeat(64);
     expect(
       (await operation('sendRoomMessage', { roomId: ROOM, messageId, text: 'Agent react here' }))

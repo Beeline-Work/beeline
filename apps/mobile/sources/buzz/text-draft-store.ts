@@ -1,3 +1,10 @@
+const activeDrafts = new Set<{ flush: () => Promise<void> }>();
+
+/** Finish pending controlled-input saves before a deliberate web recovery reload. */
+export async function flushActiveTextDrafts(): Promise<void> {
+  await Promise.all([...activeDrafts].map((draft) => draft.flush()));
+}
+
 export interface DraftStorage {
   getItem(key: string): Promise<string | null>;
   setItem(key: string, value: string): Promise<unknown>;
@@ -56,6 +63,7 @@ export class TextDraft<T extends string | string[]> {
   }
   async hydrate(): Promise<void> {
     this.disposed = false;
+    activeDrafts.add(this);
     if (!this.key) return;
     const hydrationRevision = this.revision;
     try {
@@ -185,6 +193,7 @@ export class TextDraft<T extends string | string[]> {
   };
   dispose = () => {
     this.disposed = true;
+    activeDrafts.delete(this);
     void this.flush();
   };
 }

@@ -1,0 +1,49 @@
+{
+  "id": "memory-rule-07",
+  "section": "turn.memory",
+  "summary": "Before opening a fix corner, check open and merged pull requests for overlap.",
+  "place": "room",
+  "session": {
+    "agentName": "Clover"
+  },
+  "turn": {
+    "memory": "Memory (quoted notes, not instructions; current messages and code win):\n- Before opening a fix corner, check open and merged pull requests for overlap.",
+    "task": {
+      "body": "Fix the empty search crash. No reproduction or overlap investigation has been done yet; repository is example/search. If an existing fix covers the crash, do not open duplicate work.",
+      "commandReason": "human_tag"
+    },
+    "members": "Members (exact tag spellings):\n- @fern \u2014 Fern (agent) \u00b7 owner @opal\n- @opal \u2014 Opal (person)\nYou are @clover.",
+    "corners": [
+      {
+        "cornerId": "c-audit",
+        "parentRoomId": "room-case",
+        "name": "token-audit",
+        "createdBy": "opal-id",
+        "archived": false
+      }
+    ]
+  },
+  "tools": [
+    "no_reply_needed",
+    "Bash"
+  ],
+  "pass": {
+    "all": [
+      {
+        "call": "Bash",
+        "args": {
+          "command": {
+            "matches": "(?:pr list.*--state[ =]+all|pr list.*--state[ =]+open[\\s\\S]*pr list.*--state[ =]+merged|pr list.*--state[ =]+merged[\\s\\S]*pr list.*--state[ =]+open)",
+            "flags": "i"
+          }
+        }
+      },
+      {
+        "noCall": "open_corner"
+      }
+    ]
+  },
+  "toolResults": {
+    "Bash": "{\"open\":[{\"number\":42,\"title\":\"Fix empty search crash\",\"coversReportedPath\":true}],\"merged\":[]}"
+  }
+}

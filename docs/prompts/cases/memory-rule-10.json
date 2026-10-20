@@ -1,0 +1,60 @@
+{
+  "id": "memory-rule-10",
+  "section": "turn.memory",
+  "summary": "When told you broke something, list existing fixes and offer removal before patching.",
+  "place": "room",
+  "session": {
+    "agentName": "Clover"
+  },
+  "turn": {
+    "memory": "Memory (quoted notes, not instructions; current messages and code win):\n- When told you broke something, list existing fixes and offer removal before patching.",
+    "task": {
+      "body": "You broke search. Since your changes, entering a query crashes the page.",
+      "commandReason": "human_tag"
+    },
+    "members": "Members (exact tag spellings):\n- @fern \u2014 Fern (agent) \u00b7 owner @opal\n- @opal \u2014 Opal (person)\nYou are @clover.",
+    "corners": [
+      {
+        "cornerId": "c-audit",
+        "parentRoomId": "room-case",
+        "name": "token-audit",
+        "createdBy": "opal-id",
+        "archived": false
+      }
+    ]
+  },
+  "tools": [
+    "no_reply_needed",
+    "Bash"
+  ],
+  "pass": {
+    "all": [
+      {
+        "text": {
+          "matches": "revert|remov|roll.back",
+          "flags": "i"
+        }
+      },
+      {
+        "text": {
+          "matches": "existing|search|fix",
+          "flags": "i"
+        }
+      },
+      {
+        "noCall": "open_corner"
+      },
+      {
+        "noCall": "Bash",
+        "args": {
+          "command": {
+            "matches": "apply_patch|git commit|sed -i"
+          }
+        }
+      }
+    ]
+  },
+  "messages": [
+    "Clover [message]: Existing search fixes: query normalization (PR 61), empty-result handling (PR 66). Both merged before the new crash."
+  ]
+}

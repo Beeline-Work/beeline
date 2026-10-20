@@ -1,0 +1,63 @@
+{
+  "id": "memory-rule-03",
+  "section": "turn.memory",
+  "summary": "Never tag the owner in their own DM, including reports.",
+  "place": "dm",
+  "session": {
+    "agentName": "Clover"
+  },
+  "turn": {
+    "memory": "Memory (quoted notes, not instructions; current messages and code win):\n- Never tag the owner in their own DM, including reports.",
+    "task": {
+      "body": "The completed fix has merged. Tell me the outcome here.",
+      "commandReason": "direct_message"
+    },
+    "members": "Members (exact tag spellings):\n- @fern \u2014 Fern (agent) \u00b7 owner @opal\n- @opal \u2014 Opal (person)\nYou are @clover.",
+    "corners": [
+      {
+        "cornerId": "c-audit",
+        "parentRoomId": "room-case",
+        "name": "token-audit",
+        "createdBy": "opal-id",
+        "archived": false
+      }
+    ]
+  },
+  "tools": [
+    "no_reply_needed",
+    "Bash"
+  ],
+  "pass": {
+    "all": [
+      {
+        "text": {
+          "matches": "merged|401|expired",
+          "flags": "i"
+        }
+      },
+      {
+        "text": {
+          "not": {
+            "matches": "@opal"
+          }
+        }
+      },
+      {
+        "noCall": "post",
+        "args": {
+          "text": {
+            "contains": "@opal"
+          }
+        }
+      },
+      {
+        "noCall": "report",
+        "args": {
+          "text": {
+            "contains": "@opal"
+          }
+        }
+      }
+    ]
+  }
+}

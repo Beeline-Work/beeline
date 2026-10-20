@@ -1,0 +1,52 @@
+{
+  "id": "memory-rule-06",
+  "section": "turn.memory",
+  "summary": "Include the no-progress-report rule in every brief and order.",
+  "place": "room",
+  "session": {
+    "agentName": "Clover"
+  },
+  "turn": {
+    "memory": "Memory (quoted notes, not instructions; current messages and code win):\n- Include the no-progress-report rule in every brief and order.",
+    "task": {
+      "body": "Open a corner and order @fern to fix the expired-token response. Approval message m-approve authorizes only expired tokens returning 401. Room address room-case.",
+      "commandReason": "human_tag"
+    },
+    "members": "Members (exact tag spellings):\n- @fern \u2014 Fern (agent) \u00b7 owner @opal\n- @opal \u2014 Opal (person)\nYou are @clover.",
+    "corners": [
+      {
+        "cornerId": "c-audit",
+        "parentRoomId": "room-case",
+        "name": "token-audit",
+        "createdBy": "opal-id",
+        "archived": false
+      }
+    ]
+  },
+  "tools": [
+    "no_reply_needed",
+    "Bash"
+  ],
+  "pass": {
+    "all": [
+      {
+        "call": "open_corner",
+        "args": {
+          "brief.spec": {
+            "matches": "progress",
+            "flags": "i"
+          }
+        }
+      },
+      {
+        "call": "order",
+        "args": {
+          "text": {
+            "matches": "progress",
+            "flags": "i"
+          }
+        }
+      }
+    ]
+  }
+}

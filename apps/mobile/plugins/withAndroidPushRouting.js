@@ -29,20 +29,10 @@ const pushActivitySource = (packageName) => `package ${packageName}
 import android.app.Activity
 import android.content.Intent
 import android.os.Bundle
-import expo.modules.notifications.notifications.NotificationManager
 
 class PushNotificationActivity : Activity() {
   override fun onCreate(savedInstanceState: Bundle?) {
     super.onCreate(savedInstanceState)
-    // A visible MainActivity already has Expo's response listener. Deliver
-    // genuine FCM extras through that same manager without launching it again.
-    val foregroundExtras = intent?.extras
-    if (foregroundExtras?.containsKey("google.message_id") == true && PushRoutingState.mainActivityIsStarted) {
-      NotificationManager.onNotificationResponseFromExtras(foregroundExtras)
-      finish()
-      overridePendingTransition(0, 0)
-      return
-    }
     val destination = Intent(this, MainActivity::class.java)
     destination.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
     // FCM notification-block taps carry google.message_id. Expo's data-only
@@ -51,10 +41,6 @@ class PushNotificationActivity : Activity() {
     val pushTap = intent?.hasExtra("google.message_id") == true ||
       intent?.hasExtra("notificationResponse") == true ||
       intent?.hasExtra("textInputNotificationResponse") == true
-    // A warm push only forwards to the existing task; there is no UI to animate.
-    if (pushTap && PushRoutingState.mainActivityIsLive) {
-      destination.addFlags(Intent.FLAG_ACTIVITY_NO_ANIMATION)
-    }
     if (pushTap && !PushRoutingState.mainActivityIsLive) {
       destination.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TASK)
     }
@@ -79,10 +65,6 @@ import java.util.concurrent.atomic.AtomicInteger
 
 object PushRoutingState {
   private val liveMainActivities = AtomicInteger(0)
-  private val startedMainActivities = AtomicInteger(0)
-
-  val mainActivityIsStarted: Boolean
-    get() = startedMainActivities.get() > 0
 
   val mainActivityIsLive: Boolean
     get() = liveMainActivities.get() > 0
@@ -98,17 +80,13 @@ object PushRoutingState {
           if (activity is MainActivity) liveMainActivities.decrementAndGet()
         }
 
-        override fun onActivityStarted(activity: Activity) {
-          if (activity is MainActivity) startedMainActivities.incrementAndGet()
-        }
+        override fun onActivityStarted(activity: Activity) = Unit
 
         override fun onActivityResumed(activity: Activity) = Unit
 
         override fun onActivityPaused(activity: Activity) = Unit
 
-        override fun onActivityStopped(activity: Activity) {
-          if (activity is MainActivity) startedMainActivities.decrementAndGet()
-        }
+        override fun onActivityStopped(activity: Activity) = Unit
 
         override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
       },

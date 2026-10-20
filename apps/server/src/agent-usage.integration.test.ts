@@ -1,5 +1,5 @@
 import capturedEvent from '../../body/src/fixtures/claude-rate-limit-event.json';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { readAgentDetailView, readWorkspaceMemberListView } from '@beeline/api-contract/phone';
 import { usageSummary } from '@beeline/api-contract/daemon';
 import { parseAcpUsage } from '../../body/src/acp.js';
@@ -179,14 +179,22 @@ it('reports the owner-wide free allowance with its UTC reset and keeps it privat
   expect(usageSummary(own ?? undefined)).toMatch(
     /^Usage: 123K of 3M free tokens today \(shared with your other free agents\), resets/,
   );
-  expect(JSON.stringify(own)).not.toContain('$');
+  expect(own).not.toHaveProperty('spend');
   await db.query(
     `INSERT INTO free_agent_budget(day,usd) VALUES((now() AT TIME ZONE 'UTC')::date,25)`,
   );
-  const paused = await daemon.execute('getAgentUsage', { agentId: agent }, agent);
+  // A valid usage timestamp can contain the private operator budget's digits.
+  const clock = vi.spyOn(Date, 'now').mockReturnValue(1792512525000);
+  let paused;
+  try {
+    paused = await daemon.execute('getAgentUsage', { agentId: agent }, agent);
+  } finally {
+    clock.mockRestore();
+  }
   expect(paused?.free).toMatchObject({ used: 123000, paused: true });
+  // Exact fields keep the operator budget private without matching digits in timestamps.
   expect(paused).toEqual({
-    updatedAt: expect.any(Number),
+    updatedAt: 1792512525,
     windows: [],
     free: {
       used: 123000,

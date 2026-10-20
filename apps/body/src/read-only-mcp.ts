@@ -2673,9 +2673,12 @@ export async function runGrantedCommand(
   const output = typeof result.output === 'string' && result.output ? result.output : '(no output)';
   const refused =
     result.writeRefused === true
-      ? '\nThis Room is read-only outside your scratch directory. Open a corner with open_corner to change files.'
+      ? '\nThis Room is read-only outside your scratch directory. Open a corner with open_corner to change files; for host work there, ask with request_grant(kind:command, target, reason), then use run_granted_command.'
       : '';
-  return `ran under grant ${grantId}: ${verdict}\n${output}${refused}`;
+  const recovery = result.sandboxFailure === true
+    ? '\nFor host work, open a corner and ask with request_grant(kind:command, target, reason), then use run_granted_command.'
+    : '';
+  return `ran under grant ${grantId}: ${verdict}\n${output}${refused}${recovery}`;
 }
 
 /** The small-object pass-through: the server validates and streams the

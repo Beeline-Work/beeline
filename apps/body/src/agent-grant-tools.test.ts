@@ -500,6 +500,8 @@ describe('run_granted_command reports the Room boundary', () => {
     );
     expect(reply).toContain('read-only outside your scratch directory');
     expect(reply).toContain('open_corner');
+    expect(reply).toContain('request_grant(kind:command, target, reason)');
+    expect(reply).toContain('run_granted_command');
   });
 
   it('distinguishes a sandbox startup failure from the command exit status', async () => {
@@ -518,5 +520,7 @@ describe('run_granted_command reports the Room boundary', () => {
     );
     expect(reply).toContain('sandbox failed before command start');
     expect(reply).not.toContain('exit 1');
+    expect(reply).toContain('request_grant(kind:command, target, reason)');
+    expect(reply).toContain('run_granted_command');
   });
 });

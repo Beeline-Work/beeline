@@ -37,8 +37,10 @@ afterEach(async () => {
 it('leaves the first Room frame free of the optional prompt request', async () => {
   await act(async () => { renderer = create(<Probe />); });
   expect(operation).not.toHaveBeenCalled();
-  await act(async () => frame());
-  expect(operation).not.toHaveBeenCalled();
+  for (let index = 0; index < 3; index++) {
+    await act(async () => frame());
+    expect(operation).not.toHaveBeenCalled();
+  }
   await act(async () => frame());
   expect(operation).toHaveBeenCalledExactlyOnceWith('readStarPrompt', {});
 });

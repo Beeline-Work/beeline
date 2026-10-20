@@ -1,26 +1,32 @@
 {
-  "source": "e2665c7dfc62ed9ac1de9ef4b18838dd76f9c6de",
-  "protocol": "native frame commit; canonical Room-list Back; 20 samples each",
+  "source": "6d908054c0dd404885ec2daa08115c9ef5ed10c2",
+  "protocol": "native frame commit; canonical Room-list Back; 20 samples per case; WebSocket propagation-v2; five-second censoring cap",
+  "device": null,
+  "network": null,
   "results": {
     "push-unseen-1": {
       "samples": 20,
-      "p50Ms": 678,
-      "p95Ms": 718
+      "p50Ms": 716,
+      "p95Ms": 856,
+      "timedOutSamples": 0
     },
     "push-unseen-5": {
       "samples": 20,
-      "p50Ms": 746,
-      "p95Ms": 809
+      "p50Ms": 810,
+      "p95Ms": 850,
+      "timedOutSamples": 0
     },
     "room-list-unseen-1": {
       "samples": 20,
-      "p50Ms": 1012,
-      "p95Ms": 1349
+      "p50Ms": 1120,
+      "p95Ms": 5000,
+      "timedOutSamples": 5
     },
     "room-list-unseen-5": {
       "samples": 20,
-      "p50Ms": 1480,
-      "p95Ms": 1973
+      "p50Ms": 1123,
+      "p95Ms": 1423,
+      "timedOutSamples": 0
     }
   }
 }

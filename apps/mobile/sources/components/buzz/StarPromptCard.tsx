@@ -31,22 +31,26 @@ export function useStarPrompt(winKey: string | undefined, enabled: boolean) {
     if (!enabled || stoppedThisSession) return;
     let current = true;
     const asked = answers.current;
-    let secondFrame: number | undefined;
-    // The optional prompt read must not compete with the Room's first frame.
-    const firstFrame = requestAnimationFrame(() => {
-      secondFrame = requestAnimationFrame(() => {
-        if (!current) return;
-        void monolithPhoneOperation('readStarPrompt', {})
-          .then((view) => {
-            if (current && asked === answers.current) setPrompt(view.prompt);
-          })
-          .catch(() => undefined);
-      });
-    });
+    let frame: number | undefined;
+    let remainingFrames = 4;
+    // Leave two complete frames after the Room's two-frame ready marker.
+    // That marker can precede the native buffer's actual commitment.
+    const afterRoomPaint = () => {
+      if (!current) return;
+      if (--remainingFrames > 0) {
+        frame = requestAnimationFrame(afterRoomPaint);
+        return;
+      }
+      void monolithPhoneOperation('readStarPrompt', {})
+        .then((view) => {
+          if (current && asked === answers.current) setPrompt(view.prompt);
+        })
+        .catch(() => undefined);
+    };
+    frame = requestAnimationFrame(afterRoomPaint);
     return () => {
       current = false;
-      cancelAnimationFrame(firstFrame);
-      if (secondFrame !== undefined) cancelAnimationFrame(secondFrame);
+      if (frame !== undefined) cancelAnimationFrame(frame);
     };
   }, [enabled, winKey]);
   const answer = useCallback(

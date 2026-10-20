@@ -7,7 +7,7 @@ import { publishViewerConversation } from '../sources/buzz/viewer-conversation';
 import type { RoomViewMessage } from '@beeline/api-contract/phone';
 const text = '**FIRST LINE**\n\n' + Array.from({ length: 45 }, (_, i) => `- **State ${i+1}**: A long reply about call states and endings remains readable while the artifact stays visible.`).join('\n') + '\n\n**NEWEST LINE**';
 const send = async () => {
-  setTimeout(() => publishViewerConversation({ roomId: 'proof', messages: [{ id: 'reply', text, presentation: 'message', author: { kind: 'agent', handle: 'ruby', name: 'Ruby' } } as RoomViewMessage], send }), 50);
+  setTimeout(() => publishViewerConversation({ roomId: 'proof', messages: [{ id: 'reply', text, presentation: 'message', author: { kind: 'agent', handle: 'ruby', name: 'Ruby' } } as RoomViewMessage], send }), location.search.includes('slow-reply') ? 800 : 50);
   return true;
 };
 publishViewerConversation({ roomId: 'proof', messages: [], send });
@@ -17,10 +17,28 @@ createRoot(document.getElementById('root')!).render(<View style={{ height: '100v
 </View>);
 const wait = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 const find = (id: string) => document.querySelector<HTMLElement>(`[data-testid="${id}"]`)!;
+async function waitForReplyLayout() {
+  const deadline = performance.now() + 3000;
+  let lastLayout = '', stableSince = performance.now();
+  while (performance.now() < deadline) {
+    const scroll = find('viewer-conversation-scroll');
+    const layout = scroll ? `${scroll.scrollHeight}:${scroll.clientHeight}:${scroll.scrollTop}` : '';
+    if (layout !== lastLayout) { lastLayout = layout; stableSince = performance.now(); }
+    if (scroll?.textContent?.includes('NEWEST LINE') && scroll.scrollTop > 0 &&
+        Math.abs(scroll.scrollHeight - scroll.clientHeight - scroll.scrollTop) < 3 &&
+        performance.now() - stableSince >= 150) return;
+    await wait(25);
+  }
+  throw new Error('Reply did not arrive and scroll to the newest line within 3 seconds');
+}
 async function prove() {
   await Promise.all(['SpaceGrotesk-Regular', 'SpaceGrotesk-SemiBold', 'IBMPlexMono-Regular'].map(font => document.fonts.load(`16px ${font}`)));
   await wait(200); find('viewer-conversation-toggle').click();
-  await wait(250); find('proof-send').click(); await wait(500);
+  await wait(250); find('proof-send').click();
+  // ResizeObserver and React layout can finish after an arbitrary timer in CI.
+  // Observe the reply and automatic scroll; never scroll it on the proof's behalf.
+  if (location.search.includes('baseline')) await wait(500);
+  else await waitForReplyLayout();
   const panel = find('viewer-conversation-transcript'), scroll = find('viewer-conversation-scroll');
   const checks: Record<string, boolean | number> = { panelHeight: panel.getBoundingClientRect().height, windowHeight: innerHeight };
   if (location.search.includes('baseline')) {

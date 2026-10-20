@@ -160,7 +160,7 @@ export type NotificationResponseRouting = {
   clearLastResponse: () => Promise<void>;
   resolveTarget: (target: BuzzNotificationTarget) => Promise<BuzzNotificationTarget>;
   /** Optional read started before landing; it never gates navigation. */
-  prefetchRoom?: (responseId: string, roomId: string) => void;
+  prefetchRoom?: (responseId: string, roomId: string, messageId?: string) => void;
   /** Same durable ids the entry adapter consults; a leftover replay is not a new tap. */
   consumedResponses?: ConsumedNotificationResponseStore;
   log?: (message: string) => void;
@@ -238,7 +238,9 @@ export async function routeBuzzNotificationResponse(
       !buzzTarget.cornerId;
     if (responseId && directRoom && buzzTarget?.channelId) {
       try {
-        routing.prefetchRoom?.(responseId, buzzTarget.channelId);
+        const messageId = buzzTarget.messageId ?? buzzTarget.eventId;
+        if (messageId) routing.prefetchRoom?.(responseId, buzzTarget.channelId, messageId);
+        else routing.prefetchRoom?.(responseId, buzzTarget.channelId);
       } catch (error) {
         log(`Could not prefetch pushed Room: ${String(error)}`);
       }

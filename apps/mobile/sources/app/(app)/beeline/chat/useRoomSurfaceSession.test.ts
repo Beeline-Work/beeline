@@ -107,6 +107,7 @@ vi.mock('@/buzz/community-storage', () => ({
 
 vi.mock('@/buzz/surface-storage', () => ({
   mobileSurfaceCache: {
+    peek: vi.fn(() => null),
     read: vi.fn(async () => controls.cached),
     write: vi.fn(async () => undefined),
     remove: vi.fn(async () => undefined),
@@ -308,7 +309,7 @@ function Harness({
   return React.createElement('room-surface', {
     roomId: result.roomSurface?.room.id,
     error: result.hydrationError,
-  });
+  }, ...(result.roomSurface?.messages ?? []).map((message) => React.createElement('message-row', { key: message.id }, message.text)));
 }
 
 function stubFrameScheduler(): {
@@ -968,6 +969,27 @@ describe('useRoomSurfaceSession', () => {
     expect(controls.transportCount).toBe(1);
     expect(receivers.length).toBeGreaterThan(0);
     expect(receivers.every((receiver) => receiver === globalThis)).toBe(true);
+    await act(async () => renderer.unmount());
+  });
+
+  it.each([1, 5])('paints %i received messages on the first frame before any network read', async (count) => {
+    const { queued } = stubFrameScheduler();
+    controls.cached = { ...roomView('room-a'), messages: Array.from({ length: count }, (_, n) => ({
+      id: `received-${n}`, text: `received ${n}`, createdAt: 10 + n,
+      author: { pubkey: 'author', kind: 'human' as const, name: 'Author' }, presentation: 'message' as const,
+    })) };
+    let current!: UseRoomSurfaceSessionResult;
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(React.createElement(Harness, {
+      channelId: 'room-a', capture: (result: UseRoomSurfaceSessionResult) => { current = result; },
+    })); });
+    await flushMicrotasks();
+    await act(async () => { queued.splice(0).forEach((frame) => frame(0)); });
+    expect(current.roomSurface?.messages.at(-1)?.id).toBe(`received-${count - 1}`);
+    expect(renderer.root.findAllByType('message-row').at(-1)?.props.children).toBe(`received ${count - 1}`);
+    expect(controls.transportCount).toBe(0);
+    expect(controls.roomReads).toBe(0);
+    expect(controls.subscriptions).toHaveLength(0);
     await act(async () => renderer.unmount());
   });
 

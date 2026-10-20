@@ -1,0 +1,6 @@
+[
+  { "name": "room-list-unseen-1", "entry": "room-list", "unseen": 1, "budgetMs": 450 },
+  { "name": "room-list-unseen-5", "entry": "room-list", "unseen": 5, "budgetMs": 450 },
+  { "name": "push-unseen-1", "entry": "push", "unseen": 1, "budgetMs": 450 },
+  { "name": "push-unseen-5", "entry": "push", "unseen": 5, "budgetMs": 450 }
+]

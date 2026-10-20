@@ -2,6 +2,7 @@
 /** Analyze correlated device/proxy/server spans. All durations are measured, never inferred. */
 import { readFile, writeFile } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
+import { validateArrivalCases } from './room-arrivals.mjs';
 
 export const BUDGET_MS = Object.freeze({ route: 450, tap: 150 });
 
@@ -88,7 +89,8 @@ export function summarizeSample(sample) {
   };
 }
 
-export function summarize(samples, routes = [], interactions = []) {
+export function summarize(samples, routes = [], interactions = [], arrivalCases = []) {
+  if (arrivalCases.length) validateArrivalCases(arrivalCases);
   const grouped = new Map();
   for (const raw of samples) {
     const sample = summarizeSample(raw);
@@ -100,9 +102,10 @@ export function summarize(samples, routes = [], interactions = []) {
   const rows = [...grouped.values()].map((items) => {
     const first = items[0];
     const budget = first.kind === 'route' ? routeBudget.get(first.name) : undefined;
-    const maxRequests = first.kind === 'route'
+    const arrival = arrivalCases.find((item) => first.kind === 'route' && first.name === '/beeline/chat/[channelId]' && first.variant === item.name);
+    const maxRequests = arrival ? 1 : first.kind === 'route'
       ? (first.variant === 'warm' ? 0 : budget?.coldHttpMax ?? 1) : 1;
-    const maxDepth = first.kind === 'route'
+    const maxDepth = arrival ? 1 : first.kind === 'route'
       ? (first.variant === 'warm' ? 0 : budget?.coldDepthMax ?? 1) : 1;
     const maxObserved = (key) => Math.max(...items.map((item) => item[key]));
     const p95 = percentile(items.map((item) => item.paintMs), .95);
@@ -120,8 +123,8 @@ export function summarize(samples, routes = [], interactions = []) {
       maxWsBytes: maxObserved('wsBytes'),
       maxSqlStatements: maxObserved('sqlStatements'), maxSqlDepth: maxObserved('sqlDepth'),
       maxSqlPoolWaitMs: maxObserved('sqlPoolWaitMs'),
-      budgetMs: BUDGET_MS[first.kind], maxRequests, maxDepth,
-      timingPass: p95 < BUDGET_MS[first.kind],
+      budgetMs: arrival?.budgetMs ?? BUDGET_MS[first.kind], maxRequests, maxDepth,
+      timingPass: p95 < (arrival?.budgetMs ?? BUDGET_MS[first.kind]),
       requestPass: maxObserved('prepaintHttpCount') <= maxRequests &&
         maxObserved('prepaintHttpDepth') <= maxDepth &&
         (first.kind !== 'tap' || items.every((item) => item.writeCount === 1 &&
@@ -130,14 +133,16 @@ export function summarize(samples, routes = [], interactions = []) {
   }).sort((a, b) => a.kind.localeCompare(b.kind) || a.name.localeCompare(b.name) || a.variant.localeCompare(b.variant));
   const missingRoutes = routes.map((route) => route.path)
     .filter((path) => !rows.some((row) => row.kind === 'route' && row.name === path));
-  const missingRouteVariants = routes.flatMap((route) => ['cold', 'warm'].filter((variant) =>
+  const missingRouteVariants = routes.flatMap((route) => (route.variants ?? ['cold', 'warm']).filter((variant) =>
     !rows.some((row) => row.kind === 'route' && row.name === route.path && row.variant === variant))
     .map((variant) => ({ path: route.path, variant, coldHttpMax: route.coldHttpMax,
       coldDepthMax: route.coldDepthMax })));
   const missingInteractions = interactions.filter((name) =>
     !rows.some((row) => row.kind === 'tap' && row.name === name));
-  return { rows, missingRoutes, missingRouteVariants, missingInteractions,
-    complete: missingRouteVariants.length === 0 && missingInteractions.length === 0,
+  const missingArrivalCases = arrivalCases.filter((item) => !rows.some((row) =>
+    row.kind === 'route' && row.name === '/beeline/chat/[channelId]' && row.variant === item.name && row.samples >= 20)).map((item) => item.name);
+  return { rows, missingArrivalCases, missingRoutes, missingRouteVariants, missingInteractions,
+    complete: missingRouteVariants.length === 0 && missingInteractions.length === 0 && missingArrivalCases.length === 0,
     timingPass: rows.every((row) => row.timingPass),
     requestPass: rows.every((row) => row.requestPass) };
 }
@@ -165,6 +170,7 @@ export function markdown(report, metadata = {}) {
     `Unmeasured route variants: ${report.missingRouteVariants.map((item) => `${item.path} (${item.variant})`).join(', ')}`);
   if (report.missingInteractions.length) lines.push('',
     `Unmeasured interactions: ${report.missingInteractions.join(', ')}`);
+  if (report.missingArrivalCases?.length) lines.push('', `Unmeasured arrival cases (20 samples required): ${report.missingArrivalCases.join(', ')}`);
   return `${lines.join('\n')}\n`;
 }
 
@@ -177,19 +183,34 @@ async function main() {
   const input = option('--input');
   if (!input || input.startsWith('--')) throw new Error('usage: analyze.mjs --input samples.ndjson --routes routes.json [--out report.md] [--check]');
   const raw = await readFile(input, 'utf8');
-  const samples = raw.split(/\r?\n/).filter(Boolean).map((line, index) => {
+  let samples = raw.split(/\r?\n/).filter(Boolean).map((line, index) => {
     try { return JSON.parse(line); } catch { throw new Error(`invalid JSON on input line ${index + 1}`); }
   });
-  const routes = args.includes('--routes') ? JSON.parse(await readFile(option('--routes'), 'utf8')) : [];
-  const interactions = args.includes('--interactions')
+  let routes = args.includes('--routes') ? JSON.parse(await readFile(option('--routes'), 'utf8')) : [];
+  let interactions = args.includes('--interactions')
     ? JSON.parse(await readFile(option('--interactions'), 'utf8')) : [];
-  const report = summarize(samples, routes, interactions);
+  const arrivalCases = args.includes('--room-cases')
+    ? JSON.parse(await readFile(option('--room-cases'), 'utf8')) : [];
+  if (args.includes('--room-cases')) validateArrivalCases(arrivalCases);
+  if (args.includes('--nightly')) {
+    validateArrivalCases(arrivalCases);
+    const room = routes.find((route) => route.path === '/beeline/chat/[channelId]');
+    if (!room) throw new Error('Nightly requires the existing Room route budget');
+    routes = [{ ...room, variants: ['warm'] }];
+    interactions = ['send-text'];
+    samples = samples.filter((sample) =>
+      (sample.kind === 'route' && sample.name === room.path &&
+        (sample.variant === 'warm' || arrivalCases.some((item) => item.name === sample.variant))) ||
+      (sample.kind === 'tap' && sample.name === 'send-text'));
+  }
+  const report = summarize(samples, routes, interactions, arrivalCases);
   const output = markdown(report, {
     commit: option('--commit') ?? 'unknown',
     device: option('--device') ?? 'unknown',
     network: option('--network') ?? 'unknown',
     note: option('--note'),
   });
+  if (args.includes('--json-out')) await writeFile(option('--json-out'), JSON.stringify({ ...report, commit: option('--commit') ?? 'unknown' }, null, 2) + '\n');
   if (args.includes('--out')) await writeFile(option('--out'), output);
   else process.stdout.write(output);
   if (args.includes('--check') && (!report.complete || !report.timingPass || !report.requestPass))

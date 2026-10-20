@@ -435,7 +435,7 @@ describe('notification response wiring', () => {
 
       await vi.waitFor(() => expect(openStack).toHaveBeenCalledTimes(1));
       if (surface === 'corner') expect(prefetchRoom).not.toHaveBeenCalled();
-      else expect(prefetchRoom).toHaveBeenCalledWith(responseId, channelId);
+      else expect(prefetchRoom).toHaveBeenCalledWith(responseId, channelId, messageId);
       // Back from the notified screen stays in its Workspace: the stack
       // underneath is that Workspace's Room list (and a corner's corners list).
       expect(openStack).toHaveBeenCalledWith([

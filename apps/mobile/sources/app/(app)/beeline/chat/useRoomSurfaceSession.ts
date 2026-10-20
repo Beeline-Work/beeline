@@ -1150,9 +1150,8 @@ export function useRoomSurfaceSession({
         if (paintedCache) enrichView(paintedCache, identity.publicKey, relayUrl, false);
         if (cancelled) return;
 
-        let openingPrefetch = notificationResponseId
-          ? takePrefetchedPushRoom(notificationResponseId, channelId)
-          : null;
+        let openingPrefetch = takePrefetchedPushRoom(notificationResponseId ?? `room-open:${channelId}`, channelId);
+        const openReadBeforeWatch = Boolean(notificationResponseId || openingPrefetch);
         scheduler = new SurfaceRefreshScheduler({
           fetch: async () => {
             const traces = pendingReadTraces;
@@ -1202,7 +1201,7 @@ export function useRoomSurfaceSession({
               relayUrl,
               true,
             );
-            if (notificationResponseId && !watchStarted) {
+            if (openReadBeforeWatch && !watchStarted) {
               watchStarted = true;
               readRacedAhead = true;
               // A push needs its fresh Room answer on screen first. Installing
@@ -1275,7 +1274,7 @@ export function useRoomSurfaceSession({
                     : `Could not load this conversation. ${String(error)}`,
               );
             }
-            if (notificationResponseId && !terminal && !watchStarted) {
+            if (openReadBeforeWatch && !terminal && !watchStarted) {
               watchStarted = true;
               readRacedAhead = true;
               markRoomOpen('watch-install');
@@ -1284,7 +1283,7 @@ export function useRoomSurfaceSession({
           },
         });
         schedulerRef.current = scheduler;
-        if (notificationResponseId) {
+        if (openReadBeforeWatch) {
           scheduler.refreshNow();
           await scheduler.startAfter(Promise.resolve());
         } else {

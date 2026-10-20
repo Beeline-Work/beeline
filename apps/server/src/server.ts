@@ -1,3 +1,4 @@
+import { receiveLatencyRigAlert } from './latency-rig-alert.js';
 import { VoiceBudgetExceeded } from './voice-budget.js';
 import { readCompanyLogo } from './company-logos.js';
 import { captureServerError } from './sentry.js';
@@ -1481,6 +1482,14 @@ async function route(
 ): Promise<void> {
   const url = exactPath(request.url);
   const method = request.method ?? 'GET';
+  if (method === 'POST' && url.pathname === '/v1/latency-rig/alert') {
+    let input: unknown;
+    try { input = await body(request); }
+    catch { json(response, 400, { error: 'invalid_rig_alert' }); return; }
+    const status = await receiveLatencyRigAlert(options.database, request.headers.authorization, input);
+    json(response, status, status === 200 ? { accepted: true } : { error: 'invalid_rig_alert' });
+    return;
+  }
   if (method === 'POST' && url.pathname === '/v1/sentry/webhook') {
     let raw: Buffer;
     try { raw = await bytes(request, MAX_JSON_BYTES); }

@@ -1,0 +1,48 @@
+name: Latency rig watchdog
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch: {}
+permissions:
+  contents: read
+  actions: read
+jobs:
+  watchdog:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Restore last passing baseline for the PR range
+        id: baseline
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/latency-rig/download-passing.mjs
+      - name: Check whether the nightly capture finished
+        id: watchdog
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/latency-rig/check-nightly-started.mjs
+      - name: Build skipped-run alert with PRs since last pass
+        if: steps.watchdog.outcome != 'success'
+        continue-on-error: true
+        env:
+          LATENCY_RIG_BASELINE_ERROR: ${{ steps.baseline.outcome != 'success' }}
+        run: node scripts/latency-rig/nightly-report.mjs latency-rig-output/missing.json latency-rig-output/baseline.json
+      - name: Alert the Room even when the device runner is offline
+        if: steps.watchdog.outcome != 'success'
+        run: node scripts/latency-rig/post-nightly-alert.mjs
+      - name: Fail after reporting the skipped nightly
+        if: steps.watchdog.outcome != 'success'
+        run: exit 1

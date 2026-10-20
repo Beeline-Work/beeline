@@ -172,10 +172,76 @@ packet loss need an on-device packet capture. The report generator refuses
 to fill unmeasured routes with static estimates.
 
 The per-PR contract check validates route coverage and the deterministic
-budget evaluator. Real timing checks belong in the on-demand rig workflow,
-where a release app and device capture are available; they are not a flaky PR
-gate. The on-demand job requires a runner labeled `beeline-android-rig` with
-`LATENCY_RIG_CAPTURE_COMMAND` set to an executable that writes fresh,
-first-frame `samples.ndjson` for this checkout, plus device and network
-descriptions. Until all routes and interactions have frame marks, its checked
-report fails closed; a partial Room capture is not a passing launch baseline.
+budget evaluator. Device timing belongs in the dedicated rig workflow,
+which runs the fixed nightly subset below on schedule or on demand. It requires
+a runner labeled `beeline-android-rig` with `LATENCY_RIG_CAPTURE_COMMAND` set
+to an executable that writes fresh `samples.ndjson` for this checkout, plus
+device and network descriptions. A full launch report still requires all route
+and interaction marks; the nightly subset does not establish that broader
+budget. Missing required subset cases fail closed.
+
+## Room opens with newly arrived messages
+
+`room-arrival-cases.json` fixes the four warm-session entry/count combinations:
+Room list or Android push tap, with one or five new messages. Each has a strict
+450 ms p95 budget and requires at least 20 samples. `check-routes.mjs` validates
+that matrix. The arrival extractor matches the expected newest message id;
+a cached `newest-frame` cannot finish these cases. Missing target marks fail
+rather than disappearing from the statistics.
+
+`capture-arrivals.mjs` drives a leased disposable emulator and inserts messages
+only into an explicitly supplied loopback `latency_rig` database. After signing
+into the local fixture, select the **Latency Rig 200** Workspace. Set
+`LATENCY_RIG_DEVICE` to the leased device and `LATENCY_RIG_DATABASE_URL` to that
+fixture database, then run:
+
+```sh
+node scripts/latency-rig/capture-arrivals.mjs latency-rig-output/arrivals
+node scripts/latency-rig/join.mjs \
+  --moments latency-rig-output/arrivals/moments.ndjson \
+  --proxy scripts/latency-rig/local-proxy.ndjson \
+  --sql scripts/latency-rig/local-sql.ndjson \
+  --out latency-rig-output/arrivals/samples.ndjson
+node scripts/latency-rig/analyze.mjs \
+  --input latency-rig-output/arrivals/samples.ndjson \
+  --room-cases scripts/latency-rig/room-arrival-cases.json \
+  --out latency-rig-output/arrivals/report.md --check
+```
+
+The driver records the first open separately in `first-open.json` without a
+cold-start verdict, then warms navigation and allows installation work to settle
+for 30 seconds before collecting the warm-session matrix.
+
+Room-list entries use `input tap` on the visible fixture row; push entries use
+the Android FCM tap extras on `PushNotificationActivity`, through the same Expo
+response listener as a notification tap. This does not measure delivery by FCM
+or System UI notification-shade latency. The timer includes the adb dispatch
+from the device timestamp immediately before the entry action. The existing
+opt-in Room trace emits the target id after two animation frames following
+its application; this is a frame probe, not a pixel comparison.
+
+`nightly-compare.mjs` compares each case with its last passing p95, rejecting
+strictly greater than 20% regression, over-budget samples, missing coverage,
+and skipped captures. `mergedPrs` requires a complete first-parent commit range
+from the measured head through the passing baseline, excluding that baseline.
+The `--nightly` analyzer subset requires the four arrival cases, the existing
+warm Room-open route, and send-text. Cold opens remain outside this nightly
+gate. Every case requires 20 samples in the nightly comparison.
+
+The nightly workflow is scheduled at 03:00 UTC on `main`. Its report job runs
+on GitHub-hosted Linux, compares with the most recent retained passing artifact
+from this workflow on main, and saves a new baseline only on a passing verdict.
+A separate 06:00 UTC hosted watchdog notices absent, queued, failed, or unfinished
+runs, cancels an overdue run, and posts the skipped/failing-night alert. Neither
+job adds a per-PR device gate. The runner capture executable must emit the
+four arrival variants, the warm Room route, and send-text, each with 20 samples;
+an old or partial executable fails coverage rather than reporting success.
+
+Room delivery uses `/v1/latency-rig/alert` with a short-lived GitHub Actions OIDC
+identity, not a saved phone token. The server pins GitHub's issuer, rig audience,
+immutable repository and owner ids, main ref, and the two exact workflow files.
+It writes only to Room `bb91a1c7-7cad-4fde-aafc-94fccb651ac8`. A deterministic
+UTC-night message id deduplicates normal and watchdog alerts. The endpoint must
+be deployed through the ordinary server release before the scheduled alert can
+be demonstrated against production. Merging alone does not deploy it.
+See [GitHub's OIDC claims](https://docs.github.com/en/actions/reference/security/oidc).

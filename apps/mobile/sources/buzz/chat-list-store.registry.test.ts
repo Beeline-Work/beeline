@@ -163,3 +163,36 @@ describe('the Room list store over the real surface registry', () => {
     handle.release();
   });
 });
+
+describe('opening a Room after a list delta', () => {
+  it.each(['hot', 'durable'])('keeps five committed arrivals in the %s scoped Room response before a new read', async (storage) => {
+    const { isRoomView } = await import('@beeline/buzz-client');
+    const roomAddress = surfaceAddress(key.relayUrl, VIEWER, `/room/${ROOM_A}`);
+    const wrongViewer = surfaceAddress(key.relayUrl, 'd'.repeat(64), `/room/${ROOM_A}`);
+    const room = {
+      room: row(ROOM_A, 'Alpha', { id: M1, createdAt: 10 }).room,
+      messages: [{ id: M1, text: 'old', createdAt: 10, author: agent, presentation: 'message' as const }],
+      members: [], latestAgentTurns: [], watchFilters: [{ '#h': [ROOM_A] }],
+      viewer: { identity: { pubkey: VIEWER, kind: 'human' as const, name: 'Captain' },
+        role: 'owner' as const, permissions: { send: true, manage: true } },
+      repositoryResolution: { status: 'absent' as const },
+    };
+    await mobileSurfaceCache.write(roomAddress, room, isRoomView);
+    await mobileSurfaceCache.write(wrongViewer, room, isRoomView);
+    if (storage === 'durable') mobileSurfaceCache.clear();
+    server.chats = async () => listOf([row(ROOM_A, 'Alpha', { id: M1, createdAt: 10 })]);
+    const handle = acquireChatList(key, { visible: () => true });
+    await vi.advanceTimersByTimeAsync(10);
+    for (let n = 1; n <= 5; n++) {
+      for (const listener of live.listeners) listener({ monolithLive: {
+        type: 'message-delta', roomId: ROOM_A, version: n,
+        message: { id: String(n + 2).repeat(64), text: `new ${n}`, createdAt: 20 + n, author: agent, presentation: 'message' },
+      } });
+    }
+    await vi.advanceTimersByTimeAsync(0);
+    expect(mobileSurfaceCache.peek(roomAddress, isRoomView)?.messages.slice(-5).map((message) => message.text))
+      .toEqual(['new 1', 'new 2', 'new 3', 'new 4', 'new 5']);
+    expect((await mobileSurfaceCache.read(wrongViewer, isRoomView))?.messages).toHaveLength(1);
+    handle.release();
+  });
+});

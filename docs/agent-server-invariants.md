@@ -19,6 +19,8 @@ Paths and commands below are relative to the repository root. Read these invaria
 
 ## Feature contracts
 
+- **Nightly latency alerts use workflow identity.** `/v1/latency-rig/alert` accepts only GitHub-signed identities for the pinned repository, main ref and two rig workflows, and writes one notice per UTC night to the configured maintenance Room. No phone or daemon credential belongs in the workflow. Authority and regression coverage: `latency-rig-alert.ts`, `latency-rig-alert.test.ts`; rig and watchdog: `scripts/latency-rig/README.md`.
+
 - Sentry capture, authenticated Telegram relay, configuration and post-release proof: [error monitoring](error-monitoring.md). Keep Telegram outbound-only and exclude relay failures from recursive capture.
 
 - Private operator dashboard cohorts, fixture exclusions and metric provenance: [dashboard API](operator-dashboard-api.md); aggregate queries and regressions live in `operator-dashboard.ts` and `operator-dashboard.test.ts`.

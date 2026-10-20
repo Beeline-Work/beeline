@@ -2,6 +2,8 @@ name: Latency rig
 
 on:
   pull_request: {}
+  schedule:
+    - cron: '0 3 * * *'
   workflow_dispatch:
     inputs:
       run_device:
@@ -26,11 +28,11 @@ jobs:
       - name: Verify every route has a request and depth budget
         run: node scripts/latency-rig/check-routes.mjs
       - name: Verify measured-span math and fail-closed verdicts
-        run: node --test scripts/latency-rig/analyze.test.mjs scripts/latency-rig/join.test.mjs
+        run: node --test scripts/latency-rig/*.test.mjs
 
   device:
-    name: LATENCY RIG DEVICE (on demand)
-    if: github.event_name == 'workflow_dispatch' && inputs.run_device
+    name: LATENCY RIG DEVICE
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.run_device)
     runs-on: [self-hosted, linux, beeline-android-rig]
     timeout-minutes: 120
     steps:
@@ -41,12 +43,62 @@ jobs:
           cache: npm
       - run: npm ci
       - name: Capture release Android samples on the dedicated rig
+        env:
+          LATENCY_RIG_NIGHTLY: '1'
         run: bash scripts/latency-rig/ci-timing.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: latency-rig-report
           path: |
+            latency-rig-output/report.json
             latency-rig-output/report.md
             latency-rig-output/samples.ndjson
           if-no-files-found: warn
+
+  report:
+    name: LATENCY RIG NIGHTLY REPORT
+    needs: device
+    if: always() && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.run_device)) && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: latency-rig-report
+          path: latency-rig-output
+      - name: Restore the last passing main baseline
+        id: baseline
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node scripts/latency-rig/download-passing.mjs
+      - name: Compare budgets and the last passing baseline
+        id: compare
+        continue-on-error: true
+        env:
+          LATENCY_RIG_BASELINE_ERROR: ${{ steps.baseline.outcome != 'success' }}
+        run: node scripts/latency-rig/nightly-report.mjs latency-rig-output/report.json latency-rig-output/baseline.json
+      - name: Post one failing-night alert to the Room
+        if: steps.compare.outcome != 'success'
+        run: node scripts/latency-rig/post-nightly-alert.mjs
+      - uses: actions/upload-artifact@v4
+        if: steps.compare.outcome == 'success'
+        with:
+          name: latency-rig-passing
+          path: latency-rig-output/passing.json
+          retention-days: 90
+      - name: Fail the nightly verdict after alerting
+        if: steps.compare.outcome != 'success'
+        run: exit 1

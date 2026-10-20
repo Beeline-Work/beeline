@@ -55,6 +55,7 @@ keep them to plain checks such as "no `@` tag".
 - `{"call": "order", "args": {"address": "c-1"}}`: some call to `order` matches every argument matcher.
 - `{"noCall": "Bash", "args": {"command": {"matches": "\\bssh\\b"}}}`: no call matches.
 - `{"text": {"not": {"matches": "@juniper"}}}`: the agent's text, all steps joined.
+- `{"skill": "beeline-files-and-mocks", "beforeRetry": "post_artifact"}`: reads the listed skill file before the first retry (or loads it without retrying). Skill names must exist in the session's installed skills.
 - `{"all": [...]}`, `{"any": [...]}`, `{"not": rule}`.
 
 An argument path may be dotted (`http.url`); `*` means all arguments as JSON.
@@ -78,10 +79,22 @@ request without the posted table. The replaying agent:
    `@beeline/api-contract`).
 2. Runs `npm run prompt-cases -- --export <dir>`. This writes one self-contained
    `<id>.prompt.md` per case: the system prompt, the tools, the stub results and
-   the turn, built with the real assembler and tool descriptions.
+   the turn, built with the real assembler and tool descriptions. It also lists
+   Beeline-managed skills and their descriptions from `beeline-skill.ts`, with
+   the review skill only for reviewer sessions. The native `Read(file_path)`
+   tool returns a listed skill's real body when requested. Bodies are exported
+   separately in `<id>.skills.json`, so they cannot influence the first answer.
 3. Gives each prompt file to a fresh session of its own model, never to its own
    context, and saves the JSON answer as `<dir>/<id>.1.json`. With Claude Code:
    `claude -p --tools "" --strict-mcp-config < <dir>/<id>.prompt.md > <dir>/<id>.1.json`.
+   If the model calls `Read` for a listed skill, it pauses. As replay controller,
+   look up that path in `<id>.skills.json` and return its content as the tool
+   result to the same fresh model session. With a CLI without tool injection,
+   send the original prompt, previous calls and the requested result as the
+   continuation context. Never send unread bodies. Continue up to six total
+   rounds; concatenate the calls in order and assistant text into the final
+   `<id>.<n>.json`. A skill read counts as a round. If the limit is reached, grade
+   the transcript so far. Repeat this process independently for each sample.
 4. Runs `npm run prompt-cases -- --grade <dir>`. One passing sample passes a
    case. A failing case shows `NEEDS SAMPLES`: record `<id>.2.json` and
    `<id>.3.json` and grade again; it passes at 2 of 3.
@@ -90,3 +103,10 @@ request without the posted table. The replaying agent:
 
 Every case must pass. A new case for a prompt fix must also fail when replayed
 on the prompt before the fix (`--only <id>`).
+
+For a baseline against another checkout, export with
+`npm run prompt-cases -- --source /absolute/path/to/main-checkout --export <dir>`.
+The cases and grading rules come from this checkout; assembly, tool descriptions,
+and Beeline skills come from `--source`. Record that checkout's exact commit and
+model with the table. A case-library-only PR may record failures without changing
+the prompt; future prompt fixes must raise that baseline.

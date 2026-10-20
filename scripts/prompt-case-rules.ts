@@ -26,6 +26,7 @@ export type Matcher =
   | { readonly not: Matcher };
 
 export type Rule =
+  | { readonly skill: string; readonly beforeRetry?: string }
   | { readonly call: string; readonly args?: Readonly<Record<string, Matcher>> }
   | { readonly noCall: string; readonly args?: Readonly<Record<string, Matcher>> }
   | { readonly text: Matcher }
@@ -95,6 +96,12 @@ function checkRule(rule: unknown, where: string): void {
     const extra = keys.filter((key) => !allowed.includes(key));
     if (extra.length) throw new Error(`${where}: unknown rule keys ${extra.join(', ')}`);
   };
+  if ('skill' in rule) {
+    only('skill', 'beforeRetry');
+    if (typeof rule.skill !== 'string' || !rule.skill) throw new Error(`${where}.skill must be a skill name`);
+    if (rule.beforeRetry !== undefined && typeof rule.beforeRetry !== 'string') throw new Error(`${where}.beforeRetry must be a tool name`);
+    return;
+  }
   if ('call' in rule || 'noCall' in rule) {
     const kind = 'call' in rule ? 'call' : 'noCall';
     only(kind, 'args');
@@ -191,7 +198,27 @@ function callMatches(call: ToolCall, name: string, args?: Readonly<Record<string
 const describeCalls = (calls: readonly ToolCall[]) =>
   calls.length ? calls.map((call) => `${call.name}(${JSON.stringify(call.args).slice(0, 200)})`).join(', ') : 'no tool calls';
 
+/** Check against the skills actually installed for this session, including nested rules. */
+export function validateRuleSkills(rule: Rule, names: readonly string[]): void {
+  if ('skill' in rule && !names.includes(rule.skill)) throw new Error(`unknown or unavailable skill ${rule.skill}`);
+  if ('all' in rule) rule.all.forEach((child) => validateRuleSkills(child, names));
+  if ('any' in rule) rule.any.forEach((child) => validateRuleSkills(child, names));
+  if ('not' in rule) validateRuleSkills(rule.not, names);
+}
+
+/** The replay exposes the harness's native file reader at these stable paths. */
+export function skillPath(name: string): string {
+  return `/replay/skills/${name}/SKILL.md`;
+}
+
 export function evaluateRule(rule: Rule, transcript: Transcript): Verdict {
+  if ('skill' in rule) {
+    const loaded = transcript.calls.findIndex((call) =>
+      callMatches(call, 'Read', { file_path: skillPath(rule.skill) }));
+    const retry = rule.beforeRetry === undefined ? -1 : transcript.calls.findIndex((call) => call.name === rule.beforeRetry);
+    const pass = loaded !== -1 && (retry === -1 || loaded < retry);
+    return { pass, reason: pass ? `loaded ${rule.skill}` : `expected loading ${rule.skill}${rule.beforeRetry ? ` before retrying ${rule.beforeRetry}` : ''}` };
+  }
   if ('call' in rule) {
     const pass = transcript.calls.some((call) => callMatches(call, rule.call, rule.args));
     return { pass, reason: pass ? `called ${rule.call}` : `expected ${rule.call}${rule.args ? ` with ${JSON.stringify(rule.args)}` : ''}; saw ${describeCalls(transcript.calls)}` };

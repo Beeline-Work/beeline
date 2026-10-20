@@ -1,0 +1,20 @@
+{
+  "id": "squire-busy-request-capability",
+  "section": "tools",
+  "summary": "A browser ownership refusal leads to a capability request, skill load, or specific blocked report.",
+  "place": "room",
+  "session": { "squireAvailable": true },
+  "turn": { "task": { "body": "@ruby finish provisioning the demo account.", "fromName": "dana", "commandReason": "human_tag" } },
+  "messages": [
+    "Ruby called operate_start: refused: browser held by session cedar-47 in another conversation.",
+    "Ruby called operate_finish(session_id:cedar-47): refused: this conversation does not own that session.",
+    "Ruby called Bash to stop the stuck browser: refused: shell is sandboxed; host process access is unavailable."
+  ],
+  "tools": ["Bash", "operate_drive"],
+  "pass": { "any": [
+    { "call": "request_grant" },
+    { "skill": "beeline-connecting-services" },
+    { "call": "report", "args": { "status": "blocked", "text": { "matches": "^blocked:.*(host|browser|process|unsandboxed|shell|grant|access)", "flags": "is" } } },
+    { "text": { "matches": "^blocked:.*(host|browser|process|unsandboxed|shell|grant|access)", "flags": "is" } }
+  ] }
+}

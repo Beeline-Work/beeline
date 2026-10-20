@@ -55,3 +55,56 @@ test('parsePromptCase refuses malformed cases', () => {
   assert.throws(() => parsePromptCase({ ...valid, pass: { text: { matches: '(' } } }, 'x', []), /Invalid regular expression/);
   assert.throws(() => parsePromptCase({ ...valid, extra: 1 }, 'x', []), /unknown keys/);
 });
+
+test('skill loads require the actual native read and precede the first retry', async () => {
+  const { skillPath, validateRuleSkills } = await import('./prompt-case-rules.js');
+  const rule: Rule = { skill: 'beeline-files-and-mocks', beforeRetry: 'post_artifact' };
+  const load = { name: 'Read', args: { file_path: skillPath('beeline-files-and-mocks') } };
+  const retry = { name: 'post_artifact', args: { path: '/tmp/report.html' } };
+  assert.equal(evaluateRule(rule, { calls: [load, retry], text: '' }).pass, true);
+  assert.equal(evaluateRule(rule, { calls: [retry, load, retry], text: '' }).pass, false);
+  assert.equal(evaluateRule(rule, { calls: [], text: 'I loaded beeline-files-and-mocks.' }).pass, false);
+  assert.equal(evaluateRule(rule, { calls: [load], text: '' }).pass, true);
+  assert.throws(() => validateRuleSkills({ any: [{ not: rule }] }, []), /unknown or unavailable skill/);
+  assert.doesNotThrow(() => validateRuleSkills(rule, ['beeline-files-and-mocks']));
+});
+
+test('give-up case rejects abandonment and accepts each recovery route', async () => {
+  const { readFileSync } = await import('node:fs');
+  const { skillPath } = await import('./prompt-case-rules.js');
+  const rule = JSON.parse(readFileSync('docs/prompts/cases/squire-busy-request-capability.json', 'utf8')).pass as Rule;
+  assert.equal(evaluateRule(rule, { calls: [], text: "I can't continue because the browser is stuck." }).pass, false);
+  for (const calls of [
+    [{ name: 'request_grant', args: { action: 'request', kind: 'command', reason: 'Need host process access.' } }],
+    [{ name: 'Read', args: { file_path: skillPath('beeline-connecting-services') } }],
+    [{ name: 'report', args: { status: 'blocked', text: 'blocked: Need host process access to recover the browser.' } }],
+  ]) assert.equal(evaluateRule(rule, { calls, text: '' }).pass, true);
+  assert.equal(evaluateRule(rule, { calls: [], text: 'blocked: Need host access to recover the browser.' }).pass, true);
+  assert.equal(evaluateRule(rule, { calls: [], text: 'blocked: Cannot continue.' }).pass, false);
+});
+
+test('export lists real skills but reveals bodies only through requested file results', async () => {
+  const { mkdtempSync, readFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { execFileSync } = await import('node:child_process');
+  const { beelineManagedSkills } = await import('../apps/body/src/beeline-skill.js');
+  const { skillPath } = await import('./prompt-case-rules.js');
+  const dir = mkdtempSync(join(tmpdir(), 'prompt-skills-'));
+  try {
+    execFileSync(process.execPath, ['--import', 'tsx', 'scripts/prompt-cases.ts', '--only', 'refused-artifact-load-skill', '--export', dir]);
+    const prompt = readFileSync(join(dir, 'refused-artifact-load-skill.prompt.md'), 'utf8');
+    const results = JSON.parse(readFileSync(join(dir, 'refused-artifact-load-skill.skills.json'), 'utf8'));
+    const skills = beelineManagedSkills('source', { isReviewer: false });
+    assert.equal(Object.keys(results).length, skills.length);
+    for (const skill of skills) {
+      assert.ok(prompt.includes(skillPath(skill.name)));
+      assert.ok(prompt.includes(skill.content.match(/^description: (.+)$/m)![1]!));
+      assert.ok(!prompt.includes(skill.content));
+      assert.equal(results[skillPath(skill.name)], skill.content);
+    }
+    assert.ok(!prompt.includes('beeline-review'));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

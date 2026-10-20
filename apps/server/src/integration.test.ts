@@ -9947,7 +9947,7 @@ describe('monolith integration', () => {
     ).toEqual([]);
   });
 
-  it('rejects an approval that does not name a human Room message, and an over-long spec', async () => {
+  it('records agent-initiated openings without human context, and rejects an over-long spec', async () => {
     const agentMessage = 'agent-approval-message';
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Looks good to me')`,
@@ -9965,13 +9965,10 @@ describe('monolith integration', () => {
         repository: 'example/repository',
         brief: { spec: '## Checklist\n\n- Ship it.', approval: { sourceMessageId } },
       });
-      expect(response.status).toBe(403);
-      expect(await response.text()).toContain(
-        'corner brief approval must name a human message or commander order',
-      );
-      expect(
-        (await database.query(`SELECT 1 FROM corner_facts WHERE request_id=$1`, [requestId])).rows,
-      ).toEqual([]);
+      expect(response.status).toBe(200);
+      const opened = await response.json() as { cornerId: string };
+      expect((await database.query(`SELECT approval_basis FROM corner_brief_revisions WHERE corner_id=$1`,
+        [opened.cornerId])).rows[0]).toMatchObject({ approval_basis: { kind: 'agent-initiated', approvedBy: AGENT } });
     }
 
     const tooLong = await daemonOperation('createCorner', {

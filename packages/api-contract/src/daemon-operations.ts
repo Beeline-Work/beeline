@@ -1438,8 +1438,8 @@ export type CornerBriefDraft = {
   readonly spec: string;
   /** False when no repository files are assigned or edits/PRs are forbidden; attachments are separate. */
   readonly repositoryWork?: boolean;
-  /** The human Room message dispatching the work or authorizing its revision. The server quotes it. */
-  readonly approval: { readonly sourceMessageId: string };
+  /** Optional opening context; revisions require a human message or commander order. The server quotes it. */
+  readonly approval?: { readonly sourceMessageId: string };
   readonly attachments?: readonly {
     readonly objectId: string;
     readonly purpose: string;

@@ -5927,7 +5927,7 @@ export class DaemonService {
         if (current || corner.kind !== 'human') {
           if (current && input.brief && (current.spec !== input.brief.spec.trim() ||
               current.repositoryWork !== input.brief.repositoryWork ||
-              current.approval?.sourceMessageId !== input.brief.approval.sourceMessageId))
+              current.approval?.sourceMessageId !== input.brief.approval?.sourceMessageId))
             throw new Error('corner brief already exists; revise the current brief instead');
           if (objective !== undefined) await db.query(
             `UPDATE corner_facts SET objective=$2,updated_at=now() WHERE corner_id=$1`,
@@ -5962,7 +5962,7 @@ export class DaemonService {
              ) VALUES($1,1,$2,$3,$4,$5,$6,$7,$8,$9)`,
             [input.cornerId, brief.spec.trim(), JSON.stringify(authority.approvalBasis),
               authority.revisionHash, brief.change ?? null, agentId, authority.sourceRoomId,
-              brief.approval.sourceMessageId, JSON.stringify(attachments)],
+              brief.approval?.sourceMessageId, JSON.stringify(attachments)],
           );
           await db.query(
             `UPDATE corner_facts SET objective=$2,updated_at=now() WHERE corner_id=$1`,
@@ -7819,6 +7819,8 @@ export class DaemonService {
           input.brief,
           attachments,
           parentCommand.private_payload ? parentCommand.id : parentCommand.root_source_message_id,
+          undefined,
+          { agentId, roomId },
         );
         await db.query(
           `INSERT INTO corner_brief_revisions(
@@ -7833,7 +7835,7 @@ export class DaemonService {
             input.brief.change ?? null,
             agentId,
             authority.sourceRoomId,
-            input.brief.approval.sourceMessageId,
+            input.brief.approval?.sourceMessageId,
             JSON.stringify(attachments),
           ],
         );
@@ -7978,7 +7980,7 @@ export class DaemonService {
           draft.change?.trim() ?? null,
           agentId,
           authority.sourceRoomId,
-          draft.approval.sourceMessageId,
+          draft.approval?.sourceMessageId,
           JSON.stringify(attachments),
         ],
       );

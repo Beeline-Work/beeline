@@ -1,4 +1,4 @@
-import { useRepositoryOnboarding } from '@/buzz/onboarding-rollout';
+import { readRepositoryOnboardingEligibility, useRepositoryOnboarding } from '@/buzz/onboarding-rollout';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
 import { HullDialogActions, HullDialogInput } from '@/components/buzz/HullDialog';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
@@ -173,7 +173,7 @@ export default function BuzzOnboarding() {
    * in Settings.
    */
   const enterAfterMonolithSignIn = async (identityId: string | undefined) => {
-    if ((await monolithPhoneOperation('getAuthCapabilities', {}).catch(() => null))?.repositoryOnboarding)
+    if (await readRepositoryOnboardingEligibility())
       await monolithPhoneOperation('listGitHubRepositories', { refresh: true });
     const seed = identityId || (await monolithSession.identityId().catch(() => null)) || '';
     const hosted = await monolithPhoneOperation('getManagedIdentity', {}).catch(() => null);

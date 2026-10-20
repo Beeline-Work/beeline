@@ -223,7 +223,8 @@ single line with a unique id suffix, so five messages fit the unchanged landing.
 emulator host URL. The Expo plugin is absent from ordinary builds and rejects
 production URLs. Its receiver requires Android's shell-only DUMP permission.
 The timer starts at native touch-up or push Activity entry. An existing draw
-must contain a full line of the unique target text above the composer; the
+must contain a full line of the unique target text above the composer in the
+same native navigation Screen, excluding the previous Room-list preview; the
 [Android frame-commit callback](https://developer.android.com/reference/android/view/ViewTreeObserver#registerFrameCommitCallback(java.lang.Runnable)) ends the sample. No accessibility polling
 or JavaScript callback ends this timer. Unsupported hardware rendering fails
 closed. Frame submission is measured, rather than physical display scanout.

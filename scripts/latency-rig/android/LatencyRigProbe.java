@@ -39,8 +39,10 @@ public final class LatencyRigProbe {
   private static synchronized void observe(View view) {
     Pending p = pending;
     if (p == null || p.startNanos == 0 || p.submitted || !view.isHardwareAccelerated()) return;
-    int composerTop = composerTop(view);
-    if (!visibleRow(view, p.needle, composerTop)) return;
+    View room = roomScreen(view);
+    if (room == null) return;
+    int composerTop = composerTop(room);
+    if (composerTop == Integer.MAX_VALUE || !visibleRow(room, p.needle, composerTop)) return;
     p.submitted = true;
     view.getViewTreeObserver().registerFrameCommitCallback(() -> {
       long paintMs = p.startMs + (SystemClock.elapsedRealtimeNanos() - p.startNanos) / 1000000;
@@ -53,8 +55,25 @@ public final class LatencyRigProbe {
       synchronized (LatencyRigProbe.class) { if (pending == p) pending = null; }
     });
   }
+  private static View roomScreen(View view) {
+    if (view.isShown() && view.getAlpha() >= 0.9f && "Message".contentEquals(view.getContentDescription() == null ? "" : view.getContentDescription())) {
+      View parent = view;
+      while (parent.getParent() instanceof View) {
+        parent = (View)parent.getParent();
+        if (parent.getClass().getName().equals("com.swmansion.rnscreens.Screen")) return parent;
+      }
+    }
+    if (view instanceof ViewGroup) {
+      ViewGroup group = (ViewGroup)view;
+      for (int i=0; i<group.getChildCount(); i++) {
+        View room = roomScreen(group.getChildAt(i));
+        if (room != null) return room;
+      }
+    }
+    return null;
+  }
   private static int composerTop(View view) {
-    if ("Message".contentEquals(view.getContentDescription() == null ? "" : view.getContentDescription())) {
+    if (view.isShown() && view.getAlpha() >= 0.9f && "Message".contentEquals(view.getContentDescription() == null ? "" : view.getContentDescription())) {
       Rect bounds = new Rect();
       if (view.getGlobalVisibleRect(bounds)) return bounds.top;
     }

@@ -32,14 +32,17 @@ The original marker matched the newest message id, but subsequent native
 inspection found that its text could remain clipped above the composer. A JS
 callback after response application cannot establish visible paint. An
 accessibility observer also perturbed the timings; its pilot percentiles are
-not acceptance evidence. Neither experiment is used to claim a passing fix.
+not acceptance evidence. An early frame-probe pilot also matched a Room-list
+preview; the corrected probe requires the composer and target in the same
+native navigation Screen. None of these pilots is used to claim a passing fix.
 
 ## Native measurement
 
 The rig-only Expo plugin is absent in ordinary builds and rejects non-emulator
 host URLs. A shell-permission receiver arms one expected unique message. Timing
 starts at native touch-up or push Activity entry. An existing draw must contain
-a full TextView line above the composer, then the hardware frame-commit callback
+a full TextView line above the composer in its own navigation Screen, then the
+hardware frame-commit callback
 records completion. This observes rendered frame submission, not physical
 scanout. No polling of the UI or JavaScript callback ends the measurement.
 

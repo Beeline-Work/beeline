@@ -96,7 +96,6 @@ export function cornerVisualState(
   if (
     opts?.awaitingReply ||
     opts?.reason === 'question' ||
-    opts?.reason === 'failed' ||
     status === 'review'
   ) {
     return 'needs-you';

@@ -353,6 +353,8 @@ it('claims a report once before playback and never replays an interrupted openin
 it('waits for an utterance that starts while a report claim is in flight', async () => {
   const { service, speech } = conversationService(1);
   let offered = false;
+  let playbackStarted!: () => void;
+  const firstPlayback = new Promise<void>(resolve => { playbackStarted = resolve; });
   let releaseClaim!: () => void;
   const report = { source_message_id: 'order', id: 'report', text: 'Completed work.', agent_id: 'ruby', human_id: 'human' };
   service.db.query.mockImplementation(async (sql: string) => {
@@ -362,13 +364,16 @@ it('waits for an utterance that starts while a report claim is in flight', async
   });
   const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
   let releasePlayback!: () => void;
-  state.audio.waitForPlayout.mockImplementationOnce(() => new Promise<void>(resolve => { releasePlayback = resolve; }));
+  state.audio.waitForPlayout.mockImplementationOnce(() => new Promise<void>(resolve => { releasePlayback = resolve; playbackStarted(); }));
   try {
     (runtime as any).targets.set('human', report.agent_id);
     offered = true; await runtime.refresh();
     await vi.waitFor(() => expect(releaseClaim).toBeDefined());
     const utterance = runtime.utterance('human', 'Ruby hello');
-    await vi.waitFor(() => expect(speech.synthesize).toHaveBeenCalledOnce());
+    // Synchronize on the held playout itself, not a short polling window
+    // that can expire under the full CI shard's event-loop load.
+    await firstPlayback;
+    expect(speech.synthesize).toHaveBeenCalledOnce();
     releaseClaim();
     await new Promise(resolve => setImmediate(resolve));
     expect(speech.synthesize).toHaveBeenCalledOnce();

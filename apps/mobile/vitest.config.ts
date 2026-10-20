@@ -15,6 +15,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
+      '@beeline/push-gateway/projection': resolve('../push-gateway/src/room-indexer-projection.ts'),
       '@beeline/auth/github': resolve('../auth/src/github.ts'),
       '@': resolve('./sources'),
     },

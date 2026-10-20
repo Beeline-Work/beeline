@@ -63,8 +63,8 @@ export type RoomListZone = 'needs-you' | 'working' | 'idle';
 
 // Gold is the exact needs-you state, only when a person can act now.
 // Affordance words per canonical projection stay contextual (reply / retry).
-function needsYouAction(corner: CornerSummary): string {
-  return corner.reason === 'failed' ? 'RETRY' : 'REPLY';
+function needsYouAction(_corner: CornerSummary): string {
+  return 'REPLY';
 }
 const MEANINGFUL_CORNER_SUPERSTATES: ReadonlySet<CornerSuperState> = new Set([
   'needs-human',
@@ -529,7 +529,7 @@ export function roomRowPresentation(
     state,
     unread: unreadHere,
     glyph: cornerStatusPresentation(
-      state === 'working' ? 'working' : state === 'needs-you' ? 'review' : 'waiting',
+      state === 'working' ? 'working' : state === 'needs-you' ? 'review' : currentCorner?.state ?? 'idle',
     ).glyph,
     live: Boolean(room.agentTurnWorking || working),
     attention: state === 'needs-you',

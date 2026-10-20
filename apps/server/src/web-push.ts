@@ -6,6 +6,7 @@ import { parse as parseLegacyUrl } from 'node:url';
 import ipaddr from 'ipaddr.js';
 import type { SqlDatabase } from './database.js';
 import type { PushSender } from './background.js';
+import { pushMessageData } from './firebase-push.js';
 
 export type WebPushKeys = { p256dh: string; auth: string };
 
@@ -109,6 +110,7 @@ export function createWebPushSender(
           : message.type === 'workspace-join' && !message.roomId
             ? `/beeline/channels?communityId=${encodeURIComponent(message.workspaceId)}`
             : `/beeline/chat/${encodeURIComponent(message.type === 'message' ? message.channelId : message.roomId!)}?communityId=${encodeURIComponent(message.workspaceId)}`;
+      const cornerState = pushMessageData(message).cornerState;
       try {
         await webpush.sendNotification(
           { endpoint: new URL(endpoint).href, keys },
@@ -117,6 +119,7 @@ export function createWebPushSender(
             ...(message.type === 'message' && message.title ? { title: message.title } : {}),
             url,
             messageId: message.messageId,
+            ...(cornerState ? { cornerState } : {}),
             tag: message.collapseId ?? message.messageId,
             ...(message.type === 'message'
               ? { channelId: message.channelId, roomId: message.roomId }

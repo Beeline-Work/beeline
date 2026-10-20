@@ -1,3 +1,4 @@
+import { markRoomOpen } from '@/buzz/room-open-trace';
 import {
   getBuzzNotificationTargetFromData,
   navigateToBuzzTargetFromNotification,
@@ -107,11 +108,13 @@ async function dispatchNotificationResponse(
   entry: NotificationEntryPath,
   active: () => boolean,
 ): Promise<void> {
+  markRoomOpen('push-entry-dispatch');
   const id = readIdentifier(response);
   if (id && entries.consumedResponses && (await entries.consumedResponses.has(id))) {
     entries.log?.(`[PUSH ROUTING] Skipping leftover ${entry} notification response: ${id}`);
     return;
   }
+  markRoomOpen('push-entry-deduped');
   if (!active()) return;
   await entries.route(response, entry);
 }
@@ -121,6 +124,7 @@ export function startNotificationResponseEntries(entries: NotificationResponseEn
   let active = true;
   const stillActive = () => active;
   const subscription = entries.addResponseListener((response) => {
+    markRoomOpen('push-entry-event');
     const entry = entries.getAppState() === 'active' ? 'foreground' : 'background';
     void dispatchNotificationResponse(entries, response, entry, stillActive).catch((error) =>
       entries.log?.('Failed to route notification response:', error),
@@ -191,6 +195,7 @@ export async function routeBuzzNotificationResponse(
   response: TappedNotificationResponse | null | undefined,
   routing: NotificationResponseRouting,
 ): Promise<BuzzNotificationTarget | null> {
+  markRoomOpen('push-route-entry');
   const log = routing.log ?? ((message: string) => console.log(message));
   if (!response) {
     log('[PUSH ROUTING] Notification response is null');

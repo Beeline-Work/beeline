@@ -164,6 +164,21 @@ The next candidate routes foreground FCM extras through Expo's existing
 NotificationManager while MainActivity is started; background and cold taps
 retain task forwarding. Its device timing is not yet measured.
 
+## Foreground FCM candidate (e817d36fd)
+
+| Entry / unseen | Samples | p50 ms | p95 ms | Timing |
+| --- | ---: | ---: | ---: | --- |
+| Room list / 1 | 20 | 257 | 282 | pass |
+| Room list / 5 | 20 | 275 | 299 | pass |
+| Push / 1 | 20 | 385 | 791 | fail |
+| Push / 5 | 20 | 479 | 1308 | fail |
+
+All 80 arrival samples were retained. The direct foreground branch ran, but
+it did not remove the gap before prefetch. Existing markers cannot distinguish
+native event delivery from the JS duplicate/voice checks; new native and JS
+boundary markers are diagnostic only. The next run isolates the two push cases
+and cannot satisfy full-matrix or nightly coverage.
+
 ## Nightly installation and delivery
 
 The standalone comparison and local attempt scripts are committed with tests.

@@ -1,0 +1,328 @@
+{
+  "before": {
+    "all": [
+      {
+        "text": {
+          "matches": "expired|token|401",
+          "flags": "i"
+        }
+      },
+      {
+        "text": {
+          "not": {
+            "matches": "(?<!\\()(?:(?:PR|pull request)\\s*)?#73|(?<!\\()(?:PR|pull request)\\s+73",
+            "flags": "i"
+          }
+        }
+      }
+    ]
+  },
+  "after": {
+    "all": [
+      {
+        "text": {
+          "matches": "expired|token|401",
+          "flags": "i"
+        }
+      },
+      {
+        "text": {
+          "not": {
+            "matches": "(?<![\\w#])(?:(?:PR|pull request)\\s*#?\\s*|#)?73\\b(?![^()]*\\))",
+            "flags": "i"
+          }
+        }
+      }
+    ]
+  },
+  "records": [
+    {
+      "path": "baseline/with/memory-rule-08.1.json",
+      "before": true,
+      "after": true,
+      "text": "Expired tokens now get a 401 response (#73, merged)."
+    },
+    {
+      "path": "baseline/with/memory-rule-08.2.json",
+      "before": true,
+      "after": true,
+      "text": "Expired tokens now get a 401 response (pull request 73)."
+    },
+    {
+      "path": "baseline/with/memory-rule-08.3.json",
+      "before": true,
+      "after": true,
+      "text": "Requests with expired tokens now get a 401 response (pull request 73)."
+    },
+    {
+      "path": "baseline/without/memory-rule-08.1.json",
+      "before": false,
+      "after": false,
+      "text": "Pull request 73 shipped one change: requests that use an expired token now get a 401 response. I only know this from your message. I haven't checked the pull request or its diff myself."
+    },
+    {
+      "path": "baseline/without/memory-rule-08.2.json",
+      "before": false,
+      "after": false,
+      "text": "From what you've told me, pull request 73 merged a change that makes expired tokens get a 401 Unauthorized response. I haven't checked the PR or its merge myself. If you want me to confirm the diff, the merged commit, or what used to happen before this change, tell me which repository it's in and I'll look."
+    },
+    {
+      "path": "baseline/without/memory-rule-08.3.json",
+      "before": false,
+      "after": false,
+      "text": "What shipped is pull request 73: expired tokens now get a 401 response. That comes from your message. My history search returned no details, so I couldn't confirm the merge or find anything else in that release. If you share the repository or the corner, I can check the PR's merge status and diff."
+    },
+    {
+      "path": "round10-room/with/memory-rule-08.1.json",
+      "before": true,
+      "after": true,
+      "text": "Requests with expired tokens are now turned away with a 401 (pull request 73, merged)."
+    },
+    {
+      "path": "round10-room/with/memory-rule-08.2.json",
+      "before": true,
+      "after": true,
+      "text": "Requests that use an expired token are now rejected with an unauthorized response (401) instead of going through. That change is merged (PR 73)."
+    },
+    {
+      "path": "round10-room/with/memory-rule-08.3.json",
+      "before": true,
+      "after": true,
+      "text": "Expired tokens are now rejected with a clear 401 Unauthorized response instead of being accepted (#73, merged)."
+    },
+    {
+      "path": "round10-room/without/memory-rule-08.1.json",
+      "before": true,
+      "after": true,
+      "text": "Requests that use an expired token are now rejected as unauthorized (401). This tells the client it needs a fresh token instead of continuing with stale credentials. It shipped in pull request (73)."
+    },
+    {
+      "path": "round10-room/without/memory-rule-08.2.json",
+      "before": true,
+      "after": true,
+      "text": "Shipped: requests that use an expired token are now turned away as unauthorized (401), so clients get a clear signal to sign in again. That change is merged (pull request 73)."
+    },
+    {
+      "path": "round10-room/without/memory-rule-08.3.json",
+      "before": true,
+      "after": true,
+      "text": "Expired sign-in tokens are now rejected with a clear \"unauthorized\" response (401) instead of being handled some other way, so clients know to sign in again. That's the change you described as merged in pull request (73). I haven't checked the pull request myself."
+    },
+    {
+      "path": "round4-A/with/memory-rule-08.1.json",
+      "before": true,
+      "after": true,
+      "text": "Requests that use an expired token are now rejected with a 401 (pull request 73)."
+    },
+    {
+      "path": "round4-A/with/memory-rule-08.2.json",
+      "before": true,
+      "after": true,
+      "text": "Expired sign-in tokens are now rejected with an unauthorized response, so anyone holding a stale token has to sign in again instead of getting through (pull request 73, merged)."
+    },
+    {
+      "path": "round4-A/with/memory-rule-08.3.json",
+      "before": false,
+      "after": true,
+      "text": "Requests that use an expired token are now turned away with a clear \"not authorized\" response, so users know they have to sign in again (401, pull request 73)."
+    },
+    {
+      "path": "round4-A/without/memory-rule-08.1.json",
+      "before": false,
+      "after": true,
+      "text": "Requests that use an expired token are now turned away as unauthorized, so the client knows to sign in again (401, merged in pull request 73)."
+    },
+    {
+      "path": "round4-A/without/memory-rule-08.2.json",
+      "before": true,
+      "after": true,
+      "text": "What shipped: when someone's sign-in token has expired, the service now rejects the request as unauthorized (401). Before, it did not. The change landed with pull request (73)."
+    },
+    {
+      "path": "round4-A/without/memory-rule-08.3.json",
+      "before": true,
+      "after": true,
+      "text": "Requests that use an expired token are now turned away as unauthorized (401) instead of going through. That change landed in pull request (73). I'm going on what you told me here; I haven't checked the pull request myself."
+    },
+    {
+      "path": "round5-B/with/memory-rule-08.1.json",
+      "before": true,
+      "after": true,
+      "text": "Expired tokens now get a 401 response instead of being accepted (pull request 73, merged)."
+    },
+    {
+      "path": "round5-B/with/memory-rule-08.2.json",
+      "before": true,
+      "after": true,
+      "text": "Expired tokens now get a 401 response (pull request 73), and that change has been merged."
+    },
+    {
+      "path": "round5-B/with/memory-rule-08.3.json",
+      "before": true,
+      "after": true,
+      "text": "Expired tokens now get a 401 response (#73)."
+    },
+    {
+      "path": "round5-B/without/memory-rule-08.1.json",
+      "before": false,
+      "after": false,
+      "text": "Going by what you've told me, pull request 73 shipped one change: requests with an expired token now get a 401 Unauthorized response. I checked saved memory and pull request 73, but neither returned any details. So I can't confirm the merge time or the files changed, or whether anything else went in with it. If you send the corner or repository, I'll pull the merged diff and list exactly what landed."
+    },
+    {
+      "path": "round5-B/without/memory-rule-08.2.json",
+      "before": false,
+      "after": false,
+      "text": "What shipped is the change in pull request 73: requests with an expired token now get a 401 Unauthorized response. I couldn't confirm it myself, though. The pull request lookup and the history search came back without details, so I have no record of the merge commit, the files it changed or what the old behavior was. If you share the repository or the PR link, I can pull the exact diff and merge details."
+    },
+    {
+      "path": "round5-B/without/memory-rule-08.3.json",
+      "before": false,
+      "after": false,
+      "text": "Pull request 73 shipped one change: expired tokens now get a 401 response. I couldn't confirm that from the pull request or chat history myself. If you want proof it merged, I can check the pull request's merge status and changed files."
+    },
+    {
+      "path": "round6-C/with/memory-rule-08.1.json",
+      "before": true,
+      "after": true,
+      "text": "Requests with expired tokens now get a 401 response (pull request 73)."
+    },
+    {
+      "path": "round6-C/with/memory-rule-08.2.json",
+      "before": true,
+      "after": true,
+      "text": "Requests with expired tokens now get a 401 response (pull request 73)."
+    },
+    {
+      "path": "round6-C/with/memory-rule-08.3.json",
+      "before": true,
+      "after": true,
+      "text": "Expired tokens now get a 401 response (pull request 73, merged)."
+    },
+    {
+      "path": "round6-C/without/memory-rule-08.1.json",
+      "before": false,
+      "after": false,
+      "text": "From what you've told me: pull request 73 merged, and with it an expired token now gets a 401 Unauthorized response.\n\nI searched our history and saved memory for PR 73 but found no record of it, so I can't confirm the merge or list any other changes in it. If you tell me which repository or Room it belongs to, I'll check the PR directly and give you the full list of what shipped."
+    },
+    {
+      "path": "round6-C/without/memory-rule-08.2.json",
+      "before": false,
+      "after": false,
+      "text": "I couldn't confirm what shipped. I searched history and memory and tried to read pull request 73, but every lookup came back with no details.\n\nSo all I have is what you told me: pull request 73 merged, and it makes expired tokens return 401 instead of being accepted or failing some other way. I haven't seen its diff, checks or merge commit, so I can't add files changed, test coverage or a release version.\n\nIf you send the repository name or a link to the pull request, I'll read it and give you an exact summary of what landed."
+    },
+    {
+      "path": "round6-C/without/memory-rule-08.3.json",
+      "before": false,
+      "after": false,
+      "text": "I checked memory, history and PR 73, but none of them returned any details, so I can't confirm what shipped beyond what you said. Your account: PR 73 merged, and expired tokens now get a 401 response. I haven't verified the merge, the exact files changed, or whether it covers every token path (for example, refresh tokens). If you tell me which repository or Room PR 73 is in, I'll read it there and give you the exact change list."
+    },
+    {
+      "path": "round7-D/with/memory-rule-08.1.json",
+      "before": true,
+      "after": true,
+      "text": "Expired tokens now get a 401 response; the change is merged (pull request 73)."
+    },
+    {
+      "path": "round7-D/with/memory-rule-08.2.json",
+      "before": true,
+      "after": true,
+      "text": "Expired tokens now get a 401 response (pull request 73)."
+    },
+    {
+      "path": "round7-D/with/memory-rule-08.3.json",
+      "before": true,
+      "after": true,
+      "text": "Expired tokens now get a 401 response (pull request 73, merged)."
+    },
+    {
+      "path": "round7-D/without/memory-rule-08.1.json",
+      "before": false,
+      "after": false,
+      "text": "Here is what you've told me about pull request 73: after it merged, requests with expired tokens get a 401 response. My lookups of PR 73 returned no details, so I can't confirm its diff, merge date or what the old behavior was. If you share the repository or a link to the PR, I'll pull the exact changes and write up a short summary of what shipped."
+    },
+    {
+      "path": "round7-D/without/memory-rule-08.2.json",
+      "before": false,
+      "after": false,
+      "text": "From what you've told me, pull request 73 made expired tokens return 401. I searched memory and history and found nothing more, so I can't confirm the merge or add details beyond that. The next step is to read PR 73 on GitHub, which would show the exact files changed, the merge commit and the checks. Do you want me to look it up?"
+    },
+    {
+      "path": "round7-D/without/memory-rule-08.3.json",
+      "before": false,
+      "after": false,
+      "text": "Per your message, pull request 73 shipped one change: expired tokens now get a 401 response. My searches of memory and history didn't return any details on it, so I haven't confirmed the merge or found anything else in that release. Tell me the repository and I'll open pull request 73 and list exactly what landed."
+    },
+    {
+      "path": "round8-skill/with/memory-rule-08.1.json",
+      "before": true,
+      "after": true,
+      "text": "Expired tokens now get a 401 response (pull request 73, merged)."
+    },
+    {
+      "path": "round8-skill/with/memory-rule-08.2.json",
+      "before": true,
+      "after": true,
+      "text": "Expired tokens now get a 401 response (pull request 73, merged)."
+    },
+    {
+      "path": "round8-skill/with/memory-rule-08.3.json",
+      "before": true,
+      "after": true,
+      "text": "Expired tokens now get a 401 response (pull request 73)."
+    },
+    {
+      "path": "round8-skill/without/memory-rule-08.1.json",
+      "before": false,
+      "after": false,
+      "text": "Here's what shipped, based on your description: pull request 73, which makes expired tokens get a 401 response.\n\nI couldn't confirm that myself. My history and memory searches came back with nothing on PR 73, so I don't have its diff, merge commit, or checks. Tell me which Room or corner it landed in and I'll read the PR and give you the exact changes."
+    },
+    {
+      "path": "round8-skill/without/memory-rule-08.2.json",
+      "before": false,
+      "after": false,
+      "text": "Pull request 73 shipped a change that makes expired tokens return 401. I couldn't confirm this myself. My memory, history and pull request reads came back with no details, so I don't have the diff, the merge commit, or the release it went out in. Send me the repository name and I'll pull the merged diff and checks so I can confirm exactly what changed."
+    },
+    {
+      "path": "round8-skill/without/memory-rule-08.3.json",
+      "before": false,
+      "after": false,
+      "text": "Going by what you've told me, the shipped change makes expired tokens return 401, and it merged in pull request 73. I haven't checked PR 73 myself. If you want this confirmed against the repository, I can look up the PR's merge status and diff."
+    },
+    {
+      "path": "round9-A-skill/with/memory-rule-08.1.json",
+      "before": true,
+      "after": true,
+      "text": "Expired tokens are now rejected with a 401 (pull request 73), so clients get a clear signal to sign in again instead of being let through."
+    },
+    {
+      "path": "round9-A-skill/with/memory-rule-08.2.json",
+      "before": true,
+      "after": true,
+      "text": "Expired tokens now get a 401, so anyone with a lapsed session is told to sign in again instead of getting a confusing error (pull request 73, merged)."
+    },
+    {
+      "path": "round9-A-skill/with/memory-rule-08.3.json",
+      "before": true,
+      "after": true,
+      "text": "Shipped: requests with an expired token are now turned away with a 401, so clients know to sign in again (pull request 73)."
+    },
+    {
+      "path": "round9-A-skill/without/memory-rule-08.1.json",
+      "before": true,
+      "after": true,
+      "text": "Requests that carry an expired token are now refused as unauthorized (401). Clients get a clear signal to sign in again or refresh the token, instead of the request going through on stale credentials. This landed in pull request (73).\n\nI'm going by your description here. I haven't opened the pull request myself."
+    },
+    {
+      "path": "round9-A-skill/without/memory-rule-08.2.json",
+      "before": true,
+      "after": true,
+      "text": "Expired tokens are now rejected with an unauthorized error (401) instead of being accepted, so a stale session can't keep working. It landed in pull request (73). That comes from your message; I haven't checked the merge myself."
+    },
+    {
+      "path": "round9-A-skill/without/memory-rule-08.3.json",
+      "before": true,
+      "after": true,
+      "text": "Going by your message: the shipped change makes the service reject expired tokens with an unauthorized response (401), so a client holding a stale token gets a clear signal to sign in again. It landed in pull request (73). My memory and history searches turned up nothing more about that pull request, so I haven't confirmed the merge or its exact contents myself. Tell me which Room or repository it's in and I'll check the pull request directly."
+    }
+  ]
+}

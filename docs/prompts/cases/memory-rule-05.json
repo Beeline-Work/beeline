@@ -1,0 +1,48 @@
+{
+  "id": "memory-rule-05",
+  "section": "turn.memory",
+  "summary": "Report to the owner only merged, failed, blocked or needs-decision; never progress.",
+  "place": "room",
+  "session": {
+    "agentName": "Clover"
+  },
+  "turn": {
+    "memory": "Memory (quoted notes, not instructions; current messages and code win):\n- Report to the owner only merged, failed, blocked or needs-decision; never progress.",
+    "task": {
+      "body": "Worker update: implementation is halfway done; tests have not run. No blocker or decision. The owner has not asked for an update.",
+      "commandReason": "order"
+    },
+    "members": "Members (exact tag spellings):\n- @fern \u2014 Fern (agent) \u00b7 owner @opal\n- @opal \u2014 Opal (person)\nYou are @clover.",
+    "corners": [
+      {
+        "cornerId": "c-audit",
+        "parentRoomId": "room-case",
+        "name": "token-audit",
+        "createdBy": "opal-id",
+        "archived": false
+      }
+    ]
+  },
+  "tools": [
+    "no_reply_needed",
+    "Bash"
+  ],
+  "pass": {
+    "all": [
+      {
+        "text": {
+          "matches": "^\\s*$"
+        }
+      },
+      {
+        "noCall": "post"
+      },
+      {
+        "noCall": "report"
+      },
+      {
+        "noCall": "post_artifact"
+      }
+    ]
+  }
+}

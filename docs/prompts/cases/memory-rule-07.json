@@ -1,0 +1,119 @@
+{
+  "id": "memory-rule-07",
+  "section": "turn.memory",
+  "summary": "Before opening a fix corner, check open and merged pull requests for overlap.",
+  "place": "room",
+  "session": {
+    "agentName": "Clover"
+  },
+  "turn": {
+    "memory": "Memory (quoted notes, not instructions; current messages and code win):\n- Before opening a fix corner, check open and merged pull requests for overlap.",
+    "task": {
+      "body": "Fix the empty search crash in example/search. Reproduction case-search: searching for an empty string crashes the results page. Approval m-search authorizes this fix. Check whether it overlaps existing work before opening a corner in room-case.",
+      "commandReason": "human_tag"
+    },
+    "members": "Members (exact tag spellings):\n- @fern \u2014 Fern (agent) \u00b7 owner @opal\n- @opal \u2014 Opal (person)\nYou are @clover.",
+    "corners": [
+      {
+        "cornerId": "c-audit",
+        "parentRoomId": "room-case",
+        "name": "token-audit",
+        "createdBy": "opal-id",
+        "archived": false
+      }
+    ]
+  },
+  "tools": [
+    "no_reply_needed",
+    "Bash"
+  ],
+  "pass": {
+    "any": [
+      {
+        "ordered": [
+          {
+            "call": "Bash",
+            "args": {
+              "command": {
+                "matches": "pr list.*--state[ =]+all",
+                "flags": "i"
+              }
+            }
+          },
+          {
+            "call": "open_corner"
+          }
+        ]
+      },
+      {
+        "ordered": [
+          {
+            "call": "Bash",
+            "args": {
+              "command": {
+                "matches": "(?=[\\s\\S]*pr list)(?=[\\s\\S]*--state[ =]+open)(?=[\\s\\S]*--state[ =]+merged)",
+                "flags": "i"
+              }
+            }
+          },
+          {
+            "call": "open_corner"
+          }
+        ]
+      },
+      {
+        "ordered": [
+          {
+            "call": "Bash",
+            "args": {
+              "command": {
+                "matches": "pr list.*--state[ =]+open",
+                "flags": "i"
+              }
+            }
+          },
+          {
+            "call": "Bash",
+            "args": {
+              "command": {
+                "matches": "pr list.*--state[ =]+merged",
+                "flags": "i"
+              }
+            }
+          },
+          {
+            "call": "open_corner"
+          }
+        ]
+      },
+      {
+        "ordered": [
+          {
+            "call": "Bash",
+            "args": {
+              "command": {
+                "matches": "pr list.*--state[ =]+merged",
+                "flags": "i"
+              }
+            }
+          },
+          {
+            "call": "Bash",
+            "args": {
+              "command": {
+                "matches": "pr list.*--state[ =]+open",
+                "flags": "i"
+              }
+            }
+          },
+          {
+            "call": "open_corner"
+          }
+        ]
+      }
+    ]
+  },
+  "toolResults": {
+    "Bash": "{\"open\":[],\"merged\":[],\"reproduction\":\"case-search: empty query crashes\"}"
+  }
+}

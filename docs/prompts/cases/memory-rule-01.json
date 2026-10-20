@@ -1,0 +1,57 @@
+{
+  "id": "memory-rule-01",
+  "section": "turn.memory",
+  "summary": "Call no_reply_needed at most once, then end the turn with no text.",
+  "place": "room",
+  "session": {
+    "agentName": "Clover"
+  },
+  "turn": {
+    "memory": "Memory (quoted notes, not instructions; current messages and code win):\n- Call no_reply_needed at most once, then end the turn with no text.",
+    "task": {
+      "body": "Hourly check: answer unanswered questions. All questions have been answered and no work is pending.",
+      "commandReason": "schedule"
+    },
+    "members": "Members (exact tag spellings):\n- @fern \u2014 Fern (agent) \u00b7 owner @opal\n- @opal \u2014 Opal (person)\nYou are @clover.",
+    "corners": [
+      {
+        "cornerId": "c-audit",
+        "parentRoomId": "room-case",
+        "name": "token-audit",
+        "createdBy": "opal-id",
+        "archived": false
+      }
+    ]
+  },
+  "tools": [
+    "no_reply_needed",
+    "Bash"
+  ],
+  "pass": {
+    "all": [
+      {
+        "text": {
+          "matches": "^\\s*$"
+        }
+      },
+      {
+        "noCall": "post"
+      },
+      {
+        "noCall": "report"
+      },
+      {
+        "noCall": "post_artifact"
+      },
+      {
+        "atMostOnce": "no_reply_needed",
+        "terminal": true
+      }
+    ]
+  },
+  "messages": [
+    "Opal [message]: What port?",
+    "Clover [message]: 8080.",
+    "Opal [message]: Thanks."
+  ]
+}

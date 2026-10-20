@@ -1,0 +1,256 @@
+{
+  "before": {
+    "all": [
+      {
+        "text": {
+          "matches": "expired|session|sign.in",
+          "flags": "i"
+        }
+      },
+      {
+        "text": {
+          "not": {
+            "matches": "(?<!\\()(?:(?:PR|pull request)\\s*)?#86|(?<!\\()(?:PR|pull request)\\s+86",
+            "flags": "i"
+          }
+        }
+      },
+      {
+        "text": {
+          "not": {
+            "matches": "(?:onboarding )?animation (?:has )?(?:shipped|landed)|(?:shipped|landed) (?:the )?(?:onboarding )?animation",
+            "flags": "i"
+          }
+        }
+      }
+    ]
+  },
+  "after": {
+    "all": [
+      {
+        "text": {
+          "matches": "expired|session|sign.in",
+          "flags": "i"
+        }
+      },
+      {
+        "text": {
+          "not": {
+            "matches": "(?<![\\w#])(?:(?:PR|pull request)\\s*#?\\s*|#)?86\\b(?![^()]*\\))",
+            "flags": "i"
+          }
+        }
+      },
+      {
+        "text": {
+          "not": {
+            "matches": "(?:onboarding )?animation (?:has )?(?:shipped|landed)|(?:shipped|landed) (?:the )?(?:onboarding )?animation",
+            "flags": "i"
+          }
+        }
+      }
+    ]
+  },
+  "records": [
+    {
+      "path": "baseline/with/long-incident-shipped-status.1.json",
+      "before": false,
+      "after": false,
+      "text": "Pull request 86 shipped the expired-session fix. When a session expires, people now get a clear failure instead of being looped back to the sign-in screen. The onboarding animation did not ship."
+    },
+    {
+      "path": "baseline/with/long-incident-shipped-status.2.json",
+      "before": false,
+      "after": false,
+      "text": "Pull request 86 shipped. When someone's session expires, the app now tells them clearly that it failed. Before, it sent them around the sign-in screen in a loop. Nothing else has finished. The onboarding animation did not ship."
+    },
+    {
+      "path": "baseline/with/long-incident-shipped-status.3.json",
+      "before": false,
+      "after": false,
+      "text": "Pull request 86 shipped one thing for users: when a session expires, sign-in now fails with a clear message instead of looping. Nothing else has shipped. The onboarding animation was not part of it."
+    },
+    {
+      "path": "round10-room/with/long-incident-shipped-status.1.json",
+      "before": true,
+      "after": true,
+      "text": "When a session expires, people now get a clear failure instead of being sent back to sign-in over and over (pull request 86). That fix is the only thing that shipped. The onboarding animation is not part of it."
+    },
+    {
+      "path": "round10-room/with/long-incident-shipped-status.2.json",
+      "before": true,
+      "after": true,
+      "text": "People whose session has expired now get a clear failure instead of being stuck in a sign-in loop (pull request 86). That is the only thing that shipped. The onboarding animation is not part of it."
+    },
+    {
+      "path": "round10-room/with/long-incident-shipped-status.3.json",
+      "before": true,
+      "after": true,
+      "text": "When a session expires, people now get a clear message and can sign in again, instead of getting stuck in a sign-in loop (pull request 86). That is the only change that has shipped. The onboarding animation was not built and has not shipped."
+    },
+    {
+      "path": "round4-A/with/long-incident-shipped-status.1.json",
+      "before": true,
+      "after": true,
+      "text": "When a sign-in session expires, people now get a clear failure message instead of being sent around the sign-in screen in a loop. They can see what happened and sign in again rather than getting stuck (pull request 86). Nothing else shipped. The onboarding animation was not built."
+    },
+    {
+      "path": "round4-A/with/long-incident-shipped-status.2.json",
+      "before": true,
+      "after": true,
+      "text": "People whose session has expired now get a clear failure message instead of being sent around the sign-in loop, so they know to sign in again (pull request 86). That is the only change that shipped. The onboarding animation was not built and is not part of this release."
+    },
+    {
+      "path": "round4-A/with/long-incident-shipped-status.3.json",
+      "before": true,
+      "after": true,
+      "text": "When your session expires, the app now tells you clearly instead of sending you back to sign-in over and over (pull request 86). That is the only change that shipped. The onboarding animation was not built."
+    },
+    {
+      "path": "round5-B/with/long-incident-shipped-status.1.json",
+      "before": false,
+      "after": false,
+      "text": "One thing shipped: when your session expires, the app now tells you clearly instead of sending you back around the sign-in loop. That came from pull request 86, and the merge was confirmed. The onboarding animation was not built."
+    },
+    {
+      "path": "round5-B/with/long-incident-shipped-status.2.json",
+      "before": false,
+      "after": false,
+      "text": "What shipped: pull request 86, the expired-session fix. For people using the app, an expired session now fails with a clear message instead of looping them back through sign-in. The optional onboarding animation did not ship."
+    },
+    {
+      "path": "round5-B/with/long-incident-shipped-status.3.json",
+      "before": false,
+      "after": false,
+      "text": "Pull request 86 shipped. If your session has expired, the app now tells you clearly instead of sending you around the sign-in screen in a loop. The onboarding animation did not ship."
+    },
+    {
+      "path": "round6-C/with/long-incident-shipped-status.1.json",
+      "before": false,
+      "after": false,
+      "text": "One thing shipped: pull request 86, the expired-session fix. When someone's session expires, the app now tells them clearly that it failed instead of sending them around the sign-in loop. They can see what happened and sign in again instead of getting stuck.\n\nThe optional onboarding animation did not ship. Nothing else has been confirmed as landed."
+    },
+    {
+      "path": "round6-C/with/long-incident-shipped-status.2.json",
+      "before": false,
+      "after": false,
+      "text": "Pull request 86 is the only work that shipped. With it, people whose session has expired now get a clear failure instead of being stuck in a loop at sign-in. The optional onboarding animation did not ship."
+    },
+    {
+      "path": "round6-C/with/long-incident-shipped-status.3.json",
+      "before": false,
+      "after": false,
+      "text": "What shipped is pull request 86. When someone's session has expired, the app now tells them clearly instead of sending them around the sign-in loop. The merge event confirmed this fix landed. The onboarding animation did not ship."
+    },
+    {
+      "path": "round7-D/with/long-incident-shipped-status.1.json",
+      "before": false,
+      "after": false,
+      "text": "One thing shipped: pull request 86, which the merge event confirmed. When your session expires, the app now tells you plainly that it failed, instead of sending you around the sign-in screen in a loop. You can see what happened and sign in again.\n\nThe optional onboarding animation was not built and is not part of this release."
+    },
+    {
+      "path": "round7-D/with/long-incident-shipped-status.2.json",
+      "before": false,
+      "after": false,
+      "text": "When a session expires, people now get a clear failure instead of being stuck in a loop at sign-in. That fix shipped in pull request 86. The onboarding animation did not ship."
+    },
+    {
+      "path": "round7-D/with/long-incident-shipped-status.3.json",
+      "before": false,
+      "after": false,
+      "text": "One thing shipped: pull request 86, the expired-session fix. The merge event confirmed it. When someone's session expires, the app now shows a clear failure instead of trapping them in a sign-in loop. They can see what happened and sign in again. The onboarding animation did not ship."
+    },
+    {
+      "path": "round8-skill/with/long-incident-shipped-status.1.json",
+      "before": false,
+      "after": false,
+      "text": "What shipped is pull request 86, which fixes expired sign-in sessions. If your session has expired, the app now tells you so clearly instead of sending you back to the sign-in screen in a loop.\n\nThe onboarding animation was not built and did not ship."
+    },
+    {
+      "path": "round8-skill/with/long-incident-shipped-status.2.json",
+      "before": false,
+      "after": false,
+      "text": "For people using the app: when their session expires, they now get a clear failure instead of being stuck in a sign-in loop. That is the only shipped change, from pull request 86, and the merge event confirmed it. The onboarding animation has not shipped."
+    },
+    {
+      "path": "round8-skill/with/long-incident-shipped-status.3.json",
+      "before": false,
+      "after": false,
+      "text": "One change shipped, in pull request 86. When your session expires, the app now gives a clear failure instead of looping you back to sign-in. The onboarding animation did not ship."
+    },
+    {
+      "path": "round9-A-skill/with/long-incident-shipped-status.1.json",
+      "before": true,
+      "after": true,
+      "text": "People whose session has expired now get a clear message instead of being stuck in a loop on the sign-in screen (pull request 86). That is the only change that shipped. The onboarding animation was not built."
+    },
+    {
+      "path": "round9-A-skill/with/long-incident-shipped-status.2.json",
+      "before": true,
+      "after": true,
+      "text": "People whose session has expired now get a clear message telling them so, instead of being sent around in a loop at sign-in (pull request 86). That is the only change that shipped. The onboarding animation was not built and is not live."
+    },
+    {
+      "path": "round9-A-skill/with/long-incident-shipped-status.3.json",
+      "before": true,
+      "after": true,
+      "text": "People whose session has expired now get a clear failure message instead of being sent around the sign-in loop, so they know to sign in again (pull request 86). The optional onboarding animation did not ship."
+    },
+    {
+      "path": "stress-main/long-incident-shipped-status.1.json",
+      "before": false,
+      "after": false,
+      "text": "Pull request 86 shipped. If your session has expired, the app now tells you so clearly instead of sending you back to sign-in over and over. Nothing else landed. The onboarding animation was not built and has not shipped."
+    },
+    {
+      "path": "stress-main/long-incident-shipped-status.2.json",
+      "before": false,
+      "after": false,
+      "text": "What shipped: pull request 86, the expired-session fix. When a session expires, people now get a clear failure at sign-in instead of being stuck in a sign-in loop. The onboarding animation did not ship."
+    },
+    {
+      "path": "stress-main/long-incident-shipped-status.3.json",
+      "before": false,
+      "after": false,
+      "text": "What shipped is pull request 86. When your sign-in session expires, the app now tells you clearly instead of sending you around the sign-in loop. Nothing else from this work has shipped. The onboarding animation was not built."
+    }
+  ],
+  "independentRecords": [
+    {
+      "path": "independent-shipped-status/head/long-incident-shipped-status.1.json",
+      "before": true,
+      "after": true,
+      "text": "When a session expires, people now get a clear message instead of being sent back around the sign-in loop (pull request 86). That fix is the only change that shipped. The onboarding animation did not ship."
+    },
+    {
+      "path": "independent-shipped-status/head/long-incident-shipped-status.2.json",
+      "before": true,
+      "after": true,
+      "text": "People whose session has expired now get a clear failure message instead of being sent around the sign-in screen in a loop (pull request 86). That fix is the only thing that shipped. The optional onboarding animation was not built."
+    },
+    {
+      "path": "independent-shipped-status/head/long-incident-shipped-status.3.json",
+      "before": true,
+      "after": true,
+      "text": "People whose session has expired now get a clear failure message instead of being sent around the sign-in screen in a loop (pull request 86). The merge event confirmed that fix.\n\nThe onboarding animation did not ship, and no other completed work was observed."
+    },
+    {
+      "path": "independent-shipped-status/main/long-incident-shipped-status.1.json",
+      "before": false,
+      "after": false,
+      "text": "People whose session has expired now get a clear failure message instead of being sent around the sign-in loop. That fix landed in pull request 86. The optional onboarding animation did not ship."
+    },
+    {
+      "path": "independent-shipped-status/main/long-incident-shipped-status.2.json",
+      "before": false,
+      "after": false,
+      "text": "Pull request 86 shipped, and it was the only change that landed. For people using the app, an expired session now fails with a clear message instead of looping them back through sign-in. The onboarding animation did not ship."
+    },
+    {
+      "path": "independent-shipped-status/main/long-incident-shipped-status.3.json",
+      "before": false,
+      "after": false,
+      "text": "One thing shipped: pull request 86. For people using the app, an expired session now fails with a clear message instead of looping them back through sign-in. The optional onboarding animation did not ship."
+    }
+  ]
+}

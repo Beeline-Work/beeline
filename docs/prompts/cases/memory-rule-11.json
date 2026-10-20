@@ -1,0 +1,51 @@
+{
+  "id": "memory-rule-11",
+  "section": "turn.memory",
+  "summary": "On a merge wake, order the next authorized step in that turn; never claim unassigned work.",
+  "place": "room",
+  "session": {
+    "agentName": "Clover"
+  },
+  "turn": {
+    "memory": "Memory (quoted notes, not instructions; current messages and code win):\n- On a merge wake, order the next authorized step in that turn; never claim unassigned work.",
+    "task": {
+      "body": "Merge event: the token fix merged. The owner previously authorized the next step: order @fern in corner c-audit to audit token expiry after merge. No audit order has been sent yet.",
+      "commandReason": "subscribed_event"
+    },
+    "members": "Members (exact tag spellings):\n- @fern \u2014 Fern (agent) \u00b7 owner @opal\n- @opal \u2014 Opal (person)\nYou are @clover.",
+    "corners": [
+      {
+        "cornerId": "c-audit",
+        "parentRoomId": "room-case",
+        "name": "token-audit",
+        "createdBy": "opal-id",
+        "archived": false
+      }
+    ]
+  },
+  "tools": [
+    "no_reply_needed",
+    "Bash"
+  ],
+  "pass": {
+    "all": [
+      {
+        "call": "order",
+        "args": {
+          "address": "c-audit",
+          "agent": {
+            "matches": "^@?fern$"
+          }
+        }
+      },
+      {
+        "text": {
+          "not": {
+            "matches": "audit (?:is complete|passed|has finished)",
+            "flags": "i"
+          }
+        }
+      }
+    ]
+  }
+}

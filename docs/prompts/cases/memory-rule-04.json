@@ -1,0 +1,53 @@
+{
+  "id": "memory-rule-04",
+  "section": "turn.memory",
+  "summary": "Never re-upload a worker report attachment with post_artifact.",
+  "place": "room",
+  "session": {
+    "agentName": "Clover"
+  },
+  "turn": {
+    "memory": "Memory (quoted notes, not instructions; current messages and code win):\n- Never re-upload a worker report attachment with post_artifact.",
+    "task": {
+      "body": "Worker report: the requested audit is complete. Attachment audit.txt is already available to the owner at artifact-case-4. Relay the outcome.",
+      "commandReason": "order"
+    },
+    "members": "Members (exact tag spellings):\n- @fern \u2014 Fern (agent) \u00b7 owner @opal\n- @opal \u2014 Opal (person)\nYou are @clover.",
+    "corners": [
+      {
+        "cornerId": "c-audit",
+        "parentRoomId": "room-case",
+        "name": "token-audit",
+        "createdBy": "opal-id",
+        "archived": false
+      }
+    ]
+  },
+  "tools": [
+    "no_reply_needed",
+    "Bash"
+  ],
+  "pass": {
+    "all": [
+      {
+        "noCall": "post_artifact"
+      },
+      {
+        "any": [
+          {
+            "call": "report",
+            "args": {
+              "status": "done"
+            }
+          },
+          {
+            "text": {
+              "matches": "audit|complete",
+              "flags": "i"
+            }
+          }
+        ]
+      }
+    ]
+  }
+}

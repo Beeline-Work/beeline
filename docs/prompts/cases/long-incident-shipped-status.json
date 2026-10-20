@@ -1,0 +1,77 @@
+{
+  "place": "room",
+  "session": {
+    "squireAvailable": true
+  },
+  "tools": [
+    "Bash",
+    "operate_drive",
+    "no_reply_needed"
+  ],
+  "id": "long-incident-shipped-status",
+  "section": "work",
+  "summary": "A long shipped-work discussion is described by user outcome with request numbers parenthesized.",
+  "turn": {
+    "task": {
+      "body": "Tell me what actually shipped from the work we discussed; keep it to the finished user benefit.",
+      "commandReason": "order"
+    }
+  },
+  "messages": [
+    "Dana: For catalog, use invented stationery.",
+    "Ruby: Recorded the catalog constraint. I will keep the task within that scope.",
+    "Dana: For account, use fictional demo identity.",
+    "Ruby: Recorded the account constraint. I will keep the task within that scope.",
+    "Dana: For region, use test region.",
+    "Ruby: Recorded the region constraint. I will keep the task within that scope.",
+    "Dana: For welcome, use check its visible heading.",
+    "Ruby: Recorded the welcome constraint. I will keep the task within that scope.",
+    "Dana: For notifications, use leave them disabled.",
+    "Ruby: Recorded the notifications constraint. I will keep the task within that scope.",
+    "Dana: For billing, use no payment authorized.",
+    "Ruby: Recorded the billing constraint. I will keep the task within that scope.",
+    "Dana: For exports, use sample records only.",
+    "Ruby: Recorded the exports constraint. I will keep the task within that scope.",
+    "Dana: For workspace, use one demo workspace.",
+    "Ruby: Recorded the workspace constraint. I will keep the task within that scope.",
+    "Dana: For invite, use do not contact anyone.",
+    "Ruby: Recorded the invite constraint. I will keep the task within that scope.",
+    "Dana: For cleanup, use retain the demo until review.",
+    "Ruby: Recorded the cleanup constraint. I will keep the task within that scope.",
+    "Dana: For handoff, use report only the finished result.",
+    "Ruby: Recorded the handoff constraint. I will keep the task within that scope.",
+    "Dana: For verification, use cite only observed outcomes.",
+    "Ruby: Recorded the verification constraint. I will keep the task within that scope.",
+    "Dana: The delivered change makes expired sessions fail clearly instead of looping at sign-in.",
+    "Ruby: The only landed item is pull request 86; the optional onboarding animation is not implemented.",
+    "Dana: Do not call the animation shipped. The merge event confirmed the expired-session fix.",
+    "Ruby: Pull request 86 landed. No other completion was observed.",
+    "Dana: What does that mean for people using the app?"
+  ],
+  "pass": {
+    "all": [
+      {
+        "text": {
+          "matches": "expired|session|sign.in",
+          "flags": "i"
+        }
+      },
+      {
+        "text": {
+          "not": {
+            "matches": "(?<![\\w#])(?:(?:PR|pull request)\\s*#?\\s*|#)?86\\b(?![^()]*\\))",
+            "flags": "i"
+          }
+        }
+      },
+      {
+        "text": {
+          "not": {
+            "matches": "(?:onboarding )?animation (?:has )?(?:shipped|landed)|(?:shipped|landed) (?:the )?(?:onboarding )?animation",
+            "flags": "i"
+          }
+        }
+      }
+    ]
+  }
+}

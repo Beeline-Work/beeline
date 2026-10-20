@@ -12,6 +12,35 @@ const turn: Transcript = {
 };
 const pass = (rule: Rule) => evaluateRule(rule, turn).pass;
 
+test('shipped status allows parenthesized references and rejects work numbers outside them', async () => {
+  const { readFileSync } = await import('node:fs');
+  const rule = JSON.parse(readFileSync('docs/prompts/cases/long-incident-shipped-status.json', 'utf8')).pass as Rule;
+  const grade = (text: string) => evaluateRule(rule, { calls: [], text }).pass;
+  for (const reference of ['PR #86', '#86', 'PR 86', '86']) {
+    assert.equal(grade(`Expired sessions now fail clearly at sign-in (${reference}).`), true, reference);
+  }
+  for (const reference of ['PR #86', '#86', 'PR 86', '86']) {
+    assert.equal(grade(`${reference} is done. Expired sessions now fail clearly at sign-in.`), false, reference);
+  }
+  assert.equal(grade('Expired sessions now fail clearly at sign-in (PR #86). The onboarding animation shipped.'), false);
+});
+
+test('rule 08 allows parenthesized references but rejects numbers naming the work', async () => {
+  const { readFileSync } = await import('node:fs');
+  const rule = JSON.parse(readFileSync('docs/prompts/cases/memory-rule-08.json', 'utf8')).pass as Rule;
+  const grade = (text: string) => evaluateRule(rule, { calls: [], text }).pass;
+  for (const reference of ['PR #73', '#73', 'PR 73', '73', '401, merged in pull request 73']) {
+    assert.equal(grade(`Expired tokens now return 401 (${reference}).`), true, reference);
+  }
+  for (const text of ['Merged #73.', 'PR #73 is done.',
+    'Expired tokens now return 401. Merged #73.',
+    'Expired tokens now return 401. PR #73 is done.',
+    'Expired tokens now return 401. 73 is done.',
+    'Expired tokens now return 401 (#73). PR #73 is done.']) {
+    assert.equal(grade(text), false, text);
+  }
+});
+
 test('call and noCall match tool names and argument matchers', () => {
   assert.equal(pass({ call: 'order', args: { address: 'c-1' } }), true);
   assert.equal(pass({ call: 'order', args: { address: 'c-2' } }), false);
@@ -104,6 +133,62 @@ test('export lists real skills but reveals bodies only through requested file re
       assert.equal(results[skillPath(skill.name)], skill.content);
     }
     assert.ok(!prompt.includes('beeline-review'));
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('at-most-once rejects repeats and calls after terminal silence', () => {
+  const rule: Rule = { atMostOnce: 'no_reply_needed', terminal: true };
+  const silent = { name: 'no_reply_needed', args: {} };
+  assert.equal(evaluateRule(rule, { calls: [], text: '' }).pass, true);
+  assert.equal(evaluateRule(rule, { calls: [silent], text: '' }).pass, true);
+  assert.equal(evaluateRule(rule, { calls: [silent, silent], text: '' }).pass, false);
+  assert.equal(evaluateRule(rule, { calls: [silent, turn.calls[0]!], text: '' }).pass, false);
+  assert.equal(evaluateRule({ atMostOnce: 'order', args: { address: 'c-2' } }, turn).pass, true);
+});
+
+test('ordered calls require every first match before the next action', () => {
+  const read = { name: 'read', args: { facet: 'pr' } };
+  const open = { name: 'open_corner', args: {} };
+  const rule: Rule = { ordered: [{ call: 'read', args: { facet: 'pr' } }, { call: 'open_corner' }] };
+  for (const calls of [[read, open], [read, turn.calls[1]!, open]]) {
+    assert.equal(evaluateRule(rule, { calls, text: '' }).pass, true);
+  }
+  for (const calls of [[], [read], [open, read], [open, read, open]]) {
+    assert.equal(evaluateRule(rule, { calls, text: '' }).pass, false);
+  }
+  const base = { id: 'x', section: 'talking', summary: 'Ordered calls.', place: 'room', turn: { task: { body: 'hi' } } };
+  for (const pass of [{ ordered: [] }, { ordered: [{ noCall: 'read' }, { call: 'open_corner' }] }, { atMostOnce: 'read', terminal: 'yes' }]) {
+    assert.throws(() => parsePromptCase({ ...base, pass }, 'x', []));
+  }
+});
+
+test('paired memory export changes only the note and grades variants separately', async () => {
+  const { mkdtempSync, readFileSync, writeFileSync, rmSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  const { execFileSync } = await import('node:child_process');
+  const dir = mkdtempSync(join(tmpdir(), 'prompt-memory-'));
+  const run = (...args: string[]) => execFileSync(process.execPath, ['--import', 'tsx', 'scripts/prompt-cases.ts', '--only', 'memory-rule-01', ...args], { encoding: 'utf8', stdio: 'pipe' });
+  try {
+    run('--memory', 'both', '--export', dir);
+    const withNote = readFileSync(join(dir, 'with', 'memory-rule-01.prompt.md'), 'utf8');
+    const withoutNote = readFileSync(join(dir, 'without', 'memory-rule-01.prompt.md'), 'utf8');
+    const note = JSON.parse(readFileSync('docs/prompts/cases/memory-rule-01.json', 'utf8')).turn.memory;
+    assert.ok(withNote.includes(note));
+    assert.ok(!withoutNote.includes(note));
+    assert.equal(withNote.replace(note + '\n\n', ''), withoutNote);
+    assert.equal(readFileSync(join(dir, 'with', 'memory-rule-01.skills.json'), 'utf8'), readFileSync(join(dir, 'without', 'memory-rule-01.skills.json'), 'utf8'));
+    writeFileSync(join(dir, 'with', 'memory-rule-01.1.json'), JSON.stringify({ calls: [], text: '' }));
+    writeFileSync(join(dir, 'without', 'memory-rule-01.1.json'), JSON.stringify({ calls: [], text: 'Unnecessary update.' }));
+    assert.throws(() => run('--memory', 'both', '--grade', dir), (error: unknown) => {
+      assert.ok(error && typeof error === 'object' && 'stdout' in error);
+      assert.match(String(error.stdout), /memory-rule-01 \(with note\).*PASS/);
+      assert.match(String(error.stdout), /memory-rule-01 \(without note\).*NEEDS SAMPLES/);
+      return true;
+    });
+    assert.throws(() => run('--memory', 'invalid'));
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

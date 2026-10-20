@@ -270,8 +270,9 @@ Launch an owned private emulator with `beeline emulator -avd se_api35 -no-window
 serial through its own launcher/child process, then select it explicitly with
 `LATENCY_RIG_DEVICE`; never select another lane's device merely because it is
 online. Preserve these device settings and the fixed local network shape night
-over night. Do not build during capture. The scripts cap Node's heap at 6 GiB
-and Gradle workers at two, below the session's 31.41 GiB memory cap.
+over night. Do not build during capture. The scripts cap Node's heap at 6 GiB and Gradle workers at two. A private Gradle
+home keeps teardown from stopping another lane's daemon. These limits keep
+typical runs within the session's 31.41 GiB memory cap.
 
 `local-attempt.sh` builds a local release/Hermes APK, starts `run-local.sh` on
 loopback ports 18880/18881, seeds the disposable PostgreSQL fixture, signs in

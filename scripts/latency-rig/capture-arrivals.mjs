@@ -50,7 +50,16 @@ try {
   let listReady = false;
   for (let ready = 0; ready < 30; ready++) {
     const xml = dump();
-    if (pointFor(xml, 'content-desc', 'all conversations')) { listReady = true; break; }
+    if (pointFor(xml, 'content-desc', 'all conversations')) {
+      if (pointFor(xml, 'text', '#Rig room 001') && !pointFor(xml, 'content-desc', 'Close Workspace switcher')) { listReady = true; break; }
+      const fixtureWorkspace = pointFor(xml, 'content-desc', 'Latency Rig 200');
+      if (fixtureWorkspace) tap(fixtureWorkspace);
+      else {
+        const switchLabel = xml.match(/content-desc="([^"]+ — switch Workspace)"/)?.[1];
+        const switchPoint = switchLabel && pointFor(xml, 'content-desc', switchLabel);
+        if (switchPoint) tap(switchPoint);
+      }
+    }
     if (pointFor(xml, 'content-desc', 'Message')) adb('shell', 'input', 'keyevent', '4');
     if (xml.includes('Continue with GitHub')) throw new Error('Sign in to the local fixture before capture');
     await pause(500);
@@ -92,6 +101,8 @@ try {
     { name: 'warm', entry: 'room-list', unseen: 0 },
     { name: 'send-text', entry: 'send-text', unseen: 0 });
   for (const scenario of scenarios.filter((item) => !entry || item.entry === entry)) {
+    // Existing watch/covering reads are setup, not part of the send interaction.
+    if (scenario.entry === 'send-text') await pause(10000);
     for (let sample = 0; sample < count; sample++) {
       if (scenario.entry !== 'send-text') adb('shell', 'input', 'keyevent', '4');
       await pause(1000);

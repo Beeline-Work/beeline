@@ -14,6 +14,7 @@ cd "$repo_dir"
 lock_dir="${XDG_STATE_HOME:-$HOME/.local/state}/beeline/latency-rig-speedy"
 mkdir -p "$lock_dir"
 exec 9>"$lock_dir/capture.lock"
+export GRADLE_USER_HOME="$lock_dir/gradle"
 flock -n 9 || { echo 'Another Speedy rig attempt is running' >&2; exit 2; }
 export NODE_OPTIONS="${NODE_OPTIONS:---max-old-space-size=6144}"
 export JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS:--Dorg.gradle.workers.max=2}"

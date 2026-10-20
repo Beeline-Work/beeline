@@ -1,0 +1,26 @@
+{
+  "source": "e2665c7dfc62ed9ac1de9ef4b18838dd76f9c6de",
+  "protocol": "native frame commit; canonical Room-list Back; 20 samples each",
+  "results": {
+    "push-unseen-1": {
+      "samples": 20,
+      "p50Ms": 678,
+      "p95Ms": 718
+    },
+    "push-unseen-5": {
+      "samples": 20,
+      "p50Ms": 746,
+      "p95Ms": 809
+    },
+    "room-list-unseen-1": {
+      "samples": 20,
+      "p50Ms": 1012,
+      "p95Ms": 1349
+    },
+    "room-list-unseen-5": {
+      "samples": 20,
+      "p50Ms": 1480,
+      "p95Ms": 1973
+    }
+  }
+}

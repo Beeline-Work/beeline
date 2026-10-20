@@ -22,7 +22,7 @@ import { CommandExecutionContext, runServerCommandIntake } from '../../body/src/
 import { assembleTurnPrompt } from '../../body/src/prompt-assembly.js';
 import type { DaemonApiClient } from '../../body/src/daemon-api-client.js';
 import {
-  computerViewToken, createComputerSession, endComputerSession, expireComputerSessions, getComputerSession, refreshComputerSession, serveComputerSession,
+  computerViewToken, computerViewerHtml, createComputerSession, endComputerSession, expireComputerSessions, getComputerSession, refreshComputerSession, serveComputerSession,
   serveComputerStatus, startComputerExpirySweep, trustedComputerShareUpstream, upgradeBodyComputerSource, upgradeComputerSession, upgradeComputerWaiter,
 } from './computer-session.js';
 
@@ -318,7 +318,7 @@ describe('computer session handoff', () => {
       if (expired) { response.writeHead(410).end(); return; }
       if (failOnce) { failOnce = false; response.writeHead(503).end(); return; }
       response.writeHead(200, { 'content-type': 'text/html' });
-      response.end('<!doctype html><div id="bar"></div><script>const socket = new WebSocket(new URL("stream", location.href));</script></body>');
+      response.end('<!doctype html><head><meta name="viewport" content="width=device-width,initial-scale=1,shrink-to-fit=yes"></head><body><div id="bar"></div><script>const socket = new WebSocket(new URL("stream", location.href));</script></body>');
     });
     const upstreamSockets = new WebSocketServer({ noServer: true });
     squire.on('upgrade', (request, socket, head) => {
@@ -342,6 +342,10 @@ describe('computer session handoff', () => {
       expect(html).not.toContain(token);
       expect(html).toContain('new URL("stream" + location.search, location.href)');
       expect(html).toContain('const scale=Math.max(');
+      // The viewer owns the gesture: no document zoom and no upstream viewport.
+      expect(html).toContain('maximum-scale=1,user-scalable=no');
+      expect(html).toContain('html,body{background:#1b1320!important;touch-action:none!important');
+      expect(html).not.toContain('shrink-to-fit=yes');
       expect(html).not.toContain('beeline-handback');
       expect(html).not.toContain('beeline-end');
       const viewer = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/stream?access=${access}`);
@@ -939,6 +943,161 @@ describe('computer session handoff', () => {
         await new Promise<void>((resolve) => chrome.once('exit', () => resolve()));
       }
       if (profile) await rm(profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+    }
+  }, 120_000);
+
+  /**
+   * Drives a real two-finger touchscreen pinch into the served viewer with
+   * Chrome DevTools Protocol and returns the viewer surface width before and
+   * after. This is the page-level gesture path shared by both live viewers.
+   */
+  async function gestureViewer(pageUrl: string, touchPinch: { x: number; y: number }[]) {
+    const profile = await mkdtemp(join(process.cwd(), '.pinch-e2e-'));
+    const chrome = spawn(chromeBinary, [
+      '--headless=new', '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage',
+      '--remote-debugging-address=127.0.0.1', '--remote-debugging-port=0',
+      `--user-data-dir=${profile}`, pageUrl,
+    ], { stdio: 'ignore' });
+    try {
+      const port = await until(async () => {
+        try {
+          const found = Number((await readFile(join(profile, 'DevToolsActivePort'), 'utf8')).split('\n')[0]);
+          return found > 0 ? found : undefined;
+        } catch { return undefined; }
+      }, 15_000);
+      const page = await until(async () => {
+        try { return await findChromiumPage(`http://127.0.0.1:${port}`); } catch { return undefined; }
+      });
+      const socket = new WebSocket(page.webSocketDebuggerUrl!);
+      await opened(socket);
+      let serial = 0;
+      const pending = new Map<number, (value: Record<string, unknown>) => void>();
+      socket.on('message', (data) => {
+        const message = JSON.parse(data.toString()) as { id?: number; result?: Record<string, unknown>; error?: unknown };
+        if (message.id && pending.has(message.id)) { pending.get(message.id)!(message); pending.delete(message.id); }
+      });
+      const command = (method: string, params: Record<string, unknown> = {}) => new Promise<Record<string, unknown>>((resolve, reject) => {
+        const id = ++serial;
+        pending.set(id, (message) => message.error ? reject(new Error(JSON.stringify(message.error))) : resolve(message.result ?? {}));
+        socket.send(JSON.stringify({ id, method, params }));
+      });
+      const evaluate = async (expression: string) => {
+        const result = await command('Runtime.evaluate', { expression, returnByValue: true });
+        return (result as { result?: { value?: unknown } }).result?.value;
+      };
+      await command('Runtime.enable');
+      await command('Page.enable');
+      await command('Emulation.setDeviceMetricsOverride', { width: 390, height: 800, deviceScaleFactor: 2, mobile: true });
+      await command('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
+      await command('Emulation.setEmulatedMedia', { features: [{ name: 'pointer', value: 'coarse' }, { name: 'any-pointer', value: 'coarse' }] });
+      const reload = async () => {
+        await command('Page.reload');
+        await new Promise((resolve) => setTimeout(resolve, 1_500));
+      };
+      const surfaceWidth = () => evaluate(`document.getElementById('canvas')?.style.width || document.getElementById('screen').style.width`);
+      const touch = async (type: string, points: Record<string, number>[]) => {
+        await command('Input.dispatchTouchEvent', { type, touchPoints: points });
+        await new Promise((resolve) => setTimeout(resolve, 30));
+      };
+      const spread = async (points: Record<string, number>[], step: number) => {
+        await touch('touchStart', points);
+        for (let index = 1; index <= 8; index++) {
+          await touch('touchMove', points.map((point, position) => ({
+            x: point.x + (position === 0 ? -index * step : index * step), y: point.y,
+          })));
+        }
+        await touch('touchEnd', []);
+        await new Promise((resolve) => setTimeout(resolve, 300));
+      };
+      await reload();
+      const before = await surfaceWidth();
+      await spread(touchPinch, 10);
+      const after = await surfaceWidth();
+      const scale = await evaluate('visualViewport.scale');
+      // The viewer must own the gesture: no document page-zoom and no native
+      // pinch target, or the host WebView cancels the second finger.
+      const viewport = await evaluate(`document.querySelector('meta[name="viewport"]')?.content ?? ''`);
+      const bodyTouchAction = await evaluate(`getComputedStyle(document.body).touchAction`);
+      socket.close();
+      return { before, after, scale, viewport, bodyTouchAction };
+    } finally {
+      if (chrome.exitCode === null && chrome.signalCode === null) {
+        chrome.kill('SIGTERM');
+        await new Promise<void>((resolve) => chrome.once('exit', () => resolve()));
+      }
+      await rm(profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
+    }
+  }
+
+  it('locks the body viewer document so a native host cannot page-zoom it', () => {
+    const html = computerViewerHtml('lock-id');
+    expect(html).toContain('maximum-scale=1,user-scalable=no');
+    expect(html).toContain('touch-action:none;overscroll-behavior:none');
+  });
+
+  it.skipIf(!existsSync(chromeBinary))('pinches the body-hosted viewer without forwarding the gesture', async () => {
+    const share = await createComputerSession(database, live, {
+      roomId: ROOM, agentId: AGENT, sessionId: 'body-pinch', upstreamUrl: 'body:', title: 'Body viewer',
+    });
+    const access = await computerViewToken(database, share.id, HUMAN);
+    const source = new WebSocket(`${origin.replace('http:', 'ws:')}/s/${share.id}/source`);
+    await opened(source);
+    const forwarded: string[] = [];
+    source.on('message', (data) => forwarded.push(data.toString()));
+    source.send(JSON.stringify({ method: 'Page.screencastFrame',
+      params: { data: '/9j/2Q==', sessionId: 1, metadata: { deviceWidth: 800, deviceHeight: 600 } } }));
+    try {
+      const gesture = await gestureViewer(`${origin}/s/${share.id}?access=${access}&embedded=1`, [
+        { x: 150, y: 400, id: 0 }, { x: 250, y: 400, id: 1 },
+      ]);
+      expect(gesture.before).toBeTruthy();
+      expect(gesture.after).not.toBe(gesture.before);
+      expect(gesture.scale).toBe(1);
+      expect(gesture.viewport).toContain('maximum-scale=1');
+      expect(gesture.viewport).toContain('user-scalable=no');
+      expect(gesture.bodyTouchAction).toBe('none');
+      expect(forwarded.filter((message) => /"type":"(touch|wheel)"/.test(message))).toEqual([]);
+    } finally {
+      source.close();
+      await endComputerSession(database, live, (await getComputerSession(database, share.id))!);
+    }
+  }, 120_000);
+
+  it.skipIf(!existsSync(chromeBinary))('pinches the Squire bridge viewer without forwarding the gesture', async () => {
+    const squire = createServer((_request, response) => {
+      response.writeHead(200, { 'content-type': 'text/html' });
+      response.end(`<!doctype html><head><meta name="viewport" content="width=device-width,initial-scale=1"><style>
+        html,body{margin:0;width:100%;height:100%}#screen{width:100vw;height:100vh}</style></head><body>
+        <div id="bar"><button id="focus"></button></div>
+        <div id="screen"><canvas id="canvas" width="800" height="600"></canvas></div>
+        <script>const socket = new WebSocket(new URL("stream", location.href));</script></body>`);
+    });
+    const streams = new WebSocketServer({ noServer: true });
+    const forwarded: string[] = [];
+    squire.on('upgrade', (request, socket, head) => streams.handleUpgrade(request, socket, head, (client) => streams.emit('connection', client, request)));
+    streams.on('connection', (socket) => socket.on('message', (data) => forwarded.push(data.toString())));
+    await new Promise<void>((resolve) => squire.listen(0, '127.0.0.1', resolve));
+    const share = await createComputerSession(database, live, {
+      roomId: ROOM, agentId: AGENT, sessionId: 'squire-pinch',
+      upstreamUrl: `http://127.0.0.1:${(squire.address() as AddressInfo).port}/s/${'s'.repeat(43)}/`,
+    }, testSquire);
+    const access = await computerViewToken(database, share.id, HUMAN);
+    try {
+      const gesture = await gestureViewer(`${origin}/s/${share.id}/?access=${access}&embedded=1`, [
+        { x: 150, y: 250, id: 0 }, { x: 250, y: 250, id: 1 },
+      ]);
+      expect(gesture.before).toBeTruthy();
+      expect(gesture.after).not.toBe(gesture.before);
+      expect(gesture.scale).toBe(1);
+      expect(gesture.viewport).toContain('maximum-scale=1');
+      expect(gesture.viewport).toContain('user-scalable=no');
+      expect(gesture.bodyTouchAction).toBe('none');
+      expect(forwarded.filter((message) => /"type":"(touch|wheel)"/.test(message))).toEqual([]);
+    } finally {
+      for (const client of streams.clients) client.close();
+      await new Promise<void>((resolve) => streams.close(() => resolve()));
+      await new Promise<void>((resolve) => squire.close(() => resolve()));
+      await endComputerSession(database, live, (await getComputerSession(database, share.id))!);
     }
   }, 120_000);
 });

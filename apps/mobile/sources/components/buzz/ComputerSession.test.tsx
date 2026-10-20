@@ -176,6 +176,15 @@ it('retries an expired preview URL with the refreshed token', async () => {
   await act(async () => tree!.unmount());
 });
 
+it('keeps the native WebView from owning pinch so the viewer gesture wins', async () => {
+  let tree: ReturnType<typeof create>;
+  await act(async () => { tree = create(<ComputerSessionViewer session={session} onClose={() => {}} />); });
+  const webview = tree!.root.findByType('WebView');
+  expect(webview.props.setBuiltInZoomControls).toBe(false);
+  expect(webview.props.setDisplayZoomControls).toBe(false);
+  await act(async () => tree!.unmount());
+});
+
 it('removes the stream if background authorization refuses current viewer access', async () => {
   phoneOperation.mockRejectedValueOnce(Object.assign(new Error('access denied'), { status: 403 }));
   let tree: ReturnType<typeof create>;

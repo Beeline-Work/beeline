@@ -3,7 +3,7 @@ import * as React from 'react';
 import { act, create } from 'react-test-renderer';
 import { expect, it, vi } from 'vitest';
 import { readRoomView } from '@beeline/api-contract/phone';
-import { cornerHeaderAgent } from '@/buzz/corner-display-state';
+import { cornerDisplayState, cornerHeaderAgent } from '@/buzz/corner-display-state';
 import { resolveCornerViewAgentPubkey } from '@/buzz/corner-session';
 import { displayRoomMessage } from '@/buzz/room-view-presentation';
 
@@ -109,5 +109,29 @@ it.each(['approve', 'connect', 'question'] as const)(
     expect(jump).toHaveBeenCalledOnce();
     const root = tree!.root.findAllByType('Text' as never)[0]!;
     expect(root.props.children[0]).toBe('JELLYBEAN · waiting');
+  },
+);
+
+it.each(['approve', 'connect', 'question'] as const)(
+  'R1: failing checks preserve the %s link through the real header adapters', (reason) => {
+    const item = { state: 'waiting' as const, reason, itemId: 'open-request',
+      lifecycle: { lifecycle: 'in-review' as const, checks: 'failing' as const } };
+    const display = cornerDisplayState(item);
+    const header = cornerHeaderAgent({ ownerPubkey: niglet, status: display.status,
+      headerSuffix: display.headerSuffix, activeTurnPubkeys: [] });
+    const jump = vi.fn();
+    let tree: ReturnType<typeof create>;
+    act(() => {
+      tree = create(<CornerHeaderAgentText name="Jellybean" stateWord={header.stateWord}
+        state={display.status} headerSuffix={display.headerSuffix}
+        waitingReason={item.reason} onReasonPress={() => jump(item.itemId)} />);
+    });
+    const texts = tree!.root.findAllByType('Text' as never);
+    const link = texts.find((node: any) => node.props.accessibilityRole === 'link');
+    expect(link?.props.children).toBe(reason);
+    act(() => link!.props.onPress());
+    expect(jump).toHaveBeenCalledWith(item.itemId);
+    expect(texts[0]!.props.children[0]).toBe('JELLYBEAN · waiting');
+    expect(texts[0]!.props.children[2]).toBe(' · checks failed');
   },
 );

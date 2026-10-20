@@ -1,4 +1,5 @@
 import React from 'react';
+import type { CornerState } from '@beeline/api-contract/phone';
 import { Text, View, type StyleProp, type TextStyle } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 
@@ -48,25 +49,32 @@ export function HeaderMetaRow({
 export function CornerHeaderAgentText({
   name,
   stateWord,
+  state,
+  headerSuffix,
   waitingReason,
   onReasonPress,
   style,
 }: {
   name: string;
   stateWord?: string;
+  state?: CornerState;
+  headerSuffix?: string;
   waitingReason?: 'approve' | 'connect' | 'question';
   onReasonPress?: () => void;
   style?: StyleProp<TextStyle>;
 }) {
+  const waiting = (state ?? stateWord) === 'waiting';
+  const label = waiting ? 'waiting' : stateWord;
   return (
     <Text numberOfLines={1} style={[styles.metaCaps, style]}>
-      {stateWord ? `${name.toUpperCase()} · ${stateWord}` : name.toUpperCase()}
-      {stateWord === 'waiting' && waitingReason ? (
+      {label ? `${name.toUpperCase()} · ${label}` : name.toUpperCase()}
+      {waiting && waitingReason ? (
         <>
           {waitingReason === 'question' ? ' on a ' : ' to '}
           <Text accessibilityRole="link" onPress={onReasonPress}>{waitingReason}</Text>
         </>
       ) : null}
+      {waiting && headerSuffix ? ` · ${headerSuffix}` : null}
     </Text>
   );
 }

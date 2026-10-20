@@ -249,6 +249,17 @@ describe('quoted mention TS/SQL agreement', () => {
       ['```\n@bee', false], ['`stray @bee', true], ['`code` @bee', true],
       ['“`code` @bee”', false], ['"@channel"', false], ['“@channel”', false],
       ['> @channel', false], ['@bee', true], ['@channel', true],
+      ['"start ```\ncode\n``` @bee"', true],
+      ['“start ```\ncode\n``` @bee”', true],
+      ['> before ```\ncode\n``` @bee', true],
+      ['before ```\ncode\n``` > @bee', false],
+      ['```one``` @bee ```two```', true],
+      ['```one``` ```@bee', false],
+      ['`` before ```\n@bee\n``` @bee', true],
+      ['"start ```\ncode\n``` @channel"', true],
+      ['“start ```\ncode\n``` @channel”', true],
+      ['before ```\ncode\n``` > @channel', false],
+      ['```\ncode\n``` "@bee"', false],
       ['word@bee', false], ['@bee.other', false], ['@bee.', true],
     ];
     try {

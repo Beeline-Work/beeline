@@ -43,7 +43,8 @@ const FENCED_CODE = /```[\s\S]*?(?:```|$)/g;
 const INLINE_CODE = /`[^`\n]*`/g;
 // Only matching double quotes on one line suppress a tag; unmatched quotes hide nothing.
 const DOUBLE_QUOTES = /"[^"\n]*"|“[^”\n]*”/g;
-const FENCED_CODE_SQL = "'```.*?(```|$)'";
+/** Non-code chunks cannot cross a fence opener; each match retains its original newlines. */
+const CODE_CHUNKS_SQL = "'(```(?:(?!```).)*(?:```|$)|(?:[^`]|`(?!``))+)'";
 const INLINE_CODE_SQL = "'`[^`\\n]*`'";
 
 /**
@@ -201,8 +202,14 @@ function handleWrittenIn(textExpr: string, handleExpr: string): string {
  * code, paired double quotes and blockquote lines. Removed spans become token boundaries.
  */
 function withoutForwardCaptionSql(textExpr: string): string {
-  return `regexp_replace(regexp_replace(regexp_replace(regexp_replace(regexp_replace(${textExpr},${FORWARD_CAPTION_SQL},''),
-    ${FENCED_CODE_SQL},' ','g'),${INLINE_CODE_SQL},' ','g'),
+  const attributed = `regexp_replace(${textExpr},${FORWARD_CAPTION_SQL},'')`;
+  // Most delivery text has no fence. Only fenced messages need chunking to
+  // blank code without joining source lines before quote and blockquote reads.
+  const withoutFences = `(CASE WHEN strpos(${attributed},'\`\`\`')=0 THEN ${attributed}
+    ELSE (SELECT string_agg(CASE WHEN left(chunk.parts[1],3)='\`\`\`'
+      THEN regexp_replace(chunk.parts[1],'[^\\n]',' ','g') ELSE chunk.parts[1] END,'' ORDER BY chunk.ordinality)
+      FROM regexp_matches(${attributed},${CODE_CHUNKS_SQL},'g') WITH ORDINALITY AS chunk(parts,ordinality)) END)`;
+  return `regexp_replace(regexp_replace(regexp_replace(${withoutFences},${INLINE_CODE_SQL},' ','g'),
     '"[^"\\n]*"|“[^”\\n]*”',' ','g'), '^[ \\t\\r]*>[^\\n]*','','gn')`;
 }
 

@@ -1186,6 +1186,7 @@ it('Reproduction R1: each post receipt lists only that post tags', async () => {
   expect((await post('Correction: my quote of "@ruby" in that reply woke Ruby. That was my error. Ruby has no task here.')).woken).toEqual([]);
   expect((await post('The next post has no tag.')).woken).toEqual([]);
   expect((await post('@ruby fresh tag')).woken).toEqual(['ruby']);
+  expect((await post('"start ```\ncode\n``` @ruby"')).woken).toEqual(['ruby']);
 });
 
 

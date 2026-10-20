@@ -6,7 +6,8 @@ import type { ChatListView, NostrEvent, RoomView } from '@beeline/buzz-client';
 import { visibleLiveOverlays } from '@beeline/buzz-client';
 import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 import { prefetchPushRoom } from '@/push/push-room-prefetch';
-import { loadBuzzViewerPubkey } from '@/auth/buzz-identity-storage';
+import { mobileSurfaceCache } from '@/buzz/surface-storage';
+import { loadBuzzIdentity, loadBuzzViewerPubkey } from '@/auth/buzz-identity-storage';
 
 type TestSurfaceEvent = NostrEvent | MonolithSurfaceEvent;
 
@@ -40,6 +41,7 @@ const controls = vi.hoisted(() => ({
   reopenChat: vi.fn(async (_roomId: string) => undefined),
   identityPromise: null as Promise<{ publicKey: string; secretKey: Uint8Array } | null> | null,
   ensureClientPromise: null as Promise<void> | null,
+  outboxRestore: null as Promise<void> | null,
   viewerPubkey: 'viewer' as string | null,
   outboxFail: vi.fn(async (_eventId: string) => undefined),
   outboxGet: vi.fn((_eventId: string) => ({ status: 'pending' as const })),
@@ -125,7 +127,7 @@ vi.mock('@/buzz/surface-storage', () => ({
   },
   surfaceAddress: vi.fn((_relay: string, _viewer: string, path: string) => path),
   createRoomOutbox: vi.fn(() => ({
-    restore: vi.fn(async () => undefined),
+    restore: vi.fn(async () => { await controls.outboxRestore; }),
     list: vi.fn(() => []),
     reconcile: vi.fn(async () => undefined),
     fail: controls.outboxFail,
@@ -392,6 +394,7 @@ beforeEach(() => {
   controls.readMarks.length = 0;
   controls.identityPromise = null;
   controls.ensureClientPromise = null;
+  controls.outboxRestore = null;
   controls.viewerPubkey = 'viewer';
   controls.roomResponse = null;
   controls.roomReads = 0;
@@ -1031,6 +1034,47 @@ describe('useRoomSurfaceSession', () => {
     expect(controls.cacheListeners.size).toBe(0);
   });
 
+  it('paints a missing-row publish after disk read while identity and then outbox remain pending', async () => {
+    controls.hotViewer = true;
+    controls.cached = roomView('room-a');
+    let resolveIdentity!: (identity: { publicKey: string; secretKey: Uint8Array }) => void;
+    controls.identityPromise = new Promise((resolve) => { resolveIdentity = resolve; });
+    controls.outboxRestore = new Promise(() => undefined);
+    const { queued } = stubFrameScheduler();
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(React.createElement(Harness, {
+      channelId: 'room-a', notificationResponseId: 'late-opening-reply', capture: () => undefined,
+    })); });
+    await act(async () => {
+      queued.splice(0).forEach((frame) => frame(0));
+      queued.splice(0).forEach((frame) => frame(0));
+    });
+    await flushMicrotasks();
+    expect(mobileSurfaceCache.read).toHaveBeenCalled();
+    expect(loadBuzzIdentity).toHaveBeenCalled();
+    const publish = async (text: string) => {
+      await act(async () => {
+        controls.cached = { ...roomView('room-a'), messages: [{ id: text, text, createdAt: 10,
+          author: { pubkey: 'author', kind: 'human', name: 'Author' }, presentation: 'message' }] };
+        controls.cacheListeners.forEach((listener) => listener());
+      });
+      expect(renderer.root.findAllByType('message-row').at(-1)?.props.children).toBe(text);
+    };
+    try {
+      await publish('Reply after disk read, identity pending');
+      expect(controls.transportCount).toBe(0);
+      await act(async () => resolveIdentity({ publicKey: 'viewer', secretKey: new Uint8Array(32) }));
+      await flushMicrotasks();
+      expect(controls.transportCount).toBe(1);
+      expect(controls.schedulers).toHaveLength(0);
+      await publish('Reply while outbox restore is pending');
+      expect(controls.roomReads).toBe(0);
+    } finally {
+      await act(async () => renderer.unmount());
+    }
+    expect(controls.cacheListeners.size).toBe(0);
+  });
+
   it.each([1, 5])('paints %i received messages on the first frame before any network read', async (count) => {
     controls.hotViewer = true;
     const { queued } = stubFrameScheduler();
@@ -1591,6 +1635,7 @@ describe('useRoomSurfaceSession', () => {
     expect(controls.schedulers[0]!.followUpCalls).toBe(1);
     await act(async () => renderer.unmount());
     controls.ensureClientPromise = null;
+  controls.outboxRestore = null;
     vi.useRealTimers();
   });
 

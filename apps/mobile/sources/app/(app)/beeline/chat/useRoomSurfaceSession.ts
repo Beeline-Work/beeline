@@ -1134,7 +1134,6 @@ export function useRoomSurfaceSession({
         markRoomOpen('session-start', channelId);
         markRoomOpen('cache-read-start');
         const cached = await mobileSurfaceCache.read(address, isRoomView);
-        stopOpeningResponse();
         markRoomOpen('cache-read-end', cached ? 'hit' : 'miss');
         let paintedCache: RoomView | null = null;
         if (cached && !cancelled) {
@@ -1246,6 +1245,10 @@ export function useRoomSurfaceSession({
               relayUrl,
               true,
             );
+            // Disk completion does not mean the tap-time response has arrived.
+            // Keep painting cache publishes through identity/outbox setup until
+            // the opening read is actually applied (cleanup also unsubscribes).
+            stopOpeningResponse();
             if (openReadBeforeWatch && !watchStarted) {
               watchStarted = true;
               readRacedAhead = true;

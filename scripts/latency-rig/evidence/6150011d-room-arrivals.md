@@ -93,3 +93,11 @@ install the 03:00 America/New_York schedule from reviewed main. No installed
 schedule is claimed before that handoff. A deliberately skipped capture/rerun
 already produced exactly one labeled dry-run alert in the parent Room, verified
 by reading message `315af9b7fc6895ea11a3325079cf8eaaa55eb406ccd2c07e6059d586d5c04326`.
+
+## Opening-response subscription race follow-up
+
+Independent review found a setup ordering the n20 rig does not force: disk cache read completes, then the tap-time missing-row response publishes while identity/outbox restoration is still pending. The rig uses normal setup timing and does not stall identity or outbox; passing push1/push5 samples do not establish correctness for that ordering. We do not claim their GET completed before the disk read without correlated evidence.
+
+The opening-cache listener now remains subscribed until the opening response is applied or effect cleanup. A rendered-session regression test first completes the cache read while identity is pending and publishes a new row; it then resolves identity, holds outbox restoration, and publishes another row. Both rows must render before setup continues, and unmount must remove the listener. This test failed against the previous application source (the same source on 36f09476f and 26f4157d5), then passed with this fix. The whole session suite passes 60 tests; mobile typecheck passes.
+
+The n20 table above measures application 9729c3ac; it has not been recaptured for this subsequent subscription-lifetime fix. The deterministic rendered-session test is the proof for the newly identified ordering.

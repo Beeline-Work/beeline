@@ -374,28 +374,35 @@ describe('listening flow', () => {
     expect(send.props.accessibilityHint).toBe('Stops dictation and sends');
   });
 
-  it('Reproduction CONVERSATION-3: live volume changes fixed blocks without a sample delay', async () => {
-    const { renderer } = render();
-    await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
-    await act(async () => {});
-    const waveform = () => renderer.root.findAllByProps({ testID: 'chat-speech-waveform' })
-      .find((node: any) => node.type === 'View');
-    const heights = () => waveform().children.map((bar: any) =>
-      bar.props.style.flat(Infinity).find((style: any) => style?.height).height);
-    expect(waveform().children).toHaveLength(WAVEFORM_BAR_COUNT);
-    expect([waveform().props.style].flat(Infinity).some((style: any) => style?.transform)).toBe(false);
-    const samples = [heights()[0]];
-    for (const value of [2, 4, 7]) {
-      await act(async () => fireEvent('volumechange', { value }));
-      expect(waveform().children).toHaveLength(WAVEFORM_BAR_COUNT);
-      samples.push(heights()[0]);
-    }
-    expect(samples[0]).toBe(2);
-    expect(samples[1]).toBeGreaterThan(samples[0]);
-    expect(samples[2]).toBeGreaterThan(samples[1]);
-    expect(samples[3]).toBeGreaterThan(samples[2]);
-    expect(samples[3]).toBeLessThanOrEqual(18);
-    console.info('CONVERSATION-3: same-render heights', samples);
+  it('Reproduction CONVERSATION-3: latest visible level updates before the scrolling history sample', async () => {
+    vi.useFakeTimers();
+    try {
+      const { renderer } = render();
+      await act(async () => renderer.root.findByProps({ testID: 'chat-mic' }).props.onPress());
+      await act(async () => {});
+      const waveform = () => renderer.root.findAllByProps({ testID: 'chat-speech-waveform' })
+        .find((node: any) => node.type === 'View');
+      const tip = () => renderer.root.findAllByProps({ testID: 'chat-speech-waveform-live-level' })
+        .find((node: any) => node.type === 'View');
+      const height = () => tip().props.style.flat(Infinity).find((style: any) => style?.height).height;
+      const samples = [height()];
+      expect(waveform().props.style.flat(Infinity).some((style: any) => style?.transform)).toBe(true);
+      expect(waveform().children).toHaveLength(0);
+      for (const value of [2, 4, 7, -2]) {
+        await act(async () => fireEvent('volumechange', { value }));
+        samples.push(height());
+        expect(waveform().children).toHaveLength(0);
+      }
+      expect(samples[0]).toBe(2);
+      expect(samples[1]).toBeGreaterThan(samples[0]);
+      expect(samples[2]).toBeGreaterThan(samples[1]);
+      expect(samples[3]).toBeGreaterThan(samples[2]);
+      expect(samples[4]).toBe(2);
+      await act(async () => vi.advanceTimersByTime(120));
+      expect(waveform().children.length).toBeGreaterThan(0);
+      expect(waveform().children.length).toBeLessThanOrEqual(WAVEFORM_BAR_COUNT);
+      console.info('CONVERSATION-3: same-render visible heights before history sampling', samples);
+    } finally { vi.useRealTimers(); }
   });
 
   it('keeps Stop a plain outlined square with no ring or glow while listening', async () => {

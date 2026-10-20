@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 // @ts-expect-error Standalone proof uses installed react-dom.
 import { createRoot } from 'react-dom/client';
+// @ts-expect-error Standalone proof uses installed react-dom.
+import { flushSync } from 'react-dom';
 import { View, Text } from 'react-native';
 import { ConversationComposer } from '../sources/components/buzz/ConversationComposer';
 import { AttachmentPickerSheet } from '../sources/components/buzz/AttachmentPickerSheet';
@@ -47,16 +49,15 @@ async function run() {
   check('CONVERSATION-2: tap selects Jellybean immediately', !!selected()?.querySelector('[style*="underline"]'));
   const selectedLabel = Array.from(selected()!.querySelectorAll<HTMLElement>('*')).find(element => element.textContent === 'Jellybean');
   check('CONVERSATION-2: selection is visible as an underline', !!selectedLabel && getComputedStyle(selectedLabel).textDecorationLine.includes('underline'));
-  const blocks = () => Array.from(byID('voice-waveform')!.querySelectorAll<HTMLElement>('*'))
-    .filter(element => getComputedStyle(element).width === '2px');
-  const initial = blocks();
-  check('CONVERSATION-3: fixed blocks visible in silence', initial.length === 40 && initial.every(element => getComputedStyle(element).height === '2px'));
+  const latest = () => byID('waveform-live-level')!;
+  check('CONVERSATION-3: visible newest bar is quiet in silence', getComputedStyle(latest()).height === '2px');
   for (const phase of ['silence', 'connecting', 'listening', 'speaking']) {
-    setPhase(phase); await pause();
+    flushSync(() => setPhase(phase));
+    if (phase === 'listening') check('CONVERSATION-3: volume changes the visible newest bar before timers advance', parseFloat(getComputedStyle(latest()).height) > 2);
+    await pause();
     check(`${phase}: tap stays selected`, !!selected()?.querySelector('[style*="underline"]'));
-    check(`${phase}: blocks stay in place`, blocks().length === 40 && blocks().every((element, index) => element === initial[index]) &&
-      blocks().every(element => getComputedStyle(element.parentElement!).transform === 'none'));
-    if (phase === 'listening') check('CONVERSATION-3: latest level changes heights', blocks().every(element => parseFloat(getComputedStyle(element).height) > 2));
+    check(`${phase}: current level stays at the visible right edge`, latest().getBoundingClientRect().right <= byID('voice-waveform')!.getBoundingClientRect().right);
+    if (phase === 'listening') check('CONVERSATION-3: current level grows immediately', parseFloat(getComputedStyle(latest()).height) > 2);
     const strip = byID('conversation-target-strip')!.getBoundingClientRect();
     const field = byID('voice-waveform')!.getBoundingClientRect();
     check(`${phase}: avatars above waveform, no caption`, strip.bottom <= field.top && !byID('conversation-mode-label'));

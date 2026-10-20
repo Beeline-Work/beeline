@@ -45,10 +45,12 @@ and underlined name ([selection screenshot](fixed-selected.png)). Server tests
 also cover persistence across replies and multi-human targeting; component tests
 cover immediate selection across rerenders.
 
-CONVERSATION-3: production composer volume events change the fixed blocks in the
-same render, without advancing a timer. The browser proof verifies stable block
-nodes and no translation in both themes; [composer evidence](../../../apps/mobile/evidence/conversation-composer/README.md)
-contains the screenshots. The 120 ms sample queue and smoothing are removed.
+CONVERSATION-3: the fixed-block proposal and the waveform in this older Android
+binary were superseded by brief revision 5. The existing scrolling appearance is
+retained. The refreshed [composer browser proof](../../../apps/mobile/evidence/conversation-composer/README.md)
+demonstrates a live newest bar responding immediately to volume events, with no
+wait for history sampling or offscreen entry. The Android observations here
+remain proof of server request joining and transport, not the new waveform.
 
 Server regressions cover both direct answers and work decisions completing
 between fragments, same-human partial speech, independent replies to another

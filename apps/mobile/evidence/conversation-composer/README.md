@@ -10,9 +10,10 @@ npx vitest run sources/components/buzz/ConversationComposer.conversation.browser
 
 The proof checks connected silence, connection pending, listening and agent speech;
 all controls remain available. It taps Jellybean, verifies the visible underline
-and persistent selected state across those phases, and checks that 40 fixed
-waveform blocks retain their positions while their heights follow the current
-level. It then ends the call and sends a staged document with the next message,
+and persistent selected state across those phases, and checks that the existing scrolling waveform retains a live bar at its
+visible newest edge. A level update changes that bar in the same synchronous
+render, before any history sample or timer advances. History keeps its existing
+glide and 120 ms spacing, without attack/release smoothing. It then ends the call and sends a staged document with the next message,
 reusing the upload. Both themes print RESULT PASS. Screenshots show Ruby speaking
 while Jellybean remains selected.
 

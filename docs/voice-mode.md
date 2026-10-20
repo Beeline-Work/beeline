@@ -95,8 +95,11 @@ in both the card and VoiceBar.
 
 `agent-voice.ts` owns library reads, owner saves and bounded previews. The
 client renders validated catalog/write receipts, never a guessed voice choice.
-The composer waveform uses a fixed set of blocks whose heights follow each
-current volume event directly; there is no scrolling history or sample timer.
+Voice and dictation share the existing scrolling composer waveform. Its newest
+visible bar follows each volume event directly, without smoothing or offscreen
+entry delay. The history retains its 120 ms sample spacing and native glide;
+that history timer never gates the current visible level. Frozen and muted
+states keep their existing appearance.
 
 The existing native WebView hosts short audio previews without adding a native
 dependency or changing the native runtime.

@@ -36,6 +36,7 @@ vi.mock('expo-router', () => ({ router: { replace: vi.fn() } }));
 
 vi.mock('@/auth/buzz-identity-storage', () => ({
   loadBuzzIdentity: vi.fn(async () => ({ publicKey: 'viewer', secretKey: new Uint8Array(32) })),
+  peekBuzzViewerContext: () => null,
   loadBuzzViewerPubkey: vi.fn(async () => 'viewer'),
   getEffectiveRelayUrl: vi.fn(async () => 'https://relay.test'),
 }));

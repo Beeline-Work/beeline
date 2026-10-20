@@ -40,7 +40,11 @@ describe('Android emulator instance leases', () => {
     for (let port = 5554; port <= 5584; port += 4)
       await writeFile(join(shared, `port-${port}.lease`), `${process.pid}:wrong-start:old`);
     const lease = await leaseEmulator(shared, join(root, 'private'));
-    expect(lease.port).toBe(5554);
+    // Real emulators on a self-hosted runner may own the earliest port pairs.
+    expect(lease.port).toBeGreaterThanOrEqual(5554);
+    expect(lease.port).toBeLessThanOrEqual(5584);
+    expect((lease.port - 5554) % 4).toBe(0);
+    expect(await readFile(join(shared, `port-${lease.port}.lease`), 'utf8')).not.toContain('wrong-start');
     await lease.release();
   });
 

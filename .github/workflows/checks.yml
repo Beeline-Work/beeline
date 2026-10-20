@@ -456,7 +456,7 @@ jobs:
       - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client && npm run build -w @beeline/auth && npm run build -w @beeline/body
       - name: Run the hermetic Body suite
         working-directory: apps/body
-        run: npx vitest run
+        run: npx vitest run --maxWorkers=2 --minWorkers=1
 
   mac-helper-acceptance:
     name: MAC HELPER ACCEPTANCE

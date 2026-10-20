@@ -27,6 +27,7 @@ import { GitHubOperations } from '../../server/src/github-operations.js';
 import { ConnectionPresence } from '../../server/src/connection-presence.js';
 import { ReleaseNotifier } from '../../server/src/release-notify.js';
 import { DaemonApiClient } from './daemon-api-client.js';
+import { MachineLink } from './machine-link.js';
 import { AcpClient } from './acp.js';
 import { isScheduledPrompt, MonolithRoomTurnLoop } from './monolith-room-turn.js';
 import {
@@ -850,11 +851,19 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     });
     const { daemonToken } = (await exchanged.json()) as { daemonToken: string };
     const sockets: WebSocket[] = [];
-    const client = new DaemonApiClient(origin, daemonToken, AGENT, fetch, (url, protocols) => {
-      const socket = new WebSocket(url, protocols);
-      sockets.push(socket);
-      return socket;
+    // Keep the reconnect window deterministic so the old connection's durable
+    // offline event can commit before a replacement connection claims presence.
+    const machine = new MachineLink({
+      baseUrl: origin,
+      random: () => 1,
+      timing: { backoffBaseMs: 2_000, backoffMaxMs: 2_000, stableCloseJitterMs: 2_000 },
+      factory: (url, protocols) => {
+        const socket = new WebSocket(url, protocols);
+        sockets.push(socket);
+        return socket;
+      },
     });
+    const client = new DaemonApiClient(origin, daemonToken, AGENT, fetch, undefined, undefined, undefined, machine);
     const operations = vi.spyOn(client, 'execute');
     const activation = await client.execute('getRoomInbox', { roomId: ROOM, startAtLatest: true });
     let connected = false;
@@ -926,7 +935,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       await vi.waitFor(() => expect(connectionStates).toContain(false));
       // The connection held the agent's presence; a socket that ended releases
       // it at once, and the reconnect holds it again.
-      await vi.waitFor(() => expect(published).toContain('offline'));
+      await vi.waitFor(() => expect(published).toContain('offline'), { timeout: 5_000 });
       await vi.waitFor(() => expect(published.at(-1)).toBe('online'), { timeout: 5_000 });
       stopWatching();
       await vi.waitFor(

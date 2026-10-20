@@ -1262,7 +1262,9 @@ liveDescribe('the wrapper enforces Room read-only and the corner hygiene denylis
   let siblingCorner: string;
 
   beforeAll(() => {
-    root = mkdtempSync(resolve(tmpdir(), 'bwrap-proof-'));
+    // This fixture exercises the wrapper's writable /tmp overlay, including
+    // mountpoints for paths that do not exist on the host yet.
+    root = mkdtempSync('/tmp/bwrap-proof-');
     checkout = resolve(root, 'checkout');
     worktree = resolve(root, 'corners/current');
     siblingCorner = resolve(root, 'corners/sibling');

@@ -212,7 +212,8 @@ describe('one helper process hosts every agent on the machine', () => {
       agentId === restarting && run === 1 ? Promise.resolve('restart-requested') : undefined);
     const running = runMachineHelper({ env, signals, runAgent: fake.runAgent, exitProcess: () => undefined });
     await vi.waitFor(() => expect(fake.runs.get(restarting)).toBe(2));
-    expect(fake.runs.get(sibling)).toBe(1);
+    // Runtime launches are asynchronous; the restarting agent may win the race.
+    await vi.waitFor(() => expect(fake.runs.get(sibling)).toBe(1));
     expect(fake.signals.get(sibling)!.aborted).toBe(false);
     signals.emit('SIGTERM');
     expect((await running).reason).toBe('stopped');

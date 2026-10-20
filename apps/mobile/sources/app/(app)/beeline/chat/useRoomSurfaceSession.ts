@@ -412,7 +412,8 @@ export function useRoomSurfaceSession({
   roomClientRef.current = roomClient;
   const liveOverlaysRef = useRef(liveOverlays);
   const schedulerRef = useRef<SurfaceRefreshScheduler<RoomView> | null>(null);
-  const reconciledViewRef = useRef<RoomView | null>(null);
+  const reconciledViewRef = useRef<RoomView | null>(openingCache?.view ?? null);
+  const sessionStartedRef = useRef(false);
   const agentPresencesRef = useRef(heartbeatPresences);
   const reconnectGraceRef = useRef(presenceReconnectGrace);
   const pendingPaintTracesRef = useRef<readonly ReceivedLiveTrace[]>([]);
@@ -615,18 +616,28 @@ export function useRoomSurfaceSession({
     let cacheAddress: ReturnType<typeof surfaceAddress> | undefined;
     let cacheWriteTimer: ReturnType<typeof setTimeout> | undefined;
 
-    agentPresencesRef.current = {};
-    reconnectGraceRef.current = {};
-    setAgentPresences({});
-    setPresenceReconnectGrace({});
-    setPresenceResolved(false);
-    liveOverlaysRef.current = [];
-    setLiveOverlays([]);
-    reconciledViewRef.current = null;
-    setFailedIds(new Set());
+    const openingViewer = peekBuzzViewerContext();
+    const openingFrame = !sessionStartedRef.current && openingCache &&
+      openingCache.view.room.id === channelId &&
+      openingCache.viewerPubkey === openingViewer?.viewerPubkey &&
+      openingCache.relayUrl === openingViewer?.relayUrl;
+    sessionStartedRef.current = true;
+    // Initial state already describes this cached response. Resetting it here
+    // commits another Room render before its first frame can be submitted.
+    if (!openingFrame) {
+      agentPresencesRef.current = {};
+      reconnectGraceRef.current = {};
+      setAgentPresences({});
+      setPresenceReconnectGrace({});
+      setPresenceResolved(false);
+      liveOverlaysRef.current = [];
+      setLiveOverlays([]);
+      reconciledViewRef.current = null;
+      setFailedIds(new Set());
+    }
     setHydrationFailed(false);
     setHydrationError(null);
-    bindingsRef.current.resetTranscript();
+    if (!openingFrame) bindingsRef.current.resetTranscript();
 
     // Seconds, but not WHOLE seconds. A draft's first snapshot is the anchor
     // its row keeps for the rest of the turn (C107), and two turns starting a
@@ -1078,6 +1089,10 @@ export function useRoomSurfaceSession({
     let transportForEffect: BuzzRigTransport | undefined;
     void (async () => {
       try {
+        if (openingFrame) {
+          await yieldToPaint();
+          if (cancelled) return;
+        }
         markRoomOpen('session-effect', channelId);
         markRoomOpen('identity-start');
         const viewerPubkey = await loadBuzzViewerPubkey();
@@ -1109,7 +1124,7 @@ export function useRoomSurfaceSession({
           queueNewestFrameMark(cachedNewest);
         }
         markRoomOpen('occupancy-yield-start');
-        await yieldToPaint();
+        if (!openingFrame || cached !== openingCache.view) await yieldToPaint();
         markRoomOpen('occupancy-yield-end');
         if (cancelled) return;
 

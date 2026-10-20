@@ -25,7 +25,11 @@ const cases = JSON.parse(await readFile(new URL('./room-arrival-cases.json', imp
 validateArrivalCases(cases);
 const adb = (...args) => execFileSync('adb', ['-s', device, ...args], { encoding: 'utf8', maxBuffer: 32 * 1024 * 1024 });
 const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const dump = () => { adb('shell', 'uiautomator', 'dump', '/sdcard/latency-rig.xml'); return adb('shell', 'cat', '/sdcard/latency-rig.xml'); };
+const dump = () => {
+  adb('shell', 'rm', '-f', '/sdcard/latency-rig.xml');
+  adb('shell', 'uiautomator', 'dump', '/sdcard/latency-rig.xml');
+  return adb('shell', 'cat', '/sdcard/latency-rig.xml');
+};
 const tap = (point) => adb('shell', 'input', 'tap', ...point.map(String));
 const open = (route) => adb('shell', 'am', 'start', '-W', '-a', 'android.intent.action.VIEW', '-d', `beeline://${route}`, 'app.usebeeline/.MainActivity');
 const db = new pg.Client({ connectionString: databaseUrl });
@@ -103,6 +107,8 @@ try {
   for (const scenario of scenarios.filter((item) => !entry || item.entry === entry)) {
     // Existing watch/covering reads are setup, not part of the send interaction.
     if (scenario.entry === 'send-text') await pause(10000);
+    let sendComposer;
+    let sendButton;
     for (let sample = 0; sample < count; sample++) {
       if (scenario.entry !== 'send-text') adb('shell', 'input', 'keyevent', '4');
       await pause(1000);
@@ -115,14 +121,18 @@ try {
       await pause(300);
       let point;
       if (scenario.entry === 'send-text') {
-        const composer = pointFor(dump(), 'content-desc', 'Message');
+        const composer = sendComposer ?? pointFor(dump(), 'content-desc', 'Message');
         if (!composer) throw new Error('Send-text requires the visible Room composer');
+        sendComposer = composer;
         tap(composer);
         targetId = randomBytes(32).toString('hex');
         adb('shell', 'input', 'text', `Rig%s${targetId.slice(0, 16)}`);
         adb('shell', 'input', 'keyevent', '4');
-        point = pointFor(dump(), 'content-desc', 'Send message');
+        // Sending starts animated status rows that prevent UI Automator idle.
+        // Reuse the established controls; native text paint still proves every send.
+        point = sendButton ?? pointFor(dump(), 'content-desc', 'Send message');
         if (!point) throw new Error('Send-text fixture has no enabled send button');
+        sendButton = point;
       } else {
         let xml;
         for (let precondition = 0; precondition < 3; precondition++) {

@@ -14,5 +14,10 @@ test('failed local setup cannot reuse an old passing report at the same main SHA
     });
     assert.equal(result.status, 2);
     await assert.rejects(readFile(join(dir, 'report.json')));
+    const load = JSON.parse(await readFile(join(dir, 'capture', 'host-load.json'), 'utf8'));
+    assert.equal(load.length, 1);
+    assert.ok(load[0].cpus > 0);
+    assert.ok(load[0].atMs > 0);
+    assert.equal(load[0].load.length, 3);
   } finally { await rm(dir, { recursive: true, force: true }); }
 });

@@ -6,6 +6,7 @@ import type { ChatListView, NostrEvent, RoomView } from '@beeline/buzz-client';
 import { visibleLiveOverlays } from '@beeline/buzz-client';
 import type { MonolithSurfaceEvent } from '@/sync/transport/monolith-rig-transport';
 import { prefetchPushRoom } from '@/push/push-room-prefetch';
+import { loadBuzzViewerPubkey } from '@/auth/buzz-identity-storage';
 
 type TestSurfaceEvent = NostrEvent | MonolithSurfaceEvent;
 
@@ -290,14 +291,16 @@ function Harness({
   notificationResponseId,
   isFocused = true,
   capture,
+  onResetTranscript,
 }: {
   channelId: string;
   notificationResponseId?: string;
   isFocused?: boolean;
   capture(result: UseRoomSurfaceSessionResult): void;
+  onResetTranscript?: () => void;
 }) {
   const bindingsRef = React.useRef<RoomSurfaceSessionBindings>({
-    resetTranscript: vi.fn(),
+    resetTranscript: onResetTranscript ?? vi.fn(),
     restoreOutboxMessages: vi.fn(),
     dismissOptimisticMessage: vi.fn(),
     observeRoomSurface: vi.fn(),
@@ -983,12 +986,19 @@ describe('useRoomSurfaceSession', () => {
     controls.cached = { ...roomView('room-a'), messages: [{ id: 'target', text: 'Newest received row', createdAt: 10,
       author: { pubkey: 'author', kind: 'human', name: 'Author' }, presentation: 'message' }] };
     const { queued } = stubFrameScheduler();
+    const reset = vi.fn();
+    const props = { channelId: 'room-a', capture: () => undefined, onResetTranscript: reset };
     let renderer!: ReactTestRenderer;
-    await act(async () => { renderer = create(React.createElement(Harness, { channelId: 'room-a', capture: () => undefined })); });
+    await act(async () => { renderer = create(React.createElement(Harness, props)); });
     expect(renderer.root.findAllByType('message-row').at(-1)?.props.children).toBe('Newest received row');
+    expect(reset).not.toHaveBeenCalled();
+    expect(loadBuzzViewerPubkey).not.toHaveBeenCalled();
     await act(async () => { queued.splice(0).forEach((frame) => frame(0)); });
     expect(controls.transportCount).toBe(0);
     expect(controls.roomReads).toBe(0);
+    await act(async () => renderer.update(React.createElement(Harness, { ...props, isFocused: false })));
+    await act(async () => renderer.update(React.createElement(Harness, props)));
+    expect(reset).toHaveBeenCalledOnce();
     await act(async () => renderer.unmount());
   });
 

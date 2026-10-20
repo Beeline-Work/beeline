@@ -8,6 +8,14 @@ mkdir -p "$output"
 chmod 700 "$output"
 # Clear previous verdicts before even validating setup or acquiring the lock.
 rm -f "$output/report.json" "$output/report.md" "$output/samples.ndjson"
+mkdir -p "$output/capture"
+# Setup failures still carry this night's load instead of a stale capture.
+node --input-type=module - "$output/capture/host-load.json" <<'JS'
+import os from 'node:os';
+import { writeFileSync } from 'node:fs';
+writeFileSync(process.argv[2], JSON.stringify([{ atMs: Date.now(), load: os.loadavg(),
+  freeMemory: os.freemem(), totalMemory: os.totalmem(), cpus: os.availableParallelism() }], null, 2));
+JS
 device="${LATENCY_RIG_DEVICE:?select the owned Beeline-leased emulator explicitly}"
 if [[ ! "$device" =~ ^emulator-[0-9]+$ ]]; then echo 'Disposable emulator required' >&2; exit 2; fi
 cd "$repo_dir"

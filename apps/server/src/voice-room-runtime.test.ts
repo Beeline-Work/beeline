@@ -2220,11 +2220,15 @@ it('DELIVERY-2: another human interrupting pre-audio synthesis cannot drop the o
 it('VOICE-ROUTER-1: pending call work reaches the brain without an invented report', async () => {
   const { service } = conversationService(1);
   const original = service.db.query.getMockImplementation()!;
-  service.db.query.mockImplementation(async (sql, params) => sql.includes('SELECT source.text FROM voice_orders')
-    ? { rowCount: 1, rows: [{ text: '@ruby check whether the release went out' }] as any }
+  service.db.query.mockImplementation(async (sql, params) => sql.includes('SELECT source.text')
+    ? { rowCount: 1, rows: [{ source_message_id: 'work', agent_id: 'ruby', human_id: 'human', text: '@ruby check whether the release went out' }] as any }
     : original(sql, params));
   const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
   try {
+    service.db.query.mockImplementation(async (sql, params) => {
+      if (sql.includes('SELECT source.text')) throw new Error('Pending lookup must stay off the turn path');
+      return original(sql, params);
+    });
     await runtime.utterance('human', 'Ruby, are you still working on it?');
     const history = service.config.brain.answer.mock.calls.at(-1)![1] as any;
     expect(history.find((row: any) => row.content.startsWith('Call work still pending')).content).toContain('Call work still pending; no report or progress is available');
@@ -2285,4 +2289,31 @@ it('scales the character and CJK limits by six', () => {
   expect(spokenReport('短い文。'.repeat(81))).toBe('短い文。'.repeat(80) + ' The rest is in the chat.');
   expect(spokenReport('x'.repeat(1079) + '.')).toBe('x'.repeat(1079) + '.');
   expect(spokenReport('x'.repeat(1080) + '.')).toBe('The rest is in the chat.');
+});
+
+it('VOICE-ROUTER-1: remembers a new dispatch immediately and clears it on committed completion', async () => {
+  const { service } = conversationService(1);
+  service.config.brain.answer.mockResolvedValueOnce({ text: 'Checking.', order: true });
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  try {
+    await runtime.utterance('human', 'Ruby check whether the release went out');
+    await runtime.utterance('human', 'Ruby are you still working?');
+    const pending = service.config.brain.answer.mock.calls.at(-1)![1] as any[];
+    expect(pending.some(row => row.content.startsWith('Call work still pending'))).toBe(true);
+    await runtime.refresh();
+    await runtime.utterance('human', 'Ruby hello');
+    const finished = service.config.brain.answer.mock.calls.at(-1)![1] as any[];
+    expect(finished.some(row => row.content.startsWith('Call work still pending'))).toBe(false);
+  } finally { await runtime.close(); }
+});
+
+
+it('VOICE-ROUTER-1: empty call work is hydrated once across transcript invalidations', async () => {
+  const { service } = conversationService(1);
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  try {
+    await runtime.refresh();
+    await runtime.refresh();
+    expect(service.db.query.mock.calls.filter(([sql]) => sql.includes('SELECT source.text'))).toHaveLength(1);
+  } finally { await runtime.close(); }
 });

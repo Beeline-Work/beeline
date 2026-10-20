@@ -140,6 +140,8 @@ export class VoiceRoomRuntime {
   private refreshPending = false;
   private reportQueue = Promise.resolve();
   private readonly queuedReports = new Set<string>();
+  private workHydrated = false;
+  private readonly pendingWork = new Map<string, { text: string; agent_id: string; human_id: string }>();
   private readonly history = new Map<string, { role: 'user' | 'assistant'; content: string }[]>();
   private readonly missingSince = new Map<string, number>();
   private constructor(private readonly service: VoiceService, readonly callId: string, readonly roomId: string, private readonly leaseOwner: string) {}
@@ -651,14 +653,10 @@ export class VoiceRoomRuntime {
         history = rows.rows.reverse().map(row => ({ role: row.author_id === agent.id ? 'assistant' : 'user', content: row.text }));
       }
       if (generation.signal.aborted || this.closed) return;
-      const pending = await this.retry(() => this.service.db.query<{ text: string }>(
-        `SELECT source.text FROM voice_orders o JOIN messages source ON source.id=o.source_message_id
-         JOIN agent_commands c ON c.source_message_id=o.source_message_id AND c.agent_id=o.agent_id
-         WHERE o.call_id=$1 AND o.agent_id=$2 AND source.author_id=$3 AND c.state IN ('pending','claimed')
-         ORDER BY c.created_at`, [this.callId, agent.id, human]));
+      const pending = [...this.pendingWork.values()].filter(work => work.agent_id === agent.id && work.human_id === human);
       const brainHistory = [...history];
-      if (pending.rows.length) brainHistory.push({ role: 'user', content:
-        'Call work still pending; no report or progress is available for these requests: ' + JSON.stringify(pending.rows.map(row => row.text)) });
+      if (pending.length) brainHistory.push({ role: 'user', content:
+        'Call work still pending; no report or progress is available for these requests: ' + JSON.stringify(pending.map(row => row.text)) });
       history.push({ role: 'user', content: request.text });
       brainHistory.push({ role: 'user', content: request.text });
       request.state = 'classifying';
@@ -707,6 +705,7 @@ export class VoiceRoomRuntime {
           request.state = 'delivering';
           try { await this.retry(() => this.service.dispatch(this.callId, sourceId, agent.id)); }
           catch (error) { this.assembler.retainFailure(human, request); throw error; }
+          this.pendingWork.set(sourceId, { text: request.text, agent_id: agent.id, human_id: human });
           delivered = true;
           timing('delivery_committed');
         }
@@ -774,6 +773,19 @@ export class VoiceRoomRuntime {
     if (this.closed || this.refreshPending) return;
     this.refreshPending = true;
     try {
+      // Hydrate on lease acquisition; this runtime records every subsequent dispatch.
+      // Transcript invalidations with no outstanding work need no work query.
+      if (!this.workHydrated || this.pendingWork.size) {
+        const known = new Set(this.pendingWork.keys());
+        const pending = await this.retry(() => this.service.db.query<{ source_message_id: string; text: string; agent_id: string; human_id: string }>(
+          `SELECT source.text,o.source_message_id,o.agent_id,source.author_id human_id FROM voice_orders o
+           JOIN messages source ON source.id=o.source_message_id
+           JOIN agent_commands c ON c.source_message_id=o.source_message_id AND c.agent_id=o.agent_id
+           WHERE o.call_id=$1 AND c.state IN ('pending','claimed') ORDER BY c.created_at`, [this.callId]));
+        for (const id of known) this.pendingWork.delete(id);
+        for (const row of pending.rows) this.pendingWork.set(row.source_message_id, row);
+        this.workHydrated = true;
+      }
       const reports = await this.retry(() => this.service.db.query<{ source_message_id: string; id: string; text: string; agent_id: string; human_id: string }>(
         `SELECT DISTINCT ON (o.source_message_id) o.source_message_id,m.id,m.text,o.agent_id,source.author_id human_id
          FROM voice_orders o JOIN messages source ON source.id=o.source_message_id

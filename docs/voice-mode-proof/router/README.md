@@ -37,7 +37,25 @@ Built release APK, Android API 36 emulator, native microphone publication and na
 | Audio playable | 1904 | 1101 |
 | First received agent audio | 2380 | 2383 |
 
-First received agent audio is unchanged within the 50 ms sampling resolution (+3 ms). This single-run comparison cannot prove a small latency difference. Controlled end-of-turn-to-first-server-audio samples: before 26.42, 21.6, 22.25, 25.35, 28.47; after 100.88, 34.92, 55.08, 32.47, 47.73. Their medians are 25.35 and 47.73 ms; the server samples increased and should not be described as a speedup. Startup mic/audio readiness improved. Raw events and screenshots are in `baseline-startup.*` and `fixed-startup.*`.
+First received agent audio is unchanged within the 50 ms sampling resolution (+3 ms). This single-run comparison cannot prove a small latency difference. Raw Android events and screenshots remain in `baseline-startup.*` and `fixed-startup.*`.
+
+### First-audio regression correction
+
+VOICE-ROUTER-1 review reproduced an added database round trip before every brain request: the original controlled end-of-turn-to-first-server-audio samples were before 26.42, 21.6, 22.25, 25.35, 28.47 ms and after 100.88, 34.92, 55.08, 32.47, 47.73 ms (medians **25.35 → 47.73 ms**). The Android startup observation did not resolve that regression.
+
+The corrected runtime hydrates pending work on lease acquisition, records each successful dispatch immediately, and refreshes outstanding work on committed events. A conversational reply reads that evidence synchronously. Once outstanding work is empty, transcript invalidations do not repeat the work query. Tests reject any pending-work query from the reply path, verify lease-start hydration, immediate dispatch visibility and clearing on completion, and verify empty calls do not repeat the lookup.
+
+Matched repeat: same machine, local native LiveKit, disposable PGlite database, production runtime/provider adapters, controlled brain and 300 ms PCM. Each build starts a fresh fixture, discards two warm-up replies, then records ten `Ruby ready?` replies. Both build orders are included to expose host timing drift. The baseline runtime is `1d114f3a03ef760262c08a12368938fe1269c430:apps/server/src/voice-room-runtime.ts`, before this change set. Measurement starts at the runtime utterance boundary and ends at first server audio publication; the native RTC partner receives the latency signal. This repeats the server audio path used by the Android fixture, without treating phone startup as turn-latency evidence.
+
+| Controlled first-server-audio median | Before (ms) | Corrected (ms) |
+| --- | ---: | ---: |
+| Round 1: baseline then corrected | 21.26 | 21.51 |
+| Round 2: corrected then baseline | 38.12 | 24.44 |
+| All 20 measured turns per build | **25.76** | **22.73** |
+
+The combined median is 3.02 ms lower, with overlapping sample distributions; the earlier consistent 22.38 ms regression is absent. Round 1 still increased by 0.25 ms, and host variation is substantial. These controlled observations show no repeatable slowdown; they cannot guarantee equal live-provider or phone-speaker latency. Every measured sample is retained in `latency-{baseline,fixed}-round1.json` and `latency-{baseline,fixed}.json`. `latency-intermediate.json` preserves the first correction before empty-call refresh queries were removed (23.73 ms median).
+
+To repeat server timing: place the baseline runtime at `apps/server/src/.voice-delivery-baseline.ts`; start `scripts/prove-voice-delivery.ts` with `VOICE_DELIVERY_BASELINE=1` for baseline or without it for corrected; run `python3 scripts/prove-voice-router-latency.py baseline` or `fixed`. Restart the fixture between builds. Repeat in reverse order and keep both rounds. The fixture uses loopback HTTP and disposable identities, with native LiveKit on port 17890; it never uses production agents or credentials.
 
 The loading glyph remains until microphone publication and `canPlaybackAudio` are both ready; the unit test independently delays each condition. Native mic capture volume drives the waveform directly; browser capture uses an unsmoothed analyser per animation frame. Remote speaker levels no longer override it.
 
@@ -51,3 +69,5 @@ To repeat: start local LiveKit with the disposable development settings used by 
 - Mobile hook, browser waveform, keep-awake and native compatibility: 42 passed.
 - VoiceBar: 9 passed.
 - Android release build: passed; production hook and VoiceBar demonstrated on native RTC.
+
+Review correction validation: 175 server runtime/provider/service/assembler tests passed; server typecheck passed.

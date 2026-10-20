@@ -4101,6 +4101,18 @@
     ],
     "occurrences": 1
   },
+  // redeemInvite wrapper approved by lunchboxfortwo, DM 82530d41 (yes), relayed by Ruby.
+  {
+    "id": "src/phone-service.ts:PhoneService.redeemInvite:wrapper:c122a7fcc9c2c20b",
+    "file": "apps/server/src/phone-service.ts",
+    "kind": "wrapper",
+    "template": "postRepositoryOnboarding(database, this.github, {\n    roomId, agentId: existing.agent_id, requesterId: viewerId,\n    kind: existing.repository_name ? 'starters' : 'repository',\n})",
+    "literals": [
+      "'repository'",
+      "'starters'"
+    ],
+    "occurrences": 1
+  },
   {
     "id": "src/phone-service.ts:PhoneService.removeAgent:wrapper:066577f9ae1ad3ed",
     "file": "apps/server/src/phone-service.ts",

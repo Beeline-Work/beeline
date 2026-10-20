@@ -1,13 +1,17 @@
 import React from 'react';
 // @ts-expect-error Browser proof uses installed react-dom.
 import { createRoot } from 'react-dom/client';
+// @ts-expect-error Browser proof uses installed react-dom.
+import { flushSync } from 'react-dom';
 import { View, Text, Pressable } from 'react-native';
 import { ViewerConversationDock } from '../sources/components/buzz/ViewerConversationDock';
 import { publishViewerConversation } from '../sources/buzz/viewer-conversation';
 import type { RoomViewMessage } from '@beeline/api-contract/phone';
 const text = '**FIRST LINE**\n\n' + Array.from({ length: 45 }, (_, i) => `- **State ${i+1}**: A long reply about call states and endings remains readable while the artifact stays visible.`).join('\n') + '\n\n**NEWEST LINE**';
 const send = async () => {
-  setTimeout(() => publishViewerConversation({ roomId: 'proof', messages: [{ id: 'reply', text, presentation: 'message', author: { kind: 'agent', handle: 'ruby', name: 'Ruby' } } as RoomViewMessage], send }), location.search.includes('slow-reply') ? 800 : 50);
+  // Commit fixture delivery before Chrome advances virtual time again. The dock
+  // still owns layout and scrolling; the proof never scrolls for it.
+  setTimeout(() => flushSync(() => publishViewerConversation({ roomId: 'proof', messages: [{ id: 'reply', text, presentation: 'message', author: { kind: 'agent', handle: 'ruby', name: 'Ruby' } } as RoomViewMessage], send })), location.search.includes('slow-reply') ? 800 : 50);
   return true;
 };
 publishViewerConversation({ roomId: 'proof', messages: [], send });

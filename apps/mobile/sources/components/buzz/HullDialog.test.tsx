@@ -386,6 +386,25 @@ describe('Hull dialog family', () => {
     expect(box).toBeTruthy();
   });
 
+  it('opens from a boxed field tap without a screen-level Pressable', () => {
+    const onPress = vi.fn();
+    const renderer = render(
+      <HullDialogInput
+        accessibilityLabel="Search apps, keys, and websites"
+        onPress={onPress}
+        placeholder="Search apps, keys, and websites"
+        testID="connectors-search"
+        value=""
+        variant="boxed"
+      />,
+    );
+    const button = hostByTestID(renderer, 'connectors-search', 'Pressable');
+    expect(button.props.accessibilityRole).toBe('button');
+    expect(hostByTestID(renderer, 'connectors-search', 'TextInput')).toBeUndefined();
+    act(() => button.props.onPress());
+    expect(onPress).toHaveBeenCalledTimes(1);
+  });
+
   it('renders a bottom sheet with grip, metadata, destructive-only red, disabled state, and quiet cancel', () => {
     const onClose = vi.fn();
     const archive = vi.fn();

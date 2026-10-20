@@ -416,8 +416,10 @@ export const HullDialogInput = React.forwardRef<
     // `boxed` is the bordered search field: regular-weight placeholder,
     // no dialog underline, house radius.
     variant?: 'dialog' | 'boxed';
+    // Read-only tap target, e.g. Connectors search that opens the search sheet.
+    onPress?: () => void;
   }
->(function HullDialogInput({ style, ruleStyle, variant = 'dialog', ...props }, ref) {
+>(function HullDialogInput({ style, ruleStyle, variant = 'dialog', onPress, ...props }, ref) {
   const { theme } = useUnistyles();
   // Layout belongs to the wrapper; the native field owns only its shared type
   // and underline geometry. Keep flex/margins at existing row/search callers.
@@ -446,16 +448,54 @@ export const HullDialogInput = React.forwardRef<
     if (key in resolvedStyle) (outerStyle as Record<string, unknown>)[key] = resolvedStyle[key];
     delete innerStyle[key];
   }
+  const boxStyle = [
+    styles.inputRule,
+    variant === 'boxed' && styles.inputRuleBoxed,
+    outerStyle,
+    ruleStyle,
+    focused && (variant === 'boxed' ? styles.inputFocusedBoxed : styles.inputFocused),
+  ];
+  const inputStyle = [
+    innerStyle,
+    styles.input,
+    variant === 'boxed' && styles.inputBoxed,
+    props.multiline && styles.multilineInput,
+  ];
+  if (onPress) {
+    return (
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={props.accessibilityLabel}
+        onPress={onPress}
+        style={styles.inputPressable}
+        testID={props.testID}
+      >
+        <View style={boxStyle}>
+          <TextInput
+            {...props}
+            ref={ref}
+            editable={false}
+            pointerEvents="none"
+            testID={undefined}
+            importantForAccessibility="no"
+            accessibilityElementsHidden
+            onFocus={(event) => {
+              setFocused(true);
+              props.onFocus?.(event);
+            }}
+            onBlur={(event) => {
+              setFocused(false);
+              props.onBlur?.(event);
+            }}
+            placeholderTextColor={props.placeholderTextColor ?? theme.buzz.textDisabled}
+            style={inputStyle}
+          />
+        </View>
+      </Pressable>
+    );
+  }
   return (
-    <View
-      style={[
-        styles.inputRule,
-        variant === 'boxed' && styles.inputRuleBoxed,
-        outerStyle,
-        ruleStyle,
-        focused && (variant === 'boxed' ? styles.inputFocusedBoxed : styles.inputFocused),
-      ]}
-    >
+    <View style={boxStyle}>
       <TextInput
         {...props}
         ref={ref}
@@ -468,12 +508,7 @@ export const HullDialogInput = React.forwardRef<
           props.onBlur?.(event);
         }}
         placeholderTextColor={props.placeholderTextColor ?? theme.buzz.textDisabled}
-        style={[
-          innerStyle,
-          styles.input,
-          variant === 'boxed' && styles.inputBoxed,
-          props.multiline && styles.multilineInput,
-        ]}
+        style={inputStyle}
       />
     </View>
   );
@@ -549,6 +584,7 @@ const styles = StyleSheet.create((theme) => {
       justifyContent: 'flex-end',
       gap: hull.space.sm,
     },
+    inputPressable: { alignSelf: 'stretch' },
     inputRule: {
       alignSelf: 'stretch',
       marginTop: HULL_DIALOG_LAYOUT.inputMarginTop,

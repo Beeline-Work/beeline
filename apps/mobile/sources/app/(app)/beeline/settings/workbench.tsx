@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Pressable, ScrollView, Text, View } from 'react-native';
+import { ScrollView, Text, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -39,11 +39,9 @@ export default function WorkbenchScreen() {
     {(!index && error) || (view && !index) ? <NetworkUnavailableState onRetry={() => void refresh()} testID="workbench-network-unavailable" /> : !index ?
       <View style={styles.centered}><SurfaceGlyphLoader testID="workbench-loader" /></View> :
       <ScrollView style={styles.content} contentContainerStyle={[styles.contentInner, { paddingBottom: insets.bottom + theme.buzz.space.xxl }]} testID="workbench-scroll">
-        <Pressable accessibilityRole="button" accessibilityLabel="Search apps, keys, and websites"
-          onPress={() => setSearchOpen(true)} testID="connectors-search">
-          <HullDialogInput accessibilityLabel="Search apps, keys, and websites" placeholder="Search apps, keys, and websites"
-            value="" editable={false} pointerEvents="none" variant="boxed" placeholderTextColor={theme.buzz.textDisabled} />
-        </Pressable>
+        <HullDialogInput accessibilityLabel="Search apps, keys, and websites" placeholder="Search apps, keys, and websites"
+          value="" editable={false} variant="boxed" placeholderTextColor={theme.buzz.textDisabled}
+          testID="connectors-search" onPress={() => setSearchOpen(true)} />
         {!index.hasConnections ? <View>
           <Text style={styles.note}>No connections yet. Choose a service to get started.</Text>
           <RoomListSectionHeader title="Suggested" inset="content" spacing="flush" />

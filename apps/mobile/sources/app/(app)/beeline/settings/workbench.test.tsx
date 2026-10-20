@@ -201,15 +201,15 @@ describe('Connectors server-owned settings screen', () => {
   });
   it('renders the search hint as a quiet boxed field and opens the existing search', async () => {
     const renderer = await render();
-    const search = renderer.root.findByProps({ testID: 'connectors-search' });
     const hint = renderer.root.findByType('HullDialogInput');
+    expect(hint.props.testID).toBe('connectors-search');
     expect(hint.props.variant).toBe('boxed');
     expect(hint.props.editable).toBe(false);
     expect(hint.props.placeholder).toBe('Search apps, keys, and websites');
     expect(hint.props.value).toBe('');
     expect(hint.props.placeholderTextColor).toBeTruthy();
     expect(hint.props.placeholderTextColor).not.toMatch(/#f0f0f3|#171310/i);
-    await act(async () => search.props.onPress());
+    await act(async () => hint.props.onPress());
     expect(renderer.root.findByProps({ testID: 'connectors-search-sheet' }).props.visible).toBe(true);
   });
   it('only shows suggestions in the body for an empty account', async () => {

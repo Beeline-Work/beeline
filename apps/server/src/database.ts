@@ -3,7 +3,7 @@ import { CORNER_PERSON_STATE_SCHEMA, migrateCornerPersonState } from './corner-p
 import { deleteArchivedCornerWakeSources } from './migrations/archived-corner-wakes.js';
 import { retireBotDirectMessages } from './migrations/one-system-thread.js';
 import { VOICE_SCHEMA } from './voice-schema.js';
-import { FREE_AGENTS_SCHEMA, FREE_AGENT_CONNECT_GUIDE } from './free-agents.js';
+import { FREE_AGENTS_SCHEMA, FREE_AGENT_CONNECT_GUIDE, FREE_AGENT_REPOSITORY_GUIDE } from './free-agents.js';
 import { backfillComputerObservations } from './system-line.js';
 import { scheduleWorkflowSlugSql } from './workflow-admin.js';
 import { AGENT_SUBSCRIPTIONS_SCHEMA } from './agent-subscriptions.js';
@@ -3238,6 +3238,14 @@ export async function migrateData(database: SqlDatabase): Promise<void> {
         FROM free_agents free WHERE agent.agent_id=free.agent_id
         AND jsonb_typeof(agent.soul->'instructions')='string'
         AND strpos(agent.soul->>'instructions',$1)=0`, [FREE_AGENT_CONNECT_GUIDE]);
+    }));
+  await dataStep('free agent repository onboarding guide', () =>
+    workflowBackfillOnce(database, 'free-agent-repository-onboarding-v1', async db => {
+      await db.query(`UPDATE agents agent SET soul=jsonb_set(agent.soul,'{instructions}',
+        to_jsonb((agent.soul->>'instructions') || E'\\n\\n' || $1::text)),updated_at=now()
+        FROM free_agents free WHERE agent.agent_id=free.agent_id
+        AND jsonb_typeof(agent.soul->'instructions')='string'
+        AND strpos(agent.soul->>'instructions',$1)=0`, [FREE_AGENT_REPOSITORY_GUIDE]);
     }));
   await dataStep('durable phone sessions', () =>
     workflowBackfillOnce(database, 'durable-phone-sessions-v1', async db => {

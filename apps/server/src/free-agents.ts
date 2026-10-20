@@ -1,3 +1,4 @@
+import { postRepositoryOnboarding } from './repository-onboarding.js';
 import { createCipheriv, createDecipheriv, createECDH, createHash, randomBytes } from 'node:crypto';
 import { assignSeededAgentIdentity, resolveFace, uniqueAgentHandle } from '@beeline/api-contract/phone';
 import { createAgentCommand } from './agent-command.js';
@@ -192,7 +193,7 @@ export const FREE_AGENT_JOIN_GREETING =
   "what up boss? I'm a pro bono agent for beeline. I can help you set up this workspace, invite other humans and agents, or whatever else you might need";
 
 export const FREE_AGENT_HELLO =
-  `@<owner> Hi, I'm Beebee, your free agent in Beeline. I run on my own small cloud computer, so I can write files, run commands, research and draft things for you. Try "@<handle> draft a welcome note for this Workspace" to start. If you don't want me here, open Members and remove me from the Workspace.`;
+  `@<owner> Hi, I'm Beebee, your free agent in Beeline. I run on my own small cloud computer, so I can write files, run commands, research and draft things for you. Choose or create a repository on the card below, and I’ll suggest a starting task. If you don't want me here, open Members and remove me from the Workspace.`;
 
 /**
  * The exit note. Both claims hold: leaving or removal keeps the member's
@@ -209,6 +210,10 @@ export const FREE_AGENT_CONNECT_GUIDE = `Offer help bringing their own agent onl
 
 When they accept, guide them one step at a time, waiting for the result of each step. Help them choose their own computer or an always-on machine they control. Install Node.js and an agent CLI (Claude Code, Codex or OpenCode), and help them sign in to that CLI. Send them to Members -> Add agent in their Workspace to copy the command. The command format is npx usebeeline connect <code>; they must run the actual command copied from Add agent on their chosen machine. Never create, retrieve, request, repeat or post a pairing code in a Room. Troubleshoot using redacted errors, never secrets. Keep helping until Members shows their new agent online, then have them tag it with a small task. Do not claim it is online without confirmation.`;
 
+export const FREE_AGENT_REPOSITORY_GUIDE = `For repository work, use app_tool(app:"beeline:onboarding") to discover the repository and starters tools. When a Room has no repository, post its repository card instead of sending anyone to Settings or a CLI. When a person wants to switch repositories, post the same card. After linking, offer the starters card, grounded in recent commits, CI and open issues. A tapped starter is an instruction to start that task now: open a repository corner with a complete brief using their selection as approval, do the work, and use the normal checks, independent review and merge path. Never explain corners during this onboarding flow.
+
+When asked to do work or told "just ship it", execute the requested work. Do not stop at a plan, a capability statement or another confirmation of an already clear request. Report a concrete blocker when one exists; keep making independent progress. Existing merge and approval rules still apply.`;
+
 export function freeAgentInstructions(seededSoul: string, name: string, config: FreeAgentConfig): string {
   return `${seededSoul}
 
@@ -218,7 +223,9 @@ You run on your own small Linux cloud computer (${config.cpus} shared CPU, ${con
 
 Do real work when asked: write and edit files, run commands, install tools, research, draft and explain. Keep replies warm, short and concrete.
 
-The server already posts your first hello in #general. Do not repeat it.
+The server already posts your first hello and repository card in #general. Do not repeat them.
+
+${FREE_AGENT_REPOSITORY_GUIDE}
 
 When people join #general (a "joined" line), always reply, with nothing else, exactly: their @handles, then a space, then this sentence:
 ${FREE_AGENT_JOIN_GREETING}
@@ -345,6 +352,7 @@ export async function createFreeAgentInWorkspace(
     [createHash('sha256').update(`free-agent-hello:${agent.publicKey}`).digest('hex'),
       input.roomId, agent.publicKey, hello],
   );
+  await postRepositoryOnboarding(database, undefined, { roomId: input.roomId, agentId: agent.publicKey, requesterId: input.creatorId, kind: 'repository' });
   await recordFreeAgentEvent(database, agent.publicKey, 'created', {
     workspaceId: input.workspaceId,
   });

@@ -1,6 +1,10 @@
+import * as Crypto from 'expo-crypto';
+import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
+import { saveActiveCommunityId } from '@/buzz/community-storage';
+import { enterWorkspaceRoom } from '@/buzz/enter-workspace';
 import { HullDialogInput } from '@/components/buzz/HullDialog';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, Text, TextInput, TouchableOpacity, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { router, useLocalSearchParams, type Href } from 'expo-router';
@@ -40,6 +44,9 @@ export default function WorkspaceChoice() {
   useLatencyRouteFrame('/beeline/community', workspaceList !== null, true);
   const [joinOpen, setJoinOpen] = useState(requestedMode === 'join');
   const [inviteInput, setInviteInput] = useState('');
+  const [draftName, setDraftName] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const workspaceId = useRef(Crypto.randomUUID()).current;
   const [error, setError] = useState<string | null>(null);
   const communities = useMemo(
     () => workspaceList?.workspaces.map(workspaceRailItem) ?? [],
@@ -47,6 +54,22 @@ export default function WorkspaceChoice() {
   );
   const hasWorkspaces = communities.length > 0;
   const viewerName = workspaceList?.viewer.name?.trim() ?? '';
+  const workspaceName = draftName ?? (viewerName ? `${viewerName}'s team` : 'My team');
+  const createWorkspace = async () => {
+    if (!identity || creating || !workspaceName.trim()) return;
+    setCreating(true);
+    setError(null);
+    try {
+      const name = workspaceName.trim();
+      const created = await monolithPhoneOperation('createWorkspace', { workspaceId, name });
+      await monolithPhoneOperation('updateWorkspace', { workspaceId, name });
+      await saveActiveCommunityId(identity.publicKey, created.id);
+      enterWorkspaceRoom(created.id, created.roomId ?? null);
+    } catch (reason) {
+      setError(`Could not create Workspace: ${reason instanceof Error ? reason.message : String(reason)}`);
+      setCreating(false);
+    }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -142,10 +165,13 @@ export default function WorkspaceChoice() {
           </Text>
 
           <View style={styles.choices}>
+            <HullDialogInput accessibilityLabel="Workspace name" testID="choice-workspace-name"
+              maxLength={80} editable={!creating} value={workspaceName} onChangeText={setDraftName}
+              onSubmitEditing={() => void createWorkspace()} />
             <ChoiceCard
-              description="New workspace for your team"
+              description={creating ? "Creating your Workspace…" : workspaceName}
               glyph={<RoomGlyph color={theme.buzz.accent} size={20} />}
-              onPress={() => router.push('/beeline/create-workspace' as Href)}
+              onPress={() => void createWorkspace()}
               testID="choice-create"
               title={`Create a ${WORKSPACE_LABEL}`}
             />

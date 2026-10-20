@@ -3708,6 +3708,11 @@ async function executeAgentOperation(
     }
     case 'offer_connector':
       return offerConnector(args);
+    case 'post_repository_card':
+    case 'post_starters_card':
+      return JSON.stringify(await daemonExecute('postRepositoryOnboarding', {
+        ...await activeCommandContext(), kind: name === 'post_repository_card' ? 'repository' : 'starters',
+      }));
     case 'ask_choice':
       return askChoice(args);
     case 'open_poll':

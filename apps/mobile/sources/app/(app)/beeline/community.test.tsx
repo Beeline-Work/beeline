@@ -1,3 +1,7 @@
+vi.mock('expo-crypto', () => ({ randomUUID: () => '11111111-2222-4333-8444-555555555555' }));
+vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: controls.operation }));
+vi.mock('@/buzz/community-storage', () => ({ saveActiveCommunityId: vi.fn(async () => undefined) }));
+vi.mock('@/buzz/enter-workspace', () => ({ enterWorkspaceRoom: controls.enter }));
 vi.mock('@expo/vector-icons', async () => { const R = await import('react'); return { Ionicons: (props: any) => R.createElement('Ionicons', props) }; });
 vi.mock('expo-haptics', () => ({ ImpactFeedbackStyle: { Light: 'Light' }, impactAsync: async () => undefined }));
 vi.mock('react-native-keyboard-controller', async () => { const R = await import('react'); return { KeyboardAvoidingView: (props: any) => R.createElement('View', props, props.children) }; });
@@ -8,6 +12,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 
 const TOKEN = `inv_${'b'.repeat(64)}`;
 const controls = vi.hoisted(() => ({
+  operation: vi.fn(async () => ({ id: '11111111-2222-4333-8444-555555555555', roomId: 'general' })),
+  enter: vi.fn(),
   push: vi.fn(),
   replace: vi.fn(),
   workspaces: vi.fn(),
@@ -162,7 +168,7 @@ describe('the create-or-join choice', () => {
       expect.arrayContaining([
         'Start a Workspace, or join one you were invited to.',
         'Create a Workspace',
-        'New workspace for your team',
+        "Ada's team",
         'Join with an invite link',
         'Paste the link someone sent you.',
       ]),
@@ -173,10 +179,14 @@ describe('the create-or-join choice', () => {
     expect(find(renderer, 'choice-settings')).toHaveLength(0);
   });
 
-  it('opens the wizard for Create', async () => {
+  it('creates with the prefilled name in one tap and enters its first Room', async () => {
+    controls.workspaces.mockResolvedValue({ workspaces: [], viewer: { name: 'Ada' } });
     const renderer = await render();
-    find(renderer, 'choice-create')[0]!.props.onPress();
-    expect(controls.push).toHaveBeenCalledWith('/beeline/create-workspace');
+    expect(find(renderer, 'choice-workspace-name')[0]!.props.value).toBe("Ada's team");
+    expect(controls.operation).not.toHaveBeenCalled();
+    await act(async () => find(renderer, 'choice-create')[0]!.props.onPress());
+    expect(controls.operation).toHaveBeenCalledWith('createWorkspace', { workspaceId: '11111111-2222-4333-8444-555555555555', name: "Ada's team" });
+    expect(controls.enter).toHaveBeenCalledWith('11111111-2222-4333-8444-555555555555', 'general');
   });
 
   it('previews a pasted invite link, and refuses something that is not one', async () => {

@@ -269,9 +269,13 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
       }
       deviceCodeHash = device.deviceCodeHash;
     }
+    const onboarding = query.onboarding === '1' && !!appRedirectUri;
+    // This cookie is only a routing hint. The callback still verifies the user's installation.
+    const returningInstall = /(?:^|;\s*)beeline_github_installed=1(?:;|$)/.test(request.headers.cookie ?? '');
+    const installOnSignIn = onboarding && !returningInstall;
     const issuedAt = now();
-    const state = randomToken();
-    const verifier = randomToken();
+    const state = onboarding ? `onboarding_${randomToken()}` : randomToken();
+    const verifier = installOnSignIn ? '' : randomToken();
     const browserSession = randomToken();
     const codeChallenge = Buffer.from(sha256Bytes(verifier)).toString('base64url');
     const redirectUri = `${tenant.origin}/auth/github/callback`;
@@ -296,7 +300,7 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
       `${flowCookieName}=${browserSession}; Path=/; Max-Age=${Math.floor(flowTtlMs / 1_000)};${cookieSecurity} HttpOnly; SameSite=Lax`,
     );
     return reply.redirect(
-      options.github.oauth.authorizationUrl({ state, codeChallenge, redirectUri }),
+      installOnSignIn ? options.github.app.installationUrl(state) : options.github.oauth.authorizationUrl({ state, codeChallenge, redirectUri }),
       302,
     );
   });
@@ -308,7 +312,8 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
     // Request-user-authorization-on-install makes this the GitHub App's only
     // post-install callback too. Repository selection updates carry the
     // installation id/setup action instead of an ordinary sign-in code.
-    if (query.installation_id !== undefined || query.setup_action !== undefined) {
+    if ((query.installation_id !== undefined || query.setup_action !== undefined) &&
+        !(typeof query.state === 'string' && query.state.startsWith('onboarding_'))) {
       return completeGitHubInstallation(request, reply);
     }
     const tenant = tenantFor(request);
@@ -341,10 +346,15 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
       if (completion) return deliverNativeCompletion(reply, completion);
       throw new ProtocolError(401, 'github_denied', 'GitHub denied the authorization request');
     }
+    if (state.startsWith('onboarding_') && typeof query.code !== 'string') {
+      const completion = nativeCompletion(flow, { error: 'github_installation_required',
+        message: 'GitHub did not finish authorizing the installation. Return and try again.' });
+      if (completion) return deliverNativeCompletion(reply, completion);
+    }
     const code = requiredQueryString(query.code, 'code');
     let identity: GitHubIdentity;
     try {
-      identity = await options.github.oauth.exchangeCode(code, flow.redirectUri, flow.pkceVerifier);
+      identity = await options.github.oauth.exchangeCode(code, flow.redirectUri, flow.pkceVerifier || undefined);
     } catch {
       const completion = nativeCompletion(flow, {
         error: 'invalid_github_proof',
@@ -367,6 +377,31 @@ export function registerServerOidcIdentityRoutes(context: AuthRouteContext): voi
           : undefined,
       },
     );
+    if (state.startsWith('onboarding_')) {
+      // Never trust installation_id from the redirect as proof of repository access.
+      let accounts: Awaited<ReturnType<typeof options.github.app.installationAccount>>[];
+      try {
+        const ids = await options.github.app.listUserInstallationIds(identity.accessToken);
+        accounts = await Promise.all(ids.map(id => options.github!.app.installationAccount(id)));
+      } catch {
+        const completion = nativeCompletion(flow, { error: 'github_installation_unavailable',
+          message: 'GitHub could not verify your installation. Please try again.' });
+        if (completion) return deliverNativeCompletion(reply, completion);
+        throw new ProtocolError(503, 'github_installation_unavailable', 'GitHub installation verification failed');
+      }
+      const installed = accounts.some(account => account.type === 'User' && account.login.toLowerCase() === identity.login.toLowerCase() && account.repositorySelection === 'all');
+      const clearing = reply.getHeader('set-cookie');
+      reply.header('set-cookie', [
+        ...(Array.isArray(clearing) ? clearing.map(String) : clearing ? [String(clearing)] : []),
+        `beeline_github_installed=${installed ? '1' : ''}; Path=/; Max-Age=${installed ? 31_536_000 : 0};${cookieSecurity} HttpOnly; SameSite=Lax`,
+      ]);
+      if (!installed) {
+        const completion = nativeCompletion(flow, { error: 'github_installation_required',
+          message: 'Install Beeline on your personal account with All repositories, then try again.' });
+        if (completion) return deliverNativeCompletion(reply, completion);
+        throw new ProtocolError(409, 'github_installation_required', 'Personal All repositories installation is required');
+      }
+    }
     if (flow.deviceCodeHash) {
       await completeAgentConnectApproval(tenant, flow, identity);
       noStore(reply);

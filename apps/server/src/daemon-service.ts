@@ -1,5 +1,6 @@
 import { transientGitHubError, githubRetryDelay } from '@beeline/auth/github';
 import { captureServerError } from './sentry.js';
+import { postRepositoryOnboarding } from './repository-onboarding.js';
 import { agentUsage, saveAgentUsage } from './agent-usage.js';
 import { CornerAccessDatabase } from './corner-access-database.js';
 import { setRoomEventSubscriptions } from './corner-person-state.js';
@@ -105,7 +106,7 @@ import { MESSAGE_CURSOR_MS_SQL, type SqlDatabase } from './database.js';
 import { closeCornerState } from './corner-close.js';
 import { writeCornerTitle } from './corner-title.js';
 import { advanceCorner, lockCornerLifecycle } from './corner-lifecycle.js';
-import type { LandCornerOutcome } from './github-operations.js';
+import type { GitHubOperations, LandCornerOutcome } from './github-operations.js';
 import { SYSTEM_IDENTITY_ID } from '@beeline/api-contract/system-identity';
 import { SCHEDULE_SCHEDULER_ID } from '@beeline/api-contract/scheduled-prompts';
 import {
@@ -415,6 +416,7 @@ export class DaemonService {
       cornerId: string,
     ) => Promise<Output<'readCornerPullRequest'>>,
     private readonly subscriptionReceiverUrl?: string,
+    private readonly github?: GitHubOperations,
   ) {
     this.database = new CornerAccessDatabase(database);}
 
@@ -519,6 +521,7 @@ export class DaemonService {
       'connect',
       'listAppTools',
       'executeAppTool',
+      'postRepositoryOnboarding',
       'askRoomChoice',
       'openRoomPoll',
       'putCornerApp',
@@ -778,6 +781,7 @@ export class DaemonService {
           this.objects,
           this.linkWallet,
           this.refreshMergeability,
+          this.landCorner, this.closePullRequest, this.readPullRequest, this.subscriptionReceiverUrl, this.github,
         );
         scoped.memoryEmbed = memoryEmbed;
         scoped.afterCommit = (task) => {
@@ -1753,6 +1757,21 @@ export class DaemonService {
           input as Input<'requestAgentGrant'>,
           authenticatedAgentId,
         )) as Output<Name>;
+      case 'postRepositoryOnboarding': {
+        const request = input as Input<'postRepositoryOnboarding'>;
+        await this.access(request.roomId, authenticatedAgentId);
+        const requester = await this.grantRequester();
+        const owner = requester.kind === 'human' ? requester.id : (await this.database.query<{ owner_id: string }>(
+          `SELECT owner_id FROM agents WHERE agent_id=$1`, [authenticatedAgentId])).rows[0]?.owner_id;
+        if (!owner) throw new Error('repository card requester not found');
+        if (!['repository', 'starters'].includes(request.kind)) throw new Error('invalid repository card kind');
+        if (request.kind === 'repository') await this.github?.refresh(owner);
+        const card = await postRepositoryOnboarding(this.database, this.github, {
+          roomId: request.roomId, agentId: authenticatedAgentId, requesterId: owner, kind: request.kind,
+        });
+        this.live.publish({ type: 'invalidate', roomId: request.roomId, reason: 'message', agentId: authenticatedAgentId });
+        return card as Output<Name>;
+      }
       case 'askRoomChoice':
         return (await this.askRoomChoice(
           input as Input<'askRoomChoice'>,
@@ -8476,6 +8495,7 @@ const DAEMON_OPERATION_ROUTES: Record<keyof DaemonOperationMap, true> = {
   renameCorner: true,
   postTargetBranchProposal: true,
   requestAgentGrant: true,
+  postRepositoryOnboarding: true,
   askRoomChoice: true,
   openRoomPoll: true,
   listAgentGrants: true,

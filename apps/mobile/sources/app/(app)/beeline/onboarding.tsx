@@ -171,6 +171,7 @@ export default function BuzzOnboarding() {
    * in Settings.
    */
   const enterAfterMonolithSignIn = async (identityId: string | undefined) => {
+    await monolithPhoneOperation('listGitHubRepositories', { refresh: true });
     const seed = identityId || (await monolithSession.identityId().catch(() => null)) || '';
     const hosted = await monolithPhoneOperation('getManagedIdentity', {}).catch(() => null);
     if (hosted?.face) {
@@ -381,7 +382,8 @@ export default function BuzzOnboarding() {
               });
             return;
           }
-          const identityId = await monolithSession.exchangeGitHubTicket(challenge.ticket);
+          setStatus('binding');
+        const identityId = await monolithSession.exchangeGitHubTicket(challenge.ticket);
           await clearPendingGitHubSignInState();
           if (alive) await enterAfterMonolithSignIn(identityId);
           return;
@@ -487,6 +489,7 @@ export default function BuzzOnboarding() {
             ),
           subscribeToUrls: subscribeToAuthUrls,
         });
+        setStatus('binding');
         const identityId = await monolithSession.exchangeGitHubTicket(challenge.ticket);
         await clearPendingGitHubSignInState();
         await enterAfterMonolithSignIn(identityId);
@@ -1039,6 +1042,8 @@ export default function BuzzOnboarding() {
             disabled={loading}
           />
         ) : !showAdvanced && canSignIn ? (
+          <View>
+          <Text style={styles.subtitle} testID="onboarding-github-scope">Sign in and install Beeline on your personal GitHub account. Choose All repositories so Beeline can work on repos you create later.</Text>
           <Button
             label={signInLabel}
             labelStyle={Platform.OS === 'android' ? styles.signInLabel : undefined}
@@ -1049,6 +1054,7 @@ export default function BuzzOnboarding() {
             onPress={() => void handleSignIn()}
             disabled={loading || status === 'checking_device' || status === 'binding'}
           />
+          </View>
         ) : null}
         {!monolithEnabled && (
           <Button

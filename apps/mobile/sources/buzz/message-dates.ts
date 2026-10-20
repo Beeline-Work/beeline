@@ -81,6 +81,7 @@ function hasTranscriptByline(message: ChatDisplayMessage): boolean {
     message.grantRequest ||
     message.squireApproval ||
     message.computerSession ||
+    message.onboarding ||
     message.choice ||
     message.connectorOffer ||
     message.agentCommand ||

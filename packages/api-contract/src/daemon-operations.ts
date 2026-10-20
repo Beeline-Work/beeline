@@ -1,3 +1,4 @@
+import type { RepositoryOnboardingCard } from './repository-onboarding.js';
 import type { AgentUsage } from './agent-usage.js';
 import type { RoomSubscriptionListResult, RoomSubscriptionView, SubscriptionSource, SubscriptionEventCatalog } from './subscriptions.js';
 import type { AppRoute, AppTransport, ConnectAppStatus } from './app-connections.js';
@@ -549,6 +550,7 @@ export type DaemonOperationMap = {
   >;
   postTargetBranchProposal: Operation<PostTargetBranchProposalInput, WriteResult>;
   requestAgentGrant: Operation<RequestAgentGrantInput, RequestAgentGrantResult>;
+  postRepositoryOnboarding: Operation<RoomInput & { readonly kind: 'repository' | 'starters' }, RepositoryOnboardingCard>;
   askRoomChoice: Operation<AskRoomChoiceInput, AskRoomChoiceResult>;
   openRoomPoll: Operation<OpenRoomPollInput, AskRoomChoiceResult>;
   listAgentGrants: Operation<AgentInput & { readonly roomId?: string }, AgentGrantListResult>;

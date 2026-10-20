@@ -1,3 +1,4 @@
+import type { RepositorySignals } from './repository-onboarding.js';
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 import {
   GITHUB_IDENTITY_AUDIENCE,
@@ -552,15 +553,52 @@ export class GitHubOperations {
     return token ? this.app.starRepository(token, fullName) : false;
   }
 
-  async createRepository(viewerId: string, input: Input<'createGitHubRepository'>) {
+  /** Read signals with the Room's exact-repository installation token. */
+  async onboardingSignals(roomId: string): Promise<RepositorySignals> {
+    const room = (await this.database.query<{ repository_name: string; repository_target_branch: string }>(
+      `SELECT repository_name,repository_target_branch FROM rooms WHERE id=$1 AND repository_resolution='repository'`, [roomId])).rows[0];
+    if (!room) throw new Error('Link a repository before reading starters');
+    const token = await this.roomToken(roomId);
+    const read = (path: string) => this.app.issuesRequest(token.token, room.repository_name, 'GET', path);
+    const [commitsResult, issuesResult, branchesResult, treeResult] = await Promise.all([
+      read(`commits?sha=${encodeURIComponent(room.repository_target_branch)}&per_page=30`).catch(error => {
+        if (error instanceof GitHubHttpError && error.status === 409) return [];
+        throw error;
+      }),
+      read('issues?state=open&sort=created&direction=asc&per_page=50'),
+      read('branches?per_page=100'),
+      read(`git/trees/${encodeURIComponent(room.repository_target_branch)}?recursive=1`).catch(error => {
+        if (error instanceof GitHubHttpError && [404, 409].includes(error.status)) return { tree: [] };
+        throw error;
+      }),
+    ]);
+    const records = (value: unknown) => Array.isArray(value) ? value.map(record).filter((r): r is GitHubRecord => !!r) : [];
+    const commits = await Promise.all(records(commitsResult).slice(0, 10).map(async commit => {
+      const sha = text(commit.sha)!;
+      const detail = record(await read(`commits/${encodeURIComponent(sha)}`));
+      return { sha, message: text(record(commit.commit)?.message) ?? '',
+        files: records(detail?.files).map(file => text(file.filename)).filter((p): p is string => !!p) };
+    }));
+    const head = commits[0]?.sha;
+    const checks = head ? await this.app.readCommitCheckRollup(token.token, room.repository_name, head) : undefined;
+    return {
+      commits, failingChecks: checks?.failing ?? [],
+      issues: records(issuesResult).filter(issue => !issue.pull_request).map(issue => ({ number: integer(issue.number)!,
+        title: text(issue.title) ?? '', bug: records(issue.labels).some(label => /bug/i.test(String(label.name))) })),
+      branches: records(branchesResult).map(branch => text(branch.name)).filter((p): p is string => !!p),
+      files: records(record(treeResult)?.tree).map(file => text(file.path)).filter((p): p is string => !!p),
+    };
+  }
+
+  async createRepository(viewerId: string, input: Input<'createGitHubRepository'>, database: SqlDatabase = this.database) {
     const installation = (
-      await this.database.query<{ account_login: string; account_type: 'User' | 'Organization' }>(
+      await database.query<{ account_login: string; account_type: 'User' | 'Organization' }>(
         `SELECT account_login,account_type FROM github_installations WHERE installation_id=$1 AND owner_id=$2 AND status='active'`,
         [input.installationId, viewerId],
       )
     ).rows[0];
     if (!installation) throw new Error('GitHub installation not found');
-    const token = (await this.userCredential(viewerId, this.database))?.token;
+    const token = (await this.userCredential(viewerId, database))?.token;
     const repository = await this.app.createRepository(
       input.installationId,
       { login: installation.account_login, type: installation.account_type },
@@ -571,7 +609,7 @@ export class GitHubOperations {
       },
       token,
     );
-    await this.storeRepository(repository, this.database);
+    await this.storeRepository(repository, database);
     return {
       id: repository.id,
       fullName: repository.fullName,

@@ -211,6 +211,19 @@ describe('Android push routing generated sources', () => {
     }
   });
 
+  it('delivers foreground FCM extras through Expo without starting MainActivity again', async () => {
+    const sources = await generatedSources('app.usebeeline');
+    const activity = sources['PushNotificationActivity.kt'];
+    const foreground = activity.slice(activity.indexOf('val foregroundExtras'), activity.indexOf('val destination'));
+    expect(foreground).toContain('containsKey("google.message_id") == true && PushRoutingState.mainActivityIsStarted');
+    expect(foreground).toContain('NotificationManager.onNotificationResponseFromExtras(foregroundExtras)');
+    expect(foreground).toContain('finish()');
+    expect(foreground).toContain('return');
+    expect(foreground).not.toContain('startActivity');
+    expect(sources['PushRoutingLifecycleProvider.kt']).toContain('startedMainActivities.incrementAndGet()');
+    expect(sources['PushRoutingLifecycleProvider.kt']).toContain('startedMainActivities.decrementAndGet()');
+  });
+
   it('clears the task only when no live MainActivity can take the fresh intent', async () => {
     const sources = await generatedSources('app.usebeeline');
 

@@ -147,6 +147,23 @@ session/cache read until about 535 ms, after the cached-frame wait. A scoped
 opening-response subscription is the next candidate; no passing timing is
 claimed for it yet.
 
+## Opening-response candidate (706150b5e)
+
+| Entry / unseen | Samples | p50 ms | p95 ms | Timing |
+| --- | ---: | ---: | ---: | --- |
+| Room list / 1 | 20 | 265 | 285 | pass |
+| Room list / 5 | 20 | 274 | 297 | pass |
+| Push / 1 | 20 | 456 | 780 | fail |
+| Push / 5 | 20 | 515 | 1337 | fail |
+
+All 80 arrival samples were retained. This capture was stopped before the
+extra nightly cases to test the native handoff. Fresh responses now reach
+layout before session setup, but one 781 ms push sample spent its first
+213 ms between native Activity entry and the JS notification listener.
+The next candidate routes foreground FCM extras through Expo's existing
+NotificationManager while MainActivity is started; background and cold taps
+retain task forwarding. Its device timing is not yet measured.
+
 ## Nightly installation and delivery
 
 The standalone comparison and local attempt scripts are committed with tests.

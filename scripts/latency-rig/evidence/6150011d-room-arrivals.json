@@ -52,71 +52,10 @@
   },
   "firstFixCapture": "rev2-fixed-nightly-workspace",
   "limitations": [
-    "All 120 samples completed on latest candidate; no complete nightly pass.",
+    "Latest completed capture retains all 80 arrival samples; extra nightly cases stopped for the next candidate. No complete nightly pass.",
     "Diagnostic animation-disabled runs excluded; original Android animation settings restored.",
     "No durable nightly schedule receipt yet."
   ],
-  "latestCandidate": {
-    "source": "daf09db85",
-    "capture": "rev2-nightly-wrapper-attempt-6",
-    "complete": true,
-    "results": [
-      {
-        "name": "/beeline/chat/[channelId]",
-        "variant": "push-unseen-1",
-        "samples": 20,
-        "p50Ms": 381,
-        "p95Ms": 1028,
-        "timingPass": false,
-        "requestPass": false
-      },
-      {
-        "name": "/beeline/chat/[channelId]",
-        "variant": "push-unseen-5",
-        "samples": 20,
-        "p50Ms": 829,
-        "p95Ms": 1251,
-        "timingPass": false,
-        "requestPass": false
-      },
-      {
-        "name": "/beeline/chat/[channelId]",
-        "variant": "room-list-unseen-1",
-        "samples": 20,
-        "p50Ms": 261,
-        "p95Ms": 282,
-        "timingPass": true,
-        "requestPass": true
-      },
-      {
-        "name": "/beeline/chat/[channelId]",
-        "variant": "room-list-unseen-5",
-        "samples": 20,
-        "p50Ms": 275,
-        "p95Ms": 300,
-        "timingPass": true,
-        "requestPass": true
-      },
-      {
-        "name": "/beeline/chat/[channelId]",
-        "variant": "warm",
-        "samples": 20,
-        "p50Ms": 286,
-        "p95Ms": 303,
-        "timingPass": true,
-        "requestPass": false
-      },
-      {
-        "name": "send-text",
-        "variant": "warm",
-        "samples": 20,
-        "p50Ms": 157,
-        "p95Ms": 179,
-        "timingPass": false,
-        "requestPass": false
-      }
-    ]
-  },
   "previousCandidate": {
     "source": "262b39de1",
     "capture": "rev2-nightly-wrapper-attempt-5",
@@ -179,7 +118,7 @@
     ]
   },
   "requestEvidenceValid": false,
-  "requestEvidenceIssue": "Historical raw requestPass flags joined uncalibrated host/device clocks and are not acceptance proof. Native monotonic paint durations remain valid.",
+  "requestEvidenceIssue": "Historical raw requestPass flags joined uncalibrated clocks and are not acceptance proof. Separately named calibrated captures have verified request clocks. Native monotonic paint durations remain valid.",
   "calibratedSynchronousPrefetch": {
     "source": "5c93b5e18e67635d23ba5475a2867011cd9eb6b4",
     "capture": "rev2-synchronous-prefetch",
@@ -213,5 +152,192 @@
     "shouldAlert": true,
     "baselineAdvanced": false,
     "deliberatelySkipped": true
+  },
+  "historicalWarmDispatch": {
+    "source": "daf09db85",
+    "capture": "rev2-nightly-wrapper-attempt-6",
+    "complete": true,
+    "results": [
+      {
+        "name": "/beeline/chat/[channelId]",
+        "variant": "push-unseen-1",
+        "samples": 20,
+        "p50Ms": 381,
+        "p95Ms": 1028,
+        "timingPass": false,
+        "requestPass": false
+      },
+      {
+        "name": "/beeline/chat/[channelId]",
+        "variant": "push-unseen-5",
+        "samples": 20,
+        "p50Ms": 829,
+        "p95Ms": 1251,
+        "timingPass": false,
+        "requestPass": false
+      },
+      {
+        "name": "/beeline/chat/[channelId]",
+        "variant": "room-list-unseen-1",
+        "samples": 20,
+        "p50Ms": 261,
+        "p95Ms": 282,
+        "timingPass": true,
+        "requestPass": true
+      },
+      {
+        "name": "/beeline/chat/[channelId]",
+        "variant": "room-list-unseen-5",
+        "samples": 20,
+        "p50Ms": 275,
+        "p95Ms": 300,
+        "timingPass": true,
+        "requestPass": true
+      },
+      {
+        "name": "/beeline/chat/[channelId]",
+        "variant": "warm",
+        "samples": 20,
+        "p50Ms": 286,
+        "p95Ms": 303,
+        "timingPass": true,
+        "requestPass": false
+      },
+      {
+        "name": "send-text",
+        "variant": "warm",
+        "samples": 20,
+        "p50Ms": 157,
+        "p95Ms": 179,
+        "timingPass": false,
+        "requestPass": false
+      }
+    ]
+  },
+  "latestCompletedCalibrated": {
+    "capture": "rev2-opening-response",
+    "source": "706150b5e991dcf7d150f46285907703af4c4e9c",
+    "completeArrivalMatrix": true,
+    "nightlyComplete": false,
+    "clockCalibrated": true,
+    "maxClockUncertaintyMs": 8.5,
+    "rows": [
+      {
+        "kind": "route",
+        "name": "/beeline/chat/[channelId]",
+        "variant": "push-unseen-1",
+        "samples": 20,
+        "p50Ms": 456,
+        "p95Ms": 780,
+        "p99Ms": 781,
+        "worstMs": 781,
+        "clockCalibrated": true,
+        "maxClockUncertaintyMs": 8.5,
+        "maxPrepaintHttpCount": 3,
+        "maxPrepaintHttpDepth": 2,
+        "maxPrepaintCompletedRoundTrips": 2,
+        "maxWrites": 4,
+        "maxFollowupReads": 5,
+        "maxHttpBytes": 58779,
+        "maxWsFrames": 0,
+        "maxWsMessages": 63,
+        "maxWsBytes": 9277,
+        "maxSqlStatements": 25,
+        "maxSqlDepth": 23,
+        "maxSqlPoolWaitMs": 5,
+        "budgetMs": 450,
+        "maxRequests": 1,
+        "maxDepth": 1,
+        "timingPass": false,
+        "requestPass": false
+      },
+      {
+        "kind": "route",
+        "name": "/beeline/chat/[channelId]",
+        "variant": "push-unseen-5",
+        "samples": 20,
+        "p50Ms": 515,
+        "p95Ms": 1337,
+        "p99Ms": 1339,
+        "worstMs": 1339,
+        "clockCalibrated": true,
+        "maxClockUncertaintyMs": 7.5,
+        "maxPrepaintHttpCount": 3,
+        "maxPrepaintHttpDepth": 3,
+        "maxPrepaintCompletedRoundTrips": 2,
+        "maxWrites": 3,
+        "maxFollowupReads": 3,
+        "maxHttpBytes": 26129,
+        "maxWsFrames": 0,
+        "maxWsMessages": 71,
+        "maxWsBytes": 11637,
+        "maxSqlStatements": 19,
+        "maxSqlDepth": 18,
+        "maxSqlPoolWaitMs": 4,
+        "budgetMs": 450,
+        "maxRequests": 1,
+        "maxDepth": 1,
+        "timingPass": false,
+        "requestPass": false
+      },
+      {
+        "kind": "route",
+        "name": "/beeline/chat/[channelId]",
+        "variant": "room-list-unseen-1",
+        "samples": 20,
+        "p50Ms": 265,
+        "p95Ms": 285,
+        "p99Ms": 299,
+        "worstMs": 299,
+        "clockCalibrated": true,
+        "maxClockUncertaintyMs": 8,
+        "maxPrepaintHttpCount": 1,
+        "maxPrepaintHttpDepth": 1,
+        "maxPrepaintCompletedRoundTrips": 1,
+        "maxWrites": 3,
+        "maxFollowupReads": 5,
+        "maxHttpBytes": 42359,
+        "maxWsFrames": 0,
+        "maxWsMessages": 5,
+        "maxWsBytes": 334,
+        "maxSqlStatements": 25,
+        "maxSqlDepth": 24,
+        "maxSqlPoolWaitMs": 10,
+        "budgetMs": 450,
+        "maxRequests": 1,
+        "maxDepth": 1,
+        "timingPass": true,
+        "requestPass": true
+      },
+      {
+        "kind": "route",
+        "name": "/beeline/chat/[channelId]",
+        "variant": "room-list-unseen-5",
+        "samples": 20,
+        "p50Ms": 274,
+        "p95Ms": 297,
+        "p99Ms": 301,
+        "worstMs": 301,
+        "clockCalibrated": true,
+        "maxClockUncertaintyMs": 7.5,
+        "maxPrepaintHttpCount": 1,
+        "maxPrepaintHttpDepth": 1,
+        "maxPrepaintCompletedRoundTrips": 1,
+        "maxWrites": 3,
+        "maxFollowupReads": 5,
+        "maxHttpBytes": 42429,
+        "maxWsFrames": 0,
+        "maxWsMessages": 5,
+        "maxWsBytes": 336,
+        "maxSqlStatements": 23,
+        "maxSqlDepth": 22,
+        "maxSqlPoolWaitMs": 6,
+        "budgetMs": 450,
+        "maxRequests": 1,
+        "maxDepth": 1,
+        "timingPass": true,
+        "requestPass": true
+      }
+    ]
   }
 }

@@ -288,7 +288,7 @@ module.exports = withoutIosPushCapabilities;\n`,
         `android: ${before.fingerprints.android} -> `,
       );
       expect(dirty.stderr).toContain(`ios: ${before.fingerprints.ios} -> `);
-      expect(dirty.stderr).toContain('bump android.runtimeVersion in apps/mobile/app.config.js to "40"');
+      expect(dirty.stderr).toContain('bump android.runtimeVersion in apps/mobile/app.config.js to "41"');
       expect(dirty.stderr).toContain('new native build');
 
       // `--write` will not quietly re-record a native change under the old pin:

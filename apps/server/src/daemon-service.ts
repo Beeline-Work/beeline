@@ -8156,7 +8156,7 @@ export class DaemonService {
           [input.messageId, input.roomId],
         )
       ).rows[0];
-      if (!row) throw new Error('message is not available for reaction');
+      if (!row) throw new CommandRefusalError('message is not available for reaction', 404);
       const reactions = { ...(row.reactions ?? {}) };
       const reactors = new Set(reactions[input.emoji] ?? []);
       reactors.add(agentId);

@@ -1824,7 +1824,9 @@ export class MonolithCornerTurnLoop {
                     ? { reviewerTarget: activeReviewerInstruction }
                     : {}),
                   task: {
-                    ...(sourceMessageId ? { reactionTargetId: sourceMessageId } : {}),
+                    ...(sourceMessageId && conversation.items.some(
+                      (message) => message.id === sourceMessageId && message.type === 'message',
+                    ) ? { reactionTargetId: sourceMessageId } : {}),
                     body: trigger,
                     reply: this.commandContext.current?.source,
                     commandReason: this.commandContext.current?.reason,

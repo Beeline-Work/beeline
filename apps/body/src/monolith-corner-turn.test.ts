@@ -3323,7 +3323,7 @@ describe('thin monolith corner turn', () => {
         return {
           items: [
             {
-              id: 'objective-message',
+              id: status === 'completed' ? 'cornerid' : 'outside-source',
               authorId: runtime.agent.publicKey,
               createdAt: 1,
               type: 'message',
@@ -3515,7 +3515,10 @@ describe('thin monolith corner turn', () => {
       '[message id: corner-artifact]\nBeeline [message]: (shared attachments)\n📎 findings.md (text/markdown, 2 KB) id=1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
     );
     expect(cornerFetch).not.toHaveBeenCalled();
-    expect(firstPrompt).toContain('Reaction target message id: cornerid\nNewest message:');
+    // Reproduction reaction-target-7801448616: only offer a source in this conversation.
+    if (status === 'completed')
+      expect(firstPrompt).toContain('Reaction target message id: cornerid\nNewest message:');
+    else expect(firstPrompt).not.toContain('Reaction target message id:');
     // The second turn is the SAME warm session: it sends only what is new —
     // here nothing, so no transcript at all — and the objective, which lives
     // outside the transcript window, still rides on every prompt.

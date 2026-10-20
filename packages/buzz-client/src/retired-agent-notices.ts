@@ -43,6 +43,7 @@ const ATTACHMENT_ENOENT_NOTICE = /^Attachment unavailable:[\s\S]*ENOENT[\s\S]*re
  * effort, so the invariant recovery line is the structural anchor.
  */
 const MODEL_UNAVAILABLE_TITLE = /^Model(?: validation)? unavailable · /;
+
 const MODEL_UNAVAILABLE_RECOVERY: readonly string[] = [
   'Open this agent’s settings, choose a value from the live model catalog, then restart the agent.',
   'Restore access to the selected harness and its live catalog, then restart the agent.',

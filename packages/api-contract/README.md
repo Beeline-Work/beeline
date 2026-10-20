@@ -1,6 +1,6 @@
 # @beeline/api-contract
 
-Compile-time and validation contracts for the relay-to-monolith migration. The only public entry points are `@beeline/api-contract/phone` and `@beeline/api-contract/daemon`.
+Compile-time and validation contracts for the Beeline server, app and helper. The only public entry points are `@beeline/api-contract/phone` and `@beeline/api-contract/daemon`.
 
 - `phone` owns the existing RoomView DTOs and surface readers plus named future phone operations.
 - `daemon` owns named future daemon operations. It deliberately has no generic event query/publish surface.

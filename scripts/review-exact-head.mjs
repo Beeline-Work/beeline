@@ -4,7 +4,7 @@
  *
  * Checks one exact commit out into a temporary detached worktree, installs
  * from the committed lockfile, builds every workspace package export the
- * server/body/gate/push-gateway tests consume, then runs the requested
+ * server/body/auth tests consume, then runs the requested
  * non-interactive typechecks and targeted tests and prints a per-step
  * PASS/FAIL summary. The worktree is removed on exit unless `--keep` is
  * passed, in which case the removal command is printed instead.
@@ -37,15 +37,13 @@ const USAGE = `Usage:
   node scripts/review-exact-head.mjs <sha> [--typecheck <pkg> ...] [--keep] [--] [<pkg>:<glob> ...]
 `;
 
-/** Packages whose dist/ exports the server/body/gate/push-gateway tests import. */
+/** Packages whose dist/ exports the server/body/auth tests import. */
 export const REVIEW_BUILD_PACKAGES = [
   '@beeline/nostr',
   '@beeline/api-contract',
   '@beeline/buzz-client',
-  '@beeline/gate',
   '@beeline/auth',
   '@beeline/body',
-  '@beeline/push-gateway',
 ];
 
 export const MOBILE_PACKAGE_NAMES = ['@beeline/mobile', 'mobile', 'apps/mobile'];

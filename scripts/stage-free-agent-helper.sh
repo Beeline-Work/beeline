@@ -10,5 +10,5 @@ npm run bundle:beeline -- --platform linux-x64
 target=infra/free-agent/helper-bundle
 mkdir -p "$target"
 for file in manifest.json beeline-linux-x64.tar.gz beeline-linux-x64.tar.gz.sha256 beeline-bootstrap.mjs; do
-  cp "relay-stack/web/dl/$file" "$target/$file"
+  cp "web/dl/$file" "$target/$file"
 done

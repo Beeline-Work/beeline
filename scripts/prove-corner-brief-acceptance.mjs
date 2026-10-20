@@ -22,7 +22,6 @@ if (!liveOptIn) {
 }
 
 // Build the full workspace export closure the deterministic boundaries import:
-// server tests reach @beeline/auth/* and @beeline/push-gateway/projection, body
 // and gate tests reach @beeline/nostr and @beeline/buzz-client. A bare `npm ci`
 // worktree has none of these dist/ trees, so the proof builds them itself in
 // dependency order (same chain BODY SUITE uses) before any test runs.
@@ -30,10 +29,8 @@ const buildPackages = [
   '@beeline/nostr',
   '@beeline/api-contract',
   '@beeline/buzz-client',
-  '@beeline/gate',
   '@beeline/auth',
   '@beeline/body',
-  '@beeline/push-gateway',
 ];
 run('npm', ['run', 'build', ...buildPackages.flatMap((pkg) => ['-w', pkg])]);
 

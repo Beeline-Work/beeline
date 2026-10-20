@@ -10,7 +10,7 @@ Fly Machine; never place a URL in a shell argument, log, dump, or repository fil
 2. Provision a schema-administrator application role and store its direct private-network URL as
    `FLY_PG_URL` on every server machine. The Fly CLI attach output is not used.
 3. From one server machine, point all three schema owners at `FLY_PG_URL`: the server database
-   migration, `AuthStore.migrate()`, and the push-gateway materializer migrations. This creates the
+   migration (including historical storage tables) and `AuthStore.migrate()`. This creates the
    target schema with application-owned migrations rather than database-version-specific dump DDL.
 4. Upload `apps/server/scripts/copy-postgres-data.mjs` to a machine scratch directory and run it
    there with the machine's existing environment. It reads Neon through `DATABASE_URL`, writes Fly

@@ -417,8 +417,7 @@ test('server deployment dry-run prints both success and rollback ordering', () =
 test('component selection follows the explicit path map', () => {
   assert.deepEqual(selectReleaseComponents(['apps/server/src/index.ts']), ['server']);
   assert.deepEqual(selectReleaseComponents(['apps/body/src/index.ts']), ['helper']);
-  assert.deepEqual(selectReleaseComponents(['apps/gate/src/index.ts']), ['helper']);
-  assert.deepEqual(selectReleaseComponents(['relay-stack/web/index.html']), ['website']);
+  assert.deepEqual(selectReleaseComponents(['web/index.html']), ['website']);
   assert.deepEqual(selectReleaseComponents(['docs/operator.md']), []);
   assert.deepEqual(selectReleaseComponents([], { selection: 'server,mobile-ota' }), [
     'server',
@@ -1148,7 +1147,7 @@ test('production endpoint, stable downloads, rollback evidence, green gates, and
   const prepareMigration = workflow.jobs.server.steps[prepareMigrationIndex].run;
   assert.match(prepareMigration, /^npm ci$/m);
   assert.doesNotMatch(prepareMigration, /--ignore-scripts|@beeline\/gate/);
-  for (const workspace of ['nostr', 'api-contract', 'buzz-client', 'body', 'auth', 'push-gateway', 'server']) {
+  for (const workspace of ['nostr', 'api-contract', 'buzz-client', 'body', 'auth', 'server']) {
     assert.match(prepareMigration, new RegExp(`npm run build -w @beeline/${workspace}`));
   }
   const migrationStep = serverLegAction.runs.steps.find((step) => step.name === 'Run schema migrations and backfills once before Machine updates');

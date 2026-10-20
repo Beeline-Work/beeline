@@ -79,7 +79,7 @@ export async function reportRunningUpdateReceipt(identity: Identity): Promise<vo
     typeof navigator === 'undefined' ? undefined : navigator.platform,
   );
   if (!platform) return;
-  // Desktop has no push-gateway receipt path; its observation is a phone
+  // Desktop has no push receipt path; its observation is a phone
   // operation through the same authenticated monolith boundary.
   if (platform !== 'ios' && platform !== 'android' && !getBuzzRuntimeConfig().monolithEnabled)
     return;

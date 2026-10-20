@@ -144,7 +144,7 @@ import {
 import type { CommittedMessageLiveRow, LiveEvent, LiveHub } from './live.js';
 import { HistoryOutlineCache } from './history-outline-cache.js';
 import type { GitHubOperations } from './github-operations.js';
-import { collapsePermissionCards } from '@beeline/push-gateway/projection';
+import { collapsePermissionCards } from './permission-cards.js';
 import { advanceCorner, lockCornerLifecycle } from './corner-lifecycle.js';
 import {
   chatCornerCounts,
@@ -7331,7 +7331,7 @@ export class PhoneService {
       ),
     );
   }
-  /** Owner-only; the card and relay rules live in `agent-sign-in.ts`. */
+  /** Owner-only; the card and sign-in forwarding rules live in `agent-sign-in.ts`. */
   private async completeAgentSignIn(input: Input<'completeAgentSignIn'>, viewerId: string) {
     if (!this.live) throw new Error(AGENT_SIGN_IN_NO_ANSWER_MESSAGE);
     return completeAgentSignInCard(this.database, this.live, input, viewerId);

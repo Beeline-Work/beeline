@@ -46,11 +46,11 @@ coverage/
 *.aab
 
 # CLI bundles are built in-tree but published to Pages and GitHub Release assets.
-relay-stack/web/dl/manifest.json
-relay-stack/web/dl/*.tar.gz
-relay-stack/web/dl/*.tar.gz.sha256
-relay-stack/web/dl/beeline-bootstrap.mjs
-relay-stack/web/dl/beeline-bootstrap.mjs.sha256
+web/dl/manifest.json
+web/dl/*.tar.gz
+web/dl/*.tar.gz.sha256
+web/dl/beeline-bootstrap.mjs
+web/dl/beeline-bootstrap.mjs.sha256
 
 # Mac
 .DS_Store

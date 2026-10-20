@@ -227,7 +227,7 @@ describe('navigateToBuzzNotificationResponse', () => {
             identifier: 'response-room',
             content: {
               // The gateway's exact serialization for a Room mention
-              // (see push-gateway mapping.test.ts).
+              // (see the server push payload tests).
               data: {
                 type: 'mention',
                 target: 'message',

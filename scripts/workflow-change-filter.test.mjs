@@ -137,13 +137,6 @@ test('a mapped tree opens only its own suites', () => {
       on: ['serverSuite', 'serverIntegration', 'productionCorpusReplay', 'authImage'],
     },
     {
-      label: 'push-gateway-only',
-      files: ['apps/push-gateway/src/index.ts'],
-      runEverything: 'false',
-      desktop: 'false',
-      on: ['pushGateway', 'authImage'],
-    },
-    {
       label: 'body-cli',
       files: ['apps/body/src/cli.ts'],
       runEverything: 'false',
@@ -184,7 +177,7 @@ test('a mapped tree opens only its own suites', () => {
     'serverSuite',
     'serverIntegration',
     'macHelper',
-    'pushGateway',
+
     'mobileSuite',
     'mobileExportReachability',
     'productionCorpusReplay',
@@ -212,7 +205,6 @@ test('packages and a path outside the four app trees still open every path-filte
   const cases = [
     { label: 'packages-only', files: ['packages/api-contract/src/index.ts'] },
     { label: 'docs-only', files: ['docs/foo.md'] },
-    { label: 'gate-app', files: ['apps/gate/src/index.ts'] },
     {
       label: 'mobile-plus-docs',
       files: ['apps/mobile/sources/scrubber.ts', 'docs/foo.md'],
@@ -228,7 +220,7 @@ test('packages and a path outside the four app trees still open every path-filte
       'body',
       'serverSuite',
       'serverIntegration',
-      'pushGateway',
+
       'mobileSuite',
       'mobileExportReachability',
       'productionCorpusReplay',

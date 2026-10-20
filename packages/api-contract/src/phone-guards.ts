@@ -1707,10 +1707,6 @@ export function readRoomHistoryView(value: unknown): RoomHistoryView | null {
   return { roomId: item.roomId, messages, ...field('nextBefore', nextBefore) };
 }
 
-export function isRoomHistoryView(value: unknown): value is RoomHistoryView {
-  return readRoomHistoryView(value) !== null;
-}
-
 /** A Room list search page holds at most this many results. */
 const MESSAGE_SEARCH_RESULT_LIMIT = 50;
 

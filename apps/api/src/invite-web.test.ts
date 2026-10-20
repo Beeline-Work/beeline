@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { buildSync } from 'esbuild';
 
@@ -13,14 +12,14 @@ import {
   MONOLITH_ORIGIN,
   resolveInvitePreview,
   startInviteLanding,
-} from '../../../relay-stack/web/join/invite-source.js';
+} from '../../../web/join/invite-source.js';
 
 const INVITE_TOKEN = 'inv_cd2f4ae16feb43b42a6566ce72ed437b38d374397b0769307c9bdcc29cfb2b38';
 
 const repoFile = (path: string) =>
   readFileSync(new URL(`../../../${path}`, import.meta.url), 'utf8');
 
-describe('relay invite web front', () => {
+describe('public invite website', () => {
   afterEach(() => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
@@ -28,59 +27,6 @@ describe('relay invite web front', () => {
 
   it('publishes every production app-association dependency from the committed files', async () => {
     expect(validateRequiredAssociations(await readRepositoryAssociations())).toEqual([]);
-  });
-
-  it('offers a CSP-pinned custom-scheme fallback for either store review device', () => {
-    const page = repoFile('relay-stack/web/review/index.html');
-    const script = page.match(/<script>\n([\s\S]*?)\n    <\/script>/)?.[1];
-    expect(script).toBeTruthy();
-    const scriptHash = createHash('sha256').update(script!).digest('base64');
-
-    expect(page).toContain('iPhone, iPad, or Android');
-    expect(page).toContain('App Store or Google Play');
-    expect(page).toContain('id="open-beeline"');
-
-    const action = { href: '' };
-    vi.stubGlobal('window', {
-      location: { pathname: '/review/play-review-secret-value-0001' },
-    });
-    vi.stubGlobal('document', {
-      getElementById: vi.fn(() => action),
-    });
-    Function(script!)();
-    expect(action.href).toBe('beeline://review/play-review-secret-value-0001');
-
-    for (const path of ['relay-stack/nginx.conf']) {
-      const nginx = repoFile(path);
-      expect(nginx).toContain('^/review/[A-Za-z0-9_-]{24,128}/?$');
-      expect(nginx).toContain(`script-src 'sha256-${scriptHash}'`);
-    }
-  });
-
-  it('serves only valid invite paths and proxies the relay including upgrades', () => {
-    const nginx = repoFile('relay-stack/nginx.conf');
-    const compose = repoFile('relay-stack/compose.yml');
-    const landing = repoFile('relay-stack/web/join/index.html');
-    const script = repoFile('relay-stack/web/join/invite.js');
-
-    expect(nginx).toContain(
-      '^/join/(?:inv_[0-9a-f]{64}|bzi_(?:[0-9a-f]{64}|[A-Za-z0-9_-]{43}))/?$',
-    );
-    expect(nginx).toContain('location = /join/invite.js');
-    expect(nginx).toContain('proxy_pass http://relay:3000');
-    expect(nginx).toContain('proxy_set_header Upgrade $http_upgrade');
-    expect(nginx).toContain("img-src 'self' data:");
-    expect(compose).toContain('${BUZZ_HTTP_PORT:-3010}:3000');
-    expect(compose).toContain('./web:/usr/share/nginx/html:ro');
-    expect(compose).toContain('"host":"usebeeline.app"');
-    expect(compose).not.toContain('"host":"relay.buzzrouter.com"');
-    expect(landing).toContain("You're invited to a Workspace");
-    expect(landing).toContain('rel="icon"');
-    expect(landing).toContain('data:image/svg+xml');
-    expect(script).toContain('beeline://join/');
-    for (const path of ['relay-stack/nginx.conf']) {
-      expect(repoFile(path)).toContain('connect-src https://server.usebeeline.app');
-    }
   });
 
   it.each([`bzi_${'a'.repeat(64)}`, `bzi_${'A'.repeat(42)}_`])(
@@ -98,31 +44,12 @@ describe('relay invite web front', () => {
     },
   );
 
-  it('isolates active media previews from the authenticated product origin', () => {
-    for (const path of ['relay-stack/nginx.conf']) {
-      const nginx = repoFile(path);
-      const preview = nginx.slice(nginx.indexOf('server_name preview.usebeeline.app'));
-      expect(nginx).toContain('map $upstream_http_content_type $product_media_disposition');
-      expect(nginx).toContain('add_header Content-Disposition $product_media_disposition always');
-      expect(nginx).toContain('"~^image/(?:png|jpeg|gif|webp)(?:;|$)" ""');
-      expect(preview).toContain('limit_except GET HEAD { deny all; }');
-      expect(preview).toContain('proxy_hide_header Set-Cookie');
-      expect(preview).toContain('proxy_set_header Cookie ""');
-      expect(preview).toContain('sandbox allow-scripts');
-      expect(preview).toContain("default-src 'self' 'unsafe-inline'");
-      expect(preview).toContain("connect-src 'none'");
-      expect(preview).toContain('location / { return 404; }');
-      expect(preview).not.toContain('location /auth/');
-      expect(preview).not.toContain('location /push/');
-    }
-  });
-
   it.each([
     ['?code=abc%2Fdef&scopes=user.info.basic,video.list&state=s%2B1', '?code=abc%2Fdef&scopes=user.info.basic,video.list&state=s%2B1'],
     ['?error=access_denied&redirect=https%3A%2F%2Fevil.test', '?error=access_denied&redirect=https%3A%2F%2Fevil.test'],
     ['', ''],
   ])('sends the Pages TikTok callback %j to the fixed Composio callback', (search, carried) => {
-    const page = repoFile('relay-stack/web/oauth/tiktok/callback/index.html');
+    const page = repoFile('web/oauth/tiktok/callback/index.html');
     expect(page).toContain('<meta name="referrer" content="no-referrer" />');
     expect(page).toContain('<meta name="robots" content="noindex, nofollow" />');
     const script = page.match(/<script>\n([\s\S]*?)\n    <\/script>/)?.[1];
@@ -135,34 +62,8 @@ describe('relay invite web front', () => {
     expect(replace).toHaveBeenCalledWith(`https://backend.composio.dev/api/v1/auth-apps/add${carried}`);
   });
 
-  it('redirects the TikTok OAuth callback to the fixed Composio callback with the query unchanged', () => {
-    const nginx = repoFile('relay-stack/nginx.conf');
-    const product = nginx.slice(0, nginx.indexOf('server_name preview.usebeeline.app'));
-    const opening = '    location = /oauth/tiktok/callback {\n';
-    const start = product.indexOf(opening);
-    expect(start).toBeGreaterThan(-1);
-    expect(start).toBeLessThan(product.indexOf('    location / {\n'));
-    const block = product.slice(start + opening.length, product.indexOf('\n    }\n', start));
-    const directives = block.split('\n').map((line) => line.trim())
-      .filter((line) => line && !line.startsWith('#'));
-    expect(directives).toEqual([
-      'add_header Cache-Control "no-store" always;',
-      'add_header Referrer-Policy "no-referrer" always;',
-      'add_header X-Content-Type-Options "nosniff" always;',
-      'return 302 https://backend.composio.dev/api/v1/auth-apps/add$is_args$args;',
-    ]);
-  });
-
-  it('does not expose the retired public NIP-05 service in any stack', () => {
-    for (const path of ['relay-stack/nginx.conf']) {
-      const nginx = repoFile(path);
-      expect(nginx).not.toContain('location /nip05/');
-      expect(nginx).not.toContain('location = /.well-known/nostr.json');
-    }
-  });
-
   it('renders one monochrome join action without exposing the invite token', () => {
-    const landing = repoFile('relay-stack/web/join/index.html');
+    const landing = repoFile('web/join/index.html');
     const colors = [...landing.matchAll(/#[0-9a-f]{6}/gi)].map(([color]) => color);
 
     expect(landing.match(/<(?:a|button)\b/gi)).toHaveLength(1);
@@ -180,7 +81,7 @@ describe('relay invite web front', () => {
     ).toBe(true);
   });
 
-  it('resolves the public preview from the monolith without a relay query', async () => {
+  it('resolves the public preview from the monolith through the server API', async () => {
     const requests: Array<{ input: string; init?: RequestInit }> = [];
     vi.stubGlobal(
       'fetch',
@@ -200,7 +101,7 @@ describe('relay invite web front', () => {
         init: { headers: { accept: 'application/json' } },
       },
     ]);
-    const source = repoFile('relay-stack/web/join/invite-source.js');
+    const source = repoFile('web/join/invite-source.js');
     expect(source).not.toContain('/query');
     expect(source).not.toContain('createIdentity');
     expect(source).not.toContain('Nostr');
@@ -266,7 +167,7 @@ describe('relay invite web front', () => {
     const output = buildSync({
       absWorkingDir: new URL('../../..', import.meta.url).pathname,
       bundle: true,
-      entryPoints: ['relay-stack/web/join/invite-source.js'],
+      entryPoints: ['web/join/invite-source.js'],
       format: 'iife',
       minify: true,
       platform: 'browser',
@@ -274,7 +175,7 @@ describe('relay invite web front', () => {
       write: false,
     }).outputFiles[0]?.text;
 
-    expect(repoFile('relay-stack/web/join/invite.js')).toBe(output);
+    expect(repoFile('web/join/invite.js')).toBe(output);
   });
 });
 

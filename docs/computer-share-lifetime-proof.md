@@ -11,7 +11,7 @@ Navigation is recorded only from an explicit upstream notification while the hum
 ## Regression evidence
 
 - Renewal scheduler crosses three shortened upstream lifetimes with the same URL and human control; transient failure, explicit end, owner reap, and a late response after helper close are covered.
-- The real helper relay instance renews between model turns on one owning connection over more than two shortened lifetimes. This test uses the supplied provider contract fixture, not a live Squire broker.
+- The real helper forwarder instance renews between model turns on one owning connection over more than two shortened lifetimes. This test uses the supplied provider contract fixture, not a live Squire broker.
 - Server tests cover persisted renewals over successive old deadlines, wrong-owner/URL refusals, explicit-end non-resurrection, a renewal racing a previously selected sweep, a still-live upstream after stale expiry, service unavailability, and confirmed source reap.
 - URL and origin-only navigation notifications flow through the actual stream proxy into a claimed agent turn. Initial agent navigation, pointer input, and changed frame pixels produce no navigation observation. This verifies the consumer protocol; production Squire form-submit emission is upstream work.
 

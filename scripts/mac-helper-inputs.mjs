@@ -17,7 +17,6 @@ export const MAC_HELPER_INPUTS = [
   'packages/nostr/',
   'packages/api-contract/',
   'packages/buzz-client/',
-  'apps/gate/',
   'package.json',
   'package-lock.json',
   'tsconfig.base.json',
@@ -27,7 +26,7 @@ export const MAC_HELPER_INPUTS = [
   'scripts/verify-beeline-install.mjs',
   'scripts/pages-site.mjs',
   'scripts/app-associations.mjs',
-  'relay-stack/web/install.sh',
+  'web/install.sh',
 ];
 
 function capture(command, args) {

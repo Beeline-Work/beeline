@@ -41,21 +41,21 @@ preserve every individual retry timestamp.
 
 Reproduction LATE-APPROVAL-1: request a vault credential; end the asking turn; approve later;
 consume the same approval ID from a new turn; pass the original deadline.
-Before the fix, the relay returns `credential_fetched`, then emits an `expired`
+Before the fix, the forwarder returns `credential_fetched`, then emits an `expired`
 decision for that ID. `squire-task-relay.test.ts` test “LATE-APPROVAL-1: consumes a late
 approval in a new turn without a false no-answer wake” failed with that exact
 unexpected decision before implementation.
 
 Replaying a real passkey ceremony would disclose a real one-use credential and
 requires the owner's participation. The closest stand-in uses the affected
-relay's real loopback HTTP boundary with scripted Squire responses and an
+forwarder's real loopback HTTP boundary with scripted Squire responses and an
 accelerated clock; it exercises the same pending/consume/expiry sequence.
 
 ## Demonstrated
 
 After the fix, LATE-APPROVAL-1 returns the consumed fixture value, emits no false decision,
 allows the continuing turn to make another call after the original deadline,
-then completes the relay turn and releases its idle connection. Squire still owns passkey verification and
+then completes the forwarder turn and releases its idle connection. Squire still owns passkey verification and
 single-use delivery; Beeline never caches or replays the value.
 
 The compiled `apps/body/dist/squire-task-relay.js` was also exercised through
@@ -72,7 +72,7 @@ Additional regressions exercise:
   endpoint through a real stdio facade and HTTP handoff, with its own ID and
   turn context. The consumed value is absent from those notifications.
 - A hung vault MCP request returns `fetch_credential timed out after 30000ms`;
-  the relay preserves this error instead of replacing it with a browser restart
+  the forwarder preserves this error instead of replacing it with a browser restart
   instruction. Browser operations retain their 210-second ceiling.
 
 No new System message type or release dispatch is part of this change. Local

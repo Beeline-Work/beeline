@@ -19,7 +19,7 @@ const exec = promisify(execFile);
 const home = process.env.HOME;
 if (home !== '/home/proof' || !process.env.BEELINE_NATIVE_PROOF)
   throw new Error('fixture requires the isolated proof container');
-const web = '/workspace/relay-stack/web';
+const web = '/workspace/web';
 const original = await readFile(`${web}/dl/beeline-linux-x64.tar.gz`);
 let archive = original,
   digest = createHash('sha256').update(archive).digest('hex');

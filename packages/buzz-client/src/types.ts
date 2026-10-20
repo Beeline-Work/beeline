@@ -41,16 +41,6 @@ export interface AgentPairingCode {
   event: NostrEvent;
 }
 
-export interface RedeemAgentPairingResult {
-  communityId: string;
-  /** Human Workspace member who minted the pairing code. */
-  pairedBy: string;
-  agent: Agent;
-  joined: boolean;
-  /** Current top-level Rooms inherited atomically from the pairing-code minter. */
-  attachedRoomIds: string[];
-}
-
 /** Stable Room-level repository identity. Secrets from remote URLs are never retained. */
 export interface RepositoryBinding {
   /** SHA-256 identity used to converge clones of the same origin into one Room. */
@@ -137,43 +127,6 @@ export interface AgentModelConfigOption {
   options: Array<{ id: string; name?: string }>;
 }
 
-/** The agent's own effective selection: a human pick when one exists, else its pair-time default. */
-export interface AgentModelSelection {
-  model?: string;
-  effort?: string;
-}
-
-/** Self-authored, per-(agent,Workspace) snapshot of what the runtime currently advertises. */
-export interface AgentModelCatalog {
-  communityId: string;
-  agentPubkey: string;
-  options: AgentModelConfigOption[];
-  /** What the agent will actually run with, published by the agent itself so a
-   * CLI-configured (`beeline pair --model/--effort`) selection is visible to
-   * readers without waiting for a session activation or an in-app pick. */
-  selection?: AgentModelSelection;
-  updatedAt: number;
-  raw: NostrEvent;
-}
-
-/** One slash command/skill an agent's ACP runtime advertises (display only). */
-export interface AgentCommandInfo {
-  /** The command name, without any leading slash (e.g. `loop`, `mcp:github`). */
-  name: string;
-  description?: string;
-  /** Argument hint the harness advertised (e.g. `[issue-number]`). */
-  inputHint?: string;
-}
-
-/** Self-authored, per-(agent,Workspace) snapshot of the agent's advertised commands. */
-export interface AgentCommandList {
-  communityId: string;
-  agentPubkey: string;
-  commands: AgentCommandInfo[];
-  updatedAt: number;
-  raw: NostrEvent;
-}
-
 export interface AgentModelConfigInput {
   fastMode?: boolean;
   /** The chosen `model` option's id. Absent leaves the current model choice alone. */
@@ -236,36 +189,6 @@ export interface MediaBlob {
 
 export type { AttachmentReference } from './attachment.js';
 
-export interface CreateAgentOptions {
-  agentId?: string;
-  displayName?: string;
-  /** Optional Phase-2b inputs. Callers supply them; the client never synthesizes them. */
-  soul?: string;
-  personality?: string;
-  avatar?: string;
-}
-
-/** Minimal WebSocket surface — injectable so RN can supply its own impl. */
-export interface WebSocketLike {
-  readonly readyState: number;
-  send(data: string): void;
-  close(code?: number, reason?: string): void;
-  addEventListener(
-    type: 'open' | 'message' | 'error' | 'close',
-    listener: (ev: unknown) => void,
-  ): void;
-  removeEventListener(
-    type: 'open' | 'message' | 'error' | 'close',
-    listener: (ev: unknown) => void,
-  ): void;
-}
-
-export type WebSocketConstructor = new (
-  url: string,
-  protocols?: string | string[],
-) => WebSocketLike;
-
-/** Result of publishing via the HTTP bridge. */
 export interface PublishResult {
   status: number;
   accepted: boolean;
@@ -339,82 +262,4 @@ export interface CommunityInvite {
   mintedBy: string;
   event: NostrEvent;
 }
-
-/** Safe projection of an invite event; contains no redeemable plaintext token. */
-export interface CommunityInviteRecord {
-  tokenHash: string;
-  communityId: string;
-  expiresAt: number;
-  mintedBy: string;
-  revoked?: boolean;
-  event: NostrEvent;
-}
-
-export interface RedeemInviteResult {
-  communityId: string;
-  mintedBy: string;
-  expiresAt: number;
-  joined: boolean;
-  alreadyMember: boolean;
-}
-
-/** Raw relay delivery. Screen subscriptions use it only as a dirty signal. */
-export type SessionEvent = NostrEvent;
-
-export type SessionEventHandler = (ev: SessionEvent) => void;
 export type Unsubscribe = () => void;
-
-/** Options for live subscription / backfill. */
-export interface ChannelFilterOpts {
-  /** Extra kinds beyond stream messages (default [9]). */
-  kinds?: number[];
-  limit?: number;
-  since?: number;
-  until?: number;
-}
-
-export interface MessageSubmitOpts {
-  /** When set, adds `#p` mention so buzz-acp can treat it as an agent prompt. */
-  mentionAgent?: string;
-  /** People or additional agents explicitly selected with the composer mention picker. */
-  mentionPubkeys?: string[];
-  /** Extra tags to attach (each is a full tag array). */
-  extraTags?: string[][];
-}
-
-export interface BuzzClientConfig {
-  /**
-   * Relay HTTP origin, e.g. `http://127.0.0.1:3010`.
-   * WS URL is derived by swapping the scheme (http→ws, https→wss).
-   */
-  baseUrl: string;
-  /** Optional explicit WebSocket endpoint. Defaults to the endpoint derived from baseUrl. */
-  wsUrl?: string;
-  /**
-   * Public relay origin for NIP-98 and NIP-42 signing when a local proxy is
-   * used for the TCP connection. Defaults to `baseUrl`.
-   */
-  publicOrigin?: string;
-  /**
-   * Host header authority the relay bound its deployment community under.
-   * Defaults to `publicOrigin` when supplied, otherwise the host:port of
-   * `baseUrl`.
-   */
-  host?: string;
-  /** Client identity (must be set before signed ops). */
-  identity: Identity;
-  /**
-   * WebSocket constructor. Defaults to `globalThis.WebSocket` (Node ≥22 and
-   * browsers). React Native should pass its polyfill / `react-native` WS.
-   * Choice: prefer the platform global — no `ws` package dependency in core.
-   */
-  WebSocketImpl?: WebSocketConstructor;
-  /** Test-only/advanced tuning for automatic live-subscription recovery. */
-  reconnectDelayMs?: number;
-  /** Skip waiting for NIP-42 AUTH when the relay never challenges (rare). */
-  skipAuth?: boolean;
-  /** Connect timeout for the first WS open + AUTH, ms. */
-  connectTimeoutMs?: number;
-  /** Coalesce same-turn HTTP reads into one multi-filter relay query. */
-  batchQueries?: boolean;
-}

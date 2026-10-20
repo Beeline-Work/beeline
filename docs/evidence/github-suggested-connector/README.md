@@ -88,7 +88,7 @@ the `connect(mode:status)` result for an existing personal GitHub app. The hint
 names its owner-scoped app and transport, prefers supported personal API
 operations including Git Data pushes, and forbids App fallback after denial.
 App-only checkout remains on the existing path. Tests cover personal status,
-App-only access, managed-tool permission refusal, and the actual Squire relay
+App-only access, managed-tool permission refusal, and the actual Squire forwarder
 path preserving both a successful and a refused Git Data update without retry.
 Owner authorization denial is also tested before any upstream vault call.
 Managed routes name the exact connected app ID; sealed routes name
@@ -125,7 +125,7 @@ Authenticated reviewer proof remains outstanding; this PR must remain draft.
 Personal push proof subsequently passed as recorded below.
 
 Local validation: `npm run corner:prepare`, root `npm run typecheck`, 226 body
-prompt/skill/app-tool/Squire relay tests, 11 released Workbench MCP tests, and
+prompt/skill/app-tool/Squire forwarder tests, 11 released Workbench MCP tests, and
 45 native git/gh wrapper tests passed. Saved behavior cases follow pending PR #2606's format; that replay
 runner is not on this branch. The merged main branch added a Room-with-Squire
 snapshot, which was refreshed to include the repository guidance.

@@ -18,11 +18,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:build-clean": "mkdir -p dist/read-model && touch dist/read-model/stale && npm run build && test ! -e dist/read-model/stale",
-    "format:check": "prettier --check src scripts package.json README.md",
-    "lint": "npm run format:check",
-    "capture:relay-corpus": "node --import tsx scripts/capture-relay-history.ts",
-    "pretest:live": "npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client",
-    "test:live": "vitest run --config vitest.live.config.ts"
+    "format:check": "prettier --check src package.json README.md",
+    "lint": "npm run format:check"
   },
   "dependencies": {
     "@beeline/api-contract": "*",

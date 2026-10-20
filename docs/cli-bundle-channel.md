@@ -50,7 +50,7 @@ falls back to checkout helper bytes or the dev machine.
 No new binaries are committed to Git (#647). The served Pages site and Release
 assets are independent of the dev machine and Actions artifact retention.
 Build runners still run the existing release jobs; moving those runners is a
-separate task from retiring the dev relay services.
+separate task from retiring the retired development services.
 
 ## Consumer and verification contract
 
@@ -141,7 +141,7 @@ agent is named with its reason. `update` preserves stopped agents; `start --all`
 or `start --agent <key>` explicitly re-enables them. `update --status` is a local,
 read-only observation; `--check` checks only the published artifact.
 
-Legacy relay records sign the one-time authenticated
+Legacy helper records sign the one-time authenticated
 `/v1/auth/daemon/migrate-legacy` server route with their existing identity. The
 server requires current owner and Workspace membership, and denies revoked or expired daemon credentials and repeat completed migrations. The exchange preserves agent identity,
 policy, homes and sessions. Revoked or unrecognized identities show `needs

@@ -6,7 +6,6 @@ export {
   isChatListView,
   isCornerListView,
   isInviteView,
-  isRoomHistoryView,
   isRoomView,
   isRoomViewMessage,
   isWorkspaceListView,

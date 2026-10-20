@@ -20,7 +20,6 @@
       // JavaScript module graph Knip can follow.
       "entry": [
         "scripts/cutover-hooks/{generate-daemon-exchanges,production-e2e}.mjs",
-        "scripts/{provision-smoke,publish-smoke-replies}.ts",
         "scripts/prove-tray-inline.ts",
         "scripts/prove-harness-node-path.mjs",
         "scripts/check-acp-adapters.mjs",
@@ -44,8 +43,8 @@
         "scripts/**/*.{js,cjs,mjs,ts,tsx}",
         "!scripts/fixtures/dead-code-regression/**",
         ".verification/**/*.ts",
-        "relay-stack/web/**/*.{js,mjs}",
-        "!relay-stack/web/join/invite.js",
+        "web/**/*.{js,mjs}",
+        "!web/join/invite.js",
       ],
     },
     "apps/*": {
@@ -203,9 +202,6 @@
         "vitest.live.config.ts",
       ],
     },
-    "apps/gate": {
-      "entry": ["src/{index,provisioning}.ts", "vitest.live.config.ts"],
-    },
     "apps/server": {
       // These are copied to an operator host and executed during database
       // cutover; they are intentionally not package.json commands.
@@ -215,7 +211,7 @@
       ],
     },
     "packages/buzz-client": {
-      "entry": ["src/index.ts", "scripts/capture-relay-history.ts", "vitest.live.config.ts"],
+      "entry": ["src/index.ts"],
     },
   },
 }

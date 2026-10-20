@@ -10,7 +10,7 @@ This inventory covers every current `apps/server/src/**/*.test.ts` file after th
 | `agent-access.test.ts` | who may address an agent | retained |
 | `agent-avatar.test.ts` | generated avatar rendering | retained |
 | `agent-class-retirement.test.ts` | retireAgentClasses | retained |
-| `agent-command.integration.test.ts` | server command authority, sibling corner steering, reviewer wake recovery, and Room/corner relays | retained |
+| `agent-command.integration.test.ts` | server command authority, sibling corner steering, reviewer wake recovery, and Room/corner forwards | retained |
 | `agent-command.scaling.test.ts` | claim latency budget; runs alone on a dedicated runner | retained |
 | `agent-grant-inspect.test.ts` | listAgentGrantRequests | retained |
 | `agent-health.test.ts` | roomAgentHealth; isConfiguredReviewer; firstHealthyAgent; related cases | consolidated assertions; retained coverage |

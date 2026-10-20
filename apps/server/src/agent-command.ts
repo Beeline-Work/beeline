@@ -940,35 +940,28 @@ export async function routeHumanMessage(db: SqlDatabase, sourceId: string): Prom
 }
 
 /**
- * A person's agent tag in a corner names that corner's current implementer, so
- * the corner lifecycle's wakes follow the person's choice instead of
- * the corner's never-changing opener (`corner_facts.owner_agent_id`). The
- * parent Room's configured reviewer and its fallbacks hold the review post, so
- * they never take the implementer role from a tag.
- *
- * A corner a person opened (`kind='human'`) has no opener agent. The first
- * agent to take the implementer role here becomes its owner, and keeps it:
- * that is the agent a restarted helper records the feature branch for and
- * whose deliverables the corner owes its requester.
+ * A person's agent tag in a corner is conversation: it never takes the work
+ * from the corner's current implementer, so the corner lifecycle's wakes (CI,
+ * review, merge) keep reaching the agent doing the work. Only a corner with no
+ * agent yet takes the first tagged agent as its implementer, so the corner has
+ * someone to do the work. In a corner a person opened (`kind='human'`) that
+ * agent also becomes the owner, and keeps it: that is the agent a restarted
+ * helper records the feature branch for and whose deliverables the corner owes
+ * its requester. The parent Room's configured reviewer and its fallbacks hold
+ * the review post, so they never take the implementer role.
  */
-async function setCornerImplementer(
-  db: SqlDatabase,
-  cornerId: string,
-  agentId: string,
-): Promise<void> {
+async function setCornerImplementer(db: SqlDatabase, cornerId: string, agentId: string): Promise<void> {
   await db.query(
     `UPDATE corner_facts fact
      SET worker_agent_id=$2,
-         owner_agent_id=CASE WHEN fact.kind='human'
-           THEN COALESCE(fact.owner_agent_id,$2) ELSE fact.owner_agent_id END,
+         owner_agent_id=CASE WHEN fact.kind='human' THEN $2 ELSE fact.owner_agent_id END,
          updated_at=now()
      FROM rooms corner
      JOIN rooms parent ON parent.id=corner.parent_id
      WHERE fact.corner_id=corner.id AND corner.id=$1
+       AND fact.owner_agent_id IS NULL AND fact.worker_agent_id IS NULL
        AND $2<>COALESCE(parent.reviewer_agent_id,'')
-       AND NOT ($2=ANY(parent.reviewer_fallback_ids))
-       AND (fact.worker_agent_id IS DISTINCT FROM $2
-            OR (fact.kind='human' AND fact.owner_agent_id IS NULL))`,
+       AND NOT ($2=ANY(parent.reviewer_fallback_ids))`,
     [cornerId, agentId],
   );
 }

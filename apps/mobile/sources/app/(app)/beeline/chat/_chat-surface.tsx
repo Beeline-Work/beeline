@@ -3631,28 +3631,31 @@ export function BuzzChatSurface({
         decodedId,
       );
       if (!target) return;
-      setReplyTarget(target);
-      if (target.isAgent && target.authorHandle && target.authorPubkey) {
-        applyComposerPrefill(
-          planReplyPrefill({
-            draft: inputTextRef.current,
-            prefill: composerPrefillRef.current,
-            handle: target.authorHandle,
-            pubkey: target.authorPubkey,
-            sourceMessageId: target.messageId,
-          }),
-          { handle: target.authorHandle, pubkey: target.authorPubkey },
-        );
-      }
-      setDismissedMentionKey(null);
-      void Haptics.selectionAsync();
-      // A reply started from a message the reader scrolled up to read keeps
-      // that same scroll offset by default while the keyboard/reply banner
-      // shrink the viewport, which reads as the transcript jumping to
-      // center the replied-to message. The reply reference in the composer
-      // is enough context, so land back on the end of the log instead.
-      scrollController.request({ kind: 'newest' });
-      scheduleAnimationFrame(() => composerRef.current?.focus());
+      const install = () => {
+        setReplyTarget(target);
+        if (target.isAgent && target.authorHandle && target.authorPubkey) {
+          applyComposerPrefill(
+            planReplyPrefill({
+              draft: inputTextRef.current,
+              prefill: composerPrefillRef.current,
+              handle: target.authorHandle,
+              pubkey: target.authorPubkey,
+              sourceMessageId: target.messageId,
+            }),
+            { handle: target.authorHandle, pubkey: target.authorPubkey },
+          );
+        }
+        setDismissedMentionKey(null);
+        void Haptics.selectionAsync();
+        // A reply started from a message the reader scrolled up to read keeps
+        // that same scroll offset by default while the keyboard/reply banner
+        // shrink the viewport, which reads as the transcript jumping to
+        // center the replied-to message. The reply reference in the composer
+        // is enough context, so land back on the end of the log instead.
+        scrollController.request({ kind: 'newest' });
+        scheduleAnimationFrame(() => composerRef.current?.focus());
+      };
+      install();
     },
     // Read through the ref: a transcript dependency here would hand every
     // row a new renderer on each live message.

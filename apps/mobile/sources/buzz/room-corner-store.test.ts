@@ -1,3 +1,4 @@
+import { LiveHub } from '../../../server/src/live';
 import { beforeEach, describe, expect, it } from 'vitest';
 import type { CornerListItem, CornerListView } from '@beeline/api-contract/phone';
 import {
@@ -331,4 +332,23 @@ describe('room corner store', () => {
     expect(getRoomCorners(ROOM).archived).toBeUndefined();
     expect(getRoomCornerSummary(ROOM)).toBeUndefined();
   });
+});
+
+it('Reproduction 5b25dbcb: applies a corner change after 257 rooms evict the parent history', () => {
+  const hub = new LiveHub();
+  noteCornerLaneSubscribed(ROOM, false);
+  let state = 'working';
+  const lane = hub.subscribeReplay(ROOM, undefined, (_event, sequence, epoch) => {
+    acceptCornerStatusFrame({ roomId: ROOM, sequence, epoch, cornerCount: 1,
+      openCorners: [], corners: [row('corner-a', state)] });
+  });
+  hub.publish({ type: 'invalidate', roomId: ROOM, reason: 'corner-status' });
+  hub.publish({ type: 'invalidate', roomId: ROOM, reason: 'corner-status' });
+  expect(roomOpenCornerRows(getRoomCorners(ROOM))[0]?.state).toBe('working');
+  for (let i = 0; i < 257; i++)
+    hub.publish({ type: 'invalidate', roomId: `other-${i}`, reason: 'corner-status' });
+  state = 'idle';
+  hub.publish({ type: 'invalidate', roomId: ROOM, reason: 'corner-status' });
+  expect(roomOpenCornerRows(getRoomCorners(ROOM))[0]?.state).toBe('idle');
+  lane.release();
 });

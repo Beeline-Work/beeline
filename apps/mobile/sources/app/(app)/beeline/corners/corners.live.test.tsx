@@ -23,6 +23,7 @@ const list = vi.hoisted(() => ({
   createFailure: null as Error | null,
   live: null as null | import('@/sync/transport/live-connection').LiveConnection,
   identityPubkey: 'viewer',
+  appListeners: new Set<(state: string) => void>(),
 }));
 
 vi.mock('react-native', async () => {
@@ -30,7 +31,10 @@ vi.mock('react-native', async () => {
   const host = (name: string) => (props: any) =>
     ReactModule.createElement(name, props, props.children);
   return {
-    AppState: { currentState: 'active', addEventListener: () => ({ remove: () => undefined }) },
+    AppState: { currentState: 'active', addEventListener: (_event: string, listener: (state: string) => void) => {
+      list.appListeners.add(listener);
+      return { remove: () => list.appListeners.delete(listener) };
+    } },
     Platform: {
       OS: 'ios',
       select: (choices: Record<string, unknown>) => choices.ios ?? choices.default,
@@ -334,6 +338,7 @@ async function mountList(): Promise<ReactTestRenderer> {
 }
 
 beforeEach(() => {
+  list.appListeners.clear();
   list.reads.length = 0;
   list.state = 'waiting';
   list.extra = [];
@@ -375,6 +380,34 @@ afterEach(() => {
 });
 
 describe('Corner list live path', () => {
+  it('Reproduction 5b25dbcb: rereads a current list on mount and foreground while keeping its rows painted', async () => {
+    const stop = await holdLaneElsewhere();
+    const first = await openCorners();
+    await vi.waitFor(() => expect(openReads()).toBe(1));
+    await settle();
+    await act(async () => first.unmount());
+    list.state = 'idle';
+    let release!: () => void;
+    list.readGate = new Promise((resolve) => { release = resolve; });
+    const second = await openCorners();
+    expect(painted(second)).toEqual(['corner-1:waiting']);
+    expect(openReads()).toBe(2);
+    await act(async () => release());
+    await settle();
+    expect(painted(second)).toEqual(['corner-1:idle']);
+    list.readGate = null;
+    list.state = 'working';
+    await act(async () => {
+      for (const listener of list.appListeners) listener('background');
+      for (const listener of list.appListeners) listener('active');
+    });
+    await settle();
+    expect(openReads()).toBe(3);
+    expect(painted(second)).toEqual(['corner-1:working']);
+    await act(async () => second.unmount());
+    stop();
+  });
+
   it('shows corners the Room lane heard while Corners was closed at once, and reads once for its saved header (D3)', async () => {
     // The Room list holds the parent lane. While Corners is closed, two
     // corners open and the server sends their rows.

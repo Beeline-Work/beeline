@@ -19,6 +19,7 @@ type CornerStatusFrame = {
   readonly corners?: readonly CornerListItem[];
   readonly nextOpen?: string;
   readonly sequence?: number;
+  readonly epoch?: string;
 };
 
 type CornerListHeader = Omit<CornerListView, 'corners' | 'nextOpen' | 'nextArchived' | 'summary'>;
@@ -48,6 +49,7 @@ type Entry = RoomCorners & {
   readonly changedAt: number;
   readonly rowsReadAt?: number;
   readonly sequence?: number;
+  readonly epoch?: string;
   readonly summaryAt?: number;
   /** An archived read begun before this clock may miss a closed corner. */
   readonly archivedChangedAt: number;
@@ -200,7 +202,7 @@ export const shareCornerRead = (key: string, force: boolean, read: () => Promise
  */
 export function acceptCornerStatusFrame(frame: CornerStatusFrame): boolean {
   const current = entry(frame.roomId);
-  if (frame.sequence !== undefined && current.sequence !== undefined &&
+  if (frame.epoch === current.epoch && frame.sequence !== undefined && current.sequence !== undefined &&
       frame.sequence <= current.sequence) return false;
   const clock = records.clock();
   const framed = {
@@ -210,6 +212,7 @@ export function acceptCornerStatusFrame(frame: CornerStatusFrame): boolean {
       clock,
     ),
     changedAt: clock,
+    epoch: frame.epoch,
     ...(frame.sequence !== undefined ? { sequence: frame.sequence } : {}),
   };
   if (!frame.corners) {

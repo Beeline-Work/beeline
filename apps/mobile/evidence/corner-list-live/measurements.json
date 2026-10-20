@@ -1,0 +1,250 @@
+[
+  {
+    "platform": "Android",
+    "variant": "branch",
+    "action": "archive",
+    "eviction": {
+      "distinctActivityRooms": 257
+    },
+    "recordRequestedAt": 1792460902011,
+    "write": {
+      "startedAt": 1792460902533,
+      "settledAt": 1792460902547,
+      "status": 204,
+      "body": ""
+    },
+    "observations": {
+      "header": {
+        "observedMs": 631,
+        "captureStartedAt": 1792460902913,
+        "captureEndedAt": 1792460903164,
+        "text": "0-AR 1\n\n@sn\n\n#Corner proof/archive-pr...\n\narchived\n\n<\n\n\u2122 RIG AGENT\n\narchived\n\n| Isolated corner freshness proof\n\nA\n\nReady for a steering message\n\nSteer the agent on \u201cIsolated corner freshness\n\nproof\u201d.\n\nCorner archived (read-only)\n\n\u2014\u2014EEEEEEE\n",
+        "passing": true,
+        "file": "android-branch-archive-header.png"
+      },
+      "list": {
+        "observedMs": 1744,
+        "captureStartedAt": 1792460904056,
+        "captureEndedAt": 1792460904277,
+        "text": "0-AR 1\n\n@sn\n\n#Corner proof\n\nCorners\n\nMine -1\n\n#Corner proof/turn-proof\n\nS\n\nIDLE O\n\nOpened by Rig Agent\n\nArchived corners\n",
+        "passing": true,
+        "file": "android-branch-archive-list.png"
+      }
+    },
+    "video": "android-branch-archive.mp4"
+  },
+  {
+    "platform": "Android",
+    "variant": "branch",
+    "action": "turn",
+    "eviction": {
+      "distinctActivityRooms": 257
+    },
+    "recordRequestedAt": 1792460981340,
+    "write": {
+      "startedAt": 1792460981841,
+      "settledAt": 1792460981846
+    },
+    "observations": {
+      "header": {
+        "observedMs": 620,
+        "captureStartedAt": 1792460982149,
+        "captureEndedAt": 1792460982461,
+        "text": "Q-A0 11\n\n@sn\n\n#Corner proof/turn-proof\n\nRIG AGENT\n\nworking\n\n| Isolated corner freshness proof\n\nA\n\nReady for a steering message\n\nSteer the agent on \u201cIsolated corner freshness\n\nproof\u201d.\n\n> Rig Agent Pondering.. 1s\n\nm STOP\n\n+ Tagan agent with @\n\ng\n\n*\n",
+        "passing": true,
+        "file": "android-branch-turn-header.png"
+      },
+      "list": {
+        "observedMs": 1594,
+        "captureStartedAt": 1792460983115,
+        "captureEndedAt": 1792460983435,
+        "text": "Q-A0 11\n\n@sn\n\n#Corner proof\n\nCorners\n\nMine -2\n\n#Corner proof/turn-proof\n\nS\n\nWORKING O\n\nOpened by Rig Agent\n\n#Corner proof/archive-proof\n\nWORKING O\n\nS\n\nOpened by Rig Agent\n\nArchived corners\n",
+        "passing": true,
+        "file": "android-branch-turn-list.png"
+      }
+    },
+    "video": "android-branch-turn.mp4"
+  },
+  {
+    "platform": "Android",
+    "variant": "main",
+    "action": "archive",
+    "eviction": {
+      "distinctActivityRooms": 257
+    },
+    "recordRequestedAt": 1792461072056,
+    "write": {
+      "startedAt": 1792461072572,
+      "settledAt": 1792461072588,
+      "status": 204,
+      "body": ""
+    },
+    "observations": {
+      "header": {
+        "observedMs": 3151,
+        "captureStartedAt": 1792461075435,
+        "captureEndedAt": 1792461075723,
+        "text": "a-41 11\n\n@sn\n\n#Corner proof/archive-pr...\n\narchived\n\n<\n\n\u2122 RIG AGENT\n\nworking\n\n| Isolated corner freshness proof\n\nA\n\nReady for a steering message\n\nSteer the agent on \u201cIsolated corner freshness\n\nproof\u201d.\n\nCorner archived (read-only)\n\n\u2014\u2014EEEEEEE\n",
+        "passing": false,
+        "file": "android-main-archive-header.png"
+      },
+      "list": {
+        "observedMs": 5743,
+        "captureStartedAt": 1792461077994,
+        "captureEndedAt": 1792461078315,
+        "text": "a-41 11\n\n@sn\n\n#Corner proof\n\nCorners\n\nMine -2\n\n#Corner proof/turn-proof\n\nS\n\nIDLE O\n\nOpened by Rig Agent\n\n#Corner proof/archive-proof\n\nWORKING O\n\nS\n\nOpened by Rig Agent\n\nArchived corners\n",
+        "passing": false,
+        "file": "android-main-archive-list.png"
+      }
+    },
+    "video": "android-main-archive.mp4"
+  },
+  {
+    "platform": "Android",
+    "variant": "main",
+    "action": "turn",
+    "eviction": {
+      "distinctActivityRooms": 257
+    },
+    "recordRequestedAt": 1792461093135,
+    "write": {
+      "startedAt": 1792461093636,
+      "settledAt": 1792461093642
+    },
+    "observations": {
+      "header": {
+        "observedMs": 3427,
+        "captureStartedAt": 1792461096741,
+        "captureEndedAt": 1792461097063,
+        "text": "a-41 11\n\n@sn\n\n#Corner proof/turn-proof\n\nRIG AGENT\n\nidle\n\n| Isolated corner freshness proof\n\nA\n\nReady for a steering message\n\nSteer the agent on \u201cIsolated corner freshness\n\nproof\u201d.\n\nY Rig Agent Brewing... 3s\n\nm STOP\n\n+ Tagan agent with @\n\ng\n\n*\n",
+        "passing": false,
+        "file": "android-main-turn-header.png"
+      },
+      "list": {
+        "observedMs": 5660,
+        "captureStartedAt": 1792461098969,
+        "captureEndedAt": 1792461099296,
+        "text": "a-41 11\n\n@sn\n\n#Corner proof\n\nCorners\n\nMine -2\n\n#Corner proof/turn-proof\n\nS\n\nIDLE O\n\nOpened by Rig Agent\n\n#Corner proof/archive-proof\n\nWORKING O\n\nS\n\nOpened by Rig Agent\n\nArchived corners\n",
+        "passing": false,
+        "file": "android-main-turn-list.png"
+      }
+    },
+    "video": "android-main-turn.mp4"
+  },
+  {
+    "platform": "Web",
+    "variant": "branch",
+    "action": "archive",
+    "eviction": {
+      "distinctActivityRooms": 257
+    },
+    "startedAt": 1792461196055,
+    "write": {
+      "startedAt": 1792461196078,
+      "settledAt": 1792461196101,
+      "status": 204,
+      "body": ""
+    },
+    "observations": [
+      {
+        "surface": "list",
+        "observedAt": 1792461196170,
+        "text": "Beeline Review\n\uf2ce\nAll 2\nUnread 0\nPinned 0\n\uf563\nROOMS\n2\n\uf103\n#general\nNo messages yet\n10m\n#proof\nNo messages yet\n10m\nLatency Rig\n#Corner proof\nCorners\nWaiting \u00b7 0\nMine \u00b7 1\nOthers \u00b7 0\nAll \u00b7 1\nArchived\n#Corner proof/turn-proof\nIDLE\nIsolated corner freshness proof",
+        "elapsedMs": 92
+      },
+      {
+        "surface": "header",
+        "observedAt": 1792461196650,
+        "text": "Latency Rig 1\n\uf2ce\nAll 2\nUnread 0\nPinned 0\n\uf563\nROOMS\n2\n\uf103\n#Corner proof\nNo messages yet\n13m\n#Rig room 001\nNo messages yet\n14m\nLatency Rig\n#Corner proof/archive-proof\nRIG AGENT \u00b7 archived\narchived\nIsolated corner freshness proof\n\u25b3\nReady for a steering message\nSteer the agent on \u201cIsolated corner freshness proof\u201d.\nCorner archived (read-only)",
+        "elapsedMs": 572
+      }
+    ]
+  },
+  {
+    "platform": "Web",
+    "variant": "branch",
+    "action": "turn",
+    "eviction": {
+      "distinctActivityRooms": 257
+    },
+    "startedAt": 1792461198699,
+    "write": {
+      "startedAt": 1792461198700,
+      "settledAt": 1792461198704
+    },
+    "observations": [
+      {
+        "surface": "list",
+        "observedAt": 1792461198745,
+        "text": "#Corner proof/turn-proofworkingIsolated corner freshness proof",
+        "elapsedMs": 45
+      },
+      {
+        "surface": "header",
+        "observedAt": 1792461198745,
+        "text": "Latency Rig 1\n\uf2ce\nAll 2\nUnread 0\nPinned 0\n\uf563\nROOMS\n2\n\uf103\n#Corner proof\nNo messages yet\n13m\n#Rig room 001\nNo messages yet\n14m\nLatency Rig\n#Corner proof/turn-proof\nRIG AGENT \u00b7 working\nIsolated corner freshness proof\n\u25b3\nReady for a steering message\nSteer the agent on \u201cIsolated corner freshness proof\u201d.\nRig Agent Mulling\u2026\n0s\n\u25a0 STOP",
+        "elapsedMs": 45
+      }
+    ]
+  },
+  {
+    "platform": "Web",
+    "variant": "main",
+    "action": "archive",
+    "eviction": {
+      "distinctActivityRooms": 257
+    },
+    "startedAt": 1792460945467,
+    "write": {
+      "startedAt": 1792460945483,
+      "settledAt": 1792460945498,
+      "status": 204,
+      "body": ""
+    },
+    "observations": [
+      {
+        "surface": "list",
+        "timeout": true,
+        "observedAt": 1792460950471,
+        "text": "Beeline Review\n\uf2ce\nAll 2\nUnread 0\nPinned 0\n\uf563\nROOMS\n2\n\uf103\n#general\nNo messages yet\n6m\n#proof\nNo messages yet\n6m\nLatency Rig\n#Corner proof\nCorners\nWaiting \u00b7 0\nMine \u00b7 2\nOthers \u00b7 0\nAll \u00b7 2\nArchived\n#Corner proof/turn-proof\nIDLE\nIsolated corner freshness proof\n#Corner proof/archive-proof\nWORKING\nIsolated corner freshness proof",
+        "elapsedMs": 4988
+      },
+      {
+        "surface": "header",
+        "timeout": true,
+        "observedAt": 1792460950471,
+        "text": "Latency Rig 1\n\uf2ce\nAll 2\nUnread 0\nPinned 0\n\uf563\nROOMS\n2\n\uf103\n#Corner proof\nNo messages yet\n9m\n#Rig room 001\nNo messages yet\n10m\nLatency Rig\n#Corner proof/archive-proof\nRIG AGENT \u00b7 working\narchived\nIsolated corner freshness proof\n\u25b3\nReady for a steering message\nSteer the agent on \u201cIsolated corner freshness proof\u201d.\nCorner archived (read-only)",
+        "elapsedMs": 4988
+      }
+    ]
+  },
+  {
+    "platform": "Web",
+    "variant": "main",
+    "action": "turn",
+    "eviction": {
+      "distinctActivityRooms": 257
+    },
+    "startedAt": 1792460952335,
+    "write": {
+      "startedAt": 1792460952338,
+      "settledAt": 1792460952345
+    },
+    "observations": [
+      {
+        "surface": "list",
+        "timeout": true,
+        "observedAt": 1792460957337,
+        "text": "Beeline Review\n\uf2ce\nAll 2\nUnread 0\nPinned 0\n\uf563\nROOMS\n2\n\uf103\n#general\nNo messages yet\n6m\n#proof\nNo messages yet\n6m\nLatency Rig\n#Corner proof\nCorners\nWaiting \u00b7 0\nMine \u00b7 2\nOthers \u00b7 0\nAll \u00b7 2\nArchived\n#Corner proof/turn-proof\nIDLE\nIsolated corner freshness proof\n#Corner proof/archive-proof\nWORKING\nIsolated corner freshness proof",
+        "elapsedMs": 4999
+      },
+      {
+        "surface": "header",
+        "timeout": true,
+        "observedAt": 1792460957338,
+        "text": "Latency Rig 1\n\uf2ce\nAll 2\nUnread 0\nPinned 0\n\uf563\nROOMS\n2\n\uf103\n#Corner proof\nNo messages yet\n9m\n#Rig room 001\nNo messages yet\n10m\nLatency Rig\n#Corner proof/turn-proof\nRIG AGENT \u00b7 idle\nIsolated corner freshness proof\n\u25b3\nReady for a steering message\nSteer the agent on \u201cIsolated corner freshness proof\u201d.\nRig Agent Mulling\u2026\n5s\n\u25a0 STOP",
+        "elapsedMs": 5000
+      }
+    ]
+  }
+]

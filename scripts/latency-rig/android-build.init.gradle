@@ -4,6 +4,10 @@ if (System.getenv('BEELINE_ANDROID_NATIVE_LATENCY_PROBE') != '1' ||
     endpoint.host != '10.0.2.2' || !(endpoint.scheme in ['http', 'https']) || endpoint.port < 1) {
   throw new GradleException('Latency build settings require the disposable emulator proxy')
 }
+// Select the APK task instead of every library's publishing tasks.
+gradle.startParameter.setTaskNames(gradle.startParameter.taskNames.collect { name ->
+  name == 'assembleRelease' ? ':app:assembleRelease' : name
+})
 allprojects { project ->
   project.tasks.configureEach { task ->
     if (task.name in ['lintVitalAnalyzeRelease', 'lintVitalReportRelease', 'lintVitalRelease']) {

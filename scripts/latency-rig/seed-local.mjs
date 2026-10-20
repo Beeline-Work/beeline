@@ -105,7 +105,8 @@ try {
       now() - interval '1 hour' + n * interval '1 second'
     FROM generate_series(1,30) AS n ON CONFLICT(id) DO NOTHING`, [busy.roomId, reviewId]);
   await database.query(`INSERT INTO messages(id,room_id,author_id,text,created_at)
-    VALUES($1,$2,$3,repeat('streamed answer ',640),now()) ON CONFLICT(id) DO NOTHING`,
+    VALUES($1,$2,$3,repeat('streamed answer ',640),clock_timestamp())
+    ON CONFLICT(id) DO UPDATE SET created_at=EXCLUDED.created_at`,
     [messageId('10kb-answer'), busy.roomId, reviewId]);
   await database.query('COMMIT');
   console.log(JSON.stringify({ fixtures, busyCornerId: cornerIds[0],

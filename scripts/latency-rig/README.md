@@ -271,7 +271,8 @@ serial through its own launcher/child process, then select it explicitly with
 online. Preserve these device settings and the fixed local network shape night
 over night. Do not build during capture. The local attempt caps Node and Gradle
 heaps at 4 GiB, Gradle and Metro workers at two, and compiles Kotlin in-process.
-Its fixture-only Gradle init script omits Android release dependency lint;
+Its fixture-only Gradle init script selects `:app:assembleRelease` for x86_64
+and omits Android release dependency lint;
 ordinary CI and release builds use their existing checks. A private Gradle home
 keeps teardown from stopping another lane's daemon. These settings bound the
 fixture build within the session's 31.41 GiB memory cap.

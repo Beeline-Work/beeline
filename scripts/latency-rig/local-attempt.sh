@@ -50,6 +50,8 @@ for (const port of ports) await new Promise((resolve, reject) => {
 });
 JS
 rm -f "$output/report.json" "$output/report.md" "$output/samples.ndjson"
+# Stop the previous fixture app before starting a new backend on these ports.
+adb -s "$device" shell am force-stop app.usebeeline
 # Each attempt starts with the same fixture, including no prior send leases.
 createdb --host=/var/run/postgresql "$fixture_database"
 server_pid=""
@@ -77,6 +79,7 @@ mkdir -p "$GRADLE_USER_HOME/init.d"
 cat > "$GRADLE_USER_HOME/gradle.properties" <<'PROPERTIES'
 org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g
 org.gradle.workers.max=2
+reactNativeArchitectures=x86_64
 kotlin.compiler.execution.strategy=in-process
 PROPERTIES
 cp scripts/latency-rig/android-build.init.gradle "$GRADLE_USER_HOME/init.d/latency-rig.gradle"

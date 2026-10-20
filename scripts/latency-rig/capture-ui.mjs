@@ -8,6 +8,8 @@ export function pointFor(xml, attribute, label) {
 export function requireRoomList(xml) {
   if (pointFor(xml, 'content-desc', 'Close Workspace switcher')) throw new Error('Workspace overlay covers the Room list');
   if (!pointFor(xml, 'content-desc', 'all conversations')) throw new Error('Room-list precondition missing; sign in before capture');
+  if (!pointFor(xml, 'content-desc', 'Latency Rig 200 — switch Workspace'))
+    throw new Error('Select the Latency Rig 200 Workspace before capture');
   const point = pointFor(xml, 'text', '#Rig room 001');
   if (!point) throw new Error('Select the Latency Rig 200 Workspace before capture');
   return point;

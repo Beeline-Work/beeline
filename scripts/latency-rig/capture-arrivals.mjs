@@ -55,7 +55,8 @@ try {
   for (let ready = 0; ready < 30; ready++) {
     const xml = dump();
     if (pointFor(xml, 'content-desc', 'all conversations')) {
-      if (pointFor(xml, 'text', '#Rig room 001') && !pointFor(xml, 'content-desc', 'Close Workspace switcher')) { listReady = true; break; }
+      if (pointFor(xml, 'content-desc', 'Latency Rig 200 — switch Workspace') &&
+          pointFor(xml, 'text', '#Rig room 001') && !pointFor(xml, 'content-desc', 'Close Workspace switcher')) { listReady = true; break; }
       const fixtureWorkspace = pointFor(xml, 'content-desc', 'Latency Rig 200');
       if (fixtureWorkspace) tap(fixtureWorkspace);
       else {

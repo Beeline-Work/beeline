@@ -12,12 +12,13 @@ it.skipIf(!existsSync(CHROME))('call-feedback-1: mic levels move the rendered co
       '@/constants/Typography': 'export const Typography = { default: () => ({}) };',
       './client-error-report': 'export const errorDiagnostic = e => ({ message: String(e) }); export const reportClientError = async () => {};',
       '@/sync/transport/live-connection': 'export const sharedLiveConnection = () => ({ register: async () => () => {}, subscribeConnected: () => () => {} });',
-      'livekit-client': `export const RoomEvent = { DataReceived: 'data', Disconnected: 'left', ActiveSpeakersChanged: 'levels', TrackSubscribed: 'track', TrackUnsubscribed: 'untrack' }; export const Track = { Kind: { Audio: 'audio' } };`,
+      'livekit-client': `export const RoomEvent = { DataReceived: 'data', Disconnected: 'left', ActiveSpeakersChanged: 'levels', AudioPlaybackStatusChanged: 'audio-ready', TrackSubscribed: 'track', TrackUnsubscribed: 'untrack' }; export const Track = { Kind: { Audio: 'audio' } };`,
       './voice-transport': `const listeners = new Map();
-        const room = { on(event, listener) { listeners.set(event, listener); }, connect: async () => {}, disconnect: async () => {},
+        const room = { canPlaybackAudio: true, startAudio: async () => {}, on(event, listener) { listeners.set(event, listener); }, connect: async () => {}, disconnect: async () => {},
           remoteParticipants: new Map([['beeline-voice-proof-call', { audioLevel: 0 }]]),
           localParticipant: { audioLevel: 0, publishData: async () => {}, setMicrophoneEnabled: async () => {} } };
         globalThis.__callFeedback = { room, emit: (event, ...args) => listeners.get(event)?.(...args) };
+        export const subscribeVoiceMicrophone = (room, onLevel) => { room.on('levels', () => onLevel(room.localParticipant.audioLevel)); return () => {}; };
         export const subscribeVoiceResume = () => () => {};
         export const voiceFetch = async () => new Response(JSON.stringify({ sessionId: 'proof-session',
           call: { id: 'proof-call', roomId: 'proof-room', participants: [{ kind: 'human', identity: 'proof-viewer' }] }, url: 'wss://proof', token: 'proof', agents: [] }));

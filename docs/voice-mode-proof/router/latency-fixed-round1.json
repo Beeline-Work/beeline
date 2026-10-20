@@ -1,0 +1,18 @@
+{
+  "mode": "fixed",
+  "samplesMs": [
+    23.250567999999475,
+    26.308703999999125,
+    22.729393999999957,
+    21.008452999998553,
+    16.442065999999613,
+    19.510529000001043,
+    20.66546500000004,
+    28.28816999999981,
+    22.020477000001847,
+    16.043343000001187
+  ],
+  "medianMs": 21.5144650000002,
+  "warmupTurns": 2,
+  "path": "HTTP /say -> production runtime utterance -> PGlite commit -> controlled brain and PCM -> native LiveKit captureFrame -> latency signal received by native RTC partner"
+}

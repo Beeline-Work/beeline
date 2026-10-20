@@ -72,3 +72,16 @@ it('retains a failed delivery even when a later request finishes first', () => {
   expect(assembler.retryable('alex')).toBeUndefined();
   assembler.close();
 });
+
+it('keeps each draft cancellation reason for evidence logs', () => {
+  const assembler = new VoiceRequestAssembler();
+  const speaking = assembler.begin('alex', 'Ruby hello').request;
+  assembler.pause('alex');
+  expect(speaking.classification.signal.reason).toBe('user resumed speaking');
+  const previous = assembler.begin('alex', 'again').request;
+  assembler.begin('alex', 'more');
+  expect(previous.classification.signal.reason).toBe('superseded');
+  const closing = assembler.current('alex')!;
+  assembler.close();
+  expect(closing.classification.signal.reason).toBe('call closed');
+});

@@ -1,0 +1,452 @@
+[
+  {
+    "case": 0,
+    "run": 1,
+    "line": "Ah, i a c k. Your joke.",
+    "decision": "answer",
+    "text": "Fair. Here’s a better one: I told my calendar I needed more time. It said, “Your days are numbered.”",
+    "status": 200,
+    "elapsedMs": 3927
+  },
+  {
+    "case": 1,
+    "run": 1,
+    "line": "You had to",
+    "decision": "answer",
+    "text": "Fair point—you asked for a joke, and I gave you the scarecrow one. Here’s another: I told my computer I needed a break, and it said, “No problem—I’ll go to sleep.”",
+    "status": 200,
+    "elapsedMs": 1768
+  },
+  {
+    "case": 2,
+    "run": 1,
+    "line": "why did you forward this…",
+    "decision": "answer",
+    "text": "I didn’t forward this; I can answer from what I know. Serbia’s history is long, but a few turning points stand out.\n\nMedieval Serbia grew into a powerful kingdom under the Nemanjić dynasty, especially in the 13th and 14th centuries. Its empire reached its height under Stefan Dušan, then weakened after his death. The Ottoman victory at Kosovo in 1389 became a defining national story, though Ottoman rule over Serbian lands was established gradually and lasted for centuries.\n\nIn the early 1800s, Serbian uprisings began a movement toward autonomy and independence. Serbia became internationally recognized as an independent kingdom in 1878. It expanded in the Balkan Wars, then played a central role in the events that led to World War I: the assassination of Archduke Franz Ferdinand in Sarajevo was carried out by a Bosnian Serb nationalist, and Austria-Hungary’s response helped trigger the war.\n\nAfter the war, Serbia became part of",
+    "status": 200,
+    "elapsedMs": 7071
+  },
+  {
+    "case": 3,
+    "run": 1,
+    "line": "Tell me about the Ottoman Empire.",
+    "decision": "answer",
+    "text": "The Ottoman Empire was a powerful state that lasted from about 1299 to 1922. It began in Anatolia, expanded across southeastern Europe, the Middle East, and North Africa, and at its height ruled a vast, diverse population. Its capital was Constantinople—today’s Istanbul—after the city’s conquest in 1453. The empire ended after World War I, and the Republic of Turkey was founded in 1923.",
+    "status": 200,
+    "elapsedMs": 9885
+  },
+  {
+    "case": 4,
+    "run": 1,
+    "line": "Tell me about the history of Turkey.",
+    "decision": "answer",
+    "text": "Turkey’s history spans ancient Anatolian civilizations, the Byzantine Empire, and the Ottoman Empire. After the Ottoman defeat in World War I, Mustafa Kemal Atatürk led the Turkish War of Independence. The Republic of Turkey was founded in 1923, with Ankara as its capital, and Atatürk introduced sweeping secular and political reforms.\n\nSince then, Turkey has experienced periods of multiparty democracy and military intervention, rapid urbanization, and major economic and social change. It joined NATO in 1952 and remains a significant regional power, connecting Europe and Asia.",
+    "status": 200,
+    "elapsedMs": 12185
+  },
+  {
+    "case": 5,
+    "run": 1,
+    "line": "tell me about the history of Serbia",
+    "decision": "answer",
+    "text": "Serbia’s history stretches from medieval kingdoms to the modern state.\n\nIn the early Middle Ages, Slavic peoples settled the region. Serbia grew into a powerful kingdom under the Nemanjić dynasty, especially in the 13th and 14th centuries. In 1346, Stefan Dušan proclaimed himself emperor, and the Serbian Empire briefly controlled much of the Balkans.\n\nThe Ottoman Empire conquered Serbian lands over time. The 1389 Battle of Kosovo became a powerful symbol in Serbian history, though Ottoman rule continued for centuries. Serbia gained greater autonomy after uprisings in the early 19th century and was internationally recognized as independent in 1878.\n\nSerbia became a kingdom in 1882. Its role in the events leading to World War I was pivotal: the assassination of Archduke Franz Ferdinand in Sarajevo in 1914 by Gavrilo Princip, a Bosnian Serb, helped trigger the war. Afterward, Serbia joined with other South Slavic",
+    "status": 200,
+    "elapsedMs": 15335
+  },
+  {
+    "case": 6,
+    "run": 1,
+    "line": "check whether the release went out",
+    "decision": "order",
+    "text": "",
+    "status": 200,
+    "elapsedMs": 17066
+  },
+  {
+    "case": 7,
+    "run": 1,
+    "line": "merge the PR",
+    "decision": "order",
+    "text": "",
+    "status": 200,
+    "elapsedMs": 18588
+  },
+  {
+    "case": 8,
+    "run": 1,
+    "line": "open a corner to fix X",
+    "decision": "order",
+    "text": "",
+    "status": 200,
+    "elapsedMs": 20871
+  },
+  {
+    "case": 9,
+    "run": 1,
+    "line": "Are you still working on the release check?",
+    "decision": "answer",
+    "text": "I’m still working on it.",
+    "status": 200,
+    "elapsedMs": 22297
+  },
+  {
+    "case": 0,
+    "run": 2,
+    "line": "Ah, i a c k. Your joke.",
+    "decision": "answer",
+    "text": "Fair. Here’s a better one: I told my computer I needed a break. It said, “No problem—I’ll go to sleep.”",
+    "status": 200,
+    "elapsedMs": 1587
+  },
+  {
+    "case": 1,
+    "run": 2,
+    "line": "You had to",
+    "decision": "answer",
+    "text": "I had to… because the scarecrow was outstanding in his field? 😄",
+    "status": 200,
+    "elapsedMs": 3043
+  },
+  {
+    "case": 2,
+    "run": 2,
+    "line": "why did you forward this…",
+    "decision": "answer",
+    "text": "No reason was recorded—I shouldn’t have forwarded it. Serbia’s history is mine to explain.\n\nThe area has been home to many peoples and states. In the early Middle Ages, Slavic Serbs settled in the region. A powerful medieval Serbian state emerged under the Nemanjić dynasty, reaching its height in the 14th century under Stefan Dušan. After the Ottoman victory at Kosovo in 1389, Serbia gradually came under Ottoman rule, which lasted for centuries, though the details unfolded over time.\n\nSerbian uprisings in the early 19th century led to autonomy and then independence, formally recognized in 1878. Serbia expanded in the Balkan Wars, then played a central role in the events that began World War I. After the war, it became the core of the Kingdom of Serbs, Croats and Slovenes, later called Yugoslavia.\n\nFollowing World War II, Serbia was one of six republics in socialist Yugoslavia. When Yug",
+    "status": 200,
+    "elapsedMs": 6717
+  },
+  {
+    "case": 3,
+    "run": 2,
+    "line": "Tell me about the Ottoman Empire.",
+    "decision": "answer",
+    "text": "The Ottoman Empire was a powerful state that lasted from about 1299 to 1922. It began in Anatolia, expanded across parts of Europe, Asia, and North Africa, and ruled Constantinople—now Istanbul—after conquering it in 1453. At its height under Suleiman the Magnificent in the 16th century, it was a major military, political, and cultural power. After centuries of change and decline, it ended after World War I, and the Republic of Turkey was founded in 1923.",
+    "status": 200,
+    "elapsedMs": 9274
+  },
+  {
+    "case": 4,
+    "run": 2,
+    "line": "Tell me about the history of Turkey.",
+    "decision": "answer",
+    "text": "Modern Turkey was founded in 1923, after the Ottoman Empire collapsed following World War I. Under Mustafa Kemal Atatürk, the new republic introduced major reforms, including a secular legal system, expanded education, and the Latin alphabet.\n\nTurkey’s history goes back much further: the region was home to ancient civilizations, later became the heartland of the Byzantine Empire, and was gradually conquered by Turkic peoples. The Ottoman Empire, founded around the end of the 13th century, ruled much of the region for centuries. In the 20th century, the Turkish War of Independence led to the republic. Since then, Turkey has experienced periods of political change, military intervention, economic growth, and debate over secularism, religion, and democracy.",
+    "status": 200,
+    "elapsedMs": 12531
+  },
+  {
+    "case": 5,
+    "run": 2,
+    "line": "tell me about the history of Serbia",
+    "decision": "answer",
+    "text": "Serbia’s history is shaped by its position between Central and Southeastern Europe.\n\nMedieval Serbia grew into a powerful kingdom under the Nemanjić dynasty, especially in the 13th and 14th centuries. The Serbian Empire reached its height under Stefan Dušan, but after his death it fractured. The defeat at the Battle of Kosovo in 1389 became a lasting symbol in Serbian history, though Ottoman rule over the region took place gradually, not all at once.\n\nSerbia spent centuries under Ottoman control. In the early 19th century, uprisings began a long process of gaining autonomy and then independence, formally recognized in 1878. Serbia became a kingdom in 1882.\n\nAfter World War I, Serbia joined other South Slavic lands in the Kingdom of Serbs, Croats, and Slovenes, later called Yugoslavia. Serbia was a republic within socialist Yugoslavia after World War II. When Yugoslavia broke apart in the 199",
+    "status": 200,
+    "elapsedMs": 16283
+  },
+  {
+    "case": 6,
+    "run": 2,
+    "line": "check whether the release went out",
+    "decision": "order",
+    "text": "",
+    "status": 200,
+    "elapsedMs": 17741
+  },
+  {
+    "case": 7,
+    "run": 2,
+    "line": "merge the PR",
+    "decision": "order",
+    "text": "",
+    "status": 200,
+    "elapsedMs": 18967
+  },
+  {
+    "case": 8,
+    "run": 2,
+    "line": "open a corner to fix X",
+    "decision": "order",
+    "text": "I’ll get that started.",
+    "status": 200,
+    "elapsedMs": 20534
+  },
+  {
+    "case": 9,
+    "run": 2,
+    "line": "Are you still working on the release check?",
+    "decision": "answer",
+    "text": "Yes, I’m still working on it.",
+    "status": 200,
+    "elapsedMs": 22769
+  },
+  {
+    "case": 0,
+    "run": 3,
+    "line": "Ah, i a c k. Your joke.",
+    "decision": "answer",
+    "text": "Fair. That one was painfully corny. Want me to try again?",
+    "status": 200,
+    "elapsedMs": 6471
+  },
+  {
+    "case": 1,
+    "run": 3,
+    "line": "You had to",
+    "decision": "answer",
+    "text": "I had to what? I’m listening.",
+    "status": 200,
+    "elapsedMs": 1347
+  },
+  {
+    "case": 2,
+    "run": 3,
+    "line": "why did you forward this…",
+    "decision": "answer",
+    "text": "I didn’t forward it—there’s no reason recorded for forwarding. I can answer your question directly: Serbia’s history spans medieval kingdoms, centuries under Ottoman rule, and its emergence as a modern state in the 19th century.\n\nThe medieval Serbian state grew especially powerful under the Nemanjić dynasty, reaching its height in the 14th century. After the Ottoman victory at Kosovo in 1389, Serbia gradually fell under Ottoman control, which lasted for centuries. Serbian uprisings in the early 1800s led to autonomy and then independence, recognized in 1878.\n\nSerbia became a kingdom and played a major role in the Balkan Wars and World War I. After the war, it became part of the Kingdom of Serbs, Croats and Slovenes, later Yugoslavia. Following Yugoslavia’s breakup in the 1990s, Serbia was part of a union with Montenegro until 2006, when it became an independent country again.",
+    "status": 200,
+    "elapsedMs": 4688
+  },
+  {
+    "case": 3,
+    "run": 3,
+    "line": "Tell me about the Ottoman Empire.",
+    "decision": "answer",
+    "text": "The Ottoman Empire was a powerful state that lasted from about 1299 to 1922. It began in Anatolia, expanded across southeastern Europe, the Middle East, and North Africa, and at its height ruled from Istanbul. It was home to many peoples and religions, and its legacy shaped modern Turkey and neighboring countries.",
+    "status": 200,
+    "elapsedMs": 8688
+  },
+  {
+    "case": 4,
+    "run": 3,
+    "line": "Tell me about the history of Turkey.",
+    "decision": "answer",
+    "text": "Turkey’s history stretches from ancient Anatolian civilizations to the modern republic. Anatolia was home to peoples including the Hittites, Greeks, and Romans, and later became part of the Byzantine Empire.\n\nFrom the 11th century, Turkic peoples settled in Anatolia. The Ottoman Empire grew from a small principality into a major power, capturing Constantinople in 1453. After centuries of expansion and gradual decline, it dissolved after World War I.\n\nIn 1923, Mustafa Kemal Atatürk founded the Republic of Turkey. His government introduced sweeping reforms, including a new legal system, the Latin alphabet, and expanded secular education. Since then, Turkey has experienced periods of multi-party democracy, military intervention, rapid urbanization, and political change. Its location between Europe and Asia continues to shape its culture and role in regional affairs.",
+    "status": 200,
+    "elapsedMs": 12121
+  },
+  {
+    "case": 5,
+    "run": 3,
+    "line": "tell me about the history of Serbia",
+    "decision": "answer",
+    "text": "Serbia’s history stretches from early Slavic settlement in the Balkans to its role as a modern European state. South Slavic peoples settled there from roughly the 6th century onward. By the 12th century, the Nemanjić dynasty had established a powerful Serbian state, and in 1217 Serbia became a kingdom. Its medieval peak came under Stefan Dušan, who briefly expanded it into a major Balkan empire in the 14th century.\n\nAfter the Ottoman victory at Kosovo in 1389, Serbia was gradually absorbed into the Ottoman Empire; Ottoman rule was established across most of the region by the mid-15th century. Serbian uprisings in the early 1800s led to autonomy and then internationally recognized independence in 1878. Serbia expanded in the Balkan Wars of 1912–13 and became a founding part of Yugoslavia after World War I.\n\nDuring World War II, Serbia was occupied by Axis powers, and the region saw resistance",
+    "status": 200,
+    "elapsedMs": 16205
+  },
+  {
+    "case": 6,
+    "run": 3,
+    "line": "check whether the release went out",
+    "decision": "order",
+    "text": "",
+    "status": 200,
+    "elapsedMs": 18223
+  },
+  {
+    "case": 7,
+    "run": 3,
+    "line": "merge the PR",
+    "decision": "order",
+    "text": "",
+    "status": 200,
+    "elapsedMs": 19506
+  },
+  {
+    "case": 8,
+    "run": 3,
+    "line": "open a corner to fix X",
+    "decision": "order",
+    "text": "",
+    "status": 200,
+    "elapsedMs": 20932
+  },
+  {
+    "case": 9,
+    "run": 3,
+    "line": "Are you still working on the release check?",
+    "decision": "answer",
+    "text": "Yes, I’m still working on it.",
+    "status": 200,
+    "elapsedMs": 22530
+  },
+  {
+    "case": 0,
+    "run": 4,
+    "line": "Ah, i a c k. Your joke.",
+    "decision": "answer",
+    "text": "Fair. Let me try again: I told my calendar I needed a day off. It said, “I’m booked.”",
+    "status": 200,
+    "elapsedMs": 3030
+  },
+  {
+    "case": 1,
+    "run": 4,
+    "line": "You had to",
+    "decision": "answer",
+    "text": "Fair point. Here’s a better one: I tried to write a joke about time travel, but you didn’t like it.",
+    "status": 200,
+    "elapsedMs": 4587
+  },
+  {
+    "case": 2,
+    "run": 4,
+    "line": "why did you forward this…",
+    "decision": "answer",
+    "text": "Sorry—that was a mistake. I didn’t need to forward your question; I can answer it myself.\n\nSerbia’s history stretches back to medieval Slavic kingdoms. A powerful Serbian state emerged under the Nemanjić dynasty in the 12th and 13th centuries, reaching its height under Stefan Dušan in the 14th. After the Battle of Kosovo in 1389, Serbia gradually fell under Ottoman rule, which lasted for centuries.\n\nSerbian uprisings in the early 19th century led to autonomy and then independence, internationally recognized in 1878. Serbia became a kingdom and played a major role in the Balkan Wars and the First World War. After the war, it helped form the Kingdom of Serbs, Croats and Slovenes, later Yugoslavia.\n\nAfter the Second World War, Serbia was one of six republics in socialist Yugoslavia. As Yugoslavia broke apart in the 1990s, Serbia was involved in the",
+    "status": 200,
+    "elapsedMs": 7634
+  },
+  {
+    "case": 3,
+    "run": 4,
+    "line": "Tell me about the Ottoman Empire.",
+    "decision": "answer",
+    "text": "The Ottoman Empire was a major empire founded around 1299 by Osman I in northwestern Anatolia. At its height, it ruled lands across southeastern Europe, western Asia, and North Africa. In 1453, it captured Constantinople, making it the imperial capital. The empire lasted until after World War I and was formally abolished in 1922; the Republic of Turkey was established the following year.",
+    "status": 200,
+    "elapsedMs": 13486
+  },
+  {
+    "case": 4,
+    "run": 4,
+    "line": "Tell me about the history of Turkey.",
+    "decision": "answer",
+    "text": "Turkey’s history spans ancient civilizations, the Byzantine Empire, the Ottoman Empire, and the founding of the modern republic.\n\nThe region was home to Hittites, Greeks, Romans, and many others. Constantinople—now Istanbul—became the capital of the Byzantine Empire after Rome’s division. Ottoman Turks captured it in 1453, and their empire grew into a major power across Europe, Asia, and Africa.\n\nAfter the Ottoman Empire’s defeat in World War I, a nationalist movement led by Mustafa Kemal Atatürk established the Republic of Turkey in 1923. Atatürk introduced sweeping reforms, including a new legal system and the Latin alphabet. Since then, Turkey has experienced periods of multi-party democracy, military intervention, rapid social and economic change, and ongoing debate over secularism, religion, and its role between Europe and the Middle East.",
+    "status": 200,
+    "elapsedMs": 10918
+  },
+  {
+    "case": 5,
+    "run": 4,
+    "line": "tell me about the history of Serbia",
+    "decision": "answer",
+    "text": "Serbia’s history spans medieval kingdoms, centuries under Ottoman rule, and the creation of modern states.\n\nIn the Middle Ages, Serbian states grew in influence, especially under the Nemanjić dynasty. Stefan Dušan’s empire reached its height in the 14th century. After the Serbian defeat at Kosovo in 1389, Ottoman power expanded, and Serbia was eventually incorporated into the Ottoman Empire.\n\nSerbs began uprisings against Ottoman rule in 1804 and 1815. These led to autonomy and, later, international recognition of Serbia’s independence in 1878. Serbia became a kingdom in 1882.\n\nIn the 20th century, Serbia was central to the creation of Yugoslavia after World War I. During World War II, it was occupied by Axis forces. After the war, Serbia became one of the republics of socialist Yugoslavia. As Yugoslavia broke apart in the 1990s, Serbia was involved in the ensuing conflicts",
+    "status": 200,
+    "elapsedMs": 16837
+  },
+  {
+    "case": 6,
+    "run": 4,
+    "line": "check whether the release went out",
+    "decision": "order",
+    "text": "",
+    "status": 200,
+    "elapsedMs": 18694
+  },
+  {
+    "case": 7,
+    "run": 4,
+    "line": "merge the PR",
+    "decision": "order",
+    "text": "",
+    "status": 200,
+    "elapsedMs": 19954
+  },
+  {
+    "case": 8,
+    "run": 4,
+    "line": "open a corner to fix X",
+    "decision": "order",
+    "text": "I’ll get the corner opened for X.",
+    "status": 200,
+    "elapsedMs": 21445
+  },
+  {
+    "case": 9,
+    "run": 4,
+    "line": "Are you still working on the release check?",
+    "decision": "answer",
+    "text": "Yes, I’m still working on the release check.",
+    "status": 200,
+    "elapsedMs": 22870
+  },
+  {
+    "case": 0,
+    "run": 5,
+    "line": "Ah, i a c k. Your joke.",
+    "decision": "answer",
+    "text": "Fair. My joke was painfully corny. Want a better one? Why don’t skeletons fight each other? They don’t have the guts.",
+    "status": 200,
+    "elapsedMs": 1675
+  },
+  {
+    "case": 1,
+    "run": 5,
+    "line": "You had to",
+    "decision": "answer",
+    "text": "I did—here’s another: Why don’t skeletons fight each other? They don’t have the guts.",
+    "status": 200,
+    "elapsedMs": 3209
+  },
+  {
+    "case": 2,
+    "run": 5,
+    "line": "why did you forward this…",
+    "decision": "answer",
+    "text": "Sorry—that was unnecessary. I didn’t forward anything; I can answer from what I know.\n\nSerbia’s history spans medieval kingdoms, centuries under Ottoman rule, and its emergence as an independent state in the 19th century. The medieval Serbian state reached its height under Stefan Dušan in the 14th century, before its defeat by the Ottomans at the Battle of Kosovo in 1389. Serbia gradually won autonomy and independence from the Ottoman Empire during the 1800s.\n\nAfter World War I, Serbia became part of the Kingdom of Serbs, Croats and Slovenes, later renamed Yugoslavia. Serbia was a central republic in socialist Yugoslavia after World War II. As Yugoslavia broke apart in the 1990s, Serbia was involved in regional conflicts and later formed a union with Montenegro. Serbia became an independent country again in 2006. Its modern history is also closely connected with Kosovo, which declared independence in 2008;",
+    "status": 200,
+    "elapsedMs": 6727
+  },
+  {
+    "case": 3,
+    "run": 5,
+    "line": "Tell me about the Ottoman Empire.",
+    "decision": "answer",
+    "text": "The Ottoman Empire was a major state that lasted from about 1299 to 1922. It began in Anatolia, expanded across southeastern Europe, the Middle East, and North Africa, and at its height ruled a vast, diverse population. Its capital became Constantinople—modern Istanbul—after its conquest in 1453. The empire ended after World War I, and the Republic of Turkey was founded in 1923.",
+    "status": 200,
+    "elapsedMs": 8855
+  },
+  {
+    "case": 4,
+    "run": 5,
+    "line": "Tell me about the history of Turkey.",
+    "decision": "answer",
+    "text": "Turkey’s history stretches from ancient Anatolian civilizations to the modern republic. The region was home to the Hittites, Greeks, and Romans, and later became a center of the Byzantine Empire, with Constantinople—today’s Istanbul—as its capital.\n\nFrom the 11th century, Turkic peoples migrated into Anatolia. The Ottoman Empire grew from a small principality into a major power, capturing Constantinople in 1453 and ruling across parts of Europe, Asia, and Africa for centuries. After its defeat in World War I, the empire dissolved. Mustafa Kemal Atatürk led the Turkish national movement, and the Republic of Turkey was founded in 1923. Atatürk introduced sweeping reforms, including secular laws and a new alphabet.\n\nSince then, Turkey has experienced periods of one-party rule, military coups, competitive elections, and rapid social and economic change. Its location between Europe and Asia, and its varied cultural heritage, continue to shape its politics and identity.",
+    "status": 200,
+    "elapsedMs": 12307
+  },
+  {
+    "case": 5,
+    "run": 5,
+    "line": "tell me about the history of Serbia",
+    "decision": "answer",
+    "text": "Serbia’s history spans medieval kingdoms, centuries under Ottoman rule, and the formation of modern states in the Balkans.\n\nMedieval Serbia rose to prominence under the Nemanjić dynasty. Stefan Dušan expanded the realm in the 14th century and was crowned emperor in 1346. After the Ottoman victory at the Battle of Kosovo in 1389, Serbia gradually fell under Ottoman control, with the final medieval Serbian stronghold conquered in 1459.\n\nSerbian uprisings against Ottoman rule began in 1804 and 1815. These led to growing autonomy and, by 1878, internationally recognized independence. Serbia became a kingdom in 1882. Its role in the crises leading to World War I was pivotal: the assassination of Archduke Franz Ferdinand in Sarajevo in 1914 by a Bosnian Serb nationalist helped trigger the war.\n\nAfter the war, Serbia joined with other South Slavic lands in the Kingdom of Serbs, Croats and",
+    "status": 200,
+    "elapsedMs": 15958
+  },
+  {
+    "case": 6,
+    "run": 5,
+    "line": "check whether the release went out",
+    "decision": "order",
+    "text": "",
+    "status": 200,
+    "elapsedMs": 17622
+  },
+  {
+    "case": 7,
+    "run": 5,
+    "line": "merge the PR",
+    "decision": "order",
+    "text": "",
+    "status": 200,
+    "elapsedMs": 19039
+  },
+  {
+    "case": 8,
+    "run": 5,
+    "line": "open a corner to fix X",
+    "decision": "order",
+    "text": "",
+    "status": 200,
+    "elapsedMs": 20355
+  },
+  {
+    "case": 9,
+    "run": 5,
+    "line": "Are you still working on the release check?",
+    "decision": "answer",
+    "text": "Yes, I’m still working on it.",
+    "status": 200,
+    "elapsedMs": 21654
+  }
+]

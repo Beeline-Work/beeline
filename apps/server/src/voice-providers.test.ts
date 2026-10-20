@@ -69,9 +69,11 @@ describe('voice providers', () => {
     expect(body.messages[0].content).toContain('You are Ruby');
     expect(body.messages[0].content).toContain('Warm.');
     expect(body.tools.map((tool: { function: { name: string } }) => tool.function.name)).toEqual(['order', 'search_web', 'search_history']);
-    expect(body.messages[0].content).toContain('Greetings, conversation, explanations and repeating words need no tool');
+    expect(body.messages[0].content).toContain('Answer conversation, knowledge, history, explanations, opinions');
     expect(body.messages[0].content).toContain('Use search_history');
-    expect(body.messages[0].content).toContain('Use order for real work');
+    expect(body.messages[0].content).toContain('Never claim results, progress, stopping points or reasons');
+    expect(body.messages[0].content).toContain('An explicit Call work still pending entry confirms work is running');
+    expect(body.messages[0].content).toContain('Call order only when tools beyond search_web');
     expect(reply).toEqual({ text: 'I’ll work on that.', order: true });
     expect(text.mock.calls.flat().join('')).toBe(reply.text);
   });

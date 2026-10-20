@@ -15,8 +15,9 @@ const fixture = vi.hoisted(() => ({ room: undefined as any, closeAudio: vi.fn(as
 vi.mock('./client-error-report', async original => ({ ...await original<object>(), reportClientError: vi.fn(async () => {}) }));
 vi.mock('@/sync/transport/live-connection', () => ({ sharedLiveConnection: () => ({ subscribeConnected: (listener: () => void) => { fixture.connected = listener; return () => { fixture.connected = undefined; }; }, register: async (_filters: unknown, listener: () => void) => { fixture.live = listener; return () => { fixture.live = undefined; }; } }) }));
 vi.mock('react-native', () => ({ Platform: { OS: 'android' }, AppState: { addEventListener: () => ({ remove() {} }) } }));
-vi.mock('livekit-client', () => ({ RoomEvent: { DataReceived: 'data', Disconnected: 'left', ActiveSpeakersChanged: 'levels' }, Track: {} }));
-vi.mock('./voice-transport', () => ({ voiceFetch: (...args: unknown[]) => fixture.fetch(...args), subscribeVoiceResume: () => () => {}, createVoiceRoom: async (stop: () => void) => {
+vi.mock('livekit-client', () => ({ RoomEvent: { DataReceived: 'data', Disconnected: 'left', ActiveSpeakersChanged: 'levels', AudioPlaybackStatusChanged: 'audio-ready' }, Track: {} }));
+vi.mock('./voice-transport', () => ({ subscribeVoiceMicrophone: (room: any, onLevel: (level: number) => void) => { room.on('levels', () => onLevel(room.localParticipant.audioLevel ?? 0)); return () => {}; }, voiceFetch: (...args: unknown[]) => fixture.fetch(...args), subscribeVoiceResume: () => () => {}, createVoiceRoom: async (stop: () => void) => {
+  fixture.room.startAudio ??= async () => {}; fixture.room.canPlaybackAudio ??= true;
   fixture.stop = stop; return { configureStop: fixture.configureStop, room: fixture.room, closeAudio: fixture.closeAudio };
 } }));
 vi.mock('./runtime-config', () => ({ getBuzzRuntimeConfig: () => ({ monolithUrl: 'http://proof' }) }));
@@ -122,7 +123,7 @@ it.each([
   } finally { await act(async () => renderer.unmount()); }
 });
 
-it('maps local and bridge audio levels through the same fixed volume curve', async () => {
+it('maps captured mic audio through the fixed curve without remote override', async () => {
   vi.useFakeTimers();
   fixture.room = Object.assign(new EventEmitter(), { connect: async () => {}, disconnect: async () => {},
     remoteParticipants: new Map(), localParticipant: { audioLevel: 0, publishData: vi.fn(async () => {}),
@@ -150,7 +151,7 @@ it('maps local and bridge audio levels through the same fixed volume curve', asy
     await act(async () => fixture.room.emit('data', new TextEncoder().encode(JSON.stringify({ type: 'speaker', agentId: 'agent' })),
       { identity: bridge }, undefined, VOICE_DATA_TOPIC));
     await act(async () => fixture.room.emit('levels'));
-    expect(voice.level).toBeCloseTo(levels[2]);
+    expect(voice.level).toBeCloseTo(levels[3]);
     await act(async () => voice.end());
   } finally {
     await act(async () => renderer.unmount());
@@ -295,7 +296,7 @@ it('call-feedback-1: follows the mic when a stale speaker signal outlives bridge
     expect(voice.level).toBeGreaterThan(quietMic);
     fixture.room.remoteParticipants.get(bridge).audioLevel = 0.01;
     await act(async () => fixture.room.emit('levels'));
-    expect(voice.level).toBeLessThan(quietMic);
+    expect(voice.level).toBeGreaterThan(quietMic);
     expect(voice.call).not.toBeNull();
   } finally { await act(async () => renderer.unmount()); vi.clearAllTimers(); vi.useRealTimers(); }
 });
@@ -430,5 +431,26 @@ it('shows the workspace warning and retains the owner-midnight message when call
     await act(async () => voice.join());
     expect(voice.call).toBeNull();
     expect(voice.error).toBe('Calls resume at 12:00 AM');
+  } finally { await act(async () => renderer.unmount()); }
+});
+
+
+it('VOICE-ROUTER-1: joining stays visible until mic publication and audio playback are ready', async () => {
+  let publish!: () => void;
+  fixture.room = Object.assign(new EventEmitter(), { canPlaybackAudio: false, startAudio: async () => {},
+    connect: async () => {}, disconnect: async () => {}, remoteParticipants: new Map(),
+    localParticipant: { publishData: async () => {}, setMicrophoneEnabled: () => new Promise<void>(resolve => { publish = resolve; }) } });
+  let voice!: ReturnType<typeof useVoiceCall>; let renderer: any;
+  function Probe() { voice = useVoiceCall(fixture.callId, true); return null; }
+  await act(async () => { renderer = create(<Probe />); });
+  try {
+    let joining!: Promise<void>;
+    await act(async () => { joining = voice.join(); });
+    expect(voice.connecting).toBe(true);
+    await act(async () => { publish(); await joining; });
+    expect(voice.connecting).toBe(true);
+    await act(async () => { fixture.room.canPlaybackAudio = true; fixture.room.emit('audio-ready'); });
+    expect(voice.connecting).toBe(false);
+    await act(async () => voice.end());
   } finally { await act(async () => renderer.unmount()); }
 });

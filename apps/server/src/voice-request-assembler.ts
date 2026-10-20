@@ -47,7 +47,7 @@ export class VoiceRequestAssembler {
     const request = this.requests.get(human);
     if (request && ['assembling', 'classifying', 'replying'].includes(request.state)) {
       request.state = 'assembling';
-      request.classification.abort();
+      request.classification.abort('user resumed speaking');
     }
   }
   humans() { return [...new Set([...this.requests.keys(), ...this.addresses.keys(), ...this.failed.keys()])]; }
@@ -66,7 +66,7 @@ export class VoiceRequestAssembler {
   begin(human: string, text: string): { request: VoiceRequest; previous?: VoiceRequest } {
     const previous = this.requests.get(human);
     const continuation = previous && ['assembling', 'classifying', 'replying'].includes(previous.state) ? previous : undefined;
-    continuation?.classification.abort();
+    continuation?.classification.abort('superseded');
     const request: VoiceRequest = {
       id: continuation?.id ?? randomBytes(32).toString('hex'),
       text: continuation ? `${continuation.text} ${text}` : text,
@@ -86,16 +86,16 @@ export class VoiceRequestAssembler {
       this.clearAddress(human);
     }
   }
-  cancel(human: string) {
+  cancel(human: string, reason = 'superseded') {
     const request = this.requests.get(human);
     if (request) {
-      request.classification.abort(); this.requests.delete(human);
+      request.classification.abort(reason); this.requests.delete(human);
     }
     this.failed.delete(human);
     this.clearAddress(human);
   }
   close() {
-    for (const human of this.humans()) this.cancel(human);
+    for (const human of this.humans()) this.cancel(human, 'call closed');
     for (const human of this.addresses.keys()) this.clearAddress(human);
   }
 }

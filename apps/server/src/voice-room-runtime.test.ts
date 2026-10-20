@@ -534,6 +534,7 @@ function phantomHarness(answer = 'Hey there is the answer.') {
 
 it.each([0.6, 0.3, 0.95])('Reproduction keep-turn-1: records and replies to a final at confidence %s', async confidence => {
   const harness = phantomHarness();
+  const logs = vi.spyOn(console, 'info');
   const runtime = await VoiceRoomRuntime.connect(harness.service as unknown as VoiceService, 'call', 'room');
   state.streams = [new ReadableStream()];
   try {
@@ -547,7 +548,9 @@ it.each([0.6, 0.3, 0.95])('Reproduction keep-turn-1: records and replies to a fi
     harness.finishPlayback();
     await vi.waitFor(() => expect(harness.service.recordAnswer).toHaveBeenCalledOnce());
     expect(harness.service.config.brain.answer).toHaveBeenCalledOnce();
-  } finally { await runtime.close(); }
+    expect(logs).toHaveBeenCalledWith('[voice-speech-shadow]', expect.stringContaining(text));
+    expect(logs).toHaveBeenCalledWith('[voice-router-decision]', expect.stringContaining('answer'));
+  } finally { await runtime.close(); logs.mockRestore(); }
 });
 
 it('dispatches a low-confidence final without interrupting playback when voiceInterrupt is false', async () => {
@@ -795,6 +798,7 @@ it('finished-sentence timing adds no wait before commit or first audio', async (
 
 it('Reproduction CONTINUATION-1: resumes during thinking without creating another message', async () => {
   const { service } = conversationService(1);
+  const logs = vi.spyOn(console, 'info');
   const releases: Array<() => void> = [];
   service.config.brain.answer.mockImplementation(async (_agent, _history, _onText, signal) => {
     await new Promise<void>((resolve, reject) => {
@@ -813,8 +817,10 @@ it('Reproduction CONTINUATION-1: resumes during thinking without creating anothe
     expect(service.recordHuman).toHaveBeenCalledOnce();
     expect(service.config.brain.answer.mock.calls[1]?.[1].filter(message => message.role === 'user').at(-1)?.content).toBe('Ruby I can talk for hours. That does not exist today.');
     expect(service.recordAnswer).toHaveBeenCalledOnce();
+    const cancelled = logs.mock.calls.filter(([tag]) => tag === '[voice-draft-cancelled]').map(([, data]) => JSON.parse(String(data)));
+    expect(cancelled).toEqual([expect.objectContaining({ reason: 'superseded', traceId: expect.any(String), elapsedMs: expect.any(Number) })]);
     console.log('CONTINUATION-1: one message, combined request, one reply');
-  } finally { await runtime.close(); }
+  } finally { await runtime.close(); logs.mockRestore(); }
 });
 
 function deferred<T>() {
@@ -2215,6 +2221,27 @@ it('DELIVERY-2: another human interrupting pre-audio synthesis cannot drop the o
   } finally { await runtime.close(); }
 });
 
+
+it('VOICE-ROUTER-1: pending call work reaches the brain without an invented report', async () => {
+  const { service } = conversationService(1);
+  const original = service.db.query.getMockImplementation()!;
+  service.db.query.mockImplementation(async (sql, params) => sql.includes('SELECT source.text')
+    ? { rowCount: 1, rows: [{ source_message_id: 'work', agent_id: 'ruby', human_id: 'human', text: '@ruby check whether the release went out' }] as any }
+    : original(sql, params));
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  try {
+    service.db.query.mockImplementation(async (sql, params) => {
+      if (sql.includes('SELECT source.text')) throw new Error('Pending lookup must stay off the turn path');
+      return original(sql, params);
+    });
+    await runtime.utterance('human', 'Ruby, are you still working on it?');
+    const history = service.config.brain.answer.mock.calls.at(-1)![1] as any;
+    expect(history.find((row: any) => row.content.startsWith('Call work still pending')).content).toContain('Call work still pending; no report or progress is available');
+    expect(history.find((row: any) => row.content.startsWith('Call work still pending')).content).toContain('check whether the release went out');
+    expect(history.some((row: any) => row.role === 'user' && row.content.includes('are you still working on it?'))).toBe(true);
+  } finally { await runtime.close(); }
+});
+
 it('Reproduction SPOKEN-150: measures report refresh to first audio with controlled synthesis and RTC', async () => {
   const elapsed: number[] = [];
   for (let sample = 0; sample < 7; sample++) {
@@ -2267,4 +2294,31 @@ it('scales the character and CJK limits by six', () => {
   expect(spokenReport('短い文。'.repeat(81))).toBe('短い文。'.repeat(80) + ' The rest is in the chat.');
   expect(spokenReport('x'.repeat(1079) + '.')).toBe('x'.repeat(1079) + '.');
   expect(spokenReport('x'.repeat(1080) + '.')).toBe('The rest is in the chat.');
+});
+
+it('VOICE-ROUTER-1: remembers a new dispatch immediately and clears it on committed completion', async () => {
+  const { service } = conversationService(1);
+  service.config.brain.answer.mockResolvedValueOnce({ text: 'Checking.', order: true });
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  try {
+    await runtime.utterance('human', 'Ruby check whether the release went out');
+    await runtime.utterance('human', 'Ruby are you still working?');
+    const pending = service.config.brain.answer.mock.calls.at(-1)![1] as any[];
+    expect(pending.some(row => row.content.startsWith('Call work still pending'))).toBe(true);
+    await runtime.refresh();
+    await runtime.utterance('human', 'Ruby hello');
+    const finished = service.config.brain.answer.mock.calls.at(-1)![1] as any[];
+    expect(finished.some(row => row.content.startsWith('Call work still pending'))).toBe(false);
+  } finally { await runtime.close(); }
+});
+
+
+it('VOICE-ROUTER-1: empty call work is hydrated once across transcript invalidations', async () => {
+  const { service } = conversationService(1);
+  const runtime = await VoiceRoomRuntime.connect(service as unknown as VoiceService, 'call', 'room');
+  try {
+    await runtime.refresh();
+    await runtime.refresh();
+    expect(service.db.query.mock.calls.filter(([sql]) => sql.includes('SELECT source.text'))).toHaveLength(1);
+  } finally { await runtime.close(); }
 });

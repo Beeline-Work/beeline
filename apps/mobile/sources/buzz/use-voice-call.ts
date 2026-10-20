@@ -4,7 +4,7 @@ import { RoomEvent, Track, type Room } from 'livekit-client';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { VOICE_DATA_TOPIC, type VoiceBudget, type VoiceJoin, type VoiceSignal, type VoiceCall, type RoomViewIdentity } from '@beeline/api-contract/phone';
 import { getBuzzRuntimeConfig } from './runtime-config';
-import { createVoiceRoom, subscribeVoiceResume, voiceFetch } from './voice-transport';
+import { createVoiceRoom, subscribeVoiceMicrophone, subscribeVoiceResume, voiceFetch } from './voice-transport';
 import { errorDiagnostic, reportClientError } from './client-error-report';
 import { sharedLiveConnection } from '@/sync/transport/live-connection';
 import { voiceWaveformLevel } from './waveform-level';
@@ -150,6 +150,16 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
       if (version !== revision.current) { await release(); await voiceRequest(joined.call.id, 'leave', joined.sessionId); return; }
       setJoinedAgents({ roomId, agents: joined.agents });
       const { room } = transport;
+      const stopMeter = subscribeVoiceMicrophone(room, amplitude => {
+        if (current()) setLevel(quotaRef.current || mutedRef.current ? 0 : voiceWaveformLevel(amplitude));
+      });
+      const closeAudio = transport.closeAudio;
+      transport.closeAudio = async () => { stopMeter(); await closeAudio(); };
+      let microphonePublished = false;
+      const updateReadiness = () => {
+        if (current()) setConnecting(!microphonePublished || !room.canPlaybackAudio);
+      };
+      room.on(RoomEvent.AudioPlaybackStatusChanged, updateReadiness);
       let humanCount = joined.call.participants.filter(p => p.kind === 'human').length;
       setHumans(humanCount);
       mode.current = 'active';
@@ -211,7 +221,7 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
       let recovering = false;
       room.on(RoomEvent.Disconnected, () => {
         if (version !== revision.current || mode.current !== 'active' || session.current?.room !== room || recovering) return;
-        recovering = true;
+        recovering = true; microphonePublished = false; updateReadiness();
         void (async () => {
           // A full reconnect after token expiry needs a freshly authorized token.
           const fresh = await request<VoiceJoin>(roomId, 'join', undefined, joined!.call.id);
@@ -229,6 +239,9 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
           if (agentId) await room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ type: 'target', agentId })),
             { reliable: true, topic: VOICE_DATA_TOPIC });
           await room.localParticipant.setMicrophoneEnabled(!quotaRef.current && !mutedRef.current, { echoCancellation: true, noiseSuppression: true, autoGainControl: false });
+          microphonePublished = true;
+          await room.startAudio();
+          updateReadiness();
           if (version !== revision.current) await release();
         })().catch(cause => {
           if (version !== revision.current) return;
@@ -239,26 +252,20 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
       });
       await room.connect(joined.url, joined.token);
       if (version !== revision.current) { await release(); await voiceRequest(joined.call.id, 'leave', joined.sessionId); return; }
+      const playbackReady = room.startAudio();
       const defaultTarget = joined.agents.find(a => a.pubkey === targetRef.current)?.pubkey ?? joined.agents[0]?.pubkey;
       if (defaultTarget) await room.localParticipant.publishData(new TextEncoder().encode(JSON.stringify({ type: 'target', agentId: defaultTarget })),
         { reliable: true, topic: VOICE_DATA_TOPIC });
       await room.localParticipant.setMicrophoneEnabled(true, { echoCancellation: true, noiseSuppression: true,
         autoGainControl: false });
+      microphonePublished = true;
+      await playbackReady;
+      updateReadiness();
       if (quotaRef.current) await room.localParticipant.setMicrophoneEnabled(false);
       if (version !== revision.current) { await release(); await voiceRequest(joined.call.id, 'leave', joined.sessionId); return; }
       joiningCleanup.current = null;
       session.current = { ...transport, callId: joined.call.id, sessionId: joined.sessionId };
       setCall(joined.call); setTarget(defaultTarget ?? null); targetRef.current = defaultTarget ?? null;
-      const updateLevel = () => {
-        if (!current() || mode.current !== 'active') return;
-        const bridge = `beeline-voice-${joined!.call.id}`;
-        const bridgeLevel = room.remoteParticipants.get(bridge)?.audioLevel ?? 0;
-        // A speaker signal can outlive playback; silent bridge audio must not hide the mic.
-        const levels = speakerRef.current && bridgeLevel > 0 ? [bridgeLevel]
-          : [room.localParticipant.audioLevel, ...[...room.remoteParticipants.values()].filter(p => p.identity !== bridge).map(p => p.audioLevel)];
-        setLevel(quotaRef.current ? 0 : voiceWaveformLevel(Math.max(0, ...levels)));
-      };
-      room.on(RoomEvent.ActiveSpeakersChanged, updateLevel);
       const live = sharedLiveConnection();
       const reconcile = () => {
         const active = joined!;
@@ -276,11 +283,10 @@ export function useVoiceCall(roomId: string, enabled: boolean, roomAgents: reado
       void reportClientError('voice-join', cause);
       await release();
       if (joined) await voiceRequest(joined.call.id, 'leave', joined.sessionId).catch(() => {});
-      if (version === revision.current) setError(errorDiagnostic(cause).message);
+      if (version === revision.current) { setError(errorDiagnostic(cause).message); setConnecting(false); }
     } finally {
       if (joiningCleanup.current === release) joiningCleanup.current = null;
       pending.current = false;
-      if (version === revision.current) setConnecting(false);
     }
   }, [enabled, roomId, end]);
   React.useEffect(() => {

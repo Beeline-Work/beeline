@@ -173,9 +173,8 @@ to fill unmeasured routes with static estimates.
 
 The per-PR contract check validates route coverage and the deterministic
 budget evaluator. Nightly timing uses the squire emulator and parent-Room
-schedule documented below. The legacy GitHub device job remains on demand;
-there is no registered runner established for it, and nightly runs do not use
-it. A full launch report still requires all route and interaction marks; the
+schedule documented below. A full launch report still requires all route and
+interaction marks; the
 nightly subset does not establish that broader budget. Missing required subset
 cases fail closed.
 
@@ -187,7 +186,10 @@ Room list or Android push tap, with one or five new messages. Each has a strict
 that matrix. The native probe matches a unique suffix of the expected newest message in
 an on-screen text row above the composer. A Room-list preview or clipped byline
 cannot finish a case. Missing visible targets fail instead of disappearing
-from the statistics.
+from the statistics. Capture caps each attempt at five seconds and retains a
+`timedOut` sample when the target does not paint. Its 5000 ms value is a
+censored failure bound, not a measured paint; any timeout fails the verdict,
+even when p95 would otherwise hide one failure in twenty.
 
 `capture-arrivals.mjs` drives a leased disposable emulator and inserts messages
 only into an explicitly supplied loopback `latency_rig` database. After signing
@@ -260,8 +262,8 @@ gate. Every case requires 20 samples in the nightly comparison.
 
 The nightly run is a **Speedy-owned Beeline schedule in the parent Room**
 `bb91a1c7-7cad-4fde-aafc-94fccb651ac8`, at 03:00 America/New_York on squire.
-It does not use the legacy GitHub on-demand device job, a webhook, or a new
-token. Create it from that Room: the wake tool only schedules its current place,
+It does not use a GitHub device job, a webhook, or a new token. Create it from
+that Room: the wake tool only schedules its current place,
 and schedules belonging to archived corners do not run. Schedule installation
 and its returned id must be recorded after creating it; a documented prompt
 alone is not an installed schedule.

@@ -71,7 +71,7 @@ export function summarizeSample(sample) {
   return {
     kind: sample.kind, name: sample.name, variant: sample.variant,
     fixture: sample.fixture ?? '',
-    clockCalibrated, clockUncertaintyMs,
+    clockCalibrated, clockUncertaintyMs, timedOut: sample.timedOut === true,
     paintMs: paintMs - startMs,
     canonicalMs: sample.canonicalMs === undefined ? null : finite(sample.canonicalMs, 'canonicalMs') - startMs,
     prepaintHttpCount: prepaint.length,
@@ -120,6 +120,7 @@ export function summarize(samples, routes = [], interactions = [], arrivalCases 
       p50Ms: percentile(items.map((item) => item.paintMs), .5), p95Ms: p95,
       p99Ms: percentile(items.map((item) => item.paintMs), .99),
       worstMs: maxObserved('paintMs'),
+      timedOutSamples: items.filter((item) => item.timedOut).length,
       clockCalibrated: items.every((item) => item.clockCalibrated),
       maxClockUncertaintyMs: maxObserved('clockUncertaintyMs'),
       maxPrepaintHttpCount: maxObserved('prepaintHttpCount'),
@@ -132,7 +133,7 @@ export function summarize(samples, routes = [], interactions = [], arrivalCases 
       maxSqlStatements: maxObserved('sqlStatements'), maxSqlDepth: maxObserved('sqlDepth'),
       maxSqlPoolWaitMs: maxObserved('sqlPoolWaitMs'),
       budgetMs: arrival?.budgetMs ?? BUDGET_MS[first.kind], maxRequests, maxDepth,
-      timingPass: p95 < (arrival?.budgetMs ?? BUDGET_MS[first.kind]),
+      timingPass: !items.some((item) => item.timedOut) && p95 < (arrival?.budgetMs ?? BUDGET_MS[first.kind]),
       requestPass: items.every((item) => item.clockCalibrated) && maxObserved('prepaintHttpCount') <= maxRequests &&
         maxObserved('prepaintHttpDepth') <= maxDepth &&
         (first.kind !== 'tap' || items.every((item) => item.writeCount === 1 &&

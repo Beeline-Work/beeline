@@ -80,3 +80,18 @@ test('profiled native frames cannot become acceptance samples', () => {
   const mark = { probe: 'native-frame-commit-v1', case: 'push-unseen-1', startMs: 100, paintMs: 200, profiled: true };
   assert.throws(() => nativeArrivalMoment(`LATENCY_VISIBLE ${JSON.stringify(mark)}`, 'push-unseen-1'), /Profiled/);
 });
+
+
+test('a censored five-second arrival fails even when p95 hides the timeout', () => {
+  const samples = cases.flatMap((item) => Array.from({ length: 20 }, () => ({
+    kind: 'route', name: '/beeline/chat/[channelId]', variant: item.name,
+    clockDomain: 'host', startMs: 0, paintMs: 100,
+  })));
+  samples[0] = { ...samples[0], paintMs: 5000, timedOut: true };
+  const report = summarize(samples, [], [], cases);
+  assert.equal(report.complete, true);
+  assert.equal(report.timingPass, false);
+  const row = report.rows.find((row) => row.variant === cases[0].name);
+  assert.equal(row.p95Ms, 100);
+  assert.equal(row.timedOutSamples, 1);
+});

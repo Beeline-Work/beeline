@@ -157,6 +157,7 @@ try {
       adb('shell', 'am', 'broadcast', '-a', 'app.usebeeline.LATENCY_RIG_EXPECT', '-n', 'app.usebeeline/.LatencyRigReceiver',
         '--es', 'needle', targetId.slice(0, 16), '--es', 'case', scenario.name, '--es', 'entry', scenario.entry);
       await writeFile(`${output}/pending-attempt.json`, JSON.stringify({ name: scenario.name, unseen: scenario.unseen, targetId }, null, 2));
+      const deadline = Date.now() + 5000;
       if (point) tap(point);
       else adb('shell', 'am', 'start', '-a', 'android.intent.action.MAIN', '-n', 'app.usebeeline/.PushNotificationActivity',
         '--es', 'google.message_id', targetId, '--es', 'type', 'room-message',
@@ -164,14 +165,21 @@ try {
         '--es', 'workspaceId', fixture.workspace_id, '--es', 'messageId', targetId);
       let nativeOutput = '';
       let line = '';
-      for (let probe = 0; probe < 50; probe++) {
+      while (Date.now() < deadline) {
         await pause(200);
         nativeOutput = adb('logcat', '-d', '-s', 'LATENCY_NATIVE:W');
         line = findNativeArrival(nativeOutput, scenario.name, targetId.slice(0, 16), armedAtMs);
         if (line) break;
       }
       await writeFile(`${output}/native-${scenario.name}-${sample}.txt`, line);
-      const moment = nativeArrivalMoment(line, scenario.name);
+      const moment = line ? nativeArrivalMoment(line, scenario.name) : {
+        kind: scenario.entry === 'send-text' ? 'tap' : 'route',
+        name: scenario.entry === 'send-text' ? 'send-text' : '/beeline/chat/[channelId]',
+        variant: scenario.entry === 'send-text' ? 'warm' : scenario.name,
+        startMs: armedAtMs, paintMs: armedAtMs + 5000, timedOut: true,
+      };
+      // A timeout is a censored failure, never evidence that the row painted.
+      // Keep collecting the matrix rather than losing every later case.
       await pause(2000);
       const clockAfter = calibrateDeviceClock(readDeviceMs);
       const endMs = clockAfter.deviceMs;

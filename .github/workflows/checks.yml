@@ -477,6 +477,10 @@ jobs:
     runs-on: [self-hosted, macOS, X64, ios-builder]
     timeout-minutes: 35
     steps:
+      - name: Record Mac runner hardware
+        run: |
+          sysctl -n machdep.cpu.brand_string
+          uname -m
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:

@@ -26,7 +26,9 @@ four configured RTT profiles, with the limits of that comparison.
 - `proxy.mjs` records HTTP request/response **body** bytes and WebSocket
   **message payload** bytes. It
   supports RTT, jitter, bandwidth, and whole-request failure injection. A
-  whole-request failure is **not** a packet-loss simulation. The proxy does not
+  whole-request failure is **not** a packet-loss simulation. WebSocket propagation delays overlap across messages; only their byte
+  serialization is queued. Earlier captures charged half an RTT per queued
+  message and must not be compared with this corrected shaping. The proxy does not
   report header bytes, physical WebSocket frame counts, compressed wire bytes,
   retransmits, or TLS handshake cost.
 - `room-marks.mjs` extracts the existing release Room first-frame marker from

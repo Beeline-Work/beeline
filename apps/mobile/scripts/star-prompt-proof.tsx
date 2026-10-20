@@ -41,7 +41,27 @@ function Harness() {
   );
 }
 
+// Headless virtual time does not drive display frames. Keep this functional
+// proof on the same timer-driven frame clock as notification-landing-proof.
+function installFrameClock() {
+  const frames = new Map<number, ReturnType<typeof setTimeout>>();
+  let next = 0;
+  globalThis.requestAnimationFrame = (callback: FrameRequestCallback) => {
+    const handle = ++next;
+    frames.set(handle, setTimeout(() => {
+      frames.delete(handle);
+      callback(performance.now());
+    }, 16));
+    return handle;
+  };
+  globalThis.cancelAnimationFrame = (handle: number) => {
+    clearTimeout(frames.get(handle));
+    frames.delete(handle);
+  };
+}
+
 async function run() {
+  installFrameClock();
   createRoot(document.getElementById('root')!).render(<Harness />);
   await pause();
   await pause();

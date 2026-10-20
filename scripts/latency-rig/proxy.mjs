@@ -7,6 +7,7 @@ import { createWriteStream } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { Transform } from 'node:stream';
 import { WebSocket, WebSocketServer } from 'ws';
+import { messageSchedule } from './message-shaping.mjs';
 
 const backend = new URL(process.env.LATENCY_RIG_BACKEND ?? 'http://127.0.0.1:8080');
 const listenPort = Number(process.env.LATENCY_RIG_PORT ?? 8081);
@@ -109,22 +110,25 @@ server.on('upgrade', (request, socket, head) => {
     const pending = [];
     let upQueue = Promise.resolve();
     let downQueue = Promise.resolve();
+    const scheduleUp = messageSchedule();
+    const scheduleDown = messageSchedule();
     const protocols = String(request.headers['sec-websocket-protocol'] ?? '')
       .split(',').map((value) => value.trim()).filter(Boolean);
     const upstream = new WebSocket(`${socketTarget}${request.url}`, protocols, {
       headers: { authorization: request.headers.authorization ?? '',
         'x-latency-rig-trace': traceId },
     });
-    const relayUp = async (data, isBinary) => {
-      const startMs = Date.now();
-      await delay(halfRtt() + bytesDelay(data.length));
+    const relayUp = async (data, isBinary, startMs, dueAt) => {
+      await delay(dueAt - Date.now());
       if (upstream.readyState !== WebSocket.OPEN) return;
       upstream.send(data, { binary: isBinary });
       emit({ type: 'ws', traceId, granularity: 'message', direction: 'up', startMs, endMs: Date.now(), bytes: data.length,
         connectionStartMs: startedMs });
     };
     const enqueueUp = (data, isBinary) => {
-      upQueue = upQueue.then(() => relayUp(data, isBinary));
+      const startMs = Date.now();
+      const dueAt = scheduleUp(startMs, halfRtt(), bytesDelay(data.length));
+      upQueue = upQueue.then(() => relayUp(data, isBinary, startMs, dueAt));
     };
     downstream.on('message', (data, isBinary) => {
       if (upstream.readyState === WebSocket.OPEN) enqueueUp(data, isBinary);
@@ -134,9 +138,10 @@ server.on('upgrade', (request, socket, head) => {
       for (const [data, isBinary] of pending) enqueueUp(data, isBinary);
       pending.length = 0;
       upstream.on('message', (data, isBinary) => {
+        const startMs = Date.now();
+        const dueAt = scheduleDown(startMs, halfRtt(), bytesDelay(data.length));
         downQueue = downQueue.then(async () => {
-          const startMs = Date.now();
-          await delay(halfRtt() + bytesDelay(data.length));
+          await delay(dueAt - Date.now());
           if (downstream.readyState !== WebSocket.OPEN) return;
           downstream.send(data, { binary: isBinary });
           emit({ type: 'ws', traceId, granularity: 'message', direction: 'down', startMs, endMs: Date.now(), bytes: data.length,

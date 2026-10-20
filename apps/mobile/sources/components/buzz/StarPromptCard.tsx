@@ -31,13 +31,22 @@ export function useStarPrompt(winKey: string | undefined, enabled: boolean) {
     if (!enabled || stoppedThisSession) return;
     let current = true;
     const asked = answers.current;
-    monolithPhoneOperation('readStarPrompt', {})
-      .then((view) => {
-        if (current && asked === answers.current) setPrompt(view.prompt);
-      })
-      .catch(() => undefined);
+    let secondFrame: number | undefined;
+    // The optional prompt read must not compete with the Room's first frame.
+    const firstFrame = requestAnimationFrame(() => {
+      secondFrame = requestAnimationFrame(() => {
+        if (!current) return;
+        void monolithPhoneOperation('readStarPrompt', {})
+          .then((view) => {
+            if (current && asked === answers.current) setPrompt(view.prompt);
+          })
+          .catch(() => undefined);
+      });
+    });
     return () => {
       current = false;
+      cancelAnimationFrame(firstFrame);
+      if (secondFrame !== undefined) cancelAnimationFrame(secondFrame);
     };
   }, [enabled, winKey]);
   const answer = useCallback(

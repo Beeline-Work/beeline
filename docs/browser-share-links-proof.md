@@ -6,7 +6,7 @@ The candidate adds a public entry page with fixed Beeline web and native destina
 
 ## Built service stand-in
 
-Run `npm run build` then `node --import tsx scripts/prove-browser-share-link.ts`.
+Run `npm run prove:browser-share-link`. It builds the server dependencies before running the proof.
 
 This runs built server modules against isolated PGlite through the mounted HTTP server. The GitHub assertion exchange uses an isolated fixture verifier, not a production login. Under Reproduction 2026-10-20 the same bare-link path now returns 200 with 494 bytes and both Beeline destinations. An unauthenticated phone open returns 401; fixture sign-in followed by `openComputerSession` returns a capability; the viewer returns 200. Revoking Room membership makes the issued capability return 403 with an explanation. Ending the share returns 410 with an explanation.
 

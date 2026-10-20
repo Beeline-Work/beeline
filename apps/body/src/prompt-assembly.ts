@@ -188,7 +188,7 @@ export const CORNER_AUTHOR_CONTRACT = `Work in this corner; report blockers or d
 The current brief's stories, criteria, approving order, non-goals and inherited human constraints bound the work; its objective is navigation only. Meet every story, respect risks and use the file manifest. Before code/build, read the current brief. Any human in the Room can direct you. If a newer human instruction contradicts an earlier one, follow the newer instruction, revise the brief with that message as approval, and state in the corner what changed. Dispatch authorizes work without separate spec/mock approval; produce either first when requested.
 For repository bugfixes, the brief records a real-target Reproduction <id>, or why it is not feasible and the closest stand-in; done means that same reproduction or stand-in passes.
 Follow beeline-triage. Before the PR, demonstrate the user path with the built app or affected service; if unavailable, exercise that exact path with the narrowest script. Inner-function tests, logs and code reads do not prove a visible result. The PR body needs ## Reproduced and ## Demonstrated: steps, wrong and passing results under the same Reproduction <id>; explain any unavailable real-target proof and its stand-in. For features, say "not a defect report".
-Only repository assignments commit/push/open a PR; other work delivers with post_artifact and reports. End the turn awaiting orders, checks or review; committed wakes resume it. Landing archives this corner, cancels its work and abandons saved runs. The surviving commander owns follow-up at its own address. Claim another agent's progress only from durable commands, the current prompt or tool evidence. No unrequested features or refactors.`;
+Work outside the repository delivers with post_artifact and reports. End the turn awaiting orders, checks or review; committed wakes resume it. Landing archives this corner, cancels its work and abandons saved runs. The surviving commander owns follow-up at its own address. Claim another agent's progress only from durable commands, the current prompt or tool evidence. No unrequested features or refactors.`;
 
 export const CORNER_REVIEWER_SESSION_INSTRUCTION =
   "As configured reviewer, review the assigned green head with approve_merge. Demand available proof; report missing capability to your commander once. PASS wakes the implementer to land; use merge_corner yourself only on an explicit commander order.";
@@ -197,7 +197,7 @@ export const CORNER_REVIEWER_UNSTABLE_HEAD_INSTRUCTION =
   'The current PR head is not green, so approve_merge on it fails now. The server wakes you when checks pass on the current head.';
 
 export const CORNER_DELIVERY_NUDGE =
-  'Only when you write code in this corner and the brief calls for repository changes, inspect the repository state and finish delivering the work unless a human hold stands: commit and push the intended changes and open the pull request if one does not exist. Decide yourself whether any remaining dirty work belongs to the brief; do not discard it merely to make the worktree clean. The pull request body must carry ## Reproduced and ## Demonstrated; if they are missing, add them before ending the turn. Otherwise do not commit, push or open a PR; deliver with post_artifact.';
+  'Only when you write code in this corner and the brief calls for repository changes, inspect the repository state and finish delivering the work unless a human hold stands: commit and push the intended changes and open the pull request if one does not exist. Decide yourself whether any remaining dirty work belongs to the brief; do not discard it merely to make the worktree clean. The pull request body must carry ## Reproduced and ## Demonstrated; if they are missing, add them before ending the turn. If you wrote no code, deliver with post_artifact.';
 
 /** What the implementer does when a reviewer's PASS wakes it in `land`. */
 export const CORNER_LAND_RULE =
@@ -475,7 +475,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
     id: 'corner',
     topic: 'code corners',
     why: {
-      'corner.implementer': 'A reviewer that opened its corner was given push steps and pushed a fix (PR #2224); only the agent knows whether it was told to write code, so the author rules are conditional.',
+      'corner.implementer': 'Any member agent may write and push code here; only the agent knows whether it wrote code, so the author rules apply when it does. The reviewer rules still keep a reviewer off the author branch (PR #2224).',
       'corner.prepare': 'Only a checkout that defines the command can run it; another repository fails on its first step.',
       'corner.push': 'The author must push only its own branch and rebase before each push, or it overwrites or loses work.',
       'corner.contract': 'The reviewer enforces this contract; an author that never saw it fails review.',
@@ -490,7 +490,7 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
       const repositoryWork = cornerHasRepositoryWork(brief);
       const push = `Only when the brief calls for repository changes: commit and push only ${worktree?.featureBranch}; never force-push or write to ${worktree?.targetBranch}. Before pushing, run \`git ls-remote --exit-code origin ${worktree?.featureBranch}\`. Exit code 0: rebase on origin/${worktree?.featureBranch}; resolve conflicts autonomously, realigning to that remote branch and redoing the work if needed, then rerun affected tests. Exit code 2: the branch is absent; skip rebase for the first push. Any other non-zero exit is a lookup failure: stop and retry; do not skip rebase or push.`;
       return paragraphs(
-        `Implementer rules: the rules below${reviewer ? ', up to the reviewer rules,' : ''} apply only when the brief or a person in this corner told you to write code or do this corner's work. A hand-over of the work to another agent ends that. Otherwise do not commit, push, or open a pull request.`,
+        `Implementer rules: any agent in this corner may commit, push and open a pull request. The rules below${reviewer ? ', up to the reviewer rules,' : ''} apply whenever you write code in this corner.`,
         repositoryWork && cornerPrepareScript === true && 'Run npm run corner:prepare first.',
         repositoryWork &&
           (githubCli === 'rest'

@@ -31,3 +31,14 @@ export function extractArrivalMoments(logcat, attempts) {
   }
   return moments;
 }
+
+/** A native result exists only after the unique row is visible above the composer. */
+export function nativeArrivalMoment(output, name) {
+  const match = /LATENCY_VISIBLE (\{[^\r\n]*\})/.exec(output);
+  if (!match) throw new Error(`Newest message never became visible: ${name}`);
+  const mark = JSON.parse(match[1]);
+  if (mark.probe !== 'native-frame-commit-v1' || mark.case !== name || !Number.isFinite(mark.startMs) || !Number.isFinite(mark.paintMs) || mark.paintMs < mark.startMs)
+    throw new Error('Invalid native visibility timestamps');
+  return { kind: 'route', name: '/beeline/chat/[channelId]', variant: name,
+    startMs: mark.startMs, paintMs: mark.paintMs };
+}

@@ -43,3 +43,12 @@ test('nightly keeps the warm open-room and send-text cases without a cold-start 
   assert.equal(report.requestPass, true);
   assert.equal(summarize(samples.filter((item) => item.variant !== 'warm'), [route], ['send-text'], cases).complete, false);
 });
+
+const { nativeArrivalMoment } = await import('./room-arrivals.mjs');
+test('native capture requires a target-visible result, not a successful test-run banner', () => {
+  assert.throws(() => nativeArrivalMoment('OK (1 test)', 'push-unseen-1'), /never became visible/);
+  assert.throws(() => nativeArrivalMoment('LATENCY_VISIBLE {"probe":"native-frame-commit-v1","case":"room-list-unseen-1","startMs":100,"paintMs":240}', 'push-unseen-1'));
+  assert.throws(() => nativeArrivalMoment('LATENCY_VISIBLE {"probe":"native-accessibility-v1","case":"push-unseen-1","startMs":100,"paintMs":240}', 'push-unseen-1'));
+  assert.equal(nativeArrivalMoment('LATENCY_VISIBLE {"probe":"native-frame-commit-v1","case":"push-unseen-1","startMs":100,"paintMs":240}', 'push-unseen-1').paintMs, 240);
+  assert.throws(() => nativeArrivalMoment('LATENCY_VISIBLE {"probe":"native-frame-commit-v1","case":"push-unseen-1","startMs":200,"paintMs":100}', 'push-unseen-1'));
+});

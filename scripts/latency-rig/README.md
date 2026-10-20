@@ -185,15 +185,16 @@ budget. Missing required subset cases fail closed.
 `room-arrival-cases.json` fixes the four warm-session entry/count combinations:
 Room list or Android push tap, with one or five new messages. Each has a strict
 450 ms p95 budget and requires at least 20 samples. `check-routes.mjs` validates
-that matrix. The arrival extractor matches the expected newest message id;
-a cached `newest-frame` cannot finish these cases. Missing target marks fail
-rather than disappearing from the statistics.
+that matrix. The native probe matches a unique suffix of the expected newest message in
+an on-screen text row above the composer. A Room-list preview or clipped byline
+cannot finish a case. Missing visible targets fail instead of disappearing
+from the statistics.
 
 `capture-arrivals.mjs` drives a leased disposable emulator and inserts messages
 only into an explicitly supplied loopback `latency_rig` database. After signing
 into the local fixture, select the **Latency Rig 200** Workspace. Set
 `LATENCY_RIG_DEVICE` to the leased device and `LATENCY_RIG_DATABASE_URL` to that
-fixture database, then run:
+fixture database, then run (JDK, Android 35 platform and build-tools 36.0.0 are required):
 
 ```sh
 node scripts/latency-rig/capture-arrivals.mjs latency-rig-output/arrivals
@@ -212,13 +213,25 @@ The driver records the first open separately in `first-open.json` without a
 cold-start verdict, then warms navigation and allows installation work to settle
 for 30 seconds before collecting the warm-session matrix.
 
-Room-list entries use `input tap` on the visible fixture row; push entries use
-the Android FCM tap extras on `PushNotificationActivity`, through the same Expo
-response listener as a notification tap. This does not measure delivery by FCM
-or System UI notification-shade latency. The timer includes the adb dispatch
-from the device timestamp immediately before the entry action. The existing
-opt-in Room trace emits the target id after two animation frames following
-its application; this is a frame probe, not a pixel comparison.
+Room-list entries use an on-device `input tap` on the visible fixture row;
+push entries use Android FCM tap extras on `PushNotificationActivity`, through
+the same Expo response listener as a notification tap. This excludes delivery
+by FCM and System UI notification-shade latency. Each fixture message is a short
+single line with a unique id suffix, so five messages fit the unchanged landing.
+
+`build-local.sh` enables a native frame-commit probe only for the disposable
+emulator host URL. The Expo plugin is absent from ordinary builds and rejects
+production URLs. Its receiver requires Android's shell-only DUMP permission.
+The timer starts at native touch-up or push Activity entry. An existing draw
+must contain a full line of the unique target text above the composer; the
+[Android frame-commit callback](https://developer.android.com/reference/android/view/ViewTreeObserver#registerFrameCommitCallback(java.lang.Runnable)) ends the sample. No accessibility polling
+or JavaScript callback ends this timer. Unsupported hardware rendering fails
+closed. Frame submission is measured, rather than physical display scanout.
+
+The earlier `ROOM_OPEN` frame extractor remains available for diagnostic
+comparison. Two JS animation callbacks after applying a response are not proof
+that its newest text is visible; those timings must not be presented as the
+native arrival-case verdict.
 
 `nightly-compare.mjs` compares each case with its last passing p95, rejecting
 strictly greater than 20% regression, over-budget samples, missing coverage,

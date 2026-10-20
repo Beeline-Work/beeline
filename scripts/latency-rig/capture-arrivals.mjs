@@ -6,7 +6,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import pg from 'pg';
 import { openSync, closeSync } from 'node:fs';
 import { once } from 'node:events';
-import { extractArrivalMoments, validateArrivalCases } from './room-arrivals.mjs';
+import { extractArrivalMoments, nativeArrivalMoment, validateArrivalCases } from './room-arrivals.mjs';
 const databaseUrl = process.env.LATENCY_RIG_DATABASE_URL;
 const target = new URL(databaseUrl);
 if (!['localhost', '127.0.0.1', '::1'].includes(target.hostname) ||
@@ -75,7 +75,7 @@ try {
       for (let n = 0; n < scenario.unseen; n++) {
         targetId = randomBytes(32).toString('hex');
         await db.query('INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,$4)',
-          [targetId, fixture.id, author, `Rig arrival ${scenario.name} ${sample} ${n}`]);
+          [targetId, fixture.id, author, `Rig ${targetId.slice(0, 16)}`]);
       }
       await pause(300);
       let point;
@@ -87,16 +87,26 @@ try {
         if (!bounds) throw new Error('Room-list fixture row not visible; select Latency Rig 200 Workspace first');
         point = [Math.round((Number(bounds[1]) + Number(bounds[3])) / 2), Math.round((Number(bounds[2]) + Number(bounds[4])) / 2)];
       }
-      // The sample begins at the physical entry action, before any navigation.
-      const startMs = Number(adb('shell', 'date', '+%s%3N').trim());
+      adb('shell', 'am', 'broadcast', '-a', 'app.usebeeline.LATENCY_RIG_EXPECT', '-n', 'app.usebeeline/.LatencyRigReceiver',
+        '--es', 'needle', targetId.slice(0, 16), '--es', 'case', scenario.name, '--es', 'entry', scenario.entry);
+      await writeFile(`${output}/pending-attempt.json`, JSON.stringify({ name: scenario.name, unseen: scenario.unseen, targetId }, null, 2));
       if (point) adb('shell', 'input', 'tap', ...point.map(String));
-      else adb('shell', 'am', 'start', '-a', 'android.intent.action.MAIN', '-n', 'app.usebeeline/.PushNotificationActivity',
+      else adb('shell', 'am', 'start', '-n', 'app.usebeeline/.PushNotificationActivity',
         '--es', 'google.message_id', targetId, '--es', 'type', 'room-message',
-        '--es', 'workspaceId', fixture.workspace_id, '--es', 'roomId', fixture.id,
-        '--es', 'channelId', fixture.id, '--es', 'messageId', targetId);
-      await pause(3000);
+        '--es', 'channelId', fixture.id, '--es', 'roomId', fixture.id,
+        '--es', 'workspaceId', fixture.workspace_id, '--es', 'messageId', targetId);
+      let nativeOutput = '';
+      for (let probe = 0; probe < 50; probe++) {
+        await pause(200);
+        nativeOutput = adb('logcat', '-d', '-s', 'LATENCY_NATIVE:W');
+        if (nativeOutput.includes(targetId.slice(0, 16))) break;
+      }
+      const line = nativeOutput.split('\n').find((line) => line.includes(targetId.slice(0, 16))) || '';
+      await writeFile(`${output}/native-${scenario.name}-${sample}.txt`, line);
+      const moment = nativeArrivalMoment(line, scenario.name);
+      await pause(2000);
       const endMs = Number(adb('shell', 'date', '+%s%3N').trim());
-      attempts.push({ name: scenario.name, targetId, startMs, endMs });
+      attempts.push({ ...moment, targetId, endMs });
       await writeFile(`${output}/attempts.json`, JSON.stringify(attempts, null, 2));
       console.log(`${scenario.name} ${sample + 1}/${count}`);
     }
@@ -106,8 +116,7 @@ try {
   capture = undefined;
   closeSync(captureFd);
   captureFd = undefined;
-  const logcat = await readFile(`${output}/logcat.txt`, 'utf8');
-  const moments = extractArrivalMoments(logcat, attempts);
+  const moments = attempts.map(({ targetId, ...moment }) => moment);
   await writeFile(`${output}/moments.ndjson`, moments.map((item) => JSON.stringify(item)).join('\n') + '\n');
 } finally {
   if (capture) { capture.kill('SIGTERM'); await once(capture, 'close'); }

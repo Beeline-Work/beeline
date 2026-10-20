@@ -42,6 +42,12 @@ test('nightly keeps the warm open-room and send-text cases without a cold-start 
   assert.equal(report.timingPass, true);
   assert.equal(report.requestPass, true);
   assert.equal(summarize(samples.filter((item) => item.variant !== 'warm'), [route], ['send-text'], cases).complete, false);
+  assert.equal(summarize(samples, [route], ['send-text'], cases, 20).complete, true);
+  const shortSend = samples.filter((item, index) => !(item.kind === 'tap' && index === samples.length - 1));
+  const incomplete = summarize(shortSend, [route], ['send-text'], cases, 20);
+  assert.equal(incomplete.complete, false);
+  assert.equal(incomplete.undersampledCases[0].samples, 19);
+  assert.equal(incomplete.undersampledCases[0].name, 'send-text');
 });
 
 const { nativeArrivalMoment } = await import('./room-arrivals.mjs');

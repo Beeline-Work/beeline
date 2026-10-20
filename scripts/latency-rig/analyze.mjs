@@ -89,7 +89,8 @@ export function summarizeSample(sample) {
   };
 }
 
-export function summarize(samples, routes = [], interactions = [], arrivalCases = []) {
+export function summarize(samples, routes = [], interactions = [], arrivalCases = [], minimumSamples = 1) {
+  if (!Number.isInteger(minimumSamples) || minimumSamples < 1) throw new Error('Invalid minimum sample count');
   if (arrivalCases.length) validateArrivalCases(arrivalCases);
   const grouped = new Map();
   for (const raw of samples) {
@@ -141,8 +142,10 @@ export function summarize(samples, routes = [], interactions = [], arrivalCases 
     !rows.some((row) => row.kind === 'tap' && row.name === name));
   const missingArrivalCases = arrivalCases.filter((item) => !rows.some((row) =>
     row.kind === 'route' && row.name === '/beeline/chat/[channelId]' && row.variant === item.name && row.samples >= 20)).map((item) => item.name);
-  return { rows, missingArrivalCases, missingRoutes, missingRouteVariants, missingInteractions,
-    complete: missingRouteVariants.length === 0 && missingInteractions.length === 0 && missingArrivalCases.length === 0,
+  const undersampledCases = rows.filter((row) => row.samples < minimumSamples)
+    .map(({ kind, name, variant, samples }) => ({ kind, name, variant, samples, minimumSamples }));
+  return { rows, missingArrivalCases, missingRoutes, missingRouteVariants, missingInteractions, undersampledCases,
+    complete: missingRouteVariants.length === 0 && missingInteractions.length === 0 && missingArrivalCases.length === 0 && undersampledCases.length === 0,
     timingPass: rows.every((row) => row.timingPass),
     requestPass: rows.every((row) => row.requestPass) };
 }
@@ -171,6 +174,7 @@ export function markdown(report, metadata = {}) {
   if (report.missingInteractions.length) lines.push('',
     `Unmeasured interactions: ${report.missingInteractions.join(', ')}`);
   if (report.missingArrivalCases?.length) lines.push('', `Unmeasured arrival cases (20 samples required): ${report.missingArrivalCases.join(', ')}`);
+  if (report.undersampledCases?.length) lines.push('', `Insufficient samples: ${report.undersampledCases.map((row) => `${row.name} (${row.variant}): ${row.samples}/${row.minimumSamples}`).join(', ')}`);
   return `${lines.join('\n')}\n`;
 }
 
@@ -203,7 +207,7 @@ async function main() {
         (sample.variant === 'warm' || arrivalCases.some((item) => item.name === sample.variant))) ||
       (sample.kind === 'tap' && sample.name === 'send-text'));
   }
-  const report = summarize(samples, routes, interactions, arrivalCases);
+  const report = summarize(samples, routes, interactions, arrivalCases, args.includes('--nightly') ? 20 : 1);
   const output = markdown(report, {
     commit: option('--commit') ?? 'unknown',
     device: option('--device') ?? 'unknown',

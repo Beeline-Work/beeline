@@ -131,6 +131,22 @@ about 148 ms after tap. Device marks show headers at 318 ms, decoded body at
 reply. The next candidate reads the Room response as text, avoiding the
 separate native Blob/body-reading step; its timing is not yet established.
 
+## Text-response candidate (742622a87)
+
+| Entry / unseen | Samples | p50 ms | p95 ms | Timing |
+| --- | ---: | ---: | ---: | --- |
+| Room list / 1 | 20 | 261 | 301 | pass |
+| Room list / 5 | 20 | 274 | 300 | pass |
+| Push / 1 | 20 | 470 | 905 | fail |
+| Push / 5 | 20 | 568 | 969 | fail |
+
+All 80 arrival samples were retained; the extra nightly cases were stopped to
+validate the next candidate. Text-response decoding now completes with headers.
+An 820 ms push trace decoded the reply at about 332 ms but did not start the
+session/cache read until about 535 ms, after the cached-frame wait. A scoped
+opening-response subscription is the next candidate; no passing timing is
+claimed for it yet.
+
 ## Nightly installation and delivery
 
 The standalone comparison and local attempt scripts are committed with tests.

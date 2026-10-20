@@ -1086,6 +1086,25 @@ export function useRoomSurfaceSession({
       unsubscribe = stop;
     };
 
+    let stopOpeningResponse = () => {};
+    if (openingFrame && openingViewer) {
+      const address = surfaceAddress(openingViewer.relayUrl, openingViewer.viewerPubkey, `/room/${channelId}`);
+      const paintOpeningResponse = () => {
+        const viewer = peekBuzzViewerContext();
+        if (cancelled || viewer?.viewerPubkey !== openingViewer.viewerPubkey ||
+            viewer.relayUrl !== openingViewer.relayUrl) return;
+        const view = mobileSurfaceCache.peek(address, isRoomView);
+        if (view && view !== reconciledViewRef.current) {
+          paintView(view, false);
+          queueNewestFrameMark(view.messages.at(-1)?.id);
+        }
+      };
+      // A missing-row reply may arrive while the cached frame is committing.
+      // Observe the authorized response now instead of holding it behind setup.
+      stopOpeningResponse = mobileSurfaceCache.subscribe(address, paintOpeningResponse);
+      paintOpeningResponse();
+    }
+
     let transportForEffect: BuzzRigTransport | undefined;
     void (async () => {
       try {
@@ -1115,6 +1134,7 @@ export function useRoomSurfaceSession({
         markRoomOpen('session-start', channelId);
         markRoomOpen('cache-read-start');
         const cached = await mobileSurfaceCache.read(address, isRoomView);
+        stopOpeningResponse();
         markRoomOpen('cache-read-end', cached ? 'hit' : 'miss');
         let paintedCache: RoomView | null = null;
         if (cached && !cancelled) {
@@ -1331,6 +1351,7 @@ export function useRoomSurfaceSession({
     })();
 
     return () => {
+      stopOpeningResponse();
       if (cacheWriteTimer) {
         clearTimeout(cacheWriteTimer);
         const view = reconciledViewRef.current;

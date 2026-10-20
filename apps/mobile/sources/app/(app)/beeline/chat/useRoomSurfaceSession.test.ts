@@ -13,6 +13,7 @@ type TestSurfaceEvent = NostrEvent | MonolithSurfaceEvent;
 const controls = vi.hoisted(() => ({
   cached: null as RoomView | null,
   hotViewer: false,
+  cacheListeners: new Set<() => void>(),
   viewerRead: null as Promise<string | null> | null,
   schedulers: [] as Array<{
     fetch(): Promise<RoomView>;
@@ -115,6 +116,10 @@ vi.mock('@/buzz/surface-storage', () => ({
     read: vi.fn(async () => controls.cached),
     write: vi.fn(async () => undefined),
     publish: vi.fn((_address: unknown, view: RoomView) => { controls.cached = view; return view; }),
+    subscribe: vi.fn((_address: unknown, listener: () => void) => {
+      controls.cacheListeners.add(listener);
+      return () => { controls.cacheListeners.delete(listener); };
+    }),
     persist: vi.fn(async () => undefined),
     remove: vi.fn(async () => undefined),
   },
@@ -375,6 +380,7 @@ beforeEach(() => {
   vi.unstubAllGlobals();
   controls.cached = null;
   controls.hotViewer = false;
+  controls.cacheListeners.clear();
   controls.viewerRead = null;
   controls.schedulers.length = 0;
   controls.subscriptions.length = 0;
@@ -1002,6 +1008,27 @@ describe('useRoomSurfaceSession', () => {
     await act(async () => renderer.update(React.createElement(Harness, props)));
     expect(reset).toHaveBeenCalledOnce();
     await act(async () => renderer.unmount());
+  });
+
+  it('paints an opening reply while cached-frame callbacks and identity setup are still pending', async () => {
+    controls.hotViewer = true;
+    controls.viewerRead = new Promise(() => undefined);
+    controls.cached = roomView('room-a');
+    stubFrameScheduler();
+    let renderer!: ReactTestRenderer;
+    await act(async () => { renderer = create(React.createElement(Harness, {
+      channelId: 'room-a', capture: () => undefined,
+    })); });
+    await act(async () => {
+      controls.cached = { ...roomView('room-a'), messages: [{ id: 'arrived', text: 'Arrived during opening', createdAt: 10,
+        author: { pubkey: 'author', kind: 'human', name: 'Author' }, presentation: 'message' }] };
+      controls.cacheListeners.forEach((listener) => listener());
+    });
+    expect(renderer.root.findAllByType('message-row').at(-1)?.props.children).toBe('Arrived during opening');
+    expect(loadBuzzViewerPubkey).not.toHaveBeenCalled();
+    expect(controls.roomReads).toBe(0);
+    await act(async () => renderer.unmount());
+    expect(controls.cacheListeners.size).toBe(0);
   });
 
   it.each([1, 5])('paints %i received messages on the first frame before any network read', async (count) => {

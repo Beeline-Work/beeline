@@ -91,7 +91,7 @@ describe('wallet connect in the desktop web renderer', () => {
             },
           });`,
           '@/sync/transport/monolith-operation': `import { companyWorkbench, companyRow, companyOption } from '@/test/company-workbench';
-            const companies = active => active ? companyWorkbench([{ ...companyRow('coinbase', 'Coinbase', 'apps'), subtitle: '1 app', items: [{ id: 'wallet', title: 'Wallet', subtitle: 'built in', kind: 'connection', target: { kind: 'wallet' } }] }]).companies
+            const companies = active => active ? companyWorkbench([{ ...companyRow('coinbase', 'Coinbase', 'apps'), subtitle: '1 app', items: [{ id: 'wallet', title: 'Coinbase wallet', subtitle: 'built in', kind: 'connection', target: { kind: 'wallet' } }] }]).companies
               : companyWorkbench([], [{ ...companyOption('wallet', 'Coinbase wallet', 'wallet'), providerId: 'coinbase' }]).companies;
             const wallet = () => ({ address: '0xabc', solanaAddress: null, totalUsd: '$0.00', coins: [], chains: [], sponsorship: null,
               delegation: { active: globalThis.__server.active, expiresAt: null } });

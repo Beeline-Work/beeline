@@ -14,7 +14,7 @@ import { SurfaceGlyphLoader } from '@/components/buzz/SurfaceGlyphLoader';
 import { HullActionSheetModal, HullActionSheetRow, HullActionSheetCancel } from '@/components/buzz/HullActionSheet';
 import { getWorkbenchSource } from '@/buzz/workbench-source';
 import { useSharedWorkbench } from '@/buzz/workbench-surface';
-import { openCompanyItem, useConnectCompanyApp } from '@/buzz/company-connection-actions';
+import { connectionViewState, openCompanyItem, useConnectCompanyApp } from '@/buzz/company-connection-actions';
 import { appNeedsSquire, reconnectWorkbenchApp } from '@/buzz/app-reconnect';
 import { appErrorCopy } from '@/buzz/app-error-copy';
 import type { WorkbenchApp } from '@/buzz/workbench';
@@ -44,6 +44,7 @@ export default function ConnectorServiceScreen() {
   const reconnectMachine = (helperId: string) => {
     setMachine(null); router.push({ pathname: '/beeline/settings/workbench/connect', params: { ...scope, connectorId: 'trusty-squire', helperId } } as Href);
   };
+  const topState = row ? connectionViewState(row) : undefined;
   const keyed = row?.items.some(item => item.target.kind === 'key') ?? false;
   const agents = row?.kind === 'sign-in-service' ? 'Trusty Squire signs up and signs in to websites for your agents. Your computers keep the sign-in sessions.'
     : row?.items.some(item => item.kind === 'connection') ? `Agents use ${row.name} when you ask them to.`
@@ -67,16 +68,22 @@ export default function ConnectorServiceScreen() {
     finally { setAppBusy(null); }
   };
   const appRow = (item: WorkbenchCompany['items'][number], app: WorkbenchApp) => {
-    const connected = app.status === 'connected';
+    const state = connectionViewState(item);
     const computer = app.transport === 'composio' ? null : appNeedsSquire(app) ? 'Trusty Squire' : app.helperName ?? 'Your computer';
     const busy = appBusy === app.id || app.status === 'connecting';
-    return connected
-      ? <SettingsRow appBoard key={item.id} title={item.title} description={item.subtitle} value={item.status ?? 'Connected'} statusGlyph="live"
-        disabled={busy} onPress={() => setAppOpen(app)} testID={`company-item-${item.id}`} />
-      // A failed app shows the computer that retries it, with the retry one tap away.
-      : <SettingsRow appBoard key={item.id} title={item.title} description={[computer, app.errorMessage ? appErrorCopy(app.errorMessage) : item.subtitle].filter(Boolean).join(' · ')}
-        descriptionTone={app.status === 'error' ? 'danger' : undefined} action={busy ? undefined : appNeedsSquire(app) ? 'Connect' : 'Reconnect'}
-        value={busy ? 'Connecting…' : undefined} disabled={busy} onPress={() => void reconnectApp(app)} testID={`company-item-${item.id}`} />;
+    const reason = item.status ?? (app.errorMessage ? appErrorCopy(app.errorMessage) : undefined);
+    if (state === 'connected') {
+      return <SettingsRow appBoard key={item.id} title={item.title} description={item.subtitle} chevron="right"
+        disabled={busy} onPress={() => setAppOpen(app)} testID={`company-item-${item.id}`} />;
+    }
+    if (state === 'error') {
+      return <SettingsRow appBoard key={item.id} title={item.title} description={item.subtitle}
+        value={busy ? 'Connecting…' : reason} valueTone="danger" disabled={busy}
+        onPress={() => setAppOpen(app)} testID={`company-item-${item.id}`} />;
+    }
+    return <SettingsRow appBoard key={item.id} title={item.title} description={[computer, item.subtitle].filter(Boolean).join(' · ')}
+      action={busy ? undefined : 'Connect'} value={busy ? 'Connecting…' : undefined} disabled={busy}
+      onPress={() => void reconnectApp(app)} testID={`company-item-${item.id}`} />;
   };
   const disconnect = async () => {
     try {
@@ -91,8 +98,12 @@ export default function ConnectorServiceScreen() {
       <Text style={styles.note}>This company is no longer connected.</Text> :
       <ScrollView contentContainerStyle={[styles.content, { paddingBottom: insets.bottom + theme.buzz.space.xl }]}>
         <SettingsRow appBoard title={row.name} description={[row.domain, row.subtitle].filter(Boolean).join(' · ')} leading={<ServiceMark company={row.name} domain={row.domain} mark={row.logo} />}
-          value={row.attention ? row.status ?? 'Needs attention' : row.kind === 'sign-in-service' ? row.status : 'Connected'} valueTone={row.attention ? 'danger' : undefined}
-          statusGlyph={row.attention ? 'failed' : 'live'} testID="connector-info-status" />
+          value={topState === 'error' ? row.status ?? 'Needs attention'
+            : topState === 'connect' ? undefined
+              : row.kind === 'sign-in-service' ? row.status : 'Connected'}
+          action={topState === 'connect' ? 'Connect' : undefined}
+          valueTone={topState === 'error' ? 'danger' : undefined}
+          statusGlyph={topState === 'error' ? 'failed' : topState === 'connected' ? 'live' : undefined} testID="connector-info-status" />
         <Text style={styles.note} testID="connector-info-agents">{agents}</Text>
         {row.attention ? <Text accessibilityRole="alert" style={styles.error}>{row.attention}</Text> : null}
         {row.kind === 'sign-in-service' ? <View>
@@ -102,7 +113,7 @@ export default function ConnectorServiceScreen() {
             // An online computer that can retry does it in one tap; an offline one shows why it cannot.
             return !item.reconnecting && item.online && needsFix(item)
               ? <SettingsRow appBoard key={item.id} title={item.name} description={[status, item.error].filter(Boolean).join(' · ')} descriptionTone={item.status === 'error' ? 'danger' : undefined}
-                action={item.status === 'not-added' ? 'Set up' : 'Reconnect'} onPress={() => reconnectMachine(item.id)} testID={`squire-computer-${item.id}`} />
+                action={item.status === 'not-added' ? 'Set up' : 'Connect'} onPress={() => reconnectMachine(item.id)} testID={`squire-computer-${item.id}`} />
               : <SettingsRow appBoard key={item.id} title={item.name} description={item.error} value={status}
                 valueTone={item.status === 'error' || (item.status === 'connected' && !item.online) ? 'danger' : undefined}
                 chevron="right" disabled={item.reconnecting} onPress={() => setMachine(item)} testID={`squire-computer-${item.id}`} />;
@@ -136,7 +147,7 @@ export default function ConnectorServiceScreen() {
       </ScrollView>}
     <HullActionSheetModal visible={Boolean(machine) || linkOpen} title={machine?.name ?? 'Link'} onClose={() => { setMachine(null); setLinkOpen(false); }}>
       {manageMachine?.reconnecting ? <Text style={styles.note}>Reconnecting…</Text> : manageMachine && !manageMachine.online ? <Text style={styles.error} testID="squire-computer-offline">{manageMachine.error ?? `Turn on ${manageMachine.name} to reconnect it.`}</Text>
-        : machine && manageMachine && needsFix(manageMachine) ? <HullActionSheetRow label={manageMachine.status === 'not-added' ? 'Set up' : 'Reconnect'} onPress={() => reconnectMachine(machine.id)} /> : <HullActionSheetRow label="Disconnect" destructive onPress={() => void disconnect()} />}
+        : machine && manageMachine && needsFix(manageMachine) ? <HullActionSheetRow label={manageMachine.status === 'not-added' ? 'Set up' : 'Connect'} onPress={() => reconnectMachine(machine.id)} /> : <HullActionSheetRow label="Disconnect" destructive onPress={() => void disconnect()} />}
       <HullActionSheetCancel onPress={() => { setMachine(null); setLinkOpen(false); }} />
     </HullActionSheetModal>
     <HullActionSheetModal visible={Boolean(appOpen)} title={appOpen?.name} onClose={() => setAppOpen(null)}>

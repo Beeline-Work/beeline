@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { WorkbenchConnectionView, WorkbenchView, WorkbenchAppView } from '@beeline/api-contract/workbench';
-import { projectWorkbenchCompanies, companySearchResults } from './workbench-companies.js';
+import { projectWorkbenchCompanies, companySearchResults, classifyConnectionState, worstConnectionState } from './workbench-companies.js';
 import { resolveCompany } from './company-registry.js';
 const origin = 'https://server.example';
 const key = (id: string, service: string, hosts: readonly string[], label = 'default'): WorkbenchConnectionView => ({
@@ -119,7 +119,34 @@ describe('server-owned Connectors company projection', () => {
     const view = { ...base(), connectors: [{ connectorId: 'google-uuid', connectorType: 'google-gmail' as const, helperAgentId: 'personal', createdAt: 1,
       status: { connectorId: 'google-uuid', status: 'error' as const, steps: [] } }] };
     const google = projectWorkbenchCompanies(view, origin).rows.find(r => r.id === 'google');
-    expect(google).toMatchObject({ section: 'attention', status: 'Offline', items: [{ target: { kind: 'connector', connectorId: 'google' } }] });
+    expect(google).toMatchObject({ section: 'attention', state: 'connect', items: [{ target: { kind: 'connector', connectorId: 'google' } }] });
+    expect(google?.status).not.toBe('Offline');
+  });
+  it('classifies app attention as Connect unless the failure cannot be retried', () => {
+    expect(classifyConnectionState({ status: 'error', neverAuthorised: true })).toEqual({ state: 'connect' });
+    expect(classifyConnectionState({ status: 'error', errorMessage: 'Sign-in expired' })).toEqual({ state: 'connect' });
+    expect(classifyConnectionState({ status: 'error', errorMessage: 'Token revoked' })).toEqual({ state: 'connect' });
+    expect(classifyConnectionState({ status: 'error', errorMessage: 'something unclassified' })).toEqual({ state: 'connect' });
+    expect(classifyConnectionState({ status: 'error', errorMessage: 'App provider request failed (403)' }))
+      .toEqual({ state: 'error', label: 'App provider request failed (403)' });
+    expect(classifyConnectionState({ status: 'error', computerOffline: true })).toEqual({ state: 'error', label: 'Computer offline' });
+    expect(classifyConnectionState({ status: 'connected' })).toEqual({ state: 'connected' });
+  });
+  it('company top-row status is the worst app state and never Offline', () => {
+    expect(worstConnectionState(['connected', 'connect', 'error'])).toBe('error');
+    expect(worstConnectionState(['connected', 'connect'])).toBe('connect');
+    const refused = { ...app('gmail', 'Gmail', 'mail.google.com'), status: 'error' as const, errorMessage: 'App provider request failed (403)' };
+    const expired = { ...app('googlecalendar', 'Calendar', 'calendar.google.com'), status: 'error' as const, errorMessage: 'Sign-in expired' };
+    const healthy = app('googledrive', 'Drive', 'drive.google.com');
+    const mixed = projectWorkbenchCompanies(base([], [refused, expired, healthy]), origin).rows.find(r => r.id === 'google')!;
+    expect(mixed.state).toBe('error');
+    expect(mixed.status).toBe('App provider request failed (403)');
+    expect(mixed.status).not.toBe('Offline');
+    const neverAuth = projectWorkbenchCompanies(base([], [{ ...app('gmail', 'Gmail', 'mail.google.com'), status: 'error' }]), origin)
+      .rows.find(r => r.id === 'google')!;
+    expect(neverAuth.state).toBe('connect');
+    expect(neverAuth.status).not.toBe('Offline');
+    expect(JSON.stringify(neverAuth)).not.toMatch(/Offline/);
   });
   it('ranks empty-account discovery by company popularity, with Squire first and company-level purposes', () => {
     const view = { ...base(), helpers: [] };

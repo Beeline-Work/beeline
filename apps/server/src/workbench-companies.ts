@@ -1,5 +1,5 @@
 import type {
-  CompanyItem, CompanySuggestion, WorkbenchCompany, WorkbenchCompanyIndex, WorkbenchView, WorkbenchAppSearchResult,
+  CompanyItem, CompanySuggestion, ConnectorViewState, WorkbenchCompany, WorkbenchCompanyIndex, WorkbenchView, WorkbenchAppSearchResult,
 } from '@beeline/api-contract/workbench';
 import { COHORT_SQL } from './operator-dashboard-cohort.js';
 import type { SqlDatabase } from './database.js';
@@ -57,6 +57,33 @@ const PLATFORM_KEY_SERVICES = new Set(['coinbase-cdp']);
 export function isPlatformKey(key: { readonly label: string; readonly service: string | null }): boolean {
   return PLATFORM_KEY_SERVICES.has((key.service ?? '').trim().toLowerCase()) && /^beeline(?:$|[-_\s])/i.test(key.label.trim());
 }
+const STATE_RANK: Record<ConnectorViewState, number> = { connected: 0, connect: 1, error: 2 };
+const PROVIDER_REFUSAL = /App provider request failed \(\d{3}\)|provider refused/i;
+const APP_REMOVED = /removed upstream|was removed|app removed/i;
+const COMPUTER_OFFLINE = /computer offline|helper (is )?offline|machine offline/i;
+
+/** One classifier for company top rows and app rows. Unknown failures are Connect. */
+export function classifyConnectionState(input: {
+  readonly status?: string | null;
+  readonly errorMessage?: string | null;
+  readonly neverAuthorised?: boolean;
+  readonly computerOffline?: boolean;
+}): { readonly state: ConnectorViewState; readonly label?: string } {
+  if (input.status === 'connected' || input.status === 'active') return { state: 'connected' };
+  const message = input.errorMessage?.trim() || undefined;
+  if (input.computerOffline || COMPUTER_OFFLINE.test(message ?? '')) {
+    return { state: 'error', label: message && !/^offline$/i.test(message) ? message : 'Computer offline' };
+  }
+  if (message && PROVIDER_REFUSAL.test(message)) return { state: 'error', label: message };
+  if (message && APP_REMOVED.test(message)) return { state: 'error', label: message };
+  if (input.neverAuthorised) return { state: 'connect' };
+  return { state: 'connect' };
+}
+
+export function worstConnectionState(states: readonly ConnectorViewState[]): ConnectorViewState {
+  return states.reduce<ConnectorViewState>((worst, state) => STATE_RANK[state] > STATE_RANK[worst] ? state : worst, 'connected');
+}
+
 function suggestion(app: typeof COMPANY_APPS[number], origin: string): CompanySuggestion {
   const p = resolveCompany({ domain: app.domain });
   return { appKey: app.appKey, appName: app.name, name: app.name, purpose: app.purpose, providerId: p.id,
@@ -107,34 +134,48 @@ export function projectWorkbenchCompanies(view: WorkbenchView, origin: string,
     const title = credentialTitle(key.label, key.service, provider);
     row.items.push({ id: key.connectionId, kind: key.credentialKind === 'session' || key.credentialKind === 'login' ? 'login' : 'key',
       title, subtitle: provider.domain ?? (humanize(key.service ?? '') || 'Saved credential'),
-      target: { kind: 'key', connectionId: key.connectionId }, status, attention: Boolean(status) });
+      target: { kind: 'key', connectionId: key.connectionId }, state: status ? 'error' : 'connected', status, attention: Boolean(status) });
   }
   for (const app of view.apps ?? []) {
     if (app.transport === 'squire-api') continue; // Backing key is already the one credential placement.
     const provider = resolveCompany({ domain: app.domain, appKey: app.appKey });
     const row = group(provider);
-    const status = app.status === 'error' ? 'Offline' : app.status === 'connecting' ? 'Connecting' : undefined;
+    const helper = app.helperId ? view.helpers.find(item => item.id === app.helperId) : undefined;
+    const classified = classifyConnectionState({
+      status: app.status,
+      errorMessage: app.errorMessage,
+      neverAuthorised: app.status === 'error' && !app.errorMessage,
+      computerOffline: helper ? !helper.online : false,
+    });
     row.items.push({ id: app.appId, kind: 'connection', title: humanize(app.name),
       subtitle: app.transport === 'composio' ? 'via Composio' : app.transport === 'registry-mcp' ? 'MCP server' : 'via Trusty Squire',
-      target: { kind: 'app', appId: app.appId }, status, attention: app.status === 'error' });
+      target: { kind: 'app', appId: app.appId }, state: classified.state,
+      status: classified.state === 'error' ? classified.label : app.status === 'connecting' ? 'Connecting' : undefined,
+      attention: classified.state !== 'connected' });
     const held = appKeys.get(provider.id) ?? new Set<string>(); held.add(app.appKey); appKeys.set(provider.id, held);
   }
   // Built-ins are live connections, never extra company rows or copies of stored keys.
-  const builtin = (providerId: string, id: string, title: string, target: CompanyItem['target'], attention?: string, appKey?: string) => {
+  const builtin = (providerId: string, id: string, title: string, target: CompanyItem['target'], failed?: boolean, appKey?: string, errorMessage?: string) => {
     const provider = COMPANY_REGISTRY.find(p => p.id === providerId)!;
     const row = group(provider);
     if (appKey) { const held = appKeys.get(provider.id) ?? new Set<string>(); held.add(appKey); appKeys.set(provider.id, held); }
-    row.items.push({ id, kind: 'connection', title, subtitle: 'built in', target,
-      status: attention, attention: Boolean(attention) });
+    const classified = classifyConnectionState({
+      status: failed ? 'error' : 'connected',
+      errorMessage,
+      neverAuthorised: failed && !errorMessage,
+    });
+    row.items.push({ id, kind: 'connection', title, subtitle: 'built in', target, state: classified.state,
+      status: classified.state === 'error' ? classified.label : undefined, attention: classified.state !== 'connected' });
   };
   const googleRows = view.connectors.filter(c => c.connectorType.startsWith('google-'));
   const google = googleRows.find(c => c.status.status === 'error') ?? googleRows.find(c => c.status.status === 'connected');
   if (view.googleAccount?.connected || google)
-    builtin('google', 'builtin:google', 'Google sign-in', { kind: 'connector', connectorId: 'google' }, google?.status.status === 'error' ? 'Offline' : undefined);
+    builtin('google', 'builtin:google', 'Google sign-in', { kind: 'connector', connectorId: 'google' }, google?.status.status === 'error');
   const tailscale = view.connectors.find(c => c.connectorType === 'tailscale' && ['connected', 'error'].includes(c.status.status));
-  if (tailscale) builtin('tailscale', 'builtin:tailscale', 'Tailscale', { kind: 'connector', connectorId: 'tailscale' }, tailscale.status.status === 'error' ? 'Offline' : undefined, 'tailscale');
+  if (tailscale) builtin('tailscale', 'builtin:tailscale', 'Tailscale', { kind: 'connector', connectorId: 'tailscale' }, tailscale.status.status === 'error', 'tailscale');
   if (view.wallet && (view.wallet.delegationActive || view.wallet.delegationExpiresAt !== null)) builtin('coinbase', 'builtin:wallet', 'Coinbase wallet', { kind: 'wallet' },
-    !view.wallet.delegationActive && view.wallet.delegationExpiresAt ? 'Expired' : undefined, 'wallet');
+    Boolean(!view.wallet.delegationActive && view.wallet.delegationExpiresAt), 'wallet',
+    !view.wallet.delegationActive && view.wallet.delegationExpiresAt ? 'Expired' : undefined);
   if (view.linkAccount?.connected) builtin('link', 'builtin:link', 'Link', { kind: 'link' }, undefined, 'link');
   const machines = view.helpers.filter(h => h.squireEligible === true);
   if (machines.length) {
@@ -165,10 +206,13 @@ export function projectWorkbenchCompanies(view: WorkbenchView, origin: string,
         item.subtitle = companyHost(key.allowedHosts[0] ?? key.loginHosts?.[0]) ?? item.subtitle;
       }
     }
-    const broken = row.items.filter(i => i.attention).sort((a, b) => (a.status ?? '').localeCompare(b.status ?? ''));
+    const itemState = (item: MutableItem): ConnectorViewState => item.state ?? (item.attention ? 'error' : 'connected');
+    const broken = row.items.filter(i => itemState(i) !== 'connected')
+      .sort((a, b) => STATE_RANK[itemState(b)] - STATE_RANK[itemState(a)] || (a.status ?? '').localeCompare(b.status ?? ''));
     row.section = row.kind === 'other' ? 'keys' : broken.length ? 'attention'
       : row.items.some(i => i.kind !== 'key') ? 'apps' : 'keys';
-    row.status = broken[0]?.status;
+    row.state = worstConnectionState(row.items.map(itemState));
+    row.status = row.state === 'error' ? broken[0]?.status : undefined;
     row.attention = broken.length ? `${broken.length} ${broken.length === 1 ? 'connection needs' : 'connections need'} attention` : undefined;
     row.subtitle = (['connection', 'login', 'key'] as const).flatMap(kind => {
       const n = row.items.filter(i => i.kind === kind).length;

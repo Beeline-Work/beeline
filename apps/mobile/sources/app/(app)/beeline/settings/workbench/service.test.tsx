@@ -71,7 +71,7 @@ describe('company detail', () => {
   it('lists only the also-available apps the server still offers', async () => {
     const source = new MockWorkbenchSource();
     source.readWorkbench = async () => companyWorkbench([{ ...companyRow('coinbase', 'Coinbase', 'apps'),
-      items: [{ id: 'builtin:wallet', title: 'Wallet', subtitle: 'built in', kind: 'connection', target: { kind: 'wallet' } }], alsoAvailable: [] }]);
+      items: [{ id: 'builtin:wallet', title: 'Coinbase wallet', subtitle: 'built in', kind: 'connection', target: { kind: 'wallet' } }], alsoAvailable: [] }]);
     setWorkbenchSource(source); params.service = 'coinbase';
     const renderer = await render();
     expect(renderer.root.findAll((node: any) => String(node.props?.testID ?? '').startsWith('company-available-'))).toHaveLength(0);
@@ -113,7 +113,7 @@ it('Reproduction squire-false-card: account replaces Ready and reconnect hides D
   await act(async () => reconnecting.unmount());
 });
 
-it('Reproduction squire-spinner: an expired online computer offers Reconnect after failure', async () => {
+it('Reproduction squire-spinner: an expired online computer offers Connect after failure', async () => {
   params.service = 'trusty-squire'; navigation.push.mockClear();
   const source = new MockWorkbenchSource(); const row = squireRow();
   source.readWorkbench = async () => companyWorkbench([{ ...row, machines: row.machines.map(m => ({
@@ -122,7 +122,7 @@ it('Reproduction squire-spinner: an expired online computer offers Reconnect aft
   setWorkbenchSource(source);
   const renderer = await render();
   const computer = renderer.root.findByProps({ testID: 'squire-computer-machine-one' });
-  expect(computer.props.action).toBe('Reconnect'); expect(computer.props.description).toBe('Google sign-in expired · Google reconnect failed');
+  expect(computer.props.action).toBe('Connect'); expect(computer.props.description).toBe('Google sign-in expired · Google reconnect failed');
   await act(async () => computer.props.onPress());
   expect(navigation.push).toHaveBeenCalledWith({ pathname: '/beeline/settings/workbench/connect',
     params: { workspaceId: 'ws', viewerId: 'human-dani', connectorId: 'trusty-squire', helperId: 'machine-one' } });
@@ -146,8 +146,9 @@ it('shows the error, not a retry, when the computer that would retry is offline'
 
 describe('app connections on the info page', () => {
   const notionRow = (status: 'connected' | 'error') => ({ ...companyRow('notion', 'Notion', status === 'error' ? 'attention' : 'apps'), subtitle: '1 app',
+    state: status === 'error' ? 'connect' as const : 'connected' as const,
     items: [{ id: 'notion-app', title: 'Notion', subtitle: 'via Trusty Squire', kind: 'connection' as const, target: { kind: 'app' as const, appId: 'notion' },
-      status: status === 'error' ? 'Offline' : 'Connected', attention: status === 'error' }] });
+      state: status === 'error' ? 'connect' as const : 'connected' as const, attention: status === 'error' }] });
   const notionApp = (status: 'connected' | 'error') => ({ id: 'notion', key: 'notion', name: 'Notion', transport: 'squire-browser', status, useCount: 0,
     helperId: 'laptop', helperName: 'Laptop', ...(status === 'error' ? { errorMessage: 'Notion sign-in expired' } : {}) }) as any;
   function serveNotion(status: 'connected' | 'error') {
@@ -162,7 +163,9 @@ describe('app connections on the info page', () => {
     const disconnect = vi.spyOn(source, 'disconnectApp').mockResolvedValue(undefined as any);
     const renderer = await render();
     const appRow = renderer.root.findByProps({ testID: 'company-item-notion-app' });
-    expect(appRow.props.chevron).toBeUndefined();
+    expect(appRow.props.chevron).toBe('right');
+    expect(appRow.props.value).toBeUndefined();
+    expect(appRow.props.action).toBeUndefined();
     await act(async () => appRow.props.onPress());
     expect(navigation.push).not.toHaveBeenCalled();
     const sheet = renderer.root.findAllByType('HullActionSheetModal').find((node: any) => node.props.title === 'Notion');
@@ -179,11 +182,76 @@ describe('app connections on the info page', () => {
     const connect = vi.spyOn(source, 'connectApp').mockResolvedValue({ appId: 'notion' } as any);
     const renderer = await render();
     const appRow = renderer.root.findByProps({ testID: 'company-item-notion-app' });
-    expect(appRow.props.action).toBe('Reconnect');
+    expect(appRow.props.action).toBe('Connect');
     expect(appRow.props.description).toMatch(/^Laptop · /);
     await act(async () => { await appRow.props.onPress(); });
     expect(connect).toHaveBeenCalledWith({ workspaceId: 'ws', app: 'Notion', helperId: 'laptop', reconnect: true });
     expect(navigation.push).not.toHaveBeenCalled();
+    await act(async () => renderer.unmount());
+  });
+});
+
+describe('three-state connection status', () => {
+  const googleApp = (id: string, name: string, status: 'connected' | 'error', extra: Record<string, unknown> = {}) => ({
+    id, key: id, name, transport: 'composio', status, useCount: 0, ...extra,
+  }) as any;
+  it('shows Connected once on a healthy company and omits it from app rows', async () => {
+    const source = new MockWorkbenchSource();
+    source.readWorkbench = async () => ({ ...companyWorkbench([{
+      ...companyRow('google', 'Google', 'apps'), subtitle: '4 apps', state: 'connected' as const,
+      items: [
+        { id: 'gmail', title: 'Gmail', subtitle: 'via Composio', kind: 'connection' as const, target: { kind: 'app' as const, appId: 'gmail' }, state: 'connected' as const },
+        { id: 'cal', title: 'Google Calendar', subtitle: 'via Composio', kind: 'connection' as const, target: { kind: 'app' as const, appId: 'cal' }, state: 'connected' as const },
+        { id: 'drive', title: 'Google Drive', subtitle: 'via Composio', kind: 'connection' as const, target: { kind: 'app' as const, appId: 'drive' }, state: 'connected' as const },
+        { id: 'builtin:google', title: 'Google sign-in', subtitle: 'built in', kind: 'connection' as const, target: { kind: 'connector' as const, connectorId: 'google' }, state: 'connected' as const },
+      ],
+    }]), apps: [googleApp('gmail', 'Gmail', 'connected'), googleApp('cal', 'Google Calendar', 'connected'), googleApp('drive', 'Google Drive', 'connected')] });
+    setWorkbenchSource(source); params.service = 'google';
+    const renderer = await render();
+    const connected = renderer.root.findAllByType('SettingsRow').filter((row: any) => row.props.value === 'Connected');
+    expect(connected).toHaveLength(1);
+    expect(connected[0].props.testID).toBe('connector-info-status');
+    for (const id of ['gmail', 'cal', 'drive', 'builtin:google']) {
+      const row = renderer.root.findByProps({ testID: `company-item-${id}` });
+      expect(row.props.value).toBeUndefined();
+      expect(row.props.action).toBeUndefined();
+      expect(row.props.statusGlyph).toBeUndefined();
+    }
+    await act(async () => renderer.unmount());
+  });
+  it('shows Connect and Error on the rows that need them, never Reconnect or Offline', async () => {
+    const source = new MockWorkbenchSource();
+    source.readWorkbench = async () => ({ ...companyWorkbench([{
+      ...companyRow('google', 'Google', 'attention'), subtitle: '4 apps', state: 'error' as const,
+      status: 'App provider request failed (403)', attention: '1 connection needs attention',
+      items: [
+        { id: 'gmail', title: 'Gmail', subtitle: 'via Composio', kind: 'connection' as const, target: { kind: 'app' as const, appId: 'gmail' }, state: 'connected' as const },
+        { id: 'cal', title: 'Google Calendar', subtitle: 'via Composio', kind: 'connection' as const, target: { kind: 'app' as const, appId: 'cal' }, state: 'connect' as const, attention: true },
+        { id: 'drive', title: 'Google Drive', subtitle: 'via Composio', kind: 'connection' as const, target: { kind: 'app' as const, appId: 'drive' },
+          state: 'error' as const, status: 'App provider request failed (403)', attention: true },
+        { id: 'sheets', title: 'Google Sheets', subtitle: 'via Composio', kind: 'connection' as const, target: { kind: 'app' as const, appId: 'sheets' }, state: 'connected' as const },
+      ],
+    }]), apps: [
+      googleApp('gmail', 'Gmail', 'connected'),
+      googleApp('cal', 'Google Calendar', 'error', { errorMessage: 'Sign-in expired' }),
+      googleApp('drive', 'Google Drive', 'error', { errorMessage: 'App provider request failed (403)' }),
+      googleApp('sheets', 'Google Sheets', 'connected'),
+    ] });
+    setWorkbenchSource(source); params.service = 'google';
+    const renderer = await render();
+    const connect = renderer.root.findByProps({ testID: 'company-item-cal' });
+    const error = renderer.root.findByProps({ testID: 'company-item-drive' });
+    const healthy = renderer.root.findByProps({ testID: 'company-item-gmail' });
+    expect(connect.props.action).toBe('Connect');
+    expect(error.props.value).toBe('App provider request failed (403)');
+    expect(error.props.valueTone).toBe('danger');
+    expect(error.props.action).toBeUndefined();
+    expect(healthy.props.value).toBeUndefined();
+    expect(healthy.props.action).toBeUndefined();
+    const copy = renderer.root.findAllByType('SettingsRow').flatMap((row: any) =>
+      [row.props.value, row.props.action, row.props.title, row.props.description]).join(' ');
+    expect(copy).not.toMatch(/Reconnect/);
+    expect(copy).not.toMatch(/Offline/);
     await act(async () => renderer.unmount());
   });
 });

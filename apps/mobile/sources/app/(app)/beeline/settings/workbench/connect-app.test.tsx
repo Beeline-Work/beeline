@@ -165,7 +165,7 @@ describe('server-owned connector search', () => {
   });
   it('opens an existing company by the same one-tap rule as its Connectors row', async () => {
     source.readWorkbench = async () => companyWorkbench([{ ...companyRow('coinbase', 'Coinbase', 'apps'),
-      items: [{ id: 'builtin:wallet', title: 'Wallet', subtitle: 'built in', kind: 'connection', target: { kind: 'wallet' } }] }]);
+      items: [{ id: 'builtin:wallet', title: 'Coinbase wallet', subtitle: 'built in', kind: 'connection', target: { kind: 'wallet' } }] }]);
     source.searchApps = async () => [{ appKey: 'coinbase', name: 'Coinbase', companyId: 'coinbase' }];
     const renderer = await render(); await search(renderer, 'coin');
     await act(async () => renderer.root.findByType('SettingsRow').props.onPress());

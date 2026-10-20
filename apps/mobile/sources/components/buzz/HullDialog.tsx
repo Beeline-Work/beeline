@@ -413,8 +413,8 @@ export const HullDialogInput = React.forwardRef<
   TextInput,
   TextInputProps & {
     ruleStyle?: StyleProp<ViewStyle>;
-    // `boxed` drops the dialog margin, rule and min-height so the field
-    // centres inside a caller-drawn bordered box, such as a search row.
+    // `boxed` is the bordered search field: regular-weight placeholder,
+    // no dialog underline, house radius.
     variant?: 'dialog' | 'boxed';
   }
 >(function HullDialogInput({ style, ruleStyle, variant = 'dialog', ...props }, ref) {
@@ -453,7 +453,7 @@ export const HullDialogInput = React.forwardRef<
         variant === 'boxed' && styles.inputRuleBoxed,
         outerStyle,
         ruleStyle,
-        focused && styles.inputFocused,
+        focused && (variant === 'boxed' ? styles.inputFocusedBoxed : styles.inputFocused),
       ]}
     >
       <TextInput
@@ -555,8 +555,20 @@ const styles = StyleSheet.create((theme) => {
       borderBottomWidth: StyleSheet.hairlineWidth,
       borderBottomColor: hull.borderStrong,
     },
-    inputRuleBoxed: { alignSelf: 'auto', marginTop: 0, borderBottomWidth: 0 },
+    inputRuleBoxed: {
+      alignSelf: 'stretch',
+      marginTop: 0,
+      borderBottomWidth: StyleSheet.hairlineWidth,
+      borderWidth: StyleSheet.hairlineWidth,
+      borderColor: hull.borderStrong,
+      borderRadius: hull.radius,
+      paddingHorizontal: hull.space.md,
+      paddingVertical: hull.space.sm,
+      minHeight: 44,
+      justifyContent: 'center',
+    },
     inputFocused: { borderBottomColor: hull.accent },
+    inputFocusedBoxed: { borderColor: hull.accent },
     input: {
       ...hull.type.body,
       minHeight: HULL_DIALOG_LAYOUT.inputMinHeight,

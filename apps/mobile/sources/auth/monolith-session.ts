@@ -6,13 +6,18 @@ import { resetClientState } from '@/sync/client-reset';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
 import { markRoomOpen } from '@/buzz/room-open-trace';
+import { fetchOpeningRoom } from '@/sync/transport/room-fetch';
 
 const REFRESH_KEY = 'buzzy.monolith.refresh.v1';
 const IDENTITY_KEY = 'buzzy.monolith.identity.v1';
 const ACCESS_KEY = 'buzzy.monolith.access.v1';
 
 async function monolithFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-  if (!isDesktopShell()) return fetch(input, init);
+  if (!isDesktopShell()) {
+    return (init?.method ?? 'GET').toUpperCase() === 'GET' && /\/v1\/phone\/rooms\/[^/?]+$/.test(String(input))
+      ? fetchOpeningRoom(input, init)
+      : fetch(input, init);
+  }
   const { fetch: desktopFetch } = await import('@tauri-apps/plugin-http');
   return desktopFetch(input, init);
 }

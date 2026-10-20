@@ -52,6 +52,7 @@
     "exports:apps/mobile/sources/sync/storage.ts:useSettings",
     "exports:apps/mobile/sources/sync/transport/rig-transport.ts:RigTransportNotImplementedError",
     "exports:apps/mobile/sources/sync/transport/rig-transport.ts:RigTransportStubbedError",
+    "exports:apps/mobile/sources/sync/transport/room-fetch.native.ts:fetchOpeningRoom",
     "exports:apps/mobile/sources/utils/consoleLogging.ts:clearLogBuffer",
     "exports:apps/mobile/sources/utils/consoleLogging.ts:getLogBuffer",
     "exports:apps/mobile/sources/utils/readFileBytes.web.ts:readFileBytes",

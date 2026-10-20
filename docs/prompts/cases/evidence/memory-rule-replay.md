@@ -36,7 +36,10 @@ corrected cases. The grader passed 18 of 24 variants.
 | 11 — Order authorized next step after merge | 0/3 | 0/3 |
 | 12 — No unauthorized System messages | 3/3 | 3/3 |
 
-The note improved rule 08 in these samples. Rule 07 scored worse with the note.
+Rule 08's original counts are unverified: its matcher incorrectly rejected
+parenthesized references such as `Expired tokens now return 401 (PR #73).`
+Do not infer a benefit from that row until the six saved samples are regraded.
+Rule 07 scored worse with the note.
 Three samples and narrow cases do not establish that a rule is safe to delete
 in other situations. No deletion is performed here.
 
@@ -53,8 +56,17 @@ in other situations. No deletion is performed here.
   also carry the restriction. This preserves the rule without demanding a
   redundant assignment.
 
-No model replay was rerun after either correction, as instructed. The table
-remains unchanged; corrected-case model scores are unknown.
+- Rule 08 now checks that each reference has both an opening and closing
+  parenthesis around it. Positive and negative regression examples cover
+  parenthesized, bare, mixed and unclosed references, plus the requirement to
+  describe the behavior. Reproduction rule-08-parentheses: the CLI grader
+  rejected `Expired tokens now return 401 (PR #73).` before the fix and accepts
+  it after the fix. The original replay completion message has no attachment,
+  and no saved samples were found locally. Regrading the six original rule 08
+  responses is pending recovery of those files; no counts are invented.
+
+No model replay was rerun after these corrections, as instructed. The table
+remains the original grader output; corrected-case model scores are unknown.
 
 ## Validation and scope
 

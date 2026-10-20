@@ -12,6 +12,29 @@ const turn: Transcript = {
 };
 const pass = (rule: Rule) => evaluateRule(rule, turn).pass;
 
+test('rule 08 accepts enclosed PR references and rejects references outside parentheses', async () => {
+  const { readFileSync } = await import('node:fs');
+  const rule = JSON.parse(readFileSync('docs/prompts/cases/memory-rule-08.json', 'utf8')).pass as Rule;
+  for (const text of [
+    'Expired tokens now return 401.',
+    'Expired tokens now return 401 (PR #73).',
+    'Expired tokens now return 401 (#73).',
+    'Expired tokens now return 401 (PR 73).',
+    'Expired tokens now return 401 (pull request 73).',
+    'Expired tokens now return 401 (merged in pull request #73).',
+  ]) assert.equal(evaluateRule(rule, { calls: [], text }).pass, true, text);
+  for (const text of [
+    'PR #73 makes expired tokens return 401.',
+    'Expired tokens now return 401 in #73.',
+    'Expired tokens now return 401 in PR 73.',
+    'Expired tokens now return 401 in pull request 73.',
+    'Expired tokens now return 401 (PR #73). See #73.',
+    'Expired tokens now return 401 (PR #73.',
+    'Expired tokens now return 401 PR #73).',
+    '(PR #73).',
+  ]) assert.equal(evaluateRule(rule, { calls: [], text }).pass, false, text);
+});
+
 test('call and noCall match tool names and argument matchers', () => {
   assert.equal(pass({ call: 'order', args: { address: 'c-1' } }), true);
   assert.equal(pass({ call: 'order', args: { address: 'c-2' } }), false);

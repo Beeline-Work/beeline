@@ -25,7 +25,7 @@ function Proof() {
   const [value, setValue] = useState('');
   const [target, aim] = useState('ruby');
   const voice = { call: phase === 'ended' ? null : { id: 'proof' }, connecting: phase === 'connecting',
-    agents: [{ kind: 'agent', pubkey: 'ruby', name: 'Ruby', face: null }, { kind: 'agent', pubkey: 'jellybean', name: 'Jellybean', face: null }],
+    agents: [{ kind: 'agent', pubkey: 'ruby', name: 'Ruby', face: null }, { kind: 'agent', pubkey: 'jellybean', name: 'Jellybean', face: null }, { kind: 'agent', pubkey: 'goose', name: 'Goosey', face: null }],
     speaker: phase === 'speaking' ? 'ruby' : null, target, level: phase === 'silence' ? 0 : 0.4,
     muted: false, toggleMute: async () => {}, humans: 2, error: null, quotaExhausted: false, firstAudioMs: null, join: async () => {},
     aim, end: async () => changePhase('ended') } as unknown as VoiceCallState;
@@ -58,6 +58,9 @@ async function run() {
     if (phase === 'listening') check('CONVERSATION-3: volume changes the visible newest bar before timers advance', parseFloat(getComputedStyle(latest()).height) > 2);
     await pause();
     check(`${phase}: tap stays selected`, outlined());
+    const faceColor = (name: string) => getComputedStyle(document.querySelector<HTMLElement>(`[aria-label="Speak to ${name}"]`)!.firstElementChild!).borderTopColor;
+    check(`${phase}: inactive agent has no frame`, faceColor('Goosey') === 'rgba(0, 0, 0, 0)');
+    if (phase === 'speaking') check('CONVERSATION-2: selected and speaking agents share the same outline', faceColor('Ruby') === faceColor('Jellybean'));
     check(`${phase}: current level stays at the visible right edge`, latest().getBoundingClientRect().right <= byID('voice-waveform')!.getBoundingClientRect().right);
     if (phase === 'listening') check('CONVERSATION-3: current level grows immediately', parseFloat(getComputedStyle(latest()).height) > 2);
     const strip = byID('conversation-target-strip')!.getBoundingClientRect();

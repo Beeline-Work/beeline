@@ -120,12 +120,14 @@ it.each([1, 2])('uses the existing warning slot for %s humans and prioritizes ca
 it('Reproduction CONVERSATION-2: tapping a face immediately marks selection and keeps it across level updates', async () => {
   let renderer: any;
   let updateLevel!: (level: number) => void;
+  let updateSpeaker!: (speaker: string | null) => void;
   function Probe() {
     const [target, aim] = React.useState('ruby');
+    const [speaker, setSpeaker] = React.useState<string | null>(null); updateSpeaker = setSpeaker;
     const [level, setLevel] = React.useState(0); updateLevel = setLevel;
     return <VoiceAgentStrip voice={{ agents: [
       { pubkey: 'ruby', kind: 'agent', name: 'Ruby' }, { pubkey: 'goose', kind: 'agent', name: 'Goosey' },
-    ], target, aim, level, speaker: null } as any} />;
+    ], target, aim, level, speaker } as any} />;
   }
   await act(async () => { renderer = create(<Probe />); });
   const face = (name: string) => renderer.root.findAllByType('Pressable')
@@ -145,5 +147,11 @@ it('Reproduction CONVERSATION-2: tapping a face immediately marks selection and 
     expect(outline('Goosey')).not.toBe('transparent');
     expect(outline('Ruby')).toBe('transparent');
     expect(underlined()).toBe(false);
+    await act(async () => updateSpeaker('ruby'));
+    expect(outline('Ruby')).toBe(outline('Goosey'));
+    expect(face('Goosey').props.accessibilityState.selected).toBe(true);
+    await act(async () => updateSpeaker(null));
+    expect(outline('Ruby')).toBe('transparent');
+    expect(outline('Goosey')).not.toBe('transparent');
   } finally { await act(async () => renderer.unmount()); }
 });

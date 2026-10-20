@@ -51,7 +51,8 @@ with an agent's name or an explicit avatar tap to get a reply.
 A name-only segment holds that human's addressee for three seconds, renewed
 while that human speaks. An avatar tap selects that human's call target until
 another tap or spoken opening name replaces it, including after pauses and replies.
-The selected avatar has a visible outline; names are never underlined. An unfinished request retains
+Selected and speaking avatars use the same outline style; other avatars have no
+frame. Names are never underlined. An unfinished request retains
 its addressee across further segments; an explicit new name replaces it. Other
 humans cannot consume the draft. Delivery, cancel, expiry or departure clears the temporary spoken address.
 Departure also clears the persistent tap selection. An expired name alone never dispatches work; an unaddressed

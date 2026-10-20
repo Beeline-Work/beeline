@@ -12,7 +12,7 @@ export function VoiceAgentStrip({ voice }: { voice: VoiceCallState }) {
     {voice.agents.map(agent => <Pressable key={agent.pubkey} onPress={() => voice.aim(agent.pubkey)}
       accessibilityRole="button" accessibilityLabel={`Speak to ${agent.name}`}
       accessibilityState={{ selected: voice.target === agent.pubkey }} style={styles.agent}>
-      <View style={[styles.face, voice.target === agent.pubkey && styles.selected, voice.speaker === agent.pubkey && styles.speaking]}>
+      <View style={[styles.face, (voice.target === agent.pubkey || voice.speaker === agent.pubkey) && styles.active]}>
         <IdentityMark kind="agent" seed={agent.pubkey} face={agent.face} name={agent.name} size={32} />
       </View>
       <Text numberOfLines={1} style={styles.name}>{agent.name}</Text>
@@ -54,8 +54,7 @@ const styles = StyleSheet.create(theme => ({
   agentContent: { alignItems: 'flex-start', gap: 8 },
   agent: { minWidth: 44, minHeight: 44, maxWidth: 96, alignItems: 'center', gap: 4 },
   face: { padding: 4, borderWidth: 1, borderRadius: 3, borderColor: 'transparent' },
-  selected: { borderColor: theme.buzz.textPrimary, backgroundColor: theme.buzz.bgHighlight },
-  speaking: { borderColor: theme.buzz.accent },
+  active: { borderColor: theme.buzz.textPrimary, backgroundColor: theme.buzz.bgHighlight },
   name: { ...theme.buzz.type.meta, color: theme.buzz.textMuted },
   controls: { minHeight: 42, flexDirection: 'row', alignItems: 'center', padding: 8 },
   controlSlot: { width: 26, height: 26, marginLeft: 8, alignItems: 'center', justifyContent: 'center' },

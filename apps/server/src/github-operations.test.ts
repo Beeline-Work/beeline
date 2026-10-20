@@ -11,6 +11,8 @@ import { LiveHub } from './live.js';
 import { readFileSync } from 'node:fs';
 import { runInNewContext } from 'node:vm';
 import { transformSync } from 'esbuild';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 
 const HUMAN = 'a'.repeat(64);
 const REVIEWER = 'b'.repeat(64);
@@ -69,7 +71,7 @@ describe('GitHub phone operations', () => {
     const payload = { action: 'completed', installation: { id: 77 }, repository: { full_name: 'owner/widgets' },
       check_run: { name: 'lint', status: 'completed', conclusion: 'success', head_sha: headSha,
         check_suite: { head_branch: 'feature/checks-1', head_sha: headSha } } };
-    return { corners, headSha, app, payload };
+    return { room, corners, headSha, app, payload };
   }
 
   it.each(['green on reopen', 'green after reopen', 'prior head green'])('R1: close, push, stale reopen — %s dispatches once with current card totals', async timing => {
@@ -1185,6 +1187,113 @@ describe('GitHub phone operations', () => {
     );
     expect(app.installationToken).toHaveBeenCalledTimes(1);
   });
+  it('does not cache failed room token mints and shares concurrent failures', async () => {
+    const { room } = await checksFixture();
+    let fail!: (error: Error) => void;
+    const mint = vi.fn().mockImplementationOnce(() => new Promise((_resolve, reject) => { fail = reject; }))
+      .mockResolvedValue({ token: 'recovered', expiresAt: new Date(Date.now() + 3_600_000).toISOString() });
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient,
+      { installationToken: mint } as unknown as GitHubAppClient, 'secret');
+    const requests = Array.from({ length: 5 }, () => operations.roomToken(room));
+    const results = Promise.allSettled(requests);
+    await vi.waitFor(() => expect(mint).toHaveBeenCalledTimes(1));
+    // Let all database lookups reach the pending mint before rejecting it.
+    await database.query('SELECT 1');
+    fail(new Error('mint failed'));
+    expect((await results).every((result) => result.status === 'rejected')).toBe(true);
+    expect(mint).toHaveBeenCalledTimes(1);
+    await expect(operations.roomToken(room)).resolves.toMatchObject({ token: 'recovered' });
+    expect(mint).toHaveBeenCalledTimes(2);
+  });
+
+  it('keys room token reuse by installation and repository and evicts stale entries', async () => {
+    const { room } = await checksFixture();
+    let now = Date.now();
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    try {
+      const mint = vi.fn(async () => ({ token: 'scoped', expiresAt: new Date(now + 3_600_000).toISOString() }));
+      const operations = new GitHubOperations(database, {} as GitHubOAuthClient,
+        { installationToken: mint } as unknown as GitHubAppClient, 'secret');
+      await operations.roomToken(room);
+      await database.query(`INSERT INTO github_repositories(repository_id,installation_id,full_name,default_branch)
+        VALUES(102,77,'owner/other','main')`);
+      await database.query(`UPDATE rooms SET repository_remote='https://github.com/owner/other.git' WHERE id=$1`, [room]);
+      await operations.roomToken(room);
+      expect(mint).toHaveBeenLastCalledWith(77, { repositoryIds: [102] });
+      await database.query(`INSERT INTO github_installations(installation_id,owner_id,account_id,account_login,account_type,repository_selection,status)
+        VALUES(78,$1,'43','other','User','selected','active')`, [HUMAN]);
+      await database.query(`UPDATE github_repositories SET installation_id=78 WHERE repository_id=102`);
+      await database.query(`UPDATE rooms SET github_installation_id=78 WHERE id=$1`, [room]);
+      await operations.roomToken(room);
+      expect(mint).toHaveBeenLastCalledWith(78, { repositoryIds: [102] });
+      expect(mint).toHaveBeenCalledTimes(3);
+      now += 3_600_000;
+      await operations.roomToken(room);
+      await database.query(`UPDATE github_repositories SET installation_id=77 WHERE repository_id=102`);
+      await database.query(`UPDATE rooms SET github_installation_id=77 WHERE id=$1`, [room]);
+      await operations.roomToken(room);
+      expect(mint).toHaveBeenCalledTimes(5);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it.each([
+    `UPDATE github_installations SET status='suspended' WHERE installation_id=77`,
+    `UPDATE rooms SET archived_at=now() WHERE parent_id IS NULL`,
+    `UPDATE github_repositories SET active=false WHERE repository_id=101`,
+  ])('rechecks access before returning a cached room token: %s', async (revoke) => {
+    const { room } = await checksFixture();
+    const mint = vi.fn(async () => ({ token: 'scoped', expiresAt: new Date(Date.now() + 3_600_000).toISOString() }));
+    const operations = new GitHubOperations(database, {} as GitHubOAuthClient,
+      { installationToken: mint } as unknown as GitHubAppClient, 'secret');
+    await operations.roomToken(room);
+    await database.query(revoke);
+    await expect(operations.roomToken(room)).rejects.toThrow('GitHub repository installation not found');
+    expect(mint).toHaveBeenCalledTimes(1);
+  });
+
+  it('reuse-room-token: reuses scoped tokens through the daemon and refreshes at five minutes', async () => {
+    const { room } = await checksFixture();
+    let now = Date.now();
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now);
+    let mints = 0;
+    const scopes: unknown[] = [];
+    const endpoint = createServer(async (request, response) => {
+      let body = '';
+      for await (const chunk of request) body += chunk;
+      scopes.push(JSON.parse(body));
+      mints++;
+      response.setHeader('content-type', 'application/json');
+      response.end(JSON.stringify({ token: `fake-token-${mints}`, expires_at: new Date(now + 3_600_000).toISOString() }));
+    });
+    await new Promise<void>((resolve) => endpoint.listen(0, '127.0.0.1', resolve));
+    try {
+      const { privateKey } = await generateKeyPair('RS256');
+      const app = new GitHubAppClient({ appId: '1', slug: 'test', privateKey: await exportPKCS8(privateKey),
+        apiBaseUrl: `http://127.0.0.1:${(endpoint.address() as AddressInfo).port}` });
+      const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app, 'secret');
+      const daemon = new DaemonService(database, new LiveHub(), (id) => operations.roomToken(id));
+      const request = () => daemon.execute('getRoomGitHubToken', { roomId: room }, REVIEWER);
+      for (let index = 0; index < 10; index++) await request();
+      await Promise.all(Array.from({ length: 5 }, request));
+      expect(mints).toBe(1);
+      now += 55 * 60_000 - 1;
+      await request();
+      expect(mints).toBe(1);
+      now++;
+      await Promise.all(Array.from({ length: 5 }, request));
+      expect(mints).toBe(2);
+      expect(scopes).toEqual([{ repository_ids: [101] }, { repository_ids: [101] }]);
+      await database.query(`UPDATE github_repositories SET active=false WHERE repository_id=101`);
+      await expect(request()).rejects.toThrow('Room repository access needs the Beeline GitHub App');
+      expect(mints).toBe(2);
+    } finally {
+      clock.mockRestore();
+      await new Promise<void>((resolve, reject) => endpoint.close((error) => error ? reject(error) : resolve()));
+    }
+  });
+
   it('keeps a listed repository token available while its installation sync is in progress', async () => {
     const workspace = '11111111-1111-4111-8111-111111111111';
     const room = '22222222-2222-4222-8222-222222222222';

@@ -183,7 +183,6 @@ it('reports the owner-wide free allowance with its UTC reset and keeps it privat
   );
   const paused = await daemon.execute('getAgentUsage', { agentId: agent }, agent);
   expect(paused?.free).toMatchObject({ used: 123000, paused: true });
-  // Check the complete public shape: timestamps can legitimately contain "25".
   expect(paused).toEqual({
     updatedAt: expect.any(Number),
     windows: [],

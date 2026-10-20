@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { beelineManagedSkills, runningBeelineReleaseId } from './beeline-skill.js';
 import { builtinBeelineApp } from '@beeline/api-contract/workbench';
 import { Check } from 'typebox/value';
 import { CAPABILITY_ROUTES, REPOSITORY_ROUTES, SCRATCH_ROUTES, minimalTools, repositoryTools, scratchTools, CAPABILITY_TOOLS, RUNNER_TOOL, SILENT_TOOL } from './minimal-tool-surface.js';
@@ -2930,14 +2931,24 @@ async function executeAgentOperation(
     }
     case 'download_attachment':
       return downloadAttachment(args);
-    case 'load_workspace_skill':
-      return JSON.stringify(
-        await daemonExecute('loadWorkspaceSkill', {
+    case 'load_workspace_skill': {
+      // Workspace procedures retain precedence over shipped skills with the same slug.
+      try {
+        return JSON.stringify(await daemonExecute('loadWorkspaceSkill', {
           agentId: requiredEnv('BEELINE_DAEMON_AGENT_ID'),
           roomId: requiredEnv('BEELINE_DAEMON_ROOM_ID'),
           slug: args.slug,
-        }),
-      );
+        }));
+      } catch (error) {
+        // Only a missing procedure falls back; authorization and service failures stay visible.
+        if (!(error instanceof Error) || !error.message.startsWith('daemon operation loadWorkspaceSkill failed (404:'))
+          throw error;
+        const skill = beelineManagedSkills(runningBeelineReleaseId(), { isReviewer: true })
+          .find((candidate) => candidate.name === args.slug);
+        if (!skill) throw error;
+        return JSON.stringify({ slug: skill.name, markdown: skill.content, source: 'built-in' });
+      }
+    }
     case 'save_skill':
       return JSON.stringify(
         await daemonExecute('saveSkill', {

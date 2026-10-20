@@ -166,10 +166,7 @@ describe('message replies', () => {
         preview: record.text,
       };
 
-      expect(beginReplyTarget(record, [], display, 'corner-id')).toEqual({
-        ...display,
-        reference: { channelId: 'corner-id', eventId: record.id, rootId: record.id },
-      });
+      expect(beginReplyTarget(record, [], display, 'corner-id')).toEqual(display);
     },
   );
 

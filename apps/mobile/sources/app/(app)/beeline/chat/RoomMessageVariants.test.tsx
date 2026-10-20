@@ -3469,7 +3469,7 @@ describe('Room message variant components', () => {
           text: kind === 'order' ? 'Do the work' : 'done: work is complete',
         },
       });
-      let target: ReturnType<typeof beginReplyTarget> = null;
+      const replyTargets: NonNullable<ReturnType<typeof beginReplyTarget>>[] = [];
       const renderer = render(<OrdinaryLedgerMessage
         message={record}
         participantsHydrated
@@ -3481,7 +3481,7 @@ describe('Room message variant components', () => {
         deliveryFailed={false}
         onChannelReference={vi.fn()}
         onReply={(chosen) => {
-          target = beginReplyTarget(chosen, [], {
+          const target = beginReplyTarget(chosen, [], {
             messageId: chosen.relayId ?? chosen.id,
             authorName: chosen.authorIdentity!.name,
             authorHandle: chosen.authorIdentity!.handle,
@@ -3489,25 +3489,23 @@ describe('Room message variant components', () => {
             isAgent: true,
             preview: chosen.text,
           }, 'corner-id');
+          if (target) replyTargets.push(target);
         }}
         onCopy={vi.fn()}
         onRetry={vi.fn()}
         onDismiss={vi.fn()}
       />);
       act(() => renderer.root.findByType('Swipeable').props.onSwipeableOpen('right'));
-      expect(target).toEqual({
+      expect(replyTargets).toHaveLength(1);
+      expect(replyTargets[0]).toEqual({
         messageId: `agent-${kind}`,
         authorName: 'Speedy',
         authorHandle: 'speedy',
         authorPubkey: 'speedy',
         isAgent: true,
         preview: kind === 'order' ? 'ordered @worker' : 'reported to commander',
-        reference: {
-          channelId: 'corner-id',
-          eventId: `agent-${kind}`,
-          rootId: `agent-${kind}`,
-        },
       });
+      expect(replyTargets[0]?.reference).toBeUndefined();
     }
   });
 

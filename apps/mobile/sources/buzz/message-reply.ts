@@ -82,10 +82,9 @@ export function activityReplyParent(
 /**
  * The reply target for a transcript row, or null when the row cannot be a
  * parent in this Room. Activity rows borrow their turn's real parent. An
- * agent-command record has no snapshot reference because the server emits it
- * as a card, yet the row is still a same-Room message: give it the same
- * reference shape locally so Reply opens the composer with the sender as the
- * target and the record as the thread parent.
+ * agent-command record has no server reference because it is emitted as a
+ * card: Reply addresses the record's sender as an ordinary message instead of
+ * inventing parent proof. A card that ever gains a real reference uses it.
  */
 export function beginReplyTarget(
   message: ChatDisplayMessage,
@@ -94,15 +93,11 @@ export function beginReplyTarget(
   roomId: string,
 ): MessageReplyTarget | null {
   if (message.isAgentActivity) return activityMessageReplyTarget(message, messages, display);
-  const eventId = message.relayId ?? message.id;
-  const reference =
-    message.reference ?? (message.agentCommand
-      ? { channelId: roomId, eventId, rootId: eventId }
-      : undefined);
   const target: MessageReplyTarget = {
     ...display,
-    ...(reference ? { reference } : {}),
+    ...(message.reference ? { reference: message.reference } : {}),
   };
+  if (message.agentCommand) return target;
   return target.reference?.channelId === roomId ? target : null;
 }
 

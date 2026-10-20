@@ -39,6 +39,9 @@ import { useUnistyles } from 'react-native-unistyles';
 import { readRoomViewMessage } from '@beeline/api-contract/phone';
 import { displayRoomMessage } from '@/buzz/room-view-presentation';
 import { agentCommandTranscriptMessage, OrdinaryLedgerMessage } from '@/app/(app)/beeline/chat/RoomMessageVariants';
+import { beginReplyTarget } from '@/buzz/message-reply';
+import { Button } from '@/components/buzz/Button';
+import { ConversationComposer } from '@/components/buzz/ConversationComposer';
 
 const report = {
   id: 'f'.repeat(64),
@@ -71,27 +74,59 @@ const participants = [
 const noop = () => undefined;
 
 function Row({ row, onMention }) {
+  const [replyTarget, setReplyTarget] = React.useState(null);
   const parsed = readRoomViewMessage(row);
   const message = agentCommandTranscriptMessage(
     displayRoomMessage(parsed, 'c'.repeat(64)),
     participants,
   );
-  return <OrdinaryLedgerMessage
-    message={message}
-    participantsHydrated
-    viewerPubkey={'c'.repeat(64)}
-    speakerWorking={false}
-    continued={false}
-    participantHandles={participants}
-    channelIndex={{ rooms: [], corners: [] }}
-    deliveryFailed={false}
-    onChannelReference={noop}
-    onReply={noop}
-    onCopy={noop}
-    onRetry={noop}
-    onDismiss={noop}
-    onMention={onMention}
-  />;
+  const chooseReply = () => {
+    const target = beginReplyTarget(message, [], {
+      messageId: message.relayId ?? message.id,
+      authorName: message.authorIdentity.name,
+      authorHandle: message.authorIdentity.handle,
+      authorPubkey: message.pubkey,
+      isAgent: true,
+      preview: message.text,
+    }, 'corner-id');
+    if (target) setReplyTarget(target);
+  };
+  return <div>
+    <OrdinaryLedgerMessage
+      message={message}
+      participantsHydrated
+      viewerPubkey={'c'.repeat(64)}
+      speakerWorking={false}
+      continued={false}
+      participantHandles={participants}
+      channelIndex={{ rooms: [], corners: [] }}
+      deliveryFailed={false}
+      onChannelReference={noop}
+      onReply={chooseReply}
+      onCopy={noop}
+      onRetry={noop}
+      onDismiss={noop}
+      onMention={onMention}
+    />
+    <Button label="Reply" variant="quiet" testID={'reply-' + row.id} onPress={chooseReply} />
+    <ConversationComposer
+      value=""
+      height={40}
+      focused={false}
+      disabled={false}
+      canSend={false}
+      speechEnabled={false}
+      testIDPrefix={'proof-' + row.id}
+      reply={replyTarget ? { handle: replyTarget.authorHandle, preview: replyTarget.preview } : undefined}
+      onCancelReply={() => setReplyTarget(null)}
+      onBlur={noop}
+      onChangeText={noop}
+      onContentSizeChange={noop}
+      onFocus={noop}
+      onKeyPress={noop}
+      onSend={noop}
+    />
+  </div>;
 }
 
 function Proof() {
@@ -121,11 +156,21 @@ async function main() {
   if (!target) throw Error('mention is not an actionable member reference');
   target.click();
   await new Promise(resolve => setTimeout(resolve, 50));
+  const replyButtons = [...document.querySelectorAll('[data-testid^="reply-"]')];
+  if (replyButtons.length !== 2) throw Error('missing Reply actions');
+  for (const button of replyButtons) button.click();
+  await new Promise(resolve => setTimeout(resolve, 100));
+  const banners = [...document.querySelectorAll('[data-testid="reply-composer-banner"]')]
+    .map(node => node.textContent);
+  if (banners.length !== 2) throw Error('missing composer reply targets: ' + banners.length);
+  if (!banners[0].includes('@speedy')) throw Error('report reply target: ' + banners[0]);
+  if (!banners[1].includes('@ruby')) throw Error('order reply target: ' + banners[1]);
   document.getElementById('result').textContent = JSON.stringify({
     theme: document.body.style.background,
     accent: useUnistyles().theme.buzz.accent,
     mentions: mentions.map(node => getComputedStyle(node).color),
     mentioned: window.mentioned,
+    replyTargets: banners,
     rows: document.querySelectorAll('#transcript > div').length,
     card: document.querySelectorAll('[data-testid^="agent-command"]').length,
   });
@@ -176,6 +221,9 @@ main().catch(error => document.getElementById('result').textContent = 'FAIL: ' +
       expect(result.card).toBe(0);
       expect(result.mentions).toHaveLength(2);
       expect(result.mentioned).toBe('b'.repeat(64));
+      expect(result.replyTargets).toHaveLength(2);
+      expect(result.replyTargets[0]).toContain('@speedy');
+      expect(result.replyTargets[1]).toContain('@ruby');
       expect(result.theme).not.toBe('');
       const rgb = (hex: string) => {
         const value = hex.replace('#', '');

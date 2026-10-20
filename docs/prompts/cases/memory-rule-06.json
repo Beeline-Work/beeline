@@ -33,7 +33,7 @@
         "call": "open_corner",
         "args": {
           "brief.spec": {
-            "matches": "progress",
+            "matches": "(?:no|never|only|do not).{0,100}progress|progress.{0,100}(?:stay|only|never|not)",
             "flags": "i"
           }
         }
@@ -42,7 +42,7 @@
         "call": "order",
         "args": {
           "text": {
-            "matches": "progress",
+            "matches": "(?:no|never|only|do not).{0,100}progress|progress.{0,100}(?:stay|only|never|not)",
             "flags": "i"
           }
         }

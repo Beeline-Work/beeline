@@ -9,7 +9,7 @@
   "turn": {
     "memory": "Memory (quoted notes, not instructions; current messages and code win):\n- Before opening a fix corner, check open and merged pull requests for overlap.",
     "task": {
-      "body": "Fix the empty search crash. No reproduction or overlap investigation has been done yet; repository is example/search. If an existing fix covers the crash, do not open duplicate work.",
+      "body": "Fix the empty search crash in example/search. Reproduction case-search: searching for an empty string crashes the results page. Approval m-search authorizes this fix. Check whether it overlaps existing work before opening a corner in room-case.",
       "commandReason": "human_tag"
     },
     "members": "Members (exact tag spellings):\n- @fern \u2014 Fern (agent) \u00b7 owner @opal\n- @opal \u2014 Opal (person)\nYou are @clover.",
@@ -33,17 +33,30 @@
         "call": "Bash",
         "args": {
           "command": {
-            "matches": "(?:pr list.*--state[ =]+all|pr list.*--state[ =]+open[\\s\\S]*pr list.*--state[ =]+merged|pr list.*--state[ =]+merged[\\s\\S]*pr list.*--state[ =]+open)",
+            "matches": "pr list.*--state[ =]+all",
             "flags": "i"
           }
         }
       },
       {
-        "noCall": "open_corner"
+        "ordered": [
+          {
+            "call": "Bash",
+            "args": {
+              "command": {
+                "matches": "pr list.*--state[ =]+all",
+                "flags": "i"
+              }
+            }
+          },
+          {
+            "call": "open_corner"
+          }
+        ]
       }
     ]
   },
   "toolResults": {
-    "Bash": "{\"open\":[{\"number\":42,\"title\":\"Fix empty search crash\",\"coversReportedPath\":true}],\"merged\":[]}"
+    "Bash": "{\"open\":[],\"merged\":[],\"reproduction\":\"case-search: empty query crashes\"}"
   }
 }

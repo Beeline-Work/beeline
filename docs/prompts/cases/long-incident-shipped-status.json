@@ -59,7 +59,7 @@
       {
         "text": {
           "not": {
-            "matches": "(?<!\\()(?:(?:PR|pull request)\\s*)?#86|(?<!\\()(?:PR|pull request)\\s+86",
+            "matches": "(?<![\\w#])(?:(?:PR|pull request)\\s*#?\\s*|#)?86\\b(?![^()]*\\))",
             "flags": "i"
           }
         }

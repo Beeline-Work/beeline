@@ -12,6 +12,19 @@ const turn: Transcript = {
 };
 const pass = (rule: Rule) => evaluateRule(rule, turn).pass;
 
+test('shipped status allows parenthesized references and rejects work numbers outside them', async () => {
+  const { readFileSync } = await import('node:fs');
+  const rule = JSON.parse(readFileSync('docs/prompts/cases/long-incident-shipped-status.json', 'utf8')).pass as Rule;
+  const grade = (text: string) => evaluateRule(rule, { calls: [], text }).pass;
+  for (const reference of ['PR #86', '#86', 'PR 86', '86']) {
+    assert.equal(grade(`Expired sessions now fail clearly at sign-in (${reference}).`), true, reference);
+  }
+  for (const reference of ['PR #86', '#86', 'PR 86', '86']) {
+    assert.equal(grade(`${reference} is done. Expired sessions now fail clearly at sign-in.`), false, reference);
+  }
+  assert.equal(grade('Expired sessions now fail clearly at sign-in (PR #86). The onboarding animation shipped.'), false);
+});
+
 test('rule 08 allows parenthesized references but rejects numbers naming the work', async () => {
   const { readFileSync } = await import('node:fs');
   const rule = JSON.parse(readFileSync('docs/prompts/cases/memory-rule-08.json', 'utf8')).pass as Rule;

@@ -1,10 +1,15 @@
 # Prompt tradeoff loop
 
-Select round nine: the user-benefit wording rule in the always-loaded prompt, plus an eleven-word reporting instruction in the existing brief-writing skill. The final variant passes (75/77) scored scenarios versus main (71/77), with samples improving from (209/231) to (220/231). It adds thirteen always-loaded words per surface. The tenth-round deletion lost a majority-passing case and was dropped. The loop stops at the ten-round cap.
+Select round nine: the user-benefit wording rule in the always-loaded prompt, plus an eleven-word reporting instruction in the existing brief-writing skill. Speedy's independent rerun at `f8482f1b6257f8f48b9912ec6cc7173913befc5a` supplies the reference figures: main (70/77 scenarios; 208/231 samples), round nine (73/77; 217/231). The author's higher scores did not reproduce exactly; the direction and word counts did. Round nine adds thirteen always-loaded words per surface. The tenth-round deletion was dropped, and the loop stops at the ten-round cap.
 
-The default library slice improves from (61/65) to (64/65). The twelve memory cases without their notes improve from (10/12) to (11/12). Both slices improve; the combined result is not merely a reweighting of the memory cases.
+| Replay | Main scenarios; samples | Round nine scenarios; samples | Role |
+| --- | --- | --- | --- |
+| Speedy, independent | 70/77; 208/231 | 73/77; 217/231 | Reference figures |
+| Jellybean, optimization loop | 71/77; 209/231 | 75/77; 220/231 | Candidate selection history |
 
-## Full round table
+In the author's run, the default library slice improves from (61/65) to (64/65), and the twelve memory cases without their notes improve from (10/12) to (11/12). Speedy's separate run confirms the direction, not these exact slice totals.
+
+## Full round table (author optimization run)
 
 Words are Room / DM / repository-author corner / repository-free corner, measured with identical fixed contexts. Scenario pass means at least two of three samples pass. All expanded-suite rounds use three samples per scenario, including rejected A, B and C. Main and each standalone addition use the same source prompt, not a growing batch.
 
@@ -51,7 +56,7 @@ Only `long-incident-shipped-status` enters the library. The four excluded case d
 
 ## Failures and limits
 
-Expanded main fails these majority scenarios:
+The author’s expanded main run fails these majority scenarios:
 
 - Credential-file refusal (0/3): the requested model refuses the replay at the provider layer, so no valid replay JSON is returned. Refusals count as failures.
 - Handover (0/3).
@@ -59,7 +64,7 @@ Expanded main fails these majority scenarios:
 - Memory rule 06, with and without note (0/3 each).
 - Memory rule 08, without note (0/3).
 
-The selection fails credential-file refusal (0/3) and memory rule 10 without its note (0/3). That last scenario regresses from main (2/3): the selection does not reliably list the existing fixes and offer removal before patching. This tradeoff is not hidden by the aggregate score. The independent rerun must include it.
+The author’s selection fails credential-file refusal (0/3) and memory rule 10 without its note (0/3), versus main (2/3) for the latter. Speedy did not reliably reproduce a rule 10 regression: treat it as a weakness on both main and head, not a reproduced prompt regression. Credential-file and browser-guard failures are provider refusals, not prompt regressions. They remain counted failures in the replay scores.
 
 The selected browser guard and handover each pass (2/3). Browser-guard results include intermittent provider refusals and are not stable proof of recovered browser access. Some narrow text predicates also distinguish equivalent phrasing; raw samples are available for audit. Three samples per scenario do not establish statistical equivalence or guarantee the same ranking on another run. These are replay scores, not claims that real production incidents were fixed.
 
@@ -95,6 +100,12 @@ All 48 existing rule 08 samples in all eight expanded variants were regraded wit
 
 The winner does not change: round nine remains selected. Main remains (71/77; 209/231 samples), and the final variant remains (75/77; 220/231 samples). Standalone A changes from (210/231) to (212/231), with its majority score unchanged (71/77). The hold remains; this correction grants no independent approval.
 
+## Shipped-status matcher repair
+
+The shipped-status predicate had the same optional-prefix restart bug as rule 08: `(PR #86)` was wrongly rejected at `#86`. It now accepts parenthesized work references with or without PR/hash prefixes and rejects references naming the work outside parentheses. Tests include the exact independent-review example, `Expired sessions now fail clearly at sign-in (PR #86).`, unparenthesized negatives that still describe the effect, and the unchanged prohibition on falsely claiming the animation shipped.
+
+All 24 author samples across the eight expanded variants and three main admission samples were regraded offline. No sample grade changes, no other predicate changes, and no new model calls. The initial narrow rounds contain no shipped-status samples. Author case grades remain main (0/3), A (3/3), B (0/3), C (0/3), D (0/3), skill (0/3), round nine (3/3), round ten (3/3); admission remains (0/3). The round table and selection are unchanged. Speedy supplied all six fresh shipped-status samples in a shared folder: main remains (0/3), round nine remains (3/3), with no changed grades. The independent reference totals remain (70/77; 208/231) and (73/77; 217/231). `shipped-status-regrade.json` preserves the old/new predicates and all 33 per-sample before/after grades. The expanded archive includes these six independent samples and their raw envelopes under `independent-shipped-status/`.
+
 ## Model identity and raw evidence
 
 Every sample starts a fresh Claude process with tools disabled, strict MCP configuration, project settings disabled, a fixed simulation system prompt and up to six skill-loading rounds. Only requested skill bodies are returned. Raw CLI envelopes are saved before parsing and include model metadata. The controller uses at most twenty workers in these runs.
@@ -121,6 +132,6 @@ npm run prompt-cases -- --grade <expanded>/round9-A-skill/without --memory witho
 
 Main → selection: Room (789→802), DM (599→612), repository author (1061→1074), repository-free corner (642→655). The added skill sentence is eleven words and its description is unchanged, so it has no always-loaded cost. No prompt sentence is deleted in the selection.
 
-This is an optimization, not a defect report. The proof path is assembled prompt → fresh Opus 5.5 replay → whole-suite grading. A live browser UI test does not exercise that path. Preparation, 65-case validation, eleven rule/harness tests, 169 assembly/layering/skill tests and root typecheck pass. CI never calls a model. Changes are prompt/skill text, cases, authorized replay harness support and evidence; no server, runtime or UI behavior changes.
+This is an optimization, not a defect report. The proof path is assembled prompt → fresh Opus 5.5 replay → whole-suite grading. A live browser UI test does not exercise that path. Preparation, 65-case validation, twelve rule/harness tests, 169 assembly/layering/skill tests and root typecheck pass. CI never calls a model. Changes are prompt/skill text, cases, authorized replay harness support and evidence; no server, runtime or UI behavior changes.
 
-Ruby should order Speedy to rerun baseline and selection independently with model-identity enforcement. Keep the hold: landing requires lunchboxfortwo's explicit yes relayed by Ruby, alongside live green checks and exact-head approval.
+Speedy independently reran baseline and selection with model-identity enforcement; the reference results above replace the author’s exact scores as the basis for the decision. Keep the hold: landing requires lunchboxfortwo's explicit yes relayed by Ruby, alongside live green checks and exact-head approval.

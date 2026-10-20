@@ -1,3 +1,4 @@
+import quotedTagPosts from './test-fixtures/quoted-tag-posts.json';
 import { flushDueCommanderWakes } from './commander-wakes.js';
 import { AgentScheduleLoop } from './agent-schedules.js';
 import { advanceCorner } from './corner-lifecycle.js';
@@ -1162,4 +1163,47 @@ it('R1: post refuses removed membership, archived and unknown addresses clearly'
   await db.query(`UPDATE memberships SET removed_at=now() WHERE room_id=$1 AND identity_id=$2`, [ROOM, RUBY]);
   await expect(daemon.execute('postCornerMessage', { ...authority(order), cornerId: ROOM, text: 'Refused' }, RUBY)).rejects.toThrow('not a current member');
   expect((await db.query(`SELECT id FROM messages WHERE text='Refused'`)).rowCount).toBe(0);
+});
+
+
+it('Reproduction R1: each post receipt lists only that post tags', async () => {
+  const opened = await open(), turn = await worker(opened.cornerId);
+  const post = (text: string) => daemon.execute('postCornerMessage', { ...authority(turn), cornerId: opened.cornerId, text }, WORKER);
+  const first = await post('@ruby discuss this');
+  expect(first.woken).toEqual(['ruby']);
+  const other = '7'.repeat(64);
+  await db.query(`INSERT INTO identities(id,kind,name,handle) VALUES($1,'agent','Other','other') ON CONFLICT DO NOTHING`, [other]);
+  await db.query(`INSERT INTO agents(agent_id,owner_id) VALUES($1,$2) ON CONFLICT DO NOTHING`, [other,HUMAN]);
+  await db.query(`INSERT INTO memberships(workspace_id,room_id,identity_id,role) VALUES($1,NULL,$2,'member'),($1,$3,$2,'member')`, [WS,other,ROOM]);
+  expect((await post('@other this post is for you')).woken).toEqual(['other']);
+  const second = await post('No tag in this next post.');
+  expect(second.woken).toEqual([]);
+  const third = await post('@captain see this');
+  expect(third.woken).toEqual([]);
+  expect(third.notWoken.map(item => item.handle)).toEqual(['captain']);
+  const quoted = await post('"@ruby, or any squire agent except Speedy."');
+  expect(quoted.woken).toEqual([]);
+  expect((await post('Correction: my quote of "@ruby" in that reply woke Ruby. That was my error. Ruby has no task here.')).woken).toEqual([]);
+  expect((await post('The next post has no tag.')).woken).toEqual([]);
+  expect((await post('@ruby fresh tag')).woken).toEqual(['ruby']);
+  expect((await post('"start ```\ncode\n``` @ruby"')).woken).toEqual(['ruby']);
+});
+
+
+it('Reproduction R1: exact original posts do not wake the quoted member', async () => {
+  const opened = await open(), turn = await worker(opened.cornerId);
+  await db.query(`UPDATE identities SET handle='nerd' WHERE id=$1`, [RUBY]);
+  try {
+    const receipts = [];
+    for (const text of quotedTagPosts) {
+      const receipt = await daemon.execute('postCornerMessage', { ...authority(turn), cornerId: opened.cornerId, text }, WORKER);
+      receipts.push(receipt);
+      expect((await db.query('SELECT text FROM messages WHERE id=$1', [receipt.id])).rows[0]?.text).toBe(text);
+    }
+    console.info('Reproduction R1 post receipts:', JSON.stringify(receipts.map(receipt => receipt.woken)));
+    for (const receipt of receipts) {
+      expect(receipt.woken).toEqual([]);
+      expect((await db.query(`SELECT id FROM agent_commands WHERE source_message_id=$1 AND agent_id=$2`, [receipt.id, RUBY])).rowCount).toBe(0);
+    }
+  } finally { await db.query(`UPDATE identities SET handle='ruby' WHERE id=$1`, [RUBY]); }
 });

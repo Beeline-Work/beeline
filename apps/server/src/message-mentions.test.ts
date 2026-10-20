@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { hasChannelMention, isChannelMentionToken, typedMentionHandles } from './message-mentions.js';
+import { hasChannelMention, hasSystemReportMention, isChannelMentionToken, typedMentionHandles } from './message-mentions.js';
 
 describe('typedMentionHandles', () => {
   it('does not turn forwarded quote text into a fresh mention', () => {
@@ -68,4 +68,16 @@ describe('hasChannelMention', () => {
       false,
     );
   });
+});
+
+
+it('ignores paired double quotes on one line but preserves unmatched quotes and other markdown', () => {
+  for (const text of ['"@ada"', '“@ada”', '"@ada" and “@ada”'])
+    expect(typedMentionHandles(text), text).toEqual(new Set());
+  for (const text of ['"@ada', '“@ada', '"@ada”', '"start\n@ada"', "'@ada'", '**@ada**'])
+    expect(typedMentionHandles(text), text).toEqual(new Set(['ada']));
+  expect(typedMentionHandles('"@ada" @bee “@ada”')).toEqual(new Set(['bee']));
+  expect(hasChannelMention('"@channel"')).toBe(false);
+  expect(hasSystemReportMention('“@system”')).toBe(false);
+  expect(hasSystemReportMention('“quoted” @system')).toBe(true);
 });

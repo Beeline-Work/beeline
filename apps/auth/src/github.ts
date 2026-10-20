@@ -396,24 +396,37 @@ export class GitHubAppClient {
       throw new Error('invalid GitHub installation id');
     }
     const hasBody = Boolean(options.repositoryIds?.length) || Boolean(options.permissions);
-    const body = await jsonObject(
-      await fetch(`${this.#config.apiBaseUrl}/app/installations/${installationId}/access_tokens`, {
-        method: 'POST',
-        headers: {
-          ...githubHeaders(await this.appJwt()),
-          ...(hasBody ? { 'content-type': 'application/json' } : {}),
-        },
-        ...(hasBody
-          ? {
-              body: JSON.stringify({
-                ...(options.repositoryIds?.length ? { repository_ids: options.repositoryIds } : {}),
-                ...(options.permissions ? { permissions: options.permissions } : {}),
-              }),
-            }
-          : {}),
-      }),
-      'GitHub installation token',
-    );
+    const response = await fetch(`${this.#config.apiBaseUrl}/app/installations/${installationId}/access_tokens`, {
+      method: 'POST',
+      headers: {
+        ...githubHeaders(await this.appJwt()),
+        ...(hasBody ? { 'content-type': 'application/json' } : {}),
+      },
+      ...(hasBody
+        ? {
+            body: JSON.stringify({
+              ...(options.repositoryIds?.length ? { repository_ids: options.repositoryIds } : {}),
+              ...(options.permissions ? { permissions: options.permissions } : {}),
+            }),
+          }
+        : {}),
+    });
+    if (!response.ok) {
+      try {
+        const requestId = response.headers.get('x-github-request-id') ?? '';
+        const contentType = response.headers.get('content-type')?.split(';')[0]?.trim().toLowerCase();
+        const mediaType = contentType === 'application/json' || contentType === 'application/vnd.github+json'
+          ? 'json' : contentType === 'text/html' ? 'html' : contentType ? 'other' : 'missing';
+        // Only bounded correlation metadata; never retain bodies, credentials or request scope.
+        console.warn('[github-installation-token]', {
+          status: response.status,
+          requestId: requestId.length <= 128 && /^[0-9a-f]+(?::[0-9a-f]+)+$/i.test(requestId)
+            ? requestId : 'unavailable',
+          mediaType,
+        });
+      } catch { /* Diagnostics must not replace the original GitHub failure. */ }
+    }
+    const body = await jsonObject(response, 'GitHub installation token');
     const token = typeof body.token === 'string' ? body.token : '';
     const expiresAt = typeof body.expires_at === 'string' ? body.expires_at : '';
     if (!token || !Number.isFinite(Date.parse(expiresAt))) {

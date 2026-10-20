@@ -12,7 +12,7 @@ This runs built server modules against isolated PGlite through the mounted HTTP 
 
 ## App checks
 
-- Server handoff suite: 21 tests pass, including missing/invalid/expired tokens, revoked membership, valid viewer HTML and ended shares.
+- Server handoff suite: 22 tests pass, including missing/invalid/expired tokens, revoked membership, valid viewer HTML and ended shares.
 - Body share/tool suites: 37 tests pass; returned card id and Beeline link are checked.
 - API contract suite: 477 tests pass.
 - Mobile route, existing viewer, native link delivery and pending-sign-in tests pass.
@@ -22,3 +22,13 @@ This runs built server modules against isolated PGlite through the mounted HTTP 
 ## Acceptance still pending
 
 The candidate is not deployed. The required signed-in walkthrough on `web.usebeeline.app` and the corresponding native Android live-share walkthrough remain pending. They cannot exercise this candidate while production serves its prior server and web/native routes. The next step is a coordinated candidate server/web/Android deployment, then a fresh live share opened from its bare link after reviewer sign-in. No production success or native full-view success is claimed.
+
+## Missing DM card: SHARE-CARD-DM-1
+
+Read-only production metadata confirms share `x2DgjDTMYApB_MhVPJBG3tnvFhxlPutBpd5zCXwwwmQ` has a committed, undeleted `computer-session` message in the requested DM. The historical tool mislabeled the share id as `cardId`; the actual message id is a separate 64-character id. Its URL/title/status satisfy the client card schema, and imported-history filtering does not apply to this DM.
+
+The publishing service emitted a targetless `message` invalidation. The mounted socket server needs `messageId` to project a committed `message-delta`; without it, direct card delivery is absent and recovery depends on a covering read or PostgreSQL notification. The fix names the committed message after its transaction completes.
+
+The new mounted-DM socket regression failed before this fix: the owner received no `message-delta`, despite the card being persisted. It now receives the card, the actual message id matches the tool result, the production client parser retains `computerSession`, a later Room read agrees, and a non-member receives no card. No LISTEN bridge or reload is used. A mobile regression parses and folds the same DTO shape and renders the live card/open control without needing an agent-turn request id. The built proof script also exercises that existing-socket DM delivery path before opening the share URL.
+
+This establishes and fixes a direct delivery defect. The original owner's visible symptom still needs confirmation against the deployed candidate; no historical client trace proves which recovery path failed on that phone.

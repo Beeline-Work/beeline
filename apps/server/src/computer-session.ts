@@ -209,7 +209,7 @@ export async function createComputerSession(
       [id, input.roomId, messageId, input.agentId, input.sessionId, upstream?.toString() ?? 'body:', process.env.FLY_MACHINE_ID ?? null, randomBytes(32), input.expiresAt ?? null],
     );
   });
-  live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'message', agentId: input.agentId });
+  live.publish({ type: 'invalidate', roomId: input.roomId, reason: 'message', agentId: input.agentId, messageId });
   return { id, url, messageId, beelineUrl: `https://web.usebeeline.app/beeline/browser-share?id=${id}` };
 }
 

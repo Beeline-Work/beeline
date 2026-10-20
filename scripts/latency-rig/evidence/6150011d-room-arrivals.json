@@ -57,6 +57,67 @@
     "No durable nightly schedule receipt yet."
   ],
   "latestCandidate": {
+    "source": "daf09db85",
+    "capture": "rev2-nightly-wrapper-attempt-6",
+    "complete": true,
+    "results": [
+      {
+        "name": "/beeline/chat/[channelId]",
+        "variant": "push-unseen-1",
+        "samples": 20,
+        "p50Ms": 381,
+        "p95Ms": 1028,
+        "timingPass": false,
+        "requestPass": false
+      },
+      {
+        "name": "/beeline/chat/[channelId]",
+        "variant": "push-unseen-5",
+        "samples": 20,
+        "p50Ms": 829,
+        "p95Ms": 1251,
+        "timingPass": false,
+        "requestPass": false
+      },
+      {
+        "name": "/beeline/chat/[channelId]",
+        "variant": "room-list-unseen-1",
+        "samples": 20,
+        "p50Ms": 261,
+        "p95Ms": 282,
+        "timingPass": true,
+        "requestPass": true
+      },
+      {
+        "name": "/beeline/chat/[channelId]",
+        "variant": "room-list-unseen-5",
+        "samples": 20,
+        "p50Ms": 275,
+        "p95Ms": 300,
+        "timingPass": true,
+        "requestPass": true
+      },
+      {
+        "name": "/beeline/chat/[channelId]",
+        "variant": "warm",
+        "samples": 20,
+        "p50Ms": 286,
+        "p95Ms": 303,
+        "timingPass": true,
+        "requestPass": false
+      },
+      {
+        "name": "send-text",
+        "variant": "warm",
+        "samples": 20,
+        "p50Ms": 157,
+        "p95Ms": 179,
+        "timingPass": false,
+        "requestPass": false
+      }
+    ]
+  },
+  "previousCandidate": {
     "source": "262b39de1",
     "capture": "rev2-nightly-wrapper-attempt-5",
     "complete": true,

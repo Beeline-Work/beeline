@@ -62,7 +62,7 @@ The current candidate preserves the initial cached transcript, publishes missing
 responses before session setup consumes them, and tests a warm-push-only native
 handoff flag.
 
-## Complete candidate matrix (262b39de1)
+## First complete candidate matrix (262b39de1)
 
 The actual local-attempt wrapper built, installed and signed in to a fresh
 fixture, then captured all 120 samples. Android system animation settings were
@@ -82,6 +82,25 @@ The revised send harness completed all 20 sends. Push traces show delays before
 the HTTP request reaches the proxy and after its response. Further diagnostic
 marks distinguish authorization, native request dispatch, body decoding and
 navigation ancestry. No causal conclusion is claimed from those gaps alone.
+
+## Warm dispatch and native push candidate (daf09db85)
+
+| Entry / unseen | Samples | p50 ms | p95 ms | Timing | Request contract |
+| --- | ---: | ---: | ---: | --- | --- |
+| Room list / 1 | 20 | 261 | 282 | pass | pass |
+| Room list / 5 | 20 | 275 | 300 | pass | pass |
+| Push / 1 | 20 | 381 | 1028 | fail | fail |
+| Push / 5 | 20 | 829 | 1251 | fail | fail |
+| Warm Room open | 20 | 286 | 303 | pass | fail |
+| Send text | 20 | 157 | 179 | fail | fail |
+
+All 120 samples completed; the analyzer exits 1. A warm valid token now reaches
+the JS fetch call without yielding to navigation. Exact mounted ancestry uses
+a normal stack push. The remaining trace still shows native networking and
+body-decoding delays: one missing-row sample dispatched in JS at +9 ms, reached
+the proxy at +391 ms, received its wire response by +515 ms, and completed body
+decoding at +960 ms. A Room-only Expo native fetch candidate is under test;
+this run does not contain that change.
 
 ## Nightly installation and delivery
 

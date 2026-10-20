@@ -9,7 +9,6 @@ import { RESOURCE_FACADE_FLAG, runResourceFacade } from './resource-mcp-facade.j
  *   BUZZ_PRIVATE_KEY=nsec1... \
  *   BUZZ_AGENT_BIN=/path/to/buzz-agent \
  *   BUZZ_DEV_MCP_BIN=/path/to/buzz-dev-mcp \
- *   BUZZY_BODY_LLM_FILE=/path/to/llm-egress.env \
  *   npx tsx src/cli.ts provision <channel-uuid>
  *
  * Or via npm:

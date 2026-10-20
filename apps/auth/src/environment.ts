@@ -1,6 +1,11 @@
 import { OidcClient } from './oidc.js';
 import type { AuthTenant } from './server.js';
 
+/** Prefer Beeline names while retaining existing operator configuration. */
+export function readEnv(env: NodeJS.ProcessEnv, suffix: string): string | undefined {
+  return env[`BEELINE_${suffix}`] ?? env[`BUZZY_${suffix}`];
+}
+
 function required(env: NodeJS.ProcessEnv, name: string): string {
   const value = env[name];
   if (!value) throw new Error(`${name} is required`);
@@ -8,8 +13,14 @@ function required(env: NodeJS.ProcessEnv, name: string): string {
 }
 
 export function authTenantsFromEnvironment(env: NodeJS.ProcessEnv): AuthTenant[] {
-  const parsed = JSON.parse(required(env, 'BUZZY_AUTH_TENANTS_JSON')) as unknown;
-  if (!Array.isArray(parsed)) throw new Error('BUZZY_AUTH_TENANTS_JSON must be an array');
+  const raw = readEnv(env, 'AUTH_TENANTS_JSON');
+  if (!raw)
+    throw new Error('BEELINE_AUTH_TENANTS_JSON is required (BUZZY_AUTH_TENANTS_JSON still works)');
+  const parsed = JSON.parse(raw) as unknown;
+  if (!Array.isArray(parsed))
+    throw new Error(
+      'BEELINE_AUTH_TENANTS_JSON (BUZZY_AUTH_TENANTS_JSON still works) must be an array',
+    );
   return parsed.map((entry) => {
     if (!entry || typeof entry !== 'object') throw new Error('invalid auth tenant');
     const candidate = entry as Record<string, unknown>;

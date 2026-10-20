@@ -1,3 +1,4 @@
+import { readEnv } from './env.js';
 import process from 'node:process';
 import { Pool, type PoolClient } from 'pg';
 
@@ -22,8 +23,8 @@ async function main(): Promise<void> {
       'usage: node --import tsx scripts/cleanup-legacy-daemon-chat.ts --dry-run|--execute',
     );
   }
-  const databaseUrl = process.env.BUZZY_PUSH_DATABASE_URL ?? process.env.DATABASE_URL;
-  if (!databaseUrl) throw new Error('set BUZZY_PUSH_DATABASE_URL or DATABASE_URL');
+  const databaseUrl = readEnv(process.env, 'PUSH_DATABASE_URL') ?? process.env.DATABASE_URL;
+  if (!databaseUrl) throw new Error('set BEELINE_PUSH_DATABASE_URL (BUZZY_PUSH_DATABASE_URL still works) or DATABASE_URL');
 
   const pool = new Pool({ connectionString: databaseUrl, max: 1 });
   const client = await pool.connect();

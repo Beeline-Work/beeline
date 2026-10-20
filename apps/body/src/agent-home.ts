@@ -1,3 +1,4 @@
+import { readEnv } from './env.js';
 /**
  * Per-room-instance harness state directories.
  *
@@ -1826,7 +1827,7 @@ export function harnessStateDirsFromEnv(env: Record<string, string | undefined>)
 } {
   const stateDirs: string[] = [];
   for (const name of HARNESS_STATE_ENV_VARS) {
-    const value = env[name];
+    const value = name === AGENT_PRIVATE_STATE_ENV ? readEnv(env, 'AGENT_PRIVATE_DIR') : env[name];
     if (value) stateDirs.push(resolve(value));
   }
   const tmp = env.TMPDIR;

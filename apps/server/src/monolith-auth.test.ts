@@ -82,7 +82,7 @@ describe('mounted monolith auth', () => {
           tokenAuth.createDaemonExchange(agentId, transaction),
         env: {
           NODE_ENV: 'test',
-          BUZZY_AUTH_TENANTS_JSON: JSON.stringify([tenant]),
+          BEELINE_AUTH_TENANTS_JSON: JSON.stringify([tenant]),
           BUZZY_AUTH_OIDC_ISSUER: 'https://accounts.example',
           BUZZY_AUTH_OIDC_AUTHORIZATION_ENDPOINT: 'https://accounts.example/authorize',
           BUZZY_AUTH_OIDC_TOKEN_ENDPOINT: 'https://accounts.example/token',

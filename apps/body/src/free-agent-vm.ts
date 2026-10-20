@@ -1,3 +1,4 @@
+import { envPair } from './env.js';
 import { chmod, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { LEGACY_ACCESS_POLICY } from './access-policy.js';
@@ -73,10 +74,10 @@ export function freeAgentModelEnv(grant: Pick<FreeAgentGrant, 'modelToken' | 'ma
   const lines = {
     BEELINE_FREE_AGENT_MODEL_TOKEN: grant.modelToken,
     BEELINE_FREE_AGENT_MAX_TURN_SECONDS: String(grant.maxTurnSeconds ?? 900),
-    BUZZY_BODY_AGENT_ENV_PASSTHROUGH: [
+    ...envPair('BODY_AGENT_ENV_PASSTHROUGH', [
       'BEELINE_FREE_AGENT_MODEL_TOKEN',
       'BEELINE_FREE_AGENT_MAX_TURN_SECONDS',
-    ].join(','),
+    ].join(',')),
   };
   return `${Object.entries(lines)
     .map(([key, value]) => `${key}=${value.replace(/[\r\n]/g, '')}`)

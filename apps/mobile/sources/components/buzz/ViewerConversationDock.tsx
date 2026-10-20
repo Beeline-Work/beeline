@@ -1,17 +1,16 @@
 import { Button } from './Button';
 import React from 'react';
 import { Animated, Platform, ScrollView, Text, View, useWindowDimensions } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { AttachmentReference } from '@beeline/buzz-client';
 import type { RoomViewMessage } from '@beeline/api-contract/phone';
 import { currentViewerConversation, subscribeViewerConversation, viewerAgentHandle, viewerContext, viewerContextLabel } from '@/buzz/viewer-conversation';
 import { withAlpha } from '@/buzz/groknight';
 import { useKeyboardState } from 'react-native-keyboard-controller';
-import { MAX_MESSAGE_ATTACHMENTS, pickedPhotoAttachments, type PickedChatAttachment } from '@/buzz/chat-attachment-pick';
 import { COMPOSER_SINGLE_LINE_INPUT_HEIGHT, ConversationComposer, type DictatedSend } from '@/components/buzz/ConversationComposer';
-import { TranscriptReference, ViewerConversationRing } from './TranscriptReference';
-import { AttachmentPickerSheet } from './AttachmentPickerSheet';
+import { TranscriptReference } from './TranscriptReference';
+import { ConversationGlyph } from './MicGlyph';
 import { MonoMarkdown } from './MonoMarkdown';
 
 type Entry = { id: string; speaker: string; text: string; context?: string };
@@ -27,6 +26,7 @@ export function ViewerConversationDock({
   artifact?: AttachmentReference;
   captureScreen?: () => Promise<string | null>;
 }) {
+  const { theme } = useUnistyles();
   const insets = useSafeAreaInsets();
   const { height: windowHeight } = useWindowDimensions();
   const transcriptScroll = React.useRef<ScrollView>(null);
@@ -56,10 +56,6 @@ export function ViewerConversationDock({
   const [tickerVisible, setTickerVisible] = React.useState(false);
   const [sending, setSending] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
-  const [attachPicker, setAttachPicker] = React.useState(false);
-  const [attachments, setAttachments] = React.useState<PickedChatAttachment[]>([]);
-  // One slot belongs to the artifact or browser snapshot attached at send time.
-  const maxPickedAttachments = MAX_MESSAGE_ATTACHMENTS - 1;
   const [availableWidth, setAvailableWidth] = React.useState(366);
   const width = React.useRef(new Animated.Value(44)).current;
   const keyboardHeight = useKeyboardState((state) => state.height);
@@ -113,7 +109,7 @@ export function ViewerConversationDock({
 
   const send = async (dictated?: DictatedSend) => {
     const text = draftRef.current.trim();
-    if ((!text && !attachments.length) || !conversation || sending) return false;
+    if (!text || !conversation || sending) return false;
     setSending(true);
     setError(null);
     const previouslySent = sentToAgent.current;
@@ -126,7 +122,6 @@ export function ViewerConversationDock({
         text, context, agentHandle: currentAgent,
         ...(artifact ? { artifact } : {}),
         ...(screenshotBase64 ? { screenshotBase64 } : {}),
-        ...(attachments.length ? { pickedAttachments: attachments } : {}),
       }, dictated);
       if (!succeeded) { sentToAgent.current = previouslySent; return false; }
       setEntries((current) => [...current, {
@@ -134,7 +129,6 @@ export function ViewerConversationDock({
       }].slice(-8));
       setDraft('');
       draftRef.current = '';
-      setAttachments([]);
       setHeight(COMPOSER_SINGLE_LINE_INPUT_HEIGHT);
       setRevision((current) => current + 1);
       return true;
@@ -146,27 +140,6 @@ export function ViewerConversationDock({
       setSending(false);
     }
   };
-  const pickPhoto = async () => {
-    const remaining = maxPickedAttachments - attachments.length;
-    if (remaining < 1) return;
-    const ImagePicker = await import('expo-image-picker');
-    const picked = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ['images'], allowsMultipleSelection: true, selectionLimit: remaining, quality: 1, exif: false,
-    });
-    if (!picked.canceled) setAttachments((current) => [...current, ...pickedPhotoAttachments(picked.assets)].slice(0, maxPickedAttachments));
-  };
-  const pickDocument = async () => {
-    if (attachments.length >= maxPickedAttachments) return;
-    const DocumentPicker = await import('expo-document-picker');
-    const picked = await DocumentPicker.getDocumentAsync({ copyToCacheDirectory: true, multiple: false, type: '*/*' });
-    if (picked.canceled || !picked.assets[0]) return;
-    const file = picked.assets[0];
-    setAttachments((current) => [...current, {
-      uri: file.uri, name: file.name || `file-${Date.now()}`,
-      mimeType: file.mimeType ?? 'application/octet-stream', size: file.size ?? 0, source: 'file',
-    }]);
-  };
-
   const agentReplies = entries.filter((entry) => entry.speaker !== 'You');
   const showTranscript = Boolean(error || (open && entries.length) || (tickerVisible && agentReplies.length));
   const recent = open ? entries.slice(-3) : agentReplies.slice(-2);
@@ -212,9 +185,9 @@ export function ViewerConversationDock({
       ) : null}
       <Animated.View style={[styles.pill, { width, bottom }]} testID="viewer-conversation-pill"
       onLayout={(event) => setPillHeight(event.nativeEvent.layout.height)}>
-        <Button label="" variant="secondary" icon={<ViewerConversationRing />}
+        <Button label="" variant="secondary" icon={<ConversationGlyph color={open ? theme.buzz.accent : theme.buzz.textPrimary} />}
         accessibilityRole="button" accessibilityLabel={open ? 'Collapse conversation' : 'Talk to agent'}
-        accessibilityState={{ expanded: open }}
+        accessibilityState={{ expanded: open }} hitSlop={1}
         onPress={() => {
           if (open) setTickerVisible(false);
           setOpen((value) => !value);
@@ -226,12 +199,6 @@ export function ViewerConversationDock({
           <View style={styles.composerWrap}><ConversationComposer
         viewerPill value={draft} height={height} focused={focused} disabled={sending || !conversation}
         inputRevision={revision} testIDPrefix="viewer" speechEnabled
-        attachments={attachments.map((item) => ({
-          uri: item.uri, name: item.name, mimeType: item.mimeType,
-          sizeLabel: `${Math.max(1, Math.round(item.size / 1024))} KB`, uploadState: 'uploaded',
-        }))}
-        onRemoveAttachment={(index) => setAttachments((current) => current.filter((_, at) => at !== index))}
-        onAttach={() => setAttachPicker(true)}
         onBlur={() => setFocused(false)} onFocus={() => setFocused(true)}
         onChangeText={(text) => { draftRef.current = text; setDraft(text); }}
         onContentSizeChange={(event) => setHeight(draft.trim()
@@ -246,8 +213,6 @@ export function ViewerConversationDock({
       /></View>
         ) : null}
       </Animated.View>
-      <AttachmentPickerSheet visible={attachPicker} onClose={() => setAttachPicker(false)}
-      onPickDocument={() => void pickDocument()} onPickPhoto={() => void pickPhoto()} />
     </View>
   );
 }
@@ -268,14 +233,19 @@ const styles = StyleSheet.create((theme) => ({
     overflow: 'hidden',
   },
   control: {
-    width: 44,
-    height: 44,
+    // The enclosing 1 dp border completes the 44 dp closed square.
+    width: 42,
+    minWidth: 42,
+    height: 42,
+    minHeight: 42,
+    borderWidth: 0,
+    paddingHorizontal: 0,
     borderRadius: theme.buzz.radius,
     backgroundColor: theme.buzz.bgBase,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  controlOpen: { borderRightWidth: 1, borderRightColor: theme.buzz.border, borderRadius: 0,
+  controlOpen: { width: 44, minWidth: 44, height: 'auto', alignSelf: 'stretch', borderRightWidth: 1, borderRightColor: theme.buzz.borderStrong, borderRadius: 0,
     backgroundColor: 'transparent' },
   composerWrap: { flex: 1, minWidth: 0 },
   transcript: { overflow: 'hidden', position: 'absolute', left: 16, right: 16, padding: theme.buzz.space.md, borderRadius: 10,

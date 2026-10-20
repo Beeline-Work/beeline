@@ -199,7 +199,7 @@
       "MessageSearchRow",
       "Retry"
     ],
-    "components/buzz/MicGlyph.tsx": ["ArrowUpGlyph", "MicGlyph", "PlusGlyph", "StopGlyph", "StrokeGlyph", "WaveformGlyph"],
+    "components/buzz/MicGlyph.tsx": ["ArrowUpGlyph", "ConversationGlyph", "MicGlyph", "PlusGlyph", "StopGlyph", "StrokeGlyph", "WaveformGlyph"],
     "components/buzz/MonoHull.tsx": [
       "HullActivityTip",
       "HullLivePulse",
@@ -319,7 +319,6 @@
     ],
     "components/buzz/TranscriptReference.tsx": [
       "TranscriptReference",
-      "ViewerConversationRing",
       "contents"
     ],
     "components/buzz/TranscriptScrubber.tsx": ["TranscriptScrubber"],

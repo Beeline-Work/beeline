@@ -530,11 +530,11 @@ jobs:
           cache: npm
       - run: npm ci
       # Server tests import these workspaces from dist. The production corpus
-      # test has its own scaled-data gate below; Vitest discovers every other
+      # tests have their own scaled-data gate below; Vitest discovers every other
       # server test except the large integration file, which runs below.
       - run: npm run build -w @beeline/nostr && npm run build -w @beeline/api-contract && npm run build -w @beeline/buzz-client && npm run build -w @beeline/auth && npm run build -w @beeline/body
       - name: Run the server suite shard
-        run: npm test -w @beeline/server -- --run --exclude src/production-corpus-hot-reads.test.ts --exclude src/integration.test.ts --exclude src/agent-command.scaling.test.ts --maxWorkers=2 --minWorkers=2 --shard=${{ matrix.shard }}/8
+        run: npm test -w @beeline/server -- --run --exclude src/production-corpus-hot-reads.test.ts --exclude src/production-corpus-width.test.ts --exclude src/integration.test.ts --exclude src/agent-command.scaling.test.ts --maxWorkers=2 --minWorkers=2 --shard=${{ matrix.shard }}/8
 
   server-claim-latency:
     name: SERVER CLAIM LATENCY
@@ -731,7 +731,7 @@ jobs:
           PRODUCTION_CORPUS_CACHE_DIR: ${{ runner.temp }}/beeline-production-corpus
           PRODUCTION_CORPUS_PLAN_DIR: ${{ runner.temp }}/beeline-production-plans
         run: |
-          npm test -w @beeline/server -- --run src/production-corpus-hot-reads.test.ts
+          npm test -w @beeline/server -- --run src/production-corpus-hot-reads.test.ts src/production-corpus-width.test.ts --maxWorkers=1 --minWorkers=1
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -761,7 +761,7 @@ jobs:
           PRODUCTION_CORPUS_CACHE_DIR: ${{ runner.temp }}/beeline-production-corpus
           PRODUCTION_CORPUS_PLAN_DIR: ${{ runner.temp }}/beeline-production-plans
         run: |
-          npm test -w @beeline/server -- --run src/production-corpus-hot-reads.test.ts
+          npm test -w @beeline/server -- --run src/production-corpus-hot-reads.test.ts src/production-corpus-width.test.ts --maxWorkers=1 --minWorkers=1
       - uses: actions/upload-artifact@v4
         if: always()
         with:

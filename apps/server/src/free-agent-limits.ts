@@ -1,5 +1,14 @@
 import type { SqlDatabase } from './database.js';
 
+export const DEFAULT_FREE_AGENT_DAILY_TOKENS = 3_000_000;
+
+export function freeAgentDailyTokenCapFromEnv(env: NodeJS.ProcessEnv): number {
+  const configured = Number(env.BEELINE_FREE_AGENT_DAILY_TOKENS);
+  return Number.isFinite(configured) && configured > 0
+    ? configured
+    : DEFAULT_FREE_AGENT_DAILY_TOKENS;
+}
+
 export interface FreeAgentLimits {
   cachedTokenWeight: number;
   callsPerMinute: number;

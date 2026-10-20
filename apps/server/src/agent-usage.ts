@@ -1,6 +1,6 @@
 import { readAgentUsage, type AgentUsage } from '@beeline/api-contract/daemon';
 import type { SqlDatabase } from './database.js';
-import { freeAgentLimitsFromEnv } from './free-agent-limits.js';
+import { freeAgentDailyTokenCapFromEnv, freeAgentLimitsFromEnv } from './free-agent-limits.js';
 
 /** Usage inputs for an `agents` row, null unless `viewer` (a SQL expression) owns it. */
 export function agentUsageColumns(agent: string, viewer: string): string {
@@ -30,7 +30,6 @@ export type AgentUsageRow = {
 export function projectAgentUsage(row: AgentUsageRow): AgentUsage | undefined {
   if (row.usage_free) {
     const now = new Date();
-    const configured = Number(process.env.BEELINE_FREE_AGENT_DAILY_TOKENS);
     const paused =
       Number(row.usage_free_budget_usd ?? 0) >= freeAgentLimitsFromEnv(process.env).dailyBudgetUsd;
     return {
@@ -38,7 +37,7 @@ export function projectAgentUsage(row: AgentUsageRow): AgentUsage | undefined {
       windows: [],
       free: {
         used: Number(row.usage_free_tokens ?? 0),
-        limit: Number.isFinite(configured) && configured > 0 ? configured : 1_000_000,
+        limit: freeAgentDailyTokenCapFromEnv(process.env),
         resetsAt: Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1) / 1000,
         ...(paused ? { paused: true } : {}),
       },

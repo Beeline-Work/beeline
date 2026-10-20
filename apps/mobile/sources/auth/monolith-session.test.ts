@@ -39,6 +39,37 @@ const tokens = (generation: number) => ({
 describe('monolith phone session', () => {
   beforeEach(() => secure.clear());
 
+  it('dispatches a warm read before navigation can occupy the next microtask', async () => {
+    const fetcher = vi.fn(async () => Response.json(tokens(1)));
+    const session = new MonolithSession('https://server.example', fetcher as typeof fetch);
+    await session.exchangeGitHubTicket('ticket');
+    fetcher.mockClear();
+
+    const read = session.fetch('https://server.example/v1/phone/rooms/room-a');
+
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    expect(fetcher).toHaveBeenCalledWith(
+      'https://server.example/v1/phone/rooms/room-a',
+      expect.objectContaining({ headers: expect.objectContaining({ authorization: 'Bearer access-1' }) }),
+    );
+    await read;
+  });
+
+  it('does not dispatch a warm read whose external signal was already aborted', async () => {
+    const fetcher = vi.fn(async () => Response.json(tokens(1)));
+    const session = new MonolithSession('https://server.example', fetcher as typeof fetch);
+    await session.exchangeGitHubTicket('ticket');
+    fetcher.mockClear();
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(session.fetch('https://server.example/v1/phone/rooms/room-a', {
+      signal: controller.signal,
+    })).rejects.toMatchObject({ name: 'AbortError' });
+
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
   it('offers a synchronous cache identity only after authentication and clears it on sign-out', async () => {
     secure.set('buzzy.monolith.identity.v1', 'old-stored-identity');
     const fetcher = vi.fn(async () => new Response(JSON.stringify(tokens(1))));

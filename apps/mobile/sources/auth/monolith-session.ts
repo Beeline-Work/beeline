@@ -5,6 +5,7 @@ import { webRuntimeStorage } from '@/utils/web-storage';
 import { resetClientState } from '@/sync/client-reset';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { bytesToHex, utf8ToBytes } from '@noble/hashes/utils.js';
+import { markRoomOpen } from '@/buzz/room-open-trace';
 
 const REFRESH_KEY = 'buzzy.monolith.refresh.v1';
 const IDENTITY_KEY = 'buzzy.monolith.identity.v1';
@@ -513,8 +514,16 @@ export class MonolithSession {
     if (init.signal?.aborted) controller.abort();
     try {
       // Token restore or refresh can stall too; the deadline covers it.
-      const authorized = await untilAborted(this.authorization(fetchImpl), controller.signal);
+      const tracingRoom = /\/v1\/phone\/rooms\/[^/?]+$/.test(input);
+      if (tracingRoom) markRoomOpen('wire-authorizing');
+      // A warm Room tap must dispatch before navigation starts rendering.
+      // Awaiting an already available token lets that render hold the GET.
+      const available = this.validAccessToken();
+      const authorized = available && !controller.signal.aborted
+        ? available
+        : await untilAborted(this.authorization(fetchImpl), controller.signal);
       const requestStartMs = performance.now();
+      if (tracingRoom) markRoomOpen('wire-dispatch');
       const response = await fetchImpl(input, {
         ...init,
         signal: controller.signal,
@@ -523,6 +532,7 @@ export class MonolithSession {
           authorization: `Bearer ${authorized}`,
         },
       });
+      if (tracingRoom) markRoomOpen('wire-headers');
       responseTimings.set(response, { requestStartMs, firstByteMs: performance.now() });
       return response;
     } catch (error) {

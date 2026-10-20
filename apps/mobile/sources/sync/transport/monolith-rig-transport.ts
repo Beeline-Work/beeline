@@ -96,7 +96,7 @@ export type LiveWireEvent = (
       /** A live helper connection holds this presence; it does not age out. */
       held?: boolean;
     }
-) & { sequence?: number };
+) & { sequence?: number; epoch?: string };
 
 export type MonolithSurfaceEvent = {
   readonly monolithLive: LiveWireEvent;

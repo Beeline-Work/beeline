@@ -1,3 +1,4 @@
+import { AppState } from 'react-native';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   isCornerListView,
@@ -95,12 +96,13 @@ async function rereadPages(roomId: string, reader: Reader, archived: boolean): P
 
 /**
  * Hold a Room's lane and keep its corner record current. Rows the lane already
- * proved paint with no read; a read happens only when the record cannot prove
- * it saw every change. `client` reads for a caller that already holds one.
+ * proved stay painted during the covering read on mount and foreground.
+ * `client` reads for a caller that already holds one.
  */
 export function useRoomCorners(
   roomId: string | undefined,
   client?: CornersClient | null,
+  rereadOnMount = true,
 ) {
   const record = useRoomCornerRecord(roomId);
   const [error, setError] = useState<string | null>(null);
@@ -153,7 +155,7 @@ export function useRoomCorners(
         if (cancelled) return;
         readyRef.current = true;
         const now = getRoomCorners(roomId);
-        if (!now.current || !now.headerRead || now.wantsRead) await read(false);
+        if (rereadOnMount || !now.current || !now.headerRead || now.wantsRead) await read(false);
       } catch (reason) {
         if (!cancelled) setError(phoneOperationFailureReason(reason));
       }
@@ -163,7 +165,17 @@ export function useRoomCorners(
       readyRef.current = false;
       void holding.then((stop) => stop());
     };
-  }, [read, reader, roomId]);
+  }, [read, reader, roomId, rereadOnMount]);
+
+  useEffect(() => {
+    if (!roomId) return;
+    let previous = AppState.currentState;
+    const subscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active' && previous !== 'active' && readyRef.current) void read(true);
+      previous = state;
+    });
+    return () => subscription.remove();
+  }, [read, roomId]);
 
   useEffect(() => {
     if (!roomId || !record || !readyRef.current) return;
@@ -241,7 +253,7 @@ export function useCornerHeaderItem(
   archived: boolean,
   client?: CornersClient | null,
 ): CornerDisplayItem | undefined {
-  const { record } = useRoomCorners(parentId, client);
+  const { record } = useRoomCorners(parentId, client, false);
   if (!parentId) return undefined;
   return cornerHeaderItem(record ? findRoomCornerRow(record, cornerId) : undefined, archived);
 }

@@ -597,6 +597,7 @@ export class LiveConnection {
         turnId: live.turnId, revision: live.revision,
         text: previous.text + live.chunk,
         ...(live.sequence !== undefined ? { sequence: live.sequence } : {}),
+        ...(live.epoch !== undefined ? { epoch: live.epoch } : {}),
         latestChunk: live.latestChunk ?? live.chunk,
       };
     }
@@ -634,7 +635,13 @@ export class LiveConnection {
       noteCornerLaneSubscribed(live.roomId, resumed);
       for (const waiter of [...this.subscribeWaiters]) waiter();
     } else if (typeof live.sequence === 'number') {
-      const cursor = this.roomCursors.get(live.roomId);
+      let cursor = this.roomCursors.get(live.roomId);
+      if (live.epoch && cursor?.epoch !== live.epoch) {
+        // The server evicted this Room's history while the socket stayed open.
+        cursor = { epoch: live.epoch, base: 0, seen: new Set() };
+        this.roomCursors.set(live.roomId, cursor);
+        noteCornerLaneSubscribed(live.roomId, false);
+      }
       if (cursor && live.sequence > cursor.base) {
         if (live.sequence > cursor.base + 256) {
           this.roomCursors.delete(live.roomId);

@@ -78,8 +78,8 @@ export async function postRepositoryOnboarding(database: SqlDatabase, github: Gi
   };
   // Repeated agent calls replace an unanswered card rather than leaving stale actions live.
   await database.query(`UPDATE messages SET card=jsonb_set(card,'{status}','"settled"')
-    WHERE room_id=$1 AND author_id=$2 AND card_type='repository-onboarding' AND card->>'kind'=$3 AND card->>'status'='open'`,
-    [input.roomId, input.agentId, kind]);
+    WHERE room_id=$1 AND author_id=$2 AND card_type='repository-onboarding' AND card->>'kind'=$3 AND card->>'status'='open' AND card->>'requesterId'=$4`,
+    [input.roomId, input.agentId, kind, input.requesterId]);
   await systemLine(database, { id, roomId: input.roomId, authorId: input.agentId,
     subject: { id: input.agentId, kind: 'agent', name: room.name },
     verb: kind === 'starters' ? 'suggested work' : 'offered a repository',

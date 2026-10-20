@@ -1342,7 +1342,7 @@ export class DaemonService {
           authenticatedAgentId,
         )) as Output<Name>;
       case 'getRoomRepositoryState': {
-        const owner = (await this.database.query<{ owner_id: string }>(`SELECT owner_id FROM agents WHERE agent_id=$1`, [authenticatedAgentId])).rows[0]?.owner_id;
+        const owner = await this.repositoryOnboardingRequester(authenticatedAgentId, scopedRoom, candidate);
         return { ...(await this.repository(
           (input as Input<'getRoomRepositoryState'>).roomId,
           authenticatedAgentId,
@@ -1403,6 +1403,7 @@ export class DaemonService {
         return (await this.configuration(
           authenticatedAgentId,
           (input as Input<'getAgentConfiguration'>).roomId,
+          candidate,
         )) as Output<Name>;
       case 'getAgentPresence':
         return (await this.presence(
@@ -3717,7 +3718,7 @@ export class DaemonService {
     }
     return { currentIdentityId: current, predecessors };
   }
-  private async configuration(agentId: string, roomId?: string) {
+  private async configuration(agentId: string, roomId?: string, context?: Record<string, unknown>) {
     if (roomId) await this.access(roomId, agentId);
     const row = (
       await this.database.query<{
@@ -3781,9 +3782,10 @@ export class DaemonService {
         }))
       : [];
     if (row?.soul) {
-      const owner = (await this.database.query<{ owner_id: string }>(
-        `SELECT a.owner_id FROM agents a JOIN free_agents f ON f.agent_id=a.agent_id WHERE a.agent_id=$1`, [agentId],
-      )).rows[0]?.owner_id;
+      const freeAgent = (await this.database.query(
+        `SELECT 1 FROM free_agents WHERE agent_id=$1`, [agentId],
+      )).rowCount > 0;
+      const owner = freeAgent ? await this.repositoryOnboardingRequester(agentId, roomId, context) : undefined;
       if (owner && await onboardingEnabledForViewer(this.database, owner))
         row.soul = { ...row.soul, instructions: `${row.soul.instructions}\n\n${FREE_AGENT_REPOSITORY_GUIDE}` };
     }
@@ -6420,9 +6422,21 @@ export class DaemonService {
     };
   }
 
+  private async repositoryOnboardingRequester(agentId: string, roomId?: string, context?: Record<string, unknown>) {
+    if (process.env.BEELINE_REPOSITORY_ONBOARDING !== '1') return undefined;
+    const command = this.authorizedCommand ?? (roomId && typeof context?.requestId === 'string'
+      ? await authorizeCommandOutput(this.database, roomId, agentId, context.requestId, context.generationId)
+      : undefined);
+    if (command) {
+      const requester = await this.grantRequester(command);
+      if (requester.kind === 'human') return requester.id;
+    }
+    return (await this.database.query<{ owner_id: string }>(
+      `SELECT owner_id FROM agents WHERE agent_id=$1`, [agentId])).rows[0]?.owner_id;
+  }
+
   /** Root command provenance is the authority even after delegation and resumes. */
-  private async grantRequester() {
-    const command = this.authorizedCommand;
+  private async grantRequester(command = this.authorizedCommand) {
     if (!command) throw new Error('resource access requires an active command');
     const requester = (
       await this.database.query<{

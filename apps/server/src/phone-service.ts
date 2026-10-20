@@ -7164,9 +7164,20 @@ export class PhoneService {
         workspaceJoined: joined.rowCount > 0,
       });
       const roomId = await firstAccessibleRoomId(database, row.workspace_id, viewerId);
-      if (roomId && this.freeAgents && await onboardingEnabledForViewer(database, viewerId) && !(await database.query(
-        `SELECT 1 FROM free_agents WHERE workspace_id=$1`, [row.workspace_id])).rowCount) {
-        await this.freeAgents.createInWorkspace(database, { workspaceId: row.workspace_id, creatorId: viewerId, roomId });
+      if (roomId && joined.rowCount > 0 && await onboardingEnabledForViewer(database, viewerId)) {
+        const existing = (await database.query<{ agent_id: string; repository_name: string | null }>(
+          `SELECT f.agent_id,r.repository_name FROM free_agents f
+           JOIN memberships m ON m.identity_id=f.agent_id AND m.room_id=$2 AND m.removed_at IS NULL
+           JOIN rooms r ON r.id=m.room_id WHERE f.workspace_id=$1`, [row.workspace_id, roomId])).rows[0];
+        if (existing) {
+          await postRepositoryOnboarding(database, this.github, {
+            roomId, agentId: existing.agent_id, requesterId: viewerId,
+            kind: existing.repository_name ? 'starters' : 'repository',
+          });
+        } else if (this.freeAgents && !(await database.query(
+          `SELECT 1 FROM free_agents WHERE workspace_id=$1`, [row.workspace_id])).rowCount) {
+          await this.freeAgents.createInWorkspace(database, { workspaceId: row.workspace_id, creatorId: viewerId, roomId });
+        }
       }
       return {
         joined: joined.rowCount > 0,

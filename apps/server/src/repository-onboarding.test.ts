@@ -120,3 +120,12 @@ it('turns off cards and actions without changing the existing Room or calling Gi
     await expect(phone.execute('actOnRepositoryCard', {roomId:R,cardId:card.id,action:'create'},H)).rejects.toThrow('unavailable');
   } finally { vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING', '1'); }
 });
+
+it('keeps another requester\'s unanswered card open when onboarding an invitee', async () => {
+  const ownerCard = await postRepositoryOnboarding(db, github, { roomId:R, agentId:A, requesterId:H, kind:'repository' });
+  const inviteeCard = await postRepositoryOnboarding(db, github, { roomId:R, agentId:A, requesterId:OTHER, kind:'repository' });
+  const cards = (await db.query<{ id: string; status: string }>(
+    `SELECT id,card->>'status' status FROM messages WHERE id=ANY($1::text[])`, [[ownerCard.id, inviteeCard.id]])).rows;
+  expect(cards).toHaveLength(2);
+  expect(cards.every(card => card.status === 'open')).toBe(true);
+});

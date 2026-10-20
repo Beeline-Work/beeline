@@ -710,7 +710,9 @@ jobs:
     if: >-
       !cancelled() && github.event_name == 'pull_request' &&
       needs.changes.outputs.productionCorpusReplay == 'true'
-    runs-on: [self-hosted, beeline-ci]
+    # Match the single-runner on-demand lane: latency evidence must not share
+    # the capped worker pool with parallel integration suites and builds.
+    runs-on: [self-hosted, beeline-prod-host]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4

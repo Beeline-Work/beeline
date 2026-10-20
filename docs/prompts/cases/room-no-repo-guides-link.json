@@ -1,0 +1,49 @@
+{
+  "id": "room-no-repo-guides-link",
+  "section": "place",
+  "summary": "Code work in a Room without a repository gets the Link or Create path in the first reply.",
+  "place": "room",
+  "session": {
+    "agentCommand": "pi-acp",
+    "shell": {
+      "available": true
+    }
+  },
+  "turn": {
+    "task": {
+      "body": "@ruby can you write code here in this Room?",
+      "fromName": "dana",
+      "commandReason": "human_tag"
+    }
+  },
+  "pass": {
+    "all": [
+      {
+        "text": {
+          "matches": "Room.{0,30}header",
+          "flags": "is"
+        }
+      },
+      {
+        "text": {
+          "matches": "Repository",
+          "flags": "i"
+        }
+      },
+      {
+        "text": {
+          "matches": "\\b(Link|Create)\\b",
+          "flags": "i"
+        }
+      },
+      {
+        "text": {
+          "not": {
+            "matches": "(another|different|other)\\s+Room|(?:point|direct|send).{0,50}Room.{0,40}(?:linked|repository)|(?:go|switch|move|find|use).{0,30}Room.{0,40}(?:linked|repository)|create\\s+(?:a\\s+)?repository-backed\\s+Room|point.{0,50}repository-backed\\s+Room",
+            "flags": "is"
+          }
+        }
+      }
+    ]
+  }
+}

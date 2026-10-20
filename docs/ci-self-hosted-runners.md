@@ -56,13 +56,11 @@ additional `lipo -verify_arch x86_64 arm64` step checks the application executab
 The iOS build/upload job already selects that runner label and is unchanged.
 Runner identity, online status, signing and the dry-run iOS proof remain pending.
 
-Both helper Mac matrix legs select the same self-hosted label. **The arm64 leg
-is not ready to run on Intel:** its existing native architecture assertion will
-fail. The bundle builder requires supplied target binaries for cross builds and
-marks cross builds unverified; release validation rejects unverified bundles.
-Keep those protections. Before this draft becomes ready, provide an arm64
-execution/proof route or implement and prove an agreed cross-build verification
-path. Changing only the label cannot satisfy that requirement.
+The Intel helper leg uses `ios-builder`. Per the commander decision, the arm64
+helper leg stays on its existing GitHub-hosted `macos-15` Apple-silicon runner
+until a suitable self-hosted arm64 runner is registered. Its native architecture
+assertion and verified-bundle requirement remain unchanged; no cross bundles
+are introduced. The Korean MacBook Pro's architecture remains to be confirmed.
 
 Desktop Linux/Windows and Prompt cases remain on their current runners pending
 timing evidence. No release is dispatched by this rollout.

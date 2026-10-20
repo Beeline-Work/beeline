@@ -598,12 +598,19 @@ export type DaemonOperationMap = {
   findConnectors: Operation<RoomInput & { readonly query: string }, {
     readonly matches: readonly ConnectorSearchMatch[]; readonly unavailableSources: readonly string[];
   }>;
-  /** Discover server-mediated tools for one connected app; no credentials are returned. */
+  /** Discover tools or route guidance for a connected app; only credential metadata is returned. */
   listAppTools: Operation<TurnOutputAuthority & AgentInput & RoomInput & { readonly appId: string;
     readonly query?: string }, { readonly tools: readonly {
       readonly slug: string; readonly name: string; readonly description: string;
       readonly inputParameters: unknown;
-    }[] }>;
+    }[];
+    readonly transport?: AppTransport;
+    readonly next?: string;
+    readonly service?: string;
+    readonly credentials?: readonly {
+      readonly reference: string; readonly allowedHosts: readonly string[];
+    }[];
+  }>;
   /** Execute against the exact person's account after a fresh per-call permission decision. */
   executeAppTool: Operation<TurnOutputAuthority & AgentInput & RoomInput & { readonly appId: string;
     readonly tool: string; readonly arguments: Record<string, unknown> },

@@ -137,6 +137,7 @@ import {
   backfillRegistryApps,
   connectApp,
   connectedAppUse,
+  appConnections,
   hasExistingAppRoute,
   readOwnerApps,
   recordAppUsage,
@@ -7108,7 +7109,7 @@ export class DaemonService {
     };
   }
 
-  private async connectedAppForTool(appId: string, roomId: string, agentId: string) {
+  private async connectedAppForTool(appId: string, roomId: string, agentId: string, discovery = false) {
     if (typeof appId !== 'string' || !/^[0-9a-f-]{36}$/i.test(appId))
       throw new Error('App id is invalid');
     const row = (await this.database.query<{ id: string; app_key: string;
@@ -7135,20 +7136,34 @@ export class DaemonService {
       // Only managed-OAuth apps run through app tools; name the route that serves this one.
       if (row.owner_identity_id !== row.agent_owner_id)
         throw new CommandRefusalError(`${row.display_name} is another person's ${row.transport} app; only their own agents can use it.`, 403);
-      const app = row.transport === 'squire-api'
-        ? (await readOwnerApps(this.database, row.owner_identity_id, this.composio))
-          .find(app => app.appId === row.id) : undefined;
+      if (discovery) return row;
+      const connections = row.transport === 'squire-api'
+        ? await appConnections(this.database, row.owner_identity_id, row.app_key) : [];
+      const reference = connections.find(connection => connection.state === 'active')?.reference;
       throw new CommandRefusalError(`${row.display_name} is connected through ${row.transport}, not app tools. ${
         connectedAppUse({ transport: row.transport, name: row.display_name,
           appKey: row.app_key, domain: row.domain ?? row.display_name,
-          connectionReference: app?.connectionReference })}`, 400);
+          connectionReference: reference })}`, 400);
     }
     return row;
   }
 
   private async listAppTools(input: Input<'listAppTools'>, agentId: string) {
+    const row = await this.connectedAppForTool(input.appId, input.roomId, agentId, true);
+    if (row.transport !== 'composio') {
+      const connections = row.transport === 'squire-api'
+        ? await appConnections(this.database, row.owner_identity_id, row.app_key) : [];
+      return { tools: [], transport: row.transport,
+        next: connectedAppUse({ transport: row.transport, name: row.display_name,
+          appKey: row.app_key, domain: row.domain ?? row.display_name,
+          connectionReference: connections.find(connection => connection.state === 'active')?.reference }),
+        ...(row.transport === 'squire-api' ? { service: row.app_key,
+          credentials: connections.map(connection => ({
+            reference: connection.reference, allowedHosts: connection.hosts,
+          })) } : {}),
+      };
+    }
     if (!this.composio) throw new Error('App tools are unavailable');
-    const row = await this.connectedAppForTool(input.appId, input.roomId, agentId);
     if (row.composio_link_expires_at)
       throw new Error('App sign-in has not completed in Beeline');
     if (!row.composio_account_id)

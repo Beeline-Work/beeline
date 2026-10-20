@@ -288,7 +288,7 @@ type ConnectionFact = {
  * Every vault key of this owner that belongs to the app. The Workbench is the
  * PERSON's, across Workspaces, and so is the Squire vault behind it.
  */
-async function appConnections(
+export async function appConnections(
   database: SqlDatabase,
   ownerId: string,
   appKey: string,

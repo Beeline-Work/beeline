@@ -205,6 +205,16 @@ describe('server-mediated connected app tools', () => {
     expect(JSON.stringify(calls)).not.toMatch(/accessToken|refreshToken|composio|apiKey/i);
   });
 
+  it('returns Squire API discovery guidance without executing a provider tool', async () => {
+    const route = { tools: [], transport: 'squire-api', service: 'github',
+      next: 'Call GitHub API with Trusty Squire use_credential.',
+      credentials: [{ reference: 'vault:github', allowedHosts: ['api.github.com'] }] };
+    answer = () => Response.json(route);
+    expect(JSON.parse(await callAgentTool('app_tool', { app: appId }, 'call-1')))
+      .toEqual(route);
+    expect(calls.map(call => call.name)).toEqual(['listAppTools']);
+  });
+
   it('reports a missing app without trying another provider path', async () => {
     answer = () => Response.json({ error: 'app_unavailable' }, { status: 404 });
     await expect(callAgentTool('app_tool', { app: appId }, 'call-1'))

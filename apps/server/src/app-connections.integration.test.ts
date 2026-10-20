@@ -768,7 +768,8 @@ describe('connect_app', () => {
       'Call Neon\'s API with Trusty Squire use_credential (service "neon").';
     const listed = await daemon.execute('listAppTools', { ...turn, appId: neon }, HELPER)
       .catch((error: Error) => error.message);
-    expect(listed).toBe(cause);
+    expect(listed).toMatchObject({ tools: [], transport: 'squire-api',
+      service: 'neon', credentials: [], next: expect.stringContaining('use_credential') });
     console.log(`list_app_tools(Neon): ${listed}`);
     await expect(daemon.execute('executeAppTool', { ...turn, appId: neon,
       tool: 'NEON_LIST_PROJECTS', arguments: {} }, HELPER)).rejects.toThrow(cause);
@@ -782,13 +783,19 @@ describe('connect_app', () => {
       .rejects.toThrow("Neon is another person's squire-api app; only their own agents can use it.");
   });
 
-  it('Reproduction APP-ROUTE-1: daemon HTTP refuses Squire app tools without error capture', async () => {
+  it('Reproduction APP-ROUTE-1: daemon HTTP discovers Squire routes and refuses tool execution', async () => {
     const appId = 'edd5e6c5-fc4c-4170-93c0-8efef63010c9';
     await database.query(
       `INSERT INTO workspace_apps(id,workspace_id,owner_identity_id,app_key,display_name,transport,route)
        VALUES($1,$2,$3,'github','GitHub','squire-api','squire-api')`,
       [appId, WORKSPACE, OWNER],
     );
+    await connectSquire();
+    await applyVaultList(database, { machine_id: 'machine-one', workspace_id: WORKSPACE, owner_identity_id: OWNER }, [{
+      reference: 'vault:github', service: 'github', label: 'default',
+      fieldNames: ['token'], allowedHosts: ['api.github.com'], createdAt: 1,
+      stale: false, state: 'active',
+    }]);
     const provider = fakeComposio();
     const daemon = daemonWith(fakeRegistry([]).client, provider);
     const phone = new PhoneService(database, 'http://placeholder');
@@ -820,8 +827,15 @@ describe('connect_app', () => {
           });
           const result = await response.json();
           console.log(`Reproduction APP-ROUTE-1: ${operation}, other owner=${otherOwner} → HTTP ${response.status} ${JSON.stringify(result)}`);
-          expect(response.status).toBe(otherOwner ? 403 : 400);
-          expect(result).toEqual({ error: message });
+          if (!otherOwner && operation === 'listAppTools') {
+            expect(response.status).toBe(200);
+            expect(result).toEqual({ tools: [], transport: 'squire-api', service: 'github',
+              next: 'Call GitHub\'s API with Trusty Squire use_credential (service "github").',
+              credentials: [{ reference: 'vault:github', allowedHosts: ['api.github.com'] }] });
+          } else {
+            expect(response.status).toBe(otherOwner ? 403 : 400);
+            expect(result).toEqual({ error: message });
+          }
           expect(captureServerError).not.toHaveBeenCalled();
         }
       }

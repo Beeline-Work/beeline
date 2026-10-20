@@ -1,7 +1,7 @@
 /** Release fixture for Reproductions R1 and R2: the production Profile for an
  * owned agent with no merged work. Register this entry temporarily. Message
- * cycles a Codex agent and a Cursor agent carrying the usage a real quota-axi
- * read produced on squire through HarnessQuotaReader (2026-10-20), then a
+ * cycles Codex, Cursor and Claude agents carrying the usage real quota-axi
+ * reads produced on squire through HarnessQuotaReader (2026-10-20), then a
  * Codex agent with no usage snapshot. Back alternates themes.
  */
 import '../sources/unistyles';
@@ -17,8 +17,8 @@ import type { AgentDetailView } from '@beeline/buzz-client';
 
 UnistylesRuntime.setTheme('obsidian');
 // Read at 2026-10-20T02:28Z; shifted so the fixture always reads as fresh.
-const READ = {"codex": {"updatedAt": 1792463287.358, "windows": [{"rateLimitType": "weekly", "status": "allowed", "utilization": 0.48, "resetsAt": 1792874591, "updatedAt": 1792463287.358, "label": "week"}], "plan": "pro", "credits": {"remaining": 62174.920478}}, "cursor": {"updatedAt": 1792463287.851, "windows": [{"rateLimitType": "included_usage", "status": "allowed", "utilization": 0, "resetsAt": 1795094859, "updatedAt": 1792463287.851, "label": "included usage"}, {"rateLimitType": "auto_usage", "status": "allowed", "utilization": 0.01, "resetsAt": 1795094859, "updatedAt": 1792463287.851, "label": "auto usage"}, {"rateLimitType": "api_usage", "status": "allowed", "utilization": 0, "resetsAt": 1795094859, "updatedAt": 1792463287.851, "label": "API usage"}, {"rateLimitType": "grok_bot", "status": "allowed", "utilization": 0, "resetsAt": 1792848465.964, "updatedAt": 1792463287.851, "label": "Grok Bot"}], "plan": "Ultra"}} as const;
-const fresh = (usage: (typeof READ)['codex'] | (typeof READ)['cursor']) => {
+const READ = {"codex": {"updatedAt": 1792463287.358, "windows": [{"rateLimitType": "weekly", "status": "allowed", "utilization": 0.48, "resetsAt": 1792874591, "updatedAt": 1792463287.358, "label": "week"}], "plan": "pro", "credits": {"remaining": 62174.920478}}, "cursor": {"updatedAt": 1792463287.851, "windows": [{"rateLimitType": "included_usage", "status": "allowed", "utilization": 0, "resetsAt": 1795094859, "updatedAt": 1792463287.851, "label": "included usage"}, {"rateLimitType": "auto_usage", "status": "allowed", "utilization": 0.01, "resetsAt": 1795094859, "updatedAt": 1792463287.851, "label": "auto usage"}, {"rateLimitType": "api_usage", "status": "allowed", "utilization": 0, "resetsAt": 1795094859, "updatedAt": 1792463287.851, "label": "API usage"}, {"rateLimitType": "grok_bot", "status": "allowed", "utilization": 0, "resetsAt": 1792848465.964, "updatedAt": 1792463287.851, "label": "Grok Bot"}], "plan": "Ultra"}, "claude": {"updatedAt": 1792468031.988, "windows": [{"rateLimitType": "five_hour", "status": "allowed", "utilization": 0.14, "resetsAt": 1792472400.219, "updatedAt": 1792468031.988, "label": "session"}, {"rateLimitType": "seven_day", "status": "allowed", "utilization": 0.28, "resetsAt": 1792731600.219, "updatedAt": 1792468031.988, "label": "week"}, {"rateLimitType": "model_fable", "status": "allowed", "utilization": 0, "resetsAt": 1792731600.219, "updatedAt": 1792468031.988, "label": "Fable week"}], "plan": "max"}} as const;
+const fresh = (usage: (typeof READ)[keyof typeof READ]) => {
   const shift = Date.now() / 1000 - usage.updatedAt;
   return {
     ...usage,
@@ -29,6 +29,7 @@ const fresh = (usage: (typeof READ)['codex'] | (typeof READ)['cursor']) => {
 const AGENTS = [
   { name: 'Jellybean', handle: 'jellybean', face: 'owl', harness: 'codex', model: ['gpt-6.1-sol', '6.1 Sol'], usage: () => fresh(READ.codex) },
   { name: 'Kit', handle: 'kit', face: 'fox', harness: 'cursor', model: ['auto', 'Auto'], usage: () => fresh(READ.cursor) },
+  { name: 'Ruby', handle: 'ruby', face: 'owl', harness: 'claude', model: ['opus', 'Opus'], usage: () => fresh(READ.claude) },
   { name: 'Nerd', handle: 'nerd', face: 'cat', harness: 'codex', model: ['gpt-6.1-sol', '6.1 Sol'], usage: () => undefined },
 ] as const;
 const soul = 'Investigate carefully, explain what matters, and see each piece of work through.';

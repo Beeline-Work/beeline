@@ -729,7 +729,7 @@ export class MonolithCornerTurnLoop {
   /** This agent's own OpenRouter key when its model routes there. */
   private openRouterKey?: string;
   private openRouterSpendPublish: Promise<unknown> = Promise.resolve();
-  /** Plan quota read through quota-axi for harnesses ACP leaves silent. */
+  /** Plan quota read through quota-axi, throttled per agent across loops. */
   private harnessQuota?: HarnessQuotaReader;
 
   /**
@@ -754,6 +754,7 @@ export class MonolithCornerTurnLoop {
   /** After a turn, refresh the owner's view of this agent's plan quota. */
   private publishHarnessQuota(): void {
     this.harnessQuota ??= new HarnessQuotaReader({
+      agentId: this.agent.publicKey,
       post: (usage) =>
         this.options.api.execute('postAgentUsage', { agentId: this.agent.publicKey, usage }),
     });

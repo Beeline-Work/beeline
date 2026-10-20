@@ -1,8 +1,8 @@
 /**
  * `quota-axi --provider codex,cursor,claude --json --no-credential-refresh`
  * (quota-axi 0.1.64), run on squire on 2026-10-20 with a Beeline agent's own
- * CODEX_HOME and XDG_CONFIG_HOME. Claude and each provider's `quotaSemantics`
- * block are trimmed; nothing else is edited.
+ * CODEX_HOME, CLAUDE_CONFIG_DIR and XDG_CONFIG_HOME, split by provider. Each
+ * provider's `quotaSemantics` block is trimmed; nothing else is edited.
  */
 export const QUOTA_AXI_CODEX_CURSOR_REPORT = {
   "generatedAt": "2026-10-20T02:22:23.939Z",
@@ -87,6 +87,63 @@ export const QUOTA_AXI_CODEX_CURSOR_REPORT = {
           "pace": {
             "status": "behind",
             "reservePercentPoints": 36.2563,
+            "burnMultiple": 0
+          }
+        }
+      ],
+      "state": {
+        "status": "fresh",
+        "stale": false
+      },
+      "accountKeys": [
+        "default"
+      ]
+    }
+  ]
+} as const;
+
+/** The Claude provider from the same run. */
+export const QUOTA_AXI_CLAUDE_REPORT = {
+  "generatedAt": "2026-10-20T02:22:23.939Z",
+  "schemaVersion": 5,
+  "providers": [
+    {
+      "provider": "claude",
+      "plan": "max",
+      "windows": [
+        {
+          "id": "five_hour",
+          "label": "session",
+          "kind": "session",
+          "resetsAt": "2026-10-20T05:00:00.017148+00:00",
+          "percentRemaining": 91,
+          "pace": {
+            "status": "behind",
+            "reservePercentPoints": 38.4662,
+            "burnMultiple": 0.1896
+          }
+        },
+        {
+          "id": "seven_day",
+          "label": "week",
+          "kind": "weekly",
+          "resetsAt": "2026-10-23T05:00:00.017167+00:00",
+          "percentRemaining": 72,
+          "pace": {
+            "status": "behind",
+            "reservePercentPoints": 27.5794,
+            "burnMultiple": 0.5038
+          }
+        },
+        {
+          "id": "model:fable",
+          "label": "Fable week",
+          "kind": "model",
+          "resetsAt": "2026-10-23T05:00:00.017344+00:00",
+          "percentRemaining": 100,
+          "pace": {
+            "status": "behind",
+            "reservePercentPoints": 55.5794,
             "burnMultiple": 0
           }
         }

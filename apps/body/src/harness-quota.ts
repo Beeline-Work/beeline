@@ -1,11 +1,13 @@
 /**
- * Plan quota for harnesses whose ACP adapter reports none (Codex, Cursor,
+ * Plan quota for every harness quota-axi can read (Claude, Codex, Cursor,
  * Grok, OpenCode Go). After a turn the helper runs the pinned quota-axi CLI in
  * the agent's own environment, so it reads that agent's own login, and turns
  * its report into the `AgentUsage` windows the owner's Profile shows.
  *
- * quota-axi never refreshes credentials here (`--no-credential-refresh`), never
- * prompts a keychain, and never spends inference. Its output carries no token.
+ * quota-axi never refreshes credentials here (`--no-credential-refresh`). It
+ * prompts no keychain and spends no Claude inference, because neither
+ * `--allow-keychain-prompt` nor `--allow-claude-inference` is ever passed. Its
+ * output carries no token.
  */
 import { execFile } from 'node:child_process';
 import { createRequire } from 'node:module';
@@ -21,12 +23,13 @@ export const QUOTA_READ_INTERVAL_MS = 5 * 60_000;
 const MAX_WINDOWS = 8;
 
 /**
- * The quota-axi provider for a harness, or undefined when the harness already
- * reports its own windows (Claude over ACP) or bills through OpenRouter.
+ * The quota-axi provider for a harness, or undefined when the agent bills
+ * through OpenRouter (its key spend is read instead) or quota-axi has none.
  */
 export function quotaAxiProvider(kind: AgentKind | undefined, openRouter: boolean): string | undefined {
   if (openRouter) return;
   switch (kind) {
+    case 'claude':
     case 'codex':
     case 'cursor':
     case 'grok':
@@ -115,6 +118,11 @@ export type QuotaAxiRun = (
   env: Record<string, string>,
 ) => Promise<string>;
 
+/** The quota-axi flags; never add a refresh, keychain or inference opt-in here. */
+export function quotaAxiArgs(provider: string): string[] {
+  return ['--provider', provider, '--json', '--no-credential-refresh'];
+}
+
 /** Exit 1 still prints the report (every provider failed), so read stdout either way. */
 const runQuotaAxi: QuotaAxiRun = (launch, env) =>
   new Promise((resolve, reject) => {
@@ -126,17 +134,24 @@ const runQuotaAxi: QuotaAxiRun = (launch, env) =>
     );
   });
 
+type ReadSlot = { lastStartedAt: number; running: boolean };
+/**
+ * One agent's Room and corner turn loops run in the same helper, each with its
+ * own reader. They share this per-agent slot so the agent, not the loop, gets
+ * one read per interval.
+ */
+const AGENT_READ_SLOTS = new Map<string, ReadSlot>();
+
 /**
  * Per-agent throttled reader. `publish` never throws and never blocks the
- * turn; at most one read runs at a time and one starts per interval.
+ * turn; at most one read per agent runs at a time and one starts per interval.
  */
 export class HarnessQuotaReader {
-  private lastStartedAt = -Infinity;
-  private running = false;
-
   constructor(
     private readonly options: {
+      agentId: string;
       post: (usage: AgentUsage) => Promise<unknown>;
+      slots?: Map<string, ReadSlot>;
       run?: QuotaAxiRun;
       launch?: () => { command: string; args: string[] };
       now?: () => number;
@@ -146,16 +161,20 @@ export class HarnessQuotaReader {
 
   publish(provider: string | undefined, env: Record<string, string>): Promise<void> {
     const now = this.options.now?.() ?? Date.now();
-    if (!provider || this.running || now - this.lastStartedAt < (this.options.intervalMs ?? QUOTA_READ_INTERVAL_MS))
+    const slots = this.options.slots ?? AGENT_READ_SLOTS;
+    let slot = slots.get(this.options.agentId);
+    if (!slot) slots.set(this.options.agentId, (slot = { lastStartedAt: -Infinity, running: false }));
+    if (!provider || slot.running || now - slot.lastStartedAt < (this.options.intervalMs ?? QUOTA_READ_INTERVAL_MS))
       return Promise.resolve();
     // Turn-loop tests must never read the developer's real vendor quota.
     if (!this.options.run && process.env.VITEST) return Promise.resolve();
-    this.lastStartedAt = now;
-    this.running = true;
+    const held = slot;
+    held.lastStartedAt = now;
+    held.running = true;
     return (async () => {
       const launch = (this.options.launch ?? quotaAxiLaunch)();
       const stdout = await (this.options.run ?? runQuotaAxi)(
-        { command: launch.command, args: [...launch.args, '--provider', provider, '--json', '--no-credential-refresh'] },
+        { command: launch.command, args: [...launch.args, ...quotaAxiArgs(provider)] },
         env,
       );
       const usage = quotaAxiUsage(JSON.parse(stdout), provider, now / 1000);
@@ -163,7 +182,7 @@ export class HarnessQuotaReader {
     })()
       .catch((error) => console.error(`[agent-usage] quota-axi ${provider} read failed`, error instanceof Error ? error.message : error))
       .finally(() => {
-        this.running = false;
+        held.running = false;
       });
   }
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { parseAcpUsage } from './acp.js';
-import { HarnessQuotaReader, quotaAxiLaunch, quotaAxiProvider, quotaAxiUsage } from './harness-quota.js';
-import { QUOTA_AXI_CODEX_CURSOR_REPORT } from './harness-quota.fixtures.js';
+import { HarnessQuotaReader, quotaAxiArgs, quotaAxiLaunch, quotaAxiProvider, quotaAxiUsage } from './harness-quota.js';
+import { QUOTA_AXI_CLAUDE_REPORT, QUOTA_AXI_CODEX_CURSOR_REPORT } from './harness-quota.fixtures.js';
 
 const now = Date.parse('2026-10-20T02:22:23.939Z') / 1000;
 
@@ -65,13 +65,28 @@ describe('quota-axi plan usage (Reproduction R2)', () => {
     expect(usage.credits).toBeUndefined();
   });
 
-  it('asks quota-axi only for harnesses ACP leaves silent and not for OpenRouter keys', () => {
+  it('turns the recorded Claude report into session, weekly and Fable windows', () => {
+    const usage = quotaAxiUsage(QUOTA_AXI_CLAUDE_REPORT, 'claude', now)!;
+    expect(usage.plan).toBe('max');
+    expect(usage.windows.map((w) => [w.rateLimitType, w.utilization, w.label])).toEqual([
+      ['five_hour', 0.09, 'session'],
+      ['seven_day', 0.28, 'week'],
+      ['model_fable', 0, 'Fable week'],
+    ]);
+  });
+
+  it('never opts quota-axi into a credential refresh, keychain prompt or Claude inference', () => {
+    expect(quotaAxiArgs('claude')).toEqual(['--provider', 'claude', '--json', '--no-credential-refresh']);
+  });
+
+  it('asks quota-axi for every harness it covers and not for OpenRouter keys', () => {
     expect(quotaAxiProvider('codex', false)).toBe('codex');
     expect(quotaAxiProvider('cursor', false)).toBe('cursor');
     expect(quotaAxiProvider('grok', false)).toBe('grok');
     expect(quotaAxiProvider('opencode', false)).toBe('opencode-go');
     expect(quotaAxiProvider('opencode', true)).toBeUndefined();
-    expect(quotaAxiProvider('claude', false)).toBeUndefined();
+    expect(quotaAxiProvider('claude', false)).toBe('claude');
+    expect(quotaAxiProvider('claude', true)).toBeUndefined();
     expect(quotaAxiProvider('pi', false)).toBeUndefined();
   });
 
@@ -86,7 +101,7 @@ describe('quota-axi plan usage (Reproduction R2)', () => {
     let clock = 0;
     const post = vi.fn(async () => undefined);
     const run = vi.fn(async () => JSON.stringify(QUOTA_AXI_CODEX_CURSOR_REPORT));
-    const reader = new HarnessQuotaReader({ post, run, now: () => clock, launch: () => ({ command: 'node', args: ['q.mjs'] }) });
+    const reader = new HarnessQuotaReader({ agentId: 'a', slots: new Map(), post, run, now: () => clock, launch: () => ({ command: 'node', args: ['q.mjs'] }) });
     const env = { CODEX_HOME: '/agent/codex' };
     await reader.publish('codex', env);
     await reader.publish('codex', env);
@@ -105,5 +120,29 @@ describe('quota-axi plan usage (Reproduction R2)', () => {
     error.mockRestore();
     await reader.publish(undefined, env);
     expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it('shares one read per interval across the Room and corner loops of one agent', async () => {
+    let clock = 0;
+    const slots = new Map();
+    const run = vi.fn(async () => JSON.stringify(QUOTA_AXI_CODEX_CURSOR_REPORT));
+    const launch = () => ({ command: 'node', args: ['q.mjs'] });
+    const reader = (agentId: string) =>
+      new HarnessQuotaReader({ agentId, slots, run, launch, now: () => clock, post: async () => undefined });
+    const room = reader('agent-a');
+    const corner = reader('agent-a');
+    const env = { CODEX_HOME: '/agent/codex' };
+    // Two loops start reads at the same instant; one reaches the vendor.
+    await Promise.all([room.publish('codex', env), corner.publish('codex', env)]);
+    expect(run).toHaveBeenCalledTimes(1);
+    clock += 60_000;
+    await corner.publish('codex', env);
+    expect(run).toHaveBeenCalledTimes(1);
+    // Another agent keeps its own budget.
+    await reader('agent-b').publish('codex', env);
+    expect(run).toHaveBeenCalledTimes(2);
+    clock += 5 * 60_000;
+    await corner.publish('codex', env);
+    expect(run).toHaveBeenCalledTimes(3);
   });
 });

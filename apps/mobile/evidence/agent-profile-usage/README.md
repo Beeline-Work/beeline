@@ -17,11 +17,12 @@ Production on 2026-10-20 matched this. Codex agents that ran since #2571 had onl
 
 ## Demonstrated
 
-The after APK uses the same fixture. Message cycles through three agents:
+The after APK uses the same fixture. Message cycles through four agents:
 
 1. after-codex.png: a Codex agent carrying the usage that `HarnessQuotaReader` produced from a real quota-axi read on squire. Columns: Weekly 48% (resets Sat 4:43 PM) and Credits 62,174 left. Note: "Codex · pro plan · updated …".
 2. after-cursor.png: a Cursor agent from the same real read. Columns: Included, Auto, API and Grok Bot, two to a row so reset times stay whole. Note: "Cursor · Ultra plan · updated …".
-3. after-nodata.png: a Codex agent with no snapshot. The USAGE section shows "Codex doesn't report usage to Beeline".
+3. after-claude.png: a Claude agent from a real read of this agent's Claude login through the same reader. Columns: 5-hour 14%, Weekly 28% and Fable week 0%. Note: "Claude Code · max plan · updated …". The reader used `--no-credential-refresh` and never passed `--allow-keychain-prompt` or `--allow-claude-inference`.
+4. after-nodata.png: a Codex agent with no snapshot. The USAGE section shows "Codex doesn't report usage to Beeline".
 
 In every after screenshot, "No merged work to show yet." starts on the RECENT WORK header's edge.
 
@@ -30,7 +31,11 @@ The fixture (`apps/mobile/scripts/agent-profile-usage-native-proof.tsx`) mounts 
 APK SHA-256:
 
 - Before: 8dd7d8d844b35e9813ac2485f11973fea9d1feb941873529531b122f34808752
-- After: c75d44cd930c8cacce92f96cf00c43b4f4982c15f96a7d2e93fb34cb742f67a6
+- After: ba3c75c958407db179d5d76cb7e0a15a1b3c2f8c540ae2e6b93331a03dec113c
+
+## Shared throttle (review finding)
+
+The same Claude read ran from two `HarnessQuotaReader` instances for one agent. They stand in for a Room loop and a corner loop in one helper. The two loops started together and then made a third call. quota-axi ran once (`vendorReads: 1`), and one usage snapshot was posted.
 
 ## Repeat
 

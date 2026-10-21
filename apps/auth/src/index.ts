@@ -4,7 +4,7 @@ import { AuthStore, PostgresDatabase } from './store.js';
 import { GitHubAppClient, GitHubOAuthClient } from './github.js';
 import { checkGitHubAppDriftBestEffort } from './github-manifest.js';
 import { githubEnvironmentConfig } from './github-config.js';
-import { authTenantsFromEnvironment, oidcClientFromEnvironment } from './environment.js';
+import { readEnv, authTenantsFromEnvironment, oidcClientFromEnvironment } from './environment.js';
 
 function required(name: string): string {
   const value = process.env[name];
@@ -41,13 +41,13 @@ async function main(): Promise<void> {
       : {}),
     // Operator-only shared secret for the GitHub App manifest setup page and
     // the on-demand drift endpoint; unset disables both surfaces.
-    githubSetupToken: process.env.BUZZY_AUTH_SETUP_TOKEN,
+    githubSetupToken: readEnv(process.env, 'AUTH_SETUP_TOKEN'),
     tenants: authTenantsFromEnvironment(process.env),
     authorizeGitHubRoomToken: createGitHubRoomTokenAuthority(store),
     logger: true,
   });
   const port = Number(process.env.PORT ?? '8789');
-  const host = process.env.BUZZY_AUTH_HOST ?? '127.0.0.1';
+  const host = readEnv(process.env, 'AUTH_HOST') ?? '127.0.0.1';
   await app.listen({ port, host });
 
   if (github) {

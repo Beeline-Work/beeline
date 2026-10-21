@@ -241,7 +241,7 @@ export function toolScopeWarning(
     parts.push(
       options.isolatedHarnessHome
         ? "This Room has its own harness home, populated with the operator's explicitly shared skills and copied MCP declarations; unrelated harness settings remain out of reach."
-        : 'Set BUZZY_BODY_ROOM_HOME=1 so this Room gets its own harness home.',
+        : 'Set BEELINE_BODY_ROOM_HOME=1 (BUZZY_BODY_ROOM_HOME still works) so this Room gets its own harness home.',
     );
   }
   return parts.join(' ');

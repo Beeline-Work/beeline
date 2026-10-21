@@ -22,8 +22,8 @@ async function main(): Promise<void> {
       'usage: node --import tsx scripts/cleanup-legacy-daemon-chat.ts --dry-run|--execute',
     );
   }
-  const databaseUrl = process.env.BUZZY_PUSH_DATABASE_URL ?? process.env.DATABASE_URL;
-  if (!databaseUrl) throw new Error('set BUZZY_PUSH_DATABASE_URL or DATABASE_URL');
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) throw new Error('set DATABASE_URL');
 
   const pool = new Pool({ connectionString: databaseUrl, max: 1 });
   const client = await pool.connect();

@@ -77,3 +77,19 @@ disclosure revealed all remaining rows. Screenshots and UIAutomator XML capture
 expanded, collapsed, single/long and service-projected DM/parent call-site frames in both themes.
 See android-receipts.json for destinations and tap bounds; android-build.json
 identifies the proof APK. The adjacent snapshot records the local service response used by the native proof.
+
+## Shared reading face (brief revision 4)
+
+PrLifecycleCard.test.tsx now renders grouped PR/issue rows, the standalone
+LifecycleCard adapter and CornerOpenedMarker together. It verifies that every
+explicit font is Space Grotesk and that marker meta and row body share the
+Regular face. The tool-run line retains its machine role.
+
+The native harness also has a Room frame with a source marker directly above
+a PR row, plus the unchanged mono tool-run reference. Capture just this frame
+in both themes with the capture script’s --shared-face-only option.
+
+Captured: [Bone](android-bone-shared-typeface.png) and
+[Obsidian](android-obsidian-shared-typeface.png). The adjacent XML and
+android-shared-typeface-receipts.json preserve visible text and the verified
+PR destination. android-build.json records this additional proof APK separately.

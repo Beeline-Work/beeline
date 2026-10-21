@@ -117,7 +117,7 @@ function Proof() {
         <Pressable
           accessibilityLabel="Next frame"
           onPress={() => {
-            setVariant((variant + 1) % 4);
+            setVariant((variant + 1) % 5);
             setDestination('');
           }}
           style={{ minHeight: 44 }}
@@ -135,6 +135,7 @@ function Proof() {
             'A · single and long run',
             'DM · service-projected call site',
             'Parent corner · service-projected call site',
+            'Room · shared typeface',
           ][variant]
         }
       </Text>
@@ -174,6 +175,26 @@ function Proof() {
               )}
             </View>
           </>
+        ) : variant === 4 ? (
+          <>
+            <Text
+              style={{
+                ...theme.buzz.type.machine,
+                color: theme.buzz.ledgerQuiet,
+                marginBottom: 24,
+              }}
+            >
+              › 4 steps · 12s
+            </Text>
+            <Text style={{ ...theme.buzz.type.body, color: theme.buzz.textPrimary }}>
+              @ruby open a corner to align the reading face.
+            </Text>
+            <CornerOpenedMarker
+              title="shared-face"
+              onOpen={() => setDestination('corner-shared-face')}
+            />
+            {card([pr('shared-face', 2742, 'Keep agent lead and body text in the same font face')])}
+          </>
         ) : (
           anchored.map((message) => (
             <View key={message.id}>
@@ -190,7 +211,7 @@ function Proof() {
             </View>
           ))
         )}
-        {variant >= 2 ? (
+        {variant >= 2 && variant < 4 ? (
           <View style={{ marginTop: 24 }}>
             <Text style={{ ...theme.buzz.type.meta, color: theme.buzz.ledgerQuiet }}>
               Room record

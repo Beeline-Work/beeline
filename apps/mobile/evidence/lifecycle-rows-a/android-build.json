@@ -3,5 +3,6 @@
   "platform": "Android 36 x86_64",
   "proofEntry": "scripts/lifecycle-rows-a-native-proof.tsx",
   "dmServerDelivery": "local createCorner \u2192 PhoneService.readRoom response replayed by native proof",
-  "parentCornerDelivery": "local createCorner \u2192 PhoneService.readRoom response replayed by native proof"
+  "parentCornerDelivery": "local createCorner \u2192 PhoneService.readRoom response replayed by native proof",
+  "sharedTypefaceProofApkSha256": "c1b79eb8fa075324d94bd51139e4ffcde4759474d5d29dc4d57a3964c73fa9bd"
 }

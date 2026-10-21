@@ -12,6 +12,10 @@ vi.mock('react-native', () => {
   return { Text: host('Text'), View: host('View'), Pressable: host('Pressable') };
 });
 import { NotificationLifecycleCard } from './PrLifecycleCard';
+vi.mock('./Ledger', () => ({ LEDGER_MARGINALIA_WIDTH: 36 }));
+vi.mock('./LifecycleRow', () => ({ LifecycleRow: () => null }));
+import { LifecycleRecordCard } from './LifecycleCard';
+import { CornerOpenedMarker } from './CornerOpenedMarker';
 import { CornerBranchGlyph } from './CornerBranchGlyph';
 
 (globalThis as any).IS_REACT_ACT_ENVIRONMENT = true;
@@ -143,4 +147,50 @@ describe('mock A lifecycle rows', () => {
     expect(anchored).toHaveLength(1);
     expect(anchored[0].cornerMarkers?.[0].id).toBe('open');
   });
+});
+
+it('shares Space Grotesk across grouped rows, standalone adapters and source markers', () => {
+  let tree: any;
+  act(() => {
+    tree = create(
+      <>
+        <NotificationLifecycleCard
+          message={
+            {
+              id: 'fonts',
+              notificationLifecycleRun: { items: [item, issue], subline: '' },
+            } as ChatDisplayMessage
+          }
+          onOpenCorner={() => undefined}
+          onOpenUrl={() => undefined}
+        />
+        <LifecycleRecordCard
+          item={item}
+          timestamp={1}
+          testID="standalone-fonts"
+          onOpenCorner={() => undefined}
+          onOpenUrl={() => undefined}
+        />
+        <CornerOpenedMarker title="shared-face" onOpen={() => undefined} />
+      </>,
+    );
+  });
+  act(() =>
+    tree.root
+      .findAllByType('Pressable')
+      .find((node: any) => node.props.testID === 'notification-run-expand-fonts')
+      .props.onPress(),
+  );
+  const texts = tree.root.findAllByType('Text');
+  const flatten = (style: any): any =>
+    Array.isArray(style) ? Object.assign({}, ...style.map(flatten)) : (style ?? {});
+  const families = texts.map((node: any) => flatten(node.props.style).fontFamily).filter(Boolean);
+  expect(families.length).toBeGreaterThan(5);
+  for (const family of families) expect(family).toMatch(/^SpaceGrotesk-/);
+  const titles = texts.filter((node: any) => node.props.numberOfLines === 2);
+  expect(titles).toHaveLength(3);
+  const marker = texts.find((node: any) => text(node).startsWith('Corner opened'));
+  expect(flatten(marker.props.style).fontFamily).toBe(theme.buzz.type.meta.fontFamily);
+  for (const title of titles)
+    expect(flatten(title.props.style).fontFamily).toBe(flatten(marker.props.style).fontFamily);
 });

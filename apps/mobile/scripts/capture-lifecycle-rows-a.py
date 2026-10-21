@@ -10,6 +10,7 @@ from pathlib import Path
 parser = argparse.ArgumentParser()
 parser.add_argument('--serial', required=True)
 parser.add_argument('--out', required=True)
+parser.add_argument('--shared-face-only', action='store_true')
 args = parser.parse_args()
 out = Path(args.out)
 out.mkdir(parents=True, exist_ok=True)
@@ -48,6 +49,12 @@ for theme in ['bone', 'obsidian']:
     adb('shell', 'am', 'start', '-n', 'app.usebeeline/.MainActivity')
     time.sleep(3)
     tap(label=theme)
+    if args.shared_face_only:
+        for _ in range(4): tap(label='Next frame')
+        capture(f'android-{theme}-shared-typeface')
+        tap(resource='notification-run-cell-url-shared-face')
+        destination('https://github.com/Beeline-Work/beeline/pull/2742')
+        continue
     capture(f'android-{theme}-collapsed')
     tap(resource='notification-run-expand-lead')
     capture(f'android-{theme}-expanded')
@@ -74,5 +81,5 @@ for theme in ['bone', 'obsidian']:
     capture(f'android-{theme}-parent-callsite')
     tap(label='Open corner requested-work')
     destination(next(m['daemonFact']['cornerId'] for m in snapshot['parent']['messages'] if m.get('daemonFact')))
-(out / 'android-receipts.json').write_text(json.dumps(receipts, indent=2) + '\n')
-print('PASS: both themes, collapsed/expanded/single/long/DM and parent call sites, separate destinations')
+(out / ('android-shared-typeface-receipts.json' if args.shared_face_only else 'android-receipts.json')).write_text(json.dumps(receipts, indent=2) + '\n')
+print('PASS: shared typeface in both themes and PR destinations' if args.shared_face_only else 'PASS: both themes, collapsed/expanded/single/long/DM and parent call sites, separate destinations')

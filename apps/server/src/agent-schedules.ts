@@ -78,6 +78,7 @@ type DueSchedule = {
   room_id: string;
   agent_id: string;
   creator_id: string;
+  human_command_message_id: string | null;
   owner_id: string | null;
   workflow_slug: string | null;
   cadence: RoomScheduleCadence;
@@ -108,7 +109,7 @@ export class AgentScheduleLoop {
 
   async runOnce(now = new Date()): Promise<number> {
     const due = await this.database.query<DueSchedule & { updated_at: string }>(
-      `SELECT schedule.id,schedule.room_id,schedule.agent_id,schedule.creator_id,schedule.owner_id,schedule.workflow_slug,
+      `SELECT schedule.id,schedule.room_id,schedule.agent_id,schedule.creator_id,schedule.owner_id,schedule.workflow_slug,schedule.human_command_message_id,
         schedule.cadence,schedule.message,schedule.max_runs,schedule.run_count,schedule.next_run_at,
         schedule.updated_at::text updated_at
        FROM agent_schedules schedule
@@ -131,7 +132,7 @@ export class AgentScheduleLoop {
         roomId = await this.database.transaction(async (database) => {
           const current = (
             await database.query<DueSchedule>(
-              `SELECT schedule.id,schedule.room_id,schedule.agent_id,schedule.creator_id,schedule.owner_id,schedule.workflow_slug,
+              `SELECT schedule.id,schedule.room_id,schedule.agent_id,schedule.creator_id,schedule.owner_id,schedule.workflow_slug,schedule.human_command_message_id,
                 schedule.cadence,schedule.message,schedule.max_runs,schedule.run_count,schedule.next_run_at,
                 agent.name agent_name
                FROM agent_schedules schedule
@@ -228,12 +229,24 @@ export class AgentScheduleLoop {
               JSON.stringify(current.owner_id ? { ownerId: current.owner_id } : {}),
             ],
           );
-          await createAgentCommand(database, {
-            roomId: current.room_id,
-            agentId: current.agent_id,
-            sourceMessageId: messageId,
-            reason: 'schedule',
-          });
+          if (selfCreated) {
+            // systemLine already queued this occurrence; bind authority before
+            // the transaction commits and a helper can claim the command.
+            if (current.human_command_message_id) await database.query(
+              `UPDATE agent_commands SET root_source_message_id=$4
+               WHERE room_id=$1 AND agent_id=$2 AND source_message_id=$3
+                 AND reason='schedule' AND action='input' AND state='pending'`,
+              [current.room_id, current.agent_id, messageId, current.human_command_message_id],
+            );
+          } else {
+            await createAgentCommand(database, {
+              roomId: current.room_id,
+              agentId: current.agent_id,
+              sourceMessageId: messageId,
+              reason: 'schedule',
+              scheduledHumanCommandMessageId: current.human_command_message_id ?? undefined,
+            });
+          }
           await this.advance(database, current, now, true);
           return current.room_id;
         });

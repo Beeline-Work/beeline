@@ -29,15 +29,13 @@
 
 ## Routine release
 
-Firstmate runs one command directly, without creating a release worker:
-
-```sh
-node scripts/dispatch-production-release.mjs
-```
+Firstmate calls the first-party `dispatch_release` agent tool with `{}`, without
+creating a release worker or requesting a command grant. This path creates no
+command-approval card.
 
 Pass no inputs. Run inside an authenticated Beeline agent turn citing a human
-release command. The command uses the existing repository workflow dispatch
-path on the server; it no longer invokes GitHub directly. The server derives
+release command from a workspace owner or admin. The tool uses the existing
+repository workflow dispatch path on the server. The server derives
 agent id and handle, place, and the root human command message from the active
 turn, and commits a Room message before requesting the dispatch. That message
 is the durable audit receipt and is readable through the ordinary Room read.
@@ -49,14 +47,26 @@ The workflow requires that attribution, shows it in its run name and summary,
 and preserves it on automatic retries. Anonymous agent dispatches are refused.
 Recovery operators cannot override the server-supplied attribution.
 
-The dispatch command refuses while any production release is
+An explicitly human-commanded recurring release may use the same tool on each
+scheduled turn. Creating or updating the schedule in that human-rooted turn
+stores the authorizing human command message id on the schedule. The scheduler carries the original human command into
+the release turn; the audit receipt cites that command. Agent-only edits clear
+the authorization. Schedules created before this support need a human-rooted
+update to record the command before they can dispatch releases. The original
+human must still be a workspace owner or admin at dispatch time.
+
+The dispatch tool refuses while any production release is
 queued, waiting, or in progress, and stops if the GitHub listing fails. Recovery
-operators pass the existing `-f name=value` inputs to the same command. This
+operators pass the recovery fields in the tool’s optional `inputs` object. This
 check is advisory against simultaneous callers: workflow concurrency serializes
 those races with `cancel-in-progress: false`. GitHub keeps at most one pending
-run in a concurrency group, so use this command to avoid stacking dispatches.
+run in a concurrency group, so use this tool to avoid stacking dispatches.
 Direct GitHub recovery dispatches also require `dispatched_by` and still
-serialize behind the running release. Use the audited command for agent work.
+serialize behind the running release. Use the audited tool for agent work.
+The legacy
+`scripts/dispatch-production-release.mjs` remains available for operator
+compatibility in an authenticated agent turn; shell invocation still follows
+the ordinary command-grant rules.
 
 A person can cancel a stuck run in GitHub Actions → Unified production release
 → the run → Cancel workflow, or run `gh-axi run cancel <run-id>`. Wait for

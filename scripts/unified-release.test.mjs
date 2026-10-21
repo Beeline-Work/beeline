@@ -1260,9 +1260,9 @@ test('a desktop-carrying retry fetches this release\'s installers, never the pre
 test('canonical routine release guidance is a single no-input dispatch', () => {
   const guide = readFileSync(new URL('../docs/release-pipeline.md', import.meta.url), 'utf8');
   const agents = readFileSync(new URL('../AGENTS.md', import.meta.url), 'utf8');
-  const command = 'node scripts/dispatch-production-release.mjs';
-  assert.match(guide, new RegExp(command.replaceAll('.', '\\.')));
-  assert.match(agents, new RegExp(command.replaceAll('.', '\\.')));
+  assert.match(guide, /calls the first-party `dispatch_release` agent tool with `\{\}`/);
+  assert.match(agents, /calls the first-party `dispatch_release` tool/);
+  assert.doesNotMatch(agents, /node scripts\/dispatch-production-release\.mjs/);
   assert.match(guide, /Pass no inputs/);
   assert.match(agents, /with no release worker and no inputs/);
 });

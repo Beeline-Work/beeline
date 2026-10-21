@@ -33,9 +33,13 @@ export async function productionReleaseDispatch(
     const command = await authorizeCommandOutput(db, input.roomId, agentId, input.requestId, input.generationId);
     const human = (await db.query<{ id: string }>(
       `SELECT m.id FROM messages m JOIN identities i ON i.id=m.author_id AND i.kind='human'
-       WHERE m.id=$1 AND m.deleted_at IS NULL`, [command.root_source_message_id],
+       JOIN rooms room ON room.id=$2
+       JOIN memberships manager ON manager.workspace_id=room.workspace_id
+         AND manager.room_id IS NULL AND manager.identity_id=m.author_id
+         AND manager.removed_at IS NULL AND manager.role IN ('owner','admin')
+       WHERE m.id=$1 AND m.deleted_at IS NULL`, [command.root_source_message_id, input.roomId],
     )).rows[0];
-    if (!human) throw new Error('Production release requires a cited human command message');
+    if (!human) throw new Error('Production release requires a cited human command message from a workspace owner or admin');
     const provenance = JSON.stringify({
       agentId: agent.id, handle: agent.handle, place: input.roomId,
       humanCommandMessageId: human.id, auditMessageId,

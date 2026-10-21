@@ -5194,8 +5194,32 @@ export class DaemonService {
         title ?? scheduleFallbackTitle(workflowName),
       ],
     );
+    await this.recordScheduleAuthorization(db, scheduleId, input.roomId, agentId, requestId,
+      (input as { generationId?: unknown }).generationId);
     return { scheduleId, nextRunAt: Math.floor(nextRunAt.getTime() / 1_000) };
   }
+  private async recordScheduleAuthorization(
+    db: SqlDatabase, scheduleId: string, roomId: string, agentId: string, requestId: unknown, generationId: unknown,
+  ): Promise<void> {
+    // Only a server-validated human-rooted turn may authorize the saved task.
+    // Nonhuman edits clear old authority, even if the task text is unchanged.
+    let humanCommandMessageId: string | null = null;
+    if (typeof requestId === 'string' && typeof generationId === 'string') {
+      const command = await authorizeCommandOutput(db, roomId, agentId, requestId, generationId);
+      const human = (await db.query<{ id: string }>(
+        `SELECT root.id FROM messages root
+         JOIN identities person ON person.id=root.author_id AND person.kind='human' AND NOT person.hidden_from_roster
+         WHERE root.id=$1 AND root.deleted_at IS NULL`,
+        [command.root_source_message_id],
+      )).rows[0];
+      humanCommandMessageId = human?.id ?? null;
+    }
+    await db.query(
+      `UPDATE agent_schedules SET human_command_message_id=$2 WHERE id=$1`,
+      [scheduleId, humanCommandMessageId],
+    );
+  }
+
   /**
    * What this agent reacts to in this Room, set by the agent itself.
    *
@@ -5473,6 +5497,8 @@ export class DaemonService {
     );
     const row = updated.rows[0];
     if (!row) throw new Error('schedule not found');
+    await this.recordScheduleAuthorization(db, input.scheduleId, input.roomId, agentId,
+      (input as { requestId?: unknown }).requestId, (input as { generationId?: unknown }).generationId);
     return {
       scheduleId: input.scheduleId,
       nextRunAt: Math.floor(row.next_run_at.getTime() / 1_000),

@@ -16,6 +16,7 @@ const names = [
   'revise_corner',
   'order',
   'report',
+  'dispatch_release',
   'report_feedback',
   'notify_feedback_fixed',
   'approve_merge',
@@ -64,6 +65,16 @@ afterEach(() => {
 });
 
 describe('minimal agent surface', () => {
+  it('dispatches release recovery inputs with active corner authority and no grant runner', async () => {
+    await callAgentTool('dispatch_release', { inputs: { retry_attempt: '2' } });
+    expect(calls).toEqual([{ operation: 'dispatchRoomWorkflow', input: {
+      roomId: 'corner', requestId: 'request', generationId: 'generation', inputs: { retry_attempt: '2' },
+    } }]);
+    const schema = agentToolsFor(true, false).find(tool => tool.name === 'dispatch_release')!.inputSchema;
+    expect(Check(schema as never, { inputs: { dispatched_by: 'forged' } })).toBe(false);
+    expect(Check(schema as never, { inputs: { retry_attempt: '2' } })).toBe(true);
+  });
+
   it.each([
     [false, false],
     [false, true],

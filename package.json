@@ -73,6 +73,8 @@
     "measure:corner-wake": "node --import tsx scripts/measure-corner-wake.ts",
     "mobile:install": "npm install --prefix apps/mobile",
     "corner:prepare": "npm ci && npm run mobile:install && npm run build",
+    "prove:runnable-server": "node --import tsx scripts/serve-runnable-artifact-proof.mjs",
+    "game-host": "node scripts/runnable-artifact-proxy.mjs",
     "mobile:web": "npm run web --prefix apps/mobile",
     "mobile:typecheck": "npm run typecheck --prefix apps/mobile"
   },

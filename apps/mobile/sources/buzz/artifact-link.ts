@@ -76,6 +76,21 @@ interface ArtifactLinkResponse {
   link?: string;
 }
 
+/** Only the trusted app mints capabilities. The game receives no bearer. */
+export async function runnableArtifactUrl(attachment: AttachmentReference): Promise<string> {
+  const response = await monolithSession.fetch(`${artifactMediaUrl(attachment)}/play`, {}, { timeoutMs: 10_000 });
+  if (!response.ok) throw new Error('The game could not be opened. Close and try again.');
+  const { url } = await response.json() as { url: string };
+  const game = new URL(url);
+  const app = new URL(getBuzzRuntimeConfig().monolithUrl);
+  if (game.protocol !== 'https:' || game.origin === app.origin ||
+      game.hostname === 'usebeeline.app' || game.hostname.endsWith('.usebeeline.app') ||
+      game.username || game.password || !/^\/play\/[0-9a-f-]{36}$/.test(game.pathname)) {
+    throw new Error('The game host is not isolated.');
+  }
+  return game.href;
+}
+
 export async function openArtifactInBrowser(attachment: AttachmentReference): Promise<void> {
   const objectId = mediaIdFromUrl(attachment.url);
   if (!objectId) throw new Error('attachment is not a monolith media URL');

@@ -366,6 +366,25 @@ describe('ObjectService', () => {
       .toBeUndefined();
   });
 
+  it('redeems runnable capabilities only for games, with expired and forged links refused', async () => {
+    process.env.MEDIA_LINK_SECRET = 'test-game-secret';
+    try {
+      const game = await service.uploadArtifact(AGENT, Buffer.from('<script>game()</script>'), 'application/vnd.beeline.game+html', 'Game');
+      const link = await service.runnableLink(game.objectId, 'https://games.example.net');
+      const url = new URL(link!.url);
+      expect(url.origin).toBe('https://games.example.net');
+      const expires = Number(url.searchParams.get('expires'));
+      const token = url.searchParams.get('token')!;
+      expect(await service.openRunnableArtifact(game.objectId, expires, token)).toEqual(new Uint8Array(Buffer.from('owned-bytes')));
+      expect(await service.openRunnableArtifact(game.objectId, expires, 'forged')).toBeUndefined();
+      expect(await service.openRunnableArtifact(game.objectId, 1, token)).toBeUndefined();
+      const inert = await service.uploadArtifact(AGENT, Buffer.from(HTML), 'text/html', 'Mock');
+      expect(await service.runnableLink(inert.objectId, 'https://games.example.net')).toBeUndefined();
+      await database.query('INSERT INTO object_expirations(id,expired_at,retention_hours) VALUES($1,now(),7)', [game.objectId]);
+      expect(await service.openRunnableArtifact(game.objectId, expires, token)).toBeUndefined();
+    } finally { delete process.env.MEDIA_LINK_SECRET; }
+  });
+
   it('mediaLink mints a capability URL on our origin; openMediaLink redeems it', async () => {
     process.env.MEDIA_LINK_SECRET = 'test-link-secret';
     try {

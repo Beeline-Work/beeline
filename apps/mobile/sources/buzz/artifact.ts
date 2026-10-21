@@ -4,7 +4,7 @@
  * decision the server lane applies at post time. Pure so the per-format
  * branches are testable without a renderer.
  */
-export type ArtifactFormat = 'html' | 'svg' | 'image' | 'pdf' | 'markdown' | 'text' | 'document';
+export type ArtifactFormat = 'html' | 'game' | 'svg' | 'image' | 'pdf' | 'markdown' | 'text' | 'document';
 export type ArtifactSurface = 'ios' | 'android' | 'desktop';
 export type ArtifactTreatment = 'inline' | 'external';
 
@@ -16,6 +16,7 @@ export interface ArtifactCapabilities {
 
 export function artifactFormat(mimeType: string): ArtifactFormat {
   const mime = mimeType.split(';')[0]!.trim().toLowerCase();
+  if (mime === 'application/vnd.beeline.game+html') return 'game';
   if (mime === 'text/html') return 'html';
   if (mime === 'image/svg+xml') return 'svg';
   if (mime.startsWith('image/')) return 'image';

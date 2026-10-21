@@ -32,8 +32,8 @@ import {
   type Transcript,
 } from './prompt-case-rules.js';
 
-// Root CommonJS scripts have no import.meta; this file always runs by path.
-const repoRoot = resolve(dirname(process.argv[1]!), '..');
+// Also imported by the nightly controller and its tests.
+const repoRoot = resolve(__dirname, '..');
 const casesDir = join(repoRoot, 'docs', 'prompts', 'cases');
 const args = process.argv.slice(2);
 const flag = (name: string) => args.includes(name);
@@ -57,7 +57,7 @@ interface PromptSource {
   readonly skills: typeof Skills;
 }
 
-async function loadSource(root: string): Promise<PromptSource> {
+export async function loadSource(root: string): Promise<PromptSource> {
   const load = (file: string) => import(pathToFileURL(join(root, 'apps', 'body', 'src', file)).href);
   return { assembly: await load('prompt-assembly.ts'), tools: await load('minimal-tool-surface.ts'), skills: await load('beeline-skill.ts') };
 }
@@ -146,7 +146,7 @@ function assemble(source: PromptSource, testCase: PromptCase, withMemory = true)
   };
 }
 
-function loadCases(): PromptCase[] {
+export function loadCases(): PromptCase[] {
   const known = [SILENT_TOOL_NAME, ...NATIVE_TOOL_NAMES];
   return readdirSync(casesDir)
     .filter((file) => file.endsWith('.json'))
@@ -154,7 +154,7 @@ function loadCases(): PromptCase[] {
     .map((file) => parsePromptCase(JSON.parse(readFileSync(join(casesDir, file), 'utf8')), file.replace(/\.json$/, ''), known));
 }
 
-function check(source: PromptSource, cases: readonly PromptCase[]): string[] {
+export function check(source: PromptSource, cases: readonly PromptCase[]): string[] {
   const problems: string[] = [];
   const sectionIds = [...source.assembly.SESSION_SECTIONS, ...source.assembly.TURN_SECTIONS].map((section) => section.id);
   for (const id of sectionIds) {
@@ -191,7 +191,7 @@ function skillsFor(source: PromptSource, testCase: PromptCase) {
  * session of its own model, which answers with the calls and text it would
  * produce on that turn.
  */
-function replayPrompt(source: PromptSource, testCase: PromptCase, withMemory = true): string {
+export function replayPrompt(source: PromptSource, testCase: PromptCase, withMemory = true): string {
   const prompt = assemble(source, testCase, withMemory);
   const skills = skillsFor(source, testCase);
   const tools = toolsFor(source, testCase).map((tool) => ({ name: tool.name, description: tool.description, input_schema: tool.inputSchema }));
@@ -237,7 +237,7 @@ function replayPrompt(source: PromptSource, testCase: PromptCase, withMemory = t
  * Models wrap the JSON answer in prose or code fences, and sometimes add a
  * stray closing brace; grade the longest object from the first `{` that parses.
  */
-function parseAnswer(raw: string): Partial<Transcript> {
+export function parseAnswer(raw: string): Partial<Transcript> {
   const start = raw.indexOf('{');
   for (let end = raw.lastIndexOf('}'); start !== -1 && end > start; end = raw.lastIndexOf('}', end - 1)) {
     try {
@@ -351,6 +351,6 @@ async function main(): Promise<number> {
   return 0;
 }
 
-void main().then((code) => {
+if (require.main === module) void main().then((code) => {
   process.exitCode = code;
 });

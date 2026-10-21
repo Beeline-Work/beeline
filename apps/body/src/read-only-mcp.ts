@@ -1745,6 +1745,7 @@ export async function createSchedule(
     roomId: deps.roomId,
     prompt,
     cadence,
+    ...(args.title !== undefined ? { title: args.title } : {}),
     ...(stringArg(args, 'workflowName') ? { workflowName: stringArg(args, 'workflowName')! } : {}),
     ...(maxRuns !== undefined ? { maxRuns } : {}),
   });
@@ -1913,12 +1914,13 @@ export async function updateSchedule(
   ) {
     throw new Error('maxRuns must be a positive integer');
   }
-  if (prompt === undefined && parsed === undefined && maxRuns === undefined && !stringArg(args, 'workflowName'))
+  if (prompt === undefined && parsed === undefined && maxRuns === undefined && args.title === undefined && !stringArg(args, 'workflowName'))
     throw new Error('give a prompt, cadence, or maxRuns to change');
   const updated = await deps.execute('updateAgentSchedule', {
     roomId: deps.roomId,
     scheduleId,
     ...(deps.selfOnly ? { selfOnly: true } : {}),
+    ...(args.title !== undefined ? { title: args.title } : {}),
     ...(stringArg(args, 'workflowName') ? { workflowName: stringArg(args, 'workflowName')! } : {}),
     ...(prompt !== undefined ? { prompt } : {}),
     ...(parsed ? { cadence: parsed.cadence } : {}),
@@ -2842,7 +2844,7 @@ export async function callAgentTool(name: string, args: JsonObject, toolCallId: 
     }
     case 'wake': {
       // Explicit allowlist: no payload can select an arbitrary daemon operation or recipient.
-      const allowed = new Set(['action', 'trigger', 'address', 'scheduleId', 'subscriptionId', 'prompt', 'cadence', 'maxRuns', 'workflowName', 'source', 'event', 'repository', 'channelId', 'channelName', 'kinds']);
+      const allowed = new Set(['action', 'trigger', 'address', 'scheduleId', 'subscriptionId', 'prompt', 'cadence', 'maxRuns', 'title', 'workflowName', 'source', 'event', 'repository', 'channelId', 'channelName', 'kinds']);
       if (Object.keys(args).some(key => !allowed.has(key))) throw new Error('wake only manages this agent’s own wake sources');
       if (args.trigger !== 'lifecycle' && args.address !== undefined) throw new Error('address is only supported for lifecycle wakes; schedules and events belong to this place');
       if (args.trigger === 'lifecycle' && !args.address) throw new Error('lifecycle wake requires address');

@@ -536,6 +536,7 @@ describe('agent tool schedule daemon operations', () => {
       );
       expect(listed.schedules).toEqual([
         {
+          title: 'Scheduled task',
           scheduleId: created.scheduleId,
           agentId: AGENT,
           prompt: 'Ping the Room.',
@@ -621,6 +622,7 @@ describe('agent tool schedule daemon operations', () => {
           .schedules,
       ).toEqual([
         {
+          title: 'Scheduled task',
           scheduleId: created.scheduleId,
           agentId: AGENT,
           prompt: 'Summarize the Room.',

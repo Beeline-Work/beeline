@@ -7,8 +7,8 @@ import { act, create } from 'react-test-renderer';
 import { beforeEach, expect, it, vi } from 'vitest';
 const room = vi.hoisted(() => vi.fn(async () => ({ room: { name: 'Room' }, viewer: { permissions: { manage: true } }, members: [{ identity: { kind: 'agent', pubkey: 'agent-1', name: 'Hoots' } }] })));
 const operation = vi.hoisted(() => vi.fn(async (name: string, _input?: unknown) => name === 'readScheduledWork' ? { roomName: 'Room', agentNames: [['agent-1', 'Hoots']], schedules: [
-  { id: 'daily', roomId: 'room', agentId: 'agent-1', cadence: { kind: 'interval', everyMinutes: 60 }, message: 'Morning summary', nextRunAt: 1790000000, runCount: 14 },
-  { id: 'video', roomId: 'corner-1', agentId: 'agent-1', cadence: { kind: 'interval', everyMinutes: 1440 }, message: 'Start the workflow', nextRunAt: 1790000000, runCount: 2, workflowSlug: 'post_youtube_video', corner: { id: 'corner-1', name: 'video' } },
+  { id: 'daily', title: 'Morning summary', roomId: 'room', agentId: 'agent-1', cadence: { kind: 'interval', everyMinutes: 60 }, message: 'Morning summary', nextRunAt: 1790000000, runCount: 14 },
+  { id: 'video', title: 'Post youtube video', maxRuns: 1, roomId: 'corner-1', agentId: 'agent-1', cadence: { kind: 'interval', everyMinutes: 1440 }, message: 'Start the workflow', nextRunAt: 1790000000, runCount: 2, workflowSlug: 'post_youtube_video', corner: { id: 'corner-1', name: 'video' } },
 ], subscriptions: [{ id: 'sub', roomId: 'room', agentId: 'agent-1', source: 'repository', event: 'issue.opened', repository: 'owner/widgets', prompt: 'Triage new issues.', firedCount: 3 }] } : {}));
 const params = vi.hoisted(() => ({ value: { roomId: 'room', workspaceId: 'ws' } as Record<string, string> }));
 const router = vi.hoisted(() => ({ back: vi.fn(), push: vi.fn(), replace: vi.fn() }));
@@ -115,8 +115,8 @@ it('lists every entry as one row in the shared grammar, each opening its own pag
   const tree = await render(<ScheduledWork />);
   try {
     const row = (testID: string) => tree.root.findByProps({ testID });
-    expect(row('scheduled-work-daily').props).toMatchObject({ title: 'Morning summary', descriptionLead: 'Every hour', description: '· @Hoots · this Room', chevron: 'right' });
-    expect(row('scheduled-work-video').props).toMatchObject({ title: 'Post youtube video', descriptionLead: 'Every day', description: '· @Hoots · corner video' });
+    expect(row('scheduled-work-daily').props).toMatchObject({ title: 'Morning summary', description: undefined, chevron: 'right' });
+    expect(row('scheduled-work-video').props).toMatchObject({ title: 'Post youtube video', description: 'Once' });
     expect(row('scheduled-work-video').props.leading).toBeTruthy();
     expect(row('scheduled-work-daily').props.leading).toBeTruthy();
     expect(row('subscription-sub').props.leading).toBeTruthy();
@@ -259,8 +259,8 @@ it('names empty and legacy corner names through the shared title grammar (J40)',
   try {
     const tree = await render(<ScheduledWork />);
     const row = (testID: string) => tree.root.findByProps({ testID });
-    expect(row('scheduled-work-unnamed').props.description).toBe('· @Hoots · corner corner-abcdef12');
-    expect(row('scheduled-work-legacy').props.description).toBe('· @Hoots · corner fix-auth');
+    expect(row('scheduled-work-unnamed').props.description).toBeUndefined();
+    expect(row('scheduled-work-legacy').props.description).toBeUndefined();
     expect(row('subscription-sub').props.description).toBe('· @Hoots · corner triage');
     tree.unmount();
   } finally {

@@ -1179,6 +1179,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
           "type": "string",
           "description": "Required lifecycle corner address; rejected for local schedule/event management."
         },
+        "title": {"type": "string", "description": "Plain schedule label in one to four words.", "maxLength": 80},
         "workflowName": {
           "type": "string",
           "description": "Saved workflow targeted by this subscription, if the action starts one."

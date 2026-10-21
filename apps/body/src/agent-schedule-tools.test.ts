@@ -95,6 +95,16 @@ describe('beeline-agent schedule tools', () => {
     expect(result).toContain('5 runs');
   });
 
+  it('passes a short title on create and title-only updates', async () => {
+    const ops: Array<{ name: string; input: Record<string, unknown> }> = [];
+    await createSchedule({ title: 'Morning card', prompt: 'Summarize.',
+      cadence: { kind: 'interval', everyMinutes: 60 } }, deps(ops));
+    await updateSchedule({ scheduleId: 'sched-1', title: 'Owner card' }, deps(ops));
+    expect(ops[0]?.input.title).toBe('Morning card');
+    expect(ops[1]).toEqual({ name: 'updateAgentSchedule',
+      input: { roomId: 'room-1', scheduleId: 'sched-1', title: 'Owner card' } });
+  });
+
   it('create_schedule accepts cron cadences without a floor note', async () => {
     const ops: Array<{ name: string; input: Record<string, unknown> }> = [];
     const result = await createSchedule(

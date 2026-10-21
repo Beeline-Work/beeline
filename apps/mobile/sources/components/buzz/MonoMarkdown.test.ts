@@ -835,6 +835,17 @@ describe('MonoMarkdown renders a pipe table as an aligned wrapping grid', () => 
 
 
 describe('message reference taps', () => {
+  // Link taps load these modules lazily. Load them once here so a cold CI
+  // transform cannot outlast the per-tap wait.
+  beforeAll(async () => {
+    await Promise.all([
+      import('@/auth/buzz-identity-storage'),
+      import('@/sync/transport/room-view-client'),
+      import('expo-router'),
+      import('@/modal/ModalManager'),
+    ]);
+  });
+
   it('explains an unavailable message without navigating', async () => {
     messageLinks.resolve.mockRejectedValueOnce(new Error('not_found'));
     messageLinks.alert.mockClear();
@@ -844,8 +855,10 @@ describe('message reference taps', () => {
       markdown: `[missing](#beeline/room/${'f'.repeat(64)})`, textStyle: {},
     })); });
     const link = tree.root.find((node: any) => node.type === 'Text' && node.props.accessibilityRole === 'link');
-    await act(async () => { link.props.onPress(); await new Promise((resolve) => setTimeout(resolve, 0)); });
-    expect(messageLinks.alert).toHaveBeenCalledWith('Message not available', expect.any(String));
+    await act(async () => {
+      link.props.onPress();
+      await vi.waitFor(() => expect(messageLinks.alert).toHaveBeenCalledWith('Message not available', expect.any(String)));
+    });
     expect(navigation.navigate).not.toHaveBeenCalled();
     act(() => tree.unmount());
   });

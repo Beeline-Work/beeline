@@ -6,11 +6,17 @@ seeing how to tag its first agent, and tapping to prepare the addressed message.
 ## Findings
 
 Both transcript layouts previously showed `EmptyLedgerState` only when the
-transcript had zero rows. `corner-opened` system rows and `workflow-handoff`
-cards survive the server-message presentation projection, so a fresh corner
-with only those records had no starter. The prompt now appears alongside those
-records. The first conversation message hides it; agent viewers never see it.
-Room and DM empty-state eligibility and copy remain unchanged.
+transcript had zero rows. The new eligibility also allows typed `corner-opened`
+and `workflow-handoff` rows, preserving their display if delivered to the
+transcript. The first conversation message hides the prompt; agent viewers never
+see it. Room and DM empty-state eligibility and copy remain unchanged.
+
+The real local create-with-+ path writes two system cards to PostgreSQL, but the
+current server Room DTO returns `messages: []` for that fresh corner. Thus those
+cards do **not** suppress the empty state on this demonstrated path. The
+system-rows-only browser regression separately covers those rows being present
+in the display transcript. `local-opening-records.txt` records the underlying
+cards; `local-room-read.json` records the actual DTO message count.
 
 ## Demonstrated: CORNER-START-1 (focused browser stand-in)
 
@@ -42,33 +48,71 @@ Observed passing results:
 empty composer filled, existing draft preserved, no-agent fallback focused.
 These are component/surface-slice screenshots, not full signed-in app evidence.
 
-## Outstanding real-target verification
+## Real local stack (brief revision 2)
 
-The requested native Android create-with-+ path and reviewer-bypass browser path
-have not been demonstrated. The leased Android emulator booted, but contained
-no Beeline installation. The APKs found under temporary OTA-test directories
-were test fixtures; an attempted install was rejected as not an APK. A broader
-search also found prior-corner APKs, but none built from this head. The exact
-Android acceptance still needs a build carrying this head and a signed-in session.
+Production reviewer-bypass verification was replaced by local-stack acceptance
+in brief revision 2. The local server uses a fresh migrated PostgreSQL database
+`jellybean_corner_start_r2`, development auth and no production connections.
+The disposable `local:cornercaptain` identity signs in through
+`POST /v1/auth/github/exchange`. A real Workspace and #general were created
+through the phone API, with a seeded local Beebee identity and agent membership.
+No helper is attached and no agent turn is dispatched.
 
-Trusty Squire opened production web in an existing lunchboxfortwo owner session.
-The reviewer bypass exists in the vault as a sealed login-link value; the
-mounted browser navigation route requires a plaintext URL and exposes no sealed
-login-link navigation operation. No secret was retrieved, no corner/message was
-created in that session, and no production rollout was attempted. This branch's
-code is not deployed there.
+Desktop Expo web runs on port 18432 against the server on 18431. A temporary
+bootstrap exchanged the dev identity and populated browser/native session
+storage before normal app startup; it is not part of the product change.
+The product entry and package main were restored afterward.
 
-Remaining acceptance: load this head in an Android development build and a web
-preview, sign in through an authorized reviewer route, create a corner with +
-in a Room containing Beebee, capture the note, tap it, and capture the focused
-composer with @beebee. The focused proof above does not replace that acceptance.
+The real desktop app (1279 × 936) was driven through #general → Corners → +.
+It created `open-amber-corner`, showed “Tag @beebee to start”, and tapping that
+note registered the visible @beebee composer chip. No message was sent.
+
+- `desktop-01-corners.jpg`: Corners screen before +.
+- `desktop-02-note.jpg`: new corner and note, before tapping.
+- `desktop-03-composer.jpg`: note tapped, composer with @beebee.
+
+Android inventory found three development-client APKs: runtimes 21, 24 and 37.
+No runtime-39 development client was found in the owner’s home/state/cache or
+temporary APK inventory. The newest available development client was installed:
+`a9c406e6-a4cc-4767-befe-668f904af6b5/apps/mobile/android/app/build/outputs/apk/debug/app-debug.apk`.
+Its embedded `expo_runtime_version` is **37**, verified with aapt; the Expo
+menu reports the current Metro app configuration’s runtime **40**, which does
+not change the installed binary’s native runtime. APK SHA-256:
+`f48c31a09f1e06c15864fa1e438b948cef21037a35579fa004efa4400fe60289`.
+
+Metro on port 18433 serves this PR’s normal `index.ts` against
+`http://10.0.2.2:18431`. Device logs report build/release SHA
+`ec4ef66e09bf208a0a90d89854b13dac5ca7fa22` and the local server origin.
+The runtime-37 binary successfully loaded this head and signed in locally.
+The initial asynchronous proof bootstrap caused “App entry not found”; restoring
+the normal entry point fixed it. An initial workspace read timed out and Retry
+loaded the Room deck. Expo’s floating Tools overlay was disabled in the local
+dev-client preferences for the captures, without changing native source.
+
+The Android native app was driven through #general → Corners → +, creating
+`hidden-atlas-corner` (`4d7eafdc-5596-4261-8dc2-eeddc8079a2f`). The note showed
+“Tag @beebee to start”. Tapping it produced the @beebee mention chip, an active
+caret and the Android keyboard. The accessibility tree reports the Message
+field text `@beebee ` with `focused="true"`; InputMethodManager reports
+`mInputShown=true`. No message was sent. The database contains two opening records
+for this new corner while the Room read DTO returns no transcript messages.
+
+- `android-01-corners.png`: native Corners before +.
+- `android-02-note.png`: the new native corner and note before tapping.
+- `android-03-composer.png`: after tapping, mention and keyboard visible.
+- `android-composer.xml`: accessibility evidence of the focused Message input.
+
+This is a real app/server demonstration, not the focused renderer stand-in.
+The installed native runtime is 37, so it does **not** claim the brief’s exact
+runtime-39 acceptance. The concrete remaining decision is whether to accept
+this successful native proof or repeat it with a supplied runtime-39 dev client.
 
 ## Validation
 
 - `npm run corner:prepare`: passes.
 - Root typecheck, mobile UI component policy and workflow-path lint: pass.
 - Focused unit/composer/browser checks: 10 tests pass.
-- Full mobile run: 575 files pass, 4 skip, 1 fails (4765 passing tests,
-  5 skipped, 1 failing). The failure is the unrelated
-  `ViewerConversationDock.browser.test.ts` top-scroll proof. Its isolated rerun
-  passes all three tests. The full run is therefore not claimed green.
+- Revision-2 full mobile run: **577 files pass, 4 skip; 4767 tests pass,
+  5 skip; no failures** (581 files, 4772 tests).
+- The earlier run’s unrelated viewer-dock failure passed in the isolated retry
+  and in this full run.

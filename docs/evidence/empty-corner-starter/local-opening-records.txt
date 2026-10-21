@@ -1,0 +1,2 @@
+card|@system opened corner|{"verb": "opened", "object": {"text": "corner"}, "subject": {"id": "972a35ec7a6e572c01c5b0a48cbdc82f6137dd7f35435cf9cc0ec305fdafa248", "kind": "system", "name": "@system"}}
+card|@system handed off implement|{"verb": "handed off", "object": {"text": "implement"}, "subject": {"id": "972a35ec7a6e572c01c5b0a48cbdc82f6137dd7f35435cf9cc0ec305fdafa248", "kind": "system", "name": "@system"}}

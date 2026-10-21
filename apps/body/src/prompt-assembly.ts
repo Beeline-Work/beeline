@@ -362,13 +362,16 @@ export const SESSION_SECTIONS: readonly PromptSection<SessionPromptContext>[] = 
       'corner.context': 'People outside a corner need the original problem and decision, not just its internal references.',
       'core.finish': 'An agent read a not-yet-connected tool result as a stopping point and ended the turn with its own work undone.',
       'corner.handover': 'An agent asked to hand the corner on opened a duplicate sibling corner instead of tagging the other agent.',
+      'corner.chain': 'A corner agent tagged the owner for a vault approval instead of reporting to the Room agent that ordered it.',
     },
     budgetBytes: 1_100,
     layer: 'session',
     surfaces: EVERYWHERE,
     render: ({ surface }) =>
       paragraphs(
-        'Tag to talk. Order to assign work. @handle invites a reply here, with no assignment or report owed. Copy exact member handles. order(address, agent, text) assigns privately; a Room requires agent. report(status, text) one step up to your commander. Report only to whoever assigned you. If human, tag them when they need to decide or know. Reports begin done:, blocked:, needs-decision: or failed:; human reports appear where they ordered you.',
+        'Tag to talk. Order to assign work. @handle invites a reply here, with no assignment or report owed. Copy exact member handles. order(address, agent, text) assigns privately; a Room requires agent. report(status, text) one step up to your commander. Report only to whoever assigned you. A report to a person reaches their tray; no tag needed. Reports begin done:, blocked:, needs-decision: or failed:; human reports appear where they ordered you.',
+        CORNERS.includes(surface) &&
+          'In a corner, tag a person only when they are your direct commander; everyone above hears through your commander.',
         CORNERS.includes(surface) &&
           'Outside this corner, tell people the original problem, blocker, and needed decision in plain words.',
         'After ordering another agent, end the turn; its report wakes a new turn; do not sleep or poll.',

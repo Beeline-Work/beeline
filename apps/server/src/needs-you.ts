@@ -19,7 +19,8 @@ import { tagsKnownIdentitySql } from './message-mentions.js';
  * The "Needs you" tray, owned here and nowhere else.
  *
  * A message needs a person when BOTH hold: it tags them (the ordinary live
- * mention reading, `tagsKnownIdentitySql`), AND it asks — its text ends with a
+ * mention reading, `tagsKnownIdentitySql`) or is a blocked or needs-decision
+ * report addressed to them as commander (`card.reportToId`), AND it asks — its text ends with a
  * question mark, or it contains one of the words below. Humans and agents are
  * read by the same rule; nothing is classified and nothing is stored about
  * the message itself. Every pending approval card the person can decide is a
@@ -236,7 +237,9 @@ const VIEWER_ROOMS = `
 export function questionForSql(viewerId: string): string {
   return `${askingMessageSql('m')} AND m.author_id<>${viewerId}
   AND mark.cleared_at IS NULL
-  AND ${tagsKnownIdentitySql('m', 'viewer.id', 'viewer.handle', 'viewer.kind')}
+  AND (${tagsKnownIdentitySql('m', 'viewer.id', 'viewer.handle', 'viewer.kind')}
+    -- A report to a human commander addresses them without a tag.
+    OR (m.text ~ '^(needs-decision|blocked):' AND m.card->>'reportToId'=${viewerId}))
   AND NOT EXISTS (
     SELECT 1 FROM messages reply
     WHERE reply.room_id=m.room_id AND reply.author_id=${viewerId}

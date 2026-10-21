@@ -632,12 +632,14 @@ describe('prompt assembly guards', () => {
     expect(skill).toContain('exact reviewed head SHA');
   });
 
-  it('lets agents decide when to tag their human commander', () => {
+  it('keeps decisions on the chain of command', () => {
     for (const [name, context] of Object.entries(SESSION_VARIANTS)) {
       const text = assembleSessionPrompt(context).systemPrompt;
-      expect(text, name).toContain('Report only to whoever assigned you. If human, tag them when they need to decide or know.');
-      expect(text, name).not.toContain('Do not tag a human to escalate.');
+      expect(text, name).toContain('Report only to whoever assigned you. A report to a person reaches their tray; no tag needed.');
+      expect(text, name).not.toContain('If human, tag them');
       expect(text, name).toContain('report(status, text) one step up to your commander.');
+      const corner = ['code-corner', 'repo-less-corner'].includes(context.surface);
+      expect(text.includes('tag a person only when they are your direct commander'), name).toBe(corner);
     }
   });
 

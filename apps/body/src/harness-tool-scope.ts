@@ -86,13 +86,6 @@ export const CLAUDE_TOOL_SCOPE_SETTINGS = { disableClaudeAiConnectors: true } as
  * to drive the operator's personal accounts through it. Even with the mounts
  * gone, the model must never offer, claim, or try to authorize one.
  */
-export const NO_PERSONAL_CONNECTORS_INSTRUCTION =
-  'The only tools you have are the ones this host mounted for this session. ' +
-  'Other than an explicitly host-mounted account tool, you have no personal, cloud, or ' +
-  'account-linked connectors here — no email, drive, calendar, design, docs, or ticketing ' +
-  'integrations — and no way to authorize one. Never claim any unmounted tool is available ' +
-  'or coming online, never offer to connect one, and never tell anyone to change connector settings.';
-
 interface ToolScopeProfile {
   enforcement: ToolScopeEnforcement;
   note: string;
@@ -162,21 +155,6 @@ const PROFILES: Array<{ match: RegExp; profile: ToolScopeProfile }> = [
   },
 ];
 
-/** Classify the configured ACP command. Unknown commands fail closed. */
-export function harnessToolScope(agentCommand: string | undefined): {
-  enforcement: ToolScopeEnforcement;
-  note: string;
-} {
-  const profile = matchProfile(agentCommand);
-  if (profile) return { enforcement: profile.enforcement, note: profile.note };
-  return {
-    enforcement: 'unknown',
-    note: agentCommand
-      ? `'${agentCommand}' has not been verified to keep the operator's personal MCP servers and account connectors out of a session`
-      : 'no ACP command configured',
-  };
-}
-
 /**
  * The `_meta` that pins this harness's tool surface to the servers passed on
  * the same `session/new` request, or `undefined` when the harness has no such
@@ -219,32 +197,6 @@ export function sessionToolScopeMeta(
  */
 export function harnessReadsMetaSystemPrompt(agentCommand: string | undefined): boolean {
   return matchProfile(agentCommand)?.metaSystemPrompt === true;
-}
-
-/**
- * One-line operator warning when a Room's tool surface is wider than Beeline's
- * own mounted servers, or `undefined` when it is not. `isolatedHarnessHome` is
- * whether this Room got its own `agent-home` (see `agent-home.ts`) — the only
- * thing standing between a codex session and `$HOME/.codex/config.toml`.
- */
-export function toolScopeWarning(
-  agentCommand: string | undefined,
-  options: { isolatedHarnessHome: boolean },
-): string | undefined {
-  const { enforcement, note } = harnessToolScope(agentCommand);
-  if (enforcement === 'allowlisted') return undefined;
-  const parts = [
-    `Room members can reach tools Beeline did not mount: ${note}.`,
-    "Anything this harness exposes from the operator's own account or config is reachable by every Room member.",
-  ];
-  if (enforcement === 'config-isolated') {
-    parts.push(
-      options.isolatedHarnessHome
-        ? "This Room has its own harness home, populated with the operator's explicitly shared skills and copied MCP declarations; unrelated harness settings remain out of reach."
-        : 'Set BUZZY_BODY_ROOM_HOME=1 so this Room gets its own harness home.',
-    );
-  }
-  return parts.join(' ');
 }
 
 function matchProfile(agentCommand: string | undefined): ToolScopeProfile | undefined {

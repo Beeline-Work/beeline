@@ -33,7 +33,6 @@ export type {
   MissionTargetAllocation,
   NormalizedDestination,
   ParsedPermissionDecision,
-  ParsedPermissionEvent,
   ParsedPermissionExecution,
   ParsedPermissionRequest,
   ParsedPermissionRevocation,
@@ -57,7 +56,6 @@ export {
   buildPermissionRevocation,
   defaultPermissionGrantEnvelope,
   parsePermissionDecision,
-  parsePermissionEvent,
   parsePermissionExecution,
   parsePermissionRequest,
   parsePermissionRevocation,
@@ -70,7 +68,6 @@ export {
 } from './permission-ledger.js';
 export type { PermissionFoldState, PermissionUsage } from './permission-ledger.js';
 export {
-  verifyMissionPermissionActionAuthority,
   verifyPermissionAction,
 } from './permission-verification.js';
 export type {

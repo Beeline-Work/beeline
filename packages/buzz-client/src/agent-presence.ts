@@ -2,8 +2,6 @@
 import { TAG_AGENT_PRESENCE } from './kinds.js';
 import { AGENT_REACHABLE_HORIZON_MS, isAgentReachable } from '@beeline/api-contract/agent-access';
 
-/** @deprecated Presence is event-driven; no publisher schedules a heartbeat. */
-export const AGENT_PRESENCE_HEARTBEAT_MS = 45_000;
 export const AGENT_PRESENCE_STALE_MS = AGENT_REACHABLE_HORIZON_MS;
 
 /** An explicit offline fact ages into dormancy after a day. */

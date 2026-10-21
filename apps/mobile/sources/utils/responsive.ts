@@ -9,18 +9,6 @@ import { getLayoutClass, type LayoutClass } from './layoutClass';
 export { calculateDeviceDimensions, determineDeviceType, calculateHeaderHeight };
 export { getLayoutClass, LAYOUT_BREAKPOINTS, type LayoutClass } from './layoutClass';
 
-// Get header height based on platform, device type, and orientation (wrapper for backward compatibility)
-export function getHeaderHeight(isLandscape: boolean, deviceType: 'phone' | 'tablet'): number {
-    return calculateHeaderHeight({
-        platform: Platform.OS,
-        isLandscape,
-        // @ts-ignore - isPad is not in the type definitions but exists at runtime on iOS
-        isPad: Platform.OS === 'ios' ? Platform.isPad : undefined,
-        deviceType: Platform.OS === 'android' ? deviceType : undefined,
-        isMacCatalyst: isRunningOnMac()
-    });
-}
-
 // Hook to get device type (reactive to dimension changes)
 export function useDeviceType(): 'phone' | 'tablet' {
     const { width, height } = useWindowDimensions();

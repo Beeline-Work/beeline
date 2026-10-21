@@ -1,16 +1,13 @@
 import type {
   Agent,
   AttachmentReference,
-  ChatListItem,
   ChatListWorkspace,
-  CommunityMember,
   CornerListItem,
   RoomView,
   RoomViewAgentTurn,
   RoomViewIdentity,
   RoomViewMember,
   RoomViewMessage,
-  WorkspaceView,
 } from '@beeline/buzz-client';
 import {
   cornerShortTitle,
@@ -674,14 +671,4 @@ export function memberAgent(member: RoomViewMember, _workspaceId: string): Agent
     // seed contradicts both (`agent-display.ts`).
     ...(member.identity.face ? { face: member.identity.face } : {}),
   };
-}
-
-export function workspacePeople(view: WorkspaceView): CommunityMember[] {
-  return view.members
-    .filter((member) => member.identity.kind === 'human')
-    .map((member) => ({ pubkey: member.identity.pubkey, role: member.role }));
-}
-
-export function chatListItemUpdatedAt(item: ChatListItem): number | undefined {
-  return item.latestMessage?.createdAt ?? item.room.updatedAt;
 }

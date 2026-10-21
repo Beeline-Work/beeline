@@ -60,15 +60,6 @@ async function storageSet(key: string, value: string): Promise<void> {
   await SecureStore.setItemAsync(key, value);
 }
 
-async function storageRemove(key: string): Promise<void> {
-  const web = webStore();
-  if (web) {
-    web.delete(key);
-    return;
-  }
-  await SecureStore.deleteItemAsync(key);
-}
-
 async function secretGetAt(key: string): Promise<string | null> {
   const web = webStore();
   if (web) return web.getString(key) ?? null;
@@ -204,13 +195,6 @@ export async function saveRelayUrl(url: string): Promise<void> {
   const previous = await storageGet(BUZZ_RELAY_URL_KEY);
   await storageSet(BUZZ_RELAY_URL_KEY, url);
   if (previous !== url) resetClientState();
-}
-
-/** Forget the stored relay URL (reset to default). */
-export async function clearRelayUrl(): Promise<void> {
-  const previous = await storageGet(BUZZ_RELAY_URL_KEY);
-  await storageRemove(BUZZ_RELAY_URL_KEY);
-  if (previous !== null) resetClientState();
 }
 
 /**

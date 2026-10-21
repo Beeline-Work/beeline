@@ -7,7 +7,6 @@ import { registerServerOidcIdentityRoutes } from './server-oidc-identity-routes.
 import { registerServerAgentConnectRoutes } from './server-agent-connect-routes.js';
 
 export {
-  GITHUB_REPO_EVENT_TYPES,
   type AuthServerOptions,
   type AuthTenant,
   type GitHubRoomTokenAuthorityFailureReason,

@@ -7,11 +7,6 @@ export function tagValue(event: NostrEvent, name: string): string | undefined {
   return event.tags.find((t) => t[0] === name)?.[1];
 }
 
-/** Channel UUID from the `h` tag (Buzz requires UUID; non-UUIDs are dropped). */
-export function channelIdOf(event: NostrEvent): string | undefined {
-  return tagValue(event, 'h');
-}
-
 /**
  * Parse kind:39002 members list.
  * Tags are typically `["p", <pubkey>]` (and possibly role as separate history).

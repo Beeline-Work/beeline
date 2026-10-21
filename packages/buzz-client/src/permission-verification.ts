@@ -321,12 +321,3 @@ export function verifyPermissionAction(
 ): Promise<PermissionVerificationResult> {
   return verifyPermissionActionInternal(input, false);
 }
-
-export function verifyMissionPermissionActionAuthority(
-  input: PermissionActionVerificationInput,
-): Promise<PermissionVerificationResult> {
-  if (input.action.scope.type !== 'mission.control') {
-    return Promise.resolve({ authorized: false, terminal: true, reason: 'action-mismatch' });
-  }
-  return verifyPermissionActionInternal(input, true);
-}

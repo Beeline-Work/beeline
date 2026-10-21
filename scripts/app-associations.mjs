@@ -1,5 +1,4 @@
 import { readFile } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
 
 export const ASSOCIATION_FILES = {
   apple: {
@@ -142,8 +141,4 @@ export async function readLiveAssociations({ fetchImpl = fetch } = {}) {
     }),
   );
   return Object.fromEntries(entries);
-}
-
-export function repositoryPath(kind) {
-  return fileURLToPath(ASSOCIATION_FILES[kind].repositoryUrl);
 }

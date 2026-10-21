@@ -10,7 +10,6 @@ import {
   buildAgentAccessConfig,
   buildPermissionDecision,
   buildPermissionExecution,
-  buildPermissionRevocation,
   defaultPermissionGrantEnvelope,
   foldPermissionLedger,
   parsePermissionDecision,
@@ -234,58 +233,6 @@ export async function grantAndQueueRoomCreate(input: {
   await input.outbox.put(item);
   await input.client.publish(decision);
   return item;
-}
-
-/** Generic approval-card decision path for standing envelopes and Tier 2 asks. */
-export async function publishPermissionDecisionFromCard(input: {
-  identity: Identity;
-  requestEvent: NostrEvent;
-  client: PermissionEventPublisher;
-  decision: 'grant' | 'deny';
-  grant?: PermissionGrantEnvelopeV1;
-  note?: string;
-  now?: number;
-}): Promise<NostrEvent> {
-  const request = parsePermissionRequest(input.requestEvent);
-  if (!request) throw new Error('invalid permission request');
-  const decidedAt = input.now ?? Math.floor(Date.now() / 1_000);
-  const event = buildPermissionDecision(input.identity, request, {
-    version: 1,
-    permissionId: request.value.permissionId,
-    requestEventId: request.event.id,
-    decision: input.decision,
-    decidedAt,
-    ...(input.decision === 'grant'
-      ? { grant: input.grant ?? defaultPermissionGrantEnvelope(request.value.scope, decidedAt) }
-      : {}),
-    ...(input.note ? { note: input.note } : {}),
-  });
-  await input.client.publish(event);
-  return event;
-}
-
-/** Instant revocation action exposed by every granted permission card. */
-export async function publishPermissionRevocationFromCard(input: {
-  identity: Identity;
-  requestEvent: NostrEvent;
-  grantEventId: string;
-  client: PermissionEventPublisher;
-  reason: string;
-  note?: string;
-  now?: number;
-}): Promise<NostrEvent> {
-  const request = parsePermissionRequest(input.requestEvent);
-  if (!request) throw new Error('invalid permission request');
-  const event = buildPermissionRevocation(input.identity, request, {
-    version: 1,
-    permissionId: request.value.permissionId,
-    grantEventId: input.grantEventId,
-    revokedAt: input.now ?? Math.floor(Date.now() / 1_000),
-    reason: input.reason,
-    ...(input.note ? { note: input.note } : {}),
-  });
-  await input.client.publish(event);
-  return event;
 }
 
 /**

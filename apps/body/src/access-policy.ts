@@ -17,7 +17,6 @@
 
 import {
   DEFAULT_AGENT_ACCESS_POLICY,
-  MAX_ACCESS_ALLOWLIST_ENTRIES,
   type AgentAccessPolicy,
 } from '@beeline/api-contract/agent-access';
 
@@ -52,17 +51,6 @@ export const DEFAULT_ACCESS_POLICY: AgentAccessPolicy = DEFAULT_AGENT_ACCESS_POL
  * for records that carry no explicit policy — never for a new pairing.
  */
 export const LEGACY_ACCESS_POLICY: AgentAccessPolicy = 'everyone';
-
-/** Strict persisted form: unique lowercase hex pubkeys with a bounded cardinality. */
-export function isAgentAccessAllowlist(value: unknown): value is string[] {
-  if (!Array.isArray(value) || value.length === 0 || value.length > MAX_ACCESS_ALLOWLIST_ENTRIES) {
-    return false;
-  }
-  if (value.some((pubkey) => typeof pubkey !== 'string' || !/^[0-9a-f]{64}$/.test(pubkey))) {
-    return false;
-  }
-  return new Set(value).size === value.length;
-}
 
 /**
  * The captain-specified default auto-response, verbatim. `<@owner_name>` is a

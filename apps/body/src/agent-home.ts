@@ -1640,11 +1640,6 @@ async function resolveExplicitSkillSources(
   return resolved;
 }
 
-/** Pair-time preflight for the same source boundary activation will enforce. */
-export async function validateSharedSkills(operatorHome: string, names: string[]): Promise<void> {
-  await resolveExplicitSkillSources(resolve(operatorHome), names);
-}
-
 function assertContained(root: string, candidate: string): void {
   const rel = relative(root, candidate);
   if (rel === '..' || rel.startsWith(`..${sep}`) || resolve(root, rel) !== resolve(candidate)) {

@@ -201,19 +201,16 @@
     ],
     "components/buzz/MicGlyph.tsx": ["ArrowUpGlyph", "ConversationGlyph", "MicGlyph", "PlusGlyph", "StopGlyph", "StrokeGlyph", "WaveformGlyph"],
     "components/buzz/MonoHull.tsx": [
-      "HullActivityTip",
       "HullLivePulse",
       "HullMechanismRail",
       "HullMechanismReveal",
       "HullSurface",
-      "HullWaveSignal",
       "LoaderCell",
       "NewMessageMaterialize",
       "PixelGateReveal",
       "PixelLoader",
       "RevealStrip",
       "StateCircle",
-      "WaveSegment",
       "mark",
       "rail"
     ],
@@ -388,10 +385,7 @@
     "components/markdown/parseMarkdown.ts": [],
     "components/markdown/parseMarkdownBlock.ts": [],
     "components/markdown/parseMarkdownSpans.ts": [],
-    "components/navigation/headerMetrics.ts": [],
     "components/ShortcutHints.tsx": [
-      "SessionShortcutHintBadge",
-      "ShortcutHintBadge",
       "ShortcutHintsContext",
       "ShortcutHintsProvider"
     ],

@@ -262,10 +262,6 @@ export async function findRuntimeConfigPaths(
   return findAgentRuntimeConfigPaths(env, cwd);
 }
 
-export async function resolveRuntimeConfigPath(path: string): Promise<string> {
-  return resolve(path);
-}
-
 export async function selectRuntimeConfigPaths(options: {
   cwd: string;
   all: boolean;

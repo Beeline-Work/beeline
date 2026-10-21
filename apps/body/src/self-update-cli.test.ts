@@ -179,7 +179,6 @@ it('stages a CLI update from its manifest override while a helper is serving', a
   const configPath = join(home, 'runtime.json');
   vi.spyOn(runtime, 'findRuntimeConfigPaths').mockResolvedValue([]);
   vi.spyOn(runtime, 'findAgentRuntimeConfigPaths').mockResolvedValue([configPath]);
-  vi.spyOn(runtime, 'resolveRuntimeConfigPath').mockResolvedValue(configPath);
   vi.spyOn(runtime, 'runtimeDaemonPid').mockResolvedValue(process.pid);
   vi.spyOn(runtime, 'readRuntimeRecord').mockResolvedValue({ agent: { publicKey: 'fixture-agent' } } as never);
   const published = join(home, 'published');

@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
+import { HULL_SHEET_ROW_HEIGHT } from '@/buzz/hull-sheet-layout';
 
 /**
  * The open Repository row on the Room sheet and New Room. Its label once
@@ -28,7 +29,8 @@ describe('open Repository row', () => {
 
   it('sits inside one row frame with the closed row height', () => {
     expect(styleBody(choice, 'labelLine')).toContain('minHeight: 52 - 2 * hull.space.sm');
-    expect(styleBody(sheet, 'row')).toContain('minHeight: 52');
+    expect(HULL_SHEET_ROW_HEIGHT).toBe(52);
+    expect(styleBody(sheet, 'row')).toContain('minHeight: HULL_SHEET_ROW_HEIGHT');
     expect(styleBody(sheet, 'row')).toContain('paddingVertical: hull.space.sm');
     const block = styleBody(choice, 'repoBlock');
     expect(block).toContain('paddingVertical: hull.space.sm');

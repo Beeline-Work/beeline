@@ -34,8 +34,8 @@ setTimeout(() => {
   titleText.selectNodeContents(title);
   document.getElementById('result')!.textContent = JSON.stringify({
     titleInset: titleText.getBoundingClientRect().left - sheet.left,
-    searchLeftInset: search.getBoundingClientRect().left - sheet.left,
-    searchRightInset: sheet.right - search.getBoundingClientRect().right,
+    searchLeftInset: search.getBoundingClientRect().left - sheet.left + parseFloat(getComputedStyle(search).paddingLeft),
+    searchRightInset: sheet.right - search.getBoundingClientRect().right + parseFloat(getComputedStyle(search).paddingRight),
     messageButtonBorders: buttons.map(node => getComputedStyle(node).borderTopColor),
   });
 }, 500);

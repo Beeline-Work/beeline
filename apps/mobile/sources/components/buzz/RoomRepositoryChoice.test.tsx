@@ -30,7 +30,7 @@ vi.mock('./HullActionSheet', async () => {
   const React = await import('react');
   return {
     HULL_SHEET_INSET: 24,
-    HullActionSheetRow: (props: any) => React.createElement('Row', props),
+    HullActionSheetRow: (props: any) => React.createElement('Row', props, React.createElement('Text', {}, props.label), props.selected ? React.createElement('Text', {}, 'SELECTED') : null),
   };
 });
 
@@ -208,7 +208,7 @@ describe('Room header Repository control', () => {
     press('room-repo-mode-create');
     expect(text('room-repo-create')).toBe('trusty-squirethecollector');
     press('room-repo-owner');
-    expect(text('room-owner-menu')).toBe('trusty-squire✓Beeline-WorkConnect another org');
+    expect(text('room-owner-menu')).toBe('trusty-squireSELECTEDBeeline-WorkConnect another org');
     press('room-owner-2');
     expect(text('room-repo-create')).toBe('Beeline-Workthecollector');
     act(() => save().onPress());

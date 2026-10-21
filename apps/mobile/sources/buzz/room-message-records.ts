@@ -1,4 +1,5 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import equal from 'fast-deep-equal';
 import type { RoomViewAgentTurn, RoomViewMessage } from '@beeline/buzz-client';
 import { ROOM_VIEW_AGENT_LIMIT } from '@beeline/api-contract/phone';
 import { clientResetGeneration, subscribeClientReset } from '@/sync/client-reset';
@@ -102,6 +103,9 @@ function accept(room: RoomRecords, incoming: RoomViewMessage, shared: boolean): 
   const feedbackReported = Boolean(held?.feedbackReported || incoming.feedbackReported);
   const next = bookmarked === incoming.bookmarked && feedbackReported === Boolean(incoming.feedbackReported)
     ? incoming : { ...incoming, bookmarked, feedbackReported };
+  // Identity selection can recreate an unchanged row when turn subscribers refresh.
+  // Keep its record stable so the layout effect does not notify those subscribers again.
+  if (held && equal(held, next)) return false;
   if (next !== incoming) readAt.set(next, readAt.get(incoming)!);
   room.messages.set(incoming.id, next);
   return next !== held;

@@ -166,9 +166,13 @@ two secrets must be configured. The self-protection pool snapshot (`size`, `inUs
 sample; missing or malformed metrics and any nonzero waiter count fail the
 canary before the second Machine can update.
 
-The server job has a separate 40-minute timeout for package and image builds,
-migration, the full five-minute watch, peer update and rollback headroom; the
-OTA fix-to-phone budget does not cap this promotion job.
+Server promotion keeps its eighteen-minute job timeout. Free starter image
+publishing runs after the release result in a separate best-effort job, outside
+migration, canary observation, server checkpoints and release-result dependencies.
+Waiting for the result also keeps the shared production runner available to
+finish the release record. Its
+helper staging can compile Rust binaries; that independent work cannot consume
+the server promotion's time or prevent the release record.
 
 Only a clean window permits the second Machine update. Any failed update or
 sample restores the canary to the exact `previousImageRef` and fails the

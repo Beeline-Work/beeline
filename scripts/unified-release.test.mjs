@@ -637,14 +637,31 @@ test('R-release-timeout: routine native input changes carry binaries while recov
 
 test('R-release-timeout: workflow completes promotion and refuses unrequested native jobs', () => {
   const workflow = parse(readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'));
-  // The failed run spent fourteen minutes reaching the canary. Reserve time
-  // for slower builds/migration, the full watch, peer readiness and rollback.
-  const buildAndMigrationMinutes = 20;
-  const watchMinutes = SERVER_CANARY_WINDOW_SECONDS / 60;
-  const peerAndRollbackMinutes = 10;
-  assert.ok(workflow.jobs.server['timeout-minutes'] >=
-    buildAndMigrationMinutes + watchMinutes + peerAndRollbackMinutes);
+  assert.equal(workflow.jobs.server['timeout-minutes'], 18);
   assert.equal(workflow.jobs.server.concurrency['cancel-in-progress'], false);
+  const action = parse(readFileSync(new URL('../.github/actions/server-leg/action.yml', import.meta.url), 'utf8'));
+  assert.ok(!action.runs.steps.some((step) => /free starter agent|stage-free-agent/.test(step.name + step.run)));
+  assert.ok(!workflow.jobs.server.steps.some((step) => step.uses === 'dtolnay/rust-toolchain@stable'));
+  const publishJob = workflow.jobs.free_agent_image;
+  assert.deepEqual(publishJob.needs, ['initialize', 'server', 'release_result']);
+  assert.match(publishJob.if, /always\(\) && !cancelled\(\)/);
+  assert.match(publishJob.if, /needs\.server\.result == 'success'/);
+  assert.equal(publishJob['continue-on-error'], true);
+  assert.equal(publishJob['timeout-minutes'], 18);
+  assert.equal(publishJob.steps[0].with.ref, '${{ needs.initialize.outputs.release_sha }}');
+  assert.ok(publishJob.steps.some((step) => step.uses === 'dtolnay/rust-toolchain@stable'));
+  const publish = publishJob.steps.find((step) => step.name === 'Publish the free starter agent base image');
+  assert.match(publish.run, /bash scripts\/stage-free-agent-helper\.sh/);
+  assert.match(publish.run, /Free starter agent image was not published/);
+  assert.equal(publish.env.RELEASE_SHA, '${{ needs.initialize.outputs.release_sha }}');
+  for (const [name, job] of Object.entries(workflow.jobs)) {
+    if (name === 'free_agent_image') continue;
+    assert.ok(![job.needs].flat().includes('free_agent_image'), `${name} must not wait for starter image publishing`);
+  }
+  const canary = action.runs.steps.find((step) => step.name === 'Canary one Machine, observe for five minutes, then update its peer');
+  assert.match(canary.run, /for sample in \$\(seq 0 20\)/);
+  assert.match(canary.run, /sleep 15/);
+  assert.equal(SERVER_CANARY_WINDOW_SECONDS, 300);
   for (const platform of ['android', 'ios']) {
     const condition = workflow.jobs[`mobile_native_${platform}`].if;
     // Evaluate the actual workflow expression with a stale native retry flag,
@@ -661,6 +678,45 @@ test('R-release-timeout: workflow completes promotion and refuses unrequested na
           !['', 'none'].includes(storeTrack) || !['', 'auto'].includes(selection));
       }
     }
+  }
+});
+
+test('R-release-timeout: independent starter publishing preserves release identity and remains best effort', () => {
+  const workflow = parse(readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'));
+  const publish = workflow.jobs.free_agent_image.steps.find((step) => step.name === 'Publish the free starter agent base image');
+  const root = mkdtempSync(join(tmpdir(), 'starter-publish-'));
+  try {
+    const trace = join(root, 'trace');
+    for (const command of ['bash', 'flyctl', 'docker']) {
+      const script = join(root, command);
+      writeFileSync(script, `#!/bin/sh
+printf '%s %s %s %s\\n' '${command}' "$*" "\${BEELINE_RELEASE_SHA:-}" "\${BEELINE_RELEASE_VERSION:-}" >> "$TRACE"
+if [ '${command}' = bash ] && [ "$FAIL_STAGE" = true ]; then exit 1; fi
+`);
+      chmodSync(script, 0o755);
+    }
+    for (const failStage of ['false', 'true']) {
+      writeFileSync(trace, '');
+      const result = spawnSync('/bin/bash', ['--noprofile', '--norc', '-c', publish.run], {
+        cwd: root, encoding: 'utf8', timeout: 10_000,
+        env: { ...process.env, PATH: `${root}:${process.env.PATH}`, TRACE: trace,
+          FAIL_STAGE: failStage, RELEASE_VERSION: 'v0.1.97', RELEASE_SHA: NEW_SHA },
+      });
+      assert.equal(result.status, 0, result.stderr);
+      const calls = readFileSync(trace, 'utf8').trim().split('\n');
+      assert.equal(calls[0], `bash scripts/stage-free-agent-helper.sh ${NEW_SHA} v0.1.97`);
+      if (failStage === 'true') {
+        assert.equal(calls.length, 1);
+        assert.match(result.stdout, /::warning::Free starter agent image was not published/);
+      } else {
+        assert.equal(calls.length, 5);
+        assert.match(calls[1], new RegExp(`flyctl deploy .*--build-arg BEELINE_RELEASE_SHA=${NEW_SHA}`));
+        assert.match(calls[4], /docker push registry.fly.io\/beeline-free-agents:latest/);
+        assert.match(result.stdout, /Published registry.fly.io\/beeline-free-agents:0.1.97-/);
+      }
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
@@ -1006,11 +1062,11 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
   assert.equal(workflow.jobs.initialize['timeout-minutes'], 2);
   assert.equal(workflow.jobs.release_result['timeout-minutes'], 2);
   assert.equal(RELEASE_BUDGET_MINUTES, 20);
-  assert.match(source, /fix-to-phone budget is 20 minutes/);
+  assert.match(source, /release ceiling is 20 minutes/);
   // Only the legs that build a store binary, run the emulator proof, or build a
-  // native helper bundle from cold cargo, or promote the server canary, may
-  // exceed the 20-minute ceiling; every other job stays within it.
-  const slowLegs = new Set(['release_proof', 'mobile_native_android', 'mobile_native_ios', 'helper_macos', 'server']);
+  // native helper bundle from cold cargo may exceed the 20-minute ceiling;
+  // every other job stays within it.
+  const slowLegs = new Set(['release_proof', 'mobile_native_android', 'mobile_native_ios', 'helper_macos']);
   for (const [name, job] of Object.entries(workflow.jobs)) {
     const cap = job['timeout-minutes'];
     if (cap === undefined) continue;

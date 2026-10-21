@@ -1089,6 +1089,44 @@ describe('Room turn failure receipt', () => {
       );
     });
 
+    it('fails a 402 over once to the next pinned provider, then ends without looping', async () => {
+      const cacheRoot = await pinCache();
+      const warnings: string[] = [];
+      const warn = vi.spyOn(console, 'warn').mockImplementation((...args: unknown[]) => {
+        warnings.push(args.map(String).join(' '));
+      });
+      const fetchImpl = vi.fn(
+        async () => new Response('{}', { status: 503 }),
+      ) as unknown as typeof fetch;
+      const { receipts, posted, attempts } = await runTurn({
+        agentCommand: '/opt/harness/pi-acp',
+        agentKind: 'pi',
+        advertisedModel: MODEL,
+        fetchImpl,
+        configOverrides: config(cacheRoot),
+        prompt: async ({ agentHomeRoot }) => {
+          // Every provider on the key is out of credit: the same 402 comes back
+          // on each attempt. The turn must move the pin exactly once and then
+          // end on one named failure — never re-pin provider after provider.
+          await record(agentHomeRoot, {
+            content: [],
+            stopReason: 'error',
+            errorMessage:
+              '402: {"message":"This request requires more credits, or fewer max_tokens.","code":402}',
+          });
+          return { stopReason: 'end_turn', updates: [], agentText: '', toolCalls: [] };
+        },
+      });
+      warn.mockRestore();
+
+      expect(attempts).toBe(2);
+      expect(posted).toEqual([]);
+      const failed = receipts.filter((receipt) => receipt.status === 'failed');
+      expect(failed).toHaveLength(1);
+      expect(String(failed[0]!.reason)).toMatch(/^provider error 402/);
+      expect(warnings.join('\n')).toContain('retrying on baseten');
+    });
+
     it('never re-pins the session for a turn the requester stopped', async () => {
       const cacheRoot = await pinCache();
       const warnings: string[] = [];

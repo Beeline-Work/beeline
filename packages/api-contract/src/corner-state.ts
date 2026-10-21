@@ -82,7 +82,19 @@ export function deriveCornerState(facts: CornerStateFacts): DerivedCornerState {
   if (facts.reviewerActive) return { state: 'review' };
   if (facts.blocker || facts.owed === true) return { state: 'waiting', ...facts.blocker };
   if (facts.lifecycle?.checks === 'pending' || facts.lifecycle?.checksSummary?.status === 'pending' ||
-      facts.lifecycle?.checksSummary?.checks.some(check => check.status === 'pending'))
+      facts.lifecycle?.checksSummary?.checks.some(check => check.status === 'pending') ||
+      checksNotReported(facts.lifecycle))
     return { state: 'review' };
   return { state: 'idle' };
+}
+
+/**
+ * A push resets the PR head's checks to an empty `unknown` summary with no
+ * fetch time. Until GitHub reports on that head, its checks are under way.
+ * An empty summary from a completed fetch means no checks are configured.
+ */
+function checksNotReported(lifecycle: CornerLifecycleView | undefined): boolean {
+  const summary = lifecycle?.checksSummary;
+  return Boolean(lifecycle?.pr) && summary?.status === 'unknown' && summary.total === 0 &&
+    summary.fetchStartedAt === undefined;
 }

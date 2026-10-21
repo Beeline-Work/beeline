@@ -26,7 +26,7 @@ function shims(mobile: string): Record<string, string> {
     export const loadBuzzIdentity = async () => ({ publicKey: '${VIEWER}', secretKey: new Uint8Array(32) });`,
     '@/buzz/avatar-upload': 'export const pickAndUploadAvatar = async () => undefined;',
     '@/buzz/runtime-config':
-      "export const getBuzzRuntimeConfig = () => ({ monolithEnabled: true, relayUrl: 'https://relay.test' });",
+      "export const getBuzzRuntimeConfig = () => ({ relayUrl: 'https://relay.test' });",
     '@/sync/transport': `export class BuzzRigTransport {
       async ensureClient() { return { surfaceSubscribe: async () => () => undefined }; }
     }`,

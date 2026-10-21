@@ -22,7 +22,7 @@ vi.mock('@/buzz/surface-storage', () => ({
   surfaceAddress: (_origin: string, _viewer: string, endpoint: string) => ({ endpoint }),
 }));
 vi.mock('@/buzz/runtime-config', () => ({
-  getBuzzRuntimeConfig: () => ({ monolithEnabled: true, monolithUrl: fixture.monolithUrl }),
+  getBuzzRuntimeConfig: () => ({ monolithUrl: fixture.monolithUrl }),
 }));
 vi.mock('@/buzz/room-open-trace', () => ({ markRoomOpen: () => undefined }));
 vi.mock('@/sync/transport/room-view-client', () => ({

@@ -1,13 +1,12 @@
 import { readRepositoryOnboardingEligibility, useRepositoryOnboarding } from '@/buzz/onboarding-rollout';
 import { RoomListSectionHeader } from '@/components/buzz/RoomListSectionHeader';
-import { HullDialogActions, HullDialogInput } from '@/components/buzz/HullDialog';
+import { HullDialogInput } from '@/components/buzz/HullDialog';
 import { useLatencyRouteFrame } from '@/buzz/latency-route-hook';
 import { useTextDraft } from '@/buzz/use-text-draft';
 /** Native GitHub-first onboarding. OAuth proves lookup only; the Nostr key remains device-held. */
 import React, { useEffect, useRef, useState } from 'react';
-import { Platform, Text, TextInput, TouchableOpacity, View } from 'react-native';
+import { Platform, Text, TextInput, View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
-import * as Clipboard from 'expo-clipboard';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import * as Linking from 'expo-linking';
@@ -21,27 +20,15 @@ import {
   buildOidcBindEvent,
   finishOidcBind,
   recoverOidcBind,
-  lookupRecovery,
   type Identity,
   type ManagedIdentity,
   type OidcBindChallenge,
 } from '@beeline/buzz-client';
 import {
   clearPendingGitHubIdentity,
-  generateBuzzIdentity,
-  importBuzzIdentity,
   loadBuzzIdentity,
   loadPendingGitHubIdentity,
-  savePendingGitHubIdentity,
-  saveBuzzIdentity,
 } from '@/auth/buzz-identity-storage';
-import {
-  canConfirmNewKeyBackup,
-  canEnterWithNewKey,
-  createNewKeyDraft,
-  maskNsec,
-  type NewKeyDraft,
-} from '@/auth/new-key-onboarding';
 import {
   clearOnboardingFaceStep,
   clearOnboardingNotice,
@@ -53,7 +40,6 @@ import {
   publishOnboardingNotice,
   subscribeToOnboardingFaceStep,
   subscribeToOnboardingNotices,
-  waitForAuthCallback,
   type OnboardingFaceStep,
   type OnboardingNotice,
   type OnboardingStatus,
@@ -64,17 +50,12 @@ import {
   cancelPendingGitHubSignIn,
   isPendingGitHubReconnect,
   loadPendingGitHubBindChallenge,
-  persistGitHubSignInState,
   recoverPendingGitHubBindChallenge,
-  resumeGitHubSignInCallback,
-  resumeInitialGitHubInstallation,
   resumeInitialGitHubSignIn,
-  startGitHubSignInWebFlow,
   runResilientGitHubSignInSession,
 } from '@/auth/github-auth-session';
 import {
   clearPersonNameOnboardingPending,
-  isPersonNameOnboardingPending,
   loadPreferredPersonName,
   markPersonNameOnboardingPending,
   resolveOnboardingPersonName,
@@ -83,7 +64,7 @@ import {
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { BeelineMark } from '@/components/buzz/BeelineMark';
 import { Button } from '@/components/buzz/Button';
-import { HullSurface, PixelGateReveal } from '@/components/buzz/MonoHull';
+import { PixelGateReveal } from '@/components/buzz/MonoHull';
 import { registerBuzzPushNotifications } from '@/push/buzz-push-registration';
 import { BuzzRigTransport } from '@/sync/transport';
 import { Typography } from '@/constants/Typography';
@@ -136,19 +117,11 @@ export default function BuzzOnboarding() {
   const pendingBind = useRef<PendingBind | null>(null);
   const existingIdentity = useRef<Identity | null>(null);
   const canSignIn = accountSignInAvailable(Platform.OS, isTauri());
-  const [nsecInput, setNsecInput] = useState('');
-  const [showAdvanced, setShowAdvanced] = useState(false);
   const [status, setStatus] = useState<OnboardingStatus>('checking_device');
   const [notice, setNotice] = useState<OnboardingNotice | null>(canSignIn ? null : WEB_NOTICE);
   const [loadingAction, setLoadingAction] = useState<
-    'github' | 'bind' | 'recover' | 'import' | 'name' | 'create' | 'enter' | null
+    'github' | 'bind' | 'recover' | 'name' | null
   >(null);
-  const [newKey, setNewKey] = useState<NewKeyDraft | null>(null);
-  const [newKeyRevealed, setNewKeyRevealed] = useState(false);
-  const [newKeyCopied, setNewKeyCopied] = useState(false);
-  const [newKeySeen, setNewKeySeen] = useState(false);
-  const [newKeyConfirmed, setNewKeyConfirmed] = useState(false);
-  const [inputFocused, setInputFocused] = useState(false);
   const [nameFocused, setNameFocused] = useState(false);
   const [namingIdentity, setNamingIdentity] = useState<Identity | null>(null);
   const [namingClient, setNamingClient] = useState<BuzzClient | null>(null);
@@ -317,9 +290,8 @@ export default function BuzzOnboarding() {
       await clearPendingGitHubSignInState();
       // GitHub OAuth establishes the identity. Repository installation is a
       // separate, user-triggered action in the workspace and Room repo pickers.
-      await saveBuzzIdentity(pending.identity);
-      // Everything after the primary key save is recoverable in-app. Never
-      // report a false sign-in failure after the durable identity is present.
+      // Everything after the bind is recoverable in-app. Never report a false
+      // sign-in failure after the durable identity is present.
       await clearPendingGitHubIdentity().catch(() => undefined);
       await markPersonNameOnboardingPending().catch(() => undefined);
       // Push registration is recoverable in-app. Once the key is saved, never
@@ -353,105 +325,45 @@ export default function BuzzOnboarding() {
       return;
     }
     let alive = true;
-    const relayUrl = getBuzzRuntimeConfig().relayUrl;
     void (async () => {
       const initialUrl = await initialAuthUrl().catch(() => null);
-      if (getBuzzRuntimeConfig().monolithEnabled) {
-        // A press already running in this process owns its own callback. This
-        // screen is the one expo-router routed over it when that callback
-        // arrived: it must neither spend the one-use ticket a second time nor
-        // race the press into the app past the ceremony it is about to publish.
-        if (isSignInInFlight()) return;
-        const savedIdentityId = await monolithSession.identityId();
-        const challenge =
-          (await resumeInitialGitHubSignIn(() => Promise.resolve(initialUrl), undefined, {
-            signedIn: savedIdentityId !== null,
-          })) ??
-          (await recoverPendingGitHubBindChallenge()) ??
-          (await loadPendingGitHubBindChallenge());
-        if (challenge) {
-          if (await isPendingGitHubReconnect()) {
-            let result = 'success';
-            try {
-              await monolithSession.reconnectGitHubTicket(challenge.ticket);
-            } catch (error) {
-              result = error instanceof GitHubAccountMismatchError ? 'mismatch' : 'failed';
-            }
-            await clearPendingGitHubSignInState();
-            if (alive)
-              router.replace({
-                pathname: '/beeline/settings',
-                params: { githubReconnect: result },
-              });
-            return;
+      // A press already running in this process owns its own callback. This
+      // screen is the one expo-router routed over it when that callback
+      // arrived: it must neither spend the one-use ticket a second time nor
+      // race the press into the app past the ceremony it is about to publish.
+      if (isSignInInFlight()) return;
+      const savedIdentityId = await monolithSession.identityId();
+      const challenge =
+        (await resumeInitialGitHubSignIn(() => Promise.resolve(initialUrl), undefined, {
+          signedIn: savedIdentityId !== null,
+        })) ??
+        (await recoverPendingGitHubBindChallenge()) ??
+        (await loadPendingGitHubBindChallenge());
+      if (challenge) {
+        if (await isPendingGitHubReconnect()) {
+          let result = 'success';
+          try {
+            await monolithSession.reconnectGitHubTicket(challenge.ticket);
+          } catch (error) {
+            result = error instanceof GitHubAccountMismatchError ? 'mismatch' : 'failed';
           }
-          if (repositoryOnboarding) setStatus('binding');
-        const identityId = await monolithSession.exchangeGitHubTicket(challenge.ticket);
           await clearPendingGitHubSignInState();
-          if (alive) await enterAfterMonolithSignIn(identityId);
+          if (alive)
+            router.replace({
+              pathname: '/beeline/settings',
+              params: { githubReconnect: result },
+            });
           return;
         }
-        if (savedIdentityId) {
-          if (alive) router.replace('/beeline/channels');
-        }
+        if (repositoryOnboarding) setStatus('binding');
+        const identityId = await monolithSession.exchangeGitHubTicket(challenge.ticket);
+        await clearPendingGitHubSignInState();
+        if (alive) await enterAfterMonolithSignIn(identityId);
         return;
       }
-      const coldChallenge =
-        (await resumeInitialGitHubSignIn(() => Promise.resolve(initialUrl))) ??
-        (await loadPendingGitHubBindChallenge());
-      if (coldChallenge) {
-        if (!alive) return;
-        setStatus('binding');
-        const identity =
-          (await loadBuzzIdentity()) ??
-          (await loadPendingGitHubIdentity()) ??
-          (await generateBuzzIdentity('buzzy-mobile', { persist: false }));
-        await savePendingGitHubIdentity(identity);
-        existingIdentity.current = identity;
-        const pending: PendingBind = {
-          challenge: coldChallenge,
-          identity,
-          bound: false,
-        };
-        pendingBind.current = pending;
-        await finishPendingBind(pending);
-        return;
+      if (savedIdentityId) {
+        if (alive) router.replace('/beeline/channels');
       }
-
-      const coldInstallation = await resumeInitialGitHubInstallation(() =>
-        Promise.resolve(initialUrl),
-      );
-      if (coldInstallation) {
-        const identity = await loadBuzzIdentity();
-        if (!identity) {
-          throw new OidcBindError(
-            'state_mismatch',
-            'This GitHub installation has no device identity to return to.',
-          );
-        }
-        existingIdentity.current = identity;
-        if (alive) await continueAfterIdentity(identity);
-        return;
-      }
-
-      const savedIdentity = await loadBuzzIdentity();
-      const identity = savedIdentity ?? (await loadPendingGitHubIdentity());
-      if (!identity) return;
-      existingIdentity.current = identity;
-      const links = await lookupRecovery(relayUrl, identity);
-      if (!savedIdentity && links.length > 0) {
-        await saveBuzzIdentity(identity);
-        await clearPendingGitHubIdentity().catch(() => undefined);
-        await markPersonNameOnboardingPending().catch(() => undefined);
-        if (alive) await continueAfterIdentity(identity, undefined, true);
-        return;
-      }
-      if (await isPersonNameOnboardingPending()) {
-        if (alive) await continueAfterIdentity(identity, undefined, true);
-        return;
-      }
-      if (!alive || links.length === 0) return;
-      await continueAfterIdentity(identity);
     })()
       .catch((error: unknown) => {
         if (!alive) return;
@@ -477,58 +389,26 @@ export default function BuzzOnboarding() {
     let startedState: string | undefined;
     try {
       const runtime = getBuzzRuntimeConfig();
-      if (runtime.monolithEnabled) {
-        const state = randomState();
-        startedState = state;
-        const challenge = await runResilientGitHubSignInSession({
-          state,
-          recoveryToken: randomState(),
-          runtime,
-          openAuthSession: (authorizationUrl, redirectUri) =>
-            openAccountAuthSession(
-              authorizationUrl,
-              redirectUri,
-              authSessionOptions(Platform.OS, redirectUri),
-            ),
-          subscribeToUrls: subscribeToAuthUrls,
-        });
-        if (repositoryOnboarding) setStatus('binding');
-        const identityId = await monolithSession.exchangeGitHubTicket(challenge.ticket);
-        await clearPendingGitHubSignInState();
-        await enterAfterMonolithSignIn(identityId);
-        return;
-      }
-      const identity =
-        existingIdentity.current ??
-        (await loadPendingGitHubIdentity()) ??
-        (await generateBuzzIdentity('buzzy-mobile', { persist: false }));
-      await savePendingGitHubIdentity(identity);
-      existingIdentity.current = identity;
       const state = randomState();
       startedState = state;
-      const start = startGitHubSignInWebFlow(state, runtime);
-      await persistGitHubSignInState(state);
-      const callbackUrl = await waitForAuthCallback({
-        redirectUri: start.redirectUri,
-        openAuthSession: () =>
+      const challenge = await runResilientGitHubSignInSession({
+        state,
+        recoveryToken: randomState(),
+        runtime,
+        openAuthSession: (authorizationUrl, redirectUri) =>
           openAccountAuthSession(
-            start.authorizationUrl,
-            start.redirectUri,
-            authSessionOptions(Platform.OS, start.redirectUri),
+            authorizationUrl,
+            redirectUri,
+            authSessionOptions(Platform.OS, redirectUri),
           ),
         subscribeToUrls: subscribeToAuthUrls,
       });
-      setStatus(nextOnboardingStatus('opening_browser', 'callback_received'));
-      const challenge = await resumeGitHubSignInCallback(callbackUrl);
-      const pending = { challenge, identity, bound: false };
-      pendingBind.current = pending;
-      await finishPendingBind(pending);
+      if (repositoryOnboarding) setStatus('binding');
+      const identityId = await monolithSession.exchangeGitHubTicket(challenge.ticket);
+      await clearPendingGitHubSignInState();
+      await enterAfterMonolithSignIn(identityId);
     } catch (error) {
-      if (getBuzzRuntimeConfig().monolithEnabled) {
-        await cancelPendingGitHubSignIn(undefined, undefined, startedState).catch(() => undefined);
-      } else {
-        await clearPendingGitHubSignInState();
-      }
+      await cancelPendingGitHubSignIn(undefined, undefined, startedState).catch(() => undefined);
       const next = noticeForAuthError(error);
       setStatus(next.status);
       setNotice(next);
@@ -563,139 +443,6 @@ export default function BuzzOnboarding() {
       setStatus(next.status);
       setNotice(next);
       publishOnboardingNotice(next);
-    } finally {
-      setLoadingAction(null);
-    }
-  };
-
-  const handleImport = async () => {
-    const trimmed = nsecInput.trim();
-    if (!trimmed.startsWith('nsec1')) {
-      setNotice({
-        status: 'bind_retry',
-        title: 'INVALID KEY',
-        message: 'Paste a valid nsec1… secret key.',
-        retryable: false,
-      });
-      return;
-    }
-    setLoadingAction('import');
-    setNotice(null);
-    let identitySaved = false;
-    try {
-      await markPersonNameOnboardingPending();
-      const identity = await importBuzzIdentity(trimmed);
-      identitySaved = true;
-      await Promise.all([
-        clearPendingGitHubIdentity().catch(() => undefined),
-        clearPendingGitHubSignInState().catch(() => undefined),
-      ]);
-      await registerBuzzPushNotifications(identity);
-      await continueAfterIdentity(identity, undefined, true);
-    } catch (error) {
-      if (!identitySaved) await clearPersonNameOnboardingPending();
-      setNotice({
-        status: 'bind_retry',
-        title: 'IMPORT FAILED',
-        message: error instanceof Error ? error.message : String(error),
-        retryable: false,
-      });
-    } finally {
-      setLoadingAction(null);
-    }
-  };
-
-  const resetNewKey = () => {
-    setNewKey(null);
-    setNewKeyRevealed(false);
-    setNewKeyCopied(false);
-    setNewKeySeen(false);
-    setNewKeyConfirmed(false);
-  };
-
-  const handleCreateKey = async () => {
-    setLoadingAction('create');
-    setNotice(null);
-    try {
-      const draft = await createNewKeyDraft();
-      setNewKeyRevealed(false);
-      setNewKeyCopied(false);
-      setNewKeySeen(false);
-      setNewKeyConfirmed(false);
-      // Generated in memory only. Nothing reaches SecureStore until the
-      // backup gate below opens.
-      setNewKey(draft);
-    } catch (error) {
-      setNotice({
-        status: 'bind_retry',
-        title: 'KEY NOT CREATED',
-        message: error instanceof Error ? error.message : String(error),
-        retryable: false,
-      });
-    } finally {
-      setLoadingAction(null);
-    }
-  };
-
-  const handleRevealNewKey = () => {
-    const next = !newKeyRevealed;
-    setNewKeyRevealed(next);
-    if (next) setNewKeySeen(true);
-  };
-
-  const handleCopyNewKey = async () => {
-    if (!newKey) return;
-    try {
-      await Clipboard.setStringAsync(newKey.nsec);
-      setNewKeyCopied(true);
-      setNewKeySeen(true);
-      setTimeout(() => setNewKeyCopied(false), 1_200);
-    } catch {
-      setNotice({
-        status: 'bind_retry',
-        title: 'COPY FAILED',
-        message: 'Beeline could not reach the clipboard. Reveal the key and copy it by hand.',
-        retryable: false,
-      });
-    }
-  };
-
-  const handleEnterWithNewKey = async () => {
-    if (!newKey) return;
-    // Fail closed: the button is disabled without this, and it is re-checked
-    // here so no other path can persist an unbacked key.
-    if (!canEnterWithNewKey({ seen: newKeySeen, confirmed: newKeyConfirmed })) {
-      setNotice({
-        status: 'bind_retry',
-        title: 'BACK UP YOUR KEY',
-        message: 'Reveal or copy your secret key, then confirm you saved it.',
-        retryable: false,
-      });
-      return;
-    }
-    setLoadingAction('enter');
-    setNotice(null);
-    let identitySaved = false;
-    try {
-      await markPersonNameOnboardingPending();
-      await saveBuzzIdentity(newKey.identity);
-      identitySaved = true;
-      await Promise.all([
-        clearPendingGitHubIdentity().catch(() => undefined),
-        clearPendingGitHubSignInState().catch(() => undefined),
-      ]);
-      await registerBuzzPushNotifications(newKey.identity);
-      const identity = newKey.identity;
-      resetNewKey();
-      await continueAfterIdentity(identity, undefined, true);
-    } catch (error) {
-      if (!identitySaved) await clearPersonNameOnboardingPending();
-      setNotice({
-        status: 'bind_retry',
-        title: 'SETUP FAILED',
-        message: error instanceof Error ? error.message : String(error),
-        retryable: false,
-      });
     } finally {
       setLoadingAction(null);
     }
@@ -758,7 +505,6 @@ export default function BuzzOnboarding() {
   const canRetryBind = notice?.retryable === true && pendingBind.current !== null;
   // Offline, the one action is the person's own retry; nothing retries for them.
   const signInLabel = notice?.status === 'offline' ? 'Try again' : 'Continue with GitHub';
-  const monolithEnabled = getBuzzRuntimeConfig().monolithEnabled;
   const desktopAuthSurface = isTauri();
 
   if (faceStep) {
@@ -842,112 +588,6 @@ export default function BuzzOnboarding() {
     );
   }
 
-  if (newKey) {
-    const backupConfirmable = canConfirmNewKeyBackup({ seen: newKeySeen });
-    const canEnter = canEnterWithNewKey({ seen: newKeySeen, confirmed: newKeyConfirmed });
-    return (
-      <View
-        style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}
-        testID="onboarding-new-key-step"
-      >
-        <PixelGateReveal style={styles.namePanel}>
-          <RoomListSectionHeader title="NEW KEY · BACK IT UP" inset="content" />
-          <View style={styles.nameAvatar}>
-            <IdentityMark kind="human" seed={newKey.identity.publicKey} size={82} />
-          </View>
-          <Text style={styles.nameTitle}>Save your key</Text>
-          <Text style={styles.nameBody}>
-            This key is your Beeline identity. It lives only on this device and Beeline cannot reset
-            it. Save it somewhere safe before you continue.
-          </Text>
-
-          <RoomListSectionHeader title="PUBLIC · NPUB" inset="content" />
-          <HullSurface strength="code" style={styles.keyBox}>
-            <Text selectable style={styles.keyText} testID="onboarding-new-key-npub">
-              {newKey.npub}
-            </Text>
-          </HullSurface>
-
-          <View style={styles.warning}>
-            <Text style={styles.warningGlyph}>!</Text>
-            <Text style={styles.warningText}>
-              Anyone with the secret key controls this identity. Never share it.
-            </Text>
-          </View>
-
-          <RoomListSectionHeader title="SECRET · NSEC" inset="content" />
-          <HullSurface strength="code" style={styles.keyBox}>
-            <Text
-              selectable={newKeyRevealed}
-              style={styles.keyText}
-              testID="onboarding-new-key-nsec"
-            >
-              {newKeyRevealed ? newKey.nsec : maskNsec(newKey.nsec)}
-            </Text>
-          </HullSurface>
-          <View style={styles.keyActions}>
-            <TouchableOpacity
-              accessibilityLabel={newKeyRevealed ? 'Hide secret key' : 'Reveal secret key'}
-              accessibilityRole="button"
-              onPress={handleRevealNewKey}
-              style={styles.keyAction}
-              testID="onboarding-new-key-reveal"
-            >
-              <Text style={styles.keyActionText}>{newKeyRevealed ? 'Hide' : 'Reveal'}</Text>
-            </TouchableOpacity>
-            <TouchableOpacity
-              accessibilityLabel="Copy secret key"
-              accessibilityRole="button"
-              onPress={() => void handleCopyNewKey()}
-              style={styles.keyAction}
-              testID="onboarding-new-key-copy"
-            >
-              <Text style={styles.keyActionText}>{newKeyCopied ? '✓ COPIED' : 'Copy'}</Text>
-            </TouchableOpacity>
-          </View>
-
-          <TouchableOpacity
-            accessibilityLabel="I saved my key"
-            accessibilityRole="checkbox"
-            accessibilityState={{ checked: newKeyConfirmed, disabled: !backupConfirmable }}
-            disabled={!backupConfirmable}
-            onPress={() => {
-              // Fail closed here too, not only via `disabled`: the gate must not
-              // depend on a touchable honouring a prop.
-              if (!backupConfirmable) return;
-              setNewKeyConfirmed((value) => !value);
-            }}
-            style={styles.confirmRow}
-            testID="onboarding-new-key-confirm"
-          >
-            <Text style={styles.confirmBox}>{newKeyConfirmed ? '[✓]' : '[ ]'}</Text>
-            <Text style={[styles.confirmText, !backupConfirmable && styles.confirmTextIdle]}>
-              I saved my key
-            </Text>
-          </TouchableOpacity>
-          {!backupConfirmable && (
-            <Text style={styles.confirmHint}>Reveal or copy the key to enable this.</Text>
-          )}
-
-          {notice && (
-        <View accessibilityRole="alert" style={styles.noticePanel}>
-          <Text style={styles.statusLabel}>◇ {notice.title}</Text>
-          <Text style={styles.noticeText}>{notice.message}</Text>
-        </View>
-      )}
-
-          <HullDialogActions actions={[
-            { label: 'Discard this key', variant: 'quiet', disabled: loading,
-              onPress: resetNewKey, testID: 'onboarding-new-key-discard' },
-            { label: 'Enter Beeline', variant: 'primary', disabled: !canEnter || loading,
-              loading: loadingAction === 'enter', onPress: () => void handleEnterWithNewKey(),
-              testID: 'onboarding-new-key-enter' },
-          ]} />
-        </PixelGateReveal>
-      </View>
-    );
-  }
-
   return (
     <View style={[styles.container, { paddingTop: insets.top, paddingBottom: insets.bottom }]}>
       <View style={[styles.brandSurface, desktopAuthSurface && styles.desktopBrandSurface]}>
@@ -970,59 +610,8 @@ export default function BuzzOnboarding() {
         </View>
       )}
 
-      {!monolithEnabled && showAdvanced && (
-        <PixelGateReveal style={styles.importPanel}>
-          <RoomListSectionHeader title="ADVANCED · NEW NOSTR KEY" inset="content" />
-          <Text style={styles.keyGuide}>
-            No key yet? Create one on this device. You back it up before entering Beeline.
-          </Text>
-          <View style={styles.importAction}>
-            <Button
-                label="Create a new key"
-              loading={loadingAction === 'create'}
-              variant="secondary"
-              onPress={() => void handleCreateKey()}
-              disabled={loading}
-              testID="onboarding-create-key"
-            />
-          </View>
-          <View style={styles.advancedDivider} />
-          <RoomListSectionHeader title="ADVANCED · EXISTING NOSTR KEY" inset="content" />
-          <Text style={styles.keyGuide}>
-            Your nostr key stays on this device and does not go to GitHub.
-          </Text>
-          <HullDialogInput
-            nativeID="buzz-secret-key"
-            accessibilityLabel="Secret key"
-            style={[styles.input, inputFocused && styles.inputFocused]}
-            placeholder="nsec1…"
-            placeholderTextColor={theme.buzz.textDisabled}
-            value={nsecInput}
-            onChangeText={setNsecInput}
-            onFocus={() => setInputFocused(true)}
-            onBlur={() => setInputFocused(false)}
-            autoCapitalize="none"
-            autoCorrect={false}
-            secureTextEntry={canSignIn}
-            testID="onboarding-secret-key"
-            editable={!loading}
-            onSubmitEditing={() => void handleImport()}
-          />
-          <View style={styles.importAction}>
-            <Button
-                label="Import key"
-              loading={loadingAction === 'import'}
-              variant="secondary"
-              onPress={() => void handleImport()}
-              disabled={loading}
-              testID="onboarding-import-key"
-            />
-          </View>
-        </PixelGateReveal>
-      )}
-
       <View style={styles.actions}>
-        {!showAdvanced && notice?.status === 'link_conflict' && pendingBind.current ? (
+        {notice?.status === 'link_conflict' && pendingBind.current ? (
           <View style={styles.recoveryActions}>
             <Text style={styles.recoveryWarning}>
               Replacing the device key moves this GitHub link to your new key. Your Workspaces,
@@ -1037,14 +626,14 @@ export default function BuzzOnboarding() {
               testID="onboarding-replace-device-key"
             />
           </View>
-        ) : !showAdvanced && canRetryBind ? (
+        ) : canRetryBind ? (
           <Button
             label="Retry device bind"
             loading={loadingAction === 'bind'}
             onPress={() => pendingBind.current && void finishPendingBind(pendingBind.current)}
             disabled={loading}
           />
-        ) : !showAdvanced && canSignIn ? (
+        ) : canSignIn ? (
           <View>
           {repositoryOnboarding ? <Text style={styles.subtitle} testID="onboarding-github-scope">Sign in and install Beeline on your personal GitHub account. Choose All repositories so Beeline can work on repos you create later.</Text> : null}
           <Button
@@ -1059,18 +648,6 @@ export default function BuzzOnboarding() {
           />
           </View>
         ) : null}
-        {!monolithEnabled && (
-          <Button
-            label={showAdvanced ? 'Hide Advanced' : 'Advanced'}
-            variant="secondary"
-            onPress={() => {
-              setShowAdvanced((value) => !value);
-              setNotice(canSignIn ? null : WEB_NOTICE);
-            }}
-            disabled={loading}
-            testID="onboarding-advanced"
-          />
-        )}
       </View>
     </View>
   );
@@ -1140,29 +717,11 @@ const styles = StyleSheet.create((theme) => {
       ...theme.buzz.type.body,
       color: groknight.textSecondary,
     },
-    importPanel: { width: '100%', maxWidth: 440, alignSelf: 'center', marginBottom: 16 },
-    keyGuide: {
-      ...theme.buzz.type.body,
-      color: groknight.textSecondary,
-      marginBottom: groknight.space.sm,
-    },
-    input: {
-      ...theme.buzz.type.machine,
-      minHeight: 48,
-      borderWidth: INPUT_BORDER_WIDTH,
-      borderColor: groknight.border,
-      borderRadius: 3,
-      paddingHorizontal: groknight.space.md,
-      paddingVertical: groknight.space.sm,
-      color: groknight.textPrimary,
-      backgroundColor: groknight.bgBase,
-    },
     inputFocused: {
       borderWidth: INPUT_FOCUSED_BORDER_WIDTH,
       borderColor: groknight.focus,
       paddingHorizontal: groknight.space.md - (INPUT_FOCUSED_BORDER_WIDTH - INPUT_BORDER_WIDTH),
     },
-    importAction: { marginTop: groknight.space.sm },
     // Android undermeasures the bundled face; reserve only this sign-in label's width.
     signInLabel: { flexGrow: 1, textAlign: 'center' },
     actions: { width: '100%', maxWidth: 440, alignSelf: 'center', gap: groknight.space.sm },
@@ -1170,58 +729,6 @@ const styles = StyleSheet.create((theme) => {
     recoveryWarning: {
       ...theme.buzz.type.meta,
       color: groknight.textSecondary,
-    },
-    advancedDivider: {
-      borderBottomWidth: 1,
-      borderBottomColor: groknight.border,
-      marginTop: 16,
-      marginBottom: 16,
-    },
-    keyBox: { paddingHorizontal: groknight.space.md, paddingVertical: groknight.space.sm, marginTop: groknight.space.sm, marginBottom: groknight.space.sm },
-    keyText: {
-      ...theme.buzz.type.machine,
-      color: groknight.textPrimary,
-    },
-    keyActions: { flexDirection: 'row', gap: groknight.space.sm, marginBottom: 16 },
-    keyAction: {
-      minHeight: 44,
-      paddingHorizontal: groknight.space.md,
-      alignItems: 'center',
-      justifyContent: 'center',
-    },
-    keyActionText: {
-      ...theme.buzz.type.sectionHead,
-      color: groknight.chrome,
-    },
-    warning: { flexDirection: 'row', gap: groknight.space.sm, marginBottom: 16 },
-    warningGlyph: {
-      ...theme.buzz.type.body,
-      fontFamily: groknight.proseSemibold,
-      color: groknight.chrome,
-    },
-    warningText: {
-      ...theme.buzz.type.meta,
-      flex: 1,
-      minWidth: 0,
-      color: groknight.textSecondary,
-    },
-    confirmRow: { flexDirection: 'row', alignItems: 'center', gap: groknight.space.sm, minHeight: 44 },
-    confirmBox: {
-      ...theme.buzz.type.machine,
-      fontFamily: groknight.monoSemibold,
-      color: groknight.textPrimary,
-    },
-    confirmText: {
-      ...theme.buzz.type.body,
-      flex: 1,
-      minWidth: 0,
-      color: groknight.textPrimary,
-    },
-    confirmTextIdle: { color: groknight.textDisabled },
-    confirmHint: {
-      ...theme.buzz.type.meta,
-      marginBottom: groknight.space.sm,
-      color: groknight.textMuted,
     },
     namePanel: { width: '100%', maxWidth: 420, alignSelf: 'center' },
     nameAvatar: { alignItems: 'center', marginTop: groknight.space.md, marginBottom: groknight.space.md },

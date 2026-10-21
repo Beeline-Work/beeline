@@ -770,11 +770,6 @@ CREATE TABLE IF NOT EXISTS service_review_visits (
 ALTER TABLE service_review_visits ADD COLUMN IF NOT EXISTS agent_id text;
 ALTER TABLE service_review_visits ADD COLUMN IF NOT EXISTS run_id text;
 
--- Retained but unused: the workspace-level seeded-souls switch was removed
--- (C99); every agent now always carries its seeded soul as before that
--- switch existed. Dropping the column is left for a later migration.
-ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS seeded_souls_enabled boolean NOT NULL DEFAULT true;
-
 -- Retained but unused: agent classes and weight tiers were removed
 -- (retireAgentClasses clears it). Kept so an older server image stays
 -- compatible during a rolling update; a later migration can drop it.
@@ -798,7 +793,6 @@ CREATE TABLE IF NOT EXISTS rooms (
   repository_updated_at timestamptz,
   repository_resolution text NOT NULL DEFAULT 'none' CHECK (repository_resolution IN ('repository', 'none', 'unverified')),
   github_installation_id bigint,
-  github_events_enabled boolean NOT NULL DEFAULT true,
   reviewer_agent_id text REFERENCES identities(id),
   created_at timestamptz NOT NULL DEFAULT now(),
   updated_at timestamptz NOT NULL DEFAULT now()
@@ -857,8 +851,6 @@ ALTER TABLE memberships ADD COLUMN IF NOT EXISTS push_muted boolean NOT NULL DEF
 -- Mute is a Room setting: a corner follows its Room's mute.
 UPDATE memberships member SET push_muted=false FROM rooms corner
   WHERE corner.id=member.room_id AND corner.parent_id IS NOT NULL AND member.push_muted;
--- Beeline's PR flow needs GitHub events in every Room; the toggle is gone.
-UPDATE rooms SET github_events_enabled=true WHERE NOT github_events_enabled;
 -- What this member reacts to in THIS Room. An event happens in a Room, so the
 -- subscription lives on the Room membership row and not on the identity: an
 -- agent in several Rooms would otherwise inherit one Room's job everywhere.
@@ -1650,7 +1642,6 @@ CREATE INDEX IF NOT EXISTS workspace_skill_uses_room_idx ON workspace_skill_uses
 CREATE TABLE IF NOT EXISTS institutional_memory_workspace_rollouts (
   workspace_id uuid PRIMARY KEY REFERENCES workspaces(id) ON DELETE CASCADE,
   stage text NOT NULL DEFAULT 'live' CHECK (stage IN ('off','shadow','pilot','live','paused')),
-  auto_advance boolean NOT NULL DEFAULT false,
   stale_after_days integer NOT NULL DEFAULT 30 CHECK (stale_after_days BETWEEN 7 AND 3650),
   archive_after_days integer NOT NULL DEFAULT 90 CHECK (archive_after_days BETWEEN 14 AND 7300),
   retention_days integer NOT NULL DEFAULT 365 CHECK (retention_days BETWEEN 30 AND 7300),

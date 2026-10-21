@@ -45,11 +45,9 @@ export function buildCommunityInviteUrl(token: string, relayUrl: string): string
   return `${relay.origin}/join/${encodeURIComponent(parsed)}`;
 }
 
-export function resolveCommunityInvitePublicOrigin(
-  effectiveRelayUrl: string,
-  runtime: { readonly monolithEnabled: boolean; readonly relayUrl: string },
-): string {
-  return runtime.monolithEnabled ? runtime.relayUrl : effectiveRelayUrl;
+/** Invite links use the public app-link origin, never the server API origin. */
+export function resolveCommunityInvitePublicOrigin(runtime: { readonly relayUrl: string }): string {
+  return runtime.relayUrl;
 }
 
 export function resolveCommunityInviteRelayUrl(

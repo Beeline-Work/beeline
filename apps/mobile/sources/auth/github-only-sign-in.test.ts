@@ -7,7 +7,10 @@ const source = (relativePath: string): string =>
 describe('GitHub-only mobile sign-in surface', () => {
   it('starts monolith sign-in on the monolith auth host', () => {
     expect(source('app/(app)/beeline/onboarding.tsx')).toContain(
-      'startGitHubSignInWebFlow(state, runtime)',
+      'runResilientGitHubSignInSession({',
+    );
+    expect(source('auth/github-auth-session.ts')).toContain(
+      'const authBaseUrl = runtime.monolithUrl;',
     );
   });
 

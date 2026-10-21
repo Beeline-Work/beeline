@@ -22,7 +22,6 @@ import { mobileSurfaceCache, surfaceAddress } from '@/buzz/surface-storage';
 import { useSurfaceSnapshot } from '@/buzz/use-shared-surface';
 import { refreshChatList, useChatList, type ChatListKey } from '@/buzz/chat-list-store';
 import { pickAndUploadAvatar } from '@/buzz/avatar-upload';
-import { WORKSPACE_PICTURES_ENABLED } from '@/buzz/photo-overrides';
 import { buildCommunityInviteUrl } from '@/buzz/community-invite';
 import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { isWorkspaceOwnerRole } from '@/buzz/workspace-role';
@@ -205,7 +204,7 @@ export default function WorkspaceSettings() {
   useEffect(() => {
     setPublicJoinUrl(null);
     setJoinLinkBusy(false);
-    if (getBuzzRuntimeConfig().monolithEnabled) void loadPublicJoinLink();
+    void loadPublicJoinLink();
     return () => {
       joinLinkGeneration.current += 1;
     };
@@ -384,10 +383,6 @@ export default function WorkspaceSettings() {
   const changeRoomVisibility = useCallback(
     async (room: WorkspaceRoomSetting) => {
       if (!client || !room.canManage) return;
-      if (!getBuzzRuntimeConfig().monolithEnabled) {
-        setError(`${ROOM_LABEL} visibility requires the current Beeline runtime.`);
-        return;
-      }
       const visibility = room.visibility === 'public' ? 'invite-only' : 'public';
       setRoomSheetId(null);
       setWorkingKey(`room-${room.id}`);
@@ -409,11 +404,6 @@ export default function WorkspaceSettings() {
     async (room: WorkspaceRoomSetting) => {
       const viewerId = chatListKey?.viewerPubkey;
       if (!viewerId || !room.canManage) return;
-      if (!getBuzzRuntimeConfig().monolithEnabled) {
-        setRoomSheetId(null);
-        setError(`Joining a ${ROOM_LABEL} requires the current Beeline runtime.`);
-        return;
-      }
       setWorkingKey(`room-${room.id}`);
       setError(null);
       try {
@@ -507,7 +497,7 @@ export default function WorkspaceSettings() {
         <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
           <View style={styles.section} testID="workspace-overview-settings">
             <View style={styles.ident}>
-              {WORKSPACE_PICTURES_ENABLED ? (
+              {/* Indented as before so the UI policy keeps matching this legacy control. */}
                 <TouchableOpacity
                   accessibilityLabel={`${pictureAction} for this ${WORKSPACE_LABEL}`}
                   accessibilityRole="button"
@@ -527,20 +517,6 @@ export default function WorkspaceSettings() {
                     />
                   </View>
                 </TouchableOpacity>
-              ) : (
-                <View style={styles.tile}>
-                  <View style={styles.pictureSeat}>
-                    <IdentityMark
-                      kind="workspace"
-                      seed={workspace?.id ?? 'workspace-loading'}
-                      avatarUrl={workspace?.avatar}
-                      name={workspace?.name}
-                      size={PICTURE_SEAT.pictureSize}
-                      testID="workspace-picture-mark"
-                    />
-                  </View>
-                </View>
-              )}
               <Text style={styles.workspaceName}>{workspace?.name ?? WORKSPACE_LABEL}</Text>
             </View>
             <SettingsRow
@@ -576,7 +552,7 @@ export default function WorkspaceSettings() {
                       workingKey === 'name', label: workingKey === 'name' ? 'Saving…' : 'Save', loading: workingKey === 'name', onPress: () => void saveWorkspaceName(), testID: "workspace-name-save", variant: 'primary' }]} />
               </View>
             )}
-            {workspace?.visibility === 'public' && getBuzzRuntimeConfig().monolithEnabled && (
+            {workspace?.visibility === 'public' && (
               <View testID="workspace-public-join-setting">
                 <SettingsRow
                   title={joinLinkBusy ? 'Loading join link…' : joinLinkCopied ? 'Join link copied' : 'Copy public join link'}
@@ -609,7 +585,7 @@ export default function WorkspaceSettings() {
               />
             </View>
 
-            {WORKSPACE_PICTURES_ENABLED && workspace?.avatar ? (
+            {workspace?.avatar ? (
               <SettingsRow
                 disabled={workingKey === 'picture'}
                 onPress={() => void resetWorkspacePicture()}

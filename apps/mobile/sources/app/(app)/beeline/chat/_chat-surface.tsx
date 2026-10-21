@@ -2824,8 +2824,7 @@ export function BuzzChatSurface({
             !isCorner &&
             !isDirectMessage &&
             !viewerIsAgent &&
-            canManageWorkspace &&
-            getBuzzRuntimeConfig().monolithEnabled,
+            canManageWorkspace,
           ),
           canRunWorkflows: Boolean(
             !isCorner &&
@@ -4699,7 +4698,7 @@ export function BuzzChatSurface({
       const url = await createCommunityInviteUrl(
         await inviteTransport.ensureClient(),
         activeCommunityId,
-        resolveCommunityInvitePublicOrigin(await getEffectiveRelayUrl(), getBuzzRuntimeConfig()),
+        resolveCommunityInvitePublicOrigin(getBuzzRuntimeConfig()),
       );
       await Share.share({ message: url });
     } catch (reason) {
@@ -6263,8 +6262,7 @@ export function BuzzChatSurface({
             )}
             {isDirectMessage &&
               !viewerIsAgent &&
-              !isArchived &&
-              getBuzzRuntimeConfig().monolithEnabled && (
+              !isArchived && (
                 <TouchableOpacity
                   accessibilityLabel="Conversation actions"
                   accessibilityRole="button"
@@ -7242,21 +7240,19 @@ export function BuzzChatSurface({
               roomName={displayRoomName}
               updateRoom={(input) => monolithPhoneOperation('updateRoom', input)}
             />
-            {getBuzzRuntimeConfig().monolithEnabled && (
-              <HullActionSheetRow
-                label="Mute notifications"
-                accessibilityLabel={`Mute notifications in this ${ROOM_LABEL} and its ${CORNER_LABEL}s`}
-                description="Tags and replies still notify you."
-                disabled={pushMuteWorking}
-                onPress={() => void togglePushMute()}
-                toggle={{
-                  value: pushMuted,
-                  disabled: pushMuteWorking,
-                  onValueChange: () => void togglePushMute(),
-                }}
-                testID="room-push-mute"
-              />
-            )}
+            <HullActionSheetRow
+              label="Mute notifications"
+              accessibilityLabel={`Mute notifications in this ${ROOM_LABEL} and its ${CORNER_LABEL}s`}
+              description="Tags and replies still notify you."
+              disabled={pushMuteWorking}
+              onPress={() => void togglePushMute()}
+              toggle={{
+                value: pushMuted,
+                disabled: pushMuteWorking,
+                onValueChange: () => void togglePushMute(),
+              }}
+              testID="room-push-mute"
+            />
             <HullActionSheetRow
               accessibilityLabel={`View ${formatRoomParticipantTotal(roomParticipantTotal)}`}
               chevron="right"
@@ -7271,7 +7267,7 @@ export function BuzzChatSurface({
               }}
               testID="room-participant-roster-trigger"
             />
-            {canManageWorkspace && getBuzzRuntimeConfig().monolithEnabled && (
+            {canManageWorkspace && (
               <HullActionSheetRow
                 accessibilityLabel={`View ${ROOM_LABEL} schedules and subscriptions`}
                 chevron="right"

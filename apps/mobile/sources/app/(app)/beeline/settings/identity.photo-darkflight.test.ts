@@ -31,6 +31,7 @@ const permissionInfo = vi.hoisted(() => ({
     canAskAgain: true,
   })),
 }));
+const phoneOperation = vi.hoisted(() => vi.fn());
 const identityApi = vi.hoisted(() => ({
   lookupRecovery: vi.fn(async () => []),
   lookupManagedIdentity: vi.fn(async () => null),
@@ -201,6 +202,7 @@ vi.mock('@/push/push-level-storage', () => ({
   saveStoredPushLevel: vi.fn(async () => undefined),
   watchStoredPushLevel: () => () => undefined,
 }));
+vi.mock('@/sync/transport/monolith-operation', () => ({ monolithPhoneOperation: phoneOperation }));
 vi.mock('@/buzz/identity-live', () => ({ subscribeOwnIdentityChange: () => () => undefined }));
 vi.mock('@/sync/pushRegistration', () => permissionInfo);
 vi.mock('@/buzz/surface-storage', async () => {
@@ -249,7 +251,7 @@ vi.mock('react-native', async () => {
 // StyleSheet.create calls the screen's theme-taking factory as it imports.
 import { beelineThemes } from '@/buzz/groknight';
 import IdentitySettingsScreen from './identity';
-import { PHOTO_OVERRIDES_ENABLED } from '@/buzz/photo-overrides';
+import { mobileSurfaceCache } from '@/buzz/surface-storage';
 import { openExternalUrl } from '@/utils/open-external-url';
 
 const originalConsoleError = console.error;
@@ -270,8 +272,20 @@ beforeAll(() => {
 });
 afterAll(() => vi.restoreAllMocks());
 
+function identitySettings(handle: string | null) {
+  return {
+    identity: { personId: 'a'.repeat(64), face: null, pushLevel: 'attention', handle, name: 'Captain' },
+    workspaces: { workspaces: [] },
+  };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
+  mobileSurfaceCache.clear();
+  phoneOperation.mockImplementation(async (name: string) => {
+    if (name === 'readIdentitySettings') return identitySettings(null);
+    throw new Error(`unexpected operation ${name}`);
+  });
   identityApi.lookupManagedIdentity.mockResolvedValue(null);
   client.getGlobalPersonProfile.mockResolvedValue({
     name: 'Captain',
@@ -298,12 +312,6 @@ function renderedText(renderer: ReactTestRenderer): string {
 }
 
 describe('photo-override darkflight on the settings surfaces', () => {
-  it('ships with the flag off', () => {
-    // The darkflight IS the flag. Flipping it revives every gated surface at
-    // once — this assertion makes that flip a deliberate act, not an accident.
-    expect(PHOTO_OVERRIDES_ENABLED).toBe(false);
-  });
-
   it('keeps picture-setting actions unreachable on human and agent settings', () => {
     const root = new URL('../../../../../', import.meta.url).pathname;
     const surfaces = [
@@ -333,12 +341,9 @@ describe('photo-override darkflight on the settings surfaces', () => {
   });
 
   it('shows one GitHub-provisioned identity and no secondary handle controls', async () => {
-    identityApi.lookupManagedIdentity.mockResolvedValue({
-      handle: 'octocat',
-      displayName: 'The Octocat',
-      source: 'github',
-      githubLogin: 'octocat',
-      githubRenameAvailable: false,
+    phoneOperation.mockImplementation(async (name: string) => {
+      if (name === 'readIdentitySettings') return identitySettings('octocat');
+      throw new Error(`unexpected operation ${name}`);
     });
     const renderer = await renderScreen();
 

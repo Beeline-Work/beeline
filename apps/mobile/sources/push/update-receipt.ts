@@ -1,17 +1,13 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { nip98AuthHeader } from '@beeline/nostr';
 import type { Identity } from '@beeline/buzz-client';
 import * as Crypto from 'expo-crypto';
-import * as Device from 'expo-device';
 import * as Updates from 'expo-updates';
 import { Platform } from 'react-native';
-import { getBuzzRuntimeConfig } from '@/buzz/runtime-config';
 import { loadAppConfig } from '@/sync/appConfig';
 import { monolithPhoneOperation } from '@/sync/transport/monolith-operation';
 import { isTauri } from '@/utils/isTauri';
 
 const DEVICE_ID_KEY = '@beeline/mobile-update-receipt/device-id';
-const RECEIPT_TIMEOUT_MS = 7_500;
 let deviceIdPromise: Promise<string> | null = null;
 
 function object(value: unknown): Record<string, unknown> | null {
@@ -81,53 +77,18 @@ export async function reportRunningUpdateReceipt(identity: Identity): Promise<vo
   if (!platform) return;
   // Desktop has no push receipt path; its observation is a phone
   // operation through the same authenticated monolith boundary.
-  if (platform !== 'ios' && platform !== 'android' && !getBuzzRuntimeConfig().monolithEnabled)
-    return;
-  const receiptUrl = `${getBuzzRuntimeConfig().pushGatewayUrl}/update-receipts`;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), RECEIPT_TIMEOUT_MS);
-  try {
-    const release = loadAppConfig();
-    if (getBuzzRuntimeConfig().monolithEnabled) {
-      await monolithPhoneOperation('reportRunningUpdate', {
-        deviceId: await installationDeviceId(),
-        platform,
-        ...(Updates.updateId ? { updateId: Updates.updateId } : {}),
-        ...(Updates.channel ? { channel: Updates.channel } : {}),
-        ...(runningUpdateGroup(Updates.manifest)
-          ? { group: runningUpdateGroup(Updates.manifest)! }
-          : {}),
-        ...(Updates.runtimeVersion ? { runtimeVersion: Updates.runtimeVersion } : {}),
-        ...(release.releaseVersion ? { releaseVersion: release.releaseVersion } : {}),
-        ...(release.releaseSha ? { sourceSha: release.releaseSha } : {}),
-      });
-      reportedRunningUpdate = reportKey;
-      return;
-    }
-    const response = await fetch(receiptUrl, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        authorization: nip98AuthHeader(identity.secretKey, identity.publicKey, receiptUrl, 'POST'),
-      },
-      body: JSON.stringify({
-        pubkey: identity.publicKey,
-        deviceId: await installationDeviceId(),
-        updateId: Updates.updateId ?? null,
-        channel: Updates.channel ?? null,
-        group: runningUpdateGroup(Updates.manifest),
-        runtimeVersion: Updates.runtimeVersion ?? null,
-        releaseVersion: release.releaseVersion ?? null,
-        sourceSha: release.releaseSha ?? null,
-        environment: Device.isDevice ? 'physical' : 'emulator',
-      }),
-      signal: controller.signal,
-    });
-    if (!response.ok) throw new Error(`gateway returned HTTP ${response.status}`);
-    console.log(
-      `[beeline-ota] running update reported update=${Updates.updateId ?? 'embedded'} channel=${Updates.channel ?? 'embedded'}`,
-    );
-  } finally {
-    clearTimeout(timeout);
-  }
+  const release = loadAppConfig();
+  await monolithPhoneOperation('reportRunningUpdate', {
+    deviceId: await installationDeviceId(),
+    platform,
+    ...(Updates.updateId ? { updateId: Updates.updateId } : {}),
+    ...(Updates.channel ? { channel: Updates.channel } : {}),
+    ...(runningUpdateGroup(Updates.manifest)
+      ? { group: runningUpdateGroup(Updates.manifest)! }
+      : {}),
+    ...(Updates.runtimeVersion ? { runtimeVersion: Updates.runtimeVersion } : {}),
+    ...(release.releaseVersion ? { releaseVersion: release.releaseVersion } : {}),
+    ...(release.releaseSha ? { sourceSha: release.releaseSha } : {}),
+  });
+  reportedRunningUpdate = reportKey;
 }

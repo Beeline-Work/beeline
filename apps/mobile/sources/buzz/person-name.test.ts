@@ -10,10 +10,8 @@ vi.mock('@react-native-async-storage/async-storage', () => ({ default: asyncStor
 
 import {
   clearPersonNameOnboardingPending,
-  ensurePersonNameForWorkspace,
   isPersonNameOnboardingPending,
   markPersonNameOnboardingPending,
-  publishPreferredPersonName,
   resolveOnboardingPersonName,
 } from './person-name';
 
@@ -91,104 +89,6 @@ describe('person name persistence', () => {
     });
   });
 
-  it('publishes Settings edits without erasing the avatar', async () => {
-    const client = {
-      getGlobalPersonProfile: vi
-        .fn()
-        .mockResolvedValue({ avatar: 'https://relay.test/person.png' }),
-      getPersonProfile: vi.fn().mockResolvedValue({ avatar: 'https://relay.test/person.png' }),
-      setGlobalPersonProfile: vi.fn().mockResolvedValue({ name: 'Ada Lovelace' }),
-    } as any;
-
-    await publishPreferredPersonName(client, 'workspace-1', 'person', ' Ada   Lovelace ');
-
-    expect(client.setGlobalPersonProfile).toHaveBeenCalledWith({
-      name: 'Ada Lovelace',
-      handle: 'adalovelace',
-      avatar: 'https://relay.test/person.png',
-    });
-  });
-
-  it('reuses the chosen name when entering another Workspace', async () => {
-    asyncStorage.getItem.mockResolvedValue('Ada');
-    const client = {
-      getGlobalPersonProfile: vi.fn().mockResolvedValue(null),
-      getPersonProfile: vi.fn().mockResolvedValue(null),
-      setGlobalPersonProfile: vi.fn().mockResolvedValue({ name: 'Ada' }),
-    } as any;
-
-    await ensurePersonNameForWorkspace(client, 'workspace-2', 'person');
-
-    expect(client.setGlobalPersonProfile).toHaveBeenCalledWith({
-      name: 'Ada',
-      handle: 'ada',
-      avatar: undefined,
-    });
-  });
-
-  it('migrates the active legacy Workspace name without losing it', async () => {
-    asyncStorage.getItem.mockResolvedValue('Ada');
-    const existing = { name: 'Grace', communityId: 'workspace-old' };
-    const client = {
-      getGlobalPersonProfile: vi.fn().mockResolvedValue(null),
-      getPersonProfile: vi.fn().mockResolvedValue(existing),
-      setGlobalPersonProfile: vi.fn().mockResolvedValue({ name: 'Grace', handle: 'grace' }),
-    } as any;
-
-    await expect(
-      ensurePersonNameForWorkspace(client, 'workspace-old', 'person'),
-    ).resolves.toMatchObject({ name: 'Grace', handle: 'grace' });
-    expect(asyncStorage.setItem).toHaveBeenCalledWith(
-      '@beeline/person-name/preferred/person',
-      'Grace',
-    );
-    expect(client.setGlobalPersonProfile).toHaveBeenCalledWith({
-      name: 'Grace',
-      handle: 'grace',
-      avatar: undefined,
-    });
-  });
-
-  it('keeps a legacy Workspace profile when the one-time global migration cannot publish', async () => {
-    const existing = { name: 'Grace', communityId: 'workspace-old' };
-    const client = {
-      getGlobalPersonProfile: vi.fn().mockRejectedValue(new Error('legacy global profile unavailable')),
-      getPersonProfile: vi.fn().mockResolvedValue(existing),
-      setGlobalPersonProfile: vi.fn().mockRejectedValue(new Error('migration publish failed')),
-    } as any;
-
-    await expect(
-      ensurePersonNameForWorkspace(client, 'workspace-old', 'person'),
-    ).resolves.toBe(existing);
-    expect(asyncStorage.setItem).toHaveBeenCalledWith(
-      '@beeline/person-name/preferred/person',
-      'Grace',
-    );
-  });
-
-  it('reads the same global name and picture in every Workspace', async () => {
-    const globalProfile = {
-      name: 'Ada',
-      handle: 'ada',
-      avatar: 'https://relay.test/ada.png',
-    };
-    const client = {
-      getGlobalPersonProfile: vi.fn().mockResolvedValue(globalProfile),
-      getPersonProfile: vi.fn(),
-      setGlobalPersonProfile: vi.fn(),
-    } as any;
-
-    await expect(ensurePersonNameForWorkspace(client, 'workspace-1', 'person')).resolves.toBe(
-      globalProfile,
-    );
-    await expect(ensurePersonNameForWorkspace(client, 'workspace-2', 'person')).resolves.toBe(
-      globalProfile,
-    );
-
-    expect(client.getPersonProfile).not.toHaveBeenCalled();
-    expect(client.setGlobalPersonProfile).not.toHaveBeenCalled();
-  });
-
   it('lets the server name replace a stale device copy at onboarding', async () => {
     asyncStorage.getItem.mockResolvedValue('Old Name');
     const profile = { name: 'Server Name' };
@@ -202,22 +102,6 @@ describe('person name persistence', () => {
       '@beeline/person-name/preferred/person',
       'Server Name',
     );
-  });
-
-  it('overwrites the device hint with the server name on Workspace entry', async () => {
-    asyncStorage.getItem.mockResolvedValue('Old Name');
-    const client = {
-      getGlobalPersonProfile: vi.fn().mockResolvedValue({ name: 'Server Name' }),
-      getPersonProfile: vi.fn(),
-      setGlobalPersonProfile: vi.fn(),
-    } as any;
-
-    await ensurePersonNameForWorkspace(client, 'workspace-1', 'person');
-    expect(asyncStorage.setItem).toHaveBeenCalledWith(
-      '@beeline/person-name/preferred/person',
-      'Server Name',
-    );
-    expect(client.setGlobalPersonProfile).not.toHaveBeenCalled();
   });
 
   it('falls back to the device hint only while the server cannot answer', async () => {

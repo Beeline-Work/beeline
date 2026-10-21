@@ -1055,7 +1055,7 @@ describe('Postgres live fanout', () => {
     await settle(parent);
     await database.query(`UPDATE corner_facts SET close_requested=true WHERE corner_id=$1`, [corner]);
     await database.query(
-      `UPDATE rooms SET github_events_enabled=NOT github_events_enabled WHERE id=$1`, [corner]);
+      `UPDATE rooms SET repository_updated_at=now() WHERE id=$1`, [corner]);
     await database.query(
       `INSERT INTO messages(id,room_id,author_id,text,presentation) VALUES('step-1',$1,$2,'step','activity')`,
       [corner, agent]);

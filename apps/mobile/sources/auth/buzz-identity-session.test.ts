@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const session = vi.hoisted(() => ({ identityId: vi.fn(), authorization: vi.fn() }));
 vi.mock('@/auth/monolith-session', () => ({ monolithSession: session }));
 vi.mock('@/buzz/runtime-config', () => ({
-  getBuzzRuntimeConfig: () => ({ monolithEnabled: true }),
+  getBuzzRuntimeConfig: () => ({}),
 }));
 vi.mock('expo-secure-store', () => ({ WHEN_UNLOCKED_THIS_DEVICE_ONLY: 1 }));
 

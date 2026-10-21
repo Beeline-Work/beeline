@@ -3,7 +3,7 @@ import { startPushRegistrationLifecycle } from './push-registration-lifecycle';
 import { Platform } from 'react-native';
 
 const storage = vi.hoisted(() => ({ getItem: vi.fn(), setItem: vi.fn() }));
-const desktop = vi.hoisted(() => ({ enabled: false, monolith: false, operation: vi.fn() }));
+const desktop = vi.hoisted(() => ({ enabled: false, operation: vi.fn() }));
 const updates = vi.hoisted(() => ({
   updateId: '11111111-2222-3333-4444-555555555555',
   channel: 'production',
@@ -12,20 +12,12 @@ const updates = vi.hoisted(() => ({
 }));
 
 vi.mock('@react-native-async-storage/async-storage', () => ({ default: storage }));
-vi.mock('@beeline/nostr', () => ({ nip98AuthHeader: vi.fn(() => 'Nostr signed') }));
 vi.mock('expo-crypto', () => ({ randomUUID: () => 'device-id-1111-2222' }));
-vi.mock('expo-device', () => ({ isDevice: true }));
 vi.mock('expo-updates', () => updates);
 vi.mock('react-native', () => ({ Platform: { OS: 'android' } }));
 vi.mock('@/utils/isTauri', () => ({ isTauri: () => desktop.enabled }));
 vi.mock('@/sync/transport/monolith-operation', () => ({
   monolithPhoneOperation: desktop.operation,
-}));
-vi.mock('@/buzz/runtime-config', () => ({
-  getBuzzRuntimeConfig: () => ({
-    pushGatewayUrl: 'https://push.example',
-    monolithEnabled: desktop.monolith,
-  }),
 }));
 vi.mock('@/sync/appConfig', () => ({
   loadAppConfig: () => ({ releaseVersion: 'v0.0.1', releaseSha: '1'.repeat(40) }),
@@ -52,41 +44,32 @@ describe('mobile OTA device receipt', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     desktop.enabled = false;
-    desktop.monolith = false;
     Platform.OS = 'android';
     storage.getItem.mockResolvedValue(null);
     storage.setItem.mockResolvedValue(undefined);
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it('posts the running EAS update and stable installation id with signed identity auth', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 201 }));
-    vi.stubGlobal('fetch', fetchMock);
+  let reportedPublicKey = 0;
+  const freshIdentity = () => ({ ...identity, publicKey: String(++reportedPublicKey).padStart(64, 'b') });
 
+  it('reports the running EAS update and stable installation id through the server', async () => {
     await reportRunningUpdateReceipt(identity);
 
     expect(storage.setItem).toHaveBeenCalledWith(
       '@beeline/mobile-update-receipt/device-id',
       'device-id-1111-2222',
     );
-    expect(fetchMock).toHaveBeenCalledWith(
-      'https://push.example/update-receipts',
-      expect.objectContaining({
-        method: 'POST',
-        headers: expect.objectContaining({ authorization: 'Nostr signed' }),
-        body: JSON.stringify({
-          pubkey: identity.publicKey,
-          deviceId: 'device-id-1111-2222',
-          updateId: updates.updateId,
-          channel: 'production',
-          group: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
-          runtimeVersion: '21',
-          releaseVersion: 'v0.0.1',
-          sourceSha: '1'.repeat(40),
-          environment: 'physical',
-        }),
-      }),
-    );
+    expect(desktop.operation).toHaveBeenCalledWith('reportRunningUpdate', {
+      deviceId: 'device-id-1111-2222',
+      platform: 'android',
+      updateId: updates.updateId,
+      channel: 'production',
+      group: 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',
+      runtimeVersion: '21',
+      releaseVersion: 'v0.0.1',
+      sourceSha: '1'.repeat(40),
+    });
   });
 
   it('reads current and fallback EAS group metadata without inventing a group', () => {
@@ -99,16 +82,15 @@ describe('mobile OTA device receipt', () => {
     expect(runningUpdateGroup({})).toBeNull();
   });
 
-  it('reports on cold launch and foreground independently of push registration success', async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 201 }));
-    vi.stubGlobal('fetch', fetchMock);
+  it('reports on cold launch independently of push registration success', async () => {
+    const launchIdentity = freshIdentity();
     let foreground = () => {};
     const reportFailure = vi.fn();
     const failed = { registered: false, retryable: true, phase: 'token-failed' as const };
     const register = vi.fn(async () => failed);
     const retry = vi.fn(async () => failed);
     const dispose = startPushRegistrationLifecycle({
-      loadIdentity: async () => identity,
+      loadIdentity: async () => launchIdentity,
       subscribeIdentityChange: () => () => {},
       subscribeForeground: (listener) => {
         foreground = listener;
@@ -120,18 +102,17 @@ describe('mobile OTA device receipt', () => {
       reportFailure,
     });
     try {
-      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
-      expect(register).toHaveBeenCalledWith(identity);
+      await vi.waitFor(() => expect(desktop.operation).toHaveBeenCalledOnce());
+      expect(register).toHaveBeenCalledWith(launchIdentity);
       foreground();
-      await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
-      expect(retry).toHaveBeenCalledWith(identity);
-      for (const [, request] of fetchMock.mock.calls) {
-        expect(JSON.parse(request.body)).toMatchObject({
-          pubkey: identity.publicKey,
-          updateId: updates.updateId,
-        });
-      }
-      expect(reportFailure).toHaveBeenCalledTimes(2);
+      await vi.waitFor(() => expect(retry).toHaveBeenCalledWith(launchIdentity));
+      // The running bytes cannot change under this JS context: one report per identity.
+      expect(desktop.operation).toHaveBeenCalledOnce();
+      expect(desktop.operation).toHaveBeenCalledWith(
+        'reportRunningUpdate',
+        expect.objectContaining({ updateId: updates.updateId }),
+      );
+      await vi.waitFor(() => expect(reportFailure).toHaveBeenCalledTimes(2));
     } finally {
       dispose();
     }
@@ -139,10 +120,9 @@ describe('mobile OTA device receipt', () => {
 
   it('reports a Tauri desktop platform through the monolith receipt operation', async () => {
     desktop.enabled = true;
-    desktop.monolith = true;
     Platform.OS = 'web';
     vi.stubGlobal('navigator', { platform: 'MacIntel' });
-    await reportRunningUpdateReceipt(identity);
+    await reportRunningUpdateReceipt(freshIdentity());
     expect(desktop.operation).toHaveBeenCalledWith(
       'reportRunningUpdate',
       expect.objectContaining({ platform: 'macos', deviceId: 'device-id-1111-2222' }),

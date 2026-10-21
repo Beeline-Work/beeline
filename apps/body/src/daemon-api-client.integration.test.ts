@@ -1712,7 +1712,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       await database.query(
         `UPDATE rooms SET repository_key=$2,repository_name=$2,
            repository_remote=$3,repository_resolution='repository',repository_target_branch='main',
-           github_installation_id=$4,github_events_enabled=true WHERE id=$1`,
+           github_installation_id=$4 WHERE id=$1`,
         [ROOM, repository, `https://github.com/${repository}.git`, installationId],
       );
       await database.query(

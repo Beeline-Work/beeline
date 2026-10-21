@@ -31,7 +31,6 @@ const permissionInfo = vi.hoisted(() => ({
     canAskAgain: true,
   })),
 }));
-const runtime = vi.hoisted(() => ({ monolithEnabled: false }));
 const phoneOperation = vi.hoisted(() => vi.fn());
 const notificationApi = vi.hoisted(() => ({
   getPresentedNotificationsAsync: vi.fn(async () => []),
@@ -112,7 +111,6 @@ vi.mock('@/auth/buzz-identity-storage', () => ({
     publicKey: 'a'.repeat(64),
     secretKey: new Uint8Array(32).fill(1),
   })),
-  loadBuzzIdentityNsecForExport: vi.fn(async () => 'nsec1test'),
 }));
 vi.mock('@/buzz/community-storage', () => ({
   loadActiveCommunityId: vi.fn(async () => null),
@@ -123,7 +121,6 @@ vi.mock('@/buzz/community-storage', () => ({
 }));
 vi.mock('@/buzz/avatar-upload', () => ({ pickAndUploadAvatar: vi.fn() }));
 vi.mock('@/buzz/person-name', () => ({
-  ensurePersonNameForWorkspace: vi.fn(async () => ({ name: 'Captain' })),
   loadPreferredPersonName: vi.fn(async () => 'Captain'),
   savePreferredPersonName: vi.fn(async () => undefined),
 }));
@@ -131,7 +128,6 @@ vi.mock('@/buzz/runtime-config', () => ({
   getBuzzRuntimeConfig: () => ({
     relayUrl: 'https://relay.test',
     pushGatewayUrl: 'https://push.test',
-    monolithEnabled: runtime.monolithEnabled,
   }),
 }));
 vi.mock('@/sync/appConfig', () => ({
@@ -291,7 +287,6 @@ function headings(renderer: ReactTestRenderer): string[] {
 beforeEach(() => {
   vi.clearAllMocks();
   mobileSurfaceCache.clear();
-  runtime.monolithEnabled = false;
   workspaceRead.workspaces.mockResolvedValue({ workspaces: [] });
   client.getGlobalPersonProfile.mockResolvedValue({ name: 'Captain' });
   pushModule.getBuzzPushEnabled.mockResolvedValue(true);
@@ -348,7 +343,6 @@ describe('Reproduction settings-identity-read-failure', () => {
   });
 
   it('shows the logo until the saved face arrives, then shows that face', async () => {
-    runtime.monolithEnabled = true;
     let resolveFace!: (value: unknown) => void;
     phoneOperation.mockImplementation(
       () =>
@@ -376,7 +370,6 @@ describe('Reproduction settings-identity-read-failure', () => {
   });
 
   it('keeps the logo when the hosted identity has no face', async () => {
-    runtime.monolithEnabled = true;
     phoneOperation.mockResolvedValue({ identity: {
       personId: 'a'.repeat(64), face: null, pushLevel: 'attention', handle: null, name: 'Captain',
     }, workspaces: { workspaces: [] } });
@@ -398,7 +391,6 @@ describe('Settings groups', () => {
   });
 
   it('heads the Workbench row Workbench when the Workbench is available', async () => {
-    runtime.monolithEnabled = true;
     phoneOperation.mockResolvedValue({
       face: null,
       pushLevel: 'attention',

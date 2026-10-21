@@ -32,7 +32,6 @@ subscribeClientReset(() => {
 /** Start the push's single Room read while initial landing is still resolving. */
 export function prefetchPushRoom(responseId: string, roomId: string, messageId?: string): void {
   const config = getBuzzRuntimeConfig();
-  if (!config.monolithEnabled) return;
   if (pending?.responseId === responseId && pending.roomId === roomId) return;
   markRoomOpen('prefetch-start');
   markRoomOpen('prefetch-target', messageId ?? 'unspecified');

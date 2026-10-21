@@ -424,9 +424,8 @@ describe('one mark, everywhere', () => {
   });
 
   it('never lets a relay photo replace the creature', () => {
-    // DESIGN.md ("Identity"): `photoIdentityMarksEnabled` ships FALSE — a
-    // photo defeats the face system at once, so the gate stays off until a
-    // captain decides portraits may live inside the tile.
+    // DESIGN.md ("Pictures"): a person photo defeats the face system, so
+    // IdentityMark never renders one.
     const renderer = render(
       React.createElement(IdentityMark, {
         seed: HUMAN,
@@ -437,7 +436,6 @@ describe('one mark, everywhere', () => {
     );
     expect(renderer.root.findAllByType('Image')).toHaveLength(0);
     expect(hosts(renderer, 'face-figure')).toHaveLength(1);
-    expect(groknight.photoIdentityMarksEnabled).toBe(false);
   });
 
   it('renders generated agent art and falls back to its assigned face on image failure', () => {

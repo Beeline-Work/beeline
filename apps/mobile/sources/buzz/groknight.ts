@@ -17,10 +17,6 @@ const shared = {
   dialogShadowColor: '#000000',
   // Explicit black selection frame for conversation routing.
   voiceSelectionFrame: '#000000',
-  // Human and agent relay photos defeat their identity axes, so their shared
-  // photo gate stays off. Workspace pictures are the explicit exception and
-  // are gated separately in photo-overrides.ts.
-  photoIdentityMarksEnabled: false,
   transcriptCard: {
     cornerRadius: 10,
     marginTop: 8,

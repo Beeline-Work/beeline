@@ -67,7 +67,7 @@ const shims = {
   '@/buzz/person-name': `export const ensurePersonNameForWorkspace = async () => ({ name: 'Captain' });
     export const loadPreferredPersonName = async () => 'Captain';
     export const savePreferredPersonName = async () => undefined;`,
-  '@/buzz/runtime-config': `export const getBuzzRuntimeConfig = () => ({ monolithEnabled: true, relayUrl: 'https://relay.test' });`,
+  '@/buzz/runtime-config': `export const getBuzzRuntimeConfig = () => ({ relayUrl: 'https://relay.test' });`,
   '@/buzz/workbench': `export const connectionsForViewer = () => [];`,
   '@/buzz/workbench-source': `export const getWorkbenchSource = () => ({ readWorkbench: async () => ({ connections: [] }) });`,
   '@/buzz/surface-storage': `export const clearMobileSurfaceStorage = async () => undefined;`,

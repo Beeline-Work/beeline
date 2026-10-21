@@ -15,7 +15,6 @@ import {
 } from '@/buzz/identity-mark';
 import { resolveFace } from '@/buzz/faces';
 import { PERSON_PLATE, agentFaceLayers, personFaceLayers } from '@/buzz/faces/face-tile';
-import { WORKSPACE_PICTURES_ENABLED } from '@/buzz/photo-overrides';
 import { SYSTEM_IDENTITY_PUBKEY } from '@/buzz/system-identity';
 import beelineMark from '@/buzz/beeline-mark.json';
 import { HullLivePulse } from './MonoHull';
@@ -229,10 +228,7 @@ export const IdentityMark = React.memo(function IdentityMark(props: IdentityMark
   // photos stay inert even when an untyped/stale caller supplies avatarUrl.
   const showGeneratedAvatar =
     kind === 'agent' && Boolean(isGeneratedAgentAvatarUrl(avatarUrl) && failedAvatar !== avatarUrl);
-  const showRelayAvatar =
-    WORKSPACE_PICTURES_ENABLED &&
-    kind === 'workspace' &&
-    Boolean(avatarUrl && failedAvatar !== avatarUrl);
+  const showRelayAvatar = kind === 'workspace' && Boolean(avatarUrl && failedAvatar !== avatarUrl);
 
   useEffect(() => setFailedAvatar(null), [avatarUrl]);
 

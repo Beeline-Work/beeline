@@ -32,3 +32,5 @@ Workspace owner and member screenshots use real role DTOs. Renderer tests additi
 The glyph in these captures was the authorized placeholder. Owner-selected option 4 is now implemented and captured in ../members-glyph-option4. The reused Workspace controls fill more than one Android screen; the two admin captures show the complete section and its transition into Device. No other layout changes were made.
 
 This is not a defect report. Revision 2 screenshots are superseded by this directory.
+
+Review correction R3-ROOM-SETTINGS: the earlier admin bottom capture omitted existing Room controls. The restored section and owner action path are recorded in ../workspace-room-rows/README.md; use those captures for the complete Workspace section.

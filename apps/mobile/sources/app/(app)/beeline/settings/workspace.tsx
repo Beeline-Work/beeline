@@ -633,7 +633,6 @@ export default function WorkspaceSettings({ embedded = false, workspaceId }: { e
             />
           </View>
 
-          {!embedded && (<>
           <View style={styles.section} testID="channel-visibility-settings">
             <Text style={styles.sectionLabel}>{ROOM_LABEL}s</Text>
             {workspaceView?.managerSettings?.roomsTruncated && (
@@ -676,8 +675,6 @@ export default function WorkspaceSettings({ embedded = false, workspaceId }: { e
               );
             })}
           </View>
-
-          </>)}
 
           {isWorkspaceOwner && (
             <View style={styles.section}>

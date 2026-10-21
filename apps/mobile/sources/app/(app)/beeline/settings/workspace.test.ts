@@ -325,10 +325,10 @@ function chatListView(chats: ReturnType<typeof room>[] = []) {
   };
 }
 
-async function render(): Promise<ReactTestRenderer> {
+async function render(props: React.ComponentProps<typeof WorkspaceSettings> = {}): Promise<ReactTestRenderer> {
   let renderer!: ReactTestRenderer;
   await act(async () => {
-    renderer = create(React.createElement(WorkspaceSettings));
+    renderer = create(React.createElement(WorkspaceSettings, props));
     await Promise.resolve();
     await Promise.resolve();
   });
@@ -383,8 +383,8 @@ describe('Workspace Settings authority', () => {
     expect(renderer.root.findByProps({ testID: 'workspace-overview-settings' })).toBeDefined();
   });
 
-  it('loads every scoped settings section for a Workspace owner', async () => {
-    const renderer = await render();
+  it.each([false, true])('loads every owner section when embedded=%s', async (embedded) => {
+    const renderer = await render({ embedded, workspaceId: 'workspace-1' });
 
     expect(renderer.root.findByProps({ testID: 'workspace-overview-settings' })).toBeDefined();
     expect(renderer.root.findByProps({ testID: 'workspace-visibility-setting' })).toBeDefined();
@@ -620,12 +620,12 @@ describe('Workspace Settings authority', () => {
     );
   });
 
-  it('qualifies same-name Rooms with human dates and discloses the full ID on demand', async () => {
+  it.each([false, true])('opens duplicate Room Details when embedded=%s', async (embedded) => {
     roomViews.chats.mockResolvedValue(
       chatListView([room('11111111-room', 'beeline', 1), room('22222222-room', 'beeline', 2)]),
     );
 
-    const renderer = await render();
+    const renderer = await render({ embedded, workspaceId: 'workspace-1' });
     const visibleText = renderer.root.findAllByType('Text').map((node) => node.children.join(''));
 
     expect(visibleText).toContain('Created Jan 1, 1970 · 00:00:01 UTC');

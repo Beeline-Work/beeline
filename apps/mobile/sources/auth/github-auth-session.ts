@@ -539,6 +539,11 @@ export async function runResilientGitHubSignInSession({
     await cancelGitHubRecovery(previousRecoveryToken, runtime, fetchImpl);
   }
   const start = startGitHubSignInWebFlow(state, runtime, recoveryToken);
+  if (purpose === 'signin') {
+    const authorization = new URL(start.authorizationUrl);
+    authorization.searchParams.set('onboarding', '1');
+    start.authorizationUrl = authorization.toString();
+  }
   await persistGitHubSignInState(state, purpose, recoveryToken);
   let callbackUrl: string | null = null;
   try {

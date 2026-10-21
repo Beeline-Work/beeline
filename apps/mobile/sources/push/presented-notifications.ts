@@ -1,5 +1,6 @@
 import { getBuzzNotificationTargetFromData } from '@/utils/notificationRouting';
 import type { PushLevel } from '@beeline/api-contract/phone';
+import { ACTION_OUTCOME_DATA_KEY } from './notification-actions';
 
 export type PresentedNotification = {
   request: {
@@ -102,6 +103,16 @@ export async function dismissPresentedNotificationsForChannel(
   await dismissPresentedNotificationsForChannels([{ channelId }], api, platform);
 }
 
+/** An Android row rewritten to confirm a tapped action, such as "Replied". */
+function isActionOutcome(notification: PresentedNotification): boolean {
+  const data = notification.request.content?.data;
+  return Boolean(
+    data &&
+    typeof data === 'object' &&
+    (data as Record<string, unknown>)[ACTION_OUTCOME_DATA_KEY] === 'true',
+  );
+}
+
 function presentedMessageId(notification: PresentedNotification): string | null {
   const data = notification.request.content?.data;
   if (!data || typeof data !== 'object') return null;
@@ -128,6 +139,7 @@ export async function dismissPresentedNotificationsForChannels(
   reads: readonly ChannelRead[],
   api: PresentedNotificationApi,
   platform: string,
+  options: { keepActionOutcomes?: boolean } = {},
 ): Promise<void> {
   const readChannels = reads.flatMap((read) => {
     const channelId = read.channelId.trim();
@@ -137,6 +149,7 @@ export async function dismissPresentedNotificationsForChannels(
 
   const presented = await api.getPresentedNotificationsAsync();
   const matchingIds = presented.flatMap((notification) =>
+    !(options.keepActionOutcomes && isActionOutcome(notification)) &&
     readChannels.some((read) => {
       if (!presentedNotificationMatchesChannel(notification, read.channelId)) return false;
       if (!read.messageId) return true;

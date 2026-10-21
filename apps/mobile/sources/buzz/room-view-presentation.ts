@@ -319,6 +319,7 @@ export type ChatDisplayMessage = {
   appSignIn?: NonNullable<RoomViewMessage['appSignIn']>;
   /** `@agent /login`: Claude's sign-in card at the call site. Never holds a code. */
   agentSignIn?: NonNullable<RoomViewMessage['agentSignIn']>;
+  onboarding?: NonNullable<RoomViewMessage['onboarding']>;
   choice?: NonNullable<RoomViewMessage['choice']>;
   /** An agent's order into, or report from, a corner; a collapsed record card. */
   agentCommand?: NonNullable<RoomViewMessage['agentCommand']>;
@@ -458,6 +459,7 @@ export function displayRoomMessage(
     ...(message.connectorOffer ? { connectorOffer: { ...message.connectorOffer } } : {}),
     ...(message.appSignIn ? { appSignIn: { ...message.appSignIn } } : {}),
     ...(message.agentSignIn ? { agentSignIn: { ...message.agentSignIn } } : {}),
+    ...(message.onboarding ? { onboarding: message.onboarding } : {}),
     ...(message.choice ? { choice: message.choice } : {}),
     ...(message.agentCommand ? { agentCommand: message.agentCommand } : {}),
     ...(message.walletTx ? { walletTx: { ...message.walletTx } } : {}),

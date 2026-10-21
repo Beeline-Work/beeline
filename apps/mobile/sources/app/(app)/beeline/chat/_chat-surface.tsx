@@ -1,3 +1,4 @@
+import { RepositoryOnboardingCard } from './RepositoryOnboardingCard';
 import { showVoiceJoinError } from '@/buzz/voice-update';
 import { useUntaggedMessageHints } from '@/buzz/use-untagged-message-hints';
 import { focusComposerSelection } from '@/buzz/composer-selection';
@@ -5677,6 +5678,7 @@ export function BuzzChatSurface({
       }
       // The active call lives below the Room header; ended calls use LedgerSystemLine.
       if (item.voiceCall && !item.voiceCall.endedAt) return null;
+      if (item.onboarding) return <RepositoryOnboardingCard card={item.onboarding} viewerId={cacheViewerPubkey} author={item.authorIdentity} />;
       if (item.choice) {
         return (
           <ChoiceCard

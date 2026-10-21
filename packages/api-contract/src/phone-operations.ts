@@ -1,3 +1,4 @@
+import type { RepositoryOnboardingAction } from './repository-onboarding.js';
 import type { RoomSubscriptionListResult } from './subscriptions.js';
 import type { AgentGrantDecision, AgentGrantStatus } from './agent-grants.js';
 import type { ChoiceStatus, ChoiceOptionInput } from './room-choices.js';
@@ -132,6 +133,7 @@ export type PhoneOperationMap = {
   startOwnedWorkflow: { input: RoomInput & { readonly name: string; readonly roleBindings: Readonly<Record<string, string | readonly string[]>> }; output: { readonly runId: string; readonly state: string } };
   readWorkflowRun: { input: ReadWorkflowRunInput; output: WorkflowRunDetailView };
   cancelAgentTurn: { input: CancelAgentTurnInput; output: void };
+  actOnRepositoryCard: { input: RepositoryOnboardingAction; output: { readonly url?: string; readonly selected?: string } };
   createHumanCorner: { input: CreateHumanCornerInput; output: IdResult };
   requestCornerClose: { input: RoomInput; output: void };
   decideWritePermission: { input: DecideWritePermissionInput; output: MessageWriteResult };
@@ -717,7 +719,7 @@ export type RoomRepositoryResult = {
   readonly githubEventsEnabled: boolean;
   readonly source: 'config';
 };
-export type AuthCapabilitiesResult = { readonly github: boolean };
+export type AuthCapabilitiesResult = { readonly github: boolean; readonly repositoryOnboarding?: boolean };
 export type BeginBrowserAuthInput = { readonly redirectUri: string; readonly state: string };
 export type BrowserAuthStartResult = { readonly url: string };
 export type CompleteBrowserAuthInput = { readonly challenge: string; readonly proof: string };

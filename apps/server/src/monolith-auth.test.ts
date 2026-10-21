@@ -29,6 +29,7 @@ describe('mounted monolith auth', () => {
   let server: ReturnType<typeof createBeelineServer>;
   let origin: string;
   let githubOperations: GitHubOperations;
+  let installationAccess: boolean;
   let processWebhook: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
@@ -59,7 +60,11 @@ describe('mounted monolith auth', () => {
         tokenExpiresIn: 28800,
       }),
     } as unknown as GitHubOAuthClient;
+    installationAccess = true;
     const githubApp = {
+      installationUrl: (state: string) => `https://github.test/install?state=${state}`,
+      userCanAccessInstallation: async () => installationAccess,
+      listUserInstallationIds: async () => [77],
       installationAccount: async () => ({
         id: '42',
         login: 'owner',
@@ -78,6 +83,7 @@ describe('mounted monolith auth', () => {
         app: githubApp,
       },
       {
+        completeRepositoryInstallation: (state, installationId) => githubOperations.completeInstallation(state, installationId),
         createDaemonExchange: (agentId, transaction) =>
           tokenAuth.createDaemonExchange(agentId, transaction),
         env: {
@@ -246,6 +252,51 @@ describe('mounted monolith auth', () => {
 
     const retiredLookup = await mountedRequest('/.well-known/nostr.json?name=octocat');
     expect(retiredLookup.status).toBe(404);
+  });
+
+  it('completes repo-card installation through the OAuth callback and rejects replay or forged state', async () => {
+    vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING', '1');
+    vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING_GITHUB_IDS', '42');
+    const start = await mountedRequest(
+      `/auth/github/start?app_redirect=${encodeURIComponent('beeline://beeline/github-callback')}&app_state=${'r'.repeat(43)}`,
+    );
+    const authState = new URL(String(start.headers.location)).searchParams.get('state');
+    const authorized = await mountedRequest(`/auth/github/callback?code=github-code&state=${authState}`, {
+      cookie: String(start.headers['set-cookie']).split(';', 1)[0]!,
+    });
+    const ticket = new URL(String(authorized.headers.location)).searchParams.get('ticket');
+    const sessionResponse = await fetch(`${origin}/v1/auth/github/exchange`, {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ oidcToken: ticket }),
+    });
+    const session = await sessionResponse.json() as { identityId: string };
+    const installation = await githubOperations.beginInstallation(session.identityId, {
+      redirectUri: 'beeline://beeline/github-installation',
+    });
+    const state = new URL(installation.url).searchParams.get('state');
+    expect(state).toMatch(/^repository_install_/);
+    const path = `/auth/github/callback?code=install-code&state=${state}&installation_id=77&setup_action=install`;
+    const completion = await mountedRequest(path);
+    expect(completion.status, completion.body).toBe(302);
+    expect(completion.headers.location).toBe('beeline://beeline/github-installation?installed=1');
+    expect((await database.query(`SELECT 1 FROM github_repositories WHERE installation_id=77 AND active`)).rows).toHaveLength(1);
+    expect((await mountedRequest(path)).status).toBeGreaterThanOrEqual(400);
+    const deniedStart = await githubOperations.beginInstallation(session.identityId, {
+      redirectUri: 'beeline://beeline/github-installation',
+    });
+    const deniedState = new URL(deniedStart.url).searchParams.get('state');
+    const discovered = await mountedRequest(`/auth/github/callback?code=install-code&state=${deniedState}`);
+    expect(discovered.status, discovered.body).toBe(302);
+    const anotherStart = await githubOperations.beginInstallation(session.identityId, {
+      redirectUri: 'beeline://beeline/github-installation',
+    });
+    const anotherState = new URL(anotherStart.url).searchParams.get('state');
+    installationAccess = false;
+    const denied = await mountedRequest(`/auth/github/callback?state=${anotherState}&installation_id=77`);
+    expect(denied.status).toBeGreaterThanOrEqual(400);
+    expect(denied.headers.location).toBeUndefined();
+    expect((await mountedRequest('/auth/github/callback?state=repository_install_forged&installation_id=77')).status).toBeGreaterThanOrEqual(400);
+    expect((await mountedRequest(`/auth/github/callback?state=${state}&error=access_denied&installation_id=77`)).status).toBe(400);
   });
 
   it('turns an in-process GitHub ticket into a phone session with subject and login', async () => {

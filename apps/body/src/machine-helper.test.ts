@@ -354,12 +354,23 @@ describe('one helper process hosts every agent on the machine', () => {
     const { configPaths, env, signals } = await machine(2);
     const restarting = (await readRuntimeRecord(configPaths[0]!)).agent.publicKey;
     const sibling = (await readRuntimeRecord(configPaths[1]!)).agent.publicKey;
+    let requestRestart!: (reason: AgentExitReason) => void;
+    const firstExit = new Promise<AgentExitReason>((resolveExit) => { requestRestart = resolveExit; });
     const fake = fakeRuntimes((agentId, run) =>
-      agentId === restarting && run === 1 ? Promise.resolve('restart-requested') : undefined);
+      agentId === restarting && run === 1 ? firstExit : undefined);
     const running = runMachineHelper({ env, signals, runAgent: fake.runAgent, exitProcess: () => undefined });
+    // Startup reads are independent: one agent can restart before its sibling
+    // has entered runAgent. Exercise the restart only once both are serving.
+    await vi.waitFor(() => {
+      expect(fake.runs.get(restarting)).toBe(1);
+      expect(fake.runs.get(sibling)).toBe(1);
+    });
+    const siblingSignal = fake.signals.get(sibling);
+    requestRestart('restart-requested');
     await vi.waitFor(() => expect(fake.runs.get(restarting)).toBe(2));
     expect(fake.runs.get(sibling)).toBe(1);
-    expect(fake.signals.get(sibling)!.aborted).toBe(false);
+    expect(fake.signals.get(sibling)).toBe(siblingSignal);
+    expect(siblingSignal!.aborted).toBe(false);
     signals.emit('SIGTERM');
     expect((await running).reason).toBe('stopped');
   });

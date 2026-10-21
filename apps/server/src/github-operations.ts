@@ -2104,6 +2104,7 @@ export class GitHubOperations {
             WHERE corner_id=$1 AND lifecycle->'checkRefreshRetry'->>'headSha'=$2`,
             [target.corner_id, target.head_sha]);
         }
+        if (error instanceof GitHubHttpError && error.rateLimited) continue;
         captureServerError(error, { background_job: 'github-check-refresh' });
         console.error('[github] queued check refresh failed:', error);
       }

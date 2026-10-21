@@ -5,6 +5,8 @@ import {
   GitHubHttpError,
   GitHubOAuthClient,
   githubMergeability,
+  transientGitHubError,
+  githubRetryDelay,
 } from './github.js';
 
 afterEach(() => {
@@ -1120,3 +1122,48 @@ describe('live branch deletion safety reads', () => {
     await expect(app.branchDeletionSafety('sealed', 'owner/repo', 'gone')).rejects.toThrow('HTTP 404');
   });
 });
+
+
+it.each(['primary', 'secondary', 'plain', 'invalid', 'reset-with-budget'])(
+  'R-GH-403: PR and check reads retain only documented rate limits (%s)', async kind => {
+    const reset = Math.floor(Date.now() / 1000) + 600;
+    const headers: Record<string, string> = kind === 'primary'
+      ? { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(reset) }
+      : kind === 'secondary' ? { 'retry-after': '120' }
+      : kind === 'invalid' ? { 'retry-after': 'invalid', 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': 'invalid' }
+      : kind === 'reset-with-budget' ? { 'x-ratelimit-remaining': '10', 'x-ratelimit-reset': String(reset) } : {};
+    const fetchMock = vi.fn(async () => new Response('{}', { status: 403, headers }));
+    vi.stubGlobal('fetch', fetchMock);
+    const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
+    for (const read of [() => app.readPullRequest('fake', 'owner/widgets', 1),
+      () => app.readCommitCheckRollup('fake', 'owner/widgets', retryHead),
+      () => app.confirmNoChecks('fake', 'owner/widgets', retryHead)]) {
+      const error = await read().catch(error => error);
+      expect(error).toBeInstanceOf(GitHubHttpError);
+      const limited = kind === 'primary' || kind === 'secondary';
+      expect(error.rateLimited).toBe(limited);
+      expect(transientGitHubError(error)).toBe(limited);
+      if (limited) {
+        expect(error.message).toMatch(/^GitHub rate limit; checks readable again at /);
+        expect(githubRetryDelay(error, 0)).toBeGreaterThan(kind === 'primary' ? 590_000 : 119_000);
+      } else expect(error.retryAfter).toBeNull();
+    }
+    // Long waits belong to the durable queue; no immediate request retries.
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  },
+);
+
+
+it.each(['pulls/1/files', 'pulls/1/reviews', 'pulls/1/comments', 'issues/1/comments'])(
+  'R-GH-403-DISCUSSION: preserves headers before parsing a non-JSON error from %s', async path => {
+    const reset = Math.floor(Date.now() / 1000) + 600;
+    vi.stubGlobal('fetch', vi.fn(async (url: string) => String(url).includes(`/${path}?`)
+      ? new Response('rate limited', { status: 403,
+        headers: { 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': String(reset) } })
+      : new Response('[]')));
+    const app = new GitHubAppClient({ appId: '42', privateKey: 'unused', slug: 'beeline' });
+    await expect(app.readPullRequestDiscussion('fake', 'owner/widgets', 1)).rejects.toMatchObject({
+      status: 403, rateLimited: true, retryAfter: new Date(reset * 1000).toUTCString(),
+    });
+  },
+);

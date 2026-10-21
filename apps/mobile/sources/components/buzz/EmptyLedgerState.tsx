@@ -18,7 +18,7 @@ export type EmptyLedgerStarterPrompt = {
 type EmptyLedgerStateProps = {
   variant: EmptyLedgerVariant;
   name?: string;
-  objective?: string;
+  agentHandle?: string;
   onPress: () => void;
   /** A Room the viewer can write in, empty: teach by doing (first Room). */
   starterPrompts?: readonly EmptyLedgerStarterPrompt[];
@@ -30,15 +30,13 @@ type EmptyLedgerStateProps = {
 function emptyLedgerCopy(
   variant: EmptyLedgerVariant,
   name?: string,
-  objective?: string,
+  agentHandle?: string,
 ): { glyph: string | null; title: string; body: string } {
   if (variant === 'corner') {
     return {
       glyph: '△',
-      title: 'Ready for a steering message',
-      body: objective
-        ? `Steer the agent on “${objective}”.`
-        : 'Tell the agent what to investigate or change.',
+      title: agentHandle ? `Tag @${agentHandle.replace(/^@/, '')} to start` : 'Tag an agent to start',
+      body: 'Agents here reply only when tagged.',
     };
   }
   if (variant === 'dm') {
@@ -56,6 +54,13 @@ function emptyLedgerCopy(
   };
 }
 
+/** Opening records are retained, but do not count as a conversation to start. */
+export function cornerNeedsStarter(rows: readonly { systemEvent?: { kind?: string } }[]): boolean {
+  return rows.every((row) =>
+    row.systemEvent?.kind === 'corner-opened' || row.systemEvent?.kind === 'workflow-handoff',
+  );
+}
+
 /**
  * Empty transcript voice for Room, Corner, and DM ledgers. The whole state is
  * the affordance: tapping it focuses the composer, so no duplicate button is
@@ -64,13 +69,13 @@ function emptyLedgerCopy(
 export function EmptyLedgerState({
   variant,
   name,
-  objective,
+  agentHandle,
   onPress,
   starterPrompts,
   starterIntro,
   testID = 'empty-ledger-state',
 }: EmptyLedgerStateProps) {
-  const copy = emptyLedgerCopy(variant, name, objective);
+  const copy = emptyLedgerCopy(variant, name, agentHandle);
   if (variant === 'room' && starterPrompts?.length) {
     return (
       <View style={styles.pressable} testID={testID}>
@@ -104,7 +109,9 @@ export function EmptyLedgerState({
   }
   return (
     <TouchableOpacity
-      accessibilityHint="Focuses the message composer"
+      accessibilityHint={variant === 'corner' && agentHandle
+        ? 'Adds the agent mention and focuses the message composer'
+        : 'Focuses the message composer'}
       accessibilityLabel={`${copy.title}. ${copy.body}`}
       accessibilityRole="button"
       activeOpacity={0.72}

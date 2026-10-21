@@ -30,6 +30,7 @@ export class VoiceService {
   readonly profiles: AgentVoiceService;
   readonly budget: VoiceBudgetStore;
   private readonly runtimes = new Map<string, Promise<VoiceRoomRuntime | undefined>>();
+  private readonly timingWrites = new Set<Promise<void>>();
   private readonly rooms: RoomServiceClient;
   private readonly unsubscribe: () => void;
   constructor(readonly db: SqlDatabase, readonly live: LiveHub, readonly config: VoiceConfig) {
@@ -447,6 +448,15 @@ export class VoiceService {
     });
   }
 
+  recordTiming(row: { traceId: string; callId: string; stage: string; elapsedMs: number }) {
+    const write = this.db.query(`INSERT INTO voice_turn_timings(trace_id,call_id,stage,elapsed_ms,server_release)
+      VALUES($1,$2,$3,$4,$5) ON CONFLICT(trace_id,stage) DO NOTHING`,
+      [row.traceId, row.callId, row.stage, row.elapsedMs, process.env.BEELINE_RELEASE_SHA ?? process.env.FLY_IMAGE_REF ?? 'local']).then(() => {});
+    this.timingWrites.add(write);
+    void write.then(() => this.timingWrites.delete(write), () => this.timingWrites.delete(write));
+    return write;
+  }
+
   async recordAnswer(roomId: string, agentId: string, text: string) {
     text=text.trim();
     // Luna can render the same complete answer twice, formatted then plain.
@@ -474,6 +484,7 @@ export class VoiceService {
     this.unsubscribe();
     await Promise.allSettled([...this.runtimes.values()].map(async runtime => (await runtime)?.close()));
     this.runtimes.clear();
+    await Promise.allSettled(this.timingWrites);
   }
 }
 

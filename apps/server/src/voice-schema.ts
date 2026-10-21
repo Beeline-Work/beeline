@@ -53,4 +53,14 @@ CREATE TABLE IF NOT EXISTS voice_messages (
   call_id uuid NOT NULL REFERENCES voice_calls(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS voice_messages_call_idx ON voice_messages(call_id);
+CREATE TABLE IF NOT EXISTS voice_turn_timings (
+  trace_id uuid NOT NULL,
+  call_id uuid NOT NULL REFERENCES voice_calls(id) ON DELETE CASCADE,
+  stage text NOT NULL,
+  elapsed_ms double precision NOT NULL CHECK (elapsed_ms >= 0),
+  server_release text NOT NULL,
+  recorded_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY(trace_id,stage)
+);
+CREATE INDEX IF NOT EXISTS voice_turn_timings_call_idx ON voice_turn_timings(call_id,recorded_at);
 `;

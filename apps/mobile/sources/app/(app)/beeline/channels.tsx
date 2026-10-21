@@ -1,3 +1,4 @@
+import { TrayGlyph } from '@/components/buzz/TrayGlyph';
 import { takePendingBrowserShare } from '@/buzz/pending-browser-share';
 import { RoomViewHttpError } from '@beeline/buzz-client';
 import { useTextDraft } from '@/buzz/use-text-draft';
@@ -895,6 +896,9 @@ export default function BuzzChannels() {
               <Button label="" variant="quiet" accessibilityLabel="Members" testID="workspace-members"
                 icon={<MembersAgentsGlyph size={22} color={styles.membersGlyph.color} />}
                 onPress={() => router.push({ pathname: '/beeline/members', params: { communityId: activeCommunityId } } as never)} />
+                <TrayGlyph size={22} color={styles.trayGlyph.color} cutColor={styles.trayGlyph.backgroundColor}
+                  testID="workspace-tray" needsYouCount={needsYouCount} filled={false}
+                  onPress={() => router.push({ pathname: '/beeline/tray', params: { communityId: activeCommunityId, workspaceName: chatList?.workspace.name ?? '' } } as never)} />
             </View>
           )}
         </View>
@@ -905,16 +909,7 @@ export default function BuzzChannels() {
             query={query}
             onQuery={setQuery}
             counts={counts}
-            needsYouCount={needsYouCount}
-            onTray={
-              activeCommunityId
-                ? () =>
-                    router.push({
-                      pathname: '/beeline/tray',
-                      params: { communityId: activeCommunityId, workspaceName: chatList?.workspace.name ?? '' },
-                    } as never)
-                : undefined
-            }
+
           />
         )}
         {pinError && (
@@ -1214,6 +1209,7 @@ const styles = StyleSheet.create((theme) => {
     // Target edge to target edge, not ink to ink: the boxes ARE the targets,
     // and they touch, so their centres stay one complete touch target apart.
     membersGlyph: { color: hull.ledgerQuiet },
+    trayGlyph: { color: hull.accent, backgroundColor: hull.bgBase },
     headerActions: {
       flexDirection: 'row',
       alignItems: 'center',

@@ -53,6 +53,11 @@ const review=new ReviewAccess({secret:'isolated-design-proof-secret-5678',mint:(
 const app=createBeelineServer({database,auth,phone,daemon:{} as DaemonService,live,review,webAppOrigins:['http://127.0.0.1:18082'],mediaMaximumBytes:1});
 await new Promise<void>(resolve=>app.listen(45862,'127.0.0.1',resolve));
 const proxy=createServer(async(req,res)=>{
+  if(req.url?.startsWith('/_proof/badge/')) {
+    const enabled=req.url.endsWith('/on');
+    await database.query(`UPDATE messages SET text=$1 WHERE id=$2`,[enabled ? '@play-review please review this prototype?' : 'Welcome back. The next review is on Friday.',createHash('sha256').update('message:general').digest('hex')]);
+    res.end(JSON.stringify({enabled}));return;
+  }
   if(req.url?.startsWith('/_proof/role/')) {
     const role=req.url.endsWith('/member')?'member':'owner';
     await database.query(`UPDATE memberships SET role=$1 WHERE workspace_id=$2 AND room_id IS NULL AND identity_id=$3`,[role,REVIEW_WORKSPACE_ID,REVIEW_IDENTITY_ID]);

@@ -321,6 +321,7 @@ vi.mock('@/components/buzz/HullActionSheet', () => ({
 
 import { SidebarView } from './SidebarView';
 import { liveChatList, refreshChatList, resetChatListStoresForTest } from '@/buzz/chat-list-store';
+import { TrayGlyph } from '@/components/buzz/TrayGlyph';
 import { RoomListToolbar } from '@/components/buzz/RoomListToolbar';
 let tree: ReactTestRenderer;
 function control(id: string) {
@@ -646,7 +647,7 @@ describe('desktop Workspace navigation', () => {
       params: { communityId: 'workspace-a' },
     });
 
-    act(() => tree.root.findByType(RoomListToolbar).props.onTray());
+    act(() => tree.root.findByType(TrayGlyph).props.onPress());
     expect(routerPush).toHaveBeenCalledWith({
       pathname: '/beeline/tray',
       params: { communityId: 'workspace-a', workspaceName: 'Alpha Workspace' },
@@ -720,7 +721,7 @@ describe('desktop Workspace navigation', () => {
     expect(tree.root.findAllByProps({ testID: 'desktop-new-room' })).toHaveLength(0);
     expect(tree.root.findAllByProps({ testID: 'workspace-menu-settings' })).toHaveLength(0);
     expect(control('desktop-new-direct-message')).toBeDefined();
-    expect(tree.root.findByType(RoomListToolbar).props.onTray).toBeDefined();
+    expect(tree.root.findByType(TrayGlyph).props.onPress).toBeDefined();
     expect(control('workspace-members')).toBeDefined();
     expect(control('profile-settings-navigation')).toBeDefined();
   });
@@ -744,7 +745,7 @@ describe('desktop Workspace navigation', () => {
     });
     await settle();
 
-    expect(tree.root.findByType(RoomListToolbar).props.traySelected).toBe(true);
+    expect(tree.root.findByType(TrayGlyph).props.filled).toBe(true);
     expect(control('profile-settings-navigation').props.accessibilityState).toEqual({
       selected: false,
     });
@@ -756,7 +757,7 @@ describe('desktop Workspace navigation', () => {
       tree.update(<SidebarView key="members-route" />);
     });
     await settle();
-    expect(tree.root.findByType(RoomListToolbar).props.traySelected).toBe(false);
+    expect(tree.root.findByType(TrayGlyph).props.filled).toBe(false);
   });
 
   it('exposes the active conversation to assistive technology', async () => {

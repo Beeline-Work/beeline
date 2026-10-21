@@ -167,7 +167,6 @@ function Proof() {
             unread: rooms.filter((item) => item.unread).length,
             pinned: pinned.length,
           }}
-          onTray={() => action('tray')}
         />
         {desktop && visibleRooms.some((item) => !item.directMessage) && (
           <RoomListSectionHeader

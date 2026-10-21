@@ -1,3 +1,4 @@
+import { TrayGlyph } from '@/components/buzz/TrayGlyph';
 import { Button } from '@/components/buzz/Button';
 import { HullDialogInput } from '@/components/buzz/HullDialog';
 import { useTextDraft } from '@/buzz/use-text-draft';
@@ -141,6 +142,7 @@ const stylesheet = StyleSheet.create((theme) => ({
   settingsText: { ...theme.buzz.type.sectionHead, color: theme.colors.text },
   desktopWorkspaceHeaderRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
   membersGlyph: { color: theme.buzz.ledgerQuiet },
+  trayGlyph: { color: theme.buzz.accent, backgroundColor: theme.buzz.bgBase },
   desktopWorkspaceHeaderActions: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -494,9 +496,14 @@ export const SidebarView = React.memo(function SidebarView() {
               />
               <View style={styles.desktopWorkspaceHeaderActions}>
                 {workspaceId && (
+                  <>
                   <Button label="" variant="quiet" accessibilityLabel="Members" testID="workspace-members"
                     icon={<MembersAgentsGlyph size={22} color={styles.membersGlyph.color} />}
                     onPress={() => router.push({ pathname: '/beeline/members', params: { communityId: workspaceId } } as Href)} />
+                <TrayGlyph size={22} color={styles.trayGlyph.color} cutColor={styles.trayGlyph.backgroundColor}
+                  testID="desktop-tray" needsYouCount={needsYouCount} filled={traySelected}
+                  onPress={() => router.push({ pathname: '/beeline/tray', params: { communityId: workspaceId, workspaceName: activeWorkspace?.name ?? '' } } as never)} />
+                  </>
                 )}
               </View>
             </View>
@@ -541,18 +548,8 @@ export const SidebarView = React.memo(function SidebarView() {
             onFilter={setFilter}
             query={query}
             onQuery={setQuery}
-            traySelected={traySelected}
             counts={counts}
-            needsYouCount={needsYouCount}
-            onTray={
-              workspaceId
-                ? () =>
-                    router.push({
-                      pathname: '/beeline/tray',
-                      params: { communityId: workspaceId, workspaceName: activeWorkspace?.name ?? '' },
-                    } as Href)
-                : undefined
-            }
+
           />
           {pinError && (
             <Text accessibilityRole="alert" style={styles.empty}>

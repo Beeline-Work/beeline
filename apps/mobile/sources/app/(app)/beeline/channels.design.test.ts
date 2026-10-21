@@ -21,14 +21,15 @@ describe('Approved Room list layout', () => {
     expect(header).toContain("inset = 'screen'");
     expect(header).toContain('paddingHorizontal: hull.space.md');
   });
-  it('uses the workspace identity and header actions with the tray beside search', () => {
+  it('uses the workspace identity and header actions with Members then Tray in the primary row', () => {
     expect(source).toContain('<CommunityDrawerTrigger community={activeCommunity}');
     expect(source).toContain('<MembersAgentsGlyph');
     expect(source).not.toContain('<WorkspaceActionsMenu');
     expect(source).not.toMatch(/<RoomDeckComposeMenu\s+header/);
     expect(source).toContain('actionAccessibilityLabel=');
     expect(source).not.toContain('composeOverlay');
-    expect(toolbar).toContain('<TrayGlyph');
+    expect(source).toContain('<TrayGlyph');
+    expect(toolbar).not.toContain('<TrayGlyph');
     expect(toolbar).toContain('{actions}');
     expect(toolbar).toContain('{searchOpen && search}');
     expect(toolbar).not.toContain('!desktop && actions');

@@ -54,7 +54,12 @@ export function scheduleWhere(
 
 /** Line 1 of a schedule row: what it runs, ellipsized by the row if needed. */
 export function scheduleTitle(schedule: RoomScheduleView): string {
-  return schedule.title ?? 'Scheduled task';
+  const stored = schedule.title?.trim();
+  // A server before this derivation sent the generic label for a nameless
+  // schedule; read it as absent so the prompt or workflow names the row.
+  if (stored && stored !== 'Scheduled task') return stored;
+  if (schedule.workflowSlug) return workflowDisplayName(schedule.workflowSlug);
+  return promptLead(schedule.message) || 'Scheduled task';
 }
 
 /** The detail page's Runs row: the cadence and the next firing. */

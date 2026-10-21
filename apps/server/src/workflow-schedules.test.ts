@@ -496,7 +496,7 @@ it('Reproduction ebc844ec744260fdaf5b93010d0ffe549b6e30e1a33efbd47cd8b939ef54f16
   await db.query(`UPDATE agent_schedules SET title=NULL,workflow_slug='feedback-triage' WHERE id=$1`, [created.scheduleId]);
   expect((await phone.execute('listRoomSchedules', { roomId: ROOM }, ADMIN)).schedules[0]?.title).toBe('Feedback triage');
   await db.query('UPDATE agent_schedules SET workflow_slug=NULL WHERE id=$1', [created.scheduleId]);
-  expect((await phone.execute('listRoomSchedules', { roomId: ROOM }, ADMIN)).schedules[0]?.title).toBe('Scheduled task');
+  expect((await phone.execute('listRoomSchedules', { roomId: ROOM }, ADMIN)).schedules[0]?.title).toBe('One-time 24-hour Play report access check');
 });
 
 it('backfills the existing Beeline labels without editing cadence or instructions', async () => {

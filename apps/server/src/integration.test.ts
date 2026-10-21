@@ -5022,7 +5022,7 @@ describe('monolith integration', () => {
     await expect(listed.json()).resolves.toEqual({
       schedules: [
         {
-          title: 'Scheduled task',
+          title: "message 'hello @bananaman614305'",
           scheduleId,
           agentId: AGENT,
           agentHandle: 'bee',

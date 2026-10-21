@@ -2,7 +2,7 @@ import { approvalCardSource } from './approval-card-source.js';
 import { ExpectedRefusalError } from './command-refusal.js';
 import { productionReleaseDispatch } from './production-release-dispatch.js';
 import { turnMessageRepetition } from './turn-repetition.js';
-import { scheduleFallbackTitle, validateScheduleTitle } from './schedule-title.js';
+import { scheduleDisplayTitle, validateScheduleTitle } from './schedule-title.js';
 import { onboardingEnabledForViewer } from './onboarding-rollout.js';
 import { FREE_AGENT_REPOSITORY_GUIDE } from './free-agents.js';
 import { postRepositoryOnboarding } from './repository-onboarding.js';
@@ -5203,7 +5203,7 @@ export class DaemonService {
         nextRunAt,
         workflowName ?? null,
         ownerId ?? null,
-        title ?? scheduleFallbackTitle(workflowName),
+        title ?? null,
       ],
     );
     await this.recordScheduleAuthorization(db, scheduleId, input.roomId, agentId, requestId,
@@ -5407,7 +5407,7 @@ export class DaemonService {
         const activeRunIds = [...new Set([...workflowRunIds, ...scheduleRunIds])];
         return {
           ...(row.workflow_slug ? { workflowName: row.workflow_slug } : {}),
-          title: row.title ?? scheduleFallbackTitle(row.workflow_slug),
+          title: scheduleDisplayTitle({ title: row.title, workflow: row.workflow_slug, prompt: row.message }),
           scheduleId: row.id,
           ...(input.selfOnly ? { roomId: row.room_id, roomName: row.room_name } : {}),
           agentId: row.agent_id,

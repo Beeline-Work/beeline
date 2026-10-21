@@ -107,6 +107,42 @@ describe('manager schedule phone operations', () => {
     }
   });
 
+  it('Reproduction R-schedule-titles: nameless agent schedules read as what they run', async () => {
+    const database = await fixture();
+    try {
+      const phone = new PhoneService(database, 'http://local.test');
+      const daemon = new DaemonService(database, new LiveHub());
+      const cadence = { kind: 'interval' as const, everyMinutes: 60 };
+      await daemon.execute(
+        'createAgentSchedule',
+        { roomId: ROOM, agentId: AGENT, cadence, prompt: 'Post the daily launch report to the Room.' },
+        AGENT,
+      );
+      await daemon.execute(
+        'createAgentSchedule',
+        { roomId: ROOM, agentId: AGENT, cadence, prompt: 'Replay the nightly prompt log.' },
+        AGENT,
+      );
+      // A row that already stored the generic label before this derivation.
+      await database.query(
+        `INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at,title)
+         VALUES($1,$2,$3,$4,$4,$5::jsonb,'Check the Play release downloads.','2030-01-01','Scheduled task')`,
+        ['99999999-9999-4999-8999-999999999999', WORKSPACE, ROOM, AGENT, JSON.stringify(cadence)],
+      );
+      const titles = (await phone.execute('listRoomSchedules', { roomId: ROOM }, OWNER))
+        .schedules.map((row) => row.title);
+      expect(titles).toEqual(expect.arrayContaining([
+        'Post the daily launch report to the Room',
+        'Replay the nightly prompt log',
+        'Check the Play release downloads',
+      ]));
+      expect(titles).not.toContain('Scheduled task');
+      console.log('Demonstrated R-schedule-titles:', JSON.stringify(titles));
+    } finally {
+      await database.close();
+    }
+  });
+
   it('lists a corner-created schedule from its parent Room with its corner identity', async () => {
     const database = await fixture();
     try {
@@ -536,7 +572,7 @@ describe('agent tool schedule daemon operations', () => {
       );
       expect(listed.schedules).toEqual([
         {
-          title: 'Scheduled task',
+          title: 'Ping the Room',
           scheduleId: created.scheduleId,
           agentId: AGENT,
           prompt: 'Ping the Room.',
@@ -622,7 +658,7 @@ describe('agent tool schedule daemon operations', () => {
           .schedules,
       ).toEqual([
         {
-          title: 'Scheduled task',
+          title: 'Summarize the Room',
           scheduleId: created.scheduleId,
           agentId: AGENT,
           prompt: 'Summarize the Room.',

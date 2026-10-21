@@ -84,6 +84,20 @@ function shims(mobile: string): Record<string, string> {
           message: 'Original instructions stay in details.', nextRunAt: 1790000000 + index, createdAt: 0, runCount: 0,
         }));
       }
+      if (new URLSearchParams(location.search).has('namelessSchedules')) {
+        work.subscriptions = [];
+        work.schedules = [
+          ['Post the daily launch report to the Room.', null],
+          ['Replay the nightly prompt log.', null],
+          ['Check the Play release downloads.', null],
+          ['Start the feedback-triage workflow.', 'feedback-triage']
+        ].map(([message, workflowSlug], index) => ({
+          id: 'nameless-' + index, workflowSlug,
+          workspaceId: 'workspace-1', roomId: 'room-1', agentId: 'agent-1', creatorId: 'agent-1',
+          cadence: { kind: 'interval', everyMinutes: 1440 },
+          message, nextRunAt: 1790000000 + index, createdAt: 0, runCount: 0,
+        }));
+      }
       return { ...work, schedules: work.schedules.filter((item) => !gone.has(item.id)),
         subscriptions: work.subscriptions.filter((item) => !gone.has(item.id)) };
     };`,
@@ -220,6 +234,18 @@ describe.skipIf(!existsSync(CHROME))('Schedules and subscriptions pages in a bro
         'Play downloads check', 'Once', 'Feedback triage', 'Release']);
       expect(page.text.join(' ')).not.toMatch(/Every day|America|Original instructions|this Room/);
     }
+  }, 120_000);
+
+  it('Reproduction R-schedule-titles: nameless schedules read what they run', async () => {
+    const page = await proof('?page=list&roomId=room-1&workspaceId=workspace-1&namelessSchedules',
+      process.env.PROOF_SHOTS ? path.join(process.env.PROOF_SHOTS, 'R-schedule-titles.png') : undefined);
+    expect(page.text.slice(2)).toEqual([
+      'Post the daily launch report to the Room',
+      'Replay the nightly prompt log',
+      'Check the Play release downloads',
+      'Feedback triage',
+    ]);
+    expect(page.text.join(' ')).not.toContain('Scheduled task');
   }, 120_000);
 
   it('uses dark brass workflow marks on the light list', async () => {

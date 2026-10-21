@@ -30,3 +30,5 @@ export * from './agent-sign-in.js';
 export * from './tray-ask.js';
 
 export * from './agent-usage.js';
+
+export * from './repository-onboarding.js';

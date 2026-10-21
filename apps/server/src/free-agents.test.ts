@@ -1,8 +1,9 @@
+import { DaemonService } from './daemon-service.js';
 import { createECDH } from 'node:crypto';
 import { getPublicKey } from '@beeline/nostr';
 import { AGENT_MENTION_NOTICE_GRACE_MS } from '@beeline/api-contract/agent-access';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { createAgentCommand } from './agent-command.js';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { claimAgentCommand, createAgentCommand } from './agent-command.js';
 import {
   claimAgentConnection,
   releaseAgentConnection,
@@ -26,6 +27,7 @@ import { resolveCurrentMemberMentions } from './message-mentions.js';
 import { LiveHub } from './live.js';
 import { agentMachineOfflineSql } from './machine-offline.js';
 import { PhoneService } from './phone-service.js';
+import type { GitHubOperations } from './github-operations.js';
 import { PgliteDatabase } from './test-support.js';
 
 const OWNER = 'a'.repeat(64);
@@ -138,6 +140,7 @@ describe('free starter agents', () => {
     );
   });
   afterEach(async () => {
+    vi.unstubAllEnvs();
     await settle();
     await db.close();
   });
@@ -160,6 +163,88 @@ describe('free starter agents', () => {
         [workspaceId],
       )
     ).rows[0]!;
+
+  it('adds the repository guide only to an eligible runtime and removes it immediately when OFF', async () => {
+    const { id, roomId } = await phone.execute('createWorkspace', { name: 'Flag test' }, OWNER) as { id:string;roomId:string };
+    const agent = await freeAgentOf(id);
+    const daemon = new DaemonService(db, live);
+    const read = () => daemon.execute('getAgentConfiguration', { roomId }, agent.agent_id);
+    expect((await read()).soul?.instructions).not.toContain('beeline:onboarding');
+    vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING','1');
+    expect((await read()).soul?.instructions).not.toContain('beeline:onboarding');
+    await db.query(`UPDATE identities SET github_subject='296966200' WHERE id=$1`,[OWNER]);
+    expect((await read()).soul?.instructions).toContain('beeline:onboarding');
+    vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING','0');
+    expect((await read()).soul?.instructions).not.toContain('beeline:onboarding');
+    const stored=(await db.query<{soul:{instructions:string}}>(`SELECT soul FROM agents WHERE agent_id=$1`,[agent.agent_id])).rows[0]!;
+    expect(stored.soul.instructions).not.toContain('beeline:onboarding');
+  });
+
+  it.each([
+    { flag: '0', eligible: true, expected: false },
+    { flag: '1', eligible: false, expected: false },
+    { flag: '1', eligible: true, expected: true },
+  ])('onboarding-invite-1: unlinked Room join respects $flag / eligibility $eligible', async ({ flag, eligible, expected }) => {
+    const { id, roomId } = await phone.execute('createWorkspace', { name: 'Existing unlinked workspace' }, OWNER) as { id: string; roomId: string };
+    const agent = await freeAgentOf(id);
+    vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING', flag);
+    if (eligible) await db.query(`UPDATE identities SET github_subject='296966200' WHERE id=$1`, [FRIEND]);
+    const invite = await phone.execute('createInvite', { workspaceId: id }, OWNER);
+    await phone.execute('redeemInvite', { token: invite.token }, FRIEND);
+    const cards = (await phone.readRoom(roomId, FRIEND))?.messages.filter(message => message.onboarding) ?? [];
+    expect(cards).toHaveLength(expected ? 1 : 0);
+    if (expected) {
+      expect(cards[0]?.onboarding).toMatchObject({ kind: 'repository', state: 'install_missing', requesterId: FRIEND, canLink: false });
+      await expect(phone.execute('actOnRepositoryCard', { roomId, cardId: cards[0]!.id, action: 'create' }, FRIEND)).rejects.toThrow();
+    }
+    expect((await freeAgentOf(id)).agent_id).toBe(agent.agent_id);
+    expect((await phone.readRoom(roomId, OWNER))?.messages.some(message => message.onboarding)).toBe(false);
+  });
+
+  it('onboarding-invite-1: an eligible invitee selects a starter from an existing Beebee without repository-management rights', async () => {
+    const { id, roomId } = await phone.execute('createWorkspace', { name: 'Existing workspace' }, OWNER) as { id: string; roomId: string };
+    const agent = await freeAgentOf(id);
+    await db.query(`UPDATE rooms SET repository_name='tester/existing',repository_key='github:42',
+      repository_remote='git://github.com/tester/existing',repository_resolution='repository' WHERE id=$1`, [roomId]);
+    const github = { onboardingSignals: vi.fn(async () => ({ commits: [], failingChecks: [], issues: [], branches: [], files: [] })) } as unknown as GitHubOperations;
+    phone = new PhoneService(db, 'https://server.test', github, undefined, live);
+    vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING', '1');
+    await db.query(`UPDATE identities SET github_subject='296966200' WHERE id=$1`, [FRIEND]);
+    const invite = await phone.execute('createInvite', { workspaceId: id }, OWNER);
+    await phone.execute('redeemInvite', { token: invite.token }, FRIEND);
+    const joined = await phone.readRoom(roomId, FRIEND);
+    const card = joined?.messages.find(message => message.onboarding?.requesterId === FRIEND)?.onboarding;
+    expect(card).toMatchObject({ kind: 'starters', requesterId: FRIEND, repository: 'tester/existing', canLink: false });
+    expect(card?.starters).toHaveLength(3);
+    expect((await phone.readRoom(roomId, OWNER))?.messages.some(message => message.onboarding)).toBe(false);
+    await expect(phone.execute('actOnRepositoryCard', { roomId, cardId: card!.id, action: 'link', repositoryId: 42 }, FRIEND)).rejects.toThrow();
+    await phone.execute('actOnRepositoryCard', { roomId, cardId: card!.id, action: 'starter', starterId: 'readme' }, FRIEND);
+    const command = (await db.query<{ id: string; turn_request_id: string }>(
+      `SELECT c.id,c.turn_request_id FROM agent_commands c JOIN messages m ON m.id=c.root_source_message_id
+       WHERE c.agent_id=$1 AND c.room_id=$2 AND m.author_id=$3 AND m.text LIKE '%Make the README useful%'`, [agent.agent_id, roomId, FRIEND])).rows[0]!;
+    expect(command).toBeDefined();
+    await claimAgentCommand(db, roomId, agent.agent_id, command.id, 'invite-generation');
+    const daemon = new DaemonService(db, live);
+    const context = { roomId, requestId: command.turn_request_id, generationId: 'invite-generation' };
+    const configuration = await daemon.execute('getAgentConfiguration', context as never, agent.agent_id);
+    expect(configuration.soul?.instructions).toContain('beeline:onboarding');
+    expect(await daemon.execute('getRoomRepositoryState', context as never, agent.agent_id)).toMatchObject({ repositoryOnboarding: true });
+    expect(await daemon.execute('postRepositoryOnboarding', { ...context, kind: 'repository' } as never, agent.agent_id))
+      .toMatchObject({ requesterId: FRIEND, canLink: false });
+    const ownerMessageId = 'd'.repeat(64);
+    await db.query(`INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'Help with this project')`, [ownerMessageId, roomId, OWNER]);
+    const ownerCommand = (await createAgentCommand(db, { roomId, agentId: agent.agent_id,
+      sourceMessageId: ownerMessageId, reason: 'human_tag', turnRequestId: 'owner-request' }))!;
+    await claimAgentCommand(db, roomId, agent.agent_id, ownerCommand.id, 'owner-generation');
+    const ownerContext = { roomId, requestId: ownerCommand.turn_request_id, generationId: 'owner-generation' };
+    expect((await daemon.execute('getAgentConfiguration', ownerContext as never, agent.agent_id)).soul?.instructions).not.toContain('beeline:onboarding');
+    expect(await daemon.execute('getRoomRepositoryState', ownerContext as never, agent.agent_id)).not.toHaveProperty('repositoryOnboarding');
+    await expect(daemon.execute('postRepositoryOnboarding', { ...ownerContext, kind: 'repository' } as never, agent.agent_id)).rejects.toThrow('unavailable');
+    vi.stubEnv('BEELINE_REPOSITORY_ONBOARDING', '0');
+    expect((await phone.readRoom(roomId, FRIEND))?.messages.some(message => message.onboarding)).toBe(false);
+    expect((await daemon.execute('getAgentConfiguration', context as never, agent.agent_id)).soul?.instructions).not.toContain('beeline:onboarding');
+    expect(await daemon.execute('getRoomRepositoryState', context as never, agent.agent_id)).not.toHaveProperty('repositoryOnboarding');
+  });
 
   it('posts the exact hello and notifies the owner without a model turn or Machine boot', async () => {
     const { id, roomId } = await phone.execute('createWorkspace', { name: 'Fresh' }, OWNER) as { id: string; roomId: string };
@@ -196,6 +281,7 @@ describe('free starter agents', () => {
       `SELECT id,text FROM messages WHERE room_id=$1 AND author_id=$2 AND card_type IS NULL`, [roomId, agent.agent_id],
     )).rows;
     const expected = `@lunchboxfortwo Hi, I'm Beebee, your free agent in Beeline. I run on my own small cloud computer, so I can write files, run commands, research and draft things for you. Try "@beebee draft a welcome note for this Workspace" to start. If you don't want me here, open Members and remove me from the Workspace.`;
+    expect((await phone.readRoom(roomId, OWNER))?.messages.some(message => message.onboarding?.kind === 'repository')).toBe(false);
     expect(hello).toHaveLength(1);
     expect(hello[0]!.text).toBe(expected);
     expect(FREE_AGENT_HELLO.replace('<owner>', 'lunchboxfortwo').replace('<handle>', 'beebee')).toBe(expected);

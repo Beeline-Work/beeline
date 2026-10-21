@@ -13087,6 +13087,7 @@ describe('monolith integration', () => {
   it('refuses the review identity every GitHub and repository write', async () => {
     const session = (await (await redeemReview(REVIEW_SECRET)).json()) as { accessToken: string };
     const lockedOperations = [
+      ['actOnRepositoryCard', { roomId: ROOM, cardId: 'a'.repeat(64), action: 'refresh' }],
       ['beginGitHubInstallation', {}],
       ['createGitHubRepository', { installationId: 1, name: 'demo' }],
       [

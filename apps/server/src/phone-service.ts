@@ -1,3 +1,6 @@
+import { onboardingEnabledForViewer } from './onboarding-rollout.js';
+import { postRepositoryOnboarding } from './repository-onboarding.js';
+import { readRepositoryOnboardingCard } from '@beeline/api-contract/phone';
 import { CommandRefusalError } from './command-refusal.js';
 import { agentUsageColumns, projectAgentUsage, type AgentUsageRow } from './agent-usage.js';
 import { prepareCornerCompatibility } from './corner-person-state.js';
@@ -904,6 +907,8 @@ function projectedMessage(
         },
       };
     }
+    case 'repository-onboarding':
+      return { ...base, onboarding: readRepositoryOnboardingCard(row.card) };
     case 'choice':
       return { ...base, choice: row.card as NonNullable<RoomViewMessage['choice']> };
     case 'agent-command':
@@ -1106,6 +1111,7 @@ export class PhoneService {
     viewerId?: string,
   ): Promise<RoomLiveDelta | null> {
     if (committed.row.room_id !== roomId) return null;
+    if (committed.row.card_type === 'repository-onboarding' && (!viewerId || !await onboardingEnabledForViewer(this.database, viewerId))) return null;
     const message = (await this.decorateCornerOpenCards(roomId, [
       projectedMessage(committed.row, this.publicOrigin, viewerId),
     ]))[0]!;
@@ -1297,6 +1303,7 @@ export class PhoneService {
           }
         : null;
     for (const viewer of row.authorized_viewers) {
+      if (row.card_type === 'repository-onboarding' && !await onboardingEnabledForViewer(this.database, viewer)) continue;
       const message = { ...projectedMessage(row, this.publicOrigin, viewer),
         ...(base.daemonFact ? { daemonFact: base.daemonFact } : {}) };
       deltas.set(viewer, {
@@ -2218,7 +2225,7 @@ export class PhoneService {
             enrichment?.attachmentFacts ?? { expired: new Set<string>(), artifacts: new Map() },
           )
         : measured('media', this.attachmentFacts(messages, toolRows, briefing)),
-      measured('app-metadata', this.decorateMessageCards(roomId, messages)),
+      measured('app-metadata', this.decorateMessageCards(roomId, messages, viewerId)),
     ]);
     const projectionStartedAt = performance.now();
     const view: RoomView = {
@@ -2483,7 +2490,7 @@ export class PhoneService {
     const rows = loaded.rows.map((row) => reviveDates(row, ['created_at','deleted_at']));
     const attachmentFacts = await this.enrichHistoryRows(rows, viewerId);
     const messages = rows.map((row) => projectedMessage(row, this.publicOrigin, viewerId));
-    const appMessages = await this.decorateMessageCards(roomId, messages);
+    const appMessages = await this.decorateMessageCards(roomId, messages, viewerId);
     return { roomId, messages: decorateAttachments(appMessages, attachmentFacts) };
   }
 
@@ -2527,7 +2534,7 @@ export class PhoneService {
     const rows = loaded.rows.map((row) => reviveDates(row, ['created_at','deleted_at']));
     const attachmentFacts = await this.enrichHistoryRows(rows, viewerId);
     const messages = rows.map((row) => projectedMessage(row, this.publicOrigin, viewerId));
-    const appMessages = await this.decorateMessageCards(roomId, messages);
+    const appMessages = await this.decorateMessageCards(roomId, messages, viewerId);
     return { roomId, messages: decorateAttachments(appMessages, attachmentFacts) };
   }
 
@@ -2574,7 +2581,7 @@ export class PhoneService {
     const messages = page
       .reverse()
       .map((row) => projectedMessage(row, this.publicOrigin, viewerId));
-    const appMessages = await this.decorateMessageCards(roomId, messages);
+    const appMessages = await this.decorateMessageCards(roomId, messages, viewerId);
     return {
       roomId,
       messages: decorateAttachments(appMessages, attachmentFacts),
@@ -4340,6 +4347,8 @@ export class PhoneService {
           input as Input<'createRoomPoll'>,
           viewerId,
         )) as Output<Name>;
+      case 'actOnRepositoryCard':
+        return await this.actOnRepositoryCard(input as Input<'actOnRepositoryCard'>, viewerId) as Output<Name>;
       case 'answerChoice':
         return (await this.answerChoice(input as Input<'answerChoice'>, viewerId)) as Output<Name>;
       case 'skipChoice':
@@ -4500,7 +4509,7 @@ export class PhoneService {
           input as Input<'approveCornerMerge'>,
         )) as Output<Name>;
       case 'getAuthCapabilities':
-        return { github: Boolean(this.github) } as Output<Name>;
+        return { github: Boolean(this.github), ...(await onboardingEnabledForViewer(this.database, viewerId) ? { repositoryOnboarding: true } : {}) } as Output<Name>;
       case 'getIdentityRecovery':
         return (await this.identityRecovery(viewerId)) as Output<Name>;
       case 'getManagedIdentity':
@@ -7155,6 +7164,21 @@ export class PhoneService {
         workspaceJoined: joined.rowCount > 0,
       });
       const roomId = await firstAccessibleRoomId(database, row.workspace_id, viewerId);
+      if (roomId && joined.rowCount > 0 && await onboardingEnabledForViewer(database, viewerId)) {
+        const existing = (await database.query<{ agent_id: string; repository_name: string | null }>(
+          `SELECT f.agent_id,r.repository_name FROM free_agents f
+           JOIN memberships m ON m.identity_id=f.agent_id AND m.room_id=$2 AND m.removed_at IS NULL
+           JOIN rooms r ON r.id=m.room_id WHERE f.workspace_id=$1`, [row.workspace_id, roomId])).rows[0];
+        if (existing) {
+          await postRepositoryOnboarding(database, this.github, {
+            roomId, agentId: existing.agent_id, requesterId: viewerId,
+            kind: existing.repository_name ? 'starters' : 'repository',
+          });
+        } else if (this.freeAgents && !(await database.query(
+          `SELECT 1 FROM free_agents WHERE workspace_id=$1`, [row.workspace_id])).rowCount) {
+          await this.freeAgents.createInWorkspace(database, { workspaceId: row.workspace_id, creatorId: viewerId, roomId });
+        }
+      }
       return {
         joined: joined.rowCount > 0,
         workspaceId: row.workspace_id,
@@ -7489,6 +7513,78 @@ export class PhoneService {
       };
     });
   }
+  private async actOnRepositoryCard(input: Input<'actOnRepositoryCard'>, viewerId: string): Promise<Output<'actOnRepositoryCard'>> {
+    if (!await onboardingEnabledForViewer(this.database, viewerId)) throw new Error('repository onboarding unavailable');
+    if (['create', 'link'].includes(input.action)) await this.requireRoomWorkspaceManager(input.roomId, viewerId);
+    else {
+      if (!(await this.hasRoomAccess(input.roomId, viewerId))) throw new Error('room access denied');
+      await this.requireTopLevelChatMember(input.roomId, viewerId);
+    }
+    let followup: { roomId: string; agentId: string; requesterId: string; kind: 'repository' | 'starters' } | undefined;
+    // Serialize taps and make a retried response return the committed selection.
+    const result = await this.database.transaction(async database => {
+      const row = (await database.query<{ card: unknown }>(
+        `SELECT card FROM messages WHERE id=$1 AND room_id=$2 AND card_type='repository-onboarding' FOR UPDATE`,
+        [input.cardId, input.roomId])).rows[0];
+      const card = readRepositoryOnboardingCard(row?.card);
+      if (!card || card.requesterId !== viewerId) throw new Error('repository card access denied');
+      if (['create', 'link', 'refresh'].includes(input.action)) followup = { roomId: input.roomId, agentId: card.agentId, requesterId: viewerId, kind: input.action === 'refresh' ? 'repository' : 'starters' };
+      if (card.status === 'settled') { followup = undefined; return { selected: card.selected }; }
+      const requestedSelection = input.action === 'create' ? card.defaultName : String(input.repositoryId);
+      if (['create', 'link'].includes(input.action) && card.selected && card.selected !== requestedSelection)
+        throw new Error('This card already linked a repository. Retry the same option or ask for a new card.');
+      if (input.action === 'refresh') {
+        await this.requireGitHub().refresh(viewerId);
+        return {};
+      }
+      const service = new PhoneService(database, this.publicOrigin, this.github, this.sendPushTest, this.live, true);
+      if (input.action === 'install' || input.action === 'organization') {
+        if (!input.redirectUri) throw new Error('installation return is required');
+        return this.requireGitHub().beginInstallation(viewerId, { redirectUri: input.redirectUri });
+      }
+      if (input.action === 'starter') {
+        if (card.kind !== 'starters') throw new Error('this card does not offer starter tasks');
+        const starter = card.starters.find(s => s.id === input.starterId);
+        if (!starter) throw new Error('starter not found');
+        const current = (await database.query<{ repository_name: string }>(
+          `SELECT repository_name FROM rooms WHERE id=$1`, [input.roomId])).rows[0];
+        if (current?.repository_name !== card.repository) throw new Error('Repository changed. Ask for fresh starters.');
+        const agent = (await database.query<{ handle: string }>(`SELECT handle FROM identities WHERE id=$1`, [card.agentId])).rows[0];
+        if (!agent?.handle) throw new Error('The offering agent is no longer available');
+        await service.sendMessage({ roomId: input.roomId,
+          text: `@${agent.handle} ${starter.title}\n${starter.task}\nStart this task now in a repository corner with a complete brief. Use this selection as approval. Keep the normal checks, independent review and merge gate.`,
+          mentions: [card.agentId] }, viewerId);
+      } else {
+        if (card.kind !== 'repository' || !['create', 'link'].includes(input.action)) throw new Error('invalid repository action');
+        let repository;
+        if (input.action === 'create') {
+          if (!card.installationId) throw new Error('Install Beeline on all personal repositories first');
+          // The per-card name lets a retry recover a repository created before a lost response.
+          await this.requireGitHub().refresh(viewerId);
+          const available = await service.listRepositories(viewerId);
+          repository = available.repositories.find(r => r.installationId === card.installationId && r.fullName.split('/')[1] === card.defaultName);
+          repository ??= await this.requireGitHub().createRepository(viewerId, {
+            installationId: card.installationId, name: card.defaultName, private: true,
+          }, database);
+        } else repository = card.repositories.find(r => r.id === input.repositoryId);
+        if (!repository) throw new Error('repository not found');
+        await service.setRepository({ roomId: input.roomId, key: `github:${repository.id}`, name: repository.fullName,
+          remote: `git://github.com/${repository.fullName}`, targetBranch: repository.defaultBranch,
+          githubInstallationId: repository.installationId }, viewerId);
+      }
+      const selected = input.action === 'starter' ? input.starterId! : input.action === 'create' ? card.defaultName : String(input.repositoryId);
+      await database.query(`UPDATE messages SET card=card || $2::jsonb,version=version+1 WHERE id=$1`,
+        [input.cardId, JSON.stringify({ status: followup ? 'open' : 'settled', selected })]);
+      return { selected };
+    });
+    if (followup) {
+      await this.database.transaction(db => postRepositoryOnboarding(db, this.github, followup!));
+      if (followup.kind === 'starters') await this.database.query(`UPDATE messages SET card=jsonb_set(card,'{status}','"settled"') WHERE id=$1`, [input.cardId]);
+    }
+    this.live?.publish({ type: 'invalidate', roomId: input.roomId, reason: 'message' });
+    return result;
+  }
+
   private async answerChoice(input: Input<'answerChoice'>, viewerId: string) {
     return this.database.transaction(
       async (database) =>
@@ -8789,7 +8885,9 @@ export class PhoneService {
     });
   }
 
-  private async decorateMessageCards(roomId: string, messages: RoomViewMessage[]): Promise<RoomViewMessage[]> {
+  private async decorateMessageCards(roomId: string, messages: RoomViewMessage[], viewerId: string): Promise<RoomViewMessage[]> {
+    if (messages.some(message => message.onboarding) && !await onboardingEnabledForViewer(this.database, viewerId))
+      messages = messages.filter(message => !message.onboarding);
     return this.decorateCornerOpenCards(roomId, await this.decorateAppSignInCards(messages));
   }
 
@@ -10345,6 +10443,7 @@ export const ACCESS_POLICY_AUTHORITY_MESSAGE = AGENT_OWNER_AUTHORITY_MESSAGE;
  */
 export const REVIEW_IDENTITY_MESSAGE = 'GitHub access denied for the review identity';
 export const REVIEW_LOCKED_OPERATIONS = new Set<keyof PhoneOperationMap>([
+  'actOnRepositoryCard',
   'setRoomRepository',
   'removeRoomRepository',
   'beginGitHubInstallation',
@@ -10430,6 +10529,7 @@ export const PHONE_OPERATION_NAMES = new Set<keyof PhoneOperationMap>([
   'updateIdentityFace',
   'updateRoomPushState',
   'updateIdentityPushLevel',
+  'actOnRepositoryCard',
   'setRoomRepository',
   'setRoomTargetBranch',
   'removeRoomRepository',

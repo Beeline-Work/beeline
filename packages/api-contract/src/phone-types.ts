@@ -1,3 +1,4 @@
+import type { RepositoryOnboardingCard } from './repository-onboarding.js';
 import type { AgentUsage } from './agent-usage.js';
 import type { SystemEvent } from './system-events.js';
 import type { AgentGrantKind, AgentGrantStatus, CommandGrantScript } from './agent-grants.js';
@@ -309,6 +310,7 @@ export type RoomViewMessage = {
   /** `@agent /login`: Claude's sign-in at the call site. Holds the link, never a code. */
   readonly agentSignIn?: AgentSignInCardView;
   /** One preference card: a lettered question or a Room poll. Never authority. */
+  readonly onboarding?: RepositoryOnboardingCard;
   readonly choice?: ChoiceCardView;
   readonly targetBranch?: {
     readonly proposalId: string;

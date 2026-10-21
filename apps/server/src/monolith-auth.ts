@@ -27,6 +27,7 @@ export async function createMonolithAuth(
     | undefined,
   options: {
     createDaemonExchange: TokenAuth['createDaemonExchange'];
+    completeRepositoryInstallation?: (state: string, installationId?: number) => Promise<string>;
     env?: NodeJS.ProcessEnv;
     webAppOrigins?: readonly string[];
   },
@@ -46,6 +47,7 @@ export async function createMonolithAuth(
   const pairing = new PhoneService(database, publicOrigin);
   const app = buildAuthServer({
     store,
+    completeRepositoryInstallation: options.completeRepositoryInstallation,
     oidc: oidcClientFromEnvironment(env),
     ...(github ? { github } : {}),
     tenants,

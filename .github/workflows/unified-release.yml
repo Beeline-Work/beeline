@@ -1,7 +1,7 @@
 # The one production release button. It plans from the last successful release,
 # runs only affected components, and carries every other immutable artifact into
 # one new release record. A merge to main never releases. A normal selective
-# release ceiling is 20 minutes from dispatch to the final result.
+# fix-to-phone budget is 20 minutes; server promotion has a separate 40-minute timeout.
 #
 # RELEASE POLICY (consent gates):
 # - The default release is OTA-ONLY. Mobile OTA promotion never requires the
@@ -424,7 +424,8 @@ jobs:
     needs: initialize
     if: inputs.plan_only != true && needs.initialize.outputs.run_server == 'true'
     runs-on: [self-hosted, beeline-prod-host]
-    timeout-minutes: 18
+    # Build, migration, five-minute canary watch, peer update and rollback headroom.
+    timeout-minutes: 40
     concurrency:
       group: deploy-beeline-server
       cancel-in-progress: false
@@ -1096,6 +1097,8 @@ jobs:
     needs: initialize
     if: >-
       inputs.plan_only != true && needs.initialize.outputs.run_mobile_native == 'true' &&
+      ((inputs.store_track != '' && inputs.store_track != 'none') ||
+       (inputs.selection != '' && inputs.selection != 'auto')) &&
       needs.initialize.outputs.native_android == 'true'
     # Local EAS build on a self-hosted Linux runner (Android SDK + JDK 17 live
     # there): Expo's cloud build needs credits the free plan ran out of. The
@@ -1208,6 +1211,8 @@ jobs:
     needs: initialize
     if: >-
       inputs.plan_only != true && needs.initialize.outputs.run_mobile_native == 'true' &&
+      ((inputs.store_track != '' && inputs.store_track != 'none') ||
+       (inputs.selection != '' && inputs.selection != 'auto')) &&
       needs.initialize.outputs.native_ios == 'true'
     runs-on: [self-hosted, macOS, X64, ios-builder]
     timeout-minutes: 90

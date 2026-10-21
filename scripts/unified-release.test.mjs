@@ -12,6 +12,7 @@ import {
   changedPathsFromPublishedInputs,
   classifyReleaseAttempt,
   COMPONENT_PATH_RULES,
+  SERVER_CANARY_WINDOW_SECONDS,
   DESKTOP_VERSION_BASELINE,
   createServerImageLedger,
   evaluateServerCanarySample,
@@ -438,7 +439,7 @@ test('shared protocol and shared UI paths fan out to their actual consumers', ()
   );
   assert.deepEqual(
     selectReleaseComponents(['apps/mobile/app.config.js']),
-    ['mobile-ota', 'mobile-native', 'desktop', 'website'],
+    ['mobile-ota', 'desktop', 'website'],
   );
   assert.deepEqual(
     selectReleaseComponents(['apps/mobile/scripts/ota-release.mjs']),
@@ -479,6 +480,7 @@ test('routine CLI derives lagging consumers from real published git history', ()
 
     writeFixture(root, 'apps/server/src/index.ts', 'export const server = true;\n');
     writeFixture(root, 'apps/mobile/sources/components/Ledger.tsx', 'export const ledger = true;\n');
+    writeFixture(root, 'apps/mobile/app.config.js', 'export const config = true;\n');
     run('git', ['add', '.'], root);
     run('git', ['commit', '--quiet', '-m', 'server and shared ui'], root);
     const releaseSha = run('git', ['rev-parse', 'HEAD'], root).trim();
@@ -513,6 +515,7 @@ test('routine CLI derives lagging consumers from real published git history', ()
     const componentPaths = JSON.parse(readFileSync(componentPathsPath, 'utf8'));
     assert.deepEqual(componentPaths.server, []);
     assert.deepEqual(componentPaths.desktop, [
+      'apps/mobile/app.config.js',
       'apps/mobile/sources/components/Ledger.tsx',
       'apps/server/src/index.ts',
     ]);
@@ -606,6 +609,59 @@ test('routine same-head release supplements lagging shared UI consumers and retr
     selectedComponents: selectReleaseComponentsFromPublishedInputs(noChanges),
   });
   assert.deepEqual(noOp, retry);
+});
+
+test('R-release-timeout: routine native input changes carry binaries while recovery remains explicit', () => {
+  const paths = ['apps/mobile/app.config.js', 'apps/mobile/package.json',
+    'apps/mobile/package-lock.json', 'apps/mobile/android/build.gradle',
+    'apps/mobile/ios/Podfile', 'apps/mobile/plugins/withNative.js'];
+  const pathsByComponent = Object.fromEntries(RELEASE_COMPONENTS.map((name) => [name, paths]));
+  for (const select of [
+    (options) => selectReleaseComponents(paths, options),
+    (options) => selectReleaseComponentsFromPublishedInputs(pathsByComponent, options),
+  ]) {
+    for (const selection of ['auto', '']) {
+      assert.ok(!select({ selection, storeTrack: 'none' }).includes('mobile-native'));
+    }
+    for (const selection of ['all', 'mobile-native']) {
+      assert.ok(select({ selection, storeTrack: 'none' }).includes('mobile-native'));
+    }
+    for (const storeTrack of ['internal', 'beta', 'production']) {
+      assert.ok(select({ storeTrack }).includes('mobile-native'));
+    }
+    assert.throws(() => select({ runtimePin: { changed: true, previous: '23', next: '24' } }), /--store-track/);
+    assert.ok(!select({ runtimePin: { changed: true, previous: '24', next: '23' },
+      allowPinRestore: true }).includes('mobile-native'));
+  }
+});
+
+test('R-release-timeout: workflow completes promotion and refuses unrequested native jobs', () => {
+  const workflow = parse(readFileSync(new URL('../.github/workflows/unified-release.yml', import.meta.url), 'utf8'));
+  // The failed run spent fourteen minutes reaching the canary. Reserve time
+  // for slower builds/migration, the full watch, peer readiness and rollback.
+  const buildAndMigrationMinutes = 20;
+  const watchMinutes = SERVER_CANARY_WINDOW_SECONDS / 60;
+  const peerAndRollbackMinutes = 10;
+  assert.ok(workflow.jobs.server['timeout-minutes'] >=
+    buildAndMigrationMinutes + watchMinutes + peerAndRollbackMinutes);
+  assert.equal(workflow.jobs.server.concurrency['cancel-in-progress'], false);
+  for (const platform of ['android', 'ios']) {
+    const condition = workflow.jobs[`mobile_native_${platform}`].if;
+    // Evaluate the actual workflow expression with a stale native retry flag,
+    // so a planner regression cannot silently start a routine store build.
+    for (const storeTrack of ['', 'none', 'internal', 'beta', 'production']) {
+      for (const selection of ['', 'auto', 'all', 'mobile-native']) {
+        const expression = condition
+          .replaceAll('inputs.plan_only', 'false')
+          .replaceAll('needs.initialize.outputs.run_mobile_native', "'true'")
+          .replaceAll(`needs.initialize.outputs.native_${platform}`, "'true'")
+          .replaceAll('inputs.store_track', JSON.stringify(storeTrack))
+          .replaceAll('inputs.selection', JSON.stringify(selection));
+        assert.equal(Function(`return (${expression})`)(),
+          !['', 'none'].includes(storeTrack) || !['', 'auto'].includes(selection));
+      }
+    }
+  }
 });
 
 test('store choice explicitly selects a native mobile binary', () => {
@@ -950,11 +1006,11 @@ test('workflow is manual, selective, concurrent, bounded, and component-local on
   assert.equal(workflow.jobs.initialize['timeout-minutes'], 2);
   assert.equal(workflow.jobs.release_result['timeout-minutes'], 2);
   assert.equal(RELEASE_BUDGET_MINUTES, 20);
-  assert.match(source, /release ceiling is 20 minutes/);
+  assert.match(source, /fix-to-phone budget is 20 minutes/);
   // Only the legs that build a store binary, run the emulator proof, or build a
-  // native helper bundle from cold cargo may exceed the 20-minute ceiling; every
-  // other job stays within the release ceiling.
-  const slowLegs = new Set(['release_proof', 'mobile_native_android', 'mobile_native_ios', 'helper_macos']);
+  // native helper bundle from cold cargo, or promote the server canary, may
+  // exceed the 20-minute ceiling; every other job stays within it.
+  const slowLegs = new Set(['release_proof', 'mobile_native_android', 'mobile_native_ios', 'helper_macos', 'server']);
   for (const [name, job] of Object.entries(workflow.jobs)) {
     const cap = job['timeout-minutes'];
     if (cap === undefined) continue;

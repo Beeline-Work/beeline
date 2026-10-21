@@ -96,7 +96,10 @@ SHA in the last successful `unified-release-index` and writes
 `server`, `helper`, `mobile-ota`, `mobile-native`, `desktop`, and `website`
 independently. `selection=all` is a recovery-only, deliberate full-release
 override. A
-non-`none` store track always selects `mobile-native`.
+non-`none` store track always selects `mobile-native`. Automatic selection with
+`store_track=none` never builds native binaries, even when native inputs changed.
+Explicit recovery selection (`all` or `mobile-native`) can still build binaries
+without submitting them to a store.
 
 The per-platform native runtime pins couple OTA and store delivery: when
 `apps/mobile/native-fingerprint.json` changes `android.runtimeVersion` or
@@ -162,6 +165,10 @@ two secrets must be configured. The self-protection pool snapshot (`size`, `inUs
 `waiting`, and `oldestActiveQueryAgeMs`) is mandatory and validated on every
 sample; missing or malformed metrics and any nonzero waiter count fail the
 canary before the second Machine can update.
+
+The server job has a separate 40-minute timeout for package and image builds,
+migration, the full five-minute watch, peer update and rollback headroom; the
+OTA fix-to-phone budget does not cap this promotion job.
 
 Only a clean window permits the second Machine update. Any failed update or
 sample restores the canary to the exact `previousImageRef` and fails the

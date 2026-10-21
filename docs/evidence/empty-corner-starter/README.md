@@ -120,15 +120,16 @@ change is JavaScript-only; no runtime-39 client will be built.
 - The earlier run’s unrelated viewer-dock failure passed in the isolated retry
   and in this full run.
 
-## First-message prefill (brief revision 3)
+## First-message prefill (brief revisions 3–4)
 
 The existing automatic reply rule is `answerPrefillCandidate` in
 `apps/mobile/sources/buzz/composer-prefill.ts`, followed by `planAnswerPrefill`.
 `BuzzChatSurface` applies its plan through `applyComposerPrefill` and registers
 both mention maps. The extension supplies the Room/corner roster and offers its
-sole agent before the viewer has sent a message. Room-scoped candidate ids reuse
+sole agent before the viewer has sent a message, only when exactly one human
+is also a member. Room-scoped candidate ids reuse
 the existing once-only guard, and the existing planner preserves any draft.
-Agent viewers, DMs, and zero/multiple-agent first-message behavior stay unchanged.
+Agent viewers, DMs, and zero/multiple-agent or multiple-human first-message behavior stay unchanged.
 
 The same local #general now contains only Beebee's seeded hello, with no human
 message. `desktop-04-first-message.jpg` captures the real desktop app opening
@@ -140,11 +141,11 @@ Unit cases cover an empty Room and a hello, two agents, no agent, an existing
 draft, an agent viewer, deletion followed by a hello, and the normal answer rule
 after the viewer has spoken.
 
-First-message implementation commit: `d5923e63e`. The revision-2 native runtime-37 acceptance remains in force.
+First-message implementation began in `d5923e63e`; revision 4 restricts it to one human in `b16f0be62`. The runtime-37 acceptance remains in force.
 
 `android-04-first-message.png` captures the same real #general path on the
 accepted runtime-37 client, with Metro reporting implementation SHA
-`d5923e63eebcd4ea504b24041cf2c402c12758e4`. The Room shows Beebee's hello and the
+`b16f0be62aef265d51149c4f30cce275336c89d7`. The Room shows Beebee's hello and the
 @beebee composer chip automatically, without typing, tapping the note, or
 sending a message. `android-first-message.xml` records the native input text.
 `first-message-state.json` confirms one agent member and zero messages authored
@@ -158,3 +159,33 @@ passed 4773 tests with 5 skipped and one unrelated five-second timeout in
 `DirectMessagePickerSheet.browser.test.ts`; that file passes both tests on its
 isolated retry. A full repeat uses two workers and one retry. Current-head CI
 must pass before this PR leaves draft; final results are recorded in the PR.
+
+## One-human restriction (brief revision 4)
+
+First-message prefill now requires exactly one human and one agent in the
+server-projected Room membership. The existing addressed-answer/reply rule is
+unchanged for group conversations. The new `humanCount` uses identity kind
+`human` from the Room DTO, alongside the agent roster supplied to
+`answerPrefillCandidate`. Unit regressions cover 0, 2 and 3 human members with
+one agent (no first-message candidate), plus an explicitly addressed agent
+answer in a multi-human Room (the existing rule still applies).
+
+Revision-4 app proof re-ran the positive case on desktop and native Android
+(API 35, the accepted runtime-37 client). The updated first-message captures
+and native XML use implementation `b16f0be62`; the native install started with
+fresh app data. The browser's previous draft tag was removed before a fresh
+load, so the positive capture does not rely on a saved draft. Both apps show
+Beebee's hello and an automatically generated @beebee composer chip with exactly
+one human and one agent.
+
+Next, the local fixture added Corner peer as a second human Room member.
+A fresh desktop load shows the same hello and an empty composer, without an
+automatic @beebee chip (`desktop-05-two-humans.jpg`). `two-human-state.json`
+records two humans, one agent, and zero viewer messages. No message was sent.
+The existing later-answer/reply rule remains covered in the unit suite.
+
+Revision-4 focused validation: 32 composer-prefill tests and the rendered corner
+proof pass (33 tests); root typecheck passes. A full mobile run with two workers
+and one retry is in progress and current-head CI remains required. Final test
+results are recorded in the PR. The final desktop positive/negative JPEG files
+were recaptured and confirmed saved after the earlier capture returned no image.

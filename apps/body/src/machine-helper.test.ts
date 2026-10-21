@@ -86,6 +86,60 @@ function fakeRuntimes(script: (agentId: string, run: number) => Promise<AgentExi
 
 describe('one helper process hosts every agent on the machine', () => {
 
+  // Reproduction HELPER-7: ownership blocks agent startup and therefore its update socket.
+  it('updates without starting an agent while a previous owner is draining', async () => {
+    const { root, configPaths, env, signals } = await machine(1);
+    const layout = { libDir: resolve(root, 'lib/beeline'),
+      releasesRoot: resolve(root, 'lib/beeline-releases') };
+    await mkdir(resolve(layout.releasesRoot, 'old/lib/beeline'), { recursive: true });
+    await writeFile(resolve(layout.releasesRoot, 'old/lib/beeline/bundle.json'),
+      JSON.stringify({ version: 'v0.1.89', commit: 'old' }));
+    await symlink('beeline-releases/old', layout.libDir);
+    env.BEELINE_LIB_DIR = layout.libDir;
+    vi.spyOn(runtime, 'runtimeDaemonPid').mockResolvedValue(123456789);
+    vi.spyOn(process, 'kill').mockReturnValue(true);
+    const capture = vi.spyOn(sentry, 'captureHelperError');
+    const fake = fakeRuntimes();
+    const prepare = vi.fn(async () => {
+      await mkdir(resolve(layout.releasesRoot, '.state'), { recursive: true });
+      await writeFile(resolve(layout.releasesRoot, '.state/update-state.json'),
+        JSON.stringify({ stagedReleaseId: 'new' }));
+    });
+    const running = runMachineHelper({ configPaths, env, signals, runAgent: fake.runAgent,
+      runUpdateWorker: prepare, exitProcess: () => undefined });
+    try {
+      await vi.waitFor(() => expect(prepare).toHaveBeenCalledTimes(1));
+      expect((await running).reason).toBe('update');
+      expect(fake.runAgent).not.toHaveBeenCalled();
+      expect(capture).not.toHaveBeenCalled();
+    } finally { signals.emit('SIGTERM'); await running; }
+  });
+
+  it('reports a previous owner only once after both shutdown deadlines', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const { root, configPaths, env, signals } = await machine(1);
+    let reads = 0;
+    vi.spyOn(runtime, 'runtimeDaemonPid').mockImplementation(async () => {
+      if (++reads % 2 === 0) vi.setSystemTime(Date.now() + 20_000);
+      return 123456789;
+    });
+    vi.spyOn(process, 'kill').mockReturnValue(true);
+    const capture = vi.spyOn(sentry, 'captureHelperError');
+    const fake = fakeRuntimes();
+    const running = runMachineHelper({ configPaths, env, signals, runAgent: fake.runAgent,
+      exitProcess: () => undefined });
+    try {
+      await vi.waitFor(() => expect(capture).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() => expect(reads).toBeGreaterThanOrEqual(12), { timeout: 8_000 });
+      expect(capture).toHaveBeenCalledTimes(1);
+      expect(fake.runAgent).not.toHaveBeenCalled();
+      const status = JSON.parse(await readFile(helperStatusPath(root), 'utf8'));
+      expect(Object.values(status.agents)).toEqual([expect.objectContaining({
+        lastError: expect.stringContaining('still alive after SIGKILL'),
+      })]);
+    } finally { signals.emit('SIGTERM'); await running; }
+  }, 15_000);
+
   // Reproduction legacy-owner-handoff: real owner process and persisted helper status.
   it.skipIf(process.platform !== 'linux').each(['graceful', 'ignores SIGTERM', 'reused PID', 'helper PID', 'cancelled'] as const)(
     'takes over a legacy owner: %s', async (mode) => {

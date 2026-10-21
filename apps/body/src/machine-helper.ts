@@ -453,6 +453,8 @@ async function serveMachineHelper(
   /** One agent's whole life in this process: start, restart on failure, stop. */
   const supervise = async (slot: AgentSlot) => {
     let failures = 0;
+    let migrationReleaseChecked = false;
+    let reportedPreviousOwner: number | undefined;
     while (!controller.signal.aborted && !slot.controller.signal.aborted) {
       if (
         !(await stat(slot.configPath).then(
@@ -465,12 +467,19 @@ async function serveMachineHelper(
         break;
       }
       let reason: AgentExitReason;
+      let reportError = true;
       slot.attemptRevision = slot.revision;
       setState(slot, 'starting', slot.status);
       try {
         let previous = await runtimeDaemonPid(slot.configPath);
         if (previous && previous !== process.pid) {
           setState(slot, 'starting', 'stopping previous runtime owner');
+          // Migration precedes the agent socket, so it cannot rely on socket
+          // registration to discover a release that repairs the handoff.
+          if (!migrationReleaseChecked) {
+            migrationReleaseChecked = true;
+            update?.notify();
+          }
           const signalOwner = async (signal: NodeJS.Signals) => {
             // Re-read identity immediately before each signal; records and PIDs can change.
             previous = await runtimeDaemonPid(slot.configPath);
@@ -496,10 +505,15 @@ async function serveMachineHelper(
             await waitForOwner(PREVIOUS_OWNER_KILL_MS);
           }
           if (slot.controller.signal.aborted) break;
-          if (previous && previous !== process.pid)
+          if (previous && previous !== process.pid) {
+            reportError = reportedPreviousOwner !== previous;
+            reportedPreviousOwner = previous;
             throw new Error(`previous runtime owner ${previous} still alive after SIGKILL`);
+          }
           setState(slot, 'starting', 'starting runtime');
         }
+        migrationReleaseChecked = false;
+        reportedPreviousOwner = undefined;
         if (await stat(resolve(supervisorRoot, 'beeline/storage-owners', `ended-agent-${slot.agentId}.json`)).catch(() => undefined)) {
           await pruneEndedOwnerStorage(supervisorRoot);
           slot.enabled = false;
@@ -508,7 +522,7 @@ async function serveMachineHelper(
         }
         reason = await runAgent(slot.configPath, host, slot.controller.signal);
       } catch (error) {
-        captureHelperError(error);
+        if (reportError) captureHelperError(error);
         console.error(`[helper] agent ${slot.agentId} failed:`, error);
         await settleDaemonStartFailure(dirname(slot.configPath), error).catch(() => undefined);
         slot.established = false;

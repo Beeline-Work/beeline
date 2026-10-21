@@ -397,7 +397,7 @@ export const MonoMarkdown = React.memo(function MonoMarkdown({
   const onLink = useCallback((url: string) => {
     if (messageLinkId(url)) {
       void openMessageLink(url).catch(async () => {
-        const { Modal } = await import('@/modal');
+        const { Modal } = await import('@/modal/ModalManager');
         Modal.alert('Message not available', 'This message could not be opened. Check your access and try again.');
       });
       return;

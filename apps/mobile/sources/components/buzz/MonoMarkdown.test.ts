@@ -20,7 +20,8 @@ vi.mock('react-native', async () => {
 
 vi.mock('expo-clipboard', () => ({ setStringAsync: vi.fn(async () => undefined) }));
 const navigation = vi.hoisted(() => ({ push: vi.fn(), navigate: vi.fn() }));
-const messageLinks = vi.hoisted(() => ({ resolve: vi.fn() }));
+const messageLinks = vi.hoisted(() => ({ resolve: vi.fn(), alert: vi.fn() }));
+vi.mock('@/modal/ModalManager', () => ({ Modal: { alert: messageLinks.alert } }));
 vi.mock('@/auth/buzz-identity-storage', () => ({
   loadBuzzIdentity: async () => ({ publicKey: 'viewer' }),
   getEffectiveRelayUrl: async () => 'http://local.test',
@@ -834,6 +835,21 @@ describe('MonoMarkdown renders a pipe table as an aligned wrapping grid', () => 
 
 
 describe('message reference taps', () => {
+  it('explains an unavailable message without navigating', async () => {
+    messageLinks.resolve.mockRejectedValueOnce(new Error('not_found'));
+    messageLinks.alert.mockClear();
+    navigation.navigate.mockClear();
+    let tree!: ReactTestRenderer;
+    act(() => { tree = create(React.createElement(MonoMarkdown, {
+      markdown: `[missing](#beeline/room/${'f'.repeat(64)})`, textStyle: {},
+    })); });
+    const link = tree.root.find((node: any) => node.type === 'Text' && node.props.accessibilityRole === 'link');
+    await act(async () => { link.props.onPress(); await new Promise((resolve) => setTimeout(resolve, 0)); });
+    expect(messageLinks.alert).toHaveBeenCalledWith('Message not available', expect.any(String));
+    expect(navigation.navigate).not.toHaveBeenCalled();
+    act(() => tree.unmount());
+  });
+
   it('renders underlined Room, corner and labeled links and navigates to each message', async () => {
     const roomId = 'a'.repeat(64);
     const cornerId = 'b'.repeat(64);

@@ -90,6 +90,7 @@ writeFileSync(priorReleaseScript, releaseSource
   .concat(`\nfunction releaseUpdateTargets(projectDir, pins) {\n  if (process.env.EXPO_RUNTIME_OVERRIDE) throw new Error('EXPO_RUNTIME_OVERRIDE is reserved for ota-release.mjs child processes.');\n  return ${JSON.stringify(priorTargets)};\n}\n`)
   .replace(/export const SHIPPED_NATIVE_RUNTIMES = \[[\s\S]*?\n\];/, `export const SHIPPED_NATIVE_RUNTIMES = ${JSON.stringify(priorShipped)};`)
   .replace("'./native-fingerprint.mjs'", JSON.stringify(join(mobileRoot, 'scripts/native-fingerprint.mjs')))
+  .replace("'./upload-sentry-sourcemaps.mjs'", JSON.stringify(join(mobileRoot, 'scripts/upload-sentry-sourcemaps.mjs')))
   .replace("'./ota-delivery-index.mjs'", JSON.stringify(join(mobileRoot, 'scripts/ota-delivery-index.mjs'))));
 
 function runRelease(args: string[], env: Record<string, string> = {}) {

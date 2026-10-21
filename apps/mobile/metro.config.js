@@ -1,9 +1,12 @@
-const { getDefaultConfig } = require("expo/metro-config");
+const { getSentryExpoConfig } = require("@sentry/react-native/metro");
 const fs = require("fs");
 const path = require("path");
 
-const config = getDefaultConfig(__dirname, {
+const config = getSentryExpoConfig(__dirname, {
   isCSSEnabled: true,
+  injectReleaseForWeb: false,
+  enableSourceContextInDevelopment: false,
+  optionsFile: false,
 });
 
 // @beeline/buzz-client and @beeline/nostr are file: symlinks to ../../packages/*.

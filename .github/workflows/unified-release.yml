@@ -873,6 +873,7 @@ jobs:
         if: needs.initialize.outputs.stage_mobile_ota == 'pending'
         with:
           phase: build
+          sentry_auth_token: ${{ secrets.SENTRY_AUTH_TOKEN }}
           release_sha: ${{ needs.initialize.outputs.release_sha }}
           release_version: ${{ needs.initialize.outputs.release_version }}
           retry_attempt: ${{ inputs.retry_attempt }}
@@ -1057,6 +1058,12 @@ jobs:
     runs-on: [self-hosted, beeline-android]
     timeout-minutes: 60
     env:
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+      SENTRY_RELEASE: ${{ needs.initialize.outputs.release_sha }}
+      EXPO_PUBLIC_BEELINE_RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
+      SENTRY_ORG: beeline-bt
+      SENTRY_PROJECT: beeline-mobile
+      SENTRY_DISABLE_XCODE_DEBUG_UPLOAD: 'true'
       EAS_CLI_VERSION: 22.2.0
     steps:
       - uses: actions/checkout@v4
@@ -1158,6 +1165,12 @@ jobs:
     runs-on: [self-hosted, macOS, X64, ios-builder]
     timeout-minutes: 90
     env:
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+      SENTRY_RELEASE: ${{ needs.initialize.outputs.release_sha }}
+      EXPO_PUBLIC_BEELINE_RELEASE_SHA: ${{ needs.initialize.outputs.release_sha }}
+      SENTRY_ORG: beeline-bt
+      SENTRY_PROJECT: beeline-mobile
+      SENTRY_DISABLE_XCODE_DEBUG_UPLOAD: 'true'
       EAS_CLI_VERSION: 22.2.0
     steps:
       - uses: actions/checkout@v4

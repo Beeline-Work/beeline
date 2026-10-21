@@ -179,6 +179,11 @@ export default {
             favicon: "./sources/assets/images/favicon.png"
         },
         plugins: [
+            ["@sentry/react-native/expo", {
+                organization: "beeline-bt",
+                project: "beeline-mobile",
+                useNativeInit: false,
+            }],
             ...(process.env.BEELINE_ANDROID_NATIVE_LATENCY_PROBE === "1" ? [require("./plugins/withLatencyRigNativeProbe.js")] : []),
             "@livekit/react-native-expo-plugin",
             "@config-plugins/react-native-webrtc",

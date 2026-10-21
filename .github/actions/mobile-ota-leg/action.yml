@@ -24,6 +24,10 @@ inputs:
   expo_token:
     description: EXPO_TOKEN secret (composite actions cannot read secrets themselves)
     required: true
+  sentry_auth_token:
+    description: Sentry release upload token; never exposed to the app
+    required: false
+    default: ''
   room_open_trace:
     description: "1 turns on the on-device Room-open timing readout in this bundle; empty leaves it off, which is every ordinary release"
     required: false
@@ -153,6 +157,7 @@ runs:
       working-directory: apps/mobile
       env:
         EXPO_TOKEN_SECRET: ${{ inputs.expo_token }}
+        SENTRY_AUTH_TOKEN: ${{ inputs.sentry_auth_token }}
         RELEASE_SHA: ${{ inputs.release_sha }}
         RELEASE_VERSION: ${{ inputs.release_version }}
         EXPO_PUBLIC_BEELINE_RELEASE_VERSION: ${{ inputs.release_version }}

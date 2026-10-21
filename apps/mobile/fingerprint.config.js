@@ -45,6 +45,12 @@ module.exports = {
       return chunk;
     }
     const config = JSON.parse(chunk);
+    // Sentry's plugin adds build-time JS source-map upload hooks only. Native
+    // autolinking and native initialization remain disabled, so installed
+    // binaries can receive these JS bundles without a new runtime.
+    config.plugins = config.plugins?.filter(plugin =>
+      (Array.isArray(plugin) ? plugin[0] : plugin) !== '@sentry/react-native/expo',
+    );
     // The update channel is the delivery vehicle, not the compatibility
     // boundary: `beta-apk` bakes `beta`, every other artifact bakes
     // `production`, and both must accept the same update group.

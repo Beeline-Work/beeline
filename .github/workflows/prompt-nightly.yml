@@ -1,0 +1,123 @@
+name: Nightly prompt optimization
+
+on:
+  schedule:
+    # GitHub cron is UTC. The gate selects 08:00 in EDT and 09:00 in EST.
+    - cron: '0 8 * * *'
+    - cron: '0 9 * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  actions: write
+
+concurrency:
+  group: prompt-nightly
+  cancel-in-progress: false
+
+jobs:
+  clock:
+    runs-on: ubuntu-latest
+    outputs:
+      run: ${{ steps.clock.outputs.run }}
+    steps:
+      - id: clock
+        env:
+          EVENT: ${{ github.event_name }}
+          CRON: ${{ github.event.schedule }}
+        run: |
+          node <<'JS' >> "$GITHUB_OUTPUT"
+          const hour = Number(process.env.CRON?.split(' ')[1]);
+          const scheduled = new Date();
+          scheduled.setUTCHours(hour || 8, 0, 0, 0);
+          const localHour = new Intl.DateTimeFormat('en-US', {
+            timeZone: 'America/New_York', hour: '2-digit', hourCycle: 'h23',
+          }).format(scheduled);
+          console.log(`run=${process.env.EVENT === 'workflow_dispatch' || localHour === '04'}`);
+          JS
+
+  replay:
+    needs: clock
+    if: needs.clock.outputs.run == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx turbo run build --filter=@beeline/api-contract
+      - name: Restore history from the latest retained artifact
+        run: |
+          mkdir -p .scratch/prompt-nightly
+          archive=$(gh api "repos/$GH_REPO/actions/artifacts?name=prompt-nightly-history&per_page=1" --jq '.artifacts[0].archive_download_url // empty')
+          if [ -n "$archive" ]; then
+            gh api "$archive" > .scratch/prompt-nightly/history.zip
+            unzip -o .scratch/prompt-nightly/history.zip -d .scratch/prompt-nightly
+          fi
+      - name: Replay all cases and one removal experiment
+        env:
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: node --import tsx scripts/prompt-nightly.mjs
+      - name: Validate a proposed removal
+        id: proposal
+        run: |
+          if [ -f .scratch/prompt-nightly/latest/prompt-assembly.ts ]; then
+            cp .scratch/prompt-nightly/latest/prompt-assembly.ts apps/body/src/prompt-assembly.ts
+            npm run test:prompt-cases
+            npm run test -w @beeline/body -- src/prompt-assembly.test.ts -u -t 'snapshots the'
+            npm run test -w @beeline/body -- --run src/prompt-assembly.test.ts src/prompt-layers.test.ts
+            echo 'ready=true' >> "$GITHUB_OUTPUT"
+          fi
+      - name: Open a proposal for independent review
+        if: steps.proposal.outputs.ready == 'true'
+        run: |
+          branch="automation/prompt-removal-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          git switch -c "$branch"
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add apps/body/src/prompt-assembly.ts docs/prompts/*.md
+          git commit -m 'Remove a prompt paragraph validated by nightly replay'
+          git push --set-upstream origin "$branch"
+          gh pr create --base main --head "$branch" --title 'Remove one prompt paragraph after nightly replay' --body-file .scratch/prompt-nightly/latest/proposal.md
+          # GITHUB_TOKEN pushes do not trigger PR workflows; dispatch explicitly.
+          gh workflow run checks.yml --ref "$branch"
+          gh workflow run prompt-cases.yml --ref "$branch"
+      - name: Publish the line read by the 9am digest
+        if: always()
+        env:
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -f .scratch/prompt-nightly/latest/summary.txt ]; then
+            cat .scratch/prompt-nightly/latest/summary.txt > .scratch/prompt-nightly/digest.txt
+          else
+            mkdir -p .scratch/prompt-nightly
+            echo 'Prompt nightly: incomplete; replay did not produce a result; inspect the run.' > .scratch/prompt-nightly/digest.txt
+          fi
+          echo "Run and evidence: $RUN_URL (job status: ${{ job.status }})" >> .scratch/prompt-nightly/digest.txt
+          cat .scratch/prompt-nightly/digest.txt >> "$GITHUB_STEP_SUMMARY"
+          issue=$(gh issue list --state open --search '"Prompt nightly results" in:title' --json number,title --jq '.[] | select(.title == "Prompt nightly results") | .number' | head -n 1)
+          if [ -z "$issue" ]; then
+            gh issue create --title 'Prompt nightly results' --body 'Nightly prompt replay history. The 9am digest reads the newest comment. Detailed per-case results and cumulative history are linked from each run.'
+            issue=$(gh issue list --state open --search '"Prompt nightly results" in:title' --json number,title --jq '.[] | select(.title == "Prompt nightly results") | .number' | head -n 1)
+          fi
+          gh issue comment "$issue" --body-file .scratch/prompt-nightly/digest.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: prompt-nightly-evidence-${{ github.run_id }}
+          path: .scratch/prompt-nightly/latest/
+          retention-days: 90
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: prompt-nightly-history
+          path: .scratch/prompt-nightly/history.jsonl
+          retention-days: 90

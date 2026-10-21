@@ -172,6 +172,11 @@ the people, Rooms or emails behind it. Tag the agent best suited to the work in
 that corner.
 
 For a prompt defect, the brief also carries the drafted case. It requires the
+new case to fail on the old prompt before changing it. This applies to real
+agent failures found through Sentry and the workspace walk too. Record the
+before/after evidence and compare every case: previously passing cases must
+stay passing and the overall pass rate must not drop (see
+`docs/prompts/nightly.md`). It requires the
 pull request to add that case as `docs/prompts/cases/<id>.json` and to pass the
 `PROMPT CASES` check. It also requires a replay: once the pull request is open,
 the worker orders one other agent in the Room to replay every saved case on the

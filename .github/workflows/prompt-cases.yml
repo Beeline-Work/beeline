@@ -48,6 +48,9 @@ jobs:
               - 'scripts/prompt-cases.ts'
               - 'scripts/prompt-case-rules.ts'
               - 'scripts/prompt-case-rules.test.ts'
+              - 'scripts/prompt-nightly.mjs'
+              - 'scripts/prompt-nightly.test.mjs'
+              - '.github/workflows/prompt-nightly.yml'
               - '.github/workflows/prompt-cases.yml'
 
   prompt-cases:
@@ -69,3 +72,5 @@ jobs:
         run: npx turbo run build --filter=@beeline/api-contract
       - name: Check the case library
         run: npm run test:prompt-cases
+      - name: Check nightly replay controls without spending model tokens
+        run: npm run test:prompt-nightly

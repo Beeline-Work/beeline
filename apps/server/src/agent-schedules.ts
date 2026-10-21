@@ -207,7 +207,8 @@ export class AgentScheduleLoop {
               scheduleId: current.id,
               object: { text: current.agent_name, id: current.agent_id },
               consequence: current.message,
-              wakes: [current.agent_id],
+              // The explicit command below carries the saved human authority.
+              wakes: [],
             });
           } else {
             // The agent is woken by the command created just below, never by a
@@ -228,11 +229,26 @@ export class AgentScheduleLoop {
               JSON.stringify(current.owner_id ? { ownerId: current.owner_id } : {}),
             ],
           );
+          const authorization = (await database.query<{ human_command_message_id: string }>(
+            `SELECT receipt.card->'scheduleAuthorization'->>'humanCommandMessageId' human_command_message_id
+             FROM messages receipt
+             JOIN messages human_command ON human_command.id=receipt.card->'scheduleAuthorization'->>'humanCommandMessageId'
+               AND human_command.deleted_at IS NULL
+             JOIN identities person ON person.id=human_command.author_id AND person.kind='human'
+               AND NOT COALESCE(person.hidden_from_roster,false)
+             WHERE receipt.id=$1 AND receipt.room_id=$2 AND receipt.deleted_at IS NULL
+               AND receipt.card->'scheduleAuthorization' = jsonb_build_object(
+                 'humanCommandMessageId',human_command.id,'agentId',$3::text,'prompt',$4::text,
+                 'cadence',$5::jsonb,'maxRuns',$6::integer,'workflowName',$7::text)`,
+            [current.id, current.room_id, current.agent_id, current.message,
+              JSON.stringify(current.cadence), current.max_runs, current.workflow_slug],
+          )).rows[0];
           await createAgentCommand(database, {
             roomId: current.room_id,
             agentId: current.agent_id,
             sourceMessageId: messageId,
             reason: 'schedule',
+            scheduledHumanCommandMessageId: authorization?.human_command_message_id,
           });
           await this.advance(database, current, now, true);
           return current.room_id;

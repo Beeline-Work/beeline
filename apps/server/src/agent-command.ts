@@ -402,6 +402,8 @@ export async function createAgentCommand(
     roomId: string;
     agentId: string;
     sourceMessageId: string | null;
+    /** Server-resolved human authority for a saved scheduled task. */
+    scheduledHumanCommandMessageId?: string;
     privatePayload?: PrivateCommandPayload;
     id?: string;
     reason: string;
@@ -488,7 +490,7 @@ export async function createAgentCommand(
       input.reason,
       parent?.root_command_id ?? id,
       parent?.id ?? null,
-      parent?.root_source_message_id ?? input.sourceMessageId ?? id,
+      parent?.root_source_message_id ?? input.scheduledHumanCommandMessageId ?? input.sourceMessageId ?? id,
       depth,
       input.avatarJob ?? false,
       privatePayload ? JSON.stringify(privatePayload) : null,

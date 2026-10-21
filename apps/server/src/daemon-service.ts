@@ -5193,7 +5193,32 @@ export class DaemonService {
         title ?? scheduleFallbackTitle(workflowName),
       ],
     );
+    await this.recordScheduleAuthorization(db, scheduleId, input.roomId, agentId, requestId,
+      (input as { generationId?: unknown }).generationId);
     return { scheduleId, nextRunAt: Math.floor(nextRunAt.getTime() / 1_000) };
+  }
+  private async recordScheduleAuthorization(
+    db: SqlDatabase, scheduleId: string, roomId: string, agentId: string, requestId: unknown, generationId: unknown,
+  ): Promise<void> {
+    // Only a server-validated human-rooted turn may authorize the saved task.
+    // Nonhuman edits clear old authority, even if the task text is unchanged.
+    await db.query(`UPDATE messages SET card=card-'scheduleAuthorization' WHERE id=$1`, [scheduleId]);
+    if (typeof requestId !== 'string' || typeof generationId !== 'string') return;
+    const command = await authorizeCommandOutput(db, roomId, agentId, requestId, generationId);
+    await db.query(
+      `INSERT INTO messages(id,room_id,author_id,text,durable_fact,card)
+       SELECT schedule.id::text,schedule.room_id,schedule.agent_id,
+         'Scheduled task authorized by human command: ' || root.id,'action',
+         jsonb_build_object('scheduleAuthorization',jsonb_build_object(
+           'humanCommandMessageId',root.id,'agentId',schedule.agent_id,'prompt',schedule.message,
+           'cadence',schedule.cadence,'maxRuns',schedule.max_runs,'workflowName',schedule.workflow_slug))
+       FROM agent_schedules schedule
+       JOIN messages root ON root.id=$2 AND root.deleted_at IS NULL
+       JOIN identities person ON person.id=root.author_id AND person.kind='human' AND NOT person.hidden_from_roster
+       WHERE schedule.id=$1
+       ON CONFLICT(id) DO UPDATE SET text=EXCLUDED.text,card=EXCLUDED.card`,
+      [scheduleId, command.root_source_message_id],
+    );
   }
   /**
    * What this agent reacts to in this Room, set by the agent itself.
@@ -5472,6 +5497,8 @@ export class DaemonService {
     );
     const row = updated.rows[0];
     if (!row) throw new Error('schedule not found');
+    await this.recordScheduleAuthorization(db, input.scheduleId, input.roomId, agentId,
+      (input as { requestId?: unknown }).requestId, (input as { generationId?: unknown }).generationId);
     return {
       scheduleId: input.scheduleId,
       nextRunAt: Math.floor(row.next_run_at.getTime() / 1_000),

@@ -197,7 +197,65 @@ it('R-RELEASE-CARD: built MCP tool dispatches through the daemon with a receipt 
     expect(operations).toHaveLength(2);
     expect(await grantCount()).toBe(before.grants);
     expect(await messages()).toBe(before.messages + 1);
-    console.log('Demonstrated R-RELEASE-CARD: built dispatch_release → authenticated daemon → committed audit receipt + one stub dispatch, zero grants/cards; nonhuman root refused. No production release.');
+
+    const { AgentScheduleLoop } = await import('./agent-schedules.js');
+    const scheduleLoop = new AgentScheduleLoop(db);
+    await expect(service.execute('createAgentSchedule', {
+      roomId: room, requestId: input.requestId, generationId: 'stale',
+      prompt: 'Unauthorized schedule', cadence: { kind: 'interval', everyMinutes: 60 },
+    }, agent)).rejects.toThrow(/authority rejected/);
+    expect((await db.query(`SELECT id FROM agent_schedules WHERE message='Unauthorized schedule'`)).rows).toHaveLength(0);
+    const scheduledRun = async (humanRoot: boolean, edited = false, legacy = false) => {
+      await db.query(`UPDATE agent_commands SET root_source_message_id=$1 WHERE id='command'`, [humanRoot && !legacy ? 'human-command' : 'missing']);
+      const saved = await service.execute('createAgentSchedule', {
+        roomId: room, requestId: input.requestId, generationId: input.generationId,
+        prompt: 'Run the explicitly commanded nightly production release with dispatch_release.',
+        cadence: { kind: 'cron', expression: '0 2 * * *', timeZone: 'America/New_York' }, maxRuns: 1,
+      }, agent);
+      if (legacy) {
+        await db.query(`UPDATE agent_commands SET root_source_message_id='human-command' WHERE id='command'`);
+        await service.execute('updateAgentSchedule', {
+          roomId: room, requestId: input.requestId, generationId: input.generationId,
+          scheduleId: saved.scheduleId, title: 'Nightly release',
+        }, agent);
+      }
+      if (edited) await db.query(`UPDATE agent_commands SET root_source_message_id='missing' WHERE id='command'`);
+      if (edited) await service.execute('updateAgentSchedule', {
+        roomId: room, requestId: input.requestId, generationId: input.generationId,
+        scheduleId: saved.scheduleId, prompt: 'Run a different release task.',
+      }, agent);
+      await db.query(`UPDATE agent_schedules SET next_run_at=now()-interval '1 second' WHERE id=$1`, [saved.scheduleId]);
+      expect(await scheduleLoop.runOnce()).toBe(1);
+      const command = (await db.query<{ id: string; root_source_message_id: string }>(
+        `SELECT command.id,command.root_source_message_id FROM agent_commands command
+         JOIN messages wake ON wake.id=command.source_message_id
+         WHERE wake.card->'trigger'->>'scheduleId'=$1 AND command.reason='schedule'`, [saved.scheduleId],
+      )).rows[0]!;
+      if (humanRoot && !edited) expect(command.root_source_message_id).toBe('human-command');
+      else expect(command.root_source_message_id).not.toBe('human-command');
+      await db.query(`UPDATE agent_commands SET state='claimed',generation_id='scheduled-generation' WHERE id=$1`, [command.id]);
+      const scheduledContext = (await db.query<{ turn_request_id: string }>(`SELECT turn_request_id FROM agent_commands WHERE id=$1`, [command.id])).rows[0]!;
+      await writeFile(context, JSON.stringify({ roomId: room, requestId: scheduledContext.turn_request_id, generationId: 'scheduled-generation' }));
+      const beforeDispatch = await messages();
+      const result = await run();
+      expect(result.result.isError === true).toBe(!humanRoot || edited);
+      expect(await messages()).toBe(beforeDispatch + (humanRoot && !edited ? 1 : 0));
+      if (humanRoot && !edited) {
+        const auditId = JSON.parse(result.result.content[0].text).auditMessageId;
+        const audit = (await db.query<{ text: string }>(`SELECT text FROM messages WHERE id=$1`, [auditId])).rows[0]!;
+        expect(audit.text).toContain('"humanCommandMessageId":"human-command"');
+      }
+      expect(await grantCount()).toBe(before.grants);
+    };
+    await scheduledRun(true);
+    expect(dispatch).toHaveBeenCalledTimes(2);
+    await scheduledRun(false);
+    await scheduledRun(true, true);
+    expect(dispatch).toHaveBeenCalledTimes(2);
+    await scheduledRun(true, false, true);
+    expect(dispatch).toHaveBeenCalledTimes(3);
+
+    console.log('Demonstrated R-RELEASE-CARD: built dispatch_release → authenticated daemon → committed audit receipt + one stub dispatch, zero grants/cards; scheduled human provenance accepted after schedule expiry; unapproved or edited schedules refused. No production release.');
   } finally {
     await db.query(`UPDATE agent_commands SET root_source_message_id='human-command' WHERE id='command'`);
     await rm(dir, { recursive: true, force: true });

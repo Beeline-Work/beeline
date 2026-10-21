@@ -88,3 +88,15 @@ Server shard 6 separately exceeded the unchanged room-list timing budget
 EXPLAIN p95 41ms, Room-list median 56ms. The personal GitHub token's job-rerun
 request was refused with HTTP 403 (Actions write required). No timing budget
 was relaxed and no unrelated read query was changed.
+
+## Review correction: contained literal facts
+
+Speedy found that normalized containment bypassed the signed-number/URL
+protection applied to equality. Through the same-address post, final, and
+human Room read, both corrections failed before the repair: `-5` to `5` and
+`https://example.com/a-b` to `https://example.com/a/b`, with an omitted second
+sentence. The corrected final was missing from the visible messages.
+Containment now requires literal-bearing prose to occur with punctuation
+intact and each literal to match exactly. Both corrected finals stay visible;
+the unchanged amount and link summaries still deduplicate. Unit coverage also
+allows dropping an unrelated sentence containing a different literal.

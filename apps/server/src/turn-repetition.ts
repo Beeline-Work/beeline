@@ -4,12 +4,22 @@ export function turnMessageRepetition(final: string, earlier: string): 'same' | 
     .replace(/[^\p{L}\p{N}]+/gu, ' ').trim().split(/\s+/).filter(Boolean);
   // Punctuation in a URL or signed number carries meaning; normalization
   // must not turn a changed destination or amount into an exact match.
-  const literals = (text: string) => text.match(/https?:\/\/\S+|(?<!\w)[+-]?\d+(?:\.\d+)?%?/g)?.join('|') ?? '';
+  const literalParts = (text: string) => text.match(/https?:\/\/\S+|(?<!\w)[+-]?\d+(?:\.\d+)?%?/g) ?? [];
+  const literals = (text: string) => JSON.stringify(literalParts(text));
   const next = tokens(final), previous = tokens(earlier);
   if (!next.length || !previous.length) return false;
   const a = next.join(' '), b = previous.join(' ');
   if (a === b) return literals(final) === literals(earlier) ? 'same' : false;
-  if (` ${b} `.includes(` ${a} `)) return 'same';
+  if (` ${b} `.includes(` ${a} `)) {
+    // Token normalization erases signed amounts and URL separators. A
+    // literal-bearing subset must also occur with its punctuation intact.
+    // This permits omitted sentences without requiring all earlier literals.
+    const prose = (text: string) => text.normalize('NFKC').toLowerCase().replace(/\s+/g, ' ').trim();
+    const finalLiterals = literalParts(final), earlierLiterals = literalParts(earlier);
+    const unchanged = !finalLiterals.length || (prose(earlier).includes(prose(final)) &&
+      finalLiterals.every(value => earlierLiterals.includes(value)));
+    return unchanged ? 'same' : false;
+  }
   // Any appended sentence is new information, even when most words repeat.
   if (` ${a} `.includes(` ${b} `)) return false;
   // Require the same sentence count and no changed numbers, negations or links.

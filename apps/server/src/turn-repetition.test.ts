@@ -19,3 +19,12 @@ it.each([
 it.each([['Balance is -5.', 'Balance is 5.'], ['Open https://example.com/a-b', 'Open https://example.com/a/b']])('preserves changed literal %s', (final, previous) => {
   expect(turnMessageRepetition(final, previous)).toBe(false);
 });
+
+it.each([
+  ['The balance is 5.', 'The balance is -5. The checks passed.', false],
+  ['Open https://example.com/a/b.', 'Open https://example.com/a-b. The checks passed.', false],
+  ['The balance is -5.', 'The balance is -5. Another balance is 10.', 'same'],
+  ['Open https://example.com/a-b.', 'Open https://example.com/a-b. The checks passed.', 'same'],
+])('protects contained literal facts: %s', (final, previous, expected) => {
+  expect(turnMessageRepetition(final, previous)).toBe(expected);
+});

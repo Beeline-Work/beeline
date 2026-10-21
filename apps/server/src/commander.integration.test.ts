@@ -1366,3 +1366,16 @@ it.each([false, true])('dedupe keeps a final carrying a new attachment (tagged=%
   expect(message.presentation).toBe('message');
   expect(message.attachments).toHaveLength(1);
 });
+
+it.each([
+  ['The balance is -5. The checks passed.', 'The balance is 5.', true],
+  ['Open https://example.com/a-b. The checks passed.', 'Open https://example.com/a/b.', true],
+  ['The balance is -5. The checks passed.', 'The balance is -5.', false],
+  ['Open https://example.com/a-b. The checks passed.', 'Open https://example.com/a-b.', false],
+])('dedupe preserves literal corrections in contained summaries: %s -> %s', async (post, final, corrected) => {
+  const posted = await daemon.execute('postCornerMessage', { ...authority(order), cornerId: DM, text: post }, RUBY);
+  const result = await daemon.execute('postRoomMessage', { ...authority(order), text: final }, RUBY);
+  const messages = (await phone.readRoom(DM, HUMAN))!.messages.filter(m => m.author.pubkey === RUBY && m.presentation === 'message');
+  expect(messages.map(m => m.id)).toEqual(corrected ? [posted.id, result.id] : [posted.id]);
+  if (corrected) expect(messages[1]?.text).toBe(final);
+});

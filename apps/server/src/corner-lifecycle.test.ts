@@ -2846,18 +2846,22 @@ describe('unfinished merge claim recovery (R6a–R6f)', () => {
     } finally { await db.query(`UPDATE github_repositories SET active=true WHERE repository_id=101`); }
   });
 
-  it('Reproduction R6a: a crash before merge gets one fresh attempt from recovery', async () => {
+  it('Reproduction MA-2 / R6a: recurring recovery releases an unmerged claim without merging', async () => {
     const cornerId = await claimed();
     expect(await implementersMerge()).toBe(0);
     expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
-    await recover();
+    for (let cycle = 0; cycle < 3; cycle++) {
+      await recover();
+      expect(await claimHead(cornerId)).toBeNull();
+      expect(githubApp.mergePullRequest).not.toHaveBeenCalled();
+    }
+    expect(await currentState(cornerId)).toBe('review');
+    expect(await implementersMerge()).toBe(1);
     expect(githubApp.mergePullRequest).toHaveBeenCalledWith(77, 101, 'owner/widgets', 7, SHA);
-    await recover();
-    expect(await implementersMerge()).toBe(0);
     expect(githubApp.mergePullRequest).toHaveBeenCalledTimes(1);
     await mergedWebhook(cornerId, 7, SHA);
     await landing(cornerId);
-    console.info('R6a demonstrated: interrupted approved corner retried once, then archived with one landing and parent completion card.');
+    console.info('MA-2 / R6a demonstrated: repeated recovery clears the claim without merging; a fresh explicit gated request can merge and archive once.');
   });
 
   it('Reproduction R6b: a crash after merge records one landing without another merge', async () => {

@@ -235,6 +235,17 @@ export function AgentProfileView({
                 </View>
               ) : null}
             </View>
+            <View style={styles.section}>
+              <RoomListSectionHeader title="Model / difficulty" inset="row" spacing="flush" />
+              {editing && canEdit && modelManagement ? (
+                modelManagement
+              ) : (
+                <>
+                  <SettingsRow title="Model" description={displayModel(label(model, modelAxis))} />
+                  <SettingsRow title="Thinking level" value={label(effort, effortAxis)} />
+                </>
+              )}
+            </View>
             {canEdit && editing && (
               <View style={styles.confirmRow}>
                 <HullDialogActions
@@ -258,17 +269,6 @@ export function AgentProfileView({
                 />
               </View>
             )}
-            <View style={styles.section}>
-              <RoomListSectionHeader title="Model / difficulty" inset="row" spacing="flush" />
-              {editing && canEdit && modelManagement ? (
-                modelManagement
-              ) : (
-                <>
-                  <SettingsRow title="Model" description={displayModel(label(model, modelAxis))} />
-                  <SettingsRow title="Thinking level" value={label(effort, effortAxis)} />
-                </>
-              )}
-            </View>
             {canEdit ? <AgentUsageSection usage={detail.usage} harness={detail.harness} /> : null}
             <AgentVoiceSection
               key={`${detail.workspaceId}:${identity.pubkey}:${voiceApi?.contextKey ?? ''}`}

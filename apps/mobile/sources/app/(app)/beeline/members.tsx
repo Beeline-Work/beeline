@@ -1156,6 +1156,7 @@ export default function BuzzMembers({
                             style={styles.modelSearchInput}
                             testID="model-search-model"
                             value={modelSearchQuery}
+                            variant="boxed"
                           />
                         )}
                         {open && (

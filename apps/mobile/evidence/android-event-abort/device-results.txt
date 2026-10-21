@@ -1,0 +1,2 @@
+10-20 23:17:13.607  4989  5051 I ReactNativeJS: 'ANDROID-EVENT-ABORT-1', 'FAIL: ReferenceError: Property \'Event\' doesn\'t exist'
+10-20 23:17:43.509  5100  5158 I ReactNativeJS: 'ANDROID-EVENT-ABORT-1', 'PASS: Hermes, Event=undefined, cancelled=3, Abort handler called'

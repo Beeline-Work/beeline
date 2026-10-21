@@ -878,6 +878,29 @@ export class GitHubAppClient {
     return (await response.json()) as Record<string, unknown>;
   }
 
+  /** Read live repository and branch protection before destructive cleanup. */
+  async branchDeletionSafety(accessToken: string, fullName: string, branch: string) {
+    const response = await fetch(`${this.#config.apiBaseUrl}/repos/${repositoryPath(fullName)}`, {
+      headers: githubHeaders(accessToken), signal: AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) throw new GitHubHttpError('GitHub repository', response.status);
+    const repository = await response.json() as { default_branch?: unknown };
+    if (typeof repository.default_branch !== 'string') throw new Error('GitHub default branch is missing');
+    let details: Record<string, unknown>;
+    try {
+      details = await this.readRepositoryJson(accessToken, fullName, `branches/${encodeURIComponent(branch)}`);
+    } catch (error) {
+      if (error instanceof GitHubHttpError && (error.status === 404 || error.status === 422)) return undefined;
+      throw error;
+    }
+    if (typeof details.protected !== 'boolean') throw new Error('GitHub branch protection is missing');
+    const pulls = await this.readRepositoryJson(accessToken, fullName,
+      `pulls?state=open&base=${encodeURIComponent(branch)}&per_page=1`);
+    if (!Array.isArray(pulls)) throw new Error('GitHub branch pull requests are invalid');
+    return { defaultBranch: repository.default_branch, protected: details.protected,
+      openBasePullRequest: pulls.length > 0 };
+  }
+
   /** Delete one installation-scoped branch after its corner has been archived. */
   async deleteBranch(
     installationId: number,
@@ -899,11 +922,11 @@ export class GitHubAppClient {
       .join('/');
     const response = await fetch(
       `${this.#config.apiBaseUrl}/repos/${repositoryPath}/git/refs/heads/${branchPath}`,
-      { method: 'DELETE', headers: githubHeaders(token.token) },
+      { method: 'DELETE', headers: githubHeaders(token.token), signal: AbortSignal.timeout(15_000) },
     );
     // A 404 means GitHub's delete-on-merge setting already removed the ref.
-    if (!response.ok && response.status !== 404) {
-      throw new Error(`GitHub branch deletion failed: HTTP ${response.status}`);
+    if (!response.ok && response.status !== 404 && response.status !== 422) {
+      throw new GitHubHttpError('GitHub branch deletion', response.status);
     }
   }
 

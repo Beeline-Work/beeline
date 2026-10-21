@@ -1,3 +1,4 @@
+import { enqueueCornerBranchDeletion } from './corner-branch-cleanup.js';
 import { CommandRefusalError } from './commander.js';
 import type { SqlDatabase } from './database.js';
 import { createAgentCommand, type CommandRow } from './agent-command.js';
@@ -106,5 +107,6 @@ export async function closeCornerState(database: SqlDatabase, cornerId: string) 
   await abandonCornerWorkflowRuns(database, cornerId);
   await deleteCornerWakeSources(database, [cornerId]);
   await advanceCorner(database, cornerId, { kind: 'closed' });
+  await enqueueCornerBranchDeletion(database, cornerId);
   return { parentId: corner.parent_id };
 }

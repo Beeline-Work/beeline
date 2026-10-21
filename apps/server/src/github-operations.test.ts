@@ -83,6 +83,8 @@ describe('GitHub phone operations', () => {
       readPullRequest: vi.fn(async (_token: string, _repository: string, number: number) => ({ number,
         headSha, url: `https://github.com/owner/widgets/pull/${number}`, mergeability: 'clean' })),
       mergePullRequest: vi.fn(async () => undefined),
+      branchDeletionSafety: vi.fn(async () => ({ defaultBranch: 'main', protected: false })),
+      openPullRequestsForBranch: vi.fn(async () => []),
       deleteBranch: vi.fn(async () => undefined),
     };
     const payload = { action: 'completed', installation: { id: 77 }, repository: { full_name: 'owner/widgets' },
@@ -713,6 +715,8 @@ describe('GitHub phone operations', () => {
     const app = {
       installationToken: vi.fn(async () => ({ token: 'room-token' })),
       readCommitCheckRollup: vi.fn(async () => ({ state: 'passed', total: 0, failing: [], checks: [] })),
+      branchDeletionSafety: vi.fn(async () => ({ defaultBranch: 'main', protected: false })),
+      openPullRequestsForBranch: vi.fn(async () => []),
       deleteBranch: vi.fn(async () => undefined),
     } as unknown as GitHubAppClient;
     const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app, 'secret');
@@ -786,6 +790,8 @@ describe('GitHub phone operations', () => {
         failing: [],
         checks: [{ name: 'build', status: 'passed' }],
       })),
+      branchDeletionSafety: vi.fn(async () => ({ defaultBranch: 'main', protected: false })),
+      openPullRequestsForBranch: vi.fn(async () => []),
       deleteBranch: vi.fn(async () => undefined),
     } as unknown as GitHubAppClient;
     const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app, 'secret');
@@ -873,6 +879,8 @@ describe('GitHub phone operations', () => {
         failing: [],
         checks: [{ name: 'build', status: 'passed' }],
       })),
+      branchDeletionSafety: vi.fn(async () => ({ defaultBranch: 'main', protected: false })),
+      openPullRequestsForBranch: vi.fn(async () => []),
       deleteBranch: vi.fn(async () => undefined),
     } as unknown as GitHubAppClient;
     const operations = new GitHubOperations(database, {} as GitHubOAuthClient, app, 'secret');
@@ -972,6 +980,8 @@ describe('GitHub phone operations', () => {
         failing: [],
         checks: [{ name: 'build', status: 'passed' }],
       })),
+      branchDeletionSafety: vi.fn(async () => ({ defaultBranch: 'main', protected: false })),
+      openPullRequestsForBranch: vi.fn(async () => []),
       deleteBranch: vi.fn(async () => undefined),
     } as unknown as GitHubAppClient;
     // #100 is recorded after #200's branch lookup returns, but before
@@ -1198,6 +1208,8 @@ describe('GitHub phone operations', () => {
         merged: false,
         mergeability: 'clean',
       })),
+      branchDeletionSafety: vi.fn(async () => ({ defaultBranch: 'main', protected: false })),
+      openPullRequestsForBranch: vi.fn(async () => []),
       deleteBranch: vi.fn(async () => undefined),
     } as unknown as GitHubAppClient;
     const operations = new GitHubOperations(

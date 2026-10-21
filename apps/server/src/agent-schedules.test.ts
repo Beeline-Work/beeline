@@ -143,6 +143,33 @@ describe('manager schedule phone operations', () => {
     }
   });
 
+  it('Reproduction closed-corner-schedules: a closed corner schedule stops listing in its Room', async () => {
+    const database = await fixture();
+    try {
+      await database.query(
+        `INSERT INTO rooms(id,workspace_id,parent_id,created_by,name,archived_at)
+         VALUES($1,$2,$3,$4,'Closed corner','2026-10-21T00:23:25Z')`,
+        [CORNER, WORKSPACE, ROOM, OWNER],
+      );
+      const scheduleId = '88888888-8888-4888-8888-888888888888';
+      await database.query(
+        `INSERT INTO agent_schedules(id,workspace_id,room_id,agent_id,creator_id,cadence,message,next_run_at,title)
+         VALUES($1,$2,$3,$4,$4,$5::jsonb,'Collect the runners.','2030-01-01','Collect runners')`,
+        [scheduleId, WORKSPACE, CORNER, AGENT, JSON.stringify({ kind: 'interval', everyMinutes: 65 })],
+      );
+      const phone = new PhoneService(database, 'http://local.test');
+      // The scheduler skips archived Rooms, so their schedules must not read as active.
+      expect((await phone.execute('listRoomSchedules', { roomId: ROOM }, OWNER)).schedules).toEqual([]);
+      await database.query(`UPDATE rooms SET archived_at=NULL WHERE id=$1`, [CORNER]);
+      expect((await phone.execute('listRoomSchedules', { roomId: ROOM }, OWNER)).schedules.map(
+        (row) => row.id,
+      )).toEqual([scheduleId]);
+      console.log('Demonstrated closed-corner-schedules: an archived corner schedule is hidden from its Room and returns when the corner reopens');
+    } finally {
+      await database.close();
+    }
+  });
+
   it('lists a corner-created schedule from its parent Room with its corner identity', async () => {
     const database = await fixture();
     try {
@@ -515,35 +542,40 @@ describe('agent tool schedule daemon operations', () => {
       const listed = await daemon.execute('listAgentSchedules', {
         agentId: AGENT, roomId: elsewhere, selfOnly: true,
       }, AGENT);
+      // Own schedules in every Workspace the agent belongs to, not just this one.
       expect(listed.schedules).toEqual([
         expect.objectContaining({ scheduleId: own.scheduleId, roomId: ROOM, roomName: 'Scheduled Room' }),
         expect.objectContaining({ scheduleId: local.scheduleId, roomId: elsewhere, roomName: 'Other place' }),
+        expect.objectContaining({ scheduleId: outside.scheduleId, roomId: otherRoom, roomName: 'Outside Workspace' }),
       ]);
       const cadence = { kind: 'cron' as const, expression: '0 19 * * *', timeZone: 'America/New_York' };
       await daemon.execute('updateAgentSchedule', {
         agentId: AGENT, roomId: elsewhere, selfOnly: true,
         scheduleId: own.scheduleId, prompt: 'Evening audit.', cadence,
       }, AGENT);
+      // The other-Workspace schedule is editable from here too.
+      await daemon.execute('updateAgentSchedule', {
+        agentId: AGENT, roomId: elsewhere, selfOnly: true,
+        scheduleId: outside.scheduleId, prompt: 'Outside evening audit.',
+      }, AGENT);
       expect((await daemon.execute('listAgentSchedules', {
         agentId: AGENT, roomId: elsewhere, selfOnly: true,
       }, AGENT)).schedules).toContainEqual(expect.objectContaining({
         scheduleId: own.scheduleId, roomId: ROOM, prompt: 'Evening audit.', cadence,
       }));
-      for (const scheduleId of [rival.scheduleId, outside.scheduleId]) {
-        for (const operation of ['updateAgentSchedule', 'deleteAgentSchedule'] as const) {
-          await expect(daemon.execute(operation, {
-            agentId: AGENT, roomId: elsewhere, selfOnly: true,
-            scheduleId, prompt: 'Forbidden.',
-          }, AGENT)).rejects.toThrow('schedule not found');
-        }
+      for (const operation of ['updateAgentSchedule', 'deleteAgentSchedule'] as const) {
+        await expect(daemon.execute(operation, {
+          agentId: AGENT, roomId: elsewhere, selfOnly: true,
+          scheduleId: rival.scheduleId, prompt: 'Forbidden.',
+        }, AGENT)).rejects.toThrow('schedule not found');
       }
       await daemon.execute('deleteAgentSchedule', {
         agentId: AGENT, roomId: elsewhere, selfOnly: true, scheduleId: own.scheduleId,
       }, AGENT);
       expect((await daemon.execute('listAgentSchedules', {
         agentId: AGENT, roomId: elsewhere, selfOnly: true,
-      }, AGENT)).schedules.map(schedule => schedule.scheduleId)).toEqual([local.scheduleId]);
-      console.info('Demonstrated cross-place-schedules-1: own schedules listed with Room names; remote cadence/prompt updated and deleted; rival mutations refused.');
+      }, AGENT)).schedules.map(schedule => schedule.scheduleId)).toEqual([local.scheduleId, outside.scheduleId]);
+      console.info('Demonstrated cross-place-schedules-1: own schedules listed with Room names across Workspaces; remote cadence/prompt updated and deleted; rival mutations refused.');
     } finally {
       await database.close();
     }

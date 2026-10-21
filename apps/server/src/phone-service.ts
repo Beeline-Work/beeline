@@ -5070,7 +5070,8 @@ export class PhoneService {
               surface.parent_id surface_parent_id,surface.name surface_name
        FROM agent_schedules schedule
        JOIN rooms surface ON surface.id=schedule.room_id
-       WHERE (surface.id=$1 OR surface.parent_id=$1) AND schedule.workflow_run IS NULL
+       WHERE (surface.id=$1 OR surface.parent_id=$1) AND surface.archived_at IS NULL
+         AND schedule.workflow_run IS NULL
        ORDER BY schedule.created_at,schedule.id`,
       [roomId],
     );

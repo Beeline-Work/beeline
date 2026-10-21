@@ -1179,7 +1179,7 @@ const ORDINARY_TOOLS: ToolDefinition[] = [
   },
   {
     "name": "wake",
-    "description": "Manage your own wake sources. List, update and delete your schedules across the current Workspace by scheduleId; lists include roomId and roomName. Creating schedules and managing events stay in this place. Schedules and events reject address. lifecycle requires address and watches opened/merged. Opening a corner already watches it. events discovers the catalog. Never posts, orders or reports. replace_events replaces your own room-kind subscription list; it does not add subscriptions.",
+    "description": "Manage your own wake sources. List, update and delete your schedules across every Room you belong to by scheduleId; lists include roomId and roomName. Creating schedules and managing events stay in this place. Schedules and events reject address. lifecycle requires address and watches opened/merged. Opening a corner already watches it. events discovers the catalog. Never posts, orders or reports. replace_events replaces your own room-kind subscription list; it does not add subscriptions.",
     "inputSchema": {
       "type": "object",
       "properties": {

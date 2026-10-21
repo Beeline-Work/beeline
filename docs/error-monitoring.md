@@ -122,18 +122,25 @@ above remains independent.
 `sentry_wake_issues` stores issue metadata keyed by issue id and event type;
 retries do not re-arm an acknowledged row, and a newer occurrence updates its
 metadata. `sentry_wake_state` serializes ingestion and dispatch across server
-machines. The first issue queues a private command for Jellybean in issues-triage
-immediately; later issues accumulate until five minutes after the previous
-command. The command and acknowledgement commit together. The existing
-background leader reads the durable deadline after restart and PostgreSQL
-notifications re-arm it after arrivals. An unavailable target keeps rows pending.
+machines. Fatal issues and explicitly unhandled exceptions queue a private command
+for Jellybean in issues-triage immediately; later urgent issues accumulate until
+five minutes after the previous urgent command. Unhandled signals include
+`issue.isUnhandled`, `event.unhandled`, `handled=no` event tags, and exception
+mechanisms with `handled=false`. Other issues remain pending for a separate
+24-hour daily triage batch; they neither wake on arrival nor enter urgent digests.
+The daily clock starts at migration and advances only when a daily batch commits.
+The command and acknowledgement commit together. The existing background leader
+reads both durable deadlines after restart and PostgreSQL notifications re-arm it
+after arrivals. An unavailable target keeps rows pending.
 The server setting `BEELINE_SENTRY_TRIAGE_AGENT_ID` selects the recipient and
 defaults to Jellybean (`7eafb2e0cc049a9b3345f4322024b604358af04cb551d1fc71084ca3a99d7877`).
 The receiver and background worker share that setting. Set it consistently on
 all server machines and restart through the normal release process to change
-the recipient without code. Each digest ends with: "Triage these. Dismiss noise
-silently. If one blocks Beeline service or needs a fix, report it to Ruby with
-the Sentry link and a proposed fix." No transcript or System message is created.
+the recipient without code. Digests instruct Jellybean to investigate and open
+and own warranted fix corners, with Jellybean implementing and Speedy reviewing,
+linking the Sentry issue id and URL. Existing corner authority and merge gates
+still apply. Ruby receives only blocked or needs-decision reports, including
+exact authority refusals. No transcript or System message is created.
 Sentry text is quoted as untrusted data. Receiver failures return 503 without recursive Sentry capture.
 
 Integration created 2026-10-18 UTC:

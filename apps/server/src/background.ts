@@ -158,6 +158,12 @@ export function isUnregisteredPushToken(error: unknown): boolean {
   );
 }
 
+/** The lateral boundary prevents sibling filters from becoming history index scans. */
+function messagePointsSql(ids: string, alias: string): string {
+  return `unnest(${ids}) ${alias}_ids(id)
+    CROSS JOIN LATERAL (SELECT * FROM messages WHERE id=${alias}_ids.id OFFSET 0) ${alias}`;
+}
+
 /**
  * One push per recipient per agent turn. An agent message is one of its
  * turn's messages when it shares the Room, the author and the request id.
@@ -166,7 +172,8 @@ export function isUnregisteredPushToken(error: unknown): boolean {
  */
 function earlierTurnPushSql(message: string, deviceToken: string): string {
   return `EXISTS (
-    SELECT 1 FROM messages sibling
+    SELECT 1 FROM ${messagePointsSql(`COALESCE((SELECT context.turn_ids FROM push_message_context context
+      WHERE context.message_id=${message}.id),ARRAY[]::text[])`, 'sibling')}
     JOIN identities sibling_author ON sibling_author.id=sibling.author_id
       AND sibling_author.kind='agent'
     JOIN push_delivery_claims sibling_claim ON sibling_claim.message_id=sibling.id
@@ -186,6 +193,12 @@ export class PushDeliveryLoop {
     private readonly iosSender?: PushSender,
     private readonly webSender?: PushSender,
   ) {}
+
+  async nextDueAt(): Promise<Date | null> {
+    const due = await this.database.query<{ not_before: Date }>(
+      `SELECT not_before FROM push_outbox ORDER BY not_before,message_id,device_token LIMIT 1`);
+    return due.rows[0]?.not_before ?? null;
+  }
 
   async runOnce(): Promise<number> {
     let delivered = 0;
@@ -227,7 +240,7 @@ export class PushDeliveryLoop {
                FROM (
                  SELECT message.id,message.created_at
                  FROM push_delivery_claims claim
-                 JOIN messages message ON message.id=claim.message_id
+                 JOIN LATERAL (SELECT * FROM messages WHERE id=claim.message_id OFFSET 0) message ON true
                  WHERE claim.device_token=device.token AND claim.status='delivered'
                    AND claim.read_cleared_at IS NULL
                    AND message.room_id=mark.room_id AND message.created_at>=device.registered_at
@@ -240,7 +253,7 @@ export class PushDeliveryLoop {
            WHERE mark.identity_id=device.identity_id
              AND EXISTS (
                SELECT 1 FROM push_delivery_claims claim
-               JOIN messages message ON message.id=claim.message_id
+               JOIN LATERAL (SELECT * FROM messages WHERE id=claim.message_id OFFSET 0) message ON true
                WHERE claim.device_token=device.token AND claim.status='delivered'
                  AND claim.read_cleared_at IS NULL
                  AND message.room_id=mark.room_id AND message.created_at>=device.registered_at
@@ -297,6 +310,23 @@ export class PushDeliveryLoop {
     // window cannot suppress a future push.
     // Retain mobile claims for read-clear for at most a week.
     await this.database.query(TERMINAL_PUSH_CLAIMS_SQL, [1000]);
+    await this.database.query(`DELETE FROM push_message_context WHERE message_id IN (
+      SELECT message_id FROM push_message_context WHERE expires_at<=now()
+      ORDER BY expires_at LIMIT 1000 FOR UPDATE SKIP LOCKED)`);
+    const due = await this.database.query<{ message_id: string; device_token: string }>(`
+      WITH due AS (
+        SELECT message_id,device_token FROM push_outbox
+        WHERE not_before<=now() ORDER BY not_before,message_id,device_token
+        LIMIT 100 FOR UPDATE SKIP LOCKED
+      )
+      UPDATE push_outbox queue SET not_before=now()+interval '30 seconds'
+      FROM due WHERE queue.message_id=due.message_id AND queue.device_token=due.device_token
+      RETURNING queue.message_id,queue.device_token
+    `);
+    if (due.rows.length === 0) {
+      this.#repeatBatch = false;
+      return 0;
+    }
     const candidates = await this.database.query<{
       message_id: string;
       workspace_id: string;
@@ -321,15 +351,16 @@ export class PushDeliveryLoop {
       corner_name: string | null;
       dm_peer: ChatTitleIdentity | null;
     }>(`
-      -- Bound message/device pairs before the current-roster tag subquery.
-      -- Without this barrier the planner can resolve tags across all history.
-      WITH recent_messages AS MATERIALIZED (
-        SELECT m.*,d.token push_token,d.identity_id push_identity_id
-        FROM messages m
+      -- Only leased message/device IDs enter eligibility and title projection.
+      WITH queued_messages AS MATERIALIZED (
+        SELECT m.*,context.turn_ids,context.burst_ids,d.token push_token,d.identity_id push_identity_id
+        FROM jsonb_to_recordset($1::jsonb) queued(message_id text,device_token text)
+        JOIN LATERAL (SELECT * FROM messages WHERE id=queued.message_id OFFSET 0) m ON true
+        JOIN push_message_context context ON context.message_id=m.id
         JOIN push_delivery_floors floor ON floor.id='message-delivery'
         JOIN effective_memberships member ON member.room_id=m.room_id AND member.removed_at IS NULL
           AND member.identity_id<>m.author_id
-        JOIN push_devices d ON d.identity_id=member.identity_id AND m.created_at>=d.registered_at
+        JOIN push_devices d ON d.token=queued.device_token AND d.identity_id=member.identity_id AND m.created_at>=d.registered_at
         WHERE m.created_at>=floor.started_at
           AND m.created_at>=now()-interval '1 hour'
           AND m.presentation IS DISTINCT FROM 'activity'
@@ -349,8 +380,9 @@ export class PushDeliveryLoop {
           AND NOT EXISTS (
             SELECT 1 FROM push_delivery_claims claim
             WHERE claim.message_id=m.id AND claim.device_token=d.token
-              AND (claim.status<>'retryable' OR claim.next_retry_at>now()
-                OR claim.attempts>=${PUSH_MAX_ATTEMPTS})
+              AND NOT ((claim.status='retryable' AND claim.next_retry_at<=now()
+                AND claim.attempts<${PUSH_MAX_ATTEMPTS}) OR (claim.status='claimed'
+                AND claim.claimed_at<now()-interval '1 minute' AND claim.attempts<${PUSH_MAX_ATTEMPTS}))
           )
           AND NOT ${earlierTurnPushSql('m', 'd.token')}
           -- A completed turn's decision/tag metadata qualifies its final prose,
@@ -358,7 +390,7 @@ export class PushDeliveryLoop {
           AND NOT (m.presentation IN ('system','card') AND m.request_id IS NOT NULL
             AND EXISTS (SELECT 1 FROM agent_turns t WHERE t.room_id=m.room_id
               AND t.request_id=m.request_id AND t.agent_id=m.author_id AND t.status='complete')
-            AND EXISTS (SELECT 1 FROM messages final WHERE final.room_id=m.room_id
+            AND EXISTS (SELECT 1 FROM ${messagePointsSql('context.turn_ids', 'final')} WHERE final.room_id=m.room_id
               AND final.author_id=m.author_id AND final.request_id=m.request_id
               AND final.presentation='message' AND final.deleted_at IS NULL))
           -- Durable chat from agents waits for completion and selects final prose.
@@ -366,7 +398,7 @@ export class PushDeliveryLoop {
             OR NOT EXISTS (SELECT 1 FROM identities a WHERE a.id=m.author_id AND a.kind='agent')
             OR (NOT EXISTS (SELECT 1 FROM agent_turns t WHERE t.room_id=m.room_id
                 AND t.request_id=m.request_id AND t.agent_id=m.author_id AND t.status='working')
-              AND NOT EXISTS (SELECT 1 FROM messages newer WHERE newer.room_id=m.room_id
+              AND NOT EXISTS (SELECT 1 FROM ${messagePointsSql('context.turn_ids', 'newer')} WHERE newer.room_id=m.room_id
                 AND newer.author_id=m.author_id AND newer.request_id=m.request_id
                 AND newer.presentation='message' AND newer.card_type IS NULL AND newer.deleted_at IS NULL
                 AND (newer.created_at,newer.id)>(m.created_at,m.id))))
@@ -407,16 +439,11 @@ export class PushDeliveryLoop {
           COALESCE(NULLIF(author.name,''),'Someone') author_name,
           CASE WHEN attention.direct OR m.presentation<>'message' THEN
             CASE WHEN author.kind='human' AND m.presentation='message' THEN (
-              SELECT burst.id FROM messages burst
+              SELECT burst.id FROM ${messagePointsSql('m.burst_ids', 'burst')}
               WHERE burst.room_id=m.room_id AND burst.author_id=m.author_id
                 AND burst.presentation='message' AND burst.deleted_at IS NULL
                 AND burst.created_at>=m.created_at-interval '20 seconds'
                 AND (burst.created_at,burst.id)<=(m.created_at,m.id)
-                AND NOT EXISTS (SELECT 1 FROM messages interruption
-                  WHERE interruption.room_id=m.room_id AND interruption.author_id<>m.author_id
-                    AND interruption.presentation='message'
-                    AND (interruption.created_at,interruption.id)>(burst.created_at,burst.id)
-                    AND (interruption.created_at,interruption.id)<(m.created_at,m.id))
                 AND (room.direct_participants IS NOT NULL OR ${addressedToPersonSql('burst', 'recipient.id', 'recipient.handle', 'recipient.kind', false)})
               ORDER BY burst.created_at,burst.id LIMIT 1)
             ELSE m.id END
@@ -433,7 +460,7 @@ export class PushDeliveryLoop {
           CASE WHEN room.direct_participants IS NOT NULL THEN jsonb_build_object(
             'name',COALESCE(NULLIF(author.name,''),'Someone'),
             'handle',author.handle,'avatar',author.avatar) END dm_peer
-        FROM recent_messages m
+        FROM queued_messages m
         JOIN rooms room ON room.id=m.room_id
         LEFT JOIN rooms parent ON parent.id=room.parent_id
         LEFT JOIN memberships workspace_member ON workspace_member.workspace_id=room.workspace_id
@@ -447,7 +474,7 @@ export class PushDeliveryLoop {
             AND m.card->>'ownerId'=recipient.id)
           OR ${addressedToPersonSql('m', 'recipient.id', 'recipient.handle', 'recipient.kind', false)}
           OR (author.kind='agent' AND m.presentation='message' AND m.request_id IS NOT NULL
-            AND EXISTS (SELECT 1 FROM messages part WHERE part.room_id=m.room_id
+            AND EXISTS (SELECT 1 FROM ${messagePointsSql('m.turn_ids', 'part')} WHERE part.room_id=m.room_id
               AND part.author_id=m.author_id AND part.request_id=m.request_id
               AND part.deleted_at IS NULL
               AND ${addressedToPersonSql('part', 'recipient.id', 'recipient.handle', 'recipient.kind', false)}))
@@ -474,8 +501,9 @@ export class PushDeliveryLoop {
           NULL::text action,NULL::text grant_id,NULL::text grant_kind,NULL::text grant_target,
           NULL::text grant_agent_name,NULL::text author_name,NULL::text collapse_id,
           false direct_attention,NULL::text room_name,NULL::text corner_name,NULL::jsonb dm_peer
-        FROM workspace_join_notifications notification
-        JOIN workspace_join_notification_devices device ON device.notification_id=notification.id
+        FROM jsonb_to_recordset($1::jsonb) queued(message_id text,device_token text)
+        JOIN workspace_join_notifications notification ON notification.id=queued.message_id
+        JOIN workspace_join_notification_devices device ON device.notification_id=notification.id AND device.device_token=queued.device_token
         JOIN push_devices push_device ON push_device.token=device.device_token
         JOIN identities recipient ON recipient.id=push_device.identity_id
           AND recipient.kind='human' AND recipient.push_level IN ('full')
@@ -503,6 +531,8 @@ export class PushDeliveryLoop {
           ON claim.message_id=candidate.message_id AND claim.device_token=candidate.token
         WHERE claim.message_id IS NULL OR (claim.status='retryable'
           AND claim.next_retry_at<=now() AND claim.attempts<${PUSH_MAX_ATTEMPTS})
+          OR (claim.status='claimed' AND claim.claimed_at<now()-interval '1 minute'
+            AND claim.attempts<${PUSH_MAX_ATTEMPTS})
         ORDER BY candidate.message_id,candidate.token
       )
       SELECT message_id,workspace_id,room_id,channel_id,corner_id,target,
@@ -510,7 +540,7 @@ export class PushDeliveryLoop {
         action,grant_id,grant_kind,grant_target,grant_agent_name,author_name,collapse_id,
         direct_attention,room_name,corner_name,dm_peer
       FROM unclaimed ORDER BY created_at,message_id LIMIT 100
-    `);
+    `, [JSON.stringify(due.rows)]);
     const cornerIds = [...new Set(candidates.rows.flatMap((row) => row.corner_id ? [row.corner_id] : []))];
     const cornerStates = new Map<string, DerivedCornerState>();
     if (cornerIds.length) {
@@ -566,7 +596,8 @@ export class PushDeliveryLoop {
              ON CONFLICT(message_id,device_token) DO UPDATE
                SET status='claimed',attempts=claim.attempts+1,claimed_at=now(),
                  completed_at=NULL,error=NULL,next_retry_at=NULL
-               WHERE claim.status='retryable' AND claim.next_retry_at<=now()
+               WHERE ((claim.status='retryable' AND claim.next_retry_at<=now())
+                 OR (claim.status='claimed' AND claim.claimed_at<now()-interval '1 minute'))
                  AND claim.attempts<${PUSH_MAX_ATTEMPTS}`,
             [
               candidate.message_id,
@@ -722,7 +753,22 @@ export class PushDeliveryLoop {
       ),
     );
     delivered = workerResults.reduce((sum, count) => sum + count, 0);
-    this.#repeatBatch = candidates.rows.length === 100 && claimedRows > 0;
+    // Terminal claims are authoritative during rolling cutover as well as retries.
+    await this.database.query(`DELETE FROM push_outbox queue
+      USING jsonb_to_recordset($1::jsonb) due(message_id text,device_token text)
+      WHERE queue.message_id=due.message_id AND queue.device_token=due.device_token
+        AND (queue.expires_at<=now() OR EXISTS (
+          SELECT 1 FROM push_delivery_claims claim WHERE claim.message_id=queue.message_id
+            AND claim.device_token=queue.device_token AND claim.status IN ('delivered','failed','suppressed')))`,
+      [JSON.stringify(due.rows)]);
+    await this.database.query(`UPDATE push_outbox queue SET not_before=COALESCE(
+        (SELECT CASE WHEN claim.status='claimed' THEN claim.claimed_at+interval '1 minute' ELSE claim.next_retry_at END FROM push_delivery_claims claim
+         WHERE claim.message_id=queue.message_id AND claim.device_token=queue.device_token
+           AND claim.status IN ('retryable','claimed')),now()+interval '1 minute')
+      FROM jsonb_to_recordset($1::jsonb) due(message_id text,device_token text)
+      WHERE queue.message_id=due.message_id AND queue.device_token=due.device_token`,
+      [JSON.stringify(due.rows)]);
+    this.#repeatBatch = due.rows.length === 100 && claimedRows > 0;
     return delivered;
   }
 }
@@ -863,22 +909,20 @@ export class MediaExpiryLoop {
 }
 
 export async function runMaintenance(database: SqlDatabase): Promise<void> {
-  await database.query(`DELETE FROM room_push_views WHERE expires_at<now()`);
-  await database.query(
-    `DELETE FROM agent_commands WHERE state IN ('complete','cancelled') AND completed_at<now()-interval '30 days'`,
-  );
-  await database.query(`DELETE FROM phone_access_tokens WHERE expires_at<now()`);
-  await database.query(
-    `DELETE FROM live_outputs WHERE updated_at<now()-interval '2 hours'
-       AND kind<>'presence'`,
-  );
-  await database.query(`DELETE FROM github_auth_flows WHERE expires_at<now()-interval '1 day'`);
-  await database.query(
-    `DELETE FROM daemon_token_exchanges WHERE expires_at<now()-interval '1 day'`,
-  );
-  // A deferred mention notice is spent once written or withdrawn; its row has
-  // no further use after the source message and the notice are both long gone.
-  await database.query(`DELETE FROM pending_mention_notices WHERE due_at<now()-interval '30 days'`);
+  // Each autocommitted batch fits the jobs pool budget; later cycles finish backlogs.
+  const expired = [
+    ['room_push_views', 'expires_at<now()'],
+    ['agent_commands', "state IN ('complete','cancelled') AND completed_at<now()-interval '30 days'"],
+    ['phone_access_tokens', 'expires_at<now()'],
+    ['live_outputs', "updated_at<now()-interval '2 hours' AND kind<>'presence'"],
+    ['github_auth_flows', "expires_at<now()-interval '1 day'"],
+    ['daemon_token_exchanges', "expires_at<now()-interval '1 day'"],
+    ['pending_mention_notices', "due_at<now()-interval '30 days'"],
+  ] as const;
+  for (const [table, predicate] of expired) {
+    await database.query(`DELETE FROM ${table} WHERE ctid IN (
+      SELECT ctid FROM ${table} WHERE ${predicate} LIMIT 1000 FOR UPDATE SKIP LOCKED)`);
+  }
 }
 
 /**

@@ -198,41 +198,8 @@ describe('background advisory-lock ownership', () => {
       const loop = new PushDeliveryLoop(db, { send });
       const query = vi.spyOn(db, 'query');
       expect(await loop.runOnce()).toBe(0);
-      const candidateQueries = query.mock.calls.filter(([sql]) => sql.includes('FROM unclaimed'));
-      expect(candidateQueries).toHaveLength(1);
-      const sql = candidateQueries[0]![0];
-      query.mockRestore();
+      expect(query.mock.calls.some(([sql]) => sql.includes('FROM unclaimed'))).toBe(false);
       expect(send).not.toHaveBeenCalled();
-
-      const result = await db.query(`EXPLAIN (ANALYZE, FORMAT JSON) ${sql}`);
-      type Plan = { Plans?: Plan[]; [key: string]: unknown };
-      const root = (result.rows[0]!['QUERY PLAN'] as Array<{ Plan: Plan }>)[0]!.Plan;
-      const nodes: Plan[] = [];
-      const visit = (node: Plan) => {
-        nodes.push(node);
-        for (const child of node.Plans ?? []) visit(child);
-      };
-      visit(root);
-      expect(
-        nodes.some(
-          (node) => node['Node Type'] === 'CTE Scan' && node['CTE Name'] === 'recent_messages',
-        ),
-      ).toBe(true);
-      expect(
-        Number(
-          nodes.find((node) => node['Subplan Name'] === 'CTE recent_messages')?.['Actual Rows'],
-        ),
-      ).toBe(0);
-      expect(nodes.some((node) => node.Alias === 'tagged_member')).toBe(false);
-      for (const node of nodes.filter(
-        (node) =>
-          node['Node Type'] === 'Seq Scan' &&
-          ['identities', 'push_devices'].includes(String(node['Relation Name'])),
-      ))
-        expect(Number(node['Actual Loops'])).toBeLessThanOrEqual(1);
-      const ambiguityScan = nodes.find((node) => node.Alias === 'rival_member');
-      expect(ambiguityScan).toBeDefined();
-      expect(ambiguityScan!['Actual Loops']).toBe(0);
 
       await db.query(
         `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@owner new message')`,
@@ -240,6 +207,13 @@ describe('background advisory-lock ownership', () => {
       );
       expect(await loop.runOnce()).toBe(7);
       expect(send).toHaveBeenCalledTimes(7);
+      const candidateQueries = query.mock.calls.filter(([sql]) => sql.includes('FROM unclaimed'));
+      expect(candidateQueries).toHaveLength(1);
+      const sql = candidateQueries[0]![0];
+      query.mockRestore();
+      expect(sql).toContain('SELECT * FROM messages WHERE id=queued.message_id OFFSET 0');
+      expect(sql).toContain('unnest(context.turn_ids) final_ids(id)');
+      expect(sql).not.toContain('FROM messages interruption');
       expect(await loop.runOnce()).toBe(0);
     } finally {
       await db.close();

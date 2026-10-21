@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { PGlite } from '@electric-sql/pglite';
 import { vector } from '@electric-sql/pglite/vector';
@@ -48,7 +49,7 @@ const matchers: ReadonlyArray<readonly [HotReadName, (sql: string) => boolean]> 
     'presence-candidates',
     (sql) => sql.includes('WITH candidates AS MATERIALIZED') && sql.includes('evidence_token'),
   ],
-  ['push-candidates', (sql) => sql.includes('WITH recent_messages AS MATERIALIZED')],
+  ['push-candidates', (sql) => sql.includes('WITH queued_messages AS MATERIALIZED')],
   ['corner-facts', (sql) => sql.includes('FROM rooms c LEFT JOIN corner_facts f')],
   ['history-search', (sql) => sql.includes('authorized_rooms AS') && sql.includes('matched_count')],
 ];
@@ -248,7 +249,17 @@ describe('PRODUCTION-CORPUS REPLAY hot-read gate', () => {
     });
     await presence.observe(ROOM);
     await presence.stop();
-    await push.runOnce();
+    // Cached history predates device registration. Exercise a committed outbox
+    // entry on every replay, including runs which reuse the persistent corpus.
+    await database.query(`UPDATE push_devices SET identity_id=$1 WHERE token='corpus-device'`, [VIEWER]);
+    const probeId = `corpus-push-probe-${randomUUID()}`;
+    await database.query(
+      `INSERT INTO messages(id,room_id,author_id,text) VALUES($1,$2,$3,'@viewer push probe')`,
+      [probeId, ROOM, AGENT],
+    );
+    expect((await database.query(`SELECT 1 FROM push_outbox
+      WHERE message_id=$1 AND device_token='corpus-device'`, [probeId])).rowCount).toBe(1);
+    expect(await push.runOnce()).toBe(1);
     await Promise.all(measured.pending);
 
     expect([...measured.results.keys()].sort()).toEqual(Object.keys(HOT_READ_BUDGETS_MS).sort());

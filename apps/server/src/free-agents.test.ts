@@ -269,6 +269,10 @@ describe('free starter agents', () => {
   });
 
   it('posts the exact hello and notifies the owner without a model turn or Machine boot', async () => {
+    // The owner registers their device before creating the Workspace.
+    await db.query(`INSERT INTO push_devices(token,identity_id,platform,environment,registered_at)
+      VALUES('hello-owner-device-1234567890',$1,'android','physical',now()-interval '1 minute')`, [OWNER]);
+    await db.query(`INSERT INTO push_delivery_floors(id,started_at) VALUES('message-delivery',now()-interval '1 minute')`);
     const { id, roomId } = await phone.execute('createWorkspace', { name: 'Fresh' }, OWNER) as { id: string; roomId: string };
     const agent = await freeAgentOf(id);
     expect(agent.state).toMatch(/provisioning|waking/);
@@ -308,9 +312,8 @@ describe('free starter agents', () => {
     expect(hello[0]!.text).toBe(expected);
     expect(FREE_AGENT_HELLO.replace('<owner>', 'lunchboxfortwo').replace('<handle>', 'beebee')).toBe(expected);
     expect(await resolveCurrentMemberMentions(db, roomId, expected, agent.agent_id)).toEqual([{ id: OWNER, kind: 'human', handle: 'lunchboxfortwo' }]);
-    await db.query(`INSERT INTO push_devices(token,identity_id,platform,environment,registered_at)
-      VALUES('hello-owner-device-1234567890',$1,'android','physical',now()-interval '1 minute')`, [OWNER]);
-    await db.query(`INSERT INTO push_delivery_floors(id,started_at) VALUES('message-delivery',now()-interval '1 minute')`);
+    expect((await db.query(`SELECT 1 FROM push_outbox
+      WHERE message_id=$1 AND device_token='hello-owner-device-1234567890'`, [hello[0]!.id])).rowCount).toBe(1);
     const delivered: Array<{ messageId: string; recipientIdentityId?: string }> = [];
     await new PushDeliveryLoop(db, { send: async (_token, message) => { delivered.push(message); } }).runOnce();
     expect(delivered).toContainEqual(expect.objectContaining({ messageId: hello[0]!.id, recipientIdentityId: OWNER }));
